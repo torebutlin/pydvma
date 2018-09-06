@@ -6,6 +6,4 @@ from .logdata import dataSet, timeData, freqData, tfData, sonoData, metaData
 from .plotting import plotdata
 from .analysis import convert_to_frequency
 
-#from .logdata import get_oscilloscope_data
 
-__all__ = ['setup','file']
