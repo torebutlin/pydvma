@@ -9,7 +9,7 @@ import scipy as sp
 import peakutils
         
 
-class beam_data(object):
+class beam(object):
     ''' Defines beam data for m1 lab'''
     
     def __init__(self,*,L,b,d,M):
@@ -33,7 +33,7 @@ class beam_data(object):
         self.alphaL = np.array([4.730, 7.853, 10.996, 14.137])
         
 
-def E_calculator(*,beam_data,frequency,mode):
+def E_calculator(*,beam,frequency,mode):
     '''
     Args:
         beam_data (class): Beam data object
@@ -51,11 +51,11 @@ def E_calculator(*,beam_data,frequency,mode):
         print('Invalid mode number. Please give a number between 1 and 4')
         return
     
-    alpha = beam_data.alphaL[mode-1] / beam_data.L
+    alpha = beam.alphaL[mode-1] / beam.L
     
-    E = ((2*np.pi*frequency)**2)*((beam_data.L/alpha)**4)*beam_data.rho*beam_data.A/beam_data.I
+    E = ((2*np.pi*frequency)**2)*((beam.L/alpha)**4)*beam.rho*beam_data.A/beam.I
     print('The Young\'s Modulus calculated from Mode %i is %.2f GPa' %(mode,E*1e-9))  
-    print('Density= %.2f kgm^-3' % beam_data.rho)
+    print('Density= %.2f kgm^-3' % beam.rho)
     return E
         
     

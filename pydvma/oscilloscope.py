@@ -111,7 +111,10 @@ class oscilloscope(object):
         self.view_time = True
         self.win.nextRow()
         self.osc_time_line = self.win.addPlot(title="Time Domain (toggle with 'T')")
-        self.osc_time_line.setYRange(-1,self.settings.channels)
+        if self.settings.channels==1:
+            self.osc_freq_line.enableAutoRange()
+        else:
+            self.osc_time_line.setYRange(-1,self.settings.channels)
         self.osc_time_line.setXRange(self.rec.osc_time_axis[0],self.rec.osc_time_axis[-1])
         self.osc_time_line.showGrid(True, True)
         self.osc_time_line.addLegend()
@@ -281,7 +284,7 @@ class oscilloscope(object):
             metadata = logdata.metaData(timestamp=t,timestring=timestring)
             dataset = logdata.dataSet(timeData=t_data, settings=self.settings, metaData=metadata)
             
-#            plotting.plotdata(dataset)
+            plotting.plotdata(dataset)
             
             data_array=np.array([dataset])
             
