@@ -36,7 +36,7 @@ class beam(object):
 def E_calculator(*,beam,frequency,mode):
     '''
     Args:
-        beam_data (class): Beam data object
+        beam (class): Beam data object
         frequency: frequency of mode in Hz.
         mode (int): mode number
 
@@ -53,7 +53,7 @@ def E_calculator(*,beam,frequency,mode):
     
     alpha = beam.alphaL[mode-1] / beam.L
     
-    E = ((2*np.pi*frequency)**2)*((beam.L/alpha)**4)*beam.rho*beam_data.A/beam.I
+    E = ((2*np.pi*frequency)**2)*((beam.L/alpha)**4)*beam.rho*beam.A/beam.I
     print('The Young\'s Modulus calculated from Mode %i is %.2f GPa' %(mode,E*1e-9))  
     print('Density= %.2f kgm^-3' % beam.rho)
     return E
