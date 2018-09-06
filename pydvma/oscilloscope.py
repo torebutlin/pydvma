@@ -112,7 +112,7 @@ class oscilloscope(object):
         self.win.nextRow()
         self.osc_time_line = self.win.addPlot(title="Time Domain (toggle with 'T')")
         if self.settings.channels==1:
-            self.osc_timeline.enableAutoRange()
+            self.osc_time_line.enableAutoRange()
         else:
             self.osc_time_line.setYRange(-1,self.settings.channels)
         self.osc_time_line.setXRange(self.rec.osc_time_axis[0],self.rec.osc_time_axis[-1])
