@@ -1,1 +1,1 @@
-from .m1 import beam_data, find_peaks, E_calculator, round2nsf
+from .m1 import beam, find_peaks, E_calculator, round2nsf
