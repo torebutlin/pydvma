@@ -23,9 +23,9 @@ python setup.py install
 To get started, within a Jupyter Notebook or Python command line:
 
 ```python
-import pydvma as ma
-settings = ma.mySettings()
-osc = ma.oscilloscope(settings)
+import pydvma as dvma
+settings = dvma.mySettings()
+osc = dvma.oscilloscope(settings)
 ```
 
 ## Roadmap
