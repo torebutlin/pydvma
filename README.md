@@ -16,14 +16,17 @@ The aim is for a library that is simple to use and simple to maintain. It is not
 
 Clone this repository and install using:
 
+```
 python setup.py install
+```
 
 To get started, within a Jupyter Notebook or Python command line:
 
+```python
 import pydvma as ma
 settings = ma.mySettings()
 osc = ma.oscilloscope(settings)
-
+```
 
 ## Roadmap
 
