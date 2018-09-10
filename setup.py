@@ -6,11 +6,25 @@ Created on Thu Sep  6 15:06:51 2018
 """
 from setuptools import setup, find_packages
 
+requires = [
+        'distutils',
+        'numpy',
+        'scipy',
+        'time',
+        'datetime',
+        'pyqtgraph',
+        'copy',
+        'tkinter',
+        'matplotlib',
+        'pyaudio',
+        'pandas' 
+        ]
+
 setup(
     name='pydvma',
     version='0.1dev',
-    #packages=['distutils', 'numpy', 'scipy', 'time', 'datetime', 'pyqtgraph', 'copy', 'tkinter', 'matplotlib', 'pyaudio', 'pandas' ],
-    packages=find_packages(),
+    install_requires=requires,
+    packages=['pydvma','labs'],
     license='BSD 3-Clause License',
     long_description=open('README.md').read(),
 )

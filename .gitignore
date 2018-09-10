@@ -2,3 +2,6 @@ labs/__pycache__/
 pydvma/__pycache__/
 *.npy
 labs/.ipynb_checkpoints/
+build/
+dist/
+pydvma.egg-info/
