@@ -7,7 +7,10 @@ Created on Mon Aug 13 15:37:24 2018
 import numpy as np
 import scipy as sp
 import peakutils
+import pydvma as dvma
         
+
+DEFAULT_SETTINGS = dvma.mySettings()
 
 class beam(object):
     ''' Defines beam data for m1 lab'''

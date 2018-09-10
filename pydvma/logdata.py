@@ -16,12 +16,18 @@ class dataSet():
         self.settings = settings
         self.metaData = metaData
         
+    def __repr__(self):
+        return "<dataset class containing ...>"
+        
         
 class timeData():
     def __init__(self,time_axis,time_data,settings):
         self.time_axis = time_axis
         self.time_data = time_data  
         self.settings = settings
+        
+    def __repr__(self):
+        return "<dataset class containing ...>"
 
         
 class freqData():

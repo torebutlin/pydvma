@@ -25,6 +25,9 @@ import pandas as pd
 
 
 class oscilloscope(object):
+    
+    app = None
+    
     def __init__(self,settings):
         '''Creates an Oscilloscope
         Args:
