@@ -10,7 +10,8 @@ import peakutils
 import pydvma as dvma
         
 
-DEFAULT_SETTINGS = dvma.mySettings()
+DEFAULT_SETTINGS = dvma.mySettings(channels=1,fs=8000,stored_time=2,view_time=2,device_index=1)
+
 
 class beam(object):
     ''' Defines beam data for m1 lab'''

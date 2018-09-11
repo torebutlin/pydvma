@@ -51,7 +51,7 @@ class oscilloscope(object):
             self.timer = QtCore.QTimer()
             self.timer.timeout.connect(lambda:self.update(audio_stream)) # update figure and buffer
             self.timer.start(0)
-            self.app.instance().exec_()
+            oscilloscope.app.instance().exec_()
             
             
     def create_figure(self):
@@ -60,7 +60,9 @@ class oscilloscope(object):
         
         '''
         pg.setConfigOption('background', 'w')
-        self.app = QtGui.QApplication([])
+        if oscilloscope.app == None:
+            oscilloscope.app = QtGui.QApplication([])
+            
         self.win = KeyPressWindow(self)
 #        self.win.setWindowIcon(QtGui.QIcon('icon.png'))
         
@@ -300,14 +302,15 @@ class oscilloscope(object):
                 self.save_root.attributes('-topmost', 1)
                 self.save_root.filename =  filedialog.asksaveasfilename(defaultextension=".npy", filetypes=(("npy file", "*.npy"),("All Files", "*.*") ))
                 
-                if self.save_root.filename is None: # asksaveasfile returns `None` if dialog closed with "cancel".
+                if self.save_root.filename is '': # asksaveasfile returns `None` if dialog closed with "cancel".
                     self.save_root.destroy()
                 else:
                     filename = self.save_root.filename.replace(".npy","")
                     np.save(filename+".npy",data_array)
                     self.save_root.destroy()
+                    
+                    print("... file saved as " + filename + ".npy")
                     self.data_saved_counter += 1
-                    print("... file saved as " + filename+'_'+str(self.data_saved_counter)+".npy")
 
             else:
                 filename = self.save_root.filename.replace(".npy","")
@@ -450,7 +453,7 @@ class KeyPressWindow(pg.GraphicsWindow):
         '''
         
         self.oscilloscope.timer.stop()
-        self.oscilloscope.app.exit()
+        #self.oscilloscope.app.exit()
         self.close()
         self.oscilloscope.rec.end_pyaudio(self.oscilloscope.audio_stream,self.oscilloscope.audio)
         

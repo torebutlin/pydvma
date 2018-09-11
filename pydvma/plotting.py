@@ -54,18 +54,18 @@ class plotdata(object):
             self.fig, self.ax = plt.subplots(2, 1,figsize = (9,5),dpi=100)
             
             self.ax[0].set_xlabel('Time (s)')
-            self.ax[0].set_ylabel('Amplitude')
+            self.ax[0].set_ylabel('Normalised Amplitude')
 #            self.ax[0].set_xlim(fdata.settings.time_range)
             self.ax[0].axvspan(fdata.settings.time_range[0], fdata.settings.time_range[1], color='blue', alpha=0.25)
             self.ax[0].grid()
             self.ax[1].set_xlabel('Frequency (Hz)')
-            self.ax[1].set_ylabel('Amplitude')
+            self.ax[1].set_ylabel('Amplitude (dB)')
             self.ax[1].grid()
             
             
             for n in range(data.settings.channels):
-                self.ax[0].plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=2,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
-                self.ax[1].plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=2,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax[0].plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax[1].plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax[0].legend()
             self.ax[1].legend()
@@ -75,11 +75,11 @@ class plotdata(object):
             self.fig, self.ax = plt.subplots(figsize = (9,5),dpi=100)
         
             self.ax.set_xlabel('Time (s)')
-            self.ax.set_ylabel('Amplitude')
+            self.ax.set_ylabel('Normalised Amplitude')
             self.ax.grid()
             
             for n in range(data.settings.channels):
-                self.ax.plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=2,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax.plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax.legend()
             
@@ -88,11 +88,11 @@ class plotdata(object):
             self.fig, self.ax = plt.subplots(figsize = (9,5),dpi=100)
         
             self.ax.set_xlabel('Frequency (Hz)')
-            self.ax.set_ylabel('Amplitude')
+            self.ax.set_ylabel('Amplitude (dB)')
             self.ax.grid()
             
             for n in range(data.settings.channels):
-                self.ax.plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=2,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax.plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax.legend()
             
