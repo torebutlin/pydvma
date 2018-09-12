@@ -31,7 +31,7 @@ class mySettings(object):
     num_chunks: int
         Number of chunks to store in circular buffer
     view_time: float
-        Overrides num_chunks to display view_time in seconds for oscilloscope
+        If specified, overrides num_chunks to display view_time in seconds for oscilloscope
     stored_time: float
         Length of the pre-trigger when the space button is hit, in seconds
     device_index: int
