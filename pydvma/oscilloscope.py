@@ -21,7 +21,6 @@ import matplotlib.pyplot as plt
 from tkinter import filedialog
 import time
 import datetime
-import pandas as pd
 
 
 class oscilloscope(object):
