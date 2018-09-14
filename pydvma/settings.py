@@ -50,7 +50,7 @@ class mySettings(object):
                  nbits=16, 
                  chunk_size=1024, 
                  num_chunks=6,
-                 view_time=None,
+                 viewed_time=None,
                  stored_time=2,
                  device_index=None,
                  init_view_time=True,
@@ -61,7 +61,7 @@ class mySettings(object):
         self.fs=fs
         self.chunk_size=chunk_size
         self.num_chunks=num_chunks
-        self.view_time=view_time
+        self.viewed_time=viewed_time
         self.nbits=nbits
         self.stored_time=stored_time
         self.device_index=device_index
@@ -70,8 +70,8 @@ class mySettings(object):
         self.init_view_levels=init_view_levels
         
         ### derived settings
-        if view_time != None:
-            self.num_chunks = int(np.ceil(view_time*fs/chunk_size))
+        if viewed_time != None:
+            self.num_chunks = int(np.ceil(viewed_time*fs/chunk_size))
             
         self.format = eval('pyaudio.paInt'+str(self.nbits))
         self.device_name = None # until initialise stream

@@ -10,7 +10,7 @@ import peakutils
 import pydvma as dvma
         
 
-DEFAULT_SETTINGS = dvma.mySettings(channels=1,fs=8000,stored_time=2,view_time=2,device_index=1)
+DEFAULT_SETTINGS = dvma.mySettings(channels=1,fs=8000,stored_time=2,viewed_time=2,device_index=1)
 
 
 class beam(object):
