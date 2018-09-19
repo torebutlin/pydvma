@@ -14,11 +14,9 @@ from . import plotting
 import pyaudio
 import numpy as np
 import pyqtgraph as pg
-import tkinter as tk
 from pyqtgraph.Qt import QtGui, QtCore
 import matplotlib
 import matplotlib.pyplot as plt
-from tkinter import filedialog
 import time
 import datetime
 
@@ -290,35 +288,24 @@ class oscilloscope(object):
             
             plotting.plotdata(dataset)
             
-            data_array=np.array([dataset])
+            
+            
             
             if evt.key() == QtCore.Qt.Key_S:
                 self.data_saved_counter = 0
             
-            if self.data_saved_counter == 0:
-
-                self.save_root = tk.Tk()
-                self.save_root.attributes('-topmost', 1)
-                self.save_root.filename =  filedialog.asksaveasfilename(defaultextension=".npy", filetypes=(("npy file", "*.npy"),("All Files", "*.*") ))
-                
-                if self.save_root.filename is '': # asksaveasfile returns `None` if dialog closed with "cancel".
-                    self.save_root.destroy()
-                else:
-                    filename = self.save_root.filename.replace(".npy","")
-                    np.save(filename+".npy",data_array)
-                    self.save_root.destroy()
-                    
-                    print("... file saved as " + filename + ".npy")
-                    self.data_saved_counter += 1
-
-            else:
-                filename = self.save_root.filename.replace(".npy","")
-                np.save(filename+'_'+str(self.data_saved_counter)+".npy",data_array)
-                self.data_saved_counter += 1
-                print("... file saved as " + filename+'_'+str(self.data_saved_counter)+".npy")
-
-                
             
+            if self.data_saved_counter == 0:
+                self.last_filename = file.save_data(dataset)
+                if self.last_filename != None:
+                    self.data_saved_counter += 1
+            
+            else:
+                filename = self.last_filename.replace('.npy','') + '_' + str(self.data_saved_counter) + '.npy'
+                file.save_data(dataset,filename)
+                self.data_saved_counter += 1
+
+
         
         
 class recorder(object):

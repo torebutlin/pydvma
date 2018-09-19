@@ -1,5 +1,5 @@
 from .settings import mySettings
-from .file import read_data
+from .file import load_data, save_data
 from .oscilloscope import oscilloscope, recorder
 from .logdata import dataSet, timeData, freqData, tfData, sonoData, metaData
 from .plotting import plotdata

@@ -5,3 +5,4 @@ labs/.ipynb_checkpoints/
 build/
 dist/
 pydvma.egg-info/
+.spyproject/

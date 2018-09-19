@@ -11,14 +11,36 @@ from . import plotting
 from . import logdata
 
 import numpy as np
-import tkinter as tk
-from tkinter import filedialog
+import os.path
+from pyqtgraph.Qt import QtGui, QtCore
 
 
-def read_data():
+def load_data(*filename):
     '''
-    Gives the user a filedialog to select a .npy file.
+    Loads dataset from filename, or displays a dialog if no argument provided.
     '''
+    if len(filename) == 0:
+        filename = QtGui.QFileDialog.getOpenFileName(None,'title',None,'*.npy')
+        filename = filename[0]
+        if filename:
+            d=np.load(filename)
+            dataset = d[0]
+        else:
+            dataset = None
+
+    
+    elif (len(filename)==1) & (type(filename[0])==str):
+        d=np.load(filename)
+        dataset = d[0]
+        
+    else:
+        print('Unexpected input arguments (expecting single filename string)')
+        dataset = None
+        
+    return dataset
+    
+    
+    
     
     ##fromfile means extracted 
     open_root = tk.Tk()
@@ -34,51 +56,87 @@ def read_data():
         return
 
     return dataset
-#    
-#    fromfile_settings=fromfile_data_array[0]
-#    fromfile_data=fromfile_data_array[1]
-#    fs=fromfile_settings.fs
-#    n_samp=len(fromfile_data[:,0])
-#    dt=1/fs
-#    t_samp=n_samp*dt
-#    fromfile_t_axis= np.arange(0,t_samp,dt)
-#    fromfile_freq_axis=np.fft.rfftfreq(len(fromfile_t_axis),1/fs)
-#    fromfile_time_data_windowed=np.zeros_like(fromfile_data)
-#    fromfile_num_chunks=int(np.ceil((fromfile_settings.stored_time*fromfile_settings.fs)/fromfile_settings.chunk_size))
-#    if (fromfile_num_chunks*fromfile_settings.chunk_size)%2==0:
-#        fromfile_freq_data=np.zeros(shape=(int(((fromfile_num_chunks*fromfile_settings.chunk_size+2)/2)+1),fromfile_settings.channels))
-#    else:
-#        fromfile_freq_data=np.zeros(shape=(int((fromfile_num_chunks*fromfile_settings.chunk_size+2+1)/2),fromfile_settings.channels))
-#    for i in range(fromfile_settings.channels) :  
-#        fromfile_time_data_windowed[:,i] = fromfile_data[:,i] * np.hanning(np.shape(fromfile_data)[0])
-#        fromfile_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(fromfile_time_data_windowed[:,i]))/len(fromfile_time_data_windowed[:,i]))
-#        
-#    
-#    fromfile_time_line = figure(title="Audio Signal Vs. Time", x_axis_label='Time (s)', y_axis_label='Normalised Amplitude')
-#    fromfile_freq_line = figure(title="Power Vs Frequency Domain", x_axis_label='Frequency (Hz)', y_axis_label='Power Spectrum (dB)')
-#
-#    fromfile_time_line.add_tools(pltm.HoverTool())
-#    fromfile_freq_line.add_tools(pltm.HoverTool())
-#   
-#    #this holds on to a label when tapped on but doesn't seem necessary for now
-#    #fromfile_time_line.add_tools(pltm.TapTool())
-#    #fromfile_freq_line.add_tools(pltm.TapTool())
-#    
-#    for i in range(fromfile_settings.channels):
-#        #plot the time and fft domains
-#        fromfile_time_line.line(fromfile_t_axis, fromfile_data[:,i], legend='Channel'+str(i),line_color=tuple(setup.set_plot_colours(fromfile_settings.channels)[i,:]), line_width=0.7)
-#        fromfile_freq_line.line(fromfile_freq_axis, fromfile_freq_data[:,i], legend='Channel'+str(i),line_color=tuple(setup.set_plot_colours(fromfile_settings.channels)[i,:]), line_width=0.7)
-#    
-#    #have to determine the legend.click_policy after defining the line
-#    fromfile_time_line.legend.click_policy="hide"
-#    fromfile_freq_line.legend.click_policy="hide"
-#    
-#    #resets the output of the implicit bokeh current document.
-#    #Initially, when read_data() was called severally, new figures would be added to the older ones.
-#    reset_output()
-#    
-#    show(row(fromfile_time_line,fromfile_freq_line))
 
+
+def save_data(dataset,*savename,overwrite_without_prompt=False):
+    '''
+    Saves dataset class to file 'savename.npy', or provides dialog if no filename provided.
+    
+    Args:
+        dataset: An object of the class dataSet
+        savename: string
+        overwrite_without_prompt: bool
+    '''
+
+    
+    # put data into numpy array
+    d = np.array([dataset])
+    
+    #if filename not specified, provide dialog
+    if len(savename) == 0:
+        # PROMPT
+        filename = QtGui.QFileDialog.getSaveFileName(None,'Save dataset',None,'*.npy')
+        filename = filename[0]
+        if filename:
+            filename = filename.replace(".npy","")+".npy"
+            np.save(filename,d)
+            print("Data saved as " + filename)
+      
+    #if filename not specified, provide dialog
+    elif (len(savename) == 1) & (type(savename[0]) == str):
+        # use savename
+        filename = savename[0].replace(".npy","")+".npy"
+        if overwrite_without_prompt == True:
+            if os.path.isfile(filename):
+                print('Overwriting existing file')
+            np.save(filename,d)
+            print("Data saved as " + filename)  
+            
+        elif os.path.isfile(filename):
+            answer = input('File \'' + filename + '\' already exists. Overwrite? [y/n]: ')
+            if answer == 'y':
+                np.save(savename+".npy",d)
+                print("Data saved as " + filename + ' (existing file overwritten)')
+            else:
+                filename = QtGui.QFileDialog.getSaveFileName(None,'Save dataset',None,'*.npy')
+                filename = filename[0]
+                if filename:
+                    filename = filename.replace(".npy","")+".npy"
+                    np.save(filename,d)
+                    print("Data saved as " + filename)
+                    
+        else:
+            filename = filename.replace(".npy","")+".npy"
+            np.save(filename,d)
+            print("Data saved as " + filename)
+            
+        
+    else:
+        print('Unexpected input arguments')
+        filename = None
+    
+    return filename
+        
+    
+#    savename = savename.replace(".npy","")
+#    
+#    ## check if it exists
+#    if os.path.isfile(savename+'.npy'):
+#        if overwrite_without_prompt:
+#            np.save(savename+".npy",d)
+#            print('Data saved as \'' + savename + '.npy\': overwriting existing file')
+#        else:
+#            answer = input('File \'' + savename + '.npy\' already exists. Overwrite? [y/n]: ')
+#            if answer == 'y':
+#                np.save(savename+".npy",d)
+#            else:
+#                print('Data not saved. Write code to prompt for saving')
+                
+            
+    
+    
+    
+    
 
 
 
