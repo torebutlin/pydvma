@@ -19,18 +19,18 @@ class beam(object):
     def __init__(self,*,L,b,d,M):
         """
         Args:
-            L: length (m)
-            b: width (m)
-            d: thickness (m)
-            M: mass (kg)
+            L: length (mm)
+            b: width (mm)
+            d: thickness (mm)
+            M: mass (grams)
             
-        Note units are in m or kg
-            
+        Note units are in millimeters or grams
+
         """
-        self.L = L
-        self.b = b
-        self.d = d
-        self.M = M
+        self.L = L/1e3
+        self.b = b/1e3
+        self.d = d/1e3
+        self.M = M/1e3
         self.rho = self.M/(self.L*self.b*self.d)
         self.I = (self.b*(self.d**3))/12
         self.A = self.b*self.d
@@ -47,6 +47,7 @@ def E_calculator(*,beam,frequency,mode):
     Returns:
         E: Calculation of Young's Modulus
     '''
+    rho = beam.rho
     
     if type(mode)!=int:
         print('Insert an integer for mode')
@@ -57,10 +58,10 @@ def E_calculator(*,beam,frequency,mode):
     
     alpha = beam.alphaL[mode-1] / beam.L
     
-    E = ((2*np.pi*frequency)**2)*((beam.L/alpha)**4)*beam.rho*beam.A/beam.I
+    E = ((2*np.pi*frequency)**2)*((1/alpha)**4)*beam.rho*beam.A/beam.I
     print('The Young\'s Modulus calculated from Mode %i is %.2f GPa' %(mode,E*1e-9))  
     print('Density= %.2f kgm^-3' % beam.rho)
-    return E
+    return E,rho
         
     
     
