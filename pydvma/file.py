@@ -15,11 +15,14 @@ import os.path
 from pyqtgraph.Qt import QtGui, QtCore
 
 
+        
+        
 def load_data(*filename):
     '''
     Loads dataset from filename, or displays a dialog if no argument provided.
     '''
     if len(filename) == 0:
+#        wid = QtGui.QWidget()
         filename = QtGui.QFileDialog.getOpenFileName(None,'title',None,'*.npy')
         filename = filename[0]
         if filename:
@@ -39,23 +42,23 @@ def load_data(*filename):
         
     return dataset
     
-    
-    
-    
-    ##fromfile means extracted 
-    open_root = tk.Tk()
-    open_root.attributes('-topmost', 1)
-    #open_root.attributes('-topmost', 0) # commented to force user to save or cancel
-    open_root.filename =  filedialog.askopenfilename()
-    if open_root.filename: # askopenfilename returns `False` if dialog closed with "cancel".
-        d=np.load(open_root.filename)
-        dataset = d[0]
-        open_root.destroy()
-    else:
-        open_root.destroy()
-        return
-
-    return dataset
+#    
+#    
+#    
+#    ##fromfile means extracted 
+#    open_root = tk.Tk()
+#    open_root.attributes('-topmost', 1)
+#    #open_root.attributes('-topmost', 0) # commented to force user to save or cancel
+#    open_root.filename =  filedialog.askopenfilename()
+#    if open_root.filename: # askopenfilename returns `False` if dialog closed with "cancel".
+#        d=np.load(open_root.filename)
+#        dataset = d[0]
+#        open_root.destroy()
+#    else:
+#        open_root.destroy()
+#        return
+#
+#    return dataset
 
 
 def save_data(dataset,*savename,overwrite_without_prompt=False):

@@ -21,15 +21,21 @@ import time
 import datetime
 
 
-class oscilloscope(object):
+
+
+
+class oscilloscope():
     
     app = None
-    
+    win = None
+
     def __init__(self,settings):
         '''Creates an Oscilloscope
         Args:
             settings: An object of the class mySettings
         '''
+
+        
         self.settings = settings
             
         rec = recorder(settings)
@@ -43,11 +49,13 @@ class oscilloscope(object):
             
             self.create_figure()
             
-            self.win.sigKeyPress.connect(self.keyPressed)
-    
+            
+            oscilloscope.win.sigKeyPress.connect(self.keyPressed)
+            
             self.timer = QtCore.QTimer()
             self.timer.timeout.connect(lambda:self.update(audio_stream)) # update figure and buffer
             self.timer.start(0)
+                
             oscilloscope.app.instance().exec_()
             
             
@@ -60,22 +68,22 @@ class oscilloscope(object):
         if oscilloscope.app == None:
             oscilloscope.app = QtGui.QApplication([])
             
-        self.win = KeyPressWindow(self)
-#        self.win.setWindowIcon(QtGui.QIcon('icon.png'))
+#        if oscilloscope.win == None:
+        oscilloscope.win = KeyPressWindow(self)
+#        oscilloscope.win.setWindowIcon(QtGui.QIcon('icon.png'))
         
         
-        window_geometry = self.win.geometry()
+        window_geometry = oscilloscope.win.geometry()
         
-#        screen_width = tk.Tk().winfo_screenwidth()
-#        screen_height = tk.Tk().winfo_screenheight()
+
         
-        self.win.setGeometry(100,100,800,600)
+        oscilloscope.win.setGeometry(100,100,800,600)
         
-        self.win.showMinimized()
-        self.win.showNormal()
+        oscilloscope.win.showMinimized()
+        oscilloscope.win.showNormal()
 
 
-        self.win.setWindowTitle("Oscilloscope (to save to new filename press 's', to autosave press 'space')")
+        oscilloscope.win.setWindowTitle("Oscilloscope (to save to new filename press 's', to autosave press 'space')")
         self.view_time = self.settings.init_view_time
         self.view_freq = self.settings.init_view_freq
         self.view_levels = self.settings.init_view_levels
@@ -90,7 +98,7 @@ class oscilloscope(object):
         '''
         Switches between views, triggered by keypress
         '''
-        self.win.clear()
+        oscilloscope.win.clear()
         
         
         if self.view_time == True:
@@ -111,8 +119,8 @@ class oscilloscope(object):
     def time_plot(self):
         # create a plot for the time domain
         self.view_time = True
-        self.win.nextRow()
-        self.osc_time_line = self.win.addPlot(title="Time Domain (toggle with 'T')")
+        oscilloscope.win.nextRow()
+        self.osc_time_line = oscilloscope.win.addPlot(title="Time Domain (toggle with 'T')")
         if self.settings.channels==1:
             self.osc_time_line.enableAutoRange()
         else:
@@ -131,13 +139,13 @@ class oscilloscope(object):
             pen_ = pg.mkPen(color=settings.set_plot_colours(self.settings.channels)[i,:])
             self.osc_time_lineset[i]=self.osc_time_line.plot(pen=pen_, name='Channel '+str(i))
         
-#        self.win.FillBetweenItem(curve1=osc_time_lineset[0], curve2=osc_time_lineset[1])
+#        oscilloscope.win.FillBetweenItem(curve1=osc_time_lineset[0], curve2=osc_time_lineset[1])
         
     def freq_plot(self):
         # create a plot for the frequency domain
         self.view_freq = True
-        self.win.nextRow()
-        self.osc_freq_line = self.win.addPlot(title="Frequency Domain (toggle with 'F')") 
+        oscilloscope.win.nextRow()
+        self.osc_freq_line = oscilloscope.win.addPlot(title="Frequency Domain (toggle with 'F')") 
         self.osc_freq_line.enableAutoRange()
         self.osc_freq_line.setXRange(self.rec.osc_freq_axis[0],self.rec.osc_freq_axis[-1])
         self.osc_freq_line.showGrid(True, True)
@@ -153,9 +161,9 @@ class oscilloscope(object):
     def levels_plot(self):
         # create a plot for the frequency domain
         self.view_levels = True
-        self.win.nextRow()
+        oscilloscope.win.nextRow()
         
-        self.osc_levels_line = self.win.addPlot(title="Channel Levels (toggle with 'L')")
+        self.osc_levels_line = oscilloscope.win.addPlot(title="Channel Levels (toggle with 'L')")
         self.osc_levels_line.setYRange(0,1)
         self.osc_levels_line.setXRange(-0.5,self.settings.channels-0.5)
         self.osc_levels_line.showGrid(False,True)
@@ -286,7 +294,7 @@ class oscilloscope(object):
             metadata = logdata.metaData(timestamp=t,timestring=timestring)
             dataset = logdata.dataSet(timeData=t_data, settings=self.settings, metaData=metadata)
             
-            plotting.plotdata(dataset)
+            #plotting.plotdata(dataset)
             
             
             
@@ -437,11 +445,11 @@ class KeyPressWindow(pg.GraphicsWindow):
         '''
         Stops QTimer,exits QApplication and closes the audio stream when the user exits the oscilloscope window.
         '''
-        
         self.oscilloscope.timer.stop()
-        #self.oscilloscope.app.exit()
         self.close()
         self.oscilloscope.rec.end_pyaudio(self.oscilloscope.audio_stream,self.oscilloscope.audio)
+#        pg.exit()
+
         
 
 
