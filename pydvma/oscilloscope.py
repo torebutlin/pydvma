@@ -318,10 +318,10 @@ class oscilloscope():
             
             if self.data_saved_counter == 0:
                 self.last_filename = file.save_data(dataset)
-                if self.last_filename != None:
-                    self.data_saved_counter += 1
-                else:
+                if self.last_filename == '':
                     self.data_saved_counter = 0
+                else:
+                    self.data_saved_counter += 1
             
             else:
                 filename = self.last_filename.replace('.npy','') + '_' + str(self.data_saved_counter) + '.npy'
