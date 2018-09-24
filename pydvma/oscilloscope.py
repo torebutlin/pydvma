@@ -21,13 +21,26 @@ import time
 import datetime
 
 
-
+class MainWindow():
+    app = None
+    timer = None
+    win = None
+    
+    def __init__(self,settings):
+       # create window
+       # create scope app
+       # timer
+       oscilloscope.win = KeyPressWindow(self)
+       self.timer = QtCore.QTimer()
+       self.app = QtGui.QApplication([])
+       
 
 
 class oscilloscope():
     
     app = None
     win = None
+    timer = QtCore.QTimer()
 
     def __init__(self,settings):
         '''Creates an Oscilloscope
@@ -38,23 +51,22 @@ class oscilloscope():
         
         self.settings = settings
             
-        rec = recorder(settings)
-        audio_stream,audio = rec.init_pyaudio(settings)
-        self.rec = rec
-        self.audio_stream = audio_stream
-        self.audio = audio    
+        self.rec = recorder(settings)
+        self.rec.init_pyaudio(settings)
+#        self.audio_stream = audio_stream
+#        self.audio = audio    
         
         if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
             
-            
+#            self.timer = QtCore.QTimer()
             self.create_figure()
             
             
             oscilloscope.win.sigKeyPress.connect(self.keyPressed)
             
-            self.timer = QtCore.QTimer()
-            self.timer.timeout.connect(lambda:self.update(audio_stream)) # update figure and buffer
-            self.timer.start(0)
+            
+            oscilloscope.timer.timeout.connect(self.update) # update figure and buffer
+            oscilloscope.timer.start(0)
                 
             oscilloscope.app.instance().exec_()
             
@@ -68,8 +80,9 @@ class oscilloscope():
         if oscilloscope.app == None:
             oscilloscope.app = QtGui.QApplication([])
             
+            
 #        if oscilloscope.win == None:
-        oscilloscope.win = KeyPressWindow(self)
+        oscilloscope.win = KeyPressWindow(self.rec)
 #        oscilloscope.win.setWindowIcon(QtGui.QIcon('icon.png'))
         
         
@@ -188,7 +201,7 @@ class oscilloscope():
         self.time_last_changed = np.zeros(self.settings.channels)
         
     
-    def update(self,audio_stream):
+    def update(self):
         '''
         Updates plots with incoming data from __call__. 
         Called with a 0s interval by QTimer.
@@ -307,6 +320,8 @@ class oscilloscope():
                 self.last_filename = file.save_data(dataset)
                 if self.last_filename != None:
                     self.data_saved_counter += 1
+                else:
+                    self.data_saved_counter = 0
             
             else:
                 filename = self.last_filename.replace('.npy','') + '_' + str(self.data_saved_counter) + '.npy'
@@ -343,7 +358,7 @@ class recorder(object):
                     self.stored_num_chunks*self.settings.chunk_size+2+1)/2),self.settings.channels))
             
             
-    def __call__(self,in_data, frame_count, time_info, status):
+    def __call__(self, in_data, frame_count, time_info, status):
         '''
         Obtains data from the audio stream.
         '''
@@ -361,34 +376,33 @@ class recorder(object):
         '''
         Initialises an audio stream. Gives the user a choice of which device to access.
         '''
-        global audio,audio_stream
         
-        audio = pyaudio.PyAudio()
+        self.audio = pyaudio.PyAudio()
         
         if settings.device_index == None:
     
-            device_count = audio.get_device_count()
+            device_count = self.audio.get_device_count()
             print ('Number of devices available is: %i' %device_count)
             print ('')
             print('Devices available, by index:')
             print ('')
             for i in range(device_count):
-                device = audio.get_device_info_by_index(i)
+                device = self.audio.get_device_info_by_index(i)
                 print(device['index'], device['name'])
             print ('')
-            default_device = audio.get_default_input_device_info()
+            default_device = self.audio.get_default_input_device_info()
             print('Default device is: %i %s'
                   %(default_device['index'],default_device['name']))
             print ('')
             settings.device_index=int(input('Insert index of required device:'))
             
-        settings.device_name = audio.get_device_info_by_index(settings.device_index)['name']
-        settings.device_full_info = audio.get_device_info_by_index(settings.device_index)
+        settings.device_name = self.audio.get_device_info_by_index(settings.device_index)['name']
+        settings.device_full_info = self.audio.get_device_info_by_index(settings.device_index)
         
         print(settings.device_full_info['index'], settings.device_full_info['name'])
         print("Selected device: %i : %s" %(settings.device_index,settings.device_name))    
         
-        audio_stream = audio.open(format=settings.format,
+        self.audio_stream = self.audio.open(format=settings.format,
                                         channels=settings.channels,
                                         rate=settings.fs,
                                         input=_input_,
@@ -396,21 +410,21 @@ class recorder(object):
                                         frames_per_buffer=settings.chunk_size,
                                         input_device_index=settings.device_index,
                                         stream_callback=self.__call__)  
-        audio_stream.start_stream()
+        self.audio_stream.start_stream()
         
-        return (audio_stream,audio)
+#        return (audio_stream,audio)
         
     
-    def end_pyaudio(self,audio_stream,audio):
+    def end_pyaudio(self):
         '''
         Closes an audio stream.
         '''
-        if not audio_stream.is_stopped():
-            audio_stream.stop_stream()
+        if not self.audio_stream.is_stopped():
+            self.audio_stream.stop_stream()
         else: 
             pass
-        audio_stream.close()
-        audio.terminate()
+        self.audio_stream.close()
+        self.audio.terminate()
         
         
 
@@ -427,12 +441,12 @@ class KeyPressWindow(pg.GraphicsWindow):
     sigKeyPress = QtCore.pyqtSignal(object)
     
 
-    def __init__(self, oscilloscope, *args, **kwargs):
+    def __init__(self, rec, *args, **kwargs):
         '''
         Re-implmented from parent.
         '''
         super().__init__(*args, **kwargs)
-        self.oscilloscope = oscilloscope
+        self.rec = rec
 
     def keyPressEvent(self, evt):
         '''
@@ -445,10 +459,11 @@ class KeyPressWindow(pg.GraphicsWindow):
         '''
         Stops QTimer,exits QApplication and closes the audio stream when the user exits the oscilloscope window.
         '''
-        self.oscilloscope.timer.stop()
+        oscilloscope.timer.stop()
         self.close()
-        self.oscilloscope.rec.end_pyaudio(self.oscilloscope.audio_stream,self.oscilloscope.audio)
-#        pg.exit()
+        self.rec.end_pyaudio()
+        
+
 
         
 

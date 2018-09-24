@@ -13,35 +13,75 @@ from . import logdata
 import numpy as np
 import os.path
 from pyqtgraph.Qt import QtGui, QtCore
+import tkinter as tk
+from tkinter import filedialog
+
 
 
         
         
+#def load_data(*filename):
+#    '''
+#    Loads dataset from filename, or displays a dialog if no argument provided.
+#    '''
+#    if len(filename) == 0:
+#        wid = QtGui.QFileDialog()
+#        wid.setModal(True)
+#        
+#        filename = wid.getOpenFileName(wid,'title',None,'*.npy')
+#        
+#        
+#        
+#        filename = filename[0]
+#        if filename:
+#            d=np.load(filename)
+#            dataset = d[0]
+#            print('dataset loaded')
+#        else:
+#            dataset = None
+#            print('no data loaded')
+#
+#    
+#    elif (len(filename)==1) & (type(filename[0])==str):
+#        d=np.load(filename)
+#        dataset = d[0]
+#        print('dataset loaded')
+#        
+#    else:
+#        print('Unexpected input arguments (expecting single filename string)')
+#        dataset = None
+#        
+#    return dataset
+    
 def load_data(*filename):
     '''
     Loads dataset from filename, or displays a dialog if no argument provided.
     '''
+    
     if len(filename) == 0:
-#        wid = QtGui.QWidget()
-        filename = QtGui.QFileDialog.getOpenFileName(None,'title',None,'*.npy')
-        filename = filename[0]
+        root = tk.Tk()
+        root.attributes('-topmost', 1)
+        root.withdraw()
+        filename =  filedialog.askopenfilename(title = "Select data file",filetypes =[("numpy data","*.npy")])
+
         if filename:
             d=np.load(filename)
             dataset = d[0]
+            print('dataset loaded')
         else:
             dataset = None
+            print('no data loaded')
 
-    
     elif (len(filename)==1) & (type(filename[0])==str):
         d=np.load(filename)
         dataset = d[0]
+        print('dataset loaded')
         
     else:
         print('Unexpected input arguments (expecting single filename string)')
         dataset = None
         
     return dataset
-    
 #    
 #    
 #    
