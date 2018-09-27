@@ -124,6 +124,7 @@ def find_peaks(freq_data,channel=0,threshold=0,freq_range=None):
         freq_list = ''
         for f in peak_frequencies[0:10]:
             freq_list = freq_list + '%.4g'%f + '  '
+        print(freq_list)
         print('To reduce the number of peaks, use a higher threshold. If using a plot to specifiy the threshold then use the zoom to view only the peaks and not the noisy data underneath.')
         
     return peak_frequencies, peak_amplitudes

@@ -10,7 +10,7 @@ requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'pyaudio', 'matplotlib']
 
 setup(
     name='pydvma',
-    version='0.2.0',
+    version='0.2.1',
     install_requires=requires,
     packages=['pydvma','labs'],
     license='BSD 3-Clause License',
