@@ -21,22 +21,10 @@ import time
 import datetime
 
 
-class MainWindow():
-    app = None
-    timer = None
-    win = None
-    
-    def __init__(self,settings):
-       # create window
-       # create scope app
-       # timer
-       oscilloscope.win = KeyPressWindow(self)
-       self.timer = QtCore.QTimer()
-       self.app = QtGui.QApplication([])
-       
 
 
-class oscilloscope():
+
+class Oscilloscope():
     
     app = None
     win = None
@@ -51,7 +39,7 @@ class oscilloscope():
         
         self.settings = settings
             
-        self.rec = recorder(settings)
+        self.rec = Recorder(settings)
         self.rec.init_pyaudio(settings)
 #        self.audio_stream = audio_stream
 #        self.audio = audio    
@@ -62,13 +50,13 @@ class oscilloscope():
             self.create_figure()
             
             
-            oscilloscope.win.sigKeyPress.connect(self.keyPressed)
+            Oscilloscope.win.sigKeyPress.connect(self.keyPressed)
             
             
-            oscilloscope.timer.timeout.connect(self.update) # update figure and buffer
-            oscilloscope.timer.start(0)
+            Oscilloscope.timer.timeout.connect(self.update) # update figure and buffer
+            Oscilloscope.timer.start(0)
                 
-            oscilloscope.app.instance().exec_()
+            Oscilloscope.app.instance().exec_()
             
             
     def create_figure(self):
@@ -77,26 +65,26 @@ class oscilloscope():
         
         '''
         pg.setConfigOption('background', 'w')
-        if oscilloscope.app == None:
-            oscilloscope.app = QtGui.QApplication([])
+        if Oscilloscope.app == None:
+            Oscilloscope.app = QtGui.QApplication([])
             
             
-#        if oscilloscope.win == None:
-        oscilloscope.win = KeyPressWindow(self.rec)
-#        oscilloscope.win.setWindowIcon(QtGui.QIcon('icon.png'))
+#        if Oscilloscope.win == None:
+        Oscilloscope.win = KeyPressWindow(self.rec)
+#        Oscilloscope.win.setWindowIcon(QtGui.QIcon('icon.png'))
         
         
-        window_geometry = oscilloscope.win.geometry()
+        window_geometry = Oscilloscope.win.geometry()
         
 
         
-        oscilloscope.win.setGeometry(100,100,800,600)
+        Oscilloscope.win.setGeometry(100,100,800,600)
         
-        oscilloscope.win.showMinimized()
-        oscilloscope.win.showNormal()
+        Oscilloscope.win.showMinimized()
+        Oscilloscope.win.showNormal()
 
 
-        oscilloscope.win.setWindowTitle("Oscilloscope (to save to new filename press 's', to autosave press 'space')")
+        Oscilloscope.win.setWindowTitle("Oscilloscope (to save to new filename press 's', to autosave press 'space')")
         self.view_time = self.settings.init_view_time
         self.view_freq = self.settings.init_view_freq
         self.view_levels = self.settings.init_view_levels
@@ -111,7 +99,7 @@ class oscilloscope():
         '''
         Switches between views, triggered by keypress
         '''
-        oscilloscope.win.clear()
+        Oscilloscope.win.clear()
         
         
         if self.view_time == True:
@@ -132,8 +120,8 @@ class oscilloscope():
     def time_plot(self):
         # create a plot for the time domain
         self.view_time = True
-        oscilloscope.win.nextRow()
-        self.osc_time_line = oscilloscope.win.addPlot(title="Time Domain (toggle with 'T')")
+        Oscilloscope.win.nextRow()
+        self.osc_time_line = Oscilloscope.win.addPlot(title="Time Domain (toggle with 'T')")
         if self.settings.channels==1:
             self.osc_time_line.enableAutoRange()
         else:
@@ -152,13 +140,13 @@ class oscilloscope():
             pen_ = pg.mkPen(color=settings.set_plot_colours(self.settings.channels)[i,:])
             self.osc_time_lineset[i]=self.osc_time_line.plot(pen=pen_, name='Channel '+str(i))
         
-#        oscilloscope.win.FillBetweenItem(curve1=osc_time_lineset[0], curve2=osc_time_lineset[1])
+#        Oscilloscope.win.FillBetweenItem(curve1=osc_time_lineset[0], curve2=osc_time_lineset[1])
         
     def freq_plot(self):
         # create a plot for the frequency domain
         self.view_freq = True
-        oscilloscope.win.nextRow()
-        self.osc_freq_line = oscilloscope.win.addPlot(title="Frequency Domain (toggle with 'F')") 
+        Oscilloscope.win.nextRow()
+        self.osc_freq_line = Oscilloscope.win.addPlot(title="Frequency Domain (toggle with 'F')") 
         self.osc_freq_line.enableAutoRange()
         self.osc_freq_line.setXRange(self.rec.osc_freq_axis[0],self.rec.osc_freq_axis[-1])
         self.osc_freq_line.showGrid(True, True)
@@ -174,9 +162,9 @@ class oscilloscope():
     def levels_plot(self):
         # create a plot for the frequency domain
         self.view_levels = True
-        oscilloscope.win.nextRow()
+        Oscilloscope.win.nextRow()
         
-        self.osc_levels_line = oscilloscope.win.addPlot(title="Channel Levels (toggle with 'L')")
+        self.osc_levels_line = Oscilloscope.win.addPlot(title="Channel Levels (toggle with 'L')")
         self.osc_levels_line.setYRange(0,1)
         self.osc_levels_line.setXRange(-0.5,self.settings.channels-0.5)
         self.osc_levels_line.showGrid(False,True)
@@ -303,13 +291,11 @@ class oscilloscope():
 #            freq_data=np.fft.rfft(stored_time_data_copy,axis=0)
             
             
-            t_data = logdata.timeData(t_axis,stored_time_data_copy,self.settings)
-            metadata = logdata.metaData(timestamp=t,timestring=timestring)
-            dataset = logdata.dataSet(timeData=t_data, settings=self.settings, metaData=metadata)
+            t_data = logdata.TimeData(t_axis,stored_time_data_copy,self.settings)
+            metadata = logdata.MetaData(timestamp=t,timestring=timestring)
+            dataset = logdata.DataSet(timedata=t_data, metadata=metadata)
             
             #plotting.plotdata(dataset)
-            
-            
             
             
             if evt.key() == QtCore.Qt.Key_S:
@@ -331,7 +317,7 @@ class oscilloscope():
 
         
         
-class recorder(object):
+class Recorder(object):
     def __init__(self,settings):
         self.settings = settings
         self.osc_time_axis=np.arange(0,(self.settings.num_chunks*self.settings.chunk_size)/self.settings.fs,1/self.settings.fs)
@@ -457,9 +443,9 @@ class KeyPressWindow(pg.GraphicsWindow):
         
     def closeEvent(self,event):
         '''
-        Stops QTimer,exits QApplication and closes the audio stream when the user exits the oscilloscope window.
+        Stops QTimer,exits QApplication and closes the audio stream when the user exits the Oscilloscope window.
         '''
-        oscilloscope.timer.stop()
+        Oscilloscope.timer.stop()
         self.close()
         self.rec.end_pyaudio()
         

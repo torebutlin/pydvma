@@ -29,7 +29,7 @@ def convert_to_frequency(time_data,time_range=None,window=False):
         ### use all data
         time_range = time_data.time_axis[[0,-1]]
         
-    elif time_range.__class__.__name__ == 'plotdata':
+    elif time_range.__class__.__name__ == 'PlotData':
         time_range=time_range.ax.get_xbound()
         
     settings = copy.copy(time_data.settings)
@@ -48,6 +48,6 @@ def convert_to_frequency(time_data,time_range=None,window=False):
     fdata = np.fft.rfft(data_selected,axis=0)
     faxis = np.fft.rfftfreq(N,1/time_data.settings.fs)
     
-    freq_data = logdata.freqData(faxis,fdata,settings)
+    freq_data = logdata.FreqData(faxis,fdata,settings)
     
     return freq_data

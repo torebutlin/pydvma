@@ -10,11 +10,11 @@ import peakutils
 import pydvma as dvma
         
 
-DEFAULT_SETTINGS = dvma.mySettings(channels=1,fs=8000,stored_time=2,viewed_time=2,device_index=1)
+DEFAULT_SETTINGS = dvma.MySettings(channels=1,fs=8000,stored_time=2,viewed_time=2,device_index=1)
 
 
-class beam(object):
-    ''' Defines beam data for m1 lab'''
+class Beam(object):
+    ''' Defines Beam data for m1 lab'''
     
     def __init__(self,*,L,b,d,M):
         """
@@ -60,14 +60,14 @@ def E_calculator(*,beam,frequency,mode):
     
     E = ((2*np.pi*frequency)**2)*((1/alpha)**4)*beam.rho*beam.A/beam.I
     print('The Young\'s Modulus calculated from Mode %i is %.2f GPa' %(mode,E*1e-9))  
-    print('Density= %.2f kgm^-3' % beam.rho)
+    print('Density = %.2f kgm^-3' % beam.rho)
     return E,rho
         
     
     
 #####some data####
 """
-beam_data=m1.beam_data(200,25,1.37,16)
+beam_data=m1.beam(200,25,1.37,16)
 f1=153.45
 f2=424.22
 f3=833.09
@@ -87,7 +87,7 @@ def find_peaks(freq_data,channel=0,threshold=0,freq_range=None):
         ### use all data
         freq_range = freq_data.freq_axis[[0,-1]]
         
-    elif freq_range.__class__.__name__ == 'plotdata':
+    elif freq_range.__class__.__name__ == 'PlotData':
         threshold=freq_range.ax.get_ybound()
         threshold=threshold[0]
         freq_range=freq_range.ax.get_xbound()
@@ -111,33 +111,20 @@ def find_peaks(freq_data,channel=0,threshold=0,freq_range=None):
     peak_frequencies = faxis[peaks]
     peak_amplitudes= np.abs(fdata[peaks])
     
-#    keep = 20*np.log10(np.abs(peak_amplitudes)) > threshold
-#    
-##    largest = np.argsort(-peak_amplitudes)
-##    largest = largest[0:n]
-##    peak_frequencies = peak_frequencies[largest]
-##    peak_amplitudes = peak_amplitudes[largest]
-##    indices = np.argsort(peak_frequencies)
-#    peak_frequencies = peak_frequencies[keep]
-#    peak_amplitudes  = peak_amplitudes[keep]
+
     
     if len(peak_frequencies) < 10:    
-        print('The most significant peaks above %s dB in the specified range are at the following frequencies:' % str(np.round(threshold,decimals=1)))
-        print(round2nsf(peak_frequencies,4))
+        print('The most significant peaks above %.2f dB in the specified range are at the following frequencies:' %(threshold))
+        freq_list = ''
+        for f in peak_frequencies:
+            freq_list = freq_list + '%.4g'%f + '  '
+        print(freq_list)
     else:
         print('%i peaks have been found. The first 10 are:' % len(peak_frequencies))
-        print(round2nsf(peak_frequencies[0:10],4))
+        freq_list = ''
+        for f in peak_frequencies[0:10]:
+            freq_list = freq_list + '%.4g'%f + '  '
         print('To reduce the number of peaks, use a higher threshold. If using a plot to specifiy the threshold then use the zoom to view only the peaks and not the noisy data underneath.')
         
     return peak_frequencies, peak_amplitudes
 
-
-def round2nsf(x,nsf):
-    '''
-    round x to nsf significant figures
-    '''
-    
-    temp = 10**(np.floor(np.log10(np.abs(x)) - nsf + 1));
-    y = np.round(x/temp)*temp;
-    
-    return y

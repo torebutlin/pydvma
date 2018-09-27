@@ -23,31 +23,31 @@ matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
 ###----------------------------------------------------------------------------
 
 
-class plotdata(object):
+class PlotData(object):
     def __init__(self,data):
         '''
         Args:
             data: plots data which can be class of type:
-                    logdata.dataSet
-                    logdata.timeData
-                    logdata.freqData
+                    logdata.DataSet
+                    logdata.TimeData
+                    logdata.FreqData
         '''
         
         
-        if data.__class__.__name__ == 'dataSet':
-            tdata = data.timeData
-            fdata = data.freqData
+        if data.__class__.__name__ == 'DataSet':
+            tdata = data.timedata
+            fdata = data.freqdata
             self.dataset = data
             
-        elif data.__class__.__name__  == 'timeData':
+        elif data.__class__.__name__  == 'TimeData':
             tdata = data
             fdata = None
-            self.dataset = logdata.dataSet(timeData=tdata,settings=tdata.settings)
+            self.dataset = logdata.DataSet(timedata=tdata)
             
-        elif data.__class__.__name__  == 'freqData':
+        elif data.__class__.__name__  == 'FreqData':
             tdata = None
             fdata = data
-            self.dataset = logdata.dataSet(freqData=fdata,settings=fdata.settings)
+            self.dataset = logdata.DataSet(freqdata=fdata)
             
         if tdata != None and fdata != None:
             ### plot time and frequency domain data together
@@ -63,9 +63,9 @@ class plotdata(object):
             self.ax[1].grid()
             
             
-            for n in range(data.settings.channels):
-                self.ax[0].plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
-                self.ax[1].plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
+            for n in range(tdata.settings.channels):
+                self.ax[0].plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = settings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax[1].plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = settings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax[0].legend()
             self.ax[1].legend()
@@ -78,8 +78,8 @@ class plotdata(object):
             self.ax.set_ylabel('Normalised Amplitude')
             self.ax.grid()
             
-            for n in range(data.settings.channels):
-                self.ax.plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
+            for n in range(tdata.settings.channels):
+                self.ax.plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = settings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax.legend()
             
@@ -91,8 +91,8 @@ class plotdata(object):
             self.ax.set_ylabel('Amplitude (dB)')
             self.ax.grid()
             
-            for n in range(data.settings.channels):
-                self.ax.plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = settings.set_plot_colours(data.settings.channels)[n,:]/255,label='ch '+str(n))
+            for n in range(fdata.settings.channels):
+                self.ax.plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = settings.set_plot_colours(fdata.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax.legend()
             

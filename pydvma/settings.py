@@ -14,7 +14,7 @@ import pyqtgraph as pg
 
 
 
-class mySettings(object):
+class MySettings(object):
     '''
     A class that stores the acquisition settings.
     
