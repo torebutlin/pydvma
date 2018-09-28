@@ -7,14 +7,19 @@ A Python package for dynamics and vibration measurements and analysis.
 
 This is a modular library for data-measurement and analysis in the context of dynamics and vibration, for use in student laboratory experiments as well as for research projects.
 
-A high-level interface allows straightforward use for common use-cases and a low-level interface provides more control when needed.
+A high-level interface allows straightforward application for common use-cases and a low-level interface provides more control when needed.
 
 The aim is for a library that is simple to use and simple to maintain. It is not a full-featured GUI, but when used in conjunction with Jupyter Notebooks it is intended to provide the best of both worlds: interactive tools for specific tasks and command line interface for customisation.
 
 
 ## Getting started
 
-Clone this repository and install using:
+Install using:
+```
+pip install pydvma --upgrade
+```
+
+Or clone this repository and install using:
 
 ```
 python setup.py install
@@ -24,8 +29,8 @@ To get started, within a Jupyter Notebook or Python command line:
 
 ```python
 import pydvma as dvma
-settings = dvma.mySettings()
-osc = dvma.oscilloscope(settings)
+settings = dvma.MySettings()
+osc = dvma.Oscilloscope(settings)
 ```
 
 ## Roadmap

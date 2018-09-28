@@ -129,3 +129,45 @@ def find_peaks(freq_data,channel=0,threshold=0,freq_range=None):
         
     return peak_frequencies, peak_amplitudes
 
+
+
+def find_peaks2(freq_data,channel=0,threshold=0,freq_range=None):
+    '''
+    Returns a list of the n most prominent peaks in plot.
+    
+    Args:
+        freq_data:
+        freq_range:
+    '''
+    if freq_range == None:
+        ### use all data
+        freq_range = freq_data.freq_axis[[0,-1]]
+        
+    elif freq_range.__class__.__name__ == 'PlotData':
+        threshold=freq_range.ax.get_ybound()
+        threshold=threshold[0]
+        freq_range=freq_range.ax.get_xbound()
+        
+        
+
+
+    s1 = np.argwhere(freq_range[0] <= freq_data.freq_axis <= freq_range[1])
+    s2 = 49 < freq_data.freq_axis < 51
+    s3 = 149 < freq_data.freq_axis < 151
+    selection = s1 & s2 & s3
+    selection = np.argwhere(selection)
+    
+    fdata = np.abs(fdata[:,channel])
+    max_gap = np.ceil(len(selection)/20)
+    
+    ip = []
+    while sum(selection) > 0:
+        imax = np.argmax(fdata[selection])
+        imax = selection[imax]
+        ip = [ip,imax]
+        selection = selection[(imax-max_gap) < selection < (imax+max_gap)]
+    
+    peak_frequencies = freq_data.freq_axis[ip]
+    peak_amplitudes = fdata[ip]
+    
+    return peak_frequencies, peak_amplitudes
