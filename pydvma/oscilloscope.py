@@ -42,7 +42,7 @@ class Oscilloscope():
         
         if settings.device_driver == 'soundcard':
             self.rec = streams.Recorder(settings)
-            self.rec.init_pyaudio(settings)
+            self.rec.init_stream(settings)
         elif settings.device_driver == 'nidaq':
             self.rec = streams.Recorder_NI(settings)
             self.rec.init_stream(settings)
@@ -361,7 +361,7 @@ class KeyPressWindow(pg.GraphicsWindow):
         '''
         Oscilloscope.timer.stop()
         self.close()
-        self.rec.end_pyaudio()
+        self.rec.end_stream()
         
 
 
