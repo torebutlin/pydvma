@@ -10,6 +10,7 @@ from . import settings
 from . import file
 from . import logdata
 from . import plotting
+from . import streams
 
 import pyaudio
 import numpy as np
@@ -38,11 +39,17 @@ class Oscilloscope():
 
         
         self.settings = settings
-            
-        self.rec = Recorder(settings)
-        self.rec.init_pyaudio(settings)
-#        self.audio_stream = audio_stream
-#        self.audio = audio    
+        
+        if settings.device_driver == 'soundcard':
+            self.rec = streams.Recorder(settings)
+            self.rec.init_pyaudio(settings)
+        elif settings.device_driver == 'nidaq':
+            self.rec = streams.Recorder_NI(settings)
+            self.rec.init_stream(settings)
+        else:
+            print('unrecognised driver')
+
+  
         
         if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
             
@@ -317,100 +324,7 @@ class Oscilloscope():
 
         
         
-class Recorder(object):
-    def __init__(self,settings):
-        self.settings = settings
-        self.osc_time_axis=np.arange(0,(self.settings.num_chunks*self.settings.chunk_size)/self.settings.fs,1/self.settings.fs)
-        self.osc_freq_axis=np.fft.rfftfreq(len(self.osc_time_axis),1/self.settings.fs)
-        self.osc_time_data=np.zeros(shape=((self.settings.num_chunks*self.settings.chunk_size),self.settings.channels))  
-        self.osc_time_data_windowed=np.zeros_like(self.osc_time_data)
-        if (self.settings.num_chunks*self.settings.chunk_size)%2==0:
-            self.osc_freq_data=np.zeros(shape=(int(((self.settings.num_chunks*self.settings.chunk_size)/2)+1),self.settings.channels))
-        else:
-            self.osc_freq_data=np.zeros(shape=(int((self.settings.num_chunks*self.settings.chunk_size+1)/2),self.settings.channels))
-        
-        #rounds up the number of chunks needed in the pretrig array    
-        self.stored_num_chunks=int(np.ceil((self.settings.stored_time*self.settings.fs)/self.settings.chunk_size))
-        #the +2 is to allow for the updating process on either side
-        self.stored_time_data=np.zeros(shape=((self.stored_num_chunks*self.settings.chunk_size)+2,self.settings.channels))
-        self.stored_time_data_windowed=np.zeros_like(self.stored_time_data)
-        #note the +2s to match up the length of stored_num_chunks
-        #formula used from the np.fft.rfft documentation
-        if (self.stored_num_chunks*self.settings.chunk_size)%2==0:
-            self.stored_freq_data=np.zeros(shape=(int(((
-                    self.stored_num_chunks*self.settings.chunk_size+2)/2)+1),self.settings.channels))
-        else:
-            self.stored_freq_data=np.zeros(shape=(int((
-                    self.stored_num_chunks*self.settings.chunk_size+2+1)/2),self.settings.channels))
-            
-            
-    def __call__(self, in_data, frame_count, time_info, status):
-        '''
-        Obtains data from the audio stream.
-        '''
-        self.osc_data_chunk = (np.frombuffer(in_data, dtype=eval('np.int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
-        self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
-        for i in range(self.settings.channels):
-            self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
-            self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-            self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
-            self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-        return (in_data, pyaudio.paContinue)
-    
-    
-    def init_pyaudio(self,settings,_input_=True,_output_=False):
-        '''
-        Initialises an audio stream. Gives the user a choice of which device to access.
-        '''
-        
-        self.audio = pyaudio.PyAudio()
-        
-        if settings.device_index == None:
-    
-            device_count = self.audio.get_device_count()
-            print ('Number of devices available is: %i' %device_count)
-            print ('')
-            print('Devices available, by index:')
-            print ('')
-            for i in range(device_count):
-                device = self.audio.get_device_info_by_index(i)
-                print(device['index'], device['name'])
-            print ('')
-            default_device = self.audio.get_default_input_device_info()
-            print('Default device is: %i %s'
-                  %(default_device['index'],default_device['name']))
-            print ('')
-            settings.device_index=int(input('Insert index of required device:'))
-            
-        settings.device_name = self.audio.get_device_info_by_index(settings.device_index)['name']
-        settings.device_full_info = self.audio.get_device_info_by_index(settings.device_index)
-        
-        print(settings.device_full_info['index'], settings.device_full_info['name'])
-        print("Selected device: %i : %s" %(settings.device_index,settings.device_name))    
-        
-        self.audio_stream = self.audio.open(format=settings.format,
-                                        channels=settings.channels,
-                                        rate=settings.fs,
-                                        input=_input_,
-                                        output=_output_,
-                                        frames_per_buffer=settings.chunk_size,
-                                        input_device_index=settings.device_index,
-                                        stream_callback=self.__call__)  
-        self.audio_stream.start_stream()
-        
-#        return (audio_stream,audio)
-        
-    
-    def end_pyaudio(self):
-        '''
-        Closes an audio stream.
-        '''
-        if not self.audio_stream.is_stopped():
-            self.audio_stream.stop_stream()
-        else: 
-            pass
-        self.audio_stream.close()
-        self.audio.terminate()
+
         
         
 

@@ -52,6 +52,7 @@ class MySettings(object):
                  num_chunks=6,
                  viewed_time=None,
                  stored_time=2,
+                 device_driver='soundcard',
                  device_index=None,
                  init_view_time=True,
                  init_view_freq=True,
@@ -64,6 +65,7 @@ class MySettings(object):
         self.viewed_time=viewed_time
         self.nbits=nbits
         self.stored_time=stored_time
+        self.device_driver=device_driver
         self.device_index=device_index
         self.init_view_time=init_view_time
         self.init_view_freq=init_view_freq
