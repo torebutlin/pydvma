@@ -54,7 +54,7 @@ class Recorder(object):
         return (in_data, pyaudio.paContinue)
     
     
-    def init_pyaudio(self,settings,_input_=True,_output_=False):
+    def init_stream(self,settings,_input_=True,_output_=False):
         '''
         Initialises an audio stream. Gives the user a choice of which device to access.
         '''
@@ -97,7 +97,7 @@ class Recorder(object):
 #        return (audio_stream,audio)
         
     
-    def end_pyaudio(self):
+    def end_stream(self):
         '''
         Closes an audio stream.
         '''
