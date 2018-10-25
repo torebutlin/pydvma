@@ -34,7 +34,7 @@ class Oscilloscope():
     def __init__(self,settings):
         '''Creates an Oscilloscope
         Args:
-            settings: An object of the class mySettings
+            settings: An object of the class MySettings
         '''
 
         
