@@ -5,10 +5,123 @@ Created on Mon Aug 27 17:08:42 2018
 @author: tb267
 """
 
+from . import logsettings
+from . import streams
+from . import oscilloscope
+
+import numpy as np
+import datetime
+import time
 
 
+#%% Main data acquisition function
+def log_data(settings):
+    '''
+    Logs data according to settings and returns DataSet class
+    '''
+    
+    # Stream is object within Oscilloscope (whether or not Oscilloscope is being viewed)
+    if settings.device_driver == 'soundcard':
+        oscilloscope.Oscilloscope.rec = streams.Recorder(settings)
+        oscilloscope.Oscilloscope.rec.init_stream(settings)
+    elif settings.device_driver == 'nidaq':
+        oscilloscope.Oscilloscope.rec = streams.Recorder_NI(settings)
+        oscilloscope.Oscilloscope.rec.init_stream(settings)
+    else:
+        print('unrecognised driver')
+    
+    # make recording stream easier to reference    
+    rec = oscilloscope.Oscilloscope.rec
+    rec.trigger_detected = False
+    
+    
+    t = datetime.datetime.now()
+    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+    if settings.pretrig_samples == None:
+
+        print('')
+        print('Logging data for {} seconds'.format(settings.stored_time))
+        print('')
+        
+        # basic way to control logging time: won't be precise time from calling function
+        time.sleep(settings.stored_time)
+        
+        # make copy of data
+        stored_time_data_copy = np.copy(rec.stored_time_data)
+        
+
+        
+    else:
+        t0 = time.time()
+        print('')
+        print('Waiting for trigger, logging {} seconds of data'.format(settings.stored_time))
+        print('')
+        while (time.time()-t0 < 20) and not rec.trigger_detected:
+            time.sleep(0.2)
+            
+        # make copy of data
+        print(rec.trigger_detected)
+        stored_time_data_copy = np.copy(rec.stored_time_data)
+        
+    # make into dataset
+    fs = settings.fs
+    n_samp = len(stored_time_data_copy[:,0])
+    dt = 1/fs
+    t_samp = n_samp*dt
+    time_axis = np.arange(0,t_samp,dt)
+    timedata = TimeData(time_axis,stored_time_data_copy,settings)
+    metadata = MetaData(timestamp=t,timestring=timestring)
+    dataset  = DataSet(timedata=timedata, metadata=metadata)
+    
+    return dataset
+    
+    
+    # TODO  make pretrigger
+
+
+
+#%% Create test data
+def create_test_data():
+    '''
+    Creates example time domain data
+    '''
+    settings = logsettings.MySettings(fs=10000)
+    N = np.int16(1e4)
+    time_axis = np.arange(N)/settings.fs
+    
+    time_data = np.zeros([N,2])
+    pulse_width = 0.002
+    N_pulse = np.int16(np.ceil(pulse_width*settings.fs))
+    n = np.arange(N_pulse)
+    pulse = 0.5*(1-np.cos(2*np.pi*n/N_pulse))
+    time_data[n,0] = pulse
+    
+    test_freq = 100
+    test_time_const = 0.1
+    y = np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*test_freq*time_axis)
+    
+    time_data[:,1] = y
+    
+    t = datetime.datetime.now()
+    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+    
+    timedata = TimeData(time_axis,time_data,settings)
+    metadata = MetaData(timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1], tf_cal_factors=1)
+    
+    dataset = DataSet(timedata=timedata,metadata=metadata)
+    
+    return dataset
+
+
+
+    
+    
+
+
+
+#%% Data structure
 class DataSet():
-    def __init__(self,timedata=None,freqdata=None,tfdata=None,sonodata=None,metadata=None):
+    def __init__(self,*,timedata=None,freqdata=None,tfdata=None,sonodata=None,metadata=None):
         self.timedata = timedata
         self.freqdata = freqdata
         self.tfdata   = tfdata

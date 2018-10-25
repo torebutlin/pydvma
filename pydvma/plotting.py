@@ -7,7 +7,7 @@ Created on Tue Aug 28 19:04:14 2018
 
 
 
-from . import settings
+from . import logsettings
 from . import file
 from . import logdata
 
@@ -64,8 +64,8 @@ class PlotData(object):
             
             
             for n in range(tdata.settings.channels):
-                self.ax[0].plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = settings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
-                self.ax[1].plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = settings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax[0].plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = logsettings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax[1].plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = logsettings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax[0].legend()
             self.ax[1].legend()
@@ -79,7 +79,7 @@ class PlotData(object):
             self.ax.grid()
             
             for n in range(tdata.settings.channels):
-                self.ax.plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = settings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax.plot(tdata.time_axis,tdata.time_data[:,n],'-',linewidth=1,color = logsettings.set_plot_colours(tdata.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax.legend()
             
@@ -92,7 +92,7 @@ class PlotData(object):
             self.ax.grid()
             
             for n in range(fdata.settings.channels):
-                self.ax.plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = settings.set_plot_colours(fdata.settings.channels)[n,:]/255,label='ch '+str(n))
+                self.ax.plot(fdata.freq_axis,20*np.log10(np.abs(fdata.freq_data[:,n])),'-',linewidth=1,color = logsettings.set_plot_colours(fdata.settings.channels)[n,:]/255,label='ch '+str(n))
                 
             self.ax.legend()
             

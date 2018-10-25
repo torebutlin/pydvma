@@ -1,6 +1,6 @@
 import sys
 
-from . import settings
+from . import logsettings
 from . import file
 from . import logdata
 from . import plotting
@@ -16,6 +16,7 @@ from PyDAQmx import Task
 class Recorder(object):
     def __init__(self,settings):
         self.settings = settings
+        self.trigger_detected = False
         self.osc_time_axis=np.arange(0,(self.settings.num_chunks*self.settings.chunk_size)/self.settings.fs,1/self.settings.fs)
         self.osc_freq_axis=np.fft.rfftfreq(len(self.osc_time_axis),1/self.settings.fs)
         self.osc_time_data=np.zeros(shape=((self.settings.num_chunks*self.settings.chunk_size),self.settings.channels))  
@@ -49,8 +50,15 @@ class Recorder(object):
         for i in range(self.settings.channels):
             self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
             self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-            self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
-            self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
+            if not self.trigger_detected:
+                self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
+                self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
+        
+        trigger_check = self.stored_time_data[0:(self.settings.chunk_size),self.settings.pretrig_channel]
+        if np.any(np.abs(trigger_check)>self.settings.pretrig_threshold):
+            # freeze updating stored_time_data
+            self.trigger_detected = True
+                
         return (in_data, pyaudio.paContinue)
     
     

@@ -6,7 +6,7 @@ Created on Sun Sep  2 20:16:26 2018
 """
 import sys
 
-from . import settings
+from . import logsettings
 from . import file
 from . import logdata
 from . import plotting
