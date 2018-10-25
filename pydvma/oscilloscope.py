@@ -41,11 +41,11 @@ class Oscilloscope():
         self.settings = settings
         
         if settings.device_driver == 'soundcard':
-            self.rec = streams.Recorder(settings)
-            self.rec.init_stream(settings)
+            Oscilloscope.rec = streams.Recorder(settings)
+            Oscilloscope.rec.init_stream(settings)
         elif settings.device_driver == 'nidaq':
-            self.rec = streams.Recorder_NI(settings)
-            self.rec.init_stream(settings)
+            Oscilloscope.rec = streams.Recorder_NI(settings)
+            Oscilloscope.rec.init_stream(settings)
         else:
             print('unrecognised driver')
 
@@ -77,7 +77,7 @@ class Oscilloscope():
             
             
 #        if Oscilloscope.win == None:
-        Oscilloscope.win = KeyPressWindow(self.rec)
+        Oscilloscope.win = KeyPressWindow()
 #        Oscilloscope.win.setWindowIcon(QtGui.QIcon('icon.png'))
         
         
@@ -133,7 +133,7 @@ class Oscilloscope():
             self.osc_time_line.enableAutoRange()
         else:
             self.osc_time_line.setYRange(-1,self.settings.channels)
-        self.osc_time_line.setXRange(self.rec.osc_time_axis[0],self.rec.osc_time_axis[-1])
+        self.osc_time_line.setXRange(Oscilloscope.rec.osc_time_axis[0],Oscilloscope.rec.osc_time_axis[-1])
         self.osc_time_line.showGrid(True, True)
         self.osc_time_line.addLegend()
         self.osc_time_line.setLabel('left','Normalised Amplitude')
@@ -155,7 +155,7 @@ class Oscilloscope():
         Oscilloscope.win.nextRow()
         self.osc_freq_line = Oscilloscope.win.addPlot(title="Frequency Domain (toggle with 'F')") 
         self.osc_freq_line.enableAutoRange()
-        self.osc_freq_line.setXRange(self.rec.osc_freq_axis[0],self.rec.osc_freq_axis[-1])
+        self.osc_freq_line.setXRange(Oscilloscope.rec.osc_freq_axis[0],Oscilloscope.rec.osc_freq_axis[-1])
         self.osc_freq_line.showGrid(True, True)
         self.osc_freq_line.addLegend()
         self.osc_freq_line.setLabel('left','Power Spectrum (dB)')
@@ -203,8 +203,8 @@ class Oscilloscope():
         
         '''
         if self.view_levels == True:
-            self.osc_levels_rms = np.sqrt(np.mean(self.rec.osc_time_data**2,axis=0))
-            self.osc_levels_max = np.max(np.abs(self.rec.osc_time_data),axis=0)
+            self.osc_levels_rms = np.sqrt(np.mean(Oscilloscope.rec.osc_time_data**2,axis=0))
+            self.osc_levels_max = np.max(np.abs(Oscilloscope.rec.osc_time_data),axis=0)
             changed_indices = self.osc_levels_peak_hold < self.osc_levels_max
             self.time_last_changed[changed_indices] = time.time()
             self.osc_levels_peak_hold = np.maximum(self.osc_levels_peak_hold,self.osc_levels_max)
@@ -214,13 +214,13 @@ class Oscilloscope():
         for i in range(self.settings.channels):
             offset=i
             if self.view_time == True:
-                self.osc_time_lineset[i].setData(self.rec.osc_time_axis,self.rec.osc_time_data[:,i] + offset)
+                self.osc_time_lineset[i].setData(Oscilloscope.rec.osc_time_axis,Oscilloscope.rec.osc_time_data[:,i] + offset)
             
             if self.view_freq == True:
                 # calculate the FFT
-                self.rec.osc_time_data_windowed[:,i] = self.rec.osc_time_data[:,i] * np.blackman(np.shape(self.rec.osc_time_data)[0])
-                self.rec.osc_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(self.rec.osc_time_data_windowed[:,i]))/len(self.rec.osc_time_data_windowed[:,i]))
-                self.osc_freq_lineset[i].setData(self.rec.osc_freq_axis,self.rec.osc_freq_data[:,i])
+                Oscilloscope.rec.osc_time_data_windowed[:,i] = Oscilloscope.rec.osc_time_data[:,i] * np.blackman(np.shape(Oscilloscope.rec.osc_time_data)[0])
+                Oscilloscope.rec.osc_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(Oscilloscope.rec.osc_time_data_windowed[:,i]))/len(Oscilloscope.rec.osc_time_data_windowed[:,i]))
+                self.osc_freq_lineset[i].setData(Oscilloscope.rec.osc_freq_axis,Oscilloscope.rec.osc_freq_data[:,i])
                 
             if self.view_levels == True:
                 self.osc_levels_lineset[i].setData([i,i],[0,self.osc_levels_max[i]])
@@ -236,8 +236,8 @@ class Oscilloscope():
                 
                 
             #updates for the stored
-            self.rec.stored_time_data_windowed[:,i] = self.rec.stored_time_data[:,i] * np.blackman(np.shape(self.rec.stored_time_data)[0])
-            self.rec.stored_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(self.rec.stored_time_data_windowed[:,i]))/len(self.rec.stored_time_data_windowed[:,i]))
+            Oscilloscope.rec.stored_time_data_windowed[:,i] = Oscilloscope.rec.stored_time_data[:,i] * np.blackman(np.shape(Oscilloscope.rec.stored_time_data)[0])
+            Oscilloscope.rec.stored_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(Oscilloscope.rec.stored_time_data_windowed[:,i]))/len(Oscilloscope.rec.stored_time_data_windowed[:,i]))
     
 
         
@@ -280,7 +280,7 @@ class Oscilloscope():
         
         if evt.key() == QtCore.Qt.Key_Space or evt.key() == QtCore.Qt.Key_S:
             
-            stored_time_data_copy=np.copy(self.rec.stored_time_data)
+            stored_time_data_copy=np.copy(Oscilloscope.rec.stored_time_data)
             t = datetime.datetime.now()
             timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
             
@@ -341,12 +341,12 @@ class KeyPressWindow(pg.GraphicsWindow):
     sigKeyPress = QtCore.pyqtSignal(object)
     
 
-    def __init__(self, rec, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         '''
         Re-implmented from parent.
         '''
         super().__init__(*args, **kwargs)
-        self.rec = rec
+        #Oscilloscope.rec = rec
 
     def keyPressEvent(self, evt):
         '''
@@ -361,7 +361,7 @@ class KeyPressWindow(pg.GraphicsWindow):
         '''
         Oscilloscope.timer.stop()
         self.close()
-        self.rec.end_stream()
+        Oscilloscope.rec.end_stream()
         
 
 
