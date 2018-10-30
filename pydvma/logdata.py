@@ -37,31 +37,51 @@ def log_data(settings):
     
     t = datetime.datetime.now()
     timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+    
+    
+    # Stream is slightly longer than settings.stored_time, so need to add delay
+    # from initialisation to allow stream to fill up and prevent zeros at start
+    # of logged data.
+    time.sleep(2*settings.chunk_size/settings.fs)
+    
     if settings.pretrig_samples == None:
 
         print('')
         print('Logging data for {} seconds'.format(settings.stored_time))
-        print('')
         
         # basic way to control logging time: won't be precise time from calling function
         time.sleep(settings.stored_time)
         
         # make copy of data
         stored_time_data_copy = np.copy(rec.stored_time_data)
+        number_samples = rec.settings.stored_time * rec.settings.fs
+        stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
+        print('')
+        print('Logging complete.')
         
 
         
     else:
+        rec.trigger_first_detected_message = True
         t0 = time.time()
         print('')
-        print('Waiting for trigger, logging {} seconds of data'.format(settings.stored_time))
-        print('')
+        print('Waiting for trigger on channel {}'.format(settings.pretrig_channel))
         while (time.time()-t0 < 20) and not rec.trigger_detected:
             time.sleep(0.2)
             
+            
         # make copy of data
-        print(rec.trigger_detected)
+        print('')
+        print('Logging complete.')
+        
         stored_time_data_copy = np.copy(rec.stored_time_data)
+        trigger_check = rec.stored_time_data[(rec.settings.chunk_size):(2*rec.settings.chunk_size),rec.settings.pretrig_channel]
+        detected_sample = rec.settings.chunk_size + np.where(np.abs(trigger_check) > rec.settings.pretrig_threshold)[0][0]
+        number_samples = rec.settings.stored_time * rec.settings.fs
+        start_index = detected_sample - rec.settings.pretrig_samples
+        end_index   = start_index + number_samples
+
+        stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
         
     # make into dataset
     fs = settings.fs

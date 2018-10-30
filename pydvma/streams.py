@@ -17,14 +17,13 @@ class Recorder(object):
     def __init__(self,settings):
         self.settings = settings
         self.trigger_detected = False
+        self.trigger_first_detected_message = False
         self.osc_time_axis=np.arange(0,(self.settings.num_chunks*self.settings.chunk_size)/self.settings.fs,1/self.settings.fs)
         self.osc_freq_axis=np.fft.rfftfreq(len(self.osc_time_axis),1/self.settings.fs)
         self.osc_time_data=np.zeros(shape=((self.settings.num_chunks*self.settings.chunk_size),self.settings.channels))  
         self.osc_time_data_windowed=np.zeros_like(self.osc_time_data)
-        if (self.settings.num_chunks*self.settings.chunk_size)%2==0:
-            self.osc_freq_data=np.zeros(shape=(int(((self.settings.num_chunks*self.settings.chunk_size)/2)+1),self.settings.channels))
-        else:
-            self.osc_freq_data=np.zeros(shape=(int((self.settings.num_chunks*self.settings.chunk_size+1)/2),self.settings.channels))
+        self.osc_freq_data = np.abs(np.fft.rfft(self.osc_time_data,axis=0))
+
         
         #rounds up the number of chunks needed in the pretrig array    
         self.stored_num_chunks=int(np.ceil((self.settings.stored_time*self.settings.fs)/self.settings.chunk_size))
@@ -33,12 +32,7 @@ class Recorder(object):
         self.stored_time_data_windowed=np.zeros_like(self.stored_time_data)
         #note the +2s to match up the length of stored_num_chunks
         #formula used from the np.fft.rfft documentation
-        if (self.stored_num_chunks*self.settings.chunk_size)%2==0:
-            self.stored_freq_data=np.zeros(shape=(int(((
-                    self.stored_num_chunks*self.settings.chunk_size+2)/2)+1),self.settings.channels))
-        else:
-            self.stored_freq_data=np.zeros(shape=(int((
-                    self.stored_num_chunks*self.settings.chunk_size+2+1)/2),self.settings.channels))
+        self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data,axis=0))
             
             
     def __call__(self, in_data, frame_count, time_info, status):
@@ -54,7 +48,14 @@ class Recorder(object):
                 self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
                 self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
         
-        trigger_check = self.stored_time_data[0:(self.settings.chunk_size),self.settings.pretrig_channel]
+        trigger_first_detected = np.any(np.abs(self.osc_data_chunk[:,self.settings.pretrig_channel])>self.settings.pretrig_threshold)
+        if trigger_first_detected and self.trigger_first_detected_message:
+            print('')
+            print('Trigger detected. Logging data for {} seconds'.format(self.settings.stored_time))
+            self.trigger_first_detected_message=False
+            
+            
+        trigger_check = self.stored_time_data[(self.settings.chunk_size):(2*self.settings.chunk_size),self.settings.pretrig_channel]
         if np.any(np.abs(trigger_check)>self.settings.pretrig_threshold):
             # freeze updating stored_time_data
             self.trigger_detected = True

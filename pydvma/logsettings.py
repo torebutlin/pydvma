@@ -84,6 +84,9 @@ class MySettings(object):
         self.format = eval('pyaudio.paInt'+str(self.nbits))
         self.device_name = None # until initialise stream
         
+        if pretrig_samples > chunk_size:
+            raise Exception('pretrig_samples must be less than or equal to chunk_size.')
+        
     
     def __repr__(self):
         return '<mySettings class>'
