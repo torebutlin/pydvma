@@ -12,42 +12,142 @@ from . import logdata
 from . import plotting
 
 import numpy as np
-import scipy.signal as sp
+from scipy import signal
 import time
 import datetime
 import copy
 
-def convert_to_frequency(time_data,time_range=None,window=False):
+def convert_to_frequency(timedata,time_range=None,window=False):
     '''
     Args:
-        timeData (class): time series data
+        timedata (class): time series data
         time_range: 2x1 numpy array to specify data segment to use
         window (bool): apply blackman filter to data before fft or not
     '''
     
     if time_range == None:
         ### use all data
-        time_range = time_data.time_axis[[0,-1]]
+        time_range = timedata.time_axis[[0,-1]]
         
     elif time_range.__class__.__name__ == 'PlotData':
         time_range=time_range.ax.get_xbound()
         
-    settings = copy.copy(time_data.settings)
+    settings = copy.copy(timedata.settings)
     settings.window = window
     settings.time_range = time_range
 
     
-    s1 = time_data.time_axis >= time_range[0]
-    s2 = time_data.time_axis <= time_range[1]
+    s1 = timedata.time_axis >= time_range[0]
+    s2 = timedata.time_axis <= time_range[1]
     selection = s1 & s2
-    data_selected = time_data.time_data[selection,:]
+    data_selected = timedata.timedata[selection,:]
     N = len(data_selected[:,0])
     if window == True:
         data_selected = np.blackman(N)
         
     fdata = np.fft.rfft(data_selected,axis=0)
-    faxis = np.fft.rfftfreq(N,1/time_data.settings.fs)
+    faxis = np.fft.rfftfreq(N,1/timedata.settings.fs)
     
     freq_data = logdata.FreqData(faxis,fdata,settings)
     
     return freq_data
+
+
+
+def calculate_cross_spectrum_matrix(timedata, time_range=None, window='hann', N_frames=1, overlap=0.5):
+    '''
+    Args:
+        timedata (class): time series data
+        time_range: 2x1 numpy array to specify data segment to use
+        window (None or str): apply filter to data before fft or not
+        N_frames (int): number of frames to average over
+        overlap (between 0,1): frame overlap fraction
+    '''
+    
+    if time_range == None:
+        ### use all data
+        time_range = timedata.time_axis[[0,-1]]
+        
+    elif time_range.__class__.__name__ == 'PlotData':
+        time_range=time_range.ax.get_xbound()
+        
+    settings = copy.copy(timedata.settings)
+    settings.window = window
+    settings.time_range = time_range
+
+    ## Select data range to use
+    s1 = timedata.time_axis >= time_range[0]
+    s2 = timedata.time_axis <= time_range[1]
+    selection = s1 & s2
+    data_selected = timedata.time_data[selection,:]
+    time_selected = timedata.time_axis[selection]
+    
+    N_samples = len(data_selected[:,0])
+    nperseg = np.int32(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
+    freqlength = len(np.fft.rfftfreq(nperseg))
+    
+    if window==None:
+        window='boxcar'
+        
+    window_vector = signal.get_window(window,nperseg)
+    noverlap = np.ceil(overlap*nperseg)
+    
+    Pxy = np.zeros([settings.channels,settings.channels,freqlength],dtype=complex)
+    Cxy = np.zeros([settings.channels,settings.channels,freqlength])
+    for nx in np.arange(settings.channels):
+        for ny in np.arange(settings.channels):
+            if nx > ny:
+                Pxy[nx,ny,:] = np.conjugate(Pxy[ny,nx,:])
+                Cxy[nx,ny,:] = Cxy[ny,nx,:]
+            else:
+                x = data_selected[:,nx]
+                y = data_selected[:,ny]
+                f,P = signal.csd(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap,scaling='spectrum')
+                f,C = signal.coherence(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap)
+                Pxy[nx,ny,:] = P
+                Cxy[nx,ny,:] = C
+            
+    return f,Pxy,Cxy
+
+
+def calculate_transfer_function(timedata, ch_in=0, time_range=None, window='hann', N_frames=1, overlap=0.5):
+    '''
+    Args:
+        timedata (class): time series data
+        time_range: 2x1 numpy array to specify data segment to use
+        window (None or str): apply filter to data before fft or not
+        N_frames (int): number of frames to average over
+        overlap (between 0,1): frame overlap fraction
+    '''
+    settings = copy.copy(timedata.settings)
+    settings.window = window
+    settings.time_range = time_range
+    
+    ## compute cross spectra
+    f,Pxy,Cxy = calculate_cross_spectrum_matrix(timedata, time_range=time_range, window=window, N_frames=N_frames, overlap=overlap)
+    
+    ## identify transfer functions and corresponding coherence
+    
+    ch_all = np.arange(timedata.settings.channels)
+    ch_out_set = np.setxor1d(ch_all,ch_in)
+    
+    tf_data = np.zeros([len(f),len(ch_out_set)],dtype=complex)
+    tf_coherence = np.zeros([len(f),len(ch_out_set)])
+    ch_count = -1
+    for ch_out in ch_out_set:
+        ch_count += 1
+        tf_data[:,ch_count] = Pxy[ch_out,ch_in,:] / Pxy[ch_in,ch_in,:]
+        tf_coherence[:,ch_count] = Cxy[ch_out,ch_in,:]
+        
+    settings.ch_in = ch_in
+    settings.ch_out_set = ch_out_set
+    
+    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings)
+    
+    return tfdata
+    
+#    class TfData():
+#    def __init__(self,freq_axis,tf_data,settings):
+#        self.freq_axis = freq_axis
+#        self.tf_data = tf_data
+#        self.settings = settings

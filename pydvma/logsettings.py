@@ -55,6 +55,7 @@ class MySettings(object):
                  pretrig_samples=None,
                  pretrig_threshold=0.2,
                  pretrig_channel=0,
+                 pretrig_timeout=20,
                  device_driver='soundcard',
                  device_index=None,
                  init_view_time=True,
@@ -71,6 +72,7 @@ class MySettings(object):
         self.pretrig_samples=pretrig_samples
         self.pretrig_threshold=pretrig_threshold
         self.pretrig_channel=pretrig_channel
+        self.pretrig_timeout=pretrig_timeout
         self.device_driver=device_driver
         self.device_index=device_index
         self.init_view_time=init_view_time
@@ -84,8 +86,9 @@ class MySettings(object):
         self.format = eval('pyaudio.paInt'+str(self.nbits))
         self.device_name = None # until initialise stream
         
-        if pretrig_samples > chunk_size:
-            raise Exception('pretrig_samples must be less than or equal to chunk_size.')
+        if pretrig_samples != None:
+            if pretrig_samples > chunk_size:
+                raise Exception('pretrig_samples must be less than or equal to chunk_size.')
         
     
     def __repr__(self):

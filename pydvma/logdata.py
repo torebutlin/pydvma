@@ -66,8 +66,10 @@ def log_data(settings):
         t0 = time.time()
         print('')
         print('Waiting for trigger on channel {}'.format(settings.pretrig_channel))
-        while (time.time()-t0 < 20) and not rec.trigger_detected:
+        while (time.time()-t0 < settings.pretrig_timeout) and not rec.trigger_detected:
             time.sleep(0.2)
+        if (time.time()-t0 > settings.pretrig_timeout):
+            raise Exception('Trigger not detected within timeout of {} seconds.'.format(settings.pretrig_timeout))
             
             
         # make copy of data
@@ -185,9 +187,10 @@ class FreqData():
         return "<FreqData>"
         
 class TfData():
-    def __init__(self,freq_axis,tf_data,settings):
+    def __init__(self,freq_axis,tf_data,tf_coherence,settings):
         self.freq_axis = freq_axis
         self.tf_data = tf_data
+        self.tf_coherence = tf_coherence
         self.settings = settings
         
     def __repr__(self):
