@@ -150,18 +150,54 @@ def calculate_tf(timedata, ch_in=0, time_range=None, window='hann', N_frames=1, 
 
 def calculate_tf_averaged(timedata, ch_in=0, time_range=None, window=None):
     '''
-    Calculates transfer function averaged across ensemble of timedata.
+    Calculates transfer function averaged across ensemble of timedata. Note that 
+    this expects a Python list of timedata objects.
+    
     Takes each time series as an independent measurement.
-    Intended for averaged transfer functions of impulse hammer input data.
+    
+    Intended for averaged transfer functions from separate measurements, e.g. impulse hammer tests.
+    
     Does not average data across sub-frames.    
     
     Args:
-        timedata (class): time series data
+        timedata (class): a list of time series data
         ch_in (int): index of input channel
         time_range: 2x1 numpy array to specify data segment to use
         window (None or str): type of window to use, default is None.
     '''
     
+    if type(timedata) is not list:
+        timedata = [timedata]
+
+    
     N_ensemble = len(timedata)
-    for n in range(N_ensemble):
-        f,Pxy,Cxy = calculate_cross_spectrum_matrix(timedata[n], time_range=time_range, window=window, N_frames=1, overlap=1)
+    Pxy_av = 0
+    count = -1
+    for td in timedata:
+        count += 1
+        ch_all = np.arange(td.settings.channels)
+        ch_out_set = np.setxor1d(ch_all,ch_in)
+        f,Pxy,Cxy = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
+        Pxy_av += Pxy / N_ensemble
+    
+    tf_data = np.zeros([len(f),len(ch_out_set)],dtype=complex)
+    tf_coherence = np.zeros([len(f),len(ch_out_set)])    
+    ch_count = -1
+    for ch_out in ch_out_set:
+        ch_count += 1
+        tf_data[:,ch_count] = Pxy_av[ch_out,ch_in,:] / Pxy_av[ch_in,ch_in,:]
+        tf_coherence[:,ch_count] = np.abs(Pxy_av[ch_in,ch_out,:])**2 / (np.abs(Pxy_av[ch_in,ch_in,:]) * np.abs(Pxy_av[ch_out,ch_out,:]))
+        
+        
+        
+    settings = copy.copy(td.settings)
+    settings.window = window
+    settings.time_range = time_range
+    settings.ch_in = ch_in
+    settings.ch_out_set = ch_out_set
+    
+    #tf_coherence= 0
+    
+    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings)
+    
+    return tfdata

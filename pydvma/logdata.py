@@ -122,6 +122,8 @@ def create_test_data():
     test_time_const = 0.1
     y = np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*test_freq*time_axis)
     
+    y += 0.1*np.random.rand(len(y))
+    
     time_data[:,1] = y
     
     t = datetime.datetime.now()
