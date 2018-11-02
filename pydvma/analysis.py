@@ -110,10 +110,11 @@ def calculate_cross_spectrum_matrix(timedata, time_range=None, window='hann', N_
     return f,Pxy,Cxy
 
 
-def calculate_transfer_function(timedata, ch_in=0, time_range=None, window='hann', N_frames=1, overlap=0.5):
+def calculate_tf(timedata, ch_in=0, time_range=None, window='hann', N_frames=1, overlap=0.5):
     '''
     Args:
         timedata (class): time series data
+        ch_in (int): index of input channel
         time_range: 2x1 numpy array to specify data segment to use
         window (None or str): apply filter to data before fft or not
         N_frames (int): number of frames to average over
@@ -146,8 +147,21 @@ def calculate_transfer_function(timedata, ch_in=0, time_range=None, window='hann
     
     return tfdata
     
-#    class TfData():
-#    def __init__(self,freq_axis,tf_data,settings):
-#        self.freq_axis = freq_axis
-#        self.tf_data = tf_data
-#        self.settings = settings
+
+def calculate_tf_averaged(timedata, ch_in=0, time_range=None, window=None):
+    '''
+    Calculates transfer function averaged across ensemble of timedata.
+    Takes each time series as an independent measurement.
+    Intended for averaged transfer functions of impulse hammer input data.
+    Does not average data across sub-frames.    
+    
+    Args:
+        timedata (class): time series data
+        ch_in (int): index of input channel
+        time_range: 2x1 numpy array to specify data segment to use
+        window (None or str): type of window to use, default is None.
+    '''
+    
+    N_ensemble = len(timedata)
+    for n in range(N_ensemble):
+        f,Pxy,Cxy = calculate_cross_spectrum_matrix(timedata[n], time_range=time_range, window=window, N_frames=1, overlap=1)
