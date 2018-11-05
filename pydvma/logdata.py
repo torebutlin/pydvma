@@ -122,7 +122,7 @@ def create_test_data():
     test_time_const = 0.1
     y = np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*test_freq*time_axis)
     
-    y += 0.1*np.random.rand(len(y))
+    y += 0.01*np.random.rand(len(y))
     
     time_data[:,1] = y
     
@@ -145,12 +145,31 @@ def create_test_data():
 
 #%% Data structure
 class DataSet():
-    def __init__(self,*,timedata=None,freqdata=None,tfdata=None,sonodata=None,metadata=None):
+    def __init__(self,*,timedata=[],freqdata=[],tfdata=[],sonodata=[],metadata=[]):
         self.timedata = timedata
         self.freqdata = freqdata
         self.tfdata   = tfdata
         self.sonodata = sonodata
         self.metadata = metadata
+        
+    def append_data(self,data):
+        ## find out what kind of data being added
+        if repr(data)=='<TimeData>':
+            self.timedata.append(data)
+            print('TimeData appended to dataset')
+        if repr(data)=='<FreqData>':
+            self.freqdata.append(data)
+            print('FreqData appended to dataset')
+        if repr(data)=='<TfData>':
+            self.tfdata.append(data)
+            print('TfData appended to dataset')
+        if repr(data)=='<SonoData>':
+            self.sonodata.append(data)
+            print('SonoData appended to dataset')
+            
+        ## TODO what other data management tools would be wanted
+        ## TODO once new structure determined, update other functions to match
+            
         
     def __repr__(self):
         text = '<DataSet class containing: '
@@ -167,6 +186,10 @@ class DataSet():
         
         text += '>'
         return text
+    
+#class DataSet():
+#    def add(self,*,timedata=None,freqdata=None,tfdata=None,sonodata=None,metadata=None):
+#        
         
         
 class TimeData():
