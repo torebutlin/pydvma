@@ -24,6 +24,13 @@ def convert_to_frequency(timedata,time_range=None,window=False):
         time_range: 2x1 numpy array to specify data segment to use
         window (bool): apply blackman filter to data before fft or not
     '''
+    ## Function expects single timedata object, but might pass single length list
+    if type(timedata)==list:
+        if len(timedata)==1:
+            timedata = timedata[0]
+        else:
+            ### CYCLE THROUGH ALL TIMEDATA AND MAKE FFT OF EACH
+            print('')
     
     if time_range == None:
         ### use all data
@@ -40,7 +47,7 @@ def convert_to_frequency(timedata,time_range=None,window=False):
     s1 = timedata.time_axis >= time_range[0]
     s2 = timedata.time_axis <= time_range[1]
     selection = s1 & s2
-    data_selected = timedata.timedata[selection,:]
+    data_selected = timedata.time_data[selection,:]
     N = len(data_selected[:,0])
     if window == True:
         data_selected = np.blackman(N)

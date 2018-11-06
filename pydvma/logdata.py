@@ -12,6 +12,7 @@ from . import oscilloscope
 import numpy as np
 import datetime
 import time
+import uuid
 
 
 #%% Main data acquisition function
@@ -146,93 +147,199 @@ def create_test_data():
 #%% Data structure
 class DataSet():
     def __init__(self,*,timedata=[],freqdata=[],tfdata=[],sonodata=[],metadata=[]):
-        self.timedata = timedata
-        self.freqdata = freqdata
-        self.tfdata   = tfdata
-        self.sonodata = sonodata
-        self.metadata = metadata
+        ## initialisation function to set up DataSet class
         
-    def append_data(self,data):
+        self.timedata = []
+        if isinstance(timedata,TimeData):
+            self.timedata.append(timedata)
+        elif isinstance(timedata,list):
+            self.timedata = timedata
+        
+        self.freqdata = []
+        if isinstance(freqdata,FreqData):
+            self.freqdata.append(freqdata)
+        elif isinstance(freqdata,list):
+            self.freqdata = freqdata
+            
+        self.tfdata = []
+        if isinstance(tfdata,TfData):
+            self.tfdata.append(tfdata)
+        elif isinstance(tfdata,list):
+            self.tfdata = tfdata
+
+        self.sonodata = []
+        if isinstance(sonodata,SonoData):
+            self.sonodata.append(sonodata)
+        elif isinstance(sonodata,list):
+            self.sonodata = sonodata
+        
+        self.metadata = []
+        if isinstance(metadata,MetaData):
+            self.metadata.append(metadata)
+        elif isinstance(metadata,list):
+            self.metadata = metadata
+            
+        
+    def add_data(self,data):
         ## find out what kind of data being added
-        if repr(data)=='<TimeData>':
+        data_class = data.__class__.__name__
+        if data_class=='TimeData':
             self.timedata.append(data)
             print('TimeData appended to dataset')
-        if repr(data)=='<FreqData>':
+        if data_class=='FreqData':
             self.freqdata.append(data)
             print('FreqData appended to dataset')
-        if repr(data)=='<TfData>':
+        if data_class=='TfData':
             self.tfdata.append(data)
             print('TfData appended to dataset')
-        if repr(data)=='<SonoData>':
+        if data_class=='SonoData':
             self.sonodata.append(data)
             print('SonoData appended to dataset')
+        if data_class=='MetaData':
+            self.metadata.append(data)
+            print('MetaData appended to dataset')
+            
+    def remove_last_data_item(self,data_class):
+        
+        if data_class == 'TimeData':
+            if len(self.timedata) != 0:
+                del self.timedata[-1]
+        if data_class == 'FreqData':
+            if len(self.freqdata) != 0:
+                del self.freqdata[-1]
+        if data_class == 'TfData':
+            if len(self.tfdata) != 0:
+                del self.tfdata[-1]
+        if data_class == 'SonoData':
+            if len(self.sonodata) != 0:
+                del self.sonodata[-1]
+        if data_class == 'MetaData':
+            if len(self.metadata) != 0:
+                del self.metadata[-1]
+                
+    def remove_data(self,data_class,list_index):
+        if data_class == 'TimeData':
+            if len(self.timedata) != 0:
+                del self.timedata[list_index]
+        if data_class == 'FreqData':
+            if len(self.freqdata) != 0:
+                del self.freqdata[list_index]
+        if data_class == 'TfData':
+            if len(self.tfdata) != 0:
+                del self.tfdata[list_index]
+        if data_class == 'SonoData':
+            if len(self.sonodata) != 0:
+                del self.sonodata[list_index]
+        if data_class == 'MetaData':
+            if len(self.metadata) != 0:
+                del self.metadata[list_index] 
+
             
         ## TODO what other data management tools would be wanted
         ## TODO once new structure determined, update other functions to match
             
         
     def __repr__(self):
-        text = '<DataSet class containing: '
-        if repr(self.timedata) != 'None':
-            text += repr(self.timedata)
-        if repr(self.freqdata) != 'None':
-            text += repr(self.freqdata)
-        if repr(self.tfdata) != 'None':
-            text += repr(self.tfdata)
-        if repr(self.sonodata) != 'None':
-            text += repr(self.sonodata)
-        if repr(self.metadata) != 'None':
-            text += repr(self.metadata)
         
-        text += '>'
+        anydata = len(self.timedata) + len(self.freqdata) + len(self.tfdata) + len(self.sonodata) + len(self.metadata)
+        if anydata > 0:
+            text = '<DataSet class containing: '
+            if len(self.timedata) > 0:
+                text += 'list of {} '.format(len(self.timedata))
+                text += repr(self.timedata[0])
+                text += ' items;'
+            if len(self.freqdata) > 0:
+                text += 'list of {} '.format(len(self.freqdata))
+                text += repr(self.freqdata)
+                text += ' items;'
+            if len(self.tfdata) > 0:
+                text += 'list of {} '.format(len(self.tfdata))
+                text += repr(self.tfdata)
+                text += ' items;'
+            if len(self.sonodata) > 0:
+                text += 'list of {} '.format(len(self.sonodata))
+                text += repr(self.sonodata)
+                text += ' items;'
+            if len(self.metadata) > 0:
+                text += 'list of {} '.format(len(self.metadata))
+                text += repr(self.metadata)
+                text += ' items;'
+            
+            text += '>'
+        else:
+            text = '<Empty DataSet class>'
+            
         return text
     
-#class DataSet():
-#    def add(self,*,timedata=None,freqdata=None,tfdata=None,sonodata=None,metadata=None):
-#        
-        
+   
         
 class TimeData():
-    def __init__(self,time_axis,time_data,settings):
+    def __init__(self,time_axis,time_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.time_axis = time_axis
         self.time_data = time_data  
         self.settings = settings
+        self.timestamp = timestamp
+        self.timestring = timestring
+        self.units = units
+        self.channel_cal_factors = channel_cal_factors
+        self.id_link = id_link # this is used if data is derived from an existing <TimeData> measurement
+        self.test_name = test_name
+        self.unique_id = uuid.uuid4()
         
     def __repr__(self):
         return "<TimeData>"
 
         
 class FreqData():
-    def __init__(self,freq_axis,freq_data,settings):
+    def __init__(self,freq_axis,freq_data,settings,timestamp,timestring,units,channel_cal_factors,id_link,test_name=None):
         self.freq_axis = freq_axis
         self.freq_data = freq_data
         self.settings = settings
+        self.test_name = test_name
+        self.timestamp = timestamp
+        self.timestring = timestring
+        self.units = units
+        self.channel_cal_factors = channel_cal_factors
+        self.id_link = id_link # used to link data to specific <TimeData> object
         
     def __repr__(self):
         return "<FreqData>"
         
 class TfData():
-    def __init__(self,freq_axis,tf_data,tf_coherence,settings):
+    def __init__(self,freq_axis,tf_data,tf_coherence,settings,timestamp,timestring,units,channel_cal_factors,test_name=None):
         self.freq_axis = freq_axis
         self.tf_data = tf_data
         self.tf_coherence = tf_coherence
         self.settings = settings
+        self.test_name = test_name
+        self.timestamp = timestamp
+        self.timestring = timestring
+        self.units = units
+        self.channel_cal_factors = channel_cal_factors
+        self.id_link = id_link # used to link data to specific <TimeData> object
         
     def __repr__(self):
         return "<TfData>"
         
 class SonoData():
-    def __init__(self,time_axis,freq_axis,sono_data,settings):
+    def __init__(self,time_axis,freq_axis,sono_data,settings,timestamp,timestring,units,channel_cal_factors,test_name=None):
         self.time_axis = time_axis
         self.freq_axis = freq_axis
         self.sono_data = sono_data
         self.settings = settings
+        self.test_name = test_name
+        self.timestamp = timestamp
+        self.timestring = timestring
+        self.units = units
+        self.channel_cal_factors = channel_cal_factors
+        self.id_link = id_link # used to link data to specific <TimeData> object
         
     def __repr__(self):
         return "<SonoData>"
         
 class MetaData():
-    def __init__(self, timestamp=None, timestring=None, units=None, channel_cal_factors=None, tf_cal_factors = None):
+    def __init__(self, timestamp=None, timestring=None, units=None, channel_cal_factors=None, tf_cal_factors = None,test_name=None):
+        ### not sure this is a helpful datafield: might delete. Metadata then contained within each data unit.
         self.timestamp = timestamp
         self.timestring = timestring
         self.units = units
