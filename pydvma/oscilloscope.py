@@ -297,10 +297,9 @@ class Oscilloscope():
 #            f_axis=np.fft.rfftfreq(len(t_axis),1/fs)
 #            freq_data=np.fft.rfft(stored_time_data_copy,axis=0)
             
-            
-            t_data = logdata.TimeData(t_axis,stored_time_data_copy,self.settings)
-            metadata = logdata.MetaData(timestamp=t,timestring=timestring)
-            dataset = logdata.DataSet(timedata=t_data, metadata=metadata)
+            timedata = logdata.TimeData(t_axis,stored_time_data_copy,self.settings,timestamp=t,timestring=timestring)
+            #metadata = logdata.MetaData(timestamp=t,timestring=timestring)
+            dataset = logdata.DataSet(timedata=timedata)
             
             #plotting.plotdata(dataset)
             

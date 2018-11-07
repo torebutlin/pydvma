@@ -307,7 +307,7 @@ class TimeData():
 
         
 class FreqData():
-    def __init__(self,freq_axis,freq_data,settings,timestamp,timestring,units,channel_cal_factors,id_link,test_name=None):
+    def __init__(self,freq_axis,freq_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.freq_axis = freq_axis
         self.freq_data = freq_data
         self.settings = settings
@@ -322,7 +322,7 @@ class FreqData():
         return "<FreqData>"
         
 class TfData():
-    def __init__(self,freq_axis,tf_data,tf_coherence,settings,timestamp,timestring,units,channel_cal_factors,test_name=None):
+    def __init__(self,freq_axis,tf_data,tf_coherence,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.freq_axis = freq_axis
         self.tf_data = tf_data
         self.tf_coherence = tf_coherence
@@ -338,7 +338,7 @@ class TfData():
         return "<TfData>"
         
 class SonoData():
-    def __init__(self,time_axis,freq_axis,sono_data,settings,timestamp,timestring,units,channel_cal_factors,test_name=None):
+    def __init__(self,time_axis,freq_axis,sono_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.time_axis = time_axis
         self.freq_axis = freq_axis
         self.sono_data = sono_data

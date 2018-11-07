@@ -24,38 +24,40 @@ def convert_to_frequency(timedata,time_range=None,window=False):
         time_range: 2x1 numpy array to specify data segment to use
         window (bool): apply blackman filter to data before fft or not
     '''
-    ## Function expects single timedata object, but might pass single length list
-    if type(timedata)==list:
-        if len(timedata)==1:
-            timedata = timedata[0]
-        else:
-            ### CYCLE THROUGH ALL TIMEDATA AND MAKE FFT OF EACH
-            print('')
     
-    if time_range == None:
-        ### use all data
-        time_range = timedata.time_axis[[0,-1]]
-        
-    elif time_range.__class__.__name__ == 'PlotData':
-        time_range=time_range.ax.get_xbound()
-        
-    settings = copy.copy(timedata.settings)
-    settings.window = window
-    settings.time_range = time_range
-
+    if not type(timedata) is list:
+        timedata = [timedata]
     
-    s1 = timedata.time_axis >= time_range[0]
-    s2 = timedata.time_axis <= time_range[1]
-    selection = s1 & s2
-    data_selected = timedata.time_data[selection,:]
-    N = len(data_selected[:,0])
-    if window == True:
-        data_selected = np.blackman(N)
+    freq_data = []
+    for td in timedata:
         
-    fdata = np.fft.rfft(data_selected,axis=0)
-    faxis = np.fft.rfftfreq(N,1/timedata.settings.fs)
     
-    freq_data = logdata.FreqData(faxis,fdata,settings)
+        if time_range == None:
+            ### use all data
+            time_range_copy = td.time_axis[[0,-1]]
+            
+        elif time_range.__class__.__name__ == 'PlotData':
+            time_range_copy=time_range.ax.get_xbound()
+            
+        settings = copy.copy(td.settings)
+        settings.window = window
+        settings.time_range = time_range_copy
+    
+        
+        s1 = td.time_axis >= time_range_copy[0]
+        s2 = td.time_axis <= time_range_copy[1]
+        selection = s1 & s2
+        data_selected = td.time_data[selection,:]
+        N = len(data_selected[:,0])
+        if window == True:
+            data_selected = np.blackman(N)
+            
+        fdata = np.fft.rfft(data_selected,axis=0)
+        faxis = np.fft.rfftfreq(N,1/td.settings.fs)
+        t = datetime.datetime.now()
+        timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+    
+        freq_data = freq_data + [logdata.FreqData(faxis,fdata,settings,timestamp=t,timestring=timestring)]
     
     return freq_data
 
