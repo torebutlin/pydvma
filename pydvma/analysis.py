@@ -72,7 +72,11 @@ def calculate_cross_spectrum_matrix(timedata, time_range=None, window='hann', N_
         N_frames (int): number of frames to average over
         overlap (between 0,1): frame overlap fraction
     '''
+    # TODO iterate over list of timedata... but need new dataset type?
     
+    if window==None:
+        window='boxcar'
+        
     if time_range == None:
         ### use all data
         time_range = timedata.time_axis[[0,-1]]
@@ -89,16 +93,13 @@ def calculate_cross_spectrum_matrix(timedata, time_range=None, window='hann', N_
     s2 = timedata.time_axis <= time_range[1]
     selection = s1 & s2
     data_selected = timedata.time_data[selection,:]
-    time_selected = timedata.time_axis[selection]
+    #time_selected = timedata.time_axis[selection]
     
     N_samples = len(data_selected[:,0])
     nperseg = np.int32(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
     freqlength = len(np.fft.rfftfreq(nperseg))
     
-    if window==None:
-        window='boxcar'
-        
-    window_vector = signal.get_window(window,nperseg)
+
     noverlap = np.ceil(overlap*nperseg)
     
     Pxy = np.zeros([settings.channels,settings.channels,freqlength],dtype=complex)
@@ -129,6 +130,7 @@ def calculate_tf(timedata, ch_in=0, time_range=None, window='hann', N_frames=1, 
         N_frames (int): number of frames to average over
         overlap (between 0,1): frame overlap fraction
     '''
+    # TODO iterate over list of timedata if list
     settings = copy.copy(timedata.settings)
     settings.window = window
     settings.time_range = time_range
@@ -178,7 +180,10 @@ def calculate_tf_averaged(timedata, ch_in=0, time_range=None, window=None):
     if type(timedata) is not list:
         timedata = [timedata]
 
-    
+    id_link_list = []
+    for td in timedata:
+        id_link_list += [td.unique_id]
+        
     N_ensemble = len(timedata)
     Pxy_av = 0
     count = -1
@@ -206,7 +211,9 @@ def calculate_tf_averaged(timedata, ch_in=0, time_range=None, window=None):
     settings.ch_out_set = ch_out_set
     
     #tf_coherence= 0
+    t = datetime.datetime.now()
+    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
     
-    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings)
+    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings,timestamp=t,timestring=timestring,id_link=id_link_list)
     
     return tfdata
