@@ -16,7 +16,7 @@ import uuid
 
 
 #%% Main data acquisition function
-def log_data(settings):
+def log_data(settings,test_name=None):
     '''
     Logs data according to settings and returns DataSet class
     '''
@@ -36,14 +36,12 @@ def log_data(settings):
     rec.trigger_detected = False
     
     
-    t = datetime.datetime.now()
-    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
-    
-    
     # Stream is slightly longer than settings.stored_time, so need to add delay
     # from initialisation to allow stream to fill up and prevent zeros at start
     # of logged data.
     time.sleep(2*settings.chunk_size/settings.fs)
+    t = datetime.datetime.now()
+    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
     
     if settings.pretrig_samples == None:
 
@@ -72,11 +70,10 @@ def log_data(settings):
         if (time.time()-t0 > settings.pretrig_timeout):
             raise Exception('Trigger not detected within timeout of {} seconds.'.format(settings.pretrig_timeout))
             
-            
-        # make copy of data
         print('')
         print('Logging complete.')
         
+        # make copy of data
         stored_time_data_copy = np.copy(rec.stored_time_data)
         trigger_check = rec.stored_time_data[(rec.settings.chunk_size):(2*rec.settings.chunk_size),rec.settings.pretrig_channel]
         detected_sample = rec.settings.chunk_size + np.where(np.abs(trigger_check) > rec.settings.pretrig_threshold)[0][0]
@@ -92,14 +89,14 @@ def log_data(settings):
     dt = 1/fs
     t_samp = n_samp*dt
     time_axis = np.arange(0,t_samp,dt)
-    timedata = TimeData(time_axis,stored_time_data_copy,settings)
-    metadata = MetaData(timestamp=t,timestring=timestring)
-    dataset  = DataSet(timedata=timedata, metadata=metadata)
+    timedata = TimeData(time_axis,stored_time_data_copy,settings,timestamp=t,timestring=timestring,test_name=test_name)
+    #metadata = MetaData(timestamp=t,timestring=timestring)
+    dataset  = DataSet(timedata=timedata)
     
     return dataset
     
     
-    # TODO  make pretrigger
+
 
 
 
@@ -130,7 +127,7 @@ def create_test_data(noise_level=0):
     t = datetime.datetime.now()
     timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
     
-    timedata = TimeData(time_axis,time_data,settings,timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1])
+    timedata = TimeData(time_axis,time_data,settings,timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1], test_name='Synthesised data')
     #metadata = MetaData(, tf_cal_factors=1)
     
     dataset = DataSet(timedata=timedata)
@@ -182,22 +179,37 @@ class DataSet():
         
     def add_to_dataset(self,data):
         ## find out what kind of data being added
-        data_class = data.__class__.__name__
+        ## allow input to be list of single type of data, or unit data class
+        if not type(data) is list:
+            # turn into list even if unit length
+            data = [data]
+        else:
+            # check list contains set of same kind of data
+            check = True
+            for d in data:
+                check = check and (d.__class__.__name__ == data[0].__class__.__name__)
+            if check is False:
+                raise('data list needs to contain homogenous type of data')
+                
+        data_class = data[0].__class__.__name__    
+            
         if data_class=='TimeData':
-            self.timedata.append(data)
-            print('TimeData appended to dataset')
-        if data_class=='FreqData':
-            self.freqdata.append(data)
-            print('FreqData appended to dataset')
-        if data_class=='TfData':
-            self.tfdata.append(data)
-            print('TfData appended to dataset')
-        if data_class=='SonoData':
-            self.sonodata.append(data)
-            print('SonoData appended to dataset')
-        if data_class=='MetaData':
-            self.metadata.append(data)
-            print('MetaData appended to dataset')
+            self.timedata += data
+            print('{} added to dataset'.format(data))
+        elif data_class=='FreqData':
+            self.freqdata += data
+            print('{} added to dataset'.format(data))
+        elif data_class=='TfData':
+            self.tfdata += data
+            print('{} added to dataset'.format(data))
+        elif data_class=='SonoData':
+            self.sonodata += data
+            print('{} added to dataset'.format(data))
+        elif data_class=='MetaData':
+            self.metadata += data
+            print('{} added to dataset'.format(data))
+        else:
+            print('No data added')
             
     def remove_last_data_item(self,data_class):
         
@@ -218,57 +230,61 @@ class DataSet():
                 del self.metadata[-1]
                 
     def remove_data(self,data_class,list_index):
+        
+        if list_index.__class__.__name__ == 'ndarray':
+            list_index = list(list_index)
+        elif type(list_index) is int:
+            list_index = [list_index]
+            
+        list_index.sort()
+
+
         if data_class == 'TimeData':
-            if len(self.timedata) != 0:
-                del self.timedata[list_index]
+            if len(self.timedata) > np.max(list_index):
+                for i in reversed(list_index):
+                    del self.timedata[i]
+            else:
+                print('indices out of range, no data removed')
+                
         if data_class == 'FreqData':
-            if len(self.freqdata) != 0:
-                del self.freqdata[list_index]
+            if len(self.freqdata) > np.max(list_index):
+                for i in reversed(list_index):
+                    del self.freqdata[i]
+            else:
+                print('indices out of range, no data removed')
+            
         if data_class == 'TfData':
-            if len(self.tfdata) != 0:
-                del self.tfdata[list_index]
+            if len(self.tfdata) > np.max(list_index):
+                for i in reversed(list_index):
+                    del self.tfdata[i]
+            else:
+                print('indices out of range, no data removed')
+                    
         if data_class == 'SonoData':
-            if len(self.sonodata) != 0:
-                del self.sonodata[list_index]
+            if len(self.sonodata) > np.max(list_index):
+                for i in reversed(list_index):
+                    del self.sonodata[i]
+            else:
+                print('indices out of range, no data removed')
+                
         if data_class == 'MetaData':
-            if len(self.metadata) != 0:
-                del self.metadata[list_index] 
+            if len(self.metadata) > np.max(list_index):
+                for i in reversed(list_index):
+                    del self.metadata[i] 
+            else:
+                print('indices out of range, no data removed')
 
             
-        ## TODO what other data management tools would be wanted
-        ## TODO once new structure determined, update other functions to match
-            
-        
+    
     def __repr__(self):
+        template = "{:>24}: {}" # column widths: 8, 10, 15, 7, 10
+        #print template.format("CLASSID", "DEPT", "COURSE NUMBER", "AREA", "TITLE") # header
+        dataset_dict = self.__dict__
+        text = '\n<DataSet class>\n\n'
+        for attr in dataset_dict: 
+            text += template.format(attr,dataset_dict[attr])
+            text += '\n'
         
-        anydata = len(self.timedata) + len(self.freqdata) + len(self.tfdata) + len(self.sonodata) + len(self.metadata)
-        if anydata > 0:
-            text = '<DataSet class containing: '
-            if len(self.timedata) > 0:
-                text += 'list of {} '.format(len(self.timedata))
-                text += repr(self.timedata[0])
-                text += ' items;'
-            if len(self.freqdata) > 0:
-                text += 'list of {} '.format(len(self.freqdata))
-                text += repr(self.freqdata)
-                text += ' items;'
-            if len(self.tfdata) > 0:
-                text += 'list of {} '.format(len(self.tfdata))
-                text += repr(self.tfdata)
-                text += ' items;'
-            if len(self.sonodata) > 0:
-                text += 'list of {} '.format(len(self.sonodata))
-                text += repr(self.sonodata)
-                text += ' items;'
-            if len(self.metadata) > 0:
-                text += 'list of {} '.format(len(self.metadata))
-                text += repr(self.metadata)
-                text += ' items;'
-            
-            text += '>'
-        else:
-            text = '<Empty DataSet class>'
-            
         return text
     
    
