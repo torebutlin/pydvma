@@ -33,7 +33,13 @@ class PlotData2(object):
                     logdata.FreqData
                     logdata.TfData
         '''
-        if data.__class__.__name__ == 'DataSet':
+        if not isinstance(data,list):
+            # if a raw data object is passed, first put it into expected list format
+            data = [data]
+            
+        if data[0].__class__.__name__ == 'DataSet':
+            # if DataSet class then undo turning it into a list
+            data = data[0]
             if len(data.timedata)>0:
                 self.plot_time_data(data.timedata)
             if len(data.freqdata)>0:
@@ -41,11 +47,8 @@ class PlotData2(object):
             if len(data.tfdata)>0:
                 self.plot_tf_data(data.tfdata)
 
-        elif not isinstance(data,list):
-            # if a raw data object is passed, first put it into expected list format
-            data = [data]
-            
-        if data[0].__class__.__name__ == 'TimeData':
+          
+        elif data[0].__class__.__name__ == 'TimeData':
             self.plot_time_data(data)
         
         elif data[0].__class__.__name__  == 'FreqData':

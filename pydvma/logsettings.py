@@ -92,9 +92,16 @@ class MySettings(object):
         
     
     def __repr__(self):
-        return '<mySettings class>'
+        template = "{:>24}: {}" # column widths: 8, 10, 15, 7, 10
+        #print template.format("CLASSID", "DEPT", "COURSE NUMBER", "AREA", "TITLE") # header
+        settings_dict = self.__dict__
+        text = '\n<MySettings class>\n\n'
+        for attr in settings_dict: 
+            text += template.format(attr,settings_dict[attr])
+            text += '\n'
         
-    
+        return text
+
         
         
 def set_plot_colours(channels):

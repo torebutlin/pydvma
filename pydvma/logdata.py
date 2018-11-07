@@ -104,7 +104,7 @@ def log_data(settings):
 
 
 #%% Create test data
-def create_test_data():
+def create_test_data(noise_level=0):
     '''
     Creates example time domain data
     '''
@@ -123,17 +123,17 @@ def create_test_data():
     test_time_const = 0.1
     y = np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*test_freq*time_axis)
     
-    y += 0.01*np.random.rand(len(y))
+    y += noise_level*2*(np.random.rand(len(y)) - 0.5)
     
     time_data[:,1] = y
     
     t = datetime.datetime.now()
     timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
     
-    timedata = TimeData(time_axis,time_data,settings)
-    metadata = MetaData(timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1], tf_cal_factors=1)
+    timedata = TimeData(time_axis,time_data,settings,timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1])
+    #metadata = MetaData(, tf_cal_factors=1)
     
-    dataset = DataSet(timedata=timedata,metadata=metadata)
+    dataset = DataSet(timedata=timedata)
     
     return dataset
 
@@ -180,7 +180,7 @@ class DataSet():
             self.metadata = metadata
             
         
-    def add_data(self,data):
+    def add_to_dataset(self,data):
         ## find out what kind of data being added
         data_class = data.__class__.__name__
         if data_class=='TimeData':
