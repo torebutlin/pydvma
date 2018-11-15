@@ -143,7 +143,7 @@ def create_test_data(noise_level=0):
 
 #%% Data structure
 class DataSet():
-    def __init__(self,*,timedata=[],freqdata=[],tfdata=[],sonodata=[],metadata=[]):
+    def __init__(self,*,timedata=[],freqdata=[],cspecdata=[],tfdata=[],sonodata=[],metadata=[]):
         ## initialisation function to set up DataSet class
         
         self.timedata = []
@@ -157,6 +157,12 @@ class DataSet():
             self.freqdata.append(freqdata)
         elif isinstance(freqdata,list):
             self.freqdata = freqdata
+            
+        self.cspecdata = []
+        if isinstance(cspecdata,CrossSpecData):
+            self.cspecdata.append(cspecdata)
+        elif isinstance(cspecdata,list):
+            self.cspecdata = cspecdata
             
         self.tfdata = []
         if isinstance(tfdata,TfData):
@@ -320,6 +326,24 @@ class FreqData():
         
     def __repr__(self):
         return "<FreqData>"
+    
+    
+class CrossSpecData():
+    def __init__(self,freq_axis,Pxy,Cxy,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+        self.freq_axis = freq_axis
+        self.Pxy = Pxy
+        self.Cxy = Cxy
+        self.settings = settings
+        self.test_name = test_name
+        self.timestamp = timestamp
+        self.timestring = timestring
+        self.units = units
+        self.channel_cal_factors = channel_cal_factors
+        self.id_link = id_link # used to link data to specific <TimeData> object
+        
+    def __repr__(self):
+        return "<CrossSpecData>"
+    
         
 class TfData():
     def __init__(self,freq_axis,tf_data,tf_coherence,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
@@ -336,6 +360,7 @@ class TfData():
         
     def __repr__(self):
         return "<TfData>"
+    
         
 class SonoData():
     def __init__(self,time_axis,freq_axis,sono_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):

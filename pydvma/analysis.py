@@ -17,7 +17,7 @@ import time
 import datetime
 import copy
 
-def convert_to_frequency(timedata,time_range=None,window=False):
+def calculate_fft(timedata,time_range=None,window=False):
     '''
     Args:
         timedata (class): time series data
@@ -76,49 +76,85 @@ def calculate_cross_spectrum_matrix(timedata, time_range=None, window='hann', N_
     
     if window==None:
         window='boxcar'
-        
-    if time_range == None:
-        ### use all data
-        time_range = timedata.time_axis[[0,-1]]
-        
-    elif time_range.__class__.__name__ == 'PlotData':
-        time_range=time_range.ax.get_xbound()
-        
-    settings = copy.copy(timedata.settings)
-    settings.window = window
-    settings.time_range = time_range
-
-    ## Select data range to use
-    s1 = timedata.time_axis >= time_range[0]
-    s2 = timedata.time_axis <= time_range[1]
-    selection = s1 & s2
-    data_selected = timedata.time_data[selection,:]
-    #time_selected = timedata.time_axis[selection]
+    if not type(timedata) is list:
+        timedata = [timedata]
     
-    N_samples = len(data_selected[:,0])
-    nperseg = np.int32(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
-    freqlength = len(np.fft.rfftfreq(nperseg))
+    freq_data = []
+    for td in timedata:    
+        if time_range == None:
+            ### use all data
+            time_range = timedata.time_axis[[0,-1]]
+            
+        elif time_range.__class__.__name__ == 'PlotData':
+            time_range=time_range.ax.get_xbound()
+            
+        settings = copy.copy(timedata.settings)
+        settings.window = window
+        settings.time_range = time_range
     
-
-    noverlap = np.ceil(overlap*nperseg)
+        ## Select data range to use
+        s1 = timedata.time_axis >= time_range[0]
+        s2 = timedata.time_axis <= time_range[1]
+        selection = s1 & s2
+        data_selected = timedata.time_data[selection,:]
+        #time_selected = timedata.time_axis[selection]
+        
+        N_samples = len(data_selected[:,0])
+        nperseg = np.int32(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
+        freqlength = len(np.fft.rfftfreq(nperseg))
+        
     
-    Pxy = np.zeros([settings.channels,settings.channels,freqlength],dtype=complex)
-    Cxy = np.zeros([settings.channels,settings.channels,freqlength])
-    for nx in np.arange(settings.channels):
-        for ny in np.arange(settings.channels):
-            if nx > ny:
-                Pxy[nx,ny,:] = np.conjugate(Pxy[ny,nx,:])
-                Cxy[nx,ny,:] = Cxy[ny,nx,:]
-            else:
-                x = data_selected[:,nx]
-                y = data_selected[:,ny]
-                f,P = signal.csd(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap,scaling='spectrum')
-                f,C = signal.coherence(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap)
-                Pxy[nx,ny,:] = P
-                Cxy[nx,ny,:] = C
+        noverlap = np.ceil(overlap*nperseg)
+        
+        Pxy = np.zeros([settings.channels,settings.channels,freqlength],dtype=complex)
+        Cxy = np.zeros([settings.channels,settings.channels,freqlength])
+        for nx in np.arange(settings.channels):
+            for ny in np.arange(settings.channels):
+                if nx > ny:
+                    Pxy[nx,ny,:] = np.conjugate(Pxy[ny,nx,:])
+                    Cxy[nx,ny,:] = Cxy[ny,nx,:]
+                else:
+                    x = data_selected[:,nx]
+                    y = data_selected[:,ny]
+                    f,P = signal.csd(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap,scaling='spectrum')
+                    f,C = signal.coherence(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap)
+                    Pxy[nx,ny,:] = P
+                    Cxy[nx,ny,:] = C
             
     return f,Pxy,Cxy
 
+
+def calculate_cross_spectra_averaged(timedata, time_range=None, window=None):
+    '''
+    Calculates cross spectra averaged across ensemble of timedata. Note that 
+    this expects a Python list of timedata objects.
+    
+    Takes each time series as an independent measurement.
+    
+    Intended for averaged transfer functions from separate measurements, e.g. impulse hammer tests.
+    
+    Does not average data across sub-frames.    
+    
+    Args:
+        timedata (class): a list of time series data
+        time_range: 2x1 numpy array to specify data segment to use
+        window (None or str): type of window to use, default is None.
+    '''
+    
+    if type(timedata) is not list:
+        timedata = [timedata]
+
+    id_link_list = []
+    for td in timedata:
+        id_link_list += [td.unique_id]
+        
+    N_ensemble = len(timedata)
+    Pxy_av = 0
+    for td in timedata:
+        f,Pxy,Cxy = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
+        Pxy_av += Pxy / N_ensemble
+        
+    return Pxy_av
 
 def calculate_tf(timedata, ch_in=0, time_range=None, window='hann', N_frames=1, overlap=0.5):
     '''
