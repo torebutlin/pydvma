@@ -111,7 +111,7 @@ class PlotData(object):
             for n_chan in range(freq_data_list[n_set].settings.channels):
                 count += 1
                 if n_chan in channels:
-                    self.freqax.plot(freq_data_list[n_set].freq_axis,freq_data_list[n_set].freq_data[:,n_chan],'-',linewidth=1,color = logsettings.set_plot_colours(len(freq_data_list)*freq_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
+                    self.freqax.plot(freq_data_list[n_set].freq_axis,20*np.log10(np.abs(freq_data_list[n_set].freq_data[:,n_chan])),'-',linewidth=1,color = logsettings.set_plot_colours(len(freq_data_list)*freq_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
             
         self.freqax.legend()
         
@@ -123,17 +123,18 @@ class PlotData(object):
     
         self.tfax.set_xlabel('Frequency (Hz)')
         self.tfax.set_ylabel('Amplitude (dB)')
-        self.freqax.grid()
+        self.tfax.grid()
         
         if channels == 'all':
-            channels = list(range(tf_data_list[0].settings.channels))
+            channels = list(range(len(tf_data_list[0].tf_data[0,:])))
         
         count = -1
         for n_set in range(len(tf_data_list)):
             for n_chan in range(tf_data_list[n_set].settings.channels):
                 count += 1
                 if n_chan in channels:
-                    self.tfax.plot(tf_data_list[n_set].freq_axis,tf_data_list[n_set].tf_data[:,n_chan],'-',linewidth=1,color = logsettings.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
+                    self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_data[:,n_chan])),'-',linewidth=1,color = logsettings.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
+                    self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_coherence[:,n_chan])),'--',linewidth=1,color = logsettings.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{} (coherence)'.format(n_set,n_chan))
             
         self.tfax.legend()
         

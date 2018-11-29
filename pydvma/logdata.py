@@ -103,9 +103,9 @@ def log_data(settings,test_name=None):
 
 
 #%% Create test data
-def create_test_data(noise_level=0):
+def create_test_impulse_data(noise_level=0):
     '''
-    Creates example time domain data
+    Creates example time domain data simulating impulse hammer test
     '''
     settings = logsettings.MySettings(fs=10000)
     N = np.int16(1e4)
@@ -137,13 +137,48 @@ def create_test_data(noise_level=0):
     
     return dataset
 
-
-
+def create_test_impulse_ensemble(N_ensemble=5, noise_level=0.1):
+    '''
+    Creates ensemble of example time domain data simulating impulse hammer tests
+    '''
+    dataset = DataSet()
+    for n in range(N_ensemble):
+        d = create_test_impulse_data(noise_level=noise_level)
+        dataset.add_to_dataset(d.time_data_list)
     
+    return dataset
+
+
+def create_test_noise_data():
+    '''
+    Creates example time domain data simulating noise input test
+    '''
+    settings = logsettings.MySettings(fs=10000)
+    N = np.int16(1e4)
+    time_axis = np.arange(N)/settings.fs
     
-
-
-
+    time_data = np.zeros([N,2])
+    x = np.random.rand(N) - 0.5
+    test_freq = 100
+    test_time_const = 0.1
+    g = np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*test_freq*time_axis)
+    y = np.convolve(x,g)
+    y = y[0:len(x)]
+    
+    added_noise = 0.01*2*(np.random.rand(N)-0.5)
+    time_data[:,0] = x
+    time_data[:,1] = y + added_noise
+    
+    t = datetime.datetime.now()
+    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+    
+    timedata = TimeData(time_axis,time_data,settings,timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1], test_name='Synthesised data')
+    
+    dataset = DataSet()
+    dataset.add_to_dataset(timedata)
+    
+    return dataset
+    
 #%% Data structure
 class DataSet():
     def __init__(self):#,*,timedata=[],freqdata=[],cspecdata=[],tfdata=[],sonodata=[],metadata=[]):
@@ -205,7 +240,7 @@ class DataSet():
             for d in data:
                 check = check and (d.__class__.__name__ == data[0].__class__.__name__)
             if check is False:
-                raise('data list needs to contain homogenous type of data')
+                raise Exception('data list needs to contain homogenous type of data')
                 
         data_class = data[0].__class__.__name__    
             
@@ -238,6 +273,9 @@ class DataSet():
         if data_class == 'FreqData':
             if len(self.freq_data_list) != 0:
                 del self.freq_data_list[-1]
+        if data_class == 'CrossSpecData':
+            if len(self.cross_spec_data_list) != 0:
+                del self.cross_spec_data_list[-1]
         if data_class == 'TfData':
             if len(self.tf_data_list) != 0:
                 del self.tf_data_list[-1]
@@ -272,7 +310,14 @@ class DataSet():
                     del self.freq_data_list[i]
             else:
                 print('indices out of range, no data removed')
-            
+        
+        if data_class == 'CrossSpecData':
+            if len(self.cross_spec_data_list) > np.max(list_index):
+                for i in reversed(list_index):
+                    del self.cross_spec_data_list[i]
+            else:
+                print('indices out of range, no data removed')
+                
         if data_class == 'TfData':
             if len(self.tf_data_list) > np.max(list_index):
                 for i in reversed(list_index):
@@ -350,50 +395,53 @@ class TimeData():
 
         
 class FreqData():
-    def __init__(self,freq_axis,freq_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+    def __init__(self,freq_axis,freq_data,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.freq_axis = freq_axis
         self.freq_data = freq_data
         self.settings = settings
         self.test_name = test_name
-        self.timestamp = timestamp
-        self.timestring = timestring
         self.units = units
         self.channel_cal_factors = channel_cal_factors
         self.id_link = id_link # used to link data to specific <TimeData> object
+        t = datetime.datetime.now()
+        self.timestamp = t
+        self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         
     def __repr__(self):
         return "<FreqData>"
     
     
 class CrossSpecData():
-    def __init__(self,freq_axis,Pxy,Cxy,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+    def __init__(self,freq_axis,Pxy,Cxy,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.freq_axis = freq_axis
         self.Pxy = Pxy
         self.Cxy = Cxy
         self.settings = settings
         self.test_name = test_name
-        self.timestamp = timestamp
-        self.timestring = timestring
         self.units = units
         self.channel_cal_factors = channel_cal_factors
         self.id_link = id_link # used to link data to specific <TimeData> object
+        t = datetime.datetime.now()
+        self.timestamp = t
+        self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         
     def __repr__(self):
         return "<CrossSpecData>"
     
         
 class TfData():
-    def __init__(self,freq_axis,tf_data,tf_coherence,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+    def __init__(self,freq_axis,tf_data,tf_coherence,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.freq_axis = freq_axis
         self.tf_data = tf_data
         self.tf_coherence = tf_coherence
         self.settings = settings
         self.test_name = test_name
-        self.timestamp = timestamp
-        self.timestring = timestring
         self.units = units
         self.channel_cal_factors = channel_cal_factors
         self.id_link = id_link # used to link data to specific <TimeData> object
+        t = datetime.datetime.now()
+        self.timestamp = t
+        self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         
     def __repr__(self):
         return "<TfData>"
@@ -406,23 +454,25 @@ class SonoData():
         self.sono_data = sono_data
         self.settings = settings
         self.test_name = test_name
-        self.timestamp = timestamp
-        self.timestring = timestring
         self.units = units
         self.channel_cal_factors = channel_cal_factors
         self.id_link = id_link # used to link data to specific <TimeData> object
+        t = datetime.datetime.now()
+        self.timestamp = t
+        self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         
     def __repr__(self):
         return "<SonoData>"
         
 class MetaData():
-    def __init__(self, timestamp=None, timestring=None, units=None, channel_cal_factors=None, tf_cal_factors = None,test_name=None):
+    def __init__(self, units=None, channel_cal_factors=None, tf_cal_factors = None,test_name=None):
         ### not sure this is a helpful datafield: might delete. Metadata then contained within each data unit.
-        self.timestamp = timestamp
-        self.timestring = timestring
         self.units = units
         self.channel_cal_factors = None
         self.tf_cal_factors = None
+        t = datetime.datetime.now()
+        self.timestamp = t
+        self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         
     def __repr__(self):
         return "<MetaData>"

@@ -293,7 +293,7 @@ class Oscilloscope():
             n_samp=len(stored_time_data_copy[:,0])
             dt=1/fs
             t_samp=n_samp*dt
-            t_axis= np.arange(0,t_samp,dt)
+            t_axis= np.arange(n_samp)*dt
 
             
             timedata = logdata.TimeData(t_axis,stored_time_data_copy,self.settings,timestamp=t,timestring=timestring)
@@ -320,12 +320,6 @@ class Oscilloscope():
 
 
         
-        
-
-        
-        
-
-    
 
      
 

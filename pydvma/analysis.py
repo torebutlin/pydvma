@@ -17,56 +17,50 @@ import time
 import datetime
 import copy
 
-def calculate_fft(timedata,time_range=None,window=False):
+def calculate_fft(time_data,time_range=None,window=False):
     '''
     Args:
-        timedata (class): time series data
+        time_data (<TimeData> object): time series data
         time_range: 2x1 numpy array to specify data segment to use
         window (bool): apply blackman filter to data before fft or not
     '''
     
-    if not type(timedata) is list:
-        timedata = [timedata]
+    if not time_data.__class__.__name__ is 'TimeData':
+        raise Exception('Input data needs to be single <TimeData> object')
     
-    freq_data = []
-    for td in timedata:
+
+    if time_range == None:
+        ### use all data
+        time_range_copy = time_data.time_axis[[0,-1]]
         
-    
-        if time_range == None:
-            ### use all data
-            time_range_copy = td.time_axis[[0,-1]]
-            
-        elif time_range.__class__.__name__ == 'PlotData':
-            time_range_copy=time_range.ax.get_xbound()
-            
-        settings = copy.copy(td.settings)
-        settings.window = window
-        settings.time_range = time_range_copy
-    
+    elif time_range.__class__.__name__ == 'PlotData':
+        time_range_copy=time_range.ax.get_xbound()
         
-        s1 = td.time_axis >= time_range_copy[0]
-        s2 = td.time_axis <= time_range_copy[1]
-        selection = s1 & s2
-        data_selected = td.time_data[selection,:]
-        N = len(data_selected[:,0])
-        if window == True:
-            data_selected = np.blackman(N)
-            
-        fdata = np.fft.rfft(data_selected,axis=0)
-        faxis = np.fft.rfftfreq(N,1/td.settings.fs)
-        t = datetime.datetime.now()
-        timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+    settings = copy.copy(time_data.settings)
+    settings.window = window
+    settings.time_range = time_range_copy
+
+    s1 = time_data.time_axis >= time_range_copy[0]
+    s2 = time_data.time_axis <= time_range_copy[1]
+    selection = s1 & s2
+    data_selected = time_data.time_data[selection,:]
+    N = len(data_selected[:,0])
+    if window == True:
+        data_selected = np.blackman(N)
+        
+    fdata = np.fft.rfft(data_selected,axis=0)
+    faxis = np.fft.rfftfreq(N,1/time_data.settings.fs)
     
-        freq_data = freq_data + [logdata.FreqData(faxis,fdata,settings,timestamp=t,timestring=timestring)]
+    freq_data = logdata.FreqData(faxis,fdata,settings,id_link=time_data.unique_id)
     
     return freq_data
 
 
 
-def calculate_cross_spectrum_matrix(timedata, time_range=None, window='hann', N_frames=1, overlap=0.5):
+def calculate_cross_spectrum_matrix(time_data, time_range=None, window='hann', N_frames=1, overlap=0.5):
     '''
     Args:
-        timedata (class): time series data
+        time_data (<TimeData> object): time series data
         time_range: 2x1 numpy array to specify data segment to use
         window (None or str): apply filter to data before fft or not
         N_frames (int): number of frames to average over
@@ -76,58 +70,61 @@ def calculate_cross_spectrum_matrix(timedata, time_range=None, window='hann', N_
     
     if window==None:
         window='boxcar'
-    if not type(timedata) is list:
-        timedata = [timedata]
-    
-    freq_data = []
-    for td in timedata:    
-        if time_range == None:
-            ### use all data
-            time_range = timedata.time_axis[[0,-1]]
-            
-        elif time_range.__class__.__name__ == 'PlotData':
-            time_range=time_range.ax.get_xbound()
-            
-        settings = copy.copy(timedata.settings)
-        settings.window = window
-        settings.time_range = time_range
-    
-        ## Select data range to use
-        s1 = timedata.time_axis >= time_range[0]
-        s2 = timedata.time_axis <= time_range[1]
-        selection = s1 & s2
-        data_selected = timedata.time_data[selection,:]
-        #time_selected = timedata.time_axis[selection]
         
-        N_samples = len(data_selected[:,0])
-        nperseg = np.int32(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
-        freqlength = len(np.fft.rfftfreq(nperseg))
+    if not time_data.__class__.__name__ is 'TimeData':
+        raise Exception('Input data needs to be single <TimeData> object')
+
+    if time_range == None:
+        ### use all data
+        time_range = time_data.time_axis[[0,-1]]
         
+    elif time_range.__class__.__name__ == 'PlotData':
+        time_range=time_range.ax.get_xbound()
+        
+    settings = copy.copy(time_data.settings)
+    settings.window = window
+    settings.time_range = time_range
+    settings.N_frames = N_frames
+    settings.overlap = overlap
+
+    ## Select data range to use
+    s1 = time_data.time_axis >= time_range[0]
+    s2 = time_data.time_axis <= time_range[1]
+    selection = s1 & s2
+    data_selected = time_data.time_data[selection,:]
+    #time_selected = timedata.time_axis[selection]
     
-        noverlap = np.ceil(overlap*nperseg)
-        
-        Pxy = np.zeros([settings.channels,settings.channels,freqlength],dtype=complex)
-        Cxy = np.zeros([settings.channels,settings.channels,freqlength])
-        for nx in np.arange(settings.channels):
-            for ny in np.arange(settings.channels):
-                if nx > ny:
-                    Pxy[nx,ny,:] = np.conjugate(Pxy[ny,nx,:])
-                    Cxy[nx,ny,:] = Cxy[ny,nx,:]
-                else:
-                    x = data_selected[:,nx]
-                    y = data_selected[:,ny]
-                    f,P = signal.csd(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap,scaling='spectrum')
-                    f,C = signal.coherence(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap)
-                    Pxy[nx,ny,:] = P
-                    Cxy[nx,ny,:] = C
+    N_samples = len(data_selected[:,0])
+    nperseg = np.int32(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
+    freqlength = len(np.fft.rfftfreq(nperseg))
+    
+
+    noverlap = np.ceil(overlap*nperseg)
+    
+    Pxy = np.zeros([settings.channels,settings.channels,freqlength],dtype=complex)
+    Cxy = np.zeros([settings.channels,settings.channels,freqlength])
+    for nx in np.arange(settings.channels):
+        for ny in np.arange(settings.channels):
+            if nx > ny:
+                Pxy[nx,ny,:] = np.conjugate(Pxy[ny,nx,:])
+                Cxy[nx,ny,:] = Cxy[ny,nx,:]
+            else:
+                x = data_selected[:,nx]
+                y = data_selected[:,ny]
+                f,P = signal.csd(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap,scaling='spectrum')
+                f,C = signal.coherence(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap)
+                Pxy[nx,ny,:] = P
+                Cxy[nx,ny,:] = C
             
-    return f,Pxy,Cxy
+    cross_spec_data = logdata.CrossSpecData(f,Pxy,Cxy,settings,id_link=time_data.unique_id)
+    
+    return cross_spec_data
 
 
-def calculate_cross_spectra_averaged(timedata, time_range=None, window=None):
+def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=None):
     '''
-    Calculates cross spectra averaged across ensemble of timedata. Note that 
-    this expects a Python list of timedata objects.
+    Calculates cross spectra averaged across ensemble of time_data_list. Note that 
+    this expects a <TimeDataList> of <TimeData> objects.
     
     Takes each time series as an independent measurement.
     
@@ -136,47 +133,67 @@ def calculate_cross_spectra_averaged(timedata, time_range=None, window=None):
     Does not average data across sub-frames.    
     
     Args:
-        timedata (class): a list of time series data
+        time_data_list (<TimeDataList> object): a list of time series data
         time_range: 2x1 numpy array to specify data segment to use
         window (None or str): type of window to use, default is None.
     '''
     
-    if type(timedata) is not list:
-        timedata = [timedata]
+    if time_data_list.__class__.__name__ is not 'TimeDataList':
+        raise Exception('Input argument must be <TimeDataList> object.')
 
     id_link_list = []
-    for td in timedata:
+    for td in time_data_list:
         id_link_list += [td.unique_id]
-        
-    N_ensemble = len(timedata)
-    Pxy_av = 0
-    for td in timedata:
-        f,Pxy,Cxy = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
-        Pxy_av += Pxy / N_ensemble
-        
-    return Pxy_av
+    
+    settings = copy.copy(time_data_list[0].settings)
+    settings.window = window
+    settings.time_range = time_range
 
-def calculate_tf(timedata, ch_in=0, time_range=None, window='hann', N_frames=1, overlap=0.5):
+    
+    N_ensemble = len(time_data_list)
+    Pxy_av = 0
+    for td in time_data_list:
+        cross_spec_data = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
+        Pxy_av += cross_spec_data.Pxy / N_ensemble
+    
+    ch_all = np.arange(time_data_list[0].settings.channels)
+    Cxy = np.zeros([len(ch_all),len(ch_all),len(Pxy_av[0,0,:])])
+    for ch_in in ch_all:
+        for ch_out in ch_all:
+            Cxy[ch_in,ch_out,:] = np.abs(Pxy_av[ch_in,ch_out,:])**2 / (np.abs(Pxy_av[ch_in,ch_in,:]) * np.abs(Pxy_av[ch_out,ch_out,:]))
+    
+    
+    cross_spec_data_av = logdata.CrossSpecData(cross_spec_data.freq_axis,Pxy_av,Cxy,settings,id_link=id_link_list)
+
+    return cross_spec_data_av
+
+
+def calculate_tf(time_data, ch_in=0, time_range=None, window='hann', N_frames=1, overlap=0.5):
     '''
     Args:
-        timedata (class): time series data
+        time_data (<TimeData> object): time series data
         ch_in (int): index of input channel
         time_range: 2x1 numpy array to specify data segment to use
         window (None or str): apply filter to data before fft or not
         N_frames (int): number of frames to average over
         overlap (between 0,1): frame overlap fraction
     '''
-    # TODO iterate over list of timedata if list
-    settings = copy.copy(timedata.settings)
+    if not time_data.__class__.__name__ is 'TimeData':
+        raise Exception('Input data needs to be single <TimeData> object')
+
+
+    settings = copy.copy(time_data.settings)
     settings.window = window
     settings.time_range = time_range
     
     ## compute cross spectra
-    f,Pxy,Cxy = calculate_cross_spectrum_matrix(timedata, time_range=time_range, window=window, N_frames=N_frames, overlap=overlap)
-    
+    cross_spec_data = calculate_cross_spectrum_matrix(time_data, time_range=time_range, window=window, N_frames=N_frames, overlap=overlap)
+    f = cross_spec_data.freq_axis
+    Pxy = cross_spec_data.Pxy
+    Cxy = cross_spec_data.Cxy
     ## identify transfer functions and corresponding coherence
     
-    ch_all = np.arange(timedata.settings.channels)
+    ch_all = np.arange(time_data.settings.channels)
     ch_out_set = np.setxor1d(ch_all,ch_in)
     
     tf_data = np.zeros([len(f),len(ch_out_set)],dtype=complex)
@@ -190,12 +207,12 @@ def calculate_tf(timedata, ch_in=0, time_range=None, window='hann', N_frames=1, 
     settings.ch_in = ch_in
     settings.ch_out_set = ch_out_set
     
-    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings)
+    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings,id_link=time_data.unique_id)
     
     return tfdata
     
 
-def calculate_tf_averaged(timedata, ch_in=0, time_range=None, window=None):
+def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None):
     '''
     Calculates transfer function averaged across ensemble of timedata. Note that 
     this expects a Python list of timedata objects.
@@ -207,27 +224,30 @@ def calculate_tf_averaged(timedata, ch_in=0, time_range=None, window=None):
     Does not average data across sub-frames.    
     
     Args:
-        timedata (class): a list of time series data
+        time_data_list (<TimeDataList> object): a list of time series data
         ch_in (int): index of input channel
         time_range: 2x1 numpy array to specify data segment to use
         window (None or str): type of window to use, default is None.
     '''
     
-    if type(timedata) is not list:
-        timedata = [timedata]
+    if time_data_list.__class__.__name__ is not 'TimeDataList':
+        raise Exception('Input argument must be <TimeDataList> object.')
+
 
     id_link_list = []
-    for td in timedata:
+    for td in time_data_list:
         id_link_list += [td.unique_id]
         
-    N_ensemble = len(timedata)
+    N_ensemble = len(time_data_list)
     Pxy_av = 0
     count = -1
-    for td in timedata:
+    for td in time_data_list:
         count += 1
         ch_all = np.arange(td.settings.channels)
         ch_out_set = np.setxor1d(ch_all,ch_in)
-        f,Pxy,Cxy = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
+        cross_spec_data = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
+        f = cross_spec_data.freq_axis
+        Pxy = cross_spec_data.Pxy
         Pxy_av += Pxy / N_ensemble
     
     tf_data = np.zeros([len(f),len(ch_out_set)],dtype=complex)
@@ -237,19 +257,14 @@ def calculate_tf_averaged(timedata, ch_in=0, time_range=None, window=None):
         ch_count += 1
         tf_data[:,ch_count] = Pxy_av[ch_out,ch_in,:] / Pxy_av[ch_in,ch_in,:]
         tf_coherence[:,ch_count] = np.abs(Pxy_av[ch_in,ch_out,:])**2 / (np.abs(Pxy_av[ch_in,ch_in,:]) * np.abs(Pxy_av[ch_out,ch_out,:]))
-        
-        
-        
+
     settings = copy.copy(td.settings)
     settings.window = window
     settings.time_range = time_range
     settings.ch_in = ch_in
     settings.ch_out_set = ch_out_set
     
-    #tf_coherence= 0
-    t = datetime.datetime.now()
-    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
     
-    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings,timestamp=t,timestring=timestring,id_link=id_link_list)
+    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings,id_link=id_link_list)
     
     return tfdata
