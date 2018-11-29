@@ -294,14 +294,12 @@ class Oscilloscope():
             dt=1/fs
             t_samp=n_samp*dt
             t_axis= np.arange(0,t_samp,dt)
-#            f_axis=np.fft.rfftfreq(len(t_axis),1/fs)
-#            freq_data=np.fft.rfft(stored_time_data_copy,axis=0)
+
             
             timedata = logdata.TimeData(t_axis,stored_time_data_copy,self.settings,timestamp=t,timestring=timestring)
-            #metadata = logdata.MetaData(timestamp=t,timestring=timestring)
-            dataset = logdata.DataSet(timedata=timedata)
             
-            #plotting.plotdata(dataset)
+            dataset = logdata.DataSet()
+            dataset.add_to_dataset(timedata)
             
             
             if evt.key() == QtCore.Qt.Key_S:

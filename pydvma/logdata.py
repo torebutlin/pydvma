@@ -90,8 +90,10 @@ def log_data(settings,test_name=None):
     t_samp = n_samp*dt
     time_axis = np.arange(0,t_samp,dt)
     timedata = TimeData(time_axis,stored_time_data_copy,settings,timestamp=t,timestring=timestring,test_name=test_name)
-    #metadata = MetaData(timestamp=t,timestring=timestring)
-    dataset  = DataSet(timedata=timedata)
+    
+    
+    dataset  = DataSet()
+    dataset.add_to_dataset(timedata)
     
     return dataset
     
@@ -130,7 +132,8 @@ def create_test_data(noise_level=0):
     timedata = TimeData(time_axis,time_data,settings,timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1], test_name='Synthesised data')
     #metadata = MetaData(, tf_cal_factors=1)
     
-    dataset = DataSet(timedata=timedata)
+    dataset = DataSet()
+    dataset.add_to_dataset(timedata)
     
     return dataset
 
@@ -143,50 +146,57 @@ def create_test_data(noise_level=0):
 
 #%% Data structure
 class DataSet():
-    def __init__(self,*,timedata=[],freqdata=[],cspecdata=[],tfdata=[],sonodata=[],metadata=[]):
+    def __init__(self):#,*,timedata=[],freqdata=[],cspecdata=[],tfdata=[],sonodata=[],metadata=[]):
         ## initialisation function to set up DataSet class
         
-        self.timedata = []
-        if isinstance(timedata,TimeData):
-            self.timedata.append(timedata)
-        elif isinstance(timedata,list):
-            self.timedata = timedata
+        self.time_data_list = TimeDataList()
+        self.freq_data_list = FreqDataList()
+        self.cross_spec_data_list = CrossSpecDataList()
+        self.tf_data_list = TfDataList()
+        self.sono_data_list = SonoDataList()
+        self.meta_data_list = MetaDataList()
         
-        self.freqdata = []
-        if isinstance(freqdata,FreqData):
-            self.freqdata.append(freqdata)
-        elif isinstance(freqdata,list):
-            self.freqdata = freqdata
-            
-        self.cspecdata = []
-        if isinstance(cspecdata,CrossSpecData):
-            self.cspecdata.append(cspecdata)
-        elif isinstance(cspecdata,list):
-            self.cspecdata = cspecdata
-            
-        self.tfdata = []
-        if isinstance(tfdata,TfData):
-            self.tfdata.append(tfdata)
-        elif isinstance(tfdata,list):
-            self.tfdata = tfdata
-
-        self.sonodata = []
-        if isinstance(sonodata,SonoData):
-            self.sonodata.append(sonodata)
-        elif isinstance(sonodata,list):
-            self.sonodata = sonodata
-        
-        self.metadata = []
-        if isinstance(metadata,MetaData):
-            self.metadata.append(metadata)
-        elif isinstance(metadata,list):
-            self.metadata = metadata
+#        self.timedata = []
+#        if isinstance(timedata,TimeData):
+#            self.timedata.append(timedata)
+#        elif isinstance(timedata,list):
+#            self.timedata = timedata
+#        
+#        self.freqdata = []
+#        if isinstance(freqdata,FreqData):
+#            self.freqdata.append(freqdata)
+#        elif isinstance(freqdata,list):
+#            self.freqdata = freqdata
+#            
+#        self.cspecdata = []
+#        if isinstance(cspecdata,CrossSpecData):
+#            self.cspecdata.append(cspecdata)
+#        elif isinstance(cspecdata,list):
+#            self.cspecdata = cspecdata
+#            
+#        self.tfdata = []
+#        if isinstance(tfdata,TfData):
+#            self.tfdata.append(tfdata)
+#        elif isinstance(tfdata,list):
+#            self.tfdata = tfdata
+#
+#        self.sonodata = []
+#        if isinstance(sonodata,SonoData):
+#            self.sonodata.append(sonodata)
+#        elif isinstance(sonodata,list):
+#            self.sonodata = sonodata
+#        
+#        self.metadata = []
+#        if isinstance(metadata,MetaData):
+#            self.metadata.append(metadata)
+#        elif isinstance(metadata,list):
+#            self.metadata = metadata
             
         
     def add_to_dataset(self,data):
         ## find out what kind of data being added
         ## allow input to be list of single type of data, or unit data class
-        if not type(data) is list:
+        if not 'list' in data.__class__.__name__.lower():
             # turn into list even if unit length
             data = [data]
         else:
@@ -199,43 +209,48 @@ class DataSet():
                 
         data_class = data[0].__class__.__name__    
             
+        print('')
         if data_class=='TimeData':
-            self.timedata += data
+            self.time_data_list += data
             print('{} added to dataset'.format(data))
         elif data_class=='FreqData':
-            self.freqdata += data
+            self.freq_data_list += data
             print('{} added to dataset'.format(data))
         elif data_class=='TfData':
-            self.tfdata += data
+            self.tf_data_list += data
             print('{} added to dataset'.format(data))
         elif data_class=='SonoData':
-            self.sonodata += data
+            self.sono_data_list += data
             print('{} added to dataset'.format(data))
         elif data_class=='MetaData':
-            self.metadata += data
+            self.meta_data_list += data
             print('{} added to dataset'.format(data))
         else:
             print('No data added')
+        
+        print(self)
             
     def remove_last_data_item(self,data_class):
         
         if data_class == 'TimeData':
-            if len(self.timedata) != 0:
-                del self.timedata[-1]
+            if len(self.time_data_list) != 0:
+                del self.time_data_list[-1]
         if data_class == 'FreqData':
-            if len(self.freqdata) != 0:
-                del self.freqdata[-1]
+            if len(self.freq_data_list) != 0:
+                del self.freq_data_list[-1]
         if data_class == 'TfData':
-            if len(self.tfdata) != 0:
-                del self.tfdata[-1]
+            if len(self.tf_data_list) != 0:
+                del self.tf_data_list[-1]
         if data_class == 'SonoData':
-            if len(self.sonodata) != 0:
-                del self.sonodata[-1]
+            if len(self.sono_data_list) != 0:
+                del self.sono_data_list[-1]
         if data_class == 'MetaData':
-            if len(self.metadata) != 0:
-                del self.metadata[-1]
+            if len(self.meta_data_list) != 0:
+                del self.meta_data_list[-1]
                 
-    def remove_data(self,data_class,list_index):
+        print(self)
+                
+    def remove_data_item_by_index(self,data_class,list_index):
         
         if list_index.__class__.__name__ == 'ndarray':
             list_index = list(list_index)
@@ -244,43 +259,42 @@ class DataSet():
             
         list_index.sort()
 
-
         if data_class == 'TimeData':
-            if len(self.timedata) > np.max(list_index):
+            if len(self.time_data_list) > np.max(list_index):
                 for i in reversed(list_index):
-                    del self.timedata[i]
+                    del self.time_data_list[i]
             else:
                 print('indices out of range, no data removed')
                 
         if data_class == 'FreqData':
-            if len(self.freqdata) > np.max(list_index):
+            if len(self.freq_data_list) > np.max(list_index):
                 for i in reversed(list_index):
-                    del self.freqdata[i]
+                    del self.freq_data_list[i]
             else:
                 print('indices out of range, no data removed')
             
         if data_class == 'TfData':
-            if len(self.tfdata) > np.max(list_index):
+            if len(self.tf_data_list) > np.max(list_index):
                 for i in reversed(list_index):
-                    del self.tfdata[i]
+                    del self.tf_data_list[i]
             else:
                 print('indices out of range, no data removed')
                     
         if data_class == 'SonoData':
-            if len(self.sonodata) > np.max(list_index):
+            if len(self.sono_data_list) > np.max(list_index):
                 for i in reversed(list_index):
-                    del self.sonodata[i]
+                    del self.sono_data_list[i]
             else:
                 print('indices out of range, no data removed')
                 
         if data_class == 'MetaData':
-            if len(self.metadata) > np.max(list_index):
+            if len(self.meta_data_list) > np.max(list_index):
                 for i in reversed(list_index):
-                    del self.metadata[i] 
+                    del self.meta_data_list[i] 
             else:
                 print('indices out of range, no data removed')
 
-            
+        print(self)
     
     def __repr__(self):
         template = "{:>24}: {}" # column widths: 8, 10, 15, 7, 10
@@ -293,7 +307,30 @@ class DataSet():
         
         return text
     
-   
+class TimeDataList(list):
+    ### This will allow functions to be discovered that can take lists of TimeData is arguments
+    pass
+
+class FreqDataList(list):
+    ### This will allow functions to be discovered that can take lists of FreqData is arguments
+    pass
+
+class CrossSpecDataList(list):
+    ### This will allow functions to be discovered that can take lists of CrossSpecData is arguments
+    pass
+
+class TfDataList(list):
+    ### This will allow functions to be discovered that can take lists of TfData is arguments
+    pass
+
+class SonoDataList(list):
+    ### This will allow functions to be discovered that can take lists of SonoData is arguments
+    pass
+
+class MetaDataList(list):
+    ### This will allow functions to be discovered that can take lists of MetaData is arguments
+    pass
+
         
 class TimeData():
     def __init__(self,time_axis,time_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
