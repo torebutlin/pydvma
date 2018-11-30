@@ -1,9 +1,4 @@
-import sys
 
-from . import logsettings
-from . import file
-from . import logdata
-from . import plotting
 
 import pyaudio
 import numpy as np

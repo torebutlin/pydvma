@@ -7,20 +7,14 @@ Created on Tue Aug 28 19:04:14 2018
 
 
 
-from . import logsettings
-from . import file
-from . import logdata
+from . import options
+from . import datastructure
 
-
-###----------------------------------------------------------------------------
 import numpy as np
-import scipy as sp
-
-###----------------------------------------------------------------------------
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
-###----------------------------------------------------------------------------
+
 
 
 class PlotData(object):
@@ -28,10 +22,10 @@ class PlotData(object):
         '''
         Args:
             data: plots data which can be class of type:
-                    logdata.DataSet
-                    logdata.TimeData
-                    logdata.FreqData
-                    logdata.TfData
+                    datastructure.DataSet
+                    datastructure.TimeData
+                    datastructure.FreqData
+                    datastructure.TfData
             channels: list of channels to plot
         '''
         if type(channels) is int:
@@ -54,17 +48,17 @@ class PlotData(object):
                 self.plot_tf_data(data.tf_data_list,channels)
             
         elif data[0].__class__.__name__ == 'TimeData':
-            self.data = logdata.DataSet()
+            self.data = datastructure.DataSet()
             self.data.add_to_dataset(data)
             self.plot_time_data(data,channels)
         
         elif data[0].__class__.__name__  == 'FreqData':
-            self.data = logdata.DataSet()
+            self.data = datastructure.DataSet()
             self.data.add_to_dataset(data)
             self.plot_freq_data(data,channels)
             
         elif data[0].__class__.__name__  == 'TfData':
-            self.data = logdata.DataSet()
+            self.data = datastructure.DataSet()
             self.data.add_to_dataset(data)
             self.plot_tf_data(data,channels)
             
@@ -89,7 +83,7 @@ class PlotData(object):
             for n_chan in range(time_data_list[n_set].settings.channels):
                 count += 1
                 if n_chan in channels:
-                    self.timeax.plot(time_data_list[n_set].time_axis,time_data_list[n_set].time_data[:,n_chan],'-',linewidth=1,color = logsettings.set_plot_colours(len(time_data_list)*time_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
+                    self.timeax.plot(time_data_list[n_set].time_axis,time_data_list[n_set].time_data[:,n_chan],'-',linewidth=1,color = options.set_plot_colours(len(time_data_list)*time_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
             
         self.timeax.legend()
         
@@ -111,7 +105,7 @@ class PlotData(object):
             for n_chan in range(freq_data_list[n_set].settings.channels):
                 count += 1
                 if n_chan in channels:
-                    self.freqax.plot(freq_data_list[n_set].freq_axis,20*np.log10(np.abs(freq_data_list[n_set].freq_data[:,n_chan])),'-',linewidth=1,color = logsettings.set_plot_colours(len(freq_data_list)*freq_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
+                    self.freqax.plot(freq_data_list[n_set].freq_axis,20*np.log10(np.abs(freq_data_list[n_set].freq_data[:,n_chan])),'-',linewidth=1,color = options.set_plot_colours(len(freq_data_list)*freq_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
             
         self.freqax.legend()
         
@@ -133,8 +127,8 @@ class PlotData(object):
             for n_chan in range(tf_data_list[n_set].settings.channels):
                 count += 1
                 if n_chan in channels:
-                    self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_data[:,n_chan])),'-',linewidth=1,color = logsettings.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
-                    self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_coherence[:,n_chan])),'--',linewidth=1,color = logsettings.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{} (coherence)'.format(n_set,n_chan))
+                    self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_data[:,n_chan])),'-',linewidth=1,color = options.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
+                    self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_coherence[:,n_chan])),'--',linewidth=1,color = options.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{} (coherence)'.format(n_set,n_chan))
             
         self.tfax.legend()
         

@@ -4,18 +4,13 @@ Created on Sun Sep  2 20:16:26 2018
 
 @author: tb267
 """
-import sys
 
-from . import logsettings
-from . import file
-from . import logdata
-from . import plotting
+from . import datastructure
 
 import numpy as np
 from scipy import signal
-import time
-import datetime
 import copy
+
 
 def calculate_fft(time_data,time_range=None,window=False):
     '''
@@ -51,7 +46,7 @@ def calculate_fft(time_data,time_range=None,window=False):
     fdata = np.fft.rfft(data_selected,axis=0)
     faxis = np.fft.rfftfreq(N,1/time_data.settings.fs)
     
-    freq_data = logdata.FreqData(faxis,fdata,settings,id_link=time_data.unique_id)
+    freq_data = datastructure.FreqData(faxis,fdata,settings,id_link=time_data.unique_id)
     
     return freq_data
 
@@ -116,7 +111,7 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window='hann', N
                 Pxy[nx,ny,:] = P
                 Cxy[nx,ny,:] = C
             
-    cross_spec_data = logdata.CrossSpecData(f,Pxy,Cxy,settings,id_link=time_data.unique_id)
+    cross_spec_data = datastructure.CrossSpecData(f,Pxy,Cxy,settings,id_link=time_data.unique_id)
     
     return cross_spec_data
 
@@ -163,7 +158,7 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
             Cxy[ch_in,ch_out,:] = np.abs(Pxy_av[ch_in,ch_out,:])**2 / (np.abs(Pxy_av[ch_in,ch_in,:]) * np.abs(Pxy_av[ch_out,ch_out,:]))
     
     
-    cross_spec_data_av = logdata.CrossSpecData(cross_spec_data.freq_axis,Pxy_av,Cxy,settings,id_link=id_link_list)
+    cross_spec_data_av = datastructure.CrossSpecData(cross_spec_data.freq_axis,Pxy_av,Cxy,settings,id_link=id_link_list)
 
     return cross_spec_data_av
 
@@ -207,7 +202,7 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window='hann', N_frames=1,
     settings.ch_in = ch_in
     settings.ch_out_set = ch_out_set
     
-    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings,id_link=time_data.unique_id)
+    tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=time_data.unique_id)
     
     return tfdata
     
@@ -265,6 +260,6 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
     settings.ch_out_set = ch_out_set
     
     
-    tfdata = logdata.TfData(f,tf_data,tf_coherence,settings,id_link=id_link_list)
+    tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=id_link_list)
     
     return tfdata

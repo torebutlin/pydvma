@@ -6,18 +6,14 @@ Created on Fri Aug  3 11:27:29 2018
 """      
 import sys
 
-from . import logsettings
+from . import options
 from . import file
-from . import logdata
-from . import plotting
+from . import datastructure
 from . import streams
 
-import pyaudio
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtGui, QtCore
-import matplotlib
-import matplotlib.pyplot as plt
 import time
 import datetime
 
@@ -144,7 +140,7 @@ class Oscilloscope():
         
         self.osc_time_lineset={}
         for i in range(self.settings.channels):
-            pen_ = pg.mkPen(color=logsettings.set_plot_colours(self.settings.channels)[i,:])
+            pen_ = pg.mkPen(color=options.set_plot_colours(self.settings.channels)[i,:])
             self.osc_time_lineset[i]=self.osc_time_line.plot(pen=pen_, name='Channel '+str(i))
         
 #        Oscilloscope.win.FillBetweenItem(curve1=osc_time_lineset[0], curve2=osc_time_lineset[1])
@@ -163,7 +159,7 @@ class Oscilloscope():
         
         self.osc_freq_lineset={}
         for i in range(self.settings.channels):
-            pen_ = pg.mkPen(color=logsettings.set_plot_colours(self.settings.channels)[i,:])
+            pen_ = pg.mkPen(color=options.set_plot_colours(self.settings.channels)[i,:])
             self.osc_freq_lineset[i]=self.osc_freq_line.plot(pen=pen_, name='Channel'+str(i))
             
     def levels_plot(self):
@@ -185,8 +181,8 @@ class Oscilloscope():
 #        self.osc_levels_line.setTicks(np.arange(self.settings.channels))
         self.osc_levels_lineset={}
         for i in range(self.settings.channels):
-            pen_ = pg.mkPen(color=logsettings.set_plot_colours(self.settings.channels)[i,:],width=3)
-            pen_peak = pg.mkPen(color=logsettings.set_plot_colours(self.settings.channels)[i,:],width=3)
+            pen_ = pg.mkPen(color=options.set_plot_colours(self.settings.channels)[i,:],width=3)
+            pen_peak = pg.mkPen(color=options.set_plot_colours(self.settings.channels)[i,:],width=3)
             self.osc_levels_lineset[i]=self.osc_levels_line.plot(pen=pen_, name='vertical')
             self.osc_levels_lineset[self.settings.channels+i]=self.osc_levels_line.plot(pen=pen_, name='top')
             self.osc_levels_lineset[2*self.settings.channels+i]=self.osc_levels_line.plot(pen=pen_peak, name='peak hold')    
@@ -227,9 +223,9 @@ class Oscilloscope():
                 self.osc_levels_lineset[self.settings.channels+i].setData([i-0.3,i+0.3],self.osc_levels_max[i]*np.ones(2))
                 
                 if self.osc_levels_peak_hold[i] > 0.98:
-                    pen_peak = pg.mkPen(color=logsettings.set_plot_colours(self.settings.channels)[i,:],width=10)
+                    pen_peak = pg.mkPen(color=options.set_plot_colours(self.settings.channels)[i,:],width=10)
                 else:
-                    pen_peak = pg.mkPen(color=logsettings.set_plot_colours(self.settings.channels)[i,:],width=3)
+                    pen_peak = pg.mkPen(color=options.set_plot_colours(self.settings.channels)[i,:],width=3)
 #                self.osc_levels_lineset[2*self.settings.channels+i]=self.osc_levels_line.plot(pen=pen_peak, name='peak hold')
                 self.osc_levels_lineset[2*self.settings.channels+i].setData([i-0.3,i+0.3],self.osc_levels_peak_hold[i]*np.ones(2),pen=pen_peak)
 #                self.osc_levels_lineset[3].setData(np.arange(2),np.ones(2))
@@ -296,9 +292,9 @@ class Oscilloscope():
             t_axis= np.arange(n_samp)*dt
 
             
-            timedata = logdata.TimeData(t_axis,stored_time_data_copy,self.settings,timestamp=t,timestring=timestring,test_name='Test_{}'.format(self.data_saved_counter))
+            timedata = datastructure.TimeData(t_axis,stored_time_data_copy,self.settings,timestamp=t,timestring=timestring,test_name='Test_{}'.format(self.data_saved_counter))
             
-            dataset = logdata.DataSet()
+            dataset = datastructure.DataSet()
             dataset.add_to_dataset(timedata)
             
             

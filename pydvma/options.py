@@ -5,13 +5,10 @@ Created on Mon Aug 27 13:28:39 2018
 @author: tb267
 """
 
-import pyaudio
+
 import numpy as np
+import pyaudio
 import pyqtgraph as pg
-
-
-
-
 
 
 class MySettings(object):

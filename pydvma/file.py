@@ -4,15 +4,10 @@ Created on Mon Aug 27 14:32:35 2018
 
 @author: tb267
 """
-import sys
 
-from . import logsettings
-from . import plotting
-from . import logdata
 
 import numpy as np
 import os.path
-from pyqtgraph.Qt import QtGui, QtCore
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
