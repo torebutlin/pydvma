@@ -5,6 +5,8 @@ Created on Mon Aug 27 17:08:42 2018
 @author: tb267
 """
 
+from . import analysis
+
 import numpy as np
 import datetime
 import uuid
@@ -151,7 +153,61 @@ class DataSet():
     
 class TimeDataList(list):
     ### This will allow functions to be discovered that can take lists of TimeData is arguments
-    pass
+    def calculate_fft_set(self,time_range=None,window=False):
+        '''
+        Calls analysis.calculate_fft on each item in the list and returns FreqDataList object
+        '''
+        freq_data_list = []
+        
+        for td in self:
+            freq_data = analysis.calculate_fft(td, time_range, window)
+            freq_data_list += [freq_data]
+            
+        return freq_data_list
+    
+    
+    def calculate_tf_set(self, ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
+        '''
+        Calls analysis.calculate_tf on each item in the list and returns TfDataList object
+        '''
+        tf_data_list = []
+        
+        for td in self:
+            tf_data = analysis.calculate_tf(td, ch_in, time_range,window,N_frames,overlap)
+            tf_data_list += [tf_data]
+            
+        return tf_data_list
+    
+    def calculate_cross_spectrum_matrix_set(self, ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
+        '''
+        Calls analysis.calculate_tf on each item in the list and returns TfDataList object
+        '''
+        cross_spec_data_list = []
+        
+        for td in self:
+            cross_spec_data = analysis.calculate_cross_spectrum_matrix(td, time_range,window,N_frames,overlap)
+            cross_spec_data_list += [cross_spec_data]
+            
+        return cross_spec_data_list
+    
+    
+    def calculate_tf_averaged(self, ch_in=0, time_range=None,window='hann'):
+        '''
+        Calls analysis.calculate_tf_averaged on whole list and returns TfData object
+        '''
+        tf_data_list = analysis.calculate_tf_averaged(self, ch_in, time_range,window)
+            
+        return tf_data_list
+    
+    
+    def calculate_cross_spectra_averaged(self, time_range=None,window=None):
+        '''
+        Calls analysis.calculate_tf_averaged on whole list and returns TfData object
+        '''
+        cross_spec_data = analysis.calculate_cross_spectra_averaged(self, time_range,window)
+            
+        return cross_spec_data
+    
 
 class FreqDataList(list):
     ### This will allow functions to be discovered that can take lists of FreqData is arguments

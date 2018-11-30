@@ -12,8 +12,6 @@ import numpy as np
 import datetime
 
 
-
-
     
 
 #%% Create test data
