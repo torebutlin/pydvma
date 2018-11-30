@@ -57,6 +57,7 @@ def load_data(*filename):
     '''
     Loads dataset from filename, or displays a dialog if no argument provided.
     '''
+
     
     if len(filename) == 0:
         root = tk.Tk()
@@ -74,8 +75,8 @@ def load_data(*filename):
             
         root.destroy()
         
-    elif (len(filename)==1) & (type(filename[0])==str):
-        d=np.load(filename)
+    elif (len(filename)==1) and (type(filename[0]) is str):
+        d=np.load(filename[0])
         dataset = d[0]
         print('dataset loaded')
         
@@ -188,8 +189,8 @@ def save_data(dataset,*savename,overwrite_without_prompt=False):
         # use savename
         filename = savename[0].replace(".npy","")+".npy"
         if overwrite_without_prompt == True:
-            if os.path.isfile(filename):
-                print('Overwriting existing file')
+            #if os.path.isfile(filename):
+                #print('Overwriting existing file')
             np.save(filename,d)
             print("Data saved as " + filename)  
             

@@ -342,10 +342,9 @@ class DataSet():
         print(self)
     
     def __repr__(self):
-        template = "{:>24}: {}" # column widths: 8, 10, 15, 7, 10
-        #print template.format("CLASSID", "DEPT", "COURSE NUMBER", "AREA", "TITLE") # header
+        template = "{:>24}: {}"
         dataset_dict = self.__dict__
-        text = '\n<DataSet class>\n\n'
+        text = '\n<DataSet> class:\n\n'
         for attr in dataset_dict: 
             text += template.format(attr,dataset_dict[attr])
             text += '\n'

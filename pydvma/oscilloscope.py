@@ -296,30 +296,30 @@ class Oscilloscope():
             t_axis= np.arange(n_samp)*dt
 
             
-            timedata = logdata.TimeData(t_axis,stored_time_data_copy,self.settings,timestamp=t,timestring=timestring)
+            timedata = logdata.TimeData(t_axis,stored_time_data_copy,self.settings,timestamp=t,timestring=timestring,test_name='Test_{}'.format(self.data_saved_counter))
             
             dataset = logdata.DataSet()
             dataset.add_to_dataset(timedata)
             
             
             if evt.key() == QtCore.Qt.Key_S:
-                self.data_saved_counter = 0
-            
-            
-            if self.data_saved_counter == 0:
+                self.data_saved_counter = 1
                 self.last_filename = file.save_data(dataset)
-                if self.last_filename == '':
-                    self.data_saved_counter = 0
-                else:
-                    self.data_saved_counter += 1
             
-            else:
-                filename = self.last_filename.replace('.npy','') + '_' + str(self.data_saved_counter) + '.npy'
-                file.save_data(dataset,filename)
-                self.data_saved_counter += 1
-
-
-        
+            if evt.key() == QtCore.Qt.Key_Space:
+                if self.data_saved_counter == 0:
+                    self.last_filename = file.save_data(dataset)
+                    if self.last_filename == '':
+                        self.data_saved_counter = 0
+                    else:
+                        self.data_saved_counter += 1
+                
+                else:
+                    d = file.load_data(self.last_filename)
+                    d.add_to_dataset(timedata)
+                    file.save_data(d,self.last_filename,overwrite_without_prompt=True)
+                    self.data_saved_counter += 1
+                    
 
      
 
