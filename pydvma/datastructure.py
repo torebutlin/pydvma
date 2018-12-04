@@ -44,26 +44,29 @@ class DataSet():
                 
         data_class = data[0].__class__.__name__    
             
-        print('')
+        #print('')
         if data_class=='TimeData':
             self.time_data_list += data
-            print('{} added to dataset'.format(data))
+            #print('{} added to dataset'.format(data))
         elif data_class=='FreqData':
             self.freq_data_list += data
-            print('{} added to dataset'.format(data))
+            #print('{} added to dataset'.format(data))
+        elif data_class=='CrossSpecData':
+            self.cross_spec_data_list += data
+            #print('{} added to dataset'.format(data))
         elif data_class=='TfData':
             self.tf_data_list += data
-            print('{} added to dataset'.format(data))
+            #print('{} added to dataset'.format(data))
         elif data_class=='SonoData':
             self.sono_data_list += data
-            print('{} added to dataset'.format(data))
+            #print('{} added to dataset'.format(data))
         elif data_class=='MetaData':
             self.meta_data_list += data
-            print('{} added to dataset'.format(data))
+            #print('{} added to dataset'.format(data))
         else:
             print('No data added')
         
-        print(self)
+        #print(self)
             
     def remove_last_data_item(self,data_class):
         
@@ -86,7 +89,7 @@ class DataSet():
             if len(self.meta_data_list) != 0:
                 del self.meta_data_list[-1]
                 
-        print(self)
+        #print(self)
                 
     def remove_data_item_by_index(self,data_class,list_index):
         
@@ -139,7 +142,57 @@ class DataSet():
             else:
                 print('indices out of range, no data removed')
 
-        print(self)
+        #print(self)
+        
+    def calculate_fft_set(self,time_range=None,window=False):
+        '''
+        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        '''
+        if len(self.time_data_list)>0:
+            freq_data_list = self.time_data_list.calculate_fft_set(time_range=None,window=False)
+            self.add_to_dataset(freq_data_list)
+        else:
+            print('No time data found in dataset')
+            
+    def calculate_tf_set(self, ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
+        '''
+        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        '''
+        if len(self.time_data_list)>0:
+            tf_data_list = self.time_data_list.calculate_tf_set()
+            self.add_to_dataset(tf_data_list)
+        else:
+            print('No time data found in dataset')
+            
+    def calculate_cross_spectrum_matrix_set(self,ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
+        '''
+        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        '''
+        if len(self.time_data_list)>0:
+            cross_spec_data_list = self.time_data_list.calculate_cross_spectrum_matrix_set(ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5)
+            self.add_to_dataset(cross_spec_data_list)
+        else:
+            print('No time data found in dataset')
+            
+    def calculate_tf_averaged(self, ch_in=0, time_range=None,window='hann'):
+        '''
+        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        '''
+        if len(self.time_data_list)>0:
+            tf_data = self.time_data_list.calculate_tf_averaged(ch_in=0, time_range=None,window='hann')
+            self.add_to_dataset(tf_data)
+        else:
+            print('No time data found in dataset')
+            
+    def calculate_cross_spectra_averaged(self, time_range=None,window=None):
+        '''
+        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        '''
+        if len(self.time_data_list)>0:
+            cross_spec_data = self.time_data_list.calculate_cross_spectra_averaged(time_range=None,window=None)
+            self.add_to_dataset(cross_spec_data)
+        else:
+            print('No time data found in dataset')
     
     def __repr__(self):
         template = "{:>24}: {}"
@@ -195,9 +248,9 @@ class TimeDataList(list):
         '''
         Calls analysis.calculate_tf_averaged on whole list and returns TfData object
         '''
-        tf_data_list = analysis.calculate_tf_averaged(self, ch_in, time_range,window)
+        tf_data = analysis.calculate_tf_averaged(self, ch_in, time_range,window)
             
-        return tf_data_list
+        return tf_data
     
     
     def calculate_cross_spectra_averaged(self, time_range=None,window=None):

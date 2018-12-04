@@ -6,11 +6,11 @@ Created on Thu Sep  6 15:06:51 2018
 """
 from setuptools import setup, find_packages
 
-requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'pyaudio', 'matplotlib']
+requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'pyaudio', 'matplotlib', 'PyDAQmx']
 
 setup(
     name='pydvma',
-    version='0.3.0',
+    version='0.3.1',
     install_requires=requires,
     packages=['pydvma','labs'],
     license='BSD 3-Clause License',

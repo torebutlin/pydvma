@@ -41,7 +41,8 @@ def calculate_fft(time_data,time_range=None,window=False):
     data_selected = time_data.time_data[selection,:]
     N = len(data_selected[:,0])
     if window == True:
-        data_selected = np.blackman(N)
+        w = np.blackman(N)
+        data_selected = w*data_selected
         
     fdata = np.fft.rfft(data_selected,axis=0)
     faxis = np.fft.rfftfreq(N,1/time_data.settings.fs)
