@@ -2,8 +2,15 @@
 
 import pyaudio
 import numpy as np
-import PyDAQmx as pdaq
-from PyDAQmx import Task
+
+try:
+    import PyDAQmx as pdaq
+    from PyDAQmx import Task
+except ImportError:
+    pdaq = None
+except NotImplementedError:
+    pdaq = None
+
 
 
 
