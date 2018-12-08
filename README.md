@@ -14,6 +14,19 @@ The aim is for a library that is simple to use and simple to maintain. It is not
 
 ## Getting started
 
+### Dependencies
+
+On Windows: TBC
+
+On Mac OS X: install PortAudio. If you use Homebrew, just run this:
+```shell
+$ brew install portaudio
+```
+
+On Linux: TBC
+
+### Installing pydvma
+
 Install using:
 ```
 pip install pydvma --upgrade
