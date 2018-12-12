@@ -97,3 +97,15 @@ def log_data(settings,test_name=None):
     return dataset
     
     
+def stream_snapshot(rec):
+    
+    time_data_copy = np.copy(rec.osc_time_data)
+    time_axis_copy = np.copy(rec.osc_time_axis)
+    
+    t = datetime.datetime.now()
+    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)    
+
+    time_data = datastructure.TimeData(time_axis_copy,time_data_copy,rec.settings,timestamp=t,timestring=timestring,test_name='stream_snapshot')
+    
+    
+    return time_data

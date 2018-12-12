@@ -120,11 +120,11 @@ class PlotData(object):
         self.tfax.grid()
         
         if channels == 'all':
-            channels = list(range(len(tf_data_list[0].tf_data[0,:])))
+            channels = list(range(tf_data_list[0].settings.channels-1))
         
         count = -1
         for n_set in range(len(tf_data_list)):
-            for n_chan in range(tf_data_list[n_set].settings.channels):
+            for n_chan in range(tf_data_list[n_set].settings.channels-1):
                 count += 1
                 if n_chan in channels:
                     self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_data[:,n_chan])),'-',linewidth=1,color = options.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
