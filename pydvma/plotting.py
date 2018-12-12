@@ -18,7 +18,7 @@ matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
 
 
 class PlotData(object):
-    def __init__(self,data,channels='all'):
+    def __init__(self,data,channels='all',plot_coherence=True):
         '''
         Args:
             data: plots data which can be class of type:
@@ -60,7 +60,7 @@ class PlotData(object):
         elif data[0].__class__.__name__  == 'TfData':
             self.data = datastructure.DataSet()
             self.data.add_to_dataset(data)
-            self.plot_tf_data(data,channels)
+            self.plot_tf_data(data,channels,plot_coherence)
             
         self.channels = channels
             
@@ -111,7 +111,7 @@ class PlotData(object):
         
         plt.show()
         
-    def plot_tf_data(self,tf_data_list,channels):
+    def plot_tf_data(self,tf_data_list,channels,plot_coherence=True):
         ### plot transfer function data
         self.tffig, self.tfax = plt.subplots(figsize = (9,5),dpi=100)
     
@@ -128,7 +128,8 @@ class PlotData(object):
                 count += 1
                 if n_chan in channels:
                     self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_data[:,n_chan])),'-',linewidth=1,color = options.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{}'.format(n_set,n_chan))
-                    self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_coherence[:,n_chan])),'--',linewidth=1,color = options.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{} (coherence)'.format(n_set,n_chan))
+                    if plot_coherence and not np.any(tf_data_list[n_set].tf_coherence == None):
+                        self.tfax.plot(tf_data_list[n_set].freq_axis,20*np.log10(np.abs(tf_data_list[n_set].tf_coherence[:,n_chan])),'--',linewidth=1,color = options.set_plot_colours(len(tf_data_list)*tf_data_list[n_set].settings.channels)[count,:]/255,label='set{},ch{} (coherence)'.format(n_set,n_chan))
             
         self.tfax.legend()
         

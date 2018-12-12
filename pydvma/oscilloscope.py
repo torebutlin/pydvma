@@ -219,28 +219,28 @@ class Oscilloscope():
         if evt.key() == QtCore.Qt.Key_T:
 
             if self.view_freq != False or self.view_levels != False:
-                print('toggled time domain view')
+#                print('toggled time domain view')
                 self.view_time = not self.view_time
                 self.toggle_view()
-            else:
-                print('toggling all views off is prevented')
+#            else:
+#                print('toggling all views off is prevented')
 
         if evt.key() == QtCore.Qt.Key_F:
 
             if self.view_time != False or self.view_levels != False:
-                print('toggled frequency domain view')
+#                print('toggled frequency domain view')
                 self.view_freq = not self.view_freq
                 self.toggle_view()
-            else:
-                print('toggling all views off is prevented')
+#            else:
+#                print('toggling all views off is prevented')
 
         if evt.key() == QtCore.Qt.Key_L:
             if self.view_time != False or self.view_freq != False:
-                print('toggled levels view')
+#                print('toggled levels view')
                 self.view_levels = not self.view_levels
                 self.toggle_view()
-            else:
-                print('toggling all views off is prevented')
+#            else:
+#                print('toggling all views off is prevented')
         
         if evt.key() == QtCore.Qt.Key_P:
             if self.timer.isActive():
@@ -258,7 +258,7 @@ class Oscilloscope():
             stored_time_data_copy=np.copy(self.rec.stored_time_data)
             t = datetime.datetime.now()
             timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
-            print("key press trigger: saving data to file in working directory")
+#            print("key press trigger: saving data to file in working directory")
 
             ### make into dataset
             

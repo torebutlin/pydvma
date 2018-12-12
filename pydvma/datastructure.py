@@ -16,7 +16,7 @@ import uuid
     
 #%% Data structure
 class DataSet():
-    def __init__(self):#,*,timedata=[],freqdata=[],cspecdata=[],tfdata=[],sonodata=[],metadata=[]):
+    def __init__(self,data=None):#,*,timedata=[],freqdata=[],cspecdata=[],tfdata=[],sonodata=[],metadata=[]):
         ## initialisation function to set up DataSet class
         
         self.time_data_list = TimeDataList()
@@ -25,7 +25,9 @@ class DataSet():
         self.tf_data_list = TfDataList()
         self.sono_data_list = SonoDataList()
         self.meta_data_list = MetaDataList()
-       
+        
+        if not data == None:
+            self.add_to_dataset(data)
             
         
     def add_to_dataset(self,data):
@@ -285,6 +287,9 @@ class MetaDataList(list):
         
 class TimeData():
     def __init__(self,time_axis,time_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+        
+        time_data = reshape_arrays(time_data)
+        
         self.time_axis = time_axis
         self.time_data = time_data  
         self.settings = settings
@@ -303,6 +308,9 @@ class TimeData():
         
 class FreqData():
     def __init__(self,freq_axis,freq_data,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+        
+        freq_data = reshape_arrays(freq_data)
+        
         self.freq_axis = freq_axis
         self.freq_data = freq_data
         self.settings = settings
@@ -320,6 +328,7 @@ class FreqData():
     
 class CrossSpecData():
     def __init__(self,freq_axis,Pxy,Cxy,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+        
         self.freq_axis = freq_axis
         self.Pxy = Pxy
         self.Cxy = Cxy
@@ -338,6 +347,9 @@ class CrossSpecData():
         
 class TfData():
     def __init__(self,freq_axis,tf_data,tf_coherence,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+        
+        tf_data = reshape_arrays(tf_data)
+        
         self.freq_axis = freq_axis
         self.tf_data = tf_data
         self.tf_coherence = tf_coherence
@@ -383,3 +395,11 @@ class MetaData():
         
     def __repr__(self):
         return "<MetaData>"
+    
+    
+def reshape_arrays(a):
+    b = np.shape(a)
+    if len(b) == 1:
+        a = a[:,None]
+        
+    return a

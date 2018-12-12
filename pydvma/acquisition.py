@@ -22,16 +22,15 @@ def log_data(settings,test_name=None):
     
     # Stream is object within Oscilloscope (whether or not Oscilloscope is being viewed)
     if settings.device_driver == 'soundcard':
-        oscilloscope.Oscilloscope.rec = streams.Recorder(settings)
-        oscilloscope.Oscilloscope.rec.init_stream(settings)
+        rec = streams.Recorder(settings)
+        rec.init_stream(settings)
     elif settings.device_driver == 'nidaq':
-        oscilloscope.Oscilloscope.rec = streams.Recorder_NI(settings)
-        oscilloscope.Oscilloscope.rec.init_stream(settings)
+        rec = streams.Recorder_NI(settings)
+        rec.init_stream(settings)
     else:
         print('unrecognised driver')
     
-    # make recording stream easier to reference    
-    rec = oscilloscope.Oscilloscope.rec
+    
     rec.trigger_detected = False
     
     

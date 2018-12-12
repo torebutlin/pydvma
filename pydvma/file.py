@@ -46,7 +46,7 @@ def save_data(dataset, filename=None, overwrite_without_prompt=False):
         filename, _ = QtGui.QFileDialog.getSaveFileName(wid, 'Save dataset', '', '*.npy')
         if not filename:
             # No filename chosen, give up on saving
-            print('Giving up on saving')
+            print('Save cancelled')
             return None
 
 
@@ -55,7 +55,7 @@ def save_data(dataset, filename=None, overwrite_without_prompt=False):
     elif os.path.isfile(filename) and not overwrite_without_prompt:
         answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
         if answer != 'y':
-            print('Giving up on saving')
+            print('Save cancelled')
             return None
         print('Will overwrite existing file')
         
