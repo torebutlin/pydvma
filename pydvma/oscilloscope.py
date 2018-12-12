@@ -35,17 +35,15 @@ class Oscilloscope():
             raise ValueError('Unknown driver: %r' % settings.device_driver)
         self.rec.init_stream(settings)
 
-        # XXX What is this check for?
-        if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
-            self.timer = QtCore.QTimer()
-            self.create_figure()
+        self.timer = QtCore.QTimer()
+        self.create_figure()
 
-            self.win.sigKeyPress.connect(self.keyPressed)
-            self.win.sigClose.connect(self.on_close)
+        self.win.sigKeyPress.connect(self.keyPressed)
+        self.win.sigClose.connect(self.on_close)
 
-            # Start the update timer
-            self.timer.timeout.connect(self.update) # update figure and buffer
-            self.timer.start(60)
+        # Start the update timer
+        self.timer.timeout.connect(self.update) # update figure and buffer
+        self.timer.start(60)
 
     def create_figure(self):
         '''
@@ -54,17 +52,17 @@ class Oscilloscope():
         '''
         pg.setConfigOption('background', 'w')
         self.win = KeyPressWindow()
-#        self.win.setWindowIcon(QtGui.QIcon('icon.png'))
-
+        self.win.setWindowIcon(QtGui.QIcon('icon.png'))
         window_geometry = self.win.geometry()
         self.win.setGeometry(100,100,800,600)
-
-        # XXX Do you really want it to start minimized then appear?
+        #self.win.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
+        
+        # This ensures the window appears at front.
         self.win.showMinimized()
         self.win.showNormal()
+        
 
-        self.win.setWindowTitle("Oscilloscope (to save to new filename press "
-                                "'s', to autosave press 'space')")
+        self.win.setWindowTitle("Oscilloscope ('s': save new file, 'space': autosave, 'p': pause, 'a': always top)")
         self.view_time = self.settings.init_view_time
         self.view_freq = self.settings.init_view_freq
         self.view_levels = self.settings.init_view_levels
@@ -243,7 +241,18 @@ class Oscilloscope():
                 self.toggle_view()
             else:
                 print('toggling all views off is prevented')
-
+        
+        if evt.key() == QtCore.Qt.Key_P:
+            if self.timer.isActive():
+                self.timer.stop()
+            else:
+                self.timer.start()
+                
+        if evt.key() == QtCore.Qt.Key_A:
+            self.win.setWindowFlags(self.win.windowFlags() ^ QtCore.Qt.WindowStaysOnTopHint)       
+            self.win.show()
+                
+                
         if evt.key() == QtCore.Qt.Key_Space or evt.key() == QtCore.Qt.Key_S:
 
             stored_time_data_copy=np.copy(self.rec.stored_time_data)
@@ -256,7 +265,6 @@ class Oscilloscope():
             fs=self.settings.fs
             n_samp=len(stored_time_data_copy[:,0])
             dt=1/fs
-            t_samp=n_samp*dt
             t_axis= np.arange(n_samp)*dt
 
             
@@ -298,7 +306,6 @@ class KeyPressWindow(pg.GraphicsWindow):
         Re-implmented from parent.
         '''
         super().__init__(*args, **kwargs)
-        #self.rec = rec
 
     def keyPressEvent(self, evt):
         '''
