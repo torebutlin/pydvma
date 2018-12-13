@@ -61,12 +61,12 @@ def create_test_impulse_ensemble(N_ensemble=5, noise_level=0.1):
     return dataset
 
 
-def create_test_noise_data():
+def create_test_noise_data(added_noise_level=0.1):
     '''
     Creates example time domain data simulating noise input test
     '''
     settings = options.MySettings(fs=10000)
-    N = np.int16(1e4)
+    N = np.int32(10*1e4)
     time_axis = np.arange(N)/settings.fs
     
     time_data = np.zeros([N,2])
@@ -77,7 +77,7 @@ def create_test_noise_data():
     y = np.convolve(x,g)
     y = y[0:len(x)]
     
-    added_noise = 0.01*2*(np.random.rand(N)-0.5)
+    added_noise = added_noise_level*2*(np.random.rand(N)-0.5)
     time_data[:,0] = x
     time_data[:,1] = y + added_noise
     

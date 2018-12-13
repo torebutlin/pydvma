@@ -51,7 +51,8 @@ def log_data(settings,test_name=None):
         
         # make copy of data
         stored_time_data_copy = np.copy(rec.stored_time_data)
-        number_samples = rec.settings.stored_time * rec.settings.fs
+        number_samples = np.int64(rec.settings.stored_time * rec.settings.fs)
+        print(rec)
         stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
         print('')
         print('Logging complete.')

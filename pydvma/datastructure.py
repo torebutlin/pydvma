@@ -6,6 +6,7 @@ Created on Mon Aug 27 17:08:42 2018
 """
 
 from . import analysis
+from . import file
 
 import numpy as np
 import datetime
@@ -195,6 +196,10 @@ class DataSet():
             self.add_to_dataset(cross_spec_data)
         else:
             print('No time data found in dataset')
+            
+    def save_data(self, filename=None):
+        savename = file.save_data(self, filename=None, overwrite_without_prompt=False)
+        return savename
     
     def __repr__(self):
         template = "{:>24}: {}"
