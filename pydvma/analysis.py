@@ -12,7 +12,7 @@ from scipy import signal
 import copy
 
 
-def calculate_fft(time_data,time_range=None,window=False):
+def calculate_fft(time_data,time_range=None,window=None):
     '''
     Args:
         time_data (<TimeData> object): time series data
@@ -40,10 +40,14 @@ def calculate_fft(time_data,time_range=None,window=False):
     selection = s1 & s2
     data_selected = time_data.time_data[selection,:]
     N = len(data_selected[:,0])
-    if window == True:
-        w = np.blackman(N)
-        # Broadcast the window across potentially multiple channels
-        data_selected = w[:, None] * data_selected
+    
+    if window is None:
+        w = signal.windows.get_window('boxcar',N)
+    else:
+        w = signal.windows.get_window(window,N)
+        
+    # Broadcast the window across potentially multiple channels
+    data_selected = w[:, None] * data_selected
         
     fdata = np.fft.rfft(data_selected,axis=0)
     faxis = np.fft.rfftfreq(N,1/time_data.settings.fs)
@@ -101,7 +105,7 @@ def best_match(tf_data_list,freq_range=None,n_ref=0):
     return factors
 
 
-def calculate_cross_spectrum_matrix(time_data, time_range=None, window='hann', N_frames=1, overlap=0.5):
+def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_frames=1, overlap=0.5):
     '''
     Args:
         time_data (<TimeData> object): time series data
@@ -212,7 +216,7 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
     return cross_spec_data_av
 
 
-def calculate_tf(time_data, ch_in=0, time_range=None, window='hann', N_frames=1, overlap=0.5):
+def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, overlap=0.5):
     '''
     Args:
         time_data (<TimeData> object): time series data

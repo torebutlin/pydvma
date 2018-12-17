@@ -43,7 +43,7 @@ class DataSet():
             for d in data:
                 check = check and (d.__class__.__name__ == data[0].__class__.__name__)
             if check is False:
-                raise Exception('data list needs to contain homogenous type of data')
+                raise ValueError('Data list needs to contain homogenous type of data')
                 
         data_class = data[0].__class__.__name__    
             
@@ -147,23 +147,25 @@ class DataSet():
 
         #print(self)
         
-    def calculate_fft_set(self,time_range=None,window=False):
+    def calculate_fft_set(self,time_range=None,window=None):
         '''
         Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
         '''
         if len(self.time_data_list)>0:
-            freq_data_list = self.time_data_list.calculate_fft_set(time_range=None,window=False)
-            self.add_to_dataset(freq_data_list)
+            freq_data_list = self.time_data_list.calculate_fft_set(time_range=time_range,window=window)
+            self.freq_data_list = freq_data_list
+            #self.add_to_dataset(freq_data_list)
         else:
             print('No time data found in dataset')
             
-    def calculate_tf_set(self, ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
+    def calculate_tf_set(self, ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
         '''
         Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
         '''
         if len(self.time_data_list)>0:
-            tf_data_list = self.time_data_list.calculate_tf_set()
-            self.add_to_dataset(tf_data_list)
+            tf_data_list = self.time_data_list.calculate_tf_set(ch_in=ch_in, time_range=time_range, window=window, N_frames=N_frames, overlap=overlap)
+            self.tf_data_list = tf_data_list
+            #self.add_to_dataset(tf_data_list)
         else:
             print('No time data found in dataset')
             
@@ -172,8 +174,9 @@ class DataSet():
         Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
         '''
         if len(self.time_data_list)>0:
-            cross_spec_data_list = self.time_data_list.calculate_cross_spectrum_matrix_set(ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5)
-            self.add_to_dataset(cross_spec_data_list)
+            cross_spec_data_list = self.time_data_list.calculate_cross_spectrum_matrix_set(ch_in=ch_in, time_range=time_range,window='hann',N_frames=N_frames,overlap=overlap)
+            self.cross_spec_data_list = cross_spec_data_list
+            #self.add_to_dataset(cross_spec_data_list)
         else:
             print('No time data found in dataset')
             
@@ -182,8 +185,9 @@ class DataSet():
         Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
         '''
         if len(self.time_data_list)>0:
-            tf_data = self.time_data_list.calculate_tf_averaged(ch_in=0, time_range=None,window='hann')
-            self.add_to_dataset(tf_data)
+            tf_data = self.time_data_list.calculate_tf_averaged(ch_in=ch_in, time_range=time_range ,window=window)
+            self.tf_data_list = TfDataList([tf_data])
+            #self.add_to_dataset(tf_data)
         else:
             print('No time data found in dataset')
             
@@ -192,13 +196,14 @@ class DataSet():
         Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
         '''
         if len(self.time_data_list)>0:
-            cross_spec_data = self.time_data_list.calculate_cross_spectra_averaged(time_range=None,window=None)
-            self.add_to_dataset(cross_spec_data)
+            cross_spec_data = self.time_data_list.calculate_cross_spectra_averaged(time_range=time_range,window=window)
+            self.cross_spec_data_list = CrossSpecDataList([cross_spec_data])
+            #self.add_to_dataset(cross_spec_data)
         else:
             print('No time data found in dataset')
             
     def save_data(self, filename=None):
-        savename = file.save_data(self, filename=None, overwrite_without_prompt=False)
+        savename = file.save_data(self, filename=filename, overwrite_without_prompt=False)
         return savename
     
     def __repr__(self):
@@ -220,32 +225,32 @@ class TimeDataList(list):
         freq_data_list = []
         
         for td in self:
-            freq_data = analysis.calculate_fft(td, time_range, window)
+            freq_data = analysis.calculate_fft(td, time_range=time_range, window=window)
             freq_data_list += [freq_data]
             
         return freq_data_list
     
     
-    def calculate_tf_set(self, ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
+    def calculate_tf_set(self, ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
         '''
         Calls analysis.calculate_tf on each item in the list and returns TfDataList object
         '''
         tf_data_list = []
         
         for td in self:
-            tf_data = analysis.calculate_tf(td, ch_in, time_range,window,N_frames,overlap)
+            tf_data = analysis.calculate_tf(td, ch_in=ch_in, time_range=time_range,window=window,N_frames=N_frames,overlap=overlap)
             tf_data_list += [tf_data]
             
         return tf_data_list
     
-    def calculate_cross_spectrum_matrix_set(self, ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
+    def calculate_cross_spectrum_matrix_set(self, ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
         '''
         Calls analysis.calculate_tf on each item in the list and returns TfDataList object
         '''
         cross_spec_data_list = []
         
         for td in self:
-            cross_spec_data = analysis.calculate_cross_spectrum_matrix(td, time_range,window,N_frames,overlap)
+            cross_spec_data = analysis.calculate_cross_spectrum_matrix(td, time_range=time_range,window=window,N_frames=N_frames,overlap=overlap)
             cross_spec_data_list += [cross_spec_data]
             
         return cross_spec_data_list
@@ -255,7 +260,7 @@ class TimeDataList(list):
         '''
         Calls analysis.calculate_tf_averaged on whole list and returns TfData object
         '''
-        tf_data = analysis.calculate_tf_averaged(self, ch_in, time_range,window)
+        tf_data = analysis.calculate_tf_averaged(self,ch_in=ch_in, time_range=time_range,window=window)
             
         return tf_data
     
@@ -264,7 +269,7 @@ class TimeDataList(list):
         '''
         Calls analysis.calculate_tf_averaged on whole list and returns TfData object
         '''
-        cross_spec_data = analysis.calculate_cross_spectra_averaged(self, time_range,window)
+        cross_spec_data = analysis.calculate_cross_spectra_averaged(self, time_range=time_range,window=window)
             
         return cross_spec_data
     
