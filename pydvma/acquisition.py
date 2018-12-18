@@ -7,7 +7,6 @@ Created on Mon Aug 27 17:08:42 2018
 
 from . import datastructure
 from . import streams
-from . import oscilloscope
 
 import numpy as np
 import datetime
@@ -15,21 +14,22 @@ import time
 
 
 #%% Main data acquisition function
-def log_data(settings,test_name=None):
+def log_data(settings,test_name=None,rec=None):
     '''
     Logs data according to settings and returns DataSet class
     '''
     
     # Stream is object within Oscilloscope (whether or not Oscilloscope is being viewed)
-    if settings.device_driver == 'soundcard':
-        rec = streams.Recorder(settings)
-        rec.init_stream(settings)
-    elif settings.device_driver == 'nidaq':
-        rec = streams.Recorder_NI(settings)
-        rec.init_stream(settings)
-    else:
-        print('unrecognised driver')
-    
+    if rec is None:
+        if settings.device_driver is 'soundcard':
+            rec = streams.Recorder(settings)
+            rec.init_stream(settings)
+        elif settings.device_driver is 'nidaq':
+            rec = streams.Recorder_NI(settings)
+            rec.init_stream(settings)
+        else:
+            print('unrecognised driver')
+        
     
     rec.trigger_detected = False
     
@@ -52,7 +52,7 @@ def log_data(settings,test_name=None):
         # make copy of data
         stored_time_data_copy = np.copy(rec.stored_time_data)
         number_samples = np.int64(rec.settings.stored_time * rec.settings.fs)
-        print(rec)
+        
         stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
         print('')
         print('Logging complete.')

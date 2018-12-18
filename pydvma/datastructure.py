@@ -222,7 +222,7 @@ class TimeDataList(list):
         '''
         Calls analysis.calculate_fft on each item in the list and returns FreqDataList object
         '''
-        freq_data_list = []
+        freq_data_list = FreqDataList()
         
         for td in self:
             freq_data = analysis.calculate_fft(td, time_range=time_range, window=window)
@@ -235,7 +235,7 @@ class TimeDataList(list):
         '''
         Calls analysis.calculate_tf on each item in the list and returns TfDataList object
         '''
-        tf_data_list = []
+        tf_data_list = TfDataList()
         
         for td in self:
             tf_data = analysis.calculate_tf(td, ch_in=ch_in, time_range=time_range,window=window,N_frames=N_frames,overlap=overlap)
@@ -247,7 +247,7 @@ class TimeDataList(list):
         '''
         Calls analysis.calculate_tf on each item in the list and returns TfDataList object
         '''
-        cross_spec_data_list = []
+        cross_spec_data_list = CrossSpecDataList()
         
         for td in self:
             cross_spec_data = analysis.calculate_cross_spectrum_matrix(td, time_range=time_range,window=window,N_frames=N_frames,overlap=overlap)
