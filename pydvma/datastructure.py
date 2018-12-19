@@ -7,6 +7,7 @@ Created on Mon Aug 27 17:08:42 2018
 
 from . import analysis
 from . import file
+from . import plotting
 
 import numpy as np
 import datetime
@@ -44,8 +45,10 @@ class DataSet():
                 check = check and (d.__class__.__name__ == data[0].__class__.__name__)
             if check is False:
                 raise ValueError('Data list needs to contain homogenous type of data')
-                
-        data_class = data[0].__class__.__name__    
+        if len(data) is not 0:
+            data_class = data[0].__class__.__name__    
+        else:
+            data_class = None
             
         #print('')
         if data_class=='TimeData':
@@ -67,7 +70,7 @@ class DataSet():
             self.meta_data_list += data
             #print('{} added to dataset'.format(data))
         else:
-            print('No data added')
+            pass#print('No data added')
         
         #print(self)
             
@@ -205,6 +208,24 @@ class DataSet():
     def save_data(self, filename=None):
         savename = file.save_data(self, filename=filename, overwrite_without_prompt=False)
         return savename
+    
+    def plot_time_data(self,sets='all',channels='all'):
+        global pt
+        pt = plotting.PlotData()
+        pt.update(self.time_data_list,sets=sets,channels=channels)
+        return pt
+        
+    def plot_freq_data(self,sets='all',channels='all'):
+        global pf
+        pf = plotting.PlotData()
+        pf.update(self.freq_data_list,sets=sets,channels=channels)
+        return pf
+        
+    def plot_tf_data(self,sets='all',channels='all'):
+        global ptf
+        ptf = plotting.PlotData()
+        ptf.update(self.tf_data_list,sets=sets,channels=channels)
+        return ptf
     
     def __repr__(self):
         template = "{:>24}: {}"

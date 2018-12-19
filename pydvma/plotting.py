@@ -17,6 +17,7 @@ matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
 
 
 
+
 class PlotData():
     def __init__(self,sets='all',channels='all'):
         self.fig, self.ax = plt.subplots(1,1,figsize=(9,5),dpi=100)
@@ -72,14 +73,21 @@ class PlotData():
                 elif data_list.__class__.__name__ is 'TfDataList':
                     x = data_list[n_set].freq_axis
                     y = 20*np.log10(np.abs(data_list[n_set].tf_data[:,n_chan]))
-                    yc = 20*np.log10(np.abs(data_list[n_set].tf_coherence[:,n_chan]))
+                    if data_list[n_set].tf_coherence is not None:
+                        yc = 20*np.log10(np.abs(data_list[n_set].tf_coherence[:,n_chan]))
                     
                 color = options.set_plot_colours(len(data_list)*data_list[n_set].settings.channels)[count,:]/255
                 
-                label = 'set{},ch{}'.format(n_set,n_chan)
+                if type(data_list[n_set].test_name) is str:
+                    test_name = data_list[n_set].test_name
+                else:
+                    test_name = 'set '
+                label = '{}_{}, ch_{}'.format(test_name,n_set,n_chan)
+                
                 self.ax.plot(x,y,'-',linewidth=1,color = color,label=label,alpha=alpha)
                 if data_list.__class__.__name__ is 'TfDataList':
-                    self.ax.plot(x,yc,':',linewidth=1,color = color,label=label,alpha=alpha)
+                    if data_list[n_set].tf_coherence is not None:
+                        self.ax.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
         
         if len(data_list) is not 0:
             self.legend = self.ax.legend()

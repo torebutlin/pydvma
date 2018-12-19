@@ -27,7 +27,8 @@ def load_data(filename=None):
 
 
 def save_data(dataset, filename=None, overwrite_without_prompt=False):
-    '''Saves dataset class to file 'filename.npy', or provides dialog if no
+    '''
+    Saves dataset class to file 'filename.npy', or provides dialog if no
     filename provided.
 
     Args:
@@ -66,5 +67,54 @@ def save_data(dataset, filename=None, overwrite_without_prompt=False):
     # Actually save!
     np.save(filename, d)
     print("Data saved as %s" % filename)
+
+    return filename
+
+
+
+def save_fig(fig, filename=None, overwrite_without_prompt=False):
+    '''
+    Saves figure to file 'filename.png' and 'filename.pdf', or provides dialog if no
+    filename provided.
+
+    Args:
+       fig: A matplotlib fig object
+       filename: string [optional]
+       overwrite_without_prompt: boo
+    '''
+
+
+    # If filename not specified, provide dialog
+    if filename is None:
+        wid = QtWidgets.QWidget()
+        filename, _ = QtGui.QFileDialog.getSaveFileName(wid, 'Save figure', '')
+        if not filename:
+            # No filename chosen, give up on saving
+            print('Save cancelled')
+            return None
+
+
+    # If it exists, check if we should overwrite it (unless
+    # overwrite_without_prompt is True)
+    elif os.path.isfile(filename) and not overwrite_without_prompt:
+        answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
+        if answer != 'y':
+            print('Save cancelled')
+            return None
+        print('Will overwrite existing file')
+        
+    # Make sure it ends with .png then .pdf
+    
+    filename = os.path.splitext(filename)[0]
+    if not filename.endswith('.png'):
+        filename += '.png'
+    fig.savefig(filename, dpi=300)
+    print("Figure saved as %s" % filename)
+    
+    filename = os.path.splitext(filename)[0]
+    if not filename.endswith('.pdf'):
+        filename += '.pdf'
+    fig.savefig(filename, dpi=300)
+    print("Figure saved as %s" % filename)
 
     return filename

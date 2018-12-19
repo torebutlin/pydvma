@@ -52,7 +52,7 @@ def calculate_fft(time_data,time_range=None,window=None):
     fdata = np.fft.rfft(data_selected,axis=0)
     faxis = np.fft.rfftfreq(N,1/time_data.settings.fs)
     
-    freq_data = datastructure.FreqData(faxis,fdata,settings,id_link=time_data.unique_id)
+    freq_data = datastructure.FreqData(faxis,fdata,settings,id_link=time_data.unique_id,test_name=time_data.test_name)
     
     return freq_data
 
@@ -164,7 +164,7 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
                 Pxy[nx,ny,:] = P
                 Cxy[nx,ny,:] = C
             
-    cross_spec_data = datastructure.CrossSpecData(f,Pxy,Cxy,settings,id_link=time_data.unique_id)
+    cross_spec_data = datastructure.CrossSpecData(f,Pxy,Cxy,settings,id_link=time_data.unique_id,test_name=time_data.test_name)
     
     return cross_spec_data
 
@@ -211,7 +211,7 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
             Cxy[ch_in,ch_out,:] = np.abs(Pxy_av[ch_in,ch_out,:])**2 / (np.abs(Pxy_av[ch_in,ch_in,:]) * np.abs(Pxy_av[ch_out,ch_out,:]))
     
     
-    cross_spec_data_av = datastructure.CrossSpecData(cross_spec_data.freq_axis,Pxy_av,Cxy,settings,id_link=id_link_list)
+    cross_spec_data_av = datastructure.CrossSpecData(cross_spec_data.freq_axis,Pxy_av,Cxy,settings,id_link=id_link_list,test_name=time_data_list[0].test_name)
 
     return cross_spec_data_av
 
@@ -255,7 +255,7 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
     settings.ch_in = ch_in
     settings.ch_out_set = ch_out_set
     
-    tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=time_data.unique_id)
+    tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=time_data.unique_id,test_name=time_data.test_name)
     
     return tfdata
     
@@ -313,6 +313,6 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
     settings.ch_out_set = ch_out_set
     
     
-    tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=id_link_list)
+    tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=id_link_list,test_name=time_data_list[0].test_name)
     
     return tfdata
