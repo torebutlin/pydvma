@@ -86,12 +86,7 @@ class PlotData():
             self.lines = self.ax.get_lines()
             self.lined = dict()
             
-            xmin = min(x)
-            xmax = max(x)
-            ymin = min(y)
-            ymax = max(y)
-            self.ax.set_xlim([xmin,xmax])
-            self.ax.set_ylim([ymin,ymax])
+            
             for legline, origline in zip(self.legend.get_lines(), self.lines):
                 legline.set_picker(10)  # 5 pts tolerance
                 self.lined[legline] = origline 
@@ -102,6 +97,40 @@ class PlotData():
             self.fig.canvas.draw()
     
     
+    def auto_x(self):
+        self.lines = self.ax.get_lines()
+        xmin = np.inf
+        xmax = -np.inf
+        for line in self.lines:
+            data = line.get_data()
+            xx = min(data[0])
+            xmin = min([xx,xmin])
+            xx = max(data[0])
+            xmax = max([xx,xmax])
+        try:  
+            self.ax.set_xlim([xmin,xmax])
+        except:
+            pass
+        
+        
+    def auto_y(self):
+        self.lines = self.ax.get_lines()
+        xview = self.ax.get_xlim()
+        ymin = np.inf
+        ymax = -np.inf
+        for line in self.lines:
+            data = line.get_data() 
+            x = data[0]
+            selection = (xview[0] < x) & (x < xview[1])
+            yy = min(data[1][selection])
+            ymin = min([yy,ymin])
+            yy = max(data[1][selection])
+            ymax = max([yy,ymax])
+        try:
+            self.ax.set_ylim([ymin,ymax])
+        except:
+            pass
+        
     def channel_select(self,event):
         selected_line = event.artist
         
