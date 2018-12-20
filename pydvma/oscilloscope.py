@@ -53,9 +53,9 @@ class Oscilloscope():
         pg.setConfigOption('background', 'w')
         self.win = KeyPressWindow()
         self.win.setWindowIcon(QtGui.QIcon('icon.png'))
-        window_geometry = self.win.geometry()
+#        window_geometry = self.win.geometry()
         self.win.setGeometry(100,100,800,600)
-        #self.win.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
+        self.win.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
         
         # This ensures the window appears at front.
         self.win.showMinimized()

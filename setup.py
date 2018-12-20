@@ -13,6 +13,7 @@ setup(
     version='0.3.1',
     install_requires=requires,
     packages=['pydvma','labs'],
+    package_data={'': ['icon.png']},
     license='BSD 3-Clause License',
     long_description=open('README.md').read(),
 )

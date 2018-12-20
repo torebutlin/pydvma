@@ -27,6 +27,7 @@ class PlotData():
         
     def update(self,data_list,sets='all',channels='all'):
         
+        self.data_list = data_list
         
         if data_list.__class__.__name__ is 'TimeDataList':
             self.ax.set_xlabel('Time (s)')
@@ -60,21 +61,37 @@ class PlotData():
                 count += 1
                 
                 if (n_set not in sets) or (n_chan not in channels):
-                    alpha = 0.2
+                    alpha = 0.1
                 else:
-                    alpha = 0.8
+                    alpha = 0.9
                 
                 if data_list.__class__.__name__ is 'TimeDataList':
                     x = data_list[n_set].time_axis
-                    y = data_list[n_set].time_data[:,n_chan]
+                    y = data_list[n_set].time_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
                 elif data_list.__class__.__name__ is 'FreqDataList':
                     x = data_list[n_set].freq_axis
-                    y = 20*np.log10(np.abs(data_list[n_set].freq_data[:,n_chan]))
+                    ylin = data_list[n_set].freq_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
+                    # handle log(0) manually to avoid warnings
+                    y = np.zeros(np.shape(ylin))
+                    izero = ylin==0
+                    y[~izero] = 20*np.log10(np.abs(ylin[~izero]))
+                    y[izero] = -np.inf
                 elif data_list.__class__.__name__ is 'TfDataList':
                     x = data_list[n_set].freq_axis
-                    y = 20*np.log10(np.abs(data_list[n_set].tf_data[:,n_chan]))
+                    ylin = data_list[n_set].tf_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
+                    # handle log(0) manually to avoid warnings
+                    y = np.zeros(np.shape(ylin))
+                    izero = ylin==0
+                    y[~izero] = 20*np.log10(np.abs(ylin[~izero]))
+                    y[izero] = -np.inf
                     if data_list[n_set].tf_coherence is not None:
-                        yc = 20*np.log10(np.abs(data_list[n_set].tf_coherence[:,n_chan]))
+                        # handle log(0) manually to avoid warnings
+                        yclin = data_list[n_set].tf_coherence[:,n_chan]
+                        yc = np.zeros(np.shape(yclin))
+                        izero = yclin==0
+                        yc[~izero] = 20*np.log10(np.abs(yclin[~izero]))
+                        yc[izero] = -np.inf
+                        yc = 20*np.log10(np.abs(yclin))
                     
                 color = options.set_plot_colours(len(data_list)*data_list[n_set].settings.channels)[count,:]/255
                 
@@ -91,6 +108,7 @@ class PlotData():
         
         if len(data_list) is not 0:
             self.legend = self.ax.legend()
+            self.legend.set_draggable(True)
             self.lines = self.ax.get_lines()
             self.lined = dict()
             
@@ -130,10 +148,11 @@ class PlotData():
             data = line.get_data() 
             x = data[0]
             selection = (xview[0] < x) & (x < xview[1])
-            yy = min(data[1][selection])
-            ymin = min([yy,ymin])
-            yy = max(data[1][selection])
-            ymax = max([yy,ymax])
+            if line.get_alpha() > 0.5:
+                yy = min(data[1][selection])
+                ymin = min([yy,ymin])
+                yy = max(data[1][selection])
+                ymax = max([yy,ymax])
         try:
             self.ax.set_ylim([ymin,ymax])
         except:
@@ -143,13 +162,58 @@ class PlotData():
         selected_line = event.artist
         
         a = selected_line.get_alpha()
-        a = 1-a
-        
-        origline = self.lined[selected_line]
-        selected_line.set_alpha(a)
-        origline.set_alpha(a)
-        self.fig.canvas.draw()
+        # This function is called when legend dragged, and a is None
+        # So only want to change line opacity when line actually selected.
+        if a is not None:
+            # change opacity of both legend line and actual line
+            a = 1-a
+            origline = self.lined[selected_line]
+            selected_line.set_alpha(a)
+            origline.set_alpha(a)
+            # change z order to bring selected line to foreground
+            for line in self.ax.lines:
+                line.set_zorder(0)
+            if a > 0.5:
+                origline.set_zorder(1)
+            else:
+                origline.set_zorder(0)
+            self.fig.canvas.draw()
     
+    def get_selected_channels(self):
+        # find the sets and channels higlighted in figure
+        # first find lines
+        lines = self.ax.get_lines()
+        N = len(lines)
+        alphas = np.zeros(N)
+        count = -1
+        for line in lines:
+            count += 1
+            alphas[count] = line.get_alpha()
+        
+        selected_lines = alphas > 0.5
+        
+        # now convert line selection to sets and channels
+        n_sets = len(self.data_list)
+        if self.data_list.__class__.__name__ is 'TimeDataList':
+            n_chans = len(self.data_list[0].time_data[0,:])
+        elif self.data_list.__class__.__name__ is 'FreqDataList':
+            n_chans = len(self.data_list[0].freq_data[0,:])
+        elif self.data_list.__class__.__name__ is 'TfDataList':
+            n_chans = len(self.data_list[0].tf_data[0,:])
+            
+        selected_data = np.zeros([n_sets,n_chans])
+        count = -1
+        for ns in range(n_sets):
+            for nc in range(n_chans):
+                count += 1
+                if self.data_list.__class__.__name__ is 'TfDataList':
+                    selected_data[ns,nc] = selected_lines[2*count] # skip coherence lines
+                else:
+                    selected_data[ns,nc] = selected_lines[count]
+        
+        selected_data = selected_data == True
+            
+        return selected_data
 
 
 

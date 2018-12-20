@@ -72,7 +72,7 @@ def save_data(dataset, filename=None, overwrite_without_prompt=False):
 
 
 
-def save_fig(fig, filename=None, overwrite_without_prompt=False):
+def save_fig(plot, filename=None, overwrite_without_prompt=False):
     '''
     Saves figure to file 'filename.png' and 'filename.pdf', or provides dialog if no
     filename provided.
@@ -82,7 +82,10 @@ def save_fig(fig, filename=None, overwrite_without_prompt=False):
        filename: string [optional]
        overwrite_without_prompt: boo
     '''
-
+    if plot.__class__.__name__ is 'PlotData':
+        fig = plot.fig
+    elif plot.__class__.__name__ is 'Figure':
+        fig = plot
 
     # If filename not specified, provide dialog
     if filename is None:

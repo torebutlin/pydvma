@@ -56,19 +56,25 @@ def calculate_fft(time_data,time_range=None,window=None):
     
     return freq_data
 
-def mutliply_by_power_of_iw(data,power):
+def multiply_by_power_of_iw(data,power,channel_list):
     
     if data.__class__.__name__ is 'TfData':
         iw = 1j*2*np.pi * data.freq_axis[:,None]
-        data.tf_data = (iw**power) * data.tf_data
+        if power<0:
+            iw[0]=np.inf
+        data.tf_data[:,channel_list] = (iw**power) * data.tf_data[:,channel_list]
     elif data.__class__.__name__ is 'FreqData':
         iw = 1j*2*np.pi * data.freq_axis[:,None]
-        data.tf_data = (iw**power) * data.tf_data
+        if power<0:
+            iw[0]=np.inf
+        data.freq_data[:,channel_list] = (iw**power) * data.freq_data[:,channel_list]
     else:
-        raise ValueError('Expecting input argument of type <TfData> or <FreqData>')
+        raise ValueError('Expecting input argument of type <FreqData> or <TfData>')
+        
+    return data
 
 
-def best_match(tf_data_list,freq_range=None,n_ref=0):
+def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
     '''
     Args:
         tf_data (<TfData> object): transfer function data
@@ -81,28 +87,42 @@ def best_match(tf_data_list,freq_range=None,n_ref=0):
 
     if freq_range == None:
         ### use all data
-        freq_range_copy = tf_data_list[0].freq_axis[[0,-1]]
+        freq_range_copy = tf_data_list[set_ref].freq_axis[[0,-1]]
         
     elif freq_range.__class__.__name__ == 'PlotData':
         freq_range_copy=freq_range.tfax.get_xbound()
+        
+    else:
+        freq_range_copy = freq_range
         
     settings = copy.copy(tf_data_list[0].settings)
     settings.freq_range = freq_range_copy
 
     
     n_set = len(tf_data_list)
-    factors = np.ones(n_set)
-    for n in range(n_set):
-        
-        s1 = tf_data_list[n].freq_axis >= freq_range_copy[0]
-        s2 = tf_data_list[n].freq_axis <= freq_range_copy[1]
-        selection = s1 & s2
     
-        a = tf_data_list[n].tf_data[selection,:]
-        b = tf_data_list[n_ref].tf_data[selection,:]
-        factors[n] = np.sum(np.abs(a*np.conj(b))) / np.sum(np.abs(a*np.conj(a)))
+    s1 = tf_data_list[set_ref].freq_axis >= freq_range_copy[0]
+    s2 = tf_data_list[set_ref].freq_axis <= freq_range_copy[1]
+    selection_ref = s1 & s2
+        
+    factors = []
+    for ns in range(n_set):
+        f=[]
+        n_chan = len(tf_data_list[ns].tf_data[0,:])
+        s1 = tf_data_list[ns].freq_axis >= freq_range_copy[0]
+        s2 = tf_data_list[ns].freq_axis <= freq_range_copy[1]
+        selection = s1 & s2
+        for nc in range(n_chan):
+            a = tf_data_list[ns].tf_data[selection,nc]
+            b = tf_data_list[set_ref].tf_data[selection_ref,ch_ref]
+#            f += [np.abs(np.sum(np.conj(a)*b) / np.sum(np.conj(a)*a))]
+            f += [np.sqrt(np.mean(np.abs(b**2))) / np.sqrt(np.mean(np.abs(a**2)))]
+            
+        f = np.array(f)
+        factors.append(f)
     
     return factors
+
 
 
 def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_frames=1, overlap=0.5):

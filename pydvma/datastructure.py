@@ -294,10 +294,34 @@ class TimeDataList(list):
             
         return cross_spec_data
     
+    def get_calibration_factors(self):
+        n_set = len(self)
+        factors = []
+        for ns in range(n_set):
+            factors.append(self[ns].channel_cal_factors)
+        
+        return factors
+            
+    def set_calibration_factors(self,factors):
+        n_set = len(self)
+        for ns in range(n_set):
+            self[ns].channel_cal_factors=factors[ns]
+    
 
 class FreqDataList(list):
     ### This will allow functions to be discovered that can take lists of FreqData is arguments
-    pass
+    def get_calibration_factors(self):
+        n_set = len(self)
+        factors = []
+        for ns in range(n_set):
+            factors.append(self[ns].channel_cal_factors)
+        
+        return factors
+    
+    def set_calibration_factors(self,factors):
+        n_set = len(self)
+        for ns in range(n_set):
+            self[ns].channel_cal_factors=factors[ns]
 
 class CrossSpecDataList(list):
     ### This will allow functions to be discovered that can take lists of CrossSpecData is arguments
@@ -305,7 +329,18 @@ class CrossSpecDataList(list):
 
 class TfDataList(list):
     ### This will allow functions to be discovered that can take lists of TfData is arguments
-    pass
+    def get_calibration_factors(self):
+        n_set = len(self)
+        factors = []
+        for ns in range(n_set):
+            factors.append(self[ns].channel_cal_factors)
+        
+        return factors
+    
+    def set_calibration_factors(self,factors):
+        n_set = len(self)
+        for ns in range(n_set):
+            self[ns].channel_cal_factors=factors[ns]
 
 class SonoDataList(list):
     ### This will allow functions to be discovered that can take lists of SonoData is arguments
@@ -320,6 +355,8 @@ class TimeData():
     def __init__(self,time_axis,time_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         
         time_data = reshape_arrays(time_data)
+        if channel_cal_factors is None:
+            channel_cal_factors = np.ones([len(time_data[0,:]),1])
         
         self.time_axis = time_axis
         self.time_data = time_data  
@@ -333,6 +370,7 @@ class TimeData():
         self.unique_id = uuid.uuid4()
         
         
+        
     def __repr__(self):
         return "<TimeData>"
 
@@ -341,6 +379,8 @@ class FreqData():
     def __init__(self,freq_axis,freq_data,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         
         freq_data = reshape_arrays(freq_data)
+        if channel_cal_factors is None:
+            channel_cal_factors = np.ones([len(freq_data[0,:]),1])
         
         self.freq_axis = freq_axis
         self.freq_data = freq_data
@@ -380,6 +420,8 @@ class TfData():
     def __init__(self,freq_axis,tf_data,tf_coherence,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         
         tf_data = reshape_arrays(tf_data)
+        if channel_cal_factors is None:
+            channel_cal_factors = np.ones([len(tf_data[0,:]),1])
         
         self.freq_axis = freq_axis
         self.tf_data = tf_data

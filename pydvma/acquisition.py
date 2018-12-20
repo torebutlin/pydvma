@@ -33,7 +33,6 @@ def log_data(settings,test_name=None,rec=None):
     
     rec.trigger_detected = False
     
-    
     # Stream is slightly longer than settings.stored_time, so need to add delay
     # from initialisation to allow stream to fill up and prevent zeros at start
     # of logged data.
@@ -60,6 +59,7 @@ def log_data(settings,test_name=None,rec=None):
 
         
     else:
+        rec.__init__(settings)
         rec.trigger_first_detected_message = True
         t0 = time.time()
         print('')
@@ -68,12 +68,13 @@ def log_data(settings,test_name=None,rec=None):
             time.sleep(0.2)
         if (time.time()-t0 > settings.pretrig_timeout):
             raise Exception('Trigger not detected within timeout of {} seconds.'.format(settings.pretrig_timeout))
-            
+        
         print('')
         print('Logging complete.')
         
         # make copy of data
         stored_time_data_copy = np.copy(rec.stored_time_data)
+        rec.trigger_detected = False
         trigger_check = rec.stored_time_data[(rec.settings.chunk_size):(2*rec.settings.chunk_size),rec.settings.pretrig_channel]
         detected_sample = rec.settings.chunk_size + np.where(np.abs(trigger_check) > rec.settings.pretrig_threshold)[0][0]
         number_samples = rec.settings.stored_time * rec.settings.fs
@@ -93,6 +94,10 @@ def log_data(settings,test_name=None,rec=None):
     
     dataset  = datastructure.DataSet()
     dataset.add_to_dataset(timedata)
+    
+    # check for clipping
+    if np.any(np.abs(stored_time_data_copy > 0.95)):
+        print('WARNING: Data may be clipped')
     
     return dataset
     
