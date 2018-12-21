@@ -19,16 +19,9 @@ def log_data(settings,test_name=None,rec=None):
     Logs data according to settings and returns DataSet class
     '''
     
-    # Stream is object within Oscilloscope (whether or not Oscilloscope is being viewed)
     if rec is None:
-        if settings.device_driver is 'soundcard':
-            rec = streams.Recorder(settings)
-            rec.init_stream(settings)
-        elif settings.device_driver is 'nidaq':
-            rec = streams.Recorder_NI(settings)
-            rec.init_stream(settings)
-        else:
-            print('unrecognised driver')
+        streams.start_stream(settings)
+        rec = streams.REC
         
     
     rec.trigger_detected = False

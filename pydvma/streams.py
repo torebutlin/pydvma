@@ -2,6 +2,7 @@
 
 import pyaudio
 import numpy as np
+import pprint as pp
 
 try:
     import PyDAQmx as pdaq
@@ -11,7 +12,35 @@ except ImportError:
 except NotImplementedError:
     pdaq = None
 
+#%% Handles the different cases of starting soundcard/NI streams
 
+
+REC_SC = None # create global variable for creating only a single NI stream instance. Not needed for pyaudio.
+REC_NI = None
+REC = None
+
+def start_stream(settings):
+    global REC_SC, REC_NI, REC
+    if settings.device_driver == 'soundcard':
+        REC_SC = Recorder(settings)
+        REC_SC.init_stream(settings)
+        REC = REC_SC
+    elif settings.device_driver == 'nidaq':
+        
+        if REC_NI is None:
+            REC_NI = Recorder_NI(settings)
+        else:
+            try:
+                REC_NI.end_stream()
+            except:
+                pass
+        REC_NI.__init__(settings)
+        REC_NI.init_stream(settings)
+        REC = REC_NI
+        print(REC)
+    else:
+        raise ValueError('Unknown driver: %r' % settings.device_driver)
+        
 
 
 #%% pyaudio stream
@@ -122,8 +151,11 @@ class Recorder(object):
         
         
 #%% NI stream
+   
+        
 class Recorder_NI(object):
     def __init__(self,settings):
+        
         self.settings = settings
         self.trigger_detected = False
         self.trigger_first_detected_message = False
@@ -252,7 +284,7 @@ class Recorder_NI(object):
         self.audio_stream.ReadBinaryI16(self.settings.chunk_size,10.0,pdaq.DAQmx_Val_GroupByScanNumber,
                            in_data,self.settings.chunk_size*self.settings.channels,pdaq.byref(read),None)
 
-        data_array = in_data.reshape((-1,self.settings.channels))/(2**15) *10.0
+        data_array = in_data.reshape((-1,self.settings.channels))/(2**15)
             
         self.osc_data_chunk = data_array#(np.frombuffer(in_data, dtype=eval('np.int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
         #self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
@@ -294,7 +326,7 @@ class Recorder_NI(object):
         """
         if self.settings.channels >1:
             channelname =  '%s/ai0:%s/ai%i' % (self.device_name, self.device_name,self.settings.channels-1)
-        elif self.channels == 1:
+        elif self.settings.channels == 1:
             channelname = '%s/ai0' % self.device_name
 
         print('Channels Name: %s' % channelname)
@@ -306,18 +338,34 @@ class Recorder_NI(object):
         Initialises an audio stream. Gives the user a choice of which device to access.
         '''
         
+    
+        try:
+            self.audio_stream.end_stream()
+        except:
+            pass
+        
+        # Make AutoRegN be one of set of possible numbers that works with nidaqmx
+        AutoRegN = np.int16([10,100,1000])
+        check = np.where(AutoRegN <= settings.chunk_size)
+        AutoRegN = AutoRegN[check[0][-1]]
+        
         self.audio_stream = Task()
         self.audio_stream.stream_audio_callback = self.stream_audio_callback
         self.audio_stream.CreateAIVoltageChan(self.set_channels(),"",
-                                 pdaq.DAQmx_Val_RSE,-10.0,10.0,
+                                 pdaq.DAQmx_Val_RSE,-settings.VmaxNI,settings.VmaxNI,
                                  pdaq.DAQmx_Val_Volts,None)
         self.audio_stream.CfgSampClkTiming("",self.settings.fs,
                               pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_ContSamps,
                               self.settings.chunk_size)
         self.audio_stream.AutoRegisterEveryNSamplesEvent(pdaq.DAQmx_Val_Acquired_Into_Buffer,
-                                            1000,0,name = 'stream_audio_callback')
-
+                                            AutoRegN,0,name = 'stream_audio_callback')
+        self.audio_stream.StopTask()
         self.audio_stream.StartTask()
+                
+        
+                
+        
+        
         
         ###
         
@@ -330,8 +378,7 @@ class Recorder_NI(object):
         '''
         Closes an audio stream.
         '''
-        if self.audio_stream:
+        if self.audio_stream is not None:
             self.audio_stream.StopTask()
             self.audio_stream.ClearTask()
             self.audio_stream = None
-        

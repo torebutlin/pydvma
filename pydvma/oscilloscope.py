@@ -26,14 +26,28 @@ class Oscilloscope():
         '''
 
         self.settings = settings
-
-        if settings.device_driver == 'soundcard':
-            self.rec = streams.Recorder(settings)
-        elif settings.device_driver == 'nidaq':
-            self.rec = streams.Recorder_NI(settings)
-        else:
-            raise ValueError('Unknown driver: %r' % settings.device_driver)
-        self.rec.init_stream(settings)
+        
+        streams.start_stream(settings)
+        self.rec = streams.REC
+        
+            
+#            self.rec = streams.Rec_NI(settings).rec
+#            self.rec.init_stream(settings)
+            
+#            if streams.rec_NI is None:
+#                streams.rec_NI = streams.Recorder_NI(settings)
+#                streams.rec_NI.init_stream(settings)
+#            else:
+#                try:
+#                    streams.rec_NI.end_stream()
+#                except:
+#                    pass
+#                streams.rec_NI = None
+#                streams.rec_NI = streams.Recorder_NI(settings)
+#                streams.rec_NI.init_stream(settings)
+#            self.rec = streams.rec_NI
+        
+        
 
         self.timer = QtCore.QTimer()
         self.create_figure()

@@ -23,15 +23,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out = Output()
-        with self.out:
-            if settings.device_driver is 'soundcard':
-                self.rec = streams.Recorder(settings)
-                self.rec.init_stream(settings)
-            elif settings.device_driver is 'nidaq':
-                self.rec = streams.Recorder_NI(settings)
-                self.rec.init_stream(settings)
-            else:
-                print('unrecognised driver')
+        streams.start_stream(settings)
+        self.rec = streams.REC
         
         # Initialise variables
         self.current_view = 'Time'    
@@ -196,7 +189,7 @@ class InteractiveLogging():
         self.out.clear_output(wait=False)
         with self.out:
             self.rec.trigger_detected = False
-            d = acquisition.log_data(self.settings,test_name=self.test_name,rec=self.rec)
+            d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec)
             self.dataset.add_to_dataset(d.time_data_list)
             N = len(self.dataset.time_data_list)
             self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
@@ -656,7 +649,7 @@ class InteractiveView():
                 reference = current_calibration_factors[0][0]
                 factors = analysis.best_match(self.dataset.tf_data_list,freq_range=freq_range,set_ref=0,ch_ref=0)
                 factors = [reference*x for x in factors]
-                self.dataset.tf_data_list.set_calibration_factors(factors)
+                self.dataset.tf_data_list.set_calibration_factors_all(factors)
                 self.p.update(self.dataset.tf_data_list)
                 print('scale factors:')
                 print(factors)

@@ -45,7 +45,7 @@ class MySettings(object):
                  channels=2, 
                  fs=44100, 
                  nbits=16, 
-                 chunk_size=1024, 
+                 chunk_size=100, 
                  num_chunks=6,
                  viewed_time=None,
                  stored_time=2,
@@ -55,6 +55,7 @@ class MySettings(object):
                  pretrig_timeout=20,
                  device_driver='soundcard',
                  device_index=None,
+                 VmaxNI=10.0,
                  init_view_time=True,
                  init_view_freq=True,
                  init_view_levels=True):
@@ -72,6 +73,7 @@ class MySettings(object):
         self.pretrig_timeout=pretrig_timeout
         self.device_driver=device_driver
         self.device_index=device_index
+        self.VmaxNI=VmaxNI
         self.init_view_time=init_view_time
         self.init_view_freq=init_view_freq
         self.init_view_levels=init_view_levels
@@ -79,6 +81,10 @@ class MySettings(object):
         ### derived settings
         if viewed_time != None:
             self.num_chunks = int(np.ceil(viewed_time*fs/chunk_size))
+        
+        if self.chunk_size < 10:
+            self.chunk_size = np.int16(10)
+            print('Resetting ''chunk_size'' to minimum value of 10')
             
         self.format = eval('pyaudio.paInt'+str(self.nbits))
         self.device_name = None # until initialise stream

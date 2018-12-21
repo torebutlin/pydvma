@@ -302,10 +302,13 @@ class TimeDataList(list):
         
         return factors
             
-    def set_calibration_factors(self,factors):
+    def set_calibration_factors_all(self,factors):
         n_set = len(self)
         for ns in range(n_set):
             self[ns].channel_cal_factors=factors[ns]
+            
+    def set_calibration_factor(self,factor, n_set=0, n_chan=0):
+        self[n_set].channel_cal_factors[n_chan]=factor
     
 
 class FreqDataList(list):
@@ -318,10 +321,13 @@ class FreqDataList(list):
         
         return factors
     
-    def set_calibration_factors(self,factors):
+    def set_calibration_factors_all(self,factors):
         n_set = len(self)
         for ns in range(n_set):
             self[ns].channel_cal_factors=factors[ns]
+            
+    def set_calibration_factor(self,factor, n_set=0, n_chan=0):
+        self[n_set].channel_cal_factors[n_chan]=factor
 
 class CrossSpecDataList(list):
     ### This will allow functions to be discovered that can take lists of CrossSpecData is arguments
@@ -337,10 +343,13 @@ class TfDataList(list):
         
         return factors
     
-    def set_calibration_factors(self,factors):
+    def set_calibration_factors_all(self,factors):
         n_set = len(self)
         for ns in range(n_set):
             self[ns].channel_cal_factors=factors[ns]
+            
+    def set_calibration_factor(self,factor, n_set=0, n_chan=0):
+        self[n_set].channel_cal_factors[n_chan]=factor
 
 class SonoDataList(list):
     ### This will allow functions to be discovered that can take lists of SonoData is arguments
@@ -356,7 +365,7 @@ class TimeData():
         
         time_data = reshape_arrays(time_data)
         if channel_cal_factors is None:
-            channel_cal_factors = np.ones([len(time_data[0,:]),1])
+            channel_cal_factors = np.ones(len(time_data[0,:]))
         
         self.time_axis = time_axis
         self.time_data = time_data  
@@ -380,7 +389,7 @@ class FreqData():
         
         freq_data = reshape_arrays(freq_data)
         if channel_cal_factors is None:
-            channel_cal_factors = np.ones([len(freq_data[0,:]),1])
+            channel_cal_factors = np.ones(len(freq_data[0,:]))
         
         self.freq_axis = freq_axis
         self.freq_data = freq_data
@@ -421,7 +430,7 @@ class TfData():
         
         tf_data = reshape_arrays(tf_data)
         if channel_cal_factors is None:
-            channel_cal_factors = np.ones([len(tf_data[0,:]),1])
+            channel_cal_factors = np.ones(len(tf_data[0,:]))
         
         self.freq_axis = freq_axis
         self.tf_data = tf_data
