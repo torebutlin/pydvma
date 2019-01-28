@@ -159,6 +159,7 @@ class DataSet():
             self.freq_data_list = freq_data_list
             #self.add_to_dataset(freq_data_list)
         else:
+            self.freq_data_list = FreqDataList()
             print('No time data found in dataset')
             
     def calculate_tf_set(self, ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
@@ -170,6 +171,7 @@ class DataSet():
             self.tf_data_list = tf_data_list
             #self.add_to_dataset(tf_data_list)
         else:
+            self.tf_data_list = TfDataList()
             print('No time data found in dataset')
             
     def calculate_cross_spectrum_matrix_set(self,ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
@@ -181,6 +183,7 @@ class DataSet():
             self.cross_spec_data_list = cross_spec_data_list
             #self.add_to_dataset(cross_spec_data_list)
         else:
+            self.cross_spec_data_list = CrossSpecDataList()
             print('No time data found in dataset')
             
     def calculate_tf_averaged(self, ch_in=0, time_range=None,window='hann'):
@@ -192,6 +195,7 @@ class DataSet():
             self.tf_data_list = TfDataList([tf_data])
             #self.add_to_dataset(tf_data)
         else:
+            self.tf_data_list = TfDataList()
             print('No time data found in dataset')
             
     def calculate_cross_spectra_averaged(self, time_range=None,window=None):
@@ -203,6 +207,7 @@ class DataSet():
             self.cross_spec_data_list = CrossSpecDataList([cross_spec_data])
             #self.add_to_dataset(cross_spec_data)
         else:
+            self.cross_spec_data_list = CrossSpecDataList()
             print('No time data found in dataset')
             
     def save_data(self, filename=None):
