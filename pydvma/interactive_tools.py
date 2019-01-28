@@ -13,9 +13,10 @@ from ipywidgets import Button, HBox, VBox, Output, FloatText, IntText, Dropdown,
 
 #%%
 class InteractiveLogging():
-    def __init__(self,settings,test_name=None):
+    def __init__(self,settings,test_name=None,default_window='hanning'):
         
-        
+        if default_window is None:
+            default_window = 'None'
         self.settings = settings
         self.test_name = test_name
         self.dataset = datastructure.DataSet()
@@ -97,7 +98,7 @@ class InteractiveLogging():
         self.item_view_label = Label(value="View data type:",layout=Layout(width='15%'))
         self.text_axes = [FloatText(value=0,description=i, layout=Layout(width='17%')) for i in items_axes]
         self.text_axes =  [self.button_X]+[self.button_Y] + self.text_axes
-        self.drop_window = Dropdown(options=['None', 'hanning'],value='hanning',description='Window:', layout=Layout(width='99%'))
+        self.drop_window = Dropdown(options=['None', 'hanning'],value=default_window,description='Window:', layout=Layout(width='99%'))
         self.slide_Nframes = IntSlider(value=1,min=1,max=30,step=1,description='N_frames:',continuous_update=True,readout=False, layout=Layout(width='99%'))
         self.text_Nframes = IntText(value=1,description='N_frames:', layout=Layout(width='99%'))
         
@@ -109,13 +110,13 @@ class InteractiveLogging():
         
         # ASSEMBLE
         display(HBox(self.buttons_measure))
+        display(HBox([self.button_warning]))
         display(self.out_logging)
         self.p = plotting.PlotData()
         display(HBox(self.buttons_view))
         display(HBox(self.text_axes))
         display(HBox([group0,group1,group2]))
         display(HBox(self.buttons_save))
-        display(HBox([self.button_warning]))
         self.button_warning.layout.visibility='hidden'
         
         
@@ -257,7 +258,7 @@ class InteractiveLogging():
             self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
             self.refresh_buttons()
         
-    def load_data(self,b):
+    def load_data_old(self,b):
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
@@ -277,6 +278,41 @@ class InteractiveLogging():
                 self.view_tf(None)
             else:
                 print('no data to view')
+                
+    def load_data(self,b):
+        # the 'out' construction is to refresh the text output at each update 
+        # to stop text building up in the widget display
+        self.out.clear_output(wait=False)
+        with self.out_logging:
+            d = file.load_data()
+            self.dataset.add_to_dataset(d.time_data_list)
+            self.dataset.add_to_dataset(d.freq_data_list)
+            self.dataset.add_to_dataset(d.tf_data_list)
+            self.dataset.add_to_dataset(d.cross_spec_data_list)
+            self.dataset.add_to_dataset(d.sono_data_list)
+            
+            if len(self.dataset.time_data_list) is not 0:
+                N = len(self.dataset.time_data_list)
+                self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+            elif len(self.dataset.freq_data_list) is not 0:
+                N = len(self.dataset.freq_data_list)
+                self.p.update(self.dataset.freq_data_list,sets=[N-1],channels='all')
+            elif len(self.dataset.tf_data_list) is not 0:
+                N = len(self.dataset.tf_data_list)
+            else:
+                print('no data to view')
+           
+            self.refresh_buttons()
+        
+            self.p.auto_x()
+            self.p.auto_y()
+            
+            xlim = self.p.ax.get_xlim()
+            ylim = self.p.ax.get_ylim()
+            self.text_axes[2].value = xlim[0]
+            self.text_axes[3].value = xlim[1]
+            self.text_axes[4].value = ylim[0]
+            self.text_axes[5].value = ylim[1]
             
         
         
@@ -500,7 +536,7 @@ class InteractiveLogging():
     def match(self,b):
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
-        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
         with self.out_logging:
             if self.current_view is 'TF':
                 freq_range = self.p.ax.get_xlim()
@@ -678,7 +714,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        with self.out_logging:
+        with self.out:
             d = file.load_data()
             self.dataset.add_to_dataset(d.time_data_list)
             self.dataset.add_to_dataset(d.freq_data_list)
@@ -720,7 +756,7 @@ class InteractiveView():
         # to stop text building up in the widget display
         self.dataset = datastructure.DataSet()
         self.out.clear_output(wait=False)
-        with self.out_logging:
+        with self.out:
             N = len(self.dataset.time_data_list)
             self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
         
@@ -730,7 +766,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        with self.out_logging:
+        with self.out:
             N = len(self.dataset.time_data_list)
             if N is not 0:
                 self.p.update(self.dataset.time_data_list)
@@ -752,7 +788,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        with self.out_logging:
+        with self.out:
             N = len(self.dataset.freq_data_list)
             if N is not 0:
                 self.p.update(self.dataset.freq_data_list)
@@ -774,7 +810,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        with self.out_logging:
+        with self.out:
             N = len(self.dataset.tf_data_list)
             if N is not 0:
                 self.p.update(self.dataset.tf_data_list)
@@ -795,7 +831,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        with self.out_logging:
+        with self.out:
             if self.current_view is 'TF':
                 freq_range = self.p.ax.get_xlim()
                 current_calibration_factors = self.dataset.tf_data_list.get_calibration_factors()
@@ -816,7 +852,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        with self.out_logging:
+        with self.out:
             print('Saving dataset:')
             print(self.dataset)
             self.dataset.save_data()
@@ -826,7 +862,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        with self.out_logging:
+        with self.out:
             file.save_fig(self.p)
     
                 

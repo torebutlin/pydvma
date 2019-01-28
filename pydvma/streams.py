@@ -175,8 +175,9 @@ class Recorder_NI(object):
         self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data,axis=0))
             
          
-        self.device_name = None
-        self.set_device_by_name(self.device_name)
+        devices = self.available_devices()[0]
+        self.device_name = devices[0]
+        #self.set_device_by_name(self.device_name)
         
     def set_device_by_name(self, name):
         """
@@ -329,7 +330,7 @@ class Recorder_NI(object):
         elif self.settings.channels == 1:
             channelname = '%s/ai0' % self.device_name
 
-        print('Channels Name: %s' % channelname)
+        #print('Channels Name: %s' % channelname)
         return channelname
     
     

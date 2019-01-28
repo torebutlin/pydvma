@@ -10,9 +10,9 @@ requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'pyaudio', 'matplotlib',
 
 setup(
     name='pydvma',
-    version='0.3.1',
+    version='0.3.5',
     install_requires=requires,
-    packages=['pydvma','labs'],
+    packages=['pydvma'],
     package_data={'': ['icon.png']},
     license='BSD 3-Clause License',
     long_description=open('README.md').read(),

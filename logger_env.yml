@@ -1,0 +1,17 @@
+name: logger
+channels:
+  - defaults
+dependencies:
+  - python=3.6
+  - pyqtgraph=0.10
+  - spyder
+  - matplotlib
+  - numpy
+  - scipy
+  - jupyter
+  - pip:
+    - peakutils==1.3
+    - pyaudio
+    - pydaqmx==1.4
+    - pydvma==0.3
+
