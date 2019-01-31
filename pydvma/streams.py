@@ -75,7 +75,7 @@ class Recorder(object):
         for i in range(self.settings.channels):
             self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
             self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-            if not self.trigger_detected:
+            if (not self.trigger_detected)  or (self.settings.pretrig_samples is None):
                 self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
                 self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
         
@@ -292,7 +292,7 @@ class Recorder_NI(object):
         for i in range(self.settings.channels):
             self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
             self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-            if not self.trigger_detected:
+            if (not self.trigger_detected) or (self.settings.pretrig_samples is None):
                 self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
                 self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
         
