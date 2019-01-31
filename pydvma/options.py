@@ -50,7 +50,7 @@ class MySettings(object):
                  viewed_time=None,
                  stored_time=2,
                  pretrig_samples=None,
-                 pretrig_threshold=0.1,
+                 pretrig_threshold=0.05,
                  pretrig_channel=0,
                  pretrig_timeout=20,
                  device_driver='soundcard',

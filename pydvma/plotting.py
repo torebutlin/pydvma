@@ -19,8 +19,8 @@ matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
 
 
 class PlotData():
-    def __init__(self,sets='all',channels='all'):
-        self.fig, self.ax = plt.subplots(1,1,figsize=(7.5,4),dpi=100)
+    def __init__(self,sets='all',channels='all',figsize=(9,5)):
+        self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
         self.ax.grid(True,alpha=0.3)
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
@@ -108,7 +108,7 @@ class PlotData():
         
         if len(data_list) is not 0:
             self.legend = self.ax.legend()
-            self.legend.set_draggable(True,use_blit=True,update='bbox')
+            self.legend.set_draggable(False)#(True,use_blit=True,update='bbox')
             self.lines = self.ax.get_lines()
             self.lined = dict()
             
