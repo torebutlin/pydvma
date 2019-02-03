@@ -24,8 +24,13 @@ class InteractiveLogging():
         # to stop text building up in the widget display
         self.out = Output()
         self.out_logging = Output()
-        streams.start_stream(settings)
-        self.rec = streams.REC
+        try:
+            streams.start_stream(settings)
+            self.rec = streams.REC
+        except:
+            print('Data stream not initialised.')
+            print('Possible reasons: pyaudio or PyDAQmx not installed, or acquisition hardware not connected.')
+            print('Please note that it won''t be possible to log data.')
         
         # Initialise variables
         self.current_view = 'Time'    

@@ -1,9 +1,15 @@
 
 
-import pyaudio
 import numpy as np
 import pprint as pp
 
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
+except NotImplementedError:
+    pyaudio = None
+    
 try:
     import PyDAQmx as pdaq
     from PyDAQmx import Task
