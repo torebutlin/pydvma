@@ -105,10 +105,14 @@ class PlotData():
                 if data_list.__class__.__name__ is 'TfDataList':
                     if data_list[n_set].tf_coherence is not None:
                         self.ax.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
+    
+        self.update_legend()
         
-        if len(data_list) is not 0:
-            self.legend = self.ax.legend()
-            self.legend.set_draggable(False)#(True,use_blit=True,update='bbox')
+    def update_legend(self,loc='lower right',draggable=False):
+        if len(self.data_list) is not 0:
+            self.legend = self.ax.legend(loc=loc)
+#            self.ax.legend()
+            self.legend.set_draggable(draggable,use_blit=True)#(True),update='bbox',use_blit=True
             self.lines = self.ax.get_lines()
             self.lined = dict()
             
@@ -128,11 +132,12 @@ class PlotData():
         xmin = np.inf
         xmax = -np.inf
         for line in self.lines:
-            data = line.get_data()
-            xx = min(data[0])
-            xmin = min([xx,xmin])
-            xx = max(data[0])
-            xmax = max([xx,xmax])
+            if line.get_alpha() > 0.5:
+                data = line.get_data()
+                xx = min(data[0])
+                xmin = min([xx,xmin])
+                xx = max(data[0])
+                xmax = max([xx,xmax])
         try:  
             self.ax.set_xlim([xmin,xmax])
         except:

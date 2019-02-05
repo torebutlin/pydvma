@@ -47,7 +47,7 @@ class MySettings(object):
                  nbits=16, 
                  chunk_size=100, 
                  num_chunks=6,
-                 viewed_time=None,
+                 viewed_time=0.3,
                  stored_time=2,
                  pretrig_samples=None,
                  pretrig_threshold=0.05,

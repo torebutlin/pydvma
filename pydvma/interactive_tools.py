@@ -7,7 +7,7 @@ from . import file
 
 import numpy as np
 from IPython.display import display
-from ipywidgets import Button, HBox, VBox, Output, FloatText, IntText, Dropdown, IntSlider, Layout, Label
+from ipywidgets import Button, HBox, VBox, Output, FloatText, IntText, Dropdown, IntSlider, Layout, Label, Checkbox,ToggleButton
 
 
 #%%
@@ -37,6 +37,7 @@ class InteractiveLogging():
         self.N_frames = 1
         self.iw_fft_power = 0
         self.iw_tf_power = 0
+        self.legend_loc = 'lower right'
 
         # puts plot inside widget so can have buttons next to plot
         self.outplot = Output(layout=Layout(width='85%'))
@@ -48,6 +49,10 @@ class InteractiveLogging():
         items_axes = ['xmin','xmax','ymin','ymax']
         items_save = ['Save Dataset','Save Figure']
         items_iw   = ['multiply iw','divide iw']
+        
+        items_legend = ['Left','on/off','Right']
+        
+        
         
         self.buttons_measure= [Button(description=i, layout=Layout(width='33%')) for i in items_measure]
         self.buttons_measure[0].button_style ='success'
@@ -96,13 +101,18 @@ class InteractiveLogging():
         self.button_X.button_style ='success'
         self.button_Y.button_style ='success'
         
+        self.buttons_legend = [Button(description=i, layout=Layout(width='31%')) for i in items_legend]
+        self.buttons_legend_toggle = ToggleButton(description='Click-and-drag', layout=Layout(width='95%',alignitems='start'))
+        
         # TEXT/LABELS/DROPDOWNS
         self.item_iw_fft_label = Label(value='iw power={}'.format(0),layout=Layout(width='100%'))
         self.item_iw_tf_label  = Label(value='iw power={}'.format(0),layout=Layout(width='100%'))
         self.item_label = Label(value="Frame length = {:.2f} seconds.".format(settings.stored_time/self.N_frames))
         self.item_axis_label = Label(value="Axes control:",layout=Layout(width='95%'))
         self.item_view_label = Label(value="View data:",layout=Layout(width='95%'))
+        self.item_legend_label = Label(value="Legend position:",layout=Layout(width='95%'))
         self.item_blank_label = Label(value="",layout=Layout(width='95%'))
+        
         self.text_axes = [FloatText(value=0,description=i, layout=Layout(width='95%')) for i in items_axes]
         self.text_axes =  [self.button_X]+[self.button_Y] + self.text_axes
         self.drop_window = Dropdown(options=['None', 'hanning'],value=default_window,description='Window:', layout=Layout(width='99%'))
@@ -115,7 +125,7 @@ class InteractiveLogging():
         group1 = VBox([self.buttons_calc[1],self.drop_window,self.slide_Nframes,self.text_Nframes,self.item_label,HBox(self.buttons_iw_tf),self.buttons_match],layout=Layout(width='33%'))
         group2 = VBox([self.buttons_calc[2],self.drop_window,HBox(self.buttons_iw_tf),self.buttons_match],layout=Layout(width='33%'))
         
-        group_view = VBox([self.item_blank_label,self.item_axis_label]+self.text_axes+[self.item_blank_label,self.item_view_label]+self.buttons_view,layout=Layout(width='20%'))
+        group_view = VBox([self.item_axis_label]+self.text_axes+[self.item_legend_label,self.buttons_legend_toggle]+[HBox(self.buttons_legend),self.item_view_label]+self.buttons_view,layout=Layout(width='20%'))
         
         # ASSEMBLE
         display(HBox([self.button_warning]))
@@ -140,6 +150,11 @@ class InteractiveLogging():
         
         self.button_X.on_click(self.auto_x)
         self.button_Y.on_click(self.auto_y)
+        
+        self.buttons_legend[0].on_click(self.legend_left)
+        self.buttons_legend[1].on_click(self.legend_onoff)
+        self.buttons_legend[2].on_click(self.legend_right)
+        self.buttons_legend_toggle.observe(self.legend_toggle)
         
         self.slide_Nframes.observe(self.nframes_slide)
         self.text_Nframes.observe(self.nframes_text)
@@ -171,6 +186,7 @@ class InteractiveLogging():
         
         self.refresh_buttons()
         
+        
         # Put output text at bottom of display
         display(self.out)
         
@@ -200,6 +216,35 @@ class InteractiveLogging():
         
     def auto_y(self,b):
         self.p.auto_y()
+        
+    def legend_left(self,b):
+        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
+        with self.out_logging:
+            self.legend_loc = 'lower left'
+            self.p.update_legend(self.legend_loc)
+        
+    def legend_right(self,b):
+        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
+        with self.out_logging:
+            self.legend_loc = 'lower right'
+            self.p.update_legend(self.legend_loc)
+            
+    def legend_onoff(self,b):
+        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
+        with self.out_logging:
+            visibility = self.p.ax.get_legend().get_visible()
+            self.p.ax.get_legend().set_visible(not visibility)
+                
+    def legend_toggle(self,b):
+        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
+        with self.out_logging:
+            self.p.ax.get_legend().set_visible(True)
+            self.p.legend.set_draggable(self.buttons_legend_toggle.value)
+            
         
     def nframes_slide(self,v):
         # the 'out' construction is to refresh the text output at each update 
@@ -287,26 +332,7 @@ class InteractiveLogging():
             self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
             self.refresh_buttons()
         
-    def load_data_old(self,b):
-        # the 'out' construction is to refresh the text output at each update 
-        # to stop text building up in the widget display
-        self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
-            self.dataset=file.load_data()
-            self.refresh_buttons()
-            self.current_view=None
-            if len(self.dataset.time_data_list) is not 0:
-                self.settings = self.dataset.time_data_list[0].settings
-                self.view_time(None)
-            elif len(self.dataset.freq_data_list) is not 0:
-                self.settings = self.dataset.freq_data_list[0].settings
-                self.view_fft(None)
-            elif len(self.dataset.tf_data_list) is not 0:
-                self.settings = self.dataset.tf_data_list[0].settings
-                self.view_tf(None)
-            else:
-                print('no data to view')
+    
                 
     def load_data(self,b):
         # the 'out' construction is to refresh the text output at each update 
@@ -325,13 +351,11 @@ class InteractiveLogging():
                 print('No data loaded')
             
             if len(self.dataset.time_data_list) is not 0:
-                N = len(self.dataset.time_data_list)
-                self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+                self.p.update(self.dataset.time_data_list,sets='all',channels='all')
             elif len(self.dataset.freq_data_list) is not 0:
-                N = len(self.dataset.freq_data_list)
-                self.p.update(self.dataset.freq_data_list,sets=[N-1],channels='all')
+                self.p.update(self.dataset.freq_data_list,sets='all',channels='all')
             elif len(self.dataset.tf_data_list) is not 0:
-                N = len(self.dataset.tf_data_list)
+                self.p.update(self.dataset.tf_data_list,sets='all',channels='all')
             else:
                 print('No data to view')
            
@@ -649,7 +673,7 @@ class InteractiveView():
         items_view = ['View Time', 'View FFT', 'View TF']
         items_axes = ['xmin','xmax','ymin','ymax']
         items_save = ['Save Dataset','Save Figure']
-        
+        items_legend = ['Left','on/off','Right']
         
         self.buttons_load = [Button(description=i, layout=Layout(width='50%')) for i in items_load]
         self.buttons_load[0].button_style ='primary'
@@ -679,10 +703,15 @@ class InteractiveView():
         self.button_X.button_style ='success'
         self.button_Y.button_style ='success'
         
+        self.buttons_legend = [Button(description=i, layout=Layout(width='16%')) for i in items_legend]
+        self.buttons_legend_toggle = ToggleButton(description='Click-and-drag', layout=Layout(width='16%',alignitems='start'))
+        
         # TEXT/LABELS/DROPDOWNS
         self.item_axis_label = Label(value="Adjust axes manually:",layout=Layout(width='16%'))
         self.text_axes = [FloatText(value=0,description=i, layout=Layout(width='16%')) for i in items_axes]
         self.text_axes = [self.button_X]+[self.button_Y] + [self.item_axis_label] + self.text_axes
+        self.item_legend_label = Label(value="Legend position:",layout=Layout(width='16%'))
+        self.item_blank_label = Label(value="",layout=Layout(width='20%'))
         
         group1 = VBox([self.buttons_view[0]],layout=Layout(width='33%'))
         group2 = VBox([self.buttons_view[1]],layout=Layout(width='33%'))
@@ -692,6 +721,7 @@ class InteractiveView():
         display(HBox(self.buttons_load))
         self.p = plotting.PlotData()
         display(HBox(self.text_axes))
+        display(HBox([self.item_blank_label,self.item_legend_label]+self.buttons_legend+[self.buttons_legend_toggle]))
         display(HBox([group1,group2,group3]))
         display(HBox(self.buttons_save))
         
@@ -705,7 +735,10 @@ class InteractiveView():
         self.button_X.on_click(self.auto_x)
         self.button_Y.on_click(self.auto_y)
         
-        
+        self.buttons_legend[0].on_click(self.legend_left)
+        self.buttons_legend[1].on_click(self.legend_onoff)
+        self.buttons_legend[2].on_click(self.legend_right)
+        self.buttons_legend_toggle.observe(self.legend_toggle)
         
         self.buttons_load[0].on_click(self.load_data)
         self.buttons_load[1].on_click(self.undo)
@@ -751,11 +784,40 @@ class InteractiveView():
     def auto_y(self,b):
         self.p.auto_y()
         
+    def legend_left(self,b):
+        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
+        with self.out_logging:
+            self.legend_loc = 'lower left'
+            self.p.update_legend(self.legend_loc)
+        
+    def legend_right(self,b):
+        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
+        with self.out_logging:
+            self.legend_loc = 'lower right'
+            self.p.update_legend(self.legend_loc)
+            
+    def legend_onoff(self,b):
+        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
+        with self.out_logging:
+            visibility = self.p.ax.get_legend().get_visible()
+            self.p.ax.get_legend().set_visible(not visibility)
+                
+    def legend_toggle(self,b):
+        self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
+        with self.out_logging:
+            self.p.ax.get_legend().set_visible(True)
+            self.p.legend.set_draggable(self.buttons_legend_toggle.value)
+        
         
     def load_data(self,b):
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
+        self.out_logging.clear_output(wait=False)
         with self.out:
             d = file.load_data()
             if d is not None:
@@ -768,13 +830,11 @@ class InteractiveView():
                 print('No data loaded')
             
             if len(self.dataset.time_data_list) is not 0:
-                N = len(self.dataset.time_data_list)
-                self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+                self.p.update(self.dataset.time_data_list,sets='all',channels='all')
             elif len(self.dataset.freq_data_list) is not 0:
-                N = len(self.dataset.freq_data_list)
-                self.p.update(self.dataset.freq_data_list,sets=[N-1],channels='all')
+                self.p.update(self.dataset.freq_data_list,sets='all',channels='all')
             elif len(self.dataset.tf_data_list) is not 0:
-                N = len(self.dataset.tf_data_list)
+                self.p.update(self.dataset.tf_data_list,sets='all',channels='all')
             else:
                 print('No data to view')
            

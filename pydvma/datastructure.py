@@ -313,7 +313,14 @@ class TimeDataList(list):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
-        self[n_set].channel_cal_factors[n_chan]=factor
+        if len(self) is 0:
+            print('<TimeDataList> is empty. First log data, load data, or create test data.')
+        elif n_set >= len(self):
+            print('<TimeDataList> has {} set(s) of <TimeData>. Set requested (index={}) exceeds number of sets. Note indexing starts at 0.'.format(len(self),n_set))
+        elif n_chan >= len(self[n_set].tf_data[0,:]):
+            print('<TimeDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].time_data[0,:]),n_chan))
+        else:
+            self[n_set].channel_cal_factors[n_chan]=factor
     
 
 class FreqDataList(list):
@@ -332,7 +339,14 @@ class FreqDataList(list):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
-        self[n_set].channel_cal_factors[n_chan]=factor
+        if len(self) is 0:
+            print('<FreqDataList> is empty. First calculate FFT.')
+        elif n_set >= len(self):
+            print('<FreqDataList> has {} set(s) of <FreqData>. Set requested (index={}) exceeds number of sets. Note indexing starts at 0.'.format(len(self),n_set))
+        elif n_chan >= len(self[n_set].tf_data[0,:]):
+            print('<FreqDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].freq_data[0,:]),n_chan))
+        else:
+            self[n_set].channel_cal_factors[n_chan]=factor
 
 class CrossSpecDataList(list):
     ### This will allow functions to be discovered that can take lists of CrossSpecData is arguments
@@ -354,7 +368,15 @@ class TfDataList(list):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
-        self[n_set].channel_cal_factors[n_chan]=factor
+        if len(self) is 0:
+            print('<TfDataList> is empty. First calculate transfer function.')
+        elif n_set >= len(self):
+            print('<TfDataList> has {} set(s) of <TfData>. Set requested (index={}) exceeds number of sets. Note indexing starts at 0.'.format(len(self),n_set))
+        elif n_chan >= len(self[n_set].tf_data[0,:]):
+            print('<TfDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].tf_data[0,:]),n_chan))
+        else:
+            self[n_set].channel_cal_factors[n_chan]=factor
+             
 
 class SonoDataList(list):
     ### This will allow functions to be discovered that can take lists of SonoData is arguments
