@@ -5,7 +5,7 @@ A Python package for dynamics and vibration measurements and analysis.
 
 ## About pydvma
 
-This is a modular library for data-measurement and analysis in the context of dynamics and vibration, for use in student laboratory experiments as well as for research projects, developed by staff and students at Cambridge University Engineering Department.
+This is a modular library for data-measurement and analysis in the context of dynamics and vibration, for use in student laboratory experiments as well as for research projects, developed at Cambridge University Engineering Department.
 
 A high-level interface allows straightforward application for common use-cases and a low-level interface provides more control when needed.
 
