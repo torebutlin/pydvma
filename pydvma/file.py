@@ -72,7 +72,7 @@ def save_data(dataset, filename=None, overwrite_without_prompt=False):
 
 
 
-def save_fig(plot, filename=None, overwrite_without_prompt=False):
+def save_fig(plot, figsize=None, filename=None, overwrite_without_prompt=False):
     '''
     Saves figure to file 'filename.png' and 'filename.pdf', or provides dialog if no
     filename provided.
@@ -105,9 +105,13 @@ def save_fig(plot, filename=None, overwrite_without_prompt=False):
             print('Save cancelled')
             return None
         print('Will overwrite existing file')
+
+    # Set figsize...
+    original_size = plot.fig.get_size_inches()
+    if figsize is not None:
+        plot.fig.set_size_inches(figsize,forward=False)
         
     # Make sure it ends with .png then .pdf
-    
     filename = os.path.splitext(filename)[0]
     if not filename.endswith('.png'):
         filename += '.png'
@@ -120,4 +124,8 @@ def save_fig(plot, filename=None, overwrite_without_prompt=False):
     fig.savefig(filename, dpi=300)
     print("Figure saved as %s" % filename)
 
+    # return to original size
+    plot.fig.set_size_inches(original_size,forward=False)
+    
+    
     return filename

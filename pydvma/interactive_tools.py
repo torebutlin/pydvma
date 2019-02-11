@@ -630,7 +630,7 @@ class InteractiveLogging():
         self.out.clear_output(wait=False)
         self.out_logging.clear_output(wait=False)
         with self.out_logging:
-            file.save_fig(self.p)
+            file.save_fig(self.p,figsize=(9,5))
             
     def refresh_buttons(self):
         if len(self.dataset.time_data_list) is 0:
