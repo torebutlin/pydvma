@@ -12,6 +12,6 @@ dependencies:
   - pyaudio
   - pip:
     - peakutils==1.3
-    - pydaqmx==1.4
+    - pydaqmx
     - pydvma
 
