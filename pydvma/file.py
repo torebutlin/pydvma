@@ -107,9 +107,9 @@ def save_fig(plot, figsize=None, filename=None, overwrite_without_prompt=False):
         print('Will overwrite existing file')
 
     # Set figsize...
-    original_size = plot.fig.get_size_inches()
+    original_size = fig.get_size_inches()
     if figsize is not None:
-        plot.fig.set_size_inches(figsize,forward=False)
+        fig.set_size_inches(figsize,forward=False)
         
     # Make sure it ends with .png then .pdf
     filename = os.path.splitext(filename)[0]
@@ -125,7 +125,7 @@ def save_fig(plot, figsize=None, filename=None, overwrite_without_prompt=False):
     print("Figure saved as %s" % filename)
 
     # return to original size
-    plot.fig.set_size_inches(original_size,forward=False)
+    fig.set_size_inches(original_size,forward=False)
     
     
     return filename

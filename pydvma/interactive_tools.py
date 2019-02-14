@@ -274,7 +274,14 @@ class InteractiveLogging():
         with self.out_logging:
             self.N_frames = self.text_Nframes.value
             self.slide_Nframes.value = self.N_frames
-            self.item_label.value = "Frame length = {:.2f} seconds.".format(self.settings.stored_time/self.N_frames)
+            if len(self.dataset.time_data_list) is not 0:
+                stored_time = self.dataset.time_data_list[0].settings.stored_time
+            elif len(self.dataset.tf_data_list) is not 0:
+                stored_time = self.dataset.tf_data_list[0].settings.stored_time
+            else:
+                stored_time = 0
+                print('Time or TF data settings not found')
+            self.item_label.value = "Frame length = {:.2f} seconds.".format(stored_time/self.N_frames)
             if self.current_view is 'TF':
                 self.tf(None)
         
@@ -963,7 +970,7 @@ class InteractiveView():
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
         with self.out:
-            file.save_fig(self.p)
+            file.save_fig(self.p,figsize=(9,5))
     
     def refresh_buttons(self):
         if len(self.dataset.time_data_list) is 0:
