@@ -4,6 +4,7 @@ from . import acquisition
 from . import analysis
 from . import streams
 from . import file
+import time
 
 import numpy as np
 from IPython.display import display
@@ -23,14 +24,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out = Output()
-        self.out_logging = Output()
-        try:
-            streams.start_stream(settings)
-            self.rec = streams.REC
-        except:
-            print('Data stream not initialised.')
-            print('Possible reasons: pyaudio or PyDAQmx not installed, or acquisition hardware not connected.')
-            print('Please note that it won''t be possible to log data.')
+        self.out_top = Output(layout=Layout(height='120px'))
+        
         
         # Initialise variables
         self.current_view = 'Time'    
@@ -128,9 +123,9 @@ class InteractiveLogging():
         group_view = VBox([self.item_axis_label]+self.text_axes+[self.item_legend_label,self.buttons_legend_toggle]+[HBox(self.buttons_legend),self.item_view_label]+self.buttons_view,layout=Layout(width='20%'))
         
         # ASSEMBLE
+        display(self.out_top)
         display(HBox([self.button_warning]))
         display(HBox(self.buttons_measure))
-        display(self.out_logging)
         display(HBox([self.outplot,group_view]))
         display(HBox([group0,group1,group2]))
         display(HBox(self.buttons_save))
@@ -190,6 +185,16 @@ class InteractiveLogging():
         # Put output text at bottom of display
         display(self.out)
         
+        with self.out_top:
+            try:
+                streams.start_stream(settings)
+                self.rec = streams.REC
+            except:
+                print('Data stream not initialised.')
+                print('Possible reasons: pyaudio or PyDAQmx not installed, or acquisition hardware not connected.')
+                print('Please note that it won''t be possible to log data.')
+            
+        
     
     def xmin(self,v):
         xmin = self.text_axes[2].value
@@ -219,29 +224,29 @@ class InteractiveLogging():
         
     def legend_left(self,b):
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.legend_loc = 'lower left'
             self.p.update_legend(self.legend_loc)
         
     def legend_right(self,b):
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.legend_loc = 'lower right'
             self.p.update_legend(self.legend_loc)
             
     def legend_onoff(self,b):
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             visibility = self.p.ax.get_legend().get_visible()
             self.p.ax.get_legend().set_visible(not visibility)
                 
     def legend_toggle(self,b):
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.p.ax.get_legend().set_visible(True)
             self.p.legend.set_draggable(self.buttons_legend_toggle.value)
             
@@ -250,8 +255,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.N_frames = self.slide_Nframes.value
             self.text_Nframes.value = self.N_frames
             if len(self.dataset.time_data_list) is not 0:
@@ -270,8 +275,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.N_frames = self.text_Nframes.value
             self.slide_Nframes.value = self.N_frames
             if len(self.dataset.time_data_list) is not 0:
@@ -289,9 +294,15 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.rec.trigger_detected = False
+            self.buttons_measure[0].button_style =''
+            if self.settings.pretrig_samples is None:
+                self.buttons_measure[0].description = 'Logging ({}s)'.format(self.settings.stored_time)
+            else:
+                self.buttons_measure[0].description = 'Logging ({}s, with trigger)'.format(self.settings.stored_time)
+            
             d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec)
             self.dataset.add_to_dataset(d.time_data_list)
             N = len(self.dataset.time_data_list)
@@ -300,6 +311,9 @@ class InteractiveLogging():
 #            self.p.auto_y()
             self.p.ax.set_ylim([-1,1])
             self.current_view='Time'
+            self.buttons_measure[0].button_style ='success'
+            self.buttons_measure[0].description = 'Log Data'
+            
             if np.any(np.abs(d.time_data_list[-1].time_data) > 0.95):
                 self.button_warning.layout.visibility = 'visible'
             else:
@@ -313,13 +327,12 @@ class InteractiveLogging():
             self.text_axes[5].value = ylim[1]
             self.refresh_buttons()
         
-        
     def undo(self,b):
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.dataset.remove_last_data_item('TimeData')
             self.dataset.freq_data_list = datastructure.FreqDataList()
             self.dataset.tf_data_list = datastructure.TfDataList()
@@ -333,8 +346,8 @@ class InteractiveLogging():
         # to stop text building up in the widget display
         self.dataset = datastructure.DataSet()
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             N = len(self.dataset.time_data_list)
             self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
             self.refresh_buttons()
@@ -345,8 +358,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             d = file.load_data()
             if d is not None:
                 self.dataset.add_to_dataset(d.time_data_list)
@@ -384,8 +397,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.refresh_buttons()
             N = len(self.dataset.time_data_list)
             if N is not 0:
@@ -408,8 +421,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             N = len(self.dataset.freq_data_list)
             self.refresh_buttons()
             if N is not 0:
@@ -432,8 +445,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             N = len(self.dataset.tf_data_list)
             self.refresh_buttons()
             if N is not 0:
@@ -458,8 +471,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.dataset.calculate_fft_set(window=window)
             self.p.update(self.dataset.freq_data_list)
             if self.current_view is not 'FFT':
@@ -484,8 +497,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.dataset.calculate_tf_set(window=window,N_frames=N_frames)
             self.p.update(self.dataset.tf_data_list)
             if self.current_view is not 'TF':
@@ -507,8 +520,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.dataset.calculate_tf_averaged(window=window)
             self.p.update(self.dataset.tf_data_list)
             if self.current_view is not 'TFAV':
@@ -528,8 +541,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             if self.current_view is 'FFT':
                 s = self.p.get_selected_channels()
                 n_sets,n_chans = np.shape(s)
@@ -547,8 +560,8 @@ class InteractiveLogging():
        # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             if self.current_view is 'FFT':
                 s = self.p.get_selected_channels()
                 n_sets,n_chans = np.shape(s)
@@ -566,8 +579,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             if (self.current_view is 'TF') or (self.current_view is 'TFAV'):
                 s = self.p.get_selected_channels()
                 n_sets,n_chans = np.shape(s)
@@ -585,8 +598,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             if (self.current_view is 'TF') or (self.current_view is 'TFAV'):
                 s = self.p.get_selected_channels()
                 n_sets,n_chans = np.shape(s)
@@ -604,8 +617,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             if (self.current_view is 'TF') or (self.current_view is 'TFAV'):
                 freq_range = self.p.ax.get_xlim()
                 current_calibration_factors = self.dataset.tf_data_list.get_calibration_factors()
@@ -624,8 +637,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             print('Saving dataset:')
             print(self.dataset)
             self.dataset.save_data()
@@ -635,8 +648,8 @@ class InteractiveLogging():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             file.save_fig(self.p,figsize=(9,5))
             
     def refresh_buttons(self):
@@ -669,7 +682,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out = Output()
-        self.out_logging = Output()
+        self.out_top = Output()
         
         # Initialise
         self.current_view = 'Time'    
@@ -793,29 +806,29 @@ class InteractiveView():
         
     def legend_left(self,b):
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.legend_loc = 'lower left'
             self.p.update_legend(self.legend_loc)
         
     def legend_right(self,b):
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.legend_loc = 'lower right'
             self.p.update_legend(self.legend_loc)
             
     def legend_onoff(self,b):
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             visibility = self.p.ax.get_legend().get_visible()
             self.p.ax.get_legend().set_visible(not visibility)
                 
     def legend_toggle(self,b):
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
-        with self.out_logging:
+        self.out_top.clear_output(wait=False)
+        with self.out_top:
             self.p.ax.get_legend().set_visible(True)
             self.p.legend.set_draggable(self.buttons_legend_toggle.value)
         
@@ -824,7 +837,7 @@ class InteractiveView():
         # the 'out' construction is to refresh the text output at each update 
         # to stop text building up in the widget display
         self.out.clear_output(wait=False)
-        self.out_logging.clear_output(wait=False)
+        self.out_top.clear_output(wait=False)
         with self.out:
             d = file.load_data()
             if d is not None:
