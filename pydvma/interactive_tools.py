@@ -30,6 +30,7 @@ class InteractiveLogging():
         # Initialise variables
         self.current_view = 'Time'    
         self.N_frames = 1
+        self.overlap = 0.5
         self.iw_fft_power = 0
         self.iw_tf_power = 0
         self.legend_loc = 'lower right'
@@ -102,7 +103,7 @@ class InteractiveLogging():
         # TEXT/LABELS/DROPDOWNS
         self.item_iw_fft_label = Label(value='iw power={}'.format(0),layout=Layout(width='100%'))
         self.item_iw_tf_label  = Label(value='iw power={}'.format(0),layout=Layout(width='100%'))
-        self.item_label = Label(value="Frame length = {:.2f} seconds.".format(settings.stored_time/self.N_frames))
+        self.item_label = Label(value="Frame length = {:.2f} seconds.".format(settings.stored_time/(self.N_frames-self.overlap*self.N_frames+self.overlap)))
         self.item_axis_label = Label(value="Axes control:",layout=Layout(width='95%'))
         self.item_view_label = Label(value="View data:",layout=Layout(width='95%'))
         self.item_legend_label = Label(value="Legend position:",layout=Layout(width='95%'))
@@ -267,7 +268,7 @@ class InteractiveLogging():
                 stored_time = 0
                 print('Time or TF data settings not found')
                 
-            self.item_label.value = "Frame length = {:.2f} seconds.".format(stored_time/self.N_frames)
+            self.item_label.value = "Frame length = {:.2f} seconds.".format(stored_time/(self.N_frames-self.overlap*self.N_frames+self.overlap))
             if self.current_view is 'TF':
                 self.tf(None)
         
@@ -286,7 +287,7 @@ class InteractiveLogging():
             else:
                 stored_time = 0
                 print('Time or TF data settings not found')
-            self.item_label.value = "Frame length = {:.2f} seconds.".format(stored_time/self.N_frames)
+            self.item_label.value = "Frame length = {:.2f} seconds.".format(stored_time/(self.N_frames-self.overlap*self.N_frames+self.overlap))
             if self.current_view is 'TF':
                 self.tf(None)
         
@@ -499,7 +500,7 @@ class InteractiveLogging():
         self.out.clear_output(wait=False)
         self.out_top.clear_output(wait=False)
         with self.out_top:
-            self.dataset.calculate_tf_set(window=window,N_frames=N_frames)
+            self.dataset.calculate_tf_set(window=window,N_frames=N_frames,overlap=self.overlap)
             self.p.update(self.dataset.tf_data_list)
             if self.current_view is not 'TF':
                 self.current_view = 'TF'
@@ -687,6 +688,7 @@ class InteractiveView():
         # Initialise
         self.current_view = 'Time'    
         self.N_frames = 1
+        self.overlap = 0.5
         
         # BUTTONS
         items_load = ['Load Data','Reset (deletes loaded data)']
