@@ -1,15 +1,20 @@
-.. pydvma documentation master file, created by
-   sphinx-quickstart on Wed May 15 12:53:48 2019.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
-Welcome to pydvma's documentation!
-==================================
+Documentation for pydvma
+========================
+A Python package for Dynamics and Vibration Measurement and Analysis.
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
+  introduction
+
+  quickstart
+
+  using
+
+  information_for_developers/information_for_developers
+
+  api_reference/api_reference
 
 
 Indices and tables
