@@ -14,7 +14,7 @@ import time
 
 
 #%% Main data acquisition function
-def log_data(settings,test_name=None,rec=None):
+def log_data(settings,test_name=None,rec=None,output=None):
     '''
     Logs data according to settings and returns DataSet class
     '''

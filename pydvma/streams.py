@@ -339,6 +339,7 @@ class Recorder_NI(object):
         #print('Channels Name: %s' % channelname)
         return channelname
     
+
     
     def init_stream(self,settings,_input_=True,_output_=False):
         '''
@@ -368,11 +369,28 @@ class Recorder_NI(object):
                                             AutoRegN,0,name = 'stream_audio_callback')
         self.audio_stream.StopTask()
         self.audio_stream.StartTask()
-                
+
+
+    def start_output(self,settings,output):
+
+#        output_channel_name = '%s/ao0' % self.device_name
+        output_channel_name =  '%s/ao0:%s/ao%i' % (self.device_name, self.device_name,2-1)
+        print(output_channel_name)
+        self.output_stream = Task()
+        self.output_stream.CreateAOVoltageChan(output_channel_name,"",-settings.VmaxNI,settings.VmaxNI,pdaq.DAQmx_Val_Volts,None)
+        self.output_stream.CfgSampClkTiming("",5000,
+                              pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_FiniteSamps,
+                              np.int(np.size(output)/2))
         
-                
+#        self.output_stream.StartTask()
         
-        
+        timeout = 5
+        self.output_stream.WriteAnalogF64(np.int(np.size(output)/2),True, timeout, pdaq.DAQmx_Val_GroupByChannel,output,None,None)
+#        self.output_stream.StopTask()
+             
+        ### NEED TO SYNC IN/OUT CLOCKS FOR EACH TASK
+        ### pdaq.DAQmxCfgSampClkTiming(taskHandle_input,"ao/SampleClock",fs,daq.DAQmx_Val_Falling,daq.DAQmx_Val_ContSamps,block)
+        ### pdaq.CfgDigEdgeRefTrig(...)
         
         ###
         

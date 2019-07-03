@@ -82,6 +82,8 @@ class Oscilloscope():
         self.view_levels = self.settings.init_view_levels
 
         self.toggle_view()
+        
+        self.auto_scale = False
 
         self.data_saved_counter = 0 #  to indicate not yet saved file
 
@@ -188,9 +190,10 @@ class Oscilloscope():
         Called with a 0s interval by QTimer.
 
         '''
+        time_data_snapshot = np.copy(self.rec.osc_time_data)
         if self.view_levels == True:
-            self.osc_levels_rms = np.sqrt(np.mean(self.rec.osc_time_data**2,axis=0))
-            self.osc_levels_max = np.max(np.abs(self.rec.osc_time_data),axis=0)
+            self.osc_levels_rms = np.sqrt(np.mean(time_data_snapshot**2,axis=0))
+            self.osc_levels_max = np.max(np.abs(time_data_snapshot),axis=0)
             changed_indices = self.osc_levels_peak_hold < self.osc_levels_max
             self.time_last_changed[changed_indices] = time.time()
             self.osc_levels_peak_hold = np.maximum(self.osc_levels_peak_hold,self.osc_levels_max)
@@ -199,11 +202,18 @@ class Oscilloscope():
         for i in range(self.settings.channels):
             offset = i
             if self.view_time == True:
-                self.osc_time_lineset[i].setData(self.rec.osc_time_axis, self.rec.osc_time_data[:,i] + offset)
+                if self.auto_scale is True:
+                    shift = np.mean(time_data_snapshot[:,i])
+                    scale_factor = np.max(np.abs(time_data_snapshot[:,i]-shift))*2
+                else:
+                    shift = 0
+                    scale_factor = 1
+                    
+                self.osc_time_lineset[i].setData(self.rec.osc_time_axis, (time_data_snapshot[:,i]-shift)/scale_factor + offset)
 
             if self.view_freq == True:
                 # calculate the FFT
-                self.rec.osc_time_data_windowed[:,i] = self.rec.osc_time_data[:,i] * np.blackman(np.shape(self.rec.osc_time_data)[0])
+                self.rec.osc_time_data_windowed[:,i] = time_data_snapshot[:,i] * np.blackman(np.shape(time_data_snapshot)[0])
                 self.rec.osc_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(self.rec.osc_time_data_windowed[:,i]))/len(self.rec.osc_time_data_windowed[:,i]))
                 self.osc_freq_lineset[i].setData(self.rec.osc_freq_axis,self.rec.osc_freq_data[:,i])
 
@@ -220,9 +230,9 @@ class Oscilloscope():
 #                self.osc_levels_lineset[3].setData(np.arange(2),np.ones(2))
 
 
-            #updates for the stored
-            self.rec.stored_time_data_windowed[:,i] = self.rec.stored_time_data[:,i] * np.blackman(np.shape(self.rec.stored_time_data)[0])
-            self.rec.stored_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(self.rec.stored_time_data_windowed[:,i]))/len(self.rec.stored_time_data_windowed[:,i]))
+#            #updates for the stored - DONT NEED
+#            self.rec.stored_time_data_windowed[:,i] = self.rec.stored_time_data[:,i] * np.blackman(np.shape(self.rec.stored_time_data)[0])
+#            self.rec.stored_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(self.rec.stored_time_data_windowed[:,i]))/len(self.rec.stored_time_data_windowed[:,i]))
 
     #KeyPressed function within osciolloscpe since can only take one argument
     def keyPressed(self, evt):
@@ -266,6 +276,9 @@ class Oscilloscope():
             self.win.setWindowFlags(self.win.windowFlags() ^ QtCore.Qt.WindowStaysOnTopHint)       
             self.win.show()
                 
+            
+        if evt.key() == QtCore.Qt.Key_Y:
+            self.auto_scale = not self.auto_scale 
                 
         if evt.key() == QtCore.Qt.Key_Space or evt.key() == QtCore.Qt.Key_S:
 
