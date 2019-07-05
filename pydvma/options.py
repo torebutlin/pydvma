@@ -58,7 +58,9 @@ class MySettings(object):
                  VmaxNI=5,
                  init_view_time=True,
                  init_view_freq=True,
-                 init_view_levels=True):
+                 init_view_levels=True,
+                 output_channels=None,
+                 output_fs=None):
         
         self.channels=channels
         self.fs=fs
@@ -77,6 +79,11 @@ class MySettings(object):
         self.init_view_time=init_view_time
         self.init_view_freq=init_view_freq
         self.init_view_levels=init_view_levels
+        self.output_channels = output_channels
+        self.output_fs = output_fs
+        
+        if output_fs is None:
+            self.output_fs = self.fs
         
         ### derived settings
         if viewed_time != None:

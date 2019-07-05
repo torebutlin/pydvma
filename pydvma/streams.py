@@ -339,6 +339,25 @@ class Recorder_NI(object):
         #print('Channels Name: %s' % channelname)
         return channelname
     
+    
+    def set_output_channels(self):
+        """
+        Create the string to initiate the output channels when assigning a Task
+
+        Returns
+        ----------
+        channelname: str
+            The channel names to be used when assigning Task
+            e.g. Dev0/ao0:Dev0/ao1
+        """
+        if self.settings.output_channels >1:
+            channelname =  '%s/ao0:%s/ao%i' % (self.device_name, self.device_name,self.settings.output_channels-1)
+        elif self.settings.output_channels == 1:
+            channelname = '%s/ao0' % self.device_name
+
+        #print('Channels Name: %s' % channelname)
+        return channelname
+    
 
     
     def init_stream(self,settings,_input_=True,_output_=False):
@@ -374,18 +393,45 @@ class Recorder_NI(object):
     def start_output(self,settings,output):
 
 #        output_channel_name = '%s/ao0' % self.device_name
-        output_channel_name =  '%s/ao0:%s/ao%i' % (self.device_name, self.device_name,2-1)
-        print(output_channel_name)
+        
+        output_shape = np.shape(output)
+        N_output = output_shape[0]
+        N_channel_check = output_shape[1]
+        if N_channel_check != settings.output_channels:
+            print('output matrix doesn''t match number of output channels')
+            
+            
         self.output_stream = Task()
-        self.output_stream.CreateAOVoltageChan(output_channel_name,"",-settings.VmaxNI,settings.VmaxNI,pdaq.DAQmx_Val_Volts,None)
-        self.output_stream.CfgSampClkTiming("",5000,
+        print(self.set_output_channels())
+        self.output_stream.CreateAOVoltageChan(self.set_output_channels(),"",-settings.VmaxNI,settings.VmaxNI,pdaq.DAQmx_Val_Volts,None)
+        self.output_stream.CfgSampClkTiming("",settings.output_fs,
                               pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_FiniteSamps,
-                              np.int(np.size(output)/2))
+                              N_output)
         
 #        self.output_stream.StartTask()
         
         timeout = 5
-        self.output_stream.WriteAnalogF64(np.int(np.size(output)/2),True, timeout, pdaq.DAQmx_Val_GroupByChannel,output,None,None)
+        self.output_stream.WriteAnalogF64(N_output, True, timeout, pdaq.DAQmx_Val_GroupByScanNumber,output,None,None)
+        
+        ### Attempt below to link to input stream. Problem trying to sync initiation of input and output tasks.
+        
+#        if settings.fs == settings.output_fs:
+#            N_input = N_output
+#        else:
+#            N_input = np.int(N_output * settings.fs / settings.output_fs)
+#        
+#        self.input_stream = Task()
+#        self.input_stream.CreateAIVoltageChan(self.set_channels(),"",
+#                                 pdaq.DAQmx_Val_RSE,-settings.VmaxNI,settings.VmaxNI,
+#                                 pdaq.DAQmx_Val_Volts,None)
+#        self.input_stream.CfgSampClkTiming("",self.settings.fs,
+#                              pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_FiniteSamps,
+#                              N_input)
+#        self.input_stream.CfgTimeStartTrig(1,pdaq.DAQmx_Val_HostTime)
+        
+        
+        
+        
 #        self.output_stream.StopTask()
              
         ### NEED TO SYNC IN/OUT CLOCKS FOR EACH TASK
