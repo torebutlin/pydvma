@@ -59,9 +59,12 @@ class MySettings(object):
                  init_view_time=True,
                  init_view_freq=True,
                  init_view_levels=True,
+                 output_device_driver='soundcard',
+                 output_device_index=None,
                  output_channels=None,
                  output_fs=None):
         
+        #INPUT SETTINGS
         self.channels=channels
         self.fs=fs
         self.chunk_size=chunk_size
@@ -79,6 +82,10 @@ class MySettings(object):
         self.init_view_time=init_view_time
         self.init_view_freq=init_view_freq
         self.init_view_levels=init_view_levels
+        
+        #OUTPUT SETTINGS
+        self.output_device_driver = output_device_driver
+        self.output_device_index = output_device_index
         self.output_channels = output_channels
         self.output_fs = output_fs
         

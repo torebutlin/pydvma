@@ -47,7 +47,55 @@ def start_stream(settings):
     else:
         raise ValueError('Unknown driver: %r' % settings.device_driver)
         
+#%% Find information on available devices
+def available_devices():
+    # soundcard devices list
+    print('__________________________________________________________')
+    print('')
+    print('Devices available using device_driver=''soundcard'', by index:')
+    print('__________________________________________________________')
+    print('')
 
+    audio = pyaudio.PyAudio()
+    device_count = audio.get_device_count()
+    print ('Number of devices available is: %i' %device_count)
+    print ('')
+    for i in range(device_count):
+        device = audio.get_device_info_by_index(i)
+        print(device['index'], device['name'])
+    print ('')
+    default_input_device = audio.get_default_input_device_info()
+    print('Default device is: %i %s'
+          %(default_input_device['index'],default_input_device['name']))
+    print ('')
+    default_output_device = audio.get_default_output_device_info()
+    print('Default device is: %i %s'
+          %(default_output_device['index'],default_output_device['name']))
+    print ('')
+    print ('')
+    
+    # NI list
+    print('______________________________________________________')
+    print('')
+    print('Devices available using device_driver=''nidaq'', by index:')
+    print('______________________________________________________')
+    print('')
+    numBytesneeded = pdaq.DAQmxGetSysDevNames(None,0)
+    databuffer = pdaq.create_string_buffer(numBytesneeded)
+    pdaq.DAQmxGetSysDevNames(databuffer,numBytesneeded)
+
+    devices_name = pdaq.string_at(databuffer).decode('utf-8').split(',')
+
+    device_type = []
+    counter = -1
+    for dev in devices_name:
+        counter += 1
+        numBytesneeded = pdaq.DAQmxGetDevProductType(dev,None,0)
+        databuffer = pdaq.create_string_buffer(numBytesneeded)
+        pdaq.DAQmxGetDevProductType(dev,databuffer,numBytesneeded)
+        device_type.append(pdaq.string_at(databuffer).decode('utf-8'))
+        print('{}: {} {}'.format(counter,dev,device_type[-1]))
+        
 
 #%% pyaudio stream
 class Recorder(object):
@@ -122,7 +170,7 @@ class Recorder(object):
             print('Default device is: %i %s'
                   %(default_device['index'],default_device['name']))
             print ('')
-            settings.device_index=int(input('Insert index of required device:'))
+            settings.device_index=device['index']
             
         settings.device_name = self.audio.get_device_info_by_index(settings.device_index)['name']
         settings.device_full_info = self.audio.get_device_info_by_index(settings.device_index)
@@ -390,7 +438,7 @@ class Recorder_NI(object):
         self.audio_stream.StartTask()
 
 
-    def start_output(self,settings,output):
+    def setup_output(self,settings,output):
 
 #        output_channel_name = '%s/ao0' % self.device_name
         

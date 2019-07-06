@@ -94,7 +94,32 @@ def log_data(settings,test_name=None,rec=None,output=None):
     
     return dataset
     
+
+
+def log_data_with_output(settings,output):
+    # call log_data function
+    # call output_signal function
     
+    print('not yet implemented')
+
+def output_signal(settings,output):
+    # setup NI / audio stream
+    print('not yet implemented')
+    # send to device
+
+
+def signal_generator(settings,signal='noise',fc=0.5,T=1):
+    """
+    Creates a signal ready for output to a chosen device
+    """
+    print('not yet implemented')
+    #noise
+    #sweep
+    #how to handle multiple channels? decision needed
+    
+
+
+
 def stream_snapshot(rec):
     
     time_data_copy = np.copy(rec.osc_time_data)

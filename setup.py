@@ -10,7 +10,7 @@ requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'pyaudio', 'matplotlib',
 
 setup(
     name='pydvma',
-    version='0.4.3',
+    version='0.4.4',
     install_requires=requires,
     packages=['pydvma'],
     package_data={'': ['icon.png']},
