@@ -59,7 +59,7 @@ class MySettings(object):
                  init_view_time=True,
                  init_view_freq=True,
                  init_view_levels=True,
-                 output_device_driver='soundcard',
+                 output_device_driver=None,
                  output_device_index=None,
                  output_channels=None,
                  output_fs=None):
@@ -91,6 +91,19 @@ class MySettings(object):
         
         if output_fs is None:
             self.output_fs = self.fs
+            
+        # if output device driver not specified then use same as input device
+        if output_device_driver == None:
+            output_device_driver = device_driver
+            self.output_device_driver = output_device_driver
+            
+        # set output device index to defaults if not specified
+        if (output_device_driver == 'soundcard') and (output_device_index == None):
+            audio = pyaudio.PyAudio()
+            info = audio.get_default_output_device_info()
+            self.output_device_index = info['index']
+        elif (output_device_driver == 'nidaq') and (output_device_index == None):
+            self.output_device_index = 0
         
         ### derived settings
         if viewed_time != None:

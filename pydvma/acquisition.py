@@ -9,6 +9,7 @@ from . import datastructure
 from . import streams
 
 import numpy as np
+import scipy.signal as signal
 import datetime
 import time
 
@@ -104,20 +105,66 @@ def log_data_with_output(settings,output):
 
 def output_signal(settings,output):
     # setup NI / audio stream
-    print('not yet implemented')
+    if settings.output_device_driver == 'soundcard':
+        s = streams.setup_output_soundcard(settings)
+        data = output.astype(np.float32).tostring()
+        s.write(data)
+        
+    elif settings.output_device_driver == 'nidaq':
+        sh = np.shape(output)
+        T = sh[0]/settings.fs
+        s = streams.setup_output_NI(settings,output)
+        s.StartTask()
+        s.WaitUntilTaskDone(T+5)
+        s.StopTask()
+    else:
+        print('device_driver not recognised')
+        
     # send to device
 
 
-def signal_generator(settings,signal='noise',fc=0.5,T=1):
+def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_channels='all'):
     """
     Creates a signal ready for output to a chosen device
     """
-    print('not yet implemented')
-    #noise
-    #sweep
-    #how to handle multiple channels? decision needed
+    if selected_channels == 'all':
+        selected_channels = np.arange(0,settings.output_channels)
+       
+    # initiate variables
+    t = np.arange(0,T,1/settings.output_fs)
+    N_per_channel = np.size(t)
+    y = np.zeros((N_per_channel,settings.output_channels))
+    win = np.ones((N_per_channel,1))
+    T_ramp = np.min([T/10,0.1])
+    N_ramp = np.int(T_ramp*settings.output_fs)
+    win[0:N_ramp,0] = 0.5*(1-np.cos(np.arange(0,N_ramp)/N_ramp*np.pi))
+    win[-N_ramp:,0] = 0.5*(1+np.cos(np.arange(0,N_ramp)/N_ramp*np.pi))
     
-
+    # Create sig. Note 'sig' is choice of signal, while 'signal' is scipy.signal
+    if sig == 'gaussian':
+        y[:,selected_channels] = np.random.randn(N_per_channel,np.size(selected_channels))
+        if f is not None:
+            b,a = signal.butter(2,f,btype='bandpass',fs=settings.output_fs)
+            y = signal.filtfilt(b,a,y,axis=0,padtype=None)
+            y = amplitude * y / np.sqrt(np.mean(y**2))
+    elif sig == 'uniform':
+        y[:,selected_channels] = np.random.uniform(low=-amplitude,high=amplitude,size=(N_per_channel,np.size(selected_channels)))
+        if f is not None:
+            b,a = signal.butter(2,f,btype='bandpass',fs=settings.output_fs)
+            y = signal.filtfilt(b,a,y,axis=0,padtype=None)
+            y = amplitude * y / np.sqrt(np.mean(y**2))
+    elif sig == 'sweep':
+        if f is None:
+            f = [0,settings.output_fs/2]
+        
+        for ch in selected_channels:
+            y[:,ch] = signal.chirp(t,f[0],T,f[1])
+    else:
+        print('signal type must be one of {''noise'',''sweep''}')
+        y = np.zeros((N_per_channel,settings.output_channels))
+    
+    y = win * y
+    return y
 
 
 def stream_snapshot(rec):

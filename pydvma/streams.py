@@ -203,7 +203,31 @@ class Recorder(object):
         self.audio.terminate()
         
         
+
+#%% NI devices
+def get_devices_NI():
+    # NI list
+    
+    numBytesneeded = pdaq.DAQmxGetSysDevNames(None,0)
+    databuffer = pdaq.create_string_buffer(numBytesneeded)
+    pdaq.DAQmxGetSysDevNames(databuffer,numBytesneeded)
+
+    device_name_list = pdaq.string_at(databuffer).decode('utf-8').split(',')
+
+    device_type_list = []
+    
+    counter = -1
+    for dev in device_name_list:
+        counter += 1
+        numBytesneeded = pdaq.DAQmxGetDevProductType(dev,None,0)
+        databuffer = pdaq.create_string_buffer(numBytesneeded)
+        pdaq.DAQmxGetDevProductType(dev,databuffer,numBytesneeded)
+        device_type_list.append(pdaq.string_at(databuffer).decode('utf-8'))
+        print('{}: {} {}'.format(counter,dev,device_type_list[-1]))
         
+
+    return device_name_list,device_type_list
+
 #%% NI stream
    
         
@@ -501,3 +525,43 @@ class Recorder_NI(object):
             self.audio_stream.StopTask()
             self.audio_stream.ClearTask()
             self.audio_stream = None
+
+
+#%% NI output
+def setup_output_NI(settings,output):
+    output_shape = np.shape(output)
+    N_output = output_shape[0]
+    N_channel_check = output_shape[1]
+    if N_channel_check != settings.output_channels:
+        print('output matrix doesn''t match number of output channels')
+        
+    device_name_list,device_type_list = get_devices_NI()
+    device_name = device_name_list[settings.output_device_index]
+    
+    if settings.output_channels > 1:
+        channelname =  '%s/ao0:%s/ao%i' % (device_name, device_name,settings.output_channels-1)
+    elif settings.output_channels == 1:
+        channelname = '%s/ao0' % device_name
+            
+    output_stream = Task()
+    
+    output_stream.CreateAOVoltageChan(channelname,"",-settings.VmaxNI,settings.VmaxNI,pdaq.DAQmx_Val_Volts,None)
+    output_stream.CfgSampClkTiming("",settings.output_fs,
+                          pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_FiniteSamps,
+                          N_output)
+    
+#        self.output_stream.StartTask()
+    
+    timeout = 5
+    output_stream.WriteAnalogF64(N_output, False, timeout, pdaq.DAQmx_Val_GroupByScanNumber,output,None,None)
+    
+    return output_stream
+
+def setup_output_soundcard(settings):
+    p = pyaudio.PyAudio()
+    output_stream = p.open(format=pyaudio.paFloat32,
+                        channels=settings.channels,
+                        rate=settings.fs,
+                        output=True,
+                        output_device_index=settings.output_device_index)
+    return output_stream
