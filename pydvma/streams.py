@@ -48,7 +48,7 @@ def start_stream(settings):
         raise ValueError('Unknown driver: %r' % settings.device_driver)
         
 #%% Find information on available devices
-def available_devices():
+def list_available_devices():
     # soundcard devices list
     print('__________________________________________________________')
     print('')
@@ -56,23 +56,24 @@ def available_devices():
     print('__________________________________________________________')
     print('')
 
-    audio = pyaudio.PyAudio()
-    device_count = audio.get_device_count()
-    print ('Number of devices available is: %i' %device_count)
-    print ('')
-    for i in range(device_count):
-        device = audio.get_device_info_by_index(i)
-        print(device['index'], device['name'])
-    print ('')
-    default_input_device = audio.get_default_input_device_info()
-    print('Default device is: %i %s'
-          %(default_input_device['index'],default_input_device['name']))
-    print ('')
-    default_output_device = audio.get_default_output_device_info()
-    print('Default device is: %i %s'
-          %(default_output_device['index'],default_output_device['name']))
-    print ('')
-    print ('')
+    device_name_list = get_devices_soundcard()
+    if device_name_list != None:
+        N = np.size(device_name_list)
+        for i in range(N):
+            print('{}: {}'.format(i,device_name_list[i]))
+    
+        audio = pyaudio.PyAudio()
+        default_input_device = audio.get_default_input_device_info()
+        print('Default device is: %i %s'
+              %(default_input_device['index'],default_input_device['name']))
+        print ('')
+        default_output_device = audio.get_default_output_device_info()
+        print('Default device is: %i %s'
+              %(default_output_device['index'],default_output_device['name']))
+        print ('')
+        print ('')
+    else:
+        print('no soundcards found')
     
     # NI list
     print('______________________________________________________')
@@ -80,22 +81,55 @@ def available_devices():
     print('Devices available using device_driver=''nidaq'', by index:')
     print('______________________________________________________')
     print('')
-    numBytesneeded = pdaq.DAQmxGetSysDevNames(None,0)
-    databuffer = pdaq.create_string_buffer(numBytesneeded)
-    pdaq.DAQmxGetSysDevNames(databuffer,numBytesneeded)
-
-    devices_name = pdaq.string_at(databuffer).decode('utf-8').split(',')
-
-    device_type = []
-    counter = -1
-    for dev in devices_name:
-        counter += 1
-        numBytesneeded = pdaq.DAQmxGetDevProductType(dev,None,0)
-        databuffer = pdaq.create_string_buffer(numBytesneeded)
-        pdaq.DAQmxGetDevProductType(dev,databuffer,numBytesneeded)
-        device_type.append(pdaq.string_at(databuffer).decode('utf-8'))
-        print('{}: {} {}'.format(counter,dev,device_type[-1]))
+    
+    device_name_list,device_type_list = get_devices_NI()
+    if device_name_list != None:
+        N = np.size(device_name_list)
+        for i in range(N):
+            print('{}: {} {}'.format(i,device_name_list[i],device_type_list[i]))
+    else:
+        print('no NI devices found')
         
+    
+    
+    
+        
+
+def get_devices_NI():
+    # NI list
+    try:
+        numBytesneeded = pdaq.DAQmxGetSysDevNames(None,0)
+        databuffer = pdaq.create_string_buffer(numBytesneeded)
+        pdaq.DAQmxGetSysDevNames(databuffer,numBytesneeded)
+    
+        device_name_list = pdaq.string_at(databuffer).decode('utf-8').split(',')
+        device_type_list = []
+        
+        counter = -1
+        for dev in device_name_list:
+            counter += 1
+            numBytesneeded = pdaq.DAQmxGetDevProductType(dev,None,0)
+            databuffer = pdaq.create_string_buffer(numBytesneeded)
+            pdaq.DAQmxGetDevProductType(dev,databuffer,numBytesneeded)
+            device_type_list.append(pdaq.string_at(databuffer).decode('utf-8'))
+    except:
+        return None,None
+        
+    return device_name_list,device_type_list
+
+
+def get_devices_soundcard():
+    try:
+        audio = pyaudio.PyAudio()
+        device_count = audio.get_device_count()
+        device_name_list = []
+        for i in range(device_count):
+            device = audio.get_device_info_by_index(i)
+            device_name_list.append(device['name'])
+    except:
+        return None
+    
+    return device_name_list
 
 #%% pyaudio stream
 class Recorder(object):
@@ -204,29 +238,7 @@ class Recorder(object):
         
         
 
-#%% NI devices
-def get_devices_NI():
-    # NI list
-    
-    numBytesneeded = pdaq.DAQmxGetSysDevNames(None,0)
-    databuffer = pdaq.create_string_buffer(numBytesneeded)
-    pdaq.DAQmxGetSysDevNames(databuffer,numBytesneeded)
 
-    device_name_list = pdaq.string_at(databuffer).decode('utf-8').split(',')
-
-    device_type_list = []
-    
-    counter = -1
-    for dev in device_name_list:
-        counter += 1
-        numBytesneeded = pdaq.DAQmxGetDevProductType(dev,None,0)
-        databuffer = pdaq.create_string_buffer(numBytesneeded)
-        pdaq.DAQmxGetDevProductType(dev,databuffer,numBytesneeded)
-        device_type_list.append(pdaq.string_at(databuffer).decode('utf-8'))
-        print('{}: {} {}'.format(counter,dev,device_type_list[-1]))
-        
-
-    return device_name_list,device_type_list
 
 #%% NI stream
    

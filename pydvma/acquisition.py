@@ -15,7 +15,7 @@ import time
 
 
 #%% Main data acquisition function
-def log_data(settings,test_name=None,rec=None,output=None):
+def log_data(settings,test_name=None,rec=None, output=None):
     '''
     Logs data according to settings and returns DataSet class
     '''
@@ -39,7 +39,11 @@ def log_data(settings,test_name=None,rec=None,output=None):
         print('')
         print('Logging data for {} seconds'.format(settings.stored_time))
         
+        
         # basic way to control logging time: won't be precise time from calling function
+        # also won't be exactly synced to output signal
+        if not(np.any(output==None)):
+            output_signal(settings,output)
         time.sleep(settings.stored_time)
         
         # make copy of data
@@ -55,16 +59,17 @@ def log_data(settings,test_name=None,rec=None,output=None):
     else:
         rec.__init__(settings)
         rec.trigger_first_detected_message = True
-        t0 = time.time()
+        
         print('')
         print('Waiting for trigger on channel {}'.format(settings.pretrig_channel))
+        
+        if not(np.any(output==None)):
+            output_signal(settings,output)
+        t0 = time.time()
         while (time.time()-t0 < settings.pretrig_timeout) and not rec.trigger_detected:
             time.sleep(0.2)
         if (time.time()-t0 > settings.pretrig_timeout):
             raise Exception('Trigger not detected within timeout of {} seconds.'.format(settings.pretrig_timeout))
-        
-        print('')
-        print('Logging complete.')
         
         # make copy of data
         stored_time_data_copy = np.copy(rec.stored_time_data)
@@ -76,6 +81,9 @@ def log_data(settings,test_name=None,rec=None,output=None):
         end_index   = start_index + number_samples
 
         stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
+        
+        print('')
+        print('Logging complete.')
         
     # make into dataset
     fs = settings.fs
@@ -97,11 +105,18 @@ def log_data(settings,test_name=None,rec=None,output=None):
     
 
 
-def log_data_with_output(settings,output):
-    # call log_data function
-    # call output_signal function
+def log_data_with_output(settings, output,test_name=None, rec=None):
+
     
-    print('not yet implemented')
+    # call log_data function
+    dataset = log_data(settings, test_name, rec)
+    
+    # call output_signal function
+    output_signal(settings,output)
+    
+    return dataset
+    
+
 
 def output_signal(settings,output):
     # setup NI / audio stream

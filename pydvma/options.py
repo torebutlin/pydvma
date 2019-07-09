@@ -97,6 +97,14 @@ class MySettings(object):
             output_device_driver = device_driver
             self.output_device_driver = output_device_driver
             
+            
+        if (device_driver == 'soundcard') and (device_index == None):
+            audio = pyaudio.PyAudio()
+            info = audio.get_default_input_device_info()
+            self.device_index = info['index']
+        elif (device_driver == 'nidaq') and (device_index == None):
+            self.device_index = 0
+                
         # set output device index to defaults if not specified
         if (output_device_driver == 'soundcard') and (output_device_index == None):
             audio = pyaudio.PyAudio()
@@ -118,7 +126,7 @@ class MySettings(object):
         
         if pretrig_samples != None:
             if pretrig_samples > chunk_size:
-                raise Exception('pretrig_samples must be less than or equal to chunk_size.')
+                raise Exception('pretrig_samples must be less than or equal to chunk_size (chunk_size={}).'.format(self.chunk_size))
         
     
     def __repr__(self):
