@@ -62,16 +62,19 @@ def list_available_devices():
         for i in range(N):
             print('{}: {}'.format(i,device_name_list[i]))
     
-        audio = pyaudio.PyAudio()
-        default_input_device = audio.get_default_input_device_info()
-        print('Default device is: %i %s'
-              %(default_input_device['index'],default_input_device['name']))
-        print ('')
-        default_output_device = audio.get_default_output_device_info()
-        print('Default device is: %i %s'
-              %(default_output_device['index'],default_output_device['name']))
-        print ('')
-        print ('')
+        try:
+            audio = pyaudio.PyAudio()
+            default_input_device = audio.get_default_input_device_info()
+            print('Default device is: %i %s'
+                  %(default_input_device['index'],default_input_device['name']))
+            print ('')
+            default_output_device = audio.get_default_output_device_info()
+            print('Default device is: %i %s'
+                  %(default_output_device['index'],default_output_device['name']))
+            print ('')
+            print ('')
+        except:
+            print('default information not available')
     else:
         print('no soundcards found')
     

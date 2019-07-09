@@ -5,6 +5,7 @@ Created on Mon Aug 27 13:28:39 2018
 @author: tb267
 """
 
+from . import streams
 
 import numpy as np
 import pyaudio
@@ -99,17 +100,29 @@ class MySettings(object):
             
             
         if (device_driver == 'soundcard') and (device_index == None):
-            audio = pyaudio.PyAudio()
-            info = audio.get_default_input_device_info()
-            self.device_index = info['index']
+            try:
+                # try to find default input soundcard device
+                audio = pyaudio.PyAudio()
+                info = audio.get_default_input_device_info()
+                self.device_index = info['index']
+            except:
+                # if info not available, select index 1
+                self.device_index = 1
         elif (device_driver == 'nidaq') and (device_index == None):
             self.device_index = 0
                 
         # set output device index to defaults if not specified
         if (output_device_driver == 'soundcard') and (output_device_index == None):
-            audio = pyaudio.PyAudio()
-            info = audio.get_default_output_device_info()
-            self.output_device_index = info['index']
+            try:
+                # try to find default output soundcard device
+                audio = pyaudio.PyAudio()
+                info = audio.get_default_output_device_info()
+                self.output_device_index = info['index']
+            except:
+                # try to guess sensible defaul toutput soundcard by string matching device names
+                devices = streams.get_devices_soundcard()
+                output_devices = np.where(['output' in names for names in devices])
+                self.output_device_index = output_devices[0][0]
         elif (output_device_driver == 'nidaq') and (output_device_index == None):
             self.output_device_index = 0
         
