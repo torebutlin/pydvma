@@ -80,6 +80,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
         start_index = detected_sample - rec.settings.pretrig_samples
         end_index   = start_index + number_samples
 
+
         stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
         
         print('')
@@ -162,6 +163,19 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
             b,a = signal.butter(2,f,btype='bandpass',fs=settings.output_fs)
             y = signal.filtfilt(b,a,y,axis=0,padtype=None)
             y = amplitude * y / np.sqrt(np.mean(y**2))
+            if settings.output_device_driver == 'soundcard':
+                limit = 1
+            elif settings.output_device_driver == 'nidaq':
+                limit = settings.VmaxNI
+            N_exceed_lim = np.sum(y>limit)+np.sum(y<-limit)
+            fraction_clipped = N_exceed_lim/np.size(y)
+            y[y>limit] = limit
+            y[y<-limit] = -limit
+            if fraction_clipped > 0:
+                print('{} out of {} samples exceeded output voltage limit of device and have been clipped'.format(N_exceed_lim,np.size(y)))
+            if fraction_clipped > 0.01:
+                print('{0:1.1f} percent of samples exceed output voltage limit of device'.format(fraction_clipped*100))
+                
     elif sig == 'uniform':
         y[:,selected_channels] = np.random.uniform(low=-amplitude,high=amplitude,size=(N_per_channel,np.size(selected_channels)))
         if f is not None:
@@ -173,7 +187,7 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
             f = [0,settings.output_fs/2]
         
         for ch in selected_channels:
-            y[:,ch] = signal.chirp(t,f[0],T,f[1])
+            y[:,ch] = amplitude*signal.chirp(t,f[0],T,f[1])
     else:
         print('signal type must be one of {''noise'',''sweep''}')
         y = np.zeros((N_per_channel,settings.output_channels))

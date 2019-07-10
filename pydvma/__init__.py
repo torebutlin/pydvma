@@ -1,5 +1,5 @@
 from .options import MySettings
-from .file import load_data, save_data, save_fig
+from .file import load_data, save_data, save_fig, export_to_matlab_jwlogger
 from .oscilloscope import Oscilloscope
 from .acquisition import log_data, log_data_with_output, output_signal, signal_generator, stream_snapshot
 from .datastructure import DataSet, TimeData, FreqData, CrossSpecData, TfData, SonoData, MetaData
