@@ -10,6 +10,7 @@ from . import streams
 
 import numpy as np
 import scipy.signal as signal
+import scipy.stats as stats
 import datetime
 import time
 
@@ -159,22 +160,30 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
     # Create sig. Note 'sig' is choice of signal, while 'signal' is scipy.signal
     if sig == 'gaussian':
         y[:,selected_channels] = np.random.randn(N_per_channel,np.size(selected_channels))
+        if settings.output_device_driver == 'soundcard':
+            limit = 1
+        elif settings.output_device_driver == 'nidaq':
+            limit = settings.VmaxNI
+             
+                
+        y[:,selected_channels] = stats.truncnorm.rvs(-limit/amplitude, limit/amplitude, loc=0,scale=amplitude, size=(N_per_channel,np.size(selected_channels)))
         if f is not None:
             b,a = signal.butter(2,f,btype='bandpass',fs=settings.output_fs)
             y = signal.filtfilt(b,a,y,axis=0,padtype=None)
             y = amplitude * y / np.sqrt(np.mean(y**2))
-            if settings.output_device_driver == 'soundcard':
-                limit = 1
-            elif settings.output_device_driver == 'nidaq':
-                limit = settings.VmaxNI
-            N_exceed_lim = np.sum(y>limit)+np.sum(y<-limit)
-            fraction_clipped = N_exceed_lim/np.size(y)
-            y[y>limit] = limit
-            y[y<-limit] = -limit
-            if fraction_clipped > 0:
-                print('{} out of {} samples exceeded output voltage limit of device and have been clipped'.format(N_exceed_lim,np.size(y)))
-            if fraction_clipped > 0.01:
-                print('{0:1.1f} percent of samples exceed output voltage limit of device'.format(fraction_clipped*100))
+            if np.max(np.abs(y)) > limit:
+                y = limit * y / np.max(np.abs(y))
+                print('actual rms output after scaling to avoid clipping is {0:1.3f}'.format(np.sqrt(np.mean(y**2))))
+                
+            
+#            N_exceed_lim = np.sum(y>limit)+np.sum(y<-limit)
+#            fraction_clipped = N_exceed_lim/np.size(y)
+#            y[y>limit] = limit
+#            y[y<-limit] = -limit
+#            if fraction_clipped > 0:
+#                print('{} out of {} samples exceeded output voltage limit of device and have been clipped'.format(N_exceed_lim,np.size(y)))
+#            if fraction_clipped > 0.01:
+#                print('{0:1.1f} percent of samples exceed output voltage limit of device'.format(fraction_clipped*100))
                 
     elif sig == 'uniform':
         y[:,selected_channels] = np.random.uniform(low=-amplitude,high=amplitude,size=(N_per_channel,np.size(selected_channels)))
