@@ -22,7 +22,7 @@ def load_data(filename=None):
         if not filename:
             return None
 
-    d = np.load(filename)
+    d = np.load(filename,allow_pickle=True)
     dataset = d[0]
     return dataset
 

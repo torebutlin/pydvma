@@ -336,3 +336,43 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
     tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=id_link_list,test_name=time_data_list[0].test_name)
     
     return tfdata
+
+
+
+def clean_impulse(time_data, ch_hammer=0):
+    '''
+    Sets all data outside of impulse to zero.
+    
+    Pulse width is estimated by assuming half cosine impulse, using width of half peak amplitude.
+    
+    Data before peak is unchanged. Data after estimated end of impulse is ramped to zero using half cosine pulse of width 10x estimated pulse width.
+    '''
+    y = copy.deepcopy(time_data.time_data[:,ch_hammer])
+    yi_max = np.argmax(np.abs(y))
+    y_max = np.max(np.abs(y))
+    yi_out = np.where(np.abs(y)<y_max/2)[0]
+    yi_out1 = yi_out[yi_out < yi_max]
+    yi_out2 = yi_out[yi_out > yi_max]
+    y1 = yi_out1[-1]
+    y2 = yi_out2[0]
+    
+    
+    N = y2-y1
+    b = np.int(3*N/2) #half cosine estimate
+    end = np.int(yi_max + b/2)
+    b = 10*b # less agressive roll off
+
+    ramp = np.hanning(2*b+1)    
+    win = np.ones(len(y))
+    win[end:end+b+1] = ramp[b:2*b+1]
+    win[end+b:] = 0
+    
+    y = win * y
+    
+    td = copy.deepcopy(time_data)
+    td.time_data[:,ch_hammer] = y
+    
+    return td
+        
+        
+    

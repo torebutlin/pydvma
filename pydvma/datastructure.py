@@ -12,6 +12,7 @@ from . import plotting
 import numpy as np
 import datetime
 import uuid
+import copy
 
 
 
@@ -45,7 +46,7 @@ class DataSet():
                 check = check and (d.__class__.__name__ == data[0].__class__.__name__)
             if check is False:
                 raise ValueError('Data list needs to contain homogenous type of data')
-        if len(data) is not 0:
+        if len(data) != 0:
             data_class = data[0].__class__.__name__    
         else:
             data_class = None
@@ -209,6 +210,24 @@ class DataSet():
         else:
             self.cross_spec_data_list = CrossSpecDataList()
             print('No time data found in dataset')
+            
+    def clean_impulse(self,ch_hammer=0):
+        '''
+        Calls analysis.clean_impulse on each TimeData item in the TimeDataList and returns a copy of the new dataset.
+        
+        Note that calling this function *does not* change the data, and just returns a copy.
+        '''
+        dataset_copy = copy.deepcopy(self)
+        dataset_copy.remove_data_item_by_index('TimeData',np.arange(len(dataset_copy.time_data_list)))
+        if len(self.time_data_list)>0:
+            for time_data in self.time_data_list:
+                td = analysis.clean_impulse(time_data, ch_hammer=ch_hammer)
+                dataset_copy.add_to_dataset(td)
+            print('returning copy of data with impulses cleaned')
+            return dataset_copy
+        else:
+            print('No time data found in dataset')
+            return None
             
     def save_data(self, filename=None):
         savename = file.save_data(self, filename=filename, overwrite_without_prompt=False)
