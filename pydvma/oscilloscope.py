@@ -76,7 +76,7 @@ class Oscilloscope():
         self.win.showNormal()
         
 
-        self.win.setWindowTitle("Oscilloscope ('s': save new file, 'space': autosave, 'p': pause, 'a': always top)")
+        self.win.setWindowTitle("Oscilloscope ('s': save new, 'space': autosave, 'p': pause, 'a': always top, 'y': autoscale)")
         self.view_time = self.settings.init_view_time
         self.view_freq = self.settings.init_view_freq
         self.view_levels = self.settings.init_view_levels
