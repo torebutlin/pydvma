@@ -12,6 +12,7 @@ from scipy import signal
 import copy
 
 
+
 def calculate_fft(time_data,time_range=None,window=None):
     '''
     Args:
@@ -338,7 +339,7 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
     return tfdata
 
 
-
+#%% CLEAN IMPULSE
 def clean_impulse(time_data, ch_hammer=0):
     '''
     Sets all data outside of impulse to zero.
@@ -374,5 +375,20 @@ def clean_impulse(time_data, ch_hammer=0):
     
     return td
         
-        
     
+#%% SONOGRAM    
+def calculate_sonogram(time_data, nperseg=None):
+    y = np.copy(time_data.time_data)
+    
+    f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,nperseg=nperseg,axis=0,mode='complex')
+    
+    # put channel axis at end
+    S = np.swapaxes(S,1,2)
+    
+    return f,t,S
+    
+
+
+#%% CWT
+#def calculate_cwt(time_data):
+#    return None
