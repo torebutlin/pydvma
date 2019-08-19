@@ -44,9 +44,10 @@ def log_data(settings,test_name=None,rec=None, output=None):
         # basic way to control logging time: won't be precise time from calling function
         # also won't be exactly synced to output signal
         if not(np.any(output==None)):
-            output_signal(settings,output)
+            s = output_signal(settings,output)
         time.sleep(settings.stored_time)
         
+            
         # make copy of data
         stored_time_data_copy = np.copy(rec.stored_time_data)
         number_samples = np.int64(rec.settings.stored_time * rec.settings.fs)
@@ -54,6 +55,11 @@ def log_data(settings,test_name=None,rec=None, output=None):
         stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
         print('')
         print('Logging complete.')
+
+        if not(np.any(output==None)):
+            if settings.output_device_driver == 'nidaq':
+                s.WaitUntilTaskDone(settings.stored_time+5)
+                s.StopTask()
         
 
         
@@ -86,6 +92,11 @@ def log_data(settings,test_name=None,rec=None, output=None):
         
         print('')
         print('Logging complete.')
+
+        if not(np.any(output==None)):
+            if settings.output_device_driver == 'nidaq':
+                s.WaitUntilTaskDone(settings.stored_time+5)
+                s.StopTask()
         
     # make into dataset
     fs = settings.fs
@@ -126,16 +137,17 @@ def output_signal(settings,output):
         s = streams.setup_output_soundcard(settings)
         data = output.astype(np.float32).tostring()
         s.write(data)
+        return s
         
     elif settings.output_device_driver == 'nidaq':
         sh = np.shape(output)
         T = sh[0]/settings.fs
         s = streams.setup_output_NI(settings,output)
         s.StartTask()
-        s.WaitUntilTaskDone(T+5)
-        s.StopTask()
+        return s
     else:
         print('device_driver not recognised')
+        return None
         
     # send to device
 

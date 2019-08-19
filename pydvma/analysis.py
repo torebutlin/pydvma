@@ -246,7 +246,7 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
         N_frames (int): number of frames to average over
         overlap (between 0,1): frame overlap fraction
     '''
-    if not time_data.__class__.__name__ is 'TimeData':
+    if not time_data.__class__.__name__ == 'TimeData':
         raise Exception('Input data needs to be single <TimeData> object')
 
 

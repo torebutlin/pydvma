@@ -147,23 +147,43 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
     # convert data into dictionary ready for Matlab
     data_jwlogger = dict()
     
-    T=0
-    fs=0
+    #%% TIME
+    if len(dataset.time_data_list) > 0:
+        T=0
+        fs=0
+        n=0
+        for time_data in dataset.time_data_list:
+            T = np.max([time_data.settings.stored_time,T])
+            fs = np.max([time_data.settings.fs,fs])
+            n += time_data.settings.channels
+        
+        t=np.arange(0,T,1/fs)
+        time_data_all = np.zeros((np.size(t),n))
+        counter = -1
+        for time_data in dataset.time_data_list:
+            for i in range(time_data.settings.channels):
+                counter += 1
+                time_data_all[:,counter] = np.interp(t,time_data.time_axis,time_data.time_data[:,i],right=0)
+    
+    
+    #%% Transfer Function
+    df=np.inf
+    fmax=0
     n=0
-    for time_data in dataset.time_data_list:
-        T = np.max([time_data.settings.stored_time,T])
-        fs = np.max([time_data.settings.fs,fs])
-        n += time_data.settings.channels
+    for tf_data in dataset.tf_data_list:
+        df = np.min([df,tf_data.freq_axis[-1]/len(tf_data.freq_axis)])
+        fmax = np.max([tf_data.freq_axis[-1],fmax])
+        n += tf_data.settings.channels
     
-    t=np.arange(0,T,1/fs)
-    time_data_all = np.zeros((np.size(t),n))
+    f=np.arange(0,fmax+df,df)
+    tf_data_all = np.zeros((np.size(f),n))
     counter = -1
-    for time_data in dataset.time_data_list:
-        for i in range(time_data.settings.channels):
+    for tf_data in dataset.tf_data_list:
+        for i in range(tf_data.settings.channels):
             counter += 1
-            time_data_all[:,counter] = np.interp(t,time_data.time_axis,time_data.time_data[:,i],right=0)
+            tf_data_all[:,counter] = np.interp(f,tf_data.tf_axis,tf_data.tf_data[:,i],right=0)
     
-    
+    #%% Convert
     data_jwlogger['buflen'] = np.float(np.size(t))
     data_jwlogger['dt2'] = np.array([n,0,0],dtype=float)
     data_jwlogger['freq'] = np.float(fs)
