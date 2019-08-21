@@ -270,7 +270,7 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
     ch_count = -1
     for ch_out in ch_out_set:
         ch_count += 1
-        tf_data[:,ch_count] = Pxy[ch_out,ch_in,:] / Pxy[ch_in,ch_in,:]
+        tf_data[:,ch_count] = Pxy[ch_in,ch_out,:] / Pxy[ch_in,ch_in,:]
         tf_coherence[:,ch_count] = Cxy[ch_out,ch_in,:]
         
     settings.ch_in = ch_in
