@@ -402,7 +402,7 @@ class TfDataList(list):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
-        if len(self) is 0:
+        if len(self) == 0:
             print('<TfDataList> is empty. First calculate transfer function.')
         elif n_set >= len(self):
             print('<TfDataList> has {} set(s) of <TfData>. Set requested (index={}) exceeds number of sets. Note indexing starts at 0.'.format(len(self),n_set))
