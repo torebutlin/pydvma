@@ -233,6 +233,14 @@ class DataSet():
         savename = file.save_data(self, filename=filename, overwrite_without_prompt=False)
         return savename
     
+    def export_to_matlab(self, filename=None, overwrite_without_prompt=False):
+        savename = file.export_to_matlab(self, filename=filename, overwrite_without_prompt=overwrite_without_prompt)
+        return savename
+    
+    def export_to_matlab_jwlogger(self, filename=None, overwrite_without_prompt=False):
+        savename = file.export_to_matlab_jwlogger(self, filename=filename, overwrite_without_prompt=overwrite_without_prompt)
+        return savename
+    
     def plot_time_data(self,sets='all',channels='all'):
         global pt
         pt = plotting.PlotData()
@@ -341,6 +349,9 @@ class TimeDataList(list):
         else:
             self[n_set].channel_cal_factors[n_chan]=factor
     
+    def export_to_csv(self, filename=None, overwrite_without_prompt=False):
+        savename = file.export_to_csv(self,filename=filename,overwrite_without_prompt=overwrite_without_prompt)
+        return savename
 
 class FreqDataList(list):
     ### This will allow functions to be discovered that can take lists of FreqData is arguments
@@ -366,6 +377,10 @@ class FreqDataList(list):
             print('<FreqDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].freq_data[0,:]),n_chan))
         else:
             self[n_set].channel_cal_factors[n_chan]=factor
+            
+    def export_to_csv(self, filename=None, overwrite_without_prompt=False):
+        savename = file.export_to_csv(self,filename=filename,overwrite_without_prompt=overwrite_without_prompt)
+        return savename
 
 class CrossSpecDataList(list):
     ### This will allow functions to be discovered that can take lists of CrossSpecData is arguments
@@ -395,6 +410,10 @@ class TfDataList(list):
             print('<TfDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].tf_data[0,:]),n_chan))
         else:
             self[n_set].channel_cal_factors[n_chan]=factor
+            
+    def export_to_csv(self, filename=None, overwrite_without_prompt=False):
+        savename = file.export_to_csv(self,filename=filename,overwrite_without_prompt=overwrite_without_prompt)
+        return savename
              
 
 class SonoDataList(list):

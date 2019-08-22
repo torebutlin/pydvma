@@ -380,3 +380,71 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
     print("Data saved as %s" % filename)
 
     return filename
+
+
+def export_to_csv(data_list, filename=None, overwrite_without_prompt=False):
+    '''
+    Exports data to file 'filename.csv', or provides dialog if no
+    filename provided.
+    
+    Saved file is *.csv
+
+    Args:
+       data_list: An object of the class TimeDataList, FreqDataList, or TfDataList
+       filename: string [optional]
+       overwrite_without_prompt: bool
+    '''
+    
+    data_list_type = data_list.__class__.__name__
+    
+    if data_list_type == 'TimeDataList':
+        darray = np.transpose(np.atleast_2d(data_list[0].time_axis))
+        for time_data in data_list:
+            darray = np.append(darray,time_data.time_data,axis=1)
+        
+            
+            
+    elif data_list_type == 'FreqDataList':
+        darray = np.transpose(np.atleast_2d(data_list[0].freq_axis))
+        for freq_data in data_list:
+            darray = np.append(darray,freq_data.freq_data,axis=1)
+        
+    elif data_list_type == 'TfDataList':
+        darray = np.transpose(np.atleast_2d(data_list[0].freq_axis))
+        for tf_data in data_list:
+            darray = np.append(darray,tf_data.tf_data,axis=1)
+        
+    else:
+        print('Expecting input to be one of TimeDataList, FreqDataList, or TfDataList')
+        return None
+    
+    # SAVE
+
+    # If filename not specified, provide dialog
+    if filename is None:
+        wid = QtWidgets.QWidget()
+        filename, _ = QtGui.QFileDialog.getSaveFileName(wid, 'Save dataset', '', '*.csv')
+        if not filename:
+            # No filename chosen, give up on saving
+            print('Save cancelled')
+            return None
+
+
+    # If it exists, check if we should overwrite it (unless
+    # overwrite_without_prompt is True)
+    elif os.path.isfile(filename) and not overwrite_without_prompt:
+        answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
+        if answer != 'y':
+            print('Save cancelled')
+            return None
+        print('Will overwrite existing file')
+        
+    # Make sure it ends with .csv
+    if not filename.endswith('.csv'):
+        filename += '.csv'
+        
+    # Actually save!
+    np.savetxt(filename, darray, delimiter=",")
+    print("Data saved as %s" % filename)
+
+    return filename
