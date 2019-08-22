@@ -299,7 +299,7 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
         window (None or str): type of window to use, default is None.
     '''
     
-    if time_data_list.__class__.__name__ is not 'TimeDataList':
+    if time_data_list.__class__.__name__ != 'TimeDataList':
         raise Exception('Input argument must be <TimeDataList> object.')
 
 
@@ -340,7 +340,7 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
 
 
 #%% CLEAN IMPULSE
-def clean_impulse(time_data, ch_hammer=0):
+def clean_impulse(time_data, ch_impulse=0):
     '''
     Sets all data outside of impulse to zero.
     
@@ -348,7 +348,7 @@ def clean_impulse(time_data, ch_hammer=0):
     
     Data before peak is unchanged. Data after estimated end of impulse is ramped to zero using half cosine pulse of width 10x estimated pulse width.
     '''
-    y = copy.deepcopy(time_data.time_data[:,ch_hammer])
+    y = copy.deepcopy(time_data.time_data[:,ch_impulse])
     yi_max = np.argmax(np.abs(y))
     y_max = np.max(np.abs(y))
     yi_out = np.where(np.abs(y)<y_max/2)[0]
@@ -362,19 +362,26 @@ def clean_impulse(time_data, ch_hammer=0):
     b = np.int(3*N/2) #half cosine estimate
     end = np.int(yi_max + b/2)
     b = 10*b # less agressive roll off
+    #print(time_data.settings.fs/b)
 
     ramp = np.hanning(2*b+1)    
     win = np.ones(len(y))
     win[end:end+b+1] = ramp[b:2*b+1]
     win[end+b:] = 0
     
-    y = win * y
+    y2 = win * y
     
     td = copy.deepcopy(time_data)
-    td.time_data[:,ch_hammer] = y
+    td.time_data[:,ch_impulse] = y2
+    
+    yd = y2-y
+    if np.max(np.abs(yd)) > 0.1*np.max(np.abs(y)):
+        print('Cleaned impulse data contained significant signal content: check for possible multiple impacts, or correct channel using ch_impulse.')
+    
     
     return td
-        
+
+    
     
 #%% SONOGRAM    
 def calculate_sonogram(time_data, nperseg=None):

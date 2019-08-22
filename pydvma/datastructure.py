@@ -8,6 +8,7 @@ Created on Mon Aug 27 17:08:42 2018
 from . import analysis
 from . import file
 from . import plotting
+from . import modal
 
 import numpy as np
 import datetime
@@ -26,6 +27,7 @@ class DataSet():
         self.freq_data_list = FreqDataList()
         self.cross_spec_data_list = CrossSpecDataList()
         self.tf_data_list = TfDataList()
+        self.modal_data_list = ModalDataList()
         self.sono_data_list = SonoDataList()
         self.meta_data_list = MetaDataList()
         
@@ -64,6 +66,9 @@ class DataSet():
         elif data_class=='TfData':
             self.tf_data_list += data
             #print('{} added to dataset'.format(data))
+        elif data_class=='ModalData':
+            self.modal_data_list += data
+            #print('{} added to dataset'.format(data))
         elif data_class=='SonoData':
             self.sono_data_list += data
             #print('{} added to dataset'.format(data))
@@ -73,7 +78,30 @@ class DataSet():
         else:
             pass#print('No data added')
         
-        #print(self)
+    def replace_data_item(self,data,n_set):
+        ## replace a specific data item
+        ## useful for replacing logged data
+        ## useful for replacing reconstructed modal data
+        
+        data_class = data.__class__.__name__    
+            
+        if data_class=='TimeData':
+            self.time_data_list[n_set] = data
+        elif data_class=='FreqData':
+            self.freq_data_list[n_set] = data
+        elif data_class=='CrossSpecData':
+            self.cross_spec_data_list[n_set] = data
+        elif data_class=='TfData':
+            self.tf_data_list[n_set] = data
+        elif data_class=='ModalData':
+            self.modal_data_list[n_set] = data
+        elif data_class=='SonoData':
+            self.sono_data_list[n_set] = data
+        elif data_class=='MetaData':
+            self.meta_data_list[n_set] = data
+        else:
+            pass
+        
             
     def remove_last_data_item(self,data_class):
         
@@ -89,6 +117,9 @@ class DataSet():
         if data_class == 'TfData':
             if len(self.tf_data_list) != 0:
                 del self.tf_data_list[-1]
+        if data_class == 'ModalData':
+            if len(self.modal_data_list) != 0:
+                del self.modal_data_list[-1]
         if data_class == 'SonoData':
             if len(self.sono_data_list) != 0:
                 del self.sono_data_list[-1]
@@ -130,6 +161,13 @@ class DataSet():
                 
         if data_class == 'TfData':
             if len(self.tf_data_list) > np.max(list_index):
+                for i in reversed(list_index):
+                    del self.tf_data_list[i]
+            else:
+                print('indices out of range, no data removed')
+                
+        if data_class == 'ModalData':
+            if len(self.modal_data_list) > np.max(list_index):
                 for i in reversed(list_index):
                     del self.tf_data_list[i]
             else:
@@ -211,7 +249,7 @@ class DataSet():
             self.cross_spec_data_list = CrossSpecDataList()
             print('No time data found in dataset')
             
-    def clean_impulse(self,ch_hammer=0):
+    def clean_impulse(self,ch_impulse=0):
         '''
         Calls analysis.clean_impulse on each TimeData item in the TimeDataList and returns a copy of the new dataset.
         
@@ -221,7 +259,7 @@ class DataSet():
         dataset_copy.remove_data_item_by_index('TimeData',np.arange(len(dataset_copy.time_data_list)))
         if len(self.time_data_list)>0:
             for time_data in self.time_data_list:
-                td = analysis.clean_impulse(time_data, ch_hammer=ch_hammer)
+                td = analysis.clean_impulse(time_data, ch_impulse=ch_impulse)
                 dataset_copy.add_to_dataset(td)
             print('returning copy of data with impulses cleaned')
             return dataset_copy
@@ -263,9 +301,14 @@ class DataSet():
         template = "{:>24}: {}"
         dataset_dict = self.__dict__
         text = '\n<DataSet> class:\n\n'
-        for attr in dataset_dict: 
-            text += template.format(attr,dataset_dict[attr])
-            text += '\n'
+        for attr in dataset_dict:
+            N = len(dataset_dict[attr])
+            if N <= 3:
+                text += template.format(attr,dataset_dict[attr])
+                text += '\n'
+            else:
+                text += template.format(attr,'[' + str(dataset_dict[attr][0]) + ',... (x' + str(N) + ')]')
+                text += '\n'
         
         return text
     
@@ -340,7 +383,7 @@ class TimeDataList(list):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
-        if len(self) is 0:
+        if len(self) == 0:
             print('<TimeDataList> is empty. First log data, load data, or create test data.')
         elif n_set >= len(self):
             print('<TimeDataList> has {} set(s) of <TimeData>. Set requested (index={}) exceeds number of sets. Note indexing starts at 0.'.format(len(self),n_set))
@@ -369,7 +412,7 @@ class FreqDataList(list):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
-        if len(self) is 0:
+        if len(self) == 0:
             print('<FreqDataList> is empty. First calculate FFT.')
         elif n_set >= len(self):
             print('<FreqDataList> has {} set(s) of <FreqData>. Set requested (index={}) exceeds number of sets. Note indexing starts at 0.'.format(len(self),n_set))
@@ -414,7 +457,10 @@ class TfDataList(list):
     def export_to_csv(self, filename=None, overwrite_without_prompt=False):
         savename = file.export_to_csv(self,filename=filename,overwrite_without_prompt=overwrite_without_prompt)
         return savename
-             
+      
+class ModalDataList(list):
+    ### This will allow functions to be discovered that can take lists of ModalData is arguments
+    pass
 
 class SonoDataList(list):
     ### This will allow functions to be discovered that can take lists of SonoData is arguments
@@ -511,6 +557,40 @@ class TfData():
         
     def __repr__(self):
         return "<TfData>"
+    
+    
+class ModalData():
+    def __init__(self,xn,units=None,id_link=None,test_name=None):
+        fn,zn,an,pn,rk,rm = modal.unpack(xn)
+        self.fn = fn
+        self.zn = zn
+        self.an = an
+        self.pn = pn
+        self.rk = rk
+        self.rm = rm
+        self.xn = xn
+        
+        # extra info
+        self.channels = np.size(an)
+        self.test_name = test_name
+        self.units = units
+        self.id_link = id_link # used to link data to specific <TimeData> object
+        t = datetime.datetime.now()
+        self.timestamp = t
+        self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+        
+    def __repr__(self):
+        with np.printoptions(precision=3, suppress=True):
+            template = "{}: {}"
+            modal_dict = self.__dict__
+            text = '\n<ModalData> class:\n\n'
+            for attr in modal_dict:
+                print(attr)
+                if (attr != 'xn') & (attr != 'rk') & (attr != 'rm') & (attr != 'units') & (attr != 'test_name')& (attr != 'id_link')& (attr != 'timestamp')& (attr != 'timestring'):
+                    text += template.format(attr,modal_dict[attr])
+                    text += '\n'
+            
+            return text
     
         
 class SonoData():

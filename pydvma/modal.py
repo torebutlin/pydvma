@@ -7,6 +7,7 @@ Created on Mon Aug 19 17:29:30 2019
 
 
 from . import datastructure
+from . import options
 
 import numpy as np
 from scipy import signal
@@ -217,23 +218,27 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     fn0 = np.median(fn0)
     zn0 = np.median(zn0)
     fn0i = np.argmin(np.abs(f - fn0))
+    print(fn0)
+    print(zn0)
     
     # initial guesses for each channel
     an0 = np.zeros(N_tfs)
     pn0 = np.zeros(N_tfs)
     Rk0 = np.zeros(N_tfs)
     Rm0 = np.zeros(N_tfs)
+    id_link = []
     counter = -1
     for tf_data in tf_data_list:
+        id_link += [tf_data.id_link]
         for n_chan in range(len(tf_data.tf_data[0,:])):
             counter += 1
             an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
             an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
             pn0[counter] = 0
-            Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e3
-            Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e3
+            Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e6
+            Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e6
     
-    
+    print(an0)
     x0 = np.concatenate(([fn0],[zn0],an0,pn0,Rk0,Rm0))
     
     
@@ -258,13 +263,8 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     
     r = optimize.least_squares(f_residual_all_channels,x0, bounds=bounds, max_nfev=1000, args=(f,G0,measurement_type))
 
-    results = dict()
-    results['fn'] = r.x[0]
-    results['zn'] = r.x[1]
-    results['an'] = r.x[2:2+N_tfs]
-    results['pn'] = r.x[2+N_tfs:2+2*N_tfs]
-    results['rk'] = r.x[2+2*N_tfs:2+3*N_tfs]
-    results['rm'] = r.x[2+3*N_tfs:2+4*N_tfs]
+    
+    m = datastructure.ModalData(r.x,id_link=id_link,test_name=tf_data_list[0].test_name)
     
 #    print "{:<8} {:<15} {:<10} {:<10} {:<10}".format('chan','an','pn','rk','rm')
 #    for k, v in results.items():
@@ -273,13 +273,75 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
 
     with np.printoptions(precision=3, suppress=True):
         print('')
-        print('fn={:.4g} (Hz), zn={:.4g}'.format(results['fn'],results['zn']))
+        print('fn={:.4g} (Hz), zn={:.4g}'.format(m.fn,m.zn))
         print('')
-        print('an={}'.format(results['an']))
-        print('pn={}'.format(results['pn']))
+        print('an={}'.format(m.an))
+        print('pn={}'.format(m.pn))
         print('')
-    if np.any(np.abs(results['pn'])*180/np.pi > 60):
+    if np.any(np.abs(m.pn)*180/np.pi > 60):
         print('Phase is significant, check ''measurement_type'' setting is correct')
-    return r
+        
+    # Check quality of fit
+    e = f_residual_all_channels(r.x,f,G0,measurement_type)
+    G0rms = np.mean(np.abs(G0)**2)
+    erms = np.mean(np.abs(e)**2)
+    e_rel = erms/G0rms
+    if e_rel > 0.1:
+        raise Warning('Poor quality fit: try adjusting frequency range')
+
+    return m
     
+#%%% Reconstruction
+def unpack(x):
+    # unpacks modal parameters into set of variables
+    N_tfs = np.int((len(x)-2)/4)
     
+    fn = x[0]
+    zn = x[1]
+    an = x[2:2+N_tfs]
+    pn = x[2+N_tfs:2+2*N_tfs]
+    rk = x[2+2*N_tfs:2+3*N_tfs]
+    rm = x[2+3*N_tfs:2+4*N_tfs]
+    
+    return fn,zn,an,pn,rk,rm
+    
+def pack(fn,zn,an,pn,rk,rm):
+    # packs modal parameters into single variable for optimisation
+    x = np.concatenate(([fn],[zn],an,pn,rk,rm))
+    return x
+    
+
+        
+
+def reconstruct_transfer_function(modal_data_list,f,measurement_type='acc'):
+    '''
+    Reconstructs transfer functions from modal_data and returns TfData object
+    '''
+    G = 0
+    counter = -1
+    for modal_data in modal_data_list:
+        counter += 1
+#        if counter == 1:
+#            xn = modal_data.xn
+#            fn,zn,an,pn,rk,rm = unpack(xn)
+#            rk = 00*rk
+#            rm = 0*rm
+#            xn = pack(fn,zn,an,pn,rk,rm)
+#        elif counter == len(modal_data_list):
+#            xn = modal_data.xn
+#            fn,zn,an,pn,rk,rm = unpack(xn)
+#            rk = 0*rk
+#            rm = 00*rm
+#            xn = pack(fn,zn,an,pn,rk,rm)
+#        else:
+#            xn = modal_data.xn
+#            fn,zn,an,pn,rk,rm = unpack(xn)
+#            rk = 0*rk
+#            rm = 0*rm
+#            xn = pack(fn,zn,an,pn,rk,rm)
+            
+        G += f_TF_all_channels(xn,f,measurement_type=measurement_type)
+    
+    settings = options.MySettings(channels=np.size(G[0,:]))
+    tf_data = datastructure.TfData(f,G,None,settings,units=modal_data.units,channel_cal_factors=None,id_link=modal_data.id_link,test_name=modal_data.test_name)
+    return tf_data
