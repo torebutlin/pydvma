@@ -211,10 +211,12 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
             counter += 1
             G0[:,counter] = tf_data.tf_data[selected_range,n_chan]
             fn0[counter],zn0[counter] = f_3dB(f,G0[:,counter])
+            
 
     # initial global guess for fn0,zn0 discarding any outliers
     fn0 = np.median(fn0)
     zn0 = np.median(zn0)
+    fn0i = np.argmin(np.abs(f - fn0))
     
     # initial guesses for each channel
     an0 = np.zeros(N_tfs)
@@ -226,13 +228,14 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
         for n_chan in range(len(tf_data.tf_data[0,:])):
             counter += 1
             an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
+            an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
             pn0[counter] = 0
             Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e3
             Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e3
     
     
     x0 = np.concatenate(([fn0],[zn0],an0,pn0,Rk0,Rm0))
-    print(x0)
+    
     
     # bounds
     B_fn = freq_range
@@ -254,11 +257,28 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     bounds = (lower_bounds,upper_bounds)
     
     r = optimize.least_squares(f_residual_all_channels,x0, bounds=bounds, max_nfev=1000, args=(f,G0,measurement_type))
-#    r = optimize.minimize(f_residual,x0, bounds=bounds, method='SLSQP', args=(f,G0,measurement_type))
-    print('')
-    print('fn={:.4g} (Hz), zn={:.4g}, an={:.4g}, phase={:.4g} (deg)'.format(r.x[0],r.x[1],r.x[2],r.x[3]*180/np.pi))
-    print('')
-    if (np.abs(r.x[3])*180/np.pi > 60):
+
+    results = dict()
+    results['fn'] = r.x[0]
+    results['zn'] = r.x[1]
+    results['an'] = r.x[2:2+N_tfs]
+    results['pn'] = r.x[2+N_tfs:2+2*N_tfs]
+    results['rk'] = r.x[2+2*N_tfs:2+3*N_tfs]
+    results['rm'] = r.x[2+3*N_tfs:2+4*N_tfs]
+    
+#    print "{:<8} {:<15} {:<10} {:<10} {:<10}".format('chan','an','pn','rk','rm')
+#    for k, v in results.items():
+#        label, num = v
+#        print "{:<8} {:<15} {:<10}".format(k, label, num)
+
+    with np.printoptions(precision=3, suppress=True):
+        print('')
+        print('fn={:.4g} (Hz), zn={:.4g}'.format(results['fn'],results['zn']))
+        print('')
+        print('an={}'.format(results['an']))
+        print('pn={}'.format(results['pn']))
+        print('')
+    if np.any(np.abs(results['pn'])*180/np.pi > 60):
         print('Phase is significant, check ''measurement_type'' setting is correct')
     return r
     
