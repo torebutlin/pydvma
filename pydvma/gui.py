@@ -24,67 +24,98 @@ import numpy as np
 class BlueButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: rgb(50, 50, 200)")
+        self.setStyleSheet("background-color: hsl(240, 170, 255)")
         self.setText(text) 
 
 class GreenButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: rgb(50, 200, 50);")
+        self.setStyleSheet("background-color: hsl(120, 170, 255);")
         self.setText(text)
 
 class RedButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: rgb(200, 50, 50)")
+        self.setStyleSheet("background-color: hsl(0, 170, 255)")
+        self.setText(text)
+        
+class OrangeButton(QPushButton):
+    def __init__(self,text):
+        super().__init__(text)
+        self.setStyleSheet("background-color: hsl(30, 170,255)")
         self.setText(text)
 
+class QHLine(QFrame):
+    def __init__(self):
+        super(QHLine, self).__init__()
+        self.setFrameShape(QFrame.HLine)
+        self.setFrameShadow(QFrame.Sunken)
 
 
 class InteractiveLogging():
     def __init__(self,settings=None,test_name=None,default_window='hanning'):
+        
+        # Initialise variables
         if default_window is None:
             default_window = 'None'
         self.settings = settings
         self.test_name = test_name
         self.dataset = datastructure.DataSet()
         
+        self.current_view = 'Time'    
+        self.N_frames = 1
+        self.overlap = 0.5
+        self.iw_fft_power = 0
+        self.iw_tf_power = 0
+        self.legend_loc = 'lower right'
         
+        # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
-        
         
         self.window = QWidget()
         self.window.setStyleSheet("background-color: white")
-        
-        if test_name == None:
-            self.window.setWindowTitle('Interactive Logger')
-        else:
-            self.window.setWindowTitle('Interactive Logger: ' + test_name)
-        
+        self.window.setWindowTitle('Interactive Logger')
+
         self.setup_tools_frame()
+        self.setup_input_frame()
         self.setup_figure_frame()
         self.setup_view_frame()
         
         self.setup_main_layout()
-        
-        
         self.window.show()
         
     def setup_main_layout(self):
 
         # organise frames
-        self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.addWidget(self.frame_tools)
-        self.splitter.addWidget(self.frame_figure)
-        self.splitter.addWidget(self.frame_view)
+        self.splitter_mid = QSplitter(Qt.Vertical)
+        self.splitter_mid.addWidget(self.frame_input)
+        self.splitter_mid.addWidget(self.frame_figure)
+        
+        self.splitter_all = QSplitter(Qt.Horizontal)
+        self.splitter_all.addWidget(self.frame_view)
+        self.splitter_all.addWidget(self.splitter_mid)
+        self.splitter_all.addWidget(self.frame_tools)
+        
+        
         
         # frames to main layout
         self.main_layout = QGridLayout()
-        self.main_layout.addWidget(self.splitter)
+        
+        
+        self.main_layout.addWidget(self.splitter_all)
+        
+        
+        
+#        self.main_layout.addWidget(self.splitter3)
         
         # main layout to window
         self.window.setLayout(self.main_layout)
         
+    
+    def setup_middle_frame(self):
+        self.layout_middle = QVBoxLayout()
+        self.layout_middle.addWidget(self.frame_input)
+        self.layout_middle.addWidget(self.frame_figure)
         
     def setup_tools_frame(self):
         
@@ -120,36 +151,75 @@ class InteractiveLogging():
         self.frame_figure.setFrameShape(QFrame.StyledPanel)
         self.frame_figure.setLayout(self.layout_figure)
         
+    def setup_input_frame(self):
+        
+        # content
+        log_data_button = GreenButton('Log Data')
+        del_data_button = OrangeButton('Delete Last')
+        res_data_button = RedButton('Delete All')
+        load_data_button = BlueButton('Load Data')
+        
+        # widgets to layout
+        self.layout_input = QHBoxLayout()
+        self.layout_input.addWidget(log_data_button)
+        self.layout_input.addWidget(del_data_button)
+        self.layout_input.addWidget(res_data_button)
+        self.layout_input.addWidget(load_data_button)
+        
+        # layout to frame
+        self.frame_input = QFrame()
+        self.frame_input.setFrameShape(QFrame.StyledPanel)
+        self.frame_input.setLayout(self.layout_input)
         
         
     
     def setup_view_frame(self):
         
         # design items
-#        button_auto_x = QPushButton()
-#        button_auto_x.setStyleSheet("background-color: red")
+        self.view_buttons = [QPushButton(i) for i in ['View Time','View FFT','View TF']]
         
-        button_x = GreenButton('Auto X')
-        button_y = GreenButton('Auto Y')
+        self.button_x = GreenButton('Auto X')
+        self.button_y = GreenButton('Auto Y')
         
-        items_axes = ['xmin','xmax','ymin','ymax']
-        label_axes = [QLabel(i) for i in items_axes]
-        input_axes = [QLineEdit() for i in items_axes]
+        self.label_axes = [QLabel(i) for i in ['xmin:','xmax:','ymin:','ymax:']]
+        self.input_axes = [QLineEdit() for i in range(4)]
 
+        self.legend_buttons = [BlueButton(i) for i in ['left','on/off','right']]
+        
         
         # widgets to layout
         self.layout_view = QGridLayout()
-        self.layout_view.addWidget(QLabel('Axes control:'),1,1,1,2)
-        self.layout_view.addWidget(button_x,2,1,1,2)
-        self.layout_view.addWidget(button_y,3,1,1,2)
-        
-        for n in range(4):
-            self.layout_view.addWidget(label_axes[n],n+4,1)
-            self.layout_view.addWidget(input_axes[n],n+4,2)
-        
-        
         self.layout_view.setAlignment(Qt.AlignTop)
 
+
+        # View control
+        row_start = 0
+        self.layout_view.addWidget(QLabel('View Data Type:'),row_start,0,1,3)
+        for n in range(len(self.view_buttons)):
+            self.layout_view.addWidget(self.view_buttons[n],row_start+n+1,0,1,3)
+        
+        # Axes control
+        row_start = 4
+        self.layout_view.addWidget(QLabel(),row_start,0,1,3)
+        self.layout_view.addWidget(QLabel('Axes control:'),row_start+1,0,1,3)
+        self.layout_view.addWidget(self.button_x,row_start+2,0,1,3)
+        self.layout_view.addWidget(self.button_y,row_start+3,0,1,3)
+        
+        for n in range(len(self.label_axes)):
+            self.label_axes[n].setAlignment(Qt.AlignRight)
+            self.layout_view.addWidget(self.label_axes[n],row_start+n+4,0)
+            self.layout_view.addWidget(self.input_axes[n],row_start+n+4,1,1,2)
+            
+            
+        
+        # Legend control
+        row_start = 12
+        self.layout_view.addWidget(QLabel(),row_start,0,1,3)
+        self.layout_view.addWidget(QLabel('Legend control:'),row_start+1,0,1,2)
+        for n in range(len(self.legend_buttons)):
+            self.layout_view.addWidget(self.legend_buttons[n],row_start+2,n)
+        
+        
         # layout to frame
         self.frame_view = QFrame()
         self.frame_view.setFrameShape(QFrame.StyledPanel)
