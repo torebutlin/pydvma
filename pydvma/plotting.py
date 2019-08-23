@@ -19,8 +19,14 @@ matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
 
 
 class PlotData():
-    def __init__(self,sets='all',channels='all',figsize=(9,5)):
-        self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
+    def __init__(self,sets='all',channels='all',figsize=(9,5),canvas=None,fig=None):
+        if canvas==None:
+            self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
+        else:
+            self.fig = fig
+            self.canvas = canvas
+            self.ax = self.canvas.figure.subplots()
+            
         self.ax.grid(True,alpha=0.3)
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()

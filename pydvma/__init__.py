@@ -8,6 +8,7 @@ from .plotting import PlotData#, PlotTimeData, PlotData2
 from .analysis import calculate_fft, calculate_cross_spectrum_matrix, calculate_cross_spectra_averaged, clean_impulse
 from .analysis import calculate_tf, calculate_tf_averaged, multiply_by_power_of_iw, best_match, calculate_sonogram
 from .streams import Recorder, Recorder_NI, start_stream, REC, setup_output_NI, setup_output_soundcard, list_available_devices, get_devices_NI, get_devices_soundcard
-from .interactive_tools import InteractiveLogging, InteractiveView
+#from .interactive_tools import InteractiveLogging, InteractiveView
 from .modal import modal_fit_single_channel, modal_fit_all_channels
 
+from .gui import InteractiveLogging
