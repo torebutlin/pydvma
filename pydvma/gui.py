@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame
 from PyQt5.QtWidgets import QToolTip
 from PyQt5.QtCore import Qt
@@ -111,12 +111,15 @@ class InteractiveLogging():
         
     def setup_frame_tools(self):
         
+        # initiate all tools frames
+        self.setup_layout_tools_selection()
+        self.setup_layout_tools_fft()
+        
         # widgets to layout
-        self.layout_tools = QGridLayout()
-        self.layout_tools.addWidget(QPushButton('A'),1,1)
-        self.layout_tools.addWidget(QPushButton('B'),1,2)
-        self.layout_tools.addWidget(QPushButton('B'),2,1)
-        self.layout_tools.addWidget(QPushButton('B'),2,2)
+        self.layout_tools = QVBoxLayout()
+        self.layout_tools.addWidget(self.frame_tools_selection)
+        self.layout_tools.addWidget(self.frame_tools_fft)
+        self.layout_tools.setAlignment(Qt.AlignTop)
         
         # layout to frame
         self.frame_tools = QFrame()
@@ -232,12 +235,37 @@ class InteractiveLogging():
         self.frame_axes.setFrameShape(QFrame.StyledPanel)
         self.frame_axes.setLayout(self.layout_axes)
         
+    def setup_layout_tools_selection(self):
+        
+        self.input_list_tools = QComboBox()
+        self.input_list_tools.setStyleSheet('selection-background-color: hsl(240, 170, 255)')
+        self.input_list_tools.addItems(['FFT','Transfer Function','Mode Fitting'])
+        
+        
+        self.layout_tools_selection = QGridLayout()
+        self.layout_tools_selection.addWidget(QLabel('Tool selection:'),0,0,1,3)
+        self.layout_tools_selection.addWidget(self.input_list_tools)
+        
+        self.frame_tools_selection = QFrame()
+        self.frame_tools_selection.setLayout(self.layout_tools_selection)
+        
 
-    def setup_layout_tools_standard(self):
-        pass
+    def setup_layout_tools_fft(self):
+        
+        button_FFT = BlueButton('Calc FFT')
+        
+        self.layout_tools_fft = QGridLayout()
+        self.layout_tools_fft.addWidget(QLabel('FFT'),0,0,1,3)
+        self.layout_tools_fft.addWidget(button_FFT)
+        
+        self.frame_tools_fft = QFrame()
+        self.frame_tools_fft.setLayout(self.layout_tools_fft)
 
-    def setup_layout_tools_standard(self):
+    def setup_layout_tools_mode_fitting(self):
         pass
+    
+    def update_frame_tools(self):
+        self.frame_tools.setLayout(self.layout_tools)
 
 
 #def on_button_clicked():
