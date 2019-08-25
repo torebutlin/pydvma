@@ -50,7 +50,14 @@ class QHLine(QFrame):
         super(QHLine, self).__init__()
         self.setFrameShape(QFrame.HLine)
         self.setFrameShadow(QFrame.Sunken)
-
+        
+class newComboBox(QComboBox):
+    def __init__(self,items_list):
+        super().__init__()
+        self.setStyleSheet('selection-background-color: hsl(240, 170, 255)')
+        self.addItems(items_list)
+        
+        
 
 class InteractiveLogging():
     def __init__(self,settings=None,test_name=None,default_window='hanning'):
@@ -80,7 +87,7 @@ class InteractiveLogging():
         self.setup_frame_tools()
         self.setup_frame_input()
         self.setup_frame_figure()
-        self.setup_frame_view()
+        self.setup_frame_save()
         self.setup_frame_axes()
         
         # arrange frames and create window
@@ -93,7 +100,7 @@ class InteractiveLogging():
         self.splitter_mid = QSplitter(Qt.Vertical)
         self.splitter_mid.addWidget(self.frame_input)
         self.splitter_mid.addWidget(self.frame_figure)
-        self.splitter_mid.addWidget(self.frame_view)
+        self.splitter_mid.addWidget(self.frame_save)
         
         self.splitter_all = QSplitter(Qt.Horizontal)
         self.splitter_all.addWidget(self.frame_axes)
@@ -109,22 +116,7 @@ class InteractiveLogging():
         
     
         
-    def setup_frame_tools(self):
-        
-        # initiate all tools frames
-        self.setup_layout_tools_selection()
-        self.setup_layout_tools_fft()
-        
-        # widgets to layout
-        self.layout_tools = QVBoxLayout()
-        self.layout_tools.addWidget(self.frame_tools_selection)
-        self.layout_tools.addWidget(self.frame_tools_fft)
-        self.layout_tools.setAlignment(Qt.AlignTop)
-        
-        # layout to frame
-        self.frame_tools = QFrame()
-        self.frame_tools.setFrameShape(QFrame.StyledPanel)
-        self.frame_tools.setLayout(self.layout_tools)
+
        
 
     def setup_frame_figure(self):
@@ -166,27 +158,31 @@ class InteractiveLogging():
         self.frame_input.setFrameShape(QFrame.StyledPanel)
         self.frame_input.setLayout(self.layout_input)
         
-    def setup_frame_view(self):
+    def setup_frame_save(self):
         # design items
-        self.view_buttons = [QPushButton(i) for i in ['Time Data','FFT Data','TF Data']]
+#        self.label_save = QLabel('Quick save:')
+        self.buttons_save = [GreenButton(i) for i in ['Save Dataset','Save Figure']]
         
         
         # widgets to layout
-        self.layout_view = QHBoxLayout()
+        self.layout_save = QHBoxLayout()
 #        self.layout_view.setAlignment(Qt.AlignTop)
 
         # View control
-        self.layout_view.addWidget(QLabel('View Data Type:'))
-        for n in range(len(self.view_buttons)):
-            self.layout_view.addWidget(self.view_buttons[n])
+#        self.layout_save.addWidget(self.label_save)
+#        self.label_save.setAlignment(Qt.AlignCenter)
+        for n in range(len(self.buttons_save)):
+            self.layout_save.addWidget(self.buttons_save[n])
             
         # layout to frame
-        self.frame_view = QFrame()
-        self.frame_view.setFrameShape(QFrame.StyledPanel)
-        self.frame_view.setLayout(self.layout_view)
+        self.frame_save = QFrame()
+        self.frame_save.setFrameShape(QFrame.StyledPanel)
+        self.frame_save.setLayout(self.layout_save)
         
     
     def setup_frame_axes(self):
+        
+        self.input_list_figures = newComboBox(['Time Data','FFT Data','TF Data'])
         
         
         self.button_x = GreenButton('Auto X')
@@ -207,9 +203,13 @@ class InteractiveLogging():
         self.layout_axes.setAlignment(Qt.AlignTop)
 
 
+        # Figure selection
+        row_start = 0
+        self.layout_axes.addWidget(QLabel('Figure selection:'),row_start+0,0,1,3)
+        self.layout_axes.addWidget(self.input_list_figures,row_start+1,0,1,3)
         
         # Axes control
-        row_start = 0
+        row_start = 3
         self.layout_axes.addWidget(QLabel(),row_start,0,1,3)
         self.layout_axes.addWidget(QLabel('Axes control:'),row_start+1,0,1,3)
         self.layout_axes.addWidget(self.button_x,row_start+2,0,1,3)
@@ -223,7 +223,7 @@ class InteractiveLogging():
             
         
         # Legend control
-        row_start = 8
+        row_start = 11
         self.layout_axes.addWidget(QLabel(),row_start,0,1,3)
         self.layout_axes.addWidget(QLabel('Legend control:'),row_start+1,0,1,2)
         for n in range(len(self.legend_buttons)):
@@ -234,12 +234,32 @@ class InteractiveLogging():
         self.frame_axes = QFrame()
         self.frame_axes.setFrameShape(QFrame.StyledPanel)
         self.frame_axes.setLayout(self.layout_axes)
+       
         
-    def setup_layout_tools_selection(self):
         
-        self.input_list_tools = QComboBox()
-        self.input_list_tools.setStyleSheet('selection-background-color: hsl(240, 170, 255)')
-        self.input_list_tools.addItems(['FFT','Transfer Function','Mode Fitting'])
+    def setup_frame_tools(self):
+        
+        # initiate all tools frames
+        self.setup_frame_tools_selection()
+        self.setup_frame_tools_fft()
+        self.setup_frame_tools_tf()
+        
+        # widgets to layout
+        self.layout_tools = QVBoxLayout()
+        self.layout_tools.addWidget(self.frame_tools_selection)
+        self.layout_tools.addWidget(self.frame_tools_fft)
+        self.layout_tools.addWidget(self.frame_tools_tf)
+        self.layout_tools.setAlignment(Qt.AlignTop)
+        
+        # layout to frame
+        self.frame_tools = QFrame()
+        self.frame_tools.setFrameShape(QFrame.StyledPanel)
+        self.frame_tools.setLayout(self.layout_tools)
+        
+        
+    def setup_frame_tools_selection(self):
+        
+        self.input_list_tools = newComboBox(['Standard tools','FFT','Transfer Function','Mode Fitting','Dataset Summary','Logging Settings'])
         
         
         self.layout_tools_selection = QGridLayout()
@@ -250,20 +270,36 @@ class InteractiveLogging():
         self.frame_tools_selection.setLayout(self.layout_tools_selection)
         
 
-    def setup_layout_tools_fft(self):
+    def setup_frame_tools_fft(self):
         
-        button_FFT = BlueButton('Calc FFT')
+        self.input_list_window = newComboBox(['None','hanning'])
+        self.button_FFT = BlueButton('Calc FFT')
         
         self.layout_tools_fft = QGridLayout()
-        self.layout_tools_fft.addWidget(QLabel('FFT'),0,0,1,3)
-        self.layout_tools_fft.addWidget(button_FFT)
+        self.layout_tools_fft.addWidget(QHLine(),0,0,1,3)
+        self.layout_tools_fft.addWidget(QLabel('___FFT___'),1,0,1,3)
+        self.layout_tools_fft.addWidget(QLabel('window:'),2,0,1,1)
+        self.layout_tools_fft.addWidget(self.input_list_window,2,1,1,2)
+        self.layout_tools_fft.addWidget(self.button_FFT,3,0,1,3)
         
         self.frame_tools_fft = QFrame()
         self.frame_tools_fft.setLayout(self.layout_tools_fft)
 
-    def setup_layout_tools_mode_fitting(self):
-        pass
-    
+    def setup_frame_tools_tf(self):
+        self.input_list_window = newComboBox(['None','hanning'])
+        self.button_TF = BlueButton('Calc TF')
+        
+        self.layout_tools_tf = QGridLayout()
+        self.layout_tools_tf.addWidget(QHLine(),0,0,1,3)
+        self.layout_tools_tf.addWidget(QLabel('Transfer Functions'),1,0,1,3)
+        self.layout_tools_tf.addWidget(QLabel('window:'),2,0,1,1)
+        self.layout_tools_tf.addWidget(self.input_list_window,2,1,1,2)
+        self.layout_tools_tf.addWidget(self.button_TF,3,0,1,3)
+        
+        self.frame_tools_tf = QFrame()
+        self.frame_tools_tf.setLayout(self.layout_tools_tf)
+
+
     def update_frame_tools(self):
         self.frame_tools.setLayout(self.layout_tools)
 
