@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame
 from PyQt5.QtWidgets import QToolTip
 from PyQt5.QtCore import Qt
@@ -130,9 +130,12 @@ class InteractiveLogging():
         self.toolbar = NavigationToolbar(self.canvas,None)
         self.p = plotting.PlotData(canvas=self.canvas,fig=self.fig)
         
+        self.label_figure = boldLabel('Time Data')
+        self.label_figure.setAlignment(Qt.AlignCenter)
         
         # widgets to layout
         self.layout_figure = QVBoxLayout()
+        self.layout_figure.addWidget(self.label_figure)
         self.layout_figure.addWidget(self.canvas)
         self.layout_figure.addWidget(self.toolbar)
         
@@ -244,12 +247,14 @@ class InteractiveLogging():
         
         # initiate all tools frames
         self.setup_frame_tools_selection()
+        self.setup_frame_tools_time_domain()
         self.setup_frame_tools_fft()
         self.setup_frame_tools_tf()
         
         # widgets to layout
         self.layout_tools = QVBoxLayout()
         self.layout_tools.addWidget(self.frame_tools_selection)
+        self.layout_tools.addWidget(self.frame_tools_time_domain)
         self.layout_tools.addWidget(self.frame_tools_fft)
         self.layout_tools.addWidget(self.frame_tools_tf)
         self.layout_tools.setAlignment(Qt.AlignTop)
@@ -267,11 +272,27 @@ class InteractiveLogging():
         
         self.layout_tools_selection = QGridLayout()
         self.layout_tools_selection.addWidget(boldLabel('Tool selection:'),0,0,1,3)
-        self.layout_tools_selection.addWidget(self.input_list_tools)
+        self.layout_tools_selection.addWidget(self.input_list_tools,1,0,1,3)
         
         self.frame_tools_selection = QFrame()
         self.frame_tools_selection.setLayout(self.layout_tools_selection)
         
+
+
+    def setup_frame_tools_time_domain(self):
+        
+        self.button_clean_impulse = BlueButton('Clean impulse')
+        self.input_impulse_channel = QLineEdit('0')
+        self.input_impulse_channel.setValidator(QIntValidator(0,1000))
+        self.layout_tools_time_domain = QGridLayout()
+        self.layout_tools_time_domain.addWidget(boldLabel('Pre-process:'),0,0,1,3)
+        self.layout_tools_time_domain.addWidget(QLabel('Impulse channel:'),1,0,1,1)
+        self.layout_tools_time_domain.addWidget(self.input_impulse_channel,1,1,1,2)
+        self.layout_tools_time_domain.addWidget(self.button_clean_impulse,2,0,1,3)
+        
+        self.frame_tools_time_domain = QFrame()
+        self.frame_tools_time_domain.setLayout(self.layout_tools_time_domain)
+
 
     def setup_frame_tools_fft(self):
         
@@ -289,19 +310,27 @@ class InteractiveLogging():
 
     def setup_frame_tools_tf(self):
         self.input_list_window = newComboBox(['None','hanning'])
+        self.input_list_average_TF = newComboBox(['None','within each set','across sets'])
         self.button_TF = BlueButton('Calc TF')
         self.input_Nframes = QLineEdit()
         self.input_Nframes.setValidator(QIntValidator(1,1000))
+        self.input_Nframes.setText('1')
+        self.slider_Nframes = QSlider(Qt.Horizontal)
+        self.slider_Nframes.setMinimum(1)
+        self.slider_Nframes.setMaximum(30)
+        self.button_TFav = BlueButton('Calc TF average')
+        
         
         self.layout_tools_tf = QGridLayout()
         self.layout_tools_tf.addWidget(boldLabel('Transfer Function:'),0,0,1,3)
         self.layout_tools_tf.addWidget(QLabel('window:'),1,0,1,1)
         self.layout_tools_tf.addWidget(self.input_list_window,1,1,1,2)
-        self.layout_tools_tf.addWidget(QLabel('N frames:'),2,0,1,1)
-        self.layout_tools_tf.addWidget(self.input_Nframes,2,1,1,2)
-        
-        
-        self.layout_tools_tf.addWidget(self.button_TF,4,0,1,3)
+        self.layout_tools_tf.addWidget(QLabel('average:'),2,0,1,1)
+        self.layout_tools_tf.addWidget(self.input_list_average_TF,2,1,1,2)
+        self.layout_tools_tf.addWidget(QLabel('N frames:'),3,0,1,1)
+        self.layout_tools_tf.addWidget(self.input_Nframes,3,1,1,2)
+        self.layout_tools_tf.addWidget(self.slider_Nframes,4,0,1,3)
+        self.layout_tools_tf.addWidget(self.button_TF,5,0,1,3)
         
         self.frame_tools_tf = QFrame()
         self.frame_tools_tf.setLayout(self.layout_tools_tf)
