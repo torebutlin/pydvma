@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTa
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame
 from PyQt5.QtWidgets import QToolTip
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPalette, QDoubleValidator
+from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator
 import copy
 from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -57,7 +57,10 @@ class newComboBox(QComboBox):
         self.setStyleSheet('selection-background-color: hsl(240, 170, 255)')
         self.addItems(items_list)
         
-        
+class boldLabel(QLabel):
+    def __init__(self,text):
+        super().__init__(text)
+        self.setStyleSheet('font: bold')
 
 class InteractiveLogging():
     def __init__(self,settings=None,test_name=None,default_window='hanning'):
@@ -205,13 +208,13 @@ class InteractiveLogging():
 
         # Figure selection
         row_start = 0
-        self.layout_axes.addWidget(QLabel('Figure selection:'),row_start+0,0,1,3)
+        self.layout_axes.addWidget(boldLabel('Figure selection:'),row_start+0,0,1,3)
         self.layout_axes.addWidget(self.input_list_figures,row_start+1,0,1,3)
         
         # Axes control
         row_start = 3
         self.layout_axes.addWidget(QLabel(),row_start,0,1,3)
-        self.layout_axes.addWidget(QLabel('Axes control:'),row_start+1,0,1,3)
+        self.layout_axes.addWidget(boldLabel('Axes control:'),row_start+1,0,1,3)
         self.layout_axes.addWidget(self.button_x,row_start+2,0,1,3)
         self.layout_axes.addWidget(self.button_y,row_start+3,0,1,3)
         
@@ -225,7 +228,7 @@ class InteractiveLogging():
         # Legend control
         row_start = 11
         self.layout_axes.addWidget(QLabel(),row_start,0,1,3)
-        self.layout_axes.addWidget(QLabel('Legend control:'),row_start+1,0,1,2)
+        self.layout_axes.addWidget(boldLabel('Legend control:'),row_start+1,0,1,2)
         for n in range(len(self.legend_buttons)):
             self.layout_axes.addWidget(self.legend_buttons[n],row_start+2,n)
         
@@ -263,7 +266,7 @@ class InteractiveLogging():
         
         
         self.layout_tools_selection = QGridLayout()
-        self.layout_tools_selection.addWidget(QLabel('Tool selection:'),0,0,1,3)
+        self.layout_tools_selection.addWidget(boldLabel('Tool selection:'),0,0,1,3)
         self.layout_tools_selection.addWidget(self.input_list_tools)
         
         self.frame_tools_selection = QFrame()
@@ -276,11 +279,10 @@ class InteractiveLogging():
         self.button_FFT = BlueButton('Calc FFT')
         
         self.layout_tools_fft = QGridLayout()
-        self.layout_tools_fft.addWidget(QHLine(),0,0,1,3)
-        self.layout_tools_fft.addWidget(QLabel('___FFT___'),1,0,1,3)
-        self.layout_tools_fft.addWidget(QLabel('window:'),2,0,1,1)
-        self.layout_tools_fft.addWidget(self.input_list_window,2,1,1,2)
-        self.layout_tools_fft.addWidget(self.button_FFT,3,0,1,3)
+        self.layout_tools_fft.addWidget(boldLabel('FFT:'),0,0,1,3)
+        self.layout_tools_fft.addWidget(QLabel('window:'),1,0,1,1)
+        self.layout_tools_fft.addWidget(self.input_list_window,1,1,1,2)
+        self.layout_tools_fft.addWidget(self.button_FFT,2,0,1,3)
         
         self.frame_tools_fft = QFrame()
         self.frame_tools_fft.setLayout(self.layout_tools_fft)
@@ -288,13 +290,18 @@ class InteractiveLogging():
     def setup_frame_tools_tf(self):
         self.input_list_window = newComboBox(['None','hanning'])
         self.button_TF = BlueButton('Calc TF')
+        self.input_Nframes = QLineEdit()
+        self.input_Nframes.setValidator(QIntValidator(1,1000))
         
         self.layout_tools_tf = QGridLayout()
-        self.layout_tools_tf.addWidget(QHLine(),0,0,1,3)
-        self.layout_tools_tf.addWidget(QLabel('Transfer Functions'),1,0,1,3)
-        self.layout_tools_tf.addWidget(QLabel('window:'),2,0,1,1)
-        self.layout_tools_tf.addWidget(self.input_list_window,2,1,1,2)
-        self.layout_tools_tf.addWidget(self.button_TF,3,0,1,3)
+        self.layout_tools_tf.addWidget(boldLabel('Transfer Function:'),0,0,1,3)
+        self.layout_tools_tf.addWidget(QLabel('window:'),1,0,1,1)
+        self.layout_tools_tf.addWidget(self.input_list_window,1,1,1,2)
+        self.layout_tools_tf.addWidget(QLabel('N frames:'),2,0,1,1)
+        self.layout_tools_tf.addWidget(self.input_Nframes,2,1,1,2)
+        
+        
+        self.layout_tools_tf.addWidget(self.button_TF,4,0,1,3)
         
         self.frame_tools_tf = QFrame()
         self.frame_tools_tf.setLayout(self.layout_tools_tf)
