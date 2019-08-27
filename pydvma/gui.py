@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider, QMessageBox
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame
 from PyQt5.QtWidgets import QToolTip
 from PyQt5.QtCore import Qt
@@ -72,6 +72,9 @@ class InteractiveLogging():
         self.test_name = test_name
         self.dataset = datastructure.DataSet()
         
+        
+        
+        
         self.current_view = 'Time'    
         self.N_frames = 1
         self.overlap = 0.5
@@ -96,6 +99,10 @@ class InteractiveLogging():
         # arrange frames and create window
         self.setup_layout_main()
         self.window.show()
+        
+        # start stream if already passed settings
+        self.start_stream()
+
         
     def setup_layout_main(self):
 
@@ -146,23 +153,44 @@ class InteractiveLogging():
         
     def setup_frame_input(self):
         
-        # content
-        log_data_button = GreenButton('Log Data')
-        del_data_button = OrangeButton('Delete Last')
-        res_data_button = RedButton('Delete All')
-        load_data_button = BlueButton('Load Data')
+        self.setup_frame_message()
         
+        # content
+        self.button_log_data = GreenButton('Log Data')
+        self.button_del_data = OrangeButton('Delete Last')
+        self.button_res_data = RedButton('Delete All')
+        self.button_load_data = BlueButton('Load Data')
+                
         # widgets to layout
-        self.layout_input = QHBoxLayout()
-        self.layout_input.addWidget(log_data_button)
-        self.layout_input.addWidget(del_data_button)
-        self.layout_input.addWidget(res_data_button)
-        self.layout_input.addWidget(load_data_button)
+        self.layout_input = QGridLayout()
+        self.layout_input.addWidget(self.button_log_data,0,0,1,1)
+        self.layout_input.addWidget(self.button_del_data,0,1,1,1)
+        self.layout_input.addWidget(self.button_res_data,0,2,1,1)
+        self.layout_input.addWidget(self.button_load_data,0,3,1,1)
+        self.layout_input.addWidget(self.frame_message,1,0,1,4)
         
         # layout to frame
         self.frame_input = QFrame()
         self.frame_input.setFrameShape(QFrame.StyledPanel)
         self.frame_input.setLayout(self.layout_input)
+        
+    def setup_frame_message(self):
+        self.label_message = QLabel()
+        self.button_message = GreenButton('ok')
+        
+        
+        # function connections
+        self.button_message.clicked.connect(self.hide_message)
+        
+        self.layout_message = QGridLayout()
+        
+        self.layout_message.addWidget(self.label_message,0,0,1,3)
+        self.layout_message.addWidget(self.button_message,0,3,1,1)
+        self.layout_message.setAlignment(Qt.AlignTop)
+        
+        self.frame_message = QFrame()
+        self.frame_message.setLayout(self.layout_message)
+        self.hide_message()
         
     def setup_frame_save(self):
         # design items
@@ -361,8 +389,67 @@ class InteractiveLogging():
 
 
     #%% INTERACTION FUNCTIONS
-    def button_clicked_log_data(self):
+    
+    def start_stream(self):
+        if self.settings != None:
+            try:
+                streams.start_stream(self.settings)
+                self.rec = streams.REC
+            except:
+                message = 'Data stream not initialised.\n'
+                message += 'Possible reasons: pyaudio or PyDAQmx not installed, or acquisition hardware not connected.\n' 
+                message += 'Please note that it won''t be possible to log data.'
+                m = QMessageBox.about(QWidget(), 'Information',message)
+                m.setWindowModality(Qt.ApplicationModal)
+        else:
+            message = 'To enable data acquisition, pease use \'Logger Settings\' tool.'
+            self.show_message(message)
+            self.input_list_tools.setCurrentIndex(1)
+            self.update_tool_selection()
+
+    def show_message(self,message):
+        self.label_message.setText(message)
+        self.frame_message.setVisible(True)
+        
+    def hide_message(self):
+        self.frame_message.setVisible(False)
+            
+    def update_tool_selection(self):
         pass
+            
+    def button_clicked_log_data(self):
+        # the 'out' construction is to refresh the text output at each update 
+        # to stop text building up in the widget display
+        self.rec.trigger_detected = False
+        self.buttons_measure[0].button_style =''
+        if self.settings.pretrig_samples is None:
+            self.buttons_measure[0].description = 'Logging ({}s)'.format(self.settings.stored_time)
+        else:
+            self.buttons_measure[0].description = 'Logging ({}s, with trigger)'.format(self.settings.stored_time)
+        
+        d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec)
+        self.dataset.add_to_dataset(d.time_data_list)
+        N = len(self.dataset.time_data_list)
+        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+        self.p.auto_x()
+#            self.p.auto_y()
+        self.p.ax.set_ylim([-1,1])
+        self.current_view='Time'
+        self.buttons_measure[0].button_style ='success'
+        self.buttons_measure[0].description = 'Log Data'
+        
+        if np.any(np.abs(d.time_data_list[-1].time_data) > 0.95):
+            self.button_warning.layout.visibility = 'visible'
+        else:
+            self.button_warning.layout.visibility = 'hidden'
+        
+        xlim = self.p.ax.get_xlim()
+        ylim =  self.p.ax.get_ylim()
+        self.text_axes[2].value = xlim[0]
+        self.text_axes[3].value = xlim[1]
+        self.text_axes[4].value = ylim[0]
+        self.text_axes[5].value = ylim[1]
+        self.refresh_buttons()
 
 #def on_button_clicked():
 #    alert = QMessageBox()
