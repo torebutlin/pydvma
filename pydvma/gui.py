@@ -250,6 +250,7 @@ class InteractiveLogging():
         self.setup_frame_tools_time_domain()
         self.setup_frame_tools_fft()
         self.setup_frame_tools_tf()
+        self.setup_frame_tools_scaling()
         
         # widgets to layout
         self.layout_tools = QVBoxLayout()
@@ -257,6 +258,7 @@ class InteractiveLogging():
         self.layout_tools.addWidget(self.frame_tools_time_domain)
         self.layout_tools.addWidget(self.frame_tools_fft)
         self.layout_tools.addWidget(self.frame_tools_tf)
+        self.layout_tools.addWidget(self.frame_tools_scaling)
         self.layout_tools.setAlignment(Qt.AlignTop)
         
         # layout to frame
@@ -267,7 +269,7 @@ class InteractiveLogging():
         
     def setup_frame_tools_selection(self):
         
-        self.input_list_tools = newComboBox(['Standard tools','FFT','Transfer Function','Mode Fitting','Dataset Summary','Logging Settings'])
+        self.input_list_tools = newComboBox(['Standard Tools','Logger Settings','Pre-process','FFT','Transfer Function','Calibration / Scaling','Mode Fitting','Save / Export'])
         
         
         self.layout_tools_selection = QGridLayout()
@@ -334,11 +336,33 @@ class InteractiveLogging():
         
         self.frame_tools_tf = QFrame()
         self.frame_tools_tf.setLayout(self.layout_tools_tf)
+        
+        
+    def setup_frame_tools_scaling(self):
+        self.input_iw_power = QLineEdit('0')
+        self.input_iw_power.setValidator(QIntValidator(0,2))
+
+        self.button_best_match = BlueButton('Best Match')
+        
+        
+        self.layout_tools_scaling = QGridLayout()
+        self.layout_tools_scaling.addWidget(boldLabel('Calibration / Scaling:'),0,0,1,3)
+        self.layout_tools_scaling.addWidget(QLabel('iw power:'),1,0,1,1)
+        self.layout_tools_scaling.addWidget(self.input_iw_power,1,1,1,2)
+        
+        self.layout_tools_scaling.addWidget(self.button_best_match,2,0,1,3)
+        
+        self.frame_tools_scaling = QFrame()
+        self.frame_tools_scaling.setLayout(self.layout_tools_scaling)
 
 
     def update_frame_tools(self):
         self.frame_tools.setLayout(self.layout_tools)
 
+
+    #%% INTERACTION FUNCTIONS
+    def button_clicked_log_data(self):
+        pass
 
 #def on_button_clicked():
 #    alert = QMessageBox()
