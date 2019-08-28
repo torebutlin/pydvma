@@ -53,6 +53,7 @@ class PlotData():
         if sets == 'all':
             sets = range(N_sets)
         
+        
         count = -1
         for n_set in range(len(data_list)):
             if data_list.__class__.__name__ == 'TfDataList':
@@ -75,6 +76,7 @@ class PlotData():
                 if data_list.__class__.__name__ == 'TimeDataList':
                     x = data_list[n_set].time_axis
                     y = data_list[n_set].time_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
+        
                 elif data_list.__class__.__name__ == 'FreqDataList':
                     x = data_list[n_set].freq_axis
                     ylin = data_list[n_set].freq_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
@@ -109,11 +111,13 @@ class PlotData():
                 label = '{}_{}, ch_{}'.format(test_name,n_set,n_chan)
                 
                 self.ax.plot(x,y,'-',linewidth=1,color = color,label=label,alpha=alpha)
+                
                 if data_list.__class__.__name__ == 'TfDataList':
                     if data_list[n_set].tf_coherence is not None:
                         self.ax.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
     
         self.update_legend()
+        self.canvas.draw()
         
     def update_legend(self,loc='lower right',draggable=False):
         if len(self.data_list) != 0:
@@ -149,6 +153,7 @@ class PlotData():
             self.ax.set_xlim([xmin,xmax])
         except:
             pass
+        self.canvas.draw()
         
         
     def auto_y(self):
@@ -169,6 +174,7 @@ class PlotData():
             self.ax.set_ylim([ymin,ymax])
         except:
             pass
+        self.canvas.draw()
         
     def channel_select(self,event):
         selected_line = event.artist

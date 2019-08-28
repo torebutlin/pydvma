@@ -1,8 +1,8 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider, QMessageBox
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame
 from PyQt5.QtWidgets import QToolTip
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator
+from PyQt5.QtCore import Qt, QThread, Signal, QTimer
+from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
 import copy
 from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -61,6 +61,26 @@ class boldLabel(QLabel):
     def __init__(self,text):
         super().__init__(text)
         self.setStyleSheet('font: bold')
+        
+        
+class LogDataThread(QThread):
+    
+    s = Signal(datastructure.DataSet)
+
+    def __init__(self,settings,test_name,rec):
+        super().__init__()
+        
+        self.settings = settings
+        self.test_name = test_name
+        self.rec = rec
+        
+    def __del__(self):
+        self.wait()
+    
+    def run(self):
+        self.d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec)
+        self.s.emit(self.d)
+        
 
 class InteractiveLogging():
     def __init__(self,settings=None,test_name=None,default_window='hanning'):
@@ -71,9 +91,7 @@ class InteractiveLogging():
         self.settings = settings
         self.test_name = test_name
         self.dataset = datastructure.DataSet()
-        
-        
-        
+       
         
         self.current_view = 'Time'    
         self.N_frames = 1
@@ -136,8 +154,11 @@ class InteractiveLogging():
         self.canvas = FigureCanvas(self.fig)
         self.toolbar = NavigationToolbar(self.canvas,None)
         self.p = plotting.PlotData(canvas=self.canvas,fig=self.fig)
+        self.p.ax.callbacks.connect('xlim_changed', self.update_axes_values)
+        self.p.ax.callbacks.connect('ylim_changed', self.update_axes_values)
         
         self.label_figure = boldLabel('Time Data')
+        self.label_figure.setMaximumHeight(20)
         self.label_figure.setAlignment(Qt.AlignCenter)
         
         # widgets to layout
@@ -161,6 +182,11 @@ class InteractiveLogging():
         self.button_res_data = RedButton('Delete All')
         self.button_load_data = BlueButton('Load Data')
                 
+        self.button_log_data.clicked.connect(self.button_clicked_log_data)
+        self.button_del_data.clicked.connect(self.delete_last_data)
+        self.button_res_data.clicked.connect(self.reset_data)
+        self.button_load_data.clicked.connect(self.load_data)
+        
         # widgets to layout
         self.layout_input = QGridLayout()
         self.layout_input.addWidget(self.button_log_data,0,0,1,1)
@@ -168,43 +194,44 @@ class InteractiveLogging():
         self.layout_input.addWidget(self.button_res_data,0,2,1,1)
         self.layout_input.addWidget(self.button_load_data,0,3,1,1)
         self.layout_input.addWidget(self.frame_message,1,0,1,4)
+        self.layout_input.setAlignment(Qt.AlignTop)
         
         # layout to frame
         self.frame_input = QFrame()
         self.frame_input.setFrameShape(QFrame.StyledPanel)
         self.frame_input.setLayout(self.layout_input)
         
+        
     def setup_frame_message(self):
         self.label_message = QLabel()
-        self.button_message = GreenButton('ok')
-        
+        self.button_message = GreenButton('OK')
+        self.button_cancel = RedButton('Cancel')
         
         # function connections
         self.button_message.clicked.connect(self.hide_message)
+        self.button_cancel.clicked.connect(self.cancel_logging)
         
         self.layout_message = QGridLayout()
         
         self.layout_message.addWidget(self.label_message,0,0,1,3)
         self.layout_message.addWidget(self.button_message,0,3,1,1)
+        self.layout_message.addWidget(self.button_cancel,0,3,1,1)
         self.layout_message.setAlignment(Qt.AlignTop)
         
         self.frame_message = QFrame()
         self.frame_message.setLayout(self.layout_message)
         self.hide_message()
         
+        
     def setup_frame_save(self):
         # design items
 #        self.label_save = QLabel('Quick save:')
         self.buttons_save = [GreenButton(i) for i in ['Save Dataset','Save Figure']]
-        
+        self.buttons_save[0].clicked.connect(self.save_data)
+        self.buttons_save[1].clicked.connect(self.save_fig)
         
         # widgets to layout
         self.layout_save = QHBoxLayout()
-#        self.layout_view.setAlignment(Qt.AlignTop)
-
-        # View control
-#        self.layout_save.addWidget(self.label_save)
-#        self.label_save.setAlignment(Qt.AlignCenter)
         for n in range(len(self.buttons_save)):
             self.layout_save.addWidget(self.buttons_save[n])
             
@@ -222,14 +249,24 @@ class InteractiveLogging():
         self.button_x = GreenButton('Auto X')
         self.button_y = GreenButton('Auto Y')
         
+        self.button_x.clicked.connect(self.auto_x)
+        self.button_y.clicked.connect(self.auto_y)
+        
         self.label_axes = [QLabel(i) for i in ['xmin:','xmax:','ymin:','ymax:']]
         self.input_axes = [QLineEdit() for i in range(4)]
         self.input_axes[0].setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5)) 
+        self.input_axes[0].textChanged.connect(self.xmin)
         self.input_axes[1].setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5)) 
+        self.input_axes[1].textChanged.connect(self.xmax)
         self.input_axes[2].setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5)) 
+        self.input_axes[2].textChanged.connect(self.ymin)
         self.input_axes[3].setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5)) 
+        self.input_axes[3].textChanged.connect(self.ymax)
         
         self.legend_buttons = [BlueButton(i) for i in ['left','on/off','right']]
+        self.legend_buttons[0].clicked.connect(self.legend_left)
+        self.legend_buttons[1].clicked.connect(self.legend_onoff)
+        self.legend_buttons[2].clicked.connect(self.legend_right)
         
         
         # widgets to layout
@@ -311,7 +348,7 @@ class InteractiveLogging():
 
     def setup_frame_tools_time_domain(self):
         
-        self.button_clean_impulse = BlueButton('Clean impulse')
+        self.button_clean_impulse = BlueButton('Clean Impulse')
         self.input_impulse_channel = QLineEdit('0')
         self.input_impulse_channel.setValidator(QIntValidator(0,1000))
         self.layout_tools_time_domain = QGridLayout()
@@ -396,20 +433,29 @@ class InteractiveLogging():
                 streams.start_stream(self.settings)
                 self.rec = streams.REC
             except:
-                message = 'Data stream not initialised.\n'
+                self.rec = None
+                message = 'Data stream can\'t be initialised.\n'
                 message += 'Possible reasons: pyaudio or PyDAQmx not installed, or acquisition hardware not connected.\n' 
-                message += 'Please note that it won''t be possible to log data.'
-                m = QMessageBox.about(QWidget(), 'Information',message)
-                m.setWindowModality(Qt.ApplicationModal)
+                message += 'Please note that it won\'t be possible to log data.'
+                self.show_message(message)
+                
         else:
             message = 'To enable data acquisition, pease use \'Logger Settings\' tool.'
             self.show_message(message)
             self.input_list_tools.setCurrentIndex(1)
             self.update_tool_selection()
 
-    def show_message(self,message):
+    def show_message(self,message,b='ok'):
         self.label_message.setText(message)
+        if b == 'ok':
+            self.button_message.setVisible(True)
+            self.button_cancel.setVisible(False)
+        elif b == 'cancel':
+            self.button_message.setVisible(False)
+            self.button_cancel.setVisible(True)
+            
         self.frame_message.setVisible(True)
+        
         
     def hide_message(self):
         self.frame_message.setVisible(False)
@@ -417,50 +463,163 @@ class InteractiveLogging():
     def update_tool_selection(self):
         pass
             
+
     def button_clicked_log_data(self):
-        # the 'out' construction is to refresh the text output at each update 
-        # to stop text building up in the widget display
-        self.rec.trigger_detected = False
-        self.buttons_measure[0].button_style =''
-        if self.settings.pretrig_samples is None:
-            self.buttons_measure[0].description = 'Logging ({}s)'.format(self.settings.stored_time)
-        else:
-            self.buttons_measure[0].description = 'Logging ({}s, with trigger)'.format(self.settings.stored_time)
         
-        d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec)
+        if self.rec is None:
+            self.start_stream()
+        
+        self.rec.trigger_detected = False
+        self.button_log_data.setStyleSheet("background-color: white")
+        
+        if self.settings.pretrig_samples is None:
+            message = 'Logging data for {} seconds'.format(self.settings.stored_time)
+        else:
+            message = 'Logging data for {} seconds, with trigger)'.format(self.settings.stored_time)
+        
+        self.thread = LogDataThread(self.settings,test_name=self.test_name, rec=self.rec)
+        
+        self.show_message(message,'cancel')
+        
+        
+        self.thread.start()
+        self.thread.s.connect(self.add_logged_data)
+        
+    
+    def add_logged_data(self,d):
         self.dataset.add_to_dataset(d.time_data_list)
         N = len(self.dataset.time_data_list)
         self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+        
         self.p.auto_x()
 #            self.p.auto_y()
         self.p.ax.set_ylim([-1,1])
+        self.canvas.draw()
         self.current_view='Time'
-        self.buttons_measure[0].button_style ='success'
-        self.buttons_measure[0].description = 'Log Data'
+        self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
+        self.hide_message()
         
-        if np.any(np.abs(d.time_data_list[-1].time_data) > 0.95):
-            self.button_warning.layout.visibility = 'visible'
+    def cancel_logging(self):
+        self.thread.terminate()
+        self.show_message('Logging cancelled')
+        self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
+
+
+    def delete_last_data(self):
+        self.dataset.remove_last_data_item('TimeData')
+        self.dataset.freq_data_list = datastructure.FreqDataList()
+        self.dataset.tf_data_list = datastructure.TfDataList()
+        N = len(self.dataset.time_data_list)
+        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+        self.canvas.draw()
+        
+    def reset_data(self):
+        
+        self.dataset = datastructure.DataSet()
+        N = len(self.dataset.time_data_list)
+        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+        self.canvas.draw()
+    
+    def load_data(self):
+        d = file.load_data()
+        if d is not None:
+            self.dataset.add_to_dataset(d.time_data_list)
+            self.dataset.add_to_dataset(d.freq_data_list)
+            self.dataset.add_to_dataset(d.tf_data_list)
+            self.dataset.add_to_dataset(d.cross_spec_data_list)
+            self.dataset.add_to_dataset(d.sono_data_list)
         else:
-            self.button_warning.layout.visibility = 'hidden'
+            print('No data loaded')
         
+        if len(self.dataset.time_data_list) != 0:
+            self.p.update(self.dataset.time_data_list,sets='all',channels='all')
+        elif len(self.dataset.freq_data_list) != 0:
+            self.p.update(self.dataset.freq_data_list,sets='all',channels='all')
+        elif len(self.dataset.tf_data_list) != 0:
+            self.p.update(self.dataset.tf_data_list,sets='all',channels='all')
+        else:
+            print('No data to view')
+       
+        self.p.auto_x()
+        self.p.auto_y()
+        
+            
+    def save_data(self):
+        filename = self.dataset.save_data()
+        if filename is not None:
+            message = 'Saved dataset:\n\n'
+            message += self.dataset.__repr__()
+            message += '\n\n'
+            message += 'to file '
+            message += filename
+        else:
+            message = 'Save dataset cancelled'
+        self.show_message(message)
+            
+    def save_fig(self):
+        filename = file.save_fig(self.p,figsize=(9,5))
+        if filename is not None:
+            message = 'Saved current figure to file:\n'
+            message += filename
+        else:
+            message = 'Save figure cancelled'
+        self.canvas.draw()
+        self.show_message(message)
+
+    def xmin(self,text):
+        xmin = np.float(self.input_axes[0].text())
         xlim = self.p.ax.get_xlim()
-        ylim =  self.p.ax.get_ylim()
-        self.text_axes[2].value = xlim[0]
-        self.text_axes[3].value = xlim[1]
-        self.text_axes[4].value = ylim[0]
-        self.text_axes[5].value = ylim[1]
-        self.refresh_buttons()
-
-#def on_button_clicked():
-#    alert = QMessageBox()
-#    alert.setText('You clicked the button!')
-#    alert.exec_()
-#
-#
-#button = QPushButton('Click')
-#button.clicked.connect(on_button_clicked)
-#
-#
-
-#layout.addWidget(button)
-
+        self.p.ax.set_xlim([xmin,xlim[1]])
+        self.canvas.draw()
+        
+    def xmax(self):
+        xmax = np.float(self.input_axes[1].text())
+        xlim = self.p.ax.get_xlim()
+        self.p.ax.set_xlim([xlim[0],xmax])
+        self.canvas.draw()
+        
+    def ymin(self):
+        ymin = np.float(self.input_axes[2].text())
+        ylim = self.p.ax.get_ylim()
+        self.p.ax.set_ylim([ymin,ylim[1]])
+        self.canvas.draw()
+        
+    def ymax(self):
+        ymax = np.float(self.input_axes[3].text())
+        ylim = self.p.ax.get_ylim()
+        self.p.ax.set_ylim([ylim[0],ymax])
+        self.canvas.draw()
+        
+    def auto_x(self):
+        self.p.auto_x()
+        self.update_axes_values()
+        
+    def auto_y(self):
+        self.p.auto_y()
+        self.update_axes_values()
+        
+    def update_axes_values(self,axes):
+        xlim = self.p.ax.get_xlim()
+        ylim = self.p.ax.get_ylim()
+        self.input_axes[0].setText('{:0.6g}'.format(xlim[0]))
+        self.input_axes[1].setText('{:0.6g}'.format(xlim[1]))
+        self.input_axes[2].setText('{:0.6g}'.format(ylim[0]))
+        self.input_axes[3].setText('{:0.6g}'.format(ylim[1]))
+        
+    def legend_left(self):
+        self.legend_loc = 'lower left'
+        self.p.update_legend(self.legend_loc)
+        self.canvas.draw()
+        
+    def legend_right(self):
+        self.legend_loc = 'lower right'
+        self.p.update_legend(self.legend_loc)
+        self.canvas.draw()
+            
+    def legend_onoff(self):
+        visibility = self.p.ax.get_legend().get_visible()
+        self.p.ax.get_legend().set_visible(not visibility)
+        self.canvas.draw()
+                
+    
+        
