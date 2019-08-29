@@ -116,7 +116,8 @@ class InteractiveLogging():
         
         # arrange frames and create window
         self.setup_layout_main()
-        self.window.show()
+        self.window.showMinimized()
+        self.window.showNormal()
         
         # start stream if already passed settings
         self.start_stream()
@@ -244,6 +245,8 @@ class InteractiveLogging():
     
     def setup_frame_axes(self):
         
+        self.setup_frame_plot_details()
+        
         self.input_list_figures = newComboBox(['Time Data','FFT Data','TF Data'])
         self.input_list_figures.currentIndexChanged.connect(self.select_view)
         
@@ -302,13 +305,37 @@ class InteractiveLogging():
             self.layout_axes.addWidget(self.legend_buttons[n],row_start+2,n)
         
         
+        # Plot-specific tools
+        row_start = 14
+        self.layout_axes.addWidget(self.frame_plot_details,row_start,0,1,3)
+        self.frame_plot_details.setVisible(False)
+        
         # layout to frame
         self.frame_axes = QFrame()
         self.frame_axes.setFrameShape(QFrame.StyledPanel)
         self.frame_axes.setLayout(self.layout_axes)
        
+    def setup_frame_plot_details(self):
+        #items
+        self.input_list_plot_type = newComboBox(['Amplitude (dB)','Amplitude (linear)', 'Real Part', 'Imag Part', 'Nyquist', 'Amplitude + Phase', 'Phase'])
+        self.button_lin_log_x = BlueButton('X Lin/Log')
+        self.button_coherence_toggle = BlueButton('Coherence on/off')
+        self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
         
+        #layout
+        self.layout_plot_details = QGridLayout()
+        self.layout_plot_details.addWidget(QLabel(),0,0,1,1)
+        self.layout_plot_details.addWidget(boldLabel('Plot Options:'),1,0,1,1)
+        self.layout_plot_details.addWidget(self.input_list_plot_type,2,0,1,1)
+        self.layout_plot_details.addWidget(self.button_lin_log_x,3,0,1,1)
+        self.layout_plot_details.addWidget(self.button_coherence_toggle,4,0,1,1)
+        self.layout_plot_details.addWidget(self.button_modal_fit_toggle,5,0,1,1)        
         
+        #frame
+        self.frame_plot_details = QFrame()
+        self.frame_plot_details.setLayout(self.layout_plot_details)
+    
+    
     def setup_frame_tools(self):
         
         # initiate all tools frames
@@ -530,16 +557,22 @@ class InteractiveLogging():
             self.dataset.add_to_dataset(d.cross_spec_data_list)
             self.dataset.add_to_dataset(d.sono_data_list)
         else:
-            print('No data loaded')
+            message = 'No data loaded'
+            self.show_message(message)
+            return None
         
         if len(self.dataset.time_data_list) != 0:
             self.p.update(self.dataset.time_data_list,sets='all',channels='all')
+            self.hide_message()
         elif len(self.dataset.freq_data_list) != 0:
             self.p.update(self.dataset.freq_data_list,sets='all',channels='all')
+            self.hide_message()
         elif len(self.dataset.tf_data_list) != 0:
             self.p.update(self.dataset.tf_data_list,sets='all',channels='all')
+            self.hide_message()
         else:
-            print('No data to view')
+            message = 'No data to view'
+            self.show_message(message)
        
         self.p.auto_x()
         self.p.auto_y()
@@ -632,9 +665,11 @@ class InteractiveLogging():
                     self.current_view = 'Time'
                     self.p.auto_x()
                     self.p.auto_y()
+                    self.frame_plot_details.setVisible(False)
             else:
-                message = 'no time data to display'
+                message = 'No time data to display'
                 self.show_message(message)
+                
         if self.input_list_figures.currentIndex() == 1:
             N = len(self.dataset.freq_data_list)
             if N != 0:
@@ -643,10 +678,14 @@ class InteractiveLogging():
                     self.current_view = 'FFT'
                     self.p.auto_x()
                     self.p.auto_y()
+                    self.frame_plot_details.setVisible(True)
+                    self.button_coherence_toggle.setVisible(False)
+                    self.button_modal_fit_toggle.setVisible(False)
             else:
-                message = 'no FFT data to display'
+                message = 'No FFT data to display'
                 self.show_message(message)
         if self.input_list_figures.currentIndex() == 2:
+            
             N = len(self.dataset.tf_data_list)
             if N != 0:
                 self.p.update(self.dataset.tf_data_list)
@@ -654,7 +693,14 @@ class InteractiveLogging():
                     self.current_view = 'TF'
                     self.p.auto_x()
                     self.p.auto_y()
+                    self.frame_plot_details.setVisible(True)
+                    self.button_coherence_toggle.setVisible(True)
+                    if self.flag_modal_data == True:
+                        self.button_modal_fit_toggle.setVisible(True)
+                    else:
+                        self.button_modal_fit_toggle.setVisible(False)
+                    
             else:
-                message = 'no transfer function data to display'
+                message = 'No transfer function data to display'
                 self.show_message(message)
         
