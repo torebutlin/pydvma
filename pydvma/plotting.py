@@ -26,11 +26,13 @@ class PlotData():
             self.fig = fig
             self.canvas = canvas
             self.ax = self.canvas.figure.subplots()
+
             self.ax2 = self.ax.twinx()
             self.ax2.set_visible(False)
 #            self.ax2.set_zorder(0)
             self.ax.set_zorder(self.ax2.get_zorder()+1)
             self.ax.patch.set_visible(False)
+
             
         self.ax.grid(True,alpha=0.3)
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
@@ -42,17 +44,22 @@ class PlotData():
         self.data_list = data_list
         
         if data_list.__class__.__name__ == 'TimeDataList':
+            self.ax2.set_visible(False)
             self.ax.set_xlabel('Time (s)')
             self.ax.set_ylabel('Amplitude')
         elif data_list.__class__.__name__ == 'FreqDataList':
+            self.ax2.set_visible(False)
             self.ax.set_xlabel('Frequency (Hz)')
             self.ax.set_ylabel('Amplitude')
         elif data_list.__class__.__name__ == 'TfDataList':
             self.ax.set_xlabel('Frequency (Hz)')
             self.ax.set_ylabel('Amplitude (dB)')
             # setup twin axis
-            self.ax2.set_ylabel('Coherence')
-            self.ax2.set_ylim([0,1])
+            if show_coherence == True:
+                self.ax2.set_ylabel('Coherence')
+                self.ax2.set_ylim([0,1])
+            else:
+                self.ax2.set_ylabel('')
 
            
         N_sets = len(data_list)
@@ -171,12 +178,20 @@ class PlotData():
 #            self.ax.legend()
             self.legend.set_draggable(draggable,use_blit=True)#(True),update='bbox',use_blit=True
             self.lines = self.ax.get_lines()
+            self.lines2 = self.ax2.get_lines()
             self.lined = dict()
+            self.lined2 = dict()
             
-            
+            # make dictionary of legend lines for selection    
             for legline, origline in zip(self.legend.get_lines(), self.lines):
                 legline.set_picker(10)  # argument tolerance
                 self.lined[legline] = origline 
+                
+            # make dictionary of coherence lines to select with legend - only for TF Data
+            if len(self.ax2.lines) > 0:
+                for legline, origline2 in zip(self.legend.get_lines(), self.lines2):
+                    self.lined2[legline] = origline2 
+
         else:
             self.legend = self.ax.get_legend()
             if self.legend is not None:
@@ -232,8 +247,11 @@ class PlotData():
             # change opacity of both legend line and actual line
             a = 1-a
             origline = self.lined[selected_line]
+            
+
             selected_line.set_alpha(a)
             origline.set_alpha(a)
+            
             # change z order to bring selected line to foreground
             for line in self.ax.lines:
                 line.set_zorder(0)
@@ -241,6 +259,17 @@ class PlotData():
                 origline.set_zorder(1)
             else:
                 origline.set_zorder(0)
+                
+            # also select matching coherence lines
+            if len(self.ax2.lines) > 0:
+                origline2 = self.lined2[selected_line]
+                origline2.set_alpha(a)
+                for line2 in self.ax2.lines:
+                    line2.set_zorder(0)
+                if a > 0.5:
+                    origline2.set_zorder(1)
+                else:
+                    origline2.set_zorder(0)
             self.fig.canvas.draw()
     
     def get_selected_channels(self):

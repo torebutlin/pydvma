@@ -106,6 +106,9 @@ class InteractiveLogging():
         self.iw_fft_power = 0
         self.iw_tf_power = 0
         self.legend_loc = 'lower right'
+        self.show_coherence = True
+        self.show_data = True
+        self.coherence_plot_type = 'lin'
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -330,17 +333,19 @@ class InteractiveLogging():
         self.button_lin_log_x = BlueButton('X Lin/Log')
         self.button_data_toggle = BlueButton('Data on/off')
         self.button_coherence_toggle = BlueButton('Coherence on/off')
+        
         self.input_co_min = QLineEdit('0')
         self.input_co_min.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
-        self.input_co_min.textChanged.connect(self.co_min)
         self.input_co_max = QLineEdit('1')
         self.input_co_max.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
-        self.input_co_max.textChanged.connect(self.co_max)
-        
         
         self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
         
         self.input_list_plot_type.currentIndexChanged.connect(self.select_plot_type)
+        self.input_co_min.textChanged.connect(self.co_min)
+        self.input_co_max.textChanged.connect(self.co_max)
+        self.button_data_toggle.clicked.connect(self.data_toggle)
+        self.button_coherence_toggle.clicked.connect(self.coherence_toggle)
         
         #layout
         self.layout_plot_details = QGridLayout()
@@ -598,7 +603,8 @@ class InteractiveLogging():
         else:
             message = 'No data to view'
             self.show_message(message)
-       
+        
+        self.select_view()
         self.p.auto_x()
         self.p.auto_y()
         
@@ -690,6 +696,8 @@ class InteractiveLogging():
                 self.p.update(self.dataset.time_data_list)
                 if self.current_view != 'Time':
                     self.current_view = 'Time'
+                    self.show_data = True
+                    self.show_coherence = True
                     self.p.auto_x()
                     self.p.auto_y()
                     self.frame_plot_details.setVisible(False)
@@ -703,6 +711,8 @@ class InteractiveLogging():
                 self.p.update(self.dataset.freq_data_list)
                 if self.current_view != 'FFT':
                     self.current_view = 'FFT'
+                    self.show_data = True
+                    self.p.ax.set_visible(True)
                     self.p.auto_x()
                     self.p.auto_y()
                     self.frame_plot_details.setVisible(True)
@@ -718,14 +728,18 @@ class InteractiveLogging():
                 self.p.update(self.dataset.tf_data_list)
                 if self.current_view != 'TF':
                     self.current_view = 'TF'
+                    self.show_data = True
+                    self.show_coherence = True
+                    self.p.ax.set_visible(True)
+                    self.p.ax2.set_visible(True)
                     self.p.auto_x()
                     self.p.auto_y()
                     self.frame_plot_details.setVisible(True)
                     self.button_coherence_toggle.setVisible(True)
-                    if self.flag_modal_data == True:
-                        self.button_modal_fit_toggle.setVisible(True)
-                    else:
-                        self.button_modal_fit_toggle.setVisible(False)
+#                    if self.flag_modal_data == True:
+#                        self.button_modal_fit_toggle.setVisible(True)
+#                    else:
+#                        self.button_modal_fit_toggle.setVisible(False)
                     
             else:
                 message = 'No transfer function data to display'
@@ -757,7 +771,7 @@ class InteractiveLogging():
         elif self.current_view == 'FFT':
             self.p.update(self.dataset.freq_data_list,xlinlog='lin',plot_type=self.plot_type)
         elif self.current_view == 'TF':
-            self.p.update(self.dataset.tf_data_list,xlinlog='lin',show_coherence=True,plot_type=self.plot_type)
+            self.p.update(self.dataset.tf_data_list,xlinlog='lin',show_coherence=self.show_coherence, plot_type=self.plot_type, coherence_plot_type=self.coherence_plot_type)
             
     def co_min(self):
         co_min = np.float(self.input_co_min.text())
@@ -775,3 +789,15 @@ class InteractiveLogging():
         ylim = self.p.ax2.get_ylim()
         self.input_co_min.setText('{:0.5g}'.format(ylim[0]))
         self.input_co_max.setText('{:0.5g}'.format(ylim[1]))
+        
+    def data_toggle(self):
+        self.show_data = not self.show_data
+        for line in self.p.ax.lines:
+            line.set_visible(self.show_data)
+        self.canvas.draw()
+
+    def coherence_toggle(self):
+        self.show_coherence = not self.show_coherence
+        for line in self.p.ax2.lines:
+            line.set_visible(self.show_coherence)
+        self.canvas.draw()
