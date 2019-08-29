@@ -317,10 +317,13 @@ class InteractiveLogging():
        
     def setup_frame_plot_details(self):
         #items
-        self.input_list_plot_type = newComboBox(['Amplitude (dB)','Amplitude (linear)', 'Real Part', 'Imag Part', 'Nyquist', 'Amplitude + Phase', 'Phase'])
+        self.items_list_plot_type = ['Amplitude (dB)','Amplitude (linear)', 'Real Part', 'Imag Part', 'Nyquist', 'Amplitude + Phase', 'Phase']
+        self.input_list_plot_type = newComboBox(self.items_list_plot_type)
         self.button_lin_log_x = BlueButton('X Lin/Log')
         self.button_coherence_toggle = BlueButton('Coherence on/off')
         self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
+        
+        self.input_list_plot_type.currentIndexChanged.connect(self.plot_options)
         
         #layout
         self.layout_plot_details = QGridLayout()
@@ -703,4 +706,31 @@ class InteractiveLogging():
             else:
                 message = 'No transfer function data to display'
                 self.show_message(message)
+    
+    def select_plot_type(self):
+        self.p.plot_type = self.items_list_plot_type(self.input_list_plot_type.currentIndex())
         
+        if self.plot_type == 'Amplitude (dB)':
+            
+        
+        elif self.plot_type == 'Amplitude (linear)':
+            pass
+        
+        elif self.plot_type == 'Real Part':
+            pass
+        
+        elif self.plot_type == 'Imag Part':
+            pass
+        
+        elif self.plot_type == 'Nyquist':
+            pass
+        
+        elif self.plot_type == 'Phase':
+            pass            
+        
+        if self.current_view == 'Time':
+            self.p.update(self.dataset.time_data_list)
+        elif self.current_view == 'FFT':
+            self.p.update(self.dataset.freq_data_list)
+        elif self.current_view == 'TF':
+            self.p.update(self.dataset.tf_data_list)

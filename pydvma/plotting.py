@@ -31,7 +31,7 @@ class PlotData():
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
         
-    def update(self,data_list,sets='all',channels='all'):
+    def update(self,data_list,sets='all',channels='all',xlinlog='lin',show_coherence=True,plot_type=None):
         
         self.data_list = data_list
         
@@ -80,20 +80,50 @@ class PlotData():
                 elif data_list.__class__.__name__ == 'FreqDataList':
                     x = data_list[n_set].freq_axis
                     ylin = data_list[n_set].freq_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
-                    # handle log(0) manually to avoid warnings
-                    y = np.zeros(np.shape(ylin))
-                    izero = ylin==0
-                    y[~izero] = 20*np.log10(np.abs(ylin[~izero]))
-                    y[izero] = -np.inf
+                    
+                    if plot_type == 'Amplitude (dB)':
+                        # handle log(0) manually to avoid warnings
+                        y = np.zeros(np.shape(ylin))
+                        izero = ylin==0
+                        y[~izero] = 20*np.log10(np.abs(ylin[~izero]))
+                        y[izero] = -np.inf
+                    elif plot_type == 'Amplitude (linear)':
+                        y = np.abs(ylin)
+                    elif plot_type == 'Real Part':
+                        y = np.real(ylin)
+                    elif plot_type == 'Imag Part':
+                        y = np.imag(ylin)
+                    elif plot_type == 'Nyquist':
+                        x = np.real(ylin)
+                        y = np.imag(ylin)
+                    elif plot_type == 'Phase':
+                        y = np.angle(ylin,deg=True)
+                    
                 elif data_list.__class__.__name__ == 'TfDataList':
                     x = data_list[n_set].freq_axis
                     ylin = data_list[n_set].tf_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
-                    # handle log(0) manually to avoid warnings
-                    y = np.zeros(np.shape(ylin))
-                    izero = ylin==0
-                    y[~izero] = 20*np.log10(np.abs(ylin[~izero]))
-                    y[izero] = -np.inf
-                    if data_list[n_set].tf_coherence is not None:
+                    if plot_type == 'Amplitude (dB)':
+                        # handle log(0) manually to avoid warnings
+                        y = np.zeros(np.shape(ylin))
+                        izero = ylin==0
+                        y[~izero] = 20*np.log10(np.abs(ylin[~izero]))
+                        y[izero] = -np.inf
+                    elif plot_type == 'Amplitude (linear)':
+                        y = np.abs(ylin)
+                    elif plot_type == 'Real Part':
+                        y = np.real(ylin)
+                    elif plot_type == 'Imag Part':
+                        y = np.imag(ylin)
+                    elif plot_type == 'Nyquist':
+                        x = np.real(ylin)
+                        y = np.imag(ylin)
+                    elif plot_type == 'Phase':
+                        y = np.angle(ylin,deg=True)
+                    
+                    if data_list[n_set].tf_coherence is None:
+                        show_coherence = False
+                    
+                    if show_coherence == True:
                         # handle log(0) manually to avoid warnings
                         yclin = data_list[n_set].tf_coherence[:,n_chan]
                         yc = np.zeros(np.shape(yclin))
