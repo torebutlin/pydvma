@@ -6,6 +6,7 @@ from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
 import copy
 from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
+from matplotlib.ticker import AutoLocator
 import numpy as np
 #%%
 
@@ -744,7 +745,7 @@ class InteractiveLogging():
         self.canvas.draw()
     
     def select_plot_type(self):
-        self.plot_type = self.items_list_plot_type(self.input_list_plot_type.currentIndex())
+        self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
         
         if self.current_view == 'Time':
             self.p.update(self.dataset.time_data_list)
@@ -772,34 +773,38 @@ class InteractiveLogging():
         
     def data_toggle(self):
         self.show_data = not self.show_data
+        self.select_plot_type()
         for line in self.p.ax.lines:
             line.set_visible(self.show_data)
+        if self.show_data == False:
+            self.p.ax.set_ylabel('')
+            self.p.ax.set_yticks([])
+        else:
+            self.p.ax.yaxis.set_major_locator(AutoLocator())
+            
         self.canvas.draw()
 
     def coherence_toggle(self):
         self.show_coherence = not self.show_coherence
-        for line in self.p.ax2.lines:
-            line.set_visible(self.show_coherence)
-        self.canvas.draw()
+#        for line in self.p.ax2.lines:
+#            line.set_visible(self.show_coherence)
+#        if self.show_coherence == True:
+#            self.p.ax2.set_ylabel('Coherence')
+#        else:
+#            self.p.ax2.set_ylabel('')
+            
+        self.select_plot_type()
+#        self.canvas.draw()
+                
         
     def select_xlinlog(self):
         if self.xlinlog == 'linear':
-            print('lin')
             self.xlinlog = 'symlog'
         else:
-            print('log')
             self.xlinlog = 'linear'
         
-        print('hi')
-        if self.current_view == 'Time':
-            self.p.update(self.dataset.time_data_list)
-        elif self.current_view == 'FFT':
-            self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
-        elif self.current_view == 'TF':
-            print('1')
-            self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
-            print('there')
-
+        self.select_plot_type()
+        
 sys._excepthook = sys.excepthook 
 def exception_hook(exctype, value, traceback):
     print(exctype, value, traceback)

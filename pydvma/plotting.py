@@ -58,20 +58,21 @@ class PlotData():
         elif data_list.__class__.__name__ == 'TfDataList':
             self.ax.set_xlabel('Frequency (Hz)')
             self.ax.set_ylabel('Amplitude (dB)')
+            
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
-                self.ax.minor_ticks_on()
+                self.ax.minorticks_on()
             else:
                 self.ax.minorticks_off()
             # setup twin axis
+            
             if show_coherence == True:
                 self.ax2.set_ylabel('Coherence')
                 self.ax2.set_ylim([0,1])
                 self.ax2.set_visible(True)
             else:
                 self.ax2.set_ylabel('')
-
-           
+        
         N_sets = len(data_list)
         
         
