@@ -38,9 +38,8 @@ class PlotData():
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
         
-    def update(self,data_list,sets='all',channels='all',xlinlog='lin',show_coherence=True,plot_type=None,coherence_plot_type='lin'):
+    def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear'):
         
-            
         self.data_list = data_list
         
         if data_list.__class__.__name__ == 'TimeDataList':
@@ -50,14 +49,25 @@ class PlotData():
         elif data_list.__class__.__name__ == 'FreqDataList':
             self.ax2.set_visible(False)
             self.ax.set_xlabel('Frequency (Hz)')
+            self.ax.set_xscale(xlinlog)
+            if 'log' in xlinlog:
+                self.ax.minor_ticks_on()
+            else:
+                self.ax.minor_ticks_off()
             self.ax.set_ylabel('Amplitude')
         elif data_list.__class__.__name__ == 'TfDataList':
             self.ax.set_xlabel('Frequency (Hz)')
             self.ax.set_ylabel('Amplitude (dB)')
+            self.ax.set_xscale(xlinlog)
+            if 'log' in xlinlog:
+                self.ax.minor_ticks_on()
+            else:
+                self.ax.minorticks_off()
             # setup twin axis
             if show_coherence == True:
                 self.ax2.set_ylabel('Coherence')
                 self.ax2.set_ylim([0,1])
+                self.ax2.set_visible(True)
             else:
                 self.ax2.set_ylabel('')
 
@@ -66,6 +76,8 @@ class PlotData():
         
         
         self.ax.lines=[]
+        self.ax2.lines=[]
+        
         if sets == 'all':
             sets = range(N_sets)
         
@@ -97,7 +109,7 @@ class PlotData():
                     x = data_list[n_set].freq_axis
                     ylin = data_list[n_set].freq_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
                     
-                    if plot_type == 'Amplitude (dB)':
+                    if (plot_type == 'Amplitude (dB)') or (plot_type == None):
                         # handle log(0) manually to avoid warnings
                         y = np.zeros(np.shape(ylin))
                         izero = ylin==0
@@ -141,7 +153,7 @@ class PlotData():
                         
                         # handle log(0) manually to avoid warnings
                         yclin = data_list[n_set].tf_coherence[:,n_chan]
-                        if coherence_plot_type == 'lin':
+                        if coherence_plot_type == 'linear':
                             yc = yclin
                         elif coherence_plot_type == 'log':
                             yc = np.zeros(np.shape(yclin))

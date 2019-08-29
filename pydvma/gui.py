@@ -21,12 +21,6 @@ import numpy as np
 
 #%%
 
-sys._excepthook = sys.excepthook 
-def exception_hook(exctype, value, traceback):
-    print(exctype, value, traceback)
-    sys._excepthook(exctype, value, traceback) 
-    sys.exit(1) 
-sys.excepthook = exception_hook 
 
 class BlueButton(QPushButton):
     def __init__(self,text):
@@ -108,7 +102,9 @@ class InteractiveLogging():
         self.legend_loc = 'lower right'
         self.show_coherence = True
         self.show_data = True
-        self.coherence_plot_type = 'lin'
+        self.coherence_plot_type = 'linear'
+        self.xlinlog = 'linear'
+        self.plot_type = None
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -330,7 +326,7 @@ class InteractiveLogging():
         #items
         self.items_list_plot_type = ['Amplitude (dB)','Amplitude (linear)', 'Real Part', 'Imag Part', 'Nyquist', 'Amplitude + Phase', 'Phase']
         self.input_list_plot_type = newComboBox(self.items_list_plot_type)
-        self.button_lin_log_x = BlueButton('X Lin/Log')
+        self.button_xlinlog = BlueButton('X Lin/Log')
         self.button_data_toggle = BlueButton('Data on/off')
         self.button_coherence_toggle = BlueButton('Coherence on/off')
         
@@ -346,13 +342,13 @@ class InteractiveLogging():
         self.input_co_max.textChanged.connect(self.co_max)
         self.button_data_toggle.clicked.connect(self.data_toggle)
         self.button_coherence_toggle.clicked.connect(self.coherence_toggle)
-        
+        self.button_xlinlog.clicked.connect(self.select_xlinlog)
         #layout
         self.layout_plot_details = QGridLayout()
         self.layout_plot_details.addWidget(QLabel(),0,0,1,1)
         self.layout_plot_details.addWidget(boldLabel('Plot Options:'),1,0,1,2)
         self.layout_plot_details.addWidget(self.input_list_plot_type,2,0,1,2)
-        self.layout_plot_details.addWidget(self.button_lin_log_x,3,0,1,2)
+        self.layout_plot_details.addWidget(self.button_xlinlog,3,0,1,2)
         self.layout_plot_details.addWidget(self.button_data_toggle,4,0,1,1)
         self.layout_plot_details.addWidget(self.button_coherence_toggle,4,1,1,1)
         self.layout_plot_details.addWidget(QLabel('co. min:'),5,0,1,1)
@@ -708,7 +704,7 @@ class InteractiveLogging():
         if self.input_list_figures.currentIndex() == 1:
             N = len(self.dataset.freq_data_list)
             if N != 0:
-                self.p.update(self.dataset.freq_data_list)
+                self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
                 if self.current_view != 'FFT':
                     self.current_view = 'FFT'
                     self.show_data = True
@@ -725,13 +721,13 @@ class InteractiveLogging():
             
             N = len(self.dataset.tf_data_list)
             if N != 0:
-                self.p.update(self.dataset.tf_data_list)
+                self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
                 if self.current_view != 'TF':
                     self.current_view = 'TF'
                     self.show_data = True
                     self.show_coherence = True
                     self.p.ax.set_visible(True)
-                    self.p.ax2.set_visible(True)
+#                    self.p.ax2.set_visible(True)
                     self.p.auto_x()
                     self.p.auto_y()
                     self.frame_plot_details.setVisible(True)
@@ -744,34 +740,18 @@ class InteractiveLogging():
             else:
                 message = 'No transfer function data to display'
                 self.show_message(message)
+                
+        self.canvas.draw()
     
     def select_plot_type(self):
         self.plot_type = self.items_list_plot_type(self.input_list_plot_type.currentIndex())
         
-        if self.plot_type == 'Amplitude (dB)':
-            pass
-        
-        elif self.plot_type == 'Amplitude (linear)':
-            pass
-        
-        elif self.plot_type == 'Real Part':
-            pass
-        
-        elif self.plot_type == 'Imag Part':
-            pass
-        
-        elif self.plot_type == 'Nyquist':
-            pass
-        
-        elif self.plot_type == 'Phase':
-            pass            
-        
         if self.current_view == 'Time':
             self.p.update(self.dataset.time_data_list)
         elif self.current_view == 'FFT':
-            self.p.update(self.dataset.freq_data_list,xlinlog='lin',plot_type=self.plot_type)
+            self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
         elif self.current_view == 'TF':
-            self.p.update(self.dataset.tf_data_list,xlinlog='lin',show_coherence=self.show_coherence, plot_type=self.plot_type, coherence_plot_type=self.coherence_plot_type)
+            self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
             
     def co_min(self):
         co_min = np.float(self.input_co_min.text())
@@ -801,3 +781,28 @@ class InteractiveLogging():
         for line in self.p.ax2.lines:
             line.set_visible(self.show_coherence)
         self.canvas.draw()
+        
+    def select_xlinlog(self):
+        if self.xlinlog == 'linear':
+            print('lin')
+            self.xlinlog = 'symlog'
+        else:
+            print('log')
+            self.xlinlog = 'linear'
+        
+        print('hi')
+        if self.current_view == 'Time':
+            self.p.update(self.dataset.time_data_list)
+        elif self.current_view == 'FFT':
+            self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
+        elif self.current_view == 'TF':
+            print('1')
+            self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
+            print('there')
+
+sys._excepthook = sys.excepthook 
+def exception_hook(exctype, value, traceback):
+    print(exctype, value, traceback)
+    sys._excepthook(exctype, value, traceback) 
+    sys.exit(1) 
+sys.excepthook = exception_hook 
