@@ -165,6 +165,7 @@ class InteractiveLogging():
         self.p = plotting.PlotData(canvas=self.canvas,fig=self.fig)
         self.p.ax.callbacks.connect('xlim_changed', self.update_axes_values)
         self.p.ax.callbacks.connect('ylim_changed', self.update_axes_values)
+        self.p.ax2.callbacks.connect('ylim_changed', self.update_co_axes_values)
         
         self.label_figure = boldLabel('Time Data')
         self.label_figure.setMaximumHeight(20)
@@ -327,7 +328,16 @@ class InteractiveLogging():
         self.items_list_plot_type = ['Amplitude (dB)','Amplitude (linear)', 'Real Part', 'Imag Part', 'Nyquist', 'Amplitude + Phase', 'Phase']
         self.input_list_plot_type = newComboBox(self.items_list_plot_type)
         self.button_lin_log_x = BlueButton('X Lin/Log')
+        self.button_data_toggle = BlueButton('Data on/off')
         self.button_coherence_toggle = BlueButton('Coherence on/off')
+        self.input_co_min = QLineEdit('0')
+        self.input_co_min.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
+        self.input_co_min.textChanged.connect(self.co_min)
+        self.input_co_max = QLineEdit('1')
+        self.input_co_max.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
+        self.input_co_max.textChanged.connect(self.co_max)
+        
+        
         self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
         
         self.input_list_plot_type.currentIndexChanged.connect(self.select_plot_type)
@@ -335,11 +345,16 @@ class InteractiveLogging():
         #layout
         self.layout_plot_details = QGridLayout()
         self.layout_plot_details.addWidget(QLabel(),0,0,1,1)
-        self.layout_plot_details.addWidget(boldLabel('Plot Options:'),1,0,1,1)
-        self.layout_plot_details.addWidget(self.input_list_plot_type,2,0,1,1)
-        self.layout_plot_details.addWidget(self.button_lin_log_x,3,0,1,1)
-        self.layout_plot_details.addWidget(self.button_coherence_toggle,4,0,1,1)
-        self.layout_plot_details.addWidget(self.button_modal_fit_toggle,5,0,1,1)        
+        self.layout_plot_details.addWidget(boldLabel('Plot Options:'),1,0,1,2)
+        self.layout_plot_details.addWidget(self.input_list_plot_type,2,0,1,2)
+        self.layout_plot_details.addWidget(self.button_lin_log_x,3,0,1,2)
+        self.layout_plot_details.addWidget(self.button_data_toggle,4,0,1,1)
+        self.layout_plot_details.addWidget(self.button_coherence_toggle,4,1,1,1)
+        self.layout_plot_details.addWidget(QLabel('co. min:'),5,0,1,1)
+        self.layout_plot_details.addWidget(self.input_co_min,5,1,1,1)
+        self.layout_plot_details.addWidget(QLabel('co. max:'),6,0,1,1)
+        self.layout_plot_details.addWidget(self.input_co_max,6,1,1,1)
+        self.layout_plot_details.addWidget(self.button_modal_fit_toggle,7,0,1,2)        
         
         #frame
         self.frame_plot_details = QFrame()
@@ -610,7 +625,7 @@ class InteractiveLogging():
         self.canvas.draw()
         self.show_message(message)
 
-    def xmin(self,text):
+    def xmin(self):
         xmin = np.float(self.input_axes[0].text())
         xlim = self.p.ax.get_xlim()
         self.p.ax.set_xlim([xmin,xlim[1]])
@@ -640,7 +655,9 @@ class InteractiveLogging():
         
     def auto_y(self):
         self.p.auto_y()
+        self.p.ax2.set_ylim([0,1])
         self.update_axes_values()
+        self.update_co_axes_values()
         
     def update_axes_values(self,axes):
         xlim = self.p.ax.get_xlim()
@@ -741,3 +758,20 @@ class InteractiveLogging():
             self.p.update(self.dataset.freq_data_list,xlinlog='lin',plot_type=self.plot_type)
         elif self.current_view == 'TF':
             self.p.update(self.dataset.tf_data_list,xlinlog='lin',show_coherence=True,plot_type=self.plot_type)
+            
+    def co_min(self):
+        co_min = np.float(self.input_co_min.text())
+        ylim = self.p.ax2.get_ylim()
+        self.p.ax2.set_ylim([co_min,ylim[1]])
+        self.canvas.draw()
+    
+    def co_max(self):
+        co_max = np.float(self.input_co_max.text())
+        ylim = self.p.ax2.get_ylim()
+        self.p.ax2.set_ylim([ylim[0],co_max])
+        self.canvas.draw()
+        
+    def update_co_axes_values(self,axes):
+        ylim = self.p.ax2.get_ylim()
+        self.input_co_min.setText('{:0.5g}'.format(ylim[0]))
+        self.input_co_max.setText('{:0.5g}'.format(ylim[1]))

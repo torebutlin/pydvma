@@ -26,6 +26,11 @@ class PlotData():
             self.fig = fig
             self.canvas = canvas
             self.ax = self.canvas.figure.subplots()
+            self.ax2 = self.ax.twinx()
+            self.ax2.set_visible(False)
+#            self.ax2.set_zorder(0)
+            self.ax.set_zorder(self.ax2.get_zorder()+1)
+            self.ax.patch.set_visible(False)
             
         self.ax.grid(True,alpha=0.3)
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
@@ -33,8 +38,7 @@ class PlotData():
         
     def update(self,data_list,sets='all',channels='all',xlinlog='lin',show_coherence=True,plot_type=None,coherence_plot_type='lin'):
         
-        if hasattr(self,'ax2'):
-            self.ax2.remove()
+            
         self.data_list = data_list
         
         if data_list.__class__.__name__ == 'TimeDataList':
@@ -46,7 +50,10 @@ class PlotData():
         elif data_list.__class__.__name__ == 'TfDataList':
             self.ax.set_xlabel('Frequency (Hz)')
             self.ax.set_ylabel('Amplitude (dB)')
-            
+            # setup twin axis
+            self.ax2.set_ylabel('Coherence')
+            self.ax2.set_ylim([0,1])
+
            
         N_sets = len(data_list)
         
@@ -123,11 +130,7 @@ class PlotData():
                     elif plot_type == 'Phase':
                         y = np.angle(ylin,deg=True)
                     
-                    if data_list[n_set].tf_coherence is None:
-                        show_coherence = False
-                    
-                    
-                    if show_coherence == True:
+                    if data_list[n_set].tf_coherence is not None:
                         
                         # handle log(0) manually to avoid warnings
                         yclin = data_list[n_set].tf_coherence[:,n_chan]
@@ -140,17 +143,7 @@ class PlotData():
                             yc[izero] = -np.inf
                             yc = 20*np.log10(np.abs(yclin))
                     
-                        # setup twin axis
-                        self.ax2 = self.ax.twinx()
-#                        color = 'tab:blue'
-                        self.ax2.set_ylabel('Coherence')
-                        self.ax2.set_ylim([0,1])
-                        self.ax2.set_zorder(0)
-#                        self.ax2.tick_params(axis='y', labelcolor=color)
                         
-#                        self.fig.tight_layout() 
-                    else:
-                        self.ax2.remove()
                         
                 color = options.set_plot_colours(len(data_list)*data_list[n_set].settings.channels)[count,:]/255
                 
@@ -165,10 +158,12 @@ class PlotData():
                 if data_list.__class__.__name__ == 'TfDataList':
                     if show_coherence == True:
                         self.ax2.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
-                        print(yc)
+                        self.ax2.set_visible(True)
+                    else:
+                        self.ax2.set_visible(False)
+        
         self.update_legend()
-        if hasattr(self,'canvas'): 
-            self.canvas.draw()
+        self.fig.canvas.draw()
         
     def update_legend(self,loc='lower right',draggable=False):
         if len(self.data_list) != 0:
@@ -180,7 +175,7 @@ class PlotData():
             
             
             for legline, origline in zip(self.legend.get_lines(), self.lines):
-                legline.set_picker(10)  # 5 pts tolerance
+                legline.set_picker(10)  # argument tolerance
                 self.lined[legline] = origline 
         else:
             self.legend = self.ax.get_legend()
