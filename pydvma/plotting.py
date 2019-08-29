@@ -31,8 +31,10 @@ class PlotData():
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
         
-    def update(self,data_list,sets='all',channels='all',xlinlog='lin',show_coherence=True,plot_type=None):
+    def update(self,data_list,sets='all',channels='all',xlinlog='lin',show_coherence=True,plot_type=None,coherence_plot_type='lin'):
         
+        if hasattr(self,'ax2'):
+            self.ax2.remove()
         self.data_list = data_list
         
         if data_list.__class__.__name__ == 'TimeDataList':
@@ -102,12 +104,13 @@ class PlotData():
                 elif data_list.__class__.__name__ == 'TfDataList':
                     x = data_list[n_set].freq_axis
                     ylin = data_list[n_set].tf_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
-                    if plot_type == 'Amplitude (dB)':
+                    if (plot_type == 'Amplitude (dB)') or (plot_type == None):
                         # handle log(0) manually to avoid warnings
                         y = np.zeros(np.shape(ylin))
                         izero = ylin==0
                         y[~izero] = 20*np.log10(np.abs(ylin[~izero]))
                         y[izero] = -np.inf
+                        
                     elif plot_type == 'Amplitude (linear)':
                         y = np.abs(ylin)
                     elif plot_type == 'Real Part':
@@ -123,15 +126,32 @@ class PlotData():
                     if data_list[n_set].tf_coherence is None:
                         show_coherence = False
                     
+                    
                     if show_coherence == True:
+                        
                         # handle log(0) manually to avoid warnings
                         yclin = data_list[n_set].tf_coherence[:,n_chan]
-                        yc = np.zeros(np.shape(yclin))
-                        izero = yclin==0
-                        yc[~izero] = 20*np.log10(np.abs(yclin[~izero]))
-                        yc[izero] = -np.inf
-                        yc = 20*np.log10(np.abs(yclin))
+                        if coherence_plot_type == 'lin':
+                            yc = yclin
+                        elif coherence_plot_type == 'log':
+                            yc = np.zeros(np.shape(yclin))
+                            izero = yclin==0
+                            yc[~izero] = 20*np.log10(np.abs(yclin[~izero]))
+                            yc[izero] = -np.inf
+                            yc = 20*np.log10(np.abs(yclin))
                     
+                        # setup twin axis
+                        self.ax2 = self.ax.twinx()
+#                        color = 'tab:blue'
+                        self.ax2.set_ylabel('Coherence')
+                        self.ax2.set_ylim([0,1])
+                        self.ax2.set_zorder(0)
+#                        self.ax2.tick_params(axis='y', labelcolor=color)
+                        
+#                        self.fig.tight_layout() 
+                    else:
+                        self.ax2.remove()
+                        
                 color = options.set_plot_colours(len(data_list)*data_list[n_set].settings.channels)[count,:]/255
                 
                 if type(data_list[n_set].test_name) is str:
@@ -143,11 +163,12 @@ class PlotData():
                 self.ax.plot(x,y,'-',linewidth=1,color = color,label=label,alpha=alpha)
                 
                 if data_list.__class__.__name__ == 'TfDataList':
-                    if data_list[n_set].tf_coherence is not None:
-                        self.ax.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
-    
+                    if show_coherence == True:
+                        self.ax2.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
+                        print(yc)
         self.update_legend()
-        self.canvas.draw()
+        if hasattr(self,'canvas'): 
+            self.canvas.draw()
         
     def update_legend(self,loc='lower right',draggable=False):
         if len(self.data_list) != 0:

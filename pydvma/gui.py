@@ -16,10 +16,17 @@ from . import analysis
 from . import streams
 from . import file
 import time
-
+import sys
 import numpy as np
 
 #%%
+
+sys._excepthook = sys.excepthook 
+def exception_hook(exctype, value, traceback):
+    print(exctype, value, traceback)
+    sys._excepthook(exctype, value, traceback) 
+    sys.exit(1) 
+sys.excepthook = exception_hook 
 
 class BlueButton(QPushButton):
     def __init__(self,text):
@@ -323,7 +330,7 @@ class InteractiveLogging():
         self.button_coherence_toggle = BlueButton('Coherence on/off')
         self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
         
-        self.input_list_plot_type.currentIndexChanged.connect(self.plot_options)
+        self.input_list_plot_type.currentIndexChanged.connect(self.select_plot_type)
         
         #layout
         self.layout_plot_details = QGridLayout()
@@ -708,10 +715,10 @@ class InteractiveLogging():
                 self.show_message(message)
     
     def select_plot_type(self):
-        self.p.plot_type = self.items_list_plot_type(self.input_list_plot_type.currentIndex())
+        self.plot_type = self.items_list_plot_type(self.input_list_plot_type.currentIndex())
         
         if self.plot_type == 'Amplitude (dB)':
-            
+            pass
         
         elif self.plot_type == 'Amplitude (linear)':
             pass
@@ -731,6 +738,6 @@ class InteractiveLogging():
         if self.current_view == 'Time':
             self.p.update(self.dataset.time_data_list)
         elif self.current_view == 'FFT':
-            self.p.update(self.dataset.freq_data_list)
+            self.p.update(self.dataset.freq_data_list,xlinlog='lin',plot_type=self.plot_type)
         elif self.current_view == 'TF':
-            self.p.update(self.dataset.tf_data_list)
+            self.p.update(self.dataset.tf_data_list,xlinlog='lin',show_coherence=True,plot_type=self.plot_type)
