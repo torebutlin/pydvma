@@ -153,6 +153,7 @@ class InteractiveLogging():
         self.fig = Figure(figsize=(9, 7),dpi=100)
         self.canvas = FigureCanvas(self.fig)
         self.toolbar = NavigationToolbar(self.canvas,None)
+        self.toolbar.setOrientation(Qt.Horizontal)
         self.p = plotting.PlotData(canvas=self.canvas,fig=self.fig)
         self.p.ax.callbacks.connect('xlim_changed', self.update_axes_values)
         self.p.ax.callbacks.connect('ylim_changed', self.update_axes_values)
@@ -244,7 +245,7 @@ class InteractiveLogging():
     def setup_frame_axes(self):
         
         self.input_list_figures = newComboBox(['Time Data','FFT Data','TF Data'])
-        
+        self.input_list_figures.currentIndexChanged.connect(self.select_view)
         
         self.button_x = GreenButton('Auto X')
         self.button_y = GreenButton('Auto Y')
@@ -601,10 +602,10 @@ class InteractiveLogging():
     def update_axes_values(self,axes):
         xlim = self.p.ax.get_xlim()
         ylim = self.p.ax.get_ylim()
-        self.input_axes[0].setText('{:0.6g}'.format(xlim[0]))
-        self.input_axes[1].setText('{:0.6g}'.format(xlim[1]))
-        self.input_axes[2].setText('{:0.6g}'.format(ylim[0]))
-        self.input_axes[3].setText('{:0.6g}'.format(ylim[1]))
+        self.input_axes[0].setText('{:0.5g}'.format(xlim[0]))
+        self.input_axes[1].setText('{:0.5g}'.format(xlim[1]))
+        self.input_axes[2].setText('{:0.5g}'.format(ylim[0]))
+        self.input_axes[3].setText('{:0.5g}'.format(ylim[1]))
         
     def legend_left(self):
         self.legend_loc = 'lower left'
@@ -621,5 +622,39 @@ class InteractiveLogging():
         self.p.ax.get_legend().set_visible(not visibility)
         self.canvas.draw()
                 
-    
+    def select_view(self):
+
+        if self.input_list_figures.currentIndex() == 0:
+            N = len(self.dataset.time_data_list)
+            if N != 0:
+                self.p.update(self.dataset.time_data_list)
+                if self.current_view != 'Time':
+                    self.current_view = 'Time'
+                    self.p.auto_x()
+                    self.p.auto_y()
+            else:
+                message = 'no time data to display'
+                self.show_message(message)
+        if self.input_list_figures.currentIndex() == 1:
+            N = len(self.dataset.freq_data_list)
+            if N != 0:
+                self.p.update(self.dataset.freq_data_list)
+                if self.current_view != 'FFT':
+                    self.current_view = 'FFT'
+                    self.p.auto_x()
+                    self.p.auto_y()
+            else:
+                message = 'no FFT data to display'
+                self.show_message(message)
+        if self.input_list_figures.currentIndex() == 2:
+            N = len(self.dataset.tf_data_list)
+            if N != 0:
+                self.p.update(self.dataset.tf_data_list)
+                if self.current_view != 'TF':
+                    self.current_view = 'TF'
+                    self.p.auto_x()
+                    self.p.auto_y()
+            else:
+                message = 'no transfer function data to display'
+                self.show_message(message)
         
