@@ -8,7 +8,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2Q
 from matplotlib.figure import Figure
 from matplotlib.ticker import AutoLocator
 import numpy as np
-
+import logging
+logging.basicConfig(filename='example.log',level=logging.DEBUG)
 #%%
 
 from . import plotting
@@ -278,9 +279,11 @@ class InteractiveLogging():
         self.input_axes[3].editingFinished.connect(self.ymax)
         
         self.button_select_all_data = GreenButton('Show All')
+        self.button_select_no_data = GreenButton('Hide All')
         self.input_selection_list = QLineEdit()
         self.input_selection_list.editingFinished.connect(self.select_set_chan_list)
         self.button_select_all_data.clicked.connect(self.select_all_data)
+        self.button_select_no_data.clicked.connect(self.select_no_data)
         
         self.legend_buttons = [BlueButton(i) for i in ['left','on/off','right']]
         self.legend_buttons[0].clicked.connect(self.legend_left)
@@ -295,34 +298,40 @@ class InteractiveLogging():
 
         # Figure selection
         row_start = 0
-        self.layout_axes.addWidget(boldLabel('Figure selection:'),row_start+0,0,1,3)
-        self.layout_axes.addWidget(self.input_list_figures,row_start+1,0,1,3)
+        self.layout_axes.addWidget(boldLabel('Figure selection:'),row_start+0,0,1,6)
+        self.layout_axes.addWidget(self.input_list_figures,row_start+1,0,1,6)
         
         # Axes control
         row_start = 3
-        self.layout_axes.addWidget(QLabel(),row_start,0,1,3)
-        self.layout_axes.addWidget(boldLabel('Axes control:'),row_start+1,0,1,3)
+        self.layout_axes.addWidget(QLabel(),row_start,0,1,6)
+        self.layout_axes.addWidget(boldLabel('Axes control:'),row_start+1,0,1,6)
         self.layout_axes.addWidget(self.button_x,row_start+2,0,1,3)
-        self.layout_axes.addWidget(self.button_y,row_start+3,0,1,3)
+        self.layout_axes.addWidget(self.button_y,row_start+2,3,1,3)
         
         for n in range(len(self.label_axes)):
             self.label_axes[n].setAlignment(Qt.AlignRight)
-            self.layout_axes.addWidget(self.label_axes[n],row_start+n+4,0)
-            self.layout_axes.addWidget(self.input_axes[n],row_start+n+4,1,1,2)
+            self.layout_axes.addWidget(self.label_axes[n],row_start+n+4,0,1,2)
+            self.layout_axes.addWidget(self.input_axes[n],row_start+n+4,2,1,4)
             
-            
+        # Line Selection
+        row_start = 11
+        self.layout_axes.addWidget(QLabel(),row_start,0,1,6)
+        self.layout_axes.addWidget(boldLabel('Line Selection:'),row_start+1,0,1,6)
+        self.layout_axes.addWidget(self.button_select_all_data,row_start+2,0,1,3)
+        self.layout_axes.addWidget(self.button_select_no_data,row_start+2,3,1,3)
+        
         
         # Legend control
-        row_start = 11
-        self.layout_axes.addWidget(QLabel(),row_start,0,1,3)
-        self.layout_axes.addWidget(boldLabel('Legend control:'),row_start+1,0,1,2)
+        row_start = 15
+        self.layout_axes.addWidget(QLabel(),row_start,0,1,6)
+        self.layout_axes.addWidget(boldLabel('Legend control:'),row_start+1,0,1,6)
         for n in range(len(self.legend_buttons)):
-            self.layout_axes.addWidget(self.legend_buttons[n],row_start+2,n)
+            self.layout_axes.addWidget(self.legend_buttons[n],row_start+2,2*n,1,2)
         
         
         # Plot-specific tools
-        row_start = 14
-        self.layout_axes.addWidget(self.frame_plot_details,row_start,0,1,3)
+        row_start = 18
+        self.layout_axes.addWidget(self.frame_plot_details,row_start,0,1,6)
         self.frame_plot_details.setVisible(False)
         
         # layout to frame
@@ -717,6 +726,7 @@ class InteractiveLogging():
                 self.p.update(self.dataset.time_data_list)
                 if self.current_view != 'Time':
                     self.current_view = 'Time'
+                    self.label_figure.setText('Time Data')
                     self.show_data = True
                     self.show_coherence = True
                     self.p.auto_x()
@@ -732,13 +742,20 @@ class InteractiveLogging():
                 self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
                 if self.current_view != 'FFT':
                     self.current_view = 'FFT'
+                    self.label_figure.setText('FFT Data')
                     self.show_data = True
                     self.p.ax.set_visible(True)
                     self.p.auto_x()
                     self.p.auto_y()
                     self.frame_plot_details.setVisible(True)
+                    self.button_data_toggle.setVisible(False)
                     self.button_coherence_toggle.setVisible(False)
                     self.button_modal_fit_toggle.setVisible(False)
+                    self.label_co_freq_min.setVisible(False)
+                    self.label_co_freq_max.setVisible(False)
+                    self.input_co_min.setVisible(False)
+                    self.input_co_max.setVisible(False)
+                    
             else:
                 message = 'No FFT data to display'
                 self.show_message(message)
@@ -749,6 +766,7 @@ class InteractiveLogging():
                 self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
                 if self.current_view != 'TF':
                     self.current_view = 'TF'
+                    self.label_figure.setText('Transfer Function Data')
                     self.show_data = True
                     self.show_coherence = True
                     self.p.ax.set_visible(True)
@@ -756,7 +774,12 @@ class InteractiveLogging():
                     self.p.auto_x()
                     self.p.auto_y()
                     self.frame_plot_details.setVisible(True)
+                    self.button_data_toggle.setVisible(True)
                     self.button_coherence_toggle.setVisible(True)
+                    self.label_co_freq_min.setVisible(True)
+                    self.label_co_freq_max.setVisible(True)
+                    self.input_co_min.setVisible(True)
+                    self.input_co_max.setVisible(True)
 #                    if self.flag_modal_data == True:
 #                        self.button_modal_fit_toggle.setVisible(True)
 #                    else:
@@ -769,17 +792,31 @@ class InteractiveLogging():
         self.canvas.draw()
         
     def select_all_data(self):
-        pass
+        for line in self.p.ax.lines:
+            line.set_alpha(plotting.LINE_ALPHA)
+        for line in self.p.legend.get_lines():
+            line.set_alpha(plotting.LINE_ALPHA)
+        
+        self.canvas.draw()
+        
+        
+    def select_no_data(self):
+        for line in self.p.ax.lines:
+            line.set_alpha(1-plotting.LINE_ALPHA)
+        for line in self.p.legend.get_lines():
+            line.set_alpha(1-plotting.LINE_ALPHA)
+        self.canvas.draw()
     
     def select_set_chan_list(self):
-        pass
+        for line in self.p.ax.lines:
+            line.set_alpha = 1 - plotting.LINE_ALPHA
     
     def select_plot_type(self):
         # check what switching from and to, so sensible axis behaviour
         plot_type_before = np.copy(self.plot_type)
         self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
         switch_to_nyquist = (self.plot_type == 'Nyquist') and ('Nyquist' != plot_type_before)
-        switch_from_nyquist = (plot_type_before == 'Nyquist') and ('Nyquist' not in self.plot_type)
+        switch_from_nyquist = (plot_type_before == 'Nyquist') and ('Nyquist' != self.plot_type)
         
         
         if switch_to_nyquist == True:
@@ -802,7 +839,7 @@ class InteractiveLogging():
             self.label_co_freq_min.setText('freq. min:')
             self.label_co_freq_max.setText('freq. max:')
             
-        if self.plot_type != 'Nyquist':
+        if (self.plot_type != 'Nyquist') and (self.current_view == 'TF'):
             self.button_xlinlog.setVisible(True)
             self.button_data_toggle.setVisible(True)
             self.button_coherence_toggle.setVisible(True)
@@ -819,10 +856,11 @@ class InteractiveLogging():
             
         if self.plot_type != 'Nyquist':
             self.freq_range = list(self.p.ax.get_xlim()) # force to list instead of tuple
+        
         if self.current_view == 'Time':
             self.p.update(self.dataset.time_data_list)
         elif self.current_view == 'FFT':
-            self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
+            self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=False,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
         elif self.current_view == 'TF':
             self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
         

@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
 
 
-
+LINE_ALPHA = 0.9
 
 class PlotData():
     def __init__(self,sets='all',channels='all',figsize=(9,5),canvas=None,fig=None):
@@ -33,13 +33,16 @@ class PlotData():
             self.ax.set_zorder(self.ax2.get_zorder()+1)
             self.ax.patch.set_visible(False)
 
-            
+        self.ax.lines=[]
+        self.ax2.lines=[]
+        self.line_listbyset = []
+        self.line2_listbyset = []
+        
         self.ax.grid(True,alpha=0.3)
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
         
     def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None):
-        
         self.data_list = data_list
         if data_list.__class__.__name__ == 'TimeDataList':
             self.ax2.set_visible(False)
@@ -50,9 +53,9 @@ class PlotData():
             self.ax.set_xlabel('Frequency (Hz)')
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
-                self.ax.minor_ticks_on()
+                self.ax.grid(b=True, which='minor',axis='x')
             else:
-                self.ax.minor_ticks_off()
+                self.ax.grid(b=False,which='minor',axis='x')
             self.ax.set_ylabel('Amplitude')
         elif data_list.__class__.__name__ == 'TfDataList':
             self.ax.set_xlabel('Frequency (Hz)')
@@ -60,9 +63,9 @@ class PlotData():
             
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
-                self.ax.minorticks_on()
+                self.ax.grid(b=True, which='minor',axis='x')
             else:
-                self.ax.minorticks_off()
+                self.ax.grid(b=False,which='minor',axis='x')
             # setup twin axis
             
             if show_coherence == True:
@@ -73,16 +76,26 @@ class PlotData():
                 self.ax2.set_ylabel('')
         
         N_sets = len(data_list)
-        
+
+        # pre-count how many channels total
+        ch_counter = 0
+        for n_set in range(N_sets):
+            for n_chan in range(self.data_list[n_set].settings.channels):
+                ch_counter += 1
+        self.ch_total = ch_counter
         
         self.ax.lines=[]
         self.ax2.lines=[]
+        self.line_listbyset = []
+        self.line2_listbyset = []
         
         if sets == 'all':
             sets = range(N_sets)
-        
         count = -1
         for n_set in range(len(data_list)):
+            self.line_listbyset.append([])
+            self.line2_listbyset.append([])
+            
             if data_list.__class__.__name__ == 'TfDataList':
                 N_chans = len(data_list[n_set].tf_data[0,:])
             else:
@@ -94,11 +107,10 @@ class PlotData():
 
             for n_chan in range(N_chans):
                 count += 1
-                
                 if (n_set not in sets) or (n_chan not in channels):
-                    alpha = 0.1
+                    alpha = 1-LINE_ALPHA
                 else:
-                    alpha = 0.9
+                    alpha = LINE_ALPHA
                 
                 if data_list.__class__.__name__ == 'TimeDataList':
                     x = data_list[n_set].time_axis
@@ -156,9 +168,7 @@ class PlotData():
                         y = np.imag(ylin[selected_data])
                     elif plot_type == 'Phase':
                         y = np.angle(ylin,deg=True)
-                    
                     if data_list[n_set].tf_coherence is not None:
-                        
                         # handle log(0) manually to avoid warnings
                         yclin = data_list[n_set].tf_coherence[:,n_chan]
                         if coherence_plot_type == 'linear':
@@ -169,22 +179,22 @@ class PlotData():
                             yc[~izero] = 20*np.log10(np.abs(yclin[~izero]))
                             yc[izero] = -np.inf
                             yc = 20*np.log10(np.abs(yclin))
-                    
                         
                         
                 color = options.set_plot_colours(len(data_list)*data_list[n_set].settings.channels)[count,:]/255
-                
                 if type(data_list[n_set].test_name) is str:
                     test_name = data_list[n_set].test_name
                 else:
                     test_name = 'set '
-                label = '{}_{}, ch_{}'.format(test_name,n_set,n_chan)
                 
-                self.ax.plot(x,y,'-',linewidth=1,color = color,label=label,alpha=alpha)
-                
+                if self.ch_total < 10:
+                    label = '{}_{}, ch_{}'.format(test_name,n_set,n_chan)
+                else:
+                    label = 'set{},ch{}'.format(n_set,n_chan)
+                self.line_listbyset[n_set] += self.ax.plot(x,y,'-',linewidth=1,color = color,label=label,alpha=alpha)
                 if data_list.__class__.__name__ == 'TfDataList':
                     if show_coherence == True:
-                        self.ax2.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
+                        self.line2_listbyset[n_set] += self.ax2.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
                         self.ax2.set_visible(True)
                     else:
                         self.ax2.set_visible(False)
@@ -192,23 +202,37 @@ class PlotData():
         
         self.update_legend()
         self.fig.canvas.draw()
-        return None
+        
         
     def update_legend(self,loc='lower right',draggable=False):
         if len(self.data_list) != 0:
-            self.legend = self.ax.legend(loc=loc)
+            if self.ch_total >= 10:
+                # make legend more compact
+                col_sizes = np.arange(10,7,-1)
+                rem = np.remainder(self.ch_total,col_sizes)
+                if any(rem==0):
+                    remi = np.where(rem==0)[0]
+                    remi = remi[0]
+                    ncol = np.int(self.ch_total / col_sizes[remi])
+                else:
+                    remi = np.argmax(rem)
+                    ncol = np.ceil(self.ch_total/ col_sizes[remi])
+            else:
+                ncol = 1
+                
+            self.legend = self.ax.legend(loc=loc, ncol=ncol)
 #            self.ax.legend()
             self.legend.set_draggable(draggable,use_blit=True)#(True),update='bbox',use_blit=True
             self.lines = self.ax.get_lines()
             self.lines2 = self.ax2.get_lines()
             self.lined = dict()
             self.lined2 = dict()
-            
+
             # make dictionary of legend lines for selection    
             for legline, origline in zip(self.legend.get_lines(), self.lines):
                 legline.set_picker(10)  # argument tolerance
                 self.lined[legline] = origline 
-                
+
             # make dictionary of coherence lines to select with legend - only for TF Data
             if len(self.ax2.lines) > 0:
                 for legline, origline2 in zip(self.legend.get_lines(), self.lines2):
@@ -330,58 +354,7 @@ class PlotData():
             
         return selected_data
 
-    def set_selected_channels(self,selection_list):
-        # find the sets and channels higlighted in figure
-        # first find lines
-        lines = self.ax.get_lines()
-        N = len(lines)
-        
-        for s in selection_list:
-            selected_lines = 
-        
-        for n_set in self.data_list:
-            if data_list.__class__.__name__ == 'TfDataList':
-                N_chans = len(data_list[n_set].tf_data[0,:])
-            else:
-                N_chans = data_list[n_set].settings.channels
-                
-            for n_chan in range(N_chans):
-                
-                
-                
-                
-                
-                
-        alphas = np.zeros(N)
-        count = -1
-        for line in lines:
-            count += 1
-            alphas[count] = line.get_alpha()
-        
-        selected_lines = alphas > 0.5
-        
-        # now convert line selection to sets and channels
-        n_sets = len(self.data_list)
-        if self.data_list.__class__.__name__ == 'TimeDataList':
-            n_chans = len(self.data_list[0].time_data[0,:])
-        elif self.data_list.__class__.__name__ == 'FreqDataList':
-            n_chans = len(self.data_list[0].freq_data[0,:])
-        elif self.data_list.__class__.__name__ == 'TfDataList':
-            n_chans = len(self.data_list[0].tf_data[0,:])
-            
-        selected_data = np.zeros([n_sets,n_chans])
-        count = -1
-        for ns in range(n_sets):
-            for nc in range(n_chans):
-                count += 1
-                if self.data_list.__class__.__name__ == 'TfDataList':
-                    selected_data[ns,nc] = selected_lines[2*count] # skip coherence lines
-                else:
-                    selected_data[ns,nc] = selected_lines[count]
-        
-        selected_data = selected_data == True
-            
-        return selected_data
+    
 
 #class PlotTimeData():
 #    def __init__(self,time_data_list,sets='all',channels='all'):
@@ -408,9 +381,9 @@ class PlotData():
 #                count += 1
 #                
 #                if (n_set not in sets) or (n_chan not in channels):
-#                    alpha = 0.1
+#                    alpha = 1-LINE_ALPHA
 #                else:
-#                    alpha = 0.9
+#                    alpha = LINE_ALPHA
 #                    
 #                t = time_data_list[n_set].time_axis
 #                y = time_data_list[n_set].time_data[:,n_chan]
@@ -473,9 +446,9 @@ class PlotData():
 #                count += 1
 #                
 #                if (n_set not in sets) or (n_chan not in channels):
-#                    alpha = 0.1
+#                    alpha = 1-LINE_ALPHA
 #                else:
-#                    alpha = 0.9
+#                    alpha = LINE_ALPHA
 #                    
 #                f = freq_data_list[n_set].freq_axis
 #                Y = freq_data_list[n_set].freq_data[:,n_chan]
