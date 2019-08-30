@@ -41,7 +41,6 @@ class PlotData():
     def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None):
         
         self.data_list = data_list
-        
         if data_list.__class__.__name__ == 'TimeDataList':
             self.ax2.set_visible(False)
             self.ax.set_xlabel('Time (s)')
@@ -82,7 +81,6 @@ class PlotData():
         if sets == 'all':
             sets = range(N_sets)
         
-        
         count = -1
         for n_set in range(len(data_list)):
             if data_list.__class__.__name__ == 'TfDataList':
@@ -110,7 +108,7 @@ class PlotData():
                     x = data_list[n_set].freq_axis
                     ylin = data_list[n_set].freq_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
                     
-                    print('hi')
+                    
                     if (plot_type == 'Amplitude (dB)') or (plot_type == None):
                         # handle log(0) manually to avoid warnings
                         y = np.zeros(np.shape(ylin))
@@ -126,8 +124,7 @@ class PlotData():
                     elif plot_type == 'Nyquist':
                         if freq_range == None:
                             freq_range = [-1,np.inf]
-                        selected_data = np.where((x>freq_range[0]) and (x<freq_range[1]))[0]
-                        print(selected_data)
+                        selected_data = np.where((x>freq_range[0]) * (x<freq_range[1]))[0]
                         x = np.real(ylin[selected_data])
                         y = np.imag(ylin[selected_data])
                         
@@ -154,10 +151,9 @@ class PlotData():
                     elif plot_type == 'Nyquist':
                         if freq_range == None:
                             freq_range = [-1,np.inf]
-                        selected_data = np.where((x>freq_range[0]) and (x<freq_range[1]))
+                        selected_data = np.where((x>freq_range[0]) * (x<freq_range[1]))[0]
                         x = np.real(ylin[selected_data])
                         y = np.imag(ylin[selected_data])
-                        show_coherence = False
                     elif plot_type == 'Phase':
                         y = np.angle(ylin,deg=True)
                     
@@ -334,7 +330,58 @@ class PlotData():
             
         return selected_data
 
-
+    def set_selected_channels(self,selection_list):
+        # find the sets and channels higlighted in figure
+        # first find lines
+        lines = self.ax.get_lines()
+        N = len(lines)
+        
+        for s in selection_list:
+            selected_lines = 
+        
+        for n_set in self.data_list:
+            if data_list.__class__.__name__ == 'TfDataList':
+                N_chans = len(data_list[n_set].tf_data[0,:])
+            else:
+                N_chans = data_list[n_set].settings.channels
+                
+            for n_chan in range(N_chans):
+                
+                
+                
+                
+                
+                
+        alphas = np.zeros(N)
+        count = -1
+        for line in lines:
+            count += 1
+            alphas[count] = line.get_alpha()
+        
+        selected_lines = alphas > 0.5
+        
+        # now convert line selection to sets and channels
+        n_sets = len(self.data_list)
+        if self.data_list.__class__.__name__ == 'TimeDataList':
+            n_chans = len(self.data_list[0].time_data[0,:])
+        elif self.data_list.__class__.__name__ == 'FreqDataList':
+            n_chans = len(self.data_list[0].freq_data[0,:])
+        elif self.data_list.__class__.__name__ == 'TfDataList':
+            n_chans = len(self.data_list[0].tf_data[0,:])
+            
+        selected_data = np.zeros([n_sets,n_chans])
+        count = -1
+        for ns in range(n_sets):
+            for nc in range(n_chans):
+                count += 1
+                if self.data_list.__class__.__name__ == 'TfDataList':
+                    selected_data[ns,nc] = selected_lines[2*count] # skip coherence lines
+                else:
+                    selected_data[ns,nc] = selected_lines[count]
+        
+        selected_data = selected_data == True
+            
+        return selected_data
 
 #class PlotTimeData():
 #    def __init__(self,time_data_list,sets='all',channels='all'):

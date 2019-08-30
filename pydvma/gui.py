@@ -8,6 +8,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2Q
 from matplotlib.figure import Figure
 from matplotlib.ticker import AutoLocator
 import numpy as np
+
 #%%
 
 from . import plotting
@@ -106,7 +107,7 @@ class InteractiveLogging():
         self.coherence_plot_type = 'linear'
         self.xlinlog = 'linear'
         self.plot_type = None
-        self.being_edited = [False] * 4
+        self.freq_range = [0,np.inf]
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -276,6 +277,10 @@ class InteractiveLogging():
         self.input_axes[3].setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5)) 
         self.input_axes[3].editingFinished.connect(self.ymax)
         
+        self.button_select_all_data = GreenButton('Show All')
+        self.input_selection_list = QLineEdit()
+        self.input_selection_list.editingFinished.connect(self.select_set_chan_list)
+        self.button_select_all_data.clicked.connect(self.select_all_data)
         
         self.legend_buttons = [BlueButton(i) for i in ['left','on/off','right']]
         self.legend_buttons[0].clicked.connect(self.legend_left)
@@ -333,16 +338,27 @@ class InteractiveLogging():
         self.button_data_toggle = BlueButton('Data on/off')
         self.button_coherence_toggle = BlueButton('Coherence on/off')
         
+        
+        self.label_co_freq_min = QLabel('co. min:')
+        self.label_co_freq_max = QLabel('co. max:')
         self.input_co_min = QLineEdit('0')
         self.input_co_min.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
         self.input_co_max = QLineEdit('1')
         self.input_co_max.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
         
+        # freq range for Nyquist
+        self.input_freq_min = QLineEdit()
+        self.input_freq_min.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
+        self.input_freq_min.editingFinished.connect(self.freq_min)
+        self.input_freq_max = QLineEdit()
+        self.input_freq_max.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
+        self.input_freq_max.editingFinished.connect(self.freq_max)
+        
         self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
         
         self.input_list_plot_type.currentIndexChanged.connect(self.select_plot_type)
-        self.input_co_min.textChanged.connect(self.co_min)
-        self.input_co_max.textChanged.connect(self.co_max)
+        self.input_co_min.editingFinished.connect(self.co_min)
+        self.input_co_max.editingFinished.connect(self.co_max)
         self.button_data_toggle.clicked.connect(self.data_toggle)
         self.button_coherence_toggle.clicked.connect(self.coherence_toggle)
         self.button_xlinlog.clicked.connect(self.select_xlinlog)
@@ -354,11 +370,17 @@ class InteractiveLogging():
         self.layout_plot_details.addWidget(self.button_xlinlog,3,0,1,2)
         self.layout_plot_details.addWidget(self.button_data_toggle,4,0,1,1)
         self.layout_plot_details.addWidget(self.button_coherence_toggle,4,1,1,1)
-        self.layout_plot_details.addWidget(QLabel('co. min:'),5,0,1,1)
+        self.layout_plot_details.addWidget(self.label_co_freq_min,5,0,1,1)
         self.layout_plot_details.addWidget(self.input_co_min,5,1,1,1)
-        self.layout_plot_details.addWidget(QLabel('co. max:'),6,0,1,1)
+        self.layout_plot_details.addWidget(self.input_freq_min,5,1,1,1)
+        self.layout_plot_details.addWidget(self.label_co_freq_max,6,0,1,1)
         self.layout_plot_details.addWidget(self.input_co_max,6,1,1,1)
+        self.layout_plot_details.addWidget(self.input_freq_max,6,1,1,1)
         self.layout_plot_details.addWidget(self.button_modal_fit_toggle,7,0,1,2)        
+        
+        #only show these for Nyquist plots
+        self.input_freq_min.setVisible(False)
+        self.input_freq_max.setVisible(False)
         
         #frame
         self.frame_plot_details = QFrame()
@@ -745,6 +767,12 @@ class InteractiveLogging():
                 self.show_message(message)
                 
         self.canvas.draw()
+        
+    def select_all_data(self):
+        pass
+    
+    def select_set_chan_list(self):
+        pass
     
     def select_plot_type(self):
         # check what switching from and to, so sensible axis behaviour
@@ -753,18 +781,44 @@ class InteractiveLogging():
         switch_to_nyquist = (self.plot_type == 'Nyquist') and ('Nyquist' != plot_type_before)
         switch_from_nyquist = (plot_type_before == 'Nyquist') and ('Nyquist' not in self.plot_type)
         
+        
         if switch_to_nyquist == True:
-            self.freq_range = self.p.ax.get_xlim()
+            self.freq_range = list(self.p.ax.get_xlim()) #force to list instead of tuple
             self.show_coherence_before = np.copy(self.show_coherence)
             self.freq_lim_before = self.p.ax.get_xlim()
             self.show_coherence = False
-        
+            self.xlinlog_before = np.copy(self.xlinlog)
+            self.xlinlog = 'linear'
+            
+            self.button_xlinlog.setVisible(False)
+            self.button_data_toggle.setVisible(False)
+            self.button_coherence_toggle.setVisible(False)
+            self.input_co_min.setVisible(False)
+            self.input_co_max.setVisible(False)
+            self.input_freq_min.setVisible(True)
+            self.input_freq_max.setVisible(True)
+            self.input_freq_min.setText('{:5f}'.format(self.freq_range[0]))
+            self.input_freq_max.setText('{:5f}'.format(self.freq_range[1]))
+            self.label_co_freq_min.setText('freq. min:')
+            self.label_co_freq_max.setText('freq. max:')
+            
+        if self.plot_type != 'Nyquist':
+            self.button_xlinlog.setVisible(True)
+            self.button_data_toggle.setVisible(True)
+            self.button_coherence_toggle.setVisible(True)
+            self.input_co_min.setVisible(True)
+            self.input_co_max.setVisible(True)
+            self.input_freq_min.setVisible(False)
+            self.input_freq_max.setVisible(False)
+            self.label_co_freq_min.setText('co. min:')
+            self.label_co_freq_max.setText('co. max:')
+            
         if switch_from_nyquist == True:
             self.show_coherence = np.copy(self.show_coherence_before)
-
+            self.xlinlog = np.copy(self.xlinlog_before)
+            
         if self.plot_type != 'Nyquist':
-            self.freq_range = self.p.ax.get_xlim()
-        
+            self.freq_range = list(self.p.ax.get_xlim()) # force to list instead of tuple
         if self.current_view == 'Time':
             self.p.update(self.dataset.time_data_list)
         elif self.current_view == 'FFT':
@@ -791,6 +845,14 @@ class InteractiveLogging():
         ylim = self.p.ax2.get_ylim()
         self.p.ax2.set_ylim([ylim[0],co_max])
         self.canvas.draw()
+        
+    def freq_min(self):
+        self.freq_range[0] = np.float(self.input_freq_min.text())
+        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
+        
+    def freq_max(self):
+        self.freq_range[1] = np.float(self.input_freq_max.text())
+        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
         
     def update_co_axes_values(self,axes):
         ylim = self.p.ax2.get_ylim()
