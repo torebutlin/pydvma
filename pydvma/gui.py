@@ -106,6 +106,7 @@ class InteractiveLogging():
         self.coherence_plot_type = 'linear'
         self.xlinlog = 'linear'
         self.plot_type = None
+        self.being_edited = [False] * 4
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -267,13 +268,14 @@ class InteractiveLogging():
         self.label_axes = [QLabel(i) for i in ['xmin:','xmax:','ymin:','ymax:']]
         self.input_axes = [QLineEdit() for i in range(4)]
         self.input_axes[0].setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5)) 
-        self.input_axes[0].textChanged.connect(self.xmin)
+        self.input_axes[0].editingFinished.connect(self.xmin)
         self.input_axes[1].setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5)) 
-        self.input_axes[1].textChanged.connect(self.xmax)
+        self.input_axes[1].editingFinished.connect(self.xmax)
         self.input_axes[2].setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5)) 
-        self.input_axes[2].textChanged.connect(self.ymin)
+        self.input_axes[2].editingFinished.connect(self.ymin)
         self.input_axes[3].setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5)) 
-        self.input_axes[3].textChanged.connect(self.ymax)
+        self.input_axes[3].editingFinished.connect(self.ymax)
+        
         
         self.legend_buttons = [BlueButton(i) for i in ['left','on/off','right']]
         self.legend_buttons[0].clicked.connect(self.legend_left)
@@ -495,7 +497,7 @@ class InteractiveLogging():
                 self.show_message(message)
                 
         else:
-            message = 'To enable data acquisition, pease use \'Logger Settings\' tool.'
+            message = 'To enable data acquisition, please use \'Logger Settings\' tool.'
             self.show_message(message)
             self.input_list_tools.setCurrentIndex(1)
             self.update_tool_selection()
@@ -654,13 +656,13 @@ class InteractiveLogging():
         
     def auto_x(self):
         self.p.auto_x()
-        self.update_axes_values()
+        self.update_axes_values([])
         
     def auto_y(self):
         self.p.auto_y()
         self.p.ax2.set_ylim([0,1])
-        self.update_axes_values()
-        self.update_co_axes_values()
+        self.update_axes_values([])
+        self.update_co_axes_values([])
         
     def update_axes_values(self,axes):
         xlim = self.p.ax.get_xlim()
@@ -745,15 +747,39 @@ class InteractiveLogging():
         self.canvas.draw()
     
     def select_plot_type(self):
+        # check what switching from and to, so sensible axis behaviour
+        plot_type_before = np.copy(self.plot_type)
         self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
+        switch_to_nyquist = (self.plot_type == 'Nyquist') and ('Nyquist' != plot_type_before)
+        switch_from_nyquist = (plot_type_before == 'Nyquist') and ('Nyquist' not in self.plot_type)
+        
+        if switch_to_nyquist == True:
+            self.freq_range = self.p.ax.get_xlim()
+            self.show_coherence_before = np.copy(self.show_coherence)
+            self.freq_lim_before = self.p.ax.get_xlim()
+            self.show_coherence = False
+        
+        if switch_from_nyquist == True:
+            self.show_coherence = np.copy(self.show_coherence_before)
+
+        if self.plot_type != 'Nyquist':
+            self.freq_range = self.p.ax.get_xlim()
         
         if self.current_view == 'Time':
             self.p.update(self.dataset.time_data_list)
         elif self.current_view == 'FFT':
             self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
         elif self.current_view == 'TF':
-            self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
+            self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
+        
+        if switch_to_nyquist == True:
+            self.auto_x()
             
+        if switch_from_nyquist == True:
+            self.p.ax.set_xlim(self.freq_lim_before)
+
+        self.auto_y()            
+        
     def co_min(self):
         co_min = np.float(self.input_co_min.text())
         ylim = self.p.ax2.get_ylim()
@@ -786,15 +812,7 @@ class InteractiveLogging():
 
     def coherence_toggle(self):
         self.show_coherence = not self.show_coherence
-#        for line in self.p.ax2.lines:
-#            line.set_visible(self.show_coherence)
-#        if self.show_coherence == True:
-#            self.p.ax2.set_ylabel('Coherence')
-#        else:
-#            self.p.ax2.set_ylabel('')
-            
         self.select_plot_type()
-#        self.canvas.draw()
                 
         
     def select_xlinlog(self):

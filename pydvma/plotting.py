@@ -38,7 +38,7 @@ class PlotData():
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
         
-    def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear'):
+    def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None):
         
         self.data_list = data_list
         
@@ -110,6 +110,7 @@ class PlotData():
                     x = data_list[n_set].freq_axis
                     ylin = data_list[n_set].freq_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
                     
+                    print('hi')
                     if (plot_type == 'Amplitude (dB)') or (plot_type == None):
                         # handle log(0) manually to avoid warnings
                         y = np.zeros(np.shape(ylin))
@@ -123,10 +124,16 @@ class PlotData():
                     elif plot_type == 'Imag Part':
                         y = np.imag(ylin)
                     elif plot_type == 'Nyquist':
-                        x = np.real(ylin)
-                        y = np.imag(ylin)
+                        if freq_range == None:
+                            freq_range = [-1,np.inf]
+                        selected_data = np.where((x>freq_range[0]) and (x<freq_range[1]))[0]
+                        print(selected_data)
+                        x = np.real(ylin[selected_data])
+                        y = np.imag(ylin[selected_data])
+                        
                     elif plot_type == 'Phase':
                         y = np.angle(ylin,deg=True)
+                        
                     
                 elif data_list.__class__.__name__ == 'TfDataList':
                     x = data_list[n_set].freq_axis
@@ -145,8 +152,12 @@ class PlotData():
                     elif plot_type == 'Imag Part':
                         y = np.imag(ylin)
                     elif plot_type == 'Nyquist':
-                        x = np.real(ylin)
-                        y = np.imag(ylin)
+                        if freq_range == None:
+                            freq_range = [-1,np.inf]
+                        selected_data = np.where((x>freq_range[0]) and (x<freq_range[1]))
+                        x = np.real(ylin[selected_data])
+                        y = np.imag(ylin[selected_data])
+                        show_coherence = False
                     elif plot_type == 'Phase':
                         y = np.angle(ylin,deg=True)
                     
@@ -182,8 +193,10 @@ class PlotData():
                     else:
                         self.ax2.set_visible(False)
         
+        
         self.update_legend()
         self.fig.canvas.draw()
+        return None
         
     def update_legend(self,loc='lower right',draggable=False):
         if len(self.data_list) != 0:
