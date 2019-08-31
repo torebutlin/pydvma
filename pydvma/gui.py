@@ -921,7 +921,88 @@ class InteractiveLogging():
         else:
             self.xlinlog = 'linear'
         
-        self.select_plot_type()
+        self.update_plot()
+        
+        
+        
+    def update_gui_axes_tools(self):
+        ci = self.input_list_figures.currentIndex()
+        self.selected_view = self.input_list_figures.itemText(ci)
+        
+        # Time Data
+        if self.selected_view == 'Time Data':
+            ### set to time gui
+            N = len(self.dataset.time_data_list)
+            if N != 0:
+                if self.current_view != self.selected_view:
+                    self.current_view = np.copy(self.selected_view)
+                    self.label_figure.setText(self.selected_view)
+                    self.show_data = True
+                    self.show_coherence = True # won't plot but reests for other selections
+                    self.frame_plot_details.setVisible(False)
+            else:
+                message = 'No time data to display'
+                self.show_message(message)
+        # FFT Data
+        elif self.selected_view == 'FFT Data':
+            N = len(self.dataset.freq_data_list)
+            if N != 0:
+                if self.current_view != self.selected_view:
+                    self.current_view_changed = True
+                else:
+                    self.current_view_changed = False
+                    
+                self.input_co_min.setVisible(False)
+                self.input_co_max.setVisible(False)
+                self.label_figure.setText(self.selected_view)
+                self.show_data = True
+                self.button_data_toggle.setVisible(False)
+                self.button_coherence_toggle.setVisible(False)
+                self.button_modal_fit_toggle.setVisible(False)
+                self.label_co_freq_min.setVisible(False)
+                self.label_co_freq_max.setVisible(False)
+                self.frame_plot_details.setVisible(True)
+                    
+            else:
+                message = 'No FFT data to display'
+                self.show_message(message)
+        
+        # TF Data
+        elif self.selected_view == 'TF Data':
+            N = len(self.dataset.tf_data_list)
+            if N != 0:
+                self.label_figure.setText(self.selected_view)
+                self.frame_plot_details.setVisible(True)
+                self.button_data_toggle.setVisible(True)
+                self.button_coherence_toggle.setVisible(True)
+                self.label_co_freq_min.setVisible(True)
+                self.label_co_freq_max.setVisible(True)
+                self.input_co_min.setVisible(True)
+                self.input_co_max.setVisible(True)
+                    
+                if self.current_view != self.selected_view:
+                    self.current_view = np.copy(self.selected_view)
+                    self.show_data = True
+                    self.show_coherence = True
+                    
+            else:
+                message = 'No transfer function data to display'
+                self.show_message(message)
+        
+    def update_plot(self):
+        ci = self.input_list_figures.currentIndex()
+        self.selected_view = self.input_list_figures.itemText(ci)
+        if self.selected_view == 'Time Data':
+            data_list = self.dataset.time_data_list
+        elif self.selected_view == 'FFT Data':
+            data_list = self.dataset.freq_data_list
+        elif self.selected_view == 'TF Data':
+            data_list = self.dataset.tf_data_list
+        else:
+            data_list = None
+        
+        if data_list is not None:
+            self.p.update(data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
         
 sys._excepthook = sys.excepthook 
 def exception_hook(exctype, value, traceback):
