@@ -42,7 +42,7 @@ class PlotData():
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
         
-    def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None):
+    def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy=''):
         self.data_list = data_list
         if data_list.__class__.__name__ == 'TimeDataList':
             self.ax2.set_visible(False)
@@ -201,6 +201,15 @@ class PlotData():
         
         
         self.update_legend()
+        if 'x' in auto_xy:
+            self.auto_x()
+        if 'y' in auto_xy:
+            self.auto_y()
+        if 'f' in auto_xy: # use freq_range for x axis
+            self.ax.set_xlim(freq_range)
+            self.auto_y()
+            
+            
         self.fig.canvas.draw()
         
         
