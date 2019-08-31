@@ -1075,6 +1075,7 @@ class InteractiveLogging():
                 else:
                     # update freq range if switching plot other than to/from nyquist
                     self.freq_range = list(self.p.ax.get_xlim()) # force to list instead of tuple
+                    self.auto_xy = 'fy'
 
                 # plot now then auto-x/y according to nyquist or not
                 self.update_figure_changed_view()
