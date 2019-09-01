@@ -14,7 +14,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
-
+from matplotlib.ticker import AutoLocator
 
 LINE_ALPHA = 0.9
 
@@ -209,7 +209,8 @@ class PlotData():
             self.ax.set_xlim(freq_range)
             self.auto_y()
             
-            
+#        self.ax.xaxis.set_major_locator(AutoLocator())
+#        self.ax.yaxis.set_major_locator(AutoLocator())
         self.fig.canvas.draw()
         
         

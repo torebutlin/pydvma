@@ -364,7 +364,7 @@ class InteractiveLogging():
         self.input_freq_max.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
         self.input_freq_max.editingFinished.connect(self.freq_max)
         
-        self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
+        #self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
         
         self.input_list_plot_type.currentIndexChanged.connect(self.select_view)
         self.input_co_min.editingFinished.connect(self.co_min)
@@ -386,7 +386,7 @@ class InteractiveLogging():
         self.layout_plot_details.addWidget(self.label_co_freq_max,6,0,1,1)
         self.layout_plot_details.addWidget(self.input_co_max,6,1,1,1)
         self.layout_plot_details.addWidget(self.input_freq_max,6,1,1,1)
-        self.layout_plot_details.addWidget(self.button_modal_fit_toggle,7,0,1,2)        
+        #self.layout_plot_details.addWidget(self.button_modal_fit_toggle,7,0,1,2)        
         
         #only show these for Nyquist plots
         self.input_freq_min.setVisible(False)
@@ -731,85 +731,7 @@ class InteractiveLogging():
 
         self.label_figure.setText(self.selected_view)
         self.p.update(data_list, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
-        
 
-        
-#        self.p.ax.set_visible(True)
-#        self.auto_x()
-#        self.auto_y()
-                
-#    def select_view_OLD(self):
-#
-#        if self.input_list_figures.currentIndex() == 0:
-#            N = len(self.dataset.time_data_list)
-#            if N != 0:
-#                self.p.update(self.dataset.time_data_list)
-#                if self.current_view != 'Time':
-#                    self.current_view = 'Time'
-#                    self.label_figure.setText('Time Data')
-#                    self.show_data = True
-#                    self.show_coherence = True
-#                    self.auto_x()
-#                    self.auto_y()
-#                    self.frame_plot_details.setVisible(False)
-#            else:
-#                message = 'No time data to display'
-#                self.show_message(message)
-#                
-#        if self.input_list_figures.currentIndex() == 1:
-#            N = len(self.dataset.freq_data_list)
-#            if N != 0:
-#                self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
-#                if self.current_view != 'FFT':
-#                    self.current_view = 'FFT'
-#                    self.label_figure.setText('FFT Data')
-#                    self.show_data = True
-#                    self.p.ax.set_visible(True)
-#                    self.auto_x()
-#                    self.auto_y()
-#                    self.frame_plot_details.setVisible(True)
-#                    self.button_data_toggle.setVisible(False)
-#                    self.button_coherence_toggle.setVisible(False)
-#                    self.button_modal_fit_toggle.setVisible(False)
-#                    self.label_co_freq_min.setVisible(False)
-#                    self.label_co_freq_max.setVisible(False)
-#                    self.input_co_min.setVisible(False)
-#                    self.input_co_max.setVisible(False)
-#                    
-#            else:
-#                message = 'No FFT data to display'
-#                self.show_message(message)
-#        if self.input_list_figures.currentIndex() == 2:
-#            
-#            N = len(self.dataset.tf_data_list)
-#            if N != 0:
-#                self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
-#                if self.current_view != 'TF':
-#                    self.current_view = 'TF'
-#                    self.label_figure.setText('Transfer Function Data')
-#                    self.show_data = True
-#                    self.show_coherence = True
-#                    self.p.ax.set_visible(True)
-##                    self.p.ax2.set_visible(True)
-#                    self.auto_x()
-#                    self.auto_y()
-#                    self.frame_plot_details.setVisible(True)
-#                    self.button_data_toggle.setVisible(True)
-#                    self.button_coherence_toggle.setVisible(True)
-#                    self.label_co_freq_min.setVisible(True)
-#                    self.label_co_freq_max.setVisible(True)
-#                    self.input_co_min.setVisible(True)
-#                    self.input_co_max.setVisible(True)
-##                    if self.flag_modal_data == True:
-##                        self.button_modal_fit_toggle.setVisible(True)
-##                    else:
-##                        self.button_modal_fit_toggle.setVisible(False)
-#                    
-#            else:
-#                message = 'No transfer function data to display'
-#                self.show_message(message)
-#                
-#        self.canvas.draw()
         
     def select_all_data(self):
         for line in self.p.ax.lines:
@@ -830,67 +752,7 @@ class InteractiveLogging():
     def select_set_chan_list(self):
         for line in self.p.ax.lines:
             line.set_alpha = 1 - plotting.LINE_ALPHA
-    
-#    def select_plot_type(self):
-#        # check what switching from and to, so sensible axis behaviour
-#        plot_type_before = np.copy(self.plot_type)
-#        self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
-#        switch_to_nyquist = (self.plot_type == 'Nyquist') and ('Nyquist' != plot_type_before)
-#        switch_from_nyquist = (plot_type_before == 'Nyquist') and ('Nyquist' != self.plot_type)
-#        
-#        
-#        if switch_to_nyquist == True:
-#            self.freq_range = list(self.p.ax.get_xlim()) #force to list instead of tuple
-#            self.show_coherence_before = np.copy(self.show_coherence)
-#            self.freq_lim_before = self.p.ax.get_xlim()
-#            self.show_coherence = False
-#            self.xlinlog_before = np.copy(self.xlinlog)
-#            self.xlinlog = 'linear'
-#            
-#            self.button_xlinlog.setVisible(False)
-#            self.button_data_toggle.setVisible(False)
-#            self.button_coherence_toggle.setVisible(False)
-#            self.input_co_min.setVisible(False)
-#            self.input_co_max.setVisible(False)
-#            self.input_freq_min.setVisible(True)
-#            self.input_freq_max.setVisible(True)
-#            self.input_freq_min.setText('{:5f}'.format(self.freq_range[0]))
-#            self.input_freq_max.setText('{:5f}'.format(self.freq_range[1]))
-#            self.label_co_freq_min.setText('freq. min:')
-#            self.label_co_freq_max.setText('freq. max:')
-#            
-#        if (self.plot_type != 'Nyquist') and (self.current_view == 'TF'):
-#            self.button_xlinlog.setVisible(True)
-#            self.button_data_toggle.setVisible(True)
-#            self.button_coherence_toggle.setVisible(True)
-#            self.input_co_min.setVisible(True)
-#            self.input_co_max.setVisible(True)
-#            self.input_freq_min.setVisible(False)
-#            self.input_freq_max.setVisible(False)
-#            self.label_co_freq_min.setText('co. min:')
-#            self.label_co_freq_max.setText('co. max:')
-#            
-#        if switch_from_nyquist == True:
-#            self.show_coherence = np.copy(self.show_coherence_before)
-#            self.xlinlog = np.copy(self.xlinlog_before)
-#            
-#        if self.plot_type != 'Nyquist':
-#            self.freq_range = list(self.p.ax.get_xlim()) # force to list instead of tuple
-#        
-#        if self.current_view == 'Time':
-#            self.p.update(self.dataset.time_data_list)
-#        elif self.current_view == 'FFT':
-#            self.p.update(self.dataset.freq_data_list, xlinlog=self.xlinlog, show_coherence=False,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type)
-#        elif self.current_view == 'TF':
-#            self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
-#        
-#        if switch_to_nyquist == True:
-#            self.auto_x()
-#            
-#        if switch_from_nyquist == True:
-#            self.p.ax.set_xlim(self.freq_lim_before)
-#
-#        self.auto_y()            
+           
         
     def co_min(self):
         co_min = np.float(self.input_co_min.text())
@@ -942,6 +804,7 @@ class InteractiveLogging():
             self.xlinlog = 'linear'
         
         self.update_figure_changed_view()
+
         
         
         
@@ -951,7 +814,7 @@ class InteractiveLogging():
 
         if self.current_view == self.selected_view:
             self.current_view_changed = False
-            self.plot_type_before = np.copy(self.plot_type)
+            self.plot_type_before = self.plot_type
             self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
             self.switch_to_nyquist = (self.plot_type == 'Nyquist') and ('Nyquist' != self.plot_type_before)
             self.switch_from_nyquist = (self.plot_type_before == 'Nyquist') and ('Nyquist' != self.plot_type)
@@ -968,9 +831,10 @@ class InteractiveLogging():
                 self.hide_plot_details()
                 # reset data/coherence plot properties if changed view back to time
                 if self.current_view_changed:
-                    self.current_view = np.copy(self.selected_view)
+                    self.current_view = self.selected_view
                     self.show_data = True
                     self.show_coherence = True # won't plot but reests for other selections
+                    self.xlinlog = 'linear'
                     self.auto_xy = 'xy'
                 # plot
                 self.update_figure_changed_view()
@@ -987,7 +851,7 @@ class InteractiveLogging():
             if N != 0:
                 # if main view changed reset plot properties
                 if self.current_view_changed:
-                    self.current_view = np.copy(self.selected_view)
+                    self.current_view = self.selected_view
                     self.show_data = True
                     self.show_coherence = True # won't plot but reests for other selections
                     self.auto_xy = 'xy'
@@ -997,9 +861,9 @@ class InteractiveLogging():
                 elif self.switch_to_nyquist == True:
                     # get properties before switch so can go back to this view
                     self.freq_range = list(self.p.ax.get_xlim()) #force to list instead of tuple
-                    self.show_coherence_before = np.copy(self.show_coherence)
+                    self.show_coherence_before = self.show_coherence
                     self.show_coherence = False
-                    self.xlinlog_before = np.copy(self.xlinlog)
+                    self.xlinlog_before = self.xlinlog
                     # linear x axis for nyquist
                     self.xlinlog = 'linear'
                     # update freq range text
@@ -1010,8 +874,8 @@ class InteractiveLogging():
                     
                 # if moving from nyquist back, reset properties to previous
                 elif self.switch_from_nyquist == True:
-                    self.show_coherence = np.copy(self.show_coherence_before)
-                    self.xlinlog = np.copy(self.xlinlog_before)
+                    self.show_coherence = self.show_coherence_before
+                    self.xlinlog = self.xlinlog_before
                     # freq range already set above as must have moved to nyquist first
                     self.auto_xy = 'fy'
                     
@@ -1046,7 +910,7 @@ class InteractiveLogging():
             if N != 0:
                 # if main view changed reset plot properties
                 if self.current_view_changed:
-                    self.current_view = np.copy(self.selected_view)
+                    self.current_view = self.selected_view
                     self.show_data = True
                     self.show_coherence = True 
                     self.auto_xy = 'xy'
@@ -1055,20 +919,20 @@ class InteractiveLogging():
                 elif self.switch_to_nyquist == True:
                     # get properties before switch so can go back to this view
                     self.freq_range = list(self.p.ax.get_xlim()) #force to list instead of tuple
-                    self.show_coherence_before = np.copy(self.show_coherence)
+                    self.show_coherence_before = self.show_coherence
                     self.show_coherence = False
-                    self.xlinlog_before = np.copy(self.xlinlog)
+                    self.xlinlog_before = self.xlinlog
                     # linear x axis for nyquist
                     self.xlinlog = 'linear'
                     # update freq range text
-                    self.input_freq_min.setText('{:5f}'.format(self.freq_range[0]))
-                    self.input_freq_max.setText('{:5f}'.format(self.freq_range[1]))
+                    self.input_freq_min.setText('{:5g}'.format(self.freq_range[0]))
+                    self.input_freq_max.setText('{:5g}'.format(self.freq_range[1]))
                     self.auto_xy = 'xy'
                 
                 # if moving from nyquist back, reset properties to previous
                 elif self.switch_from_nyquist == True:
-                    self.show_coherence = np.copy(self.show_coherence_before)
-                    self.xlinlog = np.copy(self.xlinlog_before)
+                    self.show_coherence = self.show_coherence_before
+                    self.xlinlog = self.xlinlog_before
                     self.auto_xy = 'fy'
                     # freq range already set above as must have moved to nyquist first
             
@@ -1129,6 +993,7 @@ class InteractiveLogging():
         
     def show_plot_details_basic(self):
         self.frame_plot_details.setVisible(True)
+        self.button_xlinlog.setVisible(True)
         self.button_data_toggle.setVisible(False)
         self.button_coherence_toggle.setVisible(False)
         self.label_co_freq_min.setVisible(False)
