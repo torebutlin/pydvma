@@ -11,6 +11,7 @@ import numpy as np
 from scipy import signal
 import copy
 
+MESSAGE = ''
 
 
 def calculate_fft(time_data,time_range=None,window=None):
@@ -21,7 +22,7 @@ def calculate_fft(time_data,time_range=None,window=None):
         window (bool): apply blackman filter to data before fft or not
     '''
     
-    if not time_data.__class__.__name__ is 'TimeData':
+    if time_data.__class__.__name__ != 'TimeData':
         raise Exception('Input data needs to be single <TimeData> object')
     
 
@@ -59,12 +60,12 @@ def calculate_fft(time_data,time_range=None,window=None):
 
 def multiply_by_power_of_iw(data,power,channel_list):
     
-    if data.__class__.__name__ is 'TfData':
+    if data.__class__.__name__ == 'TfData':
         iw = 1j*2*np.pi * data.freq_axis[:,None]
         if power<0:
             iw[0]=np.inf
         data.tf_data[:,channel_list] = (iw**power) * data.tf_data[:,channel_list]
-    elif data.__class__.__name__ is 'FreqData':
+    elif data.__class__.__name__ == 'FreqData':
         iw = 1j*2*np.pi * data.freq_axis[:,None]
         if power<0:
             iw[0]=np.inf
@@ -82,7 +83,7 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
         freq_range: 2x1 numpy array to specify data segment to use
     '''
     
-    if not tf_data_list.__class__.__name__ is 'TfDataList':
+    if tf_data_list.__class__.__name__ != 'TfDataList':
         raise ValueError('Input data needs to be single <TfData> object')
     
 
@@ -140,7 +141,7 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     if window==None:
         window='boxcar'
         
-    if not time_data.__class__.__name__ is 'TimeData':
+    if time_data.__class__.__name__ != 'TimeData':
         raise Exception('Input data needs to be single <TimeData> object')
 
     if time_range == None:
@@ -207,7 +208,7 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
         window (None or str): type of window to use, default is None.
     '''
     
-    if time_data_list.__class__.__name__ is not 'TimeDataList':
+    if time_data_list.__class__.__name__ != 'TimeDataList':
         raise Exception('Input argument must be <TimeDataList> object.')
 
     id_link_list = []
@@ -247,7 +248,7 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
         N_frames (int): number of frames to average over
         overlap (between 0,1): frame overlap fraction
     '''
-    if not time_data.__class__.__name__ == 'TimeData':
+    if time_data.__class__.__name__ != 'TimeData':
         raise Exception('Input data needs to be single <TimeData> object')
 
 
@@ -348,38 +349,50 @@ def clean_impulse(time_data, ch_impulse=0):
     
     Data before peak is unchanged. Data after estimated end of impulse is ramped to zero using half cosine pulse of width 10x estimated pulse width.
     '''
-    y = copy.deepcopy(time_data.time_data[:,ch_impulse])
-    yi_max = np.argmax(np.abs(y))
-    y_max = np.max(np.abs(y))
-    yi_out = np.where(np.abs(y)<y_max/2)[0]
-    yi_out1 = yi_out[yi_out < yi_max]
-    yi_out2 = yi_out[yi_out > yi_max]
-    y1 = yi_out1[-1]
-    y2 = yi_out2[0]
+    global MESSAGE
+    if not hasattr(time_data,'impulse_cleaned'):
+        time_data.impulse_cleaned = False
     
+    if time_data.impulse_cleaned == False:    
+        y = copy.deepcopy(time_data.time_data[:,ch_impulse])
+        yi_max = np.argmax(np.abs(y))
+        y_max = np.max(np.abs(y))
+        yi_out = np.where(np.abs(y)<y_max/2)[0]
+        yi_out1 = yi_out[yi_out < yi_max]
+        yi_out2 = yi_out[yi_out > yi_max]
+        y1 = yi_out1[-1]
+        y2 = yi_out2[0]
+        
+        
+        N = y2-y1
+        b = np.int(3*N/2) #half cosine estimate
+        end = np.int(yi_max + b/2)
+        b = 10*b # less agressive roll off
+        #print(time_data.settings.fs/b)
     
-    N = y2-y1
-    b = np.int(3*N/2) #half cosine estimate
-    end = np.int(yi_max + b/2)
-    b = 10*b # less agressive roll off
-    #print(time_data.settings.fs/b)
-
-    ramp = np.hanning(2*b+1)    
-    win = np.ones(len(y))
-    win[end:end+b+1] = ramp[b:2*b+1]
-    win[end+b:] = 0
+        ramp = np.hanning(2*b+1)    
+        win = np.ones(len(y))
+        win[end:end+b+1] = ramp[b:2*b+1]
+        win[end+b:] = 0
+        
+        y2 = win * y
+        
+        td = copy.deepcopy(time_data)
+        td.time_data[:,ch_impulse] = y2
+        td.impulse_cleaned = True
+        
+        yd = y2-y
+        if np.max(np.abs(yd)) > 0.1*np.max(np.abs(y)):
+            MESSAGE = 'Cleaned impulse data contained significant signal content: check for possible multiple impacts, or correct channel using ch_impulse.'
+        else:
+            MESSAGE = 'Impulse data cleaned.'
+        print(MESSAGE)
+        
+        return td
     
-    y2 = win * y
-    
-    td = copy.deepcopy(time_data)
-    td.time_data[:,ch_impulse] = y2
-    
-    yd = y2-y
-    if np.max(np.abs(yd)) > 0.1*np.max(np.abs(y)):
-        print('Cleaned impulse data contained significant signal content: check for possible multiple impacts, or correct channel using ch_impulse.')
-    
-    
-    return td
+    else:
+        print('Impulse data already cleaned. Returning copy of input data.')
+        return time_data
 
     
     

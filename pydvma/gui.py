@@ -24,7 +24,6 @@ import numpy as np
 
 #%%
 
-
 class BlueButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
@@ -86,16 +85,18 @@ class LogDataThread(QThread):
         self.s.emit(self.d)
         
 
-class InteractiveLogging():
+class InteractiveLogger():
+        
     def __init__(self,settings=None,test_name=None,default_window='hanning'):
         
         # Initialise variables
+        global MESSAGE
         if default_window is None:
             default_window = 'None'
         self.settings = settings
         self.test_name = test_name
         self.dataset = datastructure.DataSet()
-       
+        
         
         self.current_view = 'Time'    
         self.N_frames = 1
@@ -110,6 +111,7 @@ class InteractiveLogging():
         self.plot_type = None
         self.freq_range = [0,np.inf]
         self.auto_xy = 'xy'
+        self.last_action = None
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -219,17 +221,20 @@ class InteractiveLogging():
     def setup_frame_message(self):
         self.label_message = QLabel()
         self.button_message = GreenButton('OK')
-        self.button_cancel = RedButton('Cancel')
+        self.button_cancel = OrangeButton('Cancel')
+        self.button_undo = RedButton('Undo')
         
         # function connections
         self.button_message.clicked.connect(self.hide_message)
         self.button_cancel.clicked.connect(self.cancel_logging)
+        self.button_undo.clicked.connect(self.undo_last_action)
         
         self.layout_message = QGridLayout()
         
         self.layout_message.addWidget(self.label_message,0,0,1,3)
         self.layout_message.addWidget(self.button_message,0,3,1,1)
         self.layout_message.addWidget(self.button_cancel,0,3,1,1)
+        self.layout_message.addWidget(self.button_undo,0,3,1,1)
         self.layout_message.setAlignment(Qt.AlignTop)
         
         self.frame_message = QFrame()
@@ -438,6 +443,8 @@ class InteractiveLogging():
     def setup_frame_tools_time_domain(self):
         
         self.button_clean_impulse = BlueButton('Clean Impulse')
+        self.button_clean_impulse.clicked.connect(self.clean_impulse)
+        
         self.input_impulse_channel = QLineEdit('0')
         self.input_impulse_channel.setValidator(QIntValidator(0,1000))
         self.layout_tools_time_domain = QGridLayout()
@@ -535,15 +542,22 @@ class InteractiveLogging():
             self.update_tool_selection()
 
     def show_message(self,message,b='ok'):
-        self.label_message.setText(message)
-        if b == 'ok':
-            self.button_message.setVisible(True)
-            self.button_cancel.setVisible(False)
-        elif b == 'cancel':
-            self.button_message.setVisible(False)
-            self.button_cancel.setVisible(True)
-            
-        self.frame_message.setVisible(True)
+        if message != '':
+            self.label_message.setText(message)
+            if b == 'ok':
+                self.button_message.setVisible(True)
+                self.button_cancel.setVisible(False)
+                self.button_undo.setVisible(False)
+            elif b == 'cancel':
+                self.button_message.setVisible(False)
+                self.button_cancel.setVisible(True)
+                self.button_undo.setVisible(False)
+            elif b == 'undo':
+                self.button_message.setVisible(False)
+                self.button_cancel.setVisible(False)
+                self.button_undo.setVisible(True)
+                
+            self.frame_message.setVisible(True)
         
         
     def hide_message(self):
@@ -723,9 +737,7 @@ class InteractiveLogging():
         self.canvas.draw()
         
         
-        
-        
-    def update_figure_changed_view(self):
+    def update_figure(self):
         if self.current_view == 'Time Data':
             data_list = self.dataset.time_data_list
         elif self.current_view == 'FFT Data':
@@ -807,10 +819,8 @@ class InteractiveLogging():
         else:
             self.xlinlog = 'linear'
         
-        self.update_figure_changed_view()
+        self.update_figure()
 
-        
-        
         
     def select_view(self):
         ci = self.input_list_figures.currentIndex()
@@ -841,7 +851,7 @@ class InteractiveLogging():
                     self.xlinlog = 'linear'
                     self.auto_xy = 'xy'
                 # plot
-                self.update_figure_changed_view()
+                self.update_figure()
                 
             # show message if no data
             else:
@@ -899,7 +909,7 @@ class InteractiveLogging():
                 else:
                     self.show_plot_details_basic()
                     
-                self.update_figure_changed_view()
+                self.update_figure()
 
                 
             # show message if no data to plot
@@ -946,7 +956,7 @@ class InteractiveLogging():
                     self.auto_xy = 'fy'
 
                 # plot now then auto-x/y according to nyquist or not
-                self.update_figure_changed_view()
+                self.update_figure()
 
                     
                 # set gui to correct toolset
@@ -966,7 +976,10 @@ class InteractiveLogging():
         self.frame_plot_details.setVisible(False)
         
     def show_plot_details_with_coherence(self):
-        self.frame_plot_details.setVisible(True)
+        # Put Falses before Trues
+        self.input_freq_min.setVisible(False)
+        self.input_freq_max.setVisible(False)        
+
         self.button_xlinlog.setVisible(True)
         self.button_data_toggle.setVisible(True)
         self.button_coherence_toggle.setVisible(True)
@@ -977,27 +990,31 @@ class InteractiveLogging():
         
         self.input_co_min.setVisible(True)
         self.input_co_max.setVisible(True)
-        self.input_freq_min.setVisible(False)
-        self.input_freq_max.setVisible(False)        
-
-    def show_plot_details_with_nqyuist(self):
+        
         self.frame_plot_details.setVisible(True)
+        
+        
+    def show_plot_details_with_nqyuist(self):
+        # Put Falses before Trues
         self.button_xlinlog.setVisible(False)
         self.button_data_toggle.setVisible(False)
         self.button_coherence_toggle.setVisible(False)
+        self.input_co_min.setVisible(False)
+        self.input_co_max.setVisible(False)
+        
         self.label_co_freq_min.setVisible(True)
         self.label_co_freq_max.setVisible(True)
         self.label_co_freq_min.setText('freq. min:')
         self.label_co_freq_min.setText('freq. max:')
         
-        self.input_co_min.setVisible(False)
-        self.input_co_max.setVisible(False)
         self.input_freq_min.setVisible(True)
         self.input_freq_max.setVisible(True)
+
+        self.frame_plot_details.setVisible(True)
+        
         
     def show_plot_details_basic(self):
-        self.frame_plot_details.setVisible(True)
-        self.button_xlinlog.setVisible(True)
+        # put Falses before Trues
         self.button_data_toggle.setVisible(False)
         self.button_coherence_toggle.setVisible(False)
         self.label_co_freq_min.setVisible(False)
@@ -1008,31 +1025,29 @@ class InteractiveLogging():
         self.input_freq_min.setVisible(False)
         self.input_freq_max.setVisible(False)
         
+        self.button_xlinlog.setVisible(True)
+        self.frame_plot_details.setVisible(True)
+
+    def clean_impulse(self):
+        try:
+            ch_impulse = np.int(self.input_impulse_channel.text())
+            dataset_new = self.dataset.clean_impulse(ch_impulse=ch_impulse)
+            self.dataset_backup = self.dataset
+            self.dataset = dataset_new
+            self.show_message(analysis.MESSAGE,b='undo')
+            self.last_action = 'clean_impulse'
+        except:
+            analysis.MESSAGE = 'Clean impulse not successful, no change made.\n'
+            analysis.MESSAGE += 'Check if ch_{} exists for each set of data.'.format(ch_impulse)
+            self.show_message(analysis.MESSAGE,b='ok')
+            
+            
         
-        
-#    def show_coherence_tools(self):
-#        
-#    def hide_coherence_tools(self):
-#        
-#    def show_nyquist_tools(self):
-#        
-#    def hide_nyquist_tools(self):
-        
-        
-#    def update_plot(self):
-#        ci = self.input_list_figures.currentIndex()
-#        self.selected_view = self.input_list_figures.itemText(ci)
-#        if self.selected_view == 'Time Data':
-#            data_list = self.dataset.time_data_list
-#        elif self.selected_view == 'FFT Data':
-#            data_list = self.dataset.freq_data_list
-#        elif self.selected_view == 'TF Data':
-#            data_list = self.dataset.tf_data_list
-#        else:
-#            data_list = None
-#        
-#        if data_list is not None:
-#            self.p.update(data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
+    def undo_last_action(self):
+        if self.last_action == 'clean_impulse':
+            self.dataset = self.dataset_backup
+            self.update_figure()
+            
         
 sys._excepthook = sys.excepthook 
 def exception_hook(exctype, value, traceback):
