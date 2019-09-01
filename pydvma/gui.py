@@ -665,12 +665,16 @@ class InteractiveLogging():
         xmin = np.float(self.input_axes[0].text())
         xlim = self.p.ax.get_xlim()
         self.p.ax.set_xlim([xmin,xlim[1]])
+        if (self.current_view == 'TF Data') or (self.current_view == 'FFT Data'):
+            self.freq_range = list(self.p.ax.get_xlim())
         self.canvas.draw()
         
     def xmax(self):
         xmax = np.float(self.input_axes[1].text())
         xlim = self.p.ax.get_xlim()
         self.p.ax.set_xlim([xlim[0],xmax])
+        if (self.current_view == 'TF Data') or (self.current_view == 'FFT Data'):
+            self.freq_range = list(self.p.ax.get_xlim())
         self.canvas.draw()
         
     def ymin(self):
@@ -768,11 +772,11 @@ class InteractiveLogging():
         
     def freq_min(self):
         self.freq_range[0] = np.float(self.input_freq_min.text())
-        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
+        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         
     def freq_max(self):
         self.freq_range[1] = np.float(self.input_freq_max.text())
-        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range)
+        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         
     def update_co_axes_values(self,axes):
         ylim = self.p.ax2.get_ylim()
@@ -925,8 +929,8 @@ class InteractiveLogging():
                     # linear x axis for nyquist
                     self.xlinlog = 'linear'
                     # update freq range text
-                    self.input_freq_min.setText('{:5g}'.format(self.freq_range[0]))
-                    self.input_freq_max.setText('{:5g}'.format(self.freq_range[1]))
+                    self.input_freq_min.setText('{:0.5g}'.format(self.freq_range[0]))
+                    self.input_freq_max.setText('{:0.5g}'.format(self.freq_range[1]))
                     self.auto_xy = 'xy'
                 
                 # if moving from nyquist back, reset properties to previous
