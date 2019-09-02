@@ -236,7 +236,7 @@ class InteractiveLogger():
         self.layout_message.addWidget(self.label_message,0,0,1,3)
         self.layout_message.addWidget(self.button_message,0,3,1,1)
         self.layout_message.addWidget(self.button_cancel,0,3,1,1)
-        self.layout_message.addWidget(self.button_undo,0,3,1,1)
+        self.layout_message.addWidget(self.button_undo,1,3,1,1)
         self.layout_message.setAlignment(Qt.AlignTop)
         
         self.frame_message = QFrame()
@@ -461,8 +461,9 @@ class InteractiveLogger():
 
     def setup_frame_tools_fft(self):
         
-        self.input_list_window = newComboBox(['None','hanning'])
+        self.input_list_window = newComboBox(['None','hann'])
         self.button_FFT = BlueButton('Calc FFT')
+        self.button_FFT.clicked.connect(self.calc_fft)
         
         self.layout_tools_fft = QGridLayout()
         self.layout_tools_fft.addWidget(boldLabel('FFT:'),0,0,1,3)
@@ -477,6 +478,8 @@ class InteractiveLogger():
         self.input_list_window = newComboBox(['None','hanning'])
         self.input_list_average_TF = newComboBox(['None','within each set','across sets'])
         self.button_TF = BlueButton('Calc TF')
+        self.button_TF.clicked.connect(self.calc_tf)
+        
         self.input_Nframes = QLineEdit()
         self.input_Nframes.setValidator(QIntValidator(1,1000))
         self.input_Nframes.setText('1')
@@ -484,6 +487,7 @@ class InteractiveLogger():
         self.slider_Nframes.setMinimum(1)
         self.slider_Nframes.setMaximum(30)
         self.button_TFav = BlueButton('Calc TF average')
+        self.button_TFav.clicked.connect(self.calc_tf_av)
         
         
         self.layout_tools_tf = QGridLayout()
@@ -525,6 +529,11 @@ class InteractiveLogger():
 
     #%% INTERACTION FUNCTIONS
     
+    def show(self):
+        # allow logger to be opened again after closing
+        self.window.showMinimized()
+        self.window.showNormal()
+    
     def start_stream(self):
         if self.settings != None:
             try:
@@ -555,7 +564,7 @@ class InteractiveLogger():
                 self.button_cancel.setVisible(True)
                 self.button_undo.setVisible(False)
             elif b == 'undo':
-                self.button_message.setVisible(False)
+                self.button_message.setVisible(True)
                 self.button_cancel.setVisible(False)
                 self.button_undo.setVisible(True)
                 
@@ -564,10 +573,8 @@ class InteractiveLogger():
         
     def hide_message(self):
         self.frame_message.setVisible(False)
-            
-    def update_tool_selection(self):
-        pass
-            
+      
+        
 
     def button_clicked_log_data(self):
         
@@ -598,6 +605,7 @@ class InteractiveLogger():
         self.channels = 'all'
         self.input_list_figures.setCurrentIndex(0)
         self.select_view()
+        self.p.ax.set_ylim([-1,1])
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
         self.hide_message()
         
@@ -747,6 +755,7 @@ class InteractiveLogger():
         
         
     def update_figure(self):
+        # updates the currently viewed plot
         if self.current_view == 'Time Data':
             data_list = self.dataset.time_data_list
         elif self.current_view == 'FFT Data':
@@ -828,9 +837,14 @@ class InteractiveLogger():
             self.xlinlog = 'linear'
         
         self.update_figure()
-
+    
+    def switch_view(self,new_view_text):
+        index = self.input_list_figures.findText(new_view_text, Qt.MatchFixedString)
+        if index >= 0:
+            self.input_list_figures.setCurrentIndex(index)
         
     def select_view(self):
+        # handles logic of what to show in gui depending on selected view options
         ci = self.input_list_figures.currentIndex()
         self.selected_view = self.input_list_figures.itemText(ci)
 
@@ -1055,6 +1069,37 @@ class InteractiveLogger():
         if self.last_action == 'clean_impulse':
             self.dataset = self.dataset_backup
             self.update_figure()
+            
+    def calc_fft(self):
+        window = self.input_list_window.currentText()
+        if window == 'None':
+            window = None
+        
+        # HANNING CHOICE MAKING NO DIFF ATM
+        self.dataset.calculate_fft_set(window=window)
+        self.switch_view('FFT Data')
+        self.select_view()
+        print('done')
+        
+    def calc_tf(self):
+        self.N_frames = np.int(self.input_Nframes.currentText())
+        window = self.input_list_window.currentText()
+        if window == 'None':
+            window = None
+    
+        self.dataset.calculate_tf_set(window=window,N_frames=self.N_frames,overlap=self.overlap)
+        self.switch_view('TF Data')
+        self.select_view()
+    
+    def calc_tf_av(self,b):
+        window = self.input_list_window.currentText()
+        if window == 'None':
+            window = None
+    
+        self.dataset.calculate_tf_averaged(window=window)
+        
+        self.switch_view('TF Data')
+        self.select_view()
             
         
 sys._excepthook = sys.excepthook 
