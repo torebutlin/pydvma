@@ -6,3 +6,4 @@ build/
 dist/
 pydvma.egg-info/
 .spyproject/
+example.log

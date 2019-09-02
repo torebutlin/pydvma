@@ -15,7 +15,8 @@ import datetime
 import uuid
 import copy
 
-
+#%% version
+VERSION = '0.5.2' # keep in sync with setup.py
 
     
 #%% Data structure
@@ -33,6 +34,8 @@ class DataSet():
         
         if not data == None:
             self.add_to_dataset(data)
+            
+        self.version = VERSION
             
         
     def add_to_dataset(self,data):
