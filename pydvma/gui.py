@@ -461,21 +461,21 @@ class InteractiveLogger():
 
     def setup_frame_tools_fft(self):
         
-        self.input_list_window = newComboBox(['None','hann'])
+        self.input_list_window_fft = newComboBox(['None','hann'])
         self.button_FFT = BlueButton('Calc FFT')
         self.button_FFT.clicked.connect(self.calc_fft)
         
         self.layout_tools_fft = QGridLayout()
         self.layout_tools_fft.addWidget(boldLabel('FFT:'),0,0,1,3)
         self.layout_tools_fft.addWidget(QLabel('window:'),1,0,1,1)
-        self.layout_tools_fft.addWidget(self.input_list_window,1,1,1,2)
+        self.layout_tools_fft.addWidget(self.input_list_window_fft,1,1,1,2)
         self.layout_tools_fft.addWidget(self.button_FFT,2,0,1,3)
         
         self.frame_tools_fft = QFrame()
         self.frame_tools_fft.setLayout(self.layout_tools_fft)
 
     def setup_frame_tools_tf(self):
-        self.input_list_window = newComboBox(['None','hanning'])
+        self.input_list_window_tf = newComboBox(['None','hann'])
         self.input_list_average_TF = newComboBox(['None','within each set','across sets'])
         self.button_TF = BlueButton('Calc TF')
         self.button_TF.clicked.connect(self.calc_tf)
@@ -483,9 +483,15 @@ class InteractiveLogger():
         self.input_Nframes = QLineEdit()
         self.input_Nframes.setValidator(QIntValidator(1,1000))
         self.input_Nframes.setText('1')
+        self.input_Nframes.editingFinished.connect(self.refresh_Nframes_slider)
+        self.input_Nframes.editingFinished.connect(self.calc_tf)
+        
         self.slider_Nframes = QSlider(Qt.Horizontal)
         self.slider_Nframes.setMinimum(1)
         self.slider_Nframes.setMaximum(30)
+        self.slider_Nframes.valueChanged.connect(self.refresh_Nframes_text)
+        self.slider_Nframes.valueChanged.connect(self.calc_tf)
+        
         self.button_TFav = BlueButton('Calc TF average')
         self.button_TFav.clicked.connect(self.calc_tf_av)
         
@@ -493,7 +499,7 @@ class InteractiveLogger():
         self.layout_tools_tf = QGridLayout()
         self.layout_tools_tf.addWidget(boldLabel('Transfer Function:'),0,0,1,3)
         self.layout_tools_tf.addWidget(QLabel('window:'),1,0,1,1)
-        self.layout_tools_tf.addWidget(self.input_list_window,1,1,1,2)
+        self.layout_tools_tf.addWidget(self.input_list_window_tf,1,1,1,2)
         self.layout_tools_tf.addWidget(QLabel('average:'),2,0,1,1)
         self.layout_tools_tf.addWidget(self.input_list_average_TF,2,1,1,2)
         self.layout_tools_tf.addWidget(QLabel('N frames:'),3,0,1,1)
@@ -721,14 +727,18 @@ class InteractiveLogger():
         self.canvas.draw()
         
     def auto_x(self):
-        self.p.auto_x()
-        self.update_axes_values([])
+        self.auto_xy = 'x'
+        self.update_figure()
+#        self.p.auto_x()
+#        self.update_axes_values([])
         
     def auto_y(self):
-        self.p.auto_y()
-        self.p.ax2.set_ylim([0,1])
-        self.update_axes_values([])
-        self.update_co_axes_values([])
+        self.auto_xy = 'yc'
+        self.update_figure()
+#        self.p.auto_y()
+#        self.p.ax2.set_ylim([0,1])
+#        self.update_axes_values([])
+#        self.update_co_axes_values([])
         
     def update_axes_values(self,axes):
         xlim = self.p.ax.get_xlim()
@@ -840,7 +850,13 @@ class InteractiveLogger():
     
     def switch_view(self,new_view_text):
         index = self.input_list_figures.findText(new_view_text, Qt.MatchFixedString)
-        if index >= 0:
+        if self.input_list_figures.itemText(index) == 'Time Data':
+            N = len(self.dataset.time_data_list)
+        elif self.input_list_figures.itemText(index) == 'FFT Data':
+            N = len(self.dataset.freq_data_list)
+        elif self.input_list_figures.itemText(index) == 'TF Data':
+            N = len(self.dataset.tf_data_list)
+        if N > 0:
             self.input_list_figures.setCurrentIndex(index)
         
     def select_view(self):
@@ -871,7 +887,7 @@ class InteractiveLogger():
                     self.show_data = True
                     self.show_coherence = True # won't plot but reests for other selections
                     self.xlinlog = 'linear'
-                    self.auto_xy = 'xy'
+                    self.auto_xy = 'xyc'
                 # plot
                 self.update_figure()
                 
@@ -890,7 +906,7 @@ class InteractiveLogger():
                     self.current_view = self.selected_view
                     self.show_data = True
                     self.show_coherence = True # won't plot but reests for other selections
-                    self.auto_xy = 'xy'
+                    self.auto_xy = 'xyc'
                     
                 
                 # if staying as FFT plot but changing to nyquist then switch to FFT Nyquist toolset
@@ -949,7 +965,7 @@ class InteractiveLogger():
                     self.current_view = self.selected_view
                     self.show_data = True
                     self.show_coherence = True 
-                    self.auto_xy = 'xy'
+                    self.auto_xy = 'xyc'
                 
                 # if staying as TF plot but changing to nyquist then switch to TF Nyquist toolset
                 elif self.switch_to_nyquist == True:
@@ -1071,35 +1087,64 @@ class InteractiveLogger():
             self.update_figure()
             
     def calc_fft(self):
-        window = self.input_list_window.currentText()
-        if window == 'None':
-            window = None
+        if len(self.dataset.time_data_list) == 0:
+            message = 'No time data to calculate transfer function.'
+            self.show_message(message)
         
-        # HANNING CHOICE MAKING NO DIFF ATM
-        self.dataset.calculate_fft_set(window=window)
-        self.switch_view('FFT Data')
-        self.select_view()
-        print('done')
+        else:
+            window = self.input_list_window_fft.currentText()
+            if window == 'None':
+                window = None
+            
+            self.dataset.calculate_fft_set(window=window)
+            self.switch_view('FFT Data')
+            self.select_view()
+            
+     
+    def refresh_Nframes_text(self):
+        self.input_Nframes.setText(str(self.slider_Nframes.value()))
+        
+    def refresh_Nframes_slider(self):
+        self.slider_Nframes.setValue(np.int(self.input_Nframes.text()))
         
     def calc_tf(self):
-        self.N_frames = np.int(self.input_Nframes.currentText())
-        window = self.input_list_window.currentText()
-        if window == 'None':
-            window = None
-    
-        self.dataset.calculate_tf_set(window=window,N_frames=self.N_frames,overlap=self.overlap)
-        self.switch_view('TF Data')
-        self.select_view()
+        if len(self.dataset.time_data_list) == 0:
+            message = 'No time data to calculate transfer function.'
+            self.show_message(message)
+        
+        else:
+            self.N_frames = np.int(self.input_Nframes.text())
+            window = self.input_list_window_tf.currentText()
+            if window == 'None':
+                window = None
+
+            self.dataset.calculate_tf_set(window=window,N_frames=self.N_frames,overlap=self.overlap)
+            if self.current_view != 'TF Data':
+                self.switch_view('TF Data')
+                self.select_view()
+            else:
+                self.auto_xy = ''
+                self.update_figure()
+            
     
     def calc_tf_av(self,b):
-        window = self.input_list_window.currentText()
-        if window == 'None':
-            window = None
-    
-        self.dataset.calculate_tf_averaged(window=window)
+        if len(self.dataset.time_data_list) == 0:
+            message = 'No data to calculate FFT.'
+            self.show_message(message)
         
-        self.switch_view('TF Data')
-        self.select_view()
+        else:
+            window = self.input_list_window_tf.currentText()
+            if window == 'None':
+                window = None
+        
+            self.dataset.calculate_tf_averaged(window=window)
+            
+            if self.current_view != 'TF Data':
+                self.switch_view('TF Data')
+                self.select_view()
+            else:
+                self.auto_xy = ''
+                self.update_figure()
             
         
 sys._excepthook = sys.excepthook 

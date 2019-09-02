@@ -69,7 +69,6 @@ class PlotData():
             
             if show_coherence == True:
                 self.ax2.set_ylabel('Coherence')
-                self.ax2.set_ylim([0,1])
                 self.ax2.set_visible(True)
             else:
                 self.ax2.set_ylabel('')
@@ -207,6 +206,8 @@ class PlotData():
         if 'f' in auto_xy: # use freq_range for x axis
             self.ax.set_xlim(freq_range)
             self.auto_y()
+        if 'c' in auto_xy: # auto coherence y
+            self.ax2.set_ylim([0,1])
             
 #        self.ax.xaxis.set_major_locator(AutoLocator())
 #        self.ax.yaxis.set_major_locator(AutoLocator())
