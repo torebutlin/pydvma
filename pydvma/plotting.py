@@ -27,11 +27,10 @@ class PlotData():
             self.canvas = canvas
             self.ax = self.canvas.figure.subplots()
 
-            self.ax2 = self.ax.twinx()
-            self.ax2.set_visible(False)
-#            self.ax2.set_zorder(0)
-            self.ax.set_zorder(self.ax2.get_zorder()+1)
-            self.ax.patch.set_visible(False)
+        self.ax2 = self.ax.twinx()
+        self.ax2.set_visible(False)
+        self.ax.set_zorder(self.ax2.get_zorder()+1)
+        self.ax.patch.set_visible(False)
 
         self.ax.lines=[]
         self.ax2.lines=[]

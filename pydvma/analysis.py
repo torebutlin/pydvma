@@ -383,7 +383,8 @@ def clean_impulse(time_data, ch_impulse=0):
         
         yd = y2-y
         if np.max(np.abs(yd)) > 0.1*np.max(np.abs(y)):
-            MESSAGE = 'Cleaned impulse data contained significant signal content: check for possible multiple impacts, or correct channel using ch_impulse.'
+            MESSAGE = 'Cleaned impulse data contained significant signal content.\n'
+            MESSAGE += 'Check for possible multiple impacts, or correct channel using ch_impulse.'
         else:
             MESSAGE = 'Impulse data cleaned.'
         print(MESSAGE)

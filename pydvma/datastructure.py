@@ -18,6 +18,19 @@ import copy
 #%% version
 VERSION = '0.5.2' # keep in sync with setup.py
 
+def update_dataset(dataset):
+    dataset_new = DataSet()
+    dataset_new.add_to_dataset(dataset.time_data_list)
+    dataset_new.add_to_dataset(dataset.freq_data_list)
+    dataset_new.add_to_dataset(dataset.tf_data_list)
+    dataset_new.add_to_dataset(dataset.cross_spec_data_list)
+    dataset_new.add_to_dataset(dataset.sono_data_list)
+    dataset_new.add_to_dataset(dataset.meta_data_list)
+    try:
+        dataset_new.add_to_dataset(dataset.modal_data_list)
+    except:
+        pass
+    return dataset_new
     
 #%% Data structure
 class DataSet():
@@ -35,7 +48,7 @@ class DataSet():
         if not data == None:
             self.add_to_dataset(data)
             
-        self.version = VERSION
+        self.pydvma_version = VERSION
             
         
     def add_to_dataset(self,data):
@@ -309,6 +322,8 @@ class DataSet():
             if N <= 3:
                 text += template.format(attr,dataset_dict[attr])
                 text += '\n'
+            elif attr == 'pydvma_version':
+                pass#text += template.format('pydvma_version',str(self.pydvma_version))
             else:
                 text += template.format(attr,'[' + str(dataset_dict[attr][0]) + ',... (x' + str(N) + ')]')
                 text += '\n'

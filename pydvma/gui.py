@@ -111,6 +111,8 @@ class InteractiveLogger():
         self.plot_type = None
         self.freq_range = [0,np.inf]
         self.auto_xy = 'xy'
+        self.sets = 'all'
+        self.channels = 'all'
         self.last_action = None
         
         # SETUP GUI
@@ -592,13 +594,10 @@ class InteractiveLogger():
     def add_logged_data(self,d):
         self.dataset.add_to_dataset(d.time_data_list)
         N = len(self.dataset.time_data_list)
-        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
-        
-        self.auto_x()
-#            self.auto_y()
-        self.p.ax.set_ylim([-1,1])
-        self.canvas.draw()
-        self.current_view='Time'
+        self.sets = [N-1]
+        self.channels = 'all'
+        self.input_list_figures.setCurrentIndex(0)
+        self.select_view()
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
         self.hide_message()
         
@@ -606,22 +605,26 @@ class InteractiveLogger():
         self.thread.terminate()
         self.show_message('Logging cancelled')
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
-
+        
 
     def delete_last_data(self):
         self.dataset.remove_last_data_item('TimeData')
         self.dataset.freq_data_list = datastructure.FreqDataList()
         self.dataset.tf_data_list = datastructure.TfDataList()
         N = len(self.dataset.time_data_list)
-        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
-        self.canvas.draw()
+        self.sets = [N-1]
+        self.channels = 'all'
+        self.input_list_figures.setCurrentIndex(0)
+        self.select_view()
         
     def reset_data(self):
         
         self.dataset = datastructure.DataSet()
         N = len(self.dataset.time_data_list)
         self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
-        self.canvas.draw()
+        self.input_list_figures.setCurrentIndex(0)
+        self.select_view()
+
     
     def load_data(self):
         d = file.load_data()
@@ -631,6 +634,12 @@ class InteractiveLogger():
             self.dataset.add_to_dataset(d.tf_data_list)
             self.dataset.add_to_dataset(d.cross_spec_data_list)
             self.dataset.add_to_dataset(d.sono_data_list)
+            self.dataset.add_to_dataset(d.meta_data_list)
+            try:
+                self.dataset.add_to_dataset(d.modal_data_list)
+            except:
+                pass
+            
         else:
             message = 'No data loaded'
             self.show_message(message)
@@ -746,8 +755,7 @@ class InteractiveLogger():
             data_list = self.dataset.tf_data_list
 
         self.label_figure.setText(self.selected_view)
-        self.p.update(data_list, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
-
+        self.p.update(data_list, sets=self.sets, channels=self.channels, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         
     def select_all_data(self):
         for line in self.p.ax.lines:
@@ -1036,13 +1044,13 @@ class InteractiveLogger():
             self.dataset = dataset_new
             self.show_message(analysis.MESSAGE,b='undo')
             self.last_action = 'clean_impulse'
+            self.update_figure()
         except:
             analysis.MESSAGE = 'Clean impulse not successful, no change made.\n'
             analysis.MESSAGE += 'Check if ch_{} exists for each set of data.'.format(ch_impulse)
             self.show_message(analysis.MESSAGE,b='ok')
             
             
-        
     def undo_last_action(self):
         if self.last_action == 'clean_impulse':
             self.dataset = self.dataset_backup
