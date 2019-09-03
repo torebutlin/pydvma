@@ -114,6 +114,9 @@ class InteractiveLogger():
         self.sets = 'all'
         self.channels = 'all'
         self.last_action = None
+        self.iw_power = 0
+        self.selected_channels = []
+        self.flag_iw = False
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -514,16 +517,23 @@ class InteractiveLogger():
     def setup_frame_tools_scaling(self):
         self.input_iw_power = QLineEdit('0')
         self.input_iw_power.setValidator(QIntValidator(0,2))
+        
+        self.button_xiw = BlueButton('x (iw)')
+        self.button_diw = BlueButton('x 1/(iw)')
+        self.button_xiw.clicked.connect(self.xiw)
+        self.button_diw.clicked.connect(self.diw)
 
         self.button_best_match = BlueButton('Best Match')
-        
+        self.button_undo_scaling = RedButton('Undo All Scaling')
+        self.button_undo_scaling.clicked.connect(self.undo_scaling)        
         
         self.layout_tools_scaling = QGridLayout()
-        self.layout_tools_scaling.addWidget(boldLabel('Calibration / Scaling:'),0,0,1,3)
-        self.layout_tools_scaling.addWidget(QLabel('iw power:'),1,0,1,1)
-        self.layout_tools_scaling.addWidget(self.input_iw_power,1,1,1,2)
+        self.layout_tools_scaling.addWidget(boldLabel('Calibration / Scaling:'),0,0,1,4)
+        self.layout_tools_scaling.addWidget(self.button_xiw,1,0,1,2)
+        self.layout_tools_scaling.addWidget(self.button_diw,1,2,1,2)
         
-        self.layout_tools_scaling.addWidget(self.button_best_match,2,0,1,3)
+        self.layout_tools_scaling.addWidget(self.button_best_match,2,0,1,4)
+        self.layout_tools_scaling.addWidget(self.button_undo_scaling,3,0,1,4)
         
         self.frame_tools_scaling = QFrame()
         self.frame_tools_scaling.setLayout(self.layout_tools_scaling)
@@ -1085,6 +1095,9 @@ class InteractiveLogger():
         if self.last_action == 'clean_impulse':
             self.dataset = self.dataset_backup
             self.update_figure()
+        if self.last_action == 'scaling':
+            self.dataset = self.dataset_backup
+            self.update_figure()
             
     def calc_fft(self):
         if len(self.dataset.time_data_list) == 0:
@@ -1145,7 +1158,72 @@ class InteractiveLogger():
             else:
                 self.auto_xy = ''
                 self.update_figure()
+        
+    def xiw(self):
+        power = 1
+        self.xiwp(power)
+        
+    def diw(self):
+        power = -1
+        self.xiwp(power)
+
+
+        
+    def xiwp(self,power):
+        if self.flag_iw == False:
+                # create backup before any changes made - used to reset
+                self.dataset_backup = self.dataset
+                
+        if self.current_view == 'FFT Data':
+            data_list = self.dataset.freq_data_list
+        elif self.current_view == 'TF Data':
+            data_list = self.dataset.tf_data_list
+        else:
+            message = 'First select ''FFT Data'' or ''TF Data''.'
+            self.show_message(message)
+            return None
+        if len(data_list) > 0:            
+            s = self.p.get_selected_channels()
+            if np.shape(self.selected_channels) != np.shape(s):
+                # reset gui's iw_power record if changed selection
+                self.iw_fft_power = 0
+                self.selected_channels = s
+            elif (self.selected_channels != s).any():
+                # reset gui's iw_power record if changed selection - two ways this can change
+                self.iw_fft_power = 0
+                self.selected_channels = s
+                
+            n_sets,n_chans = np.shape(s)
+            for ns in range(n_sets):
+                newdata = analysis.multiply_by_power_of_iw(data_list[ns],power=power,channel_list=s[ns,:])
+                data_list[ns] = newdata
+                self.flag_iw = True
+            if data_list.__class__.__name__ == 'FreqData':
+                self.dataset.freq_data_list = data_list
+            elif data_list.__class__.__name__ == 'TfData':
+                self.dataset.tf_data_list = data_list
+                
+            self.auto_xy = 'y'
+            self.update_figure()
+            self.p.set_selected_channels(s)
             
+            self.iw_fft_power += power # local counter for currently selected channels
+            self.last_action = 'scaling'
+            message = 'Selected FFT data multiplied by (iw)**{}\n'.format(self.iw_fft_power)
+            message += '(note that power counter resets when selection changes)'
+            self.show_message(message)
+        else:
+            message = 'First calculate FFT or TF of data.'
+            self.show_message(message)
+        
+    def undo_scaling(self):
+        if self.last_action == 'scaling':
+            self.undo_last_action()
+            message = 'Scaling removed.'
+        else:
+            message = 'Can''t undo: scaling not last action carried out.'
+        
+        self.show_message(message)
         
 sys._excepthook = sys.excepthook 
 def exception_hook(exctype, value, traceback):

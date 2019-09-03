@@ -65,15 +65,30 @@ def multiply_by_power_of_iw(data,power,channel_list):
         if power<0:
             iw[0]=np.inf
         data.tf_data[:,channel_list] = (iw**power) * data.tf_data[:,channel_list]
+        # keep track of multiplication powers
+        if hasattr(data,'iw_power_counter'):
+            data.iw_power_counter[channel_list] += power
+        else:
+            data.iw_power_counter = np.zeros(len(data.tf_data[0,:]))
+            data.iw_power_counter[channel_list] = power
+            
     elif data.__class__.__name__ == 'FreqData':
         iw = 1j*2*np.pi * data.freq_axis[:,None]
         if power<0:
             iw[0]=np.inf
         data.freq_data[:,channel_list] = (iw**power) * data.freq_data[:,channel_list]
+        if hasattr(data,'iw_power_counter'):
+            data.iw_power_counter[channel_list] += power
+        else:
+            data.iw_power_counter = np.zeros(len(data.freq_data[0,:]))
+            data.iw_power_counter[channel_list] = power
     else:
-        raise ValueError('Expecting input argument of type <FreqData> or <TfData>')
-        
+        print('Expecting input argument of type <FreqData> or <TfData>')
+
+            
     return data
+
+
 
 
 def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):

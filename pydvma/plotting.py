@@ -331,6 +331,7 @@ class PlotData():
     def get_selected_channels(self):
         # find the sets and channels higlighted in figure
         # first find lines
+        # relies on all sets of data with same number of channels. Need to make more general.
         lines = self.ax.get_lines()
         N = len(lines)
         alphas = np.zeros(N)
@@ -363,7 +364,17 @@ class PlotData():
         selected_data = selected_data == True
             
         return selected_data
-
+    
+    def set_selected_channels(self,s):
+        # relies on all sets of data with same number of channels. Need to make more general.
+        for n_set in range(len(s[:,0])):
+            for n_chan in range(len(s[n_set,:])):
+                if s[n_set,n_chan] == True:
+                    self.line_listbyset[n_set][n_chan].set_alpha(LINE_ALPHA)
+                else:
+                    self.line_listbyset[n_set][n_chan].set_alpha(1-LINE_ALPHA)
+                
+        self.fig.canvas.draw()
     
 
 #class PlotTimeData():
