@@ -482,7 +482,8 @@ class InteractiveLogger():
         self.input_list_average_TF = newComboBox(['None','within each set','across sets'])
         self.button_TF = BlueButton('Calc TF')
         self.button_TF.clicked.connect(self.calc_tf)
-        
+        self.input_list_average_TF.currentIndexChanged.connect(self.select_averaging_type)
+        self.label_Nframes = QLabel('N frames:')
         self.input_Nframes = QLineEdit()
         self.input_Nframes.setValidator(QIntValidator(1,1000))
         self.input_Nframes.setText('1')
@@ -505,10 +506,22 @@ class InteractiveLogger():
         self.layout_tools_tf.addWidget(self.input_list_window_tf,1,1,1,2)
         self.layout_tools_tf.addWidget(QLabel('average:'),2,0,1,1)
         self.layout_tools_tf.addWidget(self.input_list_average_TF,2,1,1,2)
-        self.layout_tools_tf.addWidget(QLabel('N frames:'),3,0,1,1)
+        self.layout_tools_tf.addWidget(self.label_Nframes,3,0,1,1)
         self.layout_tools_tf.addWidget(self.input_Nframes,3,1,1,2)
         self.layout_tools_tf.addWidget(self.slider_Nframes,4,0,1,3)
         self.layout_tools_tf.addWidget(self.button_TF,5,0,1,3)
+        self.layout_tools_tf.addWidget(self.button_TFav,5,0,1,3)
+        
+        # initiate view
+        self.input_list_average_TF.setCurrentIndex(0)
+        self.input_Nframes.setText('1')
+        self.slider_Nframes.setValue(1)
+        self.label_Nframes.setVisible(False)
+        self.input_Nframes.setVisible(False)
+        self.slider_Nframes.setVisible(False)
+        self.button_TFav.setVisible(False)
+        self.button_TF.setVisible(True)
+        
         
         self.frame_tools_tf = QFrame()
         self.frame_tools_tf.setLayout(self.layout_tools_tf)
@@ -566,7 +579,7 @@ class InteractiveLogger():
             message = 'To enable data acquisition, please use \'Logger Settings\' tool.'
             self.show_message(message)
             self.input_list_tools.setCurrentIndex(1)
-            self.update_tool_selection()
+            self.select_view()
 
     def show_message(self,message,b='ok'):
         if message != '':
@@ -1113,12 +1126,37 @@ class InteractiveLogger():
             self.switch_view('FFT Data')
             self.select_view()
             
-     
+    def select_averaging_type(self):
+        self.averaging_method = self.input_list_average_TF.currentText()
+        if self.averaging_method == 'None':
+            self.input_Nframes.setText('1')
+            self.slider_Nframes.setValue(1)
+            self.label_Nframes.setVisible(False)
+            self.input_Nframes.setVisible(False)
+            self.slider_Nframes.setVisible(False)
+            self.button_TFav.setVisible(False)
+            self.button_TF.setVisible(True)
+            
+        elif self.averaging_method == 'within each set':
+            self.button_TFav.setVisible(False)
+            self.button_TF.setVisible(True)
+            self.label_Nframes.setVisible(True)
+            self.input_Nframes.setVisible(True)
+            self.slider_Nframes.setVisible(True)
+            
+        elif self.averaging_method == 'across sets':
+            self.button_TF.setVisible(False)
+            self.label_Nframes.setVisible(False)
+            self.input_Nframes.setVisible(False)
+            self.slider_Nframes.setVisible(False)
+            self.button_TFav.setVisible(True)
+            
     def refresh_Nframes_text(self):
         self.input_Nframes.setText(str(self.slider_Nframes.value()))
         
     def refresh_Nframes_slider(self):
         self.slider_Nframes.setValue(np.int(self.input_Nframes.text()))
+    
         
     def calc_tf(self):
         if len(self.dataset.time_data_list) == 0:
@@ -1172,7 +1210,7 @@ class InteractiveLogger():
     def xiwp(self,power):
         if self.flag_iw == False:
                 # create backup before any changes made - used to reset
-                self.dataset_backup = self.dataset
+                self.dataset_backup = copy.deepcopy(self.dataset)
                 
         if self.current_view == 'FFT Data':
             data_list = self.dataset.freq_data_list
@@ -1182,6 +1220,7 @@ class InteractiveLogger():
             message = 'First select ''FFT Data'' or ''TF Data''.'
             self.show_message(message)
             return None
+        
         if len(data_list) > 0:            
             s = self.p.get_selected_channels()
             if np.shape(self.selected_channels) != np.shape(s):
@@ -1198,12 +1237,18 @@ class InteractiveLogger():
                 newdata = analysis.multiply_by_power_of_iw(data_list[ns],power=power,channel_list=s[ns,:])
                 data_list[ns] = newdata
                 self.flag_iw = True
+                
             if data_list.__class__.__name__ == 'FreqData':
                 self.dataset.freq_data_list = data_list
             elif data_list.__class__.__name__ == 'TfData':
                 self.dataset.tf_data_list = data_list
-                
-            self.auto_xy = 'y'
+            
+            
+            if self.plot_type == 'Nyquist':
+                self.auto_xy = 'xy'
+            else:
+                self.auto_xy = 'y'
+            
             self.update_figure()
             self.p.set_selected_channels(s)
             
@@ -1219,6 +1264,7 @@ class InteractiveLogger():
     def undo_scaling(self):
         if self.last_action == 'scaling':
             self.undo_last_action()
+            self.flag_iw = False
             message = 'Scaling removed.'
         else:
             message = 'Can''t undo: scaling not last action carried out.'
