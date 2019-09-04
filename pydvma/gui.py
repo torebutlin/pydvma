@@ -535,8 +535,14 @@ class InteractiveLogger():
         self.button_diw = BlueButton('x 1/(iw)')
         self.button_xiw.clicked.connect(self.xiw)
         self.button_diw.clicked.connect(self.diw)
+        
+        self.input_refset = QLineEdit('0')
+        self.input_refset.setValidator(QIntValidator(0,1000))
+        self.input_refchan = QLineEdit('0')
+        self.input_refchan.setValidator(QIntValidator(0,1000))
 
         self.button_best_match = BlueButton('Best Match')
+        self.button_best_match.clicked.connect(self.best_match)
         self.button_undo_scaling = RedButton('Undo All Scaling')
         self.button_undo_scaling.clicked.connect(self.undo_scaling)        
         
@@ -545,8 +551,12 @@ class InteractiveLogger():
         self.layout_tools_scaling.addWidget(self.button_xiw,1,0,1,2)
         self.layout_tools_scaling.addWidget(self.button_diw,1,2,1,2)
         
-        self.layout_tools_scaling.addWidget(self.button_best_match,2,0,1,4)
-        self.layout_tools_scaling.addWidget(self.button_undo_scaling,3,0,1,4)
+        self.layout_tools_scaling.addWidget(QLabel('Ref set / chan:'),2,0,1,2)
+        self.layout_tools_scaling.addWidget(self.input_refset,2,2,1,1)
+        self.layout_tools_scaling.addWidget(self.input_refchan,2,3,1,1)
+        
+        self.layout_tools_scaling.addWidget(self.button_best_match,3,0,1,4)
+        self.layout_tools_scaling.addWidget(self.button_undo_scaling,4,0,1,4)
         
         self.frame_tools_scaling = QFrame()
         self.frame_tools_scaling.setLayout(self.layout_tools_scaling)
@@ -770,6 +780,9 @@ class InteractiveLogger():
         self.input_axes[1].setText('{:0.5g}'.format(xlim[1]))
         self.input_axes[2].setText('{:0.5g}'.format(ylim[0]))
         self.input_axes[3].setText('{:0.5g}'.format(ylim[1]))
+        if self.plot_type != 'Nyquist':
+            # keep freq_range up to date with zooming
+            self.freq_range = list(xlim)
         
     def legend_left(self):
         self.legend_loc = 'lower left'
@@ -1270,6 +1283,29 @@ class InteractiveLogger():
             message = 'Can''t undo: scaling not last action carried out.'
         
         self.show_message(message)
+        
+        
+    def best_match(self):
+        self.refset  = np.int(self.input_refset.text())
+        self.refchan = np.int(self.input_refchan.text())
+        if self.current_view == 'TF Data':
+            current_calibration_factors = self.dataset.tf_data_list.get_calibration_factors()
+            reference = current_calibration_factors[self.refset][self.refchan]
+            factors = analysis.best_match(self.dataset.tf_data_list,freq_range=self.freq_range,set_ref=self.refset,ch_ref=self.refchan)
+            factors = [reference*x for x in factors]
+            self.dataset.tf_data_list.set_calibration_factors_all(factors)
+            self.p.update(self.dataset.tf_data_list)
+            with np.printoptions(precision=3, suppress=True):
+                message = 'Scale factors:\n'
+                n_set = -1
+                for fs in factors:
+                    n_set += 1
+                    message += 'Set {:d}: factors = {}\n'.format(n_set,np.array2string(fs))
+                self.show_message(message)
+            #self.p.auto_y()
+        else:
+            message = 'First select ''TF Data'' or ''Calc TF''.'
+            self.show_message(message)
         
 sys._excepthook = sys.excepthook 
 def exception_hook(exctype, value, traceback):
