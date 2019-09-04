@@ -116,7 +116,7 @@ class InteractiveLogger():
         self.last_action = None
         self.iw_power = 0
         self.selected_channels = []
-        self.flag_iw = False
+        self.flag_scaling = False
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -1221,7 +1221,7 @@ class InteractiveLogger():
 
         
     def xiwp(self,power):
-        if self.flag_iw == False:
+        if self.flag_scaling == False:
                 # create backup before any changes made - used to reset
                 self.dataset_backup = copy.deepcopy(self.dataset)
                 
@@ -1249,7 +1249,7 @@ class InteractiveLogger():
             for ns in range(n_sets):
                 newdata = analysis.multiply_by_power_of_iw(data_list[ns],power=power,channel_list=s[ns,:])
                 data_list[ns] = newdata
-                self.flag_iw = True
+                self.flag_scaling = True
                 
             if data_list.__class__.__name__ == 'FreqData':
                 self.dataset.freq_data_list = data_list
@@ -1277,7 +1277,7 @@ class InteractiveLogger():
     def undo_scaling(self):
         if self.last_action == 'scaling':
             self.undo_last_action()
-            self.flag_iw = False
+            self.flag_scaling = False
             message = 'Scaling removed.'
         else:
             message = 'Can''t undo: scaling not last action carried out.'
@@ -1286,6 +1286,11 @@ class InteractiveLogger():
         
         
     def best_match(self):
+        if self.flag_scaling == False:
+            # provide backup for undo
+            self.dataset_backup = copy.deepcopy(self.dataset)
+            self.flag_scaling = True
+            
         self.refset  = np.int(self.input_refset.text())
         self.refchan = np.int(self.input_refchan.text())
         if self.current_view == 'TF Data':
@@ -1294,15 +1299,18 @@ class InteractiveLogger():
             factors = analysis.best_match(self.dataset.tf_data_list,freq_range=self.freq_range,set_ref=self.refset,ch_ref=self.refchan)
             factors = [reference*x for x in factors]
             self.dataset.tf_data_list.set_calibration_factors_all(factors)
-            self.p.update(self.dataset.tf_data_list)
-            with np.printoptions(precision=3, suppress=True):
+            self.auto_xy = ''
+            self.update_figure()
+            with np.printoptions(precision=3, suppress=False):
                 message = 'Scale factors:\n'
                 n_set = -1
                 for fs in factors:
                     n_set += 1
                     message += 'Set {:d}: factors = {}\n'.format(n_set,np.array2string(fs))
                 self.show_message(message)
-            #self.p.auto_y()
+            
+            self.last_action = 'scaling'
+            
         else:
             message = 'First select ''TF Data'' or ''Calc TF''.'
             self.show_message(message)

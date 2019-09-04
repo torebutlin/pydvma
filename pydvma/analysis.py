@@ -133,7 +133,8 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
             a = tf_data_list[ns].tf_data[selection,nc]
             b = tf_data_list[set_ref].tf_data[selection_ref,ch_ref]
 #            f += [np.abs(np.sum(np.conj(a)*b) / np.sum(np.conj(a)*a))]
-            f += [np.sqrt(np.mean(np.abs(b**2))) / np.sqrt(np.mean(np.abs(a**2)))]
+#            f += [np.sqrt(np.mean(np.abs(b**2))) / np.sqrt(np.mean(np.abs(a**2)))]
+            f += np.linalg.lstsq(a, b)
             
         f = np.array(f)
         factors.append(f)
