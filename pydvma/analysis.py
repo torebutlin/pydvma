@@ -142,16 +142,16 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
             x = tf_data_list[ns].freq_axis
             y = tf_data_list[ns].tf_data[:,nc]
             a = np.interp(f_newref,x,y)
-            a = a.reshape(np.size(a),1)
+            a2d = a.reshape(np.size(a),1)
             
             x = tf_data_list[set_ref].freq_axis
             y = tf_data_list[set_ref].tf_data[:,ch_ref]
             b = np.interp(f_newref,x,y)
-            b = b.reshape(np.size(b),1)
+            b2d = b.reshape(np.size(b),1)
             
             # use least squares only to get sign of factor
             # get scale factor just by matching rms values
-            LS = np.linalg.lstsq(a.real, b.real, rcond=None)
+            LS = np.linalg.lstsq(a2d.real, b2d.real, rcond=None)
             sign = np.sign(LS[0][0])
             f += [sign*np.sqrt(np.mean(np.abs(b)**2)) / np.sqrt(np.mean(np.abs(a)**2))]
             

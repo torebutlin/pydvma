@@ -1311,9 +1311,10 @@ class InteractiveLogger():
             with np.printoptions(precision=3, suppress=False):
                 message = 'Scale factors:\n'
                 n_set = -1
+                self.factors = factors
                 for fs in factors:
                     n_set += 1
-                    message += 'Set {:d}: factors = {}\n'.format(n_set,np.array2string(fs))
+                    message += 'Set {:d}: factors = {}\n'.format(n_set,fs)
                 self.show_message(message)
             
             self.last_action = 'scaling'
