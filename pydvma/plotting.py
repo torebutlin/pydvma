@@ -177,6 +177,8 @@ class PlotData():
                             yc[~izero] = 20*np.log10(np.abs(yclin[~izero]))
                             yc[izero] = -np.inf
                             yc = 20*np.log10(np.abs(yclin))
+                    else:
+                        yc = np.ones(np.shape(data_list[n_set].tf_data))
                         
                         
                 color = options.set_plot_colours(len(data_list)*data_list[n_set].settings.channels)[count,:]/255

@@ -541,7 +541,7 @@ class InteractiveLogger():
         self.input_refchan = QLineEdit('0')
         self.input_refchan.setValidator(QIntValidator(0,1000))
 
-        self.button_best_match = BlueButton('Best Match')
+        self.button_best_match = BlueButton('Best Match (to ref)')
         self.button_best_match.clicked.connect(self.best_match)
         self.button_undo_scaling = RedButton('Undo All Scaling')
         self.button_undo_scaling.clicked.connect(self.undo_scaling)        
@@ -692,21 +692,28 @@ class InteractiveLogger():
             self.show_message(message)
             return None
         
+        no_data = True
+        self.auto_xy = 'xyc'
         if len(self.dataset.time_data_list) != 0:
-            self.p.update(self.dataset.time_data_list,sets='all',channels='all')
+            self.input_list_figures.setCurrentText('Time Data')
+            self.select_view()
             self.hide_message()
-        elif len(self.dataset.freq_data_list) != 0:
-            self.p.update(self.dataset.freq_data_list,sets='all',channels='all')
+            no_data = False
+        if len(self.dataset.freq_data_list) != 0:
+            self.input_list_figures.setCurrentText('FFT Data')
+            self.select_view()
             self.hide_message()
-        elif len(self.dataset.tf_data_list) != 0:
-            self.p.update(self.dataset.tf_data_list,sets='all',channels='all')
+            no_data = False
+        if len(self.dataset.tf_data_list) != 0:
+            self.input_list_figures.setCurrentText('TF Data')
+            self.select_view()
             self.hide_message()
+            no_data = False
         else:
             message = 'No data to view'
             self.show_message(message)
         
-        self.auto_xy = 'xy'
-        self.select_view()
+        
         
             
     def save_data(self):

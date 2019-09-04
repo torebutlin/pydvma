@@ -112,6 +112,7 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
     else:
         freq_range_copy = freq_range
         
+    
     settings = copy.copy(tf_data_list[0].settings)
     settings.freq_range = freq_range_copy
 
@@ -121,6 +122,8 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
     s1 = tf_data_list[set_ref].freq_axis >= freq_range_copy[0]
     s2 = tf_data_list[set_ref].freq_axis <= freq_range_copy[1]
     selection_ref = s1 & s2
+    # choose 0-1 scale to make dimensions of data compatible
+    f_ref = tf_data_list[set_ref].freq_axis[selection_ref]
         
     factors = []
     for ns in range(n_set):
@@ -129,12 +132,29 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
         s1 = tf_data_list[ns].freq_axis >= freq_range_copy[0]
         s2 = tf_data_list[ns].freq_axis <= freq_range_copy[1]
         selection = s1 & s2
+        f_sel = tf_data_list[ns].freq_axis[selection]
+        N_ref = len(f_ref)
+        N_sel = len(f_sel)
+        f_newref = np.linspace(freq_range[0],freq_range[1],np.max([N_ref,N_sel]))
+        
         for nc in range(n_chan):
-            a = tf_data_list[ns].tf_data[selection,nc]
-            b = tf_data_list[set_ref].tf_data[selection_ref,ch_ref]
-#            f += [np.abs(np.sum(np.conj(a)*b) / np.sum(np.conj(a)*a))]
-#            f += [np.sqrt(np.mean(np.abs(b**2))) / np.sqrt(np.mean(np.abs(a**2)))]
-            f += np.linalg.lstsq(a, b)
+            # could make more efficient by doing all channels at once
+            x = tf_data_list[ns].freq_axis
+            y = tf_data_list[ns].tf_data[:,nc]
+            a = np.interp(f_newref,x,y)
+            a = a.reshape(np.size(a),1)
+            
+            x = tf_data_list[set_ref].freq_axis
+            y = tf_data_list[set_ref].tf_data[:,ch_ref]
+            b = np.interp(f_newref,x,y)
+            b = b.reshape(np.size(b),1)
+            
+            # use least squares only to get sign of factor
+            # get scale factor just by matching rms values
+            LS = np.linalg.lstsq(a.real, b.real, rcond=None)
+            sign = np.sign(LS[0][0])
+            f += [sign*np.sqrt(np.mean(np.abs(b)**2)) / np.sqrt(np.mean(np.abs(a)**2))]
+            
             
         f = np.array(f)
         factors.append(f)
