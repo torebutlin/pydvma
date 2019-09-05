@@ -368,10 +368,10 @@ class InteractiveLogger():
         
         # freq range for Nyquist
         self.input_freq_min = QLineEdit()
-        self.input_freq_min.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
+        self.input_freq_min.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
         self.input_freq_min.editingFinished.connect(self.freq_min)
         self.input_freq_max = QLineEdit()
-        self.input_freq_max.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
+        self.input_freq_max.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
         self.input_freq_max.editingFinished.connect(self.freq_max)
         
         #self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
@@ -415,6 +415,7 @@ class InteractiveLogger():
         self.setup_frame_tools_fft()
         self.setup_frame_tools_tf()
         self.setup_frame_tools_scaling()
+        self.setup_frame_mode_fitting()
         
         # widgets to layout
         self.layout_tools = QVBoxLayout()
@@ -423,6 +424,7 @@ class InteractiveLogger():
         self.layout_tools.addWidget(self.frame_tools_fft)
         self.layout_tools.addWidget(self.frame_tools_tf)
         self.layout_tools.addWidget(self.frame_tools_scaling)
+        self.layout_tools.addWidget(self.frame_tools_mode_fitting)
         self.layout_tools.setAlignment(Qt.AlignTop)
         
         # layout to frame
@@ -430,10 +432,17 @@ class InteractiveLogger():
         self.frame_tools.setFrameShape(QFrame.StyledPanel)
         self.frame_tools.setLayout(self.layout_tools)
         
+        # widgets to layout according to selection
+        self.input_list_tools.setCurrentText('Standard Tools')
+        self.select_tool()
+        
+        
+        
         
     def setup_frame_tools_selection(self):
         
         self.input_list_tools = newComboBox(['Standard Tools','Logger Settings','Pre-process','FFT','Transfer Function','Calibration / Scaling','Mode Fitting','Save / Export'])
+        self.input_list_tools.setCurrentIndex(0)
         self.input_list_tools.currentIndexChanged.connect(self.select_tool)
         
         self.layout_tools_selection = QGridLayout()
@@ -560,8 +569,42 @@ class InteractiveLogger():
         
         self.frame_tools_scaling = QFrame()
         self.frame_tools_scaling.setLayout(self.layout_tools_scaling)
-
-
+        
+    def setup_frame_mode_fitting(self):
+        self.input_freq_min2 = QLineEdit()
+        self.input_freq_min2.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
+        self.input_freq_min2.editingFinished.connect(self.freq_min)
+        self.input_freq_max2 = QLineEdit()
+        self.input_freq_max2.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
+        self.input_freq_max2.editingFinished.connect(self.freq_max)
+        
+        self.button_fit_mode = GreenButton('Fit Mode')
+        self.button_fit_mode.clicked.connect(self.fit_mode)
+        self.button_accept_mode = GreenButton('Accept')
+        self.button_accept_mode.clicked.connect(self.accept_mode)
+        self.button_reject_mode = OrangeButton('Reject')
+        self.button_reject_mode.clicked.connect(self.reject_mode)
+        self.button_view_mode_summary = BlueButton('View Summary')
+        self.button_view_mode_summary.clicked.connect(self.view_mode_summary)
+        self.button_view_modal_reconstruction = BlueButton('View Reconstruction')
+        self.button_view_modal_reconstruction.clicked.connect(self.view_modal_reconstruction)
+        
+        self.layout_tools_mode_fitting = QGridLayout()
+        self.layout_tools_mode_fitting.addWidget(boldLabel('Mode Fitting:'),0,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(QLabel('Zoom to view a single peak:'),1,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(QLabel('fmin:'),2,0,1,1)
+        self.layout_tools_mode_fitting.addWidget(self.input_freq_min2,2,1,1,3)
+        self.layout_tools_mode_fitting.addWidget(QLabel('fmax:'),3,0,1,1)
+        self.layout_tools_mode_fitting.addWidget(self.input_freq_max2,3,1,1,3)
+        self.layout_tools_mode_fitting.addWidget(self.button_fit_mode,4,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(self.button_accept_mode,5,0,1,2)
+        self.layout_tools_mode_fitting.addWidget(self.button_reject_mode,5,2,1,2)
+        self.layout_tools_mode_fitting.addWidget(self.button_view_mode_summary,6,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(self.button_view_modal_reconstruction,7,0,1,4)
+        
+        self.frame_tools_mode_fitting = QFrame()
+        self.frame_tools_mode_fitting.setLayout(self.layout_tools_mode_fitting)
+        
     def update_frame_tools(self):
         self.frame_tools.setLayout(self.layout_tools)
 
@@ -588,7 +631,7 @@ class InteractiveLogger():
         else:
             message = 'To enable data acquisition, please use \'Logger Settings\' tool.'
             self.show_message(message)
-            self.input_list_tools.setCurrentIndex(1)
+#            self.input_list_tools.setCurrentIndex(1)
             self.select_view()
 
     def show_message(self,message,b='ok'):
@@ -1122,6 +1165,50 @@ class InteractiveLogger():
         
         self.button_xlinlog.setVisible(True)
         self.frame_plot_details.setVisible(True)
+        
+    def hide_all_tools(self):
+        self.frame_tools_time_domain.setVisible(False)
+        self.frame_tools_fft.setVisible(False)
+        self.frame_tools_tf.setVisible(False)
+        self.frame_tools_scaling.setVisible(False)
+        self.frame_tools_mode_fitting.setVisible(False)
+        
+    def select_tool(self):
+        self.selected_tool = self.input_list_tools.currentText()
+        if self.selected_tool == 'Standard Tools':
+            self.hide_all_tools()
+            self.frame_tools_time_domain.setVisible(True)
+            self.frame_tools_fft.setVisible(True)
+            self.frame_tools_tf.setVisible(True)
+            self.frame_tools_scaling.setVisible(True)
+            
+            
+        elif self.selected_tool == 'Logger Settings':
+            print(self.selected_tool)
+            
+        elif self.selected_tool == 'Pre-process':
+            self.hide_all_tools()
+            self.frame_tools_time_domain.setVisible(True)
+            
+        elif self.selected_tool == 'FFT':
+            self.hide_all_tools()
+            self.frame_tools_fft.setVisible(True)
+            
+        elif self.selected_tool == 'Transfer Function':
+            self.hide_all_tools()
+            self.frame_tools_tf.setVisible(True)
+            
+        elif self.selected_tool == 'Calibration / Scaling':
+            self.hide_all_tools()
+            self.frame_tools_scaling.setVisible(True)
+            
+        elif self.selected_tool == 'Mode Fitting':
+            self.hide_all_tools()
+            self.frame_tools_mode_fitting.setVisible(True)
+            
+        elif self.selected_tool == 'Save / Export':
+            self.hide_all_tools()
+            self.frame_tools_time_domain.setVisible(True)
 
     def clean_impulse(self):
         try:
@@ -1335,6 +1422,22 @@ class InteractiveLogger():
         else:
             message = 'First select ''TF Data'' or ''Calc TF''.'
             self.show_message(message)
+        
+    def fit_mode(self):
+        pass
+    
+    def accept_mode(self):
+        pass
+    
+    def reject_mode(self):
+        pass
+        
+    def view_mode_summary(self):
+        pass
+    
+    def view_modal_reconstruction(self):
+        pass
+        
         
 sys._excepthook = sys.excepthook 
 def exception_hook(exctype, value, traceback):
