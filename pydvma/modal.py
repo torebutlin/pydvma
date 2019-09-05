@@ -14,6 +14,8 @@ from scipy import signal
 from scipy import optimize
 import copy
 
+MESSAGE = ''
+
 #%% single peak fit
 
 def f_3dB(f,G0):
@@ -180,6 +182,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     
     Assumes all tf_data in tf_data_list have same frequency axes
     '''
+    global MESSAGE
     
     if measurement_type == 'acc':
         p = 2
@@ -271,15 +274,14 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
 #        label, num = v
 #        print "{:<8} {:<15} {:<10}".format(k, label, num)
 
-    with np.printoptions(precision=3, suppress=True):
-        print('')
-        print('fn={:.4g} (Hz), zn={:.4g}'.format(m.fn,m.zn))
-        print('')
-        print('an={}'.format(m.an))
-        print('pn={}'.format(m.pn))
-        print('')
+#    with np.printoptions(precision=3, suppress=True):
+    MESSAGE = 'fn={:.4g} (Hz), zn={:.4g}\n\n'.format(m.fn,m.zn)
+    MESSAGE += 'an={}\n'.format(m.an)
+    MESSAGE += 'pn={}\n'.format(m.pn)
+    print(MESSAGE)
     if np.any(np.abs(m.pn)*180/np.pi > 60):
-        print('Phase is significant, check ''measurement_type'' setting is correct')
+        MESSAGE += '\nPhase is significant, check ''TF type'' setting is correct'
+        print(MESSAGE)
         
     # Check quality of fit
     e = f_residual_all_channels(r.x,f,G0,measurement_type)
@@ -287,7 +289,8 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     erms = np.mean(np.abs(e)**2)
     e_rel = erms/G0rms
     if e_rel > 0.1:
-        raise Warning('Poor quality fit: try adjusting frequency range')
+        MESSAGE += 'Poor quality fit: try adjusting frequency range'
+        print(MESSAGE)
 
     return m
     

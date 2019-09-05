@@ -18,6 +18,7 @@ from . import acquisition
 from . import analysis
 from . import streams
 from . import file
+from . import modal
 import time
 import sys
 import numpy as np
@@ -573,16 +574,18 @@ class InteractiveLogger():
     def setup_frame_mode_fitting(self):
         self.input_freq_min2 = QLineEdit()
         self.input_freq_min2.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
-        self.input_freq_min2.editingFinished.connect(self.freq_min)
+        self.input_freq_min2.editingFinished.connect(self.freq_min2)
         self.input_freq_max2 = QLineEdit()
         self.input_freq_max2.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
-        self.input_freq_max2.editingFinished.connect(self.freq_max)
+        self.input_freq_max2.editingFinished.connect(self.freq_max2)
         
-        self.button_fit_mode = GreenButton('Fit Mode')
+        self.input_list_tf_type = newComboBox(['Acceleration','Velocity','Displacement'])
+        
+        self.button_fit_mode = BlueButton('Fit Mode')
         self.button_fit_mode.clicked.connect(self.fit_mode)
-        self.button_accept_mode = GreenButton('Accept')
+        self.button_accept_mode = GreenButton('Accept Last')
         self.button_accept_mode.clicked.connect(self.accept_mode)
-        self.button_reject_mode = OrangeButton('Reject')
+        self.button_reject_mode = RedButton('Reject Last')
         self.button_reject_mode.clicked.connect(self.reject_mode)
         self.button_view_mode_summary = BlueButton('View Summary')
         self.button_view_mode_summary.clicked.connect(self.view_mode_summary)
@@ -591,16 +594,19 @@ class InteractiveLogger():
         
         self.layout_tools_mode_fitting = QGridLayout()
         self.layout_tools_mode_fitting.addWidget(boldLabel('Mode Fitting:'),0,0,1,4)
-        self.layout_tools_mode_fitting.addWidget(QLabel('Zoom to view a single peak:'),1,0,1,4)
-        self.layout_tools_mode_fitting.addWidget(QLabel('fmin:'),2,0,1,1)
-        self.layout_tools_mode_fitting.addWidget(self.input_freq_min2,2,1,1,3)
-        self.layout_tools_mode_fitting.addWidget(QLabel('fmax:'),3,0,1,1)
-        self.layout_tools_mode_fitting.addWidget(self.input_freq_max2,3,1,1,3)
-        self.layout_tools_mode_fitting.addWidget(self.button_fit_mode,4,0,1,4)
-        self.layout_tools_mode_fitting.addWidget(self.button_accept_mode,5,0,1,2)
-        self.layout_tools_mode_fitting.addWidget(self.button_reject_mode,5,2,1,2)
-        self.layout_tools_mode_fitting.addWidget(self.button_view_mode_summary,6,0,1,4)
-        self.layout_tools_mode_fitting.addWidget(self.button_view_modal_reconstruction,7,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(QLabel('TF type:'),1,0,1,1)
+        self.layout_tools_mode_fitting.addWidget(self.input_list_tf_type,1,1,1,3)
+        
+        self.layout_tools_mode_fitting.addWidget(QLabel('Zoom to view a single peak:'),2,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(QLabel('fmin:'),3,0,1,1)
+        self.layout_tools_mode_fitting.addWidget(self.input_freq_min2,3,1,1,3)
+        self.layout_tools_mode_fitting.addWidget(QLabel('fmax:'),4,0,1,1)
+        self.layout_tools_mode_fitting.addWidget(self.input_freq_max2,4,1,1,3)
+        self.layout_tools_mode_fitting.addWidget(self.button_fit_mode,5,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(self.button_accept_mode,6,0,1,2)
+        self.layout_tools_mode_fitting.addWidget(self.button_reject_mode,6,2,1,2)
+        self.layout_tools_mode_fitting.addWidget(self.button_view_mode_summary,7,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(self.button_view_modal_reconstruction,8,0,1,4)
         
         self.frame_tools_mode_fitting = QFrame()
         self.frame_tools_mode_fitting.setLayout(self.layout_tools_mode_fitting)
@@ -785,7 +791,7 @@ class InteractiveLogger():
         xmin = np.float(self.input_axes[0].text())
         xlim = self.p.ax.get_xlim()
         self.p.ax.set_xlim([xmin,xlim[1]])
-        if (self.current_view == 'TF Data') or (self.current_view == 'FFT Data'):
+        if ((self.current_view == 'TF Data') or (self.current_view == 'FFT Data')) and (self.plot_type != 'Nyquist'):
             self.freq_range = list(self.p.ax.get_xlim())
         self.canvas.draw()
         
@@ -793,7 +799,7 @@ class InteractiveLogger():
         xmax = np.float(self.input_axes[1].text())
         xlim = self.p.ax.get_xlim()
         self.p.ax.set_xlim([xlim[0],xmax])
-        if (self.current_view == 'TF Data') or (self.current_view == 'FFT Data'):
+        if ((self.current_view == 'TF Data') or (self.current_view == 'FFT Data')) and (self.plot_type != 'Nyquist'):
             self.freq_range = list(self.p.ax.get_xlim())
         self.canvas.draw()
         
@@ -830,12 +836,10 @@ class InteractiveLogger():
         self.input_axes[1].setText('{:0.5g}'.format(xlim[1]))
         self.input_axes[2].setText('{:0.5g}'.format(ylim[0]))
         self.input_axes[3].setText('{:0.5g}'.format(ylim[1]))
-        if (self.current_view == 'FFT Data') and (self.plot_type != 'Nyquist'):
-            # keep freq_range up to date with zooming
+        if ((self.current_view == 'TF Data') or (self.current_view == 'FFT Data')) and (self.plot_type != 'Nyquist'):
             self.freq_range = list(xlim)
-        if (self.current_view == 'TF Data') and (self.plot_type != 'Nyquist'):
-            # keep freq_range up to date with zooming
-            self.freq_range = list(xlim)
+            self.input_freq_min2.setText('{:0.5g}'.format(xlim[0]))
+            self.input_freq_max2.setText('{:0.5g}'.format(xlim[1]))
         
     def legend_left(self):
         self.legend_loc = 'lower left'
@@ -908,11 +912,15 @@ class InteractiveLogger():
         
     def freq_min(self):
         self.freq_range[0] = np.float(self.input_freq_min.text())
-        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
+        self.input_freq_min2.setText(str(self.freq_range[0]))
+        self.update_figure()
+#        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         
     def freq_max(self):
         self.freq_range[1] = np.float(self.input_freq_max.text())
-        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
+        self.input_freq_max2.setText(str(self.freq_range[1]))
+        self.update_figure()
+#        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         
     def update_co_axes_values(self,axes):
         ylim = self.p.ax2.get_ylim()
@@ -1424,8 +1432,27 @@ class InteractiveLogger():
             self.show_message(message)
         
     def fit_mode(self):
-        pass
+        if self.input_list_tf_type.currentText() == 'Acceleration':
+            self.measurement_type = 'acc'
+        elif self.input_list_tf_type.currentText() == 'Velocity':
+            self.measurement_type = 'vel'
+        elif self.input_list_tf_type.currentText() == 'Displacement':
+            self.measurement_type = 'dsp'
+            
+        m = modal.modal_fit_all_channels(self.dataset.tf_data_list,freq_range=self.freq_range, measurement_type=self.measurement_type)
+        self.show_message(modal.MESSAGE)
+        
     
+    def freq_min2(self):
+        self.freq_range[0] = np.float(self.input_freq_min2.text())
+        self.input_freq_min.setText(str(self.freq_range[0]))
+        self.freq_min()
+    
+    def freq_max2(self):
+        self.freq_range[1] = np.float(self.input_freq_max2.text())
+        self.input_freq_max.setText(str(self.freq_range[1]))
+        self.freq_max
+        
     def accept_mode(self):
         pass
     
