@@ -228,7 +228,7 @@ class PlotData():
                     ncol = np.int(self.ch_total / col_sizes[remi])
                 else:
                     remi = np.argmax(rem)
-                    ncol = np.ceil(self.ch_total/ col_sizes[remi])
+                    ncol = np.int(np.ceil(self.ch_total/ col_sizes[remi]))
             else:
                 ncol = 1
                 

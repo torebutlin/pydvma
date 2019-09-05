@@ -434,7 +434,7 @@ class InteractiveLogger():
     def setup_frame_tools_selection(self):
         
         self.input_list_tools = newComboBox(['Standard Tools','Logger Settings','Pre-process','FFT','Transfer Function','Calibration / Scaling','Mode Fitting','Save / Export'])
-        
+        self.input_list_tools.currentIndexChanged.connect(self.select_tool)
         
         self.layout_tools_selection = QGridLayout()
         self.layout_tools_selection.addWidget(boldLabel('Tool selection:'),0,0,1,3)
@@ -709,7 +709,7 @@ class InteractiveLogger():
             self.select_view()
             self.hide_message()
             no_data = False
-        else:
+        if no_data == True:
             message = 'No data to view'
             self.show_message(message)
         
@@ -787,7 +787,10 @@ class InteractiveLogger():
         self.input_axes[1].setText('{:0.5g}'.format(xlim[1]))
         self.input_axes[2].setText('{:0.5g}'.format(ylim[0]))
         self.input_axes[3].setText('{:0.5g}'.format(ylim[1]))
-        if self.plot_type != 'Nyquist':
+        if (self.current_view == 'FFT Data') and (self.plot_type != 'Nyquist'):
+            # keep freq_range up to date with zooming
+            self.freq_range = list(xlim)
+        if (self.current_view == 'TF Data') and (self.plot_type != 'Nyquist'):
             # keep freq_range up to date with zooming
             self.freq_range = list(xlim)
         
@@ -820,20 +823,28 @@ class InteractiveLogger():
         self.p.update(data_list, sets=self.sets, channels=self.channels, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         
     def select_all_data(self):
-        for line in self.p.ax.lines:
-            line.set_alpha(plotting.LINE_ALPHA)
-        for line in self.p.legend.get_lines():
-            line.set_alpha(plotting.LINE_ALPHA)
+        if len(self.p.ax.lines) > 0:
+            for line in self.p.ax.lines:
+                line.set_alpha(plotting.LINE_ALPHA)
+            for line in self.p.legend.get_lines():
+                line.set_alpha(plotting.LINE_ALPHA)
+            self.canvas.draw()
+        else:
+            message = 'No data to show.'
+            self.show_message(message)
         
-        self.canvas.draw()
         
         
     def select_no_data(self):
-        for line in self.p.ax.lines:
-            line.set_alpha(1-plotting.LINE_ALPHA)
-        for line in self.p.legend.get_lines():
-            line.set_alpha(1-plotting.LINE_ALPHA)
-        self.canvas.draw()
+        if len(self.p.ax.lines) > 0:
+            for line in self.p.ax.lines:
+                line.set_alpha(1-plotting.LINE_ALPHA)
+            for line in self.p.legend.get_lines():
+                line.set_alpha(1-plotting.LINE_ALPHA)
+            self.canvas.draw()
+        else:
+            message = 'No data to hide.'
+            self.show_message(message)
     
     def select_set_chan_list(self):
         for line in self.p.ax.lines:
@@ -901,13 +912,16 @@ class InteractiveLogger():
             N = len(self.dataset.tf_data_list)
         if N > 0:
             self.input_list_figures.setCurrentIndex(index)
+            
+        self.select_view()
         
     def select_view(self):
         # handles logic of what to show in gui depending on selected view options
         ci = self.input_list_figures.currentIndex()
         self.selected_view = self.input_list_figures.itemText(ci)
-
+        
         if self.current_view == self.selected_view:
+            self.current_view = np.copy(self.selected_view)
             self.current_view_changed = False
             self.plot_type_before = self.plot_type
             self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
@@ -1144,7 +1158,6 @@ class InteractiveLogger():
             
             self.dataset.calculate_fft_set(window=window)
             self.switch_view('FFT Data')
-            self.select_view()
             
     def select_averaging_type(self):
         self.averaging_method = self.input_list_average_TF.currentText()
@@ -1192,7 +1205,6 @@ class InteractiveLogger():
             self.dataset.calculate_tf_set(window=window,N_frames=self.N_frames,overlap=self.overlap)
             if self.current_view != 'TF Data':
                 self.switch_view('TF Data')
-                self.select_view()
             else:
                 self.auto_xy = ''
                 self.update_figure()
@@ -1212,7 +1224,6 @@ class InteractiveLogger():
             
             if self.current_view != 'TF Data':
                 self.switch_view('TF Data')
-                self.select_view()
             else:
                 self.auto_xy = ''
                 self.update_figure()
@@ -1314,7 +1325,9 @@ class InteractiveLogger():
                 self.factors = factors
                 for fs in factors:
                     n_set += 1
-                    message += 'Set {:d}: factors = {}\n'.format(n_set,fs)
+#                    message += 'Set {:>10:d}: factors = {:.5g}\n'.format(n_set,np.squeeze(fs))
+#                    [[fill]align][sign][#][0][minimumwidth][.precision][type]
+                    message += '{:<3} {:>4} {:<12} {:< 5g}\n'.format('Set',n_set,': factors =',np.squeeze(fs))
                 self.show_message(message)
             
             self.last_action = 'scaling'
