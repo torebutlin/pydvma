@@ -996,6 +996,9 @@ class InteractiveLogger():
                     self.show_coherence = True # won't plot but reests for other selections
                     self.xlinlog = 'linear'
                     self.auto_xy = 'xyc'
+                    self.plot_type = 'Amplitude (dB)'
+                    self.input_list_plot_type.setCurrentText(self.plot_type)
+                    
                 # plot
                 self.update_figure()
                 
@@ -1015,6 +1018,8 @@ class InteractiveLogger():
                     self.show_data = True
                     self.show_coherence = True # won't plot but reests for other selections
                     self.auto_xy = 'xyc'
+                    self.plot_type = 'Amplitude (dB)'
+                    self.input_list_plot_type.setCurrentText(self.plot_type)
                     
                 
                 # if staying as FFT plot but changing to nyquist then switch to FFT Nyquist toolset
@@ -1074,6 +1079,8 @@ class InteractiveLogger():
                     self.show_data = True
                     self.show_coherence = True 
                     self.auto_xy = 'xyc'
+                    self.plot_type = 'Amplitude (dB)'
+                    self.input_list_plot_type.setCurrentText(self.plot_type)
                 
                 # if staying as TF plot but changing to nyquist then switch to TF Nyquist toolset
                 elif self.switch_to_nyquist == True:
@@ -1422,7 +1429,7 @@ class InteractiveLogger():
                     n_set += 1
 #                    message += 'Set {:>10:d}: factors = {:.5g}\n'.format(n_set,np.squeeze(fs))
 #                    [[fill]align][sign][#][0][minimumwidth][.precision][type]
-                    message += '{:<3} {:>4} {:<12} {:< 5g}\n'.format('Set',n_set,': factors =',np.squeeze(fs))
+                    message += '{:<3} {:>4} {:<12} {}\n'.format('Set',n_set,': factors =',np.squeeze(fs))
                 self.show_message(message)
             
             self.last_action = 'scaling'
@@ -1440,7 +1447,21 @@ class InteractiveLogger():
             self.measurement_type = 'dsp'
             
         m = modal.modal_fit_all_channels(self.dataset.tf_data_list,freq_range=self.freq_range, measurement_type=self.measurement_type)
+        self.last_mode_fit = m
         self.show_message(modal.MESSAGE)
+        
+        # local reconstruction
+        x = modal.pack(m.fn, m.zn, m.an, m.pn, m.rk, m.rm)
+        f = np.linspace(self.freq_range[0],self.freq_range[1],300)
+        G = modal.f_TF_all_channels(x,f,self.measurement_type)
+        settings = self.dataset.tf_data_list[0].settings
+        id_link = []
+        for tf in self.dataset.tf_data_list:
+            id_link += [tf.id_link]
+        test_name = self.dataset.tf_data_list[0].test_name
+        tf_data = datastructure.TfData(f,G,None,settings,id_link=id_link,test_name=test_name)
+        tf_data.flag_modal_TF = True
+        self.dataset.modal_data.tf_data = tf_data
         
     
     def freq_min2(self):

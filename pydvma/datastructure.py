@@ -596,6 +596,7 @@ class ModalData():
         t = datetime.datetime.now()
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+            
         
     def __repr__(self):
         with np.printoptions(precision=3, suppress=True):

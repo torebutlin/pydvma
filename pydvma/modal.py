@@ -194,7 +194,8 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     # Find out how many TFs in dataset
     N_tfs = 0
     for tf_data in tf_data_list:
-        N_tfs += len(tf_data.tf_data[0,:])
+        if not hasattr(tf_data,'flag_modal_TF'):
+            N_tfs += len(tf_data.tf_data[0,:])
     
     if freq_range == None:
         freq_range = tf_data.freq_axis[[0,-1]]
@@ -211,10 +212,11 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     zn0 = np.zeros(N_tfs)
     counter = -1
     for tf_data in tf_data_list:
-        for n_chan in range(len(tf_data.tf_data[0,:])):
-            counter += 1
-            G0[:,counter] = tf_data.tf_data[selected_range,n_chan]
-            fn0[counter],zn0[counter] = f_3dB(f,G0[:,counter])
+        if not hasattr(tf_data,'flag_modal_TF'):
+            for n_chan in range(len(tf_data.tf_data[0,:])):
+                counter += 1
+                G0[:,counter] = tf_data.tf_data[selected_range,n_chan] * tf_data.channel_cal_factors[n_chan]
+                fn0[counter],zn0[counter] = f_3dB(f,G0[:,counter])
             
 
     # initial global guess for fn0,zn0 discarding any outliers
@@ -232,14 +234,15 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     id_link = []
     counter = -1
     for tf_data in tf_data_list:
-        id_link += [tf_data.id_link]
-        for n_chan in range(len(tf_data.tf_data[0,:])):
-            counter += 1
-            an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
-            an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
-            pn0[counter] = 0
-            Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e6
-            Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e6
+        if not hasattr(tf_data,'flag_modal_TF'):
+            id_link += [tf_data.id_link]
+            for n_chan in range(len(tf_data.tf_data[0,:])):
+                counter += 1
+                an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
+                an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
+                pn0[counter] = 0
+                Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e6
+                Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e6
     
     print(an0)
     x0 = np.concatenate(([fn0],[zn0],an0,pn0,Rk0,Rm0))
@@ -277,7 +280,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
 #    with np.printoptions(precision=3, suppress=True):
     MESSAGE = 'fn={:.4g} (Hz), zn={:.4g}\n\n'.format(m.fn,m.zn)
     MESSAGE += 'an={}\n'.format(m.an)
-    MESSAGE += 'pn={}\n'.format(m.pn)
+    MESSAGE += 'pn={} deg\n'.format(m.pn*180/np.pi)
     print(MESSAGE)
     if np.any(np.abs(m.pn)*180/np.pi > 60):
         MESSAGE += '\nPhase is significant, check ''TF type'' setting is correct'
