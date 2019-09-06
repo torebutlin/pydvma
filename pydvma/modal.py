@@ -194,8 +194,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     # Find out how many TFs in dataset
     N_tfs = 0
     for tf_data in tf_data_list:
-        if not hasattr(tf_data,'flag_modal_TF'):
-            N_tfs += len(tf_data.tf_data[0,:])
+        N_tfs += len(tf_data.tf_data[0,:])
     
     if freq_range == None:
         freq_range = tf_data.freq_axis[[0,-1]]
@@ -212,19 +211,17 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     zn0 = np.zeros(N_tfs)
     counter = -1
     for tf_data in tf_data_list:
-        if not hasattr(tf_data,'flag_modal_TF'):
-            for n_chan in range(len(tf_data.tf_data[0,:])):
-                counter += 1
-                G0[:,counter] = tf_data.tf_data[selected_range,n_chan] * tf_data.channel_cal_factors[n_chan]
-                fn0[counter],zn0[counter] = f_3dB(f,G0[:,counter])
+        for n_chan in range(len(tf_data.tf_data[0,:])):
+            counter += 1
+            G0[:,counter] = tf_data.tf_data[selected_range,n_chan] * tf_data.channel_cal_factors[n_chan]
+            fn0[counter],zn0[counter] = f_3dB(f,G0[:,counter])
             
 
     # initial global guess for fn0,zn0 discarding any outliers
     fn0 = np.median(fn0)
     zn0 = np.median(zn0)
     fn0i = np.argmin(np.abs(f - fn0))
-    print(fn0)
-    print(zn0)
+    
     
     # initial guesses for each channel
     an0 = np.zeros(N_tfs)
@@ -234,17 +231,17 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     id_link = []
     counter = -1
     for tf_data in tf_data_list:
-        if not hasattr(tf_data,'flag_modal_TF'):
-            id_link += [tf_data.id_link]
-            for n_chan in range(len(tf_data.tf_data[0,:])):
-                counter += 1
-                an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
-                an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
-                pn0[counter] = 0
-                Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e6
-                Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e6
+        id_link += [tf_data.id_link]
+        for n_chan in range(len(tf_data.tf_data[0,:])):
+            counter += 1
+            an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
+#            an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
+            an0[counter] = an0[counter] * np.sign(-np.imag(G0[fn0i,counter] / ((1j)**p)))
+            
+            pn0[counter] = 0
+            Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e6
+            Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e6
     
-    print(an0)
     x0 = np.concatenate(([fn0],[zn0],an0,pn0,Rk0,Rm0))
     
     
@@ -268,21 +265,19 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     bounds = (lower_bounds,upper_bounds)
     
     r = optimize.least_squares(f_residual_all_channels,x0, bounds=bounds, max_nfev=1000, args=(f,G0,measurement_type))
+    
+    settings = tf_data_list[0].settings
+    test_name = tf_data_list[0].test_name
+    m = datastructure.ModalData(r.x, settings=settings, id_link=id_link, test_name=test_name)
 
-    
-    m = datastructure.ModalData(r.x,id_link=id_link,test_name=tf_data_list[0].test_name)
-    
-#    print "{:<8} {:<15} {:<10} {:<10} {:<10}".format('chan','an','pn','rk','rm')
-#    for k, v in results.items():
-#        label, num = v
-#        print "{:<8} {:<15} {:<10}".format(k, label, num)
+    fn,zn,an,pn,rk,rm = unpack(r.x)
 
 #    with np.printoptions(precision=3, suppress=True):
-    MESSAGE = 'fn={:.4g} (Hz), zn={:.4g}\n\n'.format(m.fn,m.zn)
-    MESSAGE += 'an={}\n'.format(m.an)
-    MESSAGE += 'pn={} deg\n'.format(m.pn*180/np.pi)
+    MESSAGE = 'fn={:.4g} (Hz), zn={:.4g}\n\n'.format(fn,zn)
+    MESSAGE += 'an={}\n\n'.format(an)
+    MESSAGE += 'pn={} deg\n\n'.format(pn*180/np.pi)
     print(MESSAGE)
-    if np.any(np.abs(m.pn)*180/np.pi > 60):
+    if np.any(np.abs(pn)*180/np.pi > 60):
         MESSAGE += '\nPhase is significant, check ''TF type'' setting is correct'
         print(MESSAGE)
         
@@ -319,35 +314,17 @@ def pack(fn,zn,an,pn,rk,rm):
 
         
 
-def reconstruct_transfer_function(modal_data_list,f,measurement_type='acc'):
+def reconstruct_transfer_function(modal_data,f,measurement_type='acc'):
     '''
     Reconstructs transfer functions from modal_data and returns TfData object
     '''
     G = 0
-    counter = -1
-    for modal_data in modal_data_list:
-        counter += 1
-#        if counter == 1:
-#            xn = modal_data.xn
-#            fn,zn,an,pn,rk,rm = unpack(xn)
-#            rk = 00*rk
-#            rm = 0*rm
-#            xn = pack(fn,zn,an,pn,rk,rm)
-#        elif counter == len(modal_data_list):
-#            xn = modal_data.xn
-#            fn,zn,an,pn,rk,rm = unpack(xn)
-#            rk = 0*rk
-#            rm = 00*rm
-#            xn = pack(fn,zn,an,pn,rk,rm)
-#        else:
-#            xn = modal_data.xn
-#            fn,zn,an,pn,rk,rm = unpack(xn)
-#            rk = 0*rk
-#            rm = 0*rm
-#            xn = pack(fn,zn,an,pn,rk,rm)
-            
+    for n_row in range(len(modal_data.M[:,0])):
+        xn = modal_data.M[n_row,:]
         G += f_TF_all_channels(xn,f,measurement_type=measurement_type)
     
-    settings = options.MySettings(channels=np.size(G[0,:]))
+    settings = modal_data.settings
+    settings.channels = modal_data.channels
     tf_data = datastructure.TfData(f,G,None,settings,units=modal_data.units,channel_cal_factors=None,id_link=modal_data.id_link,test_name=modal_data.test_name)
+    tf_data.flag_modal_TF = True
     return tf_data

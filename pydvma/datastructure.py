@@ -26,10 +26,10 @@ def update_dataset(dataset):
     dataset_new.add_to_dataset(dataset.cross_spec_data_list)
     dataset_new.add_to_dataset(dataset.sono_data_list)
     dataset_new.add_to_dataset(dataset.meta_data_list)
-    try:
+    if hasattr(dataset,'modal_data_list'):
         dataset_new.add_to_dataset(dataset.modal_data_list)
-    except:
-        pass
+    else:
+        dataset.modal_data_list = ModalDataList()
     return dataset_new
     
 #%% Data structure
@@ -572,30 +572,55 @@ class TfData():
         t = datetime.datetime.now()
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+        self.flag_modal_TF = False
         
     def __repr__(self):
         return "<TfData>"
     
     
 class ModalData():
-    def __init__(self,xn,units=None,id_link=None,test_name=None):
-        fn,zn,an,pn,rk,rm = modal.unpack(xn)
-        self.fn = fn
-        self.zn = zn
-        self.an = an
-        self.pn = pn
-        self.rk = rk
-        self.rm = rm
-        self.xn = xn
+    def __init__(self,xn=None,settings=None,units=None,id_link=None,test_name=None):
         
-        # extra info
-        self.channels = np.size(an)
+        self.M = None
         self.test_name = test_name
+        self.settings = settings
+        self.channels = 0
+        if settings is not None:
+            self.settings.channels = 0
         self.units = units
         self.id_link = id_link # used to link data to specific <TimeData> object
         t = datetime.datetime.now()
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+
+        if xn is not None:
+            self.add_mode(xn)
+            
+        def __repr__(self):
+            return "<ModalData>"
+
+
+    def add_mode(self,xn):
+        # Make modal matrix. Each row is modal vector stacked as per 'x' in modal.py
+        if self.M is None:
+            self.M = np.atleast_2d(xn)
+        elif len(xn) == len(self.M[0,:]):
+            self.M = np.vstack(self.M,xn)
+        else:
+            print('Incompatible mode: different number of channels to existing set.')
+            return
+        
+        # sort by frequency (first column)
+        sort_i = np.argsort(self.M[:,0])
+        self.M = self.M[sort_i,:]
+        self.channels = len(sort_i)
+        self.settings.channels = self.channels
+        
+        # separate properties for easier summary, and don't need summary of local residuals rk and rm
+        self.fn = self.M[:,0]
+        self.zn = self.M[:,1]
+        self.an = self.M[:,2]
+        self.pn = self.M[:,3]
             
         
     def __repr__(self):

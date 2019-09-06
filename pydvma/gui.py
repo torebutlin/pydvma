@@ -1451,17 +1451,17 @@ class InteractiveLogger():
         self.show_message(modal.MESSAGE)
         
         # local reconstruction
-        x = modal.pack(m.fn, m.zn, m.an, m.pn, m.rk, m.rm)
         f = np.linspace(self.freq_range[0],self.freq_range[1],300)
-        G = modal.f_TF_all_channels(x,f,self.measurement_type)
-        settings = self.dataset.tf_data_list[0].settings
-        id_link = []
-        for tf in self.dataset.tf_data_list:
-            id_link += [tf.id_link]
-        test_name = self.dataset.tf_data_list[0].test_name
-        tf_data = datastructure.TfData(f,G,None,settings,id_link=id_link,test_name=test_name)
+        tf_data = modal.reconstruct_transfer_function(m,f,self.measurement_type)
+#        G = modal.f_TF_all_channels(x,f,self.measurement_type)
+#        id_link = []
+#        for tf in self.dataset.tf_data_list:
+#            id_link += [tf.id_link]
+#        test_name = self.dataset.tf_data_list[0].test_name
+#        tf_data = datastructure.TfData(f,G,None,settings,id_link=id_link,test_name=test_name)
         tf_data.flag_modal_TF = True
-        self.dataset.modal_data.tf_data = tf_data
+        self.dataset.modal_data_list = [m,tf_data]
+#        self.dataset.modal_data.tf_data = tf_data
         
     
     def freq_min2(self):
