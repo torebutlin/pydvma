@@ -30,6 +30,9 @@ def update_dataset(dataset):
         dataset_new.add_to_dataset(dataset.modal_data_list)
     else:
         dataset.modal_data_list = ModalDataList()
+    for tf_data in dataset_new.tf_data_list:
+        if not hasattr(tf_data,'flag_modal_TF'):
+            tf_data.flag_modal_TF = False
     return dataset_new
     
 #%% Data structure
@@ -471,7 +474,23 @@ class TfDataList(list):
             print('<TfDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].tf_data[0,:]),n_chan))
         else:
             self[n_set].channel_cal_factors[n_chan]=factor
+    
+    def add_modal_reconstruction(self,tf_data,mode='replace'):
+        # identify number of TFs in list that are reconstructions
+        N_reconstruction = 0
+        for tf in self:
+            if tf.flag_modal_TF == True:
+                N_reconstruction += 1
+                
+        # append / replace reconstruction TFs
+        if N_reconstruction == 0:
+            self += [tf_data]
+        elif mode == 'replace':
+            self[-1] = tf_data
+        elif mode == 'append':
+            self += [tf_data]
             
+        
     def export_to_csv(self, filename=None, overwrite_without_prompt=False):
         savename = file.export_to_csv(self,filename=filename,overwrite_without_prompt=overwrite_without_prompt)
         return savename
@@ -595,9 +614,6 @@ class ModalData():
 
         if xn is not None:
             self.add_mode(xn)
-            
-        def __repr__(self):
-            return "<ModalData>"
 
 
     def add_mode(self,xn):
@@ -605,7 +621,7 @@ class ModalData():
         if self.M is None:
             self.M = np.atleast_2d(xn)
         elif len(xn) == len(self.M[0,:]):
-            self.M = np.vstack(self.M,xn)
+            self.M = np.vstack((self.M,xn))
         else:
             print('Incompatible mode: different number of channels to existing set.')
             return
@@ -622,19 +638,21 @@ class ModalData():
         self.an = self.M[:,2]
         self.pn = self.M[:,3]
             
-        
     def __repr__(self):
-        with np.printoptions(precision=3, suppress=True):
-            template = "{}: {}"
-            modal_dict = self.__dict__
-            text = '\n<ModalData> class:\n\n'
-            for attr in modal_dict:
-                print(attr)
-                if (attr != 'xn') & (attr != 'rk') & (attr != 'rm') & (attr != 'units') & (attr != 'test_name')& (attr != 'id_link')& (attr != 'timestamp')& (attr != 'timestring'):
-                    text += template.format(attr,modal_dict[attr])
-                    text += '\n'
-            
-            return text
+        return "<ModalData>"
+        
+#    def __repr__(self):
+#        with np.printoptions(precision=3, suppress=True):
+#            template = "{}: {}"
+#            modal_dict = self.__dict__
+#            text = '\n<ModalData> class:\n\n'
+#            for attr in modal_dict:
+#                print(attr)
+#                if (attr != 'xn') & (attr != 'rk') & (attr != 'rm') & (attr != 'units') & (attr != 'test_name')& (attr != 'id_link')& (attr != 'timestamp')& (attr != 'timestring'):
+#                    text += template.format(attr,modal_dict[attr])
+#                    text += '\n'
+#            
+#            return text
     
         
 class SonoData():

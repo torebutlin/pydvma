@@ -231,16 +231,17 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     id_link = []
     counter = -1
     for tf_data in tf_data_list:
-        id_link += [tf_data.id_link]
-        for n_chan in range(len(tf_data.tf_data[0,:])):
-            counter += 1
-            an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
-#            an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
-            an0[counter] = an0[counter] * np.sign(-np.imag(G0[fn0i,counter] / ((1j)**p)))
-            
-            pn0[counter] = 0
-            Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e6
-            Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e6
+        if tf_data.flag_modal_TF == False:
+            id_link += [tf_data.id_link]
+            for n_chan in range(len(tf_data.tf_data[0,:])):
+                counter += 1
+                an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
+    #            an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
+                an0[counter] = an0[counter] * np.sign(-np.imag(G0[fn0i,counter] / ((1j)**p)))
+                
+                pn0[counter] = 0
+                Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e6
+                Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e6
     
     x0 = np.concatenate(([fn0],[zn0],an0,pn0,Rk0,Rm0))
     

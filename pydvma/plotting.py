@@ -377,6 +377,12 @@ class PlotData():
                     self.line_listbyset[n_set][n_chan].set_alpha(1-LINE_ALPHA)
                 
         self.fig.canvas.draw()
+        
+#    def plot_modal_reconstruction(modal_data_list):
+#        for data in modal_data:
+#            if data.__class__.__name__ == 'TfData':
+#                
+#                self.ax.plot
     
 
 #class PlotTimeData():

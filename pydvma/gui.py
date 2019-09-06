@@ -724,6 +724,7 @@ class InteractiveLogger():
     
     def load_data(self):
         d = file.load_data()
+        d = datastructure.update_dataset(d) # updates data saved using previous logger versions
         if d is not None:
             self.dataset.add_to_dataset(d.time_data_list)
             self.dataset.add_to_dataset(d.freq_data_list)
@@ -731,10 +732,7 @@ class InteractiveLogger():
             self.dataset.add_to_dataset(d.cross_spec_data_list)
             self.dataset.add_to_dataset(d.sono_data_list)
             self.dataset.add_to_dataset(d.meta_data_list)
-            try:
-                self.dataset.add_to_dataset(d.modal_data_list)
-            except:
-                pass
+            self.dataset.add_to_dataset(d.modal_data_list)
             
         else:
             message = 'No data loaded'
@@ -818,16 +816,10 @@ class InteractiveLogger():
     def auto_x(self):
         self.auto_xy = 'x'
         self.update_figure()
-#        self.p.auto_x()
-#        self.update_axes_values([])
         
     def auto_y(self):
         self.auto_xy = 'yc'
         self.update_figure()
-#        self.p.auto_y()
-#        self.p.ax2.set_ylim([0,1])
-#        self.update_axes_values([])
-#        self.update_co_axes_values([])
         
     def update_axes_values(self,axes):
         xlim = self.p.ax.get_xlim()
@@ -1449,19 +1441,17 @@ class InteractiveLogger():
         m = modal.modal_fit_all_channels(self.dataset.tf_data_list,freq_range=self.freq_range, measurement_type=self.measurement_type)
         self.last_mode_fit = m
         self.show_message(modal.MESSAGE)
+        if len(self.dataset.modal_data_list) == 0:
+            self.dataset.modal_data_list = [m]
+        else:
+            self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
         
         # local reconstruction
         f = np.linspace(self.freq_range[0],self.freq_range[1],300)
         tf_data = modal.reconstruct_transfer_function(m,f,self.measurement_type)
-#        G = modal.f_TF_all_channels(x,f,self.measurement_type)
-#        id_link = []
-#        for tf in self.dataset.tf_data_list:
-#            id_link += [tf.id_link]
-#        test_name = self.dataset.tf_data_list[0].test_name
-#        tf_data = datastructure.TfData(f,G,None,settings,id_link=id_link,test_name=test_name)
         tf_data.flag_modal_TF = True
-        self.dataset.modal_data_list = [m,tf_data]
-#        self.dataset.modal_data.tf_data = tf_data
+        self.dataset.tf_data_list.add_modal_reconstruction(tf_data,mode='replace')
+        self.update_figure()
         
     
     def freq_min2(self):
