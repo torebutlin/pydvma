@@ -335,9 +335,10 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc'):
     Reconstructs transfer functions from modal_data and returns TfData object
     '''
     G = 0
+    N_tfs = np.int((len(modal_data.M[0,:])-2)/4)
     for n_row in range(len(modal_data.M[:,0])):
         xn = modal_data.M[n_row,:]
-        xn[4:] = 0
+        xn[2+2*N_tfs:] = 0 #don't want local residual fits for global fits - i.e. rk and rm
         G += f_TF_all_channels(xn,f,measurement_type=measurement_type)
     
     settings = modal_data.settings

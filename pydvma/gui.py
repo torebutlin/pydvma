@@ -1156,7 +1156,7 @@ class InteractiveLogger():
         self.label_co_freq_min.setVisible(True)
         self.label_co_freq_max.setVisible(True)
         self.label_co_freq_min.setText('co. min:')
-        self.label_co_freq_min.setText('co. max:')
+        self.label_co_freq_max.setText('co. max:')
         
         self.input_co_min.setVisible(True)
         self.input_co_max.setVisible(True)
@@ -1175,7 +1175,7 @@ class InteractiveLogger():
         self.label_co_freq_min.setVisible(True)
         self.label_co_freq_max.setVisible(True)
         self.label_co_freq_min.setText('freq. min:')
-        self.label_co_freq_min.setText('freq. max:')
+        self.label_co_freq_max.setText('freq. max:')
         
         self.input_freq_min.setVisible(True)
         self.input_freq_max.setVisible(True)
