@@ -406,18 +406,18 @@ class PlotData():
         # find the sets and channels higlighted in figure
         # first find lines
         # relies on all sets of data with same number of channels. Need to make more general.
-        lines = self.ax.get_lines()
-        N = len(lines)
-        alphas = np.zeros(N)
-        count = -1
-        for line in lines:
-            count += 1
-            alphas[count] = line.get_alpha()
-        
-        selected_lines = alphas > 0.5
+#        lines = self.ax.get_lines()
+#        N = len(lines)
+#        alphas = np.zeros(N)
+#        count = -1
+#        for line in lines:
+#            count += 1
+#            alphas[count] = line.get_alpha()
+#        
+#        selected_lines = alphas > 0.5
         
         # now convert line selection to sets and channels
-        n_sets = len(self.data_list)
+        n_sets = len(self.line_listbyset)
         
             
         selected_data = []

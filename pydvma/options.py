@@ -68,23 +68,18 @@ class MySettings(object):
                  output_fs=None):
         
         #INPUT SETTINGS
-        self.channels=channels
-        self.fs=fs
-        self.chunk_size=chunk_size
-        self.num_chunks=num_chunks
-        self.viewed_time=viewed_time
-        self.nbits=nbits
-        self.stored_time=stored_time
+        self.fs=np.int(fs)
+        self.channels=np.int(channels)
+        self.stored_time=np.float(stored_time)
+        
         self.pretrig_samples=pretrig_samples
-        self.pretrig_threshold=pretrig_threshold
-        self.pretrig_channel=pretrig_channel
-        self.pretrig_timeout=pretrig_timeout
+        self.pretrig_threshold=np.float(pretrig_threshold)
+        self.pretrig_channel=np.int(pretrig_channel)
+        self.pretrig_timeout=np.float(pretrig_timeout)
+        
         self.device_driver=device_driver
         self.device_index=device_index
-        self.VmaxNI=VmaxNI
-        self.init_view_time=init_view_time
-        self.init_view_freq=init_view_freq
-        self.init_view_levels=init_view_levels
+        
         
         #OUTPUT SETTINGS
         self.output_device_driver = output_device_driver
@@ -92,16 +87,27 @@ class MySettings(object):
         self.output_channels = output_channels
         self.output_fs = output_fs
         
-        if output_fs is None:
-            self.output_fs = self.fs
+        # ADVANCED SETTINGS
+        self.VmaxNI=np.float(VmaxNI)
+        self.chunk_size=np.int(chunk_size)
+        self.num_chunks=np.int(num_chunks)
+        self.viewed_time=viewed_time
+        self.nbits=np.int(nbits)
+        self.init_view_time=init_view_time
+        self.init_view_freq=init_view_freq
+        self.init_view_levels=init_view_levels
+        
+        
+        if (output_fs is None) or (output_fs == 'None'):
+            self.output_fs = np.int(self.fs)
             
         # if output device driver not specified then use same as input device
-        if output_device_driver == None:
+        if (output_device_driver == None) or (output_device_driver == 'None'):
             output_device_driver = device_driver
             self.output_device_driver = output_device_driver
             
             
-        if (device_driver == 'soundcard') and (device_index == None):
+        if (device_driver == 'soundcard') and ((device_index == None) or (device_index == 'None')):
             try:
                 # try to find default input soundcard device
                 audio = pyaudio.PyAudio()
@@ -110,11 +116,13 @@ class MySettings(object):
             except:
                 # if info not available, select index 1
                 self.device_index = 1
-        elif (device_driver == 'nidaq') and (device_index == None):
+        elif (device_driver == 'nidaq') and ((device_index == None) or (device_index == 'None')):
             self.device_index = 0
+        else:
+            self.device_index = np.int(device_index)
                 
         # set output device index to defaults if not specified
-        if (output_device_driver == 'soundcard') and (output_device_index == None):
+        if (output_device_driver == 'soundcard') and ((output_device_index == None) or  (output_device_index == 'None')):
             try:
                 # try to find default output soundcard device
                 audio = pyaudio.PyAudio()
@@ -125,12 +133,15 @@ class MySettings(object):
                 devices = streams.get_devices_soundcard()
                 output_devices = np.where(['output' in names for names in devices])
                 self.output_device_index = output_devices[0][0]
-        elif (output_device_driver == 'nidaq') and (output_device_index == None):
+        elif (output_device_driver == 'nidaq') and ((output_device_index == None) or (output_device_index == 'None')):
             self.output_device_index = 0
         
         ### derived settings
-        if viewed_time != None:
-            self.num_chunks = int(np.ceil(viewed_time*fs/chunk_size))
+        if (viewed_time != None) and (viewed_time != 'None'):
+            self.viewed_time = np.float(viewed_time)
+            self.num_chunks = np.int(np.ceil(self.viewed_time*self.fs/self.chunk_size))
+        else:
+            self.viewed_time = None
         
         if self.chunk_size < 10:
             self.chunk_size = np.int16(10)
@@ -139,9 +150,14 @@ class MySettings(object):
         self.format = eval('pyaudio.paInt'+str(self.nbits))
         self.device_name = None # until initialise stream
         
-        if pretrig_samples != None:
-            if pretrig_samples > chunk_size:
+        if (pretrig_samples == None) or (pretrig_samples == 'None'):
+            self.pretrig_samples = None
+        else:
+            self.pretrig_samples = np.int(pretrig_samples)
+            if self.pretrig_samples > chunk_size:
                 raise Exception('pretrig_samples must be less than or equal to chunk_size (chunk_size={}).'.format(self.chunk_size))
+        
+            
         
     
     def __repr__(self):

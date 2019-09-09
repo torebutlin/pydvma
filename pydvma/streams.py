@@ -48,52 +48,51 @@ def start_stream(settings):
         raise ValueError('Unknown driver: %r' % settings.device_driver)
         
 #%% Find information on available devices
-def list_available_devices():
+def list_available_devices(io=''):
     # soundcard devices list
-    print('__________________________________________________________')
-    print('')
-    print('Devices available using device_driver=''soundcard'', by index:')
-    print('__________________________________________________________')
-    print('')
+    message = '__________________________________________________________\n'
+    message += '\n'
+    message += 'Devices available using device_driver=''soundcard'', by index:\n'
+    message += '__________________________________________________________\n'
+    message += '\n'
 
     device_name_list = get_devices_soundcard()
     if device_name_list != None:
         N = np.size(device_name_list)
         for i in range(N):
-            print('{}: {}'.format(i,device_name_list[i]))
+            if io.lower() in device_name_list[i].lower(): # option to only look for input devices
+                message += '{}: {}\n'.format(i,device_name_list[i])
     
         try:
             audio = pyaudio.PyAudio()
             default_input_device = audio.get_default_input_device_info()
-            print('Default device is: %i %s'
-                  %(default_input_device['index'],default_input_device['name']))
-            print ('')
+            message += 'Default device is: %i %s\n' %(default_input_device['index'],default_input_device['name'])
+            message += '\n'
             default_output_device = audio.get_default_output_device_info()
-            print('Default device is: %i %s'
-                  %(default_output_device['index'],default_output_device['name']))
-            print ('')
-            print ('')
+            message += 'Default device is: %i %s\n' %(default_output_device['index'],default_output_device['name'])
+            message += '\n\n'
         except:
-            print('default information not available')
+            message += 'default information not available\n'
     else:
-        print('no soundcards found')
+        message += 'no soundcards found\n'
     
     # NI list
-    print('______________________________________________________')
-    print('')
-    print('Devices available using device_driver=''nidaq'', by index:')
-    print('______________________________________________________')
-    print('')
+    message += '______________________________________________________\n'
+    message += '\n'
+    message += 'Devices available using device_driver=''nidaq'', by index:\n'
+    message += '______________________________________________________\n'
+    message += '\n'
     
     device_name_list,device_type_list = get_devices_NI()
     if device_name_list != None:
         N = np.size(device_name_list)
         for i in range(N):
-            print('{}: {} {}'.format(i,device_name_list[i],device_type_list[i]))
+            message += '{}: {} {}\n'.format(i,device_name_list[i],device_type_list[i])
     else:
-        print('no NI devices found')
+        message += 'no NI devices found\n'
         
-    
+    print(message)
+    return message
     
     
         

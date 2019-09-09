@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider, QMessageBox
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame, QFormLayout
 from PyQt5.QtWidgets import QToolTip
 from PyQt5.QtCore import Qt, QThread, Signal, QTimer
 from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
@@ -19,6 +19,7 @@ from . import analysis
 from . import streams
 from . import file
 from . import modal
+from . import options
 import time
 import sys
 import numpy as np
@@ -118,6 +119,7 @@ class InteractiveLogger():
         self.iw_power = 0
         self.selected_channels = []
         self.flag_scaling = False
+        self.message_time = 0
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -416,7 +418,8 @@ class InteractiveLogger():
         self.setup_frame_tools_fft()
         self.setup_frame_tools_tf()
         self.setup_frame_tools_scaling()
-        self.setup_frame_mode_fitting()
+        self.setup_frame_tools_mode_fitting()
+        self.setup_frame_tools_settings()
         
         # widgets to layout
         self.layout_tools = QVBoxLayout()
@@ -426,6 +429,8 @@ class InteractiveLogger():
         self.layout_tools.addWidget(self.frame_tools_tf)
         self.layout_tools.addWidget(self.frame_tools_scaling)
         self.layout_tools.addWidget(self.frame_tools_mode_fitting)
+        self.layout_tools.addWidget(self.frame_tools_settings)
+        
         self.layout_tools.setAlignment(Qt.AlignTop)
         
         # layout to frame
@@ -571,7 +576,7 @@ class InteractiveLogger():
         self.frame_tools_scaling = QFrame()
         self.frame_tools_scaling.setLayout(self.layout_tools_scaling)
         
-    def setup_frame_mode_fitting(self):
+    def setup_frame_tools_mode_fitting(self):
         self.input_freq_min2 = QLineEdit()
         self.input_freq_min2.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
         self.input_freq_min2.editingFinished.connect(self.freq_min2)
@@ -608,6 +613,54 @@ class InteractiveLogger():
         self.frame_tools_mode_fitting = QFrame()
         self.frame_tools_mode_fitting.setLayout(self.layout_tools_mode_fitting)
         
+    def setup_frame_tools_settings(self):
+        
+        if self.settings is None:
+            self.settings = options.MySettings()
+            
+            
+        self.button_apply_settings = GreenButton('Apply Settings')
+        self.button_apply_settings.clicked.connect(self.apply_settings)
+        
+        self.button_show_available_devices = BlueButton('Show Available Devices')
+        self.button_show_available_devices.clicked.connect(self.show_available_devices)
+        
+        self.settings_dict = self.settings.__dict__
+        self.labels_settings = list(self.settings_dict.keys())
+        self.values_settings = list(self.settings_dict.values())
+        
+        self.input_settings = dict()
+        for (label,value) in self.settings_dict.items():
+            self.input_settings[label] = QLineEdit(str(value))
+        
+            
+        
+        NI = streams.get_devices_NI()
+        SC = streams.get_devices_soundcard()
+        
+        if NI == (None,None):
+            self.input_list_devices = []
+        else:
+            self.input_list_devices = ['nidaq']
+        if SC != None:
+            self.input_list_devices += ['soundcard']
+        
+        
+        
+        self.layout_tools_settings = QFormLayout()
+        self.layout_tools_settings.addWidget(boldLabel('Input Settings:'))
+        for n_row in range(9):
+            self.layout_tools_settings.addRow(QLabel(self.labels_settings[n_row]),self.input_settings[self.labels_settings[n_row]])
+        self.layout_tools_settings.addWidget(boldLabel('Output Settings:'))
+        for n_row in range(9,13):
+            self.layout_tools_settings.addRow(QLabel(self.labels_settings[n_row]),self.input_settings[self.labels_settings[n_row]])
+        
+        self.layout_tools_settings.addWidget(self.button_show_available_devices)
+        self.layout_tools_settings.addWidget(self.button_apply_settings)
+        self.frame_tools_settings = QFrame()
+        self.frame_tools_settings.setLayout(self.layout_tools_settings)
+        
+        
     def update_frame_tools(self):
         self.frame_tools.setLayout(self.layout_tools)
 
@@ -638,6 +691,12 @@ class InteractiveLogger():
             self.select_view()
 
     def show_message(self,message,b='ok'):
+        # if multiple messages from different functions, then join them up
+        time_since_last = time.time()-self.message_time
+        if time_since_last < 0.5:
+            last_message = self.label_message.text()
+            message = last_message + '\n\n' + message
+        self.message_time = time.time()
         if message != '':
             self.label_message.setText(message)
             if b == 'ok':
@@ -997,7 +1056,7 @@ class InteractiveLogger():
             self.selected_channels = self.p.get_selected_channels()
         else:
             self.current_view_changed = True
-    
+        
         # Time Data
         if self.selected_view == 'Time Data':
             ### set to time gui
@@ -1204,6 +1263,7 @@ class InteractiveLogger():
         self.frame_tools_tf.setVisible(False)
         self.frame_tools_scaling.setVisible(False)
         self.frame_tools_mode_fitting.setVisible(False)
+        self.frame_tools_settings.setVisible(False)
         
     def select_tool(self):
         self.selected_tool = self.input_list_tools.currentText()
@@ -1216,7 +1276,8 @@ class InteractiveLogger():
             
             
         elif self.selected_tool == 'Logger Settings':
-            print(self.selected_tool)
+            self.hide_all_tools()
+            self.frame_tools_settings.setVisible(True)
             
         elif self.selected_tool == 'Pre-process':
             self.hide_all_tools()
@@ -1241,6 +1302,21 @@ class InteractiveLogger():
         elif self.selected_tool == 'Save / Export':
             self.hide_all_tools()
             self.frame_tools_time_domain.setVisible(True)
+            
+    def apply_settings(self):
+        settings_dict = dict()
+        for n_row in range(13):
+            label = self.labels_settings[n_row]
+            text = self.input_settings[label].text()
+            settings_dict[label] = text
+        self.settings_dict = settings_dict
+        self.settings = options.MySettings(**settings_dict)
+        self.start_stream()
+            
+    
+    def show_available_devices(self):
+        message = streams.list_available_devices()
+        self.show_message(message)
 
     def clean_impulse(self):
         try:
