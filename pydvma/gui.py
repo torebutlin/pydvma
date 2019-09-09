@@ -1464,6 +1464,7 @@ class InteractiveLogger():
             s += [[]]
         s[-1] = s2[-1]
         self.p.set_selected_channels(s) # keep selection after auto-range
+        
     
     def freq_min2(self):
         self.freq_range[0] = np.float(self.input_freq_min2.text())

@@ -53,16 +53,51 @@ class PlotData():
             self.ax.set_ylabel('Amplitude')
         elif data_list.__class__.__name__ == 'FreqDataList':
             self.ax2.set_visible(False)
-            self.ax.set_xlabel('Frequency (Hz)')
+            if (plot_type == 'Amplitude (dB)') or (plot_type == None):
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Amplitude (dB)')
+            elif plot_type == 'Amplitude (linear)':
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Amplitude')
+            elif plot_type == 'Real Part':
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Real Part')
+            elif plot_type == 'Imag Part':
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Imag Part')
+            elif plot_type == 'Nyquist':
+                self.ax.set_xlabel('Real Part')
+                self.ax.set_ylabel('Imag Part')
+            elif plot_type == 'Phase':
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Phase (deg)')
+                
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
                 self.ax.grid(b=True, which='minor',axis='x')
             else:
                 self.ax.grid(b=False,which='minor',axis='x')
-            self.ax.set_ylabel('Amplitude')
+            
         elif data_list.__class__.__name__ == 'TfDataList':
-            self.ax.set_xlabel('Frequency (Hz)')
-            self.ax.set_ylabel('Amplitude (dB)')
+            if (plot_type == 'Amplitude (dB)') or (plot_type == None):
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Amplitude (dB)')
+            elif plot_type == 'Amplitude (linear)':
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Amplitude')
+            elif plot_type == 'Real Part':
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Real Part')
+            elif plot_type == 'Imag Part':
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Imag Part')
+            elif plot_type == 'Nyquist':
+                self.ax.set_xlabel('Real Part')
+                self.ax.set_ylabel('Imag Part')
+            elif plot_type == 'Phase':
+                self.ax.set_xlabel('Frequency (Hz)')
+                self.ax.set_ylabel('Phase (deg)')
+            
             
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
@@ -226,10 +261,11 @@ class PlotData():
         self.update_legend()
         if 'x' in auto_xy:
             self.auto_x()
-        if 'y' in auto_xy:
-            self.auto_y()
         if 'f' in auto_xy: # use freq_range for x axis
             self.ax.set_xlim(freq_range)
+            self.fig.canvas.draw()
+            self.auto_y()
+        if 'y' in auto_xy:
             self.auto_y()
         if 'c' in auto_xy: # auto coherence y
             self.ax2.set_ylim([0,1])
@@ -240,7 +276,12 @@ class PlotData():
         
         
     def update_legend(self,loc='lower right',draggable=False):
+        
         if len(self.data_list) != 0:
+            if self.ax.get_legend() is not None:
+                visibility = self.ax.get_legend().get_visible()
+            else:
+                visibility = True
             if self.ch_total >= 10:
                 # make legend more compact
                 col_sizes = np.arange(10,7,-1)
@@ -266,13 +307,16 @@ class PlotData():
             # make dictionary of legend lines for selection    
             for legline, origline in zip(self.legend.get_lines(), self.lines):
                 legline.set_picker(10)  # argument tolerance
-                self.lined[legline] = origline 
+                self.lined[legline] = origline
+                legline.set_alpha(origline.get_alpha())
 
             # make dictionary of coherence lines to select with legend - only for TF Data
             if len(self.ax2.lines) > 0:
                 for legline, origline2 in zip(self.legend.get_lines(), self.lines2):
                     self.lined2[legline] = origline2 
-
+                    origline2.set_alpha(legline.get_alpha())
+                    
+            self.ax.get_legend().set_visible(visibility)
         else:
             self.legend = self.ax.get_legend()
             if self.legend is not None:
@@ -295,7 +339,7 @@ class PlotData():
             self.ax.set_xlim([xmin,xmax])
         except:
             pass
-        self.canvas.draw()
+        self.fig.canvas.draw()
         
         
     def auto_y(self):
@@ -306,7 +350,9 @@ class PlotData():
             xview = self.ax.get_xlim()
         ymin = np.inf
         ymax = -np.inf
+        c=-1
         for line in self.lines:
+            c+=1
             data = line.get_data() 
             x = data[0]
             selection = (xview[0] < x) & (x < xview[1])
@@ -319,7 +365,7 @@ class PlotData():
             self.ax.set_ylim([ymin,ymax])
         except:
             pass
-        self.canvas.draw()
+        self.fig.canvas.draw()
         
     def channel_select(self,event):
         selected_line = event.artist
@@ -403,7 +449,10 @@ class PlotData():
                     self.line_listbyset[n_set][n_chan].set_alpha(LINE_ALPHA)
                 else:
                     self.line_listbyset[n_set][n_chan].set_alpha(1-LINE_ALPHA)
-                
+        # make legend line alphas match actual lines, but keep visibility as before
+        self.update_legend()
+        
+       
         self.fig.canvas.draw()
         
 #    def plot_modal_reconstruction(modal_data_list):
