@@ -581,7 +581,7 @@ class InteractiveLogger():
         
         self.input_list_tf_type = newComboBox(['Acceleration','Velocity','Displacement'])
         
-        self.button_fit_mode = BlueButton('Fit')
+        self.button_fit_mode = GreenButton('Fit')
         self.button_fit_mode.clicked.connect(self.fit_mode)
         self.button_reject_mode = RedButton('Reject')
         self.button_reject_mode.clicked.connect(self.reject_mode)
@@ -602,8 +602,8 @@ class InteractiveLogger():
         self.layout_tools_mode_fitting.addWidget(self.input_freq_max2,4,1,1,3)
         self.layout_tools_mode_fitting.addWidget(self.button_fit_mode,5,0,1,2)
         self.layout_tools_mode_fitting.addWidget(self.button_reject_mode,5,2,1,2)
-        self.layout_tools_mode_fitting.addWidget(self.button_view_mode_summary,6,0,1,2)
-        self.layout_tools_mode_fitting.addWidget(self.button_view_modal_reconstruction,6,2,1,2)
+        self.layout_tools_mode_fitting.addWidget(self.button_view_mode_summary,6,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(self.button_view_modal_reconstruction,7,0,1,4)
         
         self.frame_tools_mode_fitting = QFrame()
         self.frame_tools_mode_fitting.setLayout(self.layout_tools_mode_fitting)
@@ -841,12 +841,13 @@ class InteractiveLogger():
                 message = 'A total of {} modes have been fitted within this frequency range so far:\n\n'.format(len(self.fn_in_range))
                 message += 'Fitted mode frequencies = {} (Hz)\n\n'.format(np.array2string(self.fn_in_range,precision=2))
                 message += 'To delete all of these modal fits, press ''Reject Mode''.'
+                self.show_message(message)
             elif len(self.fn_in_range) == 1:
                 message = 'One mode has been fitted within this frequency range:\n\n'
                 message += 'Fitted mode frequency = {} Hz\n\n'.format(np.array2string(self.fn_in_range,precision=2))
                 message += 'To replace this mode fit with a new fit, press ''Fit Mode''.\n'
                 message += 'To delete this mode fit, press ''Reject Mode''.'
-            self.show_message(message)
+                self.show_message(message)
         
     def legend_left(self):
         self.legend_loc = 'lower left'
@@ -876,9 +877,14 @@ class InteractiveLogger():
         self.label_figure.setText(self.selected_view)
         self.p.update(data_list, sets=self.sets, channels=self.channels, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         if self.current_view_changed == False:
-            self.p.set_selected_channels(self.selected_channels)
+            try:
+                # not robust as not consistent in keeping up to date
+                self.p.set_selected_channels(self.selected_channels)
+            except:
+                # get selected_channels back into sync
+                self.selected_channels = self.p.get_selected_channels()
+                   
             
-        
     def select_all_data(self):
         if len(self.p.ax.lines) > 0:
             for line in self.p.ax.lines:
@@ -1260,7 +1266,10 @@ class InteractiveLogger():
             self.update_figure()
         if self.last_action == 'delete modes':
             self.dataset = self.dataset_backup
+            self.selected_channels = self.selected_channels_backup
             self.update_figure()
+            message = 'Deleted mode fits restored.'
+            self.show_message(message)
             
     def calc_fft(self):
         if len(self.dataset.time_data_list) == 0:
@@ -1449,51 +1458,57 @@ class InteractiveLogger():
             self.show_message(message)
         
     def fit_mode(self):
-        if self.input_list_tf_type.currentText() == 'Acceleration':
-            self.measurement_type = 'acc'
-        elif self.input_list_tf_type.currentText() == 'Velocity':
-            self.measurement_type = 'vel'
-        elif self.input_list_tf_type.currentText() == 'Displacement':
-            self.measurement_type = 'dsp'
+        if self.current_view == 'TF Data':
+            if self.input_list_tf_type.currentText() == 'Acceleration':
+                self.measurement_type = 'acc'
+            elif self.input_list_tf_type.currentText() == 'Velocity':
+                self.measurement_type = 'vel'
+            elif self.input_list_tf_type.currentText() == 'Displacement':
+                self.measurement_type = 'dsp'
+                
+            m = modal.modal_fit_all_channels(self.dataset.tf_data_list,freq_range=self.freq_range, measurement_type=self.measurement_type)
+            self.last_mode_fit = m
+            self.show_message(modal.MESSAGE)
+            if len(self.dataset.modal_data_list) == 0:
+                self.dataset.modal_data_list = [m]
+            elif len(self.fn_in_range) > 1:
+                message = 'Several mode fits already in this range.\n\n'
+                message += 'Fitted mode frequencies = {} (Hz)\n\n'.format(np.array2string(self.fn_in_range,precision=2))
+                message += 'To delete them, press ''Reject''.'
+                message += 'To replace a single fit, zoom into a single peak first.'
+                self.show_message(message)
+                return None
+            elif len(self.fn_in_range) == 1:
+                # find which mode and replace it
+                fn_all = self.dataset.modal_data_list[0].M[:,0]
+                mode_number = np.where((fn_all > self.freq_range[0]) & (fn_all < self.freq_range[1]))[0]
+                self.dataset.modal_data_list[0].delete_mode(mode_number)
+                self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
+            else:
+                self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
             
-        m = modal.modal_fit_all_channels(self.dataset.tf_data_list,freq_range=self.freq_range, measurement_type=self.measurement_type)
-        self.last_mode_fit = m
-        self.show_message(modal.MESSAGE)
-        if len(self.dataset.modal_data_list) == 0:
-            self.dataset.modal_data_list = [m]
-        elif len(self.fn_in_range) > 1:
-            message = 'Several mode fits already in this range.\n\n'
-            message += 'Fitted mode frequencies = {} (Hz)\n\n'.format(np.array2string(self.fn_in_range,precision=2))
-            message += 'To delete them, press ''Reject Mode''.'
-            message += 'To replace a single fit, zoom into a single peak first.'
-            self.show_message(message)
-            return None
-        elif len(self.fn_in_range) == 1:
-            # find which mode and replace it
+            # local reconstruction
+            s = self.p.get_selected_channels() # keep selection after auto-range
+            
+            f = np.linspace(self.freq_range[0],self.freq_range[1],300)
+            tf_data = modal.reconstruct_transfer_function(m,f,self.measurement_type)
+            tf_data.flag_modal_TF = True
+            self.dataset.tf_data_list.add_modal_reconstruction(tf_data,mode='replace')
+            
+            self.update_figure()
+            s2 = self.p.get_selected_channels()
+            for i in range(len(s2[-1])):
+                s2[-1][i] = True
+            if len(s) != len(s2):
+                s += [[]]
+            s[-1] = s2[-1]
+            self.p.set_selected_channels(s) # keep selection after auto-range
             fn_all = self.dataset.modal_data_list[0].M[:,0]
-            mode_number = np.where((fn_all > self.freq_range[0]) & (fn_all < self.freq_range[1]))[0]
-            self.dataset.modal_data_list[0].delete_mode(mode_number)
-            self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
+            self.fn_in_range = m.fn
         else:
-            self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
-        
-        # local reconstruction
-        s = self.p.get_selected_channels() # keep selection after auto-range
-        
-        f = np.linspace(self.freq_range[0],self.freq_range[1],300)
-        tf_data = modal.reconstruct_transfer_function(m,f,self.measurement_type)
-        tf_data.flag_modal_TF = True
-        self.dataset.tf_data_list.add_modal_reconstruction(tf_data,mode='replace')
-        
-        self.update_figure()
-        s2 = self.p.get_selected_channels()
-        for i in range(len(s2[-1])):
-            s2[-1][i] = True
-        if len(s) != len(s2):
-            s += [[]]
-        s[-1] = s2[-1]
-        self.p.set_selected_channels(s) # keep selection after auto-range
-        
+            message = 'First select ''TF Data''.'
+            self.show_message(message)
+            
     
     def freq_min2(self):
         self.freq_range[0] = np.float(self.input_freq_min2.text())
@@ -1515,10 +1530,15 @@ class InteractiveLogger():
         if len(self.fn_in_range) >= 1:
             self.last_action = 'delete modes'
             self.dataset_backup = copy.deepcopy(self.dataset)
+            self.selected_channels_backup = self.p.get_selected_channels()
             # find which mode and replace it
             fn_all = self.dataset.modal_data_list[0].M[:,0]
             mode_number = np.where((fn_all > self.freq_range[0]) & (fn_all < self.freq_range[1]))[0]
             self.dataset.modal_data_list[0].delete_mode(mode_number)
+            if self.dataset.tf_data_list[-1].flag_modal_TF == True:
+                self.dataset.remove_last_data_item('TfData')
+                self.selected_channels.pop(-1) # updates selected channels
+                self.update_figure()
             message = 'Mode fits deleted.'
             self.show_message(message,b='undo')
         
@@ -1529,7 +1549,24 @@ class InteractiveLogger():
         self.show_message(message)
     
     def view_modal_reconstruction(self):
-        pass
+        # Global reconstruction
+        s = self.p.get_selected_channels() # keep selection after auto-range
+        
+        f = self.dataset.tf_data_list[0].freq_axis
+        m = self.dataset.modal_data_list[0]
+        tf_data = modal.reconstruct_transfer_function_global(m,f,self.measurement_type)
+        tf_data.flag_modal_TF = True
+        self.dataset.tf_data_list.add_modal_reconstruction(tf_data,mode='replace')
+        
+        self.update_figure()
+        s2 = self.p.get_selected_channels()
+        for i in range(len(s2[-1])):
+            s2[-1][i] = True
+        if len(s) != len(s2):
+            s += [[]]
+        s[-1] = s2[-1]
+        self.p.set_selected_channels(s) # keep selection after auto-range
+        self.fn_in_range = m.fn
         
         
 sys._excepthook = sys.excepthook 

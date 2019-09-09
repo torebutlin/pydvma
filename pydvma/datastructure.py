@@ -600,7 +600,7 @@ class TfData():
 class ModalData():
     def __init__(self,xn=None,settings=None,units=None,id_link=None,test_name=None):
         
-        self.M = None
+        self.M = []
         self.test_name = test_name
         self.settings = settings
         self.channels = 0
@@ -618,7 +618,7 @@ class ModalData():
 
     def add_mode(self,xn):
         # Make modal matrix. Each row is modal vector stacked as per 'x' in modal.py
-        if self.M is None:
+        if len(self.M) == 0:
             self.M = np.atleast_2d(xn)
         elif len(xn) == len(self.M[0,:]):
             self.M = np.vstack((self.M,xn))
@@ -648,6 +648,7 @@ class ModalData():
         self.zn = self.M[:,1]
         self.an = self.M[:,2]
         self.pn = self.M[:,3]
+        
             
     def __repr__(self):
         return "<ModalData>"

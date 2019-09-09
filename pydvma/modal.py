@@ -315,8 +315,6 @@ def pack(fn,zn,an,pn,rk,rm):
     return x
     
 
-        
-
 def reconstruct_transfer_function(modal_data,f,measurement_type='acc'):
     '''
     Reconstructs transfer functions from modal_data and returns TfData object
@@ -324,6 +322,22 @@ def reconstruct_transfer_function(modal_data,f,measurement_type='acc'):
     G = 0
     for n_row in range(len(modal_data.M[:,0])):
         xn = modal_data.M[n_row,:]
+        G += f_TF_all_channels(xn,f,measurement_type=measurement_type)
+    
+    settings = modal_data.settings
+    settings.channels = modal_data.channels
+    tf_data = datastructure.TfData(f,G,None,settings,units=modal_data.units,channel_cal_factors=None,id_link=modal_data.id_link,test_name=modal_data.test_name)
+    tf_data.flag_modal_TF = True
+    return tf_data
+
+def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc'):
+    '''
+    Reconstructs transfer functions from modal_data and returns TfData object
+    '''
+    G = 0
+    for n_row in range(len(modal_data.M[:,0])):
+        xn = modal_data.M[n_row,:]
+        xn[4:] = 0
         G += f_TF_all_channels(xn,f,measurement_type=measurement_type)
     
     settings = modal_data.settings
