@@ -724,8 +724,8 @@ class InteractiveLogger():
     
     def load_data(self):
         d = file.load_data()
-        d = datastructure.update_dataset(d) # updates data saved using previous logger versions
         if d is not None:
+            d = datastructure.update_dataset(d) # updates data saved using previous logger versions
             self.dataset.add_to_dataset(d.time_data_list)
             self.dataset.add_to_dataset(d.freq_data_list)
             self.dataset.add_to_dataset(d.tf_data_list)
@@ -814,12 +814,14 @@ class InteractiveLogger():
         self.canvas.draw()
         
     def auto_x(self):
-        self.auto_xy = 'x'
-        self.update_figure()
+#        self.auto_xy = 'x'
+#        self.update_figure()
+        self.p.auto_x()
         
     def auto_y(self):
-        self.auto_xy = 'yc'
-        self.update_figure()
+#        self.auto_xy = 'yc'
+#        self.update_figure()
+        self.p.auto_y()
         
     def update_axes_values(self,axes):
         xlim = self.p.ax.get_xlim()
@@ -860,6 +862,9 @@ class InteractiveLogger():
 
         self.label_figure.setText(self.selected_view)
         self.p.update(data_list, sets=self.sets, channels=self.channels, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
+        if self.current_view_changed == False:
+            self.p.set_selected_channels(self.selected_channels)
+            
         
     def select_all_data(self):
         if len(self.p.ax.lines) > 0:
@@ -970,6 +975,7 @@ class InteractiveLogger():
             self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
             self.switch_to_nyquist = (self.plot_type == 'Nyquist') and ('Nyquist' != self.plot_type_before)
             self.switch_from_nyquist = (self.plot_type_before == 'Nyquist') and ('Nyquist' != self.plot_type)
+            self.selected_channels = self.p.get_selected_channels()
         else:
             self.current_view_changed = True
     
@@ -1348,18 +1354,14 @@ class InteractiveLogger():
         
         if len(data_list) > 0:            
             s = self.p.get_selected_channels()
-            if np.shape(self.selected_channels) != np.shape(s):
+            if self.selected_channels != s:
                 # reset gui's iw_power record if changed selection
                 self.iw_fft_power = 0
                 self.selected_channels = s
-            elif (self.selected_channels != s).any():
-                # reset gui's iw_power record if changed selection - two ways this can change
-                self.iw_fft_power = 0
-                self.selected_channels = s
                 
-            n_sets,n_chans = np.shape(s)
-            for ns in range(n_sets):
-                newdata = analysis.multiply_by_power_of_iw(data_list[ns],power=power,channel_list=s[ns,:])
+            
+            for ns in range(len(s)):
+                newdata = analysis.multiply_by_power_of_iw(data_list[ns],power=power,channel_list=s[ns])
                 data_list[ns] = newdata
                 self.flag_scaling = True
                 
@@ -1447,12 +1449,21 @@ class InteractiveLogger():
             self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
         
         # local reconstruction
+        s = self.p.get_selected_channels() # keep selection after auto-range
+        
         f = np.linspace(self.freq_range[0],self.freq_range[1],300)
         tf_data = modal.reconstruct_transfer_function(m,f,self.measurement_type)
         tf_data.flag_modal_TF = True
         self.dataset.tf_data_list.add_modal_reconstruction(tf_data,mode='replace')
-        self.update_figure()
         
+        self.update_figure()
+        s2 = self.p.get_selected_channels()
+        for i in range(len(s2[-1])):
+            s2[-1][i] = True
+        if len(s) != len(s2):
+            s += [[]]
+        s[-1] = s2[-1]
+        self.p.set_selected_channels(s) # keep selection after auto-range
     
     def freq_min2(self):
         self.freq_range[0] = np.float(self.input_freq_min2.text())

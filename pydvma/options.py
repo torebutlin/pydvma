@@ -10,6 +10,8 @@ from . import streams
 import numpy as np
 import pyaudio
 import pyqtgraph as pg
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 class MySettings(object):
@@ -160,8 +162,19 @@ def set_plot_colours(channels):
     Returns a list of RGB colours depending on the number of channels required.
     '''
     #TODO: Accessible colours
-    val = [0.0,0.5,1.0]
-    colour = np.array([[255,0,0,255],[0,255,0,255],[0,0,255,255]], dtype = np.ubyte)
-    plot_colourmap =  pg.ColorMap(val,colour)
-    c_list = plot_colourmap.getLookupTable(nPts =channels,alpha=True)
+    if channels <= 1:
+        cmap = plt.get_cmap('tab10')
+#        cmap = sns.color_palette('paired')
+        c_list = np.array((np.array(cmap.colors) * 255),dtype=int)
+    else:
+#        cmap = plt.get_cmap('plasma')
+#        v = np.linspace(0,1,channels)
+#        c_list = np.array(cmap(v) * 255,dtype=int)
+        cmap = sns.hls_palette(channels, l=.3, s=1)
+        c_list = np.array(np.array(cmap) * 255,dtype=int)
+    
+#    val = [0.0,0.5,1.0]
+#    colour = np.array([[255,0,0,255],[0,255,0,255],[0,0,255,255]], dtype = np.ubyte)
+#    plot_colourmap =  pg.ColorMap(val,colour)
+#    c_list = plot_colourmap.getLookupTable(nPts =channels,alpha=True)
     return c_list 

@@ -35,7 +35,7 @@ def f_3dB(f,G0):
     xi = np.where(np.squeeze(np.abs(G0)) > halfpower)[0]
 
     
-    f1 = f[xi[1]]
+    f1 = f[xi[0]]
     f2 = f[xi[-1]]
 
     
@@ -194,7 +194,8 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     # Find out how many TFs in dataset
     N_tfs = 0
     for tf_data in tf_data_list:
-        N_tfs += len(tf_data.tf_data[0,:])
+        if tf_data.flag_modal_TF == False:
+            N_tfs += len(tf_data.tf_data[0,:])
     
     if freq_range == None:
         freq_range = tf_data.freq_axis[[0,-1]]
@@ -211,10 +212,11 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     zn0 = np.zeros(N_tfs)
     counter = -1
     for tf_data in tf_data_list:
-        for n_chan in range(len(tf_data.tf_data[0,:])):
-            counter += 1
-            G0[:,counter] = tf_data.tf_data[selected_range,n_chan] * tf_data.channel_cal_factors[n_chan]
-            fn0[counter],zn0[counter] = f_3dB(f,G0[:,counter])
+        if tf_data.flag_modal_TF == False:
+            for n_chan in range(len(tf_data.tf_data[0,:])):
+                counter += 1
+                G0[:,counter] = tf_data.tf_data[selected_range,n_chan] * tf_data.channel_cal_factors[n_chan]
+                fn0[counter],zn0[counter] = f_3dB(f,G0[:,counter])
             
 
     # initial global guess for fn0,zn0 discarding any outliers

@@ -42,7 +42,11 @@ class PlotData():
         self.fig.canvas.draw()
         
     def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy=''):
+        global LINE_ALPHA
         self.data_list = data_list
+        self.plot_type = plot_type
+        self.freq_range = freq_range
+        
         if data_list.__class__.__name__ == 'TimeDataList':
             self.ax2.set_visible(False)
             self.ax.set_xlabel('Time (s)')
@@ -78,9 +82,18 @@ class PlotData():
         # pre-count how many channels total
         ch_counter = 0
         for n_set in range(N_sets):
-            for n_chan in range(self.data_list[n_set].settings.channels):
-                ch_counter += 1
+            if data_list.__class__.__name__ == 'TimeDataList':
+                ch_counter += len(data_list[n_set].time_data[0,:])
+            elif data_list.__class__.__name__ == 'FreqDataList':
+                ch_counter += len(data_list[n_set].freq_data[0,:])
+            elif data_list.__class__.__name__ == 'TfDataList':
+                ch_counter += len(data_list[n_set].tf_data[0,:])
+
         self.ch_total = ch_counter
+        if self.ch_total <= 10:
+            LINE_ALPHA = 0.9
+        else:
+            LINE_ALPHA = 1-1/self.ch_total/2 # make deselected lines fainter if more channels
         
         self.ax.lines=[]
         self.ax2.lines=[]
@@ -96,12 +109,15 @@ class PlotData():
             
             if data_list.__class__.__name__ == 'TfDataList':
                 N_chans = len(data_list[n_set].tf_data[0,:])
-            else:
-                N_chans = data_list[n_set].settings.channels
+            elif data_list.__class__.__name__ == 'FreqDataList':
+                N_chans = len(data_list[n_set].freq_data[0,:])
+            elif data_list.__class__.__name__ == 'TimeDataList':
+                N_chans = len(data_list[n_set].time_data[0,:])
                 
             if channels == 'all':
                 channels = range(N_chans)
 
+            
 
             for n_chan in range(N_chans):
                 count += 1
@@ -181,7 +197,8 @@ class PlotData():
                         yc = np.ones(np.shape(data_list[n_set].tf_data))
                         
                         
-                color = options.set_plot_colours(len(data_list)*data_list[n_set].settings.channels)[count,:]/255
+                color = options.set_plot_colours(ch_counter)[count,:]/255
+                
                 if type(data_list[n_set].test_name) is str:
                     test_name = data_list[n_set].test_name
                 else:
@@ -191,7 +208,13 @@ class PlotData():
                     label = '{}_{}, ch_{}'.format(test_name,n_set,n_chan)
                 else:
                     label = 'set{},ch{}'.format(n_set,n_chan)
+                    
+                if data_list.__class__.__name__ == 'TfDataList':
+                    if data_list[n_set].flag_modal_TF == True:
+                        label = 'fit{}'.format(n_chan)
+                        
                 self.line_listbyset[n_set] += self.ax.plot(x,y,'-',linewidth=1,color = color,label=label,alpha=alpha)
+                
                 if data_list.__class__.__name__ == 'TfDataList':
                     if show_coherence == True:
                         self.line2_listbyset[n_set] += self.ax2.plot(x,yc,':',linewidth=1,color = color,label=label+' (coherence)',alpha=alpha)
@@ -277,7 +300,10 @@ class PlotData():
         
     def auto_y(self):
         self.lines = self.ax.get_lines()
-        xview = self.ax.get_xlim()
+        if (self.data_list.__class__.__name__ == 'TfData') and (self.plot_type != 'Nyquist'):
+            xview = self.freq_range
+        else:
+            xview = self.ax.get_xlim()
         ymin = np.inf
         ymax = -np.inf
         for line in self.lines:
@@ -346,32 +372,34 @@ class PlotData():
         
         # now convert line selection to sets and channels
         n_sets = len(self.data_list)
-        if self.data_list.__class__.__name__ == 'TimeDataList':
-            n_chans = len(self.data_list[0].time_data[0,:])
-        elif self.data_list.__class__.__name__ == 'FreqDataList':
-            n_chans = len(self.data_list[0].freq_data[0,:])
-        elif self.data_list.__class__.__name__ == 'TfDataList':
-            n_chans = len(self.data_list[0].tf_data[0,:])
-            
-        selected_data = np.zeros([n_sets,n_chans])
-        count = -1
-        for ns in range(n_sets):
-            for nc in range(n_chans):
-                count += 1
-                if self.data_list.__class__.__name__ == 'TfDataList':
-                    selected_data[ns,nc] = selected_lines[2*count] # skip coherence lines
-                else:
-                    selected_data[ns,nc] = selected_lines[count]
         
-        selected_data = selected_data == True
+            
+        selected_data = []
+        
+        for ns in range(n_sets):
+            selected_data += [[]]
+#            if self.data_list.__class__.__name__ == 'TimeDataList':
+#                n_chans = len(self.data_list[ns].time_data[0,:])
+#            elif self.data_list.__class__.__name__ == 'FreqDataList':
+#                n_chans = len(self.data_list[ns].freq_data[0,:])
+#            elif self.data_list.__class__.__name__ == 'TfDataList':
+#                n_chans = len(self.data_list[ns].tf_data[0,:])
+#            for nc in range(n_chans):
+#                count = -1
+            for line in self.line_listbyset[ns]:
+                selected_data[ns] += [line.get_alpha() > 0.5] # skip coherence lines
+                
+        
+#        selected_data = selected_data == True
             
         return selected_data
     
     def set_selected_channels(self,s):
+        global LINE_ALPHA
         # relies on all sets of data with same number of channels. Need to make more general.
-        for n_set in range(len(s[:,0])):
-            for n_chan in range(len(s[n_set,:])):
-                if s[n_set,n_chan] == True:
+        for n_set in range(len(s)):
+            for n_chan in range(len(s[n_set])):
+                if s[n_set][n_chan] == True:
                     self.line_listbyset[n_set][n_chan].set_alpha(LINE_ALPHA)
                 else:
                     self.line_listbyset[n_set][n_chan].set_alpha(1-LINE_ALPHA)
