@@ -637,6 +637,17 @@ class ModalData():
         self.zn = self.M[:,1]
         self.an = self.M[:,2]
         self.pn = self.M[:,3]
+        
+    def delete_mode(self,mode_number):
+        self.M = np.delete(self.M,mode_number,0)
+        self.channels = len(self.M[:,0])
+        self.settings.channels = self.channels
+        
+        # separate properties for easier summary, and don't need summary of local residuals rk and rm
+        self.fn = self.M[:,0]
+        self.zn = self.M[:,1]
+        self.an = self.M[:,2]
+        self.pn = self.M[:,3]
             
     def __repr__(self):
         return "<ModalData>"

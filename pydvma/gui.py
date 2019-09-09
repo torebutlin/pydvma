@@ -581,15 +581,13 @@ class InteractiveLogger():
         
         self.input_list_tf_type = newComboBox(['Acceleration','Velocity','Displacement'])
         
-        self.button_fit_mode = BlueButton('Fit Mode')
+        self.button_fit_mode = BlueButton('Fit')
         self.button_fit_mode.clicked.connect(self.fit_mode)
-        self.button_accept_mode = GreenButton('Accept Last')
-        self.button_accept_mode.clicked.connect(self.accept_mode)
-        self.button_reject_mode = RedButton('Reject Last')
+        self.button_reject_mode = RedButton('Reject')
         self.button_reject_mode.clicked.connect(self.reject_mode)
-        self.button_view_mode_summary = BlueButton('View Summary')
+        self.button_view_mode_summary = BlueButton('Summary')
         self.button_view_mode_summary.clicked.connect(self.view_mode_summary)
-        self.button_view_modal_reconstruction = BlueButton('View Reconstruction')
+        self.button_view_modal_reconstruction = BlueButton('Reconstruction')
         self.button_view_modal_reconstruction.clicked.connect(self.view_modal_reconstruction)
         
         self.layout_tools_mode_fitting = QGridLayout()
@@ -602,11 +600,10 @@ class InteractiveLogger():
         self.layout_tools_mode_fitting.addWidget(self.input_freq_min2,3,1,1,3)
         self.layout_tools_mode_fitting.addWidget(QLabel('fmax:'),4,0,1,1)
         self.layout_tools_mode_fitting.addWidget(self.input_freq_max2,4,1,1,3)
-        self.layout_tools_mode_fitting.addWidget(self.button_fit_mode,5,0,1,4)
-        self.layout_tools_mode_fitting.addWidget(self.button_accept_mode,6,0,1,2)
-        self.layout_tools_mode_fitting.addWidget(self.button_reject_mode,6,2,1,2)
-        self.layout_tools_mode_fitting.addWidget(self.button_view_mode_summary,7,0,1,4)
-        self.layout_tools_mode_fitting.addWidget(self.button_view_modal_reconstruction,8,0,1,4)
+        self.layout_tools_mode_fitting.addWidget(self.button_fit_mode,5,0,1,2)
+        self.layout_tools_mode_fitting.addWidget(self.button_reject_mode,5,2,1,2)
+        self.layout_tools_mode_fitting.addWidget(self.button_view_mode_summary,6,0,1,2)
+        self.layout_tools_mode_fitting.addWidget(self.button_view_modal_reconstruction,6,2,1,2)
         
         self.frame_tools_mode_fitting = QFrame()
         self.frame_tools_mode_fitting.setLayout(self.layout_tools_mode_fitting)
@@ -834,6 +831,22 @@ class InteractiveLogger():
             self.freq_range = list(xlim)
             self.input_freq_min2.setText('{:0.5g}'.format(xlim[0]))
             self.input_freq_max2.setText('{:0.5g}'.format(xlim[1]))
+        
+        
+        if (self.current_view == 'TF Data') and (len(self.dataset.modal_data_list) > 0) and (self.selected_tool == 'Mode Fitting'):
+            # Show message to highlight modal fit, to allow removing or replacing a given fit
+            fn_all = self.dataset.modal_data_list[0].M[:,0]
+            self.fn_in_range = fn_all[(fn_all > self.freq_range[0]) & (fn_all < self.freq_range[1])]
+            if len(self.fn_in_range) > 1:
+                message = 'A total of {} modes have been fitted within this frequency range so far:\n\n'.format(len(self.fn_in_range))
+                message += 'Fitted mode frequencies = {} (Hz)\n\n'.format(np.array2string(self.fn_in_range,precision=2))
+                message += 'To delete all of these modal fits, press ''Reject Mode''.'
+            elif len(self.fn_in_range) == 1:
+                message = 'One mode has been fitted within this frequency range:\n\n'
+                message += 'Fitted mode frequency = {} Hz\n\n'.format(np.array2string(self.fn_in_range,precision=2))
+                message += 'To replace this mode fit with a new fit, press ''Fit Mode''.\n'
+                message += 'To delete this mode fit, press ''Reject Mode''.'
+            self.show_message(message)
         
     def legend_left(self):
         self.legend_loc = 'lower left'
@@ -1245,6 +1258,9 @@ class InteractiveLogger():
         if self.last_action == 'scaling':
             self.dataset = self.dataset_backup
             self.update_figure()
+        if self.last_action == 'delete modes':
+            self.dataset = self.dataset_backup
+            self.update_figure()
             
     def calc_fft(self):
         if len(self.dataset.time_data_list) == 0:
@@ -1445,6 +1461,19 @@ class InteractiveLogger():
         self.show_message(modal.MESSAGE)
         if len(self.dataset.modal_data_list) == 0:
             self.dataset.modal_data_list = [m]
+        elif len(self.fn_in_range) > 1:
+            message = 'Several mode fits already in this range.\n\n'
+            message += 'Fitted mode frequencies = {} (Hz)\n\n'.format(np.array2string(self.fn_in_range,precision=2))
+            message += 'To delete them, press ''Reject Mode''.'
+            message += 'To replace a single fit, zoom into a single peak first.'
+            self.show_message(message)
+            return None
+        elif len(self.fn_in_range) == 1:
+            # find which mode and replace it
+            fn_all = self.dataset.modal_data_list[0].M[:,0]
+            mode_number = np.where((fn_all > self.freq_range[0]) & (fn_all < self.freq_range[1]))[0]
+            self.dataset.modal_data_list[0].delete_mode(mode_number)
+            self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
         else:
             self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
         
@@ -1477,13 +1506,27 @@ class InteractiveLogger():
         self.freq_max
         
     def accept_mode(self):
-        pass
+        self.dataset.modal_data_list
+        self.view_modal_reconstruction()
+        
     
     def reject_mode(self):
-        pass
+        # reject mode fits currently in view
+        if len(self.fn_in_range) >= 1:
+            self.last_action = 'delete modes'
+            self.dataset_backup = copy.deepcopy(self.dataset)
+            # find which mode and replace it
+            fn_all = self.dataset.modal_data_list[0].M[:,0]
+            mode_number = np.where((fn_all > self.freq_range[0]) & (fn_all < self.freq_range[1]))[0]
+            self.dataset.modal_data_list[0].delete_mode(mode_number)
+            message = 'Mode fits deleted.'
+            self.show_message(message,b='undo')
         
     def view_mode_summary(self):
-        pass
+        message = 'Modes fitted:\n\n'
+        message += 'fn = {} (Hz)\n\n'.format(np.array2string(self.dataset.modal_data_list[0].fn,precision=2))
+        message += 'zn = {} (Hz)'.format(np.array2string(self.dataset.modal_data_list[0].zn,precision=5))
+        self.show_message(message)
     
     def view_modal_reconstruction(self):
         pass
