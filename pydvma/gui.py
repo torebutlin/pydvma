@@ -72,18 +72,19 @@ class LogDataThread(QThread):
     
     s = Signal(datastructure.DataSet)
 
-    def __init__(self,settings,test_name,rec):
+    def __init__(self,settings,test_name,rec,output):
         super().__init__()
         
         self.settings = settings
         self.test_name = test_name
         self.rec = rec
+        self.output = output
         
     def __del__(self):
         self.wait()
     
     def run(self):
-        self.d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec)
+        self.d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec, output=self.output)
         self.s.emit(self.d)
         
 class PreviewWindow():
@@ -702,25 +703,23 @@ class InteractiveLogger():
         self.input_output_amp = QLineEdit('0')
         self.input_output_amp.setValidator(QDoubleValidator(0.0,1.0,5))
         
-        self.input_output_f1 = QLineEdit(str(self.freq_range[0]))
+        self.input_output_f1 = QLineEdit('0')
         self.input_output_f1.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
         
-        self.input_output_f2 = QLineEdit(str(self.freq_range[1]))
+        self.input_output_f2 = QLineEdit('0')
         self.input_output_f2.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
         
         self.input_output_duration = QLineEdit(str(self.settings.stored_time))
         self.input_output_duration.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
         
-        self.button_output_preview_time = BlueButton('Preview Time')
-        self.button_output_preview_time.clicked.connect(self.preview_time)
-        self.button_output_preview_fft  = BlueButton('Preview FFT')
-#        self.button_output_preview_fft.clicked.connect(self.preview_fft)
+        self.button_output_preview = BlueButton('Preview Output')
+        self.button_output_preview.clicked.connect(self.preview_output)
         
         self.button_start_output = BlueButton('Start Output')
-#        self.button_start_output.clicked.connect(self.start_output)
+        self.button_start_output.clicked.connect(self.start_output)
         
         self.button_log_with_output = GreenButton('Log with Output')
-#        self.button_log_with_output.clicked.connect(self.log_with_output)
+        self.button_log_with_output.clicked.connect(self.button_clicked_log_data)
         
         self.layout_tools_generate_output = QFormLayout()
         self.layout_tools_generate_output.addRow(boldLabel('Generate Outputs:'))
@@ -729,7 +728,9 @@ class InteractiveLogger():
         self.layout_tools_generate_output.addRow(QLabel('f min (Hz):'),self.input_output_f1)
         self.layout_tools_generate_output.addRow(QLabel('f max (Hz):'),self.input_output_f2)
         self.layout_tools_generate_output.addRow(QLabel('Duration (s):'),self.input_output_duration)
-        self.layout_tools_generate_output.addRow(self.button_output_preview_time)
+        self.layout_tools_generate_output.addRow(self.button_output_preview)
+        self.layout_tools_generate_output.addRow(self.button_start_output)
+        self.layout_tools_generate_output.addRow(self.button_log_with_output)
         
         self.frame_tools_generate_output = QFrame()
         self.frame_tools_generate_output.setLayout(self.layout_tools_generate_output)
@@ -832,27 +833,39 @@ class InteractiveLogger():
         
         
     def hide_message(self):
+        self.label_message.setText('')
         self.frame_message.setVisible(False)
       
         
 
     def button_clicked_log_data(self):
-        
+        # start stream
         if self.rec is None:
             self.start_stream()
         
+        # generate output if specified
+        self.create_output_signal()
+        if self.output_time_data is not None:
+            y = self.output_time_data.time_data
+        else:
+            y = None
+        
+        # reset trigger
         self.rec.trigger_detected = False
         self.button_log_data.setStyleSheet("background-color: white")
         
+        # show message re trigger
         if self.settings.pretrig_samples is None:
             message = 'Logging data for {} seconds'.format(self.settings.stored_time)
         else:
             message = 'Logging data for {} seconds, with trigger'.format(self.settings.stored_time)
         
-        self.thread = LogDataThread(self.settings,test_name=self.test_name, rec=self.rec)
+        # show message re output
+        if y is not None:
+            message += '\n\nOutput signal starting.'
         
+        self.thread = LogDataThread(self.settings,test_name=self.test_name, rec=self.rec, output=y)
         self.show_message(message,'cancel')
-        
         
         self.thread.start()
         self.thread.s.connect(self.add_logged_data)
@@ -871,11 +884,12 @@ class InteractiveLogger():
             message = 'Logged data replaced set {}.'.format(self.selected_set)
             self.show_message(message,b='undo')
             self.flag_log_and_replace = False
+            
         self.channels = 'all'
         self.switch_view('Time Data')
-        self.p.ax.set_ylim([-1,1])
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
         self.update_selected_set()
+        self.p.ax.set_ylim([-1,1])
         
     def cancel_logging(self):
         self.thread.terminate()
@@ -1553,37 +1567,54 @@ class InteractiveLogger():
         else:
             self.flag_output = True
             
-    def preview_time(self):
+    def create_output_signal(self):
+        print(1)
         sig = self.input_output_options.currentText()
+        print(2)
         T = np.float(self.input_output_duration.text())
+        print(3)
         amp = np.float(self.input_output_amp.text())
+        print(4)
         f1 = np.float(self.input_output_f1.text())
         f2 = np.float(self.input_output_f2.text())
+        print(5)
         f_max = np.max([f1,f2])
         fs_min = np.min([self.settings.fs,self.settings.output_fs])
-        if f_max > fs_min/2:
-            message = 'Highest output frequency {} Hz exceeds input or output sampling frequency {} Hz.'.format(f_max,fs_min)
-            self.show_message(message)
-            return None
+        print(6)
             
         if sig != 'None':
-            t,y = acquisition.signal_generator(self.settings,sig=sig,T=T,amplitude=amp,f=[f1,f2],selected_channels='all')
-            td = datastructure.TimeData(t,y,self.settings,test_name='output_signal')
-            d = datastructure.DataSet(td)
+            print(4)
+            if f_max > fs_min/2:
+                message = 'Highest output frequency {} Hz exceeds input or output sampling frequency {} Hz.'.format(f_max,fs_min)
+                self.show_message(message)
+                td = None
+            else:
+                print(5)
+                t,y = acquisition.signal_generator(self.settings,sig=sig,T=T,amplitude=amp,f=[f1,f2],selected_channels='all')
+                td = datastructure.TimeData(t,y,self.settings,test_name='output_signal')
+                message = acquisition.MESSAGE
+                self.show_message(message)
+        else:
+            print(6)
+            td = None
+#            message = 'Output signal turned off.'
+#            self.show_message(message)
+        print(7)            
+        self.output_time_data = td
+            
+    def preview_output(self):
+        self.create_output_signal()
+        if self.output_time_data != None:
+            d = datastructure.DataSet(self.output_time_data)
             d.calculate_fft_set()
             self.preview_window = PreviewWindow(title='Time Data')
             self.preview_window.p.update(d.time_data_list,auto_xy='xy')
             self.preview_window2 = PreviewWindow(title='FFT Data')
             self.preview_window2.p.update(d.freq_data_list, xlinlog='log',auto_xy='xy')
+    
+    def start_output(self):
+        pass
             
-            
-            message = acquisition.MESSAGE
-            self.show_message(message)
-            
-        else:
-            y = []
-            message = 'Output signal turned off.'
-            self.show_message(message)
 
     #%% DATA PROCESSING
     def clean_impulse(self):

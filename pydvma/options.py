@@ -101,6 +101,8 @@ class MySettings(object):
         
         if (output_fs is None) or (output_fs == 'None'):
             self.output_fs = np.int(self.fs)
+        else:
+            self.output_fs = np.int(output_fs)
             
         if (output_channels is None) or (output_channels == 'None'):
             self.output_channels = np.int(1)

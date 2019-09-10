@@ -46,6 +46,7 @@ class PlotData():
         self.data_list = data_list
         self.plot_type = plot_type
         self.freq_range = freq_range
+        self.xlinlog = xlinlog
         
         if data_list.__class__.__name__ == 'TimeDataList':
             self.ax2.set_visible(False)
@@ -262,7 +263,18 @@ class PlotData():
         if 'x' in auto_xy:
             self.auto_x()
         if 'f' in auto_xy: # use freq_range for x axis
-            self.ax.set_xlim(freq_range)
+            if ('log' in xlinlog) and freq_range[0]==0:
+                self.lines = self.ax.get_lines()
+                xminlog = np.inf
+                for line in self.lines:
+                    if line.get_alpha() > 0.5:
+                        data = line.get_data()
+                        xxlog = data[0][1] # first nonzero freq axis
+                        xminlog = min([xminlog,xxlog])
+                        freq_range[0] = xminlog
+                self.ax.set_xlim(freq_range)
+            else:
+                self.ax.set_xlim(freq_range)
             self.fig.canvas.draw()
             self.auto_y()
         if 'y' in auto_xy:
@@ -327,16 +339,24 @@ class PlotData():
     def auto_x(self):
         self.lines = self.ax.get_lines()
         xmin = np.inf
+        xminlog = np.inf
         xmax = -np.inf
         for line in self.lines:
             if line.get_alpha() > 0.5:
                 data = line.get_data()
                 xx = min(data[0])
                 xmin = min([xx,xmin])
+                
+                xxlog = data[0][1] # first nonzero freq axis
+                xminlog = min([xminlog,xxlog])
+                
                 xx = max(data[0])
                 xmax = max([xx,xmax])
-        try:  
-            self.ax.set_xlim([xmin,xmax])
+        try:
+            if 'log' in self.xlinlog:
+                self.ax.set_xlim([xminlog,xmax])
+            else:
+                self.ax.set_xlim([xmin,xmax])
         except:
             pass
         self.fig.canvas.draw()
