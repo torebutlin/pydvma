@@ -434,9 +434,9 @@ class InteractiveLogger():
         self.layout_tools.addWidget(self.frame_tools_scaling)
         self.layout_tools.addWidget(self.frame_tools_mode_fitting)
         self.layout_tools.addWidget(self.frame_tools_settings)
-        self.layout_tools.addWidget(self.frame_tools_generate_output)
+#        self.layout_tools.addWidget(self.frame_tools_generate_output)
         self.layout_tools.addWidget(self.frame_tools_edit_dataset)
-        self.layout_tools.addWidget(self.frame_tools_save_export)
+#        self.layout_tools.addWidget(self.frame_tools_save_export)
         
         self.layout_tools.setAlignment(Qt.AlignTop)
         
@@ -674,29 +674,38 @@ class InteractiveLogger():
         self.list_data_type = ['Time Data','FFT Data','TF Data','Modal Data','Sono Data']
         
         self.input_list_data_type = newComboBox(self.list_data_type)
+        self.input_list_data_type.setCurrentText('Time Data')
         self.input_list_data_type.currentIndexChanged.connect(self.update_selected_set)
         
         self.button_delete_data_type = RedButton('Delete all data of this type')
         self.button_delete_data_type.clicked.connect(self.delete_data_type)
         
-        self.button_delete_data_set = OrangeButton('Delete Set:')
+        self.button_delete_data_set = OrangeButton('Delete Selected Set')
         self.button_delete_data_set.clicked.connect(self.delete_data_set)
         
         self.input_selected_set = QLineEdit()
         self.input_selected_set.setValidator(QIntValidator(0,1000))
 
-        self.button_log_replace = OrangeButton('Log and Replace Set:')
+        self.button_log_replace = GreenButton('Log && Replace Selected Set')
         self.button_log_replace.clicked.connect(self.log_and_replace)
         
-        self.layout_frame_tools_generate_output = QGridLayout()
-        self.layout_frame_tools_generate_output.addWidget(boldLabel('Edit Dataset'),0,0,1,4)
-        self.layout_frame_tools_generate_output.addWidget(self.button_delete_data_type,1,0,1,4)
-        self.layout_frame_tools_generate_output.addWidget(QLabel('Selected Set:'),2,0,1,2)
-        self.layout_frame_tools_generate_output.addWidget(self.input_selected_set,2,2,1,2)
-        self.layout_frame_tools_generate_output.addWidget(self.button_delete_data_set,3,0,1,4)
-        self.layout_frame_tools_generate_output.addWidget(self.button_log_replace,4,0,1,4)
-        self.layout_frame_tools_generate_output.addWidget(self.input_selected,0,0,1,4)
+        text = self.dataset.__repr__()
+        self.label_data_summary = QLabel(text)
         
+        self.layout_tools_edit_dataset = QGridLayout()
+        self.layout_tools_edit_dataset.addWidget(boldLabel('Dataset Summary'),0,0,1,4)
+        self.layout_tools_edit_dataset.addWidget(self.label_data_summary,1,0,1,4)
+        self.layout_tools_edit_dataset.addWidget(boldLabel('Edit Dataset'),2,0,1,4)
+        self.layout_tools_edit_dataset.addWidget(QLabel('Selected Type:'),3,0,1,2)
+        self.layout_tools_edit_dataset.addWidget(self.input_list_data_type,3,2,1,2)
+        self.layout_tools_edit_dataset.addWidget(self.button_delete_data_type,4,0,1,4)
+        self.layout_tools_edit_dataset.addWidget(QLabel('Selected Set:'),5,0,1,2)
+        self.layout_tools_edit_dataset.addWidget(self.input_selected_set,5,2,1,2)
+        self.layout_tools_edit_dataset.addWidget(self.button_delete_data_set,6,0,1,4)
+        self.layout_tools_edit_dataset.addWidget(self.button_log_replace,7,0,1,4)
+        
+        self.frame_tools_edit_dataset = QFrame()
+        self.frame_tools_edit_dataset.setLayout(self.layout_tools_edit_dataset)
         
     def setup_frame_tools_save_export(self):
         pass
@@ -736,7 +745,8 @@ class InteractiveLogger():
         time_since_last = time.time()-self.message_time
         if time_since_last < 0.5:
             last_message = self.label_message.text()
-            message = last_message + '\n\n' + message
+            if last_message != message: # avoid duplicate messages
+                message = last_message + '\n\n' + message
         self.message_time = time.time()
         if message != '':
             self.label_message.setText(message)
@@ -788,16 +798,19 @@ class InteractiveLogger():
             self.dataset.add_to_dataset(d.time_data_list)
             N = len(self.dataset.time_data_list)
             self.sets = [N-1]
-
+            self.hide_message()
         else:
-            self.dataset.replace_data_item(d.time_data_list,self.selected_set)
+            self.dataset.replace_data_item(d.time_data_list[0],self.selected_set)
             self.sets = [self.selected_set]
+            self.last_action = 'data replaced'
+            message = 'Logged data replaced set {}.'.format(self.selected_set)
+            self.show_message(message,b='undo')
+            self.flag_log_and_replace = False
         self.channels = 'all'
-        self.input_list_figures.setCurrentIndex(0)
-        self.select_view()
+        self.switch_view('Time Data')
         self.p.ax.set_ylim([-1,1])
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
-        self.hide_message()
+        self.update_selected_set()
         
     def cancel_logging(self):
         self.thread.terminate()
@@ -820,14 +833,19 @@ class InteractiveLogger():
         message += 'FFT and TF data also deleted\n.'
         message += 'For more data editing options select ''Edit Dataset'' tool.'
         self.show_message(message,b='undo')
+        self.update_selected_set()
         
     def reset_data(self):
-        
+        self.dataset_backup = copy.deepcopy(self.dataset)
         self.dataset = datastructure.DataSet()
         N = len(self.dataset.time_data_list)
         self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
-        self.input_list_figures.setCurrentIndex(0)
-        self.select_view()
+        self.switch_view('Time Data')
+        self.last_action = 'delete data'
+        message = 'All data deleted.\n'
+        message += 'For more data editing options select ''Edit Dataset'' tool.'
+        self.show_message(message,b='undo')
+        self.update_selected_set()
 
     
     def load_data(self):
@@ -846,6 +864,7 @@ class InteractiveLogger():
             message = 'No data loaded'
             self.show_message(message)
             return None
+    
         
         no_data = True
         self.auto_xy = 'xyc'
@@ -867,6 +886,8 @@ class InteractiveLogger():
         if no_data == True:
             message = 'No data to view'
             self.show_message(message)
+        self.input_list_data_type.setCurrentText(self.selected_view)
+        self.update_selected_set()
         
         
         
@@ -1090,6 +1111,7 @@ class InteractiveLogger():
             N = len(self.dataset.tf_data_list)
         if N > 0:
             self.input_list_figures.setCurrentIndex(index)
+            self.input_list_data_type.setCurrentText(self.input_list_figures.currentText())
             
         self.select_view()
         
@@ -1316,9 +1338,9 @@ class InteractiveLogger():
         self.frame_tools_scaling.setVisible(False)
         self.frame_tools_mode_fitting.setVisible(False)
         self.frame_tools_settings.setVisible(False)
-        self.frame_tools_generate_output.setVisible(False)
+#        self.frame_tools_generate_output.setVisible(False)
         self.frame_tools_edit_dataset.setVisible(False)
-        self.frame_tools_save_export.setVisible(False)
+#        self.frame_tools_save_export.setVisible(False)
         
     def select_tool(self):
         self.selected_tool = self.input_list_tools.currentText()
@@ -1360,7 +1382,9 @@ class InteractiveLogger():
             
         elif self.selected_tool == 'Edit Dataset':
             self.hide_all_tools()
+            self.update_selected_set()
             self.frame_tools_edit_dataset.setVisible(True)
+
             
         elif self.selected_tool == 'Save / Export':
             self.hide_all_tools()
@@ -1385,54 +1409,79 @@ class InteractiveLogger():
         data_type = self.input_list_data_type.currentText()
         if data_type == 'Time Data':
             self.data_list = self.dataset.time_data_list
+            self.switch_view(data_type)
         elif data_type == 'FFT Data':
             self.data_list = self.dataset.freq_data_list
+            self.switch_view(data_type)
         elif data_type == 'TF Data':
             self.data_list = self.dataset.tf_data_list
+            self.switch_view(data_type)
         elif data_type == 'Modal Data':
             self.data_list = self.dataset.modal_data_list
         elif data_type == 'Sono Data':
             self.data_list = self.dataset.sono_data_list
+        else:
+            self.data_list = []
         
+        self.update_data_summary()
+        
+    def update_data_summary(self):
+        # also keeps validator up to date
         N = len(self.data_list)
-        self.input_selected_set.setValidator(QIntValidator(0,N))
+        self.input_selected_set.setValidator(QIntValidator(0,N-1))
+        text = self.dataset.__repr__()
+        self.label_data_summary.setText(text)
 
     def delete_data_type(self):
-        
+        self.update_selected_set()
         if len(self.data_list) != 0:
             self.dataset_backup = copy.deepcopy(self.dataset)
             self.data_type = self.data_list[0].__class__.__name__
-            self.dataset.remove_data_item_by_index(self.data_type[0],np.arange(len(self.data_list)))
+            self.dataset.remove_data_item_by_index(self.data_type,np.arange(len(self.data_list)))
             self.last_action = 'delete data'
-            message = 'All {} items deleted.'.format(self.data_type)
+            message = 'All {} items deleted.\n\n'.format(self.data_type)
             self.show_message(message, b='undo')
         else:
             message = 'No {} to delete.'.format(self.data_typye)
             self.show_message(message)
+        self.update_selected_set()
             
     
     def delete_data_set(self):
-        self.selected_set = np.int(self.input_selected_set)
+        self.selected_set = np.int(self.input_selected_set.text())
         if len(self.data_list) != 0:
             self.dataset_backup = copy.deepcopy(self.dataset)
             self.data_type = self.data_list[0].__class__.__name__
-            self.dataset.remove_data_item_by_index(self.data_type[0],self.selected_set)
+            self.dataset.remove_data_item_by_index(self.data_type,self.selected_set)
             self.last_action = 'delete data'
             message = 'Set {} of type {} deleted.'.format(self.selected_set,self.data_type)
             self.show_message(message, b='undo')
         else:
             message = 'No {} to delete.'.format(self.data_typye)
             self.show_message(message)
+        self.update_selected_set()
     
     def log_and_replace(self):
         self.dataset_backup = copy.deepcopy(self.dataset)
-        self.selected_set = np.int(self.input_selected_set)
+        self.selected_set = np.int(self.input_selected_set.text())
         self.flag_log_and_replace = True
-        self.button_clicked_log_data()
-        self.flag_log_and_replace = False
-        self.last_action = 'data replaced'
-        message = 'Logged data replaced set {}.'.format(self.selected_set)
-        self.show_message(message,b='undo')
+        
+        ### DUPLICATES button_clicked_log_data FUNCTION SO THAT MESSAGE APPEARS ###
+        if self.rec is None:
+            self.start_stream()
+        self.rec.trigger_detected = False
+        self.button_log_data.setStyleSheet("background-color: white")
+        if self.settings.pretrig_samples is None:
+            message = 'Logging data for {} seconds'.format(self.settings.stored_time)
+        else:
+            message = 'Logging data for {} seconds, with trigger'.format(self.settings.stored_time)
+        self.thread = LogDataThread(self.settings,test_name=self.test_name, rec=self.rec)
+        self.show_message(message,'cancel')
+        self.thread.start()
+        self.thread.s.connect(self.add_logged_data)
+        ###########################################################################
+        
+        
 
     #%% DATA PROCESSING
     def clean_impulse(self):
