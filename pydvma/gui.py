@@ -811,7 +811,7 @@ class InteractiveLogger():
         time_since_last = time.time()-self.message_time
         if time_since_last < 0.5:
             last_message = self.label_message.text()
-            if last_message != message: # avoid duplicate messages
+            if message not in last_message: # avoid duplicate messages
                 message = last_message + '\n\n' + message
         self.message_time = time.time()
         if message != '':
@@ -876,6 +876,7 @@ class InteractiveLogger():
             self.dataset.add_to_dataset(d.time_data_list)
             N = len(self.dataset.time_data_list)
             self.sets = [N-1]
+            message = ''
             self.hide_message()
         else:
             self.dataset.replace_data_item(d.time_data_list[0],self.selected_set)
@@ -884,7 +885,13 @@ class InteractiveLogger():
             message = 'Logged data replaced set {}.'.format(self.selected_set)
             self.show_message(message,b='undo')
             self.flag_log_and_replace = False
-            
+        
+        if acquisition.MESSAGE != '':
+            message += '\n\n'
+            message += acquisition.MESSAGE
+        
+        self.show_message(message)
+                    
         self.channels = 'all'
         self.switch_view('Time Data')
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
@@ -1568,38 +1575,28 @@ class InteractiveLogger():
             self.flag_output = True
             
     def create_output_signal(self):
-        print(1)
         sig = self.input_output_options.currentText()
-        print(2)
         T = np.float(self.input_output_duration.text())
-        print(3)
         amp = np.float(self.input_output_amp.text())
-        print(4)
         f1 = np.float(self.input_output_f1.text())
         f2 = np.float(self.input_output_f2.text())
-        print(5)
         f_max = np.max([f1,f2])
         fs_min = np.min([self.settings.fs,self.settings.output_fs])
-        print(6)
             
         if sig != 'None':
-            print(4)
             if f_max > fs_min/2:
                 message = 'Highest output frequency {} Hz exceeds input or output sampling frequency {} Hz.'.format(f_max,fs_min)
                 self.show_message(message)
                 td = None
             else:
-                print(5)
                 t,y = acquisition.signal_generator(self.settings,sig=sig,T=T,amplitude=amp,f=[f1,f2],selected_channels='all')
                 td = datastructure.TimeData(t,y,self.settings,test_name='output_signal')
                 message = acquisition.MESSAGE
                 self.show_message(message)
         else:
-            print(6)
             td = None
 #            message = 'Output signal turned off.'
-#            self.show_message(message)
-        print(7)            
+#            self.show_message(message)         
         self.output_time_data = td
             
     def preview_output(self):
@@ -1613,7 +1610,12 @@ class InteractiveLogger():
             self.preview_window2.p.update(d.freq_data_list, xlinlog='log',auto_xy='xy')
     
     def start_output(self):
-        pass
+        self.create_output_signal()
+        if self.output_time_data != None:
+            s = acquisition.output_signal(self.settings,self.output_time_data.time_data)
+        else:
+            message = 'No output data to generate.'
+            self.show_message(message)
             
 
     #%% DATA PROCESSING

@@ -574,8 +574,8 @@ def setup_output_NI(settings,output):
 def setup_output_soundcard(settings):
     p = pyaudio.PyAudio()
     output_stream = p.open(format=pyaudio.paFloat32,
-                        channels=settings.channels,
-                        rate=settings.fs,
+                        channels=settings.output_channels,
+                        rate=settings.output_fs,
                         output=True,
                         output_device_index=settings.output_device_index)
     return output_stream

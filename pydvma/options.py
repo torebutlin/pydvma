@@ -106,6 +106,8 @@ class MySettings(object):
             
         if (output_channels is None) or (output_channels == 'None'):
             self.output_channels = np.int(1)
+        else:
+            self.output_channels = np.int(output_channels)
             
         # if output device driver not specified then use same as input device
         if (output_device_driver == None) or (output_device_driver == 'None'):
@@ -141,6 +143,8 @@ class MySettings(object):
                 self.output_device_index = output_devices[0][0]
         elif (output_device_driver == 'nidaq') and ((output_device_index == None) or (output_device_index == 'None')):
             self.output_device_index = 0
+        else:
+            self.output_device_index = np.int(output_device_index)
         
         ### derived settings
         if (viewed_time != None) and (viewed_time != 'None'):

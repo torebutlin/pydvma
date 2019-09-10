@@ -21,6 +21,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
     '''
     Logs data according to settings and returns DataSet class
     '''
+    global MESSAGE
     
     if rec is None:
         streams.start_stream(settings)
@@ -44,9 +45,11 @@ def log_data(settings,test_name=None,rec=None, output=None):
         
         # basic way to control logging time: won't be precise time from calling function
         # also won't be exactly synced to output signal
-        if not(np.any(output==None)):
+        if output is not None:
             s = output_signal(settings,output)
-        time.sleep(settings.stored_time)
+        
+        if (settings.device_driver == 'nidaq') or (output is None): # nidaq output is nonblocking, but soundcard is blocking
+            time.sleep(settings.stored_time)
         
             
         # make copy of data
@@ -57,7 +60,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
         print('')
         print('Logging complete.')
 
-        if not(np.any(output==None)):
+        if output is not None:
             if settings.output_device_driver == 'nidaq':
                 s.WaitUntilTaskDone(settings.stored_time+5)
                 s.StopTask()
@@ -71,10 +74,12 @@ def log_data(settings,test_name=None,rec=None, output=None):
         print('')
         print('Waiting for trigger on channel {}'.format(settings.pretrig_channel))
         
-        if not(np.any(output==None)):
-            output_signal(settings,output)
+        start_output_flag = True
         t0 = time.time()
         while (time.time()-t0 < settings.pretrig_timeout) and not rec.trigger_detected:
+            if (output is not None) and (start_output_flag == True): # start output within loop, but only once!
+                s = output_signal(settings,output)
+                start_output_flag = False
             time.sleep(0.2)
         if (time.time()-t0 > settings.pretrig_timeout):
             raise Exception('Trigger not detected within timeout of {} seconds.'.format(settings.pretrig_timeout))
@@ -94,7 +99,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
         print('')
         print('Logging complete.')
 
-        if not(np.any(output==None)):
+        if output is not None:
             if settings.output_device_driver == 'nidaq':
                 s.WaitUntilTaskDone(settings.stored_time+5)
                 s.StopTask()
@@ -113,7 +118,8 @@ def log_data(settings,test_name=None,rec=None, output=None):
     
     # check for clipping
     if np.any(np.abs(stored_time_data_copy > 0.95)):
-        print('WARNING: Data may be clipped')
+        MESSAGE = 'WARNING: Data may be clipped'
+        print(MESSAGE)
     
     return dataset
     
