@@ -120,6 +120,7 @@ class InteractiveLogger():
         self.selected_channels = []
         self.flag_scaling = False
         self.message_time = 0
+        self.flag_log_and_replace = False
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -420,6 +421,9 @@ class InteractiveLogger():
         self.setup_frame_tools_scaling()
         self.setup_frame_tools_mode_fitting()
         self.setup_frame_tools_settings()
+        self.setup_frame_tools_generate_output()
+        self.setup_frame_tools_edit_dataset()
+        self.setup_frame_tools_save_export()
         
         # widgets to layout
         self.layout_tools = QVBoxLayout()
@@ -430,6 +434,9 @@ class InteractiveLogger():
         self.layout_tools.addWidget(self.frame_tools_scaling)
         self.layout_tools.addWidget(self.frame_tools_mode_fitting)
         self.layout_tools.addWidget(self.frame_tools_settings)
+        self.layout_tools.addWidget(self.frame_tools_generate_output)
+        self.layout_tools.addWidget(self.frame_tools_edit_dataset)
+        self.layout_tools.addWidget(self.frame_tools_save_export)
         
         self.layout_tools.setAlignment(Qt.AlignTop)
         
@@ -447,7 +454,7 @@ class InteractiveLogger():
         
     def setup_frame_tools_selection(self):
         
-        self.input_list_tools = newComboBox(['Standard Tools','Logger Settings','Pre-process','FFT','Transfer Function','Calibration / Scaling','Mode Fitting','Save / Export'])
+        self.input_list_tools = newComboBox(['Standard Tools','Logger Settings','Generate Output','Pre-process','FFT','Transfer Function','Calibration / Scaling','Mode Fitting','Edit Dataset','Save / Export'])
         self.input_list_tools.setCurrentIndex(0)
         self.input_list_tools.currentIndexChanged.connect(self.select_tool)
         
@@ -660,6 +667,40 @@ class InteractiveLogger():
         self.frame_tools_settings = QFrame()
         self.frame_tools_settings.setLayout(self.layout_tools_settings)
         
+    def setup_frame_tools_generate_output(self):
+        pass
+    
+    def setup_frame_tools_edit_dataset(self):
+        self.list_data_type = ['Time Data','FFT Data','TF Data','Modal Data','Sono Data']
+        
+        self.input_list_data_type = newComboBox(self.list_data_type)
+        self.input_list_data_type.currentIndexChanged.connect(self.update_selected_set)
+        
+        self.button_delete_data_type = RedButton('Delete all data of this type')
+        self.button_delete_data_type.clicked.connect(self.delete_data_type)
+        
+        self.button_delete_data_set = OrangeButton('Delete Set:')
+        self.button_delete_data_set.clicked.connect(self.delete_data_set)
+        
+        self.input_selected_set = QLineEdit()
+        self.input_selected_set.setValidator(QIntValidator(0,1000))
+
+        self.button_log_replace = OrangeButton('Log and Replace Set:')
+        self.button_log_replace.clicked.connect(self.log_and_replace)
+        
+        self.layout_frame_tools_generate_output = QGridLayout()
+        self.layout_frame_tools_generate_output.addWidget(boldLabel('Edit Dataset'),0,0,1,4)
+        self.layout_frame_tools_generate_output.addWidget(self.button_delete_data_type,1,0,1,4)
+        self.layout_frame_tools_generate_output.addWidget(QLabel('Selected Set:'),2,0,1,2)
+        self.layout_frame_tools_generate_output.addWidget(self.input_selected_set,2,2,1,2)
+        self.layout_frame_tools_generate_output.addWidget(self.button_delete_data_set,3,0,1,4)
+        self.layout_frame_tools_generate_output.addWidget(self.button_log_replace,4,0,1,4)
+        self.layout_frame_tools_generate_output.addWidget(self.input_selected,0,0,1,4)
+        
+        
+    def setup_frame_tools_save_export(self):
+        pass
+        
         
     def update_frame_tools(self):
         self.frame_tools.setLayout(self.layout_tools)
@@ -731,7 +772,7 @@ class InteractiveLogger():
         if self.settings.pretrig_samples is None:
             message = 'Logging data for {} seconds'.format(self.settings.stored_time)
         else:
-            message = 'Logging data for {} seconds, with trigger)'.format(self.settings.stored_time)
+            message = 'Logging data for {} seconds, with trigger'.format(self.settings.stored_time)
         
         self.thread = LogDataThread(self.settings,test_name=self.test_name, rec=self.rec)
         
@@ -743,9 +784,14 @@ class InteractiveLogger():
         
     
     def add_logged_data(self,d):
-        self.dataset.add_to_dataset(d.time_data_list)
-        N = len(self.dataset.time_data_list)
-        self.sets = [N-1]
+        if self.flag_log_and_replace == False:
+            self.dataset.add_to_dataset(d.time_data_list)
+            N = len(self.dataset.time_data_list)
+            self.sets = [N-1]
+
+        else:
+            self.dataset.replace_data_item(d.time_data_list,self.selected_set)
+            self.sets = [self.selected_set]
         self.channels = 'all'
         self.input_list_figures.setCurrentIndex(0)
         self.select_view()
@@ -760,6 +806,7 @@ class InteractiveLogger():
         
 
     def delete_last_data(self):
+        self.dataset_backup = copy.deepcopy(self.dataset)
         self.dataset.remove_last_data_item('TimeData')
         self.dataset.freq_data_list = datastructure.FreqDataList()
         self.dataset.tf_data_list = datastructure.TfDataList()
@@ -768,6 +815,11 @@ class InteractiveLogger():
         self.channels = 'all'
         self.input_list_figures.setCurrentIndex(0)
         self.select_view()
+        self.last_action = 'delete data'
+        message = 'Last logged time data deleted.\n'
+        message += 'FFT and TF data also deleted\n.'
+        message += 'For more data editing options select ''Edit Dataset'' tool.'
+        self.show_message(message,b='undo')
         
     def reset_data(self):
         
@@ -1264,6 +1316,9 @@ class InteractiveLogger():
         self.frame_tools_scaling.setVisible(False)
         self.frame_tools_mode_fitting.setVisible(False)
         self.frame_tools_settings.setVisible(False)
+        self.frame_tools_generate_output.setVisible(False)
+        self.frame_tools_edit_dataset.setVisible(False)
+        self.frame_tools_save_export.setVisible(False)
         
     def select_tool(self):
         self.selected_tool = self.input_list_tools.currentText()
@@ -1278,6 +1333,10 @@ class InteractiveLogger():
         elif self.selected_tool == 'Logger Settings':
             self.hide_all_tools()
             self.frame_tools_settings.setVisible(True)
+            
+        elif self.selected_tool == 'Generate Output':
+            self.hide_all_tools()
+            self.frame_tools_generate_output.setVisible(True)
             
         elif self.selected_tool == 'Pre-process':
             self.hide_all_tools()
@@ -1299,9 +1358,13 @@ class InteractiveLogger():
             self.hide_all_tools()
             self.frame_tools_mode_fitting.setVisible(True)
             
+        elif self.selected_tool == 'Edit Dataset':
+            self.hide_all_tools()
+            self.frame_tools_edit_dataset.setVisible(True)
+            
         elif self.selected_tool == 'Save / Export':
             self.hide_all_tools()
-            self.frame_tools_time_domain.setVisible(True)
+            self.frame_tools_save_export.setVisible(True)
             
     def apply_settings(self):
         settings_dict = dict()
@@ -1318,6 +1381,60 @@ class InteractiveLogger():
         message = streams.list_available_devices()
         self.show_message(message)
 
+    def update_selected_set(self):
+        data_type = self.input_list_data_type.currentText()
+        if data_type == 'Time Data':
+            self.data_list = self.dataset.time_data_list
+        elif data_type == 'FFT Data':
+            self.data_list = self.dataset.freq_data_list
+        elif data_type == 'TF Data':
+            self.data_list = self.dataset.tf_data_list
+        elif data_type == 'Modal Data':
+            self.data_list = self.dataset.modal_data_list
+        elif data_type == 'Sono Data':
+            self.data_list = self.dataset.sono_data_list
+        
+        N = len(self.data_list)
+        self.input_selected_set.setValidator(QIntValidator(0,N))
+
+    def delete_data_type(self):
+        
+        if len(self.data_list) != 0:
+            self.dataset_backup = copy.deepcopy(self.dataset)
+            self.data_type = self.data_list[0].__class__.__name__
+            self.dataset.remove_data_item_by_index(self.data_type[0],np.arange(len(self.data_list)))
+            self.last_action = 'delete data'
+            message = 'All {} items deleted.'.format(self.data_type)
+            self.show_message(message, b='undo')
+        else:
+            message = 'No {} to delete.'.format(self.data_typye)
+            self.show_message(message)
+            
+    
+    def delete_data_set(self):
+        self.selected_set = np.int(self.input_selected_set)
+        if len(self.data_list) != 0:
+            self.dataset_backup = copy.deepcopy(self.dataset)
+            self.data_type = self.data_list[0].__class__.__name__
+            self.dataset.remove_data_item_by_index(self.data_type[0],self.selected_set)
+            self.last_action = 'delete data'
+            message = 'Set {} of type {} deleted.'.format(self.selected_set,self.data_type)
+            self.show_message(message, b='undo')
+        else:
+            message = 'No {} to delete.'.format(self.data_typye)
+            self.show_message(message)
+    
+    def log_and_replace(self):
+        self.dataset_backup = copy.deepcopy(self.dataset)
+        self.selected_set = np.int(self.input_selected_set)
+        self.flag_log_and_replace = True
+        self.button_clicked_log_data()
+        self.flag_log_and_replace = False
+        self.last_action = 'data replaced'
+        message = 'Logged data replaced set {}.'.format(self.selected_set)
+        self.show_message(message,b='undo')
+
+    #%% DATA PROCESSING
     def clean_impulse(self):
         try:
             ch_impulse = np.int(self.input_impulse_channel.text())
@@ -1345,6 +1462,16 @@ class InteractiveLogger():
             self.selected_channels = self.selected_channels_backup
             self.update_figure()
             message = 'Deleted mode fits restored.'
+            self.show_message(message)
+        if self.last_action == 'delete data':
+            self.dataset = self.dataset_backup
+            self.update_figure()
+            message = 'Deleted data restored.'
+            self.show_message(message)
+        if self.last_action == 'data replaced':
+            self.dataset = self.dataset_backup
+            self.update_figure()
+            message = 'Replaced data restored.'
             self.show_message(message)
             
     def calc_fft(self):

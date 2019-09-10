@@ -82,10 +82,11 @@ class MySettings(object):
         
         
         #OUTPUT SETTINGS
+        self.output_fs = output_fs
+        self.output_channels = output_channels
         self.output_device_driver = output_device_driver
         self.output_device_index = output_device_index
-        self.output_channels = output_channels
-        self.output_fs = output_fs
+        
         
         # ADVANCED SETTINGS
         self.VmaxNI=np.float(VmaxNI)
