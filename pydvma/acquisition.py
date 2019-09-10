@@ -14,6 +14,7 @@ import scipy.stats as stats
 import datetime
 import time
 
+MESSAGE = ''
 
 #%% Main data acquisition function
 def log_data(settings,test_name=None,rec=None, output=None):
@@ -156,6 +157,7 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
     """
     Creates a signal ready for output to a chosen device
     """
+    global MESSAGE
     if selected_channels == 'all':
         selected_channels = np.arange(0,settings.output_channels)
        
@@ -180,12 +182,14 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
                 
         y[:,selected_channels] = stats.truncnorm.rvs(-limit/amplitude, limit/amplitude, loc=0,scale=amplitude, size=(N_per_channel,np.size(selected_channels)))
         if f is not None:
-            b,a = signal.butter(2,f,btype='bandpass',fs=settings.output_fs)
+            b,a = signal.butter(3,f,btype='bandpass',fs=settings.output_fs)
             y = signal.filtfilt(b,a,y,axis=0,padtype=None)
             y = amplitude * y / np.sqrt(np.mean(y**2))
             if np.max(np.abs(y)) > limit:
                 y = limit * y / np.max(np.abs(y))
-                print('actual rms output after scaling to avoid clipping is {0:1.3f}'.format(np.sqrt(np.mean(y**2))))
+                MESSAGE = 'Actual rms output after scaling to avoid clipping is {0:1.3f}'.format(np.sqrt(np.mean(y**2)))
+            else:
+                MESSAGE = 'Actual rms output is {0:1.3f}'.format(np.sqrt(np.mean(y**2)))
                 
             
 #            N_exceed_lim = np.sum(y>limit)+np.sum(y<-limit)
@@ -200,7 +204,7 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
     elif sig == 'uniform':
         y[:,selected_channels] = np.random.uniform(low=-amplitude,high=amplitude,size=(N_per_channel,np.size(selected_channels)))
         if f is not None:
-            b,a = signal.butter(2,f,btype='bandpass',fs=settings.output_fs)
+            b,a = signal.butter(3,f,btype='bandpass',fs=settings.output_fs)
             y = signal.filtfilt(b,a,y,axis=0,padtype=None)
             y = amplitude * y / np.sqrt(np.mean(y**2))
     elif sig == 'sweep':
@@ -210,11 +214,11 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
         for ch in selected_channels:
             y[:,ch] = amplitude*signal.chirp(t,f[0],T,f[1])
     else:
-        print('signal type must be one of {''noise'',''sweep''}')
+        print('signal type must be one of {''gaussian'',''uniform'',''sweep''}')
         y = np.zeros((N_per_channel,settings.output_channels))
     
     y = win * y
-    return y
+    return t,y
 
 
 def stream_snapshot(rec):

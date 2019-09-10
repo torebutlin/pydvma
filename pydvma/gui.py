@@ -86,6 +86,32 @@ class LogDataThread(QThread):
         self.d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec)
         self.s.emit(self.d)
         
+class PreviewWindow():
+    def __init__(self,title='Time Data'):
+        self.preview_window = QWidget()
+        self.preview_window.setStyleSheet("background-color: white")
+        self.preview_window.setWindowTitle('Output Signal Preview')
+        
+        self.fig = Figure(figsize=(9, 5),dpi=100)
+        self.canvas = FigureCanvas(self.fig)
+        self.toolbar = NavigationToolbar(self.canvas,None)
+        self.toolbar.setOrientation(Qt.Horizontal)
+        self.p = plotting.PlotData(canvas=self.canvas,fig=self.fig)
+        
+        self.label_figure = boldLabel(title)
+        self.label_figure.setMaximumHeight(20)
+        self.label_figure.setAlignment(Qt.AlignCenter)
+        
+        # widgets to layout
+        self.layout_figure = QVBoxLayout()
+        self.layout_figure.addWidget(self.label_figure)
+        self.layout_figure.addWidget(self.canvas)
+        self.layout_figure.addWidget(self.toolbar)
+        
+        self.preview_window.setLayout(self.layout_figure)
+        
+        self.preview_window.showMinimized()
+        self.preview_window.showNormal()
 
 class InteractiveLogger():
         
@@ -121,6 +147,7 @@ class InteractiveLogger():
         self.flag_scaling = False
         self.message_time = 0
         self.flag_log_and_replace = False
+        self.flag_output = False
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -434,7 +461,7 @@ class InteractiveLogger():
         self.layout_tools.addWidget(self.frame_tools_scaling)
         self.layout_tools.addWidget(self.frame_tools_mode_fitting)
         self.layout_tools.addWidget(self.frame_tools_settings)
-#        self.layout_tools.addWidget(self.frame_tools_generate_output)
+        self.layout_tools.addWidget(self.frame_tools_generate_output)
         self.layout_tools.addWidget(self.frame_tools_edit_dataset)
 #        self.layout_tools.addWidget(self.frame_tools_save_export)
         
@@ -668,7 +695,45 @@ class InteractiveLogger():
         self.frame_tools_settings.setLayout(self.layout_tools_settings)
         
     def setup_frame_tools_generate_output(self):
-        pass
+        self.list_output_options = ['None','sweep','gaussian','uniform']
+        self.input_output_options = newComboBox(self.list_output_options)
+        self.input_output_options.currentTextChanged.connect(self.update_output)
+        
+        self.input_output_amp = QLineEdit('0')
+        self.input_output_amp.setValidator(QDoubleValidator(0.0,1.0,5))
+        
+        self.input_output_f1 = QLineEdit(str(self.freq_range[0]))
+        self.input_output_f1.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
+        
+        self.input_output_f2 = QLineEdit(str(self.freq_range[1]))
+        self.input_output_f2.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
+        
+        self.input_output_duration = QLineEdit(str(self.settings.stored_time))
+        self.input_output_duration.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
+        
+        self.button_output_preview_time = BlueButton('Preview Time')
+        self.button_output_preview_time.clicked.connect(self.preview_time)
+        self.button_output_preview_fft  = BlueButton('Preview FFT')
+#        self.button_output_preview_fft.clicked.connect(self.preview_fft)
+        
+        self.button_start_output = BlueButton('Start Output')
+#        self.button_start_output.clicked.connect(self.start_output)
+        
+        self.button_log_with_output = GreenButton('Log with Output')
+#        self.button_log_with_output.clicked.connect(self.log_with_output)
+        
+        self.layout_tools_generate_output = QFormLayout()
+        self.layout_tools_generate_output.addRow(boldLabel('Generate Outputs:'))
+        self.layout_tools_generate_output.addRow(QLabel('Type:'),self.input_output_options)
+        self.layout_tools_generate_output.addRow(QLabel('Amplitude (0-1):'),self.input_output_amp)
+        self.layout_tools_generate_output.addRow(QLabel('f min (Hz):'),self.input_output_f1)
+        self.layout_tools_generate_output.addRow(QLabel('f max (Hz):'),self.input_output_f2)
+        self.layout_tools_generate_output.addRow(QLabel('Duration (s):'),self.input_output_duration)
+        self.layout_tools_generate_output.addRow(self.button_output_preview_time)
+        
+        self.frame_tools_generate_output = QFrame()
+        self.frame_tools_generate_output.setLayout(self.layout_tools_generate_output)
+        
     
     def setup_frame_tools_edit_dataset(self):
         self.list_data_type = ['Time Data','FFT Data','TF Data','Modal Data','Sono Data']
@@ -1095,7 +1160,7 @@ class InteractiveLogger():
         
     def select_xlinlog(self):
         if self.xlinlog == 'linear':
-            self.xlinlog = 'symlog'
+            self.xlinlog = 'log' # or symlog
         else:
             self.xlinlog = 'linear'
         
@@ -1338,7 +1403,7 @@ class InteractiveLogger():
         self.frame_tools_scaling.setVisible(False)
         self.frame_tools_mode_fitting.setVisible(False)
         self.frame_tools_settings.setVisible(False)
-#        self.frame_tools_generate_output.setVisible(False)
+        self.frame_tools_generate_output.setVisible(False)
         self.frame_tools_edit_dataset.setVisible(False)
 #        self.frame_tools_save_export.setVisible(False)
         
@@ -1480,8 +1545,45 @@ class InteractiveLogger():
         self.thread.start()
         self.thread.s.connect(self.add_logged_data)
         ###########################################################################
-        
-        
+    
+    def update_output(self):
+        sig = self.input_output_options.currentText()
+        if sig == 'None':
+            self.flag_output = False
+        else:
+            self.flag_output = True
+            
+    def preview_time(self):
+        sig = self.input_output_options.currentText()
+        T = np.float(self.input_output_duration.text())
+        amp = np.float(self.input_output_amp.text())
+        f1 = np.float(self.input_output_f1.text())
+        f2 = np.float(self.input_output_f2.text())
+        f_max = np.max([f1,f2])
+        fs_min = np.min([self.settings.fs,self.settings.output_fs])
+        if f_max > fs_min/2:
+            message = 'Highest output frequency {} Hz exceeds input or output sampling frequency {} Hz.'.format(f_max,fs_min)
+            self.show_message(message)
+            return None
+            
+        if sig != 'None':
+            t,y = acquisition.signal_generator(self.settings,sig=sig,T=T,amplitude=amp,f=[f1,f2],selected_channels='all')
+            td = datastructure.TimeData(t,y,self.settings,test_name='output_signal')
+            d = datastructure.DataSet(td)
+            d.calculate_fft_set()
+            self.preview_window = PreviewWindow(title='Time Data')
+            self.preview_window.p.update(d.time_data_list,auto_xy='xy')
+            self.preview_window2 = PreviewWindow(title='FFT Data')
+            self.preview_window2.p.update(d.freq_data_list, xlinlog='log',auto_xy='xy')
+            
+            
+            message = acquisition.MESSAGE
+            self.show_message(message)
+            
+        else:
+            y = []
+            message = 'Output signal turned off.'
+            self.show_message(message)
 
     #%% DATA PROCESSING
     def clean_impulse(self):

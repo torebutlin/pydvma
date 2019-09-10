@@ -509,11 +509,16 @@ class MetaDataList(list):
 
         
 class TimeData():
-    def __init__(self,time_axis,time_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+    def __init__(self,time_axis,time_data,settings,timestamp=None,timestring=None,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         
         time_data = reshape_arrays(time_data)
         if channel_cal_factors is None:
             channel_cal_factors = np.ones(len(time_data[0,:]))
+        
+        if timestamp == None:
+            t = datetime.datetime.now()
+            timestamp = t
+            timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         
         self.time_axis = time_axis
         self.time_data = time_data  

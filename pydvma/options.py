@@ -102,6 +102,9 @@ class MySettings(object):
         if (output_fs is None) or (output_fs == 'None'):
             self.output_fs = np.int(self.fs)
             
+        if (output_channels is None) or (output_channels == 'None'):
+            self.output_channels = np.int(1)
+            
         # if output device driver not specified then use same as input device
         if (output_device_driver == None) or (output_device_driver == 'None'):
             output_device_driver = device_driver
@@ -130,7 +133,7 @@ class MySettings(object):
                 info = audio.get_default_output_device_info()
                 self.output_device_index = info['index']
             except:
-                # try to guess sensible defaul toutput soundcard by string matching device names
+                # try to guess sensible default output soundcard by string matching device names
                 devices = streams.get_devices_soundcard()
                 output_devices = np.where(['output' in names for names in devices])
                 self.output_device_index = output_devices[0][0]
