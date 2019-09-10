@@ -58,6 +58,7 @@ class PlotData():
         self.ax2.lines=[]
         self.line_listbyset = []
         self.line2_listbyset = []
+        self.pcolor_sono = None
         
         self.ax.grid(True,alpha=0.3)
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
@@ -94,6 +95,7 @@ class PlotData():
             elif plot_type == 'Phase':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Phase (deg)')
+        
                 
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
@@ -134,6 +136,8 @@ class PlotData():
                 self.ax2.set_visible(True)
             else:
                 self.ax2.set_ylabel('')
+    
+        # sonogram plot completely different, use separate function
         
         N_sets = len(data_list)
 
@@ -359,54 +363,62 @@ class PlotData():
     
     
     def auto_x(self):
-        self.lines = self.ax.get_lines()
-        xmin = np.inf
-        xminlog = np.inf
-        xmax = -np.inf
-        for line in self.lines:
-            if line.get_alpha() > 0.5:
-                data = line.get_data()
-                xx = min(data[0])
-                xmin = min([xx,xmin])
-                
-                xxlog = data[0][1] # first nonzero freq axis
-                xminlog = min([xminlog,xxlog])
-                
-                xx = max(data[0])
-                xmax = max([xx,xmax])
-        try:
-            if 'log' in self.xlinlog:
-                self.ax.set_xlim([xminlog,xmax])
-            else:
-                self.ax.set_xlim([xmin,xmax])
-        except:
-            pass
+        if self.data_list.__class__.__name__ == 'SonoDataList':
+            xlim = self.data_list[self.n_set].time_axis[[0,-1]]
+            self.ax.set_xlim(xlim)
+        else:
+            self.lines = self.ax.get_lines()
+            xmin = np.inf
+            xminlog = np.inf
+            xmax = -np.inf
+            for line in self.lines:
+                if line.get_alpha() > 0.5:
+                    data = line.get_data()
+                    xx = min(data[0])
+                    xmin = min([xx,xmin])
+                    
+                    xxlog = data[0][1] # first nonzero freq axis
+                    xminlog = min([xminlog,xxlog])
+                    
+                    xx = max(data[0])
+                    xmax = max([xx,xmax])
+            try:
+                if 'log' in self.xlinlog:
+                    self.ax.set_xlim([xminlog,xmax])
+                else:
+                    self.ax.set_xlim([xmin,xmax])
+            except:
+                pass
         self.fig.canvas.draw()
         
         
     def auto_y(self):
-        self.lines = self.ax.get_lines()
-        if (self.data_list.__class__.__name__ == 'TfData') and (self.plot_type != 'Nyquist'):
-            xview = self.freq_range
+        if self.data_list.__class__.__name__ == 'SonoDataList':
+            ylim = self.data_list[self.n_set].freq_axis[[0,-1]]
+            self.ax.set_ylim(ylim)
         else:
-            xview = self.ax.get_xlim()
-        ymin = np.inf
-        ymax = -np.inf
-        c=-1
-        for line in self.lines:
-            c+=1
-            data = line.get_data() 
-            x = data[0]
-            selection = (xview[0] < x) & (x < xview[1])
-            if line.get_alpha() > 0.5:
-                yy = min(data[1][selection])
-                ymin = min([yy,ymin])
-                yy = max(data[1][selection])
-                ymax = max([yy,ymax])
-        try:
-            self.ax.set_ylim([ymin,ymax])
-        except:
-            pass
+            self.lines = self.ax.get_lines()
+            if (self.data_list.__class__.__name__ == 'TfData') and (self.plot_type != 'Nyquist'):
+                xview = self.freq_range
+            else:
+                xview = self.ax.get_xlim()
+            ymin = np.inf
+            ymax = -np.inf
+            c=-1
+            for line in self.lines:
+                c+=1
+                data = line.get_data() 
+                x = data[0]
+                selection = (xview[0] < x) & (x < xview[1])
+                if line.get_alpha() > 0.5:
+                    yy = min(data[1][selection])
+                    ymin = min([yy,ymin])
+                    yy = max(data[1][selection])
+                    ymax = max([yy,ymax])
+            try:
+                self.ax.set_ylim([ymin,ymax])
+            except:
+                pass
         self.fig.canvas.draw()
         
     def channel_select(self,event):
@@ -446,39 +458,14 @@ class PlotData():
     
     def get_selected_channels(self):
         # find the sets and channels higlighted in figure
-        # first find lines
-        # relies on all sets of data with same number of channels. Need to make more general.
-#        lines = self.ax.get_lines()
-#        N = len(lines)
-#        alphas = np.zeros(N)
-#        count = -1
-#        for line in lines:
-#            count += 1
-#            alphas[count] = line.get_alpha()
-#        
-#        selected_lines = alphas > 0.5
         
-        # now convert line selection to sets and channels
         n_sets = len(self.line_listbyset)
-        
-            
         selected_data = []
         
         for ns in range(n_sets):
             selected_data += [[]]
-#            if self.data_list.__class__.__name__ == 'TimeDataList':
-#                n_chans = len(self.data_list[ns].time_data[0,:])
-#            elif self.data_list.__class__.__name__ == 'FreqDataList':
-#                n_chans = len(self.data_list[ns].freq_data[0,:])
-#            elif self.data_list.__class__.__name__ == 'TfDataList':
-#                n_chans = len(self.data_list[ns].tf_data[0,:])
-#            for nc in range(n_chans):
-#                count = -1
             for line in self.line_listbyset[ns]:
                 selected_data[ns] += [line.get_alpha() > 0.5] # skip coherence lines
-                
-        
-#        selected_data = selected_data == True
             
         return selected_data
     
@@ -493,9 +480,33 @@ class PlotData():
                     self.line_listbyset[n_set][n_chan].set_alpha(1-LINE_ALPHA)
         # make legend line alphas match actual lines, but keep visibility as before
         self.update_legend()
-        
-       
         self.fig.canvas.draw()
+        
+    def update_sonogram(self,sono_data_list,n_set,n_chan):
+        self.n_set = n_set
+        self.n_chan = n_chan
+        self.ax2.set_visible(False)
+        self.ax.set_xlabel('Time (s)')
+        self.ax.set_ylabel('Frequency (Hz)')
+        self.ax.grid(False,alpha=0.3)
+        
+        self.ax.lines=[]
+        self.ax2.lines=[]
+        self.line_listbyset = []
+        self.line2_listbyset = []
+        
+        f = sono_data_list[n_set].freq_axis
+        t = sono_data_list[n_set].time_axis
+        S = sono_data_list[n_set].sono_data[:,:,n_chan]
+        
+        self.pcolor_sono = self.ax.pcolor(t,f,20*np.log10(np.abs(S)))
+        xlim = sono_data_list[n_set].time_axis[[0,-1]]
+        ylim = sono_data_list[n_set].freq_axis[[0,-1]]
+        self.ax.set_xlim(xlim)
+        self.ax.set_ylim(ylim)
+#        self.fig.colorbar(ax=self.ax)
+        self.fig.canvas.draw()
+        
         
 #    def plot_modal_reconstruction(modal_data_list):
 #        for data in modal_data:

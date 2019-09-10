@@ -193,10 +193,6 @@ class InteractiveLogger():
         # main layout to window
         self.window.setLayout(self.layout_main)
         
-    
-        
-
-       
 
     def setup_frame_figure(self):
         # content
@@ -301,7 +297,7 @@ class InteractiveLogger():
         
         self.setup_frame_plot_details()
         
-        self.input_list_figures = newComboBox(['Time Data','FFT Data','TF Data'])
+        self.input_list_figures = newComboBox(['Time Data','FFT Data','TF Data','Sono Data'])
         self.input_list_figures.currentIndexChanged.connect(self.select_view)
         
         self.button_x = GreenButton('Auto X')
@@ -451,6 +447,7 @@ class InteractiveLogger():
         self.setup_frame_tools_settings()
         self.setup_frame_tools_generate_output()
         self.setup_frame_tools_edit_dataset()
+        self.setup_frame_tools_sonogram()
         self.setup_frame_tools_save_export()
         
         # widgets to layout
@@ -464,6 +461,7 @@ class InteractiveLogger():
         self.layout_tools.addWidget(self.frame_tools_settings)
         self.layout_tools.addWidget(self.frame_tools_generate_output)
         self.layout_tools.addWidget(self.frame_tools_edit_dataset)
+        self.layout_tools.addWidget(self.frame_tools_sonogram)
 #        self.layout_tools.addWidget(self.frame_tools_save_export)
         
         self.layout_tools.setAlignment(Qt.AlignTop)
@@ -482,7 +480,7 @@ class InteractiveLogger():
         
     def setup_frame_tools_selection(self):
         
-        self.input_list_tools = newComboBox(['Standard Tools','Logger Settings','Generate Output','Pre-process','FFT','Transfer Function','Calibration / Scaling','Mode Fitting','Edit Dataset','Save / Export'])
+        self.input_list_tools = newComboBox(['Standard Tools','Logger Settings','Generate Output','Pre-process','FFT','Transfer Function','Calibration / Scaling','Sonogram','Mode Fitting','Edit Dataset','Save / Export'])
         self.input_list_tools.setCurrentIndex(0)
         self.input_list_tools.currentIndexChanged.connect(self.select_tool)
         
@@ -772,6 +770,37 @@ class InteractiveLogger():
         
         self.frame_tools_edit_dataset = QFrame()
         self.frame_tools_edit_dataset.setLayout(self.layout_tools_edit_dataset)
+        
+    def setup_frame_tools_sonogram(self):
+        self.input_sono_N_frames = QLineEdit('50')
+        self.input_sono_N_frames.setValidator(QIntValidator(1,10000))
+        self.input_sono_N_frames.editingFinished.connect(self.refresh_sono_N_frames_slider)
+        self.input_sono_N_frames.editingFinished.connect(self.calc_sono)
+        
+        self.slider_sono_N_frames = QSlider(Qt.Horizontal)
+        self.slider_sono_N_frames.setMinimum(1)
+        self.slider_sono_N_frames.setMaximum(500)
+        self.slider_sono_N_frames.valueChanged.connect(self.refresh_sono_N_frames_text)
+        self.slider_sono_N_frames.valueChanged.connect(self.calc_sono)
+        
+        self.input_sono_n_set = QLineEdit('0')
+        self.input_sono_n_set.setValidator(QIntValidator(0,1000))
+        self.input_sono_n_set.editingFinished.connect(self.calc_sono)
+        self.input_sono_n_chan = QLineEdit('1')
+        self.input_sono_n_chan.setValidator(QIntValidator(0,1000))
+        self.input_sono_n_chan.editingFinished.connect(self.calc_sono)
+        
+        self.layout_tools_sonogram = QGridLayout()
+        self.layout_tools_sonogram.addWidget(boldLabel('Calculate Sonogram:'),0,0,1,4)
+        self.layout_tools_sonogram.addWidget(QLabel('N frames:'),1,0,1,2)
+        self.layout_tools_sonogram.addWidget(self.input_sono_N_frames,1,2,1,2)
+        self.layout_tools_sonogram.addWidget(self.slider_sono_N_frames,2,0,1,4)
+        self.layout_tools_sonogram.addWidget(QLabel('Set / Chan:'),3,0,1,2)
+        self.layout_tools_sonogram.addWidget(self.input_sono_n_set,3,2,1,1)
+        self.layout_tools_sonogram.addWidget(self.input_sono_n_chan,3,3,1,1)
+        
+        self.frame_tools_sonogram = QFrame()
+        self.frame_tools_sonogram.setLayout(self.layout_tools_sonogram)
         
     def setup_frame_tools_save_export(self):
         pass
@@ -1091,9 +1120,18 @@ class InteractiveLogger():
             data_list = self.dataset.freq_data_list
         elif self.current_view == 'TF Data':
             data_list = self.dataset.tf_data_list
+        elif self.current_view == 'Sono Data':
+            data_list = self.dataset.sono_data_list
 
         self.label_figure.setText(self.selected_view)
-        self.p.update(data_list, sets=self.sets, channels=self.channels, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
+        if self.current_view == 'Sono Data':
+            n_set = np.int(self.input_sono_n_set.text())
+            n_chan = np.int(self.input_sono_n_chan.text())
+            self.p.update_sonogram(self.dataset.sono_data_list, n_set, n_chan)
+            message = 'Showing sonogram for Set {}, Channel {}.'.format(n_set,n_chan)
+            self.show_message(message)
+        else:
+            self.p.update(data_list, sets=self.sets, channels=self.channels, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         if self.current_view_changed == False:
             try:
                 # not robust as not consistent in keeping up to date
@@ -1195,6 +1233,8 @@ class InteractiveLogger():
             N = len(self.dataset.freq_data_list)
         elif self.input_list_figures.itemText(index) == 'TF Data':
             N = len(self.dataset.tf_data_list)
+        elif self.input_list_figures.itemText(index) == 'Sono Data':
+            N = len(self.dataset.sono_data_list)
         if N > 0:
             self.input_list_figures.setCurrentIndex(index)
             self.input_list_data_type.setCurrentText(self.input_list_figures.currentText())
@@ -1355,11 +1395,37 @@ class InteractiveLogger():
                 else:
                     self.show_plot_details_with_coherence()
                     
-            
             # show message if no data
             else:
                 message = 'No transfer function data to display'
                 self.show_message(message)
+            
+        elif self.selected_view == 'Sono Data':
+             ### set to time gui
+            N = len(self.dataset.sono_data_list)
+            # check if any data present to display
+            if N != 0:
+                # no plot details needed for sonogram display
+                self.hide_plot_details()
+                # reset data/coherence plot properties if changed view back to time
+                if self.current_view_changed:
+                    self.current_view = self.selected_view
+                    self.show_data = True
+                    self.show_coherence = True # won't plot but reests for other selections
+                    self.xlinlog = 'linear'
+                    self.auto_xy = 'xyc'
+                    self.plot_type = 'Amplitude (dB)'
+                    self.input_list_plot_type.setCurrentText(self.plot_type)
+                    
+                # plot
+                self.update_figure()
+                
+            # show message if no data
+            else:
+                message = 'No sonogram data to display'
+                self.show_message(message)
+            
+            
         
     def hide_plot_details(self):
         self.frame_plot_details.setVisible(False)
@@ -1426,6 +1492,7 @@ class InteractiveLogger():
         self.frame_tools_settings.setVisible(False)
         self.frame_tools_generate_output.setVisible(False)
         self.frame_tools_edit_dataset.setVisible(False)
+        self.frame_tools_sonogram.setVisible(False)
 #        self.frame_tools_save_export.setVisible(False)
         
     def select_tool(self):
@@ -1461,6 +1528,10 @@ class InteractiveLogger():
         elif self.selected_tool == 'Calibration / Scaling':
             self.hide_all_tools()
             self.frame_tools_scaling.setVisible(True)
+            
+        elif self.selected_tool == 'Sonogram':
+            self.hide_all_tools()
+            self.frame_tools_sonogram.setVisible(True)
             
         elif self.selected_tool == 'Mode Fitting':
             self.hide_all_tools()
@@ -1954,6 +2025,28 @@ class InteractiveLogger():
         s[-1] = s2[-1]
         self.p.set_selected_channels(s) # keep selection after auto-range
         self.fn_in_range = m.fn
+        
+    def refresh_sono_N_frames_slider(self):
+        self.slider_sono_N_frames.setValue(np.int(self.input_sono_N_frames.text()))
+    
+    def refresh_sono_N_frames_text(self):
+        self.input_sono_N_frames.setText(str(self.slider_sono_N_frames.value()))
+    
+    def calc_sono(self):
+        if len(self.dataset.time_data_list) == 0:
+            message = 'No time data to calculate transfer function.'
+            self.show_message(message)
+        else:
+            self.N_frames_sono = np.int(self.input_sono_N_frames.text())
+            n_set = np.int(self.input_sono_n_set.text())
+            n_chan = np.int(self.input_sono_n_chan.text())
+            NT = len(self.dataset.time_data_list[n_set].time_data[:,n_chan])
+            self.nperseg = np.int(NT // ((self.N_frames_sono * 7)/8 + 1/8)) # 1/8 is default overlap for spectrogram
+            self.dataset.calculate_sono_set(nperseg=self.nperseg)
+            if self.current_view != 'Sono Data':
+                self.switch_view('Sono Data')
+            self.update_figure()
+            
         
         
 sys._excepthook = sys.excepthook 
