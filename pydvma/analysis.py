@@ -435,16 +435,18 @@ def clean_impulse(time_data, ch_impulse=0):
     
 #%% SONOGRAM    
 def calculate_sonogram(time_data, nperseg=None):
-    y = np.copy(time_data.time_data)
     
+    y = np.copy(time_data.time_data) # handles all channels simultaneously
+    if nperseg == None:
+        nperseg = np.int(len(time_data.time_axis)/50) #roughly 50 fft's per time-series not counting overlap
     f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,nperseg=nperseg,axis=0,mode='complex')
     
     # put channel axis at end
-    S = np.swapaxes(S,1,2)
+    S_all_chans = np.swapaxes(S,1,2)
     
-    return f,t,S
+    sono_data = datastructure.SonoData(t,f,S_all_chans,time_data.settings,id_link=time_data.id_link,test_name=time_data.test_name)
     
-
+    return sono_data
 
 #%% CWT
 #def calculate_cwt(time_data):

@@ -268,6 +268,14 @@ class DataSet():
             self.cross_spec_data_list = CrossSpecDataList()
             print('No time data found in dataset')
             
+    def calculate_sono_set(self, nperseg=None):
+        if len(self.time_data_list)>0:
+            sono_data_list = self.time_data_list.calculate_sono_set(nperseg=nperseg)
+            self.sono_data_list = sono_data_list
+        else:
+            self.sono_data_list = SonoDataList()
+            print('No time data foudn in dataset')
+            
     def clean_impulse(self,ch_impulse=0):
         '''
         Calls analysis.clean_impulse on each TimeData item in the TimeDataList and returns a copy of the new dataset.
@@ -316,6 +324,12 @@ class DataSet():
         ptf.update(self.tf_data_list,sets=sets,channels=channels)
         return ptf
     
+    def plot_sono_data(self,n_set=0, n_chan=0):
+        global ptf
+        ptf = plotting.PlotSonoData()
+        ptf.update(self.sono_data_list,n_set=n_set,n_chan=n_chan)
+        return ptf
+    
     def __repr__(self):
         template = "{:>24}: {}"
         dataset_dict = self.__dict__
@@ -335,7 +349,7 @@ class DataSet():
     
 class TimeDataList(list):
     ### This will allow functions to be discovered that can take lists of TimeData is arguments
-    def calculate_fft_set(self,time_range=None,window=False):
+    def calculate_fft_set(self,time_range=None,window=None):
         '''
         Calls analysis.calculate_fft on each item in the list and returns FreqDataList object
         '''
@@ -389,6 +403,18 @@ class TimeDataList(list):
         cross_spec_data = analysis.calculate_cross_spectra_averaged(self, time_range=time_range,window=window)
             
         return cross_spec_data
+    
+    def calculate_sono_set(self, nperseg=None):
+        '''
+        Calls analysis.calculate_sonogram on each item in the list and returns SonoDataList object
+        '''
+        sono_data_list = SonoDataList()
+        
+        for td in self:
+            sono_data = analysis.calculate_sonogram(td,nperseg=nperseg)
+            sono_data_list += [sono_data]
+            
+        return sono_data_list
     
     def get_calibration_factors(self):
         n_set = len(self)
@@ -673,7 +699,7 @@ class ModalData():
     
         
 class SonoData():
-    def __init__(self,time_axis,freq_axis,sono_data,settings,timestamp,timestring,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+    def __init__(self,time_axis,freq_axis,sono_data,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.time_axis = time_axis
         self.freq_axis = freq_axis
         self.sono_data = sono_data

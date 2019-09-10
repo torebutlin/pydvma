@@ -18,6 +18,28 @@ from matplotlib.ticker import AutoLocator
 
 LINE_ALPHA = 0.9
 
+class PlotSonoData():
+    def __init__(self,figsize=(9,5),canvas=None,fig=None):
+        if canvas==None:
+            self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
+        else:
+            self.fig = fig
+            self.canvas = canvas
+            self.ax = self.canvas.figure.subplots()
+        
+        self.ax.grid(False,alpha=0.3)
+        self.fig.canvas.draw()
+        
+    def update(self,sono_data_list,n_set=0,n_chan=0):
+        
+        f = sono_data_list[n_set].freq_axis
+        t = sono_data_list[n_set].time_axis
+        S = sono_data_list[n_set].sono_data[:,:,n_chan]
+        self.ax.pcolor(t,f,20*np.log10(np.abs(S)))
+        self.ax.set_xlabel('Time (s)')
+        self.ax.set_ylabel('Frequency (Hz)')
+    
+
 class PlotData():
     def __init__(self,sets='all',channels='all',figsize=(9,5),canvas=None,fig=None):
         if canvas==None:
