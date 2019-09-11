@@ -773,31 +773,46 @@ class InteractiveLogger():
         
     def setup_frame_tools_sonogram(self):
         self.input_sono_N_frames = QLineEdit('50')
-        self.input_sono_N_frames.setValidator(QIntValidator(1,10000))
+        self.input_sono_N_frames.setValidator(QIntValidator(10,10000))
         self.input_sono_N_frames.editingFinished.connect(self.refresh_sono_N_frames_slider)
         self.input_sono_N_frames.editingFinished.connect(self.calc_sono)
         
         self.slider_sono_N_frames = QSlider(Qt.Horizontal)
-        self.slider_sono_N_frames.setMinimum(1)
+        self.slider_sono_N_frames.setMinimum(10)
         self.slider_sono_N_frames.setMaximum(500)
+        self.slider_sono_N_frames.setValue(50)
         self.slider_sono_N_frames.valueChanged.connect(self.refresh_sono_N_frames_text)
         self.slider_sono_N_frames.valueChanged.connect(self.calc_sono)
         
         self.input_sono_n_set = QLineEdit('0')
         self.input_sono_n_set.setValidator(QIntValidator(0,1000))
         self.input_sono_n_set.editingFinished.connect(self.calc_sono)
-        self.input_sono_n_chan = QLineEdit('1')
+        self.input_sono_n_chan = QLineEdit('0')
         self.input_sono_n_chan.setValidator(QIntValidator(0,1000))
         self.input_sono_n_chan.editingFinished.connect(self.calc_sono)
+        
+        self.input_db_range = QLineEdit('60')
+        self.input_db_range.setValidator(QIntValidator(1,200))
+        self.input_db_range.editingFinished.connect(self.calc_sono)
+        
+        self.sono_info = QLabel('')
+        
+        
+        self.button_calc_sono = BlueButton('Calc Sonogram')
+        self.button_calc_sono.clicked.connect(self.calc_sono)
         
         self.layout_tools_sonogram = QGridLayout()
         self.layout_tools_sonogram.addWidget(boldLabel('Calculate Sonogram:'),0,0,1,4)
         self.layout_tools_sonogram.addWidget(QLabel('N frames:'),1,0,1,2)
         self.layout_tools_sonogram.addWidget(self.input_sono_N_frames,1,2,1,2)
         self.layout_tools_sonogram.addWidget(self.slider_sono_N_frames,2,0,1,4)
-        self.layout_tools_sonogram.addWidget(QLabel('Set / Chan:'),3,0,1,2)
-        self.layout_tools_sonogram.addWidget(self.input_sono_n_set,3,2,1,1)
-        self.layout_tools_sonogram.addWidget(self.input_sono_n_chan,3,3,1,1)
+        self.layout_tools_sonogram.addWidget(self.sono_info,3,0,1,4)
+        self.layout_tools_sonogram.addWidget(QLabel('Dynamic Range (dB):'),4,0,1,2)
+        self.layout_tools_sonogram.addWidget(self.input_db_range,4,2,1,2)
+        self.layout_tools_sonogram.addWidget(QLabel('Set / Chan:'),5,0,1,2)
+        self.layout_tools_sonogram.addWidget(self.input_sono_n_set,5,2,1,1)
+        self.layout_tools_sonogram.addWidget(self.input_sono_n_chan,5,3,1,1)
+        self.layout_tools_sonogram.addWidget(self.button_calc_sono,6,0,1,4)
         
         self.frame_tools_sonogram = QFrame()
         self.frame_tools_sonogram.setLayout(self.layout_tools_sonogram)
@@ -1122,16 +1137,21 @@ class InteractiveLogger():
             data_list = self.dataset.tf_data_list
         elif self.current_view == 'Sono Data':
             data_list = self.dataset.sono_data_list
-
-        self.label_figure.setText(self.selected_view)
+            
         if self.current_view == 'Sono Data':
+            if self.current_view_changed == True:
+                auto_xy = 'xy'
+            else:
+                auto_xy=''
+                
             n_set = np.int(self.input_sono_n_set.text())
             n_chan = np.int(self.input_sono_n_chan.text())
-            self.p.update_sonogram(self.dataset.sono_data_list, n_set, n_chan)
-            message = 'Showing sonogram for Set {}, Channel {}.'.format(n_set,n_chan)
-            self.show_message(message)
+            db_range = np.int(self.input_db_range.text())
+            self.p.update_sonogram(self.dataset.sono_data_list, n_set, n_chan, db_range=db_range,auto_xy=auto_xy)
+            self.label_figure.setText(self.selected_view + ': Set {}, Channel {}'.format(n_set,n_chan))
         else:
             self.p.update(data_list, sets=self.sets, channels=self.channels, xlinlog=self.xlinlog,show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
+            self.label_figure.setText(self.selected_view)
         if self.current_view_changed == False:
             try:
                 # not robust as not consistent in keeping up to date
@@ -2040,9 +2060,17 @@ class InteractiveLogger():
             self.N_frames_sono = np.int(self.input_sono_N_frames.text())
             n_set = np.int(self.input_sono_n_set.text())
             n_chan = np.int(self.input_sono_n_chan.text())
+#            db_range = np.int(self.input_db_range.text())
             NT = len(self.dataset.time_data_list[n_set].time_data[:,n_chan])
             self.nperseg = np.int(NT // ((self.N_frames_sono * 7)/8 + 1/8)) # 1/8 is default overlap for spectrogram
             self.dataset.calculate_sono_set(nperseg=self.nperseg)
+            
+            # calc sonogram info
+            npfft,npt = np.shape(self.dataset.sono_data_list[n_set].sono_data[:,:,n_chan])
+            text = 'FFT length: {}\n'.format(self.nperseg)
+            text += 'Freq resolution: {:5g} (Hz)\n'.format(np.diff(self.dataset.sono_data_list[n_set].freq_axis[[0,1]])[0])
+            
+            self.sono_info.setText(text)
             if self.current_view != 'Sono Data':
                 self.switch_view('Sono Data')
             self.update_figure()

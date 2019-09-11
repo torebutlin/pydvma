@@ -324,10 +324,10 @@ class DataSet():
         ptf.update(self.tf_data_list,sets=sets,channels=channels)
         return ptf
     
-    def plot_sono_data(self,n_set=0, n_chan=0):
+    def plot_sono_data(self,n_set=0, n_chan=0, db_range=60):
         global ptf
-        ptf = plotting.PlotSonoData()
-        ptf.update(self.sono_data_list,n_set=n_set,n_chan=n_chan)
+        ptf = plotting.PlotData()
+        ptf.update_sonogram(self.sono_data_list,n_set=n_set,n_chan=n_chan, db_range=db_range)
         return ptf
     
     def __repr__(self):

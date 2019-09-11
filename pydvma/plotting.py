@@ -27,7 +27,7 @@ class PlotSonoData():
             self.canvas = canvas
             self.ax = self.canvas.figure.subplots()
         
-        self.ax.grid(False,alpha=0.3)
+        self.ax.grid(False,alpha=0.2)
         self.fig.canvas.draw()
         
     def update(self,sono_data_list,n_set=0,n_chan=0):
@@ -49,23 +49,40 @@ class PlotData():
             self.canvas = canvas
             self.ax = self.canvas.figure.subplots()
 
+        #ax2 is for coherence
         self.ax2 = self.ax.twinx()
         self.ax2.set_visible(False)
         self.ax.set_zorder(self.ax2.get_zorder()+1)
         self.ax.patch.set_visible(False)
+        
+#        #ax3 is for sonograms: 
+#        self.ax2 = self.ax.twinx()
+#        self.ax2.set_visible(False)
+#        self.ax.set_zorder(self.ax2.get_zorder()+1)
+#        self.ax.patch.set_visible(False)
 
         self.ax.lines=[]
         self.ax2.lines=[]
         self.line_listbyset = []
         self.line2_listbyset = []
         self.pcolor_sono = None
+        self.visibility = True
         
-        self.ax.grid(True,alpha=0.3)
+        self.ax.grid(True,alpha=0.2)
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
         
     def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy=''):
         global LINE_ALPHA
+        
+        # when switching back from sonogram, remove all pcolormesh parts of plot
+        for ch in self.ax.get_children():
+                if ch.__class__.__name__ == 'QuadMesh':
+                    ch.remove()
+                    self.visibility = True # turn legend back on
+        
+        
+        self.ax.grid(True,alpha=0.2)
         self.data_list = data_list
         self.plot_type = plot_type
         self.freq_range = freq_range
@@ -99,9 +116,9 @@ class PlotData():
                 
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
-                self.ax.grid(b=True, which='minor',axis='x')
+                self.ax.grid(b=True, which='minor',axis='x',alpha=0.2)
             else:
-                self.ax.grid(b=False,which='minor',axis='x')
+                self.ax.grid(b=False,which='minor',axis='x',alpha=0.2)
             
         elif data_list.__class__.__name__ == 'TfDataList':
             if (plot_type == 'Amplitude (dB)') or (plot_type == None):
@@ -126,9 +143,9 @@ class PlotData():
             
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
-                self.ax.grid(b=True, which='minor',axis='x')
+                self.ax.grid(b=True, which='minor',axis='x',alpha=0.2)
             else:
-                self.ax.grid(b=False,which='minor',axis='x')
+                self.ax.grid(b=False,which='minor',axis='x',alpha=0.2)
             # setup twin axis
             
             if show_coherence == True:
@@ -155,7 +172,7 @@ class PlotData():
         if self.ch_total <= 10:
             LINE_ALPHA = 0.9
         else:
-            LINE_ALPHA = 1-1/self.ch_total/2 # make deselected lines fainter if more channels
+            LINE_ALPHA = 1-1/self.ch_total # make deselected lines fainter if more channels
         
         self.ax.lines=[]
         self.ax2.lines=[]
@@ -316,10 +333,9 @@ class PlotData():
     def update_legend(self,loc='lower right',draggable=False):
         
         if len(self.data_list) != 0:
-            if self.ax.get_legend() is not None:
-                visibility = self.ax.get_legend().get_visible()
-            else:
-                visibility = True
+            if self.ax.get_legend() is None:
+                self.visibility = True
+                
             if self.ch_total >= 10:
                 # make legend more compact
                 col_sizes = np.arange(10,7,-1)
@@ -354,7 +370,7 @@ class PlotData():
                     self.lined2[legline] = origline2 
                     origline2.set_alpha(legline.get_alpha())
                     
-            self.ax.get_legend().set_visible(visibility)
+            self.ax.get_legend().set_visible(self.visibility)
         else:
             self.legend = self.ax.get_legend()
             if self.legend is not None:
@@ -482,13 +498,21 @@ class PlotData():
         self.update_legend()
         self.fig.canvas.draw()
         
-    def update_sonogram(self,sono_data_list,n_set,n_chan):
+    def update_sonogram(self,sono_data_list,n_set,n_chan,db_range=60,auto_xy='xy'):
+        self.data_list = sono_data_list # makes auto_x/y work!
+        
+        for ch in self.ax.get_children():
+                if ch.__class__.__name__ == 'QuadMesh':
+                    ch.remove()
+        
         self.n_set = n_set
         self.n_chan = n_chan
         self.ax2.set_visible(False)
         self.ax.set_xlabel('Time (s)')
         self.ax.set_ylabel('Frequency (Hz)')
-        self.ax.grid(False,alpha=0.3)
+        self.ax.grid(False,alpha=0.2)
+        if self.ax.get_legend() is not None:
+            self.ax.get_legend().set_visible(False)
         
         self.ax.lines=[]
         self.ax2.lines=[]
@@ -498,12 +522,15 @@ class PlotData():
         f = sono_data_list[n_set].freq_axis
         t = sono_data_list[n_set].time_axis
         S = sono_data_list[n_set].sono_data[:,:,n_chan]
-        
-        self.pcolor_sono = self.ax.pcolor(t,f,20*np.log10(np.abs(S)))
-        xlim = sono_data_list[n_set].time_axis[[0,-1]]
-        ylim = sono_data_list[n_set].freq_axis[[0,-1]]
-        self.ax.set_xlim(xlim)
-        self.ax.set_ylim(ylim)
+        SdB = 20*np.log10(np.abs(S))
+        vmax = SdB.max()
+        vmin = np.max([SdB.min(),vmax-db_range])
+        self.pcolor_sono = self.ax.pcolormesh(t,f,SdB,shading='gouraud',cmap='Blues',vmax=vmax,vmin=vmin,rasterized=True)
+        if 'x' in auto_xy:
+            self.auto_x()
+        if 'y' in auto_xy:
+            self.auto_y()
+
 #        self.fig.colorbar(ax=self.ax)
         self.fig.canvas.draw()
         
