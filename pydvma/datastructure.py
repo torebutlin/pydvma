@@ -664,10 +664,11 @@ class ModalData():
         self.settings.channels = self.channels
         
         # separate properties for easier summary, and don't need summary of local residuals rk and rm
-        self.fn = self.M[:,0]
-        self.zn = self.M[:,1]
-        self.an = self.M[:,2]
-        self.pn = self.M[:,3]
+        fn,zn,an,pn,rk,rm = modal.unpack_matrix(self.M)
+        self.fn = fn
+        self.zn = zn
+        self.an = an
+        self.pn = pn
         
     def delete_mode(self,mode_number):
         self.M = np.delete(self.M,mode_number,0)

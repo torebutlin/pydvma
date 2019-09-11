@@ -324,6 +324,16 @@ class InteractiveLogger():
         self.button_select_all_data.clicked.connect(self.select_all_data)
         self.button_select_no_data.clicked.connect(self.select_no_data)
         
+        self.button_select_set_only = BlueButton('Show Set Only')
+        self.button_select_set_only.clicked.connect(self.show_set_only)
+        self.button_select_chan_only = BlueButton('Show Chan Only')
+        self.button_select_chan_only.clicked.connect(self.show_chan_only)
+        
+        self.input_select_set_only = QLineEdit('0')
+        self.input_select_set_only.setValidator(QIntValidator(0,1000))
+        self.input_select_chan_only = QLineEdit('0')
+        self.input_select_chan_only.setValidator(QIntValidator(0,1000))
+        
         self.legend_buttons = [BlueButton(i) for i in ['left','on/off','right']]
         self.legend_buttons[0].clicked.connect(self.legend_left)
         self.legend_buttons[1].clicked.connect(self.legend_onoff)
@@ -358,10 +368,14 @@ class InteractiveLogger():
         self.layout_axes.addWidget(boldLabel('Line Selection:'),row_start+1,0,1,6)
         self.layout_axes.addWidget(self.button_select_all_data,row_start+2,0,1,3)
         self.layout_axes.addWidget(self.button_select_no_data,row_start+2,3,1,3)
+        self.layout_axes.addWidget(self.button_select_set_only,row_start+3,0,1,3)
+        self.layout_axes.addWidget(self.input_select_set_only,row_start+3,3,1,3)
+        self.layout_axes.addWidget(self.button_select_chan_only,row_start+4,0,1,3)
+        self.layout_axes.addWidget(self.input_select_chan_only,row_start+4,3,1,3)
         
         
         # Legend control
-        row_start = 15
+        row_start = 17
         self.layout_axes.addWidget(QLabel(),row_start,0,1,6)
         self.layout_axes.addWidget(boldLabel('Legend control:'),row_start+1,0,1,6)
         for n in range(len(self.legend_buttons)):
@@ -369,7 +383,7 @@ class InteractiveLogger():
         
         
         # Plot-specific tools
-        row_start = 18
+        row_start = 20
         self.layout_axes.addWidget(self.frame_plot_details,row_start,0,1,6)
         self.frame_plot_details.setVisible(False)
         
@@ -831,6 +845,10 @@ class InteractiveLogger():
         # allow logger to be opened again after closing
         self.window.showMinimized()
         self.window.showNormal()
+        
+    def close(self):
+        # allow logger to be closed programmatically
+        self.window.close()
     
     def start_stream(self):
         if self.settings != None:
@@ -1110,6 +1128,8 @@ class InteractiveLogger():
                 message += 'To replace this mode fit with a new fit, press ''Fit Mode''.\n'
                 message += 'To delete this mode fit, press ''Reject Mode''.'
                 self.show_message(message)
+            else:
+                self.hide_message()
         
     def legend_left(self):
         self.legend_loc = 'lower left'
@@ -1184,6 +1204,28 @@ class InteractiveLogger():
         else:
             message = 'No data to hide.'
             self.show_message(message)
+            
+    def show_set_only(self):
+        n_set = np.int(self.input_select_set_only.text())
+        selection = self.p.get_selected_channels()
+        for ns in range(len(selection)):
+            for nc in range(len(selection[ns])):
+                if ns == n_set:
+                    selection[ns][nc] = True
+                else:
+                    selection[ns][nc] = False
+        self.p.set_selected_channels(selection)
+        
+    def show_chan_only(self):
+        n_chan = np.int(self.input_select_chan_only.text())
+        selection = self.p.get_selected_channels()
+        for ns in range(len(selection)):
+            for nc in range(len(selection[ns])):
+                if nc == n_chan:
+                    selection[ns][nc] = True
+                else:
+                    selection[ns][nc] = False
+        self.p.set_selected_channels(selection)
     
     def select_set_chan_list(self):
         for line in self.p.ax.lines:
@@ -1718,7 +1760,10 @@ class InteractiveLogger():
             self.dataset = dataset_new
             self.show_message(analysis.MESSAGE,b='undo')
             self.last_action = 'clean_impulse'
+            self.auto_xy = ''
+            selection = self.p.get_selected_channels()
             self.update_figure()
+            self.p.set_selected_channels(selection)
         except:
             analysis.MESSAGE = 'Clean impulse not successful, no change made.\n'
             analysis.MESSAGE += 'Check if ch_{} exists for each set of data.'.format(ch_impulse)

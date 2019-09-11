@@ -308,6 +308,19 @@ def unpack(x):
     rm = x[2+3*N_tfs:2+4*N_tfs]
     
     return fn,zn,an,pn,rk,rm
+
+def unpack_matrix(X):
+    # unpacks modal parameters into set of variables
+    N_tfs = np.int((len(X[0,:])-2)/4)
+
+    fn = X[:,0]
+    zn = X[:,1]
+    an = X[:,2:2+N_tfs]
+    pn = X[:,2+N_tfs:2+2*N_tfs]
+    rk = X[:,2+2*N_tfs:2+3*N_tfs]
+    rm = X[:,2+3*N_tfs:2+4*N_tfs]
+
+    return fn,zn,an,pn,rk,rm
     
 def pack(fn,zn,an,pn,rk,rm):
     # packs modal parameters into single variable for optimisation
