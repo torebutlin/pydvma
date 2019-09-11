@@ -694,10 +694,12 @@ class InteractiveLogger():
             self.input_list_devices += ['soundcard']
         
         self.input_test_name = QLineEdit()
+        self.input_test_name.editingFinished.connect(self.refresh_test_name)
         
         self.layout_tools_settings = QFormLayout()
-        self.layout_tools_settings.addRow(boldLabel('Test Name:'),self.input_test_name)
+        
         self.layout_tools_settings.addWidget(boldLabel('Input Settings:'))
+        self.layout_tools_settings.addRow(QLabel('Test Name:'),self.input_test_name)
         for n_row in range(9):
             self.layout_tools_settings.addRow(QLabel(self.labels_settings[n_row]),self.input_settings[self.labels_settings[n_row]])
         self.layout_tools_settings.addWidget(boldLabel('Output Settings:'))
@@ -735,8 +737,14 @@ class InteractiveLogger():
         self.button_log_with_output = GreenButton('Log with Output')
         self.button_log_with_output.clicked.connect(self.button_clicked_log_data)
         
+        
+        self.input_test_name2 = QLineEdit()
+        self.input_test_name2.editingFinished.connect(self.refresh_test_name2)
+        
         self.layout_tools_generate_output = QFormLayout()
+        
         self.layout_tools_generate_output.addRow(boldLabel('Generate Outputs:'))
+        self.layout_tools_generate_output.addRow(QLabel('Test Name:'),self.input_test_name2)
         self.layout_tools_generate_output.addRow(QLabel('Type:'),self.input_output_options)
         self.layout_tools_generate_output.addRow(QLabel('Amplitude (0-1):'),self.input_output_amp)
         self.layout_tools_generate_output.addRow(QLabel('f min (Hz):'),self.input_output_f1)
@@ -1843,6 +1851,15 @@ class InteractiveLogger():
     def refresh_Nframes_slider(self):
         self.slider_Nframes.setValue(np.int(self.input_Nframes.text()))
     
+    def refresh_test_name(self):
+        # keep both places for entering test_name up to date
+        self.input_test_name2.setText(self.input_test_name.text())
+        self.test_name = self.input_test_name.text()
+        
+    def refresh_test_name2(self):
+        # keep both places for entering test_name up to date
+        self.input_test_name.setText(self.input_test_name2.text())
+        self.test_name = self.input_test_name2.text()
         
     def calc_tf(self):
         if len(self.dataset.time_data_list) == 0:
