@@ -116,7 +116,7 @@ class PreviewWindow():
 
 class InteractiveLogger():
         
-    def __init__(self,settings=None,test_name=None,default_window='hanning'):
+    def __init__(self,settings=None,test_name=None,default_window=None):
         
         # Initialise variables
         global MESSAGE
@@ -126,7 +126,7 @@ class InteractiveLogger():
         self.test_name = test_name
         self.dataset = datastructure.DataSet()
         
-        
+        self.default_window = default_window
         self.current_view = 'Time'    
         self.N_frames = 1
         self.overlap = 0.5
@@ -527,6 +527,7 @@ class InteractiveLogger():
     def setup_frame_tools_fft(self):
         
         self.input_list_window_fft = newComboBox(['None','hann'])
+        self.input_list_window_fft.setCurrentText(self.default_window)
         self.button_FFT = BlueButton('Calc FFT')
         self.button_FFT.clicked.connect(self.calc_fft)
         
@@ -692,9 +693,10 @@ class InteractiveLogger():
         if SC != None:
             self.input_list_devices += ['soundcard']
         
-        
+        self.input_test_name = QLineEdit()
         
         self.layout_tools_settings = QFormLayout()
+        self.layout_tools_settings.addRow(boldLabel('Test Name:'),self.input_test_name)
         self.layout_tools_settings.addWidget(boldLabel('Input Settings:'))
         for n_row in range(9):
             self.layout_tools_settings.addRow(QLabel(self.labels_settings[n_row]),self.input_settings[self.labels_settings[n_row]])
@@ -1617,6 +1619,9 @@ class InteractiveLogger():
             settings_dict[label] = text
         self.settings_dict = settings_dict
         self.settings = options.MySettings(**settings_dict)
+        self.test_name = self.input_test_name.text()
+        if self.test_name == '':
+            self.test_name = None
         self.start_stream()
             
     
