@@ -3,6 +3,7 @@ from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QF
 from PyQt5.QtWidgets import QToolTip
 from PyQt5.QtCore import Qt, QThread, Signal, QTimer
 from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
+from PyQt5 import QtGui
 import copy
 from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -155,7 +156,9 @@ class InteractiveLogger():
         
         self.window = QWidget()
         self.window.setStyleSheet("background-color: white")
-        self.window.setWindowTitle('Interactive Logger')
+        self.window.setWindowTitle('Logger')
+#        self.window.setWindowIcon(QtGui.QIcon('icon.png'))
+        self.window.YOU.ARE.HERE.CLOSEWINDOW?
 
         # initiate all interface tool frames
         self.setup_frame_tools()
