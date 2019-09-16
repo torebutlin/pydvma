@@ -158,7 +158,7 @@ class InteractiveLogger():
         self.window.setStyleSheet("background-color: white")
         self.window.setWindowTitle('Logger')
 #        self.window.setWindowIcon(QtGui.QIcon('icon.png'))
-        self.window.YOU.ARE.HERE.CLOSEWINDOW?
+#        self.window.YOU.ARE.HERE.CLOSEWINDOW?
 
         # initiate all interface tool frames
         self.setup_frame_tools()
