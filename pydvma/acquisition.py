@@ -39,8 +39,8 @@ def log_data(settings,test_name=None,rec=None, output=None):
     
     if settings.pretrig_samples == None:
 
-        print('')
-        print('Logging data for {} seconds'.format(settings.stored_time))
+        MESSAGE = 'Logging data for {} seconds.\n'.format(settings.stored_time)
+        print(MESSAGE)
         
         
         # basic way to control logging time: won't be precise time from calling function
@@ -57,8 +57,8 @@ def log_data(settings,test_name=None,rec=None, output=None):
         number_samples = np.int64(rec.settings.stored_time * rec.settings.fs)
         
         stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
-        print('')
-        print('Logging complete.')
+        MESSAGE += 'Logging complete.\n'
+        print(MESSAGE)
 
         if output is not None:
             if settings.output_device_driver == 'nidaq':
@@ -68,11 +68,12 @@ def log_data(settings,test_name=None,rec=None, output=None):
 
         
     else:
-        rec.__init__(settings)
+        rec.__init__(settings) # zeros buffers so looks for trigger in fresh data
+        rec.trigger_detected = False # somehow this can be true even after previous call
         rec.trigger_first_detected_message = True
         
-        print('')
-        print('Waiting for trigger on channel {}'.format(settings.pretrig_channel))
+        MESSAGE = 'Waiting for trigger on channel {}.\n'.format(settings.pretrig_channel)
+        print(MESSAGE)
         
         start_output_flag = True
         t0 = time.time()
@@ -80,24 +81,25 @@ def log_data(settings,test_name=None,rec=None, output=None):
             if (output is not None) and (start_output_flag == True): # start output within loop, but only once!
                 s = output_signal(settings,output)
                 start_output_flag = False
+                MESSAGE += 'Starting output signal.\n'
             time.sleep(0.2)
         if (time.time()-t0 > settings.pretrig_timeout):
-            raise Exception('Trigger not detected within timeout of {} seconds.'.format(settings.pretrig_timeout))
+            MESSAGE += 'Trigger not detected within timeout of {} seconds.\n'.format(settings.pretrig_timeout)
+            print(MESSAGE)
         
         # make copy of data
         stored_time_data_copy = np.copy(rec.stored_time_data)
-        rec.trigger_detected = False
         trigger_check = rec.stored_time_data[(rec.settings.chunk_size):(2*rec.settings.chunk_size),rec.settings.pretrig_channel]
         detected_sample = rec.settings.chunk_size + np.where(np.abs(trigger_check) > rec.settings.pretrig_threshold)[0][0]
-        number_samples = rec.settings.stored_time * rec.settings.fs
+        number_samples = np.int(rec.settings.stored_time * rec.settings.fs)
         start_index = detected_sample - rec.settings.pretrig_samples
         end_index   = start_index + number_samples
-
-
+        rec.trigger_detected = False # don't start stream again until sorted out trigger detection
+        
         stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
         
-        print('')
-        print('Logging complete.')
+        MESSAGE += 'Logging complete.\n'
+        print(MESSAGE)
 
         if output is not None:
             if settings.output_device_driver == 'nidaq':
@@ -118,7 +120,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
     
     # check for clipping
     if np.any(np.abs(stored_time_data_copy > 0.95)):
-        MESSAGE = 'WARNING: Data may be clipped'
+        MESSAGE += 'WARNING: Data may be clipped'
         print(MESSAGE)
     
     return dataset

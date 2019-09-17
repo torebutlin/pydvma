@@ -281,7 +281,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     MESSAGE += 'pn={} deg\n\n'.format(pn*180/np.pi)
     print(MESSAGE)
     if np.any(np.abs(pn)*180/np.pi > 60):
-        MESSAGE += '\nPhase is significant, check ''TF type'' setting is correct'
+        MESSAGE += '\nPhase is significant, check ''TF type'' setting is correct.\n'
         print(MESSAGE)
         
     # Check quality of fit
@@ -290,7 +290,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     erms = np.mean(np.abs(e)**2)
     e_rel = erms/G0rms
     if e_rel > 0.1:
-        MESSAGE += 'Poor quality fit: try adjusting frequency range'
+        MESSAGE += '\nPoor quality fit: try adjusting frequency range.\n'
         print(MESSAGE)
 
     return m

@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider, QMessageBox
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame, QFormLayout
 from PyQt5.QtWidgets import QToolTip
-from PyQt5.QtCore import Qt, QThread, Signal, QTimer
+from PyQt5.QtCore import Qt, QThread, Signal, QTimer, QObject
 from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
 from PyQt5 import QtGui
 import copy
@@ -23,7 +23,7 @@ from . import modal
 from . import options
 import time
 import sys
-import numpy as np
+
 
 #%%
 
@@ -88,6 +88,8 @@ class LogDataThread(QThread):
         self.d = acquisition.log_data(self.settings,test_name=self.test_name, rec=self.rec, output=self.output)
         self.s.emit(self.d)
         
+        
+        
 class PreviewWindow():
     def __init__(self,title='Time Data'):
         self.preview_window = QWidget()
@@ -150,6 +152,8 @@ class InteractiveLogger():
         self.message_time = 0
         self.flag_log_and_replace = False
         self.flag_output = False
+        self.message_timer = QTimer() # purely for pretrig live messages
+        self.message = ''
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -174,7 +178,7 @@ class InteractiveLogger():
         
         # start stream if already passed settings
         self.start_stream()
-
+        self.message_timer.timeout.connect(self.show_message_timer) # connect after stream started
         
     def setup_layout_main(self):
 
@@ -884,13 +888,18 @@ class InteractiveLogger():
     def show_message(self,message,b='ok'):
         # if multiple messages from different functions, then join them up
         time_since_last = time.time()-self.message_time
-        if time_since_last < 0.5:
-            last_message = self.label_message.text()
-            if message not in last_message: # avoid duplicate messages
-                message = last_message + '\n\n' + message
+        if (time_since_last < 0.5) and (message not in self.message) and (self.message not in message):
+            self.message += message # join messages if not duplicating
+        else:
+            self.message = message
         self.message_time = time.time()
+        
+#        if (message not in self.message) and (self.message not in message):
+#            self.message += message # join messages if not duplicating
+#        else:
+#            self.message = message
         if message != '':
-            self.label_message.setText(message)
+            self.label_message.setText(self.message)
             if b == 'ok':
                 self.button_message.setVisible(True)
                 self.button_cancel.setVisible(False)
@@ -909,15 +918,23 @@ class InteractiveLogger():
         
     def hide_message(self):
         self.label_message.setText('')
+        self.message = ''
         self.frame_message.setVisible(False)
       
-        
+    def show_message_timer(self):
+        message = acquisition.MESSAGE
+#        message += self.rec.MESSAGE
+        self.show_message(message,b='cancel')
 
     def button_clicked_log_data(self):
+        # delegate messages to acquisition global MESSAGE, and streams rec.MESSAGE
+        # this lets messages be seen from within logging thread, with live updates
+        self.message_timer.start(300) 
+        
         # start stream
         if self.rec is None:
             self.start_stream()
-        
+            
         # generate output if specified
         self.create_output_signal()
         if self.output_time_data is not None:
@@ -926,58 +943,67 @@ class InteractiveLogger():
             y = None
         
         # reset trigger
-        self.rec.trigger_detected = False
+        self.rec.trigger_detected = False # but need to do this again inside acquisition
         self.button_log_data.setStyleSheet("background-color: white")
         
-        # show message re trigger
-        if self.settings.pretrig_samples is None:
-            message = 'Logging data for {} seconds'.format(self.settings.stored_time)
-        else:
-            message = 'Logging data for {} seconds, with trigger'.format(self.settings.stored_time)
+#        # show message re trigger
+#        if self.settings.pretrig_samples is None:
+#            message = 'Logging data for {} seconds'.format(self.settings.stored_time)
+#        else:
+            #message = 'Logging data for {} seconds, with trigger.\n'.format(self.settings.stored_time)
+            
+            
         
-        # show message re output
-        if y is not None:
-            message += '\n\nOutput signal starting.'
+        
+#        # show message re output
+#        if y is not None:
+#            message += '\n\nOutput signal starting.'
+#            self.show_message(message) # this one 
+        
         
         self.thread = LogDataThread(self.settings,test_name=self.test_name, rec=self.rec, output=y)
-        self.show_message(message,'cancel')
+        #self.thread.setPriority(QThread.TimeCriticalPriority)
+#        self.show_message(message,'cancel')
         
         self.thread.start()
         self.thread.s.connect(self.add_logged_data)
         
-    
+        
     def add_logged_data(self,d):
+        
         if self.flag_log_and_replace == False:
             self.dataset.add_to_dataset(d.time_data_list)
             N = len(self.dataset.time_data_list)
             self.sets = [N-1]
-            message = ''
-            self.hide_message()
+#            message = ''
+#            self.hide_message()
         else:
             self.dataset.replace_data_item(d.time_data_list[0],self.selected_set)
             self.sets = [self.selected_set]
             self.last_action = 'data replaced'
-            message = 'Logged data replaced set {}.'.format(self.selected_set)
-            self.show_message(message,b='undo')
+            acquisition.MESSAGE += 'Logged data replaced set {}.'.format(self.selected_set)
+            self.show_message(acquisition.MESSAGE,b='undo')
             self.flag_log_and_replace = False
         
-        if acquisition.MESSAGE != '':
-            message += '\n\n'
-            message += acquisition.MESSAGE
-        
-        self.show_message(message)
+#        if acquisition.MESSAGE != '':
+#            message += '\n\n'
+#            message += acquisition.MESSAGE
+#        
+#        self.show_message(message)
                     
         self.channels = 'all'
         self.switch_view('Time Data')
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
         self.update_selected_set()
         self.p.ax.set_ylim([-1,1])
+        self.show_message('Logging complete.') # this one doesn't make it from acquisition.MESSAGE as timer stops before message polled
+        self.message_timer.stop()
         
     def cancel_logging(self):
         self.thread.terminate()
         self.show_message('Logging cancelled')
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
-        
+        self.message_timer.stop()
 
     def delete_last_data(self):
         self.dataset_backup = copy.deepcopy(self.dataset)
@@ -987,11 +1013,11 @@ class InteractiveLogger():
         N = len(self.dataset.time_data_list)
         self.sets = [N-1]
         self.channels = 'all'
-        self.input_list_figures.setCurrentIndex(0)
-        self.select_view()
+        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+        self.switch_view('Time Data')
         self.last_action = 'delete data'
         message = 'Last logged time data deleted.\n'
-        message += 'FFT and TF data also deleted\n.'
+        message += 'FFT and TF data also deleted.\n'
         message += 'For more data editing options select ''Edit Dataset'' tool.'
         self.show_message(message,b='undo')
         self.update_selected_set()

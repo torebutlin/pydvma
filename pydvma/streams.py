@@ -1,4 +1,5 @@
 
+from . import acquisition
 
 import numpy as np
 import pprint as pp
@@ -17,6 +18,7 @@ except ImportError:
     pdaq = None
 except NotImplementedError:
     pdaq = None
+
 
 #%% Handles the different cases of starting soundcard/NI streams
 
@@ -154,7 +156,7 @@ class Recorder(object):
         #note the +2s to match up the length of stored_num_chunks
         #formula used from the np.fft.rfft documentation
         self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data,axis=0))
-            
+        
             
     def __call__(self, in_data, frame_count, time_info, status):
         '''
@@ -171,8 +173,9 @@ class Recorder(object):
         
         trigger_first_detected = np.any(np.abs(self.osc_data_chunk[:,self.settings.pretrig_channel])>self.settings.pretrig_threshold)
         if trigger_first_detected and self.trigger_first_detected_message:
+            acquisition.MESSAGE += 'Trigger detected. Logging data for {} seconds.\n'.format(self.settings.stored_time)
             print('')
-            print('Trigger detected. Logging data for {} seconds'.format(self.settings.stored_time))
+            print(acquisition.MESSAGE)
             self.trigger_first_detected_message=False
             
             
@@ -390,8 +393,9 @@ class Recorder_NI(object):
         
         trigger_first_detected = np.any(np.abs(self.osc_data_chunk[:,self.settings.pretrig_channel])>self.settings.pretrig_threshold)
         if trigger_first_detected and self.trigger_first_detected_message:
+            acquisition.MESSAGE += 'Trigger detected. Logging data for {} seconds.\n'.format(self.settings.stored_time)
             print('')
-            print('Trigger detected. Logging data for {} seconds'.format(self.settings.stored_time))
+            print(acquisition.MESSAGE)
             self.trigger_first_detected_message=False
             
             
