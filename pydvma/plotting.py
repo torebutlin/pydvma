@@ -72,7 +72,7 @@ class PlotData():
         self.fig.canvas.mpl_connect('pick_event', self.channel_select)
         self.fig.canvas.draw()
         
-    def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy=''):
+    def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy='xyc'):
         global LINE_ALPHA
         
         # when switching back from sonogram, remove all pcolormesh parts of plot
@@ -281,10 +281,13 @@ class PlotData():
                 if type(data_list[n_set].test_name) is str:
                     test_name = data_list[n_set].test_name
                 else:
-                    test_name = 'set '
-                
+                    test_name = ''
+                    
+                if test_name != '':
+                    test_name = test_name + ': '
+                    
                 if self.ch_total < 10:
-                    label = '{}_{}, ch_{}'.format(test_name,n_set,n_chan)
+                    label = '{}set_{}, ch_{}'.format(test_name,n_set,n_chan)
                 else:
                     label = 'set{},ch{}'.format(n_set,n_chan)
                     

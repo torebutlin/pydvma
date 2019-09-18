@@ -428,7 +428,8 @@ def clean_impulse(time_data, ch_impulse=0):
         return td
     
     else:
-        print('Impulse data already cleaned. Returning copy of input data.')
+        MESSAGE ='Impulse data already cleaned. No change made.'
+        print(MESSAGE)
         return time_data
 
     

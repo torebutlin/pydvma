@@ -79,6 +79,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
         t0 = time.time()
         while (time.time()-t0 < settings.pretrig_timeout) and not rec.trigger_detected:
             if (output is not None) and (start_output_flag == True): # start output within loop, but only once!
+                time.sleep(1)
                 s = output_signal(settings,output)
                 start_output_flag = False
                 MESSAGE += 'Starting output signal.\n'
@@ -119,7 +120,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
     dataset.add_to_dataset(timedata)
     
     # check for clipping
-    if np.any(np.abs(stored_time_data_copy > 0.95)):
+    if np.any(np.abs(stored_time_data_copy) > 0.95):
         MESSAGE += 'WARNING: Data may be clipped'
         print(MESSAGE)
     

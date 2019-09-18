@@ -547,6 +547,7 @@ class Recorder_NI(object):
 
 #%% NI output
 def setup_output_NI(settings,output):
+    output = settings.VmaxNI * output # ie. output was normalised to 0-1
     output_shape = np.shape(output)
     N_output = output_shape[0]
     N_channel_check = output_shape[1]

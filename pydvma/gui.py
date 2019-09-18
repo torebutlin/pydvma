@@ -212,6 +212,7 @@ class Logger():
         self.p.ax.callbacks.connect('xlim_changed', self.update_axes_values)
         self.p.ax.callbacks.connect('ylim_changed', self.update_axes_values)
         self.p.ax2.callbacks.connect('ylim_changed', self.update_co_axes_values)
+        self.fig.canvas.mpl_connect('pick_event', self.update_selected_channels)
         
         self.label_figure = boldLabel('Time Data')
         self.label_figure.setMaximumHeight(20)
@@ -326,8 +327,6 @@ class Logger():
         
         self.button_select_all_data = GreenButton('All')
         self.button_select_no_data = GreenButton('None')
-        self.input_selection_list = QLineEdit()
-        self.input_selection_list.editingFinished.connect(self.select_set_chan_list)
         self.button_select_all_data.clicked.connect(self.select_all_data)
         self.button_select_no_data.clicked.connect(self.select_no_data)
         
@@ -766,8 +765,8 @@ class Logger():
         self.layout_tools_generate_output.addRow(QLabel('Test Name:'),self.input_test_name2)
         self.layout_tools_generate_output.addRow(QLabel('Type:'),self.input_output_options)
         self.layout_tools_generate_output.addRow(QLabel('Amplitude (0-1):'),self.input_output_amp)
-        self.layout_tools_generate_output.addRow(QLabel('f min (Hz):'),self.input_output_f1)
-        self.layout_tools_generate_output.addRow(QLabel('f max (Hz):'),self.input_output_f2)
+        self.layout_tools_generate_output.addRow(QLabel('f1 (Hz):'),self.input_output_f1)
+        self.layout_tools_generate_output.addRow(QLabel('f2 (Hz):'),self.input_output_f2)
         self.layout_tools_generate_output.addRow(QLabel('Duration (s):'),self.input_output_duration)
         self.layout_tools_generate_output.addRow(self.button_output_preview)
         self.layout_tools_generate_output.addRow(self.button_start_output)
@@ -900,7 +899,7 @@ class Logger():
     def show_message(self,message,b='ok'):
         # if multiple messages from different functions, then join them up
         time_since_last = time.time()-self.message_time
-        if (time_since_last < 0.5) and (message not in self.message) and (self.message not in message):
+        if (time_since_last < 0.5) and (message not in self.message):# and (self.message not in message):
             self.message += message # join messages if not duplicating
         else:
             self.message = message
@@ -987,35 +986,55 @@ class Logger():
             self.dataset.add_to_dataset(d.time_data_list)
             N = len(self.dataset.time_data_list)
             self.sets = [N-1]
+            message = 'Logging complete.\n'
+            if np.any(np.abs(d.time_data_list[0].time_data) > 0.95):
+                message += '\nWARNING: Data may be clipped.\n'
+            self.show_message(message)
 #            message = ''
 #            self.hide_message()
         else:
             self.dataset.replace_data_item(d.time_data_list[0],self.selected_set)
             self.sets = [self.selected_set]
             self.last_action = 'data replaced'
-            acquisition.MESSAGE += 'Logged data replaced set {}.'.format(self.selected_set)
-            self.show_message(acquisition.MESSAGE,b='undo')
+            message = 'Logged data replaced set {}.\n'.format(self.selected_set)
+            if np.any(np.abs(d.time_data_list[0].time_data) > 0.95):
+                message += '\nWARNING: Data may be clipped.\n'
+            self.show_message(message,b='undo')
             self.flag_log_and_replace = False
+
         
-#        if acquisition.MESSAGE != '':
-#            message += '\n\n'
-#            message += acquisition.MESSAGE
-#        
-#        self.show_message(message)
+            self.show_message(message,b='undo')
+
+        # only show most recently logged data
+        selection = self.p.get_selected_channels()
+        for ns in range(len(selection)):
+            for nc in range(len(selection[ns])):
+                if ns in self.sets:
+                    selection[ns][nc] = True
+                else:
+                    selection[ns][nc] = False
+        self.selected_channels = selection
+
                     
         self.channels = 'all'
         self.switch_view('Time Data')
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
-        self.update_selected_set()
+#        self.update_selected_set()
         self.p.ax.set_ylim([-1,1])
-        self.show_message('Logging complete.') # this one doesn't make it from acquisition.MESSAGE as timer stops before message polled
+        
+#          this one doesn't make it from acquisition.MESSAGE as timer stops before message polled
+        
+        
         self.message_timer.stop()
         
     def cancel_logging(self):
-        self.thread.terminate()
+        self.thread.terminate() # stop thread
+        streams.start_stream(self.settings) # reset stream
+        self.rec = streams.REC # reset stream
         self.show_message('Logging cancelled')
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
-        self.message_timer.stop()
+        self.message_timer.stop() # stop acquisition messages
+        self.selected_channels = self.p.get_selected_channels()
 
     def delete_last_data(self):
         self.dataset_backup = copy.deepcopy(self.dataset)
@@ -1025,14 +1044,29 @@ class Logger():
         N = len(self.dataset.time_data_list)
         self.sets = [N-1]
         self.channels = 'all'
-        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all')
+        
+        # only show most recently logged data
+        if N > 0:
+            selection = self.p.get_selected_channels()
+            for ns in range(len(selection)):
+                for nc in range(len(selection[ns])):
+                    if ns in self.sets:
+                        selection[ns][nc] = True
+                    else:
+                        selection[ns][nc] = False
+            self.selected_channels = selection
+        
+        self.auto_xy = ''
+        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all', auto_xy=self.auto_xy)
+#        update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy='xyc'):
         self.switch_view('Time Data')
         self.last_action = 'delete data'
         message = 'Last logged time data deleted.\n'
         message += 'FFT and TF data also deleted.\n'
         message += 'For more data editing options select ''Edit Dataset'' tool.'
         self.show_message(message,b='undo')
-        self.update_selected_set()
+#        self.selected_channels = self.p.get_selected_channels()
+#        self.update_selected_set()
         
     def reset_data(self):
         self.dataset_backup = copy.deepcopy(self.dataset)
@@ -1044,7 +1078,8 @@ class Logger():
         message = 'All data deleted.\n'
         message += 'For more data editing options select ''Edit Dataset'' tool.'
         self.show_message(message,b='undo')
-        self.update_selected_set()
+#        self.selected_channels = self.p.get_selected_channels()
+#        self.update_selected_set()
 
     
     def load_data(self):
@@ -1070,23 +1105,24 @@ class Logger():
         if len(self.dataset.time_data_list) != 0:
             self.input_list_figures.setCurrentText('Time Data')
             self.select_view()
-            self.hide_message()
+#            self.hide_message()
             no_data = False
         if len(self.dataset.freq_data_list) != 0:
             self.input_list_figures.setCurrentText('FFT Data')
             self.select_view()
-            self.hide_message()
+#            self.hide_message()
             no_data = False
         if len(self.dataset.tf_data_list) != 0:
             self.input_list_figures.setCurrentText('TF Data')
             self.select_view()
-            self.hide_message()
+#            self.hide_message()
             no_data = False
         if no_data == True:
             message = 'No data to view'
             self.show_message(message)
         self.input_list_data_type.setCurrentText(self.selected_view)
-        self.update_selected_set()
+        self.selected_channels = self.p.get_selected_channels()
+#        self.update_selected_set()
         
         
         
@@ -1152,6 +1188,7 @@ class Logger():
         self.p.auto_y()
         
     def update_axes_values(self,axes):
+        self.selected_channels = self.p.get_selected_channels()
         xlim = self.p.ax.get_xlim()
         ylim = self.p.ax.get_ylim()
         self.input_axes[0].setText('{:0.5g}'.format(xlim[0]))
@@ -1193,12 +1230,18 @@ class Logger():
         self.canvas.draw()
             
     def legend_onoff(self):
+        self.selected_channels = self.p.get_selected_channels()
         visibility = self.p.ax.get_legend().get_visible()
         self.p.ax.get_legend().set_visible(not visibility)
         self.canvas.draw()
         
         
     def update_figure(self):
+        try:
+            # sometimes starting point with no legend object
+            visibility = self.p.ax.get_legend().get_visible()
+        except:
+            pass
         # updates the currently viewed plot
         if self.current_view == 'Time Data':
             data_list = self.dataset.time_data_list
@@ -1226,12 +1269,24 @@ class Logger():
         if self.current_view_changed == False:
             try:
                 # not robust as not consistent in keeping up to date
+                # if only one data set then make sure it's visible
+                if len(data_list) == 1:
+                    selection = self.p.get_selected_channels()
+                    for nc in range(len(selection[0])):
+                        selection[0][nc] = True
+                    self.selected_channels = selection
+                # otherwise just inherit prev data selection
                 self.p.set_selected_channels(self.selected_channels)
+                self.p.ax.get_legend().set_visible(visibility)
+                self.fig.canvas.draw()
             except:
                 # get selected_channels back into sync
                 self.selected_channels = self.p.get_selected_channels()
+        
                    
-            
+    def update_selected_channels(self,_):
+        self.selected_channels = self.p.get_selected_channels()
+        
     def select_all_data(self):
         if len(self.p.ax.lines) > 0:
             for line in self.p.ax.lines:
@@ -1242,6 +1297,7 @@ class Logger():
         else:
             message = 'No data to show.'
             self.show_message(message)
+        self.selected_channels = self.p.get_selected_channels()
         
         
         
@@ -1255,6 +1311,7 @@ class Logger():
         else:
             message = 'No data to hide.'
             self.show_message(message)
+        self.selected_channels = self.p.get_selected_channels()
             
     def show_set_only(self):
         n_set = np.int(self.input_select_set_only.text())
@@ -1266,6 +1323,7 @@ class Logger():
                 else:
                     selection[ns][nc] = False
         self.p.set_selected_channels(selection)
+        self.selected_channels = selection
         
     def show_chan_only(self):
         n_chan = np.int(self.input_select_chan_only.text())
@@ -1277,8 +1335,15 @@ class Logger():
                 else:
                     selection[ns][nc] = False
         self.p.set_selected_channels(selection)
+        self.selected_channels = selection
         
     def next_chans(self):
+        try:
+            # sometimes starting point with no legend object
+            visibility = self.p.ax.get_legend().get_visible()
+        except:
+            pass
+        
         selection = self.p.get_selected_channels()
         prev_line = bool(selection[-1][-1])
         for ns in range(len(selection)):
@@ -1287,10 +1352,20 @@ class Logger():
                 selection[ns][nc] = bool(prev_line)
                 prev_line = bool(this_line)
         
-        self.p.set_selected_channels(selection)        
-        
+        self.p.set_selected_channels(selection)
+        self.selected_channels = selection
+        try:
+            self.p.ax.get_legend().set_visible(visibility)
+            self.fig.canvas.draw()
+        except:
+            pass
         
     def prev_chans(self):
+        try:
+            # sometimes starting point with no legend object
+            visibility = self.p.ax.get_legend().get_visible()
+        except:
+            pass
         selection = self.p.get_selected_channels()
         prev_line = bool(selection[0][0])
         for ns in reversed(range(len(selection))):
@@ -1300,10 +1375,13 @@ class Logger():
                 prev_line = bool(this_line)
         
         self.p.set_selected_channels(selection) 
-        
-    def select_set_chan_list(self):
-        for line in self.p.ax.lines:
-            line.set_alpha = 1 - plotting.LINE_ALPHA
+        self.selected_channels = selection
+        try:
+            self.p.ax.get_legend().set_visible(visibility)
+            self.fig.canvas.draw()
+        except:
+            pass
+
            
         
     def co_min(self):
@@ -1416,7 +1494,7 @@ class Logger():
                 
             # show message if no data
             else:
-                message = 'No time data to display'
+                message = 'No time data to display.\n'
                 self.show_message(message)
                 
         # FFT Data
@@ -1477,7 +1555,7 @@ class Logger():
                 
             # show message if no data to plot
             else:
-                message = 'No FFT data to display'
+                message = 'No FFT data to display.\n'
                 self.show_message(message)
         
         # TF Data
@@ -1533,7 +1611,7 @@ class Logger():
                     
             # show message if no data
             else:
-                message = 'No transfer function data to display'
+                message = 'No transfer function data to display.\n'
                 self.show_message(message)
             
         elif self.selected_view == 'Sono Data':
@@ -1675,6 +1753,7 @@ class Logger():
             
         elif self.selected_tool == 'Edit Dataset':
             self.hide_all_tools()
+            self.auto_xy = ''
             self.update_selected_set()
             self.frame_tools_edit_dataset.setVisible(True)
 
@@ -1729,6 +1808,7 @@ class Logger():
         self.label_data_summary.setText(text)
 
     def delete_data_type(self):
+        self.auto_xy = ''
         self.update_selected_set()
         if len(self.data_list) != 0:
             self.dataset_backup = copy.deepcopy(self.dataset)
@@ -1744,6 +1824,7 @@ class Logger():
             
     
     def delete_data_set(self):
+        self.auto_xy = ''
         self.selected_set = np.int(self.input_selected_set.text())
         if len(self.data_list) != 0:
             self.dataset_backup = copy.deepcopy(self.dataset)
@@ -1758,23 +1839,25 @@ class Logger():
         self.update_selected_set()
     
     def log_and_replace(self):
+        self.auto_xy = ''
         self.dataset_backup = copy.deepcopy(self.dataset)
         self.selected_set = np.int(self.input_selected_set.text())
         self.flag_log_and_replace = True
+        self.button_clicked_log_data()
         
-        ### DUPLICATES button_clicked_log_data FUNCTION SO THAT MESSAGE APPEARS ###
-        if self.rec is None:
-            self.start_stream()
-        self.rec.trigger_detected = False
-        self.button_log_data.setStyleSheet("background-color: white")
-        if self.settings.pretrig_samples is None:
-            message = 'Logging data for {} seconds'.format(self.settings.stored_time)
-        else:
-            message = 'Logging data for {} seconds, with trigger'.format(self.settings.stored_time)
-        self.thread = LogDataThread(self.settings,test_name=self.test_name, rec=self.rec)
-        self.show_message(message,'cancel')
-        self.thread.start()
-        self.thread.s.connect(self.add_logged_data)
+#        ### DUPLICATES button_clicked_log_data FUNCTION SO THAT MESSAGE APPEARS ###
+#        if self.rec is None:
+#            self.start_stream()
+#        self.rec.trigger_detected = False
+#        self.button_log_data.setStyleSheet("background-color: white")
+#        if self.settings.pretrig_samples is None:
+#            message = 'Logging data for {} seconds'.format(self.settings.stored_time)
+#        else:
+#            message = 'Logging data for {} seconds, with trigger'.format(self.settings.stored_time)
+#        self.thread = LogDataThread(self.settings,test_name=self.test_name, rec=self.rec)
+#        self.show_message(message,'cancel')
+#        self.thread.start()
+#        self.thread.s.connect(self.add_logged_data)
         ###########################################################################
     
     def update_output(self):
@@ -1832,8 +1915,12 @@ class Logger():
     def clean_impulse(self):
         try:
             ch_impulse = np.int(self.input_impulse_channel.text())
+            
             dataset_new = self.dataset.clean_impulse(ch_impulse=ch_impulse)
-            self.dataset_backup = self.dataset
+            
+            if 'data already cleaned' not in analysis.MESSAGE:
+                # only make backup if first time cleaned, otherwise backup no longer contains original data
+                self.dataset_backup = self.dataset
             self.dataset = dataset_new
             self.show_message(analysis.MESSAGE,b='undo')
             self.last_action = 'clean_impulse'
