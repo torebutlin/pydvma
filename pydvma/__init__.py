@@ -11,4 +11,4 @@ from .streams import Recorder, Recorder_NI, start_stream, REC, setup_output_NI, 
 #from .interactive_tools import InteractiveLogging, InteractiveView
 from .modal import modal_fit_single_channel, modal_fit_all_channels
 
-from .gui import InteractiveLogger
+from .gui import Logger

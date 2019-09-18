@@ -117,7 +117,7 @@ class PreviewWindow():
         self.preview_window.showMinimized()
         self.preview_window.showNormal()
 
-class InteractiveLogger():
+class Logger():
         
     def __init__(self,settings=None,test_name=None,default_window=None):
         
@@ -161,7 +161,7 @@ class InteractiveLogger():
         self.window = QWidget()
         self.window.setStyleSheet("background-color: white")
         self.window.setWindowTitle('Logger')
-#        self.window.setWindowIcon(QtGui.QIcon('icon.png'))
+        self.window.setWindowIcon(QtGui.QIcon('icon.png'))
 #        self.window.YOU.ARE.HERE.CLOSEWINDOW?
 
         # initiate all interface tool frames
@@ -324,12 +324,18 @@ class InteractiveLogger():
         self.input_axes[3].setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5)) 
         self.input_axes[3].editingFinished.connect(self.ymax)
         
-        self.button_select_all_data = GreenButton('Show All')
-        self.button_select_no_data = GreenButton('Hide All')
+        self.button_select_all_data = GreenButton('All')
+        self.button_select_no_data = GreenButton('None')
         self.input_selection_list = QLineEdit()
         self.input_selection_list.editingFinished.connect(self.select_set_chan_list)
         self.button_select_all_data.clicked.connect(self.select_all_data)
         self.button_select_no_data.clicked.connect(self.select_no_data)
+        
+        self.button_select_next = GreenButton('>')
+        self.button_select_prev = GreenButton('<')
+        self.button_select_next.clicked.connect(self.next_chans)
+        self.button_select_prev.clicked.connect(self.prev_chans)
+        
         
         self.button_select_set_only = BlueButton('Show Set Only')
         self.button_select_set_only.clicked.connect(self.show_set_only)
@@ -373,8 +379,10 @@ class InteractiveLogger():
         row_start = 11
         self.layout_axes.addWidget(QLabel(),row_start,0,1,6)
         self.layout_axes.addWidget(boldLabel('Line Selection:'),row_start+1,0,1,6)
-        self.layout_axes.addWidget(self.button_select_all_data,row_start+2,0,1,3)
-        self.layout_axes.addWidget(self.button_select_no_data,row_start+2,3,1,3)
+        self.layout_axes.addWidget(self.button_select_all_data,row_start+2,0,1,2)
+        self.layout_axes.addWidget(self.button_select_no_data,row_start+2,2,1,2)
+        self.layout_axes.addWidget(self.button_select_prev,row_start+2,4,1,1)
+        self.layout_axes.addWidget(self.button_select_next,row_start+2,5,1,1)
         self.layout_axes.addWidget(self.button_select_set_only,row_start+3,0,1,3)
         self.layout_axes.addWidget(self.input_select_set_only,row_start+3,3,1,3)
         self.layout_axes.addWidget(self.button_select_chan_only,row_start+4,0,1,3)
@@ -566,6 +574,8 @@ class InteractiveLogger():
         self.slider_Nframes.valueChanged.connect(self.refresh_Nframes_text)
         self.slider_Nframes.valueChanged.connect(self.calc_tf)
         
+        self.label_Nframes_time = QLabel('')
+        
         self.button_TFav = BlueButton('Calc TF average')
         self.button_TFav.clicked.connect(self.calc_tf_av)
         
@@ -579,8 +589,9 @@ class InteractiveLogger():
         self.layout_tools_tf.addWidget(self.label_Nframes,3,0,1,1)
         self.layout_tools_tf.addWidget(self.input_Nframes,3,1,1,2)
         self.layout_tools_tf.addWidget(self.slider_Nframes,4,0,1,3)
-        self.layout_tools_tf.addWidget(self.button_TF,5,0,1,3)
-        self.layout_tools_tf.addWidget(self.button_TFav,5,0,1,3)
+        self.layout_tools_tf.addWidget(self.label_Nframes_time,5,0,1,3)
+        self.layout_tools_tf.addWidget(self.button_TF,6,0,1,3)
+        self.layout_tools_tf.addWidget(self.button_TFav,6,0,1,3)
         
         # initiate view
         self.input_list_average_TF.setCurrentIndex(0)
@@ -589,6 +600,7 @@ class InteractiveLogger():
         self.label_Nframes.setVisible(False)
         self.input_Nframes.setVisible(False)
         self.slider_Nframes.setVisible(False)
+        self.label_Nframes_time.setVisible(False)
         self.button_TFav.setVisible(False)
         self.button_TF.setVisible(True)
         
@@ -1265,7 +1277,30 @@ class InteractiveLogger():
                 else:
                     selection[ns][nc] = False
         self.p.set_selected_channels(selection)
-    
+        
+    def next_chans(self):
+        selection = self.p.get_selected_channels()
+        prev_line = bool(selection[-1][-1])
+        for ns in range(len(selection)):
+            for nc in range(len(selection[ns])):
+                this_line = bool(selection[ns][nc])
+                selection[ns][nc] = bool(prev_line)
+                prev_line = bool(this_line)
+        
+        self.p.set_selected_channels(selection)        
+        
+        
+    def prev_chans(self):
+        selection = self.p.get_selected_channels()
+        prev_line = bool(selection[0][0])
+        for ns in reversed(range(len(selection))):
+            for nc in reversed(range(len(selection[ns]))):
+                this_line = bool(selection[ns][nc])
+                selection[ns][nc] = bool(prev_line)
+                prev_line = bool(this_line)
+        
+        self.p.set_selected_channels(selection) 
+        
     def select_set_chan_list(self):
         for line in self.p.ax.lines:
             line.set_alpha = 1 - plotting.LINE_ALPHA
@@ -1857,6 +1892,7 @@ class InteractiveLogger():
             self.label_Nframes.setVisible(False)
             self.input_Nframes.setVisible(False)
             self.slider_Nframes.setVisible(False)
+            self.label_Nframes_time.setVisible(False)
             self.button_TFav.setVisible(False)
             self.button_TF.setVisible(True)
             
@@ -1865,6 +1901,7 @@ class InteractiveLogger():
             self.button_TF.setVisible(True)
             self.label_Nframes.setVisible(True)
             self.input_Nframes.setVisible(True)
+            self.label_Nframes_time.setVisible(True)
             self.slider_Nframes.setVisible(True)
             
         elif self.averaging_method == 'across sets':
@@ -1872,14 +1909,35 @@ class InteractiveLogger():
             self.label_Nframes.setVisible(False)
             self.input_Nframes.setVisible(False)
             self.slider_Nframes.setVisible(False)
+            self.label_Nframes_time.setVisible(False)
             self.button_TFav.setVisible(True)
             
     def refresh_Nframes_text(self):
-        self.input_Nframes.setText(str(self.slider_Nframes.value()))
+        self.N_frames = self.slider_Nframes.value()
+        self.input_Nframes.setText(str(self.N_frames))
+        if len(self.dataset.time_data_list)>0:
+            stored_time = self.dataset.time_data_list[0].settings.stored_time
+            text = "Frame length = {:.2f} seconds.".format(stored_time/(self.N_frames-self.overlap*self.N_frames+self.overlap))
+        else:   
+            text = 'No time data'
+        self.label_Nframes_time.setText(text)
+        
         
     def refresh_Nframes_slider(self):
-        self.slider_Nframes.setValue(np.int(self.input_Nframes.text()))
-    
+        self.N_frames = np.int(self.input_Nframes.text())
+        # allows setting text to higher than max slider
+        try:
+            self.slider_Nframes.setValue(self.N_frames)
+        except:
+            pass
+        if len(self.dataset.time_data_list)>0:
+            stored_time = self.dataset.time_data_list[0].settings.stored_time
+            text = "Frame length = {:.2f} seconds.".format(stored_time/(self.N_frames-self.overlap*self.N_frames+self.overlap))
+        else:   
+            text = 'No time data'
+        self.label_Nframes_time.setText(text)
+        
+        
     def refresh_test_name(self):
         # keep both places for entering test_name up to date
         self.input_test_name2.setText(self.input_test_name.text())
@@ -2069,6 +2127,7 @@ class InteractiveLogger():
             tf_data.flag_modal_TF = True
             self.dataset.tf_data_list.add_modal_reconstruction(tf_data,mode='replace')
             
+            self.auto_xy = ''
             self.update_figure()
             s2 = self.p.get_selected_channels()
             for i in range(len(s2[-1])):
