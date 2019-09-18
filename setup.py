@@ -10,12 +10,13 @@ requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'pyaudio', 'matplotlib',
 
 setup(
     name='pydvma',
-    version='0.6.3',
+    version='0.6.4',
     install_requires=requires,
     packages=['pydvma'],
     package_data={'': ['icon.png']},
     license='BSD 3-Clause License',
     long_description=open('README.md').read(),
-    Author='Tore Butlin',
-    Author_email='tb267@cam.ac.uk'
+    author='Tore Butlin',
+    author_email='tb267@cam.ac.uk',
+    url='https://github.com/torebutlin/pydvma'
 )
