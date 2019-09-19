@@ -9,8 +9,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2Q
 from matplotlib.figure import Figure
 from matplotlib.ticker import AutoLocator
 import numpy as np
-import logging
-logging.basicConfig(filename='example.log',level=logging.DEBUG)
+#import logging
+#logging.basicConfig(filename='example.log',level=logging.DEBUG)
 #%%
 
 from . import plotting
@@ -22,11 +22,10 @@ from . import file
 from . import modal
 from . import options
 import time
-import sys
+#import sys, os
 
 
 #%%
-
 class BlueButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
@@ -956,6 +955,11 @@ class Logger():
             y = self.output_time_data.time_data
         else:
             y = None
+
+        if np.any(np.abs(y)>1):
+            message = 'Output amplitude too high: must be less than 1.\n'
+            self.show_message(message)
+            return None
         
         # reset trigger
         self.rec.trigger_detected = False # but need to do this again inside acquisition
@@ -1642,7 +1646,7 @@ class Logger():
                 
             # show message if no data
             else:
-                message = 'No sonogram data to display'
+                message = 'No sonogram data to display.\n'
                 self.show_message(message)
             
             
@@ -2331,9 +2335,9 @@ class Logger():
             
         
         
-sys._excepthook = sys.excepthook 
-def exception_hook(exctype, value, traceback):
-    print(exctype, value, traceback)
-    sys._excepthook(exctype, value, traceback) 
-    sys.exit(1) 
-sys.excepthook = exception_hook 
+#sys._excepthook = sys.excepthook 
+#def exception_hook(exctype, value, traceback):
+#    print(exctype, value, traceback)
+#    sys._excepthook(exctype, value, traceback) 
+#    sys.exit(1) 
+#sys.excepthook = exception_hook 
