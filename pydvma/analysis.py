@@ -440,7 +440,7 @@ def calculate_sonogram(time_data, nperseg=None):
     y = np.copy(time_data.time_data) # handles all channels simultaneously
     if nperseg == None:
         nperseg = np.int(len(time_data.time_axis)/50) #roughly 50 fft's per time-series not counting overlap
-    f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,nperseg=nperseg,axis=0,mode='complex')
+    f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,window='hann',nperseg=nperseg,noverlap=nperseg//4,axis=0,mode='complex')
     
     # put channel axis at end
     S_all_chans = np.swapaxes(S,1,2)

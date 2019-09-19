@@ -83,9 +83,9 @@ def save_fig(plot, figsize=None, filename=None, overwrite_without_prompt=False):
        filename: string [optional]
        overwrite_without_prompt: boo
     '''
-    if plot.__class__.__name__ is 'PlotData':
+    if plot.__class__.__name__ == 'PlotData':
         fig = plot.fig
-    elif plot.__class__.__name__ is 'Figure':
+    elif plot.__class__.__name__ == 'Figure':
         fig = plot
 
     # If filename not specified, provide dialog

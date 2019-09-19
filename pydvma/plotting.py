@@ -92,27 +92,33 @@ class PlotData():
             self.ax2.set_visible(False)
             self.ax.set_xlabel('Time (s)')
             self.ax.set_ylabel('Amplitude')
+            self.ax.axis('auto')
         elif data_list.__class__.__name__ == 'FreqDataList':
             self.ax2.set_visible(False)
             if (plot_type == 'Amplitude (dB)') or (plot_type == None):
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Amplitude (dB)')
+                self.ax.axis('auto')
             elif plot_type == 'Amplitude (linear)':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Amplitude')
+                self.ax.axis('auto')
             elif plot_type == 'Real Part':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Real Part')
+                self.ax.axis('auto')
             elif plot_type == 'Imag Part':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Imag Part')
+                self.ax.axis('auto')
             elif plot_type == 'Nyquist':
                 self.ax.set_xlabel('Real Part')
                 self.ax.set_ylabel('Imag Part')
+                self.ax.set_aspect('equal','datalim')
             elif plot_type == 'Phase':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Phase (deg)')
-        
+                self.ax.axis('auto')
                 
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
@@ -124,21 +130,27 @@ class PlotData():
             if (plot_type == 'Amplitude (dB)') or (plot_type == None):
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Amplitude (dB)')
+                self.ax.axis('auto')
             elif plot_type == 'Amplitude (linear)':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Amplitude')
+                self.ax.axis('auto')
             elif plot_type == 'Real Part':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Real Part')
+                self.ax.axis('auto')
             elif plot_type == 'Imag Part':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Imag Part')
+                self.ax.axis('auto')
             elif plot_type == 'Nyquist':
                 self.ax.set_xlabel('Real Part')
                 self.ax.set_ylabel('Imag Part')
+                self.ax.set_aspect('equal','datalim')
             elif plot_type == 'Phase':
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Phase (deg)')
+                self.ax.axis('auto')
             
             
             self.ax.set_xscale(xlinlog)
@@ -390,6 +402,8 @@ class PlotData():
             xmin = np.inf
             xminlog = np.inf
             xmax = -np.inf
+            ymin = np.inf # for Nyquist to stop cropping
+            ymax = -np.inf
             for line in self.lines:
                 if line.get_alpha() > 0.5:
                     data = line.get_data()
@@ -401,11 +415,29 @@ class PlotData():
                     
                     xx = max(data[0])
                     xmax = max([xx,xmax])
+                    if self.plot_type == 'Nyquist':
+                        yy = min(data[1])
+                        ymin = min([yy,ymin])
+                        yy = max(data[1])
+                        ymax = max([yy,ymax])
+                        
             try:
                 if 'log' in self.xlinlog:
                     self.ax.set_xlim([xminlog,xmax])
                 else:
+                    if self.plot_type == 'Nyquist':
+                        # equal axis means need x range needs to stay greater than y range
+                        yrange = ymax-ymin
+                        # get bounding box bb to know current aspect ratio ar
+                        bb=self.ax.get_window_extent().transformed(self.fig.dpi_scale_trans.inverted())
+                        ar = bb.width / bb.height
+                        if (xmax-xmin) < (ar*yrange):
+                            xmid = (xmin+xmax)/2
+                            xmax = xmid + ar*yrange/2
+                            xmin = xmid - ar*yrange/2
+                        
                     self.ax.set_xlim([xmin,xmax])
+                    
             except:
                 pass
         self.fig.canvas.draw()

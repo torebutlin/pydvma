@@ -334,7 +334,9 @@ class Logger():
         self.button_select_prev = GreenButton('<')
         self.button_select_next.clicked.connect(self.next_chans)
         self.button_select_prev.clicked.connect(self.prev_chans)
-        
+        width = self.button_select_next.fontMetrics().boundingRect('>').width()*4
+        self.button_select_next.setMaximumWidth(width)
+        self.button_select_prev.setMaximumWidth(width)
         
         self.button_select_set_only = BlueButton('Show Set Only')
         self.button_select_set_only.clicked.connect(self.show_set_only)
@@ -735,7 +737,9 @@ class Logger():
         self.input_output_options.currentTextChanged.connect(self.update_output)
         
         self.input_output_amp = QLineEdit('0')
-        self.input_output_amp.setValidator(QDoubleValidator(0.0,1.0,5))
+        v = QDoubleValidator(0.0,1.0,5)
+        v.setNotation(QDoubleValidator.StandardNotation)
+        self.input_output_amp.setValidator(v)
         
         self.input_output_f1 = QLineEdit('0')
         self.input_output_f1.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
@@ -986,6 +990,7 @@ class Logger():
             self.dataset.add_to_dataset(d.time_data_list)
             N = len(self.dataset.time_data_list)
             self.sets = [N-1]
+            # this doesn't make it through from acquisition.MESSAGE because polling stops first
             message = 'Logging complete.\n'
             if np.any(np.abs(d.time_data_list[0].time_data) > 0.95):
                 message += '\nWARNING: Data may be clipped.\n'
@@ -996,6 +1001,7 @@ class Logger():
             self.dataset.replace_data_item(d.time_data_list[0],self.selected_set)
             self.sets = [self.selected_set]
             self.last_action = 'data replaced'
+            # this doesn't make it through from acquisition.MESSAGE because polling stops first
             message = 'Logged data replaced set {}.\n'.format(self.selected_set)
             if np.any(np.abs(d.time_data_list[0].time_data) > 0.95):
                 message += '\nWARNING: Data may be clipped.\n'
@@ -1003,8 +1009,10 @@ class Logger():
             self.flag_log_and_replace = False
 
         
-            self.show_message(message,b='undo')
-
+        # update figure then update selection
+        self.channels = 'all'
+        self.switch_view('Time Data') # need to switch to time and update plot so that get_selected_chans picks up new data
+        
         # only show most recently logged data
         selection = self.p.get_selected_channels()
         for ns in range(len(selection)):
@@ -1014,18 +1022,13 @@ class Logger():
                 else:
                     selection[ns][nc] = False
         self.selected_channels = selection
-
-                    
-        self.channels = 'all'
-        self.switch_view('Time Data')
-        self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
-#        self.update_selected_set()
+        
+        # update with final selection and make -1 to 1, change button back to green
+        self.update_figure()
         self.p.ax.set_ylim([-1,1])
-        
-#          this one doesn't make it from acquisition.MESSAGE as timer stops before message polled
-        
-        
+        self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
         self.message_timer.stop()
+        
         
     def cancel_logging(self):
         self.thread.terminate() # stop thread
@@ -1140,7 +1143,10 @@ class Logger():
         self.show_message(message)
             
     def save_fig(self):
-        filename = file.save_fig(self.p,figsize=(9,5))
+        if self.plot_type == 'Nyquist':
+            filename = file.save_fig(self.p,figsize=(9,9))
+        else:
+            filename = file.save_fig(self.p,figsize=(9,5))
         if filename is not None:
             message = 'Saved current figure to file:\n'
             message += filename
@@ -1188,7 +1194,7 @@ class Logger():
         self.p.auto_y()
         
     def update_axes_values(self,axes):
-        self.selected_channels = self.p.get_selected_channels()
+#        self.selected_channels = self.p.get_selected_channels()
         xlim = self.p.ax.get_xlim()
         ylim = self.p.ax.get_ylim()
         self.input_axes[0].setText('{:0.5g}'.format(xlim[0]))
@@ -1467,7 +1473,7 @@ class Logger():
             self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
             self.switch_to_nyquist = (self.plot_type == 'Nyquist') and ('Nyquist' != self.plot_type_before)
             self.switch_from_nyquist = (self.plot_type_before == 'Nyquist') and ('Nyquist' != self.plot_type)
-            self.selected_channels = self.p.get_selected_channels()
+#            self.selected_channels = self.p.get_selected_channels()
         else:
             self.current_view_changed = True
         
@@ -2207,14 +2213,18 @@ class Logger():
                 self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
             
             # local reconstruction
-            s = self.p.get_selected_channels() # keep selection after auto-range
+            s = self.selected_channels # keep selection after auto-range
             
-            f = np.linspace(self.freq_range[0],self.freq_range[1],300)
+            f = np.linspace(self.freq_range[0],self.freq_range[1],3000)
             tf_data = modal.reconstruct_transfer_function(m,f,self.measurement_type)
             tf_data.flag_modal_TF = True
             self.dataset.tf_data_list.add_modal_reconstruction(tf_data,mode='replace')
             
-            self.auto_xy = ''
+            if self.plot_type == 'Nyquist':
+                self.auto_xy = 'xy'
+            else:
+                self.auto_xy = 'fy'
+                
             self.update_figure()
             s2 = self.p.get_selected_channels()
             for i in range(len(s2[-1])):
@@ -2223,6 +2233,7 @@ class Logger():
                 s += [[]]
             s[-1] = s2[-1]
             self.p.set_selected_channels(s) # keep selection after auto-range
+            self.update_figure() # run a second time so autoscaling picks up new lines
             fn_all = self.dataset.modal_data_list[0].M[:,0]
             self.fn_in_range = m.fn
         else:
@@ -2304,7 +2315,10 @@ class Logger():
             n_chan = np.int(self.input_sono_n_chan.text())
 #            db_range = np.int(self.input_db_range.text())
             NT = len(self.dataset.time_data_list[n_set].time_data[:,n_chan])
-            self.nperseg = np.int(NT // ((self.N_frames_sono * 7)/8 + 1/8)) # 1/8 is default overlap for spectrogram
+            f = 1/4 # match overlap in sonogram
+            print(1)
+            self.nperseg = np.int(NT // (self.N_frames_sono * (1-f) + f)) # 1/8 is default overlap for spectrogram
+            print(2)
             self.dataset.calculate_sono_set(nperseg=self.nperseg)
             
             # calc sonogram info
