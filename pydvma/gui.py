@@ -2316,9 +2316,7 @@ class Logger():
 #            db_range = np.int(self.input_db_range.text())
             NT = len(self.dataset.time_data_list[n_set].time_data[:,n_chan])
             f = 1/4 # match overlap in sonogram
-            print(1)
             self.nperseg = np.int(NT // (self.N_frames_sono * (1-f) + f)) # 1/8 is default overlap for spectrogram
-            print(2)
             self.dataset.calculate_sono_set(nperseg=self.nperseg)
             
             # calc sonogram info
