@@ -22,7 +22,7 @@ from . import file
 from . import modal
 from . import options
 import time
-#import sys, os
+import sys, os
 
 
 #%%
@@ -409,7 +409,7 @@ class Logger():
        
     def setup_frame_plot_details(self):
         #items
-        self.items_list_plot_type = ['Amplitude (dB)','Amplitude (linear)', 'Real Part', 'Imag Part', 'Nyquist', 'Amplitude + Phase', 'Phase']
+        self.items_list_plot_type = ['Amplitude (dB)','Amplitude (linear)', 'Real Part', 'Imag Part', 'Nyquist', 'Phase']
         self.input_list_plot_type = newComboBox(self.items_list_plot_type)
         self.button_xlinlog = BlueButton('X Lin/Log')
         self.button_data_toggle = BlueButton('Data on/off')
@@ -1028,6 +1028,7 @@ class Logger():
         self.selected_channels = selection
         
         # update with final selection and make -1 to 1, change button back to green
+        self.auto_xy = 'x'
         self.update_figure()
         self.p.ax.set_ylim([-1,1])
         self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
@@ -1109,17 +1110,17 @@ class Logger():
         
         no_data = True
         self.auto_xy = 'xyc'
-        if len(self.dataset.time_data_list) != 0:
+        if len(d.time_data_list) != 0:
             self.input_list_figures.setCurrentText('Time Data')
             self.select_view()
 #            self.hide_message()
             no_data = False
-        if len(self.dataset.freq_data_list) != 0:
+        if len(d.freq_data_list) != 0:
             self.input_list_figures.setCurrentText('FFT Data')
             self.select_view()
 #            self.hide_message()
             no_data = False
-        if len(self.dataset.tf_data_list) != 0:
+        if len(d.tf_data_list) != 0:
             self.input_list_figures.setCurrentText('TF Data')
             self.select_view()
 #            self.hide_message()
@@ -1247,6 +1248,10 @@ class Logger():
         
         
     def update_figure(self):
+        # get current status of axes for case auto_xy=''
+        xlim = self.p.ax.get_xlim()
+        ylim = self.p.ax.get_ylim()
+            
         try:
             # sometimes starting point with no legend object
             visibility = self.p.ax.get_legend().get_visible()
@@ -1291,10 +1296,15 @@ class Logger():
                 self.fig.canvas.draw()
             except:
                 # get selected_channels back into sync
-                self.selected_channels = self.p.get_selected_channels()
-        
+                pass# not sure helping. self.selected_channels = self.p.get_selected_channels()
+        if self.auto_xy=='':
+            # handle this case manually
+            self.p.ax.set_xlim(xlim)
+            self.p.ax.set_ylim(ylim)
+            self.p.fig.canvas.draw()
                    
     def update_selected_channels(self,_):
+        # keeps selected_channels in sync with legend picking
         self.selected_channels = self.p.get_selected_channels()
         
     def select_all_data(self):
@@ -1305,7 +1315,7 @@ class Logger():
                 line.set_alpha(plotting.LINE_ALPHA)
             self.canvas.draw()
         else:
-            message = 'No data to show.'
+            message = 'No data to show.\n'
             self.show_message(message)
         self.selected_channels = self.p.get_selected_channels()
         
@@ -1319,7 +1329,7 @@ class Logger():
                 line.set_alpha(1-plotting.LINE_ALPHA)
             self.canvas.draw()
         else:
-            message = 'No data to hide.'
+            message = 'No data to hide.\n'
             self.show_message(message)
         self.selected_channels = self.p.get_selected_channels()
             
@@ -1473,7 +1483,7 @@ class Logger():
         if self.current_view == self.selected_view:
             self.current_view = np.copy(self.selected_view)
             self.current_view_changed = False
-            self.plot_type_before = self.plot_type
+            self.plot_type_before = np.copy(self.plot_type)
             self.plot_type = self.items_list_plot_type[self.input_list_plot_type.currentIndex()]
             self.switch_to_nyquist = (self.plot_type == 'Nyquist') and ('Nyquist' != self.plot_type_before)
             self.switch_from_nyquist = (self.plot_type_before == 'Nyquist') and ('Nyquist' != self.plot_type)
@@ -1498,6 +1508,8 @@ class Logger():
                     self.auto_xy = 'xyc'
                     self.plot_type = 'Amplitude (dB)'
                     self.input_list_plot_type.setCurrentText(self.plot_type)
+                else:
+                    self.auto_xy = ''
                     
                 # plot
                 self.update_figure()
@@ -1555,7 +1567,7 @@ class Logger():
                                 
                 # set gui to correct toolset
                 if self.plot_type == 'Nyquist':
-                    self.auto_xy = 'xy'
+                    #self.auto_xy = 'xy'
                     self.show_plot_details_with_nqyuist()
                 else:
                     self.show_plot_details_basic()
@@ -1640,6 +1652,8 @@ class Logger():
                     self.auto_xy = 'xyc'
                     self.plot_type = 'Amplitude (dB)'
                     self.input_list_plot_type.setCurrentText(self.plot_type)
+                else:
+                    self.auto_xy = ''
                     
                 # plot
                 self.update_figure()
@@ -1791,6 +1805,7 @@ class Logger():
         self.show_message(message)
 
     def update_selected_set(self):
+        # this function is related to edit_dataset tool, not selecting channels
         data_type = self.input_list_data_type.currentText()
         if data_type == 'Time Data':
             self.data_list = self.dataset.time_data_list
@@ -2094,8 +2109,8 @@ class Logger():
         
     def xiwp(self,power):
         if self.flag_scaling == False:
-                # create backup before any changes made - used to reset
-                self.dataset_backup = copy.deepcopy(self.dataset)
+            # create backup before any changes made - used to reset
+            self.dataset_backup = copy.deepcopy(self.dataset)
                 
         if self.current_view == 'FFT Data':
             data_list = self.dataset.freq_data_list
@@ -2183,7 +2198,7 @@ class Logger():
             self.last_action = 'scaling'
             
         else:
-            message = 'First select ''TF Data'' or ''Calc TF''.'
+            message = 'First select ''TF Data'' or ''Calc TF''.\n'
             self.show_message(message)
         
     def fit_mode(self):
@@ -2273,6 +2288,7 @@ class Logger():
             if self.dataset.tf_data_list[-1].flag_modal_TF == True:
                 self.dataset.remove_last_data_item('TfData')
                 self.selected_channels.pop(-1) # updates selected channels
+                self.auto_xy = ''
                 self.update_figure()
             message = 'Mode fits deleted.'
             self.show_message(message,b='undo')
@@ -2293,6 +2309,7 @@ class Logger():
         tf_data.flag_modal_TF = True
         self.dataset.tf_data_list.add_modal_reconstruction(tf_data,mode='replace')
         
+        self.auto_xy = 'xy'
         self.update_figure()
         s2 = self.p.get_selected_channels()
         for i in range(len(s2[-1])):
@@ -2335,9 +2352,9 @@ class Logger():
             
         
         
-#sys._excepthook = sys.excepthook 
-#def exception_hook(exctype, value, traceback):
-#    print(exctype, value, traceback)
-#    sys._excepthook(exctype, value, traceback) 
-#    sys.exit(1) 
-#sys.excepthook = exception_hook 
+sys._excepthook = sys.excepthook 
+def exception_hook(exctype, value, traceback):
+    print(exctype, value, traceback)
+    sys._excepthook(exctype, value, traceback) 
+    sys.exit(1) 
+sys.excepthook = exception_hook 

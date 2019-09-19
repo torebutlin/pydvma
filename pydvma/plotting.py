@@ -316,7 +316,7 @@ class PlotData():
                     else:
                         self.ax2.set_visible(False)
         
-        
+        self.fig.canvas.draw()
         self.update_legend()
         if 'x' in auto_xy:
             self.auto_x()
@@ -407,20 +407,23 @@ class PlotData():
             for line in self.lines:
                 if line.get_alpha() > 0.5:
                     data = line.get_data()
-                    xx = min(data[0])
-                    xmin = min([xx,xmin])
-                    
-                    xxlog = data[0][1] # first nonzero freq axis
-                    xminlog = min([xminlog,xxlog])
-                    
-                    xx = max(data[0])
-                    xmax = max([xx,xmax])
-                    if self.plot_type == 'Nyquist':
-                        yy = min(data[1])
-                        ymin = min([yy,ymin])
-                        yy = max(data[1])
-                        ymax = max([yy,ymax])
+                    try:
+                        # handle when some lines are out of view
+                        xx = min(data[0])
+                        xmin = min([xx,xmin])
                         
+                        xxlog = data[0][1] # first nonzero freq axis
+                        xminlog = min([xminlog,xxlog])
+                        
+                        xx = max(data[0])
+                        xmax = max([xx,xmax])
+                        if self.plot_type == 'Nyquist':
+                            yy = min(data[1])
+                            ymin = min([yy,ymin])
+                            yy = max(data[1])
+                            ymax = max([yy,ymax])
+                    except:
+                        pass
             try:
                 if 'log' in self.xlinlog:
                     self.ax.set_xlim([xminlog,xmax])
@@ -462,10 +465,14 @@ class PlotData():
                 x = data[0]
                 selection = (xview[0] < x) & (x < xview[1])
                 if line.get_alpha() > 0.5:
-                    yy = min(data[1][selection])
-                    ymin = min([yy,ymin])
-                    yy = max(data[1][selection])
-                    ymax = max([yy,ymax])
+                    try:
+                        # handle case when some lines out of view
+                        yy = min(data[1][selection])
+                        ymin = min([yy,ymin])
+                        yy = max(data[1][selection])
+                        ymax = max([yy,ymax])
+                    except:
+                        pass
             try:
                 self.ax.set_ylim([ymin,ymax])
             except:
