@@ -433,7 +433,8 @@ class Logger():
         
         #self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
         
-        self.input_list_plot_type.currentIndexChanged.connect(self.select_view)
+#        self.input_list_plot_type.currentIndexChanged.connect(self.select_view)
+        self.input_list_plot_type.activated.connect(self.select_view) # TRY THIS SO ONLY CALLED WITH MANUAL SELECTION NOT WITHIN SELECT_VIEW
         self.input_co_min.editingFinished.connect(self.co_min)
         self.input_co_max.editingFinished.connect(self.co_max)
         self.button_data_toggle.clicked.connect(self.data_toggle)
@@ -1506,7 +1507,7 @@ class Logger():
                     self.show_coherence = True # won't plot but reests for other selections
                     self.xlinlog = 'linear'
                     self.auto_xy = 'xyc'
-                    #self.plot_type = 'Amplitude (dB)' - can trigger this to be called again
+                    self.plot_type = 'Amplitude (dB)'# - can trigger this to be called again
                     self.input_list_plot_type.setCurrentText(self.plot_type)
                 else:
                     self.auto_xy = ''
