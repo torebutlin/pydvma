@@ -1506,7 +1506,7 @@ class Logger():
                     self.show_coherence = True # won't plot but reests for other selections
                     self.xlinlog = 'linear'
                     self.auto_xy = 'xyc'
-                    self.plot_type = 'Amplitude (dB)'
+                    #self.plot_type = 'Amplitude (dB)' - can trigger this to be called again
                     self.input_list_plot_type.setCurrentText(self.plot_type)
                 else:
                     self.auto_xy = ''
@@ -2143,7 +2143,7 @@ class Logger():
             if self.plot_type == 'Nyquist':
                 self.auto_xy = 'xy'
             else:
-                self.auto_xy = 'y'
+                self.auto_xy = 'fy'
             
             self.update_figure()
             self.p.set_selected_channels(s)
