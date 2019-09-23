@@ -9,19 +9,19 @@ This is a modular library for data-measurement and analysis in the context of dy
 
 A high-level interface allows straightforward application for common use-cases and a low-level interface provides more control when needed.
 
-The aim is for a library that is simple to use and simple to maintain. It is not a full-featured GUI, but when used in conjunction with Jupyter Notebooks it is intended to provide the best of both worlds: interactive tools for specific tasks and command line interface for customisation.
+The aim is for a library that is simple to use and simple to maintain. It is not a full-featured GUI, but when used in conjunction with Jupyter Notebooks it is intended to provide the best of both worlds: interactive tools for common tasks and command line interface for customisation.
 
 
 ## Getting started
 
 ### Dependencies
 
-The logger requires Python 3.6 to work with soundcard acquisition.
+The logger requires Python 3.7 to work with soundcard acquisition.
 
 On Windows:
 
 ```
-conda env create -f logger_env.yml
+conda install pyaudio
 ```
 
 On Mac OS X: install PortAudio. If you use Homebrew, just run this:
@@ -30,48 +30,57 @@ $ brew install portaudio
 ```
 On Linux: TBC
 
+Alternatively you can use the environment yml file provided:
+```
+conda env create -f logger_env.yml
+activate logger
+```
+
 ### Installing pydvma
 
 Install using:
 ```
-pip install pydvma --upgrade
+pip install pydvma
 ```
 
 Or clone this repository and install using:
-
 ```
 python setup.py install
 ```
 
 To get started, open the file:
-
 ```
-Logger_template.ipynb
+pydvma_template.ipynb
 ```
 
 or within a Jupyter Notebook or Python command line:
-
 ```python
 import pydvma as dvma
 settings = dvma.MySettings()
 osc = dvma.Oscilloscope(settings)
+logger = dvma.Logger(settings)
 ```
 
 ## Roadmap
 
 At present the library has basic functionality for:
 
-- logging data using sound cards
-- logging data using National Instrument DAQs (requires NiDAQmx to be installed from NI, windows only)
+- logging data using soundcards or National Instrument DAQs (requires NiDAQmx to be installed from NI, windows only)
+- logging with pre-trigger for impulse response measurements
+- logging with pc generated output (soundcard and NIDAQ)
 - computing frequency domain data
 - computing transfer function data
+- computing sonograms/spectrograms
+- basic modal analysis tools (mode-fitting)
 - saving and plotting data
-- simply interactive analysis tools
+- export to Matlab
+- interactive tools for standard acquisition and analysis
+- oscilloscope view of input signals
 
 The plan is to include the following functionality:
 
-- computing and viewing sonograms / spectrograms (time-frequency plots)
-- modal analysis tools (e.g. circle fitting)
+- wider support for import/export
+- more advanced modal analysis tools (e.g. global fitting)
 - extend the range of hardware that can be accessed from this library
 
 

@@ -945,7 +945,7 @@ class Logger():
         # delegate messages to acquisition global MESSAGE, and streams rec.MESSAGE
         # this lets messages be seen from within logging thread, with live updates
         self.message_timer.start(300) 
-        
+        print(1)
         # start stream
         if self.rec is None:
             self.start_stream()
@@ -954,13 +954,15 @@ class Logger():
         self.create_output_signal()
         if self.output_time_data is not None:
             y = self.output_time_data.time_data
+            # warn if amplitude set too high
+            if np.any(np.abs(y)>1):
+                message = 'Output amplitude too high: must be less than 1.\n'
+                self.show_message(message)
+                return None
         else:
             y = None
 
-        if np.any(np.abs(y)>1):
-            message = 'Output amplitude too high: must be less than 1.\n'
-            self.show_message(message)
-            return None
+        
         
         # reset trigger
         self.rec.trigger_detected = False # but need to do this again inside acquisition
