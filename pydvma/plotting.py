@@ -21,7 +21,7 @@ LINE_ALPHA = 0.9
 class PlotSonoData():
     def __init__(self,figsize=(9,5),canvas=None,fig=None):
         if canvas==None:
-            self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
+            self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)#,constrained_layout=True)
         else:
             self.fig = fig
             self.canvas = canvas
@@ -158,13 +158,24 @@ class PlotData():
                 self.ax.grid(b=True, which='minor',axis='x',alpha=0.2)
             else:
                 self.ax.grid(b=False,which='minor',axis='x',alpha=0.2)
+            
             # setup twin axis
+            # don't plot coherence if no data, or if all coherence is one
+            flag_coherence = []
+            for n_set in range(len(data_list)):
+                if data_list[n_set].tf_coherence is None:
+                    flag_coherence += [True]
+                else:
+                    diff_to_one = np.abs(data_list[n_set].tf_coherence - 1)
+                    flag_coherence += [np.all(diff_to_one<1e-10)]
+            if np.all(flag_coherence):
+                show_coherence = False
             
             if show_coherence == True:
                 self.ax2.set_ylabel('Coherence')
                 self.ax2.set_visible(True)
             else:
-                self.ax2.set_ylabel('')
+                self.ax2.set_visible(False)
     
         # sonogram plot completely different, use separate function
         
@@ -316,6 +327,7 @@ class PlotData():
                     else:
                         self.ax2.set_visible(False)
         
+        self.fig.tight_layout()
         self.fig.canvas.draw()
         self.update_legend()
         if 'x' in auto_xy:
@@ -343,6 +355,7 @@ class PlotData():
 #        self.ax.xaxis.set_major_locator(AutoLocator())
 #        self.ax.yaxis.set_major_locator(AutoLocator())
         self.fig.canvas.draw()
+        
         
         
     def update_legend(self,loc='lower right',draggable=False):
@@ -453,6 +466,10 @@ class PlotData():
         else:
             self.lines = self.ax.get_lines()
             if (self.data_list.__class__.__name__ == 'TfData') and (self.plot_type != 'Nyquist'):
+                # at the moment this doesn't get called
+                # it should be TfDataList in condition
+                # and it should be == nyquist not !=
+                # but plot behaviour correct as it stands and probably just need this setting to xlim always
                 xview = self.freq_range
             else:
                 xview = self.ax.get_xlim()
@@ -477,6 +494,10 @@ class PlotData():
                 self.ax.set_ylim([ymin,ymax])
             except:
                 pass
+        if self.data_list.__class__.__name__ == 'TfDataList':
+            # reset coherence to 0-1
+            self.ax2.set_ylim([0,1])
+            
         self.fig.canvas.draw()
         
     def channel_select(self,event):

@@ -206,10 +206,20 @@ class Logger():
         self.fig = Figure(figsize=(9, 7),dpi=100)
         self.canvas = FigureCanvas(self.fig)
         self.toolbar = NavigationToolbar(self.canvas,None)
+        
+        # disable some buttons
+        for ch in self.toolbar.children():
+            try:
+                if ch.iconText() in ['Home','Subplots','Save','Customize']:
+                    ch.setVisible(False)
+            except:
+                pass
+        
         self.toolbar.setOrientation(Qt.Horizontal)
         self.p = plotting.PlotData(canvas=self.canvas,fig=self.fig)
         self.p.ax.callbacks.connect('xlim_changed', self.update_axes_values)
         self.p.ax.callbacks.connect('ylim_changed', self.update_axes_values)
+        self.p.ax.callbacks.connect('xlim_changed', self.update_modal_message)
         self.p.ax2.callbacks.connect('ylim_changed', self.update_co_axes_values)
         self.fig.canvas.mpl_connect('pick_event', self.update_selected_channels)
         
@@ -218,10 +228,12 @@ class Logger():
         self.label_figure.setAlignment(Qt.AlignCenter)
         
         # widgets to layout
-        self.layout_figure = QVBoxLayout()
-        self.layout_figure.addWidget(self.label_figure)
-        self.layout_figure.addWidget(self.canvas)
-        self.layout_figure.addWidget(self.toolbar)
+        self.layout_figure = QGridLayout()
+        self.layout_figure.addWidget(self.label_figure,0,0,1,3)
+        self.layout_figure.addWidget(self.canvas,1,0,1,3)
+        self.layout_figure.addWidget(self.toolbar,2,1,1,1)
+        self.layout_figure.addWidget(QLabel('Back/Forward/Pan/Zoom:'),2,0,1,1)
+#        self.layout_figure.addWidget(QLabel('(box-zoom right-click will zoom out)'),2,2,1,1)
         
         # layout to frame
         self.frame_figure = QFrame()
@@ -443,7 +455,7 @@ class Logger():
         #layout
         self.layout_plot_details = QGridLayout()
         self.layout_plot_details.addWidget(QLabel(),0,0,1,1)
-        self.layout_plot_details.addWidget(boldLabel('Plot Options:'),1,0,1,2)
+        self.layout_plot_details.addWidget(boldLabel('Plot type:'),1,0,1,2)
         self.layout_plot_details.addWidget(self.input_list_plot_type,2,0,1,2)
         self.layout_plot_details.addWidget(self.button_xlinlog,3,0,1,2)
         self.layout_plot_details.addWidget(self.button_data_toggle,4,0,1,1)
@@ -1214,8 +1226,10 @@ class Logger():
             self.input_freq_min2.setText('{:0.5g}'.format(xlim[0]))
             self.input_freq_max2.setText('{:0.5g}'.format(xlim[1]))
         
-        
-        if (self.current_view == 'TF Data') and (len(self.dataset.modal_data_list) > 0) and (self.selected_tool == 'Mode Fitting'):
+                
+    def update_modal_message(self,axes):
+        # only connected to x-axis
+        if (self.current_view == 'TF Data') and (len(self.dataset.modal_data_list) > 0) and (self.selected_tool == 'Mode Fitting') and (modal.MESSAGE == ''):
             # Show message to highlight modal fit, to allow removing or replacing a given fit
             fn_all = self.dataset.modal_data_list[0].M[:,0]
             self.fn_in_range = fn_all[(fn_all > self.freq_range[0]) & (fn_all < self.freq_range[1])]
@@ -1948,6 +1962,8 @@ class Logger():
             
             if 'data already cleaned' not in analysis.MESSAGE:
                 # only make backup if first time cleaned, otherwise backup no longer contains original data
+                # not watertight logic if cleaned some but not all channels before
+                # needs updating
                 self.dataset_backup = self.dataset
             self.dataset = dataset_new
             self.show_message(analysis.MESSAGE,b='undo')
@@ -2258,6 +2274,9 @@ class Logger():
             self.update_figure() # run a second time so autoscaling picks up new lines
             fn_all = self.dataset.modal_data_list[0].M[:,0]
             self.fn_in_range = m.fn
+            ### allow time for plots and axes to update before clearing modal.MESSAGE
+            time.sleep(1)
+            modal.MESSAGE = '' # this is a condition for update_axes_values to let modal messages appear
         else:
             message = 'First select ''TF Data''.'
             self.show_message(message)
@@ -2299,7 +2318,8 @@ class Logger():
     def view_mode_summary(self):
         message = 'Modes fitted:\n\n'
         message += 'fn = {} (Hz)\n\n'.format(np.array2string(self.dataset.modal_data_list[0].fn,precision=2))
-        message += 'zn = {} (Hz)'.format(np.array2string(self.dataset.modal_data_list[0].zn,precision=5))
+        message += 'zn = {}\n'.format(np.array2string(self.dataset.modal_data_list[0].zn,precision=5))
+        message += 'Qn = 1/(2 zn) = {}'.format(np.array2string(1/2/self.dataset.modal_data_list[0].zn,precision=1))
         self.show_message(message)
     
     def view_modal_reconstruction(self):
@@ -2355,9 +2375,9 @@ class Logger():
             
         
         
-sys._excepthook = sys.excepthook 
-def exception_hook(exctype, value, traceback):
-    print(exctype, value, traceback)
-    sys._excepthook(exctype, value, traceback) 
-    sys.exit(1) 
-sys.excepthook = exception_hook 
+#sys._excepthook = sys.excepthook 
+#def exception_hook(exctype, value, traceback):
+#    print(exctype, value, traceback)
+#    sys._excepthook(exctype, value, traceback) 
+#    sys.exit(1) 
+#sys.excepthook = exception_hook 

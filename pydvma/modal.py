@@ -156,10 +156,11 @@ def f_TF_all_channels(x,f,measurement_type):
     elif measurement_type == 'dsp':
         p = 0
 
+#    if w[0]==0:
+#        # avoid singularity at w=0
+#        w[0] = w[1]
     G = an*np.exp(1j*pn)/(wn**2 + 2j*wn*zn*w - w**2) + R1 - R2/(w**2)
     G = G*((1j*w)**p)
-    
-    
     
     return G
 
@@ -276,9 +277,9 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     fn,zn,an,pn,rk,rm = unpack(r.x)
 
 #    with np.printoptions(precision=3, suppress=True):
-    MESSAGE = 'fn={:.4g} (Hz), zn={:.4g}\n\n'.format(fn,zn)
-    MESSAGE += 'an={}\n\n'.format(an)
-    MESSAGE += 'pn={} deg\n\n'.format(pn*180/np.pi)
+    MESSAGE = 'fn={:.2f} (Hz), zn={:.3g}, Qn = 1/(2 zn) = {:.1f}\n\n'.format(fn,zn,1/2/zn)
+    MESSAGE += 'an={}\n\n'.format(np.array2string(an,precision=3))
+    MESSAGE += 'pn={} deg\n\n'.format(np.array2string(pn*180/np.pi,precision=2))
     print(MESSAGE)
     if np.any(np.abs(pn)*180/np.pi > 60):
         MESSAGE += '\nPhase is significant, check ''TF type'' setting is correct.\n'

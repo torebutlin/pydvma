@@ -305,6 +305,22 @@ class Oscilloscope():
                 self.data_saved_counter = 1
                 self.last_filename = file.save_data(dataset)
             
+#            # this version saves all data as new timedata objects within one file
+#            if evt.key() == QtCore.Qt.Key_Space:
+#                if self.data_saved_counter == 0:
+#                    self.last_filename = file.save_data(dataset)
+#                    if self.last_filename == '':
+#                        self.data_saved_counter = 0
+#                    else:
+#                        self.data_saved_counter += 1
+#                
+#                else:
+#                    d = file.load_data(self.last_filename)
+#                    d.add_to_dataset(timedata)
+#                    file.save_data(d,self.last_filename,overwrite_without_prompt=True)
+#                    self.data_saved_counter += 1
+            
+            # this version saves each new dataset to new file
             if evt.key() == QtCore.Qt.Key_Space:
                 if self.data_saved_counter == 0:
                     self.last_filename = file.save_data(dataset)
@@ -314,11 +330,11 @@ class Oscilloscope():
                         self.data_saved_counter += 1
                 
                 else:
-                    d = file.load_data(self.last_filename)
+                    d = datastructure.DataSet()
                     d.add_to_dataset(timedata)
-                    file.save_data(d,self.last_filename,overwrite_without_prompt=True)
+                    filename = self.last_filename.replace('.npy','_'+str(self.data_saved_counter)+'.npy')
+                    file.save_data(d,filename,overwrite_without_prompt=True)
                     self.data_saved_counter += 1
-
 
 class KeyPressWindow(pg.GraphicsWindow):
     '''
