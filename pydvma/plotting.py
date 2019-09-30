@@ -13,7 +13,7 @@ from . import datastructure
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-matplotlib.rcParams.update({'font.size': 12,'font.family':'serif'})
+matplotlib.rcParams.update({'font.size': 10,'font.family':'serif'})
 from matplotlib.ticker import AutoLocator
 
 LINE_ALPHA = 0.9
@@ -166,7 +166,10 @@ class PlotData():
                 if data_list[n_set].tf_coherence is None:
                     flag_coherence += [True]
                 else:
-                    diff_to_one = np.abs(data_list[n_set].tf_coherence - 1)
+                    tfc = data_list[n_set].tf_coherence
+                    i = np.isnan(tfc)
+                    tfc[i] = 1
+                    diff_to_one = np.abs(tfc - 1)
                     flag_coherence += [np.all(diff_to_one<1e-10)]
             if np.all(flag_coherence):
                 show_coherence = False
@@ -192,9 +195,10 @@ class PlotData():
                 ch_counter += len(data_list[n_set].tf_data[0,:])
 
         self.ch_total = ch_counter
-        if self.ch_total <= 10:
+        if self.ch_total <= 12:
             LINE_ALPHA = 0.9
         else:
+            # option to make lines fainter when more lines... needs some tweaking to make feel right
             LINE_ALPHA = 1-1/self.ch_total # make deselected lines fainter if more channels
         
         self.ax.lines=[]

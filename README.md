@@ -55,6 +55,7 @@ pydvma_template.ipynb
 
 or within a Jupyter Notebook or Python command line:
 ```python
+%gui qt
 import pydvma as dvma
 settings = dvma.MySettings()
 osc = dvma.Oscilloscope(settings)

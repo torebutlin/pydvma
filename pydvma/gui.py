@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider, QMessageBox
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame, QFormLayout
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame, QFormLayout, QSizePolicy
 from PyQt5.QtWidgets import QToolTip
 from PyQt5.QtCore import Qt, QThread, Signal, QTimer, QObject
 from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
@@ -1079,8 +1079,11 @@ class Logger():
                         selection[ns][nc] = False
             self.selected_channels = selection
         
-        self.auto_xy = ''
-        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all', auto_xy=self.auto_xy)
+        self.auto_xy = 'x'
+        self.update_figure()
+        self.p.ax.set_ylim([-1,1])
+#        self.auto_xy = ''
+#        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all', auto_xy=self.auto_xy)
 #        update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy='xyc'):
         self.switch_view('Time Data')
         self.last_action = 'delete data'
