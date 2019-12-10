@@ -162,7 +162,7 @@ def output_signal(settings,output):
     # send to device
 
 
-def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_channels='all'):
+def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_channels='all'):
     """
     Creates a signal ready for output to a chosen device
     """
@@ -180,13 +180,18 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
     win[0:N_ramp,0] = 0.5*(1-np.cos(np.arange(0,N_ramp)/N_ramp*np.pi))
     win[-N_ramp:,0] = 0.5*(1+np.cos(np.arange(0,N_ramp)/N_ramp*np.pi))
     
+    limit = 1 # generate signals normalised with amplitudes 0-1
+    
     # Create sig. Note 'sig' is choice of signal, while 'signal' is scipy.signal
     if sig == 'gaussian':
         y[:,selected_channels] = np.random.randn(N_per_channel,np.size(selected_channels))
-        if settings.output_device_driver == 'soundcard':
-            limit = 1
-        elif settings.output_device_driver == 'nidaq':
-            limit = settings.VmaxNI
+        
+        
+        
+#        if settings.output_device_driver == 'soundcard':
+#            limit = 1
+#        elif settings.output_device_driver == 'nidaq':
+#            limit = settings.VmaxNI
              
                 
         y[:,selected_channels] = stats.truncnorm.rvs(-limit/amplitude, limit/amplitude, loc=0,scale=amplitude, size=(N_per_channel,np.size(selected_channels)))
@@ -227,6 +232,12 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=1,f=None,selected_cha
         y = np.zeros((N_per_channel,settings.output_channels))
     
     y = win * y
+    
+    # final correction to ensure all signals limited to 0-1
+    if np.max(np.abs(y)) > limit:
+        y = limit * y / np.max(np.abs(y))
+        MESSAGE = 'Actual rms output after scaling to avoid clipping is {0:1.3f}'.format(np.sqrt(np.mean(y**2)))
+        
     return t,y
 
 
