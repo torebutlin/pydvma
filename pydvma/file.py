@@ -170,7 +170,7 @@ def export_to_matlab(dataset, filename=None, overwrite_without_prompt=False):
                 counter += 1
                 time_data_all[:,counter] = np.interp(t,time_data.time_axis,time_data.time_data[:,i],right=0)
                 
-        data_matlab['time_axis_all'] = t
+        data_matlab['time_axis_all'] = np.transpose(np.atleast_2d(t))
         data_matlab['time_data_all'] = time_data_all
 
     
@@ -199,7 +199,7 @@ def export_to_matlab(dataset, filename=None, overwrite_without_prompt=False):
                 counter += 1
                 freq_data_all[:,counter] = np.interp(f,freq_data.freq_axis,freq_data.freq_data[:,i],right=0)
         
-        data_matlab['freq_axis_all'] = f
+        data_matlab['freq_axis_all'] = np.transpose(np.atleast_2d(f))
         data_matlab['freq_data_all'] = freq_data_all
         
  
@@ -228,7 +228,7 @@ def export_to_matlab(dataset, filename=None, overwrite_without_prompt=False):
                 counter += 1
                 tf_data_all[:,counter] = np.interp(f,tf_data.freq_axis,tf_data.tf_data[:,i],right=0)
         
-        data_matlab['tf_axis_all'] = f
+        data_matlab['tf_axis_all'] = np.transpose(np.atleast_2d(f))
         data_matlab['tf_data_all'] = tf_data_all
         
 
@@ -313,6 +313,41 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
         time_data_all = 0
     
     
+    #%% FFT: get's overwritten by TF if exists
+    if len(dataset.freq_data_list) > 0:
+        df=np.inf
+        fmax=0
+        n_freq=0
+        for freq_data in dataset.freq_data_list:
+            df_check = np.mean(np.diff(freq_data.freq_axis))
+            df = np.min([df,df_check])
+            fmax = np.max([freq_data.freq_axis[-1],fmax])
+            freq_shape = np.shape(freq_data.freq_data)
+            n_freq += freq_shape[1]
+        
+        f=np.arange(0,fmax+df,df)
+        npts = 2*(len(f)-1)
+        fs_freq = 2*f[-1]
+        freq_data_all = np.zeros((len(f),n_freq),dtype=complex)
+        counter = -1
+        for freq_data in dataset.freq_data_list:
+            freq_shape = np.shape(freq_data.freq_data)
+            for i in range(freq_shape[1]):
+                counter += 1
+                freq_data_all[:,counter] = np.interp(f,freq_data.freq_axis,freq_data.freq_data[:,i],right=1)
+                freq_data_all[0,counter] = freq_data_all[1,counter] # to match equivalent tweak in JW Logger for handling DC singularities
+                zero_test = freq_data_all[:,counter] == 0
+                freq_data_all[zero_test,counter] = np.min(np.abs(freq_data_all[:,counter])) # handle zeros
+        
+        # convert
+        data_jwlogger['freq'] = np.float(fs_freq)
+        data_jwlogger['npts'] = np.float(npts)
+        data_jwlogger['yspec'] = freq_data_all
+    else:
+        n_freq = 0
+        freq_data_all = 0
+    
+    
     #%% Transfer Function - doesn't export coherence
     if len(dataset.tf_data_list) > 0:
         df=np.inf
@@ -334,7 +369,10 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
             tf_shape = np.shape(tf_data.tf_data)
             for i in range(tf_shape[1]):
                 counter += 1
-                tf_data_all[:,counter] = np.interp(f,tf_data.freq_axis,tf_data.tf_data[:,i],right=0)
+                tf_data_all[:,counter] = np.interp(f,tf_data.freq_axis,tf_data.tf_data[:,i],right=1)
+                tf_data_all[0,counter] = tf_data_all[1,counter] # to match equivalent tweak in JW Logger for handling DC singularities
+                zero_test = freq_data_all[:,counter] == 0
+                tf_data_all[zero_test,counter] = np.min(np.abs(tf_data_all[:,counter])) # handle zeros
         
         # convert
         data_jwlogger['freq'] = np.float(fs_tf)
@@ -346,8 +384,15 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
     
     #%% Convert
     
-    data_jwlogger['dt2'] = np.array([n_time,n_tf,0],dtype=float)
-    data_jwlogger['dtype'] = np.array([n_time,n_tf,0],dtype=float)
+    if (n_freq > 0) & (n_tf > 0):
+        # if both FFT and TF data present then TF overwrites
+        N = n_tf
+    else:
+        # if only one of FFT or TF, or neither, then keep non-zero one, or neither
+        N = np.max([n_tf,n_freq])
+    
+    data_jwlogger['dt2'] = np.array([n_time,N,0],dtype=float)
+    data_jwlogger['dtype'] = np.array([n_time,N,0],dtype=float)
     
 
     # SAVE

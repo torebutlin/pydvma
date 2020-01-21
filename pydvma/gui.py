@@ -504,7 +504,7 @@ class Logger():
         self.layout_tools.addWidget(self.frame_tools_generate_output)
         self.layout_tools.addWidget(self.frame_tools_edit_dataset)
         self.layout_tools.addWidget(self.frame_tools_sonogram)
-#        self.layout_tools.addWidget(self.frame_tools_save_export)
+        self.layout_tools.addWidget(self.frame_tools_save_export)
         
         self.layout_tools.setAlignment(Qt.AlignTop)
         
@@ -570,7 +570,9 @@ class Logger():
 
     def setup_frame_tools_tf(self):
         self.input_list_window_tf = newComboBox(['None','hann'])
+        self.input_list_window_tf.setCurrentText(self.default_window)
         self.input_list_average_TF = newComboBox(['None','within each set','across sets'])
+        self.input_list_average_TF.setCurrentText(self.default_window)
         self.button_TF = BlueButton('Calc TF')
         self.button_TF.clicked.connect(self.calc_tf)
         self.input_list_average_TF.currentIndexChanged.connect(self.select_averaging_type)
@@ -876,7 +878,27 @@ class Logger():
         self.frame_tools_sonogram.setLayout(self.layout_tools_sonogram)
         
     def setup_frame_tools_save_export(self):
-        pass
+        #self.button_import_matlab_jwlogger = BlueButton('Import from JW Logger')
+        #self.button_import_matlab_jwlogger.clicked.connect(self.import_jwlogger)
+        
+        self.button_export_matlab_jwlogger = BlueButton('Export to JW Logger')
+        self.button_export_matlab_jwlogger.clicked.connect(self.export_jwlogger)
+        
+        self.button_export_matlab = BlueButton('Export to Matlab')
+        self.button_export_matlab.clicked.connect(self.export_matlab)
+        
+        self.button_export_csv = BlueButton('Export to CSV')
+        self.button_export_csv.clicked.connect(self.export_csv)
+        
+        
+        self.layout_tools_save_export = QVBoxLayout()
+        #self.layout_tools_save_export.addWidget(self.button_import_matlab_jwlogger)
+        self.layout_tools_save_export.addWidget(self.button_export_matlab_jwlogger)
+        self.layout_tools_save_export.addWidget(self.button_export_matlab)
+        self.layout_tools_save_export.addWidget(self.button_export_csv)
+        
+        self.frame_tools_save_export = QFrame()
+        self.frame_tools_save_export.setLayout(self.layout_tools_save_export)
         
         
     def update_frame_tools(self):
@@ -957,7 +979,7 @@ class Logger():
         # delegate messages to acquisition global MESSAGE, and streams rec.MESSAGE
         # this lets messages be seen from within logging thread, with live updates
         self.message_timer.start(300) 
-        print(1)
+        
         # start stream
         if self.rec is None:
             self.start_stream()
@@ -1751,7 +1773,7 @@ class Logger():
         self.frame_tools_generate_output.setVisible(False)
         self.frame_tools_edit_dataset.setVisible(False)
         self.frame_tools_sonogram.setVisible(False)
-#        self.frame_tools_save_export.setVisible(False)
+        self.frame_tools_save_export.setVisible(False)
         
     def select_tool(self):
         self.selected_tool = self.input_list_tools.currentText()
@@ -2376,7 +2398,27 @@ class Logger():
                 self.switch_view('Sono Data')
             self.update_figure()
             
+    def import_jwlogger(self):
+        pass
+    
+    def export_jwlogger(self):
+        # export data to data structure compatible with JW Logger
+        file.export_to_matlab_jwlogger(self.dataset)        
         
+    def export_matlab(self):
+        # export data to data structure compatible with Matlab
+        file.export_to_matlab(self.dataset)
+    
+    def export_csv(self):
+        # export data displayed to CSV
+        if  self.current_view == 'Time Data':
+            file.export_to_csv(self.dataset.time_data_list)
+        elif  self.current_view == 'FFT Data':
+            file.export_to_csv(self.dataset.freq_data_list)
+        elif  self.current_view == 'TF Data':
+            file.export_to_csv(self.dataset.tf_data_list)
+        else:
+            self.show_message('Can only export Time, FFT or TF Data')
         
 #sys._excepthook = sys.excepthook 
 #def exception_hook(exctype, value, traceback):
