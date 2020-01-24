@@ -152,7 +152,9 @@ class Logger():
         self.flag_log_and_replace = False
         self.flag_output = False
         self.message_timer = QTimer() # purely for pretrig live messages
+        self.levels_timer = QTimer() # for levels messages
         self.message = ''
+        self.t0_clipped = 0
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -178,6 +180,8 @@ class Logger():
         # start stream if already passed settings
         self.start_stream()
         self.message_timer.timeout.connect(self.show_message_timer) # connect after stream started
+        self.levels_timer.start()
+        self.levels_timer.timeout.connect(self.show_levels) # connect after stream started
         
     def setup_layout_main(self):
 
@@ -974,7 +978,25 @@ class Logger():
         message = acquisition.MESSAGE
 #        message += self.rec.MESSAGE
         self.show_message(message,b='cancel')
-
+        
+    def show_levels(self):
+        try:
+            max_levels = np.max(np.abs(self.rec.osc_time_data),axis=0)
+            ch_max = np.argmax(max_levels)
+            max_levels_all = max_levels[ch_max]
+            N = np.int(max_levels_all*20)
+            display_text = N*'-' + '|'# + (20-N)*'-'
+            if max_levels_all > 0.99:
+                display_text += '*** WARNING CLIPPED ***'
+                self.t0_clipped = time.time()
+            if (max_levels_all < 0.99) and ((time.time()-self.t0_clipped) < 1):
+                display_text += '*** WARNING CLIPPED ***'
+            display_text += ' in ch ' + str(ch_max)
+            self.window.setWindowTitle('Logger | Max Level: | ' + display_text)
+            
+        except:
+            self.window.setWindowTitle('Logger')
+            
     def button_clicked_log_data(self):
         # delegate messages to acquisition global MESSAGE, and streams rec.MESSAGE
         # this lets messages be seen from within logging thread, with live updates
@@ -1169,6 +1191,7 @@ class Logger():
             message = 'No data to view'
             self.show_message(message)
         self.input_list_data_type.setCurrentText(self.selected_view)
+        self.select_all_data()
         self.selected_channels = self.p.get_selected_channels()
 #        self.update_selected_set()
         
