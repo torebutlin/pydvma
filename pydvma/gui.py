@@ -984,15 +984,16 @@ class Logger():
             max_levels = np.max(np.abs(self.rec.osc_time_data),axis=0)
             ch_max = np.argmax(max_levels)
             max_levels_all = max_levels[ch_max]
-            N = np.int(max_levels_all*20)
-            display_text = N*'-' + '|'# + (20-N)*'-'
+            W = 20
+            N = np.int(max_levels_all*W)
+            display_text = N*'-' + '>|' + (W-N)*'-'
             if max_levels_all > 0.99:
                 display_text += '*** WARNING CLIPPED ***'
                 self.t0_clipped = time.time()
             if (max_levels_all < 0.99) and ((time.time()-self.t0_clipped) < 1):
                 display_text += '*** WARNING CLIPPED ***'
-            display_text += ' in ch ' + str(ch_max)
-            self.window.setWindowTitle('Logger | Max Level: | ' + display_text)
+            display_text += '| in ch ' + str(ch_max)
+            self.window.setWindowTitle('Logger | Max Level: [' + display_text)
             
         except:
             self.window.setWindowTitle('Logger')
