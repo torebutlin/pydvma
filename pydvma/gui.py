@@ -152,6 +152,7 @@ class Logger():
         self.flag_log_and_replace = False
         self.flag_output = False
         self.message_timer = QTimer() # purely for pretrig live messages
+        self.stream_check_timer = QTimer() # for levels messages
         self.levels_timer = QTimer() # for levels messages
         self.message = ''
         self.t0_clipped = 0
@@ -180,7 +181,8 @@ class Logger():
         # start stream if already passed settings
         self.start_stream()
         self.message_timer.timeout.connect(self.show_message_timer) # connect after stream started
-        self.levels_timer.start()
+        self.stream_check_timer.start(1000)
+        self.stream_check_timer.timeout.connect(self.check_stream) # connect after stream started
         self.levels_timer.timeout.connect(self.show_levels) # connect after stream started
         
     def setup_layout_main(self):
@@ -978,25 +980,31 @@ class Logger():
         message = acquisition.MESSAGE
 #        message += self.rec.MESSAGE
         self.show_message(message,b='cancel')
-        
+    
+    def check_stream(self):
+        if streams.REC is None:
+            self.levels_timer.stop()
+            self.window.setWindowTitle('Logger')
+        else:
+            self.levels_timer.start()
+    
     def show_levels(self):
-        try:
+        if streams.REC is not None:
             max_levels = np.max(np.abs(self.rec.osc_time_data),axis=0)
             ch_max = np.argmax(max_levels)
             max_levels_all = max_levels[ch_max]
             W = 20
-            N = np.int(max_levels_all*W)
-            display_text = N*'-' + '>|' + (W-N)*'-'
+            N = np.int(np.round(max_levels_all*W))
+            display_text = N*'-' + '>|' + (W-N)*'-' + '] in ch ' + str(ch_max)
             if max_levels_all > 0.99:
-                display_text += '*** WARNING CLIPPED ***'
+                display_text += ' *** WARNING CLIPPED ***'
                 self.t0_clipped = time.time()
-            if (max_levels_all < 0.99) and ((time.time()-self.t0_clipped) < 1):
-                display_text += '*** WARNING CLIPPED ***'
-            display_text += '| in ch ' + str(ch_max)
-            self.window.setWindowTitle('Logger | Max Level: [' + display_text)
+            elif (max_levels_all < 0.99) and ((time.time()-self.t0_clipped) < 1):
+                display_text += ' *** WARNING CLIPPED ***'
             
-        except:
-            self.window.setWindowTitle('Logger')
+                
+            self.window.setWindowTitle('Logger | Max Level: [' + display_text)
+        
             
     def button_clicked_log_data(self):
         # delegate messages to acquisition global MESSAGE, and streams rec.MESSAGE

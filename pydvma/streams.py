@@ -234,6 +234,8 @@ class Recorder(object):
         '''
         Closes an audio stream.
         '''
+        global REC
+        REC = None
         if not self.audio_stream.is_stopped():
             self.audio_stream.stop_stream()
         else: 
@@ -539,10 +541,13 @@ class Recorder_NI(object):
         '''
         Closes an audio stream.
         '''
+        global REC
+        REC = None
         if self.audio_stream is not None:
             self.audio_stream.StopTask()
             self.audio_stream.ClearTask()
             self.audio_stream = None
+        
 
 
 #%% NI output
