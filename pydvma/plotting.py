@@ -392,7 +392,8 @@ class PlotData():
 
             # make dictionary of legend lines for selection    
             for legline, origline in zip(self.legend.get_lines(), self.lines):
-                legline.set_picker(10)  # argument tolerance
+                legline.set_picker(True)  # argument tolerance
+                legline.set_pickradius(10)  # argument tolerance
                 self.lined[legline] = origline
                 legline.set_alpha(origline.get_alpha())
 
@@ -650,7 +651,7 @@ class PlotData():
 #            self.lines = self.ax.get_lines()
 #            self.lined = dict()
 #            for legline, origline in zip(self.legend.get_lines(), self.lines):
-#                legline.set_picker(10)  # 5 pts tolerance
+#                legline.set_pickradius(10)  # 5 pts tolerance
 #                self.lined[legline] = origline 
 #        else:
 #            self.legend = self.ax.get_legend()
@@ -715,7 +716,7 @@ class PlotData():
 #            self.lines = self.ax.get_lines()
 #            self.lined = dict()
 #            for legline, origline in zip(self.legend.get_lines(), self.lines):
-#                legline.set_picker(10)  # 5 pts tolerance
+#                legline.set_pickradius(10)  # 5 pts tolerance
 #                self.lined[legline] = origline 
 #        else:
 #            self.legend = self.ax.get_legend()
