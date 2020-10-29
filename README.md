@@ -14,14 +14,20 @@ The aim is for a library that is simple to use and simple to maintain. It is not
 
 ## Getting started
 
-### Dependencies
+### Installation
 
-The logger requires Python 3.7 to work with soundcard acquisition.
+The logger requires Python 3.7 or above to work with soundcard acquisition.
 
 On Windows:
 
 ```
 conda install pyaudio
+pip install pydvma
+```
+
+Or clone this repository and install using:
+```
+python setup.py install
 ```
 
 On Mac OS X: install PortAudio. If you use Homebrew, just run this:
@@ -36,24 +42,14 @@ conda env create -f logger_env.yml
 activate logger
 ```
 
-### Installing pydvma
-
-Install using:
-```
-pip install pydvma
-```
-
-Or clone this repository and install using:
-```
-python setup.py install
-```
+### Running the logger
 
 To get started, open the file:
 ```
 pydvma_template.ipynb
 ```
 
-or within a Jupyter Notebook or Python command line:
+or within a Jupyter Notebook or Python console:
 ```python
 %gui qt
 import pydvma as dvma

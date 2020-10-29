@@ -560,8 +560,10 @@ class PlotData():
             for n_chan in range(len(s[n_set])):
                 if s[n_set][n_chan] == True:
                     self.line_listbyset[n_set][n_chan].set_alpha(LINE_ALPHA)
+                    print('yes')
                 else:
                     self.line_listbyset[n_set][n_chan].set_alpha(1-LINE_ALPHA)
+                    print('no')
         # make legend line alphas match actual lines, but keep visibility as before
         self.update_legend()
         self.fig.canvas.draw()

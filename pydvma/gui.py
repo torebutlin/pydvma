@@ -156,6 +156,7 @@ class Logger():
         self.levels_timer = QTimer() # for levels messages
         self.message = ''
         self.t0_clipped = 0
+        self.fn_in_range = np.array([])
         
         # SETUP GUI
         QApplication.setStyle(QStyleFactory.create('Fusion'))
@@ -164,7 +165,6 @@ class Logger():
         self.window.setStyleSheet("background-color: white")
         self.window.setWindowTitle('Logger')
         self.window.setWindowIcon(QtGui.QIcon('icon.png'))
-#        self.window.YOU.ARE.HERE.CLOSEWINDOW?
 
         # initiate all interface tool frames
         self.setup_frame_tools()
@@ -974,6 +974,7 @@ class Logger():
     def hide_message(self):
         self.label_message.setText('')
         self.message = ''
+        modal.MESSAGE = ''
         self.frame_message.setVisible(False)
       
     def show_message_timer(self):
@@ -1272,6 +1273,7 @@ class Logger():
         
     def update_axes_values(self,axes):
 #        self.selected_channels = self.p.get_selected_channels()
+        
         xlim = self.p.ax.get_xlim()
         ylim = self.p.ax.get_ylim()
         self.input_axes[0].setText('{:0.5g}'.format(xlim[0]))
@@ -1376,6 +1378,8 @@ class Logger():
             self.p.ax.set_xlim(xlim)
             self.p.ax.set_ylim(ylim)
             self.p.fig.canvas.draw()
+            
+        self.selected_channels = self.p.get_selected_channels()
                    
     def update_selected_channels(self,_):
         # keeps selected_channels in sync with legend picking
@@ -2308,7 +2312,7 @@ class Logger():
                 self.dataset.modal_data_list[0].add_mode(m.M[0,:]) # only one mode in 'm'
             
             # local reconstruction
-            s = self.selected_channels # keep selection after auto-range
+            s1 = self.p.get_selected_channels() # keep selection after auto-range
             
             f = np.linspace(self.freq_range[0],self.freq_range[1],3000)
             tf_data = modal.reconstruct_transfer_function(m,f,self.measurement_type)
@@ -2322,18 +2326,23 @@ class Logger():
                 
             self.update_figure()
             s2 = self.p.get_selected_channels()
+            # retain selection for fitted selection
+            # assumes each set is a single Transfer Function
+            # might break down if data organised differently
             for i in range(len(s2[-1])):
-                s2[-1][i] = True
-            if len(s) != len(s2):
-                s += [[]]
-            s[-1] = s2[-1]
-            self.p.set_selected_channels(s) # keep selection after auto-range
+                #s2[i] = s1[i]
+                s2[-1][i] = s2[i][0]
+            if len(s1) != len(s2):
+                s1 += [[]]
+                
+            self.p.set_selected_channels(s2) # keep selection after auto-range
+            self.selected_channels = np.copy(s2)
             self.update_figure() # run a second time so autoscaling picks up new lines
             fn_all = self.dataset.modal_data_list[0].M[:,0]
             self.fn_in_range = m.fn
             ### allow time for plots and axes to update before clearing modal.MESSAGE
-            time.sleep(1)
-            modal.MESSAGE = '' # this is a condition for update_axes_values to let modal messages appear
+            #time.sleep(1)
+            #modal.MESSAGE = '' # this is a condition for update_axes_values to let modal messages appear
         else:
             message = 'First select ''TF Data''.'
             self.show_message(message)
