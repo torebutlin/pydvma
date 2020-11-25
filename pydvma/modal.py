@@ -73,7 +73,8 @@ def modal_fit_single_channel(tf_data,freq_range=None,channel=0,measurement_type=
     Rm0 = np.max(np.abs(G0))*((2*np.pi*fn0)**2)/1e3
     
     
-    x0 = np.array([fn0,zn0,an0,pn0,Rk0,Rm0])
+    #x0 = np.array([fn0,zn0,an0,pn0,Rk0,Rm0])
+    x0 = np.concatenate(([fn0],[zn0],an0,pn0,Rk0,Rm0))
     
     bounds = ([freq_range[0],0,-np.inf,-np.pi/2,0,0],[freq_range[1],1,np.inf,np.pi/2,np.inf,np.inf])
 #    bounds = ((-np.inf,np.inf),(freq_range[0],freq_range[1]),(0,np.inf),(-np.pi/2,np.pi/2),(-np.inf,np.inf),(-np.inf,np.inf))
