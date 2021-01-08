@@ -273,7 +273,10 @@ class Recorder_NI(object):
             
          
         devices = self.available_devices()[0]
-        self.device_name = devices[settings.device_index]
+        if settings.device_index is None:
+            self.device_name = devices[0]
+        else:
+            self.device_name = devices[settings.device_index]
         #self.set_device_by_name(self.device_name)
         
     def set_device_by_name(self, name, settings):
