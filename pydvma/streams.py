@@ -471,10 +471,15 @@ class Recorder_NI(object):
         check = np.where(AutoRegN <= settings.chunk_size)
         AutoRegN = AutoRegN[check[0][-1]]
         
+        if settings.NI_mode == 'DAQmx_Val_RSE':
+            pdaq_mode = pdaq.DAQmx_Val_RSE
+        elif settings.NI_mode == 'DAQmx_Val_PseudoDiff':
+            pdaq_mode = pdaq.DAQmx_Val_PseudoDiff
+        
         self.audio_stream = Task()
         self.audio_stream.stream_audio_callback = self.stream_audio_callback
         self.audio_stream.CreateAIVoltageChan(self.set_channels(),"",
-                                 pdaq.DAQmx_Val_RSE,-settings.VmaxNI,settings.VmaxNI,
+                                 pdaq_mode,-settings.VmaxNI,settings.VmaxNI,
                                  pdaq.DAQmx_Val_Volts,None)
         self.audio_stream.CfgSampClkTiming("",self.settings.fs,
                               pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_ContSamps,

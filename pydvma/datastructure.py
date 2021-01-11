@@ -16,7 +16,7 @@ import uuid
 import copy
 
 #%% version
-VERSION = '0.8.0' # keep in sync with setup.py
+VERSION = '0.8.1' # keep in sync with setup.py
 
 def update_dataset(dataset):
     dataset_new = DataSet()

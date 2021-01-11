@@ -59,6 +59,7 @@ class MySettings(object):
                  device_driver='soundcard',
                  device_index=None,
                  VmaxNI=5,
+                 NI_mode='DAQmx_Val_RSE',
                  init_view_time=True,
                  init_view_freq=True,
                  init_view_levels=True,
