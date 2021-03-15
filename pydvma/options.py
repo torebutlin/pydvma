@@ -91,6 +91,7 @@ class MySettings(object):
         
         # ADVANCED SETTINGS
         self.VmaxNI=np.float(VmaxNI)
+        self.NI_mode=NI_mode
         self.chunk_size=np.int(chunk_size)
         self.num_chunks=np.int(num_chunks)
         self.viewed_time=viewed_time
