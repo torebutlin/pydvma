@@ -274,7 +274,7 @@ class DataSet():
             self.sono_data_list = sono_data_list
         else:
             self.sono_data_list = SonoDataList()
-            print('No time data foudn in dataset')
+            print('No time data found in dataset')
             
     def clean_impulse(self,ch_impulse=0):
         '''
