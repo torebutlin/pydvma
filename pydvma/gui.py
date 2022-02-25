@@ -1378,7 +1378,7 @@ class Logger():
             self.p.ax.set_xlim(xlim)
             self.p.ax.set_ylim(ylim)
             self.p.fig.canvas.draw()
-            
+
         self.selected_channels = self.p.get_selected_channels()
                    
     def update_selected_channels(self,_):
@@ -2289,7 +2289,7 @@ class Logger():
                 self.measurement_type = 'vel'
             elif self.input_list_tf_type.currentText() == 'Displacement':
                 self.measurement_type = 'dsp'
-                
+            
             m = modal.modal_fit_all_channels(self.dataset.tf_data_list,freq_range=self.freq_range, measurement_type=self.measurement_type)
             self.last_mode_fit = m
             self.show_message(modal.MESSAGE)
@@ -2336,7 +2336,7 @@ class Logger():
                 s1 += [[]]
                 
             self.p.set_selected_channels(s2) # keep selection after auto-range
-            self.selected_channels = np.copy(s2)
+            self.selected_channels = s2.copy()
             self.update_figure() # run a second time so autoscaling picks up new lines
             fn_all = self.dataset.modal_data_list[0].M[:,0]
             self.fn_in_range = m.fn
