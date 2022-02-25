@@ -1,4 +1,4 @@
-from .options import MySettings
+from .options import MySettings, set_plot_colours
 from .file import load_data, save_data, save_fig, export_to_matlab_jwlogger, export_to_matlab, export_to_csv
 from .oscilloscope import Oscilloscope
 from .acquisition import log_data, log_data_with_output, output_signal, signal_generator, stream_snapshot

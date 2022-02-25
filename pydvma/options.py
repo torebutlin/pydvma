@@ -8,10 +8,17 @@ Created on Mon Aug 27 13:28:39 2018
 from . import streams
 
 import numpy as np
-import pyaudio
+
 import pyqtgraph as pg
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
+except NotImplementedError:
+    pyaudio = None
 
 
 class MySettings(object):
@@ -141,8 +148,11 @@ class MySettings(object):
             except:
                 # try to guess sensible default output soundcard by string matching device names
                 devices = streams.get_devices_soundcard()
-                output_devices = np.where(['output' in names for names in devices])
-                self.output_device_index = output_devices[0][0]
+                if devices != None:
+                    output_devices = np.where(['output' in names for names in devices])
+                    self.output_device_index = output_devices[0][0]
+                else:
+                    self.output_device_index = 1
         elif (output_device_driver == 'nidaq') and ((output_device_index == None) or (output_device_index == 'None')):
             self.output_device_index = 0
         else:
@@ -159,7 +169,11 @@ class MySettings(object):
             self.chunk_size = np.int16(10)
             print('Resetting ''chunk_size'' to minimum value of 10')
             
-        self.format = eval('pyaudio.paInt'+str(self.nbits))
+        try:    
+            self.format = eval('pyaudio.paInt'+str(self.nbits))
+        except:
+            pass
+        
         self.device_name = None # until initialise stream
         
         if (pretrig_samples == None) or (pretrig_samples == 'None'):

@@ -27,7 +27,7 @@ class PlotSonoData():
             self.canvas = canvas
             self.ax = self.canvas.figure.subplots()
         
-        self.ax.grid(False,alpha=0.2)
+        self.ax.grid(False)
         self.fig.canvas.draw()
         
     def update(self,sono_data_list,n_set=0,n_chan=0):
@@ -61,8 +61,8 @@ class PlotData():
 #        self.ax.set_zorder(self.ax2.get_zorder()+1)
 #        self.ax.patch.set_visible(False)
 
-        self.ax.lines=[]
-        self.ax2.lines=[]
+        self.ax.lines.clear()
+        self.ax2.lines.clear()
         self.line_listbyset = []
         self.line2_listbyset = []
         self.pcolor_sono = None
@@ -124,7 +124,7 @@ class PlotData():
             if 'log' in xlinlog:
                 self.ax.grid(b=True, which='minor',axis='x',alpha=0.2)
             else:
-                self.ax.grid(b=False,which='minor',axis='x',alpha=0.2)
+                self.ax.grid(b=False)
             
         elif data_list.__class__.__name__ == 'TfDataList':
             if (plot_type == 'Amplitude (dB)') or (plot_type == None):
@@ -157,7 +157,7 @@ class PlotData():
             if 'log' in xlinlog:
                 self.ax.grid(b=True, which='minor',axis='x',alpha=0.2)
             else:
-                self.ax.grid(b=False,which='minor',axis='x',alpha=0.2)
+                self.ax.grid(b=False)
             
             # setup twin axis
             # don't plot coherence if no data, or if all coherence is one
@@ -201,8 +201,8 @@ class PlotData():
             # option to make lines fainter when more lines... needs some tweaking to make feel right
             LINE_ALPHA = 1-1/self.ch_total # make deselected lines fainter if more channels
         
-        self.ax.lines=[]
-        self.ax2.lines=[]
+        self.ax.lines.clear()
+        self.ax2.lines.clear()
         self.line_listbyset = []
         self.line2_listbyset = []
         
@@ -578,12 +578,12 @@ class PlotData():
         self.ax2.set_visible(False)
         self.ax.set_xlabel('Time (s)')
         self.ax.set_ylabel('Frequency (Hz)')
-        self.ax.grid(False,alpha=0.2)
+        self.ax.grid(False)
         if self.ax.get_legend() is not None:
             self.ax.get_legend().set_visible(False)
         
-        self.ax.lines=[]
-        self.ax2.lines=[]
+        self.ax.lines.clear()
+        self.ax2.lines.clear()
         self.line_listbyset = []
         self.line2_listbyset = []
         

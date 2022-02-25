@@ -6,11 +6,11 @@ Created on Thu Sep  6 15:06:51 2018
 """
 from setuptools import setup, find_packages
 
-requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'pyaudio', 'matplotlib', 'PyDAQmx']
+requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'matplotlib', 'seaborn']
 
 setup(
     name='pydvma',
-    version='0.8.2', # keep in sync with datastructure.py
+    version='0.8.3', # keep in sync with datastructure.py
     install_requires=requires,
     packages=['pydvma'],
     package_data={'': ['icon.png']},

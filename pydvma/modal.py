@@ -157,9 +157,9 @@ def f_TF_all_channels(x,f,measurement_type):
     elif measurement_type == 'dsp':
         p = 0
 
-#    if w[0]==0:
-#        # avoid singularity at w=0
-#        w[0] = w[1]
+    if w[0]==0:
+        # avoid singularity at w=0
+        w[0] = w[1]
     G = an*np.exp(1j*pn)/(wn**2 + 2j*wn*zn*w - w**2) + R1 - R2/(w**2)
     G = G*((1j*w)**p)
     
