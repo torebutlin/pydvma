@@ -21,6 +21,13 @@ except NotImplementedError:
     pyaudio = None
 
 
+try:
+    import sounddevice as sd
+except ImportError:
+    sd = None
+except NotImplementedError:
+    sd = None
+
 class MySettings(object):
     '''
     A class that stores the acquisition settings.
@@ -127,9 +134,7 @@ class MySettings(object):
         if (device_driver == 'soundcard') and ((device_index == None) or (device_index == 'None')):
             try:
                 # try to find default input soundcard device
-                audio = pyaudio.PyAudio()
-                info = audio.get_default_input_device_info()
-                self.device_index = info['index']
+                self.device_index = sd.default.device[0]
             except:
                 # if info not available, select index 1
                 self.device_index = 1
@@ -142,9 +147,7 @@ class MySettings(object):
         if (output_device_driver == 'soundcard') and ((output_device_index == None) or  (output_device_index == 'None')):
             try:
                 # try to find default output soundcard device
-                audio = pyaudio.PyAudio()
-                info = audio.get_default_output_device_info()
-                self.output_device_index = info['index']
+                self.output_device_index = sd.default.device[1]
             except:
                 # try to guess sensible default output soundcard by string matching device names
                 devices = streams.get_devices_soundcard()
@@ -170,7 +173,7 @@ class MySettings(object):
             print('Resetting ''chunk_size'' to minimum value of 10')
             
         try:    
-            self.format = eval('pyaudio.paInt'+str(self.nbits))
+            self.format = eval('np.int'+str(self.nbits))
         except:
             pass
         

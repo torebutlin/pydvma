@@ -8,7 +8,7 @@ Created on Mon Aug 27 14:32:35 2018
 import os.path
 import numpy as np
 import scipy.io as io
-
+import pyqtgraph as pg
 from pyqtgraph.Qt import QtGui, QtWidgets
 
 

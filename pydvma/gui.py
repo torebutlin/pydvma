@@ -9,6 +9,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2Q
 from matplotlib.figure import Figure
 from matplotlib.ticker import AutoLocator
 import numpy as np
+
 #import logging
 #logging.basicConfig(filename='example.log',level=logging.DEBUG)
 #%%
@@ -159,7 +160,8 @@ class Logger():
         self.fn_in_range = np.array([])
         
         # SETUP GUI
-        QApplication.setStyle(QStyleFactory.create('Fusion'))
+        self.app = QApplication(sys.argv)
+        self.app.setStyle(QStyleFactory.create('Fusion'))
         
         self.window = QWidget()
         self.window.setStyleSheet("background-color: white")
@@ -176,7 +178,7 @@ class Logger():
         # arrange frames and create window
         self.setup_layout_main()
         self.window.showMinimized()
-        self.window.showNormal()
+        self.window.show()
         
         # start stream if already passed settings
         self.start_stream()
@@ -184,6 +186,8 @@ class Logger():
         self.stream_check_timer.start(1000)
         self.stream_check_timer.timeout.connect(self.check_stream) # connect after stream started
         self.levels_timer.timeout.connect(self.show_levels) # connect after stream started
+        
+        # sys.exit(self.app.exec_())
         
     def setup_layout_main(self):
 
@@ -930,7 +934,7 @@ class Logger():
             except:
                 self.rec = None
                 message = 'Data stream can\'t be initialised.\n'
-                message += 'Possible reasons: pyaudio or PyDAQmx not installed, or acquisition hardware not connected.\n' 
+                message += 'Possible reasons: sounddevice or PyDAQmx not installed, or acquisition hardware not connected.\n' 
                 message += 'Please note that it won\'t be possible to log data.'
                 self.show_message(message)
                 

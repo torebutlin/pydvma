@@ -1,4 +1,3 @@
-
 from . import acquisition
 
 import numpy as np
@@ -11,6 +10,14 @@ except ImportError:
 except NotImplementedError:
     pyaudio = None
     
+try:
+    import sounddevice as sd
+except ImportError:
+    sd = None
+except NotImplementedError:
+    sd = None
+
+
 try:
     import PyDAQmx as pdaq
     from PyDAQmx import Task
@@ -66,12 +73,11 @@ def list_available_devices(io=''):
                 message += '{}: {}\n'.format(i,device_name_list[i])
     
         try:
-            audio = pyaudio.PyAudio()
-            default_input_device = audio.get_default_input_device_info()
-            message += 'Default device is: %i %s\n' %(default_input_device['index'],default_input_device['name'])
+            default_input_device = sd.default.device[0]
+            message += '\nDefault device is: [%i] %s\n' %(default_input_device,device_name_list[default_input_device])
             message += '\n'
-            default_output_device = audio.get_default_output_device_info()
-            message += 'Default device is: %i %s\n' %(default_output_device['index'],default_output_device['name'])
+            default_output_device = sd.default.device[1]
+            message += 'Default device is: [%i] %s\n' %(default_output_device,device_name_list[default_output_device])
             message += '\n\n'
         except:
             message += 'default information not available\n'
@@ -124,16 +130,28 @@ def get_devices_NI():
 
 def get_devices_soundcard():
     try:
-        audio = pyaudio.PyAudio()
-        device_count = audio.get_device_count()
+        devices = sd.query_devices()
         device_name_list = []
-        for i in range(device_count):
-            device = audio.get_device_info_by_index(i)
+        for device in devices:
             device_name_list.append(device['name'])
     except:
         return None
     
     return device_name_list
+
+# def get_devices_soundcard():
+#     try:
+#         audio = pyaudio.PyAudio()
+#         device_count = audio.get_device_count()
+#         device_name_list = []
+#         for i in range(device_count):
+#             device = audio.get_device_info_by_index(i)
+#             device_name_list.append(device['name'])
+#     except:
+#         return None
+    
+#     return device_name_list
+
 
 #%% pyaudio stream
 class Recorder(object):
@@ -158,7 +176,7 @@ class Recorder(object):
         self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data,axis=0))
         
             
-    def __call__(self, in_data, frame_count, time_info, status):
+    def __call___pyaudio(self, in_data, frame_count, time_info, status):
         '''
         Obtains data from the audio stream.
         '''
@@ -186,48 +204,94 @@ class Recorder(object):
                 
         return (in_data, pyaudio.paContinue)
     
+    def callback(self, in_data, frame_count, time_info, status):
+        '''
+        Obtains data from the audio stream.
+        '''
+        self.osc_data_chunk = in_data#(np.frombuffer(in_data, dtype=eval('np.int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
+        self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
+        for i in range(self.settings.channels):
+            self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
+            self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
+            if (not self.trigger_detected)  or (self.settings.pretrig_samples is None):
+                self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
+                self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
+        
+        trigger_first_detected = np.any(np.abs(self.osc_data_chunk[:,self.settings.pretrig_channel])>self.settings.pretrig_threshold)
+        if trigger_first_detected and self.trigger_first_detected_message:
+            acquisition.MESSAGE += 'Trigger detected. Logging data for {} seconds.\n'.format(self.settings.stored_time)
+            print('')
+            print(acquisition.MESSAGE)
+            self.trigger_first_detected_message=False
+            
+            
+        trigger_check = self.stored_time_data[(self.settings.chunk_size):(2*self.settings.chunk_size),self.settings.pretrig_channel]
+        if np.any(np.abs(trigger_check)>self.settings.pretrig_threshold):
+            # freeze updating stored_time_data
+            self.trigger_detected = True
+              
+        # out_data.fill(0)
+        return in_data, frame_count, time_info, status
+    
     
     def init_stream(self,settings,_input_=True,_output_=False):
         '''
         Initialises an audio stream. Gives the user a choice of which device to access.
         '''
         
-        self.audio = pyaudio.PyAudio()
-        
         if settings.device_index == None:
     
-            device_count = self.audio.get_device_count()
-            print ('Number of devices available is: %i' %device_count)
+            devices = sd.query_devices()
+            print('No device specified. Using default:\n\n%i %s'
+                  %(sd.default.device[0],devices[sd.default.device[0]]['name']))
             print ('')
-            print('Devices available, by index:')
-            print ('')
-            for i in range(device_count):
-                device = self.audio.get_device_info_by_index(i)
-                print(device['index'], device['name'])
-            print ('')
-            default_device = self.audio.get_default_input_device_info()
-            print('Default device is: %i %s'
-                  %(default_device['index'],default_device['name']))
-            print ('')
-            settings.device_index=device['index']
+            settings.device_index=sd.default.device[0]
             
-        settings.device_name = self.audio.get_device_info_by_index(settings.device_index)['name']
-        settings.device_full_info = self.audio.get_device_info_by_index(settings.device_index)
+        settings.device_name = sd.query_devices()[settings.device_index]['name']
+        settings.device_full_info = sd.query_devices()[settings.device_index]
         
-        print(settings.device_full_info['index'], settings.device_full_info['name'])
-        print("Selected device: %i : %s" %(settings.device_index,settings.device_name))    
+        dtype = eval('np.int'+str(self.settings.nbits))
+        self.audio_stream = sd.InputStream(samplerate=settings.fs, 
+                                      blocksize=settings.chunk_size, 
+                                      device=settings.device_index, 
+                                      channels=settings.channels, 
+                                      dtype=dtype, 
+                                      latency=None, 
+                                      extra_settings=None, 
+                                      callback=self.callback, 
+                                      finished_callback=None, 
+                                      clip_off=None, 
+                                      dither_off=None, 
+                                      never_drop_input=None, 
+                                      prime_output_buffers_using_stream_callback=None) 
+        self.audio_stream.start()
+        # self.audio_stream = sd.Stream() 
         
-        self.audio_stream = self.audio.open(format=settings.format,
-                                        channels=settings.channels,
-                                        rate=settings.fs,
-                                        input=_input_,
-                                        output=_output_,
-                                        frames_per_buffer=settings.chunk_size,
-                                        input_device_index=settings.device_index,
-                                        stream_callback=self.__call__)  
-        self.audio_stream.start_stream()
+        # self.audio_stream = sd.Stream(samplerate=settings.fs, 
+        #                               blocksize=settings.num_chunks, 
+        #                               device=settings.device_index, 
+        #                               channels=settings.channels, 
+        #                               dtype=dtype, 
+        #                               latency=None, 
+        #                               extra_settings=None, 
+        #                               callback=self.callback, 
+        #                               finished_callback=None, 
+        #                               clip_off=None, 
+        #                               dither_off=None, 
+        #                               never_drop_input=None, 
+        #                               prime_output_buffers_using_stream_callback=None) 
         
-#        return (audio_stream,audio)
+        # self.audio_stream_pyaudio = sd.Stream(format=settings.format,
+        #                                 channels=settings.channels,
+        #                                 rate=settings.fs,
+        #                                 input=_input_,
+        #                                 output=_output_,
+        #                                 frames_per_buffer=settings.chunk_size,
+        #                                 input_device_index=settings.device_index,
+        #                                 stream_callback=self.__call__)  
+        # self.audio_stream.start_stream()
+        
+        # return (audio_stream,audio)
         
     
     def end_stream(self):
@@ -236,12 +300,12 @@ class Recorder(object):
         '''
         global REC
         REC = None
-        if not self.audio_stream.is_stopped():
-            self.audio_stream.stop_stream()
+        if self.audio_stream.active:
+            self.audio_stream.stop()
         else: 
             pass
         self.audio_stream.close()
-        self.audio.terminate()
+        # self.audio.terminate()
         
         
 

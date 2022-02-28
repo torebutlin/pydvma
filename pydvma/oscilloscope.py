@@ -13,7 +13,7 @@ from . import streams
 
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtGui, QtCore
+from PyQt5 import QtGui, QtCore
 import time
 import datetime
 
@@ -73,10 +73,11 @@ class Oscilloscope():
         
         # This ensures the window appears at front.
         self.win.showMinimized()
-        self.win.showNormal()
         
 
         self.win.setWindowTitle("Oscilloscope ('s': save new, 'space': autosave, 'p': pause, 'a': always top, 'y': autoscale)")
+        self.win.showNormal()
+
         self.view_time = self.settings.init_view_time
         self.view_freq = self.settings.init_view_freq
         self.view_levels = self.settings.init_view_levels
@@ -214,7 +215,9 @@ class Oscilloscope():
             if self.view_freq == True:
                 # calculate the FFT
                 self.rec.osc_time_data_windowed[:,i] = time_data_snapshot[:,i] * np.blackman(np.shape(time_data_snapshot)[0])
-                self.rec.osc_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(self.rec.osc_time_data_windowed[:,i]))/len(self.rec.osc_time_data_windowed[:,i]))
+                fd = np.abs(np.fft.rfft(self.rec.osc_time_data_windowed[:,i]))/len(self.rec.osc_time_data_windowed[:,i])
+                fd[fd==0] = np.min(fd+1e-16) # to avoid log10(0) warnings
+                self.rec.osc_freq_data[:,i] = 20 * np.log10(fd)
                 self.osc_freq_lineset[i].setData(self.rec.osc_freq_axis,self.rec.osc_freq_data[:,i])
 
             if self.view_levels == True:
