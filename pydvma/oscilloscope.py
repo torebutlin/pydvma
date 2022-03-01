@@ -30,24 +30,6 @@ class Oscilloscope():
         streams.start_stream(settings)
         self.rec = streams.REC
         
-            
-#            self.rec = streams.Rec_NI(settings).rec
-#            self.rec.init_stream(settings)
-            
-#            if streams.rec_NI is None:
-#                streams.rec_NI = streams.Recorder_NI(settings)
-#                streams.rec_NI.init_stream(settings)
-#            else:
-#                try:
-#                    streams.rec_NI.end_stream()
-#                except:
-#                    pass
-#                streams.rec_NI = None
-#                streams.rec_NI = streams.Recorder_NI(settings)
-#                streams.rec_NI.init_stream(settings)
-#            self.rec = streams.rec_NI
-        
-        
 
         self.timer = QtCore.QTimer()
         self.create_figure()
@@ -76,6 +58,8 @@ class Oscilloscope():
         
 
         self.win.setWindowTitle("Oscilloscope ('s': save new, 'space': autosave, 'p': pause, 'a': always top, 'y': autoscale)")
+        time.sleep(0.6)
+        self.win.show()
         self.win.showNormal()
 
         self.view_time = self.settings.init_view_time
@@ -114,10 +98,12 @@ class Oscilloscope():
         self.osc_time_line = self.win.addPlot(title="Time Domain (toggle with 'T')")
 
         if self.settings.channels == 1:
+            self.auto_scale = True
             self.osc_time_line.enableAutoRange()
         else:
             # Stack the channels -- channel 0 is centred on 0, channel 1
             # centred on 1 etc.
+            self.auto_scale = False
             self.osc_time_line.setYRange(-1,self.settings.channels)
 
         self.osc_time_line.setXRange(self.rec.osc_time_axis[0],
@@ -127,8 +113,8 @@ class Oscilloscope():
         self.osc_time_line.setLabel('left', 'Normalised Amplitude')
         self.osc_time_line.setLabel('bottom', 'Time (s)')
 
-        ax = self.osc_time_line.getAxis('left')
-        ax.setTickSpacing(1, 1)
+        self.ax_time = self.osc_time_line.getAxis('left')
+        self.ax_time.setTickSpacing(1, 1)
 
         self.osc_time_lineset = {}
         for i in range(self.settings.channels):
@@ -169,8 +155,8 @@ class Oscilloscope():
         self.osc_levels_line.setLabel('left', 'Normalised Amplitude')
         self.osc_levels_line.setLabel('bottom', 'Channel Index')
 
-        ax = self.osc_levels_line.getAxis('bottom')
-        ax.setTickSpacing(1, 1)
+        self.ax_levels = self.osc_levels_line.getAxis('bottom')
+        self.ax_levels.setTickSpacing(1, 1)
 #        ax.showLabel(show=True)
 #        self.osc_levels_line.setTicks(np.arange(self.settings.channels))
         self.osc_levels_lineset={}
@@ -203,12 +189,18 @@ class Oscilloscope():
         for i in range(self.settings.channels):
             offset = i
             if self.view_time == True:
-                if self.auto_scale is True:
+                if (self.auto_scale is True) and (self.settings.channels==1):
+                    shift = 0
+                    scale_factor = 1
+                    self.osc_time_line.enableAutoRange()
+                elif (self.auto_scale is True) and (self.settings.channels!=1):
                     shift = np.mean(time_data_snapshot[:,i])
                     scale_factor = np.max(np.abs(time_data_snapshot[:,i]-shift))*2
+                    self.osc_time_line.setYRange(-1,self.settings.channels)
                 else:
                     shift = 0
                     scale_factor = 1
+                    self.osc_time_line.setYRange(-1,self.settings.channels)
                     
                 self.osc_time_lineset[i].setData(self.rec.osc_time_axis, (time_data_snapshot[:,i]-shift)/scale_factor + offset)
 
@@ -233,9 +225,6 @@ class Oscilloscope():
 #                self.osc_levels_lineset[3].setData(np.arange(2),np.ones(2))
 
 
-#            #updates for the stored - DONT NEED
-#            self.rec.stored_time_data_windowed[:,i] = self.rec.stored_time_data[:,i] * np.blackman(np.shape(self.rec.stored_time_data)[0])
-#            self.rec.stored_freq_data[:,i] = 20 * np.log10(np.abs(np.fft.rfft(self.rec.stored_time_data_windowed[:,i]))/len(self.rec.stored_time_data_windowed[:,i]))
 
     #KeyPressed function within osciolloscpe since can only take one argument
     def keyPressed(self, evt):

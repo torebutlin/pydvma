@@ -10,6 +10,9 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import AutoLocator
 import numpy as np
 
+
+
+
 #import logging
 #logging.basicConfig(filename='example.log',level=logging.DEBUG)
 #%%
@@ -115,8 +118,10 @@ class PreviewWindow():
         self.preview_window.setLayout(self.layout_figure)
         
         self.preview_window.showMinimized()
+        time.sleep(0.6)
+        self.preview_window.show()
         self.preview_window.showNormal()
-
+        
 class Logger():
         
     def __init__(self,settings=None,test_name=None,default_window=None):
@@ -178,7 +183,10 @@ class Logger():
         # arrange frames and create window
         self.setup_layout_main()
         self.window.showMinimized()
+        time.sleep(0.6)
         self.window.show()
+        self.window.showNormal()
+        
         
         # start stream if already passed settings
         self.start_stream()

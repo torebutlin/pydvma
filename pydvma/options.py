@@ -80,7 +80,8 @@ class MySettings(object):
                  output_device_driver=None,
                  output_device_index=None,
                  output_channels=None,
-                 output_fs=None):
+                 output_fs=None,
+                 use_output_as_ch0=False):
         
         #INPUT SETTINGS
         self.fs=np.int(fs)
@@ -101,7 +102,7 @@ class MySettings(object):
         self.output_channels = output_channels
         self.output_device_driver = output_device_driver
         self.output_device_index = output_device_index
-        
+        self.use_output_as_ch0 = use_output_as_ch0
         
         # ADVANCED SETTINGS
         self.VmaxNI=np.float(VmaxNI)

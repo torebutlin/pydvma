@@ -207,10 +207,11 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
 
     noverlap = np.ceil(overlap*nperseg)
     
-    Pxy = np.zeros([settings.channels,settings.channels,freqlength],dtype=complex)
-    Cxy = np.zeros([settings.channels,settings.channels,freqlength])
-    for nx in np.arange(settings.channels):
-        for ny in np.arange(settings.channels):
+    N_chans = len(time_data.time_data[0,:])
+    Pxy = np.zeros([N_chans,N_chans,freqlength],dtype=complex)
+    Cxy = np.zeros([N_chans,N_chans,freqlength])
+    for nx in np.arange(N_chans):
+        for ny in np.arange(N_chans):
             if nx > ny:
                 Pxy[nx,ny,:] = np.conjugate(Pxy[ny,nx,:])
                 Cxy[nx,ny,:] = Cxy[ny,nx,:]
@@ -299,7 +300,7 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
     Cxy = cross_spec_data.Cxy
     ## identify transfer functions and corresponding coherence
     
-    ch_all = np.arange(time_data.settings.channels)
+    ch_all = np.arange(len(time_data.time_data[0,:]))
     ch_out_set = np.setxor1d(ch_all,ch_in)
     
     tf_data = np.zeros([len(f),len(ch_out_set)],dtype=complex)
@@ -349,7 +350,7 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
     count = -1
     for td in time_data_list:
         count += 1
-        ch_all = np.arange(td.settings.channels)
+        ch_all = np.arange(len(td.time_data[0,:]))
         ch_out_set = np.setxor1d(ch_all,ch_in)
         cross_spec_data = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
         f = cross_spec_data.freq_axis

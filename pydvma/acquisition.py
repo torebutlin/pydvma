@@ -113,6 +113,10 @@ def log_data(settings,test_name=None,rec=None, output=None):
     dt = 1/fs
     t_samp = n_samp*dt
     time_axis = np.arange(0,t_samp,dt)
+    
+    if settings.use_output_as_ch0 == True:
+        stored_time_data_copy = np.concatenate((output,stored_time_data_copy),axis=1)
+    
     timedata = datastructure.TimeData(time_axis,stored_time_data_copy,settings,timestamp=t,timestring=timestring,test_name=test_name)
     
     

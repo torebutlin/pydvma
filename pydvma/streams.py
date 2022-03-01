@@ -175,8 +175,9 @@ class Recorder(object):
         #formula used from the np.fft.rfft documentation
         self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data,axis=0))
         
-            
-    def __call___pyaudio(self, in_data, frame_count, time_info, status):
+    
+    
+    def callback(self, in_data, frame_count, time_info, status):
         '''
         Obtains data from the audio stream.
         '''
@@ -201,37 +202,8 @@ class Recorder(object):
         if np.any(np.abs(trigger_check)>self.settings.pretrig_threshold):
             # freeze updating stored_time_data
             self.trigger_detected = True
-                
-        return (in_data, pyaudio.paContinue)
-    
-    def callback(self, in_data, frame_count, time_info, status):
-        '''
-        Obtains data from the audio stream.
-        '''
-        self.osc_data_chunk = in_data#(np.frombuffer(in_data, dtype=eval('np.int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
-        self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
-        for i in range(self.settings.channels):
-            self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
-            self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-            if (not self.trigger_detected)  or (self.settings.pretrig_samples is None):
-                self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
-                self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-        
-        trigger_first_detected = np.any(np.abs(self.osc_data_chunk[:,self.settings.pretrig_channel])>self.settings.pretrig_threshold)
-        if trigger_first_detected and self.trigger_first_detected_message:
-            acquisition.MESSAGE += 'Trigger detected. Logging data for {} seconds.\n'.format(self.settings.stored_time)
-            print('')
-            print(acquisition.MESSAGE)
-            self.trigger_first_detected_message=False
-            
-            
-        trigger_check = self.stored_time_data[(self.settings.chunk_size):(2*self.settings.chunk_size),self.settings.pretrig_channel]
-        if np.any(np.abs(trigger_check)>self.settings.pretrig_threshold):
-            # freeze updating stored_time_data
-            self.trigger_detected = True
-              
-        # out_data.fill(0)
-        return in_data, frame_count, time_info, status
+
+        # return in_data
     
     
     def init_stream(self,settings,_input_=True,_output_=False):
@@ -251,7 +223,7 @@ class Recorder(object):
         settings.device_full_info = sd.query_devices()[settings.device_index]
         
         dtype = eval('np.int'+str(self.settings.nbits))
-        self.audio_stream = sd.InputStream(samplerate=settings.fs, 
+        self.audio_stream = sd.RawInputStream(samplerate=settings.fs, 
                                       blocksize=settings.chunk_size, 
                                       device=settings.device_index, 
                                       channels=settings.channels, 
@@ -265,33 +237,7 @@ class Recorder(object):
                                       never_drop_input=None, 
                                       prime_output_buffers_using_stream_callback=None) 
         self.audio_stream.start()
-        # self.audio_stream = sd.Stream() 
         
-        # self.audio_stream = sd.Stream(samplerate=settings.fs, 
-        #                               blocksize=settings.num_chunks, 
-        #                               device=settings.device_index, 
-        #                               channels=settings.channels, 
-        #                               dtype=dtype, 
-        #                               latency=None, 
-        #                               extra_settings=None, 
-        #                               callback=self.callback, 
-        #                               finished_callback=None, 
-        #                               clip_off=None, 
-        #                               dither_off=None, 
-        #                               never_drop_input=None, 
-        #                               prime_output_buffers_using_stream_callback=None) 
-        
-        # self.audio_stream_pyaudio = sd.Stream(format=settings.format,
-        #                                 channels=settings.channels,
-        #                                 rate=settings.fs,
-        #                                 input=_input_,
-        #                                 output=_output_,
-        #                                 frames_per_buffer=settings.chunk_size,
-        #                                 input_device_index=settings.device_index,
-        #                                 stream_callback=self.__call__)  
-        # self.audio_stream.start_stream()
-        
-        # return (audio_stream,audio)
         
     
     def end_stream(self):
@@ -305,7 +251,7 @@ class Recorder(object):
         else: 
             pass
         self.audio_stream.close()
-        # self.audio.terminate()
+
         
         
 
@@ -654,10 +600,20 @@ def setup_output_NI(settings,output):
     return output_stream
 
 def setup_output_soundcard(settings):
-    p = pyaudio.PyAudio()
-    output_stream = p.open(format=pyaudio.paFloat32,
-                        channels=settings.output_channels,
-                        rate=settings.output_fs,
-                        output=True,
-                        output_device_index=settings.output_device_index)
+    dtype = np.float32
+
+    output_stream = sd.RawOutputStream(samplerate=settings.output_fs, 
+                                  blocksize=settings.chunk_size, 
+                                  device=settings.output_device_index, 
+                                  channels=settings.output_channels, 
+                                  dtype=dtype, 
+                                  latency=None, 
+                                  extra_settings=None, 
+                                  callback=None, 
+                                  finished_callback=None, 
+                                  clip_off=None, 
+                                  dither_off=None, 
+                                  never_drop_input=None, 
+                                  prime_output_buffers_using_stream_callback=None) 
+    output_stream.start()
     return output_stream
