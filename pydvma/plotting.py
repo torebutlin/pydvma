@@ -590,6 +590,7 @@ class PlotData():
         f = sono_data_list[n_set].freq_axis
         t = sono_data_list[n_set].time_axis
         S = sono_data_list[n_set].sono_data[:,:,n_chan]
+        S[S==0] = 1e-16 # avoid log10(0) warnings
         SdB = 20*np.log10(np.abs(S))
         vmax = SdB.max()
         vmin = np.max([SdB.min(),vmax-db_range])

@@ -2,6 +2,7 @@ from . import acquisition
 
 import numpy as np
 import pprint as pp
+import time
 
 try:
     import pyaudio
@@ -174,13 +175,13 @@ class Recorder(object):
         #note the +2s to match up the length of stored_num_chunks
         #formula used from the np.fft.rfft documentation
         self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data,axis=0))
-        
-    
+        # self.list_dt = []
     
     def callback(self, in_data, frame_count, time_info, status):
         '''
         Obtains data from the audio stream.
         '''
+        t0 = time.time()
         self.osc_data_chunk = (np.frombuffer(in_data, dtype=eval('np.int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
         self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
         for i in range(self.settings.channels):
@@ -202,6 +203,8 @@ class Recorder(object):
         if np.any(np.abs(trigger_check)>self.settings.pretrig_threshold):
             # freeze updating stored_time_data
             self.trigger_detected = True
+
+        # self.list_dt += [time.time()-t0]
 
         # return in_data
     
@@ -228,7 +231,7 @@ class Recorder(object):
                                       device=settings.device_index, 
                                       channels=settings.channels, 
                                       dtype=dtype, 
-                                      latency=None, 
+                                      latency='high', 
                                       extra_settings=None, 
                                       callback=self.callback, 
                                       finished_callback=None, 

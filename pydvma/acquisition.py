@@ -28,7 +28,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
         rec = streams.REC
         
     
-    rec.trigger_detected = False
+    streams.REC.trigger_detected = False
     
     # Stream is slightly longer than settings.stored_time, so need to add delay
     # from initialisation to allow stream to fill up and prevent zeros at start
@@ -53,14 +53,17 @@ def log_data(settings,test_name=None,rec=None, output=None):
         
             
         # make copy of data
-        stored_time_data_copy = np.copy(rec.stored_time_data)
-        number_samples = np.int64(rec.settings.stored_time * rec.settings.fs)
+        stored_time_data_copy = np.copy(streams.REC.stored_time_data)
+        number_samples = np.int64(streams.REC.settings.stored_time * streams.REC.settings.fs)
         
         stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
         MESSAGE += 'Logging complete.\n'
         print(MESSAGE)
 
         if output is not None:
+            if settings.output_device_driver == 'soundcard':
+                s.stop()
+                s.close()
             if settings.output_device_driver == 'nidaq':
                 s.WaitUntilTaskDone(settings.stored_time+5)
                 s.StopTask()
@@ -68,41 +71,46 @@ def log_data(settings,test_name=None,rec=None, output=None):
 
         
     else:
-        rec.__init__(settings) # zeros buffers so looks for trigger in fresh data
-        rec.trigger_detected = False # somehow this can be true even after previous call
-        rec.trigger_first_detected_message = True
+        streams.REC.__init__(settings) # zeros buffers so looks for trigger in fresh data
+        streams.REC.trigger_detected = False # somehow this can be true even after previous call
+        streams.REC.trigger_first_detected_message = True
         
         MESSAGE = 'Waiting for trigger on channel {}.\n'.format(settings.pretrig_channel)
         print(MESSAGE)
         
         start_output_flag = True
         t0 = time.time()
-        while (time.time()-t0 < settings.pretrig_timeout) and not rec.trigger_detected:
+        while (time.time()-t0 < settings.pretrig_timeout) and not streams.REC.trigger_detected:
             if (output is not None) and (start_output_flag == True): # start output within loop, but only once!
                 time.sleep(1)
+                MESSAGE = 'Starting output signal.\n'
+                print(MESSAGE)
                 s = output_signal(settings,output)
                 start_output_flag = False
-                MESSAGE += 'Starting output signal.\n'
+
             time.sleep(0.2)
         if (time.time()-t0 > settings.pretrig_timeout):
-            MESSAGE += 'Trigger not detected within timeout of {} seconds.\n'.format(settings.pretrig_timeout)
+            MESSAGE = 'Trigger not detected within timeout of {} seconds.\n'.format(settings.pretrig_timeout)
             print(MESSAGE)
         
         # make copy of data
-        stored_time_data_copy = np.copy(rec.stored_time_data)
-        trigger_check = rec.stored_time_data[(rec.settings.chunk_size):(2*rec.settings.chunk_size),rec.settings.pretrig_channel]
-        detected_sample = rec.settings.chunk_size + np.where(np.abs(trigger_check) > rec.settings.pretrig_threshold)[0][0]
-        number_samples = np.int(rec.settings.stored_time * rec.settings.fs)
-        start_index = detected_sample - rec.settings.pretrig_samples
+        stored_time_data_copy = np.copy(streams.REC.stored_time_data)
+        trigger_check = stored_time_data_copy[(settings.chunk_size):(2*settings.chunk_size),settings.pretrig_channel]
+        detected_sample = settings.chunk_size + np.where(np.abs(trigger_check) > settings.pretrig_threshold)[0][0]
+        number_samples = np.int(settings.stored_time * settings.fs)
+        start_index = detected_sample - settings.pretrig_samples
         end_index   = start_index + number_samples
-        rec.trigger_detected = False # don't start stream again until sorted out trigger detection
+        streams.REC.trigger_detected = False # don't start stream again until sorted out trigger detection
         
         stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
         
-        MESSAGE += 'Logging complete.\n'
+        MESSAGE = 'Logging complete.\n'
         print(MESSAGE)
 
         if output is not None:
+            if settings.output_device_driver == 'soundcard':
+                s.stop()
+                s.close()
             if settings.output_device_driver == 'nidaq':
                 s.WaitUntilTaskDone(settings.stored_time+5)
                 s.StopTask()
@@ -114,8 +122,18 @@ def log_data(settings,test_name=None,rec=None, output=None):
     t_samp = n_samp*dt
     time_axis = np.arange(0,t_samp,dt)
     
-    if settings.use_output_as_ch0 == True:
-        stored_time_data_copy = np.concatenate((output,stored_time_data_copy),axis=1)
+    if (output is not None) and (settings.use_output_as_ch0 == True):
+        stored_output = np.zeros((n_samp,len(output[0,:])))
+        n_start = settings.pretrig_samples
+        if n_start is None:
+            n_start = 0
+        n_end = np.copy(n_samp)
+        if len(output[:,0]) >= (n_end-n_start):
+            stored_output[n_start:n_end,:] = output[:n_end-n_start,:]
+        elif len(output[:,0]) < (n_end-n_start):
+            stored_output[n_start:len(output[:,0])+n_start,:] = output[:,:]
+            
+        stored_time_data_copy = np.concatenate((stored_output,stored_time_data_copy),axis=1)
     
     timedata = datastructure.TimeData(time_axis,stored_time_data_copy,settings,timestamp=t,timestring=timestring,test_name=test_name)
     
@@ -127,6 +145,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
     if np.any(np.abs(stored_time_data_copy) > 0.95):
         MESSAGE += 'WARNING: Data may be clipped'
         print(MESSAGE)
+    
     
     return dataset
     
@@ -247,13 +266,13 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
 
 def stream_snapshot(rec):
     
-    time_data_copy = np.copy(rec.osc_time_data)
-    time_axis_copy = np.copy(rec.osc_time_axis)
+    time_data_copy = np.copy(streams.REC.osc_time_data)
+    time_axis_copy = np.copy(streams.REC.osc_time_axis)
     
     t = datetime.datetime.now()
     timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)    
 
-    time_data = datastructure.TimeData(time_axis_copy,time_data_copy,rec.settings,timestamp=t,timestring=timestring,test_name='stream_snapshot')
+    time_data = datastructure.TimeData(time_axis_copy,time_data_copy,streams.REC.settings,timestamp=t,timestring=timestring,test_name='stream_snapshot')
     
     
     return time_data
