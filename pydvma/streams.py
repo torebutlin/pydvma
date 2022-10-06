@@ -4,12 +4,12 @@ import numpy as np
 import pprint as pp
 import time
 
-try:
-    import pyaudio
-except ImportError:
-    pyaudio = None
-except NotImplementedError:
-    pyaudio = None
+# try:
+#     import pyaudio
+# except ImportError:
+#     pyaudio = None
+# except NotImplementedError:
+#     pyaudio = None
     
 try:
     import sounddevice as sd
