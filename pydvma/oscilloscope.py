@@ -328,7 +328,7 @@ class Oscilloscope():
                     file.save_data(d,filename,overwrite_without_prompt=True)
                     self.data_saved_counter += 1
 
-class KeyPressWindow(pg.GraphicsWindow):
+class KeyPressWindow(pg.GraphicsLayoutWidget):
     '''
     A subclass of pyQtGraph GraphicsWindow that emits a signal when a key is pressed.
 

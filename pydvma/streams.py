@@ -154,7 +154,7 @@ def get_devices_soundcard():
 #     return device_name_list
 
 
-#%% pyaudio stream
+#%% sounddevice stream
 class Recorder(object):
     def __init__(self,settings):
         self.settings = settings
@@ -182,7 +182,8 @@ class Recorder(object):
         Obtains data from the audio stream.
         '''
         t0 = time.time()
-        self.osc_data_chunk = (np.frombuffer(in_data, dtype=eval('np.int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
+        # self.osc_data_chunk = (np.frombuffer(in_data, dtype='int'+str(self.settings.nbits))/2**(self.settings.nbits-1))
+        self.osc_data_chunk = np.copy(in_data)
         self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
         for i in range(self.settings.channels):
             self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
@@ -225,13 +226,13 @@ class Recorder(object):
         settings.device_name = sd.query_devices()[settings.device_index]['name']
         settings.device_full_info = sd.query_devices()[settings.device_index]
         
-        dtype = eval('np.int'+str(self.settings.nbits))
-        self.audio_stream = sd.RawInputStream(samplerate=settings.fs, 
+        dtype = 'float32'
+        self.audio_stream = sd.InputStream(samplerate=settings.fs, 
                                       blocksize=settings.chunk_size, 
                                       device=settings.device_index, 
                                       channels=settings.channels, 
                                       dtype=dtype, 
-                                      latency='high', 
+                                      latency='low', 
                                       extra_settings=None, 
                                       callback=self.callback, 
                                       finished_callback=None, 
@@ -393,14 +394,14 @@ class Recorder_NI(object):
         '''
         Obtains data from the audio stream.
         '''
-        in_data = np.zeros(self.settings.chunk_size*self.settings.channels,dtype = np.int16)
+        in_data = np.zeros(self.settings.chunk_size*self.settings.channels,dtype = 'int16')
         read = pdaq.int32()
         self.audio_stream.ReadBinaryI16(self.settings.chunk_size,10.0,pdaq.DAQmx_Val_GroupByScanNumber,
                            in_data,self.settings.chunk_size*self.settings.channels,pdaq.byref(read),None)
 
         data_array = in_data.reshape((-1,self.settings.channels))/(2**15)
             
-        self.osc_data_chunk = data_array#(np.frombuffer(in_data, dtype=eval('np.int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
+        self.osc_data_chunk = data_array#(np.frombuffer(in_data, dtype=eval('int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
         #self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
         for i in range(self.settings.channels):
             self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
@@ -480,7 +481,7 @@ class Recorder_NI(object):
             pass
         
         # Make AutoRegN be one of set of possible numbers that works with nidaqmx
-        AutoRegN = np.int16([10,100,1000])
+        AutoRegN = int([10,100,1000])
         check = np.where(AutoRegN <= settings.chunk_size)
         AutoRegN = AutoRegN[check[0][-1]]
         
@@ -531,7 +532,7 @@ class Recorder_NI(object):
 #        if settings.fs == settings.output_fs:
 #            N_input = N_output
 #        else:
-#            N_input = np.int(N_output * settings.fs / settings.output_fs)
+#            N_input = int(N_output * settings.fs / settings.output_fs)
 #        
 #        self.input_stream = Task()
 #        self.input_stream.CreateAIVoltageChan(self.set_channels(),"",
@@ -603,9 +604,9 @@ def setup_output_NI(settings,output):
     return output_stream
 
 def setup_output_soundcard(settings):
-    dtype = np.float32
+    dtype = 'float32'
 
-    output_stream = sd.RawOutputStream(samplerate=settings.output_fs, 
+    output_stream = sd.OutputStream(samplerate=settings.output_fs, 
                                   blocksize=settings.chunk_size, 
                                   device=settings.output_device_index, 
                                   channels=settings.output_channels, 

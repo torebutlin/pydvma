@@ -9,25 +9,32 @@ import os.path
 import numpy as np
 import scipy.io as io
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtGui, QtWidgets
+from PyQt5 import QtWidgets
+from PyQt5.QtWidgets import QFileDialog
 
 
-def load_data(filename=None):
+def load_data(parent=None, filename=None):
     '''
     Loads dataset from filename, or displays a dialog if no argument provided.
     '''
     if filename is None:
-        wid = QtWidgets.QWidget()
-        filename, _ = QtGui.QFileDialog.getOpenFileName(wid, 'Open data file', '', '*.npy')
+        # wid = QtWidgets.QWidget()
+        filename, _ = QFileDialog.getOpenFileName(parent, 'Open data file', '', '*.npy')
+        
+        # file_dialog = QFileDialog(parent, 'Open data file', '', '*.npy')
+        # file_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        # file_dialog.exec()
+        # filename = file_dialog.selectedFiles()
+
         if not filename:
             return None
 
-    d = np.load(filename,allow_pickle=True)
+    d = np.load(filename,allow_pickle=True,fix_imports=True)
     dataset = d[0]
     return dataset
 
 
-def save_data(dataset, filename=None, overwrite_without_prompt=False):
+def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=False):
     '''
     Saves dataset class to file 'filename.npy', or provides dialog if no
     filename provided.
@@ -44,8 +51,7 @@ def save_data(dataset, filename=None, overwrite_without_prompt=False):
 
     # If filename not specified, provide dialog
     if filename is None:
-        wid = QtWidgets.QWidget()
-        filename, _ = QtGui.QFileDialog.getSaveFileName(wid, 'Save dataset', '', '*.npy')
+        filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.npy')
         if not filename:
             # No filename chosen, give up on saving
             print('Save cancelled')
@@ -73,7 +79,7 @@ def save_data(dataset, filename=None, overwrite_without_prompt=False):
 
 
 
-def save_fig(plot, figsize=None, filename=None, overwrite_without_prompt=False):
+def save_fig(plot, parent=None, figsize=None, filename=None, overwrite_without_prompt=False):
     '''
     Saves figure to file 'filename.png' and 'filename.pdf', or provides dialog if no
     filename provided.
@@ -90,8 +96,7 @@ def save_fig(plot, figsize=None, filename=None, overwrite_without_prompt=False):
 
     # If filename not specified, provide dialog
     if filename is None:
-        wid = QtWidgets.QWidget()
-        filename, _ = QtGui.QFileDialog.getSaveFileName(wid, 'Save figure', '')
+        filename, _ = QFileDialog.getSaveFileName(parent, 'Save figure', '')
         if not filename:
             # No filename chosen, give up on saving
             print('Save cancelled')
@@ -134,7 +139,7 @@ def save_fig(plot, figsize=None, filename=None, overwrite_without_prompt=False):
 
 
 #%% EXPORT TO MATLAB
-def export_to_matlab(dataset, filename=None, overwrite_without_prompt=False):
+def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prompt=False):
     '''
     Exports dataset class to file 'filename.mat', or provides dialog if no
     filename provided.
@@ -239,8 +244,7 @@ def export_to_matlab(dataset, filename=None, overwrite_without_prompt=False):
 
     # If filename not specified, provide dialog
     if filename is None:
-        wid = QtWidgets.QWidget()
-        filename, _ = QtGui.QFileDialog.getSaveFileName(wid, 'Save dataset', '', '*.mat')
+        filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.mat')
         if not filename:
             # No filename chosen, give up on saving
             print('Save cancelled')
@@ -269,7 +273,7 @@ def export_to_matlab(dataset, filename=None, overwrite_without_prompt=False):
 
 
 #%% EXPORT TO MATLAB JWLOGGER
-def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=False):
+def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_without_prompt=False):
     '''
     Exports dataset class to file 'filename.mat', or provides dialog if no
     filename provided.
@@ -305,9 +309,9 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
                 counter += 1
                 time_data_all[:,counter] = np.interp(t,time_data.time_axis,time_data.time_data[:,i],right=0)
                 
-        data_jwlogger['buflen'] = np.float(np.size(t))
+        data_jwlogger['buflen'] = float(np.size(t))
         data_jwlogger['indata'] = time_data_all
-        data_jwlogger['tsmax'] = np.float(t[-1])
+        data_jwlogger['tsmax'] = float(t[-1])
     else:
         n_time = 0
         time_data_all = 0
@@ -340,8 +344,8 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
                 freq_data_all[zero_test,counter] = np.min(np.abs(freq_data_all[:,counter])) # handle zeros
         
         # convert
-        data_jwlogger['freq'] = np.float(fs_freq)
-        data_jwlogger['npts'] = np.float(npts)
+        data_jwlogger['freq'] = float(fs_freq)
+        data_jwlogger['npts'] = float(npts)
         data_jwlogger['yspec'] = freq_data_all
     else:
         n_freq = 0
@@ -375,8 +379,8 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
                 tf_data_all[zero_test,counter] = np.min(np.abs(tf_data_all[:,counter])) # handle zeros
         
         # convert
-        data_jwlogger['freq'] = np.float(fs_tf)
-        data_jwlogger['npts'] = np.float(npts)
+        data_jwlogger['freq'] = float(fs_tf)
+        data_jwlogger['npts'] = float(npts)
         data_jwlogger['yspec'] = tf_data_all
     else:
         n_tf = 0
@@ -399,8 +403,7 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
 
     # If filename not specified, provide dialog
     if filename is None:
-        wid = QtWidgets.QWidget()
-        filename, _ = QtGui.QFileDialog.getSaveFileName(wid, 'Save dataset', '', '*.mat')
+        filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.mat')
         if not filename:
             # No filename chosen, give up on saving
             print('Save cancelled')
@@ -427,7 +430,7 @@ def export_to_matlab_jwlogger(dataset, filename=None, overwrite_without_prompt=F
     return filename
 
 
-def export_to_csv(data_list, filename=None, overwrite_without_prompt=False):
+def export_to_csv(data_list, parent=None, filename=None, overwrite_without_prompt=False):
     '''
     Exports data to file 'filename.csv', or provides dialog if no
     filename provided.
@@ -467,8 +470,7 @@ def export_to_csv(data_list, filename=None, overwrite_without_prompt=False):
 
     # If filename not specified, provide dialog
     if filename is None:
-        wid = QtWidgets.QWidget()
-        filename, _ = QtGui.QFileDialog.getSaveFileName(wid, 'Save dataset', '', '*.csv')
+        filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.csv')
         if not filename:
             # No filename chosen, give up on saving
             print('Save cancelled')

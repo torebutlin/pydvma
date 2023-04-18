@@ -201,7 +201,7 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     #time_selected = timedata.time_axis[selection]
     
     N_samples = len(data_selected[:,0])
-    nperseg = np.int32(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
+    nperseg = int(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
     freqlength = len(np.fft.rfftfreq(nperseg))
     
 
@@ -402,8 +402,8 @@ def clean_impulse(time_data, ch_impulse=0):
         
         
         N = y2-y1
-        b = np.int(3*N/2) #half cosine estimate
-        end = np.int(yi_max + b/2)
+        b = int(3*N/2) #half cosine estimate
+        end = int(yi_max + b/2)
         b = 10*b # less agressive roll off
         #print(time_data.settings.fs/b)
     
@@ -440,7 +440,7 @@ def calculate_sonogram(time_data, nperseg=None):
     
     y = np.copy(time_data.time_data) # handles all channels simultaneously
     if nperseg == None:
-        nperseg = np.int(len(time_data.time_axis)/50) #roughly 50 fft's per time-series not counting overlap
+        nperseg = int(len(time_data.time_axis)/50) #roughly 50 fft's per time-series not counting overlap
     f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,window='hann',nperseg=nperseg,noverlap=nperseg//4,axis=0,mode='complex')
     
     # put channel axis at end

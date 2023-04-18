@@ -13,12 +13,12 @@ import pyqtgraph as pg
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-try:
-    import pyaudio
-except ImportError:
-    pyaudio = None
-except NotImplementedError:
-    pyaudio = None
+# try:
+#     import pyaudio
+# except ImportError:
+#     pyaudio = None
+# except NotImplementedError:
+#     pyaudio = None
 
 
 try:
@@ -84,53 +84,49 @@ class MySettings(object):
                  use_output_as_ch0=False):
         
         #INPUT SETTINGS
-        self.fs=np.int(fs)
-        self.channels=np.int(channels)
-        self.stored_time=np.float(stored_time)
+        self.fs=int(fs)
+        self.channels=int(channels)
+        self.stored_time=float(stored_time)
         
-        self.pretrig_samples=pretrig_samples
-        self.pretrig_threshold=np.float(pretrig_threshold)
-        self.pretrig_channel=np.int(pretrig_channel)
-        self.pretrig_timeout=np.float(pretrig_timeout)
+        if pretrig_samples is not None:
+            self.pretrig_samples=int(pretrig_samples)
+        
+        self.pretrig_threshold=float(pretrig_threshold)
+        self.pretrig_channel=int(pretrig_channel)
+        self.pretrig_timeout=float(pretrig_timeout)
         
         self.device_driver=device_driver
         self.device_index=device_index
         
         
-        #OUTPUT SETTINGS
-        self.output_fs = output_fs
-        self.output_channels = output_channels
-        self.output_device_driver = output_device_driver
-        self.output_device_index = output_device_index
-        self.use_output_as_ch0 = use_output_as_ch0
-        
         # ADVANCED SETTINGS
-        self.VmaxNI=np.float(VmaxNI)
+        self.VmaxNI=float(VmaxNI)
         self.NI_mode=NI_mode
-        self.chunk_size=np.int(chunk_size)
-        self.num_chunks=np.int(num_chunks)
-        self.viewed_time=viewed_time
-        self.nbits=np.int(nbits)
-        self.init_view_time=init_view_time
-        self.init_view_freq=init_view_freq
-        self.init_view_levels=init_view_levels
+        self.chunk_size=int(chunk_size)
+        self.num_chunks=int(num_chunks)
+        self.viewed_time=float(viewed_time)
+        self.nbits=int(nbits)
+        self.init_view_time=bool(init_view_time)
+        self.init_view_freq=bool(init_view_freq)
+        self.init_view_levels=bool(init_view_levels)
         
-        
+        #OUTPUT SETTINGS
         if (output_fs is None) or (output_fs == 'None'):
-            self.output_fs = np.int(self.fs)
+            self.output_fs = int(self.fs)
         else:
-            self.output_fs = np.int(output_fs)
+            self.output_fs = int(output_fs)
             
         if (output_channels is None) or (output_channels == 'None'):
-            self.output_channels = np.int(1)
+            self.output_channels = int(1)
         else:
-            self.output_channels = np.int(output_channels)
+            self.output_channels = int(output_channels)
             
         # if output device driver not specified then use same as input device
         if (output_device_driver == None) or (output_device_driver == 'None'):
             output_device_driver = device_driver
             self.output_device_driver = output_device_driver
-            
+
+        self.use_output_as_ch0 = bool(use_output_as_ch0)
             
         if (device_driver == 'soundcard') and ((device_index == None) or (device_index == 'None')):
             try:
@@ -142,7 +138,7 @@ class MySettings(object):
         elif (device_driver == 'nidaq') and ((device_index == None) or (device_index == 'None')):
             self.device_index = 0
         else:
-            self.device_index = np.int(device_index)
+            self.device_index = int(device_index)
                 
         # set output device index to defaults if not specified
         if (output_device_driver == 'soundcard') and ((output_device_index == None) or  (output_device_index == 'None')):
@@ -160,21 +156,21 @@ class MySettings(object):
         elif (output_device_driver == 'nidaq') and ((output_device_index == None) or (output_device_index == 'None')):
             self.output_device_index = 0
         else:
-            self.output_device_index = np.int(output_device_index)
+            self.output_device_index = int(output_device_index)
         
         ### derived settings
         if (viewed_time != None) and (viewed_time != 'None'):
-            self.viewed_time = np.float(viewed_time)
-            self.num_chunks = np.int(np.ceil(self.viewed_time*self.fs/self.chunk_size))
+            self.viewed_time = float(viewed_time)
+            self.num_chunks = int(np.ceil(self.viewed_time*self.fs/self.chunk_size))
         else:
             self.viewed_time = None
         
         if self.chunk_size < 10:
-            self.chunk_size = np.int16(10)
+            self.chunk_size = int(10)
             print('Resetting ''chunk_size'' to minimum value of 10')
             
         try:    
-            self.format = eval('np.int'+str(self.nbits))
+            self.format = eval('int'+str(self.nbits))
         except:
             pass
         
@@ -183,8 +179,8 @@ class MySettings(object):
         if (pretrig_samples == None) or (pretrig_samples == 'None'):
             self.pretrig_samples = None
         else:
-            self.pretrig_samples = np.int(pretrig_samples)
-            if self.pretrig_samples > chunk_size:
+            self.pretrig_samples = int(pretrig_samples)
+            if self.pretrig_samples > self.chunk_size:
                 raise Exception('pretrig_samples must be less than or equal to chunk_size (chunk_size={}).'.format(self.chunk_size))
         
             

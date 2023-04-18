@@ -9,12 +9,23 @@ Created on Tue Aug 28 19:04:14 2018
 
 from . import options
 from . import datastructure
+# from . import gui
 
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.rcParams.update({'font.size': 10,'font.family':'serif'})
 from matplotlib.ticker import AutoLocator
+
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+
+from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout
+from PyQt5.QtCore import Qt
+from PyQt5 import QtGui
+
+import time
 
 LINE_ALPHA = 0.9
 
@@ -41,9 +52,47 @@ class PlotSonoData():
     
 
 class PlotData():
-    def __init__(self,sets='all',channels='all',figsize=(9,5),canvas=None,fig=None):
+    def __init__(self,window_title=None,sets='all',channels='all',figsize=(9,5),canvas=None,fig=None):
         if canvas==None:
-            self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
+            # self.fig = Figure(figsize=(9, 7),dpi=100)
+            # self.canvas = FigureCanvas(self.fig)
+            # self.toolbar = NavigationToolbar(self.canvas,None)
+            # self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
+            
+            self.plot_window = QWidget()
+            self.plot_window.setStyleSheet("background-color: white")
+            self.plot_window.setWindowTitle('Figure')
+            # self.plot_window.setWindowIcon(QtGui.QIcon('pydvma/icon.png'))
+            
+            self.fig = Figure(figsize=(9, 5),dpi=100)
+            self.canvas = FigureCanvas(self.fig)
+            self.toolbar = NavigationToolbar(self.canvas,None)
+            self.toolbar.setOrientation(Qt.Orientation.Horizontal)
+            self.ax = self.canvas.figure.subplots()
+            
+            if window_title is not None:
+                self.label_figure = QLabel(window_title)
+            else:
+                self.label_figure = QLabel('')
+
+            self.label_figure.setMaximumHeight(20)
+            self.label_figure.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # widgets to layout
+            self.layout_figure = QVBoxLayout()
+            self.layout_figure.addWidget(self.label_figure)
+            self.layout_figure.addWidget(self.canvas)
+            self.layout_figure.addWidget(self.toolbar)
+            
+            self.plot_window.setLayout(self.layout_figure)
+            
+            
+            # self.plot_window.showMinimized()
+            # time.sleep(0.6)
+            self.plot_window.show()
+            self.plot_window.showNormal()
+            self.plot_window.raise_()
+            # self.gui.app.exec()
         else:
             self.fig = fig
             self.canvas = canvas
@@ -61,8 +110,8 @@ class PlotData():
 #        self.ax.set_zorder(self.ax2.get_zorder()+1)
 #        self.ax.patch.set_visible(False)
 
-        self.ax.lines.clear()
-        self.ax2.lines.clear()
+        [line.remove() for line in self.ax.lines]
+        [line.remove() for line in self.ax2.lines]
         self.line_listbyset = []
         self.line2_listbyset = []
         self.pcolor_sono = None
@@ -122,9 +171,9 @@ class PlotData():
                 
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
-                self.ax.grid(b=True, which='minor',axis='x',alpha=0.2)
+                self.ax.grid(visible=True, which='minor',axis='x',alpha=0.2)
             else:
-                self.ax.grid(b=False)
+                self.ax.grid(visible=False)
             
         elif data_list.__class__.__name__ == 'TfDataList':
             if (plot_type == 'Amplitude (dB)') or (plot_type == None):
@@ -155,9 +204,9 @@ class PlotData():
             
             self.ax.set_xscale(xlinlog)
             if 'log' in xlinlog:
-                self.ax.grid(b=True, which='minor',axis='x',alpha=0.2)
+                self.ax.grid(visible=True, which='minor',axis='x',alpha=0.2)
             else:
-                self.ax.grid(b=False)
+                self.ax.grid(visible=False)
             
             # setup twin axis
             # don't plot coherence if no data, or if all coherence is one
@@ -201,8 +250,8 @@ class PlotData():
             # option to make lines fainter when more lines... needs some tweaking to make feel right
             LINE_ALPHA = 1-1/self.ch_total # make deselected lines fainter if more channels
         
-        self.ax.lines.clear()
-        self.ax2.lines.clear()
+        [line.remove() for line in self.ax.lines]
+        [line.remove() for line in self.ax2.lines]
         self.line_listbyset = []
         self.line2_listbyset = []
         
@@ -375,10 +424,10 @@ class PlotData():
                 if any(rem==0):
                     remi = np.where(rem==0)[0]
                     remi = remi[0]
-                    ncol = np.int(self.ch_total / col_sizes[remi])
+                    ncol = int(self.ch_total / col_sizes[remi])
                 else:
                     remi = np.argmax(rem)
-                    ncol = np.int(np.ceil(self.ch_total/ col_sizes[remi]))
+                    ncol = int(np.ceil(self.ch_total/ col_sizes[remi]))
             else:
                 ncol = 1
                 
@@ -582,8 +631,8 @@ class PlotData():
         if self.ax.get_legend() is not None:
             self.ax.get_legend().set_visible(False)
         
-        self.ax.lines.clear()
-        self.ax2.lines.clear()
+        [line.remove() for line in self.ax.lines]
+        [line.remove() for line in self.ax2.lines]
         self.line_listbyset = []
         self.line2_listbyset = []
         

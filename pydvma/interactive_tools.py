@@ -741,7 +741,7 @@ class InteractiveView():
         
         # ASSEMBLE
         display(HBox(self.buttons_load))
-        self.p = plotting.PlotData()
+        self.p = plotting.PlotData(window_title=None)
         display(HBox(self.text_axes))
         display(HBox([self.item_blank_label,self.item_legend_label]+self.buttons_legend+[self.buttons_legend_toggle]))
         display(HBox([group1,group2,group3]))

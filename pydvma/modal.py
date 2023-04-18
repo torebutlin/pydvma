@@ -135,7 +135,7 @@ def f_residual(x,f,G0,measurement_type):
 #%%
 def f_TF_all_channels(x,f,measurement_type):
 
-    N_tfs = np.int((len(x)-2)/4)
+    N_tfs = int((len(x)-2)/4)
     
     fn = x[0]
     zn = x[1]
@@ -300,7 +300,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
 #%%% Reconstruction
 def unpack(x):
     # unpacks modal parameters into set of variables
-    N_tfs = np.int((len(x)-2)/4)
+    N_tfs = int((len(x)-2)/4)
     
     fn = x[0]
     zn = x[1]
@@ -313,7 +313,7 @@ def unpack(x):
 
 def unpack_matrix(X):
     # unpacks modal parameters into set of variables
-    N_tfs = np.int((len(X[0,:])-2)/4)
+    N_tfs = int((len(X[0,:])-2)/4)
 
     fn = X[:,0]
     zn = X[:,1]
@@ -350,7 +350,7 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc'):
     Reconstructs transfer functions from modal_data and returns TfData object
     '''
     G = 0
-    N_tfs = np.int((len(modal_data.M[0,:])-2)/4)
+    N_tfs = int((len(modal_data.M[0,:])-2)/4)
     for n_row in range(len(modal_data.M[:,0])):
         xn = modal_data.M[n_row,:]
         xn[2+2*N_tfs:] = 0 #don't want local residual fits for global fits - i.e. rk and rm

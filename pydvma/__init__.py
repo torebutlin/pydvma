@@ -10,3 +10,6 @@ from .analysis import calculate_tf, calculate_tf_averaged, multiply_by_power_of_
 from .streams import Recorder, Recorder_NI, start_stream, REC, setup_output_NI, setup_output_soundcard, list_available_devices, get_devices_NI, get_devices_soundcard
 from .modal import modal_fit_single_channel, modal_fit_all_channels
 from .gui import Logger
+# import faulthandler
+# faulthandler.enable()
+# from .gui_tk_test import Logger

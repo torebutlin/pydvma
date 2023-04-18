@@ -16,7 +16,7 @@ import uuid
 import copy
 
 #%% version
-VERSION = '0.8.5' # keep in sync with setup.py
+VERSION = '0.9.0' # keep in sync with setup.py
 
 def update_dataset(dataset):
     dataset_new = DataSet()
@@ -308,25 +308,25 @@ class DataSet():
     
     def plot_time_data(self,sets='all',channels='all'):
         global pt
-        pt = plotting.PlotData()
+        pt = plotting.PlotData(window_title='Time Data')
         pt.update(self.time_data_list,sets=sets,channels=channels)
         return pt
         
     def plot_freq_data(self,sets='all',channels='all'):
         global pf
-        pf = plotting.PlotData()
+        pf = plotting.PlotData(window_title='Frequency Data')
         pf.update(self.freq_data_list,sets=sets,channels=channels)
         return pf
         
     def plot_tf_data(self,sets='all',channels='all'):
         global ptf
-        ptf = plotting.PlotData()
+        ptf = plotting.PlotData(window_title='Transfer Function Data')
         ptf.update(self.tf_data_list,sets=sets,channels=channels)
         return ptf
     
     def plot_sono_data(self,n_set=0, n_chan=0, db_range=60):
         global ptf
-        ptf = plotting.PlotData()
+        ptf = plotting.PlotData(window_title='Sonogram Data')
         ptf.update_sonogram(self.sono_data_list,n_set=n_set,n_chan=n_chan, db_range=db_range)
         return ptf
     

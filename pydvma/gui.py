@@ -1,6 +1,7 @@
+from PyQt5.QtWidgets import QMainWindow
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider, QMessageBox
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame, QFormLayout, QSizePolicy
-from PyQt5.QtWidgets import QToolTip
+from PyQt5.QtWidgets import QToolTip, QFileDialog
 from PyQt5.QtCore import Qt, QThread, Signal, QTimer, QObject
 from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
 from PyQt5 import QtGui
@@ -33,25 +34,25 @@ import sys, os
 class BlueButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: hsl(240, 170, 255)")
+        self.setStyleSheet("background-color: hsv(240, 170, 255)")
         self.setText(text) 
 
 class GreenButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: hsl(120, 170, 255);")
+        self.setStyleSheet("background-color: hsv(120, 170, 255);")
         self.setText(text)
 
 class RedButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: hsl(0, 170, 255)")
+        self.setStyleSheet("background-color: hsv(0, 170, 255)")
         self.setText(text)
         
 class OrangeButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: hsl(30, 170,255)")
+        self.setStyleSheet("background-color: hsv(30, 170,255)")
         self.setText(text)
 
 class QHLine(QFrame):
@@ -63,7 +64,7 @@ class QHLine(QFrame):
 class newComboBox(QComboBox):
     def __init__(self,items_list):
         super().__init__()
-        self.setStyleSheet('selection-background-color: hsl(240, 170, 255)')
+        self.setStyleSheet('selection-background-color: hsv(240, 170, 255)')
         self.addItems(items_list)
         
 class boldLabel(QLabel):
@@ -98,16 +99,17 @@ class PreviewWindow():
         self.preview_window = QWidget()
         self.preview_window.setStyleSheet("background-color: white")
         self.preview_window.setWindowTitle('Output Signal Preview')
-        
+        self.preview_window.setWindowIcon(QtGui.QIcon('pydvma/icon.png'))
+
         self.fig = Figure(figsize=(9, 5),dpi=100)
         self.canvas = FigureCanvas(self.fig)
         self.toolbar = NavigationToolbar(self.canvas,None)
-        self.toolbar.setOrientation(Qt.Horizontal)
+        self.toolbar.setOrientation(Qt.Orientation.Horizontal)
         self.p = plotting.PlotData(canvas=self.canvas,fig=self.fig)
         
         self.label_figure = boldLabel(title)
         self.label_figure.setMaximumHeight(20)
-        self.label_figure.setAlignment(Qt.AlignCenter)
+        self.label_figure.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # widgets to layout
         self.layout_figure = QVBoxLayout()
@@ -121,7 +123,12 @@ class PreviewWindow():
         time.sleep(0.6)
         self.preview_window.show()
         self.preview_window.showNormal()
+        self.preview_window.raise_()
         
+app = QApplication(sys.argv)
+app.setStyle(QStyleFactory.create('Fusion'))
+app.setWindowIcon(QtGui.QIcon('pydvma/icon.png'))
+
 class Logger():
         
     def __init__(self,settings=None,test_name=None,default_window=None):
@@ -165,14 +172,14 @@ class Logger():
         self.fn_in_range = np.array([])
         
         # SETUP GUI
-        self.app = QApplication(sys.argv)
-        self.app.setStyle(QStyleFactory.create('Fusion'))
-        
+        # self.app = app
+        # self.app.setStyle(QStyleFactory.create('Fusion'))
         self.window = QWidget()
         self.window.setStyleSheet("background-color: white")
         self.window.setWindowTitle('Logger')
-        self.window.setWindowIcon(QtGui.QIcon('icon.png'))
-
+        self.window.setWindowIcon(QtGui.QIcon('pydvma/icon.png'))
+        # self.window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        
         # initiate all interface tool frames
         self.setup_frame_tools()
         self.setup_frame_input()
@@ -182,10 +189,11 @@ class Logger():
         
         # arrange frames and create window
         self.setup_layout_main()
-        self.window.showMinimized()
-        time.sleep(0.6)
-        self.window.show()
         self.window.showNormal()
+        # time.sleep(0.6)
+        self.window.show()
+        self.window.raise_()
+        # self.window.showNormal()
         
         
         # start stream if already passed settings
@@ -195,17 +203,18 @@ class Logger():
         self.stream_check_timer.timeout.connect(self.check_stream) # connect after stream started
         self.levels_timer.timeout.connect(self.show_levels) # connect after stream started
         
-        # sys.exit(self.app.exec_())
+        app.exec()
+
         
     def setup_layout_main(self):
 
         # organise frames
-        self.splitter_mid = QSplitter(Qt.Vertical)
+        self.splitter_mid = QSplitter(Qt.Orientation.Vertical)
         self.splitter_mid.addWidget(self.frame_input)
         self.splitter_mid.addWidget(self.frame_figure)
         self.splitter_mid.addWidget(self.frame_save)
         
-        self.splitter_all = QSplitter(Qt.Horizontal)
+        self.splitter_all = QSplitter(Qt.Orientation.Horizontal)
         self.splitter_all.addWidget(self.frame_axes)
         self.splitter_all.addWidget(self.splitter_mid)
         self.splitter_all.addWidget(self.frame_tools)
@@ -233,7 +242,7 @@ class Logger():
             except:
                 pass
         
-        self.toolbar.setOrientation(Qt.Horizontal)
+        self.toolbar.setOrientation(Qt.Orientation.Horizontal)
         self.p = plotting.PlotData(canvas=self.canvas,fig=self.fig)
         self.p.ax.callbacks.connect('xlim_changed', self.update_axes_values)
         self.p.ax.callbacks.connect('ylim_changed', self.update_axes_values)
@@ -243,7 +252,7 @@ class Logger():
         
         self.label_figure = boldLabel('Time Data')
         self.label_figure.setMaximumHeight(20)
-        self.label_figure.setAlignment(Qt.AlignCenter)
+        self.label_figure.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # widgets to layout
         self.layout_figure = QGridLayout()
@@ -255,7 +264,7 @@ class Logger():
         
         # layout to frame
         self.frame_figure = QFrame()
-        self.frame_figure.setFrameShape(QFrame.StyledPanel)
+        self.frame_figure.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_figure.setLayout(self.layout_figure)
         
     def setup_frame_input(self):
@@ -280,11 +289,11 @@ class Logger():
         self.layout_input.addWidget(self.button_res_data,0,2,1,1)
         self.layout_input.addWidget(self.button_load_data,0,3,1,1)
         self.layout_input.addWidget(self.frame_message,1,0,1,4)
-        self.layout_input.setAlignment(Qt.AlignTop)
+        self.layout_input.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         # layout to frame
         self.frame_input = QFrame()
-        self.frame_input.setFrameShape(QFrame.StyledPanel)
+        self.frame_input.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_input.setLayout(self.layout_input)
         
         
@@ -305,7 +314,7 @@ class Logger():
         self.layout_message.addWidget(self.button_message,0,3,1,1)
         self.layout_message.addWidget(self.button_cancel,0,3,1,1)
         self.layout_message.addWidget(self.button_undo,1,3,1,1)
-        self.layout_message.setAlignment(Qt.AlignTop)
+        self.layout_message.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         self.frame_message = QFrame()
         self.frame_message.setLayout(self.layout_message)
@@ -326,7 +335,7 @@ class Logger():
             
         # layout to frame
         self.frame_save = QFrame()
-        self.frame_save.setFrameShape(QFrame.StyledPanel)
+        self.frame_save.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_save.setLayout(self.layout_save)
         
     
@@ -345,13 +354,13 @@ class Logger():
         
         self.label_axes = [QLabel(i) for i in ['xmin:','xmax:','ymin:','ymax:']]
         self.input_axes = [QLineEdit() for i in range(4)]
-        self.input_axes[0].setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5)) 
+        self.input_axes[0].setValidator(QDoubleValidator(float(0),float(np.inf),5)) 
         self.input_axes[0].editingFinished.connect(self.xmin)
-        self.input_axes[1].setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5)) 
+        self.input_axes[1].setValidator(QDoubleValidator(float(0),float(np.inf),5)) 
         self.input_axes[1].editingFinished.connect(self.xmax)
-        self.input_axes[2].setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5)) 
+        self.input_axes[2].setValidator(QDoubleValidator(float(-np.inf),float(np.inf),5)) 
         self.input_axes[2].editingFinished.connect(self.ymin)
-        self.input_axes[3].setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5)) 
+        self.input_axes[3].setValidator(QDoubleValidator(float(-np.inf),float(np.inf),5)) 
         self.input_axes[3].editingFinished.connect(self.ymax)
         
         self.button_select_all_data = GreenButton('All')
@@ -385,7 +394,7 @@ class Logger():
         
         # widgets to layout
         self.layout_axes = QGridLayout()
-        self.layout_axes.setAlignment(Qt.AlignTop)
+        self.layout_axes.setAlignment(Qt.AlignmentFlag.AlignTop)
 
 
         # Figure selection
@@ -401,7 +410,7 @@ class Logger():
         self.layout_axes.addWidget(self.button_y,row_start+2,3,1,3)
         
         for n in range(len(self.label_axes)):
-            self.label_axes[n].setAlignment(Qt.AlignRight)
+            self.label_axes[n].setAlignment(Qt.AlignmentFlag.AlignRight)
             self.layout_axes.addWidget(self.label_axes[n],row_start+n+4,0,1,2)
             self.layout_axes.addWidget(self.input_axes[n],row_start+n+4,2,1,4)
             
@@ -434,7 +443,7 @@ class Logger():
         
         # layout to frame
         self.frame_axes = QFrame()
-        self.frame_axes.setFrameShape(QFrame.StyledPanel)
+        self.frame_axes.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_axes.setLayout(self.layout_axes)
        
     def setup_frame_plot_details(self):
@@ -449,16 +458,16 @@ class Logger():
         self.label_co_freq_min = QLabel('co. min:')
         self.label_co_freq_max = QLabel('co. max:')
         self.input_co_min = QLineEdit('0')
-        self.input_co_min.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
+        self.input_co_min.setValidator(QDoubleValidator(float(-np.inf),float(np.inf),5))
         self.input_co_max = QLineEdit('1')
-        self.input_co_max.setValidator(QDoubleValidator(np.float(-np.inf),np.float(np.inf),5))
+        self.input_co_max.setValidator(QDoubleValidator(float(-np.inf),float(np.inf),5))
         
         # freq range for Nyquist
         self.input_freq_min = QLineEdit()
-        self.input_freq_min.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
+        self.input_freq_min.setValidator(QDoubleValidator(float(0),float(np.inf),5))
         self.input_freq_min.editingFinished.connect(self.freq_min)
         self.input_freq_max = QLineEdit()
-        self.input_freq_max.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
+        self.input_freq_max.setValidator(QDoubleValidator(float(0),float(np.inf),5))
         self.input_freq_max.editingFinished.connect(self.freq_max)
         
         #self.button_modal_fit_toggle = BlueButton('Modal Fit on/off')
@@ -524,11 +533,11 @@ class Logger():
         self.layout_tools.addWidget(self.frame_tools_sonogram)
         self.layout_tools.addWidget(self.frame_tools_save_export)
         
-        self.layout_tools.setAlignment(Qt.AlignTop)
+        self.layout_tools.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         # layout to frame
         self.frame_tools = QFrame()
-        self.frame_tools.setFrameShape(QFrame.StyledPanel)
+        self.frame_tools.setFrameShape(QFrame.Shape.StyledPanel)
         self.frame_tools.setLayout(self.layout_tools)
         
         # widgets to layout according to selection
@@ -601,7 +610,7 @@ class Logger():
         self.input_Nframes.editingFinished.connect(self.refresh_Nframes_slider)
         self.input_Nframes.editingFinished.connect(self.calc_tf)
         
-        self.slider_Nframes = QSlider(Qt.Horizontal)
+        self.slider_Nframes = QSlider(Qt.Orientation.Horizontal)
         self.slider_Nframes.setMinimum(1)
         self.slider_Nframes.setMaximum(30)
         self.slider_Nframes.valueChanged.connect(self.refresh_Nframes_text)
@@ -678,10 +687,10 @@ class Logger():
         
     def setup_frame_tools_mode_fitting(self):
         self.input_freq_min2 = QLineEdit()
-        self.input_freq_min2.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
+        self.input_freq_min2.setValidator(QDoubleValidator(float(0),float(np.inf),5))
         self.input_freq_min2.editingFinished.connect(self.freq_min2)
         self.input_freq_max2 = QLineEdit()
-        self.input_freq_max2.setValidator(QDoubleValidator(np.float(0),np.float(np.inf),5))
+        self.input_freq_max2.setValidator(QDoubleValidator(float(0),float(np.inf),5))
         self.input_freq_max2.editingFinished.connect(self.freq_max2)
         
         self.input_list_tf_type = newComboBox(['Acceleration','Velocity','Displacement'])
@@ -755,7 +764,7 @@ class Logger():
         for n_row in range(9):
             self.layout_tools_settings.addRow(QLabel(self.labels_settings[n_row]),self.input_settings[self.labels_settings[n_row]])
         self.layout_tools_settings.addWidget(boldLabel('Output Settings:'))
-        for n_row in range(9,13):
+        for n_row in range(9,14):
             self.layout_tools_settings.addRow(QLabel(self.labels_settings[n_row]),self.input_settings[self.labels_settings[n_row]])
         
         self.layout_tools_settings.addWidget(self.button_show_available_devices)
@@ -770,17 +779,17 @@ class Logger():
         
         self.input_output_amp = QLineEdit('0')
         v = QDoubleValidator(0.0,1.0,5)
-        v.setNotation(QDoubleValidator.StandardNotation)
+        v.setNotation(QDoubleValidator.Notation.StandardNotation)
         self.input_output_amp.setValidator(v)
         
         self.input_output_f1 = QLineEdit('0')
-        self.input_output_f1.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
+        self.input_output_f1.setValidator(QDoubleValidator(0.0,float(np.inf),5))
         
         self.input_output_f2 = QLineEdit('0')
-        self.input_output_f2.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
+        self.input_output_f2.setValidator(QDoubleValidator(0.0,float(np.inf),5))
         
         self.input_output_duration = QLineEdit(str(self.settings.stored_time))
-        self.input_output_duration.setValidator(QDoubleValidator(0.0,np.float(np.inf),5))
+        self.input_output_duration.setValidator(QDoubleValidator(0.0,float(np.inf),5))
         
         self.button_output_preview = BlueButton('Preview Output')
         self.button_output_preview.clicked.connect(self.preview_output)
@@ -855,7 +864,7 @@ class Logger():
         self.input_sono_N_frames.editingFinished.connect(self.refresh_sono_N_frames_slider)
         self.input_sono_N_frames.editingFinished.connect(self.calc_sono)
         
-        self.slider_sono_N_frames = QSlider(Qt.Horizontal)
+        self.slider_sono_N_frames = QSlider(Qt.Orientation.Horizontal)
         self.slider_sono_N_frames.setMinimum(10)
         self.slider_sono_N_frames.setMaximum(500)
         self.slider_sono_N_frames.setValue(50)
@@ -927,8 +936,13 @@ class Logger():
     
     def show(self):
         # allow logger to be opened again after closing
-        self.window.showMinimized()
+        # self.window.showMinimized()
+        self.window.show()
         self.window.showNormal()
+        self.window.raise_()
+        
+        app.exec()
+        
         
     def close(self):
         # allow logger to be closed programmatically
@@ -1007,7 +1021,7 @@ class Logger():
             ch_max = np.argmax(max_levels)
             max_levels_all = max_levels[ch_max]
             W = 20
-            N = np.int(np.round(max_levels_all*W))
+            N = int(np.round(max_levels_all*W))
             display_text = N*'-' + '>|' + (W-N)*'-' + '] in ch ' + str(ch_max)
             if max_levels_all > 0.99:
                 display_text += ' *** WARNING CLIPPED ***'
@@ -1112,7 +1126,7 @@ class Logger():
         self.auto_xy = 'x'
         self.update_figure()
         self.p.ax.set_ylim([-1,1])
-        self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
+        self.button_log_data.setStyleSheet('background-color: hsv(120, 170, 255)')
         self.message_timer.stop()
         
         
@@ -1121,7 +1135,7 @@ class Logger():
         streams.start_stream(self.settings) # reset stream
         self.rec = streams.REC # reset stream
         self.show_message('Logging cancelled')
-        self.button_log_data.setStyleSheet('background-color: hsl(120, 170, 255)')
+        self.button_log_data.setStyleSheet('background-color: hsv(120, 170, 255)')
         self.message_timer.stop() # stop acquisition messages
         self.selected_channels = self.p.get_selected_channels()
 
@@ -1175,7 +1189,9 @@ class Logger():
 
     
     def load_data(self):
-        d = file.load_data()
+        
+        d = file.load_data(parent=self.window)
+        
         if d is not None:
             d = datastructure.update_dataset(d) # updates data saved using previous logger versions
             self.dataset.add_to_dataset(d.time_data_list)
@@ -1246,7 +1262,7 @@ class Logger():
         self.show_message(message)
 
     def xmin(self):
-        xmin = np.float(self.input_axes[0].text())
+        xmin = float(self.input_axes[0].text())
         xlim = self.p.ax.get_xlim()
         self.p.ax.set_xlim([xmin,xlim[1]])
         if ((self.current_view == 'TF Data') or (self.current_view == 'FFT Data')) and (self.plot_type != 'Nyquist'):
@@ -1254,7 +1270,7 @@ class Logger():
         self.canvas.draw()
         
     def xmax(self):
-        xmax = np.float(self.input_axes[1].text())
+        xmax = float(self.input_axes[1].text())
         xlim = self.p.ax.get_xlim()
         self.p.ax.set_xlim([xlim[0],xmax])
         if ((self.current_view == 'TF Data') or (self.current_view == 'FFT Data')) and (self.plot_type != 'Nyquist'):
@@ -1262,13 +1278,13 @@ class Logger():
         self.canvas.draw()
         
     def ymin(self):
-        ymin = np.float(self.input_axes[2].text())
+        ymin = float(self.input_axes[2].text())
         ylim = self.p.ax.get_ylim()
         self.p.ax.set_ylim([ymin,ylim[1]])
         self.canvas.draw()
         
     def ymax(self):
-        ymax = np.float(self.input_axes[3].text())
+        ymax = float(self.input_axes[3].text())
         ylim = self.p.ax.get_ylim()
         self.p.ax.set_ylim([ylim[0],ymax])
         self.canvas.draw()
@@ -1361,9 +1377,9 @@ class Logger():
             else:
                 auto_xy=''
                 
-            n_set = np.int(self.input_sono_n_set.text())
-            n_chan = np.int(self.input_sono_n_chan.text())
-            db_range = np.int(self.input_db_range.text())
+            n_set = int(self.input_sono_n_set.text())
+            n_chan = int(self.input_sono_n_chan.text())
+            db_range = int(self.input_db_range.text())
             self.p.update_sonogram(self.dataset.sono_data_list, n_set, n_chan, db_range=db_range,auto_xy=auto_xy)
             self.label_figure.setText(self.selected_view + ': Set {}, Channel {}'.format(n_set,n_chan))
         else:
@@ -1424,7 +1440,7 @@ class Logger():
         self.selected_channels = self.p.get_selected_channels()
             
     def show_set_only(self):
-        n_set = np.int(self.input_select_set_only.text())
+        n_set = int(self.input_select_set_only.text())
         selection = self.p.get_selected_channels()
         for ns in range(len(selection)):
             for nc in range(len(selection[ns])):
@@ -1436,7 +1452,7 @@ class Logger():
         self.selected_channels = selection
         
     def show_chan_only(self):
-        n_chan = np.int(self.input_select_chan_only.text())
+        n_chan = int(self.input_select_chan_only.text())
         selection = self.p.get_selected_channels()
         for ns in range(len(selection)):
             for nc in range(len(selection[ns])):
@@ -1495,25 +1511,25 @@ class Logger():
            
         
     def co_min(self):
-        co_min = np.float(self.input_co_min.text())
+        co_min = float(self.input_co_min.text())
         ylim = self.p.ax2.get_ylim()
         self.p.ax2.set_ylim([co_min,ylim[1]])
         self.canvas.draw()
     
     def co_max(self):
-        co_max = np.float(self.input_co_max.text())
+        co_max = float(self.input_co_max.text())
         ylim = self.p.ax2.get_ylim()
         self.p.ax2.set_ylim([ylim[0],co_max])
         self.canvas.draw()
         
     def freq_min(self):
-        self.freq_range[0] = np.float(self.input_freq_min.text())
+        self.freq_range[0] = float(self.input_freq_min.text())
         self.input_freq_min2.setText(str(self.freq_range[0]))
         self.update_figure()
 #        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
         
     def freq_max(self):
-        self.freq_range[1] = np.float(self.input_freq_max.text())
+        self.freq_range[1] = float(self.input_freq_max.text())
         self.input_freq_max2.setText(str(self.freq_range[1]))
         self.update_figure()
 #        self.p.update(self.dataset.tf_data_list, xlinlog=self.xlinlog, show_coherence=self.show_coherence,plot_type=self.plot_type,coherence_plot_type=self.coherence_plot_type,freq_range=self.freq_range,auto_xy=self.auto_xy)
@@ -1550,7 +1566,7 @@ class Logger():
         self.update_figure()
     
     def switch_view(self,new_view_text):
-        index = self.input_list_figures.findText(new_view_text, Qt.MatchFixedString)
+        index = self.input_list_figures.findText(new_view_text, Qt.MatchFlag.MatchFixedString)
         if self.input_list_figures.itemText(index) == 'Time Data':
             N = len(self.dataset.time_data_list)
         elif self.input_list_figures.itemText(index) == 'FFT Data':
@@ -1878,7 +1894,7 @@ class Logger():
             
     def apply_settings(self):
         settings_dict = dict()
-        for n_row in range(13):
+        for n_row in range(14):
             label = self.labels_settings[n_row]
             text = self.input_settings[label].text()
             settings_dict[label] = text
@@ -1940,7 +1956,7 @@ class Logger():
     
     def delete_data_set(self):
         self.auto_xy = ''
-        self.selected_set = np.int(self.input_selected_set.text())
+        self.selected_set = int(self.input_selected_set.text())
         if len(self.data_list) != 0:
             self.dataset_backup = copy.deepcopy(self.dataset)
             self.data_type = self.data_list[0].__class__.__name__
@@ -1956,7 +1972,7 @@ class Logger():
     def log_and_replace(self):
         self.auto_xy = ''
         self.dataset_backup = copy.deepcopy(self.dataset)
-        self.selected_set = np.int(self.input_selected_set.text())
+        self.selected_set = int(self.input_selected_set.text())
         self.flag_log_and_replace = True
         self.button_clicked_log_data()
         
@@ -1984,10 +2000,10 @@ class Logger():
             
     def create_output_signal(self):
         sig = self.input_output_options.currentText()
-        T = np.float(self.input_output_duration.text())
-        amp = np.float(self.input_output_amp.text())
-        f1 = np.float(self.input_output_f1.text())
-        f2 = np.float(self.input_output_f2.text())
+        T = float(self.input_output_duration.text())
+        amp = float(self.input_output_amp.text())
+        f1 = float(self.input_output_f1.text())
+        f2 = float(self.input_output_f2.text())
         f_max = np.max([f1,f2])
         fs_min = np.min([self.settings.fs,self.settings.output_fs])
             
@@ -2029,7 +2045,7 @@ class Logger():
     #%% DATA PROCESSING
     def clean_impulse(self):
         try:
-            ch_impulse = np.int(self.input_impulse_channel.text())
+            ch_impulse = int(self.input_impulse_channel.text())
             
             dataset_new = self.dataset.clean_impulse(ch_impulse=ch_impulse)
             
@@ -2128,7 +2144,7 @@ class Logger():
         
         
     def refresh_Nframes_slider(self):
-        self.N_frames = np.int(self.input_Nframes.text())
+        self.N_frames = int(self.input_Nframes.text())
         # allows setting text to higher than max slider
         try:
             self.slider_Nframes.setValue(self.N_frames)
@@ -2158,7 +2174,7 @@ class Logger():
             self.show_message(message)
         
         else:
-            self.N_frames = np.int(self.input_Nframes.text())
+            self.N_frames = int(self.input_Nframes.text())
             window = self.input_list_window_tf.currentText()
             if window == 'None':
                 window = None
@@ -2266,8 +2282,8 @@ class Logger():
             self.dataset_backup = copy.deepcopy(self.dataset)
             self.flag_scaling = True
             
-        self.refset  = np.int(self.input_refset.text())
-        self.refchan = np.int(self.input_refchan.text())
+        self.refset  = int(self.input_refset.text())
+        self.refchan = int(self.input_refchan.text())
         if self.current_view == 'TF Data':
             current_calibration_factors = self.dataset.tf_data_list.get_calibration_factors()
             reference = current_calibration_factors[self.refset][self.refchan]
@@ -2361,12 +2377,12 @@ class Logger():
             
     
     def freq_min2(self):
-        self.freq_range[0] = np.float(self.input_freq_min2.text())
+        self.freq_range[0] = float(self.input_freq_min2.text())
         self.input_freq_min.setText(str(self.freq_range[0]))
         self.freq_min()
     
     def freq_max2(self):
-        self.freq_range[1] = np.float(self.input_freq_max2.text())
+        self.freq_range[1] = float(self.input_freq_max2.text())
         self.input_freq_max.setText(str(self.freq_range[1]))
         self.freq_max
         
@@ -2422,7 +2438,7 @@ class Logger():
         self.fn_in_range = m.fn
         
     def refresh_sono_N_frames_slider(self):
-        self.slider_sono_N_frames.setValue(np.int(self.input_sono_N_frames.text()))
+        self.slider_sono_N_frames.setValue(int(self.input_sono_N_frames.text()))
     
     def refresh_sono_N_frames_text(self):
         self.input_sono_N_frames.setText(str(self.slider_sono_N_frames.value()))
@@ -2432,13 +2448,13 @@ class Logger():
             message = 'No time data to calculate transfer function.'
             self.show_message(message)
         else:
-            self.N_frames_sono = np.int(self.input_sono_N_frames.text())
-            n_set = np.int(self.input_sono_n_set.text())
-            n_chan = np.int(self.input_sono_n_chan.text())
-#            db_range = np.int(self.input_db_range.text())
+            self.N_frames_sono = int(self.input_sono_N_frames.text())
+            n_set = int(self.input_sono_n_set.text())
+            n_chan = int(self.input_sono_n_chan.text())
+#            db_range = int(self.input_db_range.text())
             NT = len(self.dataset.time_data_list[n_set].time_data[:,n_chan])
             f = 1/4 # match overlap in sonogram
-            self.nperseg = np.int(NT // (self.N_frames_sono * (1-f) + f)) # 1/8 is default overlap for spectrogram
+            self.nperseg = int(NT // (self.N_frames_sono * (1-f) + f)) # 1/8 is default overlap for spectrogram
             self.dataset.calculate_sono_set(nperseg=self.nperseg)
             
             # calc sonogram info

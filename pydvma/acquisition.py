@@ -47,6 +47,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
         # also won't be exactly synced to output signal
         if output is not None:
             s = output_signal(settings,output)
+            # rec.write(output.astype('float32'))
         
         if (settings.device_driver == 'nidaq') or (output is None): # nidaq output is nonblocking, but soundcard is blocking
             time.sleep(settings.stored_time)
@@ -54,7 +55,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
             
         # make copy of data
         stored_time_data_copy = np.copy(streams.REC.stored_time_data)
-        number_samples = np.int64(streams.REC.settings.stored_time * streams.REC.settings.fs)
+        number_samples = int(streams.REC.settings.stored_time * streams.REC.settings.fs)
         
         stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
         MESSAGE += 'Logging complete.\n'
@@ -86,6 +87,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
                 MESSAGE = 'Starting output signal.\n'
                 print(MESSAGE)
                 s = output_signal(settings,output)
+                # rec.write(output.astype('float32'))
                 start_output_flag = False
 
             time.sleep(0.2)
@@ -97,7 +99,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
         stored_time_data_copy = np.copy(streams.REC.stored_time_data)
         trigger_check = stored_time_data_copy[(settings.chunk_size):(2*settings.chunk_size),settings.pretrig_channel]
         detected_sample = settings.chunk_size + np.where(np.abs(trigger_check) > settings.pretrig_threshold)[0][0]
-        number_samples = np.int(settings.stored_time * settings.fs)
+        number_samples = int(settings.stored_time * settings.fs)
         start_index = detected_sample - settings.pretrig_samples
         end_index   = start_index + number_samples
         streams.REC.trigger_detected = False # don't start stream again until sorted out trigger detection
@@ -120,7 +122,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
     n_samp = len(stored_time_data_copy[:,0])
     dt = 1/fs
     t_samp = n_samp*dt
-    time_axis = np.arange(0,t_samp,dt)
+    time_axis = np.linspace(0,(n_samp-1)/n_samp * settings.stored_time,n_samp)
     
     if (output is not None) and (settings.use_output_as_ch0 == True):
         stored_output = np.zeros((n_samp,len(output[0,:])))
@@ -168,7 +170,7 @@ def output_signal(settings,output):
     # setup NI / audio stream
     if settings.output_device_driver == 'soundcard':
         s = streams.setup_output_soundcard(settings)
-        data = output.astype(np.float32).tostring()
+        data = output.astype('float32')
         s.write(data)
         return s
         
@@ -199,7 +201,7 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
     y = np.zeros((N_per_channel,settings.output_channels))
     win = np.ones((N_per_channel,1))
     T_ramp = np.min([T/10,0.1])
-    N_ramp = np.int(T_ramp*settings.output_fs)
+    N_ramp = int(T_ramp*settings.output_fs)
     win[0:N_ramp,0] = 0.5*(1-np.cos(np.arange(0,N_ramp)/N_ramp*np.pi))
     win[-N_ramp:,0] = 0.5*(1+np.cos(np.arange(0,N_ramp)/N_ramp*np.pi))
     
