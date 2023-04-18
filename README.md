@@ -5,24 +5,26 @@ A Python package for dynamics and vibration measurements and analysis.
 
 ## About pydvma
 
-This is a modular library for data-measurement and analysis in the context of dynamics and vibration, for use in student laboratory experiments as well as for research projects, developed at Cambridge University Engineering Department.
+This is a modular library for data measurement and analysis in the context of dynamics and vibration, for use in student laboratory experiments as well as for research projects, developed at Cambridge University Engineering Department.
 
 A high-level interface allows straightforward application for common use-cases and a low-level interface provides more control when needed.
 
-The aim is for a library that is simple to use and simple to maintain. It is not a full-featured GUI, but when used in conjunction with Jupyter Notebooks it is intended to provide the best of both worlds: interactive tools for common tasks and command line interface for customisation.
+The aim is for a library that is simple to use and simple to maintain. It is not a full-featured GUI, but when used in conjunction with Jupyter Notebooks it is intended to provide the best of both worlds: interactive tools for common tasks and a command line interface for customisation.
 
 
 ## Getting started
 
 ### Installation
 
-The logger requires Python 3.7 or above to work with soundcard acquisition.
-
-On Windows:
+The logger is recommended for use with Python 3.10.
 
 ```
-conda install pyaudio
 pip install pydvma
+```
+
+If you would like soundcard acquisition then also install sounddevice:
+```
+pip install sounddevice
 ```
 
 Or clone this repository and install using:
@@ -30,16 +32,10 @@ Or clone this repository and install using:
 python setup.py install
 ```
 
-On Mac OS X: install PortAudio. If you use Homebrew, just run this:
-```shell
-$ brew install portaudio
-```
-On Linux: TBC
-
 Alternatively you can use the environment yml file provided:
 ```
-conda env create -f logger_env.yml
-activate logger
+conda env -name logger create -f logger.yml
+conda activate logger
 ```
 
 ### Running the logger
