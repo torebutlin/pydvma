@@ -5,7 +5,7 @@ Created on Mon Aug 27 13:28:39 2018
 @author: tb267
 """
 
-from utils import streams
+from . import streams
 
 import numpy as np
 

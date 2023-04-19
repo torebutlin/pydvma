@@ -1,4 +1,4 @@
-from utils import acquisition
+from . import acquisition
 
 import numpy as np
 import pprint as pp

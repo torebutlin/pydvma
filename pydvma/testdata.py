@@ -5,8 +5,8 @@ Created on Mon Aug 27 17:08:42 2018
 @author: tb267
 """
 
-from utils import options
-from utils import datastructure
+from . import options
+from . import datastructure
 
 import numpy as np
 import datetime

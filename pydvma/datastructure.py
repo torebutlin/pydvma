@@ -5,10 +5,10 @@ Created on Mon Aug 27 17:08:42 2018
 @author: tb267
 """
 
-from utils import analysis
-from utils import file
-from utils import plotting
-from utils import modal
+from . import analysis
+from . import file
+from . import plotting
+from . import modal
 
 import numpy as np
 import datetime

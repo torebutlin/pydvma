@@ -1,8 +1,7 @@
-from . import utils
-from .gui import Logger
+from .gui import Logger, Oscilloscope
 from .options import MySettings, set_plot_colours
 from .file import load_data, save_data, save_fig, export_to_matlab_jwlogger, export_to_matlab, export_to_csv
-from .oscilloscope import Oscilloscope
+# from .oscilloscope import Oscilloscope
 from .acquisition import log_data, log_data_with_output, output_signal, signal_generator, stream_snapshot
 from .datastructure import DataSet, TimeData, FreqData, CrossSpecData, TfData, SonoData, MetaData, ModalData, update_dataset
 from .testdata import create_test_impulse_data, create_test_impulse_ensemble, create_test_noise_data

@@ -6,11 +6,11 @@ Created on Fri Aug  3 11:27:29 2018
 """      
 import sys
 
-from utils import options
-from utils import file
-from utils import datastructure
-from utils import streams
-from utils import gui
+from . import options
+from . import file
+from . import datastructure
+from . import streams
+# from .gui import app
 
 import numpy as np
 import pyqtgraph as pg
@@ -44,8 +44,8 @@ class Oscilloscope():
         self.timer.timeout.connect(self.update) # update figure and buffer
         self.timer.start(60)
 
-        if gui.app.applicationState() != Qt.ApplicationActive:
-            gui.app.exec()  
+        if app.applicationState() != Qt.ApplicationActive:
+            app.exec()  
 
     def create_figure(self):
         '''

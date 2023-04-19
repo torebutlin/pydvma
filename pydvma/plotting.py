@@ -7,9 +7,9 @@ Created on Tue Aug 28 19:04:14 2018
 
 
 
-from utils import options
-from utils import datastructure
-from utils import gui
+from . import options
+from . import datastructure
+from . import gui
 
 import numpy as np
 import matplotlib
