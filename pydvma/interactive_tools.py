@@ -1,9 +1,9 @@
-from . import plotting
-from . import datastructure
-from . import acquisition
-from . import analysis
-from . import streams
-from . import file
+from utils import plotting
+from utils import datastructure
+from utils import acquisition
+from utils import analysis
+from utils import streams
+from utils import file
 import time
 
 import numpy as np

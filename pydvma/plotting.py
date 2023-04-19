@@ -7,9 +7,9 @@ Created on Tue Aug 28 19:04:14 2018
 
 
 
-from . import options
-from . import datastructure
-# from . import gui
+from utils import options
+from utils import datastructure
+from utils import gui
 
 import numpy as np
 import matplotlib
@@ -21,9 +21,10 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
-from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout
-from PyQt5.QtCore import Qt
-from PyQt5 import QtGui
+from qtpy.QtWidgets import QWidget, QLabel, QVBoxLayout
+from qtpy.QtCore import Qt
+from qtpy import QtGui
+
 
 import time
 
@@ -57,41 +58,44 @@ class PlotData():
             # self.fig = Figure(figsize=(9, 7),dpi=100)
             # self.canvas = FigureCanvas(self.fig)
             # self.toolbar = NavigationToolbar(self.canvas,None)
-            # self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
+            self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
+            self.fig.show()
             
-            self.plot_window = QWidget()
-            self.plot_window.setStyleSheet("background-color: white")
-            self.plot_window.setWindowTitle('Figure')
+            # self.plot_window = QWidget()
+            # self.plot_window.setStyleSheet("background-color: white")
+            # self.plot_window.setWindowTitle('Figure')
             # self.plot_window.setWindowIcon(QtGui.QIcon('pydvma/icon.png'))
             
-            self.fig = Figure(figsize=(9, 5),dpi=100)
-            self.canvas = FigureCanvas(self.fig)
-            self.toolbar = NavigationToolbar(self.canvas,None)
-            self.toolbar.setOrientation(Qt.Orientation.Horizontal)
-            self.ax = self.canvas.figure.subplots()
+            # self.fig = Figure(figsize=(9, 5),dpi=100)
+            # self.canvas = FigureCanvas(self.fig)
+            # self.toolbar = NavigationToolbar(self.canvas,None)
+            # self.toolbar.setOrientation(Qt.Orientation.Horizontal)
+            # self.ax = self.canvas.figure.subplots()
             
-            if window_title is not None:
-                self.label_figure = QLabel(window_title)
-            else:
-                self.label_figure = QLabel('')
+            # if window_title is not None:
+            #     self.label_figure = QLabel(window_title)
+            # else:
+            #     self.label_figure = QLabel('')
 
-            self.label_figure.setMaximumHeight(20)
-            self.label_figure.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # self.label_figure.setMaximumHeight(20)
+            # self.label_figure.setAlignment(Qt.AlignmentFlag.AlignCenter)
             
-            # widgets to layout
-            self.layout_figure = QVBoxLayout()
-            self.layout_figure.addWidget(self.label_figure)
-            self.layout_figure.addWidget(self.canvas)
-            self.layout_figure.addWidget(self.toolbar)
+            # # widgets to layout
+            # self.layout_figure = QVBoxLayout()
+            # self.layout_figure.addWidget(self.label_figure)
+            # self.layout_figure.addWidget(self.canvas)
+            # self.layout_figure.addWidget(self.toolbar)
             
-            self.plot_window.setLayout(self.layout_figure)
+            # self.plot_window.setLayout(self.layout_figure)
             
             
-            # self.plot_window.showMinimized()
-            # time.sleep(0.6)
-            self.plot_window.show()
-            self.plot_window.showNormal()
-            self.plot_window.raise_()
+            # # self.plot_window.showMinimized()
+            # # time.sleep(0.6)
+            # self.plot_window.show()
+            # self.plot_window.showNormal()
+            # self.plot_window.raise_()
+            # if gui.app.applicationState() == Qt.ApplicationState.ApplicationInactive:
+            #     gui.app.exec()
             # self.gui.app.exec()
         else:
             self.fig = fig

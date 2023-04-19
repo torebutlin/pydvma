@@ -9,8 +9,9 @@ import os.path
 import numpy as np
 import scipy.io as io
 import pyqtgraph as pg
-from PyQt5 import QtWidgets
-from PyQt5.QtWidgets import QFileDialog
+from qtpy import QtWidgets
+from qtpy.QtWidgets import QFileDialog
+
 
 
 def load_data(parent=None, filename=None):

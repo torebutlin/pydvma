@@ -1,10 +1,10 @@
-from PyQt5.QtWidgets import QMainWindow
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider, QMessageBox
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame, QFormLayout, QSizePolicy
-from PyQt5.QtWidgets import QToolTip, QFileDialog
-from PyQt5.QtCore import Qt, QThread, Signal, QTimer, QObject
-from PyQt5.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
-from PyQt5 import QtGui
+from qtpy.QtWidgets import QMainWindow, QApplication, QWidget, QPushButton, QMessageBox, QTabWidget, QFormLayout, QToolBar, QLineEdit, QLabel, QComboBox, QSlider, QSizePolicy, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFrame, QStyleFactory, QSplitter, QFrame, QFormLayout
+from qtpy.QtCore import Qt, QThread, Signal, QTimer, QObject
+from qtpy.QtGui import QPalette, QDoubleValidator, QIntValidator, QFontMetrics
+from qtpy import QtGui
+from qtpy.QtWidgets import QToolTip, QFileDialog
+from qtpy import QtCore
+
 import copy
 from matplotlib.backends.backend_qt5agg import FigureCanvas, NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -18,14 +18,15 @@ import numpy as np
 #logging.basicConfig(filename='example.log',level=logging.DEBUG)
 #%%
 
-from . import plotting
-from . import datastructure
-from . import acquisition
-from . import analysis
-from . import streams
-from . import file
-from . import modal
-from . import options
+from utils import plotting
+from utils import datastructure
+from utils import acquisition
+from utils import analysis
+from utils import streams
+from utils import file
+from utils import modal
+from utils import options
+from utils import oscilloscope
 import time
 import sys, os
 
@@ -272,11 +273,14 @@ class Logger():
         self.setup_frame_message()
         
         # content
+        self.button_osc = QPushButton('')
+        self.button_osc.setIcon(QtGui.QIcon('pydvma/icon.png'))
         self.button_log_data = GreenButton('Log Data')
         self.button_del_data = OrangeButton('Delete Last')
         self.button_res_data = RedButton('Delete All')
         self.button_load_data = BlueButton('Load Data')
                 
+        self.button_osc.clicked.connect(self.button_clicked_osc)
         self.button_log_data.clicked.connect(self.button_clicked_log_data)
         self.button_del_data.clicked.connect(self.delete_last_data)
         self.button_res_data.clicked.connect(self.reset_data)
@@ -284,11 +288,12 @@ class Logger():
         
         # widgets to layout
         self.layout_input = QGridLayout()
-        self.layout_input.addWidget(self.button_log_data,0,0,1,1)
-        self.layout_input.addWidget(self.button_del_data,0,1,1,1)
-        self.layout_input.addWidget(self.button_res_data,0,2,1,1)
-        self.layout_input.addWidget(self.button_load_data,0,3,1,1)
-        self.layout_input.addWidget(self.frame_message,1,0,1,4)
+        self.layout_input.addWidget(self.button_osc,0,0,1,1)
+        self.layout_input.addWidget(self.button_log_data,0,1,1,4)
+        self.layout_input.addWidget(self.button_del_data,0,5,1,4)
+        self.layout_input.addWidget(self.button_res_data,0,9,1,4)
+        self.layout_input.addWidget(self.button_load_data,0,13,1,4)
+        self.layout_input.addWidget(self.frame_message,1,0,1,17)
         self.layout_input.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         # layout to frame
@@ -1032,7 +1037,12 @@ class Logger():
                 
             self.window.setWindowTitle('Logger | Max Level: [' + display_text)
         
-            
+    
+    def button_clicked_osc(self):
+        # launch oscilloscope
+        self.osc = oscilloscope.Oscilloscope(self.settings)
+
+
     def button_clicked_log_data(self):
         # delegate messages to acquisition global MESSAGE, and streams rec.MESSAGE
         # this lets messages be seen from within logging thread, with live updates

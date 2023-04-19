@@ -5,8 +5,8 @@ Created on Mon Aug 27 17:08:42 2018
 @author: tb267
 """
 
-from . import datastructure
-from . import streams
+from utils import datastructure
+from utils import streams
 
 import numpy as np
 import scipy.signal as signal

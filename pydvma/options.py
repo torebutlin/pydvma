@@ -5,7 +5,7 @@ Created on Mon Aug 27 13:28:39 2018
 @author: tb267
 """
 
-from . import streams
+from utils import streams
 
 import numpy as np
 
@@ -90,6 +90,8 @@ class MySettings(object):
         
         if pretrig_samples is not None:
             self.pretrig_samples=int(pretrig_samples)
+        else:
+            self.pretrig_samples=None
         
         self.pretrig_threshold=float(pretrig_threshold)
         self.pretrig_channel=int(pretrig_channel)
@@ -99,16 +101,6 @@ class MySettings(object):
         self.device_index=device_index
         
         
-        # ADVANCED SETTINGS
-        self.VmaxNI=float(VmaxNI)
-        self.NI_mode=NI_mode
-        self.chunk_size=int(chunk_size)
-        self.num_chunks=int(num_chunks)
-        self.viewed_time=float(viewed_time)
-        self.nbits=int(nbits)
-        self.init_view_time=bool(init_view_time)
-        self.init_view_freq=bool(init_view_freq)
-        self.init_view_levels=bool(init_view_levels)
         
         #OUTPUT SETTINGS
         if (output_fs is None) or (output_fs == 'None'):
@@ -124,9 +116,8 @@ class MySettings(object):
         # if output device driver not specified then use same as input device
         if (output_device_driver == None) or (output_device_driver == 'None'):
             output_device_driver = device_driver
-            self.output_device_driver = output_device_driver
 
-        self.use_output_as_ch0 = bool(use_output_as_ch0)
+        self.output_device_driver = output_device_driver
             
         if (device_driver == 'soundcard') and ((device_index == None) or (device_index == 'None')):
             try:
@@ -139,6 +130,8 @@ class MySettings(object):
             self.device_index = 0
         else:
             self.device_index = int(device_index)
+
+       
                 
         # set output device index to defaults if not specified
         if (output_device_driver == 'soundcard') and ((output_device_index == None) or  (output_device_index == 'None')):
@@ -158,6 +151,20 @@ class MySettings(object):
         else:
             self.output_device_index = int(output_device_index)
         
+        self.use_output_as_ch0 = bool(use_output_as_ch0)
+
+        
+        # ADVANCED SETTINGS
+        self.VmaxNI=float(VmaxNI)
+        self.NI_mode=NI_mode
+        self.chunk_size=int(chunk_size)
+        self.num_chunks=int(num_chunks)
+        self.viewed_time=float(viewed_time)
+        self.nbits=int(nbits)
+        self.init_view_time=bool(init_view_time)
+        self.init_view_freq=bool(init_view_freq)
+        self.init_view_levels=bool(init_view_levels)
+
         ### derived settings
         if (viewed_time != None) and (viewed_time != 'None'):
             self.viewed_time = float(viewed_time)

@@ -6,14 +6,17 @@ Created on Fri Aug  3 11:27:29 2018
 """      
 import sys
 
-from . import options
-from . import file
-from . import datastructure
-from . import streams
+from utils import options
+from utils import file
+from utils import datastructure
+from utils import streams
+from utils import gui
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt5 import QtGui, QtCore
+from qtpy import QtGui, QtCore
+from qtpy.QtCore import QObject, Signal, Qt
+
 import time
 import datetime
 
@@ -41,6 +44,9 @@ class Oscilloscope():
         self.timer.timeout.connect(self.update) # update figure and buffer
         self.timer.start(60)
 
+        if gui.app.applicationState() != Qt.ApplicationActive:
+            gui.app.exec()  
+
     def create_figure(self):
         '''
         Creates a figure which is an object of the class KeyPressWindow.
@@ -58,9 +64,10 @@ class Oscilloscope():
         
 
         self.win.setWindowTitle("Oscilloscope ('s': save new, 'space': autosave, 'p': pause, 'a': always top, 'y': autoscale)")
-        time.sleep(0.6)
+        # time.sleep(0.6)
         self.win.show()
         self.win.showNormal()
+        self.win.raise_()
 
         self.view_time = self.settings.init_view_time
         self.view_freq = self.settings.init_view_freq
@@ -74,7 +81,7 @@ class Oscilloscope():
 
     def on_close(self, evt):
         self.timer.stop()
-        self.rec.end_stream()
+        # self.rec.end_stream()
 
     def toggle_view(self):
         '''
@@ -295,7 +302,7 @@ class Oscilloscope():
             
             if evt.key() == QtCore.Qt.Key_S:
                 self.data_saved_counter = 1
-                self.last_filename = file.save_data(dataset)
+                self.last_filename = file.save_data(dataset,self.win)
             
 #            # this version saves all data as new timedata objects within one file
 #            if evt.key() == QtCore.Qt.Key_Space:
@@ -315,7 +322,7 @@ class Oscilloscope():
             # this version saves each new dataset to new file
             if evt.key() == QtCore.Qt.Key_Space:
                 if self.data_saved_counter == 0:
-                    self.last_filename = file.save_data(dataset)
+                    self.last_filename = file.save_data(dataset,self.win)
                     if self.last_filename == '':
                         self.data_saved_counter = 0
                     else:
@@ -325,7 +332,7 @@ class Oscilloscope():
                     d = datastructure.DataSet()
                     d.add_to_dataset(timedata)
                     filename = self.last_filename.replace('.npy','_'+str(self.data_saved_counter)+'.npy')
-                    file.save_data(d,filename,overwrite_without_prompt=True)
+                    file.save_data(d,self.win, filename,overwrite_without_prompt=True)
                     self.data_saved_counter += 1
 
 class KeyPressWindow(pg.GraphicsLayoutWidget):
@@ -333,8 +340,8 @@ class KeyPressWindow(pg.GraphicsLayoutWidget):
     A subclass of pyQtGraph GraphicsWindow that emits a signal when a key is pressed.
 
     '''
-    sigKeyPress = QtCore.pyqtSignal(object)
-    sigClose = QtCore.pyqtSignal(object)
+    sigKeyPress = Signal(object)
+    sigClose = Signal(object)
 
     def __init__(self, *args, **kwargs):
         '''

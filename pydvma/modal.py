@@ -6,8 +6,8 @@ Created on Mon Aug 19 17:29:30 2019
 """
 
 
-from . import datastructure
-from . import options
+from utils import datastructure
+from utils import options
 
 import numpy as np
 from scipy import signal

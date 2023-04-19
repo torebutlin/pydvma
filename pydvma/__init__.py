@@ -1,3 +1,5 @@
+from . import utils
+from .gui import Logger
 from .options import MySettings, set_plot_colours
 from .file import load_data, save_data, save_fig, export_to_matlab_jwlogger, export_to_matlab, export_to_csv
 from .oscilloscope import Oscilloscope
@@ -9,7 +11,7 @@ from .analysis import calculate_fft, calculate_cross_spectrum_matrix, calculate_
 from .analysis import calculate_tf, calculate_tf_averaged, multiply_by_power_of_iw, best_match, calculate_sonogram
 from .streams import Recorder, Recorder_NI, start_stream, REC, setup_output_NI, setup_output_soundcard, list_available_devices, get_devices_NI, get_devices_soundcard
 from .modal import modal_fit_single_channel, modal_fit_all_channels
-from .gui import Logger
 # import faulthandler
 # faulthandler.enable()
 # from .gui_tk_test import Logger
+

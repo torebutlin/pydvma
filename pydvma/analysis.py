@@ -5,7 +5,7 @@ Created on Sun Sep  2 20:16:26 2018
 @author: tb267
 """
 
-from . import datastructure
+from utils import datastructure
 
 import numpy as np
 from scipy import signal

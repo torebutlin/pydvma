@@ -5,8 +5,8 @@ Created on Mon Aug 27 17:08:42 2018
 @author: tb267
 """
 
-from . import options
-from . import datastructure
+from utils import options
+from utils import datastructure
 
 import numpy as np
 import datetime
@@ -20,12 +20,12 @@ def create_test_impulse_data(noise_level=0):
     Creates example time domain data simulating impulse hammer test
     '''
     settings = options.MySettings(fs=10000)
-    N = int16(1e4)
+    N = int(1e4)
     time_axis = np.arange(N)/settings.fs
     
     time_data = np.zeros([N,2])
     pulse_width = 0.002
-    N_pulse = int16(np.ceil(pulse_width*settings.fs))
+    N_pulse = int(np.ceil(pulse_width*settings.fs))
     n = np.arange(N_pulse)
     pulse = 0.5*(1-np.cos(2*np.pi*n/N_pulse))
     time_data[n,0] = pulse
@@ -66,7 +66,7 @@ def create_test_noise_data(added_noise_level=0.1):
     Creates example time domain data simulating noise input test
     '''
     settings = options.MySettings(fs=10000)
-    N = int32(10*1e4)
+    N = int(10*1e4)
     time_axis = np.arange(N)/settings.fs
     
     time_data = np.zeros([N,2])
