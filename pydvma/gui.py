@@ -14,6 +14,8 @@ from matplotlib.ticker import AutoLocator
 import numpy as np
 import datetime
 
+from pkg_resources import resource_filename
+
 
 
 
@@ -33,6 +35,11 @@ from . import oscilloscope
 import time
 import sys, os
 
+#%%
+icon_path = resource_filename('pydvma', 'icon.png')
+app = QApplication(sys.argv)
+app.setStyle(QStyleFactory.create('Fusion'))
+app.setWindowIcon(QtGui.QIcon(icon_path))
 
 #%%
 class BlueButton(QPushButton):
@@ -103,7 +110,7 @@ class PreviewWindow():
         self.preview_window = QWidget()
         self.preview_window.setStyleSheet("background-color: white")
         self.preview_window.setWindowTitle('Output Signal Preview')
-        self.preview_window.setWindowIcon(QtGui.QIcon('pydvma/icon.png'))
+        self.preview_window.setWindowIcon(QtGui.QIcon(icon_path))
 
         self.fig = Figure(figsize=(9, 5),dpi=100)
         self.canvas = FigureCanvas(self.fig)
@@ -123,15 +130,13 @@ class PreviewWindow():
         
         self.preview_window.setLayout(self.layout_figure)
         
-        self.preview_window.showMinimized()
-        time.sleep(0.6)
+        # self.preview_window.showMinimized()
+        # time.sleep(0.6)
         self.preview_window.show()
         self.preview_window.showNormal()
         self.preview_window.raise_()
-        
-app = QApplication(sys.argv)
-app.setStyle(QStyleFactory.create('Fusion'))
-app.setWindowIcon(QtGui.QIcon('pydvma/icon.png'))
+
+
 
 class Logger():
         
@@ -181,7 +186,7 @@ class Logger():
         self.window = QWidget()
         self.window.setStyleSheet("background-color: white")
         self.window.setWindowTitle('Logger')
-        self.window.setWindowIcon(QtGui.QIcon('pydvma/icon.png'))
+        self.window.setWindowIcon(QtGui.QIcon(icon_path))
         # self.window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         
         # initiate all interface tool frames
@@ -193,11 +198,12 @@ class Logger():
         
         # arrange frames and create window
         self.setup_layout_main()
-        self.window.showNormal()
+        # self.window.showNormal()
         # time.sleep(0.6)
         self.window.show()
         self.window.raise_()
-        # self.window.showNormal()
+        self.window.activateWindow()
+        self.window.showNormal()
         
         
         # start stream if already passed settings
@@ -277,7 +283,7 @@ class Logger():
         
         # content
         self.button_osc = QPushButton('')
-        self.button_osc.setIcon(QtGui.QIcon('pydvma/icon.png'))
+        self.button_osc.setIcon(QtGui.QIcon(icon_path))
         self.button_log_data = GreenButton('Log Data')
         self.button_del_data = OrangeButton('Delete Last')
         self.button_res_data = RedButton('Delete All')
@@ -2544,7 +2550,7 @@ class Oscilloscope():
         '''
         pg.setConfigOption('background', 'w')
         self.win = KeyPressWindow()
-        self.win.setWindowIcon(QtGui.QIcon('icon.png'))
+        self.win.setWindowIcon(QtGui.QIcon(icon_path))
 #        window_geometry = self.win.geometry()
         self.win.setGeometry(100,100,800,600)
         self.win.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)

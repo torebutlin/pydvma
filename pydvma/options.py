@@ -88,10 +88,10 @@ class MySettings(object):
         self.channels=int(channels)
         self.stored_time=float(stored_time)
         
-        if pretrig_samples is not None:
-            self.pretrig_samples=int(pretrig_samples)
-        else:
+        if (pretrig_samples is None) or (pretrig_samples == 'None'):
             self.pretrig_samples=None
+        else:
+            self.pretrig_samples=int(pretrig_samples)
         
         self.pretrig_threshold=float(pretrig_threshold)
         self.pretrig_channel=int(pretrig_channel)

@@ -481,7 +481,7 @@ class Recorder_NI(object):
             pass
         
         # Make AutoRegN be one of set of possible numbers that works with nidaqmx
-        AutoRegN = int([10,100,1000])
+        AutoRegN = np.array([10,100,1000],dtype=int)
         check = np.where(AutoRegN <= settings.chunk_size)
         AutoRegN = AutoRegN[check[0][-1]]
         
@@ -501,6 +501,7 @@ class Recorder_NI(object):
         self.audio_stream.AutoRegisterEveryNSamplesEvent(pdaq.DAQmx_Val_Acquired_Into_Buffer,
                                             AutoRegN,0,name = 'stream_audio_callback')
         self.audio_stream.StopTask()
+        self.audio_stream.SetReadAutoStart(True)
         self.audio_stream.StartTask()
 
 
