@@ -7,6 +7,7 @@ Created on Thu Sep  6 15:06:51 2018
 from setuptools import setup, find_packages
 
 requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'matplotlib', 'seaborn', 'sounddevice']
+#requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'matplotlib', 'seaborn', 'sounddevicem', 'qtpy', 'pyqt5', 'qdarktheme']
 
 setup(
     name='pydvma',

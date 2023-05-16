@@ -7,3 +7,6 @@ dist/
 pydvma.egg-info/
 .spyproject/
 example.log
+
+#find . -name '.DS_Store' -type f -delete
+.DS_Store
