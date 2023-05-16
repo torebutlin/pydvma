@@ -88,3 +88,5 @@ Contributions to this project are welcomed, keeping in mind the project aims abo
 - If you would like to make a more significant contribution or change, then please be in contact to outline your suggestion.
 
 Please see the documentation for details of the code structure and templates for anticipated applications.
+<!-- pip install git+https://github.com/torebutlin/pydvma.git -->
+<!-- pip install git+https://github.com/js2597/pydvma.git -->
