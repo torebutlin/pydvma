@@ -7,3 +7,4 @@ dist/
 pydvma.egg-info/
 .spyproject/
 example.log
+.ipynb_checkpoints/pydvma_template-checkpoint.ipynb
