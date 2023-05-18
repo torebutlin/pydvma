@@ -16,6 +16,12 @@ import datetime
 
 from pkg_resources import resource_filename
 
+try:
+    import qdarktheme
+    flag_darktheme = True
+except ModuleNotFoundError:
+    flag_darktheme = False
+
 
 
 
@@ -40,30 +46,47 @@ icon_path = resource_filename('pydvma', 'icon.png')
 app = QApplication(sys.argv)
 app.setStyle(QStyleFactory.create('Fusion'))
 app.setWindowIcon(QtGui.QIcon(icon_path))
+import platform
+if platform.system() == "Darwin":
+    app.setWindowIcon(QtGui.QIcon(resource_filename('pydvma', 'icon_darwin.png')))
+else:
+    app.setWindowIcon(QtGui.QIcon(icon_path))
 
 #%%
 class BlueButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: hsv(240, 170, 255)")
+        if flag_darktheme:
+            self.setStyleSheet("background-color: hsv(240, 120, 180)")
+        else:
+            self.setStyleSheet("background-color: hsv(240, 170, 255)")
         self.setText(text) 
 
 class GreenButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: hsv(120, 170, 255);")
+        if flag_darktheme:
+            self.setStyleSheet("background-color: hsv(120, 120, 180);")
+        else:
+            self.setStyleSheet("background-color: hsv(120, 170, 255);")
         self.setText(text)
 
 class RedButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: hsv(0, 170, 255)")
+        if flag_darktheme:
+            self.setStyleSheet("background-color: hsv(0, 120, 180)")
+        else:
+            self.setStyleSheet("background-color: hsv(0, 170, 255)")
         self.setText(text)
         
 class OrangeButton(QPushButton):
     def __init__(self,text):
         super().__init__(text)
-        self.setStyleSheet("background-color: hsv(30, 170,255)")
+        if flag_darktheme:
+            self.setStyleSheet("background-color: hsv(30, 120, 180)")
+        else:
+            self.setStyleSheet("background-color: hsv(30, 170, 255)")
         self.setText(text)
 
 class QHLine(QFrame):
@@ -75,7 +98,10 @@ class QHLine(QFrame):
 class newComboBox(QComboBox):
     def __init__(self,items_list):
         super().__init__()
-        self.setStyleSheet('selection-background-color: hsv(240, 170, 255)')
+        if flag_darktheme:
+            self.setStyleSheet('selection-background-color: hsv(240, 120, 180)')
+        else:
+            self.setStyleSheet('selection-background-color: hsv(240, 170, 255)')
         self.addItems(items_list)
         
 class boldLabel(QLabel):
@@ -212,6 +238,15 @@ class Logger():
         self.stream_check_timer.start(1000)
         self.stream_check_timer.timeout.connect(self.check_stream) # connect after stream started
         self.levels_timer.timeout.connect(self.show_levels) # connect after stream started
+        
+        # if darktheme enabled
+        if flag_darktheme:
+            qdarktheme.setup_theme("auto")
+            self.window.setStyleSheet("background-color: black; color: white")
+            self.toolbar.setStyleSheet("background-color: gray")
+            self.fig.set_edgecolor("gray")
+            #self.fig.set_facecolor("gray")
+            #self.window.setWindowIcon(QtGui.QIcon(resource_filename('pydvma', 'icon_darwin.png')))
         
         app.exec()
 

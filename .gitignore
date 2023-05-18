@@ -7,4 +7,6 @@ dist/
 pydvma.egg-info/
 .spyproject/
 example.log
-.ipynb_checkpoints/pydvma_template-checkpoint.ipynb
+
+#find . -name '.DS_Store' -type f -delete
+.DS_Store
