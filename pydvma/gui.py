@@ -37,7 +37,6 @@ from . import streams
 from . import file
 from . import modal
 from . import options
-from . import oscilloscope
 import time
 import sys, os
 
@@ -1084,7 +1083,7 @@ class Logger():
     
     def button_clicked_osc(self):
         # launch oscilloscope
-        self.osc = Oscilloscope(self.settings)
+        self.osc = Oscilloscope(self.settings, flag_standalone=False)
 
 
     def button_clicked_log_data(self):
@@ -2553,7 +2552,7 @@ class Logger():
 
 
 class Oscilloscope():
-    def __init__(self, settings):
+    def __init__(self, settings, flag_standalone=True):
         '''Creates an Oscilloscope
         Args:
             settings: An object of the class MySettings
@@ -2575,7 +2574,8 @@ class Oscilloscope():
         self.timer.timeout.connect(self.update) # update figure and buffer
         self.timer.start(60)
 
-        if app.applicationState() != Qt.ApplicationActive:
+        #if app.applicationState() != Qt.ApplicationActive:
+        if flag_standalone:
             app.exec()  
 
     def create_figure(self):
