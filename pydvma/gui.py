@@ -165,7 +165,7 @@ class PreviewWindow():
 
 class Logger():
         
-    def __init__(self,settings=None,test_name=None,default_window=None):
+    def __init__(self,settings=None,test_name=None,default_window=None,output_signal_settings=None):
         
         # Initialise variables
         global MESSAGE
@@ -204,6 +204,17 @@ class Logger():
         self.message = ''
         self.t0_clipped = 0
         self.fn_in_range = np.array([])
+
+        # Setup output defaults
+        if output_signal_settings is None:
+            self.output_signal_settings = options.Output_Signal_Settings(type='None',amp=0,f1=0,f2=0)
+        else:
+            self.output_signal_settings = output_signal_settings
+
+        # if output_signal is None:
+        #     self.output_signal = None
+        # else:
+        #     self.output_signal = output_signal
         
         # SETUP GUI
         # self.app = app
@@ -823,17 +834,19 @@ class Logger():
     def setup_frame_tools_generate_output(self):
         self.list_output_options = ['None','sweep','gaussian','uniform']
         self.input_output_options = newComboBox(self.list_output_options)
+        # set default
+        self.input_output_options.setCurrentText(self.output_signal_settings.type)
         self.input_output_options.currentTextChanged.connect(self.update_output)
         
-        self.input_output_amp = QLineEdit('0')
+        self.input_output_amp = QLineEdit(str(self.output_signal_settings.amp))
         v = QDoubleValidator(0.0,1.0,5)
         v.setNotation(QDoubleValidator.Notation.StandardNotation)
         self.input_output_amp.setValidator(v)
         
-        self.input_output_f1 = QLineEdit('0')
+        self.input_output_f1 = QLineEdit(str(self.output_signal_settings.f1))
         self.input_output_f1.setValidator(QDoubleValidator(0.0,float(np.inf),5))
         
-        self.input_output_f2 = QLineEdit('0')
+        self.input_output_f2 = QLineEdit(str(self.output_signal_settings.f2))
         self.input_output_f2.setValidator(QDoubleValidator(0.0,float(np.inf),5))
         
         self.input_output_duration = QLineEdit(str(self.settings.stored_time))
@@ -1064,7 +1077,7 @@ class Logger():
             self.levels_timer.start()
     
     def show_levels(self):
-        if streams.REC is not None:
+        if self.rec is not None:
             max_levels = np.max(np.abs(self.rec.osc_time_data),axis=0)
             ch_max = np.argmax(max_levels)
             max_levels_all = max_levels[ch_max]
@@ -1244,7 +1257,8 @@ class Logger():
     def load_data(self):
         
         d = file.load_data(parent=self.window)
-        
+        # find file type
+
         if d is not None:
             d = datastructure.update_dataset(d) # updates data saved using previous logger versions
             self.dataset.add_to_dataset(d.time_data_list)
@@ -2521,7 +2535,8 @@ class Logger():
             self.update_figure()
             
     def import_jwlogger(self):
-        pass
+        # import data from JW Logger
+        self.dataset = file.import_from_matlab_jwlogger()
     
     def export_jwlogger(self):
         # export data to data structure compatible with JW Logger

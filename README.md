@@ -22,21 +22,30 @@ The logger is recommended for use with Python 3.10.
 pip install pydvma
 ```
 
-If you would like soundcard acquisition then also install sounddevice:
-```
-pip install sounddevice
-```
-
 Or clone this repository and install using:
 ```
 python setup.py install
 ```
 
-Alternatively you can use the environment yml file provided:
+Alternatively if you use anaconda then the following creates a Python 3.10 environment with the required packages:
 ```
-conda env -name logger create -f logger.yml
-conda activate logger
+conda create -n py310 python=3.10
+conda activate py310
+conda install numpy scipy jupyter matplotlib pyqtgraph
+pip install pydvma
 ```
+
+If you would like soundcard acquisition then also install sounddevice:
+```
+pip install sounddevice
+```
+
+If you would like National Instruments acquisition then you need to install the NIDAQMX v17.6 driver from National Instruments ([here](https://www.ni.com/en/support/downloads/drivers/download.ni-daq-mx.html#288272)) and also install pydaqmx:
+```
+pip install pydaqmx
+```
+
+
 
 ### Running the logger
 
@@ -47,10 +56,11 @@ pydvma_template.ipynb
 
 or within a Jupyter Notebook or Python console:
 ```python
-%gui qt
 import pydvma as dvma
+import matplotlib
+
+%matplotlib qt
 settings = dvma.MySettings()
-osc = dvma.Oscilloscope(settings)
 logger = dvma.Logger(settings)
 ```
 

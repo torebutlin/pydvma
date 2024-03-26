@@ -11,7 +11,8 @@ import scipy.io as io
 import pyqtgraph as pg
 from qtpy import QtWidgets
 from qtpy.QtWidgets import QFileDialog
-
+from . import datastructure
+from . import options
 
 
 def load_data(parent=None, filename=None):
@@ -20,7 +21,7 @@ def load_data(parent=None, filename=None):
     '''
     if filename is None:
         # wid = QtWidgets.QWidget()
-        filename, _ = QFileDialog.getOpenFileName(parent, 'Open data file', '', '*.npy')
+        filename, _ = QFileDialog.getOpenFileName(parent, 'Open data file', '', '*.npy *.mat')
         
         # file_dialog = QFileDialog(parent, 'Open data file', '', '*.npy')
         # file_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
@@ -30,8 +31,17 @@ def load_data(parent=None, filename=None):
         if not filename:
             return None
 
-    d = np.load(filename,allow_pickle=True,fix_imports=True)
-    dataset = d[0]
+    # determine if file is .npy or .mat
+    if filename.endswith('.npy'):
+        dataset = d = np.load(filename,allow_pickle=True,fix_imports=True)
+        dataset = d[0]
+    elif filename.endswith('.mat'):
+        dataset = import_from_matlab_jwlogger(filename=filename)
+    else:
+        print('Expecting file to be .npy or .mat')
+        return None
+    
+    
     return dataset
 
 
@@ -496,3 +506,59 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
     print("Data saved as %s" % filename)
 
     return filename
+
+
+
+#%% IMPORT FROM MATLAB JWLOGGER
+def import_from_matlab_jwlogger(filename=None):
+    '''
+    Imports dataset class from file 'filename.mat', or provides dialog if no
+    filename provided.
+    
+    Saved file is compatible with Jim Woodhouse logger file format.
+
+    Args:
+       filename: string [optional]
+    '''
+    
+    d = io.loadmat(filename)
+    dataset = datastructure.DataSet()
+    
+    #%% TIME
+    if 'indata' in d:
+        td = d['indata']
+        ta = np.arange(0,d['npts']/d['freq'],1/d['freq'])
+        ta = np.squeeze(ta)
+        settings = options.MySettings(channels=np.size(td,1),
+                                      fs=d['freq'])
+        
+        time_data = datastructure.TimeData(ta,td,settings)
+        time_data.timestamp = os.path.getmtime(filename)
+        dataset.add_to_dataset(time_data)
+    
+    #%% FFT
+    if ('yspec' in d) and (d['tfun'] == 0):
+        fd = d['yspec']
+        fa = np.fft.rfftfreq(int(d['npts']),1/d['freq'])
+        fa = np.squeeze(fa)
+        settings = options.MySettings(channels=np.size(fd,1),
+                                      fs=d['freq'])
+        
+        freq_data = datastructure.FreqData(fa,fd,settings)
+        freq_data.timestamp = os.path.getmtime(filename)
+        dataset.add_to_dataset(freq_data)
+
+    
+    #%% TF
+    if ('yspec' in d) and (d['tfun'] == 1):
+        tf = d['yspec']
+        fa = np.fft.rfftfreq(int(d['npts']),1/d['freq'])
+        fa = np.squeeze(fa)
+        settings = options.MySettings(channels=np.size(tf,1),
+                                      fs=d['freq'])
+        
+        tf_data = datastructure.TfData(fa,tf,None,settings)
+        tf_data.timestamp = os.path.getmtime(filename)
+        dataset.add_to_dataset(tf_data)
+    
+    return dataset

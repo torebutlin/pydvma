@@ -153,16 +153,16 @@ def log_data(settings,test_name=None,rec=None, output=None):
     
 
 
-def log_data_with_output(settings, output,test_name=None, rec=None):
-
+#def log_data_with_output(settings, output,test_name=None, rec=None):
+#
     
-    # call log_data function
-    dataset = log_data(settings, test_name, rec)
+    # # call log_data function
+    # dataset = log_data(settings, test_name, rec)
     
-    # call output_signal function
-    output_signal(settings,output)
+    # # call output_signal function
+    # output_signal(settings,output)
     
-    return dataset
+    # return dataset
     
 
 

@@ -205,7 +205,23 @@ class MySettings(object):
         return text
 
         
+
+
+class Output_Signal_Settings(object):
+    '''
+    A class that stores the output signal settings.
+    '''
+    def __init__(self,type='None',
+                 amp = 0,
+                 f1 = 0,
+                 f2 = 0):
+        self.type = type
+        self.amp = amp
+        self.f1 = f1
+        self.f2 = f2
         
+    
+
 def set_plot_colours(channels):
     '''
     Returns a list of RGB colours depending on the number of channels required.
