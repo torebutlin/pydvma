@@ -58,7 +58,11 @@ class BlueButton(QPushButton):
         if flag_darktheme:
             self.setStyleSheet("background-color: hsv(240, 120, 180)")
         else:
-            self.setStyleSheet("background-color: hsv(240, 170, 255)")
+            # set font colour to black
+            self.setStyleSheet("background-color: hsv(240, 170, 255); color: black")
+            
+
+            
         self.setText(text) 
 
 class GreenButton(QPushButton):
@@ -67,7 +71,7 @@ class GreenButton(QPushButton):
         if flag_darktheme:
             self.setStyleSheet("background-color: hsv(120, 120, 180);")
         else:
-            self.setStyleSheet("background-color: hsv(120, 170, 255);")
+            self.setStyleSheet("background-color: hsv(120, 170, 255); color: black")
         self.setText(text)
 
 class RedButton(QPushButton):
@@ -76,7 +80,7 @@ class RedButton(QPushButton):
         if flag_darktheme:
             self.setStyleSheet("background-color: hsv(0, 120, 180)")
         else:
-            self.setStyleSheet("background-color: hsv(0, 170, 255)")
+            self.setStyleSheet("background-color: hsv(0, 170, 255); color: black")
         self.setText(text)
         
 class OrangeButton(QPushButton):
@@ -85,7 +89,7 @@ class OrangeButton(QPushButton):
         if flag_darktheme:
             self.setStyleSheet("background-color: hsv(30, 120, 180)")
         else:
-            self.setStyleSheet("background-color: hsv(30, 170, 255)")
+            self.setStyleSheet("background-color: hsv(30, 170, 255); color: black")
         self.setText(text)
 
 class QHLine(QFrame):
@@ -100,7 +104,7 @@ class newComboBox(QComboBox):
         if flag_darktheme:
             self.setStyleSheet('selection-background-color: hsv(240, 120, 180)')
         else:
-            self.setStyleSheet('selection-background-color: hsv(240, 170, 255)')
+            self.setStyleSheet('selection-background-color: hsv(240, 170, 255); color: black')
         self.addItems(items_list)
         
 class boldLabel(QLabel):
@@ -133,7 +137,7 @@ class LogDataThread(QThread):
 class PreviewWindow():
     def __init__(self,title='Time Data'):
         self.preview_window = QWidget()
-        self.preview_window.setStyleSheet("background-color: white")
+        self.preview_window.setStyleSheet("background-color: white; color: black")
         self.preview_window.setWindowTitle('Output Signal Preview')
         self.preview_window.setWindowIcon(QtGui.QIcon(icon_path))
 
@@ -220,7 +224,7 @@ class Logger():
         # self.app = app
         # self.app.setStyle(QStyleFactory.create('Fusion'))
         self.window = QWidget()
-        self.window.setStyleSheet("background-color: white")
+        self.window.setStyleSheet("background-color: white; color: black")
         self.window.setWindowTitle('Logger')
         self.window.setWindowIcon(QtGui.QIcon(icon_path))
         # self.window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -948,6 +952,10 @@ class Logger():
         
         self.button_calc_sono = BlueButton('Calc Sonogram')
         self.button_calc_sono.clicked.connect(self.calc_sono)
+
+        self.button_calc_damping = BlueButton('Calc Damping')
+        self.button_calc_damping.clicked.connect(self.calc_damping)
+
         
         self.layout_tools_sonogram = QGridLayout()
         self.layout_tools_sonogram.addWidget(boldLabel('Calculate Sonogram:'),0,0,1,4)
@@ -961,6 +969,7 @@ class Logger():
         self.layout_tools_sonogram.addWidget(self.input_sono_n_set,5,2,1,1)
         self.layout_tools_sonogram.addWidget(self.input_sono_n_chan,5,3,1,1)
         self.layout_tools_sonogram.addWidget(self.button_calc_sono,6,0,1,4)
+        self.layout_tools_sonogram.addWidget(self.button_calc_damping,7,0,1,4)
         
         self.frame_tools_sonogram = QFrame()
         self.frame_tools_sonogram.setLayout(self.layout_tools_sonogram)
@@ -1124,7 +1133,7 @@ class Logger():
         
         # reset trigger
         self.rec.trigger_detected = False # but need to do this again inside acquisition
-        self.button_log_data.setStyleSheet("background-color: white")
+        self.button_log_data.setStyleSheet("background-color: white; color: black")
         
 #        # show message re trigger
 #        if self.settings.pretrig_samples is None:
@@ -1192,7 +1201,7 @@ class Logger():
         self.auto_xy = 'x'
         self.update_figure()
         self.p.ax.set_ylim([-1,1])
-        self.button_log_data.setStyleSheet('background-color: hsv(120, 170, 255)')
+        self.button_log_data.setStyleSheet('background-color: hsv(120, 170, 255); color: black')
         self.message_timer.stop()
         
         
@@ -1201,7 +1210,7 @@ class Logger():
         streams.start_stream(self.settings) # reset stream
         self.rec = streams.REC # reset stream
         self.show_message('Logging cancelled')
-        self.button_log_data.setStyleSheet('background-color: hsv(120, 170, 255)')
+        self.button_log_data.setStyleSheet('background-color: hsv(120, 170, 255); color: black')
         self.message_timer.stop() # stop acquisition messages
         self.selected_channels = self.p.get_selected_channels()
 
@@ -2533,6 +2542,23 @@ class Logger():
             if self.current_view != 'Sono Data':
                 self.switch_view('Sono Data')
             self.update_figure()
+
+    def calc_damping(self):
+        if len(self.dataset.time_data_list) == 0:
+            message = 'No time data to calculate damping.'
+            self.show_message(message)
+        else:
+            self.N_frames_sono = int(self.input_sono_N_frames.text())
+            n_set = int(self.input_sono_n_set.text())
+            n_chan = int(self.input_sono_n_chan.text())
+            NT = len(self.dataset.time_data_list[n_set].time_data[:,n_chan])
+            f = 0 # match overlap in sonogram
+            self.nperseg = int(NT // (self.N_frames_sono * (1-f) + f)) # 1/8 is default overlap for spectrogram
+            fn,Qn = analysis.calculate_damping_from_sono(self.dataset.time_data_list[n_set],n_chan=n_chan,nperseg=self.nperseg,start_time=None)
+            message = 'Modes fitted:\n\n'
+            message += 'fn = {} (Hz)\n\n'.format(np.array2string(fn,precision=2))
+            message += 'Qn = 1/(2 zn) = {}\n'.format(np.array2string(Qn,precision=1))
+            self.show_message(message)
             
     def import_jwlogger(self):
         # import data from JW Logger

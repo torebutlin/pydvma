@@ -10,6 +10,9 @@ from . import datastructure
 import numpy as np
 from scipy import signal
 import copy
+import peakutils as pu
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
 
 MESSAGE = ''
 
@@ -436,12 +439,15 @@ def clean_impulse(time_data, ch_impulse=0):
     
     
 #%% SONOGRAM    
-def calculate_sonogram(time_data, nperseg=None):
+def calculate_sonogram(time_data, nperseg=None, noverlap=None):
     
     y = np.copy(time_data.time_data) # handles all channels simultaneously
     if nperseg == None:
         nperseg = int(len(time_data.time_axis)/50) #roughly 50 fft's per time-series not counting overlap
-    f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,window='hann',nperseg=nperseg,noverlap=nperseg//4,axis=0,mode='complex')
+    if noverlap == None:
+        noverlap = nperseg//2
+
+    f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,window='hann',nperseg=nperseg,noverlap=noverlap,axis=0,mode='complex')
     
     # put channel axis at end
     S_all_chans = np.swapaxes(S,1,2)
@@ -453,3 +459,92 @@ def calculate_sonogram(time_data, nperseg=None):
 #%% CWT
 #def calculate_cwt(time_data):
 #    return None
+
+#%% Damping from sonogram
+
+# define a custom functions for fitting
+def func_real(t, A,B,N):
+    #ensure exp(A) and exp(N) are positive
+    f = np.log(np.exp(A)*np.exp(-B*t) + 1j*np.exp(N))
+    f = np.real(f)
+    return f
+
+def func_imag(t, W, C):
+    f = W*t + C
+    return f
+
+zeta_n = []
+wn_n = []
+def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None):
+
+    sono_data = calculate_sonogram(time_data, nperseg=nperseg,noverlap=0)
+
+    t = sono_data.time_axis
+    f = sono_data.freq_axis
+    S = sono_data.sono_data
+    settings = sono_data.settings
+
+    # find t index closest to t0
+    if start_time == None:
+        try:
+            t0 = 2*sono_data.settings.pretrig_samples/sono_data.settings.fs
+            time_slice = np.argmin(np.abs(t - t0))
+        except:
+            t0 = t[-1]//20
+            time_slice = np.argmin(np.abs(t - t0))
+
+    time_slice_data = np.abs(S[:, time_slice, n_chan])
+    threshold = 10 * np.median(time_slice_data)/np.max(time_slice_data)
+    peaks = pu.indexes(time_slice_data, thres=threshold, min_dist=1)
+
+    print(peaks)
+    plt.plot(time_slice_data)
+    # horizontal line at threshold
+    plt.axhline(threshold * np.max(time_slice_data), color='r')
+
+    for peak in peaks:
+
+        # Extract the real and imaginary parts of S at the peak frequency
+        real_part = np.real(np.log(S[peak, :, n_chan]))
+        imag_part = np.unwrap(np.imag(np.log(S[peak, :, n_chan])))
+
+        # Fit the real part to a custom function
+        popt_real, _ = curve_fit(func_real, t[time_slice:], real_part[time_slice:])
+        real_fit = func_real(t, *popt_real)
+        A = popt_real[0]
+        B = popt_real[1]
+        N = popt_real[2]
+
+        # Identify crossover time when noise starts to dominate
+        t_cross = (A - N)/B
+        # nearest time index
+        time_cross = np.argmin(np.abs(t - t_cross))
+
+        # Fit the imaginary part to a linear function for clean part of the signal
+        t0 = time_slice
+        dt = int(np.ceil(0.9*(time_cross - time_slice)))
+        dt = np.max([2,dt])
+        t1 = t0 + dt
+
+        # Fit the imaginary part to a linear function for clean part of the signal
+        popt_imag,_ = curve_fit(func_imag, t[t0:t1], imag_part[t0:t1])
+        imag_fit = func_imag(t, *popt_imag)
+        W = popt_imag[0]
+        print(W/2/np.pi)
+        W0 = 2*np.pi*f[peak] + W # corrected for the bin frequency
+        C = popt_imag[1]
+        
+        # Calculate the damping factor and frequency from the fit coefficients
+        zeta = B / np.sqrt(W0**2 + B**2)
+        w = W0 / np.sqrt(1 - zeta**2)
+        
+        # Store the results in numpy arrays
+        zeta_n.append(zeta)
+        wn_n.append(w)
+
+    zn = np.array(zeta_n)
+    Qn = 1/(2*zn)
+    wn = np.array(wn_n)
+    fn = wn / (2*np.pi)
+
+    return fn, Qn

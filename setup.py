@@ -11,12 +11,13 @@ requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'matplotlib', 'seaborn',
 
 setup(
     name='pydvma',
-    version='0.9.7', # keep in sync with datastructure.py
+    version='0.9.8', # keep in sync with datastructure.py
     install_requires=requires,
     packages=['pydvma'],
     package_data={'': ['icon.png']},
     license='BSD 3-Clause License',
     long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
     author='Tore Butlin',
     author_email='tb267@cam.ac.uk',
     url='https://github.com/torebutlin/pydvma'
