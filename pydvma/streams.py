@@ -518,7 +518,7 @@ class Recorder_NI(object):
             
         self.output_stream = Task()
         print(self.set_output_channels())
-        self.output_stream.CreateAOVoltageChan(self.set_output_channels(),"",-settings.VmaxNI,settings.VmaxNI,pdaq.DAQmx_Val_Volts,None)
+        self.output_stream.CreateAOVoltageChan(self.set_output_channels(),"",-settings.output_VmaxNI,settings.output_VmaxNI,pdaq.DAQmx_Val_Volts,None)
         self.output_stream.CfgSampClkTiming("",settings.output_fs,
                               pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_FiniteSamps,
                               N_output)

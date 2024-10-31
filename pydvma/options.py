@@ -81,6 +81,7 @@ class MySettings(object):
                  output_device_index=None,
                  output_channels=None,
                  output_fs=None,
+                 output_VmaxNI=None,
                  use_output_as_ch0=False):
         
         #INPUT SETTINGS
@@ -164,6 +165,11 @@ class MySettings(object):
         self.init_view_time=bool(init_view_time)
         self.init_view_freq=bool(init_view_freq)
         self.init_view_levels=bool(init_view_levels)
+
+        if output_VmaxNI == None:
+            self.output_VmaxNI = self.VmaxNI
+        else:
+            self.output_VmaxNI = float(output_VmaxNI)
 
         ### derived settings
         if (viewed_time != None) and (viewed_time != 'None'):

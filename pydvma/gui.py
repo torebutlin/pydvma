@@ -169,7 +169,7 @@ class PreviewWindow():
 
 class Logger():
         
-    def __init__(self,settings=None,test_name=None,default_window=None,output_signal_settings=None):
+    def __init__(self,settings=None,test_name=None,default_window=None,output_signal_settings=None,dataset=None):
         
         # Initialise variables
         global MESSAGE
@@ -177,7 +177,10 @@ class Logger():
             default_window = 'None'
         self.settings = settings
         self.test_name = test_name
-        self.dataset = datastructure.DataSet()
+        if dataset is not None:
+            self.dataset = dataset
+        else:
+            self.dataset = datastructure.DataSet()
         
         self.default_window = default_window
         self.current_view = 'Time'    
