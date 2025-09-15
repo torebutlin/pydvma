@@ -9,7 +9,7 @@ from scipy.optimize import curve_fit, least_squares
 %matplotlib qt
 
 #%%
-d = ma.load_data(filename='/Users/tore/Dropbox (Cambridge University)/Work Teaching/3C6/2021/LAB/LAB VIDEO/p3_impulse_with_TF.npy')
+d = ma.load_data(filename='/Users/tore/Library/CloudStorage/OneDrive-UniversityofCambridge/Work Teaching - onedrive/3C6/2024-2025/LAB RESULTS/p3_impulse_with_TF.npy')
 # %%
 d.calculate_sono_set(nperseg=200)
 n_chan = 1
@@ -104,11 +104,16 @@ for peak in peaks:
     C = popt_imag[1]
     print(C/2/np.pi)
     
-    # plt.plot(t, real_fit)
-    # plt.plot(t[t0:t1], real_fit[t0:t1], linewidth=3)
-    # plt.plot(t, real_part,'x')
+    #plt.plot(t, real_fit)
+    color = plt.cm.tab10(len(zeta_n) % 10)
+    plt.plot(t[t0:t1], real_fit[t0:t1], linewidth=3, label=f'{f[peak]:.1f} Hz', color=color)
+    plt.plot(t[t0:t1], real_part[t0:t1],'x', color=color)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Real Part of Log(S)')
+    plt.title('Real Part of Log Sonogram Data vs Fitted Curve')
+    plt.legend()
     # plt.plot(t, imag_fit)
-    plt.plot(t[t0:t1], imag_part[t0:t1], linewidth=3)
+    #plt.plot(t[t0:t1], imag_part[t0:t1], linewidth=3)
     # plt.plot(t, np.imag(np.log(S[peak, :, n_chan])),'x')
     # plt.plot(t, imag_part,'.')
 
