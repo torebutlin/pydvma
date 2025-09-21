@@ -15,7 +15,7 @@ import datetime
     
 
 #%% Create test data
-def create_test_impulse_data(noise_level=0):
+def create_test_impulse_data(noise_level=0.0):
     '''
     Creates example time domain data simulating impulse hammer test
     '''
@@ -173,6 +173,60 @@ def create_test_impulse_data_nonlinear_v2(noise_level=0):
     timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
     
     timedata = datastructure.TimeData(time_axis,time_data,settings,timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1], test_name='Synthesised nonlinear data v2')
+    
+    dataset = datastructure.DataSet()
+    dataset.add_to_dataset(timedata)
+    
+    return dataset
+
+def create_test_impulse_data_multi_harmonics(f1=100, noise_level=0.001):
+    '''
+    Creates example time domain data simulating impulse hammer test
+    with response containing harmonics at f1, 4f1, 9f1, 16f1 and f2, 4f2, 9f2, 16f2
+    where f2 = 1.03 * f1
+    '''
+    settings = options.MySettings(fs=10000)
+    N = int(1e4)
+    time_axis = np.arange(N)/settings.fs
+    
+    time_data = np.zeros([N,2])
+    pulse_width = 0.0005
+    N_pulse = int(np.ceil(pulse_width*settings.fs))
+    n = np.arange(N_pulse)
+    pulse = 0.5*(1-np.cos(2*np.pi*n/N_pulse))
+    time_data[n,0] = pulse
+    time_data[:,0] += noise_level*2*(np.random.rand(N) - 0.5)
+    
+    f2 = 1.03 * f1
+    test_time_const = 0.1
+    
+    # Create response with multiple harmonics
+    y = np.zeros_like(time_axis)
+    
+    # First set of harmonics: f1, 4f1, 9f1, 16f1
+    harmonics_1 = [1, 4, 9, 16]
+    amplitudes_1 = [1.0, 0.5, 0.3, 0.2]  # Decreasing amplitudes
+    
+    for harmonic, amplitude in zip(harmonics_1, amplitudes_1):
+        freq = harmonic * f1
+        y += amplitude * np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*freq*time_axis)
+    
+    # Second set of harmonics: f2, 4f2, 9f2, 16f2
+    harmonics_2 = [1, 4, 9, 16]
+    amplitudes_2 = [0.8, 0.4, 0.25, 0.15]  # Slightly different amplitudes
+    
+    for harmonic, amplitude in zip(harmonics_2, amplitudes_2):
+        freq = harmonic * f2
+        y += amplitude * np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*freq*time_axis)
+    
+    y += noise_level*2*(np.random.rand(len(y)) - 0.5)
+    
+    time_data[:,1] = y
+    
+    t = datetime.datetime.now()
+    timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+    
+    timedata = datastructure.TimeData(time_axis,time_data,settings,timestamp=t, timestring=timestring, units=['N','m/s'], channel_cal_factors=[1,1], test_name='Synthesised multi-harmonic data')
     
     dataset = datastructure.DataSet()
     dataset.add_to_dataset(timedata)
