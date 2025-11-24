@@ -11,7 +11,7 @@ requires = ['peakutils', 'numpy', 'scipy', 'pyqtgraph', 'matplotlib', 'seaborn',
 
 setup(
     name='pydvma',
-    version='0.9.9', # keep in sync with datastructure.py
+    version='1.0.0', # keep in sync with datastructure.py
     install_requires=requires,
     packages=['pydvma'],
     package_data={'': ['icon.png']},
