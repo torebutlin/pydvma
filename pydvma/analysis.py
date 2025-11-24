@@ -12,7 +12,6 @@ from scipy import signal
 import copy
 import peakutils as pu
 from scipy.optimize import curve_fit
-import matplotlib.pyplot as plt
 
 MESSAGE = ''
 
@@ -473,16 +472,27 @@ def func_imag(t, W, C):
     f = W*t + C
     return f
 
-zeta_n = []
-wn_n = []
 def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None):
+    '''
+    Calculate damping from sonogram data.
 
+    Returns:
+        fn: array of natural frequencies (Hz)
+        Qn: array of Q factors (1/(2*zeta))
+        fit_data: dict containing data needed for plotting the fits:
+            - 't': time axis
+            - 'fits': list of dicts, each with keys:
+                - 't_fit': time values for the fit region
+                - 'real_fit': fitted real part values
+                - 'real_data': actual real part data values
+                - 'f_peak': peak frequency (Hz)
+                - 'Qn': Q factor for this mode
+    '''
     sono_data = calculate_sonogram(time_data, nperseg=nperseg,noverlap=0)
 
     t = sono_data.time_axis
     f = sono_data.freq_axis
     S = sono_data.sono_data
-    settings = sono_data.settings
 
     # find t index closest to t0
     if start_time == None:
@@ -497,22 +507,16 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
     threshold = 10 * np.median(time_slice_data)/np.max(time_slice_data)
     peaks = pu.indexes(time_slice_data, thres=threshold, min_dist=1)
 
-    print(peaks)
-    plt.plot(time_slice_data)
-    # horizontal line at threshold
-    plt.axhline(threshold * np.max(time_slice_data), color='r')
-
-    # Collect results locally to avoid leaking state across calls
+    # Collect results locally
     zeta_n = []
     wn_n = []
-    plt.figure()
+    fits = []
+
     for peak in peaks:
 
         # Extract the real and imaginary parts of S at the peak frequency
         real_part = np.real(np.log(S[peak, :, n_chan]))
         imag_part = np.unwrap(np.imag(np.log(S[peak, :, n_chan])))
-
-
 
         # Fit the real part to a custom function
         try:
@@ -531,10 +535,10 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
         time_cross = np.argmin(np.abs(t - t_cross))
 
         # Fit the imaginary part to a linear function for clean part of the signal
-        t0 = time_slice
+        t0_idx = time_slice
         dt = int(np.ceil(0.9*(time_cross - time_slice)))
         dt = np.max([2,dt])
-        t1 = t0 + dt
+        t1_idx = t0_idx + dt
 
         # Only continue if there are enough datapoints for imaginary part fitting
         if dt <= 4:
@@ -542,16 +546,13 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
 
         # Fit the imaginary part to a linear function for clean part of the signal
         try:
-            popt_imag,_ = curve_fit(func_imag, t[t0:t1], imag_part[t0:t1])
+            popt_imag,_ = curve_fit(func_imag, t[t0_idx:t1_idx], imag_part[t0_idx:t1_idx])
         except Exception:
             # Skip this peak if the fit fails
             continue
-        imag_fit = func_imag(t, *popt_imag)
         W = popt_imag[0]
-        print(W/2/np.pi)
         W0 = 2*np.pi*f[peak] + W # corrected for the bin frequency
-        C = popt_imag[1]
-        
+
         # Calculate the damping factor and frequency from the fit coefficients
         zeta = B / np.sqrt(W0**2 + B**2)
         # Guard against numerical issues if zeta >= 1
@@ -559,25 +560,27 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
         w = W0 / np.sqrt(1 - zeta**2)
         Qn = 1/(2*zeta)
 
-        # Plot the results in a separate figure
-        color = plt.cm.tab10(len(zeta_n) % 10)
-        plt.plot(t[t0:t1], real_fit[t0:t1], linewidth=3, label=f'{f[peak]:.1f} Hz, Qn={Qn:.0f}', color=color)
-        plt.plot(t[t0:t1], real_part[t0:t1],'x', color=color)
-        
+        # Store fit data for plotting
+        fits.append({
+            't_fit': t[t0_idx:t1_idx],
+            'real_fit': real_fit[t0_idx:t1_idx],
+            'real_data': real_part[t0_idx:t1_idx],
+            'f_peak': f[peak],
+            'Qn': Qn
+        })
 
-        # Store the results in numpy arrays
+        # Store the results
         zeta_n.append(zeta)
         wn_n.append(w)
 
-    plt.xlabel('Time (s)')
-    plt.ylabel('Real Part of Log(S)')
-    plt.title('Real Part of Log Sonogram Data vs Fitted Curve')
-    plt.legend()
-    plt.show()
-
     zn = np.array(zeta_n)
-    Qn = 1/(2*zn)
+    Qn = 1/(2*zn) if len(zn) > 0 else np.array([])
     wn = np.array(wn_n)
-    fn = wn / (2*np.pi)
+    fn = wn / (2*np.pi) if len(wn) > 0 else np.array([])
 
-    return fn, Qn
+    fit_data = {
+        't': t,
+        'fits': fits
+    }
+
+    return fn, Qn, fit_data

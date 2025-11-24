@@ -166,6 +166,58 @@ class PreviewWindow():
         self.preview_window.raise_()
 
 
+class DampingFitWindow():
+    def __init__(self, fit_data, title='Damping Fit Results'):
+        self.window = QWidget()
+        self.window.setStyleSheet("background-color: white; color: black")
+        self.window.setWindowTitle(title)
+        self.window.setWindowIcon(QtGui.QIcon(icon_path))
+
+        self.fig = Figure(figsize=(9, 6), dpi=100)
+        self.canvas = FigureCanvas(self.fig)
+        self.toolbar = NavigationToolbar(self.canvas, None)
+        self.toolbar.setOrientation(Qt.Orientation.Horizontal)
+
+        self.label_figure = boldLabel(title)
+        self.label_figure.setMaximumHeight(20)
+        self.label_figure.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Create the plot
+        self.ax = self.fig.add_subplot(111)
+        self.plot_fits(fit_data)
+
+        # Layout
+        self.layout_figure = QVBoxLayout()
+        self.layout_figure.addWidget(self.label_figure)
+        self.layout_figure.addWidget(self.canvas)
+        self.layout_figure.addWidget(self.toolbar)
+
+        self.window.setLayout(self.layout_figure)
+
+        self.window.show()
+        self.window.showNormal()
+        self.window.raise_()
+
+    def plot_fits(self, fit_data):
+        import matplotlib.cm as cm
+        fits = fit_data['fits']
+        if len(fits) == 0:
+            self.ax.text(0.5, 0.5, 'No modes fitted',
+                        transform=self.ax.transAxes, ha='center', va='center')
+            return
+
+        for i, fit in enumerate(fits):
+            color = cm.tab10(i % 10)
+            label = f'{fit["f_peak"]:.1f} Hz, Qn={fit["Qn"]:.0f}'
+            self.ax.plot(fit['t_fit'], fit['real_fit'], linewidth=3,
+                        label=label, color=color)
+            self.ax.plot(fit['t_fit'], fit['real_data'], 'x', color=color)
+
+        self.ax.set_xlabel('Time (s)')
+        self.ax.set_ylabel('Real Part of Log(S)')
+        self.ax.set_title('Real Part of Log Sonogram Data vs Fitted Curve')
+        self.ax.legend()
+        self.canvas.draw()
 
 
 
@@ -2560,7 +2612,11 @@ class Logger():
             NT = len(self.dataset.time_data_list[n_set].time_data[:,n_chan])
             f = 0 # match overlap in sonogram
             self.nperseg = int(NT // (self.N_frames_sono * (1-f) + f)) # 1/8 is default overlap for spectrogram
-            fn,Qn = analysis.calculate_damping_from_sono(self.dataset.time_data_list[n_set],n_chan=n_chan,nperseg=self.nperseg,start_time=None)
+            fn, Qn, fit_data = analysis.calculate_damping_from_sono(self.dataset.time_data_list[n_set],n_chan=n_chan,nperseg=self.nperseg,start_time=None)
+
+            # Show the fit plot in a popup window
+            self.damping_fit_window = DampingFitWindow(fit_data, title='Damping Fit Results')
+
             message = 'Modes fitted:\n\n'
             message += 'fn = {} (Hz)\n\n'.format(np.array2string(fn,precision=2))
             message += 'Qn = 1/(2 zn) = {}\n'.format(np.array2string(Qn,precision=1))
