@@ -29,13 +29,13 @@ settings = dvma.MySettings()
 
 # Acquisition settings
 settings.fs = 10000          # Sampling frequency (Hz)
-settings.duration = 2.0      # Duration (seconds)
+settings.stored_time = 2.0   # Duration (seconds)
 settings.channels = 2        # Number of channels
 settings.pretrig_samples = 1000  # Pre-trigger samples
 
 # Device settings
-settings.device = 'soundcard'  # or 'nidaq'
-settings.input_device_name = 'default'
+settings.device_driver = 'soundcard'  # or 'nidaq'
+settings.device_index = None  # None for default device
 ```
 
 ## Working with Different Data Types

@@ -121,9 +121,9 @@ fn, Qn, fit_data = dvma.calculate_damping_from_sono(
 
 ## SDOF Modal Fitting
 
-### Circle Fit Method
+### Single Channel Modal Fitting
 
-Fit a single mode from FRF data:
+Fit modal parameters from FRF data for a single channel:
 
 ```python
 # Calculate transfer function
@@ -132,35 +132,37 @@ tf_data = dvma.calculate_tf(time_data, ch_in=0)
 # Select frequency range around a mode
 freq_range = [180, 220]  # Hz
 
-# Perform SDOF fit (using external functions)
-fn, zeta, mode_params = dvma.fit_mode_circle(
+# Perform single-channel modal fit
+modal_data = dvma.modal_fit_single_channel(
     tf_data,
     freq_range=freq_range,
-    channel=0
+    channel=0,
+    measurement_type='acc'  # 'acc', 'vel', or 'disp'
 )
 
-print(f"Natural frequency: {fn:.2f} Hz")
-print(f"Damping ratio: {zeta:.4f}")
+# Access fitted parameters
+print(f"Natural frequency: {modal_data.fn:.2f} Hz")
+print(f"Damping ratio: {modal_data.zeta:.4f}")
+print(f"Modal constant: {modal_data.Ar}")
 ```
 
-### Rational Fraction Polynomial
+### Multi-Channel Modal Fitting
 
-For more accurate fitting:
+For fitting modes across all channels from a list of transfer functions:
 
 ```python
-# Multi-mode fitting
-modes = dvma.fit_modes_rfp(
-    tf_data,
-    freq_range=[50, 500],
-    n_modes=3,  # Number of modes to fit
-    channel=0
+# Fit modes for all channels
+modal_data_list = dvma.modal_fit_all_channels(
+    tf_data_list,
+    freq_range=[180, 220],
+    measurement_type='acc'
 )
 
-for i, mode in enumerate(modes):
-    print(f"Mode {i+1}:")
-    print(f"  Frequency: {mode['fn']:.2f} Hz")
-    print(f"  Damping: {mode['zeta']:.4f}")
-    print(f"  Residue: {mode['residue']}")
+# Review results for each measurement
+for i, modal_data in enumerate(modal_data_list):
+    print(f"Channel {i}:")
+    print(f"  Natural frequency: {modal_data.fn:.2f} Hz")
+    print(f"  Damping ratio: {modal_data.zeta:.4f}")
 ```
 
 ## Mode Shape Analysis
@@ -181,7 +183,14 @@ for location in measurement_points:
 
 # Extract mode shape at natural frequency
 fn_mode = 150  # Hz
-mode_shape = dvma.extract_mode_shape(tf_list, fn_mode)
+mode_shape = []
+for tf_data in tf_list:
+    # Find index closest to fn_mode
+    idx = np.argmin(np.abs(tf_data.freq_axis - fn_mode))
+    # Extract complex amplitude at that frequency
+    mode_shape.append(tf_data.tf_data[idx, 0])
+
+mode_shape = np.array(mode_shape)
 ```
 
 ### Plotting Mode Shapes
@@ -253,7 +262,11 @@ tf_list = [...]  # List of TF measurements
 
 # Extract ODS at operating frequency
 f_operating = 120  # Hz
-ods = dvma.extract_ods(tf_list, f_operating)
+ods = []
+for tf_data in tf_list:
+    idx = np.argmin(np.abs(tf_data.freq_axis - f_operating))
+    ods.append(tf_data.tf_data[idx, 0])
+ods = np.array(ods)
 
 # Animate ODS
 plt.figure()
@@ -277,7 +290,7 @@ import matplotlib.pyplot as plt
 # 1. Setup
 settings = dvma.MySettings()
 settings.fs = 10000
-settings.duration = 1.0
+settings.stored_time = 1.0
 settings.pretrig_samples = 1000
 settings.channels = 2  # Force and response
 

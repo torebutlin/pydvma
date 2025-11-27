@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 # Setup
 settings = dvma.MySettings()
 settings.fs = 10000
-settings.duration = 2.0
+settings.stored_time = 2.0
 settings.channels = 1
 
 # Record
@@ -52,7 +52,7 @@ import matplotlib.pyplot as plt
 # Setup for 2-channel measurement
 settings = dvma.MySettings()
 settings.fs = 10000
-settings.duration = 2.0
+settings.stored_time = 2.0
 settings.channels = 2  # Channel 0: input, Channel 1: output
 
 # Record
@@ -103,7 +103,7 @@ import numpy as np
 # Setup
 settings = dvma.MySettings()
 settings.fs = 10000
-settings.duration = 1.0
+settings.stored_time = 1.0
 settings.channels = 2
 settings.pretrig_samples = 1000
 
@@ -134,7 +134,7 @@ import matplotlib.pyplot as plt
 # Record data
 settings = dvma.MySettings()
 settings.fs = 10000
-settings.duration = 5.0
+settings.stored_time = 5.0
 dataset = dvma.log_data(settings, test_name="sono_test")
 time_data = dataset.time_data_list[0]
 
@@ -165,7 +165,7 @@ import numpy as np
 # Record impact response
 settings = dvma.MySettings()
 settings.fs = 10000
-settings.duration = 2.0
+settings.stored_time = 2.0
 settings.channels = 2
 settings.pretrig_samples = 1000
 

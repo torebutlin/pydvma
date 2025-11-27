@@ -32,7 +32,7 @@ settings = dvma.MySettings()
 
 # Customize as needed
 settings.fs = 10000  # Sampling frequency in Hz
-settings.duration = 2.0  # Duration in seconds
+settings.stored_time = 2.0  # Duration in seconds
 settings.channels = 2  # Number of channels
 ```
 

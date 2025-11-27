@@ -17,9 +17,9 @@ pydvma supports multiple acquisition hardware:
 import pydvma as dvma
 
 settings = dvma.MySettings()
-settings.device = 'soundcard'
+settings.device_driver = 'soundcard'
 settings.fs = 44100  # Typical soundcard sample rate
-settings.duration = 2.0
+settings.stored_time = 2.0
 settings.channels = 2
 ```
 
@@ -31,8 +31,8 @@ import sounddevice as sd
 # List all available devices
 print(sd.query_devices())
 
-# Set specific device
-settings.input_device_name = 'USB Audio Device'
+# Set specific device by index
+settings.device_index = 1  # Use the index from sd.query_devices()
 ```
 
 ### Recording
@@ -57,30 +57,27 @@ dataset = dvma.log_data(settings, test_name="recording_01")
 
 ```python
 settings = dvma.MySettings()
-settings.device = 'nidaq'
-settings.device_name = 'Dev1'  # Your device name
+settings.device_driver = 'nidaq'
+settings.device_index = 0  # Device index (typically 0 for first NI device)
 settings.fs = 10000
-settings.duration = 2.0
+settings.stored_time = 2.0
 settings.channels = 4
 
-# Specify physical channels
-settings.channel_names = ['ai0', 'ai1', 'ai2', 'ai3']
-
-# Voltage range
-settings.voltage_range = [-10, 10]
+# Voltage range (maximum voltage)
+settings.VmaxNI = 10  # ±10V range
 ```
 
 ### Terminal Configuration
 
 ```python
-# Single-ended (default)
-settings.terminal_config = 'RSE'  # Referenced Single-Ended
+# Referenced Single-Ended (default)
+settings.NI_mode = 'DAQmx_Val_RSE'
 
 # Differential
-settings.terminal_config = 'DIFF'
+settings.NI_mode = 'DAQmx_Val_Diff'
 
 # Non-referenced single-ended
-settings.terminal_config = 'NRSE'
+settings.NI_mode = 'DAQmx_Val_NRSE'
 ```
 
 ## Triggered Acquisition
@@ -93,47 +90,62 @@ Useful for capturing transient events like impacts:
 settings.pretrig_samples = 2000  # Samples to keep before trigger
 
 # Set trigger parameters
-settings.trigger_level = 0.5     # Voltage threshold
-settings.trigger_channel = 0     # Channel to monitor
-settings.trigger_slope = 'rising'  # or 'falling'
+settings.pretrig_threshold = 0.5  # Voltage threshold
+settings.pretrig_channel = 0      # Channel to monitor
+settings.pretrig_timeout = 20     # Timeout in seconds
 ```
 
-When recording starts, the system continuously buffers data. When the trigger condition is met, it saves the pre-trigger samples plus the post-trigger duration.
-
-### Post-trigger Delay
-
-```python
-settings.posttrig_delay = 0.1  # Delay in seconds after trigger
-```
+When recording starts, the system continuously buffers data. When the trigger condition is met (signal exceeds threshold), it saves the pre-trigger samples plus the post-trigger duration.
 
 ## Output Generation
 
 Generate signals during acquisition (e.g., for transfer function measurements):
 
-### Sine Wave Output
+### Gaussian White Noise Output
 
 ```python
-settings.output_enabled = True
-settings.output_type = 'sine'
-settings.output_frequency = 100  # Hz
-settings.output_amplitude = 0.5  # Voltage
-settings.output_channel = 0
+# Generate white noise signal
+t, output = dvma.signal_generator(
+    settings,
+    sig='gaussian',
+    T=settings.stored_time,
+    amplitude=0.1
+)
+
+# Record with output
+dataset = dvma.log_data(settings, output=output)
 ```
 
-### Chirp Output
+### Sine Sweep (Chirp) Output
 
 ```python
-settings.output_type = 'chirp'
-settings.output_f_start = 10     # Start frequency (Hz)
-settings.output_f_end = 1000     # End frequency (Hz)
-settings.output_amplitude = 0.5
+# Generate sine sweep from f1 to f2
+t, output = dvma.signal_generator(
+    settings,
+    sig='sinesweep',
+    T=settings.stored_time,
+    amplitude=0.5,
+    f=[10, 1000]  # Start and end frequencies (Hz)
+)
+
+# Record with output
+dataset = dvma.log_data(settings, output=output)
 ```
 
-### White Noise Output
+### Multi-tone Output
 
 ```python
-settings.output_type = 'white_noise'
-settings.output_amplitude = 0.1
+# Generate multiple sine tones
+t, output = dvma.signal_generator(
+    settings,
+    sig='multisine',
+    T=settings.stored_time,
+    amplitude=0.5,
+    f=[100, 200, 500]  # Frequencies (Hz)
+)
+
+# Record with output
+dataset = dvma.log_data(settings, output=output)
 ```
 
 ### Custom Waveform
@@ -141,12 +153,12 @@ settings.output_amplitude = 0.1
 ```python
 import numpy as np
 
-# Create custom signal
-t = np.linspace(0, settings.duration, int(settings.fs * settings.duration))
-custom_signal = 0.5 * np.sin(2 * np.pi * 50 * t)
+# Create custom signal array
+t = np.linspace(0, settings.stored_time, int(settings.fs * settings.stored_time))
+output = 0.5 * np.sin(2 * np.pi * 50 * t)
 
-settings.output_type = 'custom'
-settings.output_signal = custom_signal
+# Record with custom output
+dataset = dvma.log_data(settings, output=output)
 ```
 
 ## Calibration and Scaling
@@ -234,7 +246,7 @@ Remember Nyquist: sample at least 2× the highest frequency of interest.
 ```python
 # For frequency resolution Δf
 df = 1.0  # Hz resolution desired
-settings.duration = 1.0 / df  # Minimum duration needed
+settings.stored_time = 1.0 / df  # Minimum duration needed
 ```
 
 ### Anti-aliasing
