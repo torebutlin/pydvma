@@ -11,3 +11,7 @@ example.log
 #find . -name '.DS_Store' -type f -delete
 .DS_Store
 pydvma_template_with anim.ipynb
+
+# Documentation builds
+site/
+.cache/
