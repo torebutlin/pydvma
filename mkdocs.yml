@@ -7,6 +7,9 @@ repo_name: torebutlin/pydvma
 repo_url: https://github.com/torebutlin/pydvma
 edit_uri: edit/master/docs/
 
+exclude_docs: |
+  README.md
+
 theme:
   name: material
   palette:

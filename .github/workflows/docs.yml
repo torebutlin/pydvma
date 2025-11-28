@@ -49,7 +49,7 @@ jobs:
       - name: Deploy documentation
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
         run: |
-          mkdocs gh-deploy --force
+          mkdocs gh-deploy --force --strict
 
       - name: Build documentation (PR preview)
         if: github.event_name == 'pull_request'

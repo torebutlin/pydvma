@@ -20,7 +20,7 @@ def calculate_fft(time_data,time_range=None,window=None):
     '''
     Args:
         time_data (<TimeData> object): time series data
-        time_range: 2x1 numpy array to specify data segment to use
+        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
         window (bool): apply blackman filter to data before fft or not
     '''
     
@@ -96,8 +96,10 @@ def multiply_by_power_of_iw(data,power,channel_list):
 def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
     '''
     Args:
-        tf_data (<TfData> object): transfer function data
-        freq_range: 2x1 numpy array to specify data segment to use
+        tf_data_list (<TfDataList> object): transfer function data
+        freq_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
+        set_ref (int, optional): reference set index, default is 0
+        ch_ref (int, optional): reference channel index, default is 0
     '''
     
     if tf_data_list.__class__.__name__ != 'TfDataList':
@@ -169,10 +171,10 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     '''
     Args:
         time_data (<TimeData> object): time series data
-        time_range: 2x1 numpy array to specify data segment to use
+        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
         window (None or str): apply filter to data before fft or not
         N_frames (int): number of frames to average over
-        overlap (between 0,1): frame overlap fraction
+        overlap (float): frame overlap fraction between 0 and 1
     '''
     # TODO iterate over list of timedata... but need new dataset type?
     
@@ -232,18 +234,18 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
 
 def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=None):
     '''
-    Calculates cross spectra averaged across ensemble of time_data_list. Note that 
+    Calculates cross spectra averaged across ensemble of time_data_list. Note that
     this expects a <TimeDataList> of <TimeData> objects.
-    
+
     Takes each time series as an independent measurement.
-    
+
     Intended for averaged transfer functions from separate measurements, e.g. impulse hammer tests.
-    
-    Does not average data across sub-frames.    
-    
+
+    Does not average data across sub-frames.
+
     Args:
         time_data_list (<TimeDataList> object): a list of time series data
-        time_range: 2x1 numpy array to specify data segment to use
+        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
         window (None or str): type of window to use, default is None.
     '''
     
@@ -282,10 +284,10 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
     Args:
         time_data (<TimeData> object): time series data
         ch_in (int): index of input channel
-        time_range: 2x1 numpy array to specify data segment to use
+        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
         window (None or str): apply filter to data before fft or not
         N_frames (int): number of frames to average over
-        overlap (between 0,1): frame overlap fraction
+        overlap (float): frame overlap fraction between 0 and 1
     '''
     if time_data.__class__.__name__ != 'TimeData':
         raise Exception('Input data needs to be single <TimeData> object')
@@ -323,19 +325,19 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
 
 def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None):
     '''
-    Calculates transfer function averaged across ensemble of timedata. Note that 
+    Calculates transfer function averaged across ensemble of timedata. Note that
     this expects a Python list of timedata objects.
-    
+
     Takes each time series as an independent measurement.
-    
+
     Intended for averaged transfer functions from separate measurements, e.g. impulse hammer tests.
-    
-    Does not average data across sub-frames.    
-    
+
+    Does not average data across sub-frames.
+
     Args:
         time_data_list (<TimeDataList> object): a list of time series data
         ch_in (int): index of input channel
-        time_range: 2x1 numpy array to specify data segment to use
+        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
         window (None or str): type of window to use, default is None.
     '''
     
@@ -476,10 +478,16 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
     '''
     Calculate damping from sonogram data.
 
+    Args:
+        time_data (<TimeData> object): time series data
+        n_chan (int, optional): channel index to analyze, default is 1
+        nperseg (int, optional): number of samples per segment for spectrogram
+        start_time (float, optional): start time for analysis
+
     Returns:
-        fn: array of natural frequencies (Hz)
-        Qn: array of Q factors (1/(2*zeta))
-        fit_data: dict containing data needed for plotting the fits:
+        fn (np.ndarray): array of natural frequencies (Hz)
+        Qn (np.ndarray): array of Q factors (1/(2*zeta))
+        fit_data (dict): dict containing data needed for plotting the fits:
             - 't': time axis
             - 'fits': list of dicts, each with keys:
                 - 't_fit': time values for the fit region

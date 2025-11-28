@@ -154,13 +154,14 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
     '''
     Exports dataset class to file 'filename.mat', or provides dialog if no
     filename provided.
-    
+
     Saved file can be loaded directly in Matlab as set of arrays.
 
     Args:
-       dataset: An object of the class dataSet
-       filename: string [optional]
-       overwrite_without_prompt: bool
+       dataset (DataSet): An object of the class DataSet
+       parent (optional): Parent widget for file dialog
+       filename (str, optional): Output filename, dialog shown if not provided
+       overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     '''
     
@@ -288,13 +289,14 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
     '''
     Exports dataset class to file 'filename.mat', or provides dialog if no
     filename provided.
-    
+
     Saved file is compatible with Jim Woodhouse logger file format.
 
     Args:
-       dataset: An object of the class dataSet
-       filename: string [optional]
-       overwrite_without_prompt: bool
+       dataset (DataSet): An object of the class DataSet
+       parent (optional): Parent widget for file dialog
+       filename (str, optional): Output filename, dialog shown if not provided
+       overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     '''
 
@@ -445,13 +447,14 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
     '''
     Exports data to file 'filename.csv', or provides dialog if no
     filename provided.
-    
+
     Saved file is *.csv
 
     Args:
-       data_list: An object of the class TimeDataList, FreqDataList, or TfDataList
-       filename: string [optional]
-       overwrite_without_prompt: bool
+       data_list (TimeDataList, FreqDataList, or TfDataList): Data list to export
+       parent (optional): Parent widget for file dialog
+       filename (str, optional): Output filename, dialog shown if not provided
+       overwrite_without_prompt (bool, optional): If True, overwrite without asking
     '''
     
     data_list_type = data_list.__class__.__name__
@@ -514,11 +517,11 @@ def import_from_matlab_jwlogger(filename=None):
     '''
     Imports dataset class from file 'filename.mat', or provides dialog if no
     filename provided.
-    
+
     Saved file is compatible with Jim Woodhouse logger file format.
 
     Args:
-       filename: string [optional]
+       filename (str, optional): Input filename, dialog shown if not provided
     '''
     
     d = io.loadmat(filename)
