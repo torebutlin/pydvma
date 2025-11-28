@@ -132,19 +132,22 @@ tf_data = dvma.calculate_tf(time_data, ch_in=0)
 # Select frequency range around a mode
 freq_range = [180, 220]  # Hz
 
-# Perform single-channel modal fit
-modal_data = dvma.modal_fit_single_channel(
+# Perform single-channel modal fit (returns scipy.optimize.OptimizeResult)
+result = dvma.modal_fit_single_channel(
     tf_data,
     freq_range=freq_range,
     channel=0,
-    measurement_type='acc'  # 'acc', 'vel', or 'disp'
+    measurement_type='acc'  # 'acc', 'vel', or 'dsp'
 )
 
 # Access fitted parameters
-print(f"Natural frequency: {modal_data.fn:.2f} Hz")
-print(f"Damping ratio: {modal_data.zeta:.4f}")
-print(f"Modal constant: {modal_data.Ar}")
+fn, zeta, modal_constant = result.x[0], result.x[1], result.x[2]
+print(f"Natural frequency: {fn:.2f} Hz")
+print(f"Damping ratio: {zeta:.4f}")
+print(f"Modal constant: {modal_constant}")
 ```
+
+The optimized parameter vector is ordered as `[fn, zeta, an, phase, Rk, Rm]`.
 
 ### Multi-Channel Modal Fitting
 
@@ -155,7 +158,7 @@ For fitting modes across all channels from a list of transfer functions:
 modal_data_list = dvma.modal_fit_all_channels(
     tf_data_list,
     freq_range=[180, 220],
-    measurement_type='acc'
+    measurement_type='acc'  # 'acc', 'vel', or 'dsp'
 )
 
 # Review results for each measurement

@@ -99,7 +99,7 @@ When recording starts, the system continuously buffers data. When the trigger co
 
 ## Output Generation
 
-Generate signals during acquisition (e.g., for transfer function measurements):
+Generate signals during acquisition (e.g., for transfer function measurements). The built-in generator supports `sig='gaussian'`, `'uniform'`, or `'sweep'` and returns `(t, output)` where `output` has shape `(samples, settings.output_channels)`.
 
 ### Gaussian White Noise Output
 
@@ -122,26 +122,10 @@ dataset = dvma.log_data(settings, output=output)
 # Generate sine sweep from f1 to f2
 t, output = dvma.signal_generator(
     settings,
-    sig='sinesweep',
+    sig='sweep',
     T=settings.stored_time,
     amplitude=0.5,
     f=[10, 1000]  # Start and end frequencies (Hz)
-)
-
-# Record with output
-dataset = dvma.log_data(settings, output=output)
-```
-
-### Multi-tone Output
-
-```python
-# Generate multiple sine tones
-t, output = dvma.signal_generator(
-    settings,
-    sig='multisine',
-    T=settings.stored_time,
-    amplitude=0.5,
-    f=[100, 200, 500]  # Frequencies (Hz)
 )
 
 # Record with output
@@ -153,9 +137,15 @@ dataset = dvma.log_data(settings, output=output)
 ```python
 import numpy as np
 
-# Create custom signal array
-t = np.linspace(0, settings.stored_time, int(settings.fs * settings.stored_time))
-output = 0.5 * np.sin(2 * np.pi * 50 * t)
+# Create custom single-channel waveform (2D array expected)
+t = np.arange(0, settings.stored_time, 1 / settings.output_fs)
+carrier = 0.5 * np.sin(2 * np.pi * 50 * t)
+output = carrier[:, None]  # (samples, channels)
+
+# Example: multi-tone signal
+tones = np.array([100, 200, 500])
+multitone = 0.2 * np.sin(2 * np.pi * tones[:, None] * t).sum(axis=0)
+output = multitone[:, None]
 
 # Record with custom output
 dataset = dvma.log_data(settings, output=output)
