@@ -1046,6 +1046,56 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#load-and-save" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load and Save
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Load and Save">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.file.load_data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load_data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.file.save_data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        save_data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.file.save_fig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        save_fig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#export-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1451,6 +1501,56 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#load-and-save" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load and Save
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Load and Save">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.file.load_data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load_data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.file.save_data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        save_data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.file.save_fig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        save_fig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#export-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1549,8 +1649,167 @@
 
 
 <h1 id="file-operations-module">File Operations Module<a class="headerlink" href="#file-operations-module" title="Permanent link">&para;</a></h1>
-<p>Functions for importing and exporting data in various formats.</p>
-<h2 id="export-functions">Export Functions<a class="headerlink" href="#export-functions" title="Permanent link">&para;</a></h2>
+<p>Functions for importing, exporting, and saving data in various formats.</p>
+<h2 id="load-and-save">Load and Save<a class="headerlink" href="#load-and-save" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="pydvma.file.load_data" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">load_data</span>
+
+
+<a href="#pydvma.file.load_data" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">load_data</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Loads dataset from filename, or displays a dialog if no argument provided.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="pydvma.file.save_data" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">save_data</span>
+
+
+<a href="#pydvma.file.save_data" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">save_data</span><span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="n">parent</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">overwrite_without_prompt</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Saves dataset class to file 'filename.npy', or provides dialog if no
+filename provided.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>dataset</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataSet (pydvma.datastructure.DataSet)" href="../datastructure/#pydvma.datastructure.DataSet">DataSet</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>An object of the class DataSet</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>parent</code></b>
+              (<code><span title="optional">optional</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Parent widget for file dialog</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>filename</code></b>
+              (<code><span title="str">str</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Output filename, dialog shown if not provided</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>overwrite_without_prompt</code></b>
+              (<code><span title="bool">bool</span></code>, default:
+                  <code>False</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>If True, overwrite without asking</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="pydvma.file.save_fig" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">save_fig</span>
+
+
+<a href="#pydvma.file.save_fig" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">save_fig</span><span class="p">(</span><span class="n">plot</span><span class="p">,</span> <span class="n">parent</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">overwrite_without_prompt</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Saves figure to file 'filename.png' and 'filename.pdf', or provides dialog if no
+filename provided.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>plot</code></b>
+              (<code><a class="autorefs autorefs-internal" title="PlotData (pydvma.plotting.PlotData)" href="../plotting/#pydvma.plotting.PlotData">PlotData</a> or <span title="Figure">Figure</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>A PlotData object or matplotlib Figure object</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>parent</code></b>
+              (<code><span title="optional">optional</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Parent widget for file dialog</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>figsize</code></b>
+              (<code><span title="tuple">tuple</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Tuple for figure size</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>filename</code></b>
+              (<code><span title="str">str</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Output filename, dialog shown if not provided</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>overwrite_without_prompt</code></b>
+              (<code><span title="bool">bool</span></code>, default:
+                  <code>False</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>If True, overwrite without asking</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div><h2 id="export-functions">Export Functions<a class="headerlink" href="#export-functions" title="Permanent link">&para;</a></h2>
 
 
 <div class="doc doc-object doc-function">
