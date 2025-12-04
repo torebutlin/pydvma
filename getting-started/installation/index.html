@@ -1773,12 +1773,12 @@
 <p><strong>Import Error: No module named 'pydvma'</strong></p>
 <p>Make sure pydvma is installed in the correct Python environment. If using a dedicated environment, ensure you've activated it with <code>conda activate pydvma-env</code>.</p>
 <p><strong>Qt Platform Plugin Error</strong></p>
-<p>If you encounter Qt-related errors, try installing PyQt5:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span>pyqt5
+<p>If you encounter Qt-related errors, try installing qtpy:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span>qtpy
 </code></pre></div>
 <p><strong>Matplotlib Backend Issues</strong></p>
 <p>If plots don't display correctly in Jupyter, add this to the first cell of your notebook:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="o">%</span><span class="n">matplotlib</span> <span class="n">qt</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="o">%</span><span class="n">matplotlib</span> <span class="n">widget</span>
 </code></pre></div>
 <p><strong>Soundcard Not Detected</strong></p>
 <p>Ensure sounddevice is installed and your audio device is properly connected:</p>
