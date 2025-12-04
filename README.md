@@ -27,7 +27,7 @@ pip install pydvma
 ```python
 import pydvma as dvma
 
-%matplotlib qt
+%matplotlib widget
 settings = dvma.MySettings()
 logger = dvma.Logger(settings)
 ```

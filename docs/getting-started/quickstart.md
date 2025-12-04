@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # For interactive plots in Jupyter
-%matplotlib qt
+%matplotlib widget
 ```
 
 ### Create Settings

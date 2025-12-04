@@ -40,7 +40,7 @@ pip install pydvma
 import pydvma as dvma
 import matplotlib
 
-%matplotlib qt
+%matplotlib widget
 settings = dvma.MySettings()
 logger = dvma.Logger(settings)
 ```

@@ -102,10 +102,10 @@ Make sure pydvma is installed in the correct Python environment. If using a dedi
 
 **Qt Platform Plugin Error**
 
-If you encounter Qt-related errors, try installing PyQt5:
+If you encounter Qt-related errors, try installing qtpy:
 
 ```bash
-pip install pyqt5
+pip install qtpy
 ```
 
 **Matplotlib Backend Issues**
@@ -113,7 +113,7 @@ pip install pyqt5
 If plots don't display correctly in Jupyter, add this to the first cell of your notebook:
 
 ```python
-%matplotlib qt
+%matplotlib widget
 ```
 
 **Soundcard Not Detected**
