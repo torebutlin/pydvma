@@ -51,9 +51,10 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
     filename provided.
 
     Args:
-       dataset: An object of the class dataSet
-       filename: string [optional]
-       overwrite_without_prompt: bool
+       dataset (DataSet): An object of the class DataSet
+       parent (optional): Parent widget for file dialog
+       filename (str, optional): Output filename, dialog shown if not provided
+       overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     '''
 
@@ -96,11 +97,11 @@ def save_fig(plot, parent=None, figsize=None, filename=None, overwrite_without_p
     filename provided.
 
     Args:
-       plot: A PlotData object or matplotlib Figure object
-       parent: Parent widget for file dialog [optional]
-       figsize: Tuple for figure size [optional]
-       filename: string [optional]
-       overwrite_without_prompt: bool [optional]
+       plot (PlotData or Figure): A PlotData object or matplotlib Figure object
+       parent (optional): Parent widget for file dialog
+       figsize (tuple, optional): Tuple for figure size
+       filename (str, optional): Output filename, dialog shown if not provided
+       overwrite_without_prompt (bool, optional): If True, overwrite without asking
     '''
     if plot.__class__.__name__ == 'PlotData':
         fig = plot.fig
