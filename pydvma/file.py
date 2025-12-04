@@ -96,9 +96,11 @@ def save_fig(plot, parent=None, figsize=None, filename=None, overwrite_without_p
     filename provided.
 
     Args:
-       fig: A matplotlib fig object
+       plot: A PlotData object or matplotlib Figure object
+       parent: Parent widget for file dialog [optional]
+       figsize: Tuple for figure size [optional]
        filename: string [optional]
-       overwrite_without_prompt: boo
+       overwrite_without_prompt: bool [optional]
     '''
     if plot.__class__.__name__ == 'PlotData':
         fig = plot.fig

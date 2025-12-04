@@ -31,31 +31,45 @@ except NotImplementedError:
 class MySettings(object):
     '''
     A class that stores the acquisition settings.
-    
+
     Attributes:
-    --------------       
+    --------------
     channels: int
-        Number of Channels
+        Number of input channels
     fs: int
-        Sampling Frequency
+        Sampling frequency (Hz)
     nbits: int
         Number of bits - either 8, 16, 24 or 32
     chunk_size: int
         Number of samples obtained from each channel in one chunk
     num_chunks: int
         Number of chunks to store in circular buffer
-    view_time: float
-        If specified, overrides num_chunks to display view_time in seconds for oscilloscope
+    viewed_time: float
+        If specified, overrides num_chunks to display viewed_time in seconds for oscilloscope
     stored_time: float
-        Length of the pre-trigger when the space button is hit, in seconds
+        Duration of recorded data in seconds
+    pretrig_samples: int or None
+        Number of samples to keep before trigger, or None for no triggering
+    pretrig_threshold: float
+        Voltage threshold for trigger detection
+    pretrig_channel: int
+        Channel index to monitor for trigger
+    pretrig_timeout: float
+        Timeout in seconds when waiting for trigger
+    device_driver: str
+        Device type: 'soundcard' or 'nidaq'
     device_index: int
-        device index, will prompt if not specified
+        Device index, will prompt if not specified
+    VmaxNI: float
+        Maximum voltage range for NI DAQ devices
+    NI_mode: str
+        Terminal configuration for NI DAQ (e.g., 'DAQmx_Val_RSE', 'DAQmx_Val_Diff')
     init_view_time: bool
-        flag for time domain view in oscilloscope
+        Flag for time domain view in oscilloscope
     init_view_freq: bool
-        flag for frequency domain view in oscilloscope
+        Flag for frequency domain view in oscilloscope
     init_view_levels: bool
-        flag for channel levels view in oscilloscope
+        Flag for channel levels view in oscilloscope
     '''
         
     def __init__(self, *, 

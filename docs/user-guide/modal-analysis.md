@@ -151,21 +151,20 @@ The optimized parameter vector is ordered as `[fn, zeta, an, phase, Rk, Rm]`.
 
 ### Multi-Channel Modal Fitting
 
-For fitting modes across all channels from a list of transfer functions:
+For fitting a single mode across all channels from a list of transfer functions:
 
 ```python
-# Fit modes for all channels
-modal_data_list = dvma.modal_fit_all_channels(
+# Fit a single mode for all channels (returns single ModalData object)
+modal_data = dvma.modal_fit_all_channels(
     tf_data_list,
     freq_range=[180, 220],
     measurement_type='acc'  # 'acc', 'vel', or 'dsp'
 )
 
-# Review results for each measurement
-for i, modal_data in enumerate(modal_data_list):
-    print(f"Channel {i}:")
-    print(f"  Natural frequency: {modal_data.fn:.2f} Hz")
-    print(f"  Damping ratio: {modal_data.zeta:.4f}")
+# Review results (fn and zn are arrays, one element per fitted mode)
+print(f"Natural frequency: {modal_data.fn[0]:.2f} Hz")
+print(f"Damping ratio: {modal_data.zn[0]:.4f}")
+print(f"Modal constants: {modal_data.an}")
 ```
 
 ## Mode Shape Analysis

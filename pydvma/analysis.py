@@ -21,7 +21,7 @@ def calculate_fft(time_data,time_range=None,window=None):
     Args:
         time_data (<TimeData> object): time series data
         time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
-        window (bool): apply blackman filter to data before fft or not
+        window (str, optional): window function name (e.g., 'hann', 'hamming', 'blackman'), or None for rectangular (boxcar) window
     '''
     
     if time_data.__class__.__name__ != 'TimeData':
