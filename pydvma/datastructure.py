@@ -48,7 +48,7 @@ class DataSet():
         self.sono_data_list = SonoDataList()
         self.meta_data_list = MetaDataList()
         
-        if not data == None:
+        if data is not None:
             self.add_to_dataset(data)
             
         self.pydvma_version = VERSION
@@ -541,7 +541,7 @@ class TimeData():
         if channel_cal_factors is None:
             channel_cal_factors = np.ones(len(time_data[0,:]))
         
-        if timestamp == None:
+        if timestamp is None:
             t = datetime.datetime.now()
             timestamp = t
             timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)

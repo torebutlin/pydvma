@@ -37,7 +37,7 @@ def log_data(settings,test_name=None,rec=None, output=None):
     t = datetime.datetime.now()
     timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
     
-    if settings.pretrig_samples == None:
+    if settings.pretrig_samples is None:
 
         MESSAGE = 'Logging data for {} seconds.\n'.format(settings.stored_time)
         print(MESSAGE)

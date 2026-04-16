@@ -148,7 +148,7 @@ class PlotData():
             self.ax.axis('auto')
         elif data_list.__class__.__name__ == 'FreqDataList':
             self.ax2.set_visible(False)
-            if (plot_type == 'Amplitude (dB)') or (plot_type == None):
+            if (plot_type == 'Amplitude (dB)') or (plot_type is None):
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Amplitude (dB)')
                 self.ax.axis('auto')
@@ -180,7 +180,7 @@ class PlotData():
                 self.ax.grid(visible=False)
             
         elif data_list.__class__.__name__ == 'TfDataList':
-            if (plot_type == 'Amplitude (dB)') or (plot_type == None):
+            if (plot_type == 'Amplitude (dB)') or (plot_type is None):
                 self.ax.set_xlabel('Frequency (Hz)')
                 self.ax.set_ylabel('Amplitude (dB)')
                 self.ax.axis('auto')
@@ -294,7 +294,7 @@ class PlotData():
                     ylin = data_list[n_set].freq_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
                     
                     
-                    if (plot_type == 'Amplitude (dB)') or (plot_type == None):
+                    if (plot_type == 'Amplitude (dB)') or (plot_type is None):
                         # handle log(0) manually to avoid warnings
                         y = np.zeros(np.shape(ylin))
                         izero = ylin==0
@@ -307,7 +307,7 @@ class PlotData():
                     elif plot_type == 'Imag Part':
                         y = np.imag(ylin)
                     elif plot_type == 'Nyquist':
-                        if freq_range == None:
+                        if freq_range is None:
                             freq_range = [-1,np.inf]
                         selected_data = np.where((x>freq_range[0]) * (x<freq_range[1]))[0]
                         x = np.real(ylin[selected_data])
@@ -320,7 +320,7 @@ class PlotData():
                 elif data_list.__class__.__name__ == 'TfDataList':
                     x = data_list[n_set].freq_axis
                     ylin = data_list[n_set].tf_data[:,n_chan] * data_list[n_set].channel_cal_factors[n_chan]
-                    if (plot_type == 'Amplitude (dB)') or (plot_type == None):
+                    if (plot_type == 'Amplitude (dB)') or (plot_type is None):
                         # handle log(0) manually to avoid warnings
                         y = np.zeros(np.shape(ylin))
                         izero = ylin==0
@@ -334,7 +334,7 @@ class PlotData():
                     elif plot_type == 'Imag Part':
                         y = np.imag(ylin)
                     elif plot_type == 'Nyquist':
-                        if freq_range == None:
+                        if freq_range is None:
                             freq_range = [-1,np.inf]
                         selected_data = np.where((x>freq_range[0]) * (x<freq_range[1]))[0]
                         x = np.real(ylin[selected_data])

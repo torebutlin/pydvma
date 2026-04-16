@@ -28,7 +28,7 @@ def calculate_fft(time_data,time_range=None,window=None):
         raise Exception('Input data needs to be single <TimeData> object')
     
 
-    if time_range == None:
+    if time_range is None:
         ### use all data
         time_range_copy = time_data.time_axis[[0,-1]]
         
@@ -106,7 +106,7 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
         raise ValueError('Input data needs to be single <TfData> object')
     
 
-    if freq_range == None:
+    if freq_range is None:
         ### use all data
         freq_range_copy = tf_data_list[set_ref].freq_axis[[0,-1]]
         
@@ -184,7 +184,7 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     if time_data.__class__.__name__ != 'TimeData':
         raise Exception('Input data needs to be single <TimeData> object')
 
-    if time_range == None:
+    if time_range is None:
         ### use all data
         time_range = time_data.time_axis[[0,-1]]
         
@@ -443,9 +443,9 @@ def clean_impulse(time_data, ch_impulse=0):
 def calculate_sonogram(time_data, nperseg=None, noverlap=None):
     
     y = np.copy(time_data.time_data) # handles all channels simultaneously
-    if nperseg == None:
+    if nperseg is None:
         nperseg = int(len(time_data.time_axis)/50) #roughly 50 fft's per time-series not counting overlap
-    if noverlap == None:
+    if noverlap is None:
         noverlap = nperseg//2
 
     f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,window='hann',nperseg=nperseg,noverlap=noverlap,axis=0,mode='complex')
@@ -503,7 +503,7 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
     S = sono_data.sono_data
 
     # find t index closest to t0
-    if start_time == None:
+    if start_time is None:
         try:
             t0 = 2*sono_data.settings.pretrig_samples/sono_data.settings.fs
             time_slice = np.argmin(np.abs(t - t0))

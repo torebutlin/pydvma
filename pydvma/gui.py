@@ -872,7 +872,7 @@ class Logger():
             self.input_list_devices = []
         else:
             self.input_list_devices = ['nidaq']
-        if SC != None:
+        if SC is not None:
             self.input_list_devices += ['soundcard']
         
         self.input_test_name = QLineEdit()
@@ -1077,7 +1077,7 @@ class Logger():
         self.window.close()
     
     def start_stream(self):
-        if self.settings != None:
+        if self.settings is not None:
             try:
                 streams.start_stream(self.settings)
                 self.rec = streams.REC
@@ -2159,7 +2159,7 @@ class Logger():
             
     def preview_output(self):
         self.create_output_signal()
-        if self.output_time_data != None:
+        if self.output_time_data is not None:
             d = datastructure.DataSet(self.output_time_data)
             d.calculate_fft_set()
             self.preview_window = PreviewWindow(title='Time Data')
@@ -2169,7 +2169,7 @@ class Logger():
     
     def start_output(self):
         self.create_output_signal()
-        if self.output_time_data != None:
+        if self.output_time_data is not None:
             s = acquisition.output_signal(self.settings,self.output_time_data.time_data)
         else:
             message = 'No output data to generate.'

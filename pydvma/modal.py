@@ -51,7 +51,7 @@ def modal_fit_single_channel(tf_data,freq_range=None,channel=0,measurement_type=
     Fit modal parameters for a single mode to data within specified freq_range
     '''
     
-    if freq_range == None:
+    if freq_range is None:
         freq_range = tf_data.freq_axis[[0,-1]]
     
     
@@ -199,7 +199,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
         if tf_data.flag_modal_TF == False:
             N_tfs += len(tf_data.tf_data[0,:])
     
-    if freq_range == None:
+    if freq_range is None:
         freq_range = tf_data.freq_axis[[0,-1]]
     
     # get selected frequency axis

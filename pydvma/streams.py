@@ -67,7 +67,7 @@ def list_available_devices(io=''):
     message += '\n'
 
     device_name_list = get_devices_soundcard()
-    if device_name_list != None:
+    if device_name_list is not None:
         N = np.size(device_name_list)
         for i in range(N):
             if io.lower() in device_name_list[i].lower(): # option to only look for input devices
@@ -93,7 +93,7 @@ def list_available_devices(io=''):
     message += '\n'
     
     device_name_list,device_type_list = get_devices_NI()
-    if device_name_list != None:
+    if device_name_list is not None:
         N = np.size(device_name_list)
         for i in range(N):
             message += '{}: {} {}\n'.format(i,device_name_list[i],device_type_list[i])
@@ -215,7 +215,7 @@ class Recorder(object):
         Initialises an audio stream. Gives the user a choice of which device to access.
         '''
         
-        if settings.device_index == None:
+        if settings.device_index is None:
     
             devices = sd.query_devices()
             print('No device specified. Using default:\n\n%i %s'

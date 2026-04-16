@@ -129,19 +129,19 @@ class MySettings(object):
             self.output_channels = int(output_channels)
             
         # if output device driver not specified then use same as input device
-        if (output_device_driver == None) or (output_device_driver == 'None'):
+        if (output_device_driver is None) or (output_device_driver == 'None'):
             output_device_driver = device_driver
 
         self.output_device_driver = output_device_driver
             
-        if (device_driver == 'soundcard') and ((device_index == None) or (device_index == 'None')):
+        if (device_driver == 'soundcard') and ((device_index is None) or (device_index == 'None')):
             try:
                 # try to find default input soundcard device
                 self.device_index = sd.default.device[0]
             except:
                 # if info not available, select index 1
                 self.device_index = 1
-        elif (device_driver == 'nidaq') and ((device_index == None) or (device_index == 'None')):
+        elif (device_driver == 'nidaq') and ((device_index is None) or (device_index == 'None')):
             self.device_index = 0
         else:
             self.device_index = int(device_index)
@@ -149,19 +149,19 @@ class MySettings(object):
        
                 
         # set output device index to defaults if not specified
-        if (output_device_driver == 'soundcard') and ((output_device_index == None) or  (output_device_index == 'None')):
+        if (output_device_driver == 'soundcard') and ((output_device_index is None) or  (output_device_index == 'None')):
             try:
                 # try to find default output soundcard device
                 self.output_device_index = sd.default.device[1]
             except:
                 # try to guess sensible default output soundcard by string matching device names
                 devices = streams.get_devices_soundcard()
-                if devices != None:
+                if devices is not None:
                     output_devices = np.where(['output' in names for names in devices])
                     self.output_device_index = output_devices[0][0]
                 else:
                     self.output_device_index = 1
-        elif (output_device_driver == 'nidaq') and ((output_device_index == None) or (output_device_index == 'None')):
+        elif (output_device_driver == 'nidaq') and ((output_device_index is None) or (output_device_index == 'None')):
             self.output_device_index = 0
         else:
             self.output_device_index = int(output_device_index)
@@ -180,13 +180,13 @@ class MySettings(object):
         self.init_view_freq=bool(init_view_freq)
         self.init_view_levels=bool(init_view_levels)
 
-        if output_VmaxNI == None:
+        if output_VmaxNI is None:
             self.output_VmaxNI = self.VmaxNI
         else:
             self.output_VmaxNI = float(output_VmaxNI)
 
         ### derived settings
-        if (viewed_time != None) and (viewed_time != 'None'):
+        if (viewed_time is not None) and (viewed_time != 'None'):
             self.viewed_time = float(viewed_time)
             self.num_chunks = int(np.ceil(self.viewed_time*self.fs/self.chunk_size))
         else:
@@ -203,7 +203,7 @@ class MySettings(object):
         
         self.device_name = None # until initialise stream
         
-        if (pretrig_samples == None) or (pretrig_samples == 'None'):
+        if (pretrig_samples is None) or (pretrig_samples == 'None'):
             self.pretrig_samples = None
         else:
             self.pretrig_samples = int(pretrig_samples)
