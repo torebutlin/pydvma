@@ -1,6 +1,49 @@
 # pydvma — TODO / Backlog
 
-Backlog of items to review, fix, add or investigate. Loosely grouped; not in priority order.
+Backlog of items to review, fix, add or investigate. Grouped by topic below; see "Recommended sequencing" for the agreed order of work.
+
+## Recommended sequencing
+
+Ordering is by dependency and hardware availability, not by priority alone. Mac = soundcard only; NI hardware (cDAQ, DAQ) requires a Windows or Linux machine because the NI-DAQmx driver does not run on macOS.
+
+### Phase A — Mac-only, foundation (start here)
+
+1. **Structural pre-review (light, time-boxed, ~1 day)** — quick pass over the package before deeper work. Looking for: dead code (e.g. is `gui_tk.py` still needed?), glaring bugs, obvious structural issues that would affect test design or the speedup, copy-pasted patterns that should be helpers. Not a deep review. Outcome: a handful of high-value fixes/deletions made directly, plus notes fed into this `TODO.md` for the final pass in Phase D. Stop as soon as you catch yourself wanting to redesign something — that belongs in Phase D.
+2. **Minimal pytest scaffolding** — just enough to add "golden" regression tests for CSD / TF / PSD outputs on synthetic signals from `testdata.py`. Full test-suite expansion comes later.
+3. **TF / PSD / CSD speedup** in `calculate_cross_spectrum_matrix` — protected by the golden tests from step 2.
+4. **Rolling code review + rolling docs audit** — during steps 2–3, capture any issues noticed and fix the corresponding `docs/` pages for files you touch. Avoid a big up-front review.
+5. **nidaqmx prep (desk work on Mac)** — read the `nidaqmx-python` API, sketch the shape of a migrated `Recorder_NI`, and build a mocked `streams.py` test harness that doesn't require real hardware. The goal is to arrive at the Windows machine with a ready-to-drop-in plan.
+
+### Phase B — Mac-only, GUI & analysis (after Phase A)
+
+Do in this order:
+
+6. **GUI framework evaluation** — qtpy + PyQt5 today vs. PyQt6 / PySide6 / alternative. Pivotal choice, done after the speedup work has settled and before further GUI work. Produce a short decision record; don't migrate yet unless trivial.
+7. **Plotting robustness & logic** — may fold into a backend migration if (6) recommends one.
+8. **Legend relabelling.**
+9. **GUI calibration flow.**
+10. **Improved import / export.**
+
+### Phase C — Windows or Linux with NI hardware (intermittent access)
+
+Treat these as one coherent package, done together in each hardware session because they share hardware risk and setup cost:
+
+11. **nidaqmx migration of `Recorder_NI`** — drop in the plan from step 5.
+12. **NI cDAQ support** — naturally fits nidaqmx's task-based API.
+13. **Trigger & logging audit** across soundcard (`Recorder`) and NI paths.
+14. **Turn off ±1 scaling for the NI path** — use `VmaxNI`. (Soundcard side of this can be done on Mac in Phase B if wanted, but is easier to do with NI side together for consistency.)
+
+Because Windows access is intermittent, design each hardware session to be pauseable: small, well-specified tasks with tests runnable on Mac via mocks between sessions.
+
+### Phase D — Deferred / low-urgency (any time, no blockers)
+
+- **Mode-shape plotter** — useful for teaching, not urgent.
+- **CWT time-frequency analysis.**
+- **Full test-suite expansion** beyond `analysis.py` (i.e. `modal.py`, `file.py`, `datastructure.py`, mocked `streams.py`).
+- **Final formal code review pass** — once the big refactors have landed and the dust has settled.
+- **ML plugin as a separate repo** — isolated, can happen any time.
+
+---
 
 ## Housekeeping & review
 
@@ -27,6 +70,7 @@ Backlog of items to review, fix, add or investigate. Loosely grouped; not in pri
 
 - [ ] **Allow legend relabelling** — `update_legend` in `plotting.py` reads labels from the data objects; add GUI-level relabelling so plots can be customised without editing data.
 - [ ] **Evaluate migration to a better GUI backend** — current stack is qtpy → PyQt5 + pyqtgraph + matplotlib-Qt5Agg. Review whether PyQt6/PySide6, or an alternative (e.g. web-based) would be a better fit long-term, given lab deployment constraints.
+- [ ] **Plotting robustness & logic** — tighten the wiring between data objects → `PlotData.update()` → user interaction in `plotting.py`. Goals: plots update cleanly when data changes, no stale lines/legends, predictable behaviour when channels are added/removed or calibration changes, sensible handling of empty/NaN data, consistent real-time (pyqtgraph) vs. static (matplotlib) semantics. Partly depends on the outcome of the GUI backend evaluation — if the backend changes, this work may fold into that migration.
 
 ## I/O
 
