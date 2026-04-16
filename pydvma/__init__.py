@@ -29,4 +29,3 @@ from .streams import Recorder, Recorder_NI, start_stream, REC, setup_output_NI, 
 from .modal import modal_fit_single_channel, modal_fit_all_channels
 # import faulthandler
 # faulthandler.enable()
-# from .gui_tk_test import Logger

@@ -18,7 +18,6 @@ pydvma/
 ├── pydvma/                     # The package itself
 │   ├── __init__.py             # Public API — re-exports ~30 names
 │   ├── gui.py                  # Main PyQt Logger application (~129 KB)
-│   ├── gui_tk.py               # Older tkinter variant (legacy)
 │   ├── oscilloscope.py         # Real-time pyqtgraph oscilloscope widget
 │   ├── acquisition.py          # High-level log_data / output_signal / signal_generator
 │   ├── streams.py              # Recorder (soundcard) + Recorder_NI (PyDAQmx) classes
