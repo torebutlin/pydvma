@@ -5,13 +5,15 @@ Created on Mon Aug 27 13:28:39 2018
 @author: tb267
 """
 
-from . import streams
-
 import numpy as np
 
-import pyqtgraph as pg
-import matplotlib.pyplot as plt
-import seaborn as sns
+# Heavy / circular imports deferred to the functions that need them:
+#   - `streams`     -> MySettings.__init__ fallback (line ~158)
+#   - `matplotlib`  -> set_plot_colours
+#   - `seaborn`     -> set_plot_colours
+# This keeps `import pydvma` fast for script / CLI users who never touch
+# the GUI or call set_plot_colours (seaborn alone pulls in ipywidgets
+# and IPython, which cost ~0.5 s at import time).
 
 # try:
 #     import pyaudio
@@ -155,6 +157,7 @@ class MySettings(object):
                 self.output_device_index = sd.default.device[1]
             except:
                 # try to guess sensible default output soundcard by string matching device names
+                from . import streams  # lazy import to avoid heavy/circular load at module import
                 devices = streams.get_devices_soundcard()
                 if devices is not None:
                     output_devices = np.where(['output' in names for names in devices])
@@ -246,6 +249,11 @@ def set_plot_colours(channels):
     '''
     Returns a list of RGB colours depending on the number of channels required.
     '''
+    # Lazy imports: matplotlib and seaborn are only needed here, and seaborn
+    # in particular pulls in ipywidgets/IPython (~0.5 s), so keeping them
+    # out of module top-level makes `import pydvma` substantially faster.
+    import matplotlib.pyplot as plt
+    import seaborn as sns
     #TODO: Accessible colours
     if channels <= 1:
         cmap = plt.get_cmap('tab10')
