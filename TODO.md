@@ -9,6 +9,7 @@ Ordering is by dependency and hardware availability, not by priority alone. Mac 
 ### Phase A — Mac-only, foundation (start here)
 
 1. **Structural pre-review (light, time-boxed, ~1 day)** — quick pass over the package before deeper work. Looking for: dead code (e.g. is `gui_tk.py` still needed?), glaring bugs, obvious structural issues that would affect test design or the speedup, copy-pasted patterns that should be helpers. Not a deep review. Outcome: a handful of high-value fixes/deletions made directly, plus notes fed into this `TODO.md` for the final pass in Phase D. Stop as soon as you catch yourself wanting to redesign something — that belongs in Phase D.
+   - **First pass complete (branch `pre-review`).** Removed three dead files (`pydvma/gui_tk.py`, `pydvma/gui_tk_old.py`, `pydvma/develop_sonogram_damping function.py`) and an orphan commented import in `__init__.py`. Normalised `== None` / `!= None` to `is None` / `is not None` across 8 files (33 occurrences). Further findings from the pass have been added to the sections below (bare `except:` clauses, `streams.py` singletons, centralised hardware imports, `multiply_by_power_of_iw` initialisation).
 2. **Minimal pytest scaffolding** — just enough to add "golden" regression tests for CSD / TF / PSD outputs on synthetic signals from `testdata.py`. Full test-suite expansion comes later.
 3. **TF / PSD / CSD speedup** in `calculate_cross_spectrum_matrix` — protected by the golden tests from step 2.
 4. **Rolling code review + rolling docs audit** — during steps 2–3, capture any issues noticed and fix the corresponding `docs/` pages for files you touch. Avoid a big up-front review.
@@ -50,12 +51,14 @@ Because Windows access is intermittent, design each hardware session to be pause
 - [ ] **General code review** — full pass over the package for clarity, dead code, duplication, error handling, and consistency.
 - [ ] **Audit documentation accuracy** — the current `docs/` were Claude-generated and appear to contain invented/added content. Cross-check every page in `docs/` against the real behaviour in `pydvma/`. Don't assume `docs/` is correct when reading unfamiliar parts of the code.
 - [ ] **Set up a test suite** — no `tests/` directory exists today. Target `pytest`, covering at least: `analysis.py` (FFT, CSD, TF on known signals from `testdata.py`), `modal.py` (fits on synthetic modes), `datastructure.py` (calibration, list ops), `file.py` (round-trip save/load, CSV, MATLAB). Decide how to mock/skip the hardware-dependent paths (`streams.py`).
+- [ ] **Fix bare `except:` clauses** — 21 instances across `streams.py` (5), `gui.py` (10), `options.py` (3), `plotting.py` (2), and `analysis.py` (1). Bare `except:` catches `KeyboardInterrupt`, `SystemExit`, and unexpected driver errors, masking real issues. Each site needs judgement about which exceptions to catch — hardware imports want `(ImportError, NotImplementedError)`; data handling often wants `(TypeError, ValueError, IndexError)`. Deferred to after Phase A step 2 (pytest scaffolding) so changes to error-handling behaviour are covered by tests.
 
 ## Analysis features
 
 - [ ] **Faster TF / PSD / CSD** — `calculate_cross_spectrum_matrix` (`pydvma/analysis.py`) loops `scipy.signal.csd` over every channel pair. Investigate a vectorised version (compute all FFTs once, build the CSD matrix from outer products of segment FFTs, average, apply window correction). Benchmark vs. current implementation.
 - [ ] **CWT / wavelet time-frequency analysis** — currently only `calculate_sonogram` (STFT-based spectrogram) exists. Add continuous wavelet transform for non-stationary signals; decide on library (e.g. `pywt`) and whether to add a `WaveletData`/`WaveletDataList` pair.
 - [ ] **Simple mode-shape plotter** — combine output of `modal_fit_all_channels` with per-channel position coordinates to draw mode shapes (1D line of accelerometers, 2D grid, etc.). No mode-shape code exists today.
+- [ ] **Review `multiply_by_power_of_iw` initialisation** — `analysis.py` lines 63–91. Uses `hasattr(data, 'iw_power_counter')` plus a zero-array initialisation with single-element assignment; correct under current usage but fragile if `channel_list` semantics change. Revisit when writing unit tests for this function in Phase A step 2.
 
 ## Acquisition, hardware & signal handling
 
@@ -65,6 +68,8 @@ Because Windows access is intermittent, design each hardware session to be pause
 - [ ] **Turn off -1…+1 input scaling** — soundcard input is normalised to float32 [-1, +1]. Change so that input is returned in volts (or physical units once calibration applied), and make use of `settings.VmaxNI` (and any equivalent soundcard value) to scale correctly.
 - [ ] **Easier / GUI-based calibration handling** — calibration factors exist per channel (`set_calibration_factor` etc.) but the GUI workflow for capturing and applying them is awkward. Design a cleaner flow (known-input calibration, sensitivity entry, save/load calibration sets).
 - [ ] **Better control of output signals** — review `signal_generator` and the GUI output frame: expose amplitude, offset, timing, ramp, sweep parameters more cleanly; preview; save/reload signal definitions.
+- [ ] **Refactor module-level singletons in `streams.py`** — three module-level globals (`REC`, `REC_SC`, `REC_NI`) manage recorder instances; `start_stream` calls `REC_NI.__init__(settings)` directly on an existing object, which is fragile and hard to mock. Redesign: pass recorder instances explicitly, or introduce a small registry. Fits naturally alongside Phase A step 5 (mocked `streams.py` test harness for NI prep).
+- [ ] **Centralise optional hardware imports** — `sounddevice` and `PyDAQmx` are currently imported at the top of `streams.py` (and partially duplicated in `options.py`) wrapped in `try`/`except`. Works, but scattered. A small `_hardware.py` helper that does the try-imports once and exposes boolean flags plus module handles would make mocking for tests and graceful degradation on hardware-less machines cleaner.
 
 ## GUI & plotting
 
