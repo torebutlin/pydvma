@@ -33,7 +33,9 @@ class _FakeEnumValue(object):
         return hash(self.name)
 
 
-FAKE_CHASSIS = _FakeEnumValue('C_DAQ_CHASSIS')
+# Real nidaqmx (observed on 2026 Q2) spells the chassis category
+# `COMPACT_DAQ_CHASSIS`; we also accept `C_DAQ_CHASSIS` for forward-compat.
+FAKE_CHASSIS = _FakeEnumValue('COMPACT_DAQ_CHASSIS')
 FAKE_USB = _FakeEnumValue('USB_DAQ')
 
 
@@ -126,6 +128,15 @@ class TestEnumerateDevices:
         chassis = FakeDevice('cDAQ1', 'cDAQ-9185', chassis=True, modules=[mod])
         entries = _ni.enumerate_devices(system=FakeSystem([usb, chassis, mod]))
         assert [e['name'] for e in entries] == ['Dev1', 'cDAQ1']
+
+    def test_accepts_legacy_chassis_enum_name(self, patch_ni):
+        # Older / alternate nidaqmx builds may expose `C_DAQ_CHASSIS`
+        # instead of `COMPACT_DAQ_CHASSIS`. Both must be treated as chassis.
+        mod = FakeDevice('cDAQ1Mod1', 'NI 9215', ai=4)
+        chassis = FakeDevice('cDAQ1', 'cDAQ-9185', chassis=True, modules=[mod])
+        chassis.product_category = _FakeEnumValue('C_DAQ_CHASSIS')
+        entries = _ni.enumerate_devices(system=FakeSystem([chassis, mod]))
+        assert len(entries) == 1 and entries[0]['is_chassis'] is True
 
     def test_returns_empty_when_nidaqmx_missing(self, monkeypatch):
         monkeypatch.setattr(_ni, 'nidaqmx', None)
