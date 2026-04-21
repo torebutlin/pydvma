@@ -50,8 +50,20 @@ def resolve_terminal_config(ni_mode):
     return getattr(TerminalConfiguration, enum_name)
 
 
+# Accept either name: nidaqmx uses `COMPACT_DAQ_CHASSIS` (observed on
+# nidaqmx 2026 Q2); some older / alternate builds exposed `C_DAQ_CHASSIS`.
+# Comparing by `.name` avoids a hard dependency on the exact enum layout.
+_CHASSIS_CATEGORY_NAMES = frozenset({
+    'COMPACT_DAQ_CHASSIS',
+    'C_DAQ_CHASSIS',
+})
+
+
 def _is_chassis(dev):
-    return getattr(dev, 'product_category', None) == ProductCategory.C_DAQ_CHASSIS
+    pc = getattr(dev, 'product_category', None)
+    if pc is None:
+        return False
+    return getattr(pc, 'name', None) in _CHASSIS_CATEGORY_NAMES
 
 
 def _ai_count(dev):
