@@ -879,14 +879,30 @@ class Logger():
         self.input_test_name.editingFinished.connect(self.refresh_test_name)
         
         self.layout_tools_settings = QFormLayout()
-        
+
+        # Explicit named field lists rather than slicing self.labels_settings
+        # by position — safer against future additions to MySettings.
+        input_fields = [
+            'fs', 'channels', 'stored_time',
+            'pretrig_samples', 'pretrig_threshold', 'pretrig_channel', 'pretrig_timeout',
+            'device_driver', 'device_index',
+            'ni_backend', 'input_channels_spec',
+        ]
+        output_fields = [
+            'output_fs', 'output_channels',
+            'output_device_driver', 'output_device_index',
+            'output_channels_spec', 'use_output_as_ch0',
+        ]
+
         self.layout_tools_settings.addWidget(boldLabel('Input Settings:'))
         self.layout_tools_settings.addRow(QLabel('Test Name:'),self.input_test_name)
-        for n_row in range(9):
-            self.layout_tools_settings.addRow(QLabel(self.labels_settings[n_row]),self.input_settings[self.labels_settings[n_row]])
+        for name in input_fields:
+            if name in self.input_settings:
+                self.layout_tools_settings.addRow(QLabel(name), self.input_settings[name])
         self.layout_tools_settings.addWidget(boldLabel('Output Settings:'))
-        for n_row in range(9,14):
-            self.layout_tools_settings.addRow(QLabel(self.labels_settings[n_row]),self.input_settings[self.labels_settings[n_row]])
+        for name in output_fields:
+            if name in self.input_settings:
+                self.layout_tools_settings.addRow(QLabel(name), self.input_settings[name])
         
         self.layout_tools_settings.addWidget(self.button_show_available_devices)
         self.layout_tools_settings.addWidget(self.button_apply_settings)
@@ -2027,11 +2043,19 @@ class Logger():
             self.frame_tools_save_export.setVisible(True)
             
     def apply_settings(self):
-        settings_dict = dict()
-        for n_row in range(14):
-            label = self.labels_settings[n_row]
-            text = self.input_settings[label].text()
-            settings_dict[label] = text
+        editable_fields = [
+            'fs', 'channels', 'stored_time',
+            'pretrig_samples', 'pretrig_threshold', 'pretrig_channel', 'pretrig_timeout',
+            'device_driver', 'device_index',
+            'ni_backend', 'input_channels_spec',
+            'output_fs', 'output_channels',
+            'output_device_driver', 'output_device_index',
+            'output_channels_spec', 'use_output_as_ch0',
+        ]
+        settings_dict = {}
+        for name in editable_fields:
+            if name in self.input_settings:
+                settings_dict[name] = self.input_settings[name].text()
         self.settings_dict = settings_dict
         self.settings = options.MySettings(**settings_dict)
         self.test_name = self.input_test_name.text()

@@ -62,6 +62,16 @@ class MySettings(object):
         Device type: 'soundcard' or 'nidaq'
     device_index: int
         Device index, will prompt if not specified
+    ni_backend: str
+        NI-DAQmx Python wrapper to use when device_driver='nidaq':
+        'pydaqmx' (legacy, default) or 'nidaqmx' (official NI wrapper;
+        required for cDAQ chassis support).
+    input_channels_spec: str or None
+        Optional raw NI physical-channel string for the AI task (e.g.
+        'cDAQ1Mod1/ai0:3,cDAQ1Mod3/ai0'). Overrides the auto-constructed
+        'dev/ai0:N-1' string when set. Only used by the nidaqmx backend.
+    output_channels_spec: str or None
+        Same as input_channels_spec but for the AO task.
     VmaxNI: float
         Maximum voltage range for NI DAQ devices
     NI_mode: str
@@ -88,6 +98,8 @@ class MySettings(object):
                  pretrig_timeout=20,
                  device_driver='soundcard',
                  device_index=None,
+                 ni_backend='pydaqmx',
+                 input_channels_spec=None,
                  VmaxNI=5,
                  NI_mode='DAQmx_Val_RSE',
                  init_view_time=True,
@@ -96,6 +108,7 @@ class MySettings(object):
                  output_device_driver=None,
                  output_device_index=None,
                  output_channels=None,
+                 output_channels_spec=None,
                  output_fs=None,
                  output_VmaxNI=None,
                  use_output_as_ch0=False):
@@ -116,9 +129,16 @@ class MySettings(object):
         
         self.device_driver=device_driver
         self.device_index=device_index
-        
-        
-        
+
+        if ni_backend not in ('pydaqmx', 'nidaqmx'):
+            raise ValueError("ni_backend must be 'pydaqmx' or 'nidaqmx' (got %r)" % (ni_backend,))
+        self.ni_backend = ni_backend
+
+        if (input_channels_spec is None) or (input_channels_spec == 'None') or (input_channels_spec == ''):
+            self.input_channels_spec = None
+        else:
+            self.input_channels_spec = str(input_channels_spec)
+
         #OUTPUT SETTINGS
         if (output_fs is None) or (output_fs == 'None'):
             self.output_fs = int(self.fs)
@@ -135,7 +155,12 @@ class MySettings(object):
             output_device_driver = device_driver
 
         self.output_device_driver = output_device_driver
-            
+
+        if (output_channels_spec is None) or (output_channels_spec == 'None') or (output_channels_spec == ''):
+            self.output_channels_spec = None
+        else:
+            self.output_channels_spec = str(output_channels_spec)
+
         if (device_driver == 'soundcard') and ((device_index is None) or (device_index == 'None')):
             try:
                 # try to find default input soundcard device
