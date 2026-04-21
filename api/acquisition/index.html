@@ -954,6 +954,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="log_data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.log_data--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.log_data--returns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Returns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.log_data--notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -1488,6 +1527,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="log_data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.log_data--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.log_data--returns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Returns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.log_data--notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -1600,7 +1678,47 @@
 
     <div class="doc doc-contents first">
 
-        <p>Logs data according to settings and returns DataSet class</p>
+        <p>Acquire one block of time-domain data and return it as a DataSet.</p>
+<p>Two call modes depending on <code>settings.pretrig_samples</code>:</p>
+<ul>
+<li><strong>No pretrigger</strong> (<code>pretrig_samples is None</code>): starts / reuses
+  a stream, sleeps for <code>settings.stored_time</code> seconds, and
+  returns the most recent <code>stored_time * fs</code> samples from the
+  circular buffer. If <code>output</code> is supplied it is played in
+  parallel (soundcard play is blocking; NI play is non-blocking
+  and synchronized against <code>stored_time</code> via WaitUntilTaskDone).</li>
+<li><strong>Pretrigger armed</strong> (<code>pretrig_samples</code> set): waits up to
+  <code>settings.pretrig_timeout</code> seconds for the monitored channel
+  to cross <code>settings.pretrig_threshold</code>. On trigger, returns a
+  window of <code>stored_time * fs</code> samples straddling the trigger
+  sample so that <code>pretrig_samples</code> of pre-trigger data appears
+  at the start of the returned buffer. <strong>On timeout with no
+  trigger</strong> the function does not raise — it falls back to
+  returning the tail of the buffer (same as the no-pretrigger
+  path) with <code>trigger_detected = False</code>.</li>
+</ul>
+<h5 id="pydvma.acquisition.log_data--parameters">Parameters<a class="headerlink" href="#pydvma.acquisition.log_data--parameters" title="Permanent link">&para;</a></h5>
+<p>settings : MySettings
+    Acquisition configuration. See <code>pydvma.options.MySettings</code>.
+test_name : str or None
+    Stored on the returned <code>TimeData</code> for labelling.
+rec : Recorder-like or None
+    If given, uses this existing recorder instead of calling
+    <code>streams.start_stream(settings)</code>. Normally leave as None.
+output : ndarray (N_samples, output_channels) or None
+    Optional playback signal, normalised to ±1. For NI devices the
+    playback is scaled to <code>settings.output_VmaxNI</code> inside
+    <code>streams.setup_output_NI</code>.</p>
+<h5 id="pydvma.acquisition.log_data--returns">Returns<a class="headerlink" href="#pydvma.acquisition.log_data--returns" title="Permanent link">&para;</a></h5>
+<p>DataSet
+    A DataSet containing one TimeData. If
+    <code>settings.use_output_as_ch0</code> is True and <code>output</code> was
+    supplied, the output signal is prepended as an extra channel.</p>
+<h5 id="pydvma.acquisition.log_data--notes">Notes<a class="headerlink" href="#pydvma.acquisition.log_data--notes" title="Permanent link">&para;</a></h5>
+<p>A clipping warning is printed when <code>|data| &gt; 0.95</code> anywhere in
+the capture. This threshold assumes ±1-normalised input and is
+therefore not meaningful for the NI path in volts (tracked in
+TODO "Turn off ±1 scaling").</p>
 
 
     </div>
