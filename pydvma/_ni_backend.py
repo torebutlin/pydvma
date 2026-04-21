@@ -23,9 +23,12 @@ except NotImplementedError:
     TerminalConfiguration = None
 
 
+# nidaqmx 2026 Q2's TerminalConfiguration spells the pseudo-differential
+# value `PSEUDO_DIFF` (verified against the live enum). Names on the
+# right must match nidaqmx.constants.TerminalConfiguration member names.
 TERMINAL_CONFIG_MAP = {
     'DAQmx_Val_RSE': 'RSE',
-    'DAQmx_Val_PseudoDiff': 'PSEUDODIFFERENTIAL',
+    'DAQmx_Val_PseudoDiff': 'PSEUDO_DIFF',
     'DAQmx_Val_Diff': 'DIFF',
     'DAQmx_Val_NRSE': 'NRSE',
 }
@@ -206,16 +209,19 @@ def supports_hw_ao_sync(device_entry):
 
 
 def ai_sample_clock_source(device_entry):
-    """Return the terminal name of the AI sample clock to use as the AO timebase.
+    """Return the terminal to route as the AO sample clock for hardware
+    AI/AO sync, or None if no explicit routing is needed/possible.
 
-    For USB/PCIe devices this is `/<dev>/ai/SampleClock`. For cDAQ chassis,
-    when both AI and AO tasks run inside the chassis, referencing the AI
-    module's sample clock routes through the chassis timebase.
+    USB/PCIe M- and X-series devices expose `/<dev>/ai/SampleClock`, and
+    routing that as the AO source makes AO step on exactly the AI tick.
+
+    cDAQ chassis: per-module `/cDAQ1Mod1/ai/SampleClock` is NOT routable
+    as an AO source; the DAQmx driver rejects it. AI and AO on a cDAQ
+    chassis are already phase-coherent via the chassis 80 MHz timebase,
+    so returning None (fall through to the default per-task clock) gives
+    a usable approximation. Sample-accurate cross-module sync needs a
+    shared start trigger — tracked with TODO item 13.
     """
     if device_entry['is_chassis']:
-        modules = device_entry['module_names']
-        ai_modules = [m for m in modules if device_entry['module_ai_counts'].get(m, 0) > 0]
-        if not ai_modules:
-            return None
-        return '/%s/ai/SampleClock' % ai_modules[0]
+        return None
     return '/%s/ai/SampleClock' % device_entry['name']

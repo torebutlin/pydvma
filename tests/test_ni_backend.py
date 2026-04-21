@@ -226,12 +226,9 @@ class TestAISampleClockSource:
         entry = _usb_entry('Dev2', 'USB-6212', ai=16, ao=2)
         assert _ni.ai_sample_clock_source(entry) == '/Dev2/ai/SampleClock'
 
-    def test_chassis_uses_first_ai_bearing_module(self):
-        # Slot order Mod3 (AO-only) then Mod1 (AI): expect Mod1 chosen.
+    def test_chassis_returns_none(self):
+        # Per-module AI sample clocks are not routable as AO sources on
+        # cDAQ; callers fall back to the default (chassis timebase).
         entry = _chassis_entry('cDAQ1', 'cDAQ-9185',
-                               [('cDAQ1Mod3', 0, 4), ('cDAQ1Mod1', 4, 0)])
-        assert _ni.ai_sample_clock_source(entry) == '/cDAQ1Mod1/ai/SampleClock'
-
-    def test_chassis_without_ai_returns_none(self):
-        entry = _chassis_entry('cDAQ1', 'cDAQ-9185', [('cDAQ1Mod3', 0, 4)])
+                               [('cDAQ1Mod1', 4, 0), ('cDAQ1Mod3', 0, 4)])
         assert _ni.ai_sample_clock_source(entry) is None

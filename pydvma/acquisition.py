@@ -98,13 +98,18 @@ def log_data(settings,test_name=None,rec=None, output=None):
         # make copy of data
         stored_time_data_copy = np.copy(streams.REC.stored_time_data)
         trigger_check = stored_time_data_copy[(settings.chunk_size):(2*settings.chunk_size),settings.pretrig_channel]
-        detected_sample = settings.chunk_size + np.where(np.abs(trigger_check) > settings.pretrig_threshold)[0][0]
+        hits = np.where(np.abs(trigger_check) > settings.pretrig_threshold)[0]
         number_samples = int(settings.stored_time * settings.fs)
-        start_index = detected_sample - settings.pretrig_samples
-        end_index   = start_index + number_samples
+        if len(hits) == 0:
+            # Timeout expired with no trigger detected — return the tail of
+            # the buffer rather than crashing with IndexError.
+            stored_time_data_copy = stored_time_data_copy[-number_samples:, :]
+        else:
+            detected_sample = settings.chunk_size + hits[0]
+            start_index = detected_sample - settings.pretrig_samples
+            end_index   = start_index + number_samples
+            stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
         streams.REC.trigger_detected = False # don't start stream again until sorted out trigger detection
-        
-        stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
         
         MESSAGE = 'Logging complete.\n'
         print(MESSAGE)

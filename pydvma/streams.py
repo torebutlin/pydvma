@@ -673,10 +673,16 @@ class Recorder_NI_nidaqmx(object):
                 % (settings.channels, self.device_name, self.device_entry['ai_channel_count'])
             )
 
-        self.audio_stream = None
-        self._reader = None
-        self._read_buffer = None
-        self._callback_ref = None  # keep a strong reference for nidaqmx
+        # Preserve hardware-level state across re-__init__ calls:
+        # acquisition.py re-invokes __init__ to zero the numpy buffers
+        # before a pretrigger wait, but the NI task is still running and
+        # its callback expects the reader to still exist. Only set these
+        # on first construction.
+        if not hasattr(self, 'audio_stream'):
+            self.audio_stream = None
+            self._reader = None
+            self._read_buffer = None
+            self._callback_ref = None  # keep a strong reference for nidaqmx
 
     def available_devices(self):
         entries = _ni_backend.enumerate_devices()
