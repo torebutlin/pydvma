@@ -629,6 +629,39 @@ Recorder_NI = Recorder_NI_PyDAQmx
 
 
 class Recorder_NI_nidaqmx(object):
+    '''NI acquisition recorder using the official nidaqmx Python wrapper.
+
+    Mirror of the `Recorder_NI_PyDAQmx` class with the same public
+    attribute shape — `audio_stream`, `osc_time_data`,
+    `stored_time_data`, `trigger_detected`, etc. — so that `acquisition.py`
+    is backend-agnostic. Select this backend via
+    ``MySettings(ni_backend='nidaqmx')``.
+
+    Hardware-specific notes picked up while getting this working:
+
+    * **cDAQ chassis** are addressed via a single entry in the
+      enumerated device list. A chassis with an N-channel AI module and
+      an M-channel AO module appears as one device with
+      ``ai_channel_count=N`` and ``ao_channel_count=M``. Requesting
+      ``channels=N`` builds the correct cross-module channel string
+      (``cDAQ1Mod1/ai0:N-1``). For mixed / gappy layouts, use the
+      ``input_channels_spec`` / ``output_channels_spec`` settings to
+      pass a raw physical-channel string.
+    * **NI 9234** (and DSA modules generally) are pseudo-differential
+      only; set ``NI_mode='DAQmx_Val_PseudoDiff'``. Voltage range is
+      fixed at ±5 V; any other ``VmaxNI`` will be accepted silently
+      by the driver.
+    * **NI 9260** AO is ±4.24 V peak (= 3 V_rms). Setting
+      ``output_VmaxNI=10`` triggers DAQmx error -200077.
+    * **USB-600x low-cost devices** have software-timed AO: AI/AO
+      cannot share a hardware sample clock; the output path falls back
+      to an independent (unsynchronised) task.
+    * **Data is read in volts** directly via `AnalogMultiChannelReader`,
+      not as a normalised float — no ±1 scaling is applied. This
+      differs from the soundcard path and from the PyDAQmx backend's
+      implicit I16-divide-by-2^15 scaling.
+    '''
+
     def __init__(self, settings):
         self.settings = settings
         self.trigger_detected = False
@@ -904,10 +937,39 @@ class _NidaqmxTaskAdapter(object):
 
 
 def setup_output_NI_nidaqmx(settings, output):
-    '''Build and stage (but do not start) a finite-sample AO task on nidaqmx.
+    '''Build and stage (but not start) a finite-sample AO task on nidaqmx.
 
-    Returns a task adapter with PyDAQmx-style methods so the caller in
-    `acquisition.py` can stay backend-agnostic.
+    Parameters
+    ----------
+    settings : MySettings
+        Must have ``output_device_driver='nidaq'`` and
+        ``ni_backend='nidaqmx'``. ``output`` is expected in ±1 normalised
+        units and is scaled to ±``output_VmaxNI`` here.
+    output : ndarray, shape (N_samples, output_channels)
+        Playback waveform. Must not exceed the AO module's range after
+        scaling; e.g. NI 9260 is ±4.24 V peak, so ``output_VmaxNI > 4``
+        combined with ``|output| > 1`` will be rejected by DAQmx.
+
+    Returns
+    -------
+    _NidaqmxTaskAdapter
+        Wrapper exposing PyDAQmx-style ``StartTask`` / ``StopTask`` /
+        ``WaitUntilTaskDone`` so `acquisition.py` can call the same
+        methods regardless of backend.
+
+    Notes on AI/AO hardware sync
+    ----------------------------
+    When the AI recorder is a `Recorder_NI_nidaqmx` on the **same
+    device or chassis** and that hardware supports hardware-timed AO
+    (see `_ni_backend.supports_hw_ao_sync`), the AO task routes the
+    AI sample clock as its source — the resulting AO samples step on
+    exactly the AI tick. This works on M/X-series USB (e.g.
+    USB-6212). It is **not** used for cDAQ chassis: per-module AI
+    sample clocks are not routable as AO sources there; AI and AO
+    instead share the chassis 80 MHz timebase implicitly, which is
+    phase-coherent but not sample-accurate across tasks. USB-600x
+    low-cost devices have software-timed AO and always run
+    unsynchronised.
     '''
     output = settings.output_VmaxNI * output  # output is normalised 0..1
     output_shape = np.shape(output)

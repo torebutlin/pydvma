@@ -17,9 +17,54 @@ import time
 MESSAGE = ''
 
 #%% Main data acquisition function
-def log_data(settings,test_name=None,rec=None, output=None):
-    '''
-    Logs data according to settings and returns DataSet class
+def log_data(settings, test_name=None, rec=None, output=None):
+    '''Acquire one block of time-domain data and return it as a DataSet.
+
+    Two call modes depending on ``settings.pretrig_samples``:
+
+    * **No pretrigger** (``pretrig_samples is None``): starts / reuses
+      a stream, sleeps for ``settings.stored_time`` seconds, and
+      returns the most recent ``stored_time * fs`` samples from the
+      circular buffer. If ``output`` is supplied it is played in
+      parallel (soundcard play is blocking; NI play is non-blocking
+      and synchronized against ``stored_time`` via WaitUntilTaskDone).
+    * **Pretrigger armed** (``pretrig_samples`` set): waits up to
+      ``settings.pretrig_timeout`` seconds for the monitored channel
+      to cross ``settings.pretrig_threshold``. On trigger, returns a
+      window of ``stored_time * fs`` samples straddling the trigger
+      sample so that ``pretrig_samples`` of pre-trigger data appears
+      at the start of the returned buffer. **On timeout with no
+      trigger** the function does not raise — it falls back to
+      returning the tail of the buffer (same as the no-pretrigger
+      path) with ``trigger_detected = False``.
+
+    Parameters
+    ----------
+    settings : MySettings
+        Acquisition configuration. See `pydvma.options.MySettings`.
+    test_name : str or None
+        Stored on the returned `TimeData` for labelling.
+    rec : Recorder-like or None
+        If given, uses this existing recorder instead of calling
+        `streams.start_stream(settings)`. Normally leave as None.
+    output : ndarray (N_samples, output_channels) or None
+        Optional playback signal, normalised to ±1. For NI devices the
+        playback is scaled to ``settings.output_VmaxNI`` inside
+        `streams.setup_output_NI`.
+
+    Returns
+    -------
+    DataSet
+        A DataSet containing one TimeData. If
+        ``settings.use_output_as_ch0`` is True and ``output`` was
+        supplied, the output signal is prepended as an extra channel.
+
+    Notes
+    -----
+    A clipping warning is printed when ``|data| > 0.95`` anywhere in
+    the capture. This threshold assumes ±1-normalised input and is
+    therefore not meaningful for the NI path in volts (tracked in
+    TODO "Turn off ±1 scaling").
     '''
     global MESSAGE
     

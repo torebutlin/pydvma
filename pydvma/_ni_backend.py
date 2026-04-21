@@ -42,6 +42,18 @@ _SW_TIMED_AO_TYPES = frozenset({
 
 
 def resolve_terminal_config(ni_mode):
+    """Map a pydvma ``NI_mode`` string to an `nidaqmx` TerminalConfiguration.
+
+    Accepts the legacy PyDAQmx-style names used elsewhere in pydvma
+    (``'DAQmx_Val_RSE'``, ``'DAQmx_Val_PseudoDiff'``,
+    ``'DAQmx_Val_Diff'``, ``'DAQmx_Val_NRSE'``) and returns the matching
+    nidaqmx enum member. Raises `RuntimeError` if nidaqmx is not
+    installed, or `ValueError` for an unknown mode.
+
+    Note that DSA modules (e.g. NI 9234) only accept
+    ``'DAQmx_Val_PseudoDiff'``; the driver will reject any other mode
+    when the channel is created.
+    """
     if TerminalConfiguration is None:
         raise RuntimeError('nidaqmx is not installed')
     enum_name = TERMINAL_CONFIG_MAP.get(ni_mode)
@@ -189,10 +201,33 @@ def _build_channel_string(device_entry, n_channels, explicit_spec, *, io):
 
 
 def build_ai_channel_string(device_entry, n_channels, explicit_spec=None):
+    """Build a DAQmx physical-channel string for an AI task.
+
+    Takes a `device_entry` from `enumerate_devices()` and a channel
+    count and returns a channel string that nidaqmx accepts.
+
+    * For a standalone USB/PCIe device: ``'Dev1/ai0'`` or
+      ``'Dev1/ai0:N-1'`` for N>1.
+    * For a cDAQ chassis: walks the slotted modules in slot order and
+      consumes ``n_channels`` across them, producing e.g.
+      ``'cDAQ1Mod1/ai0:3,cDAQ1Mod2/ai0:3'`` for 8 channels across two
+      4-ch modules. Modules with zero AI are skipped.
+    * If ``explicit_spec`` is truthy, it is returned verbatim —
+      provides an escape hatch for gappy / mixed-module layouts that
+      the count-based builder cannot express.
+
+    Raises `ValueError` if ``n_channels`` exceeds the device / chassis
+    AI capacity.
+    """
     return _build_channel_string(device_entry, n_channels, explicit_spec, io='ai')
 
 
 def build_ao_channel_string(device_entry, n_channels, explicit_spec=None):
+    """Build a DAQmx physical-channel string for an AO task.
+
+    See `build_ai_channel_string` — same behaviour, ``ao`` substituted
+    for ``ai``.
+    """
     return _build_channel_string(device_entry, n_channels, explicit_spec, io='ao')
 
 
