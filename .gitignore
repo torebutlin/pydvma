@@ -15,3 +15,8 @@ pydvma_template_with anim.ipynb
 # Documentation builds
 site/
 .cache/
+
+# Claude Code: per-machine workspace and local-only guidance
+.claude/
+CLAUDE.md
+CLAUDE.local.md
