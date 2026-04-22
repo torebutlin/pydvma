@@ -45,8 +45,11 @@ def log_data(settings, test_name=None, rec=None, output=None):
     test_name : str or None
         Stored on the returned `TimeData` for labelling.
     rec : Recorder-like or None
-        If given, uses this existing recorder instead of calling
-        `streams.start_stream(settings)`. Normally leave as None.
+        Ignored. Retained for backward compatibility with callers (the
+        GUI's ``LogDataThread``) that still pass a cached recorder.
+        ``log_data`` now always rebuilds the stream via
+        ``streams.start_stream(settings)`` so that switching device or
+        backend between calls doesn't leave a stale recorder.
     output : ndarray (N_samples, output_channels) or None
         Optional playback signal, normalised to ±1. For NI devices the
         playback is scaled to ``settings.output_VmaxNI`` inside
@@ -67,12 +70,13 @@ def log_data(settings, test_name=None, rec=None, output=None):
     TODO "Turn off ±1 scaling").
     '''
     global MESSAGE
-    
-    if rec is None:
-        streams.start_stream(settings)
-        rec = streams.REC
-        
-    
+
+    # Always rebuild the stream. `streams.REC` can be None when a prior
+    # `end_stream()` fired (e.g. on device switch) even though the caller
+    # still holds a stale `rec` reference; rebuilding keeps them in sync.
+    streams.start_stream(settings)
+    rec = streams.REC
+
     streams.REC.trigger_detected = False
     
     # Stream is slightly longer than settings.stored_time, so need to add delay
