@@ -16,7 +16,9 @@ pydvma_template_with anim.ipynb
 site/
 .cache/
 
-# Claude Code: per-machine workspace and local-only guidance
+# Claude Code: per-machine workspace (worktrees, transient state).
+# Note: CLAUDE.md itself is tracked — it's the session-level rules for
+# anyone working with Claude on this repo. Personal per-machine
+# overrides go in CLAUDE.local.md, which stays gitignored.
 .claude/
-CLAUDE.md
 CLAUDE.local.md

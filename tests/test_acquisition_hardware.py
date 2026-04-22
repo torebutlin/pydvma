@@ -185,6 +185,19 @@ def test_pretrigger_timeout_no_crash(device_entry, device_index):
     assert ds.time_data_list[0].time_data.shape == (int(0.2 * s.fs), 1)
 
 
+def test_suggest_ni_settings_end_to_end(device_entry, device_index):
+    """`suggest_ni_settings(...)` output must be directly usable:
+    feed it to MySettings and run log_data without any driver error."""
+    kwargs = dvma.suggest_ni_settings(device_index)
+    s = dvma.MySettings(channels=1, stored_time=0.2, **kwargs)
+    # Values must be within-device per the helper's promise
+    if device_entry['is_chassis']:
+        # Chassis heuristic: DSA module → pseudo-diff + fixed ±5
+        assert s.NI_mode == 'DAQmx_Val_PseudoDiff'
+    ds = dvma.log_data(s)
+    assert ds.time_data_list[0].time_data.shape[0] == int(0.2 * s.fs)
+
+
 def test_backend_roundtrip_pydaqmx(device_entry, device_index):
     """Sanity: legacy pydaqmx backend still works on non-chassis devices.
 
