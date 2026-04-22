@@ -794,6 +794,29 @@ class Recorder_NI_nidaqmx(object):
                 pass
             self.audio_stream = None
 
+        try:
+            self._build_and_start_ai_task(settings)
+        except ni.errors.DaqError as e:
+            # -50103 "The specified resource is reserved" usually means a
+            # prior Python process leaked the task (notebook kernel crash,
+            # Ctrl-C, etc.) and Windows is still holding the reservation.
+            # Reset the device once to clear it and retry; surface any
+            # other DAQmx error unchanged.
+            if e.error_code != -50103:
+                raise
+            if self.audio_stream is not None:
+                try:
+                    self.audio_stream.close()
+                except Exception:
+                    pass
+                self.audio_stream = None
+            try:
+                ni.system.Device(self.device_name).reset_device()
+            except Exception:
+                pass
+            self._build_and_start_ai_task(settings)
+
+    def _build_and_start_ai_task(self, settings):
         # AutoRegN must divide evenly into chunk_size; pick the largest
         # of {10, 100, 1000} that fits. Matches the PyDAQmx sibling.
         AutoRegN_choices = np.array([10, 100, 1000], dtype=int)
@@ -829,6 +852,8 @@ class Recorder_NI_nidaqmx(object):
         self._callback_ref = _cb
         task.register_every_n_samples_acquired_into_buffer_event(AutoRegN, _cb)
 
+        # Assign before start so the retry path in ``init_stream`` can
+        # find the task to close if ``task.start()`` raises -50103.
         self.audio_stream = task
         task.start()
 
