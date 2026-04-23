@@ -481,10 +481,10 @@ class PlotData():
                         # handle when some lines are out of view
                         xx = min(data[0])
                         xmin = min([xx,xmin])
-                        
+
                         xxlog = data[0][1] # first nonzero freq axis
                         xminlog = min([xminlog,xxlog])
-                        
+
                         xx = max(data[0])
                         xmax = max([xx,xmax])
                         if self.plot_type == 'Nyquist':
@@ -492,7 +492,10 @@ class PlotData():
                             ymin = min([yy,ymin])
                             yy = max(data[1])
                             ymax = max([yy,ymax])
-                    except:
+                    except (ValueError, IndexError):
+                        # ValueError: min/max of empty sequence (all data
+                        # masked out of view). IndexError: data[0][1] on a
+                        # single-sample line.
                         pass
             try:
                 if 'log' in self.xlinlog:
@@ -508,10 +511,12 @@ class PlotData():
                             xmid = (xmin+xmax)/2
                             xmax = xmid + ar*yrange/2
                             xmin = xmid - ar*yrange/2
-                        
+
                     self.ax.set_xlim([xmin,xmax])
-                    
-            except:
+
+            except (ValueError, TypeError):
+                # ValueError: xlim = [inf, -inf] when no lines were in
+                # view. TypeError: xlim contains non-finite values.
                 pass
         self.fig.canvas.draw()
         
@@ -545,11 +550,15 @@ class PlotData():
                         ymin = min([yy,ymin])
                         yy = max(data[1][selection])
                         ymax = max([yy,ymax])
-                    except:
+                    except (ValueError, IndexError):
+                        # ValueError: min/max of empty slice when
+                        # selection masks everything out.
                         pass
             try:
                 self.ax.set_ylim([ymin,ymax])
-            except:
+            except (ValueError, TypeError):
+                # ylim still inf / -inf (no visible lines), or non-finite
+                # values in ymin/ymax.
                 pass
         if self.data_list.__class__.__name__ == 'TfDataList':
             # reset coherence to 0-1

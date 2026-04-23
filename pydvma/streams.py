@@ -90,7 +90,11 @@ def list_available_devices(io=''):
             default_output_device = sd.default.device[1]
             message += 'Default device is: [%i] %s\n' %(default_output_device,device_name_list[default_output_device])
             message += '\n\n'
-        except:
+        except (AttributeError, TypeError, IndexError):
+            # sd.default is None (no PortAudio host), or
+            # sd.default.device is -1 / not indexable on a headless
+            # machine — fall back to "unknown" without pretending any
+            # specific device is the default.
             message += 'default information not available\n'
     else:
         message += 'no soundcards found\n'
@@ -149,12 +153,17 @@ def get_devices_NI():
 
 
 def get_devices_soundcard():
+    if sd is None:
+        return None
     try:
         devices = sd.query_devices()
         device_name_list = []
         for device in devices:
             device_name_list.append(device['name'])
-    except:
+    except (sd.PortAudioError, AttributeError, TypeError):
+        # PortAudio subsystem not available, or sd.query_devices()
+        # returned something without the expected dict-of-device shape
+        # (unusual driver config). Treat as "no devices visible".
         return None
     
     return device_name_list

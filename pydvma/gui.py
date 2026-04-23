@@ -356,7 +356,9 @@ class Logger():
             try:
                 if ch.iconText() in ['Home','Subplots','Save','Customize']:
                     ch.setVisible(False)
-            except:
+            except AttributeError:
+                # Toolbar children aren't all QToolButtons — separators
+                # and action groups don't have iconText(). Skip them.
                 pass
         
         self.toolbar.setOrientation(Qt.Orientation.Horizontal)
@@ -1097,11 +1099,19 @@ class Logger():
             try:
                 streams.start_stream(self.settings)
                 self.rec = streams.REC
-            except:
+            except (RuntimeError, ValueError, OSError) as e:
+                # RuntimeError: driver module missing (nidaqmx/sounddevice
+                # not installed, or no NI devices visible). ValueError:
+                # device_index out of range. OSError: PortAudio can't
+                # open the soundcard. Deliberately *not* catching the
+                # full Exception tree so a programming bug surfaces
+                # immediately rather than being swallowed into a
+                # generic "can't initialise" dialog.
                 self.rec = None
                 message = 'Data stream can\'t be initialised.\n'
                 message += 'Possible reasons: sounddevice or nidaqmx not installed, or acquisition hardware not connected.\n'
-                message += 'Please note that it won\'t be possible to log data.'
+                message += 'Please note that it won\'t be possible to log data.\n\n'
+                message += 'Underlying error: {}: {}'.format(type(e).__name__, e)
                 self.show_message(message)
                 
         else:
@@ -1515,7 +1525,11 @@ class Logger():
         try:
             # sometimes starting point with no legend object
             visibility = self.p.ax.get_legend().get_visible()
-        except:
+        except AttributeError:
+            # ax.get_legend() returns None before any data is plotted;
+            # None.get_visible() raises AttributeError. `visibility`
+            # stays whatever it was on the previous call (the caller
+            # only reads it inside a similarly-guarded set_visible).
             pass
         # updates the currently viewed plot
         if self.current_view == 'Time Data':
@@ -1554,8 +1568,11 @@ class Logger():
                 self.p.set_selected_channels(self.selected_channels)
                 self.p.ax.get_legend().set_visible(visibility)
                 self.fig.canvas.draw()
-            except:
-                # get selected_channels back into sync
+            except (AttributeError, NameError):
+                # No legend yet (get_legend() returned None), or the
+                # outer try above never bound `visibility` because
+                # the same condition held there. Leave the selection
+                # sync for the next update cycle.
                 pass# not sure helping. self.selected_channels = self.p.get_selected_channels()
         if self.auto_xy=='':
             # handle this case manually
@@ -1623,9 +1640,11 @@ class Logger():
         try:
             # sometimes starting point with no legend object
             visibility = self.p.ax.get_legend().get_visible()
-        except:
+        except AttributeError:
+            # No legend yet — visibility stays unbound; the matching
+            # set_visible below is guarded the same way.
             pass
-        
+
         selection = self.p.get_selected_channels()
         prev_line = bool(selection[-1][-1])
         for ns in range(len(selection)):
@@ -1639,14 +1658,18 @@ class Logger():
         try:
             self.p.ax.get_legend().set_visible(visibility)
             self.fig.canvas.draw()
-        except:
+        except (AttributeError, NameError):
+            # No legend (get_legend() -> None) or `visibility` never
+            # bound. Matching guard for the get_visible() above.
             pass
-        
+
     def prev_chans(self):
         try:
             # sometimes starting point with no legend object
             visibility = self.p.ax.get_legend().get_visible()
-        except:
+        except AttributeError:
+            # No legend yet — visibility stays unbound; the matching
+            # set_visible below is guarded the same way.
             pass
         selection = self.p.get_selected_channels()
         prev_line = bool(selection[0][0])
@@ -1656,12 +1679,14 @@ class Logger():
                 selection[ns][nc] = bool(prev_line)
                 prev_line = bool(this_line)
         
-        self.p.set_selected_channels(selection) 
+        self.p.set_selected_channels(selection)
         self.selected_channels = selection
         try:
             self.p.ax.get_legend().set_visible(visibility)
             self.fig.canvas.draw()
-        except:
+        except (AttributeError, NameError):
+            # Same guard as next_chans: legend may not exist, or
+            # visibility may not have been bound above.
             pass
 
            
@@ -2225,7 +2250,11 @@ class Logger():
             selection = self.p.get_selected_channels()
             self.update_figure()
             self.p.set_selected_channels(selection)
-        except:
+        except (ValueError, IndexError, AttributeError):
+            # ValueError: non-integer in the channel text box or
+            # clean_impulse rejects the signal shape. IndexError /
+            # AttributeError: channel doesn't exist on one of the
+            # data sets.
             analysis.MESSAGE = 'Clean impulse not successful, no change made.\n'
             analysis.MESSAGE += 'Check if ch_{} exists for each set of data.'.format(ch_impulse)
             self.show_message(analysis.MESSAGE,b='ok')
@@ -2312,7 +2341,11 @@ class Logger():
         # allows setting text to higher than max slider
         try:
             self.slider_Nframes.setValue(self.N_frames)
-        except:
+        except (TypeError, ValueError):
+            # The text-box allows free-form numbers that can exceed the
+            # slider's configured range (Qt's setValue clamps via
+            # TypeError/ValueError on out-of-range). Silently leave the
+            # slider where it was.
             pass
         if len(self.dataset.time_data_list)>0:
             stored_time = self.dataset.time_data_list[0].settings.stored_time

@@ -505,9 +505,12 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
     # find t index closest to t0
     if start_time is None:
         try:
+            # pretrig_samples is None on captures without a trigger;
+            # also guards against settings being an older struct that
+            # predates that attribute.
             t0 = 2*sono_data.settings.pretrig_samples/sono_data.settings.fs
             time_slice = np.argmin(np.abs(t - t0))
-        except:
+        except (AttributeError, TypeError):
             t0 = t[-1]//20
             time_slice = np.argmin(np.abs(t - t0))
 

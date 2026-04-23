@@ -173,8 +173,9 @@ class MySettings(object):
             try:
                 # try to find default input soundcard device
                 self.device_index = sd.default.device[0]
-            except:
-                # if info not available, select index 1
+            except (AttributeError, TypeError, IndexError):
+                # sounddevice not importable, sd.default missing, or
+                # no default configured (device is -1 / not indexable).
                 self.device_index = 1
         elif (device_driver == 'nidaq') and ((device_index is None) or (device_index == 'None')):
             self.device_index = 0
@@ -188,8 +189,9 @@ class MySettings(object):
             try:
                 # try to find default output soundcard device
                 self.output_device_index = sd.default.device[1]
-            except:
-                # try to guess sensible default output soundcard by string matching device names
+            except (AttributeError, TypeError, IndexError):
+                # sd.default unavailable — fall back to a name-based
+                # guess over enumerated devices.
                 from . import streams  # lazy import to avoid heavy/circular load at module import
                 devices = streams.get_devices_soundcard()
                 if devices is not None:
@@ -237,12 +239,12 @@ class MySettings(object):
         if self.chunk_size < 10:
             self.chunk_size = int(10)
             print('Resetting ''chunk_size'' to minimum value of 10')
-            
-        try:    
-            self.format = eval('int'+str(self.nbits))
-        except:
-            pass
-        
+
+        # (Previously: try/except-everything around `eval('int' +
+        # str(nbits))` to set self.format. The eval always failed —
+        # `int16` isn't imported at module scope — and `settings.format`
+        # is never read anywhere in the package. Removed as dead code.)
+
         self.device_name = None # until initialise stream
         
         if (pretrig_samples is None) or (pretrig_samples == 'None'):
