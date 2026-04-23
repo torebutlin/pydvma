@@ -886,7 +886,7 @@ class Logger():
             'fs', 'channels', 'stored_time',
             'pretrig_samples', 'pretrig_threshold', 'pretrig_channel', 'pretrig_timeout',
             'device_driver', 'device_index',
-            'ni_backend', 'input_channels_spec',
+            'input_channels_spec',
         ]
         output_fields = [
             'output_fs', 'output_channels',
@@ -1100,7 +1100,7 @@ class Logger():
             except:
                 self.rec = None
                 message = 'Data stream can\'t be initialised.\n'
-                message += 'Possible reasons: sounddevice or PyDAQmx not installed, or acquisition hardware not connected.\n' 
+                message += 'Possible reasons: sounddevice or nidaqmx not installed, or acquisition hardware not connected.\n'
                 message += 'Please note that it won\'t be possible to log data.'
                 self.show_message(message)
                 
@@ -2047,7 +2047,7 @@ class Logger():
             'fs', 'channels', 'stored_time',
             'pretrig_samples', 'pretrig_threshold', 'pretrig_channel', 'pretrig_timeout',
             'device_driver', 'device_index',
-            'ni_backend', 'input_channels_spec',
+            'input_channels_spec',
             'output_fs', 'output_channels',
             'output_device_driver', 'output_device_index',
             'output_channels_spec', 'use_output_as_ch0',

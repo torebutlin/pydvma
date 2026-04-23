@@ -62,10 +62,6 @@ class MySettings(object):
         Device type: 'soundcard' or 'nidaq'
     device_index: int
         Device index, will prompt if not specified
-    ni_backend: str
-        NI-DAQmx Python wrapper to use when device_driver='nidaq':
-        'pydaqmx' (legacy, default) or 'nidaqmx' (official NI wrapper;
-        required for cDAQ chassis support).
     input_channels_spec: str or None
         Optional raw NI physical-channel string for the AI task (e.g.
         'cDAQ1Mod1/ai0:3,cDAQ1Mod3/ai0'). Overrides the auto-constructed
@@ -98,7 +94,6 @@ class MySettings(object):
                  pretrig_timeout=20,
                  device_driver='soundcard',
                  device_index=None,
-                 ni_backend='pydaqmx',
                  input_channels_spec=None,
                  VmaxNI=5,
                  NI_mode='DAQmx_Val_RSE',
@@ -129,10 +124,6 @@ class MySettings(object):
         
         self.device_driver=device_driver
         self.device_index=device_index
-
-        if ni_backend not in ('pydaqmx', 'nidaqmx'):
-            raise ValueError("ni_backend must be 'pydaqmx' or 'nidaqmx' (got %r)" % (ni_backend,))
-        self.ni_backend = ni_backend
 
         if (input_channels_spec is None) or (input_channels_spec == 'None') or (input_channels_spec == ''):
             self.input_channels_spec = None

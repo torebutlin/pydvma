@@ -191,7 +191,7 @@ def _pick_vmax(ranges, default):
     return float(max(r[1] for r in target))
 
 
-def suggest_ni_settings(device_index, ni_backend='nidaqmx'):
+def suggest_ni_settings(device_index):
     '''Return MySettings kwargs with safe defaults for an NI device.
 
     Picks conservative values that will not trigger DAQmx range /
@@ -203,60 +203,45 @@ def suggest_ni_settings(device_index, ni_backend='nidaqmx'):
     Parameters
     ----------
     device_index : int
-        Index into the enumeration — which enumeration depends on
-        ``ni_backend``. For ``'nidaqmx'`` (default) this is the
-        chassis-collapsed list from `_ni_backend.enumerate_devices`;
-        for ``'pydaqmx'`` it's the flat list from
-        `streams.get_devices_NI`.
-    ni_backend : {'nidaqmx', 'pydaqmx'}
+        Index into the chassis-collapsed device list returned by
+        `_ni_backend.enumerate_devices`.
 
     Returns
     -------
     dict
         Keyword arguments for `MySettings(...)` — ``device_driver``,
-        ``device_index``, ``ni_backend``, ``NI_mode``, ``VmaxNI``,
-        ``output_VmaxNI``, ``fs``, ``output_fs``, plus matching
-        output_device_* fields. You can merge in your own
-        ``channels=N, stored_time=..., pretrig_samples=...`` as needed.
+        ``device_index``, ``NI_mode``, ``VmaxNI``, ``output_VmaxNI``,
+        ``fs``, ``output_fs``, plus matching output_device_* fields.
+        Merge your own ``channels=N, stored_time=...,
+        pretrig_samples=...`` as needed.
     '''
-    if ni_backend == 'nidaqmx':
-        if nidaqmx is None:
-            raise RuntimeError("ni_backend='nidaqmx' selected but nidaqmx is not installed")
-        from . import _ni_backend
-        entries = _ni_backend.enumerate_devices()
-        if not entries:
-            raise RuntimeError('No NI devices found via nidaqmx')
-        if device_index < 0 or device_index >= len(entries):
-            raise ValueError(
-                'device_index %r out of range (nidaqmx sees %d devices)'
-                % (device_index, len(entries))
-            )
-        entry = entries[device_index]
-        if entry['is_chassis']:
-            ai_mod = next((m for m in entry['module_names']
-                           if entry['module_ai_counts'].get(m, 0) > 0), None)
-            ao_mod = next((m for m in entry['module_names']
-                           if entry['module_ao_counts'].get(m, 0) > 0), None)
-            ai_info = get_device_info(ai_mod) if ai_mod else None
-            ao_info = get_device_info(ao_mod) if ao_mod else None
-        else:
-            ai_info = ao_info = get_device_info(entry['name'])
-    elif ni_backend == 'pydaqmx':
-        # pydaqmx enumeration is flat; use nidaqmx to query specs regardless.
-        from . import streams
-        names, _ = streams.get_devices_NI()
-        if names is None or device_index >= len(names):
-            raise ValueError('device_index %r out of range on pydaqmx enumeration' % device_index)
-        ai_info = ao_info = get_device_info(names[device_index]) if nidaqmx else None
+    if nidaqmx is None:
+        raise RuntimeError('nidaqmx is not installed; pip install nidaqmx')
+    from . import _ni_backend
+    entries = _ni_backend.enumerate_devices()
+    if not entries:
+        raise RuntimeError('No NI devices found via nidaqmx')
+    if device_index < 0 or device_index >= len(entries):
+        raise ValueError(
+            'device_index %r out of range (nidaqmx sees %d devices)'
+            % (device_index, len(entries))
+        )
+    entry = entries[device_index]
+    if entry['is_chassis']:
+        ai_mod = next((m for m in entry['module_names']
+                       if entry['module_ai_counts'].get(m, 0) > 0), None)
+        ao_mod = next((m for m in entry['module_names']
+                       if entry['module_ao_counts'].get(m, 0) > 0), None)
+        ai_info = get_device_info(ai_mod) if ai_mod else None
+        ao_info = get_device_info(ao_mod) if ao_mod else None
     else:
-        raise ValueError('ni_backend must be "nidaqmx" or "pydaqmx"')
+        ai_info = ao_info = get_device_info(entry['name'])
 
     return {
         'device_driver': 'nidaq',
         'device_index': device_index,
         'output_device_driver': 'nidaq',
         'output_device_index': device_index,
-        'ni_backend': ni_backend,
         'NI_mode': _pick_terminal_config(ai_info),
         'VmaxNI': _pick_vmax(
             (ai_info or {}).get('ai_voltage_ranges', []), default=10.0,

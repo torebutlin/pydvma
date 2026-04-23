@@ -160,7 +160,6 @@ def _settings_for(device_entry, device_index, *, channels=1, stored_time=0.2,
         channels=channels,
         output_device_driver='nidaq', output_device_index=device_index,
         output_channels=1,
-        ni_backend='nidaqmx',
         fs=fs, stored_time=stored_time,
         **cfg,
     )
@@ -244,29 +243,3 @@ def test_suggest_ni_settings_end_to_end(device_entry, device_index):
     assert ds.time_data_list[0].time_data.shape[0] == int(0.2 * s.fs)
 
 
-def test_backend_roundtrip_pydaqmx(device_entry, device_index):
-    """Sanity: legacy pydaqmx backend still works on non-chassis devices.
-
-    Skipped for cDAQ chassis — pydaqmx path builds `Dev/ai0:N-1` and
-    can't express module-qualified chassis channels.
-    """
-    if device_entry['is_chassis']:
-        pytest.skip('pydaqmx path not cDAQ-aware')
-    # pydaqmx enumerates differently (modules flat in list); recompute
-    # its index by matching device name.
-    from pydvma.streams import get_devices_NI
-    names, _ = get_devices_NI()
-    if names is None or device_entry['name'] not in names:
-        pytest.skip('pydaqmx cannot see this device')
-    pydaqmx_index = names.index(device_entry['name'])
-    cfg = _config_for_device(device_entry)
-    s = dvma.MySettings(
-        device_driver='nidaq', device_index=pydaqmx_index, channels=1,
-        output_device_driver='nidaq', output_device_index=pydaqmx_index,
-        output_channels=1,
-        ni_backend='pydaqmx',
-        fs=10000, stored_time=0.2,
-        **cfg,
-    )
-    ds = dvma.log_data(s)
-    assert ds.time_data_list[0].time_data.shape == (2000, 1)

@@ -110,7 +110,6 @@ def _settings_for(device_entry, device_index, *, stored_time=0.4, fs=5000):
         channels=1,
         output_device_driver='nidaq', output_device_index=device_index,
         output_channels=1,
-        ni_backend='nidaqmx',
         fs=fs, stored_time=stored_time,
         **cfg,
     )

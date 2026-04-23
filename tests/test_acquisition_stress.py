@@ -91,7 +91,6 @@ def _settings_for(entry, *, pretrig=False, stored_time=0.2, fs=5000):
         channels=1,
         output_device_driver='nidaq', output_device_index=idx,
         output_channels=1,
-        ni_backend='nidaqmx',
         fs=fs, stored_time=stored_time,
         **cfg,
     )

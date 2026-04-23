@@ -14,15 +14,6 @@ except NotImplementedError:
 
 
 try:
-    import PyDAQmx as pdaq
-    from PyDAQmx import Task
-except ImportError:
-    pdaq = None
-except NotImplementedError:
-    pdaq = None
-
-
-try:
     import nidaqmx as ni
     from nidaqmx.stream_readers import AnalogMultiChannelReader
 except ImportError:
@@ -42,16 +33,9 @@ REC = None
 
 
 def _ni_recorder_class(settings):
-    backend = getattr(settings, 'ni_backend', 'pydaqmx')
-    if backend == 'pydaqmx':
-        if pdaq is None:
-            raise RuntimeError("ni_backend='pydaqmx' selected but PyDAQmx is not installed")
-        return Recorder_NI_PyDAQmx
-    if backend == 'nidaqmx':
-        if ni is None:
-            raise RuntimeError("ni_backend='nidaqmx' selected but nidaqmx is not installed")
-        return Recorder_NI_nidaqmx
-    raise ValueError('Unknown ni_backend: %r' % (backend,))
+    if ni is None:
+        raise RuntimeError('nidaqmx is not installed; pip install nidaqmx')
+    return Recorder_NI_nidaqmx
 
 
 def start_stream(settings):
@@ -111,25 +95,10 @@ def list_available_devices(io=''):
     else:
         message += 'no soundcards found\n'
     
-    # NI list (PyDAQmx view — flat, one entry per Dev/Module)
-    message += '______________________________________________________\n'
-    message += '\n'
-    message += "Devices available using device_driver='nidaq', ni_backend='pydaqmx', by index:\n"
-    message += '______________________________________________________\n'
-    message += '\n'
-
-    device_name_list,device_type_list = get_devices_NI()
-    if device_name_list is not None:
-        N = np.size(device_name_list)
-        for i in range(N):
-            message += '{}: {} {}\n'.format(i,device_name_list[i],device_type_list[i])
-    else:
-        message += 'no NI devices found via PyDAQmx\n'
-
     # NI list (nidaqmx view — cDAQ chassis collapsed into a single entry)
-    message += '\n______________________________________________________\n'
+    message += '______________________________________________________\n'
     message += '\n'
-    message += "Devices available using device_driver='nidaq', ni_backend='nidaqmx', by index:\n"
+    message += "Devices available using device_driver='nidaq', by index:\n"
     message += '______________________________________________________\n'
     message += '\n'
     if ni is None:
@@ -156,26 +125,27 @@ def list_available_devices(io=''):
         
 
 def get_devices_NI():
-    # NI list
+    '''Return (names, types) of every NI device/module visible to nidaqmx.
+
+    Flat list — a cDAQ chassis appears alongside each of its slotted
+    modules (e.g. ``['cDAQ1', 'cDAQ1Mod1', 'cDAQ1Mod2']``). For the
+    chassis-collapsed view used by `Recorder_NI_nidaqmx` itself, call
+    `_ni_backend.enumerate_devices` directly.
+
+    Returns ``(None, None)`` if nidaqmx is not installed or no devices
+    are visible, keeping the pre-nidaqmx API shape.
+    '''
+    if ni is None:
+        return None, None
     try:
-        numBytesneeded = pdaq.DAQmxGetSysDevNames(None,0)
-        databuffer = pdaq.create_string_buffer(numBytesneeded)
-        pdaq.DAQmxGetSysDevNames(databuffer,numBytesneeded)
-    
-        device_name_list = pdaq.string_at(databuffer).decode('utf-8').split(',')
-        device_type_list = []
-        
-        counter = -1
-        for dev in device_name_list:
-            counter += 1
-            numBytesneeded = pdaq.DAQmxGetDevProductType(dev,None,0)
-            databuffer = pdaq.create_string_buffer(numBytesneeded)
-            pdaq.DAQmxGetDevProductType(dev,databuffer,numBytesneeded)
-            device_type_list.append(pdaq.string_at(databuffer).decode('utf-8'))
-    except:
-        return None,None
-        
-    return device_name_list,device_type_list
+        system = ni.system.System.local()
+        names = [d.name for d in system.devices]
+        types = [d.product_type for d in system.devices]
+    except Exception:
+        return None, None
+    if not names:
+        return None, None
+    return names, types
 
 
 def get_devices_soundcard():
@@ -310,332 +280,15 @@ class Recorder(object):
 
 
 
-#%% NI stream (PyDAQmx backend)
-
-
-class Recorder_NI_PyDAQmx(object):
-    def __init__(self,settings):
-        
-        self.settings = settings
-        self.trigger_detected = False
-        self.trigger_first_detected_message = False
-        self.osc_time_axis=np.arange(0,(self.settings.num_chunks*self.settings.chunk_size)/self.settings.fs,1/self.settings.fs)
-        self.osc_freq_axis=np.fft.rfftfreq(len(self.osc_time_axis),1/self.settings.fs)
-        self.osc_time_data=np.zeros(shape=((self.settings.num_chunks*self.settings.chunk_size),self.settings.channels))  
-        self.osc_time_data_windowed=np.zeros_like(self.osc_time_data)
-        self.osc_freq_data = np.abs(np.fft.rfft(self.osc_time_data,axis=0))
-        
-        #rounds up the number of chunks needed in the pretrig array    
-        self.stored_num_chunks=2+int(np.ceil((self.settings.stored_time*self.settings.fs)/self.settings.chunk_size))
-        #the +2 is to allow for the updating process on either side
-        self.stored_time_data=np.zeros(shape=(self.stored_num_chunks*self.settings.chunk_size,self.settings.channels))
-        self.stored_time_data_windowed=np.zeros_like(self.stored_time_data)
-        #note the +2s to match up the length of stored_num_chunks
-        #formula used from the np.fft.rfft documentation
-        self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data,axis=0))
-            
-         
-        devices = self.available_devices()[0]
-        if settings.device_index is None:
-            self.device_name = devices[0]
-        else:
-            self.device_name = devices[settings.device_index]
-        #self.set_device_by_name(self.device_name)
-        
-    def set_device_by_name(self, name, settings):
-        """
-         Set the recording audio device by name.
-         Uses the first device found if no such device found.
-        """
-        devices = self.available_devices()[0]
-        selected_device = None
-        if not devices:
-            print('No NI devices found')
-            return
-
-        if not name in devices:
-            print('Input device name not found, using the first device')
-            selected_device = devices[settings.device_index]
-        else:
-            selected_device = name
-
-        print('Selected devices: %s' % selected_device)
-        self.device_name = selected_device
-
-     # Get audio device names
-    def available_devices(self):
-        """
-        Get all the available input National Instrument devices.
-
-        Returns
-        ----------
-        devices_name: List of str
-            Name of the device, e.g. Dev0
-        device_type: List of str
-            Type of device, e.g. USB-6003
-        """
-        numBytesneeded = pdaq.DAQmxGetSysDevNames(None,0)
-        databuffer = pdaq.create_string_buffer(numBytesneeded)
-        pdaq.DAQmxGetSysDevNames(databuffer,numBytesneeded)
-
-        #device_list = []
-        devices_name = pdaq.string_at(databuffer).decode('utf-8').split(',')
-
-        device_type = []
-        for dev in devices_name:
-            numBytesneeded = pdaq.DAQmxGetDevProductType(dev,None,0)
-            databuffer = pdaq.create_string_buffer(numBytesneeded)
-            pdaq.DAQmxGetDevProductType(dev,databuffer,numBytesneeded)
-            device_type.append(pdaq.string_at(databuffer).decode('utf-8'))
-
-        #device_list.append(devices_name)
-        #device_list.append(device_type)
-
-        return(devices_name,device_type)
-
-    # Display the current selected device info
-    def current_device_info(self):
-        """
-        Prints information about the current device set
-        """
-        device_info = {}
-        info = ('Category', 'Type','Product', 'Number',
-                'Analog Trigger Support','Analog Input Trigger Types','Analog Input Channels (ai)', 'Analog Output Channels (ao)',
-                'ai Minimum Rate(Hz)', 'ai Maximum Rate(Single)(Hz)', 'ai Maximum Rate(Multi)(Hz)',
-                'Digital Trigger Support','Digital Input Trigger Types','Digital Ports', 'Digital Lines', 'Terminals')
-        funcs = (pdaq.DAQmxGetDevProductCategory, pdaq.DAQmxGetDevProductType,
-                 pdaq.DAQmxGetDevProductNum, pdaq.DAQmxGetDevSerialNum,
-                 pdaq.DAQmxGetDevAnlgTrigSupported,  pdaq.DAQmxGetDevAITrigUsage,
-                 pdaq.DAQmxGetDevAIPhysicalChans,pdaq.DAQmxGetDevAOPhysicalChans,
-                 pdaq.DAQmxGetDevAIMinRate, pdaq.DAQmxGetDevAIMaxSingleChanRate, pdaq.DAQmxGetDevAIMaxMultiChanRate,
-                 pdaq.DAQmxGetDevDigTrigSupported,pdaq.DAQmxGetDevDITrigUsage,
-                 pdaq.DAQmxGetDevDIPorts,pdaq.DAQmxGetDevDILines,
-                 pdaq.DAQmxGetDevTerminals)
-        var_types = (pdaq.int32, str, pdaq.uint32, pdaq.uint32,
-                     pdaq.bool32,pdaq.int32,str,str,
-                     pdaq.float64, pdaq.float64, pdaq.float64,
-                     pdaq.bool32,pdaq.int32,str,str,str)
-
-        for i,f,v in zip(info,funcs,var_types):
-            try:
-                if v == str:
-                    nBytes = f(self.device_name,None,0)
-                    string_ptr = pdaq.create_string_buffer(nBytes)
-                    f(self.device_name,string_ptr,nBytes)
-                    if any( x in i for x in ('Channels','Ports')):
-                        device_info[i] = len(string_ptr.value.decode().split(','))
-                    else:
-                        device_info[i] = string_ptr.value.decode()
-                else:
-                    data = v()
-                    f(self.device_name,data)
-                    if 'Types' in i:
-                        device_info[i] = bin(data.value)[2:].zfill(6)
-                    else:
-                        device_info[i] = data.value
-            except Exception as e:
-                print(e)
-                device_info[i] = '-'
-
-        pp.pprint(device_info)
-            
-    def stream_audio_callback(self):
-        '''
-        Obtains data from the audio stream.
-        '''
-        in_data = np.zeros(self.settings.chunk_size*self.settings.channels,dtype = 'int16')
-        read = pdaq.int32()
-        self.audio_stream.ReadBinaryI16(self.settings.chunk_size,10.0,pdaq.DAQmx_Val_GroupByScanNumber,
-                           in_data,self.settings.chunk_size*self.settings.channels,pdaq.byref(read),None)
-
-        data_array = in_data.reshape((-1,self.settings.channels))/(2**15)
-            
-        self.osc_data_chunk = data_array#(np.frombuffer(in_data, dtype=eval('int'+str(self.settings.nbits)))/2**(self.settings.nbits-1))
-        #self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
-        for i in range(self.settings.channels):
-            self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
-            self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-            if (not self.trigger_detected) or (self.settings.pretrig_samples is None):
-                self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
-                self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-        
-        trigger_first_detected = np.any(np.abs(self.osc_data_chunk[:,self.settings.pretrig_channel])>self.settings.pretrig_threshold)
-        if trigger_first_detected and self.trigger_first_detected_message:
-            acquisition.MESSAGE += 'Trigger detected. Logging data for {} seconds.\n'.format(self.settings.stored_time)
-            print('')
-            print(acquisition.MESSAGE)
-            self.trigger_first_detected_message=False
-            
-            
-        trigger_check = self.stored_time_data[(self.settings.chunk_size):(2*self.settings.chunk_size),self.settings.pretrig_channel]
-        if np.any(np.abs(trigger_check)>self.settings.pretrig_threshold):
-            # freeze updating stored_time_data
-            self.trigger_detected = True
-#        for i in range(self.settings.channels):
-#            self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
-#            self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-#            self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
-#            self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-        return 0
-    
-
-    def set_channels(self):
-        """
-        Create the string to initiate the channels when assigning a Task
-
-        Returns
-        ----------
-        channelname: str
-            The channel names to be used when assigning Task
-            e.g. Dev0/ai0:Dev0/ai1
-        """
-        if self.settings.channels >1:
-            channelname =  '%s/ai0:%s/ai%i' % (self.device_name, self.device_name,self.settings.channels-1)
-        elif self.settings.channels == 1:
-            channelname = '%s/ai0' % self.device_name
-
-        #print('Channels Name: %s' % channelname)
-        return channelname
-    
-    
-    def set_output_channels(self):
-        """
-        Create the string to initiate the output channels when assigning a Task
-
-        Returns
-        ----------
-        channelname: str
-            The channel names to be used when assigning Task
-            e.g. Dev0/ao0:Dev0/ao1
-        """
-        if self.settings.output_channels >1:
-            channelname =  '%s/ao0:%s/ao%i' % (self.device_name, self.device_name,self.settings.output_channels-1)
-        elif self.settings.output_channels == 1:
-            channelname = '%s/ao0' % self.device_name
-
-        #print('Channels Name: %s' % channelname)
-        return channelname
-    
-
-    
-    def init_stream(self,settings,_input_=True,_output_=False):
-        '''
-        Initialises an audio stream. Gives the user a choice of which device to access.
-        '''
-        
-    
-        try:
-            self.audio_stream.end_stream()
-        except:
-            pass
-        
-        # Make AutoRegN be one of set of possible numbers that works with nidaqmx
-        AutoRegN = np.array([10,100,1000],dtype=int)
-        check = np.where(AutoRegN <= settings.chunk_size)
-        AutoRegN = AutoRegN[check[0][-1]]
-        
-        if settings.NI_mode == 'DAQmx_Val_RSE':
-            pdaq_mode = pdaq.DAQmx_Val_RSE
-        elif settings.NI_mode == 'DAQmx_Val_PseudoDiff':
-            pdaq_mode = pdaq.DAQmx_Val_PseudoDiff
-        
-        self.audio_stream = Task()
-        self.audio_stream.stream_audio_callback = self.stream_audio_callback
-        self.audio_stream.CreateAIVoltageChan(self.set_channels(),"",
-                                 pdaq_mode,-settings.VmaxNI,settings.VmaxNI,
-                                 pdaq.DAQmx_Val_Volts,None)
-        self.audio_stream.CfgSampClkTiming("",self.settings.fs,
-                              pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_ContSamps,
-                              self.settings.chunk_size)
-        self.audio_stream.AutoRegisterEveryNSamplesEvent(pdaq.DAQmx_Val_Acquired_Into_Buffer,
-                                            AutoRegN,0,name = 'stream_audio_callback')
-        self.audio_stream.StopTask()
-        self.audio_stream.SetReadAutoStart(True)
-        self.audio_stream.StartTask()
-
-
-    def setup_output(self,settings,output):
-
-#        output_channel_name = '%s/ao0' % self.device_name
-        
-        output_shape = np.shape(output)
-        N_output = output_shape[0]
-        N_channel_check = output_shape[1]
-        if N_channel_check != settings.output_channels:
-            print('output matrix doesn''t match number of output channels')
-            
-            
-        self.output_stream = Task()
-        print(self.set_output_channels())
-        self.output_stream.CreateAOVoltageChan(self.set_output_channels(),"",-settings.output_VmaxNI,settings.output_VmaxNI,pdaq.DAQmx_Val_Volts,None)
-        self.output_stream.CfgSampClkTiming("",settings.output_fs,
-                              pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_FiniteSamps,
-                              N_output)
-        
-#        self.output_stream.StartTask()
-        
-        timeout = 5
-        self.output_stream.WriteAnalogF64(N_output, True, timeout, pdaq.DAQmx_Val_GroupByScanNumber,output,None,None)
-        
-        ### Attempt below to link to input stream. Problem trying to sync initiation of input and output tasks.
-        
-#        if settings.fs == settings.output_fs:
-#            N_input = N_output
-#        else:
-#            N_input = int(N_output * settings.fs / settings.output_fs)
-#        
-#        self.input_stream = Task()
-#        self.input_stream.CreateAIVoltageChan(self.set_channels(),"",
-#                                 pdaq.DAQmx_Val_RSE,-settings.VmaxNI,settings.VmaxNI,
-#                                 pdaq.DAQmx_Val_Volts,None)
-#        self.input_stream.CfgSampClkTiming("",self.settings.fs,
-#                              pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_FiniteSamps,
-#                              N_input)
-#        self.input_stream.CfgTimeStartTrig(1,pdaq.DAQmx_Val_HostTime)
-        
-        
-        
-        
-#        self.output_stream.StopTask()
-             
-        ### NEED TO SYNC IN/OUT CLOCKS FOR EACH TASK
-        ### pdaq.DAQmxCfgSampClkTiming(taskHandle_input,"ao/SampleClock",fs,daq.DAQmx_Val_Falling,daq.DAQmx_Val_ContSamps,block)
-        ### pdaq.CfgDigEdgeRefTrig(...)
-        
-        ###
-        
-        
-        
-#        return (audio_stream,audio)
-        
-    
-    def end_stream(self):
-        '''
-        Closes an audio stream.
-        '''
-        global REC
-        REC = None
-        if self.audio_stream is not None:
-            self.audio_stream.StopTask()
-            self.audio_stream.ClearTask()
-            self.audio_stream = None
-
-
-# Backwards-compatibility alias: public API has always been `Recorder_NI`.
-Recorder_NI = Recorder_NI_PyDAQmx
-
-
 #%% NI stream (nidaqmx backend)
 
 
 class Recorder_NI_nidaqmx(object):
     '''NI acquisition recorder using the official nidaqmx Python wrapper.
 
-    Mirror of the `Recorder_NI_PyDAQmx` class with the same public
-    attribute shape — `audio_stream`, `osc_time_data`,
-    `stored_time_data`, `trigger_detected`, etc. — so that `acquisition.py`
-    is backend-agnostic. Select this backend via
-    ``MySettings(ni_backend='nidaqmx')``.
+    Exposes the same public attribute shape the soundcard `Recorder`
+    does — `audio_stream`, `osc_time_data`, `stored_time_data`,
+    `trigger_detected`, etc. — so `acquisition.py` is driver-agnostic.
 
     Hardware-specific notes picked up while getting this working:
 
@@ -658,8 +311,8 @@ class Recorder_NI_nidaqmx(object):
       to an independent (unsynchronised) task.
     * **Data is read in volts** directly via `AnalogMultiChannelReader`,
       not as a normalised float — no ±1 scaling is applied. This
-      differs from the soundcard path and from the PyDAQmx backend's
-      implicit I16-divide-by-2^15 scaling.
+      differs from the soundcard path, which returns ±1-normalised
+      float32.
     '''
 
     def __init__(self, settings):
@@ -750,7 +403,7 @@ class Recorder_NI_nidaqmx(object):
             return 0
 
         # Reader fills shape (channels, chunk_size); downstream wants
-        # (chunk_size, channels) to match the PyDAQmx path.
+        # (chunk_size, channels) to match the soundcard path.
         data_array = self._read_buffer.T
         self.osc_data_chunk = data_array
 
@@ -818,7 +471,7 @@ class Recorder_NI_nidaqmx(object):
 
     def _build_and_start_ai_task(self, settings):
         # AutoRegN must divide evenly into chunk_size; pick the largest
-        # of {10, 100, 1000} that fits. Matches the PyDAQmx sibling.
+        # of {10, 100, 1000} that fits.
         AutoRegN_choices = np.array([10, 100, 1000], dtype=int)
         check = np.where(AutoRegN_choices <= settings.chunk_size)
         AutoRegN = int(AutoRegN_choices[check[0][-1]])
@@ -880,56 +533,28 @@ class Recorder_NI_nidaqmx(object):
         self._callback_ref = None
 
 
+# Backwards-compatibility alias: the public API has always exposed
+# `Recorder_NI`, and external notebooks/scripts may still import it
+# by that name. Kept pointing at the (now sole) nidaqmx recorder.
+Recorder_NI = Recorder_NI_nidaqmx
+
+
 #%% NI output
 
 def setup_output_NI(settings, output):
-    '''Dispatch to the NI output setup for the selected backend.'''
-    backend = getattr(settings, 'ni_backend', 'pydaqmx')
-    if backend == 'nidaqmx':
-        if ni is None:
-            raise RuntimeError("ni_backend='nidaqmx' selected but nidaqmx is not installed")
-        return setup_output_NI_nidaqmx(settings, output)
-    if backend == 'pydaqmx':
-        if pdaq is None:
-            raise RuntimeError("ni_backend='pydaqmx' selected but PyDAQmx is not installed")
-        return setup_output_NI_pydaqmx(settings, output)
-    raise ValueError('Unknown ni_backend: %r' % (backend,))
+    '''Build and stage (but not start) an NI AO task.
 
-
-def setup_output_NI_pydaqmx(settings,output):
-    output = settings.VmaxNI * output # ie. output was normalised to 0-1
-    output_shape = np.shape(output)
-    N_output = output_shape[0]
-    N_channel_check = output_shape[1]
-    if N_channel_check != settings.output_channels:
-        print('output matrix doesn''t match number of output channels')
-
-    device_name_list,device_type_list = get_devices_NI()
-    device_name = device_name_list[settings.output_device_index]
-
-    if settings.output_channels > 1:
-        channelname =  '%s/ao0:%s/ao%i' % (device_name, device_name,settings.output_channels-1)
-    elif settings.output_channels == 1:
-        channelname = '%s/ao0' % device_name
-
-    output_stream = Task()
-
-    output_stream.CreateAOVoltageChan(channelname,"",-settings.VmaxNI,settings.VmaxNI,pdaq.DAQmx_Val_Volts,None)
-    output_stream.CfgSampClkTiming("",settings.output_fs,
-                          pdaq.DAQmx_Val_Rising,pdaq.DAQmx_Val_FiniteSamps,
-                          N_output)
-
-#        self.output_stream.StartTask()
-
-    timeout = 5
-    output_stream.WriteAnalogF64(N_output, False, timeout, pdaq.DAQmx_Val_GroupByScanNumber,output,None,None)
-
-    return output_stream
+    Thin wrapper that defers to `setup_output_NI_nidaqmx` — the
+    nidaqmx backend is now the only NI path.
+    '''
+    if ni is None:
+        raise RuntimeError('nidaqmx is not installed; pip install nidaqmx')
+    return setup_output_NI_nidaqmx(settings, output)
 
 
 class _NidaqmxTaskAdapter(object):
-    '''Expose the PyDAQmx-style PascalCase methods acquisition.py calls on
-    the NI output stream (StartTask, StopTask, WaitUntilTaskDone). Any other
+    '''Expose the PascalCase methods acquisition.py calls on the NI
+    output stream (StartTask, StopTask, WaitUntilTaskDone). Any other
     attribute access falls through to the underlying nidaqmx.Task.
     '''
     def __init__(self, task):
@@ -967,9 +592,9 @@ def setup_output_NI_nidaqmx(settings, output):
     Parameters
     ----------
     settings : MySettings
-        Must have ``output_device_driver='nidaq'`` and
-        ``ni_backend='nidaqmx'``. ``output`` is expected in ±1 normalised
-        units and is scaled to ±``output_VmaxNI`` here.
+        Must have ``output_device_driver='nidaq'``. ``output`` is
+        expected in ±1 normalised units and is scaled to
+        ±``output_VmaxNI`` here.
     output : ndarray, shape (N_samples, output_channels)
         Playback waveform. Must not exceed the AO module's range after
         scaling; e.g. NI 9260 is ±4.24 V peak, so ``output_VmaxNI > 4``
@@ -978,9 +603,10 @@ def setup_output_NI_nidaqmx(settings, output):
     Returns
     -------
     _NidaqmxTaskAdapter
-        Wrapper exposing PyDAQmx-style ``StartTask`` / ``StopTask`` /
+        Wrapper exposing ``StartTask`` / ``StopTask`` /
         ``WaitUntilTaskDone`` so `acquisition.py` can call the same
-        methods regardless of backend.
+        methods regardless of whether the source is an NI or soundcard
+        stream.
 
     Notes on AI/AO hardware sync
     ----------------------------

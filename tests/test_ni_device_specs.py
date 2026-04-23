@@ -271,7 +271,6 @@ class TestSuggestNiSettings:
         s = _specs.suggest_ni_settings(0)
         assert s['device_driver'] == 'nidaq'
         assert s['device_index'] == 0
-        assert s['ni_backend'] == 'nidaqmx'
         assert s['NI_mode'] == 'DAQmx_Val_RSE'
         assert s['VmaxNI'] == 10.0
         assert s['output_VmaxNI'] == 10.0
