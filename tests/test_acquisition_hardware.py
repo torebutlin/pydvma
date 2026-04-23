@@ -216,6 +216,64 @@ def test_pretrigger_with_stimulus(device_entry, device_index):
     )
 
 
+def test_pretrigger_positioning(device_entry, device_index):
+    """The first above-threshold sample in the returned buffer sits
+    at exactly index ``pretrig_samples``.
+
+    This is the invariant promised by the trigger state machine: the
+    trigger is detected when a crossing reaches
+    ``stored_time_data[chunk_size:2*chunk_size]`` (see
+    `streams.Recorder` docstring), so the slice log_data returns —
+    ``[detected_sample - pretrig_samples : ...]`` — places the crossing
+    sample at relative index ``pretrig_samples``. Samples before that
+    are all sub-threshold pre-trigger context.
+
+    Requires a working ao0 → ai0 loopback (auto-skipped otherwise).
+    """
+    if not _has_ao_to_ai_loopback(device_entry, device_index):
+        pytest.skip(
+            'No ao0 → ai0 loopback detected on {} ({}).'
+            .format(device_entry['name'], device_entry['product_type'])
+        )
+    s = _settings_for(device_entry, device_index, channels=1,
+                      stored_time=0.3, pretrig=True)
+    # pretrig_samples must stay <= chunk_size (default 100); 50 is a
+    # comfortable working value that leaves headroom either side.
+    amp_norm = 0.3
+    _, y = dvma.signal_generator(
+        s, sig='sweep', T=0.15, amplitude=amp_norm, f=[200, 1000],
+    )
+    ds = dvma.log_data(s, output=y)
+    ai = ds.time_data_list[0].time_data[:, 0]
+
+    assert ds.time_data_list[0].time_data.shape == (int(0.3 * s.fs), 1)
+
+    hits = np.where(np.abs(ai) > s.pretrig_threshold)[0]
+    assert len(hits) > 0, (
+        'no above-threshold samples in returned buffer on {} — '
+        'stimulus did not reach AI, positioning test cannot run'
+        .format(device_entry['product_type'])
+    )
+    first_hit = int(hits[0])
+    assert first_hit == s.pretrig_samples, (
+        'first above-threshold sample landed at index {} on {}; '
+        'expected exactly {} (pretrig_samples). State machine '
+        'invariant violated.'.format(
+            first_hit, device_entry['product_type'], s.pretrig_samples,
+        )
+    )
+
+    # Samples strictly before the trigger index must all be quiet —
+    # `pretrig_samples` of genuine pre-trigger context.
+    pre = ai[:s.pretrig_samples]
+    assert np.max(np.abs(pre)) <= s.pretrig_threshold, (
+        'pre-trigger window on {} contains above-threshold sample '
+        '(max {:.3f} vs threshold {:.3f})'
+        .format(device_entry['product_type'], np.max(np.abs(pre)),
+                s.pretrig_threshold)
+    )
+
+
 def test_pretrigger_timeout_no_crash(device_entry, device_index):
     """No stimulus, trigger threshold set above any realistic ambient
     noise: pretrigger times out and log_data must return the tail of

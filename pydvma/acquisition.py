@@ -68,8 +68,43 @@ def log_data(settings, test_name=None, rec=None, output=None):
     the capture. This threshold assumes ±1-normalised input and is
     therefore not meaningful for the NI path in volts (tracked in
     TODO "Turn off ±1 scaling").
+
+    Pretrigger positioning (both backends, identical logic)
+    -------------------------------------------------------
+    On a successful trigger, the returned buffer is
+    ``stored_time * fs`` samples long and the first sample exceeding
+    ``pretrig_threshold`` sits at exactly index ``pretrig_samples`` —
+    samples ``[0, pretrig_samples)`` are pre-trigger context. See
+    `streams.Recorder` for the state machine that gives this
+    invariant.
+
+    ``pretrig_samples`` is capped at ``chunk_size`` (validated at
+    call-time with a ``ValueError``); the recorder only retains that
+    much pre-trigger context. Larger windows require a larger
+    ``chunk_size``.
+
+    On a **trigger timeout** (``pretrig_timeout`` elapses with nothing
+    above threshold), the function does not raise — it returns the
+    tail of the buffer (same shape as the no-pretrigger path), leaves
+    ``trigger_detected`` False, and prints a "not detected" message.
     '''
     global MESSAGE
+
+    # Defence-in-depth guard: MySettings.__init__ already rejects this
+    # at construction time, but callers routinely mutate settings in
+    # place (e.g. s.pretrig_samples = N after construction). Re-check
+    # here so the buffer-geometry invariant holds at the point of use.
+    # See the "Trigger / pretrigger state machine" block on
+    # `streams.Recorder` for why the ceiling is `chunk_size`.
+    if (settings.pretrig_samples is not None
+            and settings.pretrig_samples > settings.chunk_size):
+        raise ValueError(
+            'pretrig_samples ({}) must not exceed chunk_size ({}). '
+            'The pretrigger buffer only retains chunk_size samples of '
+            'context before the trigger; increase chunk_size (or '
+            'reduce pretrig_samples) to fit.'
+            .format(settings.pretrig_samples, settings.chunk_size)
+        )
 
     # Always rebuild the stream. `streams.REC` can be None when a prior
     # `end_stream()` fired (e.g. on device switch) even though the caller

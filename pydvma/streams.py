@@ -175,6 +175,54 @@ def get_devices_soundcard():
 
 #%% sounddevice stream
 class Recorder(object):
+    '''Soundcard acquisition recorder (via `sounddevice`).
+
+    Owns two circular buffers:
+
+    * ``osc_time_data`` — shape ``(num_chunks * chunk_size, channels)``
+      — always live; fed the most-recent samples for the oscilloscope.
+    * ``stored_time_data`` — shape ``(stored_num_chunks * chunk_size,
+      channels)`` where ``stored_num_chunks = 2 + ceil(stored_time * fs
+      / chunk_size)`` — the capture buffer used by `log_data`.
+
+    Trigger / pretrigger state machine
+    ----------------------------------
+    Each incoming chunk (``chunk_size`` samples, ``channels`` wide)
+    runs through `callback`:
+
+    1. Shift both buffers left by ``chunk_size`` and append the new
+       chunk at the end. When ``pretrig_samples is not None`` and
+       ``trigger_detected`` is already True, `stored_time_data` is
+       **frozen** — only `osc_time_data` keeps scrolling.
+    2. "First-detect" message: if any sample in the just-read chunk
+       exceeds ``pretrig_threshold`` on the monitored
+       ``pretrig_channel``, print a one-shot notice. Independent of
+       whether the trigger has actually been committed yet.
+    3. Trigger check: look at ``stored_time_data[chunk_size :
+       2*chunk_size, pretrig_channel]`` (the *second-oldest* chunk in
+       the buffer — see below). If any sample exceeds
+       ``pretrig_threshold``, set ``trigger_detected = True`` and
+       freeze the buffer on subsequent callbacks.
+
+    The "check the second-oldest chunk" design means that by the
+    time a trigger is detected, the buffer already holds ~``stored_time
+    * fs`` samples of *post*-trigger data and up to ``chunk_size``
+    samples of *pre*-trigger data. `log_data` uses this to return a
+    window straddling the trigger with ``pretrig_samples`` samples of
+    context before it — see `pydvma.acquisition.log_data`. The
+    ``chunk_size`` ceiling on the pre-trigger context is why
+    ``pretrig_samples > chunk_size`` is rejected.
+
+    Data convention
+    ---------------
+    Samples are float32 normalised to ±1 (sounddevice default for a
+    float stream). ``pretrig_threshold`` and ``VmaxNI``-style voltage
+    fields therefore aren't directly meaningful on this path — input
+    is whatever the OS driver delivers after its own gain staging.
+    See also `Recorder_NI_nidaqmx`, which mirrors this state machine
+    but delivers raw volts; thresholds are applied with consistent
+    code but mean very different things in the two paths.
+    '''
     def __init__(self,settings):
         self.settings = settings
         self.trigger_detected = False
@@ -289,6 +337,18 @@ class Recorder_NI_nidaqmx(object):
     Exposes the same public attribute shape the soundcard `Recorder`
     does — `audio_stream`, `osc_time_data`, `stored_time_data`,
     `trigger_detected`, etc. — so `acquisition.py` is driver-agnostic.
+
+    Trigger / pretrigger state machine
+    ----------------------------------
+    Identical to `Recorder` — see that class's docstring for the full
+    description. The only differences in this path are (a) the data
+    source (the nidaqmx every-N-samples callback calling
+    `read_many_sample` rather than a sounddevice input-stream callback)
+    and (b) the sample units: **raw volts** from
+    `AnalogMultiChannelReader`, not ±1-normalised float. Thresholds
+    (`pretrig_threshold`) are applied with identical code but mean
+    different things in the two paths — always specify thresholds in
+    the units your chosen device delivers.
 
     Hardware-specific notes picked up while getting this working:
 

@@ -226,8 +226,20 @@ class MySettings(object):
             self.pretrig_samples = None
         else:
             self.pretrig_samples = int(pretrig_samples)
+            # The recorder only retains `chunk_size` samples of pre-
+            # trigger context (see `streams.Recorder` state-machine
+            # docstring); anything larger would produce a malformed
+            # window at capture time. Caught again in
+            # `acquisition.log_data` in case settings are mutated
+            # after construction.
             if self.pretrig_samples > self.chunk_size:
-                raise Exception('pretrig_samples must be less than or equal to chunk_size (chunk_size={}).'.format(self.chunk_size))
+                raise ValueError(
+                    'pretrig_samples ({}) must not exceed chunk_size ({}). '
+                    'The pretrigger buffer only retains chunk_size samples '
+                    'of context before the trigger; increase chunk_size '
+                    '(or reduce pretrig_samples) to fit.'
+                    .format(self.pretrig_samples, self.chunk_size)
+                )
         
             
         
