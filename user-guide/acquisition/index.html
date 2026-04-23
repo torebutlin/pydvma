@@ -2345,26 +2345,27 @@
 <p>When recording starts, the system continuously buffers data. When the trigger condition is met (signal exceeds threshold), it saves the pre-trigger samples plus the post-trigger duration.</p>
 <h2 id="output-generation">Output Generation<a class="headerlink" href="#output-generation" title="Permanent link">&para;</a></h2>
 <p>Generate signals during acquisition (e.g., for transfer function measurements). The built-in generator supports <code>sig='gaussian'</code>, <code>'uniform'</code>, or <code>'sweep'</code> and returns <code>(t, output)</code> where <code>output</code> has shape <code>(samples, settings.output_channels)</code>.</p>
+<p><code>amplitude</code> is in <strong>volts</strong>; the generator clamps the waveform to <code>±settings.output_vmax()</code> (= <code>output_VmaxNI</code> on NI, <code>output_VmaxSC</code> on the soundcard) so it can never drive the hardware past its rails.</p>
 <h3 id="gaussian-white-noise-output">Gaussian White Noise Output<a class="headerlink" href="#gaussian-white-noise-output" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Generate white noise signal</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Generate ~0.1 V RMS white noise</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">t</span><span class="p">,</span> <span class="n">output</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">signal_generator</span><span class="p">(</span>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">settings</span><span class="p">,</span>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">sig</span><span class="o">=</span><span class="s1">&#39;gaussian&#39;</span><span class="p">,</span>
 <a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">T</span><span class="o">=</span><span class="n">settings</span><span class="o">.</span><span class="n">stored_time</span><span class="p">,</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">amplitude</span><span class="o">=</span><span class="mf">0.1</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">amplitude</span><span class="o">=</span><span class="mf">0.1</span>     <span class="c1"># volts</span>
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="p">)</span>
 <a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
 <a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="c1"># Record with output</span>
 <a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">output</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="sine-sweep-chirp-output">Sine Sweep (Chirp) Output<a class="headerlink" href="#sine-sweep-chirp-output" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Generate sine sweep from f1 to f2</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Generate ±0.5 V sine sweep from f1 to f2</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">t</span><span class="p">,</span> <span class="n">output</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">signal_generator</span><span class="p">(</span>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">settings</span><span class="p">,</span>
 <a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">sig</span><span class="o">=</span><span class="s1">&#39;sweep&#39;</span><span class="p">,</span>
 <a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">T</span><span class="o">=</span><span class="n">settings</span><span class="o">.</span><span class="n">stored_time</span><span class="p">,</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">amplitude</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">f</span><span class="o">=</span><span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">1000</span><span class="p">]</span>  <span class="c1"># Start and end frequencies (Hz)</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">amplitude</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>     <span class="c1"># volts (peak)</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">f</span><span class="o">=</span><span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">1000</span><span class="p">]</span>       <span class="c1"># start and end frequencies (Hz)</span>
 <a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="p">)</span>
 <a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
 <a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="c1"># Record with output</span>

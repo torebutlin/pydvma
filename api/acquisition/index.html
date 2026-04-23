@@ -1731,19 +1731,21 @@ rec : Recorder-like or None
     <code>streams.start_stream(settings)</code> so that switching device or
     backend between calls doesn't leave a stale recorder.
 output : ndarray (N_samples, output_channels) or None
-    Optional playback signal, normalised to ±1. For NI devices the
-    playback is scaled to <code>settings.output_VmaxNI</code> inside
-    <code>streams.setup_output_NI</code>.</p>
+    Optional playback signal <strong>in volts</strong>. For NI it's passed
+    through as-is (must stay within ±<code>output_VmaxNI</code>). For
+    soundcard it's divided by <code>output_VmaxSC</code> to recover the ±1
+    normalised units sounddevice expects.</p>
 <h5 id="pydvma.acquisition.log_data--returns">Returns<a class="headerlink" href="#pydvma.acquisition.log_data--returns" title="Permanent link">&para;</a></h5>
 <p>DataSet
-    A DataSet containing one TimeData. If
+    A DataSet containing one TimeData <strong>in volts</strong>. If
     <code>settings.use_output_as_ch0</code> is True and <code>output</code> was
     supplied, the output signal is prepended as an extra channel.</p>
 <h5 id="pydvma.acquisition.log_data--notes">Notes<a class="headerlink" href="#pydvma.acquisition.log_data--notes" title="Permanent link">&para;</a></h5>
-<p>A clipping warning is printed when <code>|data| &gt; 0.95</code> anywhere in
-the capture. This threshold assumes ±1-normalised input and is
-therefore not meaningful for the NI path in volts (tracked in
-TODO "Turn off ±1 scaling").</p>
+<p>A clipping warning is printed when <code>|data| &gt; 0.95 * Vmax</code>
+anywhere in the capture, where <code>Vmax</code> is <code>VmaxNI</code> on the NI
+path and <code>VmaxSC</code> on the soundcard path. Both default to
+behaviour equivalent to the old ±1-normalised check when the user
+hasn't overridden them.</p>
 <h5 id="pydvma.acquisition.log_data--pretrigger-positioning-both-backends-identical-logic">Pretrigger positioning (both backends, identical logic)<a class="headerlink" href="#pydvma.acquisition.log_data--pretrigger-positioning-both-backends-identical-logic" title="Permanent link">&para;</a></h5>
 <p>On a successful trigger, the returned buffer is
 <code>stored_time * fs</code> samples long and the first sample exceeding
@@ -1779,6 +1781,12 @@ tail of the buffer (same shape as the no-pretrigger path), leaves
 
     <div class="doc doc-contents first">
 
+        <p>Play <code>output</code> (in volts) on the configured AO device.</p>
+<p>For soundcard, divides by <code>output_VmaxSC</code> to recover the ±1
+normalised float sounddevice expects. For NI, the voltage array
+is passed straight through to <code>setup_output_NI</code> (the AO task is
+configured with ±<code>output_VmaxNI</code> rails).</p>
+
 
     </div>
 
@@ -1797,7 +1805,13 @@ tail of the buffer (same shape as the no-pretrigger path), leaves
 
     <div class="doc doc-contents first">
 
-        <p>Creates a signal ready for output to a chosen device</p>
+        <p>Create an output-ready waveform.</p>
+<p><code>amplitude</code> is in <strong>volts</strong> — the generated signal is bounded to
+±<code>amplitude</code> and, as a safety ceiling, clipped to
+±<code>settings.output_vmax()</code> (i.e. output_VmaxNI on the NI path,
+output_VmaxSC on the soundcard path). Returns <code>(t, y)</code> where
+<code>y</code> is shape <code>(N, output_channels)</code> in volts, ready to hand to
+<code>log_data(..., output=y)</code> or <code>output_signal</code>.</p>
 
 
     </div>
