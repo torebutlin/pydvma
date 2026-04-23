@@ -56,7 +56,12 @@ Three NI devices are connected on this Windows machine:
 
 **BNC loopback is wired ao0 → ai0 on each device** — that's the
 standard test stimulus. Self-contained: the user does not need to be
-physically present to tap a hammer or similar.
+physically present to tap a hammer or similar. Stimulus-dependent
+tests (e.g. `test_pretrigger_with_stimulus`) run an AC-stimulus
+preflight (`_has_ao_to_ai_loopback` in
+`tests/test_acquisition_hardware.py`) and auto-skip on any device
+whose loopback isn't producing signal, so adding or removing cables
+just changes which tests run — nothing breaks CI.
 
 - **Caveat (this specific USB-6003 only):** the loopback sits on a
   breakout box and there is some evidence the `ao0` / `ao1` screw-
