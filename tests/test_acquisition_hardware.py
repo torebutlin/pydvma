@@ -108,6 +108,45 @@ def _cleanup_stream():
         pass
 
 
+_LOOPBACK_CACHE = {}
+
+
+def _has_ao_to_ai_loopback(entry, device_index, amp_norm=0.3,
+                           min_rms_lift_v=0.05):
+    """AC-stimulus loopback probe. Plays a brief 200-1000 Hz sweep on
+    ao0 via the same ``log_data`` stack the real tests use, and checks
+    whether ai0 RMS rises by at least ``min_rms_lift_v`` volts vs a
+    quiet capture.
+
+    AC (not DC) because DSA AI modules (NI 9234-class) are AC-coupled —
+    a DC preflight would report "no signal" on them even when the
+    loopback is wired. The 200-1000 Hz band is above the 9234's ~0.5 Hz
+    HPF and well below Nyquist for all our AI modules at 5 kS/s.
+
+    Cached per device name — runs at most once per device per session.
+    """
+    name = entry['name']
+    if name in _LOOPBACK_CACHE:
+        return _LOOPBACK_CACHE[name]
+
+    s = _settings_for(entry, device_index, stored_time=0.1)
+    try:
+        _t, y = dvma.signal_generator(
+            s, sig='sweep', T=0.08, amplitude=amp_norm, f=[200, 1000],
+        )
+        quiet = dvma.log_data(s).time_data_list[0].time_data[:, 0]
+        stim = dvma.log_data(s, output=y).time_data_list[0].time_data[:, 0]
+    except Exception:
+        _LOOPBACK_CACHE[name] = False
+        return False
+
+    quiet_rms = float(np.sqrt(np.mean(quiet ** 2)))
+    stim_rms = float(np.sqrt(np.mean(stim ** 2)))
+    present = (stim_rms - quiet_rms) >= min_rms_lift_v
+    _LOOPBACK_CACHE[name] = present
+    return present
+
+
 def _settings_for(device_entry, device_index, *, channels=1, stored_time=0.2,
                   fs=5000, pretrig=False):
     # fs=5000 is the conservative common rate across the lab kit:
@@ -146,7 +185,14 @@ def test_basic_acquisition(device_entry, device_index):
 
 def test_pretrigger_with_stimulus(device_entry, device_index):
     """AO-driven loopback fires the pretrigger; captured peak matches
-    the commanded amplitude within tolerance."""
+    the commanded amplitude within tolerance. Requires a physical
+    ao0 → ai0 loopback — auto-skipped on devices where none is detected."""
+    if not _has_ao_to_ai_loopback(device_entry, device_index):
+        pytest.skip(
+            'No ao0 → ai0 loopback detected on {} ({}). Check the BNC '
+            'cable; see CLAUDE.md for the expected wiring.'
+            .format(device_entry['name'], device_entry['product_type'])
+        )
     s = _settings_for(device_entry, device_index, channels=1,
                       stored_time=0.2, pretrig=True)
     amp_norm = 0.3  # normalized 0..1; physical = amp_norm * output_VmaxNI
