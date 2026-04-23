@@ -42,27 +42,37 @@ QUIRKS = {
         'terminal_configs': ['DAQmx_Val_PseudoDiff'],
         'ac_coupled_hpf_hz': 0.5,
         'rate_ladder': 'DSA: fs_base / (256 * n), n in [1, 31]; base = 13.1072 MHz',
+        'ai_sampling': 'simultaneous',
         'notes': (
             'Dynamic Signal Acquisition module; pseudo-differential '
             'only; AC-coupled with ~0.5 Hz high-pass so low-frequency '
             'content is attenuated; discrete sample-rate ladder '
-            '(fs_base / 256*n) so requested rates are snapped.'
+            '(fs_base / 256*n) so requested rates are snapped; '
+            'simultaneous-sampling (one ADC per channel, no inter-'
+            'channel skew).'
         ),
     },
     'NI 9260 (BNC)': {
+        'ao_sampling': 'simultaneous',
         'notes': (
             'DSA AO module; output limit is ±4.24 V peak (= 3 V_rms). '
-            'Minimum sample rate ~1.613 kS/s.'
+            'Minimum sample rate ~1.613 kS/s; simultaneous-updating '
+            '(one DAC per channel).'
         ),
     },
     'NI 9260': {
-        'notes': 'DSA AO module; output ±4.24 V peak (3 V_rms); fs >= ~1.613 kS/s.',
+        'ao_sampling': 'simultaneous',
+        'notes': (
+            'DSA AO module; output ±4.24 V peak (3 V_rms); '
+            'fs >= ~1.613 kS/s; simultaneous-updating.'
+        ),
     },
-    'USB-6001': {'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s.'},
-    'USB-6002': {'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s.'},
-    'USB-6003': {'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s.'},
-    'USB-6008': {'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s.'},
-    'USB-6009': {'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s.'},
+    'USB-6001': {'ai_sampling': 'multiplexed', 'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s; multiplexed AI (single ADC scans channel list, so samples are skewed by the convert time).'},
+    'USB-6002': {'ai_sampling': 'multiplexed', 'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s; multiplexed AI (single ADC scans channel list, so samples are skewed by the convert time).'},
+    'USB-6003': {'ai_sampling': 'multiplexed', 'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s; multiplexed AI (single ADC scans channel list, so samples are skewed by the convert time).'},
+    'USB-6008': {'ai_sampling': 'multiplexed', 'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s; multiplexed AI (single ADC scans channel list, so samples are skewed by the convert time).'},
+    'USB-6009': {'ai_sampling': 'multiplexed', 'notes': 'Low-cost DAQ; AO is software-timed; AO fs <= 5 kS/s; multiplexed AI (single ADC scans channel list, so samples are skewed by the convert time).'},
+    'USB-6212': {'ai_sampling': 'multiplexed', 'notes': 'M-series DAQ; hardware-timed AO; multiplexed AI (single ADC scans channel list, so samples are skewed by the convert time).'},
 }
 
 

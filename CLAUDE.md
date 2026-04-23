@@ -42,16 +42,31 @@ etc.) are repo-wide conventions worth following regardless of OS.
 Three NI devices are connected on this Windows machine:
 
 - **USB-6003** — low-cost; AO is software-timed (no hardware AI/AO
-  sync possible).
+  sync possible). **Multiplexed AI**: single ADC scanning the
+  channel list, so samples across channels are skewed by the inter-
+  channel convert time, not simultaneous.
 - **USB-6212** — M-series; hardware-timed AO, supports shared-clock
-  AI/AO sync.
+  AI/AO sync. **Multiplexed AI**: single ADC scanning the channel
+  list (same sample skew caveat as the 6003).
 - **cDAQ-9174 chassis** with module `cDAQ1Mod1` = NI 9234 (4-ch AI)
   and `cDAQ1Mod2` = NI 9260 BNC (2-ch AO). Shared-clock sync via
-  chassis timebase.
+  chassis timebase. **Simultaneous sampling**: both modules are DSA
+  (delta-sigma) with per-channel ADCs/DACs, so all channels are
+  sampled (and output) at the same instant — no inter-channel skew.
 
 **BNC loopback is wired ao0 → ai0 on each device** — that's the
 standard test stimulus. Self-contained: the user does not need to be
 physically present to tap a hammer or similar.
+
+- **Caveat (this specific USB-6003 only):** the loopback sits on a
+  breakout box and there is some evidence the `ao0` / `ao1` screw-
+  terminal labels on this unit may not match the silicon channels
+  reported to nidaqmx (i.e. the label says `ao0` but it might be
+  wired to `ao1`, or vice versa). If AO→AI tests on Dev3 start
+  failing after a re-wire, physically swap the wire between the two
+  AO terminals as a first sanity check before suspecting a hardware
+  fault. Not believed to affect other 6003 units — just this one.
+  The wire is currently left in place so tests stay runnable.
 
 ## Verify, don't assume
 
