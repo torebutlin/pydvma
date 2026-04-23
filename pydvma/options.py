@@ -69,7 +69,22 @@ class MySettings(object):
     output_channels_spec: str or None
         Same as input_channels_spec but for the AO task.
     VmaxNI: float
-        Maximum voltage range for NI DAQ devices
+        Full-scale input voltage for the NI AI task (±VmaxNI is passed
+        as min/max to add_ai_voltage_chan). Default 5 V.
+    VmaxSC: float
+        Full-scale input voltage for the soundcard path — the voltage
+        at the jack that corresponds to a normalised reading of 1.0.
+        Default 1.0, meaning "treat the soundcard's normalised output
+        as volts at unit scale" (no calibration). If you've measured
+        your soundcard's input sensitivity, set this accordingly and
+        `log_data` will return voltages with calibrated magnitudes.
+    output_VmaxNI: float or None
+        Full-scale output voltage for the NI AO task. Defaults to
+        VmaxNI if not set.
+    output_VmaxSC: float or None
+        Full-scale output voltage for the soundcard AO path (i.e. the
+        voltage at the jack corresponding to a ±1 sounddevice sample).
+        Defaults to VmaxSC if not set.
     NI_mode: str
         Terminal configuration for NI DAQ (e.g., 'DAQmx_Val_RSE', 'DAQmx_Val_Diff')
     init_view_time: bool
@@ -96,6 +111,7 @@ class MySettings(object):
                  device_index=None,
                  input_channels_spec=None,
                  VmaxNI=5,
+                 VmaxSC=1.0,
                  NI_mode='DAQmx_Val_RSE',
                  init_view_time=True,
                  init_view_freq=True,
@@ -106,6 +122,7 @@ class MySettings(object):
                  output_channels_spec=None,
                  output_fs=None,
                  output_VmaxNI=None,
+                 output_VmaxSC=None,
                  use_output_as_ch0=False):
         
         #INPUT SETTINGS
@@ -190,6 +207,7 @@ class MySettings(object):
         
         # ADVANCED SETTINGS
         self.VmaxNI=float(VmaxNI)
+        self.VmaxSC=float(VmaxSC)
         self.NI_mode=NI_mode
         self.chunk_size=int(chunk_size)
         self.num_chunks=int(num_chunks)
@@ -203,6 +221,11 @@ class MySettings(object):
             self.output_VmaxNI = self.VmaxNI
         else:
             self.output_VmaxNI = float(output_VmaxNI)
+
+        if output_VmaxSC is None:
+            self.output_VmaxSC = self.VmaxSC
+        else:
+            self.output_VmaxSC = float(output_VmaxSC)
 
         ### derived settings
         if (viewed_time is not None) and (viewed_time != 'None'):
@@ -240,10 +263,34 @@ class MySettings(object):
                     '(or reduce pretrig_samples) to fit.'
                     .format(self.pretrig_samples, self.chunk_size)
                 )
-        
-            
-        
-    
+
+
+    # Driver-selecting accessors for the full-scale voltages.  Internal
+    # code (streams callbacks, oscilloscope display, clipping warning,
+    # signal_generator) uses these so it doesn't have to branch on
+    # device_driver.  All values are in volts.
+
+    def input_vmax(self):
+        '''Effective full-scale input voltage for the current driver.
+
+        Returns ``VmaxNI`` for ``device_driver='nidaq'`` (the configured
+        AI range), ``VmaxSC`` for ``device_driver='soundcard'`` (the
+        user-supplied jack calibration; defaults to 1.0 = no
+        calibration, treating ±1 normalised samples as ±1 V).
+        '''
+        return self.VmaxNI if self.device_driver == 'nidaq' else self.VmaxSC
+
+    def output_vmax(self):
+        '''Effective full-scale output voltage for the current driver.
+
+        Mirror of `input_vmax` for the AO path, based on
+        ``output_device_driver``.
+        '''
+        return (self.output_VmaxNI
+                if self.output_device_driver == 'nidaq'
+                else self.output_VmaxSC)
+
+
     def __repr__(self):
         template = "{:>24}: {}" # column widths: 8, 10, 15, 7, 10
         #print template.format("CLASSID", "DEPT", "COURSE NUMBER", "AREA", "TITLE") # header

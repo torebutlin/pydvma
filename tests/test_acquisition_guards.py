@@ -1,4 +1,5 @@
-"""Input-validation tests for the trigger/pretrigger settings.
+"""Input-validation and unit-convention tests for `pydvma.acquisition`
+and `pydvma.options` that don't need hardware.
 
 These don't need hardware — both guards fire before any stream is
 opened, so these tests run on Mac too. The guards come in two layers:
@@ -85,3 +86,39 @@ class TestCallSiteGuard:
         s.chunk_size = 10            # now pretrig_samples (50) > chunk_size
         with pytest.raises(ValueError, match='pretrig_samples'):
             acquisition.log_data(s)
+
+
+class TestVmaxHelpers:
+    """The `input_vmax` / `output_vmax` accessors on MySettings pick
+    the right driver-specific full-scale voltage. Internal code (the
+    recorder callbacks, oscilloscope display, clipping warning,
+    signal_generator) reads through these helpers.
+    """
+
+    def test_input_soundcard_defaults_to_1(self):
+        s = dvma.MySettings(device_driver='soundcard')
+        assert s.input_vmax() == 1.0
+
+    def test_input_nidaq_uses_VmaxNI(self):
+        s = dvma.MySettings(device_driver='nidaq', VmaxNI=7.5)
+        assert s.input_vmax() == 7.5
+
+    def test_input_soundcard_uses_VmaxSC_when_set(self):
+        s = dvma.MySettings(device_driver='soundcard', VmaxSC=2.3)
+        assert s.input_vmax() == 2.3
+
+    def test_output_follows_output_device_driver(self):
+        """output_vmax() is gated on output_device_driver, not
+        device_driver — cross-driver setups (e.g. NI in, soundcard
+        out) resolve independently."""
+        s = dvma.MySettings(
+            device_driver='nidaq', VmaxNI=5,
+            output_device_driver='soundcard', output_VmaxSC=1.7,
+        )
+        assert s.input_vmax() == 5.0
+        assert s.output_vmax() == 1.7
+
+    def test_output_vmax_defaults_to_input(self):
+        s = dvma.MySettings(device_driver='soundcard', VmaxSC=2.0)
+        # output_VmaxSC not given -> defaults to VmaxSC
+        assert s.output_vmax() == 2.0

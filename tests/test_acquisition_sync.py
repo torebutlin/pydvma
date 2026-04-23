@@ -146,7 +146,7 @@ def test_ao_clock_source_policy(monkeypatch, device_entry, device_index):
 
     s = _settings_for(device_entry, device_index, stored_time=0.3)
     _, y = dvma.signal_generator(
-        s, sig='sweep', T=0.15, amplitude=0.3, f=[200, 1000],
+        s, sig='sweep', T=0.15, amplitude=1.5, f=[200, 1000],
     )
     dvma.log_data(s, output=y)
 
@@ -177,10 +177,10 @@ def test_ao_ai_sync_sharp_correlation(device_entry, device_index):
     devices with hardware-timed AO, loose for software-timed USB-600x.
     """
     s = _settings_for(device_entry, device_index, stored_time=0.4)
-    amp_norm = 0.3
+    amp_v = 1.5
     T_chirp = 0.2  # well inside the 0.4 s AI window
     _, y = dvma.signal_generator(
-        s, sig='sweep', T=T_chirp, amplitude=amp_norm,
+        s, sig='sweep', T=T_chirp, amplitude=amp_v,
         f=[200, 1000],  # above the 9234's ~0.5 Hz HPF
     )
     ds = dvma.log_data(s, output=y)
@@ -228,7 +228,7 @@ def test_ao_ai_sync_sharp_correlation(device_entry, device_index):
     # AI slice starting at the correlation peak.
     ai_slice = ai[peak_idx : peak_idx + len(ao)]
     ai_peak = float(np.max(np.abs(ai_slice)))
-    expected_peak = amp_norm * s.output_VmaxNI
+    expected_peak = amp_v   # signal_generator amplitude is now in volts
     assert ai_peak > 0.3 * expected_peak, (
         'AI chirp amplitude {:.3f} V on {} is too low vs expected {:.3f} V — '
         'correlation found a spurious peak rather than the real stimulus'

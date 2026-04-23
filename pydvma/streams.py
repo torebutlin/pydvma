@@ -215,13 +215,14 @@ class Recorder(object):
 
     Data convention
     ---------------
-    Samples are float32 normalised to ±1 (sounddevice default for a
-    float stream). ``pretrig_threshold`` and ``VmaxNI``-style voltage
-    fields therefore aren't directly meaningful on this path — input
-    is whatever the OS driver delivers after its own gain staging.
-    See also `Recorder_NI_nidaqmx`, which mirrors this state machine
-    but delivers raw volts; thresholds are applied with consistent
-    code but mean very different things in the two paths.
+    Both buffers store voltages. sounddevice delivers float32 samples
+    in ±1 normalised units; the callback scales by
+    ``settings.VmaxSC`` on the way in, so consumers see a calibrated
+    reading at the input jack (``VmaxSC`` = the voltage corresponding
+    to a normalised 1.0). Default ``VmaxSC=1.0`` means no calibration
+    — ±1 normalised is returned as ±1 "V" — which keeps behaviour
+    byte-identical to the old convention for anyone who hasn't
+    measured their soundcard's sensitivity.
     '''
     def __init__(self,settings):
         self.settings = settings
@@ -247,10 +248,18 @@ class Recorder(object):
     def callback(self, in_data, frame_count, time_info, status):
         '''
         Obtains data from the audio stream.
+
+        The sounddevice callback delivers float32 samples in ±1
+        normalised units; we scale by ``settings.VmaxSC`` on the way
+        in so both `osc_time_data` and `stored_time_data` are in
+        volts (where "volts" means "ŷ × VmaxSC", with ŷ the
+        normalised sample). VmaxSC defaults to 1.0 so uncalibrated
+        soundcards keep identical numeric behaviour to the old ±1
+        convention.
         '''
         t0 = time.time()
         # self.osc_data_chunk = (np.frombuffer(in_data, dtype='int'+str(self.settings.nbits))/2**(self.settings.nbits-1))
-        self.osc_data_chunk = np.copy(in_data)
+        self.osc_data_chunk = np.copy(in_data) * self.settings.VmaxSC
         self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
         for i in range(self.settings.channels):
             self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
@@ -653,12 +662,13 @@ def setup_output_NI_nidaqmx(settings, output):
     ----------
     settings : MySettings
         Must have ``output_device_driver='nidaq'``. ``output`` is
-        expected in ±1 normalised units and is scaled to
-        ±``output_VmaxNI`` here.
+        expected in **volts**; the AO task is configured with ranges
+        ±``output_VmaxNI`` so any sample outside that range will be
+        rejected by DAQmx (error -200077).
     output : ndarray, shape (N_samples, output_channels)
-        Playback waveform. Must not exceed the AO module's range after
-        scaling; e.g. NI 9260 is ±4.24 V peak, so ``output_VmaxNI > 4``
-        combined with ``|output| > 1`` will be rejected by DAQmx.
+        Playback waveform, in volts. Must stay within ±``output_VmaxNI``
+        (e.g. NI 9260 is ±4.24 V peak regardless of the requested
+        range).
 
     Returns
     -------
@@ -682,7 +692,8 @@ def setup_output_NI_nidaqmx(settings, output):
     low-cost devices have software-timed AO and always run
     unsynchronised.
     '''
-    output = settings.output_VmaxNI * output  # output is normalised 0..1
+    # `output` is already in volts; no pre-scaling needed.
+    output = np.asarray(output)
     output_shape = np.shape(output)
     N_output = output_shape[0]
     N_channel_check = output_shape[1]

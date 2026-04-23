@@ -111,12 +111,12 @@ def _cleanup_stream():
 _LOOPBACK_CACHE = {}
 
 
-def _has_ao_to_ai_loopback(entry, device_index, amp_norm=0.3,
+def _has_ao_to_ai_loopback(entry, device_index, amp_v=1.5,
                            min_rms_lift_v=0.05):
     """AC-stimulus loopback probe. Plays a brief 200-1000 Hz sweep on
-    ao0 via the same ``log_data`` stack the real tests use, and checks
-    whether ai0 RMS rises by at least ``min_rms_lift_v`` volts vs a
-    quiet capture.
+    ao0 (at ``amp_v`` volts) via the same ``log_data`` stack the real
+    tests use, and checks whether ai0 RMS rises by at least
+    ``min_rms_lift_v`` volts vs a quiet capture.
 
     AC (not DC) because DSA AI modules (NI 9234-class) are AC-coupled —
     a DC preflight would report "no signal" on them even when the
@@ -132,7 +132,7 @@ def _has_ao_to_ai_loopback(entry, device_index, amp_norm=0.3,
     s = _settings_for(entry, device_index, stored_time=0.1)
     try:
         _t, y = dvma.signal_generator(
-            s, sig='sweep', T=0.08, amplitude=amp_norm, f=[200, 1000],
+            s, sig='sweep', T=0.08, amplitude=amp_v, f=[200, 1000],
         )
         quiet = dvma.log_data(s).time_data_list[0].time_data[:, 0]
         stim = dvma.log_data(s, output=y).time_data_list[0].time_data[:, 0]
@@ -194,10 +194,11 @@ def test_pretrigger_with_stimulus(device_entry, device_index):
         )
     s = _settings_for(device_entry, device_index, channels=1,
                       stored_time=0.2, pretrig=True)
-    amp_norm = 0.3  # normalized 0..1; physical = amp_norm * output_VmaxNI
-    expected_peak = amp_norm * s.output_VmaxNI
+    amp_v = 1.5  # volts; kept consistent with the pre-Vmax era where
+                 # amp_norm=0.3 at output_VmaxNI=5 gave 1.5 V peak.
+    expected_peak = amp_v
     t, y = dvma.signal_generator(
-        s, sig='sweep', T=0.15, amplitude=amp_norm,
+        s, sig='sweep', T=0.15, amplitude=amp_v,
         f=[200, 1000],     # well above 9234's 0.5 Hz HPF
     )
     ds = dvma.log_data(s, output=y)
@@ -239,9 +240,9 @@ def test_pretrigger_positioning(device_entry, device_index):
                       stored_time=0.3, pretrig=True)
     # pretrig_samples must stay <= chunk_size (default 100); 50 is a
     # comfortable working value that leaves headroom either side.
-    amp_norm = 0.3
+    amp_v = 1.5
     _, y = dvma.signal_generator(
-        s, sig='sweep', T=0.15, amplitude=amp_norm, f=[200, 1000],
+        s, sig='sweep', T=0.15, amplitude=amp_v, f=[200, 1000],
     )
     ds = dvma.log_data(s, output=y)
     ai = ds.time_data_list[0].time_data[:, 0]

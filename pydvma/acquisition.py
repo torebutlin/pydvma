@@ -51,23 +51,25 @@ def log_data(settings, test_name=None, rec=None, output=None):
         ``streams.start_stream(settings)`` so that switching device or
         backend between calls doesn't leave a stale recorder.
     output : ndarray (N_samples, output_channels) or None
-        Optional playback signal, normalised to ±1. For NI devices the
-        playback is scaled to ``settings.output_VmaxNI`` inside
-        `streams.setup_output_NI`.
+        Optional playback signal **in volts**. For NI it's passed
+        through as-is (must stay within ±``output_VmaxNI``). For
+        soundcard it's divided by ``output_VmaxSC`` to recover the ±1
+        normalised units sounddevice expects.
 
     Returns
     -------
     DataSet
-        A DataSet containing one TimeData. If
+        A DataSet containing one TimeData **in volts**. If
         ``settings.use_output_as_ch0`` is True and ``output`` was
         supplied, the output signal is prepended as an extra channel.
 
     Notes
     -----
-    A clipping warning is printed when ``|data| > 0.95`` anywhere in
-    the capture. This threshold assumes ±1-normalised input and is
-    therefore not meaningful for the NI path in volts (tracked in
-    TODO "Turn off ±1 scaling").
+    A clipping warning is printed when ``|data| > 0.95 * Vmax``
+    anywhere in the capture, where ``Vmax`` is ``VmaxNI`` on the NI
+    path and ``VmaxSC`` on the soundcard path. Both default to
+    behaviour equivalent to the old ±1-normalised check when the user
+    hasn't overridden them.
 
     Pretrigger positioning (both backends, identical logic)
     -------------------------------------------------------
@@ -232,8 +234,11 @@ def log_data(settings, test_name=None, rec=None, output=None):
     dataset  = datastructure.DataSet()
     dataset.add_to_dataset(timedata)
     
-    # check for clipping
-    if np.any(np.abs(stored_time_data_copy) > 0.95):
+    # Check for clipping. Data is now in volts, so compare against the
+    # effective full-scale (VmaxNI for nidaq, VmaxSC for soundcard). Any
+    # sample within 5 % of the rail gets flagged.
+    clip_threshold = 0.95 * settings.input_vmax()
+    if np.any(np.abs(stored_time_data_copy) > clip_threshold):
         MESSAGE += 'WARNING: Data may be clipped'
         print(MESSAGE)
     
@@ -255,35 +260,45 @@ def log_data(settings, test_name=None, rec=None, output=None):
     
 
 
-def output_signal(settings,output):
-    # setup NI / audio stream
+def output_signal(settings, output):
+    '''Play ``output`` (in volts) on the configured AO device.
+
+    For soundcard, divides by ``output_VmaxSC`` to recover the ±1
+    normalised float sounddevice expects. For NI, the voltage array
+    is passed straight through to `setup_output_NI` (the AO task is
+    configured with ±``output_VmaxNI`` rails).
+    '''
     if settings.output_device_driver == 'soundcard':
         s = streams.setup_output_soundcard(settings)
-        data = output.astype('float32')
+        # sounddevice expects ±1 normalised float32. `output` is in
+        # volts, so divide by the calibration constant before writing.
+        data = (output / settings.output_VmaxSC).astype('float32')
         s.write(data)
         return s
-        
+
     elif settings.output_device_driver == 'nidaq':
-        sh = np.shape(output)
-        T = sh[0]/settings.fs
-        s = streams.setup_output_NI(settings,output)
+        s = streams.setup_output_NI(settings, output)
         s.StartTask()
         return s
     else:
         print('device_driver not recognised')
         return None
-        
-    # send to device
 
 
 def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_channels='all'):
-    """
-    Creates a signal ready for output to a chosen device
+    """Create an output-ready waveform.
+
+    ``amplitude`` is in **volts** — the generated signal is bounded to
+    ±``amplitude`` and, as a safety ceiling, clipped to
+    ±``settings.output_vmax()`` (i.e. output_VmaxNI on the NI path,
+    output_VmaxSC on the soundcard path). Returns ``(t, y)`` where
+    ``y`` is shape ``(N, output_channels)`` in volts, ready to hand to
+    `log_data(..., output=y)` or `output_signal`.
     """
     global MESSAGE
     if selected_channels == 'all':
         selected_channels = np.arange(0,settings.output_channels)
-       
+
     # initiate variables
     t = np.arange(0,T,1/settings.output_fs)
     N_per_channel = np.size(t)
@@ -293,21 +308,15 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
     N_ramp = int(T_ramp*settings.output_fs)
     win[0:N_ramp,0] = 0.5*(1-np.cos(np.arange(0,N_ramp)/N_ramp*np.pi))
     win[-N_ramp:,0] = 0.5*(1+np.cos(np.arange(0,N_ramp)/N_ramp*np.pi))
-    
-    limit = 1 # generate signals normalised with amplitudes 0-1
-    
+
+    # Safety ceiling: the device's full-scale output voltage. A user-
+    # requested ``amplitude`` bigger than this is clamped below so we
+    # don't send a signal the hardware will reject or clip.
+    limit = settings.output_vmax()
+
     # Create sig. Note 'sig' is choice of signal, while 'signal' is scipy.signal
     if sig == 'gaussian':
         y[:,selected_channels] = np.random.randn(N_per_channel,np.size(selected_channels))
-        
-        
-        
-#        if settings.output_device_driver == 'soundcard':
-#            limit = 1
-#        elif settings.output_device_driver == 'nidaq':
-#            limit = settings.VmaxNI
-             
-                
         y[:,selected_channels] = stats.truncnorm.rvs(-limit/amplitude, limit/amplitude, loc=0,scale=amplitude, size=(N_per_channel,np.size(selected_channels)))
         if f is not None:
             b,a = signal.butter(3,f,btype='bandpass',fs=settings.output_fs)
@@ -347,11 +356,11 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
     
     y = win * y
     
-    # final correction to ensure all signals limited to 0-1
+    # Final safety clamp to ±limit (= output full-scale in volts).
     if np.max(np.abs(y)) > limit:
         y = limit * y / np.max(np.abs(y))
         MESSAGE = 'Actual rms output after scaling to avoid clipping is {0:1.3f}'.format(np.sqrt(np.mean(y**2)))
-        
+
     return t,y
 
 

@@ -101,15 +101,17 @@ When recording starts, the system continuously buffers data. When the trigger co
 
 Generate signals during acquisition (e.g., for transfer function measurements). The built-in generator supports `sig='gaussian'`, `'uniform'`, or `'sweep'` and returns `(t, output)` where `output` has shape `(samples, settings.output_channels)`.
 
+`amplitude` is in **volts**; the generator clamps the waveform to `±settings.output_vmax()` (= `output_VmaxNI` on NI, `output_VmaxSC` on the soundcard) so it can never drive the hardware past its rails.
+
 ### Gaussian White Noise Output
 
 ```python
-# Generate white noise signal
+# Generate ~0.1 V RMS white noise
 t, output = dvma.signal_generator(
     settings,
     sig='gaussian',
     T=settings.stored_time,
-    amplitude=0.1
+    amplitude=0.1     # volts
 )
 
 # Record with output
@@ -119,13 +121,13 @@ dataset = dvma.log_data(settings, output=output)
 ### Sine Sweep (Chirp) Output
 
 ```python
-# Generate sine sweep from f1 to f2
+# Generate ±0.5 V sine sweep from f1 to f2
 t, output = dvma.signal_generator(
     settings,
     sig='sweep',
     T=settings.stored_time,
-    amplitude=0.5,
-    f=[10, 1000]  # Start and end frequencies (Hz)
+    amplitude=0.5,     # volts (peak)
+    f=[10, 1000]       # start and end frequencies (Hz)
 )
 
 # Record with output

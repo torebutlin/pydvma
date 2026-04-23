@@ -1161,11 +1161,17 @@ class Logger():
     
     def show_levels(self):
         if self.rec is not None:
-            max_levels = np.max(np.abs(self.rec.osc_time_data),axis=0)
+            # osc_time_data is in volts; normalise to ±1 (per-channel
+            # full-scale = input_vmax()) so the text-bar indicator and
+            # the 0.99 clipping threshold keep their original semantics
+            # regardless of driver.
+            vmax = self.settings.input_vmax()
+            max_levels = np.max(np.abs(self.rec.osc_time_data), axis=0) / vmax
             ch_max = np.argmax(max_levels)
             max_levels_all = max_levels[ch_max]
             W = 20
             N = int(np.round(max_levels_all*W))
+            N = max(0, min(W, N))   # clamp so the bar art stays bounded on clip
             display_text = N*'-' + '>|' + (W-N)*'-' + '] in ch ' + str(ch_max)
             if max_levels_all > 0.99:
                 display_text += ' *** WARNING CLIPPED ***'
@@ -2851,6 +2857,14 @@ class Oscilloscope():
             self.osc_levels_peak_hold = np.maximum(self.osc_levels_peak_hold,self.osc_levels_max)
             self.osc_levels_peak_hold[time.time()-self.time_last_changed>2] = 0
 
+        # Incoming data is now in volts (see streams.Recorder docstring);
+        # the oscilloscope still displays ±1 normalised per stacked
+        # channel for readability, so the non-auto-scale branch divides
+        # by the device full-scale. VmaxSC defaults to 1.0, so
+        # uncalibrated soundcards plot identically to the old ±1
+        # convention.
+        vmax = self.settings.input_vmax()
+
         for i in range(self.settings.channels):
             offset = i
             if self.view_time == True:
@@ -2864,9 +2878,9 @@ class Oscilloscope():
                     self.osc_time_line.setYRange(-1,self.settings.channels)
                 else:
                     shift = 0
-                    scale_factor = 1
+                    scale_factor = vmax
                     self.osc_time_line.setYRange(-1,self.settings.channels)
-                    
+
                 self.osc_time_lineset[i].setData(self.rec.osc_time_axis, (time_data_snapshot[:,i]-shift)/scale_factor + offset)
 
             if self.view_freq == True:
@@ -2878,15 +2892,21 @@ class Oscilloscope():
                 self.osc_freq_lineset[i].setData(self.rec.osc_freq_axis,self.rec.osc_freq_data[:,i])
 
             if self.view_levels == True:
-                self.osc_levels_lineset[i].setData([i,i],[0,self.osc_levels_max[i]])
-                self.osc_levels_lineset[self.settings.channels+i].setData([i-0.3,i+0.3],self.osc_levels_max[i]*np.ones(2))
+                # Levels plot is labelled "Normalised Amplitude" and
+                # fixed to Y-range [0, 1]; divide by Vmax so a channel
+                # at full-scale shows at 1.0 regardless of whether the
+                # device delivers ±VmaxNI volts or ±1 soundcard units.
+                max_norm = self.osc_levels_max[i] / vmax
+                peak_norm = self.osc_levels_peak_hold[i] / vmax
+                self.osc_levels_lineset[i].setData([i,i],[0,max_norm])
+                self.osc_levels_lineset[self.settings.channels+i].setData([i-0.3,i+0.3],max_norm*np.ones(2))
 
-                if self.osc_levels_peak_hold[i] > 0.98:
+                if peak_norm > 0.98:
                     pen_peak = pg.mkPen(color=options.set_plot_colours(self.settings.channels)[i,:],width=10)
                 else:
                     pen_peak = pg.mkPen(color=options.set_plot_colours(self.settings.channels)[i,:],width=3)
 #                self.osc_levels_lineset[2*self.settings.channels+i]=self.osc_levels_line.plot(pen=pen_peak, name='peak hold')
-                self.osc_levels_lineset[2*self.settings.channels+i].setData([i-0.3,i+0.3],self.osc_levels_peak_hold[i]*np.ones(2),pen=pen_peak)
+                self.osc_levels_lineset[2*self.settings.channels+i].setData([i-0.3,i+0.3],peak_norm*np.ones(2),pen=pen_peak)
 #                self.osc_levels_lineset[3].setData(np.arange(2),np.ones(2))
 
 

@@ -104,14 +104,15 @@ def _settings_for(entry, *, pretrig=False, stored_time=0.2, fs=5000):
     return dvma.MySettings(**kwargs)
 
 
-def _stimulus(settings, amp_norm=0.3):
+def _stimulus(settings, amp_v=1.5):
     """AO sweep that will fire a pretrigger cleanly on any device.
 
-    200-1000 Hz is above the 9234's ~0.5 Hz HPF, safe on USB-6003's
-    5 kS/s AO ceiling, and within range on every AO module in the lab.
+    ``amp_v`` is in volts (post-Vmax-refactor convention). 200-1000 Hz
+    is above the 9234's ~0.5 Hz HPF, safe on USB-6003's 5 kS/s AO
+    ceiling, and within range on every AO module in the lab.
     """
     _t, y = dvma.signal_generator(
-        settings, sig='sweep', T=0.15, amplitude=amp_norm, f=[200, 1000],
+        settings, sig='sweep', T=0.15, amplitude=amp_v, f=[200, 1000],
     )
     return y
 
