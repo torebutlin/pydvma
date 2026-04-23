@@ -1703,8 +1703,11 @@
 test_name : str or None
     Stored on the returned <code>TimeData</code> for labelling.
 rec : Recorder-like or None
-    If given, uses this existing recorder instead of calling
-    <code>streams.start_stream(settings)</code>. Normally leave as None.
+    Ignored. Retained for backward compatibility with callers (the
+    GUI's <code>LogDataThread</code>) that still pass a cached recorder.
+    <code>log_data</code> now always rebuilds the stream via
+    <code>streams.start_stream(settings)</code> so that switching device or
+    backend between calls doesn't leave a stale recorder.
 output : ndarray (N_samples, output_channels) or None
     Optional playback signal, normalised to ±1. For NI devices the
     playback is scaled to <code>settings.output_VmaxNI</code> inside
