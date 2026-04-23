@@ -75,7 +75,7 @@ For National Instruments hardware (Windows only):
 2. **Install the Python bindings**:
 
    ```bash
-   pip install pydaqmx
+   pip install nidaqmx
    ```
 
 !!! note "Windows Only"

@@ -20,7 +20,7 @@ pydvma/
 │   ├── gui.py                  # Main PyQt Logger application (~129 KB)
 │   ├── oscilloscope.py         # Real-time pyqtgraph oscilloscope widget
 │   ├── acquisition.py          # High-level log_data / output_signal / signal_generator
-│   ├── streams.py              # Recorder (soundcard) + Recorder_NI (PyDAQmx) classes
+│   ├── streams.py              # Recorder (soundcard) + Recorder_NI (nidaqmx) classes
 │   ├── analysis.py             # FFT, CSD, TF, sonogram, damping
 │   ├── modal.py                # Modal parameter fitting (scipy least-squares)
 │   ├── datastructure.py        # DataSet + TimeData/FreqData/TfData/... classes
@@ -36,7 +36,7 @@ pydvma/
 └── LICENSE                     # BSD 3-Clause
 ```
 
-No `tests/` directory exists. No console-script entry points are registered.
+A `tests/` directory holds pytest suites (mocked unit tests + hardware-dependent tests marked with the `hardware` pytest marker). No console-script entry points are registered.
 
 ## Module responsibilities
 
@@ -48,7 +48,7 @@ No `tests/` directory exists. No console-script entry points are registered.
 
 ### `streams.py` — hardware abstraction
 - `Recorder` — sounddevice-based (cross-platform soundcards).
-- `Recorder_NI` — PyDAQmx-based (National Instruments DAQ devices).
+- `Recorder_NI` — nidaqmx-based (National Instruments DAQ devices; alias for `Recorder_NI_nidaqmx`). Handles both standalone USB/PCIe devices and cDAQ chassis (modules collapsed into one logical device).
 - Device discovery: `get_devices_soundcard`, `get_devices_NI`.
 - Output setup: `setup_output_soundcard`, `setup_output_NI`.
 - Trigger logic (pre-trigger buffer + threshold detect) lives in the `Recorder.callback()` chain.
@@ -92,12 +92,12 @@ No `tests/` directory exists. No console-script entry points are registered.
 
 - **GUI & plotting:** `qtpy` + PyQt5, `pyqtgraph`, `matplotlib`, `seaborn`, optional `qdarktheme`.
 - **Scientific:** `numpy`, `scipy`, `peakutils`.
-- **Hardware:** `sounddevice` (always), `PyDAQmx` (optional, for NI).
+- **Hardware:** `sounddevice` (always), `nidaqmx` (optional, for NI DAQ / cDAQ).
 - **Docs:** MkDocs + Material, `mkdocstrings`.
 
 ## Tests & CI
 
-- **Tests:** none. `testdata.py` produces synthetic signals used for manual checks and demos.
+- **Tests:** `tests/` — Mac-runnable unit tests for the nidaqmx enumeration helpers and device-spec derivation (mocked), plus Windows-only hardware tests that auto-skip when no NI device is present. `testdata.py` produces synthetic signals used for manual checks and demos.
 - **CI:** `.github/workflows/docs.yml` builds and deploys MkDocs to GitHub Pages on pushes to master.
 
 ## How to navigate

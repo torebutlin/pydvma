@@ -76,7 +76,7 @@ just changes which tests run — nothing breaks CI.
 ## Verify, don't assume
 
 Before writing code against an external library (esp. `nidaqmx`,
-`PyDAQmx`, `sounddevice`), verify the real API up front:
+`sounddevice`), verify the real API up front:
 
 - `python -c "import nidaqmx.constants as c; print([x.name for x in c.ProductCategory])"`
 - Inspect `dir(obj)` on a live object, or check the upstream source.
