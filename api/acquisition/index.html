@@ -990,6 +990,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.log_data--pretrigger-positioning-both-backends-identical-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pretrigger positioning (both backends, identical logic)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1563,6 +1574,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.log_data--pretrigger-positioning-both-backends-identical-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pretrigger positioning (both backends, identical logic)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1722,6 +1744,21 @@ output : ndarray (N_samples, output_channels) or None
 the capture. This threshold assumes ±1-normalised input and is
 therefore not meaningful for the NI path in volts (tracked in
 TODO "Turn off ±1 scaling").</p>
+<h5 id="pydvma.acquisition.log_data--pretrigger-positioning-both-backends-identical-logic">Pretrigger positioning (both backends, identical logic)<a class="headerlink" href="#pydvma.acquisition.log_data--pretrigger-positioning-both-backends-identical-logic" title="Permanent link">&para;</a></h5>
+<p>On a successful trigger, the returned buffer is
+<code>stored_time * fs</code> samples long and the first sample exceeding
+<code>pretrig_threshold</code> sits at exactly index <code>pretrig_samples</code> —
+samples <code>[0, pretrig_samples)</code> are pre-trigger context. See
+<code>streams.Recorder</code> for the state machine that gives this
+invariant.</p>
+<p><code>pretrig_samples</code> is capped at <code>chunk_size</code> (validated at
+call-time with a <code>ValueError</code>); the recorder only retains that
+much pre-trigger context. Larger windows require a larger
+<code>chunk_size</code>.</p>
+<p>On a <strong>trigger timeout</strong> (<code>pretrig_timeout</code> elapses with nothing
+above threshold), the function does not raise — it returns the
+tail of the buffer (same shape as the no-pretrigger path), leaves
+<code>trigger_detected</code> False, and prints a "not detected" message.</p>
 
 
     </div>
