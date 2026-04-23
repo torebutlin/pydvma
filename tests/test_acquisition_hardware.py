@@ -182,6 +182,113 @@ def test_basic_acquisition(device_entry, device_index):
     assert np.isfinite(td.time_data).all()
 
 
+@pytest.mark.parametrize('n_channels', [2, 4])
+def test_multichannel_acquisition(device_entry, device_index, n_channels):
+    """Multi-channel capture. Shape reflects all channels, every
+    channel is finite, and channels are independent (no trivial
+    duplication or cross-channel bleed).
+
+    Auto-skipped when the device doesn't have enough AI channels.
+    """
+    if device_entry['ai_channel_count'] < n_channels:
+        pytest.skip(
+            '{} has only {} AI channel(s); skipping channels={}'
+            .format(device_entry['product_type'],
+                    device_entry['ai_channel_count'], n_channels)
+        )
+    s = _settings_for(device_entry, device_index,
+                      channels=n_channels, stored_time=0.2)
+    ds = dvma.log_data(s)
+    td = ds.time_data_list[0]
+    assert td.time_data.shape == (int(0.2 * s.fs), n_channels)
+    assert np.isfinite(td.time_data).all()
+
+    # Channel independence: different channels shouldn't be
+    # byte-identical (would indicate a buffer-reshape bug where all
+    # channels receive the same slice).
+    for ci in range(n_channels):
+        for cj in range(ci + 1, n_channels):
+            if np.array_equal(td.time_data[:, ci], td.time_data[:, cj]):
+                raise AssertionError(
+                    'channels {} and {} on {} are byte-identical — '
+                    'likely a reshape bug'
+                    .format(ci, cj, device_entry['product_type'])
+                )
+
+
+def _ai_sampling_mode(device_entry):
+    """Return ``'simultaneous'`` or ``'multiplexed'`` (or ``None`` if
+    unknown) for this device's AI path.
+
+    Looked up from the `_ni_device_specs.QUIRKS` table via
+    `get_device_info`. For a chassis, the first slotted AI module's
+    mode is reported.
+    """
+    if device_entry['is_chassis']:
+        for mod in device_entry['module_names']:
+            if device_entry['module_ai_counts'].get(mod, 0) > 0:
+                return dvma.get_device_info(mod).get('ai_sampling')
+        return None
+    return dvma.get_device_info(device_entry['name']).get('ai_sampling')
+
+
+def test_multichannel_stimulus_reaches_ch0_only(device_entry, device_index):
+    """With the loopback wired ao0 → ai0, driving a known stimulus on
+    AO should land primarily on channel 0 of the capture. Other
+    channels stay at the ambient noise floor, confirming per-channel
+    isolation in the multi-channel AI task.
+
+    **Only meaningful on simultaneous-sampling AI**: multiplexed
+    low-cost DAQs (USB-6212, USB-6003, etc.) charge-inject between
+    mux steps and an open ai1 will "ghost" a heavily-attenuated copy
+    of ai0 even though the wiring is correct. Catching that cleanly
+    would require grounding the unused terminals, which isn't
+    possible in the loopback-only lab setup. Skipped rather than
+    asserting looser tolerances, so a genuine cross-channel
+    mis-wiring still surfaces on DSA hardware.
+    """
+    if device_entry['ai_channel_count'] < 2:
+        pytest.skip('needs at least 2 AI channels')
+    if _ai_sampling_mode(device_entry) != 'simultaneous':
+        pytest.skip(
+            'Multiplexed-AI device ({}) ghosts the previous channel '
+            'into open inputs; strict isolation needs grounded '
+            'unused terminals, not a loopback-only setup.'
+            .format(device_entry['product_type'])
+        )
+    if not _has_ao_to_ai_loopback(device_entry, device_index):
+        pytest.skip(
+            'No ao0 → ai0 loopback detected on {} ({}).'
+            .format(device_entry['name'], device_entry['product_type'])
+        )
+    n_channels = min(device_entry['ai_channel_count'], 4)
+    s = _settings_for(device_entry, device_index,
+                      channels=n_channels, stored_time=0.2)
+    _, y = dvma.signal_generator(
+        s, sig='sweep', T=0.15, amplitude=1.5, f=[200, 1000],
+    )
+    ds = dvma.log_data(s, output=y)
+    td = ds.time_data_list[0]
+    assert td.time_data.shape == (int(0.2 * s.fs), n_channels)
+
+    ch0_peak = float(np.max(np.abs(td.time_data[:, 0])))
+    other_peaks = [float(np.max(np.abs(td.time_data[:, i])))
+                   for i in range(1, n_channels)]
+    # Stimulus is 1.5 V; other channels see only ambient pickup, which
+    # on a short open input is typically well under 200 mV (DSA
+    # modules especially). Give loose headroom to survive noisy labs.
+    assert ch0_peak > 1.0, (
+        'ch0 peak {:.3f} V on {} is lower than expected stimulus'
+        .format(ch0_peak, device_entry['product_type'])
+    )
+    for idx, peak in enumerate(other_peaks, start=1):
+        assert peak < 0.5 * ch0_peak, (
+            'channel {} peak {:.3f} V on {} is within 50 % of ch0 '
+            '({:.3f} V) — cross-talk or channel mis-wiring'
+            .format(idx, peak, device_entry['product_type'], ch0_peak)
+        )
+
+
 def test_pretrigger_with_stimulus(device_entry, device_index):
     """AO-driven loopback fires the pretrigger; captured peak matches
     the commanded amplitude within tolerance. Requires a physical
