@@ -85,6 +85,25 @@ class MySettings(object):
         Full-scale output voltage for the soundcard AO path (i.e. the
         voltage at the jack corresponding to a ±1 sounddevice sample).
         Defaults to VmaxSC if not set.
+    iepe_excit_current_A: float or sequence of float
+        Per-channel IEPE / ICP excitation current in amps. Pass a
+        scalar (broadcast to every channel) or a list of length
+        ``channels``. Default ``0.0`` = excitation off on every
+        channel. Only the NI 9234-class DSA modules in this lab
+        support IEPE; the discrete legal values on the 9234 are
+        ``0.0`` (off) and ``0.002`` (2 mA on). Per-channel allows
+        e.g. ``[0.002, 0.002, 0.0, 0.0]`` for ICP accels on
+        ``ai0``/``ai1`` and a charge-amp force input on ``ai2``.
+        With excitation enabled, the channel is also switched to
+        AC coupling (the standard for IEPE sensors).
+    channel_sensitivities: float or sequence of float
+        Per-channel sensitivity in volts per engineering unit (V/g
+        for an accelerometer, V/N for a force transducer, V/Pa for a
+        microphone, etc.). Scalar broadcasts to every channel.
+        Default ``1.0`` = no calibration applied (raw volts pass
+        through). The reciprocal becomes ``TimeData.channel_cal_factors``,
+        so a ``100 mV/g`` accelerometer is ``0.1`` here and yields a
+        ``cal_factor`` of ``10`` so plots read in ``g``.
     NI_mode: str
         Terminal configuration for NI DAQ (e.g., 'DAQmx_Val_RSE', 'DAQmx_Val_Diff')
     init_view_time: bool
@@ -112,6 +131,8 @@ class MySettings(object):
                  input_channels_spec=None,
                  VmaxNI=5,
                  VmaxSC=1.0,
+                 iepe_excit_current_A=0.0,
+                 channel_sensitivities=1.0,
                  NI_mode='DAQmx_Val_RSE',
                  init_view_time=True,
                  init_view_freq=True,
@@ -229,6 +250,33 @@ class MySettings(object):
         else:
             self.output_VmaxSC = float(output_VmaxSC)
 
+        # Per-channel arrays. Scalars broadcast to all channels;
+        # sequences must match `channels` exactly. Stored as float
+        # numpy arrays so downstream code can multiply / divide
+        # element-wise without further coercion.
+        self.iepe_excit_current_A = self._broadcast_per_channel(
+            iepe_excit_current_A, 'iepe_excit_current_A',
+        )
+        self.channel_sensitivities = self._broadcast_per_channel(
+            channel_sensitivities, 'channel_sensitivities',
+        )
+        if np.any(self.channel_sensitivities == 0):
+            raise ValueError(
+                'channel_sensitivities must be non-zero (got {!r}); a '
+                'zero sensitivity would imply an infinite calibration '
+                'factor. Use 1.0 for "no calibration applied".'
+                .format(self.channel_sensitivities.tolist())
+            )
+        if (self.device_driver != 'nidaq'
+                and np.any(self.iepe_excit_current_A > 0)):
+            raise ValueError(
+                'iepe_excit_current_A > 0 requires device_driver="nidaq"; '
+                'soundcard inputs do not have configurable excitation. '
+                '(got device_driver={!r}, iepe_excit_current_A={!r})'
+                .format(self.device_driver,
+                        self.iepe_excit_current_A.tolist())
+            )
+
         ### derived settings
         if (viewed_time is not None) and (viewed_time != 'None'):
             self.viewed_time = float(viewed_time)
@@ -265,6 +313,30 @@ class MySettings(object):
                     '(or reduce pretrig_samples) to fit.'
                     .format(self.pretrig_samples, self.chunk_size)
                 )
+
+
+    def _broadcast_per_channel(self, value, name):
+        '''Coerce ``value`` to a float ndarray of length ``channels``.
+
+        Scalars (int / float / 0-d array) broadcast across all
+        channels; a list / tuple / 1-d ndarray must already be the
+        right length. Used by `iepe_excit_current_A` and
+        `channel_sensitivities` so callers can pass either.
+        '''
+        arr = np.atleast_1d(np.asarray(value, dtype=float))
+        if arr.ndim != 1:
+            raise ValueError(
+                '{} must be a scalar or 1-D sequence (got shape {})'
+                .format(name, arr.shape)
+            )
+        if arr.size == 1:
+            arr = np.full(self.channels, float(arr[0]))
+        elif arr.size != self.channels:
+            raise ValueError(
+                '{} length {} does not match channels={}'
+                .format(name, arr.size, self.channels)
+            )
+        return arr
 
 
     # Driver-selecting accessors for the full-scale voltages.  Internal

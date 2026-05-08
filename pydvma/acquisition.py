@@ -227,8 +227,24 @@ def log_data(settings, test_name=None, rec=None, output=None):
             stored_output[n_start:len(output[:,0])+n_start,:] = output[:,:]
             
         stored_time_data_copy = np.concatenate((stored_output,stored_time_data_copy),axis=1)
-    
-    timedata = datastructure.TimeData(time_axis,stored_time_data_copy,settings,timestamp=t,timestring=timestring,test_name=test_name)
+
+    # Carry per-channel calibration through to the TimeData. With
+    # default ``channel_sensitivities = 1.0`` this is just ones (no
+    # calibration applied), matching pre-refactor behaviour. With a
+    # 100 mV/g accelerometer (sensitivity = 0.1 V/g) the cal_factor
+    # is 10, so plots and modal fits read in g.
+    cal_factors = 1.0 / np.asarray(settings.channel_sensitivities, dtype=float)
+    if (output is not None) and settings.use_output_as_ch0:
+        # The output channel was prepended; it has no measured
+        # sensitivity, so its cal_factor is 1.0 (passes through).
+        n_out = stored_time_data_copy.shape[1] - len(cal_factors)
+        cal_factors = np.concatenate((np.ones(n_out), cal_factors))
+
+    timedata = datastructure.TimeData(
+        time_axis, stored_time_data_copy, settings,
+        timestamp=t, timestring=timestring, test_name=test_name,
+        channel_cal_factors=cal_factors,
+    )
     
     
     dataset  = datastructure.DataSet()

@@ -175,6 +175,9 @@ def test_ao_ai_sync_sharp_correlation(device_entry, device_index):
     the commanded waveform. Sharp peak ⇒ coherent sample clocks over
     the AO duration. Tolerances vary by device category: stricter for
     devices with hardware-timed AO, loose for software-timed USB-600x.
+
+    Auto-skipped when no ao0 → ai0 loopback is detected (e.g. the BNC
+    cable has been disconnected for a different test setup).
     """
     s = _settings_for(device_entry, device_index, stored_time=0.4)
     amp_v = 1.5
@@ -187,6 +190,17 @@ def test_ao_ai_sync_sharp_correlation(device_entry, device_index):
 
     ai = ds.time_data_list[0].time_data[:, 0].astype(np.float64)
     ao = y[:, 0].astype(np.float64)
+
+    # Loopback gate: if AI never rose above ~10 % of the commanded AO
+    # peak, no useful signal made it through (cable disconnected, ICP
+    # accel on the input instead of a loopback, etc.). Skip cleanly
+    # rather than misreporting clock drift.
+    if np.max(np.abs(ai)) < 0.1 * amp_v:
+        pytest.skip(
+            'No ao0 → ai0 loopback signal detected on {} (max |AI|={:.3f} V '
+            'vs commanded {:.3f} V); sync test needs a working loopback.'
+            .format(device_entry['product_type'], float(np.max(np.abs(ai))), amp_v)
+        )
 
     # Full cross-correlation; 'valid' mode gives an output of length
     # (len(ai) - len(ao) + 1), which is where the chirp could sit.

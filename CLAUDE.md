@@ -53,6 +53,10 @@ Three NI devices are connected on this Windows machine:
   chassis timebase. **Simultaneous sampling**: both modules are DSA
   (delta-sigma) with per-channel ADCs/DACs, so all channels are
   sampled (and output) at the same instant — no inter-channel skew.
+  **IEPE/ICP excitation** is supported on the 9234 (not the 6003 or
+  6212); discrete legal currents are `0.0` or `0.002` A. Anti-alias
+  LPF is automatic and locked to the sample rate (delta-sigma
+  inherent — not user-configurable).
 
 **BNC loopback is wired ao0 → ai0 on each device** — that's the
 standard test stimulus. Self-contained: the user does not need to be

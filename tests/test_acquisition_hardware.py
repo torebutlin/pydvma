@@ -32,7 +32,7 @@ if not _NIDAQMX_AVAILABLE:
 import numpy as np
 
 import pydvma as dvma
-from pydvma import _ni_backend
+from pydvma import _ni_backend, streams
 
 
 pytestmark = pytest.mark.hardware
@@ -380,6 +380,100 @@ def test_pretrigger_positioning(device_entry, device_index):
         .format(device_entry['product_type'], np.max(np.abs(pre)),
                 s.pretrig_threshold)
     )
+
+
+def _supports_iepe(device_entry):
+    """Look up the device's IEPE capability through `_ni_device_specs`.
+
+    Returns the list of supported excitation currents in amps (e.g.
+    ``[0.0, 0.002]`` on the 9234, ``[]`` on USB-600x / 621x).
+    """
+    if device_entry['is_chassis']:
+        for mod in device_entry['module_names']:
+            if device_entry['module_ai_counts'].get(mod, 0) > 0:
+                vals = dvma.get_device_info(mod).get(
+                    'ai_current_int_excit_discrete_vals', []
+                )
+                return [v for v in vals if v > 0]
+        return []
+    return [v for v in dvma.get_device_info(device_entry['name'])
+            .get('ai_current_int_excit_discrete_vals', []) if v > 0]
+
+
+def test_iepe_excitation_applies(device_entry, device_index):
+    """Configuring `iepe_excit_current_A=2 mA` on an IEPE-capable device
+    actually programs the AI task with that current and AC coupling.
+
+    Verified by reading back ``ai_excit_val`` and ``ai_coupling`` on
+    each task channel after start. Auto-skipped on devices without
+    IEPE support.
+    """
+    iepe_vals = _supports_iepe(device_entry)
+    if not iepe_vals:
+        pytest.skip('{} has no IEPE support'.format(device_entry['product_type']))
+    target_current = iepe_vals[0]   # the lowest non-zero value the device offers
+
+    s = _settings_for(device_entry, device_index,
+                      channels=1, stored_time=0.1)
+    s.iepe_excit_current_A[0] = target_current
+    s.channel_sensitivities[0] = 0.1     # 100 mV/g placeholder
+
+    # Capture briefly to force the AI task through its full setup path.
+    ds = dvma.log_data(s)
+    td = ds.time_data_list[0]
+    assert td.time_data.shape == (int(0.1 * s.fs), 1)
+
+    # Sensitivity should have flowed through to the cal_factors.
+    assert np.isclose(td.channel_cal_factors[0], 10.0), (
+        'cal_factors[0] = {}, expected 10.0 (= 1 / 0.1 V/g)'
+        .format(td.channel_cal_factors[0])
+    )
+
+    # And the AI task that just ran was configured with IEPE on.
+    rec = streams.REC
+    task = rec.audio_stream
+    chs = list(task.ai_channels)
+    assert abs(chs[0].ai_excit_val - target_current) < 1e-9, (
+        'ai_excit_val = {} A, expected {} A'
+        .format(chs[0].ai_excit_val, target_current)
+    )
+    assert chs[0].ai_coupling.name == 'AC', (
+        'IEPE-enabled channel should be AC-coupled, got {}'
+        .format(chs[0].ai_coupling.name)
+    )
+
+
+def test_iepe_rejected_on_unsupported_device(device_entry, device_index):
+    """Requesting IEPE on a non-IEPE device fails loudly at stream
+    setup with a clear ValueError.
+    """
+    if _supports_iepe(device_entry):
+        pytest.skip('{} supports IEPE; this test covers the unsupported '
+                    'devices'.format(device_entry['product_type']))
+    s = _settings_for(device_entry, device_index,
+                      channels=1, stored_time=0.1)
+    s.iepe_excit_current_A[0] = 0.002
+    with pytest.raises(ValueError, match='iepe_excit_current_A'):
+        dvma.log_data(s)
+
+
+def test_iepe_off_default(device_entry, device_index):
+    """Default settings produce no IEPE excitation. Verifies that the
+    log_data path completes cleanly without any per-channel
+    excitation programming — important on non-IEPE devices where
+    even querying the property raises DAQmx -200452."""
+    s = _settings_for(device_entry, device_index,
+                      channels=1, stored_time=0.1)
+    # No iepe_excit_current_A override -> defaults to all zeros
+    assert np.all(s.iepe_excit_current_A == 0.0)
+    # Should not raise on any device, IEPE-capable or not.
+    dvma.log_data(s)
+    # On IEPE-capable devices the property is queryable; verify it
+    # really is at zero. On non-IEPE devices the property doesn't
+    # exist, so we just confirm the capture succeeded above.
+    if _supports_iepe(device_entry):
+        chs = list(streams.REC.audio_stream.ai_channels)
+        assert chs[0].ai_excit_val == 0.0
 
 
 def test_pretrigger_timeout_no_crash(device_entry, device_index):

@@ -125,6 +125,13 @@ def get_device_info(device_name):
         'ai_voltage_ranges': _pairs(_try(lambda: dev.ai_voltage_rngs) or []),
         'ai_max_single_chan_rate': _try(lambda: float(dev.ai_max_single_chan_rate)),
         'ai_min_rate': _try(lambda: float(dev.ai_min_rate)),
+        # IEPE / ICP excitation: empty list on devices that don't
+        # support internal current excitation (USB-600x, USB-621x).
+        # Non-empty (e.g. ``[0.0, 0.002]`` on the NI 9234) means the
+        # listed currents are valid for ``iepe_excit_current_A``.
+        'ai_current_int_excit_discrete_vals': list(
+            _try(lambda: dev.ai_current_int_excit_discrete_vals) or []
+        ),
         'ao_voltage_ranges': _pairs(_try(lambda: dev.ao_voltage_rngs) or []),
         'ao_max_rate': _try(lambda: float(dev.ao_max_rate)),
         'ao_min_rate': _try(lambda: float(dev.ao_min_rate)),

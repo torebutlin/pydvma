@@ -568,6 +568,11 @@ class Recorder_NI_nidaqmx(object):
             samps_per_chan=int(settings.chunk_size),
         )
 
+        # Per-channel IEPE / ICP excitation. Setting any channel's
+        # excitation requires the sample clock to be configured first
+        # (DSA modules reject the property otherwise — DAQmx -201087).
+        self._apply_per_channel_iepe(task, settings)
+
         self._read_buffer = np.zeros(
             (settings.channels, settings.chunk_size), dtype=np.float64
         )
@@ -587,6 +592,66 @@ class Recorder_NI_nidaqmx(object):
         # find the task to close if ``task.start()`` raises -50103.
         self.audio_stream = task
         task.start()
+
+    def _apply_per_channel_iepe(self, task, settings):
+        """Apply IEPE excitation + AC coupling per channel from settings.
+
+        ``settings.iepe_excit_current_A`` is an array of length
+        ``channels`` (validated in ``MySettings.__init__``). Channels
+        with ``> 0`` get internal current excitation at that value
+        plus AC coupling (the standard for IEPE/ICP sensors); channels
+        with ``0`` are left at the device's default (no excitation, DC
+        coupling on the 9234).
+
+        Validates against the device's advertised
+        ``ai_current_int_excit_discrete_vals`` so requesting an
+        unsupported current (e.g. 2 mA on a USB-6003) fails loudly
+        rather than being silently ignored.
+        """
+        currents = np.asarray(settings.iepe_excit_current_A, dtype=float)
+        if not np.any(currents > 0):
+            return  # all channels off — nothing to do
+
+        # Look up the configured device's legal excitation values. For
+        # a chassis we check the AI module that supplies channel 0.
+        if self.device_entry['is_chassis']:
+            ai_mod = next(
+                (m for m in self.device_entry['module_names']
+                 if self.device_entry['module_ai_counts'].get(m, 0) > 0),
+                None,
+            )
+            check_dev_name = ai_mod or self.device_entry['name']
+        else:
+            check_dev_name = self.device_entry['name']
+        try:
+            allowed = list(
+                ni.system.Device(check_dev_name)
+                .ai_current_int_excit_discrete_vals
+            )
+        except (ni.errors.DaqError, AttributeError):
+            allowed = []
+        # 0.0 is always implicitly allowed (= no excitation).
+        allowed_set = {0.0} | {float(v) for v in allowed}
+        for c in currents[currents > 0]:
+            if not any(abs(c - a) < 1e-9 for a in allowed_set):
+                raise ValueError(
+                    'iepe_excit_current_A={} A is not supported by {} '
+                    '(allowed: {} A). Set to 0.0 to disable IEPE.'
+                    .format(c, check_dev_name, sorted(allowed_set))
+                )
+
+        channels = list(task.ai_channels)
+        if len(channels) != len(currents):
+            raise RuntimeError(
+                'IEPE configuration mismatch: task has {} channels but '
+                'settings.iepe_excit_current_A has {} entries'
+                .format(len(channels), len(currents))
+            )
+        for ch, current in zip(channels, currents):
+            if current > 0:
+                ch.ai_excit_src = ni.constants.ExcitationSource.INTERNAL
+                ch.ai_excit_val = float(current)
+                ch.ai_coupling = ni.constants.Coupling.AC
 
     def setup_output(self, settings, output):
         # Delegate to the module-level helper so both call paths share the
