@@ -38,6 +38,18 @@ def _ni_recorder_class(settings):
     return Recorder_NI_nidaqmx
 
 
+# IEPE warmup time in seconds. When excitation is freshly applied
+# at task.start(), the sensor's DC bias rises through the AC-coupling
+# HPF on the 9234 (~0.32 s RC time constant), creating a settling
+# transient that decays exponentially. 2 s is ~6 RC time constants,
+# i.e. settled to <0.3 % of the original bias step. Applied
+# unconditionally inside `_build_and_start_ai_task` whenever any
+# channel has IEPE enabled — keeps the data clean by default
+# without exposing yet another setting. Tracked behaviour is
+# documented in the "IEPE warmup / settling delay" TODO entry.
+_IEPE_WARMUP_S = 2.0
+
+
 def start_stream(settings):
     global REC_SC, REC_NI, REC
     if settings.device_driver == 'soundcard':
@@ -592,6 +604,16 @@ class Recorder_NI_nidaqmx(object):
         # find the task to close if ``task.start()`` raises -50103.
         self.audio_stream = task
         task.start()
+
+        # IEPE warmup: when the 2 mA excitation step turns on at
+        # task.start(), the sensor's DC bias rises and propagates
+        # through the 9234's AC-coupling HPF. Block until that step
+        # has decayed below the noise floor before letting callers
+        # read the buffer; otherwise the first capture is dominated
+        # by the bias transient (mean drifting from ~12 V to 0).
+        if np.any(np.asarray(settings.iepe_excit_current_A) > 0):
+            print('IEPE excitation settling for {} s...'.format(_IEPE_WARMUP_S))
+            time.sleep(_IEPE_WARMUP_S)
 
     def _apply_per_channel_iepe(self, task, settings):
         """Apply IEPE excitation + AC coupling per channel from settings.

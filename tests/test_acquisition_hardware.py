@@ -457,6 +457,48 @@ def test_iepe_rejected_on_unsupported_device(device_entry, device_index):
         dvma.log_data(s)
 
 
+def test_iepe_warmup_settles_bias_transient(device_entry, device_index):
+    """With IEPE freshly enabled, the AC-coupling HPF on the 9234
+    produces a multi-second bias-settling transient (mean drifts
+    from sensor bias to 0). The recorder is supposed to block for
+    `_IEPE_WARMUP_S` after task.start() so the next capture is
+    settled. Verify by tearing down any leftover stream, doing a
+    single fresh capture, and checking the captured waveform's
+    absolute mean is much smaller than the un-warmed transient
+    would have been (~3 V on this lab's accel + 100 mV/g cal).
+
+    Auto-skipped on non-IEPE devices.
+    """
+    iepe_vals = _supports_iepe(device_entry)
+    if not iepe_vals:
+        pytest.skip('{} has no IEPE support'.format(device_entry['product_type']))
+
+    # Fully tear down any prior task so the next start_stream is a
+    # genuine cold start (worst case for the transient).
+    if streams.REC is not None:
+        streams.REC.end_stream()
+    streams.REC = None
+    streams.REC_NI = None
+
+    s = _settings_for(device_entry, device_index,
+                      channels=1, stored_time=0.5)
+    s.iepe_excit_current_A[0] = iepe_vals[0]   # 0.002 A on the 9234
+
+    ds = dvma.log_data(s)
+    y = ds.time_data_list[0].time_data[:, 0]
+
+    # Empirical: pre-warmup, fresh-IEPE captures show |mean| ~ 3 V on
+    # the lab's connected accel. Post-warmup, |mean| should be at the
+    # noise floor (mV-range) regardless of whether the sensor sees
+    # any motion. A 0.5 V threshold catches the un-warmed regression
+    # cleanly while leaving headroom for genuine accelerometer signal.
+    assert abs(y.mean()) < 0.5, (
+        '|mean| = {:.3f} V on {} -- IEPE warmup did not settle the '
+        'bias transient (expected < 0.5 V post-warmup)'
+        .format(abs(y.mean()), device_entry['product_type'])
+    )
+
+
 def test_iepe_off_default(device_entry, device_index):
     """Default settings produce no IEPE excitation. Verifies that the
     log_data path completes cleanly without any per-channel
