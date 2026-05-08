@@ -45,9 +45,40 @@ def _ni_recorder_class(settings):
 # i.e. settled to <0.3 % of the original bias step. Applied
 # unconditionally inside `_build_and_start_ai_task` whenever any
 # channel has IEPE enabled — keeps the data clean by default
-# without exposing yet another setting. Tracked behaviour is
-# documented in the "IEPE warmup / settling delay" TODO entry.
+# without exposing yet another setting. The `start_stream` reuse
+# path (below) keeps an already-warmed task alive across log_data
+# calls, so this 2 s cost is paid only on a genuine hardware-config
+# change (different device, channels, fs, IEPE current, ...).
 _IEPE_WARMUP_S = 2.0
+
+
+def _ni_settings_signature(s):
+    """Tuple of hardware-impacting AI-task settings.
+
+    If the new settings' signature matches the running stream's, we
+    can reuse the existing AI task and preserve its IEPE settling
+    state. If anything in this tuple differs, the task must be torn
+    down and rebuilt.
+
+    Deliberately absent: ``pretrig_*`` and ``channel_sensitivities``,
+    which only affect log_data's read-side processing — they don't
+    re-program the hardware. ``output_*`` is also absent: those go to
+    the separate AO task built by `setup_output_NI`, not the AI
+    task this signature governs.
+    """
+    return (
+        s.device_driver,
+        s.device_index,
+        int(s.channels),
+        s.input_channels_spec,
+        int(s.fs),
+        int(s.chunk_size),
+        int(s.num_chunks),
+        s.NI_mode,
+        float(s.VmaxNI),
+        float(s.stored_time),  # affects stored_time_data buffer size
+        tuple(np.asarray(s.iepe_excit_current_A).tolist()),
+    )
 
 
 def start_stream(settings):
@@ -58,6 +89,26 @@ def start_stream(settings):
         REC = REC_SC
     elif settings.device_driver == 'nidaq':
         cls = _ni_recorder_class(settings)
+        # Reuse path: an existing recorder has a live AI task whose
+        # hardware configuration matches the requested settings. Keep
+        # the task running — preserves IEPE excitation settling — and
+        # just refresh the trigger state for the next capture. Any
+        # log_data-side fields (pretrig_*, channel_sensitivities,
+        # output_*) get picked up via the settings reference update
+        # and applied at read time.
+        if (REC_NI is not None
+                and isinstance(REC_NI, cls)
+                and REC_NI.audio_stream is not None
+                and _ni_settings_signature(REC_NI.settings)
+                    == _ni_settings_signature(settings)):
+            REC_NI.settings = settings
+            REC_NI.trigger_detected = False
+            REC_NI.trigger_first_detected_message = False
+            REC = REC_NI
+            return
+
+        # Rebuild path: hardware config changed (different device,
+        # channels, fs, IEPE current, ...) or there's no live task.
         # If an existing REC_NI was created by a different backend, drop it.
         if REC_NI is not None and not isinstance(REC_NI, cls):
             try:

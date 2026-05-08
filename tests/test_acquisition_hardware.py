@@ -443,6 +443,38 @@ def test_iepe_excitation_applies(device_entry, device_index):
     )
 
 
+def test_stream_reuses_when_signature_matches(device_entry, device_index):
+    """`log_data` calls with matching hardware settings should reuse
+    the existing live AI task — same task handle, same recorder
+    instance — rather than tearing down and rebuilding. This is what
+    preserves IEPE settling between calls.
+    """
+    s = _settings_for(device_entry, device_index, channels=1, stored_time=0.1)
+    dvma.log_data(s)
+    rec1 = streams.REC
+    task1 = rec1.audio_stream
+    dvma.log_data(s)
+    rec2 = streams.REC
+    task2 = rec2.audio_stream
+    assert rec1 is rec2, 'recorder instance should be reused'
+    assert task1 is task2, 'AI task should be reused (preserves IEPE settling)'
+
+
+def test_stream_rebuilds_when_signature_changes(device_entry, device_index):
+    """Changing a hardware-impacting setting (here, fs) forces a
+    teardown + rebuild. The task handle should change."""
+    s1 = _settings_for(device_entry, device_index, channels=1, stored_time=0.1, fs=2000)
+    dvma.log_data(s1)
+    task1 = streams.REC.audio_stream
+    s2 = _settings_for(device_entry, device_index, channels=1, stored_time=0.1, fs=4000)
+    dvma.log_data(s2)
+    task2 = streams.REC.audio_stream
+    assert task1 is not task2, (
+        'fs change should have rebuilt the AI task; got the same task '
+        'object back'
+    )
+
+
 def test_iepe_rejected_on_unsupported_device(device_entry, device_index):
     """Requesting IEPE on a non-IEPE device fails loudly at stream
     setup with a clear ValueError.
