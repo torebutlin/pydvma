@@ -37,19 +37,20 @@ dvma.export_to_csv(dataset.tf_data_list)
 dataset = dvma.import_from_matlab_jwlogger()
 ```
 
-## Save Python Objects
+## Save and Load a DataSet (native format)
 
 ```python
-import pickle
+# Save dataset — opens a file-save dialog if filename is omitted
+dvma.save_data(dataset, filename='dataset.npy')
 
-# Save dataset
-with open('dataset.pkl', 'wb') as f:
-    pickle.dump(dataset, f)
-
-# Load dataset
-with open('dataset.pkl', 'rb') as f:
-    dataset = pickle.load(f)
+# Load dataset — opens a file-open dialog if filename is omitted
+dataset = dvma.load_data(filename='dataset.npy')
 ```
+
+Internally this uses `numpy.save` / `numpy.load` on a one-element
+object array wrapping the `DataSet`, so a saved file is a `.npy`. The
+helpers handle overwrite prompts and dialog fallback; prefer them
+over a raw `pickle`.
 
 ## Export Plots
 

@@ -14,7 +14,7 @@ The aim is for a library that is simple to use and simple to maintain. It is not
 
 At present the library has basic functionality for:
 
-- Logging data using soundcards or National Instrument DAQs
+- Logging data using soundcards or National Instruments DAQs
 - Logging with pre-trigger for impulse response measurements
 - Logging with PC generated output (soundcard and NIDAQ)
 - Computing frequency domain data (FFT)

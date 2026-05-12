@@ -155,24 +155,36 @@ dataset = dvma.log_data(settings, output=output)
 
 ## Calibration and Scaling
 
-### Sensor Sensitivity
+### Sensor sensitivity
 
-Apply sensor sensitivity calibration:
+Pass per-channel sensitivity (in V/eu — volts per engineering unit) to
+`MySettings` at acquisition time. `log_data` inverts it into
+`TimeData.channel_cal_factors`, and plotting / modal fitting multiply
+by those factors automatically, so the displayed values are in
+engineering units (g, m/s², N, ...) without any post-hoc scaling.
 
 ```python
-# Accelerometer sensitivity: 100 mV/g
-sensitivity_accel = 100e-3  # V/g
-
-# After recording
-time_data.time_data[:, 0] /= sensitivity_accel  # Convert to g
+settings = dvma.MySettings(
+    channels=3,
+    channel_sensitivities=[0.1, 0.1, 0.0023],  # V/g, V/g, V/N
+)
+dataset = dvma.log_data(settings)
+# dataset.time_data_list[0].channel_cal_factors is [10, 10, 434.78]
 ```
 
-### Engineering Units
+A scalar `channel_sensitivities=X` broadcasts to all channels. Default
+`1.0` means "no calibration applied" (cal_factor = 1).
+
+### Engineering-unit labels
+
+`TimeData.units` accepts a per-channel list of strings; it propagates
+through `calculate_fft`, `calculate_cross_spectrum_matrix`, and
+`calculate_sonogram`, and `calculate_tf` builds units like
+``"<out_unit>/<in_unit>"`` per output channel.
 
 ```python
-# Store channel information
-time_data.channel_names = ['Accel_X', 'Accel_Y', 'Force']
-time_data.channel_units = ['g', 'g', 'N']
+# Set units after acquisition if you didn't pass them via MySettings
+time_data.units = ['g', 'g', 'N']
 ```
 
 ## Multiple Measurements
