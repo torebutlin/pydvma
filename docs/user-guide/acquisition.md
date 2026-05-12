@@ -292,23 +292,19 @@ for i, time_data in enumerate(dataset.time_data_list):
 
 ## Monitoring and Visualization
 
-### Real-time Preview
+### Oscilloscope view
 
-The Logger GUI provides real-time visualization:
+The Logger GUI provides a live oscilloscope of the incoming signal —
+launch the GUI and use the Oscilloscope view to monitor levels and
+adjust trigger settings before committing to a recording.
 
 ```python
 logger = dvma.Logger(settings)
-# Use the "Preview" button to see signals in real-time
 ```
 
-### Oscilloscope View
-
-Monitor input signals before recording:
-
-```python
-# In the GUI, use the "Oscilloscope" tab
-# Adjust trigger levels and time scales interactively
-```
+For a one-shot programmatic peek at the live buffer without going via
+the GUI, use `dvma.stream_snapshot(streams.REC)` while a stream is
+running (e.g. immediately after a `log_data` call).
 
 ## Best Practices
 

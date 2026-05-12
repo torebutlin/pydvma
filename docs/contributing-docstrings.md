@@ -71,30 +71,39 @@ def calculate_fft(time_data, time_range=None, window=None):
 class TimeData:
     """Container for time-domain measurement data.
 
-    Stores time series data along with metadata, settings, and axis
+    Stores voltage samples along with metadata, settings, and axis
     information. Supports multi-channel data.
 
     Attributes:
-        time_axis (ndarray): Time vector in seconds
-        time_data (ndarray): Signal data, shape (samples, channels)
-        settings: Acquisition settings object
-        test_name (str): Name identifier for this measurement
-        unique_id (str): Unique identifier for data traceability
+        time_axis (ndarray): Sample times in seconds.
+        time_data (ndarray): Shape (n_samples, n_channels), in volts.
+        settings (MySettings): Acquisition settings snapshot.
+        units (list[str] or None): Engineering units per channel.
+        channel_cal_factors (ndarray): Per-channel V→eu multipliers.
+        test_name (str or None): Free-form label.
+        unique_id (uuid.UUID): Generated at construction.
 
     Examples:
         >>> time_data = TimeData(t, y, settings, test_name='test_01')
         >>> channel_0 = time_data.time_data[:, 0]
     """
 
-    def __init__(self, time_axis, time_data, settings, test_name='', id_link=None):
-        """Initialize TimeData object.
+    def __init__(self, time_axis, time_data, settings, timestamp=None,
+                 timestring=None, units=None, channel_cal_factors=None,
+                 id_link=None, test_name=None):
+        """Initialise TimeData.
 
         Args:
-            time_axis (ndarray): Time vector
-            time_data (ndarray): Signal data array
-            settings: Settings object
-            test_name (str, optional): Test identifier
-            id_link (str, optional): Link to parent data ID
+            time_axis (ndarray): Sample times in seconds.
+            time_data (ndarray): Voltage samples, (n_samples, n_channels).
+            settings (MySettings): Acquisition snapshot.
+            timestamp (datetime, optional): Capture start. Defaults to now().
+            timestring (str, optional): Filesystem-safe stamp.
+            units (list[str], optional): Per-channel units.
+            channel_cal_factors (ndarray, optional): V→eu factors.
+                Defaults to all-ones.
+            id_link (uuid.UUID, optional): Link to a parent TimeData.
+            test_name (str, optional): Free-form label.
         """
         # Implementation...
 ```

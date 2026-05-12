@@ -167,118 +167,15 @@ print(f"Damping ratio: {modal_data.zn[0]:.4f}")
 print(f"Modal constants: {modal_data.an}")
 ```
 
-## Mode Shape Analysis
+## Beyond SDOF: not yet built in
 
-### Extracting Mode Shapes
-
-From multi-point FRF measurements:
-
-```python
-# Measure FRFs at multiple locations
-tf_list = dvma.TfDataList()
-
-for location in measurement_points:
-    # Record and calculate TF
-    data = dvma.log_data(settings, test_name=f"point_{location}")
-    tf = dvma.calculate_tf(data.time_data_list[0], ch_in=0)
-    tf_list.append(tf)
-
-# Extract mode shape at natural frequency
-fn_mode = 150  # Hz
-mode_shape = []
-for tf_data in tf_list:
-    # Find index closest to fn_mode
-    idx = np.argmin(np.abs(tf_data.freq_axis - fn_mode))
-    # Extract complex amplitude at that frequency
-    mode_shape.append(tf_data.tf_data[idx, 0])
-
-mode_shape = np.array(mode_shape)
-```
-
-### Plotting Mode Shapes
-
-```python
-import matplotlib.pyplot as plt
-import numpy as np
-
-# Define geometry (example: beam with measurement points)
-x_positions = np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5])  # meters
-
-# Plot mode shape
-plt.figure()
-plt.plot(x_positions, np.abs(mode_shape), 'o-')
-plt.xlabel('Position (m)')
-plt.ylabel('Amplitude')
-plt.title(f'Mode Shape at {fn_mode} Hz')
-plt.grid(True)
-plt.show()
-```
-
-### 2D Mode Shapes
-
-For plate or surface measurements:
-
-```python
-# Define 2D grid of measurement points
-x_grid = np.array([...])  # X coordinates
-y_grid = np.array([...])  # Y coordinates
-mode_shape_2d = np.array([...])  # Mode shape amplitudes
-
-# Create contour plot
-plt.figure(figsize=(10, 8))
-plt.tricontourf(x_grid, y_grid, np.abs(mode_shape_2d), levels=20)
-plt.colorbar(label='Amplitude')
-plt.xlabel('X position (m)')
-plt.ylabel('Y position (m)')
-plt.title(f'Mode Shape at {fn_mode} Hz')
-plt.axis('equal')
-plt.show()
-```
-
-## Modal Assurance Criterion (MAC)
-
-Compare mode shapes:
-
-```python
-def calculate_mac(mode1, mode2):
-    """Calculate Modal Assurance Criterion between two mode shapes"""
-    numerator = np.abs(np.dot(mode1.conj(), mode2))**2
-    denominator = np.dot(mode1.conj(), mode1) * np.dot(mode2.conj(), mode2)
-    return numerator / denominator
-
-# Compare two mode shapes
-mac_value = calculate_mac(mode_shape_1, mode_shape_2)
-print(f"MAC value: {mac_value:.4f}")
-
-# MAC close to 1: modes are similar
-# MAC close to 0: modes are different
-```
-
-## Operating Deflection Shapes (ODS)
-
-Visualize vibration at a specific frequency:
-
-```python
-# Calculate transfer functions at multiple points
-tf_list = [...]  # List of TF measurements
-
-# Extract ODS at operating frequency
-f_operating = 120  # Hz
-ods = []
-for tf_data in tf_list:
-    idx = np.argmin(np.abs(tf_data.freq_axis - f_operating))
-    ods.append(tf_data.tf_data[idx, 0])
-ods = np.array(ods)
-
-# Animate ODS
-plt.figure()
-for phase in np.linspace(0, 2*np.pi, 50):
-    ods_instant = np.real(ods * np.exp(1j*phase))
-    plt.clf()
-    plt.plot(x_positions, ods_instant, 'o-')
-    plt.ylim([-np.max(np.abs(ods)), np.max(np.abs(ods))])
-    plt.pause(0.05)
-```
+Mode-shape extraction, the Modal Assurance Criterion (MAC), and
+Operating Deflection Shape (ODS) plotting are common next steps after
+SDOF fitting. pydvma doesn't ship those as helpers yet — they're on
+the roadmap (see `TODO.md`: "mode-shape plotter", "MAC helper", "ODS
+helper"). Starter recipes that operate on `TfData` / `ModalData`
+output live in `dev/mode-shape-sketches.md`; they're suitable as a
+basis when these are built up into proper APIs.
 
 ## Experimental Modal Analysis Workflow
 

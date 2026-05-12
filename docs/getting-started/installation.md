@@ -66,11 +66,16 @@ Replace `C:\path\to\your\folder` with the path to the folder where you saved the
 
 ## Optional: National Instruments DAQ Support
 
-For National Instruments hardware (Windows only):
+For National Instruments hardware (Windows or Linux — NI-DAQmx is not
+available on macOS):
 
-1. **Download and install NI-DAQmx driver** (version 17.6 recommended):
+1. **Download and install the NI-DAQmx driver**:
 
    **[Download NI-DAQmx](https://www.ni.com/en/support/downloads/drivers/download.ni-daq-mx.html)**
+
+   Use the latest version that supports your OS. The `nidaqmx` Python
+   wrapper tracks NI-DAQmx ABI changes and will print a clear error
+   on mismatch.
 
 2. **Install the Python bindings**:
 
@@ -78,8 +83,10 @@ For National Instruments hardware (Windows only):
    pip install nidaqmx
    ```
 
-!!! note "Windows Only"
-    National Instruments DAQ support is only available on Windows. Soundcard acquisition works on all platforms.
+!!! note "macOS"
+    NI-DAQmx has no macOS driver, so the NI path is unavailable on
+    Mac. Soundcard acquisition still works on all platforms; analysis
+    functions are pure-Python and run anywhere.
 
 ## Verifying Installation
 
