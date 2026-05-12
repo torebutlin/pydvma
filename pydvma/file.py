@@ -8,9 +8,10 @@ Created on Mon Aug 27 14:32:35 2018
 import os.path
 import numpy as np
 import scipy.io as io
-import pyqtgraph as pg
-from qtpy import QtWidgets
-from qtpy.QtWidgets import QFileDialog
+# `QFileDialog` (and via qtpy, the whole Qt binding) is only needed
+# when a save/load function is called with `filename=None` and has to
+# prompt the user. Deferring the import means analysis-only / CLI
+# callers that always pass `filename=...` never pay the Qt load cost.
 from . import datastructure
 from . import options
 
@@ -20,13 +21,8 @@ def load_data(parent=None, filename=None):
     Loads dataset from filename, or displays a dialog if no argument provided.
     '''
     if filename is None:
-        # wid = QtWidgets.QWidget()
+        from qtpy.QtWidgets import QFileDialog
         filename, _ = QFileDialog.getOpenFileName(parent, 'Open data file', '', '*.npy *.mat')
-        
-        # file_dialog = QFileDialog(parent, 'Open data file', '', '*.npy')
-        # file_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
-        # file_dialog.exec()
-        # filename = file_dialog.selectedFiles()
 
         if not filename:
             return None
@@ -63,6 +59,7 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
 
     # If filename not specified, provide dialog
     if filename is None:
+        from qtpy.QtWidgets import QFileDialog
         filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.npy')
         if not filename:
             # No filename chosen, give up on saving
@@ -110,6 +107,7 @@ def save_fig(plot, parent=None, figsize=None, filename=None, overwrite_without_p
 
     # If filename not specified, provide dialog
     if filename is None:
+        from qtpy.QtWidgets import QFileDialog
         filename, _ = QFileDialog.getSaveFileName(parent, 'Save figure', '')
         if not filename:
             # No filename chosen, give up on saving
@@ -259,6 +257,7 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
 
     # If filename not specified, provide dialog
     if filename is None:
+        from qtpy.QtWidgets import QFileDialog
         filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.mat')
         if not filename:
             # No filename chosen, give up on saving
@@ -419,6 +418,7 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
 
     # If filename not specified, provide dialog
     if filename is None:
+        from qtpy.QtWidgets import QFileDialog
         filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.mat')
         if not filename:
             # No filename chosen, give up on saving
@@ -487,6 +487,7 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
 
     # If filename not specified, provide dialog
     if filename is None:
+        from qtpy.QtWidgets import QFileDialog
         filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.csv')
         if not filename:
             # No filename chosen, give up on saving

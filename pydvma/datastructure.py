@@ -7,8 +7,12 @@ Created on Mon Aug 27 17:08:42 2018
 
 from . import analysis
 from . import file
-from . import plotting
 from . import modal
+
+# `plotting` pulls qtpy + pyqtgraph + the matplotlib Qt5Agg backend
+# (~0.7 s on a Mac). Only the four `DataSet.plot_*_data` methods need
+# it; defer the import to each call site so analysis-only / CLI users
+# don't pay the cost.
 
 import numpy as np
 import datetime
@@ -307,24 +311,28 @@ class DataSet():
         return savename
     
     def plot_time_data(self,sets='all',channels='all'):
+        from . import plotting
         global pt
         pt = plotting.PlotData(window_title='Time Data')
         pt.update(self.time_data_list,sets=sets,channels=channels)
         return pt
-        
+
     def plot_freq_data(self,sets='all',channels='all'):
+        from . import plotting
         global pf
         pf = plotting.PlotData(window_title='Frequency Data')
         pf.update(self.freq_data_list,sets=sets,channels=channels)
         return pf
-        
+
     def plot_tf_data(self,sets='all',channels='all'):
+        from . import plotting
         global ptf
         ptf = plotting.PlotData(window_title='Transfer Function Data')
         ptf.update(self.tf_data_list,sets=sets,channels=channels)
         return ptf
-    
+
     def plot_sono_data(self,n_set=0, n_chan=0, db_range=60):
+        from . import plotting
         global ptf
         ptf = plotting.PlotData(window_title='Sonogram Data')
         ptf.update_sonogram(self.sono_data_list,n_set=n_set,n_chan=n_chan, db_range=db_range)
