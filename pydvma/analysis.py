@@ -31,10 +31,14 @@ def calculate_fft(time_data,time_range=None,window=None):
     if time_range is None:
         ### use all data
         time_range_copy = time_data.time_axis[[0,-1]]
-        
+
     elif time_range.__class__.__name__ == 'PlotData':
         time_range_copy=time_range.ax.get_xbound()
-        
+
+    else:
+        # Plain list / ndarray of [t_start, t_stop]
+        time_range_copy = time_range
+
     settings = copy.copy(time_data.settings)
     settings.window = window
     settings.time_range = time_range_copy
@@ -169,28 +173,38 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
 
 def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_frames=1, overlap=0.5):
     '''
+    Compute the full cross-spectrum matrix and coherence matrix of a
+    multi-channel `TimeData` block using Welch's method.
+
+    Equivalent to looping ``scipy.signal.csd`` (with ``scaling='spectrum'``)
+    and ``scipy.signal.coherence`` over every channel pair, but vectorised:
+    each segment is FFT'd once across all channels, and the cross-spectrum
+    matrix is formed as a tensor outer product ``conj(X[:,f,i]) * X[:,f,j]``
+    averaged over segments. Output is byte-equivalent to the scipy reference
+    to within FFT round-off.
+
     Args:
         time_data (<TimeData> object): time series data
         time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
-        window (None or str): apply filter to data before fft or not
+        window (None or str): window function name; None defaults to 'boxcar'
         N_frames (int): number of frames to average over
         overlap (float): frame overlap fraction between 0 and 1
     '''
     # TODO iterate over list of timedata... but need new dataset type?
-    
-    if window==None:
-        window='boxcar'
-        
+
+    if window is None:
+        window = 'boxcar'
+
     if time_data.__class__.__name__ != 'TimeData':
         raise Exception('Input data needs to be single <TimeData> object')
 
     if time_range is None:
         ### use all data
         time_range = time_data.time_axis[[0,-1]]
-        
+
     elif time_range.__class__.__name__ == 'PlotData':
         time_range=time_range.ax.get_xbound()
-        
+
     settings = copy.copy(time_data.settings)
     settings.window = window
     settings.time_range = time_range
@@ -202,33 +216,55 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     s2 = time_data.time_axis <= time_range[1]
     selection = s1 & s2
     data_selected = time_data.time_data[selection,:]
-    #time_selected = timedata.time_axis[selection]
-    
-    N_samples = len(data_selected[:,0])
-    nperseg = int(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
-    freqlength = len(np.fft.rfftfreq(nperseg))
-    
 
-    noverlap = np.ceil(overlap*nperseg)
-    
-    N_chans = len(time_data.time_data[0,:])
-    Pxy = np.zeros([N_chans,N_chans,freqlength],dtype=complex)
-    Cxy = np.zeros([N_chans,N_chans,freqlength])
-    for nx in np.arange(N_chans):
-        for ny in np.arange(N_chans):
-            if nx > ny:
-                Pxy[nx,ny,:] = np.conjugate(Pxy[ny,nx,:])
-                Cxy[nx,ny,:] = Cxy[ny,nx,:]
-            else:
-                x = data_selected[:,nx]
-                y = data_selected[:,ny]
-                f,P = signal.csd(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap,scaling='spectrum')
-                f,C = signal.coherence(x,y,settings.fs,window=window, nperseg=nperseg, noverlap=noverlap)
-                Pxy[nx,ny,:] = P
-                Cxy[nx,ny,:] = C
-            
+    N_samples, N_chans = data_selected.shape
+    nperseg = int(np.ceil(N_samples / (N_frames+1) / (1-overlap)))
+    noverlap = int(np.ceil(overlap*nperseg))
+    step = nperseg - noverlap
+    # scipy._spectral_helper uses (N_samples - noverlap) // step segments.
+    N_seg = max(1, (N_samples - noverlap) // step)
+    fs = time_data.settings.fs
+
+    win = signal.windows.get_window(window, nperseg)
+
+    # Build segments with the FFT axis last and contiguous, matching
+    # scipy's `_fft_helper` layout. This is important: numpy's pairwise
+    # summation block order depends on memory layout, and detrending a
+    # non-contiguous axis subtly changes the per-segment residual at the
+    # DC bin (~1e-17 in the mean → O(1) noise in coherence at DC).
+    # Output shape: (N_chans, N_seg, nperseg).
+    data_T = np.ascontiguousarray(data_selected.T)
+    sv = np.lib.stride_tricks.sliding_window_view(
+        data_T, window_shape=nperseg, axis=-1
+    )[..., :N_seg * step:step, :]
+    segs = signal.detrend(sv, axis=-1, type='constant')
+    segs *= win
+
+    # (N_chans, N_seg, N_freq)
+    X = np.fft.rfft(segs, axis=-1)
+
+    # Cross-spectrum: Pxy[i, j, f] = mean_seg conj(X[i,seg,f]) * X[j,seg,f]
+    # matches scipy.signal.csd(x=channel_i, y=channel_j) convention.
+    Pxy = np.einsum('isf,jsf->ijf', X.conj(), X) / N_seg
+
+    # Spectrum scaling and one-sided correction.
+    Pxy *= 1.0 / (win.sum() ** 2)
+    if nperseg % 2 == 0:
+        Pxy[:, :, 1:-1] *= 2.0
+    else:
+        Pxy[:, :, 1:] *= 2.0
+
+    # Coherence Cxy[i,j,f] = |Pxy[i,j,f]|^2 / (Pxx[i,i,f] * Pxx[j,j,f]).
+    # The spectrum-vs-density scaling and the one-sided 2x factor cancel,
+    # so this is identical to scipy.signal.coherence's output.
+    Pxx_diag = np.real(np.diagonal(Pxy, axis1=0, axis2=1)).T   # (N_chans, N_freq)
+    Cxy = (np.abs(Pxy) ** 2 /
+           (Pxx_diag[:, None, :] * Pxx_diag[None, :, :]))
+
+    f = np.fft.rfftfreq(nperseg, 1.0 / fs)
+
     cross_spec_data = datastructure.CrossSpecData(f,Pxy,Cxy,settings,id_link=time_data.unique_id,test_name=time_data.test_name)
-    
+
     return cross_spec_data
 
 
