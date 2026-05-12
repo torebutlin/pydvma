@@ -543,6 +543,34 @@ class MetaDataList(list):
 
         
 class TimeData():
+    '''One block of acquired time-series data plus its acquisition metadata.
+
+    Held inside a `DataSet.time_data_list`. Produced by `log_data`,
+    by the test-data factories in `testdata`, and on import from
+    Matlab. The numeric content is **in volts** (see "Voltage-Based
+    I/O" in the user-guide acquisition page); apply
+    `channel_cal_factors` to convert to engineering units at display
+    or fit time. `analysis.calculate_*` functions copy `units` and
+    `channel_cal_factors` onto their derived FreqData / TfData /
+    CrossSpecData / SonoData outputs.
+
+    Attributes:
+        time_axis (np.ndarray): 1D sample times in seconds.
+        time_data (np.ndarray): Shape ``(n_samples, n_channels)`` voltage samples.
+        settings (MySettings): Snapshot of the acquisition configuration.
+        timestamp (datetime.datetime): Capture start time.
+        timestring (str): Filesystem-safe rendering of `timestamp`.
+        units (list[str] or None): Engineering units per channel
+            (e.g. ``['N', 'm/s', 'g']``). None if unset.
+        channel_cal_factors (np.ndarray): Per-channel multipliers from
+            volts to engineering units. Defaults to all-ones.
+        id_link: Reference to a source TimeData (used when this object
+            is derived rather than freshly acquired).
+        test_name (str or None): Free-form label, displayed in plots.
+        unique_id (uuid.UUID): Generated at construction; used by derived
+            objects to link back to their source via `id_link`.
+    '''
+
     def __init__(self,time_axis,time_data,settings,timestamp=None,timestring=None,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         
         time_data = reshape_arrays(time_data)
@@ -572,6 +600,29 @@ class TimeData():
 
         
 class FreqData():
+    '''One-sided complex frequency spectrum of a `TimeData` capture.
+
+    Produced by `analysis.calculate_fft`. The spectrum is the raw
+    `np.fft.rfft` of the (optionally windowed) time data — i.e. it is
+    **not** scaled to a PSD or amplitude spectrum; consumers that need
+    PSD should square the magnitude themselves. `units` and
+    `channel_cal_factors` are copied verbatim from the source TimeData.
+
+    Attributes:
+        freq_axis (np.ndarray): Frequency bins in Hz (length ``N//2+1``).
+        freq_data (np.ndarray): Shape ``(n_freq, n_channels)`` complex
+            spectrum, one column per channel.
+        settings (MySettings): Snapshot of the analysis configuration
+            (includes the window choice and the time range that was used).
+        units (list[str] or None): Engineering units per channel.
+        channel_cal_factors (np.ndarray): Per-channel multipliers from
+            volts to engineering units; applied at display time.
+        id_link (uuid.UUID): `unique_id` of the source TimeData.
+        test_name (str or None): Free-form label.
+        timestamp (datetime.datetime): When this FreqData was constructed.
+        timestring (str): Filesystem-safe rendering of `timestamp`.
+    '''
+
     def __init__(self,freq_axis,freq_data,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         
         freq_data = reshape_arrays(freq_data)
@@ -594,6 +645,32 @@ class FreqData():
     
     
 class CrossSpecData():
+    '''Full cross-spectrum matrix Pxy[i,j,f] and coherence matrix Cxy[i,j,f].
+
+    Produced by `analysis.calculate_cross_spectrum_matrix` (single
+    TimeData) or `analysis.calculate_cross_spectra_averaged` (ensemble
+    TimeDataList). The diagonal `Pxy[i, i, :]` is the per-channel
+    auto-spectrum (= scipy.signal.welch with ``scaling='spectrum'``);
+    off-diagonal `Pxy[i, j, :]` matches scipy.signal.csd with the same
+    settings. Pxy is Hermitian — `Pxy[j, i, :] = conj(Pxy[i, j, :])`.
+
+    Attributes:
+        freq_axis (np.ndarray): One-sided frequency bins in Hz.
+        Pxy (np.ndarray): Shape ``(n_channels, n_channels, n_freq)``,
+            complex. Cross-spectrum matrix.
+        Cxy (np.ndarray): Same shape, real, in [0, 1]. Coherence matrix.
+        settings (MySettings): Includes `window`, `time_range`,
+            `N_frames`, `overlap` actually used.
+        units (list[str] or None): Engineering units per channel.
+        channel_cal_factors (np.ndarray): Per-channel multipliers from
+            volts to engineering units.
+        id_link: `unique_id` of the source TimeData (or list of
+            ids when averaged across a TimeDataList).
+        test_name (str or None): Free-form label.
+        timestamp (datetime.datetime): When constructed.
+        timestring (str): Filesystem-safe rendering of `timestamp`.
+    '''
+
     def __init__(self,freq_axis,Pxy,Cxy,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         
         self.freq_axis = freq_axis
@@ -613,6 +690,40 @@ class CrossSpecData():
     
         
 class TfData():
+    '''Transfer function H(f) from one input channel to one or more outputs.
+
+    Produced by `analysis.calculate_tf` (single TimeData) or
+    `analysis.calculate_tf_averaged` (ensemble TimeDataList). The
+    convention is `Pxy[in, out] / Pxy[in, in]` per output channel;
+    `tf_coherence` carries the corresponding coherence.
+
+    Calibration: `channel_cal_factors[k]` holds the **ratio**
+    ``cal[out_k] / cal[in]`` — i.e. multiplying `tf_data[:, k] *
+    channel_cal_factors[k]` at display time gives the TF in
+    engineering units. Units are constructed as
+    ``"<out_unit>/<in_unit>"`` per output channel.
+
+    Attributes:
+        freq_axis (np.ndarray): One-sided frequency bins in Hz.
+        tf_data (np.ndarray): Shape ``(n_freq, n_outputs)``, complex.
+            One column per non-input channel.
+        tf_coherence (np.ndarray): Same shape, real, in [0, 1].
+        settings (MySettings): Snapshot including the chosen `ch_in`
+            and the derived `ch_out_set` (the channel indices in
+            `tf_data`'s second axis).
+        units (list[str] or None): Per-output-channel unit strings
+            (e.g. ``['m/s/N', 'g/N']``).
+        channel_cal_factors (np.ndarray): Per-output cal *ratios*
+            (cal[out] / cal[in]). A manual override here overwrites
+            the inherited ratio.
+        id_link: `unique_id` of the source TimeData (or list when averaged).
+        test_name (str or None): Free-form label.
+        timestamp (datetime.datetime): When constructed.
+        timestring (str): Filesystem-safe rendering of `timestamp`.
+        flag_modal_TF (bool): True after a modal fit has consumed
+            this TfData (avoids double-fitting); used by `modal.py`.
+    '''
+
     def __init__(self,freq_axis,tf_data,tf_coherence,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         
         tf_data = reshape_arrays(tf_data)
@@ -637,6 +748,32 @@ class TfData():
     
     
 class ModalData():
+    '''A set of fitted modes — each row of `M` is one mode's
+    `(fn, zn, an[chan...], pn[chan...], rk[chan...], rm[chan...])`
+    parameter vector as produced by
+    `modal.modal_fit_all_channels`.
+
+    Use `add_mode` to append further modes (e.g. across separate
+    frequency-band fits); rows are kept sorted by `fn`. After any
+    add/delete, the summary arrays `fn`, `zn`, `an`, `pn` are
+    refreshed and indexable per mode.
+
+    Attributes:
+        M (np.ndarray): Shape ``(n_modes, 2 + 4*n_channels)``. Each row
+            packs ``[fn, zn, an_0..an_C, pn_0..pn_C, rk_0..rk_C,
+            rm_0..rm_C]``.
+        fn (np.ndarray): Per-mode natural frequencies in Hz.
+        zn (np.ndarray): Per-mode damping ratios.
+        an (np.ndarray): Shape ``(n_modes, n_channels)`` modal-constant
+            amplitudes.
+        pn (np.ndarray): Same shape; modal-constant phases in radians.
+        channels (int): Number of channels (= `n_channels` above).
+        settings (MySettings): Snapshot including the source TF's settings.
+        units: Engineering units (passed through from source).
+        id_link: `unique_id`(s) of the TFs that produced these modes.
+        test_name (str or None): Free-form label.
+    '''
+
     def __init__(self,xn=None,settings=None,units=None,id_link=None,test_name=None):
         
         self.M = []
@@ -708,6 +845,32 @@ class ModalData():
     
         
 class SonoData():
+    '''Short-time-FFT spectrogram (sonogram) of a multi-channel `TimeData`.
+
+    Produced by `analysis.calculate_sonogram`. Each frame is a windowed
+    FFT of a `nperseg`-sample segment of the source data; segments are
+    overlapped by `noverlap` and the resulting matrix lets you see how
+    spectral content evolves over time. Used by
+    `analysis.calculate_damping_from_sono` to extract per-mode damping
+    from free-decay measurements.
+
+    Attributes:
+        time_axis (np.ndarray): Frame midpoints in seconds.
+        freq_axis (np.ndarray): One-sided frequency bins in Hz.
+        sono_data (np.ndarray): Shape ``(n_freq, n_frames, n_channels)``,
+            complex. Magnitude-squared gives a per-bin power spectrogram.
+        settings (MySettings): Snapshot including `pretrig_samples`
+            (used by `calculate_damping_from_sono` to pick the
+            free-decay start time).
+        units (list[str] or None): Engineering units per channel.
+        channel_cal_factors (np.ndarray): Per-channel multipliers from
+            volts to engineering units.
+        id_link: `unique_id` of the source TimeData.
+        test_name (str or None): Free-form label.
+        timestamp (datetime.datetime): When constructed.
+        timestring (str): Filesystem-safe rendering of `timestamp`.
+    '''
+
     def __init__(self,time_axis,freq_axis,sono_data,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
         self.time_axis = time_axis
         self.freq_axis = freq_axis

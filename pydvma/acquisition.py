@@ -390,7 +390,37 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
 
 
 def stream_snapshot(rec):
-    
+    '''Capture the live oscilloscope buffer as a `TimeData`.
+
+    Unlike `log_data`, which blocks for `stored_time` seconds and
+    returns a fresh capture, this is a non-blocking snapshot of the
+    oscilloscope-side circular buffer (`osc_time_data`) — i.e. the
+    most recent `num_chunks * chunk_size` samples already in memory.
+    Useful for "what is the stream doing right now?" diagnostics from
+    a notebook while a stream is running.
+
+    Parameters
+    ----------
+    rec : Recorder-like
+        Retained for backward compatibility; the actual snapshot is
+        always taken from the module-level `streams.REC`. Callers can
+        pass any value (typically `streams.REC` itself).
+
+    Returns
+    -------
+    TimeData
+        A single `TimeData` instance with `test_name='stream_snapshot'`,
+        carrying the oscilloscope axis and the live buffer. No
+        `channel_cal_factors` or `units` are attached (this is meant
+        as a quick-look tool, not a calibrated capture).
+
+    Notes
+    -----
+    Requires a live stream: call `streams.start_stream(settings)`
+    first, or use a function like `log_data` that does so internally.
+    On the soundcard path the buffer holds voltages scaled by
+    `settings.VmaxSC`; on the NI path it holds raw volts.
+    '''
     time_data_copy = np.copy(streams.REC.osc_time_data)
     time_axis_copy = np.copy(streams.REC.osc_time_axis)
     
