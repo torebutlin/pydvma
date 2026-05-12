@@ -238,7 +238,12 @@ class TestPickHelpers:
 
 @pytest.fixture
 def patch_enumerate(monkeypatch):
-    """Patch _ni_backend.enumerate_devices via sys.modules."""
+    """Patch _ni_backend.enumerate_devices via sys.modules.
+
+    Also ensures `_specs.nidaqmx` is truthy so the early
+    "nidaqmx is not installed" guard in `suggest_ni_settings` doesn't
+    short-circuit the test on Mac (where nidaqmx isn't available).
+    """
     import sys
     # Create a minimal fake _ni_backend module that lives inside a fake
     # `pydvma` package so the `from . import _ni_backend` inside
@@ -254,6 +259,7 @@ def patch_enumerate(monkeypatch):
     sys.modules['pydvma'] = fake_pydvma_pkg
     sys.modules['pydvma._ni_backend'] = fake_ni_backend
     sys.modules['pydvma._ni_device_specs'] = _specs
+    monkeypatch.setattr(_specs, 'nidaqmx', object())
     yield fake_ni_backend
     for name in ('pydvma', 'pydvma._ni_backend', 'pydvma._ni_device_specs'):
         sys.modules.pop(name, None)
