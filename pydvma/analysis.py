@@ -59,9 +59,14 @@ def calculate_fft(time_data,time_range=None,window=None):
         
     fdata = np.fft.rfft(data_selected,axis=0)
     faxis = np.fft.rfftfreq(N,1/time_data.settings.fs)
-    
-    freq_data = datastructure.FreqData(faxis,fdata,settings,id_link=time_data.unique_id,test_name=time_data.test_name)
-    
+
+    freq_data = datastructure.FreqData(
+        faxis, fdata, settings,
+        channel_cal_factors=np.asarray(time_data.channel_cal_factors, dtype=float).copy(),
+        units=time_data.units,
+        id_link=time_data.unique_id, test_name=time_data.test_name,
+    )
+
     return freq_data
 
 def multiply_by_power_of_iw(data,power,channel_list):
@@ -263,7 +268,12 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
 
     f = np.fft.rfftfreq(nperseg, 1.0 / fs)
 
-    cross_spec_data = datastructure.CrossSpecData(f,Pxy,Cxy,settings,id_link=time_data.unique_id,test_name=time_data.test_name)
+    cross_spec_data = datastructure.CrossSpecData(
+        f, Pxy, Cxy, settings,
+        channel_cal_factors=np.asarray(time_data.channel_cal_factors, dtype=float).copy(),
+        units=time_data.units,
+        id_link=time_data.unique_id, test_name=time_data.test_name,
+    )
 
     return cross_spec_data
 
@@ -310,7 +320,12 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
             Cxy[ch_in,ch_out,:] = np.abs(Pxy_av[ch_in,ch_out,:])**2 / (np.abs(Pxy_av[ch_in,ch_in,:]) * np.abs(Pxy_av[ch_out,ch_out,:]))
     
     
-    cross_spec_data_av = datastructure.CrossSpecData(cross_spec_data.freq_axis,Pxy_av,Cxy,settings,id_link=id_link_list,test_name=time_data_list[0].test_name)
+    cross_spec_data_av = datastructure.CrossSpecData(
+        cross_spec_data.freq_axis, Pxy_av, Cxy, settings,
+        channel_cal_factors=np.asarray(time_data_list[0].channel_cal_factors, dtype=float).copy(),
+        units=time_data_list[0].units,
+        id_link=id_link_list, test_name=time_data_list[0].test_name,
+    )
 
     return cross_spec_data_av
 
@@ -353,11 +368,41 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
         
     settings.ch_in = ch_in
     settings.ch_out_set = ch_out_set
-    
-    tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=time_data.unique_id,test_name=time_data.test_name)
-    
+
+    # TF inherits the calibration *ratio*: a calibrated input x_phys =
+    # cal_in * x_raw and output y_phys = cal_out * y_raw give a calibrated
+    # TF of (cal_out / cal_in) * (Y_raw / X_raw). So the stored per-output
+    # cal_factor is cal[ch_out] / cal[ch_in]. Consumers (plotting.py,
+    # modal.py) multiply tf_data by these to get the calibrated TF.
+    src_cal = np.asarray(time_data.channel_cal_factors, dtype=float)
+    tf_cal = src_cal[ch_out_set] / src_cal[ch_in]
+
+    # Units of the TF are out/in by convention. We carry both through so
+    # downstream code (or the user) can recover the ratio.
+    tf_units = _tf_units_from_source(time_data.units, ch_in, ch_out_set)
+
+    tfdata = datastructure.TfData(
+        f, tf_data, tf_coherence, settings,
+        channel_cal_factors=tf_cal,
+        units=tf_units,
+        id_link=time_data.unique_id, test_name=time_data.test_name,
+    )
+
     return tfdata
-    
+
+
+def _tf_units_from_source(src_units, ch_in, ch_out_set):
+    '''Build the TF units list as "<out_unit>/<in_unit>" per output
+    channel, or return None if the source units are not set. Safe against
+    short/missing entries — returns None on any indexing trouble.'''
+    if src_units is None:
+        return None
+    try:
+        in_unit = src_units[ch_in]
+        return ['{}/{}'.format(src_units[k], in_unit) for k in ch_out_set]
+    except (IndexError, TypeError):
+        return None
+
 
 def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None):
     '''
@@ -410,10 +455,18 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
     settings.time_range = time_range
     settings.ch_in = ch_in
     settings.ch_out_set = ch_out_set
-    
-    
-    tfdata = datastructure.TfData(f,tf_data,tf_coherence,settings,id_link=id_link_list,test_name=time_data_list[0].test_name)
-    
+
+    src_cal = np.asarray(time_data_list[0].channel_cal_factors, dtype=float)
+    tf_cal = src_cal[ch_out_set] / src_cal[ch_in]
+    tf_units = _tf_units_from_source(time_data_list[0].units, ch_in, ch_out_set)
+
+    tfdata = datastructure.TfData(
+        f, tf_data, tf_coherence, settings,
+        channel_cal_factors=tf_cal,
+        units=tf_units,
+        id_link=id_link_list, test_name=time_data_list[0].test_name,
+    )
+
     return tfdata
 
 
@@ -489,8 +542,13 @@ def calculate_sonogram(time_data, nperseg=None, noverlap=None):
     # put channel axis at end
     S_all_chans = np.swapaxes(S,1,2)
     
-    sono_data = datastructure.SonoData(t,f,S_all_chans,time_data.settings,id_link=time_data.id_link,test_name=time_data.test_name)
-    
+    sono_data = datastructure.SonoData(
+        t, f, S_all_chans, time_data.settings,
+        channel_cal_factors=np.asarray(time_data.channel_cal_factors, dtype=float).copy(),
+        units=time_data.units,
+        id_link=time_data.id_link, test_name=time_data.test_name,
+    )
+
     return sono_data
 
 #%% CWT

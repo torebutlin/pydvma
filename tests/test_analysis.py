@@ -421,3 +421,151 @@ class TestCalculateTf:
     def test_rejects_non_timedata(self):
         with pytest.raises(Exception, match='TimeData'):
             analysis.calculate_tf(np.zeros((10, 2)))
+
+
+# ---------- channel_cal_factors / units propagation ----------
+
+def _make_time_data_with_cal(time_data_array, fs, cal_factors, units=None):
+    """TimeData with non-default cal factors and units."""
+    settings = options.MySettings(fs=fs, channels=time_data_array.shape[1])
+    time_axis = np.arange(time_data_array.shape[0]) / fs
+    return datastructure.TimeData(
+        time_axis, time_data_array, settings,
+        channel_cal_factors=np.asarray(cal_factors, dtype=float),
+        units=units, test_name='cal',
+    )
+
+
+class TestCalibrationPropagation:
+    """Pin the propagation of `channel_cal_factors` and `units` through
+    every `analysis.calculate_*` function. Before this work, all of them
+    silently dropped the source TimeData's cal factors and units."""
+
+    def test_fft_propagates_cal_and_units(self):
+        fs, N = 1000, 256
+        rng = np.random.default_rng(0)
+        data = rng.standard_normal((N, 3))
+        td = _make_time_data_with_cal(
+            data, fs, cal_factors=[2.5, 0.1, 7.0], units=['N', 'm/s', 'V'],
+        )
+        fd = analysis.calculate_fft(td)
+        np.testing.assert_array_equal(fd.channel_cal_factors, [2.5, 0.1, 7.0])
+        assert fd.units == ['N', 'm/s', 'V']
+
+    def test_fft_default_cal_unchanged(self):
+        """Regression: a TimeData with all-ones cal still produces a
+        FreqData with all-ones cal (no behavior change vs old code)."""
+        fs, N = 1000, 256
+        rng = np.random.default_rng(0)
+        td = _make_time_data(rng.standard_normal((N, 2)), fs)
+        fd = analysis.calculate_fft(td)
+        np.testing.assert_array_equal(fd.channel_cal_factors, [1.0, 1.0])
+
+    def test_cross_spectrum_propagates_cal_and_units(self):
+        fs, N = 1000, 1024
+        rng = np.random.default_rng(1)
+        data = rng.standard_normal((N, 3))
+        td = _make_time_data_with_cal(
+            data, fs, cal_factors=[1.5, 0.5, 4.0], units=['N', 'm/s', 'V'],
+        )
+        csd = analysis.calculate_cross_spectrum_matrix(td, N_frames=2)
+        np.testing.assert_array_equal(csd.channel_cal_factors, [1.5, 0.5, 4.0])
+        assert csd.units == ['N', 'm/s', 'V']
+
+    def test_cross_spectra_averaged_propagates_cal(self):
+        fs, N = 1000, 1024
+        rng = np.random.default_rng(2)
+        tdl = datastructure.TimeDataList()
+        for k in range(3):
+            tdl.append(_make_time_data_with_cal(
+                rng.standard_normal((N, 2)), fs,
+                cal_factors=[3.0, 0.25], units=['N', 'm/s'],
+            ))
+        avg = analysis.calculate_cross_spectra_averaged(tdl)
+        np.testing.assert_array_equal(avg.channel_cal_factors, [3.0, 0.25])
+        assert avg.units == ['N', 'm/s']
+
+    def test_tf_cal_factors_are_out_over_in_ratio(self):
+        """The headline behaviour: TF inherits the calibration *ratio*
+        cal[ch_out] / cal[ch_in] per output channel."""
+        fs, N = 1000, 1024
+        rng = np.random.default_rng(3)
+        data = rng.standard_normal((N, 4))
+        cal = [2.0, 10.0, 0.5, 8.0]
+        td = _make_time_data_with_cal(
+            data, fs, cal_factors=cal, units=['N', 'm/s', 'g', 'V'],
+        )
+        # ch_in = 1 → ch_out_set = [0, 2, 3]
+        tf = analysis.calculate_tf(td, ch_in=1, N_frames=2)
+        expected = np.array([cal[0] / cal[1], cal[2] / cal[1], cal[3] / cal[1]])
+        np.testing.assert_allclose(tf.channel_cal_factors, expected, rtol=1e-12)
+        assert tf.units == ['N/m/s', 'g/m/s', 'V/m/s']
+
+    def test_tf_with_unit_cal_stays_unit(self):
+        """Regression: when source cal is all ones, TF ratio is also all ones."""
+        fs, N = 1000, 1024
+        rng = np.random.default_rng(4)
+        td = _make_time_data(rng.standard_normal((N, 3)), fs)
+        tf = analysis.calculate_tf(td, ch_in=0, N_frames=2)
+        np.testing.assert_array_equal(tf.channel_cal_factors, [1.0, 1.0])
+
+    def test_tf_averaged_uses_first_ensemble_cal(self):
+        fs, N = 1000, 1024
+        rng = np.random.default_rng(5)
+        tdl = datastructure.TimeDataList()
+        for k in range(3):
+            tdl.append(_make_time_data_with_cal(
+                rng.standard_normal((N, 3)), fs,
+                cal_factors=[1.0, 4.0, 2.0], units=['N', 'm/s', 'g'],
+            ))
+        tf = analysis.calculate_tf_averaged(tdl, ch_in=0)
+        np.testing.assert_allclose(tf.channel_cal_factors, [4.0, 2.0], rtol=1e-12)
+        assert tf.units == ['m/s/N', 'g/N']
+
+    def test_calibrated_tf_is_raw_tf_times_ratio(self):
+        """End-to-end: applying the stored cal ratio to a raw TF gives
+        the same result as running the analysis on already-calibrated
+        time data. This is the convention plotting.py / modal.py rely on."""
+        fs, N = 1000, 2048
+        fir = np.array([0.25, 0.5, 0.25])
+        data = _linear_system_signals(fs, N, fir, seed=0)
+        cal_in, cal_out = 0.5, 7.0
+
+        td_raw = _make_time_data_with_cal(data, fs, cal_factors=[cal_in, cal_out])
+        # Same data but with cal already baked in to the time samples
+        td_baked = _make_time_data_with_cal(
+            data * np.array([cal_in, cal_out]), fs, cal_factors=[1.0, 1.0],
+        )
+
+        tf_raw = analysis.calculate_tf(td_raw, ch_in=0, N_frames=4, window='hann')
+        tf_baked = analysis.calculate_tf(td_baked, ch_in=0, N_frames=4, window='hann')
+
+        calibrated_raw = tf_raw.tf_data[:, 0] * tf_raw.channel_cal_factors[0]
+        # tf_baked.tf_data is already in calibrated values, with cal_factor 1
+        np.testing.assert_allclose(calibrated_raw, tf_baked.tf_data[:, 0],
+                                   rtol=1e-12, atol=1e-12)
+
+    def test_sonogram_propagates_cal_and_units(self):
+        fs, N = 1000, 4096
+        rng = np.random.default_rng(7)
+        data = rng.standard_normal((N, 2))
+        td = _make_time_data_with_cal(
+            data, fs, cal_factors=[3.0, 0.25], units=['N', 'm/s'],
+        )
+        sn = analysis.calculate_sonogram(td, nperseg=256)
+        np.testing.assert_array_equal(sn.channel_cal_factors, [3.0, 0.25])
+        assert sn.units == ['N', 'm/s']
+
+    def test_units_none_does_not_crash_tf(self):
+        """If source TimeData has units=None (the common case from
+        un-annotated acquisitions), the TF should still build, with
+        units=None."""
+        fs, N = 1000, 1024
+        rng = np.random.default_rng(8)
+        td = _make_time_data_with_cal(
+            rng.standard_normal((N, 3)), fs,
+            cal_factors=[1.0, 2.0, 3.0], units=None,
+        )
+        tf = analysis.calculate_tf(td, ch_in=0, N_frames=2)
+        assert tf.units is None
+        np.testing.assert_allclose(tf.channel_cal_factors, [2.0, 3.0])
