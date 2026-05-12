@@ -153,6 +153,83 @@ output = multitone[:, None]
 dataset = dvma.log_data(settings, output=output)
 ```
 
+## Voltage-Based I/O
+
+Since v1.2 both acquired data and generated output are in **volts**
+everywhere — there is no ±1 normalisation step. Time series, FFTs,
+transfer functions, output signals: all in volts (and then in
+engineering units once `channel_cal_factors` is applied for display).
+
+### NI inputs and outputs
+
+* `settings.VmaxNI` (default `5 V`) is the AI task's full-scale range:
+  the recorder is configured with `min_val=-VmaxNI`, `max_val=+VmaxNI`,
+  and DAQmx will reject samples outside that range with error -200077.
+  Pick the smallest range that covers your signal — smaller ranges
+  give better resolution.
+* `settings.output_VmaxNI` (default = `VmaxNI`) is the AO task's full
+  scale. NI 9260, for example, is hard-limited to ±4.24 V; any
+  `signal_generator(amplitude=X)` you ask for above
+  `settings.output_VmaxNI` is clamped automatically and a message
+  prints. `suggest_ni_settings(device_index)` returns safe defaults
+  for the configured device.
+
+### Soundcard inputs and outputs
+
+`sounddevice` itself delivers samples in ±1 normalised float32 — but
+pydvma scales those to volts using a per-instance calibration constant
+so the downstream code only ever sees voltages:
+
+* `settings.VmaxSC` (default `1.0`) is the input-side calibration:
+  the voltage at the jack corresponding to a normalised reading of
+  1.0. Default `1.0` means "treat normalised as volts at unit scale"
+  — identical numeric behaviour to a pre-v1.2 capture. Once you've
+  measured your soundcard's input sensitivity, set this and
+  acquisitions become calibrated.
+* `settings.output_VmaxSC` (default = `VmaxSC`) is the output-side
+  calibration: `output_signal` divides the requested voltage waveform
+  by `output_VmaxSC` to recover the ±1 sounddevice expects.
+
+### IEPE / ICP excitation (NI DSA modules)
+
+The NI 9234 (and other DSA modules with internal excitation) can
+power IEPE/ICP accelerometers directly. Set per-channel current via:
+
+```python
+settings = dvma.MySettings(
+    device_driver='nidaq',
+    channels=4,
+    iepe_excit_current_A=[0.002, 0.002, 0.0, 0.0],  # 2 mA on ai0/ai1
+)
+```
+
+Channels with `> 0` are switched to AC coupling and the recorder
+blocks for ~2 s after task start to let the sensor's DC bias settle
+through the AC-coupling HPF before reading. Subsequent `log_data`
+calls with matching hardware settings reuse the live task and skip
+the warm-up. The 9234 only accepts the discrete values `0.0` and
+`0.002`; other values raise a clear error.
+
+### Clipping detection
+
+`log_data` checks the captured buffer against `0.95 * input_vmax()`
+(where `input_vmax()` returns `VmaxNI` on NI / `VmaxSC` on soundcard)
+and prints a `WARNING: Data may be clipped` message if any sample
+sits within 5 % of the rails. The output-side `signal_generator`
+applies the same kind of safety clamp at `output_vmax()` so any
+hand-rolled waveform you pass via `output=...` is implicitly bounded.
+
+### Quick reference
+
+| Field                    | Path     | Default | What it means                            |
+| ------------------------ | -------- | ------- | ---------------------------------------- |
+| `VmaxNI`                 | input    | `5`     | NI AI full-scale (volts)                 |
+| `VmaxSC`                 | input    | `1.0`   | Soundcard input cal: V at norm = 1       |
+| `output_VmaxNI`          | output   | `VmaxNI`| NI AO full-scale (volts)                 |
+| `output_VmaxSC`          | output   | `VmaxSC`| Soundcard output cal: V at norm = 1      |
+| `channel_sensitivities`  | input    | `1.0`   | V/eu per channel — see below             |
+| `iepe_excit_current_A`   | input    | `0.0`   | IEPE excitation per channel (NI 9234 etc.) |
+
 ## Calibration and Scaling
 
 ### Sensor sensitivity
