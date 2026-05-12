@@ -1071,6 +1071,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="stream_snapshot">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.stream_snapshot--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.stream_snapshot--returns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Returns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.stream_snapshot--notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -1655,6 +1694,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="stream_snapshot">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.stream_snapshot--parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.stream_snapshot--returns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Returns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.acquisition.stream_snapshot--notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -1831,6 +1909,30 @@ output_VmaxSC on the soundcard path). Returns <code>(t, y)</code> where
 </code></pre></div>
 
     <div class="doc doc-contents first">
+
+        <p>Capture the live oscilloscope buffer as a <code>TimeData</code>.</p>
+<p>Unlike <code>log_data</code>, which blocks for <code>stored_time</code> seconds and
+returns a fresh capture, this is a non-blocking snapshot of the
+oscilloscope-side circular buffer (<code>osc_time_data</code>) — i.e. the
+most recent <code>num_chunks * chunk_size</code> samples already in memory.
+Useful for "what is the stream doing right now?" diagnostics from
+a notebook while a stream is running.</p>
+<h5 id="pydvma.acquisition.stream_snapshot--parameters">Parameters<a class="headerlink" href="#pydvma.acquisition.stream_snapshot--parameters" title="Permanent link">&para;</a></h5>
+<p>rec : Recorder-like
+    Retained for backward compatibility; the actual snapshot is
+    always taken from the module-level <code>streams.REC</code>. Callers can
+    pass any value (typically <code>streams.REC</code> itself).</p>
+<h5 id="pydvma.acquisition.stream_snapshot--returns">Returns<a class="headerlink" href="#pydvma.acquisition.stream_snapshot--returns" title="Permanent link">&para;</a></h5>
+<p>TimeData
+    A single <code>TimeData</code> instance with <code>test_name='stream_snapshot'</code>,
+    carrying the oscilloscope axis and the live buffer. No
+    <code>channel_cal_factors</code> or <code>units</code> are attached (this is meant
+    as a quick-look tool, not a calibrated capture).</p>
+<h5 id="pydvma.acquisition.stream_snapshot--notes">Notes<a class="headerlink" href="#pydvma.acquisition.stream_snapshot--notes" title="Permanent link">&para;</a></h5>
+<p>Requires a live stream: call <code>streams.start_stream(settings)</code>
+first, or use a function like <code>log_data</code> that does so internally.
+On the soundcard path the buffer holds voltages scaled by
+<code>settings.VmaxSC</code>; on the NI path it holds raw volts.</p>
 
 
     </div>

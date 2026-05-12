@@ -1748,19 +1748,25 @@
 <p>Alternatively, you can simply run <code>jupyter notebook</code> and navigate to your folder using the Jupyter file browser.</p>
 </div>
 <h2 id="optional-national-instruments-daq-support">Optional: National Instruments DAQ Support<a class="headerlink" href="#optional-national-instruments-daq-support" title="Permanent link">&para;</a></h2>
-<p>For National Instruments hardware (Windows only):</p>
+<p>For National Instruments hardware (Windows or Linux — NI-DAQmx is not
+available on macOS):</p>
 <ol>
-<li><strong>Download and install NI-DAQmx driver</strong> (version 17.6 recommended):</li>
+<li><strong>Download and install the NI-DAQmx driver</strong>:</li>
 </ol>
 <p><strong><a href="https://www.ni.com/en/support/downloads/drivers/download.ni-daq-mx.html">Download NI-DAQmx</a></strong></p>
+<p>Use the latest version that supports your OS. The <code>nidaqmx</code> Python
+   wrapper tracks NI-DAQmx ABI changes and will print a clear error
+   on mismatch.</p>
 <ol>
 <li><strong>Install the Python bindings</strong>:</li>
 </ol>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span>nidaqmx
 </code></pre></div>
 <div class="admonition note">
-<p class="admonition-title">Windows Only</p>
-<p>National Instruments DAQ support is only available on Windows. Soundcard acquisition works on all platforms.</p>
+<p class="admonition-title">macOS</p>
+<p>NI-DAQmx has no macOS driver, so the NI path is unavailable on
+Mac. Soundcard acquisition still works on all platforms; analysis
+functions are pure-Python and run anywhere.</p>
 </div>
 <h2 id="verifying-installation">Verifying Installation<a class="headerlink" href="#verifying-installation" title="Permanent link">&para;</a></h2>
 <p>To verify your installation, open a Python console or Jupyter notebook and try:</p>

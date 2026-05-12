@@ -896,71 +896,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#mode-shape-analysis" class="md-nav__link">
+  <a href="#beyond-sdof-not-yet-built-in" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Mode Shape Analysis
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Mode Shape Analysis">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#extracting-mode-shapes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Extracting Mode Shapes
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#plotting-mode-shapes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Plotting Mode Shapes
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2d-mode-shapes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2D Mode Shapes
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#modal-assurance-criterion-mac" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Modal Assurance Criterion (MAC)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#operating-deflection-shapes-ods" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Operating Deflection Shapes (ODS)
+        Beyond SDOF: not yet built in
       
     </span>
   </a>
@@ -1761,71 +1700,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#mode-shape-analysis" class="md-nav__link">
+  <a href="#beyond-sdof-not-yet-built-in" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Mode Shape Analysis
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Mode Shape Analysis">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#extracting-mode-shapes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Extracting Mode Shapes
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#plotting-mode-shapes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Plotting Mode Shapes
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2d-mode-shapes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2D Mode Shapes
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#modal-assurance-criterion-mac" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Modal Assurance Criterion (MAC)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#operating-deflection-shapes-ods" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Operating Deflection Shapes (ODS)
+        Beyond SDOF: not yet built in
       
     </span>
   </a>
@@ -2038,170 +1916,85 @@
 <a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Damping ratio: </span><span class="si">{</span><span class="n">modal_data</span><span class="o">.</span><span class="n">zn</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 <a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Modal constants: </span><span class="si">{</span><span class="n">modal_data</span><span class="o">.</span><span class="n">an</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="mode-shape-analysis">Mode Shape Analysis<a class="headerlink" href="#mode-shape-analysis" title="Permanent link">&para;</a></h2>
-<h3 id="extracting-mode-shapes">Extracting Mode Shapes<a class="headerlink" href="#extracting-mode-shapes" title="Permanent link">&para;</a></h3>
-<p>From multi-point FRF measurements:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Measure FRFs at multiple locations</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">tf_list</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">TfDataList</span><span class="p">()</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">for</span> <span class="n">location</span> <span class="ow">in</span> <span class="n">measurement_points</span><span class="p">:</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="c1"># Record and calculate TF</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">test_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;point_</span><span class="si">{</span><span class="n">location</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">tf</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">calculate_tf</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ch_in</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="n">tf_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tf</span><span class="p">)</span>
-<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
-<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="c1"># Extract mode shape at natural frequency</span>
-<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="n">fn_mode</span> <span class="o">=</span> <span class="mi">150</span>  <span class="c1"># Hz</span>
-<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="n">mode_shape</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="k">for</span> <span class="n">tf_data</span> <span class="ow">in</span> <span class="n">tf_list</span><span class="p">:</span>
-<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    <span class="c1"># Find index closest to fn_mode</span>
-<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>    <span class="n">idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">tf_data</span><span class="o">.</span><span class="n">freq_axis</span> <span class="o">-</span> <span class="n">fn_mode</span><span class="p">))</span>
-<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>    <span class="c1"># Extract complex amplitude at that frequency</span>
-<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>    <span class="n">mode_shape</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tf_data</span><span class="o">.</span><span class="n">tf_data</span><span class="p">[</span><span class="n">idx</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
-<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>
-<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="n">mode_shape</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">mode_shape</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="plotting-mode-shapes">Plotting Mode Shapes<a class="headerlink" href="#plotting-mode-shapes" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Define geometry (example: beam with measurement points)</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">x_positions</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">])</span>  <span class="c1"># meters</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="c1"># Plot mode shape</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">()</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x_positions</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">mode_shape</span><span class="p">),</span> <span class="s1">&#39;o-&#39;</span><span class="p">)</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s1">&#39;Position (m)&#39;</span><span class="p">)</span>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s1">&#39;Amplitude&#39;</span><span class="p">)</span>
-<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Mode Shape at </span><span class="si">{</span><span class="n">fn_mode</span><span class="si">}</span><span class="s1"> Hz&#39;</span><span class="p">)</span>
-<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="n">plt</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<h3 id="2d-mode-shapes">2D Mode Shapes<a class="headerlink" href="#2d-mode-shapes" title="Permanent link">&para;</a></h3>
-<p>For plate or surface measurements:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Define 2D grid of measurement points</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">x_grid</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">...</span><span class="p">])</span>  <span class="c1"># X coordinates</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">y_grid</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">...</span><span class="p">])</span>  <span class="c1"># Y coordinates</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">mode_shape_2d</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">...</span><span class="p">])</span>  <span class="c1"># Mode shape amplitudes</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># Create contour plot</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="n">plt</span><span class="o">.</span><span class="n">tricontourf</span><span class="p">(</span><span class="n">x_grid</span><span class="p">,</span> <span class="n">y_grid</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">mode_shape_2d</span><span class="p">),</span> <span class="n">levels</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="n">plt</span><span class="o">.</span><span class="n">colorbar</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s1">&#39;Amplitude&#39;</span><span class="p">)</span>
-<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s1">&#39;X position (m)&#39;</span><span class="p">)</span>
-<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s1">&#39;Y position (m)&#39;</span><span class="p">)</span>
-<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Mode Shape at </span><span class="si">{</span><span class="n">fn_mode</span><span class="si">}</span><span class="s1"> Hz&#39;</span><span class="p">)</span>
-<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="n">plt</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s1">&#39;equal&#39;</span><span class="p">)</span>
-<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<h2 id="modal-assurance-criterion-mac">Modal Assurance Criterion (MAC)<a class="headerlink" href="#modal-assurance-criterion-mac" title="Permanent link">&para;</a></h2>
-<p>Compare mode shapes:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">calculate_mac</span><span class="p">(</span><span class="n">mode1</span><span class="p">,</span> <span class="n">mode2</span><span class="p">):</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Calculate Modal Assurance Criterion between two mode shapes&quot;&quot;&quot;</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">numerator</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">mode1</span><span class="o">.</span><span class="n">conj</span><span class="p">(),</span> <span class="n">mode2</span><span class="p">))</span><span class="o">**</span><span class="mi">2</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">denominator</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">mode1</span><span class="o">.</span><span class="n">conj</span><span class="p">(),</span> <span class="n">mode1</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">mode2</span><span class="o">.</span><span class="n">conj</span><span class="p">(),</span> <span class="n">mode2</span><span class="p">)</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="k">return</span> <span class="n">numerator</span> <span class="o">/</span> <span class="n">denominator</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="c1"># Compare two mode shapes</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="n">mac_value</span> <span class="o">=</span> <span class="n">calculate_mac</span><span class="p">(</span><span class="n">mode_shape_1</span><span class="p">,</span> <span class="n">mode_shape_2</span><span class="p">)</span>
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;MAC value: </span><span class="si">{</span><span class="n">mac_value</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
-<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="c1"># MAC close to 1: modes are similar</span>
-<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="c1"># MAC close to 0: modes are different</span>
-</code></pre></div>
-<h2 id="operating-deflection-shapes-ods">Operating Deflection Shapes (ODS)<a class="headerlink" href="#operating-deflection-shapes-ods" title="Permanent link">&para;</a></h2>
-<p>Visualize vibration at a specific frequency:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Calculate transfer functions at multiple points</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">tf_list</span> <span class="o">=</span> <span class="p">[</span><span class="o">...</span><span class="p">]</span>  <span class="c1"># List of TF measurements</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Extract ODS at operating frequency</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">f_operating</span> <span class="o">=</span> <span class="mi">120</span>  <span class="c1"># Hz</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="n">ods</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="k">for</span> <span class="n">tf_data</span> <span class="ow">in</span> <span class="n">tf_list</span><span class="p">:</span>
-<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="n">idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">tf_data</span><span class="o">.</span><span class="n">freq_axis</span> <span class="o">-</span> <span class="n">f_operating</span><span class="p">))</span>
-<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="n">ods</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tf_data</span><span class="o">.</span><span class="n">tf_data</span><span class="p">[</span><span class="n">idx</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
-<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="n">ods</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">ods</span><span class="p">)</span>
-<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>
-<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="c1"># Animate ODS</span>
-<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">()</span>
-<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="k">for</span> <span class="n">phase</span> <span class="ow">in</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="mi">50</span><span class="p">):</span>
-<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>    <span class="n">ods_instant</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">real</span><span class="p">(</span><span class="n">ods</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="mi">1</span><span class="n">j</span><span class="o">*</span><span class="n">phase</span><span class="p">))</span>
-<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>    <span class="n">plt</span><span class="o">.</span><span class="n">clf</span><span class="p">()</span>
-<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>    <span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x_positions</span><span class="p">,</span> <span class="n">ods_instant</span><span class="p">,</span> <span class="s1">&#39;o-&#39;</span><span class="p">)</span>
-<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>    <span class="n">plt</span><span class="o">.</span><span class="n">ylim</span><span class="p">([</span><span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">ods</span><span class="p">)),</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">ods</span><span class="p">))])</span>
-<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>    <span class="n">plt</span><span class="o">.</span><span class="n">pause</span><span class="p">(</span><span class="mf">0.05</span><span class="p">)</span>
-</code></pre></div>
+<h2 id="beyond-sdof-not-yet-built-in">Beyond SDOF: not yet built in<a class="headerlink" href="#beyond-sdof-not-yet-built-in" title="Permanent link">&para;</a></h2>
+<p>Mode-shape extraction, the Modal Assurance Criterion (MAC), and
+Operating Deflection Shape (ODS) plotting are common next steps after
+SDOF fitting. pydvma doesn't ship those as helpers yet — they're on
+the roadmap (see <code>TODO.md</code>: "mode-shape plotter", "MAC helper", "ODS
+helper"). Starter recipes that operate on <code>TfData</code> / <code>ModalData</code>
+output live in <code>dev/mode-shape-sketches.md</code>; they're suitable as a
+basis when these are built up into proper APIs.</p>
 <h2 id="experimental-modal-analysis-workflow">Experimental Modal Analysis Workflow<a class="headerlink" href="#experimental-modal-analysis-workflow" title="Permanent link">&para;</a></h2>
 <h3 id="complete-example">Complete Example<a class="headerlink" href="#complete-example" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pydvma</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dvma</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># 1. Setup</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">()</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="n">settings</span><span class="o">.</span><span class="n">fs</span> <span class="o">=</span> <span class="mi">10000</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="n">settings</span><span class="o">.</span><span class="n">stored_time</span> <span class="o">=</span> <span class="mf">1.0</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="n">settings</span><span class="o">.</span><span class="n">pretrig_samples</span> <span class="o">=</span> <span class="mi">1000</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="n">settings</span><span class="o">.</span><span class="n">channels</span> <span class="o">=</span> <span class="mi">2</span>  <span class="c1"># Force and response</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>
-<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="c1"># 2. Acquire data (multiple impacts)</span>
-<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="n">time_data_list</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">TimeDataList</span><span class="p">()</span>
-<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="n">n_averages</span> <span class="o">=</span> <span class="mi">5</span>
-<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>
-<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_averages</span><span class="p">):</span>
-<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>    <span class="nb">input</span><span class="p">(</span><span class="s2">&quot;Press Enter for next impact...&quot;</span><span class="p">)</span>
-<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">test_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;impact_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>    <span class="n">time_data_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-<a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>
-<a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a><span class="c1"># 3. Calculate averaged FRF</span>
-<a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a><span class="n">tf_data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">calculate_tf_averaged</span><span class="p">(</span><span class="n">time_data_list</span><span class="p">,</span> <span class="n">ch_in</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a>
-<a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a><span class="c1"># 4. Plot FRF and coherence</span>
-<a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a><span class="n">f</span> <span class="o">=</span> <span class="n">tf_data</span><span class="o">.</span><span class="n">freq_axis</span>
-<a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a><span class="n">H</span> <span class="o">=</span> <span class="n">tf_data</span><span class="o">.</span><span class="n">tf_data</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
-<a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a><span class="n">coh</span> <span class="o">=</span> <span class="n">tf_data</span><span class="o">.</span><span class="n">tf_coherence</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
-<a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>
-<a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a><span class="n">fig</span><span class="p">,</span> <span class="p">(</span><span class="n">ax1</span><span class="p">,</span> <span class="n">ax2</span><span class="p">)</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
-<a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>
-<a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a><span class="n">ax1</span><span class="o">.</span><span class="n">semilogy</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">H</span><span class="p">))</span>
-<a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a><span class="n">ax1</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;|H(f)| (m/s²/N)&#39;</span><span class="p">)</span>
-<a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a><span class="n">ax1</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s1">&#39;Frequency Response Function&#39;</span><span class="p">)</span>
-<a id="__codelineno-12-34" name="__codelineno-12-34" href="#__codelineno-12-34"></a><span class="n">ax1</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-12-35" name="__codelineno-12-35" href="#__codelineno-12-35"></a><span class="n">ax1</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">500</span><span class="p">])</span>
-<a id="__codelineno-12-36" name="__codelineno-12-36" href="#__codelineno-12-36"></a>
-<a id="__codelineno-12-37" name="__codelineno-12-37" href="#__codelineno-12-37"></a><span class="n">ax2</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">coh</span><span class="p">)</span>
-<a id="__codelineno-12-38" name="__codelineno-12-38" href="#__codelineno-12-38"></a><span class="n">ax2</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;Frequency (Hz)&#39;</span><span class="p">)</span>
-<a id="__codelineno-12-39" name="__codelineno-12-39" href="#__codelineno-12-39"></a><span class="n">ax2</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Coherence&#39;</span><span class="p">)</span>
-<a id="__codelineno-12-40" name="__codelineno-12-40" href="#__codelineno-12-40"></a><span class="n">ax2</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
-<a id="__codelineno-12-41" name="__codelineno-12-41" href="#__codelineno-12-41"></a><span class="n">ax2</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
-<a id="__codelineno-12-42" name="__codelineno-12-42" href="#__codelineno-12-42"></a><span class="n">ax2</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">500</span><span class="p">])</span>
-<a id="__codelineno-12-43" name="__codelineno-12-43" href="#__codelineno-12-43"></a>
-<a id="__codelineno-12-44" name="__codelineno-12-44" href="#__codelineno-12-44"></a><span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
-<a id="__codelineno-12-45" name="__codelineno-12-45" href="#__codelineno-12-45"></a><span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<a id="__codelineno-12-46" name="__codelineno-12-46" href="#__codelineno-12-46"></a>
-<a id="__codelineno-12-47" name="__codelineno-12-47" href="#__codelineno-12-47"></a><span class="c1"># 5. Identify modes</span>
-<a id="__codelineno-12-48" name="__codelineno-12-48" href="#__codelineno-12-48"></a><span class="kn">from</span><span class="w"> </span><span class="nn">scipy.signal</span><span class="w"> </span><span class="kn">import</span> <span class="n">find_peaks</span>
-<a id="__codelineno-12-49" name="__codelineno-12-49" href="#__codelineno-12-49"></a>
-<a id="__codelineno-12-50" name="__codelineno-12-50" href="#__codelineno-12-50"></a><span class="c1"># Find peaks in FRF</span>
-<a id="__codelineno-12-51" name="__codelineno-12-51" href="#__codelineno-12-51"></a><span class="n">magnitude</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">H</span><span class="p">)</span>
-<a id="__codelineno-12-52" name="__codelineno-12-52" href="#__codelineno-12-52"></a><span class="n">peaks</span><span class="p">,</span> <span class="n">properties</span> <span class="o">=</span> <span class="n">find_peaks</span><span class="p">(</span><span class="n">magnitude</span><span class="p">,</span> <span class="n">height</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">magnitude</span><span class="p">)</span><span class="o">*</span><span class="mf">0.1</span><span class="p">)</span>
-<a id="__codelineno-12-53" name="__codelineno-12-53" href="#__codelineno-12-53"></a>
-<a id="__codelineno-12-54" name="__codelineno-12-54" href="#__codelineno-12-54"></a><span class="n">natural_frequencies</span> <span class="o">=</span> <span class="n">f</span><span class="p">[</span><span class="n">peaks</span><span class="p">]</span>
-<a id="__codelineno-12-55" name="__codelineno-12-55" href="#__codelineno-12-55"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Identified natural frequencies:&quot;</span><span class="p">)</span>
-<a id="__codelineno-12-56" name="__codelineno-12-56" href="#__codelineno-12-56"></a><span class="k">for</span> <span class="n">fn</span> <span class="ow">in</span> <span class="n">natural_frequencies</span><span class="p">:</span>
-<a id="__codelineno-12-57" name="__codelineno-12-57" href="#__codelineno-12-57"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">fn</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Hz&quot;</span><span class="p">)</span>
-<a id="__codelineno-12-58" name="__codelineno-12-58" href="#__codelineno-12-58"></a>
-<a id="__codelineno-12-59" name="__codelineno-12-59" href="#__codelineno-12-59"></a><span class="c1"># 6. Extract damping (from time data)</span>
-<a id="__codelineno-12-60" name="__codelineno-12-60" href="#__codelineno-12-60"></a><span class="n">fn</span><span class="p">,</span> <span class="n">Qn</span><span class="p">,</span> <span class="n">fit_data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">calculate_damping_from_sono</span><span class="p">(</span>
-<a id="__codelineno-12-61" name="__codelineno-12-61" href="#__codelineno-12-61"></a>    <span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
-<a id="__codelineno-12-62" name="__codelineno-12-62" href="#__codelineno-12-62"></a>    <span class="n">n_chan</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-12-63" name="__codelineno-12-63" href="#__codelineno-12-63"></a>    <span class="n">nperseg</span><span class="o">=</span><span class="mi">512</span>
-<a id="__codelineno-12-64" name="__codelineno-12-64" href="#__codelineno-12-64"></a><span class="p">)</span>
-<a id="__codelineno-12-65" name="__codelineno-12-65" href="#__codelineno-12-65"></a>
-<a id="__codelineno-12-66" name="__codelineno-12-66" href="#__codelineno-12-66"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Damping analysis:&quot;</span><span class="p">)</span>
-<a id="__codelineno-12-67" name="__codelineno-12-67" href="#__codelineno-12-67"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">freq</span><span class="p">,</span> <span class="n">Q</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">Qn</span><span class="p">)):</span>
-<a id="__codelineno-12-68" name="__codelineno-12-68" href="#__codelineno-12-68"></a>    <span class="n">zeta</span> <span class="o">=</span> <span class="mi">1</span><span class="o">/</span><span class="p">(</span><span class="mi">2</span><span class="o">*</span><span class="n">Q</span><span class="p">)</span>
-<a id="__codelineno-12-69" name="__codelineno-12-69" href="#__codelineno-12-69"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Mode </span><span class="si">{</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">: f=</span><span class="si">{</span><span class="n">freq</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Hz, ζ=</span><span class="si">{</span><span class="n">zeta</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, Q=</span><span class="si">{</span><span class="n">Q</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pydvma</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dvma</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># 1. Setup</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">()</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">settings</span><span class="o">.</span><span class="n">fs</span> <span class="o">=</span> <span class="mi">10000</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">settings</span><span class="o">.</span><span class="n">stored_time</span> <span class="o">=</span> <span class="mf">1.0</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="n">settings</span><span class="o">.</span><span class="n">pretrig_samples</span> <span class="o">=</span> <span class="mi">1000</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="n">settings</span><span class="o">.</span><span class="n">channels</span> <span class="o">=</span> <span class="mi">2</span>  <span class="c1"># Force and response</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="c1"># 2. Acquire data (multiple impacts)</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="n">time_data_list</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">TimeDataList</span><span class="p">()</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="n">n_averages</span> <span class="o">=</span> <span class="mi">5</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_averages</span><span class="p">):</span>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>    <span class="nb">input</span><span class="p">(</span><span class="s2">&quot;Press Enter for next impact...&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">test_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;impact_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>    <span class="n">time_data_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a><span class="c1"># 3. Calculate averaged FRF</span>
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a><span class="n">tf_data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">calculate_tf_averaged</span><span class="p">(</span><span class="n">time_data_list</span><span class="p">,</span> <span class="n">ch_in</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>
+<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a><span class="c1"># 4. Plot FRF and coherence</span>
+<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a><span class="n">f</span> <span class="o">=</span> <span class="n">tf_data</span><span class="o">.</span><span class="n">freq_axis</span>
+<a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a><span class="n">H</span> <span class="o">=</span> <span class="n">tf_data</span><span class="o">.</span><span class="n">tf_data</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+<a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a><span class="n">coh</span> <span class="o">=</span> <span class="n">tf_data</span><span class="o">.</span><span class="n">tf_coherence</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+<a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>
+<a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a><span class="n">fig</span><span class="p">,</span> <span class="p">(</span><span class="n">ax1</span><span class="p">,</span> <span class="n">ax2</span><span class="p">)</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
+<a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a>
+<a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a><span class="n">ax1</span><span class="o">.</span><span class="n">semilogy</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">H</span><span class="p">))</span>
+<a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a><span class="n">ax1</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;|H(f)| (m/s²/N)&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a><span class="n">ax1</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s1">&#39;Frequency Response Function&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a><span class="n">ax1</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a><span class="n">ax1</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">500</span><span class="p">])</span>
+<a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a>
+<a id="__codelineno-7-37" name="__codelineno-7-37" href="#__codelineno-7-37"></a><span class="n">ax2</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">coh</span><span class="p">)</span>
+<a id="__codelineno-7-38" name="__codelineno-7-38" href="#__codelineno-7-38"></a><span class="n">ax2</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;Frequency (Hz)&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-39" name="__codelineno-7-39" href="#__codelineno-7-39"></a><span class="n">ax2</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Coherence&#39;</span><span class="p">)</span>
+<a id="__codelineno-7-40" name="__codelineno-7-40" href="#__codelineno-7-40"></a><span class="n">ax2</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
+<a id="__codelineno-7-41" name="__codelineno-7-41" href="#__codelineno-7-41"></a><span class="n">ax2</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-7-42" name="__codelineno-7-42" href="#__codelineno-7-42"></a><span class="n">ax2</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">500</span><span class="p">])</span>
+<a id="__codelineno-7-43" name="__codelineno-7-43" href="#__codelineno-7-43"></a>
+<a id="__codelineno-7-44" name="__codelineno-7-44" href="#__codelineno-7-44"></a><span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<a id="__codelineno-7-45" name="__codelineno-7-45" href="#__codelineno-7-45"></a><span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<a id="__codelineno-7-46" name="__codelineno-7-46" href="#__codelineno-7-46"></a>
+<a id="__codelineno-7-47" name="__codelineno-7-47" href="#__codelineno-7-47"></a><span class="c1"># 5. Identify modes</span>
+<a id="__codelineno-7-48" name="__codelineno-7-48" href="#__codelineno-7-48"></a><span class="kn">from</span><span class="w"> </span><span class="nn">scipy.signal</span><span class="w"> </span><span class="kn">import</span> <span class="n">find_peaks</span>
+<a id="__codelineno-7-49" name="__codelineno-7-49" href="#__codelineno-7-49"></a>
+<a id="__codelineno-7-50" name="__codelineno-7-50" href="#__codelineno-7-50"></a><span class="c1"># Find peaks in FRF</span>
+<a id="__codelineno-7-51" name="__codelineno-7-51" href="#__codelineno-7-51"></a><span class="n">magnitude</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">H</span><span class="p">)</span>
+<a id="__codelineno-7-52" name="__codelineno-7-52" href="#__codelineno-7-52"></a><span class="n">peaks</span><span class="p">,</span> <span class="n">properties</span> <span class="o">=</span> <span class="n">find_peaks</span><span class="p">(</span><span class="n">magnitude</span><span class="p">,</span> <span class="n">height</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">magnitude</span><span class="p">)</span><span class="o">*</span><span class="mf">0.1</span><span class="p">)</span>
+<a id="__codelineno-7-53" name="__codelineno-7-53" href="#__codelineno-7-53"></a>
+<a id="__codelineno-7-54" name="__codelineno-7-54" href="#__codelineno-7-54"></a><span class="n">natural_frequencies</span> <span class="o">=</span> <span class="n">f</span><span class="p">[</span><span class="n">peaks</span><span class="p">]</span>
+<a id="__codelineno-7-55" name="__codelineno-7-55" href="#__codelineno-7-55"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Identified natural frequencies:&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-56" name="__codelineno-7-56" href="#__codelineno-7-56"></a><span class="k">for</span> <span class="n">fn</span> <span class="ow">in</span> <span class="n">natural_frequencies</span><span class="p">:</span>
+<a id="__codelineno-7-57" name="__codelineno-7-57" href="#__codelineno-7-57"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">fn</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Hz&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-58" name="__codelineno-7-58" href="#__codelineno-7-58"></a>
+<a id="__codelineno-7-59" name="__codelineno-7-59" href="#__codelineno-7-59"></a><span class="c1"># 6. Extract damping (from time data)</span>
+<a id="__codelineno-7-60" name="__codelineno-7-60" href="#__codelineno-7-60"></a><span class="n">fn</span><span class="p">,</span> <span class="n">Qn</span><span class="p">,</span> <span class="n">fit_data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">calculate_damping_from_sono</span><span class="p">(</span>
+<a id="__codelineno-7-61" name="__codelineno-7-61" href="#__codelineno-7-61"></a>    <span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+<a id="__codelineno-7-62" name="__codelineno-7-62" href="#__codelineno-7-62"></a>    <span class="n">n_chan</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-7-63" name="__codelineno-7-63" href="#__codelineno-7-63"></a>    <span class="n">nperseg</span><span class="o">=</span><span class="mi">512</span>
+<a id="__codelineno-7-64" name="__codelineno-7-64" href="#__codelineno-7-64"></a><span class="p">)</span>
+<a id="__codelineno-7-65" name="__codelineno-7-65" href="#__codelineno-7-65"></a>
+<a id="__codelineno-7-66" name="__codelineno-7-66" href="#__codelineno-7-66"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Damping analysis:&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-67" name="__codelineno-7-67" href="#__codelineno-7-67"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">freq</span><span class="p">,</span> <span class="n">Q</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">Qn</span><span class="p">)):</span>
+<a id="__codelineno-7-68" name="__codelineno-7-68" href="#__codelineno-7-68"></a>    <span class="n">zeta</span> <span class="o">=</span> <span class="mi">1</span><span class="o">/</span><span class="p">(</span><span class="mi">2</span><span class="o">*</span><span class="n">Q</span><span class="p">)</span>
+<a id="__codelineno-7-69" name="__codelineno-7-69" href="#__codelineno-7-69"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Mode </span><span class="si">{</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">: f=</span><span class="si">{</span><span class="n">freq</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Hz, ζ=</span><span class="si">{</span><span class="n">zeta</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, Q=</span><span class="si">{</span><span class="n">Q</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="references-and-further-reading">References and Further Reading<a class="headerlink" href="#references-and-further-reading" title="Permanent link">&para;</a></h2>
 <ul>

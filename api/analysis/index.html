@@ -2115,6 +2115,14 @@ this expects a Python list of timedata objects.</p>
 
     <div class="doc doc-contents first">
 
+        <p>Compute the full cross-spectrum matrix and coherence matrix of a
+multi-channel <code>TimeData</code> block using Welch's method.</p>
+<p>Equivalent to looping <code>scipy.signal.csd</code> (with <code>scaling='spectrum'</code>)
+and <code>scipy.signal.coherence</code> over every channel pair, but vectorised:
+each segment is FFT'd once across all channels, and the cross-spectrum
+matrix is formed as a tensor outer product <code>conj(X[:,f,i]) * X[:,f,j]</code>
+averaged over segments. Output is byte-equivalent to the scipy reference
+to within FFT round-off.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -2144,7 +2152,7 @@ this expects a Python list of timedata objects.</p>
 )
           –
           <div class="doc-md-description">
-            <p>apply filter to data before fft or not</p>
+            <p>window function name; None defaults to 'boxcar'</p>
           </div>
         </li>
         <li class="doc-section-item field-body">

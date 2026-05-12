@@ -6158,6 +6158,154 @@
 
 
 
+        <p>One block of acquired time-series data plus its acquisition metadata.</p>
+<p>Held inside a <code>DataSet.time_data_list</code>. Produced by <code>log_data</code>,
+by the test-data factories in <code>testdata</code>, and on import from
+Matlab. The numeric content is <strong>in volts</strong> (see "Voltage-Based
+I/O" in the user-guide acquisition page); apply
+<code>channel_cal_factors</code> to convert to engineering units at display
+or fit time. <code>analysis.calculate_*</code> functions copy <code>units</code> and
+<code>channel_cal_factors</code> onto their derived FreqData / TfData /
+CrossSpecData / SonoData outputs.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="time_axis
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.time_axis)" href="#pydvma.datastructure.TimeData.time_axis">time_axis</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>1D sample times in seconds.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="time_data
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.time_data)" href="#pydvma.datastructure.TimeData.time_data">time_data</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Shape <code>(n_samples, n_channels)</code> voltage samples.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="settings
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.settings)" href="#pydvma.datastructure.TimeData.settings">settings</a></code></b>
+              (<code><span title="pydvma.options.MySettings">MySettings</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Snapshot of the acquisition configuration.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestamp
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.timestamp)" href="#pydvma.datastructure.TimeData.timestamp">timestamp</a></code></b>
+              (<code><span title="datetime.datetime">datetime</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Capture start time.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestring
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.timestring)" href="#pydvma.datastructure.TimeData.timestring">timestring</a></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Filesystem-safe rendering of <code>timestamp</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="units
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.units)" href="#pydvma.datastructure.TimeData.units">units</a></code></b>
+              (<code><span title="list">list</span>[<span title="str">str</span>] or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Engineering units per channel
+(e.g. <code>['N', 'm/s', 'g']</code>). None if unset.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="channel_cal_factors
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.channel_cal_factors)" href="#pydvma.datastructure.TimeData.channel_cal_factors">channel_cal_factors</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-channel multipliers from
+volts to engineering units. Defaults to all-ones.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="id_link
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.id_link)" href="#pydvma.datastructure.TimeData.id_link">id_link</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p>Reference to a source TimeData (used when this object
+is derived rather than freshly acquired).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="test_name
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.test_name)" href="#pydvma.datastructure.TimeData.test_name">test_name</a></code></b>
+              (<code><span title="str">str</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Free-form label, displayed in plots.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="unique_id
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TimeData.unique_id)" href="#pydvma.datastructure.TimeData.unique_id">unique_id</a></code></b>
+              (<code><span title="uuid.UUID">UUID</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Generated at construction; used by derived
+objects to link back to their source via <code>id_link</code>.</p>
+          </div>
+        </li>
+    </ul>
+
 
 
 
@@ -6697,6 +6845,138 @@
 
 
 
+        <p>One-sided complex frequency spectrum of a <code>TimeData</code> capture.</p>
+<p>Produced by <code>analysis.calculate_fft</code>. The spectrum is the raw
+<code>np.fft.rfft</code> of the (optionally windowed) time data — i.e. it is
+<strong>not</strong> scaled to a PSD or amplitude spectrum; consumers that need
+PSD should square the magnitude themselves. <code>units</code> and
+<code>channel_cal_factors</code> are copied verbatim from the source TimeData.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="freq_axis
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.freq_axis)" href="#pydvma.datastructure.FreqData.freq_axis">freq_axis</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Frequency bins in Hz (length <code>N//2+1</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="freq_data
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.freq_data)" href="#pydvma.datastructure.FreqData.freq_data">freq_data</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Shape <code>(n_freq, n_channels)</code> complex
+spectrum, one column per channel.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="settings
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.settings)" href="#pydvma.datastructure.FreqData.settings">settings</a></code></b>
+              (<code><span title="pydvma.options.MySettings">MySettings</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Snapshot of the analysis configuration
+(includes the window choice and the time range that was used).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="units
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.units)" href="#pydvma.datastructure.FreqData.units">units</a></code></b>
+              (<code><span title="list">list</span>[<span title="str">str</span>] or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Engineering units per channel.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="channel_cal_factors
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.channel_cal_factors)" href="#pydvma.datastructure.FreqData.channel_cal_factors">channel_cal_factors</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-channel multipliers from
+volts to engineering units; applied at display time.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="id_link
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.id_link)" href="#pydvma.datastructure.FreqData.id_link">id_link</a></code></b>
+              (<code><span title="uuid.UUID">UUID</span></code>)
+          –
+          <div class="doc-md-description">
+            <p><code>unique_id</code> of the source TimeData.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="test_name
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.test_name)" href="#pydvma.datastructure.FreqData.test_name">test_name</a></code></b>
+              (<code><span title="str">str</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Free-form label.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestamp
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.timestamp)" href="#pydvma.datastructure.FreqData.timestamp">timestamp</a></code></b>
+              (<code><span title="datetime.datetime">datetime</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>When this FreqData was constructed.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestring
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.FreqData.timestring)" href="#pydvma.datastructure.FreqData.timestring">timestring</a></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Filesystem-safe rendering of <code>timestamp</code>.</p>
+          </div>
+        </li>
+    </ul>
+
 
 
 
@@ -7093,6 +7373,171 @@
     <div class="doc doc-contents first">
 
 
+
+        <p>Transfer function H(f) from one input channel to one or more outputs.</p>
+<p>Produced by <code>analysis.calculate_tf</code> (single TimeData) or
+<code>analysis.calculate_tf_averaged</code> (ensemble TimeDataList). The
+convention is <code>Pxy[in, out] / Pxy[in, in]</code> per output channel;
+<code>tf_coherence</code> carries the corresponding coherence.</p>
+<p>Calibration: <code>channel_cal_factors[k]</code> holds the <strong>ratio</strong>
+<code>cal[out_k] / cal[in]</code> — i.e. multiplying <code>tf_data[:, k] *
+channel_cal_factors[k]</code> at display time gives the TF in
+engineering units. Units are constructed as
+<code>"&lt;out_unit&gt;/&lt;in_unit&gt;"</code> per output channel.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="freq_axis
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.freq_axis)" href="#pydvma.datastructure.TfData.freq_axis">freq_axis</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>One-sided frequency bins in Hz.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="tf_data
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.tf_data)" href="#pydvma.datastructure.TfData.tf_data">tf_data</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Shape <code>(n_freq, n_outputs)</code>, complex.
+One column per non-input channel.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="tf_coherence
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.tf_coherence)" href="#pydvma.datastructure.TfData.tf_coherence">tf_coherence</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Same shape, real, in [0, 1].</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="settings
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.settings)" href="#pydvma.datastructure.TfData.settings">settings</a></code></b>
+              (<code><span title="pydvma.options.MySettings">MySettings</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Snapshot including the chosen <code>ch_in</code>
+and the derived <code>ch_out_set</code> (the channel indices in
+<code>tf_data</code>'s second axis).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="units
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.units)" href="#pydvma.datastructure.TfData.units">units</a></code></b>
+              (<code><span title="list">list</span>[<span title="str">str</span>] or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-output-channel unit strings
+(e.g. <code>['m/s/N', 'g/N']</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="channel_cal_factors
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.channel_cal_factors)" href="#pydvma.datastructure.TfData.channel_cal_factors">channel_cal_factors</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-output cal <em>ratios</em>
+(cal[out] / cal[in]). A manual override here overwrites
+the inherited ratio.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="id_link
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.id_link)" href="#pydvma.datastructure.TfData.id_link">id_link</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p><code>unique_id</code> of the source TimeData (or list when averaged).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="test_name
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.test_name)" href="#pydvma.datastructure.TfData.test_name">test_name</a></code></b>
+              (<code><span title="str">str</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Free-form label.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestamp
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.timestamp)" href="#pydvma.datastructure.TfData.timestamp">timestamp</a></code></b>
+              (<code><span title="datetime.datetime">datetime</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>When constructed.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestring
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.timestring)" href="#pydvma.datastructure.TfData.timestring">timestring</a></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Filesystem-safe rendering of <code>timestamp</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="flag_modal_TF
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.TfData.flag_modal_TF)" href="#pydvma.datastructure.TfData.flag_modal_TF">flag_modal_TF</a></code></b>
+              (<code><span title="bool">bool</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>True after a modal fit has consumed
+this TfData (avoids double-fitting); used by <code>modal.py</code>.</p>
+          </div>
+        </li>
+    </ul>
 
 
 
@@ -7553,6 +7998,152 @@
 
 
 
+        <p>Short-time-FFT spectrogram (sonogram) of a multi-channel <code>TimeData</code>.</p>
+<p>Produced by <code>analysis.calculate_sonogram</code>. Each frame is a windowed
+FFT of a <code>nperseg</code>-sample segment of the source data; segments are
+overlapped by <code>noverlap</code> and the resulting matrix lets you see how
+spectral content evolves over time. Used by
+<code>analysis.calculate_damping_from_sono</code> to extract per-mode damping
+from free-decay measurements.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="time_axis
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.time_axis)" href="#pydvma.datastructure.SonoData.time_axis">time_axis</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Frame midpoints in seconds.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="freq_axis
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.freq_axis)" href="#pydvma.datastructure.SonoData.freq_axis">freq_axis</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>One-sided frequency bins in Hz.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="sono_data
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.sono_data)" href="#pydvma.datastructure.SonoData.sono_data">sono_data</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Shape <code>(n_freq, n_frames, n_channels)</code>,
+complex. Magnitude-squared gives a per-bin power spectrogram.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="settings
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.settings)" href="#pydvma.datastructure.SonoData.settings">settings</a></code></b>
+              (<code><span title="pydvma.options.MySettings">MySettings</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Snapshot including <code>pretrig_samples</code>
+(used by <code>calculate_damping_from_sono</code> to pick the
+free-decay start time).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="units
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.units)" href="#pydvma.datastructure.SonoData.units">units</a></code></b>
+              (<code><span title="list">list</span>[<span title="str">str</span>] or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Engineering units per channel.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="channel_cal_factors
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.channel_cal_factors)" href="#pydvma.datastructure.SonoData.channel_cal_factors">channel_cal_factors</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-channel multipliers from
+volts to engineering units.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="id_link
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.id_link)" href="#pydvma.datastructure.SonoData.id_link">id_link</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p><code>unique_id</code> of the source TimeData.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="test_name
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.test_name)" href="#pydvma.datastructure.SonoData.test_name">test_name</a></code></b>
+              (<code><span title="str">str</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Free-form label.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestamp
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.timestamp)" href="#pydvma.datastructure.SonoData.timestamp">timestamp</a></code></b>
+              (<code><span title="datetime.datetime">datetime</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>When constructed.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestring
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.SonoData.timestring)" href="#pydvma.datastructure.SonoData.timestring">timestring</a></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Filesystem-safe rendering of <code>timestamp</code>.</p>
+          </div>
+        </li>
+    </ul>
+
 
 
 
@@ -7883,6 +8474,152 @@
 
 
 
+        <p>Full cross-spectrum matrix Pxy[i,j,f] and coherence matrix Cxy[i,j,f].</p>
+<p>Produced by <code>analysis.calculate_cross_spectrum_matrix</code> (single
+TimeData) or <code>analysis.calculate_cross_spectra_averaged</code> (ensemble
+TimeDataList). The diagonal <code>Pxy[i, i, :]</code> is the per-channel
+auto-spectrum (= scipy.signal.welch with <code>scaling='spectrum'</code>);
+off-diagonal <code>Pxy[i, j, :]</code> matches scipy.signal.csd with the same
+settings. Pxy is Hermitian — <code>Pxy[j, i, :] = conj(Pxy[i, j, :])</code>.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="freq_axis
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.freq_axis)" href="#pydvma.datastructure.CrossSpecData.freq_axis">freq_axis</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>One-sided frequency bins in Hz.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="Pxy
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.Pxy)" href="#pydvma.datastructure.CrossSpecData.Pxy">Pxy</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Shape <code>(n_channels, n_channels, n_freq)</code>,
+complex. Cross-spectrum matrix.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="Cxy
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.Cxy)" href="#pydvma.datastructure.CrossSpecData.Cxy">Cxy</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Same shape, real, in [0, 1]. Coherence matrix.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="settings
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.settings)" href="#pydvma.datastructure.CrossSpecData.settings">settings</a></code></b>
+              (<code><span title="pydvma.options.MySettings">MySettings</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Includes <code>window</code>, <code>time_range</code>,
+<code>N_frames</code>, <code>overlap</code> actually used.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="units
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.units)" href="#pydvma.datastructure.CrossSpecData.units">units</a></code></b>
+              (<code><span title="list">list</span>[<span title="str">str</span>] or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Engineering units per channel.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="channel_cal_factors
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.channel_cal_factors)" href="#pydvma.datastructure.CrossSpecData.channel_cal_factors">channel_cal_factors</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-channel multipliers from
+volts to engineering units.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="id_link
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.id_link)" href="#pydvma.datastructure.CrossSpecData.id_link">id_link</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p><code>unique_id</code> of the source TimeData (or list of
+ids when averaged across a TimeDataList).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="test_name
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.test_name)" href="#pydvma.datastructure.CrossSpecData.test_name">test_name</a></code></b>
+              (<code><span title="str">str</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Free-form label.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestamp
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.timestamp)" href="#pydvma.datastructure.CrossSpecData.timestamp">timestamp</a></code></b>
+              (<code><span title="datetime.datetime">datetime</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>When constructed.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="timestring
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.CrossSpecData.timestring)" href="#pydvma.datastructure.CrossSpecData.timestring">timestring</a></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Filesystem-safe rendering of <code>timestamp</code>.</p>
+          </div>
+        </li>
+    </ul>
+
 
 
 
@@ -8212,6 +8949,131 @@
     <div class="doc doc-contents first">
 
 
+
+        <p>A set of fitted modes — each row of <code>M</code> is one mode's
+<code>(fn, zn, an[chan...], pn[chan...], rk[chan...], rm[chan...])</code>
+parameter vector as produced by
+<code>modal.modal_fit_all_channels</code>.</p>
+<p>Use <code>add_mode</code> to append further modes (e.g. across separate
+frequency-band fits); rows are kept sorted by <code>fn</code>. After any
+add/delete, the summary arrays <code>fn</code>, <code>zn</code>, <code>an</code>, <code>pn</code> are
+refreshed and indexable per mode.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="M
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.ModalData.M)" href="#pydvma.datastructure.ModalData.M">M</a></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Shape <code>(n_modes, 2 + 4*n_channels)</code>. Each row
+packs <code>[fn, zn, an_0..an_C, pn_0..pn_C, rk_0..rk_C,
+rm_0..rm_C]</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.datastructure.ModalData.fn">fn</span></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-mode natural frequencies in Hz.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.datastructure.ModalData.zn">zn</span></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-mode damping ratios.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.datastructure.ModalData.an">an</span></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Shape <code>(n_modes, n_channels)</code> modal-constant
+amplitudes.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.datastructure.ModalData.pn">pn</span></code></b>
+              (<code><span title="numpy.ndarray">ndarray</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Same shape; modal-constant phases in radians.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="channels
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.ModalData.channels)" href="#pydvma.datastructure.ModalData.channels">channels</a></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Number of channels (= <code>n_channels</code> above).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="settings
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.ModalData.settings)" href="#pydvma.datastructure.ModalData.settings">settings</a></code></b>
+              (<code><span title="pydvma.options.MySettings">MySettings</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Snapshot including the source TF's settings.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="units
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.ModalData.units)" href="#pydvma.datastructure.ModalData.units">units</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p>Engineering units (passed through from source).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="id_link
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.ModalData.id_link)" href="#pydvma.datastructure.ModalData.id_link">id_link</a></code></b>
+          –
+          <div class="doc-md-description">
+            <p><code>unique_id</code>(s) of the TFs that produced these modes.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><a class="autorefs autorefs-internal" title="test_name
+
+
+  
+      instance-attribute
+   (pydvma.datastructure.ModalData.test_name)" href="#pydvma.datastructure.ModalData.test_name">test_name</a></code></b>
+              (<code><span title="str">str</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Free-form label.</p>
+          </div>
+        </li>
+    </ul>
 
 
 
