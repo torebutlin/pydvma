@@ -802,6 +802,50 @@ class _NidaqmxTaskAdapter(object):
         return getattr(self._task, name)
 
 
+def _ao_module_name(device_entry):
+    """Return the name of the device's AO-providing module (the chassis
+    slot for a cDAQ, or the device itself for a standalone USB/PCIe
+    DAQ). Used by `_check_output_vmax_within_hardware` to look up the
+    actual hardware AO range. Returns None if no AO module is found."""
+    if device_entry['is_chassis']:
+        for mod in device_entry['module_names']:
+            if device_entry['module_ao_counts'].get(mod, 0) > 0:
+                return mod
+        return None
+    return device_entry['name']
+
+
+def _check_output_vmax_within_hardware(device_entry, requested_vmax):
+    """Raise ValueError if ``requested_vmax`` exceeds the AO module's
+    largest range, with a clear message that names the actual hardware
+    limit and points the caller at `suggest_ni_settings` for safe
+    defaults. Best-effort: if the device's `ao_voltage_ranges` can't be
+    queried, silently fall through and let DAQmx surface the error
+    itself (still a clear -200077 with min/max attached)."""
+    from . import _ni_device_specs    # local import to avoid load-order cycles
+    ao_mod = _ao_module_name(device_entry)
+    if ao_mod is None:
+        return
+    try:
+        info = _ni_device_specs.get_device_info(ao_mod)
+    except (RuntimeError, ni.errors.DaqError):
+        return
+    ranges = info.get('ao_voltage_ranges') or []
+    if not ranges:
+        return
+    hw_max = max(rmax for _, rmax in ranges)
+    if requested_vmax > hw_max + 1e-9:
+        raise ValueError(
+            'output_VmaxNI = {:.4f} V exceeds the maximum output voltage '
+            'of {} ({}) on this hardware ({:.4f} V). Lower output_VmaxNI '
+            'in MySettings, or call dvma.suggest_ni_settings(device_index='
+            '{!r}) to get safe defaults for this device.'.format(
+                requested_vmax, ao_mod, info.get('product_type', '?'),
+                hw_max, device_entry['name'],
+            )
+        )
+
+
 def setup_output_NI_nidaqmx(settings, output):
     '''Build and stage (but not start) a finite-sample AO task on nidaqmx.
 
@@ -859,6 +903,14 @@ def setup_output_NI_nidaqmx(settings, output):
     channel_string = _ni_backend.build_ao_channel_string(
         device_entry, settings.output_channels, settings.output_channels_spec,
     )
+
+    # Pre-check output_VmaxNI against the AO module's actual capability.
+    # DAQmx will reject e.g. +/-5 V on the NI 9260 (max +/-4.242641 V) with
+    # an opaque -200077 at channel creation; raising a clearer error here
+    # with the device's real limit + a pointer to suggest_ni_settings is
+    # much friendlier, especially when the call comes from the GUI's
+    # default-settings path.
+    _check_output_vmax_within_hardware(device_entry, settings.output_VmaxNI)
 
     task = ni.Task()
     task.ao_channels.add_ao_voltage_chan(

@@ -14,7 +14,19 @@ from matplotlib.ticker import AutoLocator
 import numpy as np
 import datetime
 
-from pkg_resources import resource_filename
+# Stdlib replacement for `pkg_resources.resource_filename` -- pkg_resources
+# is deprecated (slated for removal as early as 2025-11-30) and triggers a
+# noisy UserWarning at every import. `importlib.resources.files()` has been
+# the official replacement since Python 3.9.
+from importlib.resources import files as _resource_files
+
+
+def _icon_path(filename):
+    """Return a filesystem path string for a packaged resource (icon.png
+    etc.) usable by `QtGui.QIcon(...)`. Works for editable installs and
+    wheels; the `Traversable` from `importlib.resources` resolves to a
+    real path in both cases since pydvma is a regular file-based package."""
+    return str(_resource_files('pydvma').joinpath(filename))
 
 try:
     import qdarktheme
@@ -41,13 +53,13 @@ import time
 import sys, os
 
 #%%
-icon_path = resource_filename('pydvma', 'icon.png')
+icon_path = _icon_path('icon.png')
 app = QApplication(sys.argv)
 app.setStyle(QStyleFactory.create('Fusion'))
 app.setWindowIcon(QtGui.QIcon(icon_path))
 import platform
 if platform.system() == "Darwin":
-    app.setWindowIcon(QtGui.QIcon(resource_filename('pydvma', 'icon_darwin.png')))
+    app.setWindowIcon(QtGui.QIcon(_icon_path('icon_darwin.png')))
 else:
     app.setWindowIcon(QtGui.QIcon(icon_path))
 
