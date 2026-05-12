@@ -135,7 +135,7 @@ def log_data(settings, test_name=None, rec=None, output=None):
             s = output_signal(settings,output)
             # rec.write(output.astype('float32'))
         
-        if (settings.device_driver == 'nidaq') or (output is None): # nidaq output is nonblocking, but soundcard is blocking
+        if (settings.device_driver != 'soundcard') or (output is None): # soundcard output is blocking via sd.OutputStream.write; nidaq and mock are non-blocking
             time.sleep(settings.stored_time)
         
             
@@ -151,12 +151,12 @@ def log_data(settings, test_name=None, rec=None, output=None):
             if settings.output_device_driver == 'soundcard':
                 s.stop()
                 s.close()
-            if settings.output_device_driver == 'nidaq':
+            if settings.output_device_driver in ('nidaq', 'mock'):
                 s.WaitUntilTaskDone(settings.stored_time+5)
                 s.StopTask()
-        
 
-        
+
+
     else:
         streams.REC.__init__(settings) # zeros buffers so looks for trigger in fresh data
         streams.REC.trigger_detected = False # somehow this can be true even after previous call
@@ -204,10 +204,10 @@ def log_data(settings, test_name=None, rec=None, output=None):
             if settings.output_device_driver == 'soundcard':
                 s.stop()
                 s.close()
-            if settings.output_device_driver == 'nidaq':
+            if settings.output_device_driver in ('nidaq', 'mock'):
                 s.WaitUntilTaskDone(settings.stored_time+5)
                 s.StopTask()
-        
+
     # make into dataset
     fs = settings.fs
     n_samp = len(stored_time_data_copy[:,0])
@@ -296,6 +296,15 @@ def output_signal(settings, output):
         s = streams.setup_output_NI(settings, output)
         s.StartTask()
         return s
+
+    elif settings.output_device_driver == 'mock':
+        # No-op output for the hardware-free test backend. Returns a
+        # stream-like with the same surface as the NI adapter so
+        # log_data's cleanup branches can call StartTask/StopTask/etc.
+        s = streams.setup_output_mock(settings, output)
+        s.StartTask()
+        return s
+
     else:
         print('device_driver not recognised')
         return None

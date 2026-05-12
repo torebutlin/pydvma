@@ -29,6 +29,7 @@ except NotImplementedError:
 
 REC_SC = None # create global variable for creating only a single NI stream instance. Not needed for pyaudio.
 REC_NI = None
+REC_MOCK = None  # hardware-free test backend; see MockRecorder
 REC = None
 
 
@@ -82,8 +83,16 @@ def _ni_settings_signature(s):
 
 
 def start_stream(settings):
-    global REC_SC, REC_NI, REC
-    if settings.device_driver == 'soundcard':
+    global REC_SC, REC_NI, REC, REC_MOCK
+    if settings.device_driver == 'mock':
+        # Hardware-free test backend — no real audio / NI device opened.
+        # Used by tests/test_acquisition_mock.py to exercise the
+        # log_data / output_signal / stream_snapshot paths on machines
+        # without a soundcard or NI-DAQmx driver. See `MockRecorder`.
+        REC_MOCK = MockRecorder(settings)
+        REC_MOCK.init_stream(settings)
+        REC = REC_MOCK
+    elif settings.device_driver == 'soundcard':
         REC_SC = Recorder(settings)
         REC_SC.init_stream(settings)
         REC = REC_SC
@@ -949,18 +958,157 @@ def setup_output_NI_nidaqmx(settings, output):
 def setup_output_soundcard(settings):
     dtype = 'float32'
 
-    output_stream = sd.OutputStream(samplerate=settings.output_fs, 
-                                  blocksize=settings.chunk_size, 
-                                  device=settings.output_device_index, 
-                                  channels=settings.output_channels, 
-                                  dtype=dtype, 
-                                  latency=None, 
-                                  extra_settings=None, 
-                                  callback=None, 
-                                  finished_callback=None, 
-                                  clip_off=None, 
-                                  dither_off=None, 
-                                  never_drop_input=None, 
-                                  prime_output_buffers_using_stream_callback=None) 
+    output_stream = sd.OutputStream(samplerate=settings.output_fs,
+                                  blocksize=settings.chunk_size,
+                                  device=settings.output_device_index,
+                                  channels=settings.output_channels,
+                                  dtype=dtype,
+                                  latency=None,
+                                  extra_settings=None,
+                                  callback=None,
+                                  finished_callback=None,
+                                  clip_off=None,
+                                  dither_off=None,
+                                  never_drop_input=None,
+                                  prime_output_buffers_using_stream_callback=None)
     output_stream.start()
     return output_stream
+
+
+#%% Mock backend — hardware-free, for tests
+#
+# Drop-in replacement for `Recorder` / `Recorder_NI_nidaqmx`. Used by
+# `tests/test_acquisition_mock.py` to exercise the acquisition path
+# (log_data, output_signal, stream_snapshot) on machines without a
+# soundcard or NI-DAQmx driver. Selected via
+# ``settings.device_driver='mock'``; see `start_stream`.
+#
+# No audio device is ever opened — `setup_output_mock` returns a
+# no-op adapter, and `MockRecorder` synthesises a deterministic
+# signal into its buffers at construction time. Tests can write
+# directly to `stored_time_data` / `osc_time_data` after
+# `start_stream` to inject a specific signal.
+
+
+class MockRecorder(object):
+    '''Hardware-free recorder. Same public attribute surface as
+    `Recorder` / `Recorder_NI_nidaqmx` — `osc_time_data`,
+    `stored_time_data`, `trigger_detected`, `audio_stream`,
+    `init_stream`, `end_stream`, etc. — but does not touch any device.
+
+    Buffers are filled with a deterministic sine-per-channel signal at
+    construction so analysis-flow tests see non-trivial data. Tests
+    that want a specific signal can overwrite `stored_time_data`
+    directly after ``streams.start_stream`` and before `log_data`'s
+    ``stored_time``-second sleep elapses.
+
+    Trigger semantics: `trigger_detected` stays False unless a test
+    sets it manually (no callback fires, since no real samples are
+    arriving). The pretrigger path in `log_data` therefore always
+    times out and takes the no-trigger fallback when driven via the
+    mock — which is sufficient to test the timeout path itself.
+    Successful-trigger flows belong on real hardware tests.
+    '''
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.trigger_detected = False
+        self.trigger_first_detected_message = False
+
+        self.osc_time_axis = np.arange(
+            0,
+            (settings.num_chunks * settings.chunk_size) / settings.fs,
+            1 / settings.fs,
+        )
+        self.osc_freq_axis = np.fft.rfftfreq(
+            len(self.osc_time_axis), 1 / settings.fs,
+        )
+        self.osc_time_data = np.zeros(
+            (settings.num_chunks * settings.chunk_size, settings.channels)
+        )
+        self.osc_time_data_windowed = np.zeros_like(self.osc_time_data)
+        self.osc_freq_data = np.abs(np.fft.rfft(self.osc_time_data, axis=0))
+
+        self.stored_num_chunks = 2 + int(
+            np.ceil((settings.stored_time * settings.fs) / settings.chunk_size)
+        )
+        self.stored_time_data = np.zeros(
+            (self.stored_num_chunks * settings.chunk_size, settings.channels)
+        )
+        self.stored_time_data_windowed = np.zeros_like(self.stored_time_data)
+        self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data, axis=0))
+
+        # Deterministic signal: channel k gets a 0.1 V sine at
+        # 100 * (k+1) Hz so tests can see distinct content per channel.
+        t_stored = np.arange(self.stored_time_data.shape[0]) / settings.fs
+        for ch in range(settings.channels):
+            self.stored_time_data[:, ch] = 0.1 * np.sin(
+                2 * np.pi * 100 * (ch + 1) * t_stored
+            )
+        # Mirror the head of stored_time_data into osc_time_data so the
+        # oscilloscope smoke / stream_snapshot paths also see signal.
+        n_osc = self.osc_time_data.shape[0]
+        self.osc_time_data[:, :] = self.stored_time_data[:n_osc, :]
+
+        # Preserve `audio_stream` across re-__init__ calls the same way
+        # `Recorder_NI_nidaqmx` does — log_data's pretrigger path calls
+        # __init__(settings) to zero buffers but expects the stream
+        # marker to survive.
+        if not hasattr(self, 'audio_stream'):
+            self.audio_stream = None
+
+    def init_stream(self, settings, _input_=True, _output_=False):
+        # Mark live with a sentinel so `streams.REC.audio_stream is
+        # not None` (the test that gates the NI-task reuse path)
+        # reads truthy.
+        self.audio_stream = object()
+
+    def end_stream(self):
+        global REC
+        REC = None
+        self.audio_stream = None
+
+
+class _MockOutputStream(object):
+    '''No-op output stream matching the shape of both the soundcard
+    (`sd.OutputStream`: `write` / `stop` / `close` / `start`) and the
+    NI (`_NidaqmxTaskAdapter`: `StartTask` / `StopTask` /
+    `WaitUntilTaskDone`) sides, so `acquisition.output_signal` and
+    `log_data`'s cleanup branches work without touching real audio.'''
+
+    def __init__(self, settings, output):
+        self.settings = settings
+        self.output = np.asarray(output)
+        self.started = False
+
+    # soundcard-side surface
+    def write(self, data):
+        pass
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+
+    def start(self):
+        pass
+
+    # NI-side surface
+    def StartTask(self):
+        self.started = True
+
+    def StopTask(self):
+        self.started = False
+
+    def WaitUntilTaskDone(self, timeout):
+        pass
+
+    def ClearTask(self):
+        pass
+
+
+def setup_output_mock(settings, output):
+    '''Hardware-free analog-output stub used by `acquisition.output_signal`
+    when ``settings.output_device_driver='mock'``.'''
+    return _MockOutputStream(settings, output)

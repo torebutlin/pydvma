@@ -200,6 +200,12 @@ class MySettings(object):
                 self.device_index = 1
         elif (device_driver == 'nidaq') and ((device_index is None) or (device_index == 'None')):
             self.device_index = 0
+        elif (device_driver == 'mock') and ((device_index is None) or (device_index == 'None')):
+            # `'mock'` is the hardware-free test backend (see
+            # `streams.MockRecorder`). No real device to enumerate;
+            # just hold a stable index so downstream code that prints
+            # or stores `device_index` works.
+            self.device_index = 0
         else:
             self.device_index = int(device_index)
 
@@ -221,6 +227,8 @@ class MySettings(object):
                 else:
                     self.output_device_index = 1
         elif (output_device_driver == 'nidaq') and ((output_device_index is None) or (output_device_index == 'None')):
+            self.output_device_index = 0
+        elif (output_device_driver == 'mock') and ((output_device_index is None) or (output_device_index == 'None')):
             self.output_device_index = 0
         else:
             self.output_device_index = int(output_device_index)
