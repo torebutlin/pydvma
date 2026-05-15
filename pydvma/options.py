@@ -37,7 +37,13 @@ class MySettings(object):
     Attributes:
     --------------
     channels: int
-        Number of input channels
+        Number of input channels. On the soundcard backend this is
+        clamped down to the device's ``max_input_channels`` at
+        ``start_stream`` time (with a printed warning) — so the default
+        of 2 silently becomes 1 on a Mac built-in mono mic, rather
+        than failing with PortAudio ``-9998``. The NI backend instead
+        raises ``ValueError`` if the requested count exceeds the
+        device's available AI channels.
     fs: int
         Sampling frequency (Hz)
     nbits: int

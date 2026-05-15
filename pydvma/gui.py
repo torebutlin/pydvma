@@ -316,7 +316,11 @@ class Logger():
         self.window.showNormal()
         
         
-        # start stream if already passed settings
+        # Start the input stream. By this point `self.settings` is
+        # always non-None: even if the caller passed nothing,
+        # `setup_frame_tools_settings` (called via `setup_frame_tools`
+        # above) will have populated a default `MySettings()` so the
+        # settings-tool widgets have values to display.
         self.start_stream()
         self.message_timer.timeout.connect(self.show_message_timer) # connect after stream started
         self.stream_check_timer.start(1000)
@@ -1107,30 +1111,34 @@ class Logger():
         self.window.close()
     
     def start_stream(self):
-        if self.settings is not None:
-            try:
-                streams.start_stream(self.settings)
-                self.rec = streams.REC
-            except (RuntimeError, ValueError, OSError) as e:
-                # RuntimeError: driver module missing (nidaqmx/sounddevice
-                # not installed, or no NI devices visible). ValueError:
-                # device_index out of range. OSError: PortAudio can't
-                # open the soundcard. Deliberately *not* catching the
-                # full Exception tree so a programming bug surfaces
-                # immediately rather than being swallowed into a
-                # generic "can't initialise" dialog.
-                self.rec = None
-                message = 'Data stream can\'t be initialised.\n'
-                message += 'Possible reasons: sounddevice or nidaqmx not installed, or acquisition hardware not connected.\n'
-                message += 'Please note that it won\'t be possible to log data.\n\n'
-                message += 'Underlying error: {}: {}'.format(type(e).__name__, e)
-                self.show_message(message)
-                
-        else:
-            message = 'To enable data acquisition, please use \'Logger Settings\' tool.'
+        # `self.settings` is always non-None at every call site:
+        #   * `__init__` runs `setup_frame_tools_settings` first, which
+        #     populates a default `MySettings()` if the caller passed
+        #     none.
+        #   * `button_clicked_log_data` and `apply_settings` are
+        #     reachable only after that has happened (apply_settings
+        #     even reassigns `self.settings` immediately before calling
+        #     us).
+        # So no `if self.settings is not None` guard is needed; if the
+        # underlying stream can't be opened the `except` below surfaces
+        # it with a user-facing dialog.
+        try:
+            streams.start_stream(self.settings)
+            self.rec = streams.REC
+        except (RuntimeError, ValueError, OSError) as e:
+            # RuntimeError: driver module missing (nidaqmx/sounddevice
+            # not installed, or no NI devices visible). ValueError:
+            # device_index out of range. OSError: PortAudio can't
+            # open the soundcard. Deliberately *not* catching the
+            # full Exception tree so a programming bug surfaces
+            # immediately rather than being swallowed into a
+            # generic "can't initialise" dialog.
+            self.rec = None
+            message = 'Data stream can\'t be initialised.\n'
+            message += 'Possible reasons: sounddevice or nidaqmx not installed, or acquisition hardware not connected.\n'
+            message += 'Please note that it won\'t be possible to log data.\n\n'
+            message += 'Underlying error: {}: {}'.format(type(e).__name__, e)
             self.show_message(message)
-#            self.input_list_tools.setCurrentIndex(1)
-            self.select_view()
 
     def show_message(self,message,b='ok'):
         # if multiple messages from different functions, then join them up

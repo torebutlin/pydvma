@@ -82,6 +82,78 @@ def _ni_settings_signature(s):
     )
 
 
+def _clamp_soundcard_input_channels(settings):
+    '''Clamp ``settings.channels`` to the soundcard input device's
+    ``max_input_channels``, mutating ``settings`` in place.
+
+    Why this exists: ``sd.InputStream(channels=N)`` raises PortAudio
+    error ``-9998`` (paInvalidChannelCount) when ``N`` exceeds the
+    device's reported capability. The default ``MySettings()`` asks
+    for ``channels=2``, but a Mac built-in microphone is typically
+    mono — so the default path failed cryptically on Mac before this
+    clamp. The NI backend already validates analogously (raises
+    ``ValueError``) — see `Recorder_NI_nidaqmx.__init__`. Soundcard
+    clamps rather than raises because the GUI's
+    ``setup_frame_tools_settings`` silently auto-builds default
+    settings when the user passes none, so raising would surface an
+    error against a value the user never picked.
+
+    Called from `start_stream` *before* `Recorder(settings)` is
+    constructed, so the clamped value flows into both buffer
+    allocation (`Recorder.__init__`) and the actual
+    `sd.InputStream` opening (`Recorder.init_stream`). A no-op when
+    ``sd`` is unavailable, when the device default can't be resolved,
+    or when ``settings.channels`` already fits.
+    '''
+    if sd is None:
+        return
+    if settings.device_index is None:
+        try:
+            settings.device_index = sd.default.device[0]
+        except (AttributeError, TypeError, IndexError):
+            return
+    try:
+        in_info = sd.query_devices(settings.device_index)
+    except (sd.PortAudioError, ValueError, TypeError):
+        return
+    max_in = int(in_info['max_input_channels'])
+    if settings.channels > max_in:
+        print("WARNING: input device %r supports only %d input channel(s); "
+              "requested channels=%d. Clamping to %d."
+              % (in_info['name'], max_in, settings.channels, max_in))
+        settings.channels = max_in
+
+
+def _clamp_soundcard_output_channels(settings):
+    '''Clamp ``settings.output_channels`` to the soundcard output
+    device's ``max_output_channels``, mutating ``settings`` in place.
+
+    Mirror of `_clamp_soundcard_input_channels` for the output path.
+    Called from `setup_output_soundcard` because output streams are
+    opened on a separate code path from input (`acquisition.output_signal`
+    → `setup_output_soundcard`), not via `start_stream`. A no-op when
+    ``sd`` is unavailable, the output device can't be resolved, or
+    ``settings.output_channels`` already fits.
+    '''
+    if sd is None:
+        return
+    if settings.output_device_index is None:
+        try:
+            settings.output_device_index = sd.default.device[1]
+        except (AttributeError, TypeError, IndexError):
+            return
+    try:
+        out_info = sd.query_devices(settings.output_device_index)
+    except (sd.PortAudioError, ValueError, TypeError):
+        return
+    max_out = int(out_info['max_output_channels'])
+    if settings.output_channels > max_out:
+        print("WARNING: output device %r supports only %d output channel(s); "
+              "requested output_channels=%d. Clamping to %d."
+              % (out_info['name'], max_out, settings.output_channels, max_out))
+        settings.output_channels = max_out
+
+
 def start_stream(settings):
     global REC_SC, REC_NI, REC, REC_MOCK
     if settings.device_driver == 'mock':
@@ -93,6 +165,11 @@ def start_stream(settings):
         REC_MOCK.init_stream(settings)
         REC = REC_MOCK
     elif settings.device_driver == 'soundcard':
+        # Clamp channels to the device's max_input_channels before
+        # constructing the Recorder — buffer shapes in
+        # `Recorder.__init__` use `settings.channels`, so any clamping
+        # has to happen here, not inside `init_stream`.
+        _clamp_soundcard_input_channels(settings)
         REC_SC = Recorder(settings)
         REC_SC.init_stream(settings)
         REC = REC_SC
@@ -304,6 +381,18 @@ class Recorder(object):
     — ±1 normalised is returned as ±1 "V" — which keeps behaviour
     byte-identical to the old convention for anyone who hasn't
     measured their soundcard's sensitivity.
+
+    Channel-count clamping
+    ----------------------
+    The buffer shapes are derived from ``settings.channels`` at
+    construction time. To keep these consistent with what the
+    PortAudio device will actually accept, `start_stream` calls
+    `_clamp_soundcard_input_channels` *before* constructing this
+    Recorder — so by the time ``__init__`` runs, ``settings.channels``
+    is already clamped to ``max_input_channels`` (with a printed
+    warning when clamping happened). This avoids the cryptic
+    ``PortAudioError -9998`` on devices like a Mac built-in mono mic
+    when defaults asked for 2 channels.
     '''
     def __init__(self,settings):
         self.settings = settings
@@ -368,8 +457,14 @@ class Recorder(object):
     
     
     def init_stream(self,settings,_input_=True,_output_=False):
-        '''
-        Initialises an audio stream. Gives the user a choice of which device to access.
+        '''Open the live `sd.InputStream` against ``settings.device_index``.
+
+        If ``settings.device_index`` is ``None`` it's resolved to
+        ``sd.default.device[0]`` and printed to stdout. ``settings.channels``
+        is assumed to already fit the device — `start_stream` clamps it
+        via `_clamp_soundcard_input_channels` before this method runs,
+        so the value passed to ``sd.InputStream`` will not exceed the
+        device's ``max_input_channels`` even if the caller asked for more.
         '''
         
         if settings.device_index is None:
@@ -956,6 +1051,15 @@ def setup_output_NI_nidaqmx(settings, output):
     return _NidaqmxTaskAdapter(task)
 
 def setup_output_soundcard(settings):
+    '''Open a soundcard `sd.OutputStream` for `acquisition.output_signal`.
+
+    Clamps ``settings.output_channels`` against the output device's
+    ``max_output_channels`` first (mutating ``settings`` in place via
+    `_clamp_soundcard_output_channels`); without this clamp,
+    ``sd.OutputStream`` would raise PortAudio ``-9998`` on a device
+    that supports fewer output channels than requested.
+    '''
+    _clamp_soundcard_output_channels(settings)
     dtype = 'float32'
 
     output_stream = sd.OutputStream(samplerate=settings.output_fs,
