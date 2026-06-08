@@ -216,6 +216,106 @@ def test_multichannel_acquisition(device_entry, device_index, n_channels):
                 )
 
 
+def _ai_modules(device_entry):
+    """List of ``(module_name, ai_count)`` for the AI-bearing modules of
+    a chassis, in slot order. Empty for standalone devices (they have no
+    module concept). Used to find tests that genuinely span >1 module."""
+    if not device_entry['is_chassis']:
+        return []
+    return [
+        (m, device_entry['module_ai_counts'].get(m, 0))
+        for m in device_entry['module_names']
+        if device_entry['module_ai_counts'].get(m, 0) > 0
+    ]
+
+
+def test_multimodule_acquisition_spans_ai_modules(device_entry, device_index):
+    """On a chassis with two or more AI modules, capturing more channels
+    than the first module holds must spill onto the next module and come
+    back as one coherent multi-channel array.
+
+    This exercises the cross-module channel string
+    (``cDAQ1Mod1/ai0:3,cDAQ1Mod4/ai0:3``) and the buffer reshape for a
+    channel count that no single module could supply — the path that a
+    single-module rig never hits. Auto-skipped unless ≥2 AI modules are
+    present.
+    """
+    modules = _ai_modules(device_entry)
+    if len(modules) < 2:
+        pytest.skip('needs a chassis with >= 2 AI modules')
+    first_count = modules[0][1]
+    # Request one channel past the first module so the task must open the
+    # second module too; cap at the chassis total.
+    n_channels = min(first_count + 1, device_entry['ai_channel_count'])
+    s = _settings_for(device_entry, device_index,
+                      channels=n_channels, stored_time=0.2)
+    ds = dvma.log_data(s)
+    td = ds.time_data_list[0].time_data
+    assert td.shape == (int(0.2 * s.fs), n_channels)
+    assert np.isfinite(td).all()
+    # The channel string the task was actually built from must span
+    # both modules (comma-joined fragments from different devices).
+    chan_str = _ni_backend.build_ai_channel_string(device_entry, n_channels)
+    devices_used = {frag.split('/')[0] for frag in chan_str.split(',')}
+    assert len(devices_used) >= 2, (
+        'channels={} on {} did not span two modules (string={!r})'
+        .format(n_channels, device_entry['product_type'], chan_str)
+    )
+    # Channels must stay independent across the module boundary.
+    for ci in range(n_channels):
+        for cj in range(ci + 1, n_channels):
+            if np.array_equal(td[:, ci], td[:, cj]):
+                raise AssertionError(
+                    'channels {} and {} are byte-identical on {} — '
+                    'cross-module reshape bug'
+                    .format(ci, cj, device_entry['product_type'])
+                )
+
+
+def test_iepe_applies_to_second_module_channel(device_entry, device_index):
+    """IEPE programmed on a channel that lives on the *second* AI module
+    is applied to that channel — and only that channel.
+
+    Guards the per-channel, module-aware IEPE path: the channel→module
+    map must resolve a second-module channel to its own module both for
+    validation and for excitation programming. Mirrors the lab rig where
+    an ICP accelerometer sits on the second AI module while the first
+    carries an AO→AI loopback. Auto-skipped unless there are ≥2 IEPE-
+    capable AI modules.
+    """
+    modules = _ai_modules(device_entry)
+    if len(modules) < 2:
+        pytest.skip('needs a chassis with >= 2 AI modules')
+    iepe_vals = _supports_iepe(device_entry)
+    if not iepe_vals:
+        pytest.skip('{} AI modules have no IEPE support'
+                    .format(device_entry['product_type']))
+    target_current = iepe_vals[0]
+    first_count = modules[0][1]
+    # First channel of the second module is at index == first module size.
+    accel_idx = first_count
+    n_channels = min(first_count + 2, device_entry['ai_channel_count'])
+
+    s = _settings_for(device_entry, device_index,
+                      channels=n_channels, stored_time=0.1)
+    s.iepe_excit_current_A[accel_idx] = target_current
+
+    ds = dvma.log_data(s)
+    td = ds.time_data_list[0].time_data
+    assert td.shape == (int(0.1 * s.fs), n_channels)
+
+    chs = list(streams.REC.audio_stream.ai_channels)
+    # The targeted second-module channel got excitation + AC coupling.
+    assert abs(chs[accel_idx].ai_excit_val - target_current) < 1e-9, (
+        'channel {} (second module) ai_excit_val = {} A, expected {} A'
+        .format(accel_idx, chs[accel_idx].ai_excit_val, target_current)
+    )
+    assert chs[accel_idx].ai_coupling.name == 'AC'
+    # A first-module channel left at 0 stays DC / no excitation.
+    assert chs[0].ai_excit_val == 0.0
+    assert chs[0].ai_coupling.name == 'DC'
+
+
 def _ai_sampling_mode(device_entry):
     """Return ``'simultaneous'`` or ``'multiplexed'`` (or ``None`` if
     unknown) for this device's AI path.

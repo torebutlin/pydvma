@@ -204,6 +204,63 @@ class TestBuildAOChannelString:
         assert _ni.build_ao_channel_string(entry, 2) == 'cDAQ1Mod3/ao0:1'
 
 
+class TestAIChannelModuleMap:
+
+    def test_usb_all_same_device(self):
+        assert _ni.ai_channel_module_map(_usb_entry(), 3) == [
+            'Dev1', 'Dev1', 'Dev1',
+        ]
+
+    def test_chassis_single_module(self):
+        entry = _chassis_entry('cDAQ1', 'cDAQ-9185',
+                               [('cDAQ1Mod1', 4, 0)])
+        assert _ni.ai_channel_module_map(entry, 3) == [
+            'cDAQ1Mod1', 'cDAQ1Mod1', 'cDAQ1Mod1',
+        ]
+
+    def test_chassis_spans_two_modules(self):
+        # Mirrors the lab rig: two 4-ch AI modules either side of a
+        # middle AO module. Channels 0-3 -> Mod1, 4-7 -> Mod4.
+        entry = _chassis_entry('cDAQ1', 'cDAQ-9174',
+                               [('cDAQ1Mod1', 4, 0),
+                                ('cDAQ1Mod2', 0, 2),
+                                ('cDAQ1Mod4', 4, 0)])
+        assert _ni.ai_channel_module_map(entry, 8) == (
+            ['cDAQ1Mod1'] * 4 + ['cDAQ1Mod4'] * 4
+        )
+
+    def test_chassis_partial_into_second_module(self):
+        entry = _chassis_entry('cDAQ1', 'cDAQ-9174',
+                               [('cDAQ1Mod1', 4, 0),
+                                ('cDAQ1Mod2', 0, 2),
+                                ('cDAQ1Mod4', 4, 0)])
+        # 6 channels: all of Mod1 then the first two of Mod4.
+        assert _ni.ai_channel_module_map(entry, 6) == (
+            ['cDAQ1Mod1'] * 4 + ['cDAQ1Mod4'] * 2
+        )
+
+    def test_consistent_with_channel_string(self):
+        # The map's module order must agree with the channel string the
+        # AI task is actually built from.
+        entry = _chassis_entry('cDAQ1', 'cDAQ-9174',
+                               [('cDAQ1Mod1', 4, 0),
+                                ('cDAQ1Mod2', 0, 2),
+                                ('cDAQ1Mod4', 4, 0)])
+        mapped = _ni.ai_channel_module_map(entry, 5)
+        chan_str = _ni.build_ai_channel_string(entry, 5)
+        # First module in the map is the first fragment's device.
+        assert mapped[0] == chan_str.split(',')[0].split('/')[0]
+        assert mapped[-1] == chan_str.split(',')[-1].split('/')[0]
+
+    def test_over_request_raises(self):
+        with pytest.raises(ValueError):
+            _ni.ai_channel_module_map(_usb_entry(ai=2), 4)
+
+    def test_zero_raises(self):
+        with pytest.raises(ValueError):
+            _ni.ai_channel_module_map(_usb_entry(), 0)
+
+
 class TestSyncSupport:
 
     def test_cdaq_supports_sync(self):

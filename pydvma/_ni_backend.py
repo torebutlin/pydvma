@@ -231,6 +231,60 @@ def build_ao_channel_string(device_entry, n_channels, explicit_spec=None):
     return _build_channel_string(device_entry, n_channels, explicit_spec, io='ao')
 
 
+def ai_channel_module_map(device_entry, n_channels):
+    """Return the owning device name for each of the first ``n_channels``
+    AI channels, in acquisition order.
+
+    The AI task built by `build_ai_channel_string` consumes channels
+    across slotted modules in slot order, so channel *i* of the captured
+    array does not necessarily live on the same module as channel *i+1*.
+    This returns a list of length ``n_channels`` giving, for each channel
+    index, the name of the device (module on a chassis, or the device
+    itself for standalone USB/PCIe) that supplies it. That lets callers
+    apply per-channel settings (e.g. IEPE excitation) and validate them
+    against the *owning* module rather than assuming a single device.
+
+    Examples:
+        * Standalone USB, 3 channels -> ``['Dev1', 'Dev1', 'Dev1']``
+        * Chassis with two 4-ch AI modules, 6 channels ->
+          ``['cDAQ1Mod1']*4 + ['cDAQ1Mod4']*2`` (slot order, AO-only
+          modules skipped — matching the channel string).
+
+    Raises `ValueError` if ``n_channels`` exceeds the AI capacity, mirroring
+    `build_ai_channel_string`.
+    """
+    if n_channels is None or n_channels <= 0:
+        raise ValueError('n_channels must be >= 1 (got %r)' % (n_channels,))
+
+    if not device_entry['is_chassis']:
+        available = device_entry['ai_channel_count']
+        if n_channels > available:
+            raise ValueError(
+                'Requested %d AI channels but device %r has only %d'
+                % (n_channels, device_entry['name'], available)
+            )
+        return [device_entry['name']] * n_channels
+
+    out = []
+    remaining = n_channels
+    for mod_name in device_entry['module_names']:
+        available = device_entry['module_ai_counts'].get(mod_name, 0)
+        if available == 0:
+            continue
+        take = min(remaining, available)
+        out.extend([mod_name] * take)
+        remaining -= take
+        if remaining == 0:
+            break
+    if remaining > 0:
+        raise ValueError(
+            'Requested %d AI channels but chassis %r has only %d available '
+            'across its modules'
+            % (n_channels, device_entry['name'], device_entry['ai_channel_count'])
+        )
+    return out
+
+
 def supports_hw_ao_sync(device_entry):
     """Whether AI and AO can share a hardware sample clock on this device.
 
