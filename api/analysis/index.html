@@ -2123,6 +2123,11 @@ each segment is FFT'd once across all channels, and the cross-spectrum
 matrix is formed as a tensor outer product <code>conj(X[:,f,i]) * X[:,f,j]</code>
 averaged over segments. Output is byte-equivalent to the scipy reference
 to within FFT round-off.</p>
+<p>The DC bin (and, for an even segment length, the Nyquist bin) of the
+coherence matrix is undefined under a boxcar window: constant detrending
+zeroes each segment's mean, so the auto-spectra there are pure round-off
+and <code>Cxy</code> is a 0/0 ratio. It is returned as 0 in that degenerate case
+rather than NaN; treat it as "no information at DC", not a real coherence.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
