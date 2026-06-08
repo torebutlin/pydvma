@@ -80,6 +80,91 @@ settings.NI_mode = 'DAQmx_Val_Diff'
 settings.NI_mode = 'DAQmx_Val_NRSE'
 ```
 
+### cDAQ chassis with multiple modules
+
+A CompactDAQ chassis is addressed as a **single device** — use the one
+`device_index` for the chassis, not one per module. `channels=N` is
+then consumed across the chassis's AI modules **in slot order**, so a
+chassis with two 4-channel AI modules (e.g. two NI 9234s) gives eight
+channels that span both modules automatically:
+
+```python
+settings = dvma.MySettings(
+    device_driver='nidaq',
+    device_index=0,        # the chassis (one logical device)
+    channels=8,            # spans both AI modules
+    NI_mode='DAQmx_Val_PseudoDiff',   # required by the 9234 (see below)
+    VmaxNI=5,              # the 9234 is fixed at ±5 V
+    fs=12800,
+)
+```
+
+The captured array's columns follow slot order. With a chassis whose
+slots are `Mod1` (4-ch AI), `Mod2` (AO), `Mod4` (4-ch AI), the AI task
+skips the AO-only module and maps:
+
+| Column | Physical channel |
+| ------ | ---------------- |
+| 0–3    | `Mod1/ai0`–`ai3` |
+| 4–7    | `Mod4/ai0`–`ai3` |
+
+So an accelerometer wired to the second module's `ai1` is **column 5**
+of `time_data`, and any per-channel setting (`iepe_excit_current_A`,
+`channel_sensitivities`, `pretrig_channel`) is indexed the same way.
+`AO`-only modules in the middle of the chassis are simply skipped when
+counting AI channels (and vice-versa for output).
+
+#### Sensible defaults: `suggest_ni_settings`
+
+`suggest_ni_settings(device_index)` inspects the configured device and
+returns safe, in-range values (terminal config, full-scale ranges,
+sample rate) you can splat straight into `MySettings`:
+
+```python
+kwargs = dvma.suggest_ni_settings(0)        # for chassis at index 0
+settings = dvma.MySettings(channels=8, **kwargs)
+```
+
+For the lab cDAQ (two 9234s + a 9260 AO) this yields
+`NI_mode='DAQmx_Val_PseudoDiff'`, `VmaxNI=5`, `output_VmaxNI≈4.24`, and a
+rate on the 9234's discrete ladder.
+
+#### NI 9234 / DSA module constraints
+
+Delta-sigma (DSA) modules like the 9234 differ from the multiplexed
+USB-600x/621x devices, and pydvma enforces or depends on several of
+their quirks:
+
+- **Pseudo-differential only** — set `NI_mode='DAQmx_Val_PseudoDiff'`.
+  Other terminal modes are rejected.
+- **Fixed ±5 V range** — `VmaxNI` other than `5` is silently accepted
+  by the driver but does not change the hardware range.
+- **Simultaneous sampling** — every channel has its own ADC, so all
+  channels (across both modules, via the chassis timebase) are sampled
+  at the same instant; there is no inter-channel skew like the
+  multiplexed USB DAQs.
+- **Automatic anti-alias filter** — the brick-wall AA filter is locked
+  to the sample rate and is not user-configurable. AC coupling adds a
+  ~0.5 Hz high-pass.
+- **Discrete sample-rate ladder** — the 9234 only runs at rates on its
+  internal divider ladder; the driver coerces `fs` to the nearest
+  legal value rather than running arbitrary rates.
+
+#### Non-standard / gappy layouts
+
+The count-based `channels=N` assumes each module is filled from `ai0`
+upward. If you need a non-contiguous set (skip a channel, start partway
+into a module, mix specific channels across modules), bypass the
+builder with an explicit DAQmx physical-channel string:
+
+```python
+settings.input_channels_spec  = 'cDAQ1Mod1/ai0:3,cDAQ1Mod4/ai1'  # AI
+settings.output_channels_spec = 'cDAQ1Mod2/ao0'                  # AO
+```
+
+When set, these override the auto-constructed channel strings verbatim
+(nidaqmx backend only).
+
 ## Triggered Acquisition
 
 ### Pre-trigger Recording
@@ -209,6 +294,17 @@ through the AC-coupling HPF before reading. Subsequent `log_data`
 calls with matching hardware settings reuse the live task and skip
 the warm-up. The 9234 only accepts the discrete values `0.0` and
 `0.002`; other values raise a clear error.
+
+On a multi-module chassis the list is indexed in the same slot order
+as the captured columns (see
+[cDAQ chassis with multiple modules](#cdaq-chassis-with-multiple-modules)),
+and each requested current is validated against the module that
+actually supplies that channel — so an accelerometer on the second AI
+module is enabled by setting the current at its column index, e.g.
+`iepe_excit_current_A[5] = 0.002` for `Mod4/ai1`. **Do not enable IEPE
+on a channel that is wired to an AO output** (e.g. a loopback test
+channel): the excitation current is driven back into the AO terminal.
+Leave loopback/driven channels at `0.0`.
 
 ### Clipping detection
 
