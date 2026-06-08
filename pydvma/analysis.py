@@ -188,6 +188,12 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     averaged over segments. Output is byte-equivalent to the scipy reference
     to within FFT round-off.
 
+    The DC bin (and, for an even segment length, the Nyquist bin) of the
+    coherence matrix is undefined under a boxcar window: constant detrending
+    zeroes each segment's mean, so the auto-spectra there are pure round-off
+    and ``Cxy`` is a 0/0 ratio. It is returned as 0 in that degenerate case
+    rather than NaN; treat it as "no information at DC", not a real coherence.
+
     Args:
         time_data (<TimeData> object): time series data
         time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
@@ -262,9 +268,43 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     # Coherence Cxy[i,j,f] = |Pxy[i,j,f]|^2 / (Pxx[i,i,f] * Pxx[j,j,f]).
     # The spectrum-vs-density scaling and the one-sided 2x factor cancel,
     # so this is identical to scipy.signal.coherence's output.
+    #
+    # Guard the division: where a channel carries no energy at a bin the
+    # denominator is zero and the cross-coherence is genuinely 0/0
+    # (undefined). Computing it anyway either raises an "invalid value
+    # encountered in divide" RuntimeWarning (exactly-zero auto-power) or
+    # returns a meaningless ratio of floating-point round-off (underflowed
+    # auto-power). `where=denom > 0` handles the first; the explicit mask
+    # below handles the second.
     Pxx_diag = np.real(np.diagonal(Pxy, axis1=0, axis2=1)).T   # (N_chans, N_freq)
-    Cxy = (np.abs(Pxy) ** 2 /
-           (Pxx_diag[:, None, :] * Pxx_diag[None, :, :]))
+    denom = Pxx_diag[:, None, :] * Pxx_diag[None, :, :]
+    Cxy = np.divide(np.abs(Pxy) ** 2, denom,
+                    out=np.zeros(Pxy.shape, dtype=float),
+                    where=denom > 0)
+
+    # Explicitly zero the cross-coherence at degenerate bins -- those whose
+    # auto-spectrum is only floating-point round-off, not real energy. This
+    # catches the DC bin (and, for an even segment length, the Nyquist bin) of
+    # a mean-detrended boxcar segment, where constant detrending leaves the
+    # auto-power at ~1e-34. Averaging conj(X_i)X_j and |X_i|^2 independently
+    # over segments there gives a 0/0 ratio of round-off; reporting 0 ("no
+    # measurable coherence") is honest and deterministic, rather than the
+    # ~O(1) noise the division emits.
+    #
+    # Only applies with more than one segment. With a single segment the
+    # estimator is conj(X_i)X_j / (|X_i| |X_j|), which is identically 1 for
+    # every pair and bin regardless of magnitude (the tiny DC values cancel
+    # exactly) -- the well-known "single-frame coherence is 1" property, which
+    # must not be clobbered. The diagonal (auto-coherence) is always left at 1.
+    # Window functions other than boxcar reintroduce a non-zero segment mean,
+    # so their DC bin carries real energy and is untouched.
+    if N_seg > 1:
+        peak = Pxx_diag.max(axis=1, keepdims=True)             # (N_chans, 1)
+        degenerate = Pxx_diag <= 1e-12 * peak                  # (N_chans, N_freq)
+        deg_pair = degenerate[:, None, :] | degenerate[None, :, :]
+        diag = np.arange(N_chans)
+        deg_pair[diag, diag, :] = False
+        Cxy[deg_pair] = 0.0
 
     f = np.fft.rfftfreq(nperseg, 1.0 / fs)
 

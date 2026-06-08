@@ -213,7 +213,21 @@ class TestCrossSpectrumMatrix:
         )
         np.testing.assert_allclose(csd.freq_axis, f_ref, rtol=1e-12, atol=1e-12)
         np.testing.assert_allclose(csd.Pxy, Pxy_ref, rtol=1e-12, atol=1e-12)
-        np.testing.assert_allclose(csd.Cxy, Cxy_ref, rtol=1e-12, atol=1e-12)
+
+        # Coherence at the DC bin is undefined under a boxcar window: constant
+        # detrending removes each segment's mean, so the DC FFT bin is pure
+        # floating-point round-off (~1e-34 in power) and |Pxy|^2 / (Pxx*Pyy)
+        # is 0/0. scipy.signal.coherence's separate welch/csd reduction lands
+        # on different round-off there than this vectorised single-FFT path, so
+        # neither value is meaningful and they cannot agree byte-for-byte.
+        # Compare only the bins where the reference auto-spectra carry real
+        # energy. (This also masks the even-nperseg Nyquist bin, degenerate the
+        # same way; the nperseg here is odd, so there is no Nyquist bin.)
+        Pxx_ref = np.real(np.einsum('iif->if', Pxy_ref))         # (N_chans, N_freq)
+        well_defined = np.min(Pxx_ref, axis=0) > 1e-12 * np.max(Pxx_ref)
+        np.testing.assert_allclose(csd.Cxy[:, :, well_defined],
+                                   Cxy_ref[:, :, well_defined],
+                                   rtol=1e-12, atol=1e-12)
 
     def test_matches_scipy_reference_hann(self):
         fs = 2000
