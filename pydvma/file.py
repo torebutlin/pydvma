@@ -390,7 +390,7 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
                 counter += 1
                 tf_data_all[:,counter] = np.interp(f,tf_data.freq_axis,tf_data.tf_data[:,i],right=1)
                 tf_data_all[0,counter] = tf_data_all[1,counter] # to match equivalent tweak in JW Logger for handling DC singularities
-                zero_test = freq_data_all[:,counter] == 0
+                zero_test = tf_data_all[:,counter] == 0
                 tf_data_all[zero_test,counter] = np.min(np.abs(tf_data_all[:,counter])) # handle zeros
         
         # convert
