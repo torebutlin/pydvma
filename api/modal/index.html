@@ -2039,7 +2039,9 @@
 
     <div class="doc doc-contents ">
 
-        <p>Reconstructs transfer functions from modal_data and returns TfData object</p>
+        <p>Reconstructs transfer functions from modal_data and returns TfData object.
+Includes the per-channel local residual terms (rk, rm). Does not modify
+modal_data.</p>
 
 
     </div>
@@ -2059,7 +2061,10 @@
 
     <div class="doc doc-contents ">
 
-        <p>Reconstructs transfer functions from modal_data and returns TfData object</p>
+        <p>Reconstructs transfer functions from modal_data and returns TfData object.
+Excludes the per-channel local residual terms (rk, rm) — only the modal
+contributions are summed, as wanted for global fits. Does not modify
+modal_data.</p>
 
 
     </div>

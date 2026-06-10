@@ -2047,9 +2047,12 @@
 
     <div class="doc doc-contents first">
 
-        <p>Calculates transfer function averaged across ensemble of timedata. Note that
-this expects a Python list of timedata objects.</p>
-<p>Takes each time series as an independent measurement.</p>
+        <p>Calculates transfer function averaged across an ensemble of separate
+measurements. Note that this expects a <TimeDataList> object.</p>
+<p>Takes each time series as an independent measurement: the
+cross-spectra are averaged across the ensemble, then the H1
+estimator <code>Pxy[ch_in, ch_out] / Pxy[ch_in, ch_in]</code> is formed —
+the same phase convention as <code>calculate_tf</code>.</p>
 <p>Intended for averaged transfer functions from separate measurements, e.g. impulse hammer tests.</p>
 <p>Does not average data across sub-frames.</p>
 
@@ -2257,6 +2260,47 @@ this expects a <TimeDataList> of <TimeData> objects.</p>
 </code></pre></div>
 
     <div class="doc doc-contents first">
+
+        <p>Calculates a complex STFT spectrogram (sonogram) for every channel of
+a <TimeData> object using a Hann window, and returns a <SonoData>.</p>
+<p>Channel calibration factors and units are copied from the source, and
+<code>id_link</code> is set to the source's <code>unique_id</code> (same provenance
+convention as the other <code>calculate_*</code> functions).</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>time_data</code></b>
+              (<code>&lt;TimeData&gt; object</code>)
+          –
+          <div class="doc-md-description">
+            <p>time series data</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>nperseg</code></b>
+              (<code><span title="int">int</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>STFT segment length; defaults to ~1/50th
+of the time series so roughly 50 segments span the data</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>noverlap</code></b>
+              (<code><span title="int">int</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>overlap between segments, default
+<code>nperseg // 2</code></p>
+          </div>
+        </li>
+    </ul>
 
 
     </div>

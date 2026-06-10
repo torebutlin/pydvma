@@ -5884,7 +5884,7 @@
 
     <div class="doc doc-contents ">
 
-        <p>Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset</p>
+        <p>Calls analysis.calculate_tf on each TimeData item in the TimeDataList and adds TfDataList object to dataset</p>
 
 
     </div>
@@ -5904,7 +5904,7 @@
 
     <div class="doc doc-contents ">
 
-        <p>Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset</p>
+        <p>Calls analysis.calculate_cross_spectrum_matrix on each TimeData item in the TimeDataList and adds CrossSpecDataList object to dataset</p>
 
 
     </div>
@@ -5924,7 +5924,7 @@
 
     <div class="doc doc-contents ">
 
-        <p>Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset</p>
+        <p>Calls analysis.calculate_tf_averaged on the whole TimeDataList (ensemble average) and adds a single-item TfDataList to dataset</p>
 
 
     </div>
@@ -5944,7 +5944,7 @@
 
     <div class="doc doc-contents ">
 
-        <p>Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset</p>
+        <p>Calls analysis.calculate_cross_spectra_averaged on the whole TimeDataList (ensemble average) and adds a single-item CrossSpecDataList to dataset</p>
 
 
     </div>
@@ -6722,7 +6722,7 @@ objects to link back to their source via <code>id_link</code>.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Calls analysis.calculate_tf_averaged on whole list and returns TfData object</p>
+        <p>Calls analysis.calculate_cross_spectra_averaged on whole list and returns CrossSpecData object</p>
 
 
     </div>
@@ -9150,7 +9150,7 @@ amplitudes.</p>
   </span>
 
 <a href="#pydvma.datastructure.ModalData.settings" class="headerlink" title="Permanent link">&para;</a></h5>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">settings</span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">copy</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span> <span class="k">if</span> <span class="n">settings</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -9303,6 +9303,11 @@ amplitudes.</p>
 
     <div class="doc doc-contents ">
 
+        <p>Appends one mode (a packed parameter row as per 'x' in modal.py:
+[fn, zn, an x N, pn x N, rk x N, rm x N]) to the modal matrix,
+keeping rows sorted by natural frequency and refreshing the
+unpacked summary properties (fn, zn, an, pn).</p>
+
 
     </div>
 
@@ -9320,6 +9325,9 @@ amplitudes.</p>
 </code></pre></div>
 
     <div class="doc doc-contents ">
+
+        <p>Deletes one mode (row) from the modal matrix by index and
+refreshes the unpacked summary properties (fn, zn, an, pn).</p>
 
 
     </div>
