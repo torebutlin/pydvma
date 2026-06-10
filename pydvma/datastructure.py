@@ -192,7 +192,7 @@ class DataSet():
         if data_class == 'ModalData':
             if len(self.modal_data_list) > np.max(list_index):
                 for i in reversed(list_index):
-                    del self.tf_data_list[i]
+                    del self.modal_data_list[i]
             else:
                 print('indices out of range, no data removed')
                     
@@ -226,7 +226,7 @@ class DataSet():
             
     def calculate_tf_set(self, ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
         '''
-        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        Calls analysis.calculate_tf on each TimeData item in the TimeDataList and adds TfDataList object to dataset
         '''
         if len(self.time_data_list)>0:
             tf_data_list = self.time_data_list.calculate_tf_set(ch_in=ch_in, time_range=time_range, window=window, N_frames=N_frames, overlap=overlap)
@@ -238,10 +238,10 @@ class DataSet():
             
     def calculate_cross_spectrum_matrix_set(self,ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
         '''
-        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        Calls analysis.calculate_cross_spectrum_matrix on each TimeData item in the TimeDataList and adds CrossSpecDataList object to dataset
         '''
         if len(self.time_data_list)>0:
-            cross_spec_data_list = self.time_data_list.calculate_cross_spectrum_matrix_set(ch_in=ch_in, time_range=time_range,window='hann',N_frames=N_frames,overlap=overlap)
+            cross_spec_data_list = self.time_data_list.calculate_cross_spectrum_matrix_set(ch_in=ch_in, time_range=time_range,window=window,N_frames=N_frames,overlap=overlap)
             self.cross_spec_data_list = cross_spec_data_list
             #self.add_to_dataset(cross_spec_data_list)
         else:
@@ -250,7 +250,7 @@ class DataSet():
             
     def calculate_tf_averaged(self, ch_in=0, time_range=None,window='hann'):
         '''
-        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        Calls analysis.calculate_tf_averaged on the whole TimeDataList (ensemble average) and adds a single-item TfDataList to dataset
         '''
         if len(self.time_data_list)>0:
             tf_data = self.time_data_list.calculate_tf_averaged(ch_in=ch_in, time_range=time_range ,window=window)
@@ -262,7 +262,7 @@ class DataSet():
             
     def calculate_cross_spectra_averaged(self, time_range=None,window=None):
         '''
-        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        Calls analysis.calculate_cross_spectra_averaged on the whole TimeDataList (ensemble average) and adds a single-item CrossSpecDataList to dataset
         '''
         if len(self.time_data_list)>0:
             cross_spec_data = self.time_data_list.calculate_cross_spectra_averaged(time_range=time_range,window=window)
@@ -406,7 +406,7 @@ class TimeDataList(list):
     
     def calculate_cross_spectra_averaged(self, time_range=None,window=None):
         '''
-        Calls analysis.calculate_tf_averaged on whole list and returns TfData object
+        Calls analysis.calculate_cross_spectra_averaged on whole list and returns CrossSpecData object
         '''
         cross_spec_data = analysis.calculate_cross_spectra_averaged(self, time_range=time_range,window=window)
             
@@ -442,7 +442,7 @@ class TimeDataList(list):
             print('<TimeDataList> is empty. First log data, load data, or create test data.')
         elif n_set >= len(self):
             print('<TimeDataList> has {} set(s) of <TimeData>. Set requested (index={}) exceeds number of sets. Note indexing starts at 0.'.format(len(self),n_set))
-        elif n_chan >= len(self[n_set].tf_data[0,:]):
+        elif n_chan >= len(self[n_set].time_data[0,:]):
             print('<TimeDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].time_data[0,:]),n_chan))
         else:
             self[n_set].channel_cal_factors[n_chan]=factor
@@ -471,7 +471,7 @@ class FreqDataList(list):
             print('<FreqDataList> is empty. First calculate FFT.')
         elif n_set >= len(self):
             print('<FreqDataList> has {} set(s) of <FreqData>. Set requested (index={}) exceeds number of sets. Note indexing starts at 0.'.format(len(self),n_set))
-        elif n_chan >= len(self[n_set].tf_data[0,:]):
+        elif n_chan >= len(self[n_set].freq_data[0,:]):
             print('<FreqDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].freq_data[0,:]),n_chan))
         else:
             self[n_set].channel_cal_factors[n_chan]=factor
@@ -778,7 +778,10 @@ class ModalData():
         
         self.M = []
         self.test_name = test_name
-        self.settings = settings
+        # Own copy: add_mode/delete_mode rewrite settings.channels, and
+        # the caller's settings (typically the source TfData's) must not
+        # be mutated through the shared reference.
+        self.settings = copy.copy(settings) if settings is not None else None
         self.channels = 0
         if settings is not None:
             self.settings.channels = 0
@@ -793,6 +796,12 @@ class ModalData():
 
 
     def add_mode(self,xn):
+        '''
+        Appends one mode (a packed parameter row as per 'x' in modal.py:
+        [fn, zn, an x N, pn x N, rk x N, rm x N]) to the modal matrix,
+        keeping rows sorted by natural frequency and refreshing the
+        unpacked summary properties (fn, zn, an, pn).
+        '''
         # Make modal matrix. Each row is modal vector stacked as per 'x' in modal.py
         if len(self.M) == 0:
             self.M = np.atleast_2d(xn)
@@ -801,30 +810,39 @@ class ModalData():
         else:
             print('Incompatible mode: different number of channels to existing set.')
             return
-        
+
         # sort by frequency (first column)
         sort_i = np.argsort(self.M[:,0])
         self.M = self.M[sort_i,:]
-        self.channels = len(sort_i)
-        self.settings.channels = self.channels
-        
+        # row layout is [fn, zn, an*N, pn*N, rk*N, rm*N] so the channel
+        # count comes from the column count, not the number of rows (modes)
+        self.channels = int((self.M.shape[1] - 2) / 4)
+        if self.settings is not None:
+            self.settings.channels = self.channels
+
         # separate properties for easier summary, and don't need summary of local residuals rk and rm
         fn,zn,an,pn,rk,rm = modal.unpack_matrix(self.M)
         self.fn = fn
         self.zn = zn
         self.an = an
         self.pn = pn
-        
+
     def delete_mode(self,mode_number):
+        '''
+        Deletes one mode (row) from the modal matrix by index and
+        refreshes the unpacked summary properties (fn, zn, an, pn).
+        '''
         self.M = np.delete(self.M,mode_number,0)
-        self.channels = len(self.M[:,0])
-        self.settings.channels = self.channels
-        
+        self.channels = int((self.M.shape[1] - 2) / 4)
+        if self.settings is not None:
+            self.settings.channels = self.channels
+
         # separate properties for easier summary, and don't need summary of local residuals rk and rm
-        self.fn = self.M[:,0]
-        self.zn = self.M[:,1]
-        self.an = self.M[:,2]
-        self.pn = self.M[:,3]
+        fn,zn,an,pn,rk,rm = modal.unpack_matrix(self.M)
+        self.fn = fn
+        self.zn = zn
+        self.an = an
+        self.pn = pn
         
             
     def __repr__(self):
