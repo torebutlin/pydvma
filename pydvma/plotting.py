@@ -272,14 +272,17 @@ class PlotData():
             elif data_list.__class__.__name__ == 'TimeDataList':
                 N_chans = len(data_list[n_set].time_data[0,:])
                 
+            # evaluate the 'all' sentinel per set: sets can have
+            # different channel counts, so the parameter itself must
+            # not be overwritten on the first iteration
             if channels == 'all':
-                channels = range(N_chans)
-
-            
+                channels_this_set = range(N_chans)
+            else:
+                channels_this_set = channels
 
             for n_chan in range(N_chans):
                 count += 1
-                if (n_set not in sets) or (n_chan not in channels):
+                if (n_set not in sets) or (n_chan not in channels_this_set):
                     alpha = 1-LINE_ALPHA
                 else:
                     alpha = LINE_ALPHA
@@ -346,11 +349,11 @@ class PlotData():
                         if coherence_plot_type == 'linear':
                             yc = yclin
                         elif coherence_plot_type == 'log':
+                            # handle log(0) manually to avoid warnings
                             yc = np.zeros(np.shape(yclin))
                             izero = yclin==0
                             yc[~izero] = 20*np.log10(np.abs(yclin[~izero]))
                             yc[izero] = -np.inf
-                            yc = 20*np.log10(np.abs(yclin))
                     else:
                         yc = np.ones(np.shape(data_list[n_set].tf_data))
                         
@@ -527,14 +530,9 @@ class PlotData():
             self.ax.set_ylim(ylim)
         else:
             self.lines = self.ax.get_lines()
-            if (self.data_list.__class__.__name__ == 'TfData') and (self.plot_type != 'Nyquist'):
-                # at the moment this doesn't get called
-                # it should be TfDataList in condition
-                # and it should be == nyquist not !=
-                # but plot behaviour correct as it stands and probably just need this setting to xlim always
-                xview = self.freq_range
-            else:
-                xview = self.ax.get_xlim()
+            # scale y to the data within the current x view (works for
+            # Nyquist too, where x is Re(H) rather than frequency)
+            xview = self.ax.get_xlim()
             ymin = np.inf
             ymax = -np.inf
             c=-1
