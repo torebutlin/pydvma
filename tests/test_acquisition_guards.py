@@ -122,3 +122,91 @@ class TestVmaxHelpers:
         s = dvma.MySettings(device_driver='soundcard', VmaxSC=2.0)
         # output_VmaxSC not given -> defaults to VmaxSC
         assert s.output_vmax() == 2.0
+
+
+class TestOutputDeviceFallback:
+    """When `sd.default` is unavailable, `MySettings` falls back to a
+    name-based scan of enumerated devices for the output index. If no
+    device name contains 'output' (typical input-only Mac setups) the
+    scan must fall back gracefully, not raise IndexError."""
+
+    def _patch_sd_default_broken(self, monkeypatch):
+        from pydvma import options
+
+        class _BrokenDefault:
+            @property
+            def device(self):
+                raise AttributeError('no default device')
+
+        class _FakeSd:
+            default = _BrokenDefault()
+
+        monkeypatch.setattr(options, 'sd', _FakeSd())
+
+    def test_no_output_named_device_falls_back(self, monkeypatch):
+        from pydvma import streams
+        self._patch_sd_default_broken(monkeypatch)
+        monkeypatch.setattr(streams, 'get_devices_soundcard',
+                            lambda: ['Built-in Microphone'])
+        s = dvma.MySettings(device_driver='mock',
+                            output_device_driver='soundcard')
+        assert s.output_device_index == 1
+
+    def test_output_named_device_is_picked(self, monkeypatch):
+        from pydvma import streams
+        self._patch_sd_default_broken(monkeypatch)
+        monkeypatch.setattr(streams, 'get_devices_soundcard',
+                            lambda: ['mic input', 'speakers output'])
+        s = dvma.MySettings(device_driver='mock',
+                            output_device_driver='soundcard')
+        assert s.output_device_index == 1
+
+
+class TestEndStreamRobustness:
+    """Soundcard `Recorder.end_stream` must tolerate a stream that was
+    never opened or is already dead, matching the NI recorder."""
+
+    def test_end_stream_without_open_stream_does_not_raise(self):
+        from pydvma import streams
+        s = dvma.MySettings(device_driver='mock', channels=2)
+        rec = streams.Recorder(s)  # buffers only; init_stream never called
+        rec.end_stream()
+        assert streams.REC is None
+
+    def test_end_stream_with_dead_stream_object_does_not_raise(self):
+        from pydvma import streams
+        s = dvma.MySettings(device_driver='mock', channels=2)
+        rec = streams.Recorder(s)
+
+        class _DeadStream:
+            @property
+            def active(self):
+                raise RuntimeError('PortAudio: stream closed')
+
+            def stop(self):
+                raise RuntimeError('closed')
+
+            def close(self):
+                raise RuntimeError('closed')
+
+        rec.audio_stream = _DeadStream()
+        rec.end_stream()  # must swallow, like the NI path
+        assert rec.audio_stream is None
+
+
+class TestNiCallbackInterval:
+    """The NI every-N-samples callback interval must equal the
+    per-callback read size (chunk_size). The old largest-of-{10,100,
+    1000} table made events fire faster than reads consume samples for
+    any other chunk_size, and crashed outright below 10."""
+
+    def test_interval_equals_chunk_size(self):
+        from pydvma import streams
+        assert streams._ni_callback_interval(1000) == 1000
+        assert streams._ni_callback_interval(2048) == 2048  # was capped to 1000
+        assert streams._ni_callback_interval(7) == 7        # was IndexError
+
+    def test_invalid_chunk_size_raises(self):
+        from pydvma import streams
+        with pytest.raises(ValueError, match='chunk_size'):
+            streams._ni_callback_interval(0)

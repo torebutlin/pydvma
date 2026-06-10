@@ -224,14 +224,17 @@ class MySettings(object):
                 self.output_device_index = sd.default.device[1]
             except (AttributeError, TypeError, IndexError):
                 # sd.default unavailable — fall back to a name-based
-                # guess over enumerated devices.
+                # guess over enumerated devices. No device name may
+                # contain 'output' at all (e.g. input-only Mac setups),
+                # so guard the scan before indexing into it.
                 from . import streams  # lazy import to avoid heavy/circular load at module import
                 devices = streams.get_devices_soundcard()
+                output_devices = None
                 if devices is not None:
-                    output_devices = np.where(['output' in names for names in devices])
-                    self.output_device_index = output_devices[0][0]
-                else:
-                    self.output_device_index = 1
+                    matches = np.where(['output' in names for names in devices])[0]
+                    if len(matches) > 0:
+                        output_devices = int(matches[0])
+                self.output_device_index = output_devices if output_devices is not None else 1
         elif (output_device_driver == 'nidaq') and ((output_device_index is None) or (output_device_index == 'None')):
             self.output_device_index = 0
         elif (output_device_driver == 'mock') and ((output_device_index is None) or (output_device_index == 'None')):

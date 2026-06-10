@@ -498,15 +498,26 @@ class Recorder(object):
     
     def end_stream(self):
         '''
-        Closes an audio stream.
+        Stops and closes the audio stream, tolerating a stream that was
+        never opened or is already dead (e.g. after a device
+        disconnect) — matching the NI recorder's behaviour. Clears the
+        module-level ``REC`` reference.
         '''
         global REC
         REC = None
-        if self.audio_stream.active:
-            self.audio_stream.stop()
-        else: 
+        stream = getattr(self, 'audio_stream', None)
+        if stream is None:
+            return
+        try:
+            if stream.active:
+                stream.stop()
+        except Exception:
             pass
-        self.audio_stream.close()
+        try:
+            stream.close()
+        except Exception:
+            pass
+        self.audio_stream = None
 
         
         
@@ -514,6 +525,30 @@ class Recorder(object):
 
 
 #%% NI stream (nidaqmx backend)
+
+
+def _ni_callback_interval(chunk_size):
+    '''Cadence (in samples) for the NI every-N-samples acquisition
+    callback.
+
+    Must equal the per-callback read size (``settings.chunk_size``):
+    each callback reads exactly one chunk, so a shorter interval makes
+    events fire faster than reads consume samples (unbounded event
+    backlog, blocking reads) and a longer one would starve the reads.
+
+    Args:
+        chunk_size (int): samples read per callback; must be >= 1.
+
+    Returns:
+        int: the validated callback interval (== chunk_size).
+    '''
+    n = int(chunk_size)
+    if n < 1:
+        raise ValueError(
+            'chunk_size must be >= 1 for the NI callback interval, '
+            'got {!r}'.format(chunk_size)
+        )
+    return n
 
 
 class Recorder_NI_nidaqmx(object):
@@ -715,11 +750,9 @@ class Recorder_NI_nidaqmx(object):
             self._build_and_start_ai_task(settings)
 
     def _build_and_start_ai_task(self, settings):
-        # AutoRegN must divide evenly into chunk_size; pick the largest
-        # of {10, 100, 1000} that fits.
-        AutoRegN_choices = np.array([10, 100, 1000], dtype=int)
-        check = np.where(AutoRegN_choices <= settings.chunk_size)
-        AutoRegN = int(AutoRegN_choices[check[0][-1]])
+        # Callback cadence must equal the per-callback read size —
+        # see _ni_callback_interval.
+        AutoRegN = _ni_callback_interval(settings.chunk_size)
 
         term_config = _ni_backend.resolve_terminal_config(settings.NI_mode)
         task = ni.Task()
