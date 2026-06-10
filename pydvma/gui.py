@@ -63,6 +63,56 @@ if platform.system() == "Darwin":
 else:
     app.setWindowIcon(QtGui.QIcon(icon_path))
 
+#%% voltage-aware GUI helpers
+# Logged data and output signals are in volts (see the ±1-scaling
+# removal in streams/acquisition). These helpers keep the GUI's checks
+# tied to the device full-scale instead of the old ±1 convention, and
+# give the logic a hardware-free test seam (tests/test_gui_logic.py).
+
+def _post_log_clip_warning(time_data, settings):
+    '''Return a clipping warning string ('' when clean) for freshly
+    logged data. Mirrors acquisition.log_data's check: |data| above
+    0.95 x settings.input_vmax() counts as potentially clipped — the
+    data is in volts, so a fixed ±0.95 threshold only suited
+    uncalibrated soundcards.'''
+    if np.any(np.abs(time_data.time_data) > 0.95 * settings.input_vmax()):
+        return '\nWARNING: Data may be clipped.\n'
+    return ''
+
+
+def _output_within_range(y, settings):
+    '''True when the output signal fits within the output device
+    full-scale (settings.output_vmax(), volts). The GUI refuses to
+    start logging with an out-of-range output; the old check rejected
+    anything above 1 V, blocking legitimate NI outputs.'''
+    return not bool(np.any(np.abs(y) > settings.output_vmax()))
+
+
+def _input_ylim(settings):
+    '''y-limits for time-data plots after logging: ± input full-scale
+    in volts (±1 for uncalibrated soundcards, ±VmaxNI for NI).'''
+    vmax = float(settings.input_vmax())
+    return [-vmax, vmax]
+
+
+def _autoscale_factor(column, shift):
+    '''Per-channel oscilloscope auto-scale divisor: twice the peak
+    deviation from `shift`, floored so a constant channel (e.g. the
+    all-zero buffer right after stream start) cannot divide by zero.'''
+    return max(2.0 * float(np.max(np.abs(column - shift))), 1e-12)
+
+
+def _osc_can_reuse_stream(settings):
+    '''True when a live recorder already serves exactly these settings.
+    The embedded oscilloscope must not restart the stream in that case:
+    the soundcard path always builds a fresh Recorder, which would
+    leave the launching Logger holding a stale one.'''
+    rec = streams.REC
+    return (rec is not None
+            and rec.settings is settings
+            and getattr(rec, 'audio_stream', None) is not None)
+
+
 #%%
 class BlueButton(QPushButton):
     def __init__(self,text):
@@ -935,7 +985,8 @@ class Logger():
         self.input_output_options.currentTextChanged.connect(self.update_output)
         
         self.input_output_amp = QLineEdit(str(self.output_signal_settings.amp))
-        v = QDoubleValidator(0.0,1.0,5)
+        # amplitude is in volts: allow up to the output device full-scale
+        v = QDoubleValidator(0.0,float(self.settings.output_vmax()),5)
         v.setNotation(QDoubleValidator.Notation.StandardNotation)
         self.input_output_amp.setValidator(v)
         
@@ -966,7 +1017,7 @@ class Logger():
         self.layout_tools_generate_output.addRow(boldLabel('Generate Outputs:'))
         self.layout_tools_generate_output.addRow(QLabel('Test Name:'),self.input_test_name2)
         self.layout_tools_generate_output.addRow(QLabel('Type:'),self.input_output_options)
-        self.layout_tools_generate_output.addRow(QLabel('Amplitude (0-1):'),self.input_output_amp)
+        self.layout_tools_generate_output.addRow(QLabel('Amplitude (V):'),self.input_output_amp)
         self.layout_tools_generate_output.addRow(QLabel('f1 (Hz):'),self.input_output_f1)
         self.layout_tools_generate_output.addRow(QLabel('f2 (Hz):'),self.input_output_f2)
         self.layout_tools_generate_output.addRow(QLabel('Duration (s):'),self.input_output_duration)
@@ -1231,9 +1282,11 @@ class Logger():
         self.create_output_signal()
         if self.output_time_data is not None:
             y = self.output_time_data.time_data
-            # warn if amplitude set too high
-            if np.any(np.abs(y)>1):
-                message = 'Output amplitude too high: must be less than 1.\n'
+            # warn if amplitude set too high (volts vs device full-scale)
+            if not _output_within_range(y, self.settings):
+                message = ('Output amplitude too high: must be within '
+                           '±{:.3g} V (the output device full-scale).\n'
+                           .format(self.settings.output_vmax()))
                 self.show_message(message)
                 return None
         else:
@@ -1276,8 +1329,7 @@ class Logger():
             self.sets = [N-1]
             # this doesn't make it through from acquisition.MESSAGE because polling stops first
             message = 'Logging complete.\n'
-            if np.any(np.abs(d.time_data_list[0].time_data) > 0.95):
-                message += '\nWARNING: Data may be clipped.\n'
+            message += _post_log_clip_warning(d.time_data_list[0], self.settings)
             self.show_message(message)
 #            message = ''
 #            self.hide_message()
@@ -1287,8 +1339,7 @@ class Logger():
             self.last_action = 'data replaced'
             # this doesn't make it through from acquisition.MESSAGE because polling stops first
             message = 'Logged data replaced set {}.\n'.format(self.selected_set)
-            if np.any(np.abs(d.time_data_list[0].time_data) > 0.95):
-                message += '\nWARNING: Data may be clipped.\n'
+            message += _post_log_clip_warning(d.time_data_list[0], self.settings)
             self.show_message(message,b='undo')
             self.flag_log_and_replace = False
 
@@ -1307,10 +1358,11 @@ class Logger():
                     selection[ns][nc] = False
         self.selected_channels = selection
         
-        # update with final selection and make -1 to 1, change button back to green
+        # update with final selection, scale y to device full-scale,
+        # change button back to green
         self.auto_xy = 'x'
         self.update_figure()
-        self.p.ax.set_ylim([-1,1])
+        self.p.ax.set_ylim(_input_ylim(self.settings))
         self.button_log_data.setStyleSheet('background-color: hsv(120, 170, 255); color: black')
         self.message_timer.stop()
         
@@ -1346,7 +1398,7 @@ class Logger():
         
         self.auto_xy = 'x'
         self.update_figure()
-        self.p.ax.set_ylim([-1,1])
+        self.p.ax.set_ylim(_input_ylim(self.settings))
 #        self.auto_xy = ''
 #        self.p.update(self.dataset.time_data_list,sets=[N-1],channels='all', auto_xy=self.auto_xy)
 #        update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy='xyc'):
@@ -2158,11 +2210,11 @@ class Logger():
             message = 'All {} items deleted.\n\n'.format(self.data_type)
             self.show_message(message, b='undo')
         else:
-            message = 'No {} to delete.'.format(self.data_typye)
+            message = 'No {} to delete.'.format(self.input_list_data_type.currentText())
             self.show_message(message)
         self.update_selected_set()
-            
-    
+
+
     def delete_data_set(self):
         self.auto_xy = ''
         self.selected_set = int(self.input_selected_set.text())
@@ -2174,7 +2226,7 @@ class Logger():
             message = 'Set {} of type {} deleted.'.format(self.selected_set,self.data_type)
             self.show_message(message, b='undo')
         else:
-            message = 'No {} to delete.'.format(self.data_typye)
+            message = 'No {} to delete.'.format(self.input_list_data_type.currentText())
             self.show_message(message)
         self.update_selected_set()
     
@@ -2601,7 +2653,7 @@ class Logger():
     def freq_max2(self):
         self.freq_range[1] = float(self.input_freq_max2.text())
         self.input_freq_max.setText(str(self.freq_range[1]))
-        self.freq_max
+        self.freq_max()
         
     def accept_mode(self):
         self.dataset.modal_data_list
@@ -2745,10 +2797,14 @@ class Oscilloscope():
         '''
 
         self.settings = settings
-        
-        streams.start_stream(settings)
+
+        # Reuse the launching Logger's live stream when it matches:
+        # starting a fresh soundcard stream here would replace
+        # streams.REC and leave the Logger holding a stale Recorder.
+        if not _osc_can_reuse_stream(settings):
+            streams.start_stream(settings)
         self.rec = streams.REC
-        
+
 
         self.timer = QtCore.QTimer()
         self.create_figure()
@@ -2927,7 +2983,7 @@ class Oscilloscope():
                     self.osc_time_line.enableAutoRange()
                 elif (self.auto_scale is True) and (self.settings.channels!=1):
                     shift = np.mean(time_data_snapshot[:,i])
-                    scale_factor = np.max(np.abs(time_data_snapshot[:,i]-shift))*2
+                    scale_factor = _autoscale_factor(time_data_snapshot[:,i], shift)
                     self.osc_time_line.setYRange(-1,self.settings.channels)
                 else:
                     shift = 0
