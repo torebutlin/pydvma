@@ -446,10 +446,13 @@ def _tf_units_from_source(src_units, ch_in, ch_out_set):
 
 def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None):
     '''
-    Calculates transfer function averaged across ensemble of timedata. Note that
-    this expects a Python list of timedata objects.
+    Calculates transfer function averaged across an ensemble of separate
+    measurements. Note that this expects a <TimeDataList> object.
 
-    Takes each time series as an independent measurement.
+    Takes each time series as an independent measurement: the
+    cross-spectra are averaged across the ensemble, then the H1
+    estimator ``Pxy[ch_in, ch_out] / Pxy[ch_in, ch_in]`` is formed —
+    the same phase convention as `calculate_tf`.
 
     Intended for averaged transfer functions from separate measurements, e.g. impulse hammer tests.
 
@@ -487,7 +490,11 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
     ch_count = -1
     for ch_out in ch_out_set:
         ch_count += 1
-        tf_data[:,ch_count] = Pxy_av[ch_out,ch_in,:] / Pxy_av[ch_in,ch_in,:]
+        # H1 estimator, same convention as calculate_tf: with
+        # Pxy[i, j] = conj(X_i)·X_j the numerator must be
+        # Pxy[ch_in, ch_out] — the transposed element is its complex
+        # conjugate and silently negates the TF phase.
+        tf_data[:,ch_count] = Pxy_av[ch_in,ch_out,:] / Pxy_av[ch_in,ch_in,:]
         tf_coherence[:,ch_count] = np.abs(Pxy_av[ch_in,ch_out,:])**2 / (np.abs(Pxy_av[ch_in,ch_in,:]) * np.abs(Pxy_av[ch_out,ch_out,:]))
 
     settings = copy.copy(td.settings)
@@ -570,7 +577,21 @@ def clean_impulse(time_data, ch_impulse=0):
     
 #%% SONOGRAM    
 def calculate_sonogram(time_data, nperseg=None, noverlap=None):
-    
+    '''
+    Calculates a complex STFT spectrogram (sonogram) for every channel of
+    a <TimeData> object using a Hann window, and returns a <SonoData>.
+
+    Channel calibration factors and units are copied from the source, and
+    `id_link` is set to the source's `unique_id` (same provenance
+    convention as the other `calculate_*` functions).
+
+    Args:
+        time_data (<TimeData> object): time series data
+        nperseg (int, optional): STFT segment length; defaults to ~1/50th
+            of the time series so roughly 50 segments span the data
+        noverlap (int, optional): overlap between segments, default
+            ``nperseg // 2``
+    '''
     y = np.copy(time_data.time_data) # handles all channels simultaneously
     if nperseg is None:
         nperseg = int(len(time_data.time_axis)/50) #roughly 50 fft's per time-series not counting overlap
@@ -586,7 +607,7 @@ def calculate_sonogram(time_data, nperseg=None, noverlap=None):
         t, f, S_all_chans, time_data.settings,
         channel_cal_factors=np.asarray(time_data.channel_cal_factors, dtype=float).copy(),
         units=time_data.units,
-        id_link=time_data.id_link, test_name=time_data.test_name,
+        id_link=time_data.unique_id, test_name=time_data.test_name,
     )
 
     return sono_data

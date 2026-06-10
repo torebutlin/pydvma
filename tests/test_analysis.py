@@ -583,3 +583,61 @@ class TestCalibrationPropagation:
         tf = analysis.calculate_tf(td, ch_in=0, N_frames=2)
         assert tf.units is None
         np.testing.assert_allclose(tf.channel_cal_factors, [2.0, 3.0])
+
+
+# ---------- calculate_tf_averaged (ensemble H1 estimator) ----------
+
+class TestCalculateTfAveraged:
+    """Pin the ensemble-averaged TF to the H1 convention used by
+    `calculate_tf`: TF = Pxy[ch_in, ch_out] / Pxy[ch_in, ch_in] with
+    Pxy[i, j] = conj(X_i)·X_j, i.e. standard e^{+jωt} phase (a pure
+    delay has negative phase slope). Regression tests for the June
+    2026 conjugate-TF bug."""
+
+    def test_single_element_ensemble_matches_calculate_tf(self):
+        """Averaging over a one-element ensemble must reproduce the
+        single-capture H1 exactly — including phase."""
+        fs, N = 1000, 4096
+        rng = np.random.default_rng(11)
+        x = rng.standard_normal(N)
+        y = np.convolve(x, [0.4, 0.3, -0.2], mode='full')[:N]
+        td = _make_time_data(np.column_stack([x, y]), fs)
+        tdl = datastructure.TimeDataList([td])
+
+        tf_single = analysis.calculate_tf(td, ch_in=0, N_frames=1)
+        tf_avg = analysis.calculate_tf_averaged(tdl, ch_in=0)
+
+        np.testing.assert_allclose(tf_avg.tf_data, tf_single.tf_data,
+                                   rtol=1e-12, atol=1e-14)
+
+    def test_recovers_delay_phase_across_ensemble(self):
+        """y = x delayed by D samples → TF phase must be -2πfD/fs
+        (e^{+jωt} convention), averaged over a 3-capture ensemble."""
+        fs, N, D = 1000, 4096, 5
+        rng = np.random.default_rng(12)
+        tdl = datastructure.TimeDataList()
+        for _ in range(3):
+            x = rng.standard_normal(N)
+            y = np.roll(x, D)
+            tdl.append(_make_time_data(np.column_stack([x, y]), fs))
+
+        tf = analysis.calculate_tf_averaged(tdl, ch_in=0)
+        # check away from DC/Nyquist where the estimate is clean
+        k = np.arange(20, 200)
+        expected = np.exp(-1j * 2 * np.pi * tf.freq_axis[k] * D / fs)
+        np.testing.assert_allclose(tf.tf_data[k, 0], expected,
+                                   rtol=1e-6, atol=1e-8)
+
+
+# ---------- calculate_sonogram provenance ----------
+
+class TestSonogramIdLink:
+
+    def test_sonogram_id_link_is_source_unique_id(self):
+        """Every derived data object stores the source TimeData's
+        unique_id in id_link; the sonogram must do the same."""
+        fs, N = 1000, 4096
+        rng = np.random.default_rng(13)
+        td = _make_time_data(rng.standard_normal((N, 2)), fs)
+        sn = analysis.calculate_sonogram(td, nperseg=256)
+        assert sn.id_link == td.unique_id
