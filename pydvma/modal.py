@@ -198,9 +198,16 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     for tf_data in tf_data_list:
         if tf_data.flag_modal_TF == False:
             N_tfs += len(tf_data.tf_data[0,:])
-    
+
+    if N_tfs == 0:
+        raise ValueError(
+            'modal_fit_all_channels needs at least one TfData that is '
+            'not a modal reconstruction (flag_modal_TF == False); got '
+            '{} item(s), none usable.'.format(len(tf_data_list))
+        )
+
     if freq_range is None:
-        freq_range = tf_data.freq_axis[[0,-1]]
+        freq_range = tf_data_list[0].freq_axis[[0,-1]]
     
     # get selected frequency axis
     f = tf_data_list[0].freq_axis
@@ -332,14 +339,18 @@ def pack(fn,zn,an,pn,rk,rm):
 
 def reconstruct_transfer_function(modal_data,f,measurement_type='acc'):
     '''
-    Reconstructs transfer functions from modal_data and returns TfData object
+    Reconstructs transfer functions from modal_data and returns TfData object.
+    Includes the per-channel local residual terms (rk, rm). Does not modify
+    modal_data.
     '''
     G = 0
     for n_row in range(len(modal_data.M[:,0])):
         xn = modal_data.M[n_row,:]
         G += f_TF_all_channels(xn,f,measurement_type=measurement_type)
-    
-    settings = modal_data.settings
+
+    # own copy: the returned TfData must not share (or mutate) the
+    # ModalData's settings object
+    settings = copy.copy(modal_data.settings)
     settings.channels = modal_data.channels
     tf_data = datastructure.TfData(f,G,None,settings,units=modal_data.units,channel_cal_factors=None,id_link=modal_data.id_link,test_name=modal_data.test_name)
     tf_data.flag_modal_TF = True
@@ -347,16 +358,21 @@ def reconstruct_transfer_function(modal_data,f,measurement_type='acc'):
 
 def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc'):
     '''
-    Reconstructs transfer functions from modal_data and returns TfData object
+    Reconstructs transfer functions from modal_data and returns TfData object.
+    Excludes the per-channel local residual terms (rk, rm) — only the modal
+    contributions are summed, as wanted for global fits. Does not modify
+    modal_data.
     '''
     G = 0
     N_tfs = int((len(modal_data.M[0,:])-2)/4)
     for n_row in range(len(modal_data.M[:,0])):
-        xn = modal_data.M[n_row,:]
+        # copy: zeroing through a view would permanently wipe the stored
+        # residual columns of modal_data.M
+        xn = modal_data.M[n_row,:].copy()
         xn[2+2*N_tfs:] = 0 #don't want local residual fits for global fits - i.e. rk and rm
         G += f_TF_all_channels(xn,f,measurement_type=measurement_type)
-    
-    settings = modal_data.settings
+
+    settings = copy.copy(modal_data.settings)
     settings.channels = modal_data.channels
     tf_data = datastructure.TfData(f,G,None,settings,units=modal_data.units,channel_cal_factors=None,id_link=modal_data.id_link,test_name=modal_data.test_name)
     tf_data.flag_modal_TF = True
