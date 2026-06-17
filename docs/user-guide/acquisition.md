@@ -242,24 +242,75 @@ t, output = dvma.signal_generator(
 dataset = dvma.log_data(settings, output=output)
 ```
 
-### Custom Waveform
+### Custom NumPy output
+
+`signal_generator` is convenient but limited — three shapes
+(`'gaussian'`, `'uniform'`, `'sweep'`), a single amplitude and an
+optional band. For anything else (arbitrary multi-tone, a measured or
+imported waveform, per-channel-different drives, an MLS sequence, a
+stepped sine…) build the array yourself and pass it to
+`log_data(..., output=...)`. The format `log_data` expects is small but
+strict:
+
+| Requirement | Detail |
+| ----------- | ------ |
+| **Shape** | 2-D `(N_samples, output_channels)` — one **column per AO channel**, even for a single channel (use `arr[:, None]`). The column count must equal `settings.output_channels`. |
+| **Units** | **Volts** — there is no ±1 normalisation. A value of `2.5` means 2.5 V at the terminal. |
+| **Sample rate** | The array is clocked out at `settings.output_fs` (defaults to `fs`). Build the time base with `1 / settings.output_fs`, and make it ≈ `stored_time` long to span the capture. |
+| **Range** | Every sample must lie within ±`settings.output_vmax()` (`output_VmaxNI` on NI, `output_VmaxSC` on soundcard). On NI, out-of-range samples are rejected by DAQmx (error -200077). |
+| **dtype** | Any float — cast internally (to volts on NI, to ±1 `float32` on the soundcard). |
+
+!!! warning "A hand-built array gets no ramp and no safety clamp"
+    `signal_generator` fades its waveform in/out and clamps to
+    full-scale for you. A raw array does **neither** — you own both. A
+    discontinuity at the first or last sample will click and can ring
+    the structure, so window the ends yourself for transient-sensitive
+    work, and keep the signal inside ±`output_vmax()`.
 
 ```python
 import numpy as np
 
-# Create custom single-channel waveform (2D array expected)
-t = np.arange(0, settings.stored_time, 1 / settings.output_fs)
-carrier = 0.5 * np.sin(2 * np.pi * 50 * t)
-output = carrier[:, None]  # (samples, channels)
+fs   = settings.output_fs       # output clock (defaults to settings.fs)
+T    = settings.stored_time     # match the capture length
+vmax = settings.output_vmax()   # full-scale output, in volts
+t    = np.arange(0, T, 1 / fs)
 
-# Example: multi-tone signal
-tones = np.array([100, 200, 500])
-multitone = 0.2 * np.sin(2 * np.pi * tones[:, None] * t).sum(axis=0)
-output = multitone[:, None]
+# --- build any waveform you like, in volts ---
+# multi-tone: 100 + 220 + 505 Hz, 0.3 V peak each
+tones = np.array([100.0, 220.0, 505.0])
+y = 0.3 * np.sin(2 * np.pi * np.outer(t, tones)).sum(axis=1)
 
-# Record with custom output
+# raised-cosine fade over the first/last 10 ms to avoid a click
+n_ramp = int(0.01 * fs)
+ramp = 0.5 * (1 - np.cos(np.linspace(0, np.pi, n_ramp)))
+y[:n_ramp]  *= ramp
+y[-n_ramp:] *= ramp[::-1]
+
+# stay inside the rails — there is no auto-clamp on a custom array
+y = np.clip(y, -vmax, vmax)
+
+output = y[:, None]             # -> (N, 1): a single AO channel
 dataset = dvma.log_data(settings, output=output)
 ```
+
+**Multiple output channels** — one column per channel, with
+`settings.output_channels` set to match. For example a 50 Hz sine on
+`ao0` and an independent noise drive on `ao1`:
+
+```python
+settings.output_channels = 2
+a = 0.5 * np.sin(2 * np.pi * 50 * t)
+b = np.clip(0.1 * np.random.randn(t.size), -vmax, vmax)
+output = np.column_stack([a, b])   # (N, 2): columns map to ao0, ao1
+dataset = dvma.log_data(settings, output=output)
+```
+
+!!! tip "Record the drive as a reference channel"
+    Set `settings.use_output_as_ch0 = True` and the played `output` is
+    prepended as channel 0 of the returned data — useful for transfer
+    functions, where you want the excitation captured alongside the
+    response rather than assumed. The prepended column passes through
+    uncalibrated (cal factor 1).
 
 ## Voltage-Based I/O
 
@@ -328,6 +379,22 @@ module is enabled by setting the current at its column index, e.g.
 on a channel that is wired to an AO output** (e.g. a loopback test
 channel): the excitation current is driven back into the AO terminal.
 Leave loopback/driven channels at `0.0`.
+
+!!! warning "IEPE must-knows"
+    - **Only enable excitation on channels with an actual ICP/IEPE
+      sensor.** A charge/voltage input (force hammer, signal generator,
+      loopback to an AO) must stay at `0.0` — forcing 2 mA into a
+      non-ICP input can damage it.
+    - **Legal currents on the 9234 are exactly `0.0` or `0.002` A**
+      (off / 2 mA). Any other value raises a clear error, validated
+      against the module that actually owns each channel.
+    - **The list is positional — one entry per channel** in
+      captured-column (slot) order; a scalar broadcasts to every
+      channel.
+    - Enabling a channel switches it to **AC coupling** and adds a ~2 s
+      bias-settle on the first capture.
+    - `iepe_excit_current_A > 0` requires `device_driver='nidaq'` and a
+      DSA module; soundcard inputs have no configurable excitation.
 
 ### Worked example: IEPE accelerometers on a cDAQ
 
@@ -425,6 +492,13 @@ A scalar `channel_sensitivities=X` broadcasts to all channels. Default
 `1.0` means "no calibration applied" (cal_factor = 1). Every value must
 be non-zero (a zero sensitivity would mean an infinite cal factor), so
 use `1.0`, not `0.0`, for "leave this channel uncalibrated".
+
+!!! tip "Reading sensitivity off the cal sheet"
+    Manufacturers usually print sensitivity in **mV per unit** — divide
+    by 1000 to get the V/eu value pydvma expects. A `100 mV/g`
+    accelerometer is `0.1`, a `10 mV/g` one is `0.01`, and a `2.3 mV/N`
+    force transducer is `0.0023`. (A common slip is entering `100`
+    instead of `0.1` — that would scale your results by 1000×.)
 
 #### How calibration is stored and applied
 
