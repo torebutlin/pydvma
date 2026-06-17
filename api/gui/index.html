@@ -5338,6 +5338,80 @@
 
 
 
+        <p>Interactive Qt logger window for acquisition, analysis and plotting.</p>
+<p>The main GUI entry point (exposed as <code>dvma.Logger</code>). Opening a
+Logger starts a live oscilloscope and provides controls to record,
+analyse (FFT / transfer function / sonogram) and plot, all backed by
+a <code>datastructure.DataSet</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>settings</code></b>
+              (<code><a class="autorefs autorefs-internal" title="MySettings (pydvma.options.MySettings)" href="../acquisition/#pydvma.options.MySettings">MySettings</a></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Acquisition configuration. If
+None, the GUI opens with its own defaults.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>test_name</code></b>
+              (<code><span title="str">str</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Default label applied to logged data.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>default_window</code></b>
+              (<code><span title="str">str</span></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Initial FFT/TF window choice
+(e.g. <code>'hann'</code>); None means a rectangular window.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>output_signal_settings</code></b>
+              (<code><a class="autorefs autorefs-internal" title="Output_Signal_Settings (pydvma.options.Output_Signal_Settings)" href="../acquisition/#pydvma.options.Output_Signal_Settings">Output_Signal_Settings</a></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Pre-fills the "Generate output" panel — waveform type,
+amplitude and the two frequencies. Defaults to output off
+(<code>type='None'</code>). See <code>options.Output_Signal_Settings</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>dataset</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataSet (pydvma.datastructure.DataSet)" href="../datastructure/#pydvma.datastructure.DataSet">DataSet</a></code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Start from an existing dataset
+instead of an empty one — e.g. to add measurements to data
+you have already loaded.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Examples:</span></p>
+    <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">oss</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">Output_Signal_Settings</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="s1">&#39;sweep&#39;</span><span class="p">,</span> <span class="n">amp</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="gp">... </span>                                  <span class="n">f1</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">f2</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">logger</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">Logger</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">output_signal_settings</span><span class="o">=</span><span class="n">oss</span><span class="p">)</span>
+</code></pre></div>
+
 
 
 

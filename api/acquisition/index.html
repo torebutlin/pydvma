@@ -2295,7 +2295,72 @@ suggest_ni_settings: Safe NI ranges/rate/mode for a device.</p>
 
 
 
-        <p>A class that stores the output signal settings.</p>
+        <p>Pre-set values for the Logger GUI's "Generate output" panel.</p>
+<p>A lightweight holder for the four output-generation fields the
+Logger GUI exposes. Pass an instance to
+<code>gui.Logger(..., output_signal_settings=...)</code> to pre-fill that
+panel; the GUI then feeds the chosen values to
+<code>acquisition.signal_generator</code> when you preview or play the output.
+It is <strong>only</strong> consumed by the GUI — for scripted output, call
+<code>acquisition.signal_generator</code> / <code>log_data(output=...)</code> directly
+(see the Data Acquisition user guide).</p>
+<p>The signal <strong>duration is not stored here</strong> — it is a separate field
+in the GUI panel (and the <code>T=</code> argument of <code>signal_generator</code>
+when scripting).</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.Output_Signal_Settings.type">type</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Output waveform, matching the panel's drop-down —
+one of <code>'None'</code> (output off; the default), <code>'sweep'</code> (a
+linear chirp from <code>f1</code> to <code>f2</code>), <code>'gaussian'</code>
+(band-limited Gaussian noise) or <code>'uniform'</code> (band-limited
+uniform noise). Maps to <code>signal_generator</code>'s <code>sig</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.Output_Signal_Settings.amp">amp</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Peak amplitude in <strong>volts</strong> (default <code>0</code>). Clamped
+to ±<code>settings.output_vmax()</code> at generation time.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.Output_Signal_Settings.f1">f1</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Lower frequency in Hz (default <code>0</code>). For <code>'sweep'</code>
+the start frequency; for the noise types the lower band-pass
+corner. Passed through as <code>f=[f1, f2]</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.Output_Signal_Settings.f2">f2</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Upper frequency in Hz (default <code>0</code>). For <code>'sweep'</code>
+the end frequency; for noise the upper band-pass corner. The
+GUI rejects <code>max(f1, f2) &gt; fs/2</code> (Nyquist).</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Examples:</span></p>
+    <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="gp">&gt;&gt;&gt; </span><span class="c1"># band-limited noise, 0.1 V, 100-300 Hz, pre-loaded in the GUI</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">oss</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">Output_Signal_Settings</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="s1">&#39;gaussian&#39;</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="gp">... </span>                                  <span class="n">amp</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">f1</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">f2</span><span class="o">=</span><span class="mi">300</span><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">logger</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">Logger</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">output_signal_settings</span><span class="o">=</span><span class="n">oss</span><span class="p">)</span>
+</code></pre></div>
 
 
 
