@@ -934,6 +934,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#acquisition-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acquisition Settings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Acquisition Settings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.options.MySettings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MySettings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.options.Output_Signal_Settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output_Signal_Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#main-acquisition-function" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1557,6 +1596,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#acquisition-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acquisition Settings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Acquisition Settings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.options.MySettings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MySettings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pydvma.options.Output_Signal_Settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output_Signal_Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#main-acquisition-function" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1762,7 +1840,491 @@
 
 <h1 id="acquisition-module">Acquisition Module<a class="headerlink" href="#acquisition-module" title="Permanent link">&para;</a></h1>
 <p>Data acquisition functions for logging data from soundcards and National Instruments DAQ devices.</p>
-<h2 id="main-acquisition-function">Main Acquisition Function<a class="headerlink" href="#main-acquisition-function" title="Permanent link">&para;</a></h2>
+<h2 id="acquisition-settings">Acquisition Settings<a class="headerlink" href="#acquisition-settings" title="Permanent link">&para;</a></h2>
+<p><code>MySettings</code> is the object you pass to every acquisition call — it holds
+the device, channel, sampling, trigger, voltage-range, IEPE excitation
+and per-channel calibration configuration. Every constructor argument is
+keyword-only with a default, and the attributes are plain and mutable.
+The full per-attribute reference is below; for worked end-to-end recipes
+(IEPE on a cDAQ, calibration at logging time) see the
+<a href="../../user-guide/acquisition/">Data Acquisition user guide</a>.</p>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pydvma.options.MySettings" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">MySettings</span>
+
+
+<a href="#pydvma.options.MySettings" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="object">object</span></code></p>
+
+
+
+        <p>A container for every acquisition setting used by a recording.</p>
+<p>A single <code>MySettings</code> instance configures all acquisition entry
+points — <code>acquisition.log_data</code>, <code>acquisition.signal_generator</code>,
+the <code>streams</code> recorders and the Logger GUI. All constructor
+arguments are keyword-only and have defaults, so override only the
+few you need; attributes are plain and may also be set after
+construction (<code>settings.fs = 12800</code>). See the Data Acquisition
+user guide for worked end-to-end examples.</p>
+<p>Conventions used throughout:</p>
+<ul>
+<li><strong>Everything is in volts.</strong> Acquired data and generated output are
+  in volts; engineering-unit scaling is applied at display/fit time
+  from <code>channel_sensitivities</code>, never by rescaling the stored data.</li>
+<li><strong>Per-channel fields take a scalar or a sequence.</strong>
+  <code>iepe_excit_current_A</code> and <code>channel_sensitivities</code> accept one
+  value (broadcast to all <code>channels</code>) or a list of length
+  <code>channels</code>, indexed in captured-column order — on a cDAQ chassis
+  that is slot order (see <code>input_channels_spec</code>).</li>
+<li><strong>The <code>output_*</code> fields</strong> configure the generation/AO path and
+  default to their input counterparts when left unset.</li>
+</ul>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.channels">channels</span></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Number of input channels (default <code>2</code>). On the
+soundcard backend this is clamped to the device's
+<code>max_input_channels</code> at <code>start_stream</code> time (with a
+printed warning) — so the default of 2 becomes 1 on a mono
+mic rather than failing with PortAudio <code>-9998</code>. The NI
+backend instead raises <code>ValueError</code> if the count exceeds
+the device's available AI channels.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.fs">fs</span></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Input sampling frequency in Hz (default <code>44100</code>). On
+a DSA module (NI 9234) the driver coerces this to the nearest
+rate on its discrete divider ladder.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.nbits">nbits</span></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Sample bit depth — 8, 16, 24 or 32 (default <code>16</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.chunk_size">chunk_size</span></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Samples acquired per channel per callback
+(default <code>100</code>; values below 10 are raised to 10). Also the
+upper bound on <code>pretrig_samples</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.num_chunks">num_chunks</span></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Chunks held in the oscilloscope circular buffer
+(default <code>6</code>); recomputed from <code>viewed_time</code> when set.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.viewed_time">viewed_time</span></code></b>
+              (<code><span title="float">float</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Oscilloscope display window in
+seconds (default <code>0.3</code>). When set, overrides <code>num_chunks</code>
+as <code>ceil(viewed_time * fs / chunk_size)</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.stored_time">stored_time</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Duration of the recorded capture in seconds
+(default <code>2</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.pretrig_samples">pretrig_samples</span></code></b>
+              (<code><span title="int">int</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Samples retained before the
+trigger, or <code>None</code> (default) for untriggered recording.
+Must not exceed <code>chunk_size</code> (the pretrigger buffer holds
+only one chunk of pre-trigger context).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.pretrig_threshold">pretrig_threshold</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Trigger level, in the units the chosen
+device delivers — volts on NI, ±1-normalised on the soundcard
+(default <code>0.05</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.pretrig_channel">pretrig_channel</span></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Channel index monitored for the trigger
+(default <code>0</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.pretrig_timeout">pretrig_timeout</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Seconds to wait for a trigger before
+recording anyway (default <code>20</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.device_driver">device_driver</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Input backend — <code>'soundcard'</code> (default),
+<code>'nidaq'</code> or <code>'mock'</code> (the hardware-free test backend).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.device_index">device_index</span></code></b>
+              (<code><span title="int">int</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Index into the enumerated device list
+for the chosen driver; <code>None</code> picks a default (the system
+default input soundcard, or NI device 0). For a cDAQ chassis
+this indexes the <strong>chassis as a whole</strong>, not a module — list
+candidates with <code>dvma.list_available_devices()</code> (its nidaq
+section is indexed the same way <code>device_index</code> is).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.input_channels_spec">input_channels_spec</span></code></b>
+              (<code><span title="str">str</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Optional raw DAQmx
+physical-channel string for the AI task, e.g.
+<code>'cDAQ1Mod1/ai0:3,cDAQ1Mod3/ai0'</code>. Overrides the auto-built
+<code>'&lt;dev&gt;/ai0:N-1'</code> string when set — use it for gappy or
+mixed-module layouts the count-based builder cannot express.
+nidaqmx backend only.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.VmaxNI">VmaxNI</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Full-scale input voltage for the NI AI task
+(default <code>5</code>); ±VmaxNI is passed as min/max to
+<code>add_ai_voltage_chan</code>. Pick the smallest range covering the
+signal for best resolution. Fixed at ±5 V on the 9234 (other
+values are accepted but ignored by the hardware).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.VmaxSC">VmaxSC</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Soundcard input calibration (default <code>1.0</code>) —
+the jack voltage corresponding to a normalised reading of
+1.0. Default <code>1.0</code> treats normalised samples as volts at
+unit scale (no calibration); set it to your measured input
+sensitivity to calibrate captures in volts.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.NI_mode">NI_mode</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>NI terminal configuration — <code>'DAQmx_Val_RSE'</code>
+(default), <code>'DAQmx_Val_NRSE'</code>, <code>'DAQmx_Val_Diff'</code> or
+<code>'DAQmx_Val_PseudoDiff'</code>. DSA modules (9234) are
+pseudo-differential only.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.iepe_excit_current_A">iepe_excit_current_A</span></code></b>
+              (<code>float or sequence of float</code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-channel
+IEPE / ICP excitation current in amps (default <code>0.0</code> = off
+on every channel). Scalar broadcasts; a sequence must be
+length <code>channels</code>. Only NI 9234-class DSA modules support
+it; the legal discrete values on the 9234 are <code>0.0</code> and
+<code>0.002</code> (2 mA), validated against the module that actually
+owns each channel. A channel with current <code>&gt; 0</code> is switched
+to <strong>AC coupling</strong> and the recorder blocks ~2 s after start
+for the sensor bias to settle through the AC-coupling HPF.
+Requires <code>device_driver='nidaq'</code> (raises <code>ValueError</code>
+otherwise). Never enable it on a channel wired to an AO
+output (e.g. a loopback) — the current drives back into the
+AO terminal.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.channel_sensitivities">channel_sensitivities</span></code></b>
+              (<code>float or sequence of float</code>)
+          –
+          <div class="doc-md-description">
+            <p>Per-channel
+sensitivity in volts per engineering unit — V/g for an
+accelerometer, V/N for a force transducer, V/Pa for a
+microphone, etc. (default <code>1.0</code> = no calibration applied).
+Scalar broadcasts; a sequence must be length <code>channels</code> and
+every value must be non-zero. <code>log_data</code> stores the
+reciprocal as <code>TimeData.channel_cal_factors</code>, which
+plotting and modal fitting apply automatically, so a
+<code>100 mV/g</code> accelerometer (<code>0.1</code> here) gives a cal factor
+of <code>10</code> and plots read in <code>g</code>. The stored <code>time_data</code>
+array itself stays in volts.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.output_device_driver">output_device_driver</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Backend for the output/AO path;
+defaults to <code>device_driver</code> (same device as the input).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.output_device_index">output_device_index</span></code></b>
+              (<code><span title="int">int</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Device index for the output
+path; <code>None</code> picks the default output soundcard, or NI
+device 0.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.output_channels">output_channels</span></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Number of output (AO) channels
+(default <code>1</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.output_channels_spec">output_channels_spec</span></code></b>
+              (<code><span title="str">str</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Raw DAQmx physical-channel
+string for the AO task, e.g. <code>'cDAQ1Mod2/ao0'</code>; the output
+analogue of <code>input_channels_spec</code>. nidaqmx backend only.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.output_fs">output_fs</span></code></b>
+              (<code><span title="int">int</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Output sample rate in Hz; defaults to <code>fs</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.output_VmaxNI">output_VmaxNI</span></code></b>
+              (<code><span title="float">float</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Full-scale output voltage for the
+NI AO task; defaults to <code>VmaxNI</code>. (The NI 9260 is limited to
+±4.24 V.)</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.output_VmaxSC">output_VmaxSC</span></code></b>
+              (<code><span title="float">float</span> or None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Full-scale output voltage for the
+soundcard AO path — the jack voltage corresponding to a ±1
+sounddevice sample; defaults to <code>VmaxSC</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.use_output_as_ch0">use_output_as_ch0</span></code></b>
+              (<code><span title="bool">bool</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>When <code>True</code> and an <code>output</code> array
+is passed to <code>log_data</code>, the generated drive signal is
+prepended as channel 0 of the recorded data (default
+<code>False</code>). Useful for transfer-function tests where the
+excitation should be the reference channel; the prepended
+column passes through with a cal factor of 1.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.init_view_time">init_view_time</span></code></b>
+              (<code><span title="bool">bool</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Show the time-domain oscilloscope view on
+launch (default <code>True</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.init_view_freq">init_view_freq</span></code></b>
+              (<code><span title="bool">bool</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Show the frequency-domain oscilloscope
+view on launch (default <code>True</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="pydvma.options.MySettings.init_view_levels">init_view_levels</span></code></b>
+              (<code><span title="bool">bool</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Show the channel-levels oscilloscope
+view on launch (default <code>True</code>).</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Examples:</span></p>
+    <p>IEPE accelerometers on a cDAQ with per-channel calibration —
+100 mV/g ICP accelerometers on the 9234's <code>ai0</code>/<code>ai1</code> and a
+2.3 mV/N force probe on <code>ai2</code> (channel index 3 unused):</p>
+    <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="gp">... </span>    <span class="n">device_driver</span><span class="o">=</span><span class="s1">&#39;nidaq&#39;</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="gp">... </span>    <span class="n">device_index</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>                  <span class="c1"># the cDAQ chassis</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="gp">... </span>    <span class="n">channels</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="gp">... </span>    <span class="n">NI_mode</span><span class="o">=</span><span class="s1">&#39;DAQmx_Val_PseudoDiff&#39;</span><span class="p">,</span>  <span class="c1"># required by the 9234</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="gp">... </span>    <span class="n">VmaxNI</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>                        <span class="c1"># 9234 fixed at ±5 V</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="gp">... </span>    <span class="n">fs</span><span class="o">=</span><span class="mi">12800</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="gp">... </span>    <span class="n">iepe_excit_current_A</span><span class="o">=</span><span class="p">[</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>  <span class="c1"># 2 mA accels only</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="gp">... </span>    <span class="n">channel_sensitivities</span><span class="o">=</span><span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.0023</span><span class="p">],</span>  <span class="c1"># V/g, V/g, V/N</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="gp">... </span><span class="p">)</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+</code></pre></div>
+    <p>Scalars broadcast to every channel — four identical IEPE-powered
+100 mV/g accelerometers:</p>
+    <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="gp">&gt;&gt;&gt; </span><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="gp">... </span>    <span class="n">device_driver</span><span class="o">=</span><span class="s1">&#39;nidaq&#39;</span><span class="p">,</span> <span class="n">channels</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="gp">... </span>    <span class="n">iepe_excit_current_A</span><span class="o">=</span><span class="mf">0.002</span><span class="p">,</span> <span class="n">channel_sensitivities</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="gp">... </span><span class="p">)</span>
+</code></pre></div>
+
+
+<details class="see-also" open>
+  <summary>See Also</summary>
+  <p>acquisition.log_data: Run a capture using these settings.
+list_available_devices: Print soundcard + nidaq devices by index.
+suggest_ni_settings: Safe NI ranges/rate/mode for a device.</p>
+</details>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pydvma.options.Output_Signal_Settings" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">Output_Signal_Settings</span>
+
+
+<a href="#pydvma.options.Output_Signal_Settings" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="object">object</span></code></p>
+
+
+
+        <p>A class that stores the output signal settings.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="main-acquisition-function">Main Acquisition Function<a class="headerlink" href="#main-acquisition-function" title="Permanent link">&para;</a></h2>
 
 
 <div class="doc doc-object doc-function">
