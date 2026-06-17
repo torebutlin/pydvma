@@ -947,10 +947,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#custom-waveform" class="md-nav__link">
+  <a href="#custom-numpy-output" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Custom Waveform
+        Custom NumPy output
       
     </span>
   </a>
@@ -2219,10 +2219,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#custom-waveform" class="md-nav__link">
+  <a href="#custom-numpy-output" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Custom Waveform
+        Custom NumPy output
       
     </span>
   </a>
@@ -2803,22 +2803,93 @@ builder with an explicit DAQmx physical-channel string:</p>
 <a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1"># Record with output</span>
 <a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">output</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="custom-waveform">Custom Waveform<a class="headerlink" href="#custom-waveform" title="Permanent link">&para;</a></h3>
+<h3 id="custom-numpy-output">Custom NumPy output<a class="headerlink" href="#custom-numpy-output" title="Permanent link">&para;</a></h3>
+<p><code>signal_generator</code> is convenient but limited — three shapes
+(<code>'gaussian'</code>, <code>'uniform'</code>, <code>'sweep'</code>), a single amplitude and an
+optional band. For anything else (arbitrary multi-tone, a measured or
+imported waveform, per-channel-different drives, an MLS sequence, a
+stepped sine…) build the array yourself and pass it to
+<code>log_data(..., output=...)</code>. The format <code>log_data</code> expects is small but
+strict:</p>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Shape</strong></td>
+<td>2-D <code>(N_samples, output_channels)</code> — one <strong>column per AO channel</strong>, even for a single channel (use <code>arr[:, None]</code>). The column count must equal <code>settings.output_channels</code>.</td>
+</tr>
+<tr>
+<td><strong>Units</strong></td>
+<td><strong>Volts</strong> — there is no ±1 normalisation. A value of <code>2.5</code> means 2.5 V at the terminal.</td>
+</tr>
+<tr>
+<td><strong>Sample rate</strong></td>
+<td>The array is clocked out at <code>settings.output_fs</code> (defaults to <code>fs</code>). Build the time base with <code>1 / settings.output_fs</code>, and make it ≈ <code>stored_time</code> long to span the capture.</td>
+</tr>
+<tr>
+<td><strong>Range</strong></td>
+<td>Every sample must lie within ±<code>settings.output_vmax()</code> (<code>output_VmaxNI</code> on NI, <code>output_VmaxSC</code> on soundcard). On NI, out-of-range samples are rejected by DAQmx (error -200077).</td>
+</tr>
+<tr>
+<td><strong>dtype</strong></td>
+<td>Any float — cast internally (to volts on NI, to ±1 <code>float32</code> on the soundcard).</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">A hand-built array gets no ramp and no safety clamp</p>
+<p><code>signal_generator</code> fades its waveform in/out and clamps to
+full-scale for you. A raw array does <strong>neither</strong> — you own both. A
+discontinuity at the first or last sample will click and can ring
+the structure, so window the ends yourself for transient-sensitive
+work, and keep the signal inside ±<code>output_vmax()</code>.</p>
+</div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="c1"># Create custom single-channel waveform (2D array expected)</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">t</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">settings</span><span class="o">.</span><span class="n">stored_time</span><span class="p">,</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">settings</span><span class="o">.</span><span class="n">output_fs</span><span class="p">)</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">carrier</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="mi">50</span> <span class="o">*</span> <span class="n">t</span><span class="p">)</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">output</span> <span class="o">=</span> <span class="n">carrier</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>  <span class="c1"># (samples, channels)</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">fs</span>   <span class="o">=</span> <span class="n">settings</span><span class="o">.</span><span class="n">output_fs</span>       <span class="c1"># output clock (defaults to settings.fs)</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">T</span>    <span class="o">=</span> <span class="n">settings</span><span class="o">.</span><span class="n">stored_time</span>     <span class="c1"># match the capture length</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">vmax</span> <span class="o">=</span> <span class="n">settings</span><span class="o">.</span><span class="n">output_vmax</span><span class="p">()</span>   <span class="c1"># full-scale output, in volts</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">t</span>    <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">fs</span><span class="p">)</span>
 <a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="c1"># Example: multi-tone signal</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="n">tones</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">100</span><span class="p">,</span> <span class="mi">200</span><span class="p">,</span> <span class="mi">500</span><span class="p">])</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="n">multitone</span> <span class="o">=</span> <span class="mf">0.2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">tones</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">t</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="n">output</span> <span class="o">=</span> <span class="n">multitone</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="c1"># --- build any waveform you like, in volts ---</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="c1"># multi-tone: 100 + 220 + 505 Hz, 0.3 V peak each</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="n">tones</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">100.0</span><span class="p">,</span> <span class="mf">220.0</span><span class="p">,</span> <span class="mf">505.0</span><span class="p">])</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="n">y</span> <span class="o">=</span> <span class="mf">0.3</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">tones</span><span class="p">))</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 <a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>
-<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="c1"># Record with custom output</span>
-<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">output</span><span class="p">)</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="c1"># raised-cosine fade over the first/last 10 ms to avoid a click</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="n">n_ramp</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="mf">0.01</span> <span class="o">*</span> <span class="n">fs</span><span class="p">)</span>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="n">ramp</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">n_ramp</span><span class="p">)))</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="n">y</span><span class="p">[:</span><span class="n">n_ramp</span><span class="p">]</span>  <span class="o">*=</span> <span class="n">ramp</span>
+<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="n">y</span><span class="p">[</span><span class="o">-</span><span class="n">n_ramp</span><span class="p">:]</span> <span class="o">*=</span> <span class="n">ramp</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>
+<a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a><span class="c1"># stay inside the rails — there is no auto-clamp on a custom array</span>
+<a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a><span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">y</span><span class="p">,</span> <span class="o">-</span><span class="n">vmax</span><span class="p">,</span> <span class="n">vmax</span><span class="p">)</span>
+<a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a>
+<a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a><span class="n">output</span> <span class="o">=</span> <span class="n">y</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>             <span class="c1"># -&gt; (N, 1): a single AO channel</span>
+<a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">output</span><span class="p">)</span>
 </code></pre></div>
+<p><strong>Multiple output channels</strong> — one column per channel, with
+<code>settings.output_channels</code> set to match. For example a 50 Hz sine on
+<code>ao0</code> and an independent noise drive on <code>ao1</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">settings</span><span class="o">.</span><span class="n">output_channels</span> <span class="o">=</span> <span class="mi">2</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">a</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="mi">50</span> <span class="o">*</span> <span class="n">t</span><span class="p">)</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="mf">0.1</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">size</span><span class="p">),</span> <span class="o">-</span><span class="n">vmax</span><span class="p">,</span> <span class="n">vmax</span><span class="p">)</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">output</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">column_stack</span><span class="p">([</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">])</span>   <span class="c1"># (N, 2): columns map to ao0, ao1</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">output</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Record the drive as a reference channel</p>
+<p>Set <code>settings.use_output_as_ch0 = True</code> and the played <code>output</code> is
+prepended as channel 0 of the returned data — useful for transfer
+functions, where you want the excitation captured alongside the
+response rather than assumed. The prepended column passes through
+uncalibrated (cal factor 1).</p>
+</div>
 <h2 id="voltage-based-io">Voltage-Based I/O<a class="headerlink" href="#voltage-based-io" title="Permanent link">&para;</a></h2>
 <p>Since v1.2 both acquired data and generated output are in <strong>volts</strong>
 everywhere — there is no ±1 normalisation step. Time series, FFTs,
@@ -2856,11 +2927,11 @@ so the downstream code only ever sees voltages:</p>
 <h3 id="iepe-icp-excitation-ni-dsa-modules">IEPE / ICP excitation (NI DSA modules)<a class="headerlink" href="#iepe-icp-excitation-ni-dsa-modules" title="Permanent link">&para;</a></h3>
 <p>The NI 9234 (and other DSA modules with internal excitation) can
 power IEPE/ICP accelerometers directly. Set per-channel current via:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">(</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">device_driver</span><span class="o">=</span><span class="s1">&#39;nidaq&#39;</span><span class="p">,</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">channels</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="n">iepe_excit_current_A</span><span class="o">=</span><span class="p">[</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>  <span class="c1"># 2 mA on ai0/ai1</span>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">(</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="n">device_driver</span><span class="o">=</span><span class="s1">&#39;nidaq&#39;</span><span class="p">,</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">channels</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">iepe_excit_current_A</span><span class="o">=</span><span class="p">[</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>  <span class="c1"># 2 mA on ai0/ai1</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="p">)</span>
 </code></pre></div>
 <p>Channels with <code>&gt; 0</code> are switched to AC coupling and the recorder
 blocks for ~2 s after task start to let the sensor's DC bias settle
@@ -2878,6 +2949,25 @@ module is enabled by setting the current at its column index, e.g.
 on a channel that is wired to an AO output</strong> (e.g. a loopback test
 channel): the excitation current is driven back into the AO terminal.
 Leave loopback/driven channels at <code>0.0</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">IEPE must-knows</p>
+<ul>
+<li><strong>Only enable excitation on channels with an actual ICP/IEPE
+  sensor.</strong> A charge/voltage input (force hammer, signal generator,
+  loopback to an AO) must stay at <code>0.0</code> — forcing 2 mA into a
+  non-ICP input can damage it.</li>
+<li><strong>Legal currents on the 9234 are exactly <code>0.0</code> or <code>0.002</code> A</strong>
+  (off / 2 mA). Any other value raises a clear error, validated
+  against the module that actually owns each channel.</li>
+<li><strong>The list is positional — one entry per channel</strong> in
+  captured-column (slot) order; a scalar broadcasts to every
+  channel.</li>
+<li>Enabling a channel switches it to <strong>AC coupling</strong> and adds a ~2 s
+  bias-settle on the first capture.</li>
+<li><code>iepe_excit_current_A &gt; 0</code> requires <code>device_driver='nidaq'</code> and a
+  DSA module; soundcard inputs have no configurable excitation.</li>
+</ul>
+</div>
 <h3 id="worked-example-iepe-accelerometers-on-a-cdaq">Worked example: IEPE accelerometers on a cDAQ<a class="headerlink" href="#worked-example-iepe-accelerometers-on-a-cdaq" title="Permanent link">&para;</a></h3>
 <p>End-to-end recipe for the most common DSA setup — ICP/IEPE
 accelerometers powered straight off an NI 9234 in a cDAQ chassis, with
@@ -2885,31 +2975,31 @@ per-channel calibration so results come out in engineering units.
 Suppose the chassis is at <code>device_index=0</code>, its first module
 (<code>cDAQ1Mod1</code>) is a 4-channel 9234, and you have two 100 mV/g
 accelerometers on <code>ai0</code>/<code>ai1</code> plus a 2.3 mV/N force hammer on <code>ai2</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pydvma</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dvma</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="c1"># 1. Confirm the chassis index, and grab safe range/rate/mode for it.</span>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">dvma</span><span class="o">.</span><span class="n">list_available_devices</span><span class="p">()</span>          <span class="c1"># -&gt; the chassis is index 0</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">base</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">suggest_ni_settings</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>      <span class="c1"># PseudoDiff, VmaxNI=5, a 9234-legal fs, ...</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># 2. Three channels: IEPE on the two accelerometers only, and</span>
-<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="c1">#    per-channel sensitivities in volts per engineering unit.</span>
-<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">(</span>
-<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">channels</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>    <span class="n">iepe_excit_current_A</span><span class="o">=</span><span class="p">[</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>  <span class="c1"># 2 mA on ai0/ai1; hammer is not ICP</span>
-<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>    <span class="n">channel_sensitivities</span><span class="o">=</span><span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.0023</span><span class="p">],</span>  <span class="c1"># 100 mV/g, 100 mV/g, 2.3 mV/N</span>
-<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="n">stored_time</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span>
-<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>    <span class="o">**</span><span class="n">base</span><span class="p">,</span>            <span class="c1"># device_driver=&#39;nidaq&#39;, device_index=0, NI_mode, VmaxNI, fs, ...</span>
-<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="p">)</span>
-<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>
-<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="c1"># 3. Record. log_data powers the ICP sensors, switches their channels to</span>
-<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="c1">#    AC coupling, and blocks ~2 s for the bias to settle before capturing.</span>
-<a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">test_name</span><span class="o">=</span><span class="s1">&#39;hammer_test_01&#39;</span><span class="p">)</span>
-<a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a>
-<a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a><span class="c1"># 4. Samples are stored in volts; cal factors [10, 10, 434.8] are attached,</span>
-<a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a><span class="c1">#    so plots/FFTs/TFs read in engineering units automatically.</span>
-<a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">channel_cal_factors</span>        <span class="c1"># array([ 10. , 10. , 434.78])</span>
-<a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">units</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;N&#39;</span><span class="p">]</span>    <span class="c1"># optional axis labels</span>
-<a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a><span class="n">dataset</span><span class="o">.</span><span class="n">plot_time_data</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pydvma</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dvma</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># 1. Confirm the chassis index, and grab safe range/rate/mode for it.</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">dvma</span><span class="o">.</span><span class="n">list_available_devices</span><span class="p">()</span>          <span class="c1"># -&gt; the chassis is index 0</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">base</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">suggest_ni_settings</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>      <span class="c1"># PseudoDiff, VmaxNI=5, a 9234-legal fs, ...</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># 2. Three channels: IEPE on the two accelerometers only, and</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="c1">#    per-channel sensitivities in volts per engineering unit.</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">(</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    <span class="n">channels</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">iepe_excit_current_A</span><span class="o">=</span><span class="p">[</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>  <span class="c1"># 2 mA on ai0/ai1; hammer is not ICP</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>    <span class="n">channel_sensitivities</span><span class="o">=</span><span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.0023</span><span class="p">],</span>  <span class="c1"># 100 mV/g, 100 mV/g, 2.3 mV/N</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>    <span class="n">stored_time</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>    <span class="o">**</span><span class="n">base</span><span class="p">,</span>            <span class="c1"># device_driver=&#39;nidaq&#39;, device_index=0, NI_mode, VmaxNI, fs, ...</span>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="p">)</span>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="c1"># 3. Record. log_data powers the ICP sensors, switches their channels to</span>
+<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="c1">#    AC coupling, and blocks ~2 s for the bias to settle before capturing.</span>
+<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">test_name</span><span class="o">=</span><span class="s1">&#39;hammer_test_01&#39;</span><span class="p">)</span>
+<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>
+<a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a><span class="c1"># 4. Samples are stored in volts; cal factors [10, 10, 434.8] are attached,</span>
+<a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a><span class="c1">#    so plots/FFTs/TFs read in engineering units automatically.</span>
+<a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">channel_cal_factors</span>        <span class="c1"># array([ 10. , 10. , 434.78])</span>
+<a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">units</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;N&#39;</span><span class="p">]</span>    <span class="c1"># optional axis labels</span>
+<a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a><span class="n">dataset</span><span class="o">.</span><span class="n">plot_time_data</span><span class="p">()</span>
 </code></pre></div>
 <p>What this relies on, all covered above:</p>
 <ul>
@@ -2990,17 +3080,25 @@ hand-rolled waveform you pass via <code>output=...</code> is implicitly bounded.
 <code>TimeData.channel_cal_factors</code>, and plotting / modal fitting multiply
 by those factors automatically, so the displayed values are in
 engineering units (g, m/s², N, ...) without any post-hoc scaling.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">(</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>    <span class="n">channels</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="n">channel_sensitivities</span><span class="o">=</span><span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.0023</span><span class="p">],</span>  <span class="c1"># V/g, V/g, V/N</span>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="p">)</span>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="c1"># dataset.time_data_list[0].channel_cal_factors is [10, 10, 434.78]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">settings</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">MySettings</span><span class="p">(</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    <span class="n">channels</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="n">channel_sensitivities</span><span class="o">=</span><span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.0023</span><span class="p">],</span>  <span class="c1"># V/g, V/g, V/N</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="p">)</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="c1"># dataset.time_data_list[0].channel_cal_factors is [10, 10, 434.78]</span>
 </code></pre></div>
 <p>A scalar <code>channel_sensitivities=X</code> broadcasts to all channels. Default
 <code>1.0</code> means "no calibration applied" (cal_factor = 1). Every value must
 be non-zero (a zero sensitivity would mean an infinite cal factor), so
 use <code>1.0</code>, not <code>0.0</code>, for "leave this channel uncalibrated".</p>
+<div class="admonition tip">
+<p class="admonition-title">Reading sensitivity off the cal sheet</p>
+<p>Manufacturers usually print sensitivity in <strong>mV per unit</strong> — divide
+by 1000 to get the V/eu value pydvma expects. A <code>100 mV/g</code>
+accelerometer is <code>0.1</code>, a <code>10 mV/g</code> one is <code>0.01</code>, and a <code>2.3 mV/N</code>
+force transducer is <code>0.0023</code>. (A common slip is entering <code>100</code>
+instead of <code>0.1</code> — that would scale your results by 1000×.)</p>
+</div>
 <h4 id="how-calibration-is-stored-and-applied">How calibration is stored and applied<a class="headerlink" href="#how-calibration-is-stored-and-applied" title="Permanent link">&para;</a></h4>
 <p><code>channel_sensitivities</code> is consumed <strong>once, at logging time</strong>: <code>log_data</code>
 computes <code>channel_cal_factors = 1 / channel_sensitivities</code> and stores
@@ -3027,12 +3125,12 @@ and <code>VmaxNI</code> clip-checking still works against the true voltage.</p>
 of sensitivity (engineering-units per volt), because it is the
 multiplier applied to the stored volts — a 100 mV/g accelerometer
 (0.1 V/g) has a cal factor of 10:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># One channel of one set (set index and channel index are both 0-based):</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="o">.</span><span class="n">set_calibration_factor</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">n_set</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">n_chan</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># Inspect, or set a whole list at once:</span>
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">factors</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="o">.</span><span class="n">get_calibration_factors</span><span class="p">()</span>
-<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="o">.</span><span class="n">set_calibration_factors_all</span><span class="p">(</span><span class="n">factors</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># One channel of one set (set index and channel index are both 0-based):</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="o">.</span><span class="n">set_calibration_factor</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">n_set</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">n_chan</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># Inspect, or set a whole list at once:</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="n">factors</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="o">.</span><span class="n">get_calibration_factors</span><span class="p">()</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="o">.</span><span class="n">set_calibration_factors_all</span><span class="p">(</span><span class="n">factors</span><span class="p">)</span>
 </code></pre></div>
 <p>The same <code>get_calibration_factors</code> / <code>set_calibration_factor</code> /
 <code>set_calibration_factors_all</code> API exists on <code>freq_data_list</code> and
@@ -3042,34 +3140,34 @@ multiplier applied to the stored volts — a 100 mV/g accelerometer
 through <code>calculate_fft</code>, <code>calculate_cross_spectrum_matrix</code>, and
 <code>calculate_sonogram</code>, and <code>calculate_tf</code> builds units like
 <code>"&lt;out_unit&gt;/&lt;in_unit&gt;"</code> per output channel.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Set units after acquisition if you didn&#39;t pass them via MySettings</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">time_data</span><span class="o">.</span><span class="n">units</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;N&#39;</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># Set units after acquisition if you didn&#39;t pass them via MySettings</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">time_data</span><span class="o">.</span><span class="n">units</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;N&#39;</span><span class="p">]</span>
 </code></pre></div>
 <h2 id="multiple-measurements">Multiple Measurements<a class="headerlink" href="#multiple-measurements" title="Permanent link">&para;</a></h2>
 <h3 id="recording-multiple-datasets">Recording Multiple Datasets<a class="headerlink" href="#recording-multiple-datasets" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># Create dataset to hold multiple measurements</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">DataSet</span><span class="p">()</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="c1"># Record</span>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">test_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;test_</span><span class="si">{</span><span class="n">i</span><span class="si">:</span><span class="s2">02d</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>
-<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>    <span class="c1"># Add to dataset</span>
-<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>    <span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="c1"># Create dataset to hold multiple measurements</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">DataSet</span><span class="p">()</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="c1"># Record</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">log_data</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">test_name</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;test_</span><span class="si">{</span><span class="n">i</span><span class="si">:</span><span class="s2">02d</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>    <span class="c1"># Add to dataset</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>    <span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
 </code></pre></div>
 <h3 id="batch-processing">Batch Processing<a class="headerlink" href="#batch-processing" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="c1"># Process all measurements</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">time_data</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">):</span>
-<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>    <span class="c1"># Calculate FFT for each</span>
-<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>    <span class="n">freq_data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">calculate_fft</span><span class="p">(</span><span class="n">time_data</span><span class="p">)</span>
-<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="n">dataset</span><span class="o">.</span><span class="n">freq_data_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">freq_data</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># Process all measurements</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">time_data</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">dataset</span><span class="o">.</span><span class="n">time_data_list</span><span class="p">):</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>    <span class="c1"># Calculate FFT for each</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>    <span class="n">freq_data</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">calculate_fft</span><span class="p">(</span><span class="n">time_data</span><span class="p">)</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">dataset</span><span class="o">.</span><span class="n">freq_data_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">freq_data</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="monitoring-and-visualization">Monitoring and Visualization<a class="headerlink" href="#monitoring-and-visualization" title="Permanent link">&para;</a></h2>
 <h3 id="oscilloscope-view">Oscilloscope view<a class="headerlink" href="#oscilloscope-view" title="Permanent link">&para;</a></h3>
 <p>The Logger GUI provides a live oscilloscope of the incoming signal —
 launch the GUI and use the Oscilloscope view to monitor levels and
 adjust trigger settings before committing to a recording.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="n">logger</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">Logger</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="n">logger</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">Logger</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
 </code></pre></div>
 <p>For a one-shot programmatic peek at the live buffer without going via
 the GUI, use <code>dvma.stream_snapshot(streams.REC)</code> while a stream is
@@ -3084,9 +3182,9 @@ running (e.g. immediately after a <code>log_data</code> call).</p>
 </ul>
 <p>Remember Nyquist: sample at least 2× the highest frequency of interest.</p>
 <h3 id="duration-selection">Duration Selection<a class="headerlink" href="#duration-selection" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># For frequency resolution Δf</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="n">df</span> <span class="o">=</span> <span class="mf">1.0</span>  <span class="c1"># Hz resolution desired</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="n">settings</span><span class="o">.</span><span class="n">stored_time</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">df</span>  <span class="c1"># Minimum duration needed</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># For frequency resolution Δf</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="n">df</span> <span class="o">=</span> <span class="mf">1.0</span>  <span class="c1"># Hz resolution desired</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="n">settings</span><span class="o">.</span><span class="n">stored_time</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">df</span>  <span class="c1"># Minimum duration needed</span>
 </code></pre></div>
 <h3 id="anti-aliasing">Anti-aliasing<a class="headerlink" href="#anti-aliasing" title="Permanent link">&para;</a></h3>
 <p>Ensure hardware anti-aliasing filters are enabled or use appropriate sample rates to avoid aliasing.</p>
