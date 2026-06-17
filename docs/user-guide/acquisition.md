@@ -67,6 +67,29 @@ settings.channels = 4
 settings.VmaxNI = 10  # ±10V range
 ```
 
+#### Finding your device index
+
+`device_index` is an index into the NI device list **as nidaqmx
+enumerates it, with each cDAQ chassis collapsed to a single entry**.
+Don't guess — print the list (its `nidaq` section is indexed exactly the
+way `device_index` expects):
+
+```python
+dvma.list_available_devices()
+# ...
+# Devices available using device_driver='nidaq', by index:
+# 0: cDAQ1 (cDAQ-9174, chassis) AI=4 AO=2 modules=['cDAQ1Mod1', 'cDAQ1Mod2']
+# 1: Dev1 (USB-6003, device) AI=8 AO=2
+```
+
+Here the chassis is `device_index=0` and the USB-6003 is `device_index=1`.
+(`dvma.get_devices_NI()` exists too but returns a *flat* list that lists
+the chassis and each module separately, so its indices do **not** match
+`device_index` — use `list_available_devices()` for choosing the index.)
+
+`dvma.suggest_ni_settings(device_index)` then returns safe ranges, rate
+and terminal mode for whatever is at that index (see below).
+
 ### Terminal Configuration
 
 ```python
@@ -306,6 +329,59 @@ on a channel that is wired to an AO output** (e.g. a loopback test
 channel): the excitation current is driven back into the AO terminal.
 Leave loopback/driven channels at `0.0`.
 
+### Worked example: IEPE accelerometers on a cDAQ
+
+End-to-end recipe for the most common DSA setup — ICP/IEPE
+accelerometers powered straight off an NI 9234 in a cDAQ chassis, with
+per-channel calibration so results come out in engineering units.
+Suppose the chassis is at `device_index=0`, its first module
+(`cDAQ1Mod1`) is a 4-channel 9234, and you have two 100 mV/g
+accelerometers on `ai0`/`ai1` plus a 2.3 mV/N force hammer on `ai2`:
+
+```python
+import pydvma as dvma
+
+# 1. Confirm the chassis index, and grab safe range/rate/mode for it.
+dvma.list_available_devices()          # -> the chassis is index 0
+base = dvma.suggest_ni_settings(0)      # PseudoDiff, VmaxNI=5, a 9234-legal fs, ...
+
+# 2. Three channels: IEPE on the two accelerometers only, and
+#    per-channel sensitivities in volts per engineering unit.
+settings = dvma.MySettings(
+    channels=3,
+    iepe_excit_current_A=[0.002, 0.002, 0.0],  # 2 mA on ai0/ai1; hammer is not ICP
+    channel_sensitivities=[0.1, 0.1, 0.0023],  # 100 mV/g, 100 mV/g, 2.3 mV/N
+    stored_time=2.0,
+    **base,            # device_driver='nidaq', device_index=0, NI_mode, VmaxNI, fs, ...
+)
+
+# 3. Record. log_data powers the ICP sensors, switches their channels to
+#    AC coupling, and blocks ~2 s for the bias to settle before capturing.
+dataset = dvma.log_data(settings, test_name='hammer_test_01')
+
+# 4. Samples are stored in volts; cal factors [10, 10, 434.8] are attached,
+#    so plots/FFTs/TFs read in engineering units automatically.
+dataset.time_data_list[0].channel_cal_factors        # array([ 10. , 10. , 434.78])
+dataset.time_data_list[0].units = ['g', 'g', 'N']    # optional axis labels
+dataset.plot_time_data()
+```
+
+What this relies on, all covered above:
+
+- **Index by capture column, not by terminal label.** `channels=3`
+  consumes `cDAQ1Mod1/ai0:2`, so list position 0→`ai0`, 1→`ai1`,
+  2→`ai2`. The same index drives `iepe_excit_current_A`,
+  `channel_sensitivities` and `pretrig_channel`. If sensors span two AI
+  modules the indices keep counting across the slot boundary (see
+  [the channel-mapping table](#cdaq-chassis-with-multiple-modules)).
+- **IEPE only where there's an ICP sensor.** The force hammer is a
+  voltage/charge input, so its channel stays at `0.0` (DC-coupled, no
+  excitation). Forcing 2 mA into a non-ICP input can damage it.
+- **`suggest_ni_settings` does the 9234 housekeeping** (`PseudoDiff`,
+  `VmaxNI=5`, an `fs` on the module's discrete ladder) so you don't have
+  to recall the DSA constraints each time. Override any of its keys by
+  listing them after `**base`.
+
 ### Clipping detection
 
 `log_data` checks the captured buffer against `0.95 * input_vmax()`
@@ -346,7 +422,52 @@ dataset = dvma.log_data(settings)
 ```
 
 A scalar `channel_sensitivities=X` broadcasts to all channels. Default
-`1.0` means "no calibration applied" (cal_factor = 1).
+`1.0` means "no calibration applied" (cal_factor = 1). Every value must
+be non-zero (a zero sensitivity would mean an infinite cal factor), so
+use `1.0`, not `0.0`, for "leave this channel uncalibrated".
+
+#### How calibration is stored and applied
+
+`channel_sensitivities` is consumed **once, at logging time**: `log_data`
+computes `channel_cal_factors = 1 / channel_sensitivities` and stores
+them on the resulting `TimeData`. The raw `time_data` array is always
+kept in **volts** — the cal factors are applied lazily, multiplied in
+only when data is **displayed or fitted**:
+
+- **Plotting** multiplies each channel by its cal factor, so the axes
+  read in engineering units.
+- **`calculate_fft`**, **`calculate_cross_spectrum_matrix`** and
+  **`calculate_sonogram`** copy the cal factors (and `units`) onto the
+  derived `FreqData`, so spectra are scaled the same way.
+- **`calculate_tf`** inherits the calibration *ratio*: the stored
+  per-output factor is `cal[ch_out] / cal[ch_in]`, so a transfer
+  function is automatically in output-eu / input-eu (e.g. a `g/N`
+  accelerance from a `g` response and an `N` drive).
+
+Because the stored samples stay in volts, calibration is
+non-destructive: you can change it after the fact without re-recording,
+and `VmaxNI` clip-checking still works against the true voltage.
+
+#### Setting or correcting calibration after logging
+
+If you recorded without sensitivities (or fixed a wrong value), set the
+**cal factor** directly on the data list. Note this is the *reciprocal*
+of sensitivity (engineering-units per volt), because it is the
+multiplier applied to the stored volts — a 100 mV/g accelerometer
+(0.1 V/g) has a cal factor of 10:
+
+```python
+# One channel of one set (set index and channel index are both 0-based):
+dataset.time_data_list.set_calibration_factor(10, n_set=0, n_chan=0)
+
+# Inspect, or set a whole list at once:
+factors = dataset.time_data_list.get_calibration_factors()
+dataset.time_data_list.set_calibration_factors_all(factors)
+```
+
+The same `get_calibration_factors` / `set_calibration_factor` /
+`set_calibration_factors_all` API exists on `freq_data_list` and
+`tf_data_list` for adjusting already-computed spectra.
 
 ### Engineering-unit labels
 

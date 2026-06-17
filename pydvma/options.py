@@ -32,92 +32,173 @@ except NotImplementedError:
 
 class MySettings(object):
     '''
-    A class that stores the acquisition settings.
+    A container for every acquisition setting used by a recording.
+
+    A single ``MySettings`` instance configures all acquisition entry
+    points — `acquisition.log_data`, `acquisition.signal_generator`,
+    the `streams` recorders and the Logger GUI. All constructor
+    arguments are keyword-only and have defaults, so override only the
+    few you need; attributes are plain and may also be set after
+    construction (``settings.fs = 12800``). See the Data Acquisition
+    user guide for worked end-to-end examples.
+
+    Conventions used throughout:
+
+    - **Everything is in volts.** Acquired data and generated output are
+      in volts; engineering-unit scaling is applied at display/fit time
+      from ``channel_sensitivities``, never by rescaling the stored data.
+    - **Per-channel fields take a scalar or a sequence.**
+      ``iepe_excit_current_A`` and ``channel_sensitivities`` accept one
+      value (broadcast to all ``channels``) or a list of length
+      ``channels``, indexed in captured-column order — on a cDAQ chassis
+      that is slot order (see ``input_channels_spec``).
+    - **The ``output_*`` fields** configure the generation/AO path and
+      default to their input counterparts when left unset.
 
     Attributes:
-    --------------
-    channels: int
-        Number of input channels. On the soundcard backend this is
-        clamped down to the device's ``max_input_channels`` at
-        ``start_stream`` time (with a printed warning) — so the default
-        of 2 silently becomes 1 on a Mac built-in mono mic, rather
-        than failing with PortAudio ``-9998``. The NI backend instead
-        raises ``ValueError`` if the requested count exceeds the
-        device's available AI channels.
-    fs: int
-        Sampling frequency (Hz)
-    nbits: int
-        Number of bits - either 8, 16, 24 or 32
-    chunk_size: int
-        Number of samples obtained from each channel in one chunk
-    num_chunks: int
-        Number of chunks to store in circular buffer
-    viewed_time: float
-        If specified, overrides num_chunks to display viewed_time in seconds for oscilloscope
-    stored_time: float
-        Duration of recorded data in seconds
-    pretrig_samples: int or None
-        Number of samples to keep before trigger, or None for no triggering
-    pretrig_threshold: float
-        Voltage threshold for trigger detection
-    pretrig_channel: int
-        Channel index to monitor for trigger
-    pretrig_timeout: float
-        Timeout in seconds when waiting for trigger
-    device_driver: str
-        Device type: 'soundcard' or 'nidaq'
-    device_index: int
-        Device index, will prompt if not specified
-    input_channels_spec: str or None
-        Optional raw NI physical-channel string for the AI task (e.g.
-        'cDAQ1Mod1/ai0:3,cDAQ1Mod3/ai0'). Overrides the auto-constructed
-        'dev/ai0:N-1' string when set. Only used by the nidaqmx backend.
-    output_channels_spec: str or None
-        Same as input_channels_spec but for the AO task.
-    VmaxNI: float
-        Full-scale input voltage for the NI AI task (±VmaxNI is passed
-        as min/max to add_ai_voltage_chan). Default 5 V.
-    VmaxSC: float
-        Full-scale input voltage for the soundcard path — the voltage
-        at the jack that corresponds to a normalised reading of 1.0.
-        Default 1.0, meaning "treat the soundcard's normalised output
-        as volts at unit scale" (no calibration). If you've measured
-        your soundcard's input sensitivity, set this accordingly and
-        `log_data` will return voltages with calibrated magnitudes.
-    output_VmaxNI: float or None
-        Full-scale output voltage for the NI AO task. Defaults to
-        VmaxNI if not set.
-    output_VmaxSC: float or None
-        Full-scale output voltage for the soundcard AO path (i.e. the
-        voltage at the jack corresponding to a ±1 sounddevice sample).
-        Defaults to VmaxSC if not set.
-    iepe_excit_current_A: float or sequence of float
-        Per-channel IEPE / ICP excitation current in amps. Pass a
-        scalar (broadcast to every channel) or a list of length
-        ``channels``. Default ``0.0`` = excitation off on every
-        channel. Only the NI 9234-class DSA modules in this lab
-        support IEPE; the discrete legal values on the 9234 are
-        ``0.0`` (off) and ``0.002`` (2 mA on). Per-channel allows
-        e.g. ``[0.002, 0.002, 0.0, 0.0]`` for ICP accels on
-        ``ai0``/``ai1`` and a charge-amp force input on ``ai2``.
-        With excitation enabled, the channel is also switched to
-        AC coupling (the standard for IEPE sensors).
-    channel_sensitivities: float or sequence of float
-        Per-channel sensitivity in volts per engineering unit (V/g
-        for an accelerometer, V/N for a force transducer, V/Pa for a
-        microphone, etc.). Scalar broadcasts to every channel.
-        Default ``1.0`` = no calibration applied (raw volts pass
-        through). The reciprocal becomes ``TimeData.channel_cal_factors``,
-        so a ``100 mV/g`` accelerometer is ``0.1`` here and yields a
-        ``cal_factor`` of ``10`` so plots read in ``g``.
-    NI_mode: str
-        Terminal configuration for NI DAQ (e.g., 'DAQmx_Val_RSE', 'DAQmx_Val_Diff')
-    init_view_time: bool
-        Flag for time domain view in oscilloscope
-    init_view_freq: bool
-        Flag for frequency domain view in oscilloscope
-    init_view_levels: bool
-        Flag for channel levels view in oscilloscope
+        channels (int): Number of input channels (default ``2``). On the
+            soundcard backend this is clamped to the device's
+            ``max_input_channels`` at ``start_stream`` time (with a
+            printed warning) — so the default of 2 becomes 1 on a mono
+            mic rather than failing with PortAudio ``-9998``. The NI
+            backend instead raises ``ValueError`` if the count exceeds
+            the device's available AI channels.
+        fs (int): Input sampling frequency in Hz (default ``44100``). On
+            a DSA module (NI 9234) the driver coerces this to the nearest
+            rate on its discrete divider ladder.
+        nbits (int): Sample bit depth — 8, 16, 24 or 32 (default ``16``).
+        chunk_size (int): Samples acquired per channel per callback
+            (default ``100``; values below 10 are raised to 10). Also the
+            upper bound on ``pretrig_samples``.
+        num_chunks (int): Chunks held in the oscilloscope circular buffer
+            (default ``6``); recomputed from ``viewed_time`` when set.
+        viewed_time (float or None): Oscilloscope display window in
+            seconds (default ``0.3``). When set, overrides ``num_chunks``
+            as ``ceil(viewed_time * fs / chunk_size)``.
+        stored_time (float): Duration of the recorded capture in seconds
+            (default ``2``).
+        pretrig_samples (int or None): Samples retained before the
+            trigger, or ``None`` (default) for untriggered recording.
+            Must not exceed ``chunk_size`` (the pretrigger buffer holds
+            only one chunk of pre-trigger context).
+        pretrig_threshold (float): Trigger level, in the units the chosen
+            device delivers — volts on NI, ±1-normalised on the soundcard
+            (default ``0.05``).
+        pretrig_channel (int): Channel index monitored for the trigger
+            (default ``0``).
+        pretrig_timeout (float): Seconds to wait for a trigger before
+            recording anyway (default ``20``).
+        device_driver (str): Input backend — ``'soundcard'`` (default),
+            ``'nidaq'`` or ``'mock'`` (the hardware-free test backend).
+        device_index (int or None): Index into the enumerated device list
+            for the chosen driver; ``None`` picks a default (the system
+            default input soundcard, or NI device 0). For a cDAQ chassis
+            this indexes the **chassis as a whole**, not a module — list
+            candidates with ``dvma.list_available_devices()`` (its nidaq
+            section is indexed the same way ``device_index`` is).
+        input_channels_spec (str or None): Optional raw DAQmx
+            physical-channel string for the AI task, e.g.
+            ``'cDAQ1Mod1/ai0:3,cDAQ1Mod3/ai0'``. Overrides the auto-built
+            ``'<dev>/ai0:N-1'`` string when set — use it for gappy or
+            mixed-module layouts the count-based builder cannot express.
+            nidaqmx backend only.
+        VmaxNI (float): Full-scale input voltage for the NI AI task
+            (default ``5``); ±VmaxNI is passed as min/max to
+            ``add_ai_voltage_chan``. Pick the smallest range covering the
+            signal for best resolution. Fixed at ±5 V on the 9234 (other
+            values are accepted but ignored by the hardware).
+        VmaxSC (float): Soundcard input calibration (default ``1.0``) —
+            the jack voltage corresponding to a normalised reading of
+            1.0. Default ``1.0`` treats normalised samples as volts at
+            unit scale (no calibration); set it to your measured input
+            sensitivity to calibrate captures in volts.
+        NI_mode (str): NI terminal configuration — ``'DAQmx_Val_RSE'``
+            (default), ``'DAQmx_Val_NRSE'``, ``'DAQmx_Val_Diff'`` or
+            ``'DAQmx_Val_PseudoDiff'``. DSA modules (9234) are
+            pseudo-differential only.
+        iepe_excit_current_A (float or sequence of float): Per-channel
+            IEPE / ICP excitation current in amps (default ``0.0`` = off
+            on every channel). Scalar broadcasts; a sequence must be
+            length ``channels``. Only NI 9234-class DSA modules support
+            it; the legal discrete values on the 9234 are ``0.0`` and
+            ``0.002`` (2 mA), validated against the module that actually
+            owns each channel. A channel with current ``> 0`` is switched
+            to **AC coupling** and the recorder blocks ~2 s after start
+            for the sensor bias to settle through the AC-coupling HPF.
+            Requires ``device_driver='nidaq'`` (raises ``ValueError``
+            otherwise). Never enable it on a channel wired to an AO
+            output (e.g. a loopback) — the current drives back into the
+            AO terminal.
+        channel_sensitivities (float or sequence of float): Per-channel
+            sensitivity in volts per engineering unit — V/g for an
+            accelerometer, V/N for a force transducer, V/Pa for a
+            microphone, etc. (default ``1.0`` = no calibration applied).
+            Scalar broadcasts; a sequence must be length ``channels`` and
+            every value must be non-zero. ``log_data`` stores the
+            reciprocal as ``TimeData.channel_cal_factors``, which
+            plotting and modal fitting apply automatically, so a
+            ``100 mV/g`` accelerometer (``0.1`` here) gives a cal factor
+            of ``10`` and plots read in ``g``. The stored ``time_data``
+            array itself stays in volts.
+        output_device_driver (str): Backend for the output/AO path;
+            defaults to ``device_driver`` (same device as the input).
+        output_device_index (int or None): Device index for the output
+            path; ``None`` picks the default output soundcard, or NI
+            device 0.
+        output_channels (int): Number of output (AO) channels
+            (default ``1``).
+        output_channels_spec (str or None): Raw DAQmx physical-channel
+            string for the AO task, e.g. ``'cDAQ1Mod2/ao0'``; the output
+            analogue of ``input_channels_spec``. nidaqmx backend only.
+        output_fs (int): Output sample rate in Hz; defaults to ``fs``.
+        output_VmaxNI (float or None): Full-scale output voltage for the
+            NI AO task; defaults to ``VmaxNI``. (The NI 9260 is limited to
+            ±4.24 V.)
+        output_VmaxSC (float or None): Full-scale output voltage for the
+            soundcard AO path — the jack voltage corresponding to a ±1
+            sounddevice sample; defaults to ``VmaxSC``.
+        use_output_as_ch0 (bool): When ``True`` and an ``output`` array
+            is passed to ``log_data``, the generated drive signal is
+            prepended as channel 0 of the recorded data (default
+            ``False``). Useful for transfer-function tests where the
+            excitation should be the reference channel; the prepended
+            column passes through with a cal factor of 1.
+        init_view_time (bool): Show the time-domain oscilloscope view on
+            launch (default ``True``).
+        init_view_freq (bool): Show the frequency-domain oscilloscope
+            view on launch (default ``True``).
+        init_view_levels (bool): Show the channel-levels oscilloscope
+            view on launch (default ``True``).
+
+    Examples:
+        IEPE accelerometers on a cDAQ with per-channel calibration —
+        100 mV/g ICP accelerometers on the 9234's ``ai0``/``ai1`` and a
+        2.3 mV/N force probe on ``ai2`` (channel index 3 unused):
+
+        >>> settings = dvma.MySettings(
+        ...     device_driver='nidaq',
+        ...     device_index=0,                  # the cDAQ chassis
+        ...     channels=3,
+        ...     NI_mode='DAQmx_Val_PseudoDiff',  # required by the 9234
+        ...     VmaxNI=5,                        # 9234 fixed at ±5 V
+        ...     fs=12800,
+        ...     iepe_excit_current_A=[0.002, 0.002, 0.0],  # 2 mA accels only
+        ...     channel_sensitivities=[0.1, 0.1, 0.0023],  # V/g, V/g, V/N
+        ... )
+        >>> dataset = dvma.log_data(settings)
+
+        Scalars broadcast to every channel — four identical IEPE-powered
+        100 mV/g accelerometers:
+
+        >>> settings = dvma.MySettings(
+        ...     device_driver='nidaq', channels=4,
+        ...     iepe_excit_current_A=0.002, channel_sensitivities=0.1,
+        ... )
+
+    See Also:
+        acquisition.log_data: Run a capture using these settings.
+        list_available_devices: Print soundcard + nidaq devices by index.
+        suggest_ni_settings: Safe NI ranges/rate/mode for a device.
     '''
         
     def __init__(self, *, 
