@@ -312,6 +312,41 @@ dataset = dvma.log_data(settings, output=output)
     response rather than assumed. The prepended column passes through
     uncalibrated (cal factor 1).
 
+### Output via the Logger GUI
+
+The desktop Logger drives output from its **"Generate output"** panel
+rather than from a `signal_generator` / `log_data(output=...)` call.
+Pre-fill that panel by passing an `Output_Signal_Settings` when you open
+the Logger:
+
+```python
+oss = dvma.Output_Signal_Settings(
+    type='gaussian',   # 'None' | 'sweep' | 'gaussian' | 'uniform'
+    amp=0.1,           # peak amplitude in volts (clamped to output_vmax())
+    f1=100,            # sweep start / noise lower band corner (Hz)
+    f2=300,            # sweep end   / noise upper band corner (Hz)
+)
+logger = dvma.Logger(settings, output_signal_settings=oss)
+```
+
+The panel's **Type** drop-down, **Amplitude**, **f1** and **f2** fields
+open populated from those values. **Preview** plots the waveform and its
+FFT; **Generate output** plays it (the GUI refuses a maximum frequency
+above Nyquist, `fs/2`). Under the hood it calls the same
+`signal_generator` shown above — `type` becomes `sig` and `[f1, f2]`
+becomes `f`.
+
+A few notes:
+
+- **Duration is a separate panel field**, so it is *not* part of
+  `Output_Signal_Settings` — set it in the GUI (it is `T=` when
+  scripting `signal_generator`).
+- The four `type` values are exactly `'None'`, `'sweep'`, `'gaussian'`
+  and `'uniform'`. `'None'` (the default) opens the Logger with output
+  off — equivalent to omitting `output_signal_settings` entirely.
+- `Output_Signal_Settings` is **GUI-only**. For scripted/headless output
+  use the array path above; the two are independent.
+
 ## Voltage-Based I/O
 
 Since v1.2 both acquired data and generated output are in **volts**

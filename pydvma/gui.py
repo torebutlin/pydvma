@@ -285,9 +285,35 @@ class DampingFitWindow():
 
 
 class Logger():
-        
+    '''Interactive Qt logger window for acquisition, analysis and plotting.
+
+    The main GUI entry point (exposed as ``dvma.Logger``). Opening a
+    Logger starts a live oscilloscope and provides controls to record,
+    analyse (FFT / transfer function / sonogram) and plot, all backed by
+    a `datastructure.DataSet`.
+
+    Args:
+        settings (MySettings, optional): Acquisition configuration. If
+            None, the GUI opens with its own defaults.
+        test_name (str, optional): Default label applied to logged data.
+        default_window (str, optional): Initial FFT/TF window choice
+            (e.g. ``'hann'``); None means a rectangular window.
+        output_signal_settings (Output_Signal_Settings, optional):
+            Pre-fills the "Generate output" panel — waveform type,
+            amplitude and the two frequencies. Defaults to output off
+            (``type='None'``). See `options.Output_Signal_Settings`.
+        dataset (DataSet, optional): Start from an existing dataset
+            instead of an empty one — e.g. to add measurements to data
+            you have already loaded.
+
+    Examples:
+        >>> oss = dvma.Output_Signal_Settings(type='sweep', amp=0.5,
+        ...                                   f1=20, f2=2000)
+        >>> logger = dvma.Logger(settings, output_signal_settings=oss)
+    '''
+
     def __init__(self,settings=None,test_name=None,default_window=None,output_signal_settings=None,dataset=None):
-        
+
         # Initialise variables
         global MESSAGE
         if default_window is None:

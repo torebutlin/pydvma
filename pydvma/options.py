@@ -478,8 +478,41 @@ class MySettings(object):
 
 
 class Output_Signal_Settings(object):
-    '''
-    A class that stores the output signal settings.
+    '''Pre-set values for the Logger GUI's "Generate output" panel.
+
+    A lightweight holder for the four output-generation fields the
+    Logger GUI exposes. Pass an instance to
+    ``gui.Logger(..., output_signal_settings=...)`` to pre-fill that
+    panel; the GUI then feeds the chosen values to
+    `acquisition.signal_generator` when you preview or play the output.
+    It is **only** consumed by the GUI — for scripted output, call
+    `acquisition.signal_generator` / ``log_data(output=...)`` directly
+    (see the Data Acquisition user guide).
+
+    The signal **duration is not stored here** — it is a separate field
+    in the GUI panel (and the ``T=`` argument of ``signal_generator``
+    when scripting).
+
+    Attributes:
+        type (str): Output waveform, matching the panel's drop-down —
+            one of ``'None'`` (output off; the default), ``'sweep'`` (a
+            linear chirp from ``f1`` to ``f2``), ``'gaussian'``
+            (band-limited Gaussian noise) or ``'uniform'`` (band-limited
+            uniform noise). Maps to ``signal_generator``'s ``sig``.
+        amp (float): Peak amplitude in **volts** (default ``0``). Clamped
+            to ±``settings.output_vmax()`` at generation time.
+        f1 (float): Lower frequency in Hz (default ``0``). For ``'sweep'``
+            the start frequency; for the noise types the lower band-pass
+            corner. Passed through as ``f=[f1, f2]``.
+        f2 (float): Upper frequency in Hz (default ``0``). For ``'sweep'``
+            the end frequency; for noise the upper band-pass corner. The
+            GUI rejects ``max(f1, f2) > fs/2`` (Nyquist).
+
+    Examples:
+        >>> # band-limited noise, 0.1 V, 100-300 Hz, pre-loaded in the GUI
+        >>> oss = dvma.Output_Signal_Settings(type='gaussian',
+        ...                                   amp=0.1, f1=100, f2=300)
+        >>> logger = dvma.Logger(settings, output_signal_settings=oss)
     '''
     def __init__(self,type='None',
                  amp = 0,
