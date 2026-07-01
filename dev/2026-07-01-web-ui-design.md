@@ -95,8 +95,10 @@ One web frontend, same UI in three modes:
 1. `import pydvma as dvma` public API unchanged: existing labsheets
    run verbatim (`MySettings`, `Logger`, `Oscilloscope`, `log_data`,
    `load_data`, `DataSet` methods, …).
-2. Pickled class module paths unchanged (`.npy` round-trip with
-   files saved by ≤ 1.4.0).
+2. Files saved by ≤ 1.4.0 (pickle `.npy`) remain loadable forever
+   via the legacy reader — which requires pickled class module paths
+   to stay valid (hence the physical-layout freeze). New-format
+   `.dvma` files (Stage 0.5) are decoupled from code layout.
 3. Existing test suite (157 passed / 4 hardware-skipped) stays green.
 
 ## Stage 0 — packaging split (small)
@@ -121,6 +123,48 @@ surgery already.
   base install only; assert `import pydvma` succeeds and every public
   name resolves (lazy ones resolve on access where their extra is
   present; raise a helpful ImportError naming the extra where not).
+
+## Stage 0.5 — file format v2 (container format)
+
+The current save format is a pickle of live Python objects
+(`np.save(filename, dataset)` with `allow_pickle=True`). It is
+single-language, unversioned, a code-execution risk on load, and it
+couples the file format to the code layout (pickles store class
+module paths). Replace it as the *default* write format; keep the
+legacy reader permanently.
+
+- **Format:** a zip container, extension **`.dvma`**, containing
+  `manifest.json` plus plain `.npy` arrays saved with
+  `allow_pickle=False`. The manifest carries: `format_version`,
+  `pydvma_version`, a `storage` field (see below), and per-item
+  entries (kind — TimeData/FreqData/TfData/…, array member paths,
+  settings as a plain dict, units, calibration factors, test names,
+  timestamps, ids). Exact field list is an implementation-plan
+  detail; the manifest is the documented schema.
+- **Reading:** `load_data` sniffs magic bytes — zip → v2 reader,
+  `.npy` pickle → legacy reader. **Files saved by ≤ 1.4.0 remain
+  loadable forever.**
+- **Headless fix (same stage):** `load_data(path)` / file-path
+  arguments work with no GUI present; the no-argument Qt file dialog
+  becomes GUI-layer sugar only.
+- **Large-file hook:** zip members are written with optional
+  DEFLATE compression (`zipfile` handles this transparently on
+  read — trivial, so implemented now). The manifest's `storage`
+  field (`"npy"` today) is the versioned extension point for a
+  future HDF5 or chunked backend for genuinely large captures —
+  deliberately *not* implemented now; tracked in TODO (I/O section,
+  existing HDF5/Parquet item).
+- **Why it matters for the interfaces:** the format becomes the
+  contract instead of the class layout. JS can read/write `.dvma`
+  natively (jszip + a small npy parser) so the Stage 2 frontend can
+  open files without waking pyodide; files are safe to share; schema
+  versioning becomes real. Note the physical-layout freeze stays
+  regardless — legacy pickle files reference today's class paths
+  forever (or would need pickle-shim mapping if the package is ever
+  reorganised) — but new data stops adding to that constraint.
+- **Tests:** v2 round-trip across all data kinds; legacy 1.4.0
+  reference file loads; sniffing dispatch; MATLAB/CSV export paths
+  unaffected.
 
 ## Stage 1 — JupyterLite analysis site (target: ready for October)
 
@@ -162,7 +206,8 @@ gate (below) passes.
   reimplemented in JS.
 - **Swappable data sources** behind one TS interface:
   `WebAudioSource` (browser soundcard) / `BridgeSource` (websocket to
-  local `pydvma serve`) / `FileSource` (saved data).
+  local `pydvma serve`) / `FileSource` (saved data — reads `.dvma`
+  natively in JS; legacy pickle files via pyodide).
 - `pydvma serve` (new module + `pydvma[serve]` extra): local Python
   process wrapping the existing `streams`/`acquisition` code,
   streaming chunks over websocket and serving the built UI
@@ -177,6 +222,8 @@ gate (below) passes.
 ## Testing & CI summary
 
 - Stage 0: import-surface test in minimal venv; suite stays green.
+- Stage 0.5: `.dvma` round-trip across all data kinds; legacy 1.4.0
+  reference file loads via sniffing reader; headless `load_data`.
 - Stage 1: pyodide smoke test (reference-`.npy` load + analysis);
   Pages build in CI.
 - Stage 2: Playwright end-to-end with synthesised audio; bridge unit
@@ -187,8 +234,8 @@ gate (below) passes.
 
 ## Sequencing
 
-All of Stage 0, Stage 1, and the Stage 2 scope prototype are
-Mac-runnable (soundcard + pyodide). Only the NI bridge needs the
+All of Stage 0, Stage 0.5, Stage 1, and the Stage 2 scope prototype
+are Mac-runnable (soundcard + pyodide). Only the NI bridge needs the
 Windows machine. Qt GUI remains the lab interface until Stage 2 is
 proven; nothing in Stages 0–1 changes what students see in October
 except gaining the no-install analysis site.

@@ -20,7 +20,7 @@ Ordering is by dependency and hardware availability, not by priority alone. Mac 
 
 Do in this order:
 
-6. **GUI framework evaluation** — qtpy + PyQt5 today vs. PyQt6 / PySide6 / alternative. Pivotal choice, done after the speedup work has settled and before further GUI work. Produce a short decision record; don't migrate yet unless trivial.
+6. **GUI framework evaluation** — **decided 2026-07-01**: staged migration to a unified web UI (pyodide analysis / Web Audio soundcard / local NI bridge); Qt GUI frozen bugfix-only, no PySide6 migration. Decision record + staged plan: `dev/2026-07-01-web-ui-design.md`. Items 7–10 below fold into that work.
 7. **Plotting robustness & logic** — may fold into a backend migration if (6) recommends one.
 8. **Legend relabelling.**
 9. **GUI calibration flow.**
@@ -147,7 +147,7 @@ Found in the structured review on 2026-06-09/10 (parallel per-module reviews, th
 
 ## I/O
 
-- [ ] **Improved import/export** — review the existing `.npy` / MATLAB / CSV paths in `file.py`. Consider: better-documented CSV layout, MATLAB round-tripping, HDF5 / Parquet option for large datasets, consistent metadata handling.
+- [ ] **Improved import/export** — review the existing `.npy` / MATLAB / CSV paths in `file.py`. Consider: better-documented CSV layout, MATLAB round-tripping, HDF5 / Parquet option for large datasets, consistent metadata handling. Note: the `.dvma` container format (web UI plan Stage 0.5, `dev/2026-07-01-web-ui-design.md`) reserves a `storage` field in its manifest as the versioned hook for an HDF5/chunked large-file backend — implement it there when a real too-big workload appears.
 
 ## Plugins / separate repos
 
