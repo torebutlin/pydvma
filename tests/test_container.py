@@ -407,3 +407,31 @@ def test_load_data_clear_error_on_foreign_zip(tmp_path):
         zf.writestr('readme.txt', 'not a dataset')
     with pytest.raises(ValueError, match='manifest'):
         dvma.load_data(filename=str(foreign))
+
+
+def test_load_data_missing_file_raises_filenotfound(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        dvma.load_data(filename=str(tmp_path / 'no_such_file.dvma'))
+
+
+def test_load_data_corrupt_dvma_raises_clear_error(tmp_path):
+    # zero-byte / truncated .dvma must not be reported as a wrong
+    # extension — say it's corrupt
+    bad = tmp_path / 'truncated.dvma'
+    bad.write_bytes(b'')
+    with pytest.raises(ValueError, match='empty, truncated, or corrupted'):
+        dvma.load_data(filename=str(bad))
+
+
+def test_save_data_overwrite_prompt_on_normalised_name(tmp_path, monkeypatch):
+    data = _make_full_dataset()
+    target = tmp_path / 'mytest'
+    dvma.save_data(data, filename=str(target))
+    assert (tmp_path / 'mytest.dvma').is_file()
+    # second save without extension must hit the overwrite prompt for
+    # mytest.dvma; answer 'n' and verify the file is unchanged
+    before = (tmp_path / 'mytest.dvma').read_bytes()
+    monkeypatch.setattr('builtins.input', lambda prompt: 'n')
+    out = dvma.save_data(data, filename=str(target))
+    assert out is None
+    assert (tmp_path / 'mytest.dvma').read_bytes() == before

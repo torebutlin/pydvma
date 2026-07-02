@@ -41,16 +41,25 @@ dataset = dvma.import_from_matlab_jwlogger()
 
 ```python
 # Save dataset — opens a file-save dialog if filename is omitted
-dvma.save_data(dataset, filename='dataset.npy')
+dvma.save_data(dataset, filename='dataset')
 
 # Load dataset — opens a file-open dialog if filename is omitted
-dataset = dvma.load_data(filename='dataset.npy')
+dataset = dvma.load_data(filename='dataset.dvma')
 ```
 
-Internally this uses `numpy.save` / `numpy.load` on a one-element
-object array wrapping the `DataSet`, so a saved file is a `.npy`. The
-helpers handle overwrite prompts and dialog fallback; prefer them
-over a raw `pickle`.
+`.dvma` has been the native format since 1.5: a zip container of
+`manifest.json` plus pickle-free `.npy` arrays. Loading a `.dvma`
+file executes no code, so it's safe to share with others. If
+`filename` doesn't already end in `.dvma` or `.npy`, `save_data`
+appends `.dvma` for you. Format detection on load is by content (zip
+magic bytes), not extension, so a renamed file still loads correctly.
+
+Legacy `.npy` pickle files from pydvma <= 1.4.0 still load forever.
+To keep writing that legacy pickle format, pass an explicit filename
+ending in `.npy` — an escape hatch for workflows that still need it,
+but note that unpickling can execute arbitrary code, so only load
+legacy `.npy` files you or your lab created. The helpers handle
+overwrite prompts and dialog fallback either way.
 
 ## Export Plots
 

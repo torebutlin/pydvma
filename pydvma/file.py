@@ -23,7 +23,8 @@ def load_data(parent=None, filename=None):
     Loads a dataset from `filename`, or displays a file dialog if no
     filename is given (the dialog needs the GUI extras installed).
 
-    The format is sniffed from the file content, not the extension:
+    Container detection is by content (zip magic bytes); ``.mat`` and
+    legacy ``.npy`` fall back to extension:
 
     - ``.dvma`` container files (zip magic bytes) — the default
       format since 1.5.0; safe, pickle-free (see `container`).
@@ -41,6 +42,10 @@ def load_data(parent=None, filename=None):
         if not filename:
             return None
 
+    if not os.path.isfile(filename):
+        raise FileNotFoundError(
+            'No such data file: {!r}'.format(filename))
+
     if zipfile.is_zipfile(filename):
         dataset = container.load(filename)
     elif filename.endswith('.mat'):
@@ -48,6 +53,10 @@ def load_data(parent=None, filename=None):
     elif filename.endswith('.npy'):
         d = np.load(filename, allow_pickle=True, fix_imports=True)
         dataset = d[0]
+    elif filename.endswith('.dvma'):
+        raise ValueError(
+            '{!r} has the .dvma extension but is not a valid container '
+            '— empty, truncated, or corrupted?'.format(filename))
     else:
         print('Expecting file to be .dvma, .npy or .mat')
         return None
@@ -81,14 +90,23 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
             print('Save cancelled')
             return None
 
-    # If it exists, check if we should overwrite it (unless
-    # overwrite_without_prompt is True)
-    elif os.path.isfile(filename) and not overwrite_without_prompt:
-        answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
-        if answer != 'y':
-            print('Save cancelled')
-            return None
-        print('Will overwrite existing file')
+    else:
+        # Normalise the extension FIRST, so the overwrite prompt below
+        # checks the same filename we're about to write (previously
+        # the check ran before normalisation, so e.g. save_data(data,
+        # filename='mytest') would silently overwrite mytest.dvma on
+        # a second call instead of prompting).
+        if not filename.endswith('.npy') and not filename.endswith('.dvma'):
+            filename += '.dvma'
+
+        # If it exists, check if we should overwrite it (unless
+        # overwrite_without_prompt is True)
+        if os.path.isfile(filename) and not overwrite_without_prompt:
+            answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
+            if answer != 'y':
+                print('Save cancelled')
+                return None
+            print('Will overwrite existing file')
 
     if filename.endswith('.npy'):
         # legacy pickle format, kept for explicit opt-in only
@@ -97,8 +115,6 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
         print("Data saved (legacy pickle format) as %s" % filename)
         return filename
 
-    if not filename.endswith('.dvma'):
-        filename += '.dvma'
     container.save(dataset, filename)
     print("Data saved as %s" % filename)
     return filename

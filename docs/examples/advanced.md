@@ -39,14 +39,16 @@ freq_data = dvma.calculate_fft(time_data_filtered)
 import pydvma as dvma
 import os
 
-# Process all measurements in a directory. Files are pydvma's native
-# .npy format produced by dvma.save_data(...).
+# Process all measurements in a directory. .dvma is pydvma's native
+# format (a zip container) produced by dvma.save_data(...); legacy
+# .npy pickle files from pydvma <= 1.4.0 are also picked up here.
 data_dir = 'measurements'
-files = [f for f in os.listdir(data_dir) if f.endswith('.npy')]
+files = [f for f in os.listdir(data_dir) if f.endswith(('.dvma', '.npy'))]
 
 results = []
 for filename in files:
-    # Load data (DataSet from .npy via the standard helper)
+    # Load data (DataSet via the standard helper — format is
+    # detected from file content, not the extension)
     dataset = dvma.load_data(filename=os.path.join(data_dir, filename))
     time_data = dataset.time_data_list[0]
 

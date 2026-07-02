@@ -299,6 +299,12 @@ class DataSet():
             return None
             
     def save_data(self, filename=None):
+        '''
+        Saves the whole DataSet via `file.save_data` — writes the
+        .dvma container format by default (legacy pickle format if
+        `filename` explicitly ends in ``.npy``). Shows a save dialog
+        if no filename is given.
+        '''
         savename = file.save_data(self, filename=filename, overwrite_without_prompt=False)
         return savename
     

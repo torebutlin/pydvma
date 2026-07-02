@@ -3123,8 +3123,8 @@ class Oscilloscope():
             
             
             if evt.key() == QtCore.Qt.Key_S:
-                self.data_saved_counter = 1
                 self.last_filename = file.save_data(dataset,self.win)
+                self.data_saved_counter = 1 if self.last_filename else 0
             
 #            # this version saves all data as new timedata objects within one file
 #            if evt.key() == QtCore.Qt.Key_Space:
