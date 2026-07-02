@@ -228,3 +228,20 @@ class TestStreamSnapshot:
         # Mock fills osc_time_data with the sine signal; snapshot
         # should preserve voltage magnitudes
         assert np.max(np.abs(td.time_data)) > 0.0
+
+
+def test_mock_recorder_osc_buffer_longer_than_stored():
+    # viewed_time=None keeps num_chunks at its default (6 chunks =
+    # 600 samples) while a short stored_time gives a 300-sample
+    # stored buffer; construction must not assume osc <= stored
+    # (regression for the broadcast crash at streams.py:1198).
+    settings = dvma.MySettings(channels=2, fs=1000, stored_time=0.1,
+                               viewed_time=None, device_driver='mock')
+    rec = streams.MockRecorder(settings)
+    assert rec.osc_time_data.shape == (600, 2)
+    assert rec.stored_time_data.shape == (300, 2)
+    # same deterministic signal on the overlapping head
+    np.testing.assert_allclose(rec.osc_time_data[:300, :],
+                               rec.stored_time_data)
+    # and the osc buffer carries signal beyond the stored length
+    assert np.abs(rec.osc_time_data[300:, :]).max() > 0

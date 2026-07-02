@@ -1192,10 +1192,14 @@ class MockRecorder(object):
             self.stored_time_data[:, ch] = 0.1 * np.sin(
                 2 * np.pi * 100 * (ch + 1) * t_stored
             )
-        # Mirror the head of stored_time_data into osc_time_data so the
-        # oscilloscope smoke / stream_snapshot paths also see signal.
-        n_osc = self.osc_time_data.shape[0]
-        self.osc_time_data[:, :] = self.stored_time_data[:n_osc, :]
+        # Fill osc_time_data with the same deterministic per-channel
+        # sine (phase from t=0), synthesised on its own axis so the
+        # osc buffer may be longer or shorter than the stored buffer.
+        t_osc = np.arange(self.osc_time_data.shape[0]) / settings.fs
+        for ch in range(settings.channels):
+            self.osc_time_data[:, ch] = 0.1 * np.sin(
+                2 * np.pi * 100 * (ch + 1) * t_osc
+            )
 
         # Preserve `audio_stream` across re-__init__ calls the same way
         # `Recorder_NI_nidaqmx` does — log_data's pretrigger path calls

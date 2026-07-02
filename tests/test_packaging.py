@@ -75,7 +75,7 @@ def test_core_mock_acquisition_without_qt_or_hardware():
     result = _run_core_python("""
 import pydvma as dvma
 settings = dvma.MySettings(channels=2, fs=1000, stored_time=0.1,
-                           device_driver='mock')
+                           viewed_time=None, device_driver='mock')
 data = dvma.log_data(settings)
 assert data.time_data_list[0].time_data.shape[1] == 2
 print('MOCK-OK')
