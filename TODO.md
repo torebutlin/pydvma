@@ -20,7 +20,7 @@ Ordering is by dependency and hardware availability, not by priority alone. Mac 
 
 Do in this order:
 
-6. **GUI framework evaluation** — **decided 2026-07-01**: staged migration to a unified web UI (pyodide analysis / Web Audio soundcard / local NI bridge); Qt GUI frozen bugfix-only, no PySide6 migration. Decision record + staged plan: `dev/2026-07-01-web-ui-design.md`. Items 7–10 below fold into that work.
+6. **GUI framework evaluation** — **decided 2026-07-01**: staged migration to a unified web UI (pyodide analysis / Web Audio soundcard / local NI bridge); Qt GUI frozen bugfix-only, no PySide6 migration. Decision record + staged plan: `dev/2026-07-01-web-ui-design.md`. Items 7–10 below fold into that work. Stages 0, 0.5 and 1 landed 2026-07-02 (packaging split, .dvma format, JupyterLite site + CI deploy); Stage 2 (web app + scope prototype) is next — see `dev/plans/2026-07-02-web-ui-stages-0-1.md`.
 7. **Plotting robustness & logic** — may fold into a backend migration if (6) recommends one.
 8. **Legend relabelling.**
 9. **GUI calibration flow.**
@@ -103,14 +103,16 @@ Found in the structured review on 2026-06-09/10 (parallel per-module reviews, th
     - Made `Logger`, `Oscilloscope`, and `PlotData` lazy via a module-level `__getattr__` in `pydvma/__init__.py` (Python 3.7+). Accessing `pydvma.Logger` still works; `gui.py` / `plotting.py` load only on first attribute access (~165 ms each, one-off).
     - Deferred `from . import plotting` in `datastructure.py` to inside the four `DataSet.plot_*_data` methods.
     - Removed unused `pyqtgraph` / `QtWidgets` imports from `file.py` and moved `QFileDialog` into the six `if filename is None:` dialog branches.
+    - `plotting.py` no longer imports Qt (dead imports removed 2026-07-02); `set_plot_colours` has a stdlib fallback when `seaborn` is absent.
     Remaining candidates (lower priority):
     - Audit each module's top-of-file imports for unused symbols and heavy imports used in only one function. The dependency graph has cycles (`datastructure` ↔ `analysis`, `streams` ↔ `acquisition`) that Python handles but which slow startup and make dependency reasoning harder.
     - Consider splitting the package so `pydvma.core` (data + analysis + file I/O, no GUI) can be imported without any Qt / matplotlib cost. Natural fit alongside the GUI backend evaluation in Phase B.
-- [ ] **Packaging: fix `setup.py` dependencies** — `nidaqmx` is a hard install requirement but is NI/Windows-only (move to `extras_require={'ni': ['nidaqmx']}`); `qtpy` and `pyqt5` are imported by `gui.py`/`plotting.py`/`file.py` but missing from `requires`, so a clean `pip install pydvma` can't open the GUI. Version string is duplicated in `setup.py` and `datastructure.py` (in sync at 1.4.0 today) — consider single-sourcing.
+- [x] **Packaging: fix `setup.py` dependencies** — replaced by `pyproject.toml` with `qt`/`soundcard`/`ni` extras; version sync now enforced by `tests/test_packaging.py` (2026-07-02).
 - [ ] **Delete dead code found in the June 2026 review** — `pydvma/oscilloscope.py` (dead duplicate of the `gui.py` Oscilloscope, not imported anywhere — `pydvma.Oscilloscope` lazy-maps to `.gui` — and would `NameError` on `app` at `:47` if anyone imported it directly); `pydvma/logger_tester.py` plus the stray extensionless `pydvma/logger_tester` (scratch scripts with IPython `%matplotlib` magic, currently shipped inside the package — move to `dev/` or delete); in `gui.py`: `accept_mode` (`:2606`, connected to nothing), `input_list_devices` (`:886-894`, written never read), and the dead class-name checks at `:2462-2465` (compare `'FreqData'`/`'TfData'` against a `*List` object, never true — the save-back works only because the list is mutated in place).
 - [ ] **Repo-root cleanup** — six tracked docs-about-docs files (`DOCS_SETUP_SUMMARY.md`, `MKDOCSTRINGS_INTEGRATION.md`, `DOCUMENTATION.md`, `README_DOCS.md`, `.mkdocs_quickref.md`, `CODE_STRUCTURE.md`) are one-off setup notes that duplicate `docs/`; fold anything still true into `docs/README.md` or `CLAUDE.md` and delete the rest. `logger.yml` is a personal 2023 conda env export — move to `dev/` or delete.
-- [ ] **`load_data`: document the pickle trust model** — `file.py:32` uses `np.load(allow_pickle=True)`; loading a `.npy` from an untrusted source is arbitrary code execution. Acceptable for a lab tool, but say so in the docstring (it feeds the published docs).
+- [x] **`load_data`: document the pickle trust model** — documented in `load_data`'s docstring; legacy pickle is now opt-in only — `.dvma` container (pickle-free) is the default format since 1.5.0.
 - [ ] **Minor follow-ups from the review** — cache lazy imports in `pydvma/__init__.py.__getattr__` (`globals()[name] = ...`) so repeated attribute access skips the import machinery; chase the `DeprecationWarning: __package__ != __spec__.parent` from `_ni_device_specs.py:227` (visible in every pytest run); fix the copy-paste docstrings on `DataSet.calculate_tf_set`, `calculate_cross_spectrum_matrix_set`, and `calculate_tf_averaged` (`datastructure.py:228-253` — all three say "Calls analysis.calculate_fft").
+- [ ] **Automated pyodide smoke test in CI** — deferred to Stage 2 (Playwright tooling arrives there); Stage 1 was verified manually via node-pyodide (2026-07-02: full pipeline in ~10s).
 
 ## Analysis features
 
@@ -148,6 +150,7 @@ Found in the structured review on 2026-06-09/10 (parallel per-module reviews, th
 ## I/O
 
 - [ ] **Improved import/export** — review the existing `.npy` / MATLAB / CSV paths in `file.py`. Consider: better-documented CSV layout, MATLAB round-tripping, HDF5 / Parquet option for large datasets, consistent metadata handling. Note: the `.dvma` container format (web UI plan Stage 0.5, `dev/2026-07-01-web-ui-design.md`) reserves a `storage` field in its manifest as the versioned hook for an HDF5/chunked large-file backend — implement it there when a real too-big workload appears.
+- [ ] **Update teaching notebooks/labsheets for the .dvma era before October** — labsheet text still says "you should have a *.npy file"; the logger now saves `.dvma` by default (legacy `.npy` still loads).
 
 ## Plugins / separate repos
 

@@ -20,7 +20,7 @@ import uuid
 import copy
 
 #%% version
-VERSION = '1.4.0' # keep in sync with pyproject.toml (enforced by tests/test_packaging.py)
+VERSION = '1.5.0' # keep in sync with pyproject.toml (enforced by tests/test_packaging.py)
 
 def update_dataset(dataset):
     dataset_new = DataSet()

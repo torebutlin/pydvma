@@ -20,8 +20,10 @@ pydvma is a modular library for data measurement and analysis in the context of 
 
 ## Quick Start
 
+For lab use — GUI plus acquisition backends (soundcard and/or NI-DAQmx):
+
 ```bash
-pip install pydvma
+pip install "pydvma[full]"
 ```
 
 ```python
@@ -31,6 +33,14 @@ import pydvma as dvma
 settings = dvma.MySettings()
 logger = dvma.Logger(settings)
 ```
+
+Plain `pip install pydvma` installs the analysis-only core (data
+structures, FFT/TF/modal analysis, file I/O) with no Qt or hardware
+dependencies — it runs anywhere, including in-browser via
+[pydvma-lite](https://torebutlin.github.io/pydvma/lite/lab/index.html).
+
+Native data format is `.dvma` (safe, pickle-free); `.npy` files saved
+by older versions still load.
 
 ## Documentation
 
