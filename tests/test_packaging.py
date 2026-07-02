@@ -9,7 +9,6 @@ a subprocess rather than a separate venv, so they run in the normal
 suite.
 """
 import pathlib
-import re
 import subprocess
 import sys
 
@@ -49,7 +48,7 @@ def _run_core_python(body):
     unimportable, simulating a base (no-extras) install."""
     return subprocess.run(
         [sys.executable, '-c', _BLOCKER_PRELUDE + body],
-        capture_output=True, text=True, cwd=str(REPO_ROOT),
+        capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=120,
     )
 
 
@@ -66,7 +65,7 @@ assert len(data.tf_data_list) == 1
 print('CORE-OK')
 """)
     assert result.returncode == 0, result.stderr
-    assert 'CORE-OK' in result.stdout
+    assert 'CORE-OK' in result.stdout, (result.stdout, result.stderr)
 
 
 def test_core_mock_acquisition_without_qt_or_hardware():
@@ -81,4 +80,4 @@ assert data.time_data_list[0].time_data.shape[1] == 2
 print('MOCK-OK')
 """)
     assert result.returncode == 0, result.stderr
-    assert 'MOCK-OK' in result.stdout
+    assert 'MOCK-OK' in result.stdout, (result.stdout, result.stderr)

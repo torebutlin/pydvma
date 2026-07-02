@@ -90,14 +90,16 @@ class TestCallSiteGuard:
 
 class TestViewedTimeNone:
     """``viewed_time`` is documented as "float or None" (None meaning
-    "no oscilloscope view buffer"); construction must not crash when
-    it's passed explicitly."""
+    the oscilloscope buffer is sized directly from ``num_chunks``
+    instead of being derived from a time window); construction must
+    not crash when it's passed explicitly."""
 
     def test_settings_viewed_time_none(self):
-        # viewed_time is documented as "float or None"; None means "no
-        # oscilloscope view buffer" and must not crash construction
-        # (regression: an unguarded float(viewed_time) predated the
-        # None-handling block).
+        # viewed_time is documented as "float or None"; None means the
+        # osc buffer is still allocated, just sized directly from
+        # num_chunks instead of derived from a time window (regression:
+        # an unguarded float(viewed_time) predated the None-handling
+        # block).
         settings = dvma.MySettings(channels=2, fs=1000, viewed_time=None,
                                     device_driver='mock')
         assert settings.viewed_time is None

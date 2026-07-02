@@ -74,7 +74,9 @@ class MySettings(object):
             (default ``6``); recomputed from ``viewed_time`` when set.
         viewed_time (float or None): Oscilloscope display window in
             seconds (default ``0.3``). When set, overrides ``num_chunks``
-            as ``ceil(viewed_time * fs / chunk_size)``.
+            as ``ceil(viewed_time * fs / chunk_size)``. Set to None to
+            size the oscilloscope buffer directly from ``num_chunks``
+            instead.
         stored_time (float): Duration of the recorded capture in seconds
             (default ``2``).
         pretrig_samples (int or None): Samples retained before the
