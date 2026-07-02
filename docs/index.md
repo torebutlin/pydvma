@@ -29,10 +29,16 @@ At present the library has basic functionality for:
 ## Analyse data in your browser — no install
 
 Saved a dataset in the lab? You can load and analyse it right now at
-**[the pydvma browser notebook](/lite/lab/index.html)** — Python
-runs inside your browser (nothing to install, files never leave your
-machine). Drag your `.dvma` or `.npy` file into its file browser and
-follow the notebook.
+<strong><a href="lite/lab/index.html">the pydvma browser notebook</a></strong>
+— Python runs inside your browser (nothing to install, files never
+leave your machine). Drag your `.dvma` or `.npy` file into its file
+browser and follow the notebook.
+
+<!-- Raw HTML anchor on purpose: the site is a GitHub *project* page
+served under /pydvma/, so a root-absolute markdown link would 404 in
+production, while a relative markdown link trips mkdocs --strict
+(target is outside the docs tree — jupyter lite build adds it at
+deploy time). The HTML href is relative and skips link checking. -->
 
 ## Quick Start
 
