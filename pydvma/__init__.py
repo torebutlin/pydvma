@@ -49,6 +49,8 @@ def __getattr__(name):
         try:
             mod = importlib.import_module(mod_name, __name__)
         except ImportError as e:
+            if mod_name != '.gui':
+                raise
             raise ImportError(
                 'pydvma.{} needs the GUI dependencies (qtpy, PyQt5, '
                 'pyqtgraph). Install them with: pip install pydvma[qt]. '

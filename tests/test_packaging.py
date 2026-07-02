@@ -12,6 +12,8 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
+
 import pydvma
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -112,3 +114,19 @@ print('FILEIO-OK')
 """.format(out=str(out_dir / 'core_roundtrip')))
     assert result.returncode == 0, result.stderr
     assert 'FILEIO-OK' in result.stdout, (result.stdout, result.stderr)
+
+
+@pytest.mark.xfail(reason='seaborn fallback lands in the next commit', strict=True)
+def test_core_plotting_without_qt():
+    # DataSet.plot_*_data must work on a base install (Agg backend) —
+    # this is what pyodide/JupyterLite exercises.
+    result = _run_core_python("""
+import pydvma as dvma
+data = dvma.create_test_impulse_data(noise_level=0)
+data.calculate_tf_set()
+p = data.plot_tf_data()
+assert p.fig is not None
+print('PLOT-OK')
+""")
+    assert result.returncode == 0, result.stderr
+    assert 'PLOT-OK' in result.stdout, (result.stdout, result.stderr)
