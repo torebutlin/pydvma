@@ -22,3 +22,8 @@ site/
 # overrides go in CLAUDE.local.md, which stays gitignored.
 .claude/
 CLAUDE.local.md
+
+# JupyterLite build artefacts (wheels dropped in by CI / local builds)
+lite/pypi/
+lite/.jupyterlite.doit.db
+_lite_build/
