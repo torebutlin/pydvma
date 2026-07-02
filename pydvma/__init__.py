@@ -30,11 +30,12 @@ from .modal import modal_fit_single_channel, modal_fit_all_channels
 # faulthandler.enable()
 
 
-# `pydvma.gui` and `pydvma.plotting` together pull qtpy + pyqtgraph +
-# the matplotlib Qt5Agg backend, which cost ~0.7 s at import time on a
-# Mac. CLI / scripted / test users never touch Logger, Oscilloscope, or
-# PlotData, so defer those names to first attribute access via the
-# Python 3.7+ module-level __getattr__ hook.
+# `pydvma.gui` pulls qtpy + pyqtgraph and `pydvma.plotting` pulls
+# matplotlib.pyplot — together ~0.7 s at import time on a Mac (plotting
+# is Qt-free since the web-UI Stage 1 work). CLI / scripted / test
+# users never touch Logger, Oscilloscope, or PlotData, so defer those
+# names to first attribute access via the Python 3.7+ module-level
+# __getattr__ hook.
 _LAZY_NAMES = {
     'Logger': '.gui',
     'Oscilloscope': '.gui',

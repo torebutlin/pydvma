@@ -16,8 +16,6 @@ import matplotlib.pyplot as plt
 matplotlib.rcParams.update({'font.size': 10,'font.family':'serif'})
 from matplotlib.ticker import AutoLocator
 
-import time
-
 LINE_ALPHA = 0.9
 
 class PlotSonoData():
