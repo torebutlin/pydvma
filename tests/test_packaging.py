@@ -12,8 +12,6 @@ import pathlib
 import subprocess
 import sys
 
-import pytest
-
 import pydvma
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -116,7 +114,6 @@ print('FILEIO-OK')
     assert 'FILEIO-OK' in result.stdout, (result.stdout, result.stderr)
 
 
-@pytest.mark.xfail(reason='seaborn fallback lands in the next commit', strict=True)
 def test_core_plotting_without_qt():
     # DataSet.plot_*_data must work on a base install (Agg backend) —
     # this is what pyodide/JupyterLite exercises.
@@ -130,3 +127,19 @@ print('PLOT-OK')
 """)
     assert result.returncode == 0, result.stderr
     assert 'PLOT-OK' in result.stdout, (result.stdout, result.stderr)
+
+
+def test_set_plot_colours_without_seaborn():
+    result = _run_core_python("""
+import numpy as np
+from pydvma import options
+c1 = options.set_plot_colours(1)
+c4 = options.set_plot_colours(4)
+assert c4.shape[0] == 4 and c4.shape[1] in (3, 4)
+assert (c4 >= 0).all() and (c4 <= 255).all()
+# distinct hues, not all the same colour
+assert len({tuple(row[:3]) for row in c4}) == 4
+print('COLOURS-OK')
+""")
+    assert result.returncode == 0, result.stderr
+    assert 'COLOURS-OK' in result.stdout, (result.stdout, result.stderr)

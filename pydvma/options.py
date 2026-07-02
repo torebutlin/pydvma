@@ -10,7 +10,11 @@ import numpy as np
 # Heavy / circular imports deferred to the functions that need them:
 #   - `streams`     -> MySettings.__init__ fallback (line ~158)
 #   - `matplotlib`  -> set_plot_colours
-#   - `seaborn`     -> set_plot_colours
+#   - `seaborn`     -> set_plot_colours (optional; only used for
+#                      channels > 1, and only if installed — falls back
+#                      to a stdlib `colorsys` reimplementation of the
+#                      same palette when seaborn is absent, e.g. on a
+#                      base install / pyodide)
 # This keeps `import pydvma` fast for script / CLI users who never touch
 # the GUI or call set_plot_colours (seaborn alone pulls in ipywidgets
 # and IPython, which cost ~0.5 s at import time).
@@ -529,12 +533,19 @@ class Output_Signal_Settings(object):
 def set_plot_colours(channels):
     '''
     Returns a list of RGB colours depending on the number of channels required.
+
+    For a single channel this uses matplotlib's ``tab10`` colormap. For
+    multiple channels it uses seaborn's ``hls_palette`` (evenly-spaced
+    hues) when seaborn is installed. seaborn is a ``[qt]`` extra, so on
+    a base install (e.g. pyodide) this falls back to a stdlib
+    ``colorsys``-based reimplementation of the same palette — see the
+    ``except ImportError`` branch below.
     '''
-    # Lazy imports: matplotlib and seaborn are only needed here, and seaborn
-    # in particular pulls in ipywidgets/IPython (~0.5 s), so keeping them
-    # out of module top-level makes `import pydvma` substantially faster.
+    # Lazy import: matplotlib is only needed here, and pulling it (plus
+    # seaborn, when present) out of module top-level keeps `import
+    # pydvma` fast for script / CLI users who never touch the GUI or
+    # call set_plot_colours.
     import matplotlib.pyplot as plt
-    import seaborn as sns
     #TODO: Accessible colours
     if channels <= 1:
         cmap = plt.get_cmap('tab10')
@@ -544,7 +555,17 @@ def set_plot_colours(channels):
 #        cmap = plt.get_cmap('plasma')
 #        v = np.linspace(0,1,channels)
 #        c_list = np.array(cmap(v) * 255,dtype=int)
-        cmap = sns.hls_palette(channels, l=.3, s=1)
+        try:
+            import seaborn as sns
+            cmap = sns.hls_palette(channels, l=.3, s=1)
+        except ImportError:
+            # base install (no seaborn, e.g. pyodide): reproduce
+            # sns.hls_palette(n, l=.3, s=1) with the stdlib — evenly
+            # spaced hues (seaborn offsets them by 0.01) at fixed
+            # lightness/saturation.
+            import colorsys
+            hues = (np.linspace(0, 1, channels, endpoint=False) + 0.01) % 1
+            cmap = [colorsys.hls_to_rgb(h, 0.3, 1.0) for h in hues]
         c_list = np.array(np.array(cmap) * 255,dtype=int)
     
 #    val = [0.0,0.5,1.0]
