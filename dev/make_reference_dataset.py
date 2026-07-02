@@ -7,9 +7,9 @@ pinned forever. Run once from the repo root:
 
 Regenerating it later (with newer code) would defeat the point; only
 rerun if you deliberately need a new reference epoch.
+(output is not byte-reproducible — timestamps/ids differ per run)
 """
 import os
-import numpy as np
 import pydvma as dvma
 
 assert dvma.datastructure.VERSION == '1.4.0', 'reference must be written by 1.4.0'
