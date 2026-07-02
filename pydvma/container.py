@@ -50,8 +50,8 @@ may also carry optional analysis flags (see `_OPTIONAL_META`) that
 are written only when set on the object.
 
 Use `save` / `load`; ``file.save_data`` and ``file.load_data``
-delegate here from pydvma 1.5 (load sniffs the format from the
-file's magic bytes, so old pickle ``.npy`` files keep working).
+delegate here — load sniffs the format from magic bytes so old
+pickle ``.npy`` files keep working.
 """
 import datetime
 import io
@@ -314,7 +314,12 @@ def load(filename):
     rather than silently misreading a file written by a newer pydvma.
     """
     with zipfile.ZipFile(filename, 'r') as zf:
-        manifest = json.loads(zf.read('manifest.json').decode('utf-8'))
+        try:
+            manifest = json.loads(zf.read('manifest.json').decode('utf-8'))
+        except KeyError:
+            raise ValueError(
+                '{!r} is a zip file but not a dvma-dataset '
+                '(no manifest.json inside)'.format(filename)) from None
         if manifest.get('format') != FORMAT_NAME:
             raise ValueError(
                 '{!r} is a zip file but not a dvma-dataset '

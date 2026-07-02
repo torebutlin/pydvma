@@ -6,66 +6,80 @@ Created on Mon Aug 27 14:32:35 2018
 """
 
 import os.path
+import zipfile
 import numpy as np
 import scipy.io as io
 # `QFileDialog` (and via qtpy, the whole Qt binding) is only needed
 # when a save/load function is called with `filename=None` and has to
 # prompt the user. Deferring the import means analysis-only / CLI
 # callers that always pass `filename=...` never pay the Qt load cost.
+from . import container
 from . import datastructure
 from . import options
 
 
 def load_data(parent=None, filename=None):
     '''
-    Loads dataset from filename, or displays a dialog if no argument provided.
+    Loads a dataset from `filename`, or displays a file dialog if no
+    filename is given (the dialog needs the GUI extras installed).
+
+    The format is sniffed from the file content, not the extension:
+
+    - ``.dvma`` container files (zip magic bytes) — the default
+      format since 1.5.0; safe, pickle-free (see `container`).
+    - legacy ``.npy`` pickle saves from pydvma <= 1.4.0 — supported
+      forever. **Trust model:** the legacy path uses
+      ``np.load(allow_pickle=True)``, and unpickling can execute
+      arbitrary code, so only open legacy .npy files you or your lab
+      created. `.dvma` files do not have this caveat.
+    - ``.mat`` (by extension) — JW-logger imports.
     '''
     if filename is None:
         from qtpy.QtWidgets import QFileDialog
-        filename, _ = QFileDialog.getOpenFileName(parent, 'Open data file', '', '*.npy *.mat')
-
+        filename, _ = QFileDialog.getOpenFileName(
+            parent, 'Open data file', '', '*.dvma *.npy *.mat')
         if not filename:
             return None
 
-    # determine if file is .npy or .mat
-    if filename.endswith('.npy'):
-        dataset = d = np.load(filename,allow_pickle=True,fix_imports=True)
-        dataset = d[0]
+    if zipfile.is_zipfile(filename):
+        dataset = container.load(filename)
     elif filename.endswith('.mat'):
         dataset = import_from_matlab_jwlogger(filename=filename)
+    elif filename.endswith('.npy'):
+        d = np.load(filename, allow_pickle=True, fix_imports=True)
+        dataset = d[0]
     else:
-        print('Expecting file to be .npy or .mat')
+        print('Expecting file to be .dvma, .npy or .mat')
         return None
-    
-    
+
     return dataset
 
 
 def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=False):
     '''
-    Saves dataset class to file 'filename.npy', or provides dialog if no
-    filename provided.
+    Saves a DataSet to 'filename.dvma' (container format v2 — a zip
+    of manifest.json + pickle-free .npy arrays; see `container`), or
+    provides a dialog if no filename is given.
+
+    Legacy escape hatch: an explicit filename ending in ``.npy``
+    writes the pre-1.5.0 pickle format instead, for workflows that
+    still need it. New saves should prefer .dvma — it is safe to
+    share (loading executes no code) and readable outside Python.
 
     Args:
        dataset (DataSet): An object of the class DataSet
        parent (optional): Parent widget for file dialog
        filename (str, optional): Output filename, dialog shown if not provided
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
-
     '''
-
-    # put data into numpy array
-    d = np.array([dataset])
-
     # If filename not specified, provide dialog
     if filename is None:
         from qtpy.QtWidgets import QFileDialog
-        filename, _ = QFileDialog.getSaveFileName(parent, 'Save dataset', '', '*.npy')
+        filename, _ = QFileDialog.getSaveFileName(
+            parent, 'Save dataset', '', '*.dvma')
         if not filename:
-            # No filename chosen, give up on saving
             print('Save cancelled')
             return None
-
 
     # If it exists, check if we should overwrite it (unless
     # overwrite_without_prompt is True)
@@ -75,15 +89,18 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
             print('Save cancelled')
             return None
         print('Will overwrite existing file')
-        
-    # Make sure it ends with .npy
-    if not filename.endswith('.npy'):
-        filename += '.npy'
-        
-    # Actually save!
-    np.save(filename, d)
-    print("Data saved as %s" % filename)
 
+    if filename.endswith('.npy'):
+        # legacy pickle format, kept for explicit opt-in only
+        d = np.array([dataset])
+        np.save(filename, d)
+        print("Data saved (legacy pickle format) as %s" % filename)
+        return filename
+
+    if not filename.endswith('.dvma'):
+        filename += '.dvma'
+    container.save(dataset, filename)
+    print("Data saved as %s" % filename)
     return filename
 
 

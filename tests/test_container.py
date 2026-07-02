@@ -354,3 +354,56 @@ def test_v2_id_link_list_roundtrip(tmp_path):
     tf1 = container.load(str(path)).tf_data_list[0]
     assert tf1.id_link == links
     assert all(isinstance(u, uuid.UUID) for u in tf1.id_link)
+
+
+def test_save_data_defaults_to_dvma(tmp_path):
+    data = _make_full_dataset()
+    # no extension -> .dvma appended, container format written
+    out = dvma.save_data(data, filename=str(tmp_path / 'mytest'))
+    assert out.endswith('.dvma')
+    import zipfile
+    assert zipfile.is_zipfile(out)
+    loaded = dvma.load_data(filename=out)
+    np.testing.assert_array_equal(loaded.time_data_list[0].time_data,
+                                  data.time_data_list[0].time_data)
+
+
+def test_save_data_explicit_npy_writes_legacy(tmp_path):
+    # escape hatch: an explicit .npy filename keeps the old pickle
+    data = _make_full_dataset()
+    out = dvma.save_data(data, filename=str(tmp_path / 'legacy.npy'),
+                         overwrite_without_prompt=True)
+    assert out.endswith('.npy')
+    import zipfile
+    assert not zipfile.is_zipfile(out)
+    loaded = dvma.load_data(filename=out)
+    assert len(loaded.time_data_list) == 1
+
+
+def test_load_data_sniffs_by_content_not_extension(tmp_path):
+    # a .dvma file renamed to .npy must still load as v2 (content sniff)
+    data = _make_full_dataset()
+    from pydvma import container
+    odd = tmp_path / 'renamed.npy'
+    container.save(data, str(odd))
+    loaded = dvma.load_data(filename=str(odd))
+    assert len(loaded.tf_data_list) == 1
+
+
+def test_dataset_save_data_method_roundtrip(tmp_path):
+    # the labsheet idiom: dataset.save_data(...) then dvma.load_data(...)
+    data = _make_full_dataset()
+    out = data.save_data(filename=str(tmp_path / 'method_path'))
+    loaded = dvma.load_data(filename=out)
+    assert loaded.pydvma_version == data.pydvma_version
+
+
+def test_load_data_clear_error_on_foreign_zip(tmp_path):
+    # a zip that isn't a dvma-dataset must give a clear error, not a
+    # raw KeyError from the missing manifest
+    import zipfile
+    foreign = tmp_path / 'foreign.zip'
+    with zipfile.ZipFile(str(foreign), 'w') as zf:
+        zf.writestr('readme.txt', 'not a dataset')
+    with pytest.raises(ValueError, match='manifest'):
+        dvma.load_data(filename=str(foreign))

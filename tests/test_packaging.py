@@ -97,3 +97,18 @@ except ImportError as e:
     # the original cause must survive the rewrap (diagnosis chain)
     assert 'Original error:' in result.stdout, (result.stdout,
                                                 result.stderr)
+
+
+def test_save_and_load_dvma_without_qt(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp('dvma_core')
+    result = _run_core_python("""
+import pydvma as dvma
+data = dvma.create_test_impulse_data(noise_level=0)
+out = dvma.save_data(data, filename={out!r})
+loaded = dvma.load_data(filename=out)
+assert (loaded.time_data_list[0].time_data.shape
+        == data.time_data_list[0].time_data.shape)
+print('FILEIO-OK')
+""".format(out=str(out_dir / 'core_roundtrip')))
+    assert result.returncode == 0, result.stderr
+    assert 'FILEIO-OK' in result.stdout, (result.stdout, result.stderr)
