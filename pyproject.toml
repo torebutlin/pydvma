@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,9 +7,9 @@ name = "pydvma"
 version = "1.4.0"          # keep in sync with pydvma/datastructure.py (enforced by tests/test_packaging.py)
 description = "Python package for dynamics and vibration measurement and analysis"
 readme = "README.md"
-license = { text = "BSD 3-Clause License" }
+license = "BSD-3-Clause"
 authors = [{ name = "Tore Butlin", email = "tb267@cam.ac.uk" }]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 # Base install is the pure-Python core: data structures, analysis,
 # file I/O, matplotlib plotting. It must import and work with no Qt
 # binding and no hardware driver present (runs under pyodide).
