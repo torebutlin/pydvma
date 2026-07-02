@@ -81,3 +81,15 @@ print('MOCK-OK')
 """)
     assert result.returncode == 0, result.stderr
     assert 'MOCK-OK' in result.stdout, (result.stdout, result.stderr)
+
+
+def test_lazy_gui_names_raise_helpful_error_without_qt():
+    result = _run_core_python("""
+import pydvma as dvma
+try:
+    dvma.Logger
+except ImportError as e:
+    print('MSG:', e)
+""")
+    assert result.returncode == 0, result.stderr
+    assert 'pip install pydvma[qt]' in result.stdout

@@ -46,7 +46,14 @@ def __getattr__(name):
     mod_name = _LAZY_NAMES.get(name)
     if mod_name is not None:
         import importlib
-        mod = importlib.import_module(mod_name, __name__)
+        try:
+            mod = importlib.import_module(mod_name, __name__)
+        except ImportError as e:
+            raise ImportError(
+                'pydvma.{} needs the GUI dependencies (qtpy, PyQt5, '
+                'pyqtgraph). Install them with: pip install pydvma[qt]. '
+                'Original error: {}'.format(name, e)
+            ) from e
         return getattr(mod, name)
     raise AttributeError(
         'module {!r} has no attribute {!r}'.format(__name__, name)
