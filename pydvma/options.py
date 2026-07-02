@@ -332,7 +332,6 @@ class MySettings(object):
         self.NI_mode=NI_mode
         self.chunk_size=int(chunk_size)
         self.num_chunks=int(num_chunks)
-        self.viewed_time=float(viewed_time)
         self.nbits=int(nbits)
         self.init_view_time=bool(init_view_time)
         self.init_view_freq=bool(init_view_freq)

@@ -88,6 +88,24 @@ class TestCallSiteGuard:
             acquisition.log_data(s)
 
 
+class TestViewedTimeNone:
+    """``viewed_time`` is documented as "float or None" (None meaning
+    "no oscilloscope view buffer"); construction must not crash when
+    it's passed explicitly."""
+
+    def test_settings_viewed_time_none(self):
+        # viewed_time is documented as "float or None"; None means "no
+        # oscilloscope view buffer" and must not crash construction
+        # (regression: an unguarded float(viewed_time) predated the
+        # None-handling block).
+        settings = dvma.MySettings(channels=2, fs=1000, viewed_time=None,
+                                    device_driver='mock')
+        assert settings.viewed_time is None
+        # num_chunks keeps its explicit/default value rather than being
+        # derived from viewed_time
+        assert settings.num_chunks == 6
+
+
 class TestVmaxHelpers:
     """The `input_vmax` / `output_vmax` accessors on MySettings pick
     the right driver-specific full-scale voltage. Internal code (the
