@@ -8,6 +8,7 @@ present. They simulate missing packages with a meta-path blocker in
 a subprocess rather than a separate venv, so they run in the normal
 suite.
 """
+import os
 import pathlib
 import subprocess
 import sys
@@ -143,3 +144,23 @@ print('COLOURS-OK')
 """)
     assert result.returncode == 0, result.stderr
     assert 'COLOURS-OK' in result.stdout, (result.stdout, result.stderr)
+
+
+def test_core_import_with_broken_sounddevice(tmp_path):
+    # sounddevice installed but PortAudio C library missing raises
+    # OSError at import (not ImportError); pydvma must still import
+    # (CI runners and student machines without libportaudio).
+    fake = tmp_path / 'sounddevice.py'
+    fake.write_text("raise OSError('PortAudio library not found')\n")
+    result = subprocess.run(
+        [sys.executable, '-c',
+         "import matplotlib; matplotlib.use('Agg')\n"
+         "import pydvma as dvma\n"
+         "assert dvma.MySettings(channels=2, device_driver='mock') is not None\n"
+         "print('BROKEN-SD-OK')"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+        env=dict(os.environ, PYTHONPATH=str(tmp_path)),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'BROKEN-SD-OK' in result.stdout, (result.stdout, result.stderr)

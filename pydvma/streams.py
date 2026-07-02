@@ -7,9 +7,10 @@ import time
 
 try:
     import sounddevice as sd
-except ImportError:
-    sd = None
-except NotImplementedError:
+except (ImportError, NotImplementedError, OSError):
+    # OSError = package present but the PortAudio C library is
+    # missing (default on ubuntu CI runners and some student
+    # machines); treat it the same as sounddevice being absent.
     sd = None
 
 
