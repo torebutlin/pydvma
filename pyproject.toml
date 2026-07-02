@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pydvma"
+version = "1.4.0"          # keep in sync with pydvma/datastructure.py (enforced by tests/test_packaging.py)
+description = "Python package for dynamics and vibration measurement and analysis"
+readme = "README.md"
+license = { text = "BSD 3-Clause License" }
+authors = [{ name = "Tore Butlin", email = "tb267@cam.ac.uk" }]
+requires-python = ">=3.9"
+# Base install is the pure-Python core: data structures, analysis,
+# file I/O, matplotlib plotting. It must import and work with no Qt
+# binding and no hardware driver present (runs under pyodide).
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "peakutils",
+]
+
+[project.optional-dependencies]
+# GUI (Logger / Oscilloscope / PlotData interactivity)
+qt = ["qtpy", "PyQt5", "pyqtgraph", "seaborn"]
+# acquisition backends
+soundcard = ["sounddevice"]
+ni = ["nidaqmx"]
+full = ["pydvma[qt,soundcard,ni]"]
+
+[project.urls]
+Homepage = "https://github.com/torebutlin/pydvma"
+
+[tool.setuptools]
+packages = ["pydvma"]
+
+[tool.setuptools.package-data]
+pydvma = ["*.png"]
