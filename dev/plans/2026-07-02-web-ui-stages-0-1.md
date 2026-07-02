@@ -203,8 +203,8 @@ def test_core_import_without_qt_or_hardware():
 import pydvma as dvma
 # public core names all resolve
 settings = dvma.MySettings(channels=2, fs=1000, device_driver='mock')
-td = dvma.create_test_impulse_data(noise_level=0)
-data = dvma.DataSet(td)
+# NOTE: create_test_impulse_data returns a populated DataSet
+data = dvma.create_test_impulse_data(noise_level=0)
 data.calculate_fft_set()
 data.calculate_tf_set()
 assert len(data.tf_data_list) == 1
@@ -331,10 +331,11 @@ import pydvma as dvma
 
 assert dvma.datastructure.VERSION == '1.4.0', 'reference must be written by 1.4.0'
 
-td = dvma.create_test_impulse_data(noise_level=0)
+# create_test_impulse_data returns a populated DataSet
+data = dvma.create_test_impulse_data(noise_level=0)
+td = data.time_data_list[0]
 td.test_name = 'reference impulse'
 td.units = ['N', 'm/s']
-data = dvma.DataSet(td)
 data.calculate_fft_set()
 data.calculate_tf_set(ch_in=0)
 data.calculate_cross_spectrum_matrix_set(window='hann')
@@ -422,10 +423,11 @@ from pydvma import container, datastructure, options
 
 
 def _make_full_dataset():
-    td = dvma.create_test_impulse_data(noise_level=0)
+    # create_test_impulse_data returns a populated DataSet
+    data = dvma.create_test_impulse_data(noise_level=0)
+    td = data.time_data_list[0]
     td.test_name = 'roundtrip'
     td.units = ['N', 'm/s']
-    data = dvma.DataSet(td)
     data.calculate_fft_set()
     data.calculate_tf_set(ch_in=0)
     data.calculate_cross_spectrum_matrix_set(window='hann')
@@ -479,9 +481,8 @@ def test_v2_roundtrip_all_kinds(tmp_path):
 def test_v2_roundtrip_settings(tmp_path):
     settings = options.MySettings(channels=3, fs=12800, device_driver='mock',
                                   channel_sensitivities=[0.1, 0.1, 0.0023])
-    td = dvma.create_test_impulse_data(noise_level=0)
-    td.settings = settings
-    data = dvma.DataSet(td)
+    data = dvma.create_test_impulse_data(noise_level=0)
+    data.time_data_list[0].settings = settings
     path = tmp_path / 's.dvma'
     container.save(data, str(path))
     s1 = container.load(str(path)).time_data_list[0].settings
@@ -950,11 +951,11 @@ def test_save_and_load_dvma_without_qt(tmp_path_factory):
     out_dir = tmp_path_factory.mktemp('dvma_core')
     result = _run_core_python("""
 import pydvma as dvma
-td = dvma.create_test_impulse_data(noise_level=0)
-data = dvma.DataSet(td)
+data = dvma.create_test_impulse_data(noise_level=0)
 out = dvma.save_data(data, filename={out!r})
 loaded = dvma.load_data(filename=out)
-assert loaded.time_data_list[0].time_data.shape == td.time_data.shape
+assert (loaded.time_data_list[0].time_data.shape
+        == data.time_data_list[0].time_data.shape)
 print('FILEIO-OK')
 """.format(out=str(out_dir / 'core_roundtrip')))
     assert result.returncode == 0, result.stderr
@@ -1245,7 +1246,7 @@ cd lite && jupyter lite build --output-dir ../_lite_build && cd ..
 python -m http.server -d _lite_build 8899
 ```
 
-In the browser at `http://localhost:8899/lab/index.html`: open `pydvma_analysis.ipynb`, drag in a test `.dvma` file (make one first: `python -c "import pydvma as dvma; d=dvma.DataSet(dvma.create_test_impulse_data()); d.calculate_tf_set(); d.save_data(filename='/tmp/my_data.dvma')"`), edit the filename cell, run all cells.
+In the browser at `http://localhost:8899/lab/index.html`: open `pydvma_analysis.ipynb`, drag in a test `.dvma` file (make one first: `python -c "import pydvma as dvma; d=dvma.create_test_impulse_data(); d.calculate_tf_set(); d.save_data(filename='/tmp/my_data.dvma')"`), edit the filename cell, run all cells.
 Expected: plots render (ipympl widgets), TF plot shows the impulse test data, save cell writes `analysis_results.dvma`. Also drag in `tests/data/reference_dataset_v140.npy` and confirm `dvma.load_data(filename='reference_dataset_v140.npy')` loads it (the legacy path under pyodide).
 
 - [ ] **Step 3: Commit**
