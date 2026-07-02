@@ -26,6 +26,14 @@ At present the library has basic functionality for:
 - Interactive tools for standard acquisition and analysis
 - Oscilloscope view of input signals
 
+## Analyse data in your browser — no install
+
+Saved a dataset in the lab? You can load and analyse it right now at
+**[the pydvma browser notebook](/lite/lab/index.html)** — Python
+runs inside your browser (nothing to install, files never leave your
+machine). Drag your `.dvma` or `.npy` file into its file browser and
+follow the notebook.
+
 ## Quick Start
 
 ### Installation
