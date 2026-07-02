@@ -113,6 +113,15 @@ def _osc_can_reuse_stream(settings):
             and getattr(rec, 'audio_stream', None) is not None)
 
 
+def _incremented_filename(filename, counter):
+    '''Insert '_<counter>' before the file extension, whatever the
+    extension is ('.dvma' default, legacy '.npy', ...). Used by the
+    oscilloscope's space-bar snapshot save so each snapshot gets its
+    own file.'''
+    root, ext = os.path.splitext(filename)
+    return '{}_{}{}'.format(root, counter, ext)
+
+
 #%%
 class BlueButton(QPushButton):
     def __init__(self,text):
@@ -3136,15 +3145,15 @@ class Oscilloscope():
             if evt.key() == QtCore.Qt.Key_Space:
                 if self.data_saved_counter == 0:
                     self.last_filename = file.save_data(dataset,self.win)
-                    if self.last_filename == '':
+                    if not self.last_filename:
                         self.data_saved_counter = 0
                     else:
                         self.data_saved_counter += 1
-                
+
                 else:
                     d = datastructure.DataSet()
                     d.add_to_dataset(timedata)
-                    filename = self.last_filename.replace('.npy','_'+str(self.data_saved_counter)+'.npy')
+                    filename = _incremented_filename(self.last_filename, self.data_saved_counter)
                     file.save_data(d,self.win, filename,overwrite_without_prompt=True)
                     self.data_saved_counter += 1
 

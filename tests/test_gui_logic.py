@@ -193,3 +193,14 @@ class TestDeleteWithEmptyList:
         stub = self._stub()
         gui.Logger.delete_data_set(stub)  # was AttributeError data_typye
         assert any('Time Data' in m for m in stub.messages)
+
+
+class TestIncrementedFilename:
+
+    def test_incremented_filename_extension_agnostic(self):
+        from pydvma.gui import _incremented_filename
+        assert _incremented_filename('run.dvma', 1) == 'run_1.dvma'
+        assert _incremented_filename('run.npy', 3) == 'run_3.npy'
+        assert _incremented_filename('/tmp/a b/run.dvma', 2) == '/tmp/a b/run_2.dvma'
+        # no extension: counter still appended, extension left absent
+        assert _incremented_filename('run', 1) == 'run_1'
