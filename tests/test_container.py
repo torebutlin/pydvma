@@ -435,3 +435,17 @@ def test_save_data_overwrite_prompt_on_normalised_name(tmp_path, monkeypatch):
     out = dvma.save_data(data, filename=str(target))
     assert out is None
     assert (tmp_path / 'mytest.dvma').read_bytes() == before
+
+
+def test_save_data_dialog_path_appends_extension(tmp_path, monkeypatch):
+    # a user typing a bare name in the GUI save dialog must still get
+    # a .dvma file (the dialog path bypasses the explicit-filename
+    # normalisation branch)
+    import qtpy.QtWidgets as qw
+    data = _make_full_dataset()
+    target = str(tmp_path / 'typed_name')
+    monkeypatch.setattr(qw.QFileDialog, 'getSaveFileName',
+                        staticmethod(lambda *a, **k: (target, '')))
+    out = dvma.save_data(data)
+    assert out == target + '.dvma'
+    assert (tmp_path / 'typed_name.dvma').is_file()

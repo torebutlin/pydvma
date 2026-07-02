@@ -82,7 +82,8 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
     '''
     # If filename not specified, provide dialog
-    if filename is None:
+    from_dialog = filename is None
+    if from_dialog:
         from qtpy.QtWidgets import QFileDialog
         filename, _ = QFileDialog.getSaveFileName(
             parent, 'Save dataset', '', '*.dvma')
@@ -90,23 +91,22 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
             print('Save cancelled')
             return None
 
-    else:
-        # Normalise the extension FIRST, so the overwrite prompt below
-        # checks the same filename we're about to write (previously
-        # the check ran before normalisation, so e.g. save_data(data,
-        # filename='mytest') would silently overwrite mytest.dvma on
-        # a second call instead of prompting).
-        if not filename.endswith('.npy') and not filename.endswith('.dvma'):
-            filename += '.dvma'
+    # Normalise the extension FIRST, so both the dialog and explicit
+    # paths write a real extension and the overwrite prompt below
+    # checks the same filename we're about to write.
+    if not filename.endswith('.npy') and not filename.endswith('.dvma'):
+        filename += '.dvma'
 
-        # If it exists, check if we should overwrite it (unless
-        # overwrite_without_prompt is True)
-        if os.path.isfile(filename) and not overwrite_without_prompt:
-            answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
-            if answer != 'y':
-                print('Save cancelled')
-                return None
-            print('Will overwrite existing file')
+    # Explicit-filename path only: terminal overwrite prompt. The
+    # dialog path keeps Qt's own replace-file confirmation and must
+    # never block on terminal input().
+    if (not from_dialog and os.path.isfile(filename)
+            and not overwrite_without_prompt):
+        answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
+        if answer != 'y':
+            print('Save cancelled')
+            return None
+        print('Will overwrite existing file')
 
     if filename.endswith('.npy'):
         # legacy pickle format, kept for explicit opt-in only
