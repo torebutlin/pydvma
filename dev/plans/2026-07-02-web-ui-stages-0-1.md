@@ -91,7 +91,7 @@ Create `pyproject.toml` (version stays 1.4.0 for now — bump is Task 13):
 
 ```toml
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]   # >=77 needed for SPDX license string form
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -99,9 +99,9 @@ name = "pydvma"
 version = "1.4.0"          # keep in sync with pydvma/datastructure.py (enforced by tests/test_packaging.py)
 description = "Python package for dynamics and vibration measurement and analysis"
 readme = "README.md"
-license = { text = "BSD 3-Clause License" }
+license = "BSD-3-Clause"   # SPDX string; the {text=...} table form is deprecated (build error from 2027-02)
 authors = [{ name = "Tore Butlin", email = "tb267@cam.ac.uk" }]
-requires-python = ">=3.9"
+requires-python = ">=3.11"  # tomllib in the packaging test needs 3.11; current numpy/scipy don't do 3.9
 # Base install is the pure-Python core: data structures, analysis,
 # file I/O, matplotlib plotting. It must import and work with no Qt
 # binding and no hardware driver present (runs under pyodide).
@@ -1281,7 +1281,7 @@ steps at the bottom of docs.yml with:
           mkdocs build --strict
 ```
 
-Note the docs build already does `pip install -e .` plus `requirements-docs.txt`; check that requirements-docs.txt (or the mkdocstrings config) provides the Qt deps if the API docs import `gui.py` — run `grep -iE "pyqt|qtpy" requirements-docs.txt`. If absent AND the current docs build passes today, it means mkdocstrings doesn't import gui, so nothing to add. If it errors in CI later, change the install line to `pip install -e ".[qt,soundcard]"`.
+Note (from Task 1 review): `docs/api/gui.md` renders `pydvma.gui.*` via mkdocstrings, and gui.py imports qtpy and constructs a QApplication at import time — the old CI docs build never had those deps (the checked-in `site/` was built locally). While editing docs.yml, change its install line to `pip install -e ".[qt,soundcard]"` and set `QT_QPA_PLATFORM: offscreen` in the step's `env:` so the API pages build headlessly in CI.
 
 - [ ] **Step 2: Validate the workflow locally as far as possible**
 
@@ -1346,6 +1346,8 @@ Mark as done / annotate:
 - "`load_data`: document the pickle trust model" → done (Task 6 docstring).
 - Housekeeping "Import-structure cleanup" → add note: plotting.py dead Qt imports removed (Task 7).
 - Add under I/O or Housekeeping: "GUI file-dialog filters updated for .dvma (Task 6); labsheet text still says 'you should have a *.npy file' — update teaching notebooks for the .dvma era before October."
+- Update `README.md` quick-start (it's also the PyPI long-description): fresh installs now need `pip install "pydvma[full]"` to get the GUI + acquisition backends; plain `pip install pydvma` is the analysis-only core. Existing lab envs upgrading in place keep their deps.
+- Also note in TODO: automated pyodide smoke test in CI deferred to Stage 2 (see plan's out-of-scope section).
 
 - [ ] **Step 4: Full suite, commit**
 
