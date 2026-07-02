@@ -92,4 +92,8 @@ except ImportError as e:
     print('MSG:', e)
 """)
     assert result.returncode == 0, result.stderr
-    assert 'pip install pydvma[qt]' in result.stdout
+    assert 'pip install pydvma[qt]' in result.stdout, (result.stdout,
+                                                       result.stderr)
+    # the original cause must survive the rewrap (diagnosis chain)
+    assert 'Original error:' in result.stdout, (result.stdout,
+                                                result.stderr)

@@ -1033,6 +1033,8 @@ from qtpy import QtGui
 
 Also delete the commented-out block in `PlotData.__init__` that referenced them (lines 56-98 region, the `# self.plot_window = QWidget()` block) — it is the only reason those imports existed.
 
+Also (from Task 3 review): once plotting is Qt-free, the `pip install pydvma[qt]` ImportError hint in `pydvma/__init__.py.__getattr__` no longer fits `PlotData` failures. Keep `PlotData` in `_LAZY_NAMES` (it still defers the matplotlib import cost), but scope the `[qt]`-hint wrapping to `mod_name == '.gui'` and re-raise `.plotting` import errors unchanged.
+
 - [ ] **Step 4: Run the plotting + GUI tests**
 
 Run: `python -m pytest tests/test_packaging.py tests/test_plotting.py tests/test_gui_logic.py -v`
