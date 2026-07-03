@@ -50,7 +50,7 @@ dataset = dvma.log_data(settings, test_name="recording_01")
 ### Requirements
 
 - NI-DAQmx driver installed
-- nidaqmx Python package (`pip install nidaqmx`)
+- nidaqmx Python package (`pip install "pydvma[ni]"`)
 - Windows operating system
 
 ### Configuration

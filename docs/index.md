@@ -44,15 +44,21 @@ deploy time). The HTML href is relative and skips link checking. -->
 
 ### Installation
 
+For lab use — GUI plus acquisition backends (soundcard and/or NI-DAQmx):
+
 ```bash
-pip install pydvma
+pip install "pydvma[full]"
 ```
+
+Plain `pip install pydvma` installs the analysis-only core (data
+structures, FFT/TF/modal analysis, file I/O) with no Qt or hardware
+dependencies — it runs anywhere, including in-browser via
+[pydvma-lite](#analyse-data-in-your-browser-no-install) (see above).
 
 ### Basic Usage
 
 ```python
 import pydvma as dvma
-import matplotlib
 
 %matplotlib widget
 settings = dvma.MySettings()

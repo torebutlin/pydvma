@@ -21,8 +21,14 @@ Open the **Anaconda Prompt** (Windows) or terminal (Mac/Linux) and run:
 
 ```bash
 conda install numpy scipy jupyter matplotlib pyqtgraph ipympl ipywidgets jupyterlab
-pip install sounddevice pydvma
+pip install "pydvma[full]"
 ```
+
+`pydvma[full]` pulls in the GUI (Qt/pyqtgraph) and both acquisition
+backends (`sounddevice` for soundcards, `nidaqmx` for National
+Instruments hardware) — everything you need for lab use. See
+[Installation options](#installation-options) below if you only need
+a subset.
 
 ### Option B: Installation in a Dedicated Environment
 
@@ -37,11 +43,27 @@ conda activate pydvma-env
 
 # Install dependencies and pydvma
 conda install numpy scipy jupyter matplotlib pyqtgraph ipympl ipywidgets jupyterlab
-pip install sounddevice pydvma
+pip install "pydvma[full]"
 ```
 
 !!! tip "Activating your environment"
     Each time you open a new Anaconda Prompt, you'll need to activate your environment with `conda activate pydvma-env` before using pydvma.
+
+## Installation options
+
+pydvma is split into a small analysis-only core plus optional
+"extras" for the GUI and each acquisition backend, so you only pull
+in what you need:
+
+| Install command | What you get |
+| ---------------- | ------------- |
+| `pip install pydvma` | Analysis-only core: data structures, FFT/TF/modal analysis, file I/O. No Qt, no hardware drivers — runs anywhere, including in-browser. |
+| `pip install "pydvma[qt,soundcard]"` | Core + GUI (Logger/Oscilloscope, via `qtpy`/`PyQt5`/`pyqtgraph`) + soundcard acquisition (`sounddevice`). |
+| `pip install "pydvma[ni]"` | Core + National Instruments acquisition backend (`nidaqmx`). Windows/Linux only — see below. |
+| `pip install "pydvma[full]"` | Everything: GUI plus both acquisition backends. Recommended for lab use. |
+
+The rest of this page uses `pydvma[full]` throughout, but swap in
+whichever extra matches what you need.
 
 ## Step 3: Download the Template Notebook
 
@@ -77,10 +99,11 @@ available on macOS):
    wrapper tracks NI-DAQmx ABI changes and will print a clear error
    on mismatch.
 
-2. **Install the Python bindings**:
+2. **Install the Python bindings** (already included if you installed
+   `pydvma[full]` above; use this if you started from plain `pydvma`):
 
    ```bash
-   pip install nidaqmx
+   pip install "pydvma[ni]"
    ```
 
 !!! note "macOS"
@@ -109,10 +132,10 @@ Make sure pydvma is installed in the correct Python environment. If using a dedi
 
 **Qt Platform Plugin Error**
 
-If you encounter Qt-related errors, try installing qtpy:
+If you encounter Qt-related errors, make sure the GUI extra is installed:
 
 ```bash
-pip install qtpy
+pip install "pydvma[qt]"
 ```
 
 **Matplotlib Backend Issues**
@@ -125,10 +148,10 @@ If plots don't display correctly in Jupyter, add this to the first cell of your 
 
 **Soundcard Not Detected**
 
-Ensure sounddevice is installed and your audio device is properly connected:
+Ensure the soundcard extra is installed and your audio device is properly connected:
 
 ```bash
-pip install sounddevice
+pip install "pydvma[soundcard]"
 ```
 
 You can list available audio devices with:

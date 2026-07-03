@@ -27,3 +27,6 @@ CLAUDE.local.md
 lite/pypi/
 lite/.jupyterlite.doit.db
 _lite_build/
+
+# Scratch data files from local lite testing (not source)
+lite/content/*.dvma
