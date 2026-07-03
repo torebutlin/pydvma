@@ -1,0 +1,45 @@
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --border: #e3e6eb;
+  --text: #17203a;
+  --muted: #66708a;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(16, 24, 40, 0.07);
+
+  --green: #16a34a;
+  --indigo: #4f46e5;
+
+  /* 12-colour line palette (ported from dev/mockups/round2-bench.html PALETTE) */
+  --line-0: #2563eb;
+  --line-1: #dc2626;
+  --line-2: #059669;
+  --line-3: #d97706;
+  --line-4: #7c3aed;
+  --line-5: #0891b2;
+  --line-6: #be185d;
+  --line-7: #4d7c0f;
+  --line-8: #9333ea;
+  --line-9: #0e7490;
+  --line-10: #b91c1c;
+  --line-11: #15803d;
+
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13.5px/1.45 var(--font-body);
+}

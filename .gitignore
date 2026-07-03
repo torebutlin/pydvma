@@ -30,3 +30,11 @@ _lite_build/
 
 # Scratch data files from local lite testing (not source)
 lite/content/*.dvma
+
+# webui (Svelte + Vite web GUI)
+webui/node_modules/
+webui/dist/
+webui/public/pyodide/
+webui/public/pypi/
+webui/test-results/
+webui/playwright-report/
