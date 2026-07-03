@@ -9,3 +9,13 @@ pymdown-extensions>=10.0
 jupyterlite-core
 jupyterlite-pyodide-kernel
 jupyter-server
+
+# `jupyter lite build` bundles federated lab extensions FROM the build
+# environment (not from the pyodide wheels installed at runtime in the
+# browser). Without ipympl installed here, the CI build omits the
+# jupyter-matplotlib federated extension entirely, so `%matplotlib
+# widget` in lite/content/pydvma_analysis.ipynb silently falls back to
+# static figures with no pan/zoom toolbar. Pin the same version the
+# notebook's install cell requests so the build-time extension and the
+# runtime wheel match.
+ipympl==0.9.7

@@ -95,3 +95,45 @@ class TestAutoYSmoke:
         p = plotting.PlotData()
         p.update(tfl, plot_type=None, auto_xy='xy')
         p.update(tfl, plot_type='Nyquist', auto_xy='xy')
+
+
+class TestFigShowGating:
+    """PlotData.__init__ used to call self.fig.show() unconditionally,
+    which (a) is meaningless under non-interactive backends like the
+    Agg backend forced in this file and just emits a UserWarning, and
+    (b) under notebook-style backends (ipympl, inline, matplotlib-pyodide's
+    wasm/html5-canvas backends used by JupyterLite) double-displays a
+    spurious empty figure before the populated one, since those backends
+    already show the figure via their own repr/widget machinery."""
+
+    def test_no_warning_under_agg(self, recwarn):
+        """Agg is non-interactive; show() should be skipped, not just
+        attempted-and-warned."""
+        plotting.PlotData()
+        show_warnings = [w for w in recwarn.list
+                          if 'cannot be shown' in str(w.message)]
+        assert not show_warnings
+
+    @pytest.mark.parametrize('backend_name', [
+        'module://ipympl.backend_nbagg',
+        'nbagg',
+        'module://matplotlib_inline.backend_inline',
+        'module://matplotlib_pyodide.wasm_backend',
+        'module://matplotlib_pyodide.html5_canvas_backend',
+        'webagg',
+        'agg',
+        'svg',
+        'pdf',
+    ])
+    def test_notebook_and_non_interactive_backends_skip_show(self, backend_name, monkeypatch):
+        """fig.show() must not be invoked for notebook-style backends
+        (would double-display) or non-interactive backends (would warn
+        for no benefit)."""
+        monkeypatch.setattr(plotting.matplotlib, 'get_backend', lambda: backend_name)
+        calls = []
+        p = plotting.PlotData.__new__(plotting.PlotData)
+        fig, ax = plotting.plt.subplots(1, 1)
+        fig.show = lambda: calls.append(True)
+        monkeypatch.setattr(plotting.plt, 'subplots', lambda *a, **k: (fig, ax))
+        plotting.PlotData.__init__(p)
+        assert calls == []

@@ -44,7 +44,33 @@ class PlotData():
     def __init__(self,window_title=None,sets='all',channels='all',figsize=(9,5),canvas=None,fig=None):
         if canvas==None:
             self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
-            self.fig.show()
+            backend = matplotlib.get_backend().lower()
+            notebook_style = ('ipympl' in backend or 'nbagg' in backend
+                               or 'inline' in backend or 'wasm' in backend
+                               or 'webagg' in backend or 'html5' in backend)
+            # Non-interactive backends (Agg, svg, pdf, ps, pgf, cairo,
+            # template) can't pop a window either; show() is a no-op
+            # there that just emits a UserWarning. This is matplotlib's
+            # own non_interactive_bk list, hardcoded rather than
+            # imported: matplotlib.rcsetup.non_interactive_bk is
+            # deprecated as of Matplotlib 3.9, and these plain backend
+            # names (unlike e.g. 'qtcairo') are exact matches, not
+            # substrings of any interactive backend name.
+            non_interactive = backend in (
+                'agg', 'cairo', 'pdf', 'pgf', 'ps', 'svg', 'template')
+            if not notebook_style and not non_interactive:
+                # Desktop/script use (Qt, Tk, macosx, ...) needs an
+                # explicit show() to pop the window. Skip it for two
+                # other cases: notebook-style backends (ipympl widget,
+                # nbagg, %matplotlib inline, and matplotlib-pyodide's
+                # wasm/html5-canvas backends used by JupyterLite) already
+                # display the figure via their own repr/widget machinery,
+                # so an extra fig.show() here renders a spurious empty
+                # figure before the populated one; and non-interactive
+                # backends (Agg, svg, pdf, ...) where show() is a no-op
+                # that just emits a UserWarning, e.g. under the headless
+                # Agg backend forced in tests/test_plotting.py.
+                self.fig.show()
         else:
             self.fig = fig
             self.canvas = canvas
