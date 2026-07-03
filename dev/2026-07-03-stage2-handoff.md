@@ -59,7 +59,17 @@ to react to). This is the "review the GUI, make it slick" conversation
   and zoom and clickable line controls, but not slick" — Tore).
 - Workflow parity: Log Data / pretrigger / Calc FFT / Calc TF (with
   window + N_frames + averaging) / Best Match / save-load — see the
-  3C6 labsheet for the exact teaching flow that must stay recognisable.
+  3C6 labsheet for the exact teaching flow that must stay recognisable
+  (on Tore's Mac: `~/Documents/GitHub/divc_labs/3C6/3C6_Notebook.ipynb`;
+  its "Familiarise yourself with the logger window" cell describes the
+  current panel layout as taught).
+- Session mechanics decided 2026-07-03: design happens IN Claude Code,
+  iteratively, with clickable HTML mockups in `dev/mockups/` served
+  locally (same pattern as the scope prototype) or via Artifact pages.
+  claude.ai/design (DesignSync) is deferred until a component library
+  exists worth syncing. Ask Tore early for: 2–3 screenshots of the Qt
+  logger in real use, any admired interfaces, and his top GUI
+  irritations beyond those already recorded.
 - Plot interactivity expectations (zoom/pan/legend) — the lite-site
   ipympl experience is informative but the app will own its plots
   (Plotly.js candidate for static, custom canvas for realtime).
