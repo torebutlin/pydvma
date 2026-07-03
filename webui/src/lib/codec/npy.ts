@@ -8,7 +8,12 @@ export interface NpyArray {
 
 const MAGIC = [0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59];
 
+// Bytes per element for every supported dtype. Single source of the
+// "unsupported dtype" rejection — the parse switch is exhaustive over these keys.
+const ELEM_BYTES = { '<f8': 8, '<f4': 4, '<c16': 16, '|b1': 1, '<i8': 8, '<i4': 4 } as const;
+
 export function parseNpy(bytes: Uint8Array): NpyArray {
+  if (bytes.length < 10) throw new Error('not a .npy file');
   for (let i = 0; i < 6; i++) if (bytes[i] !== MAGIC[i]) throw new Error('not a .npy file');
   const major = bytes[6];
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -22,16 +27,23 @@ export function parseNpy(bytes: Uint8Array): NpyArray {
   if (!descr || !fortran || shapeTxt === undefined) throw new Error(`bad npy header: ${header}`);
   if (fortran === 'True') throw new Error('fortran_order arrays are not supported');
   const shape = shapeTxt.split(',').map(s => s.trim()).filter(Boolean).map(Number);
+  if (shape.some(n => !Number.isInteger(n) || n < 0)) throw new Error(`bad npy shape: (${shapeTxt})`);
   const count = shape.reduce((a, b) => a * b, 1);
+
+  const elemBytes = (ELEM_BYTES as Record<string, number>)[descr];
+  if (elemBytes === undefined) throw new Error(`unsupported dtype ${descr}`);
 
   // slice() copies -> result buffers are always 8-byte aligned
   const raw = bytes.slice(dataStart);
-  switch (descr) {
+  if (raw.byteLength < count * elemBytes)
+    throw new Error(`truncated .npy: need ${count * elemBytes} data bytes, got ${raw.byteLength}`);
+  switch (descr as keyof typeof ELEM_BYTES) {
     case '<f8': return { shape, isComplex: false, data: new Float64Array(raw.buffer, 0, count) };
     case '<f4': return { shape, isComplex: false, data: new Float32Array(raw.buffer, 0, count) };
     case '<c16': return { shape, isComplex: true, data: new Float64Array(raw.buffer, 0, count * 2) };
     case '|b1': return { shape, isComplex: false, data: raw.subarray(0, count) };
     case '<i8': {
+      // int64 widened to float64: exact only within ±2^53
       const big = new BigInt64Array(raw.buffer, 0, count);
       const out = new Float64Array(count);
       for (let i = 0; i < count; i++) out[i] = Number(big[i]);
@@ -41,7 +53,6 @@ export function parseNpy(bytes: Uint8Array): NpyArray {
       const ints = new Int32Array(raw.buffer, 0, count);
       return { shape, isComplex: false, data: Float64Array.from(ints) };
     }
-    default: throw new Error(`unsupported dtype ${descr}`);
   }
 }
 
@@ -52,6 +63,7 @@ export function serializeNpy(a: NpyArray): Uint8Array {
   let header = `{'descr': '${descr}', 'fortran_order': False, 'shape': ${shape}, }`;
   const unpadded = 10 + header.length + 1;
   header = header + ' '.repeat((64 - (unpadded % 64)) % 64) + '\n';
+  if (header.length > 0xffff) throw new Error('npy header too long');
 
   const body = a.data instanceof Uint8Array
     ? a.data

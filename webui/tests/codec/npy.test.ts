@@ -45,3 +45,59 @@ test('rejects fortran order', () => {
   forged.set(new TextEncoder().encode('True '), at);
   expect(() => parseNpy(forged)).toThrow(/fortran/i);
 });
+
+test('rejects truncated data', () => {
+  const whole = fix('f8_2x3.npy');
+  expect(() => parseNpy(whole.subarray(0, whole.length - 8))).toThrow(/truncated/);
+});
+
+test('rejects non-npy bytes', () => {
+  expect(() => parseNpy(new Uint8Array([1, 2, 3]))).toThrow(/not a .npy/);
+});
+
+test('rejects unsupported dtype', () => {
+  const forged = new Uint8Array(serializeNpy(parseNpy(fix('f8_2x3.npy'))));
+  const at = new TextDecoder('latin1').decode(forged.subarray(0, 128)).indexOf('<f8');
+  forged.set(new TextEncoder().encode('<u2'), at);
+  expect(() => parseNpy(forged)).toThrow(/unsupported dtype/);
+});
+
+test('round-trips zero-length (0,) and 0-d () arrays', () => {
+  const empty = parseNpy(serializeNpy({ shape: [0], isComplex: false, data: new Float64Array(0) }));
+  expect(empty.shape).toEqual([0]);
+  expect((empty.data as Float64Array).length).toBe(0);
+
+  const scalar = parseNpy(serializeNpy({ shape: [], isComplex: false, data: Float64Array.from([42]) }));
+  expect(scalar.shape).toEqual([]);
+  expect(Array.from(scalar.data as Float64Array)).toEqual([42]);
+});
+
+test('round-trips float32 and bool', () => {
+  const f4 = parseNpy(serializeNpy({ shape: [3], isComplex: false, data: new Float32Array([1.5, -2, 3]) }));
+  expect(f4.data).toBeInstanceOf(Float32Array);
+  expect(f4.shape).toEqual([3]);
+  expect(Array.from(f4.data as Float32Array)).toEqual([1.5, -2, 3]);
+
+  const b1 = parseNpy(serializeNpy({ shape: [4], isComplex: false, data: new Uint8Array([0, 1, 1, 0]) }));
+  expect(b1.data).toBeInstanceOf(Uint8Array);
+  expect(b1.shape).toEqual([4]);
+  expect(Array.from(b1.data as Uint8Array)).toEqual([0, 1, 1, 0]);
+});
+
+test('parses int32 to float64', () => {
+  // Hand-built v1 .npy: magic, version, uint16 header length, 64-byte-aligned header.
+  let header = "{'descr': '<i4', 'fortran_order': False, 'shape': (3,), }";
+  const unpadded = 10 + header.length + 1;
+  header = header + ' '.repeat((64 - (unpadded % 64)) % 64) + '\n';
+  const body = new Uint8Array(new Int32Array([7, -8, 123456]).buffer);
+  const out = new Uint8Array(10 + header.length + body.byteLength);
+  out.set([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59], 0); out[6] = 1; out[7] = 0;
+  new DataView(out.buffer).setUint16(8, header.length, true);
+  out.set(new TextEncoder().encode(header), 10);
+  out.set(body, 10 + header.length);
+
+  const a = parseNpy(out);
+  expect(a.shape).toEqual([3]);
+  expect(a.data).toBeInstanceOf(Float64Array);
+  expect(Array.from(a.data as Float64Array)).toEqual([7, -8, 123456]);
+});
