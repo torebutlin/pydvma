@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pydvma · Option B — Workflow bench</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --surface:#ffffff; --border:#e3e6eb; --text:#17203a; --muted:#66708a;
+    --radius:10px; --shadow:0 1px 3px rgba(16,24,40,.07);
+    --indigo:#4f46e5; --green:#16a34a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:13.5px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  [hidden]{display:none!important}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+  .sec-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  kbd{background:#eef0f4;border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;
+      padding:0 5px;font:11.5px ui-monospace,Menlo,monospace}
+
+  /* ---------- buttons & controls ---------- */
+  .btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:7px;
+       border:1px solid var(--border);background:#fff;color:var(--text);font-size:12.5px;font-weight:500;
+       cursor:pointer;white-space:nowrap;font-family:inherit}
+  .btn:hover{border-color:#c6cbd6;background:#fafbfc}
+  .btn:active{transform:translateY(1px)}
+  .btn.green{background:var(--green);border-color:var(--green);color:#fff;font-weight:600;height:30px;padding:0 15px}
+  .btn.green:hover{background:#15803d}
+  .btn.green-o{color:var(--green);border-color:#86efac;background:#fff}
+  .btn.indigo{background:var(--indigo);border-color:var(--indigo);color:#fff;font-weight:600}
+  .btn.indigo:hover{background:#4338ca}
+  .btn.indigo-t{background:#eef0ff;border-color:#c7d2fe;color:var(--indigo)}
+  .btn.blue-o{color:#2563eb;border-color:#bfdbfe}
+  .btn.danger-o{color:#b91c1c;border-color:#fecaca}
+  .btn.warn-o{color:#b45309;border-color:#fcd34d}
+  .btn.sm{height:24px;padding:0 8px;font-size:11.5px;border-radius:6px}
+  .btn.on,.btn.active{background:#eef0ff;border-color:#c7d2fe;color:var(--indigo)}
+  .btn.armed{background:#fef3c7;border-color:#f59e0b;color:#92400e;font-weight:600}
+  .btn[disabled]{opacity:.45;pointer-events:none}
+  select,input[type=text],input[type=number]{height:28px;border:1px solid var(--border);border-radius:7px;
+       background:#fff;color:var(--text);font:12.5px inherit;font-family:inherit;padding:0 7px}
+  input[type=number]{width:62px}
+  .fld{display:inline-flex;align-items:center;gap:5px}
+  .fld>label{font-size:11.5px;color:var(--muted)}
+  input[type=range]{accent-color:var(--indigo)}
+  .switch{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text)}
+  .switch input{appearance:none;width:30px;height:17px;border-radius:9px;background:#d3d8e2;position:relative;
+       transition:background .15s;cursor:pointer;margin:0}
+  .switch input:checked{background:var(--green)}
+  .switch input::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;
+       background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+  .switch input:checked::after{left:15px}
+
+  /* ---------- app frame ---------- */
+  #app{height:100vh;display:flex;flex-direction:column;background:var(--bg)}
+  .app-header{height:50px;flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:0 390px 0 16px;
+       background:var(--surface);border-bottom:1px solid var(--border)}
+  .hamburger{display:none;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid var(--border);
+       border-radius:7px;background:#fff;cursor:pointer;font-size:15px;color:var(--text)}
+  .brand{font-weight:700;font-size:15.5px;letter-spacing:-.01em}
+  .brand small{font-weight:500;color:var(--muted);font-size:11.5px;margin-left:7px}
+  .hdr-levels{display:flex;align-items:center;gap:6px;margin-left:auto}
+  .hdr-levels .lvl{width:46px;height:6px;border-radius:3px;overflow:hidden;position:relative;
+       background:linear-gradient(90deg,#16a34a 70%,#d97706 88%,#dc2626)}
+  .hdr-levels .lvl i{position:absolute;top:0;right:0;bottom:0;width:70%;background:#e8eaf0}
+  .clip-pill{font:600 9.5px ui-monospace,Menlo,monospace;letter-spacing:.06em;color:#c7ccd8;
+       border:1px solid var(--border);border-radius:4px;padding:1px 4px}
+  .clip-pill.hot{color:#fff;background:#dc2626;border-color:#dc2626}
+  .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--border);
+       border-radius:7px;background:#fff;cursor:pointer;color:var(--muted)}
+  .icon-btn:hover{color:var(--text);border-color:#c6cbd6}
+  .icon-btn svg{width:15px;height:15px}
+
+  /* ---------- stage ribbon ---------- */
+  .ribbon{flex:0 0 auto;display:flex;align-items:center;gap:2px;padding:7px 16px 6px;background:var(--surface);
+       border-bottom:1px solid var(--border);white-space:nowrap}
+  .stage{border:1px solid transparent;background:transparent;border-radius:8px;height:30px;padding:0 13px;
+       font:600 12.5px inherit;font-family:inherit;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+  .stage b{font-weight:600}
+  .stage .idx{font:600 10px ui-monospace,Menlo,monospace;color:#a3aabc;border:1px solid var(--border);border-radius:5px;
+       padding:0 4px;line-height:15px}
+  .stage:hover{color:var(--text);background:#f6f7fa}
+  .stage.active{background:#eef0ff;border-color:#c7d2fe;color:var(--indigo)}
+  .stage.active .idx{color:var(--indigo);border-color:#c7d2fe}
+  .sep{color:#c7ccd8;font-size:12px;padding:0 1px;user-select:none}
+
+  /* ---------- context tool strip ---------- */
+  .strip-wrap{flex:0 0 auto;background:var(--surface);border-bottom:1px solid var(--border)}
+  .strip{display:flex;align-items:center;gap:10px;min-height:46px;padding:7px 16px;position:relative}
+  .strip .sec-label{margin-right:2px;flex:0 0 auto}
+  .vdiv{width:1px;height:22px;background:var(--border);flex:0 0 auto}
+  .chipbtn{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:13px;
+       border:1px solid var(--border);background:#f8f9fb;font:12px ui-monospace,Menlo,monospace;color:var(--text);cursor:pointer}
+  .chipbtn:hover{border-color:#c6cbd6;background:#fff}
+  .chipbtn .dot{width:6px;height:6px;border-radius:50%;background:var(--indigo)}
+  #acqStatus{font-size:12px;color:var(--muted)}
+  #acqStatus.busy{color:var(--indigo);font-weight:600}
+  #acqProgWrap{width:110px;height:5px;border-radius:3px;background:#e8eaf0;overflow:hidden}
+  #acqProg{display:block;height:100%;width:0;background:var(--green)}
+  .exp-badge{font-size:9.5px;font-weight:700;letter-spacing:.05em;color:#b45309;background:#fef3c7;
+       border-radius:4px;padding:1px 4px;text-transform:uppercase}
+  .popover{position:absolute;top:44px;left:0;z-index:90;background:var(--surface);border:1px solid var(--border);
+       border-radius:var(--radius);box-shadow:0 8px 28px rgba(16,24,40,.16);padding:12px 14px;min-width:230px}
+  .popover .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0}
+  .popover .row>label{font-size:12px;color:var(--muted)}
+  .popover input,.popover select{width:110px}
+
+  /* ---------- main split ---------- */
+  .main{flex:1;display:flex;min-height:0}
+
+  /* ---------- data tray ---------- */
+  .tray{flex:0 0 290px;width:290px;display:flex;flex-direction:column;min-height:0;background:var(--surface);
+       border-right:1px solid var(--border)}
+  .tray-head{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:10px 12px 8px;border-bottom:1px solid var(--border)}
+  .tray-head .sec-label{margin-right:auto}
+  .tray-cards{flex:1;overflow-y:auto;padding:10px 12px;min-height:60px}
+  .set-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
+       padding:9px 11px 7px;margin-bottom:10px;cursor:default}
+  .set-card.hl{border-color:#a5b4fc;box-shadow:0 0 0 2px #e0e7ff, var(--shadow)}
+  .set-head{display:flex;align-items:center;gap:8px}
+  .set-name{font-weight:650;font-size:13px;cursor:text;border-radius:4px;padding:0 2px}
+  .set-name:hover{background:#f2f4f8}
+  .set-name input{font:650 13px inherit;font-family:inherit;width:120px;height:22px;border:1px solid #a5b4fc;border-radius:5px;padding:0 4px}
+  .dur-badge{margin-left:auto;font:600 10.5px ui-monospace,Menlo,monospace;color:var(--muted);
+       border:1px solid var(--border);border-radius:5px;padding:1px 5px;background:#f8f9fb}
+  .set-meta{font:10.5px ui-monospace,Menlo,monospace;color:#8b93a8;margin:2px 0 6px}
+  .ch-row{display:flex;align-items:center;gap:8px;padding:3px 1px;border-radius:6px}
+  .ch-row:hover{background:#f7f8fb}
+  .ch-chip{width:14px;height:14px;border-radius:4px;border:none;padding:0;cursor:pointer;flex:0 0 auto;
+       outline:1px solid rgba(16,24,40,.12);outline-offset:1px}
+  .ch-row .ch-lab{font:12px ui-monospace,Menlo,monospace}
+  .ch-row .tri{margin-left:auto;font:600 9.5px ui-monospace,Menlo,monospace;letter-spacing:.07em;color:var(--muted);
+       border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;background:#fff;min-width:44px;text-align:center}
+  .ch-row.st-on .tri{color:#15803d;border-color:#bbe7c8;background:#f2fbf5}
+  .ch-row.st-fade{opacity:.55}
+  .ch-row.st-fade .ch-chip{opacity:.35}
+  .ch-row.st-off{opacity:.55}
+  .ch-row.st-off .ch-chip{opacity:.15}
+  .ch-row.st-off .ch-lab{text-decoration:line-through;color:var(--muted)}
+  .tray-foot{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--border);flex-wrap:wrap}
+  .tray-empty{color:var(--muted);font-size:12.5px;text-align:center;padding:26px 8px}
+
+  /* monitor mini panel */
+  .monitor-mini{flex:0 0 auto;border-top:1px solid var(--border);background:#fbfcfe;padding:8px 12px 10px;cursor:pointer}
+  .monitor-mini:hover{background:#f4f6fd}
+  .mon-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+  .mon-live{font:600 10px ui-monospace,Menlo,monospace;color:var(--green)}
+  .mon-hint{margin-left:auto;font-size:10.5px;color:#a3aabc}
+  .mon-body{display:flex;gap:8px;align-items:stretch}
+  #monCanvas{flex:1;min-width:0;height:52px;background:#fff;border:1px solid var(--border);border-radius:7px}
+  .mon-levels{display:flex;gap:4px;align-items:flex-end}
+  .vbar{width:9px;height:52px;border-radius:4px;overflow:hidden;position:relative;
+       background:linear-gradient(0deg,#16a34a 70%,#d97706 88%,#dc2626)}
+  .vbar i{position:absolute;left:0;right:0;top:0;height:70%;background:#e8eaf0}
+  .mon-clipcol{display:flex;flex-direction:column;justify-content:flex-end}
+
+  /* ---------- plot ---------- */
+  .plot-wrap{flex:1;min-width:0;display:flex;flex-direction:column;padding:12px}
+  .plot-card{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);
+       border-radius:var(--radius);box-shadow:var(--shadow)}
+  .plot-titlebar{flex:0 0 auto;display:flex;align-items:baseline;gap:10px;padding:10px 16px 2px}
+  #plotTitle{font-weight:650;font-size:14px}
+  #plotSub{font-size:11.5px;color:var(--muted)}
+  .plot-host{flex:1;min-height:220px;position:relative;margin:2px 8px 8px}
+  .plot-host.box-mode{cursor:crosshair}
+  .plot-host.pan-mode{cursor:grab}
+  #plotSvg{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .tick{fill:#8b93a8;font:10.5px ui-monospace,Menlo,monospace}
+  .axlab{fill:var(--muted);font-size:11.5px;font-family:system-ui,sans-serif}
+  #rubber{position:absolute;border:1px dashed var(--indigo);background:rgba(79,70,229,.08);display:none;
+       pointer-events:none;z-index:5}
+  .legend{position:absolute;top:26px;left:64px;z-index:4;background:rgba(255,255,255,.88);border:1px solid var(--border);
+       border-radius:8px;padding:5px 8px;max-width:200px}
+  .lg-row{display:flex;align-items:center;gap:7px;font:11.5px ui-monospace,Menlo,monospace;padding:1.5px 2px;
+       border-radius:5px;cursor:pointer;user-select:none}
+  .lg-row:hover{background:#f2f4f8}
+  .lg-row i{width:14px;height:3px;border-radius:2px;flex:0 0 auto}
+  .lg-row.st-fade{opacity:.45}
+  .lg-row.st-off{opacity:.4}
+  .lg-row.st-off span{text-decoration:line-through}
+  .zoom-bar{position:absolute;top:8px;right:8px;z-index:6;display:flex;gap:3px;background:rgba(255,255,255,.94);
+       border:1px solid var(--border);border-radius:8px;padding:3px;box-shadow:var(--shadow)}
+  .zbtn{border:1px solid transparent;background:transparent;border-radius:6px;min-width:26px;height:24px;padding:0 6px;
+       cursor:pointer;color:var(--muted);font:600 11.5px inherit;font-family:inherit;display:inline-flex;align-items:center;justify-content:center}
+  .zbtn:hover{background:#f2f4f8;color:var(--text)}
+  .zbtn.active{background:#eef0ff;border-color:#c7d2fe;color:var(--indigo)}
+  #axPop{position:absolute;top:38px;right:8px;z-index:8;background:var(--surface);border:1px solid var(--border);
+       border-radius:var(--radius);box-shadow:0 8px 28px rgba(16,24,40,.16);padding:11px 13px}
+  #axPop .row{display:flex;align-items:center;gap:8px;margin:5px 0}
+  #axPop label{font:11.5px ui-monospace,Menlo,monospace;color:var(--muted);width:34px}
+  #axPop input{width:84px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  #fitChip{position:absolute;left:64px;bottom:52px;z-index:4;background:rgba(255,255,255,.92);border:1px solid var(--border);
+       border-radius:8px;padding:7px 11px;font:12px ui-monospace,Menlo,monospace;line-height:1.55;box-shadow:var(--shadow)}
+  #fitChip b{color:var(--indigo)}
+  #sonoCap{position:absolute;left:64px;bottom:52px;z-index:4;font:11px ui-monospace,Menlo,monospace;color:var(--muted);
+       background:rgba(255,255,255,.85);border-radius:6px;padding:2px 7px}
+
+  /* ---------- toasts ---------- */
+  #toasts{position:fixed;right:16px;bottom:16px;z-index:300;display:flex;flex-direction:column;gap:8px;max-width:360px}
+  .toast{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);
+       border-radius:var(--radius);box-shadow:0 6px 22px rgba(16,24,40,.14);padding:9px 13px;font-size:12.5px;
+       white-space:pre-line;animation:tin .18s ease-out}
+  .toast .undo{border:1px solid #c7d2fe;background:#eef0ff;color:var(--indigo);font:600 11.5px inherit;
+       font-family:inherit;border-radius:6px;height:22px;padding:0 9px;cursor:pointer;flex:0 0 auto}
+  .toast.out{opacity:0;transform:translateY(6px);transition:all .22s}
+  @keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  /* ---------- monitor overlay ---------- */
+  #monOverlay{position:fixed;inset:0;z-index:250;background:rgba(23,32,58,.42);display:flex;align-items:center;justify-content:center}
+  .mon-panel{width:min(860px,92vw);background:var(--surface);border:1px solid var(--border);border-radius:14px;
+       box-shadow:0 24px 70px rgba(16,24,40,.35);padding:14px 16px 16px}
+  .mon-bar{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .kbd-chips{display:flex;gap:5px;margin-left:14px}
+  .kbd-chips .btn{height:25px;padding:0 8px}
+  .mon-bar .spacer{flex:1}
+  .mon-grid{display:grid;grid-template-columns:1fr 220px;grid-template-rows:170px 150px;gap:10px}
+  .mon-cell{background:#fff;border:1px solid var(--border);border-radius:9px;position:relative;overflow:hidden}
+  .mon-cell canvas{position:absolute;inset:0;width:100%;height:100%}
+  .mon-cell .cell-lab{position:absolute;top:5px;left:9px;z-index:2;font:600 10px ui-monospace,Menlo,monospace;
+       letter-spacing:.07em;color:#a3aabc;text-transform:uppercase}
+  #paneL{grid-row:1/3;grid-column:2;display:flex;align-items:flex-end;justify-content:center;gap:22px;padding:34px 10px 26px}
+  .biglv{display:flex;flex-direction:column;align-items:center;gap:6px;height:100%}
+  .biglv .vbar{width:22px;flex:1;height:auto}
+  .biglv small{font:11px ui-monospace,Menlo,monospace;color:var(--muted)}
+  #bigClipWrap{position:absolute;top:8px;right:10px}
+
+  /* ---------- dev toolbar ---------- */
+  #devbar{position:fixed;top:8px;right:10px;z-index:400;display:flex;align-items:center;gap:8px;
+       background:#fff;border:1.5px dashed #aeb6c8;border-radius:8px;padding:4px 8px;font-size:11px;color:var(--muted)}
+  #devbar .dev-tag{font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#8b93a8}
+
+  /* ---------- scrim (narrow drawer) ---------- */
+  #scrim{position:fixed;inset:0;z-index:60;background:rgba(23,32,58,.35);display:none}
+
+  /* ---------- narrow layout (dev toggle) ---------- */
+  body.narrow #app{max-width:900px;margin:0 auto;box-shadow:0 0 0 1px var(--border)}
+  body.narrow .app-header{padding-right:16px}
+  body.narrow .hamburger{display:inline-flex}
+  body.narrow .tray{position:fixed;top:0;left:0;bottom:0;width:302px;z-index:70;transform:translateX(-108%);
+       transition:transform .22s ease;box-shadow:0 12px 40px rgba(16,24,40,.18)}
+  body.narrow.tray-open .tray{transform:none}
+  body.narrow.tray-open #scrim{display:block}
+  body.narrow .ribbon{overflow-x:auto}
+  body.narrow .strip{flex-wrap:wrap;row-gap:7px;height:auto}
+  /* ---------- narrow layout (honest media query) ---------- */
+  @media (max-width:1000px){
+    .hamburger{display:inline-flex}
+    .tray{position:fixed;top:0;left:0;bottom:0;width:302px;z-index:70;transform:translateX(-108%);
+         transition:transform .22s ease;box-shadow:0 12px 40px rgba(16,24,40,.18)}
+    body.tray-open .tray{transform:none}
+    body.tray-open #scrim{display:block}
+    .ribbon{overflow-x:auto}
+    .strip{flex-wrap:wrap;row-gap:7px;height:auto}
+    .app-header{padding-right:150px}
+    #devbar span:not(.dev-tag){display:none}
+  }
+</style>
+</head>
+<body>
+
+<div id="devbar"><span class="dev-tag">mockup</span><span>pydvma · Option B — Workflow bench</span>
+  <button class="btn sm" id="narrowBtn" title="Constrain the app to 900px to preview the narrow layout">⬄ Narrow</button>
+</div>
+
+<div id="app">
+  <!-- ============ header ============ -->
+  <header class="app-header">
+    <button class="hamburger" id="hamburger" title="Show data tray">≡</button>
+    <div class="brand">pydvma<small>web logger</small></div>
+    <div class="hdr-levels" title="Live input levels (always visible)">
+      <span class="sec-label">in</span>
+      <span class="lvl"><i id="hlv0"></i></span>
+      <span class="lvl"><i id="hlv1"></i></span>
+      <span class="clip-pill" id="hdrClip">CLIP</span>
+    </div>
+    <button class="icon-btn" id="hdrSave" title="Save dataset (.dvma)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 13h10"/></svg>
+    </button>
+    <button class="icon-btn" id="hdrLoad" title="Load dataset">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3l3 3M3 13h10"/></svg>
+    </button>
+  </header>
+
+  <!-- ============ stage ribbon ============ -->
+  <nav class="ribbon" id="ribbon">
+    <button class="stage" data-stage="setup"><span class="idx">1</span><b>Setup</b></button><span class="sep">›</span>
+    <button class="stage" data-stage="acquire"><span class="idx">2</span><b>Acquire</b></button><span class="sep">›</span>
+    <button class="stage" data-stage="time"><span class="idx">3</span><b>Time</b></button><span class="sep">›</span>
+    <button class="stage" data-stage="frequency"><span class="idx">4</span><b>Frequency</b></button><span class="sep">›</span>
+    <button class="stage" data-stage="tf"><span class="idx">5</span><b>TF</b></button><span class="sep">›</span>
+    <button class="stage" data-stage="fit"><span class="idx">6</span><b>Fit</b></button><span class="sep">›</span>
+    <button class="stage" data-stage="export"><span class="idx">7</span><b>Export</b></button>
+  </nav>
+
+  <!-- ============ context tool strips ============ -->
+  <div class="strip-wrap">
+    <div class="strip" data-strip="setup">
+      <span class="sec-label">Setup</span>
+      <span class="fld"><label>device</label>
+        <select id="setDevice">
+          <option>Soundcard (default input)</option>
+          <option>NI USB-6003 (Dev3)</option>
+          <option>NI USB-6212 (Dev2)</option>
+          <option>cDAQ-9174 · 9234 / 9260</option>
+        </select></span>
+      <span class="fld"><label>fs</label>
+        <select id="setFs"><option value="44100" selected>44100</option><option value="48000">48000</option>
+          <option value="51200">51200</option><option value="8192">8192</option></select></span>
+      <span class="fld"><label>channels</label><input type="number" id="setCh" value="2" min="1" max="8"></span>
+      <span class="fld"><label>duration (s)</label><input type="number" id="setDur" value="2.0" step="0.5" min="0.5"></span>
+      <span class="vdiv"></span>
+      <label class="switch"><input type="checkbox" id="setPre">pretrigger</label>
+      <span class="fld"><label>threshold (V)</label><input type="number" id="setThresh" value="0.05" step="0.01" disabled></span>
+      <span class="vdiv"></span>
+      <button class="btn" id="suggestBtn">Suggest settings</button>
+      <button class="btn indigo-t" id="applyBtn">Apply</button>
+    </div>
+
+    <div class="strip" data-strip="acquire" hidden>
+      <span class="sec-label">Acquire</span>
+      <button class="chipbtn" id="sumChip" title="Jump to Setup">44.1 kHz · 2 ch · 2.0 s</button>
+      <button class="chipbtn" id="outChip" title="Output signal — click to edit"><span class="dot"></span><span id="outChipLab">sweep 10–500 Hz · 0.3 V</span></button>
+      <div class="popover" id="outPop" hidden style="left:180px">
+        <div class="row"><label>type</label><select id="outType"><option>sweep</option><option>white noise</option><option>stepped sine</option></select></div>
+        <div class="row"><label>amplitude (V)</label><input type="number" id="outAmp" value="0.3" step="0.1"></div>
+        <div class="row"><label>f1 (Hz)</label><input type="number" id="outF1" value="10"></div>
+        <div class="row"><label>f2 (Hz)</label><input type="number" id="outF2" value="500"></div>
+        <div class="row"><label>duration (s)</label><input type="number" id="outDur" value="2.0" step="0.5"></div>
+        <div class="row" style="justify-content:flex-end"><button class="btn sm" id="outPrev">Preview</button>
+          <button class="btn sm indigo-t" id="outOk">Done</button></div>
+      </div>
+      <button class="btn" id="armBtn" title="Arm pretrigger — capture starts when channel 0 crosses the threshold">pretrigger: off</button>
+      <span class="vdiv"></span>
+      <button class="btn green" id="logBtn">● Log Data</button>
+      <button class="btn green-o" id="logOutBtn">Log with output</button>
+      <span class="vdiv"></span>
+      <span id="acqStatus">ready</span>
+      <span id="acqProgWrap" hidden><i id="acqProg"></i></span>
+      <button class="btn sm" id="cancelBtn" hidden>Cancel</button>
+    </div>
+
+    <div class="strip" data-strip="time" hidden>
+      <span class="sec-label">Time</span>
+      <button class="btn" id="cleanBtn" title="Zero the pre-impulse noise and window the tail">Clean Impulse</button>
+      <span class="vdiv"></span>
+      <span class="fld"><label>x-range</label></span>
+      <button class="btn sm active" id="rangeFull">Full</button>
+      <button class="btn sm" id="range02">First 0.2 s</button>
+      <span class="vdiv"></span>
+      <button class="btn" id="saveFigTime">Save Figure</button>
+    </div>
+
+    <div class="strip" data-strip="frequency" hidden>
+      <span class="sec-label">Frequency</span>
+      <span class="fld"><label>window</label>
+        <select id="fftWin"><option>hann</option><option>hamming</option><option>flat-top</option><option>none</option></select></span>
+      <span class="fld"><label>averaging</label>
+        <select id="fftAvg"><option>none</option><option>within set</option><option>across sets</option></select></span>
+      <button class="btn indigo" id="calcFft">Calc FFT</button>
+      <span class="vdiv"></span>
+      <button class="btn sm active" id="psdBtn">PSD</button>
+      <button class="btn sm" id="csdBtn">CSD</button>
+      <span class="vdiv"></span>
+      <button class="btn sm active" id="specBtn">Spectrum</button>
+      <button class="btn sm" id="sonoBtn">Sonogram</button>
+      <span class="fld" id="sonoResWrap" hidden><label>resolution</label>
+        <input type="range" id="sonoRes" min="3" max="8" value="6" style="width:90px">
+        <span class="mono" id="sonoResLab" style="font-size:11.5px">48 bands</span></span>
+    </div>
+
+    <div class="strip" data-strip="tf" hidden>
+      <span class="sec-label">TF</span>
+      <span class="fld"><label>window</label>
+        <select id="tfWin"><option>hann</option><option>hamming</option><option>none</option></select></span>
+      <span class="fld"><label>averaging</label>
+        <select id="tfAvg"><option>none</option><option selected>within set</option><option>across sets</option></select></span>
+      <span class="fld"><label>N frames</label>
+        <input type="range" id="nFrames" min="1" max="30" value="10" style="width:110px">
+        <span class="mono" id="nfLabel" style="font-size:11.5px">N = 10 · Frame length = 3.00 s</span></span>
+      <button class="btn indigo" id="calcTf">Calc TF</button>
+      <span class="vdiv"></span>
+      <label class="switch"><input type="checkbox" id="cohTog" checked>coherence</label>
+      <span class="vdiv"></span>
+      <span class="fld"><label>best match ref</label>
+        <select id="bmSet" style="width:78px"></select>
+        <select id="bmCh" style="width:62px"><option>ch_0</option><option>ch_1</option></select></span>
+      <button class="btn sm" id="bmApply">Best Match</button>
+      <button class="btn sm" id="xw1" title="Multiply by iω (displacement → velocity)">× (iω)</button>
+      <button class="btn sm" id="xw2" title="Multiply by 1/(iω) (velocity → displacement)">× 1/(iω)</button>
+    </div>
+
+    <div class="strip" data-strip="fit" hidden>
+      <span class="sec-label">Fit</span>
+      <button class="btn indigo-t" id="fit1">Fit 1 mode</button>
+      <button class="btn indigo-t" id="fit2">Fit 2 modes</button>
+      <button class="btn indigo-t" id="fit3">Fit 3 modes</button>
+      <span class="vdiv"></span>
+      <button class="btn" id="fitReject">Reject</button>
+      <button class="btn" id="fitSummary">Summary</button>
+      <button class="btn" id="fitRecon">Reconstruction</button>
+      <span class="vdiv"></span>
+      <button class="btn" id="fitGlobal">Global optimise <span class="exp-badge">experimental</span></button>
+    </div>
+
+    <div class="strip" data-strip="export" hidden>
+      <span class="sec-label">Export</span>
+      <button class="btn indigo-t" id="expSave">Save Dataset (.dvma)</button>
+      <span class="vdiv"></span>
+      <span class="fld"><label>figure</label>
+        <select id="figFmt" style="width:70px"><option>png</option><option>pdf</option></select></span>
+      <button class="btn" id="expFig">Save Figure</button>
+      <span class="vdiv"></span>
+      <button class="btn" id="expMat">Export Matlab</button>
+      <button class="btn" id="expCsv">Export CSV</button>
+      <span class="vdiv"></span>
+      <label class="switch" title="Captured data is kept in browser storage so a crash or refresh loses nothing">
+        <input type="checkbox" id="autosave" checked>autosave</label>
+      <span style="font-size:11px;color:var(--muted)">autosaves to browser storage every capture</span>
+    </div>
+  </div>
+
+  <!-- ============ main: tray + plot ============ -->
+  <div class="main">
+    <aside class="tray" id="tray">
+      <div class="tray-head">
+        <span class="sec-label">Data sets</span>
+        <button class="btn sm" id="trayAll" title="All channels on">All</button>
+        <button class="btn sm" id="trayNone" title="All channels off">None</button>
+        <button class="btn sm" id="traySolo" title="Show only the highlighted set">Solo</button>
+        <button class="btn sm" id="trayPrev" title="Highlight previous set">‹</button>
+        <button class="btn sm" id="trayNext" title="Highlight next set">›</button>
+      </div>
+      <div class="tray-cards" id="trayCards"></div>
+      <div class="tray-foot">
+        <button class="btn sm blue-o" id="trayLoad">Load</button>
+        <button class="btn sm" id="traySave">Save</button>
+        <span style="flex:1"></span>
+        <button class="btn sm warn-o" id="trayDelLast">Delete last</button>
+        <button class="btn sm danger-o" id="trayDelAll">Delete all</button>
+      </div>
+      <div class="monitor-mini" id="monitorMini" title="Click to expand the oscilloscope">
+        <div class="mon-head"><span class="sec-label">Monitor</span><span class="mon-live">● live</span>
+          <span class="mon-hint">click to expand</span></div>
+        <div class="mon-body">
+          <canvas id="monCanvas" width="196" height="52"></canvas>
+          <div class="mon-levels">
+            <span class="vbar"><i id="mlv0"></i></span>
+            <span class="vbar"><i id="mlv1"></i></span>
+          </div>
+          <div class="mon-clipcol"><span class="clip-pill" id="monClip">CLIP</span></div>
+        </div>
+      </div>
+    </aside>
+    <div id="scrim"></div>
+
+    <section class="plot-wrap">
+      <div class="plot-card">
+        <div class="plot-titlebar"><span id="plotTitle">Time history</span><span id="plotSub"></span></div>
+        <div class="plot-host box-mode" id="plotHost">
+          <svg id="plotSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="legend" id="legend"></div>
+          <div class="zoom-bar" id="zoomBar">
+            <button class="zbtn active" id="zoomBox" title="Box zoom — drag a rectangle on the plot">◱</button>
+            <button class="zbtn" id="zoomPan" title="Pan — drag to move the axes">✥</button>
+            <button class="zbtn" id="zoomBack" title="Back (previous axis range)">‹</button>
+            <button class="zbtn" id="zoomFwd" title="Forward">›</button>
+            <button class="zbtn" id="zoomAX" title="Autoscale X">Auto X</button>
+            <button class="zbtn" id="zoomAY" title="Autoscale Y">Auto Y</button>
+            <button class="zbtn" id="zoomMore" title="Manual axis limits">⋯</button>
+          </div>
+          <div id="axPop" hidden>
+            <div class="row"><label>xmin</label><input id="axXmin"><label>xmax</label><input id="axXmax"></div>
+            <div class="row"><label>ymin</label><input id="axYmin"><label>ymax</label><input id="axYmax"></div>
+            <div class="row" style="justify-content:flex-end"><button class="btn sm" id="axCancel">Cancel</button>
+              <button class="btn sm indigo-t" id="axApply">Apply</button></div>
+          </div>
+          <div id="rubber"></div>
+          <div id="fitChip" hidden></div>
+          <div id="sonoCap" hidden></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ============ toasts ============ -->
+<div id="toasts"></div>
+
+<!-- ============ monitor overlay ============ -->
+<div id="monOverlay" hidden>
+  <div class="mon-panel">
+    <div class="mon-bar">
+      <span class="sec-label">Oscilloscope — live monitor</span>
+      <div class="kbd-chips">
+        <button class="btn on" data-pane="T"><kbd>T</kbd>&nbsp;time</button>
+        <button class="btn on" data-pane="F"><kbd>F</kbd>&nbsp;freq</button>
+        <button class="btn on" data-pane="L"><kbd>L</kbd>&nbsp;levels</button>
+        <button class="btn" data-pane="P"><kbd>P</kbd>&nbsp;pause</button>
+      </div>
+      <span class="spacer"></span>
+      <button class="btn sm" id="popOut" title="opens as own window in production">pop out ⧉</button>
+      <button class="btn sm" id="monClose">✕ close</button>
+    </div>
+    <div class="mon-grid">
+      <div class="mon-cell" id="paneT"><span class="cell-lab">time</span><canvas id="bigTrace" width="580" height="168"></canvas></div>
+      <div class="mon-cell" id="paneF" style="grid-row:2"><span class="cell-lab">fft</span><canvas id="bigFFT" width="580" height="148"></canvas></div>
+      <div class="mon-cell" id="paneL"><span class="cell-lab">levels</span>
+        <span id="bigClipWrap"><span class="clip-pill" id="bigClip">CLIP</span></span>
+        <div class="biglv"><span class="vbar"><i id="blv0"></i></span><small>ch_0</small></div>
+        <div class="biglv"><span class="vbar"><i id="blv1"></i></span><small>ch_1</small></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ================================================================
+   pydvma web-UI mockup · Option B — "Workflow bench"
+   Stage ribbon + context strip + data tray + hero plot. All fake.
+   ================================================================ */
+(function(){
+const $=(s,el)=> (el||document).querySelector(s);
+const $$=(s,el)=> Array.from((el||document).querySelectorAll(s));
+
+/* ---------------- constants & fake-data synthesis ---------------- */
+const PALETTE=['#2563eb','#dc2626','#059669','#d97706','#7c3aed','#0891b2',
+               '#be185d','#4d7c0f','#9333ea','#0e7490','#b91c1c','#15803d'];
+const NT=600, NF=420;
+const XS_T=Array.from({length:NT},(_,i)=>i/(NT-1)*2);
+const XS_F=Array.from({length:NF},(_,i)=>i/(NF-1)*500);
+const MODES=[80,190,310,460];
+const PKF=[[80,6,74],[190,8,66],[310,9,57],[460,11,50]];       // PSD peaks: f0,width,height(dB)
+const PKT=[[80,2.5,44],[190,3,42],[310,3.5,38],[460,4.5,35]];  // TF peaks (sharper)
+const NOTCH=[[132,3,26],[250,4,29],[385,5,25]];                // antiresonances
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+  return((t^t>>>14)>>>0)/4294967296;};}
+
+function genSetData(seed){
+  const R=mulberry32(seed);
+  const d={time:[],freq:[],tf:[],coh:[]};
+  for(let ch=0;ch<2;ch++){
+    const shifts=MODES.map(()=> (R()-0.5)*5);
+    const hs=MODES.map(()=> 0.85+0.3*R());
+    /* time: decaying multi-tone burst, ±0.25 V */
+    const a0=0.16+0.08*R(), ph=R()*6.283, tau=0.32+0.22*R();
+    const comp=[[9,1],[23,0.55],[41,0.3]];
+    const tv=[];
+    for(let i=0;i<NT;i++){const t=XS_T[i];let y=0;
+      for(let k=0;k<3;k++){y+=comp[k][1]*Math.sin(6.283*comp[k][0]*t*(1+0.02*ch)+ph*(k+1));}
+      y=y*a0*Math.exp(-t/tau)+(R()-0.5)*0.012;
+      tv.push(Math.max(-0.27,Math.min(0.27,y)));}
+    d.time.push(tv);
+    /* PSD-like spectrum, −60…+40 dB */
+    const fv=[];
+    for(let i=0;i<NF;i++){const f=XS_F[i];
+      let y=-50+10*Math.exp(-f/300);
+      PKF.forEach((p,k)=>{y+=p[2]*hs[k]/(1+Math.pow((f-(p[0]+shifts[k]))/p[1],2));});
+      y+=(R()-0.5)*3;
+      fv.push(Math.min(38,Math.max(-58,y)));}
+    d.freq.push(fv);
+    /* TF + coherence, three averaging variants (N=1 / 10 / 30 frames) */
+    const tfv={},cov={};
+    [['n1',5,0.09,1],['n10',1.8,0.035,0.45],['n30',0.6,0.012,0.2]].forEach(v=>{
+      const key=v[0],nz=v[1],cn=v[2],cd=v[3],arr=[],ca=[];
+      for(let i=0;i<NF;i++){const f=XS_F[i];
+        let y=-8;
+        PKT.forEach((p,k)=>{y+=p[2]*hs[k]/(1+Math.pow((f-(p[0]+shifts[k]))/p[1],2));});
+        NOTCH.forEach(p=>{y-=p[2]/(1+Math.pow((f-p[0])/p[1],2));});
+        y+=(R()-0.5)*2*nz;
+        arr.push(Math.min(38,Math.max(-39,y)));
+        let c=0.998;
+        NOTCH.forEach(p=>{c-=cd*0.6/(1+Math.pow((f-p[0])/(p[1]*2.2),2));});
+        c-=R()*cn+cd*0.25*Math.max(0,1-f/40);
+        ca.push(Math.max(0.02,Math.min(1,c)));}
+      tfv[key]=arr;cov[key]=ca;});
+    d.tf.push(tfv);d.coh.push(cov);
+  }
+  return d;
+}
+
+/* ---------------- state ---------------- */
+const state={
+  stage:'acquire', view:'time', psd:'PSD',
+  sets:[], nextIdx:0, colorIdx:0, hl:0,
+  nFrames:10, coh:true, pretrigArmed:false,
+  ov:{},               // per-view axis overrides {view:{xmin,xmax,ymin,ymax}}
+  fit:{list:[{fn:190.4,z:0.021}],recon:false},
+  sonoRes:6, logging:false,
+};
+const FIT_PRESETS={
+  1:[{fn:190.4,z:0.021}],
+  2:[{fn:190.4,z:0.021},{fn:213.8,z:0.045}],
+  3:[{fn:168.9,z:0.052},{fn:190.4,z:0.021},{fn:213.8,z:0.045}]};
+let hist=[],histPos=-1;
+
+function stamp(){const d=new Date();const p=n=>String(n).padStart(2,'0');
+  return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
+
+function makeSet(name,ts){
+  const id=state.nextIdx++;
+  const s={id,name:name||('set_'+id),time:ts||stamp(),dur:'2.0 s',
+    channels:[0,1].map(c=>({ch:c,color:PALETTE[state.colorIdx++%PALETTE.length],state:'on'})),
+    data:genSetData(1234+id*971)};
+  state.sets.push(s);
+  return s;
+}
+makeSet('set_0','13:58:03'); makeSet('set_1','14:02:11');
+state.hl=1;
+
+function tfArr(data,ch,kind){
+  const v=data[kind][ch];const n=state.nFrames;let a,b,t;
+  if(n<=10){a=v.n1;b=v.n10;t=(n-1)/9;}else{a=v.n10;b=v.n30;t=(n-10)/20;}
+  return a.map((y,i)=>y*(1-t)+b[i]*t);
+}
+
+/* ---------------- toasts ---------------- */
+function toast(msg,opts){
+  opts=opts||{};
+  const box=$('#toasts');if(!box)return;
+  const el=document.createElement('div');el.className='toast';
+  const span=document.createElement('span');span.textContent=msg;el.appendChild(span);
+  if(opts.undo){const b=document.createElement('button');b.className='undo';b.textContent='Undo';
+    b.addEventListener('click',()=>{try{opts.undo();}finally{kill();}});el.appendChild(b);}
+  box.appendChild(el);
+  let dead=false;
+  function kill(){if(dead)return;dead=true;el.classList.add('out');setTimeout(()=>el.remove(),240);}
+  setTimeout(kill,opts.ms||4200);
+}
+
+/* ---------------- data tray ---------------- */
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function renderTray(){
+  const box=$('#trayCards');
+  if(!state.sets.length){box.innerHTML='<div class="tray-empty">No data sets yet. Press <b>Log Data</b> in the Acquire stage.</div>';}
+  else{
+    box.innerHTML=state.sets.map((s,i)=>{
+      const rows=s.channels.map(c=>
+        '<div class="ch-row st-'+c.state+'" data-set="'+s.id+'" data-ch="'+c.ch+'">'+
+        '<button class="ch-chip" style="background:'+c.color+'" title="Click: cycle ON / FADE / OFF"></button>'+
+        '<span class="ch-lab">ch_'+c.ch+'</span>'+
+        '<button class="tri">'+c.state.toUpperCase()+'</button></div>').join('');
+      return '<div class="set-card'+(i===state.hl?' hl':'')+'" data-set="'+s.id+'">'+
+        '<div class="set-head"><span class="set-name" title="Double-click to rename">'+esc(s.name)+'</span>'+
+        '<span class="dur-badge">'+s.dur+'</span></div>'+
+        '<div class="set-meta">'+s.time+' · 44.1 kHz · 2 ch</div>'+rows+'</div>';
+    }).join('');
+  }
+  const bm=$('#bmSet');
+  if(bm){bm.innerHTML=state.sets.map(s=>'<option>'+esc(s.name)+'</option>').join('')||'<option>—</option>';}
+  drawPlot();
+}
+function findSet(id){return state.sets.find(s=>s.id===+id);}
+function cycle(setId,ch){
+  const s=findSet(setId);if(!s)return;
+  const c=s.channels[ch];if(!c)return;
+  c.state=c.state==='on'?'fade':(c.state==='fade'?'off':'on');
+  renderTray();
+}
+$('#trayCards').addEventListener('click',e=>{
+  const row=e.target.closest('.ch-row');
+  if(row&&(e.target.closest('.ch-chip')||e.target.closest('.tri'))){
+    cycle(row.dataset.set,+row.dataset.ch);return;}
+  const card=e.target.closest('.set-card');
+  if(card){state.hl=state.sets.findIndex(s=>s.id===+card.dataset.set);renderTray();}
+});
+$('#trayCards').addEventListener('dblclick',e=>{
+  const nameEl=e.target.closest('.set-name');if(!nameEl)return;
+  const card=nameEl.closest('.set-card');const s=findSet(card.dataset.set);if(!s)return;
+  const inp=document.createElement('input');inp.value=s.name;
+  nameEl.textContent='';nameEl.appendChild(inp);inp.focus();inp.select();
+  let done=false;
+  const commit=ok=>{if(done)return;done=true;
+    if(ok&&inp.value.trim())s.name=inp.value.trim();renderTray();};
+  inp.addEventListener('keydown',ev=>{if(ev.key==='Enter')commit(true);if(ev.key==='Escape')commit(false);});
+  inp.addEventListener('blur',()=>commit(true));
+});
+$('#trayAll').addEventListener('click',()=>{state.sets.forEach(s=>s.channels.forEach(c=>c.state='on'));renderTray();});
+$('#trayNone').addEventListener('click',()=>{state.sets.forEach(s=>s.channels.forEach(c=>c.state='off'));renderTray();});
+$('#traySolo').addEventListener('click',()=>{
+  if(!state.sets.length){toast('No data sets to solo.');return;}
+  const hl=Math.max(0,Math.min(state.hl,state.sets.length-1));
+  state.sets.forEach((s,i)=>s.channels.forEach(c=>c.state=(i===hl)?'on':'off'));
+  renderTray();toast('Solo: '+state.sets[hl].name+' (all other sets off)');
+});
+function step(d){
+  if(!state.sets.length)return;
+  state.hl=(state.hl+d+state.sets.length)%state.sets.length;
+  renderTray();
+  const el=$('.set-card.hl');if(el&&el.scrollIntoView)el.scrollIntoView({block:'nearest'});
+}
+$('#trayPrev').addEventListener('click',()=>step(-1));
+$('#trayNext').addEventListener('click',()=>step(1));
+
+let loadCount=2;
+function doLoad(){
+  const s=makeSet('plate_hammer_0'+(++loadCount));
+  state.hl=state.sets.length-1;renderTray();
+  toast('Loaded '+s.name+'.dvma — 1 set, 2 channels, 2.0 s');
+}
+function doSave(){toast('Dataset saved: dataset_2026-07-03.dvma ('+state.sets.length+' sets)');}
+$('#trayLoad').addEventListener('click',doLoad);
+$('#hdrLoad').addEventListener('click',doLoad);
+$('#traySave').addEventListener('click',doSave);
+$('#hdrSave').addEventListener('click',doSave);
+$('#trayDelLast').addEventListener('click',()=>{
+  if(!state.sets.length){toast('Nothing to delete.');return;}
+  const s=state.sets.pop();state.hl=Math.min(state.hl,state.sets.length-1);renderTray();
+  toast('Deleted '+s.name,{undo:()=>{state.sets.push(s);state.hl=state.sets.length-1;renderTray();}});
+});
+$('#trayDelAll').addEventListener('click',()=>{
+  if(!state.sets.length){toast('Nothing to delete.');return;}
+  const old=state.sets.slice();state.sets=[];state.hl=0;renderTray();
+  toast('Deleted all sets ('+old.length+')',{undo:()=>{state.sets=old.slice();state.hl=old.length-1;renderTray();}});
+});
+
+/* ---------------- stage ribbon & strips ---------------- */
+const VIEW_OF_STAGE={setup:'time',acquire:'time',time:'time',frequency:'freq',tf:'tf',fit:'fit',export:null};
+function setStage(st){
+  state.stage=st;
+  $$('.stage').forEach(b=>b.classList.toggle('active',b.dataset.stage===st));
+  $$('.strip').forEach(p=>p.hidden=p.dataset.strip!==st);
+  let v=VIEW_OF_STAGE[st];
+  if(st==='frequency')v=($('#sonoBtn').classList.contains('active'))?'sono':'freq';
+  if(v)state.view=v;
+  drawPlot();
+}
+$('#ribbon').addEventListener('click',e=>{
+  const b=e.target.closest('.stage');if(b)setStage(b.dataset.stage);
+});
+
+/* setup strip */
+$('#setPre').addEventListener('change',e=>{
+  $('#setThresh').disabled=!e.target.checked;
+  state.pretrigArmed=e.target.checked;syncArm();
+});
+$('#suggestBtn').addEventListener('click',()=>{
+  $('#setFs').value='44100';$('#setCh').value=2;$('#setDur').value='2.0';
+  $('#setPre').checked=true;$('#setThresh').disabled=false;state.pretrigArmed=true;syncArm();
+  toast('Suggested for '+$('#setDevice').value+': fs 44100 · 2 ch · 2.0 s · pretrigger @ 0.05 V');
+});
+$('#applyBtn').addEventListener('click',()=>{
+  const fs=+$('#setFs').value;
+  const fsLab={44100:'44.1 kHz',48000:'48 kHz',51200:'51.2 kHz',8192:'8.192 kHz'}[fs]||fs+' Hz';
+  $('#sumChip').textContent=fsLab+' · '+$('#setCh').value+' ch · '+(+$('#setDur').value).toFixed(1)+' s';
+  toast('Acquisition settings applied — '+$('#setDevice').value);
+});
+
+/* acquire strip */
+$('#sumChip').addEventListener('click',()=>setStage('setup'));
+function syncArm(){
+  const b=$('#armBtn');
+  b.textContent='pretrigger: '+(state.pretrigArmed?'armed':'off');
+  b.classList.toggle('armed',state.pretrigArmed);
+  $('#setPre').checked=state.pretrigArmed;
+  $('#setThresh').disabled=!state.pretrigArmed;
+}
+$('#armBtn').addEventListener('click',()=>{state.pretrigArmed=!state.pretrigArmed;syncArm();});
+$('#outChip').addEventListener('click',e=>{e.stopPropagation();$('#outPop').hidden=!$('#outPop').hidden;});
+$('#outPop').addEventListener('click',e=>e.stopPropagation());
+function outLab(){
+  $('#outChipLab').textContent=$('#outType').value+' '+$('#outF1').value+'–'+$('#outF2').value+' Hz · '+
+    (+$('#outAmp').value).toFixed(1)+' V';
+}
+['outType','outAmp','outF1','outF2','outDur'].forEach(id=>$('#'+id).addEventListener('change',outLab));
+$('#outPrev').addEventListener('click',()=>toast('Previewing output: '+$('#outChipLab').textContent+
+  ' × '+(+$('#outDur').value).toFixed(1)+' s  (muted in mockup)'));
+$('#outOk').addEventListener('click',()=>{$('#outPop').hidden=true;});
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#outPop')&&!e.target.closest('#outChip'))$('#outPop').hidden=true;
+  if(!e.target.closest('#axPop')&&!e.target.closest('#zoomMore'))$('#axPop').hidden=true;
+});
+
+let logTimers=[];
+function clearLogTimers(){logTimers.forEach(clearTimeout);logTimers=[];}
+function setStatus(txt,busy){const el=$('#acqStatus');el.textContent=txt;el.classList.toggle('busy',!!busy);}
+function startLog(withOutput){
+  if(state.logging)return;
+  state.logging=true;
+  $('#logBtn').disabled=true;$('#logOutBtn').disabled=true;$('#cancelBtn').hidden=false;
+  const doCapture=()=>{
+    setStatus((withOutput?'Outputting '+$('#outChipLab').textContent+' — logging':'Logging data')+' for 2.0 seconds…',true);
+    const wrap=$('#acqProgWrap'),bar=$('#acqProg');
+    wrap.hidden=false;bar.style.transition='none';bar.style.width='0%';
+    void bar.offsetWidth;
+    bar.style.transition='width 1.4s linear';bar.style.width='100%';
+    logTimers.push(setTimeout(()=>{
+      const s=makeSet();state.hl=state.sets.length-1;renderTray();
+      setStatus(s.name+' captured.',false);
+      toast(s.name+' captured — 2 ch × 2.0 s @ 44.1 kHz'+(state.pretrigArmed?' (pretriggered)':''));
+      endLog();logTimers.push(setTimeout(()=>{if(!state.logging)setStatus('ready',false);},2500));
+    },1500));
+  };
+  if(state.pretrigArmed){
+    setStatus('Waiting for trigger on channel 0…',true);
+    logTimers.push(setTimeout(()=>{
+      setStatus('Trigger detected.',true);
+      logTimers.push(setTimeout(doCapture,350));
+    },2000));
+  }else doCapture();
+}
+function endLog(){
+  state.logging=false;clearLogTimers();
+  $('#logBtn').disabled=false;$('#logOutBtn').disabled=false;$('#cancelBtn').hidden=true;
+  $('#acqProgWrap').hidden=true;$('#acqProg').style.transition='none';$('#acqProg').style.width='0%';
+}
+$('#logBtn').addEventListener('click',()=>startLog(false));
+$('#logOutBtn').addEventListener('click',()=>startLog(true));
+$('#cancelBtn').addEventListener('click',()=>{endLog();setStatus('Cancelled.',false);
+  logTimers.push(setTimeout(()=>setStatus('ready',false),2000));});
+
+/* time strip */
+$('#cleanBtn').addEventListener('click',()=>toast('Impulse cleaned — pre-trigger noise zeroed, exponential window applied'));
+$('#rangeFull').addEventListener('click',()=>{delete (state.ov.time||{}).xmin;delete (state.ov.time||{}).xmax;
+  $('#rangeFull').classList.add('active');$('#range02').classList.remove('active');pushHist();drawPlot();});
+$('#range02').addEventListener('click',()=>{state.ov.time=Object.assign(state.ov.time||{},{xmin:0,xmax:0.2});
+  $('#range02').classList.add('active');$('#rangeFull').classList.remove('active');pushHist();drawPlot();});
+$('#saveFigTime').addEventListener('click',()=>toast('Figure saved: time_history.png'));
+
+/* frequency strip */
+$('#calcFft').addEventListener('click',()=>{
+  toast('FFT computed — window: '+$('#fftWin').value+', averaging: '+$('#fftAvg').value);
+  if(state.stage==='frequency'&&$('#specBtn').classList.contains('active')){state.view='freq';drawPlot();}
+});
+$('#psdBtn').addEventListener('click',()=>{state.psd='PSD';$('#psdBtn').classList.add('active');
+  $('#csdBtn').classList.remove('active');drawPlot();});
+$('#csdBtn').addEventListener('click',()=>{state.psd='CSD';$('#csdBtn').classList.add('active');
+  $('#psdBtn').classList.remove('active');drawPlot();});
+$('#specBtn').addEventListener('click',()=>{
+  $('#specBtn').classList.add('active');$('#sonoBtn').classList.remove('active');
+  $('#sonoResWrap').hidden=true;state.view='freq';drawPlot();});
+$('#sonoBtn').addEventListener('click',()=>{
+  $('#sonoBtn').classList.add('active');$('#specBtn').classList.remove('active');
+  $('#sonoResWrap').hidden=false;state.view='sono';drawPlot();});
+$('#sonoRes').addEventListener('input',e=>{
+  state.sonoRes=+e.target.value;$('#sonoResLab').textContent=(state.sonoRes*8)+' bands';drawPlot();});
+
+/* tf strip */
+$('#nFrames').addEventListener('input',e=>{
+  state.nFrames=+e.target.value;
+  $('#nfLabel').textContent='N = '+state.nFrames+' · Frame length = '+(30/state.nFrames).toFixed(2)+' s';
+  if(state.view==='tf'||state.view==='fit')drawPlot();
+});
+$('#calcTf').addEventListener('click',()=>toast('TF computed — H1, window: '+$('#tfWin').value+
+  ', averaging: '+$('#tfAvg').value+', N = '+state.nFrames+' frames'));
+$('#cohTog').addEventListener('change',e=>{state.coh=e.target.checked;drawPlot();});
+$('#bmApply').addEventListener('click',()=>toast('Best-match scaling applied — reference '+
+  ($('#bmSet').value||'—')+' / '+$('#bmCh').value));
+$('#xw1').addEventListener('click',()=>toast('Converted: multiplied by (iω) — displacement → velocity'));
+$('#xw2').addEventListener('click',()=>toast('Converted: multiplied by 1/(iω) — velocity → displacement'));
+
+/* fit strip */
+function setFit(n){state.fit.list=FIT_PRESETS[n].slice();state.fit.recon=false;
+  $('#fitRecon').classList.remove('active');drawPlot();
+  toast('Fitted '+n+' mode'+(n>1?'s':'')+' around 190 Hz');}
+$('#fit1').addEventListener('click',()=>setFit(1));
+$('#fit2').addEventListener('click',()=>setFit(2));
+$('#fit3').addEventListener('click',()=>setFit(3));
+$('#fitReject').addEventListener('click',()=>{state.fit.list=[];state.fit.recon=false;
+  $('#fitRecon').classList.remove('active');drawPlot();toast('Fit rejected — cleared overlay');});
+$('#fitSummary').addEventListener('click',()=>{
+  if(!state.fit.list.length){toast('No fitted modes yet.');return;}
+  toast('Fitted modes:\n'+state.fit.list.map((m,i)=>
+    'mode '+(i+1)+':  fn = '+m.fn.toFixed(1)+' Hz   ζ = '+m.z.toFixed(3)+'   Q = '+(1/(2*m.z)).toFixed(1)).join('\n'),{ms:6500});
+});
+$('#fitRecon').addEventListener('click',()=>{
+  if(!state.fit.list.length){toast('Fit a mode first.');return;}
+  state.fit.recon=!state.fit.recon;$('#fitRecon').classList.toggle('active',state.fit.recon);drawPlot();});
+$('#fitGlobal').addEventListener('click',()=>toast('Global optimisation started… converged in 14 iterations (mockup)'));
+
+/* export strip */
+$('#expSave').addEventListener('click',doSave);
+$('#expFig').addEventListener('click',()=>toast('Figure saved: '+
+  ({time:'time_history',freq:'spectrum',tf:'transfer_function',fit:'mode_fit',sono:'sonogram'}[state.view]||'figure')+
+  '.'+$('#figFmt').value));
+$('#expMat').addEventListener('click',()=>toast('Exported dataset to logged_data.mat'));
+$('#expCsv').addEventListener('click',()=>toast('Exported '+state.sets.length+' sets to CSV (one file per set)'));
+$('#autosave').addEventListener('change',e=>toast('Autosave '+(e.target.checked?'on — every capture is kept in browser storage':'off')));
+
+/* ---------------- plot ---------------- */
+const svg=$('#plotSvg'),host=$('#plotHost');
+let plotMap=null;
+function viewCfg(){
+  switch(state.view){
+    case 'freq':return{xmin:0,xmax:500,ymin:-60,ymax:40,xl:'Frequency (Hz)',
+      yl:state.psd==='PSD'?'PSD (dB re 1 V²/Hz)':'CSD magnitude (dB)',title:state.psd==='PSD'?'Power spectral density':'Cross spectral density'};
+    case 'tf':return{xmin:0,xmax:500,ymin:-40,ymax:40,xl:'Frequency (Hz)',yl:'|H(f)|  (dB)',
+      title:'Transfer function · H1'};
+    case 'fit':return{xmin:150,xmax:230,ymin:-20,ymax:40,xl:'Frequency (Hz)',yl:'|H(f)|  (dB)',
+      title:'Mode fit · zoomed to 190 Hz peak'};
+    case 'sono':return{xmin:0,xmax:2,ymin:0,ymax:500,xl:'Time (s)',yl:'Frequency (Hz)',title:'Sonogram'};
+    default:return{xmin:0,xmax:2,ymin:-0.3,ymax:0.3,xl:'Time (s)',yl:'Amplitude (V)',title:'Time history'};
+  }
+}
+function ticks(min,max,n){
+  const span=max-min;if(!(span>0))return[min];
+  const step0=span/Math.max(1,n-1),mag=Math.pow(10,Math.floor(Math.log10(step0)));
+  const norm=step0/mag;const step=(norm>=5?10:norm>=2.5?5:norm>=1.5?2:1)*mag;
+  const out=[];for(let v=Math.ceil(min/step-1e-9)*step;v<=max+span*1e-9;v+=step)out.push(v);
+  return out;
+}
+function fmtTick(v,span){
+  const d=span>=100?0:span>=10?1:span>=1?2:3;
+  return (+v.toFixed(d)).toString();
+}
+function visLines(){
+  const out=[];
+  state.sets.forEach(s=>s.channels.forEach(c=>{
+    if(c.state==='off')return;
+    out.push({set:s,c:c});
+  }));
+  return out;
+}
+function drawPlot(){
+  if(!svg||!host)return;
+  const W=host.clientWidth||760,H=host.clientHeight||400;
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);
+  const cfg=viewCfg(),v=state.view,ov=state.ov[v]||{};
+  const xmin=ov.xmin!=null?ov.xmin:cfg.xmin, xmax=ov.xmax!=null?ov.xmax:cfg.xmax;
+  const ymin=ov.ymin!=null?ov.ymin:cfg.ymin, ymax=ov.ymax!=null?ov.ymax:cfg.ymax;
+  const showCoh=(v==='tf')&&state.coh;
+  const L=58,R=showCoh?56:18,T=16,B=42,iw=Math.max(50,W-L-R),ih=Math.max(50,H-T-B);
+  const X=x=>L+(x-xmin)/(xmax-xmin)*iw, Y=y=>T+(1-(y-ymin)/(ymax-ymin))*ih, Y2=y=>T+(1-y)*ih;
+  plotMap={L,T,iw,ih,xmin,xmax,ymin,ymax};
+  let s='<defs><clipPath id="pc"><rect x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'"/></clipPath></defs>';
+  s+='<rect x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+'" fill="#fdfdfe" stroke="#e3e6eb"/>';
+  const xspan=xmax-xmin,yspan=ymax-ymin;
+  ticks(xmin,xmax,7).forEach(tx=>{const px=X(tx);
+    s+='<line x1="'+px+'" y1="'+T+'" x2="'+px+'" y2="'+(T+ih)+'" stroke="#eef0f4"/>';
+    s+='<text class="tick" x="'+px+'" y="'+(T+ih+15)+'" text-anchor="middle">'+fmtTick(tx,xspan)+'</text>';});
+  ticks(ymin,ymax,6).forEach(ty=>{const py=Y(ty);
+    s+='<line x1="'+L+'" y1="'+py+'" x2="'+(L+iw)+'" y2="'+py+'" stroke="#eef0f4"/>';
+    s+='<text class="tick" x="'+(L-7)+'" y="'+(py+3.5)+'" text-anchor="end">'+fmtTick(ty,yspan)+'</text>';});
+  if(showCoh)[0,0.5,1].forEach(cy=>{
+    s+='<text class="tick" x="'+(L+iw+7)+'" y="'+(Y2(cy)+3.5)+'" text-anchor="start">'+cy+'</text>';});
+  s+='<text class="axlab" x="'+(L+iw/2)+'" y="'+(H-6)+'" text-anchor="middle">'+cfg.xl+'</text>';
+  s+='<text class="axlab" transform="translate(14 '+(T+ih/2)+') rotate(-90)" text-anchor="middle">'+cfg.yl+'</text>';
+  if(showCoh)s+='<text class="axlab" transform="translate('+(W-8)+' '+(T+ih/2)+') rotate(90)" text-anchor="middle">Coherence</text>';
+
+  const lines=visLines();
+  if(v==='sono'){
+    const first=lines[0];
+    if(first)s+='<image href="'+sonoURL(first.set,first.c.ch)+'" x="'+L+'" y="'+T+'" width="'+iw+'" height="'+ih+
+      '" preserveAspectRatio="none" style="image-rendering:pixelated" clip-path="url(#pc)"/>';
+    else s+='<text class="axlab" x="'+(L+iw/2)+'" y="'+(T+ih/2)+'" text-anchor="middle">No visible channel — enable one in the data tray</text>';
+  }else if(!lines.length){
+    s+='<text class="axlab" x="'+(L+iw/2)+'" y="'+(T+ih/2)+'" text-anchor="middle">No data — press Log Data in the Acquire stage</text>';
+  }else{
+    s+='<g clip-path="url(#pc)">';
+    lines.forEach(ln=>{
+      let xs,ys;
+      if(v==='time'){xs=XS_T;ys=ln.set.data.time[ln.c.ch];}
+      else if(v==='freq'){xs=XS_F;ys=ln.set.data.freq[ln.c.ch];}
+      else{xs=XS_F;ys=tfArr(ln.set.data,ln.c.ch,'tf');}
+      const pts=xs.map((x,i)=>X(x).toFixed(1)+','+Y(ys[i]).toFixed(1)).join(' ');
+      s+='<polyline points="'+pts+'" fill="none" stroke="'+ln.c.color+'" stroke-width="1.6" opacity="'+
+        (ln.c.state==='fade'?0.25:0.95)+'"/>';
+      if(showCoh){
+        const cy=tfArr(ln.set.data,ln.c.ch,'coh');
+        const cp=XS_F.map((x,i)=>X(x).toFixed(1)+','+Y2(cy[i]).toFixed(1)).join(' ');
+        s+='<polyline points="'+cp+'" fill="none" stroke="'+ln.c.color+'" stroke-width="1.1" stroke-dasharray="5 3" opacity="'+
+          (ln.c.state==='fade'?0.12:0.4)+'"/>';
+      }
+    });
+    if(v==='fit'&&state.fit.list.length){
+      const fn=f=>{let m=0;state.fit.list.forEach(md=>{m+=1.6/Math.sqrt(Math.pow(1-Math.pow(f/md.fn,2),2)+Math.pow(2*md.z*f/md.fn,2));});
+        return 20*Math.log10(m+1e-6);};
+      let fp='',rp='';
+      for(let i=0;i<=200;i++){const f=xmin+i/200*(xmax-xmin);
+        fp+=X(f).toFixed(1)+','+Y(fn(f)).toFixed(1)+' ';
+        if(state.fit.recon)rp+=X(f).toFixed(1)+','+Y(fn(f)-2.5).toFixed(1)+' ';}
+      s+='<polyline points="'+fp+'" fill="none" stroke="#be185d" stroke-width="2.2" opacity="0.9"/>';
+      if(state.fit.recon)s+='<polyline points="'+rp+'" fill="none" stroke="#66708a" stroke-width="1.4" stroke-dasharray="6 4"/>';
+    }
+    s+='</g>';
+  }
+  svg.innerHTML=s;
+
+  /* chrome around the plot */
+  $('#plotTitle').textContent=cfg.title;
+  const nvis=lines.filter(l=>l.c.state!=='off').length;
+  $('#plotSub').textContent=v==='sono'?(lines[0]?('showing '+lines[0].set.name+' · ch_'+lines[0].c.ch):''):
+    (nvis+' line'+(nvis===1?'':'s')+(v==='tf'&&state.coh?' + coherence':''));
+  const fc=$('#fitChip');
+  if(v==='fit'){fc.hidden=false;
+    fc.innerHTML=state.fit.list.length?state.fit.list.map((m,i)=>
+      '<div><b>mode '+(i+1)+'</b>  fn '+m.fn.toFixed(1)+' Hz · ζ '+m.z.toFixed(3)+' · Q '+(1/(2*m.z)).toFixed(1)+'</div>').join(''):
+      '<div>No fit — choose Fit 1–3 modes'+'</div>';
+  }else fc.hidden=true;
+  const sc=$('#sonoCap');
+  if(v==='sono'&&lines[0]){sc.hidden=false;sc.textContent='sonogram of '+lines[0].set.name+' · ch_'+lines[0].c.ch;}
+  else sc.hidden=true;
+  renderLegend();
+}
+function renderLegend(){
+  const lg=$('#legend');if(!lg)return;
+  if(!state.sets.length||state.view==='sono'){lg.innerHTML='';lg.style.display='none';return;}
+  lg.style.display='';
+  lg.innerHTML=state.sets.map(s=>s.channels.map(c=>
+    '<div class="lg-row st-'+c.state+'" data-set="'+s.id+'" data-ch="'+c.ch+'" title="Click: cycle ON / FADE / OFF">'+
+    '<i style="background:'+c.color+'"></i><span>'+esc(s.name)+' · ch_'+c.ch+'</span></div>').join('')).join('');
+}
+$('#legend').addEventListener('click',e=>{
+  const row=e.target.closest('.lg-row');if(row)cycle(row.dataset.set,+row.dataset.ch);
+});
+
+/* sonogram raster */
+function sonoURL(set,ch){
+  const rows=state.sonoRes*8,cols=Math.round(rows*1.4);
+  const cv=document.createElement('canvas');cv.width=cols;cv.height=rows;
+  const g=cv.getContext('2d');
+  const R=mulberry32(9000+set.id*131+ch);
+  for(let r=0;r<rows;r++){
+    const f=(1-r/(rows-1))*500;
+    for(let c2=0;c2<cols;c2++){
+      const t=c2/(cols-1)*2;
+      let vI=0.05+0.05*R();
+      MODES.forEach((f0,k)=>{vI+=Math.exp(-Math.pow((f-f0)/16,2))*Math.exp(-t/(0.45+0.18*k))*(1-0.12*k);});
+      vI=Math.max(0,Math.min(1,vI));
+      /* light theme colormap: near-white → indigo → deep navy */
+      let rr,gg,bb;
+      if(vI<0.5){const u=vI/0.5;rr=248+(99-248)*u;gg=250+(102-250)*u;bb=252+(241-252)*u;}
+      else{const u=(vI-0.5)/0.5;rr=99+(30-99)*u;gg=102+(27-102)*u;bb=241+(75-241)*u;}
+      g.fillStyle='rgb('+(rr|0)+','+(gg|0)+','+(bb|0)+')';
+      g.fillRect(c2,r,1,1);
+    }
+  }
+  return cv.toDataURL();
+}
+
+/* ---------------- zoom toolbar / rubber band / pan ---------------- */
+let tool='box';
+function setTool(t){tool=t;
+  $('#zoomBox').classList.toggle('active',t==='box');
+  $('#zoomPan').classList.toggle('active',t==='pan');
+  host.classList.toggle('box-mode',t==='box');
+  host.classList.toggle('pan-mode',t==='pan');
+}
+$('#zoomBox').addEventListener('click',()=>setTool('box'));
+$('#zoomPan').addEventListener('click',()=>setTool('pan'));
+function snapshot(){return JSON.parse(JSON.stringify(state.ov));}
+function pushHist(){hist.splice(histPos+1);hist.push(snapshot());histPos=hist.length-1;}
+function applyHist(){state.ov=JSON.parse(JSON.stringify(hist[histPos]));drawPlot();}
+$('#zoomBack').addEventListener('click',()=>{if(histPos>0){histPos--;applyHist();}});
+$('#zoomFwd').addEventListener('click',()=>{if(histPos<hist.length-1){histPos++;applyHist();}});
+$('#zoomAX').addEventListener('click',()=>{const o=state.ov[state.view];
+  if(o){delete o.xmin;delete o.xmax;}pushHist();drawPlot();});
+$('#zoomAY').addEventListener('click',()=>{const o=state.ov[state.view];
+  if(o){delete o.ymin;delete o.ymax;}pushHist();drawPlot();});
+$('#zoomMore').addEventListener('click',e=>{
+  e.stopPropagation();
+  const p=$('#axPop');
+  if(p.hidden&&plotMap){
+    $('#axXmin').value=fmtTick(plotMap.xmin,plotMap.xmax-plotMap.xmin);
+    $('#axXmax').value=fmtTick(plotMap.xmax,plotMap.xmax-plotMap.xmin);
+    $('#axYmin').value=fmtTick(plotMap.ymin,plotMap.ymax-plotMap.ymin);
+    $('#axYmax').value=fmtTick(plotMap.ymax,plotMap.ymax-plotMap.ymin);
+  }
+  p.hidden=!p.hidden;
+});
+$('#axPop').addEventListener('click',e=>e.stopPropagation());
+$('#axCancel').addEventListener('click',()=>{$('#axPop').hidden=true;});
+$('#axApply').addEventListener('click',()=>{
+  const x0=parseFloat($('#axXmin').value),x1=parseFloat($('#axXmax').value);
+  const y0=parseFloat($('#axYmin').value),y1=parseFloat($('#axYmax').value);
+  if([x0,x1,y0,y1].some(isNaN)||x1<=x0||y1<=y0){toast('Axis limits must be numeric with max > min.');return;}
+  state.ov[state.view]={xmin:x0,xmax:x1,ymin:y0,ymax:y1};
+  pushHist();drawPlot();$('#axPop').hidden=true;
+});
+
+const rubber=$('#rubber');
+let drag=null;
+host.addEventListener('mousedown',e=>{
+  if(e.button!==0)return;
+  if(e.target.closest('.zoom-bar')||e.target.closest('#axPop')||e.target.closest('.legend')||
+     e.target.closest('#fitChip'))return;
+  if(!plotMap)return;
+  const r=host.getBoundingClientRect();
+  const px=e.clientX-r.left,py=e.clientY-r.top;
+  if(px<plotMap.L||px>plotMap.L+plotMap.iw||py<plotMap.T||py>plotMap.T+plotMap.ih)return;
+  drag={x0:px,y0:py,mode:tool,ovStart:JSON.parse(JSON.stringify(state.ov[state.view]||{})),map:plotMap};
+  e.preventDefault();
+});
+window.addEventListener('mousemove',e=>{
+  if(!drag)return;
+  const r=host.getBoundingClientRect();
+  const px=Math.max(drag.map.L,Math.min(drag.map.L+drag.map.iw,e.clientX-r.left));
+  const py=Math.max(drag.map.T,Math.min(drag.map.T+drag.map.ih,e.clientY-r.top));
+  if(drag.mode==='box'){
+    rubber.style.display='block';
+    rubber.style.left=Math.min(px,drag.x0)+'px';rubber.style.top=Math.min(py,drag.y0)+'px';
+    rubber.style.width=Math.abs(px-drag.x0)+'px';rubber.style.height=Math.abs(py-drag.y0)+'px';
+  }else{
+    const m=drag.map;
+    const dx=(px-drag.x0)/m.iw*(m.xmax-m.xmin),dy=(py-drag.y0)/m.ih*(m.ymax-m.ymin);
+    state.ov[state.view]={xmin:m.xmin-dx,xmax:m.xmax-dx,ymin:m.ymin+dy,ymax:m.ymax+dy};
+    drawPlot();
+  }
+});
+window.addEventListener('mouseup',e=>{
+  if(!drag)return;
+  const d=drag;drag=null;rubber.style.display='none';
+  const r=host.getBoundingClientRect();
+  const px=Math.max(d.map.L,Math.min(d.map.L+d.map.iw,e.clientX-r.left));
+  const py=Math.max(d.map.T,Math.min(d.map.T+d.map.ih,e.clientY-r.top));
+  if(d.mode==='box'){
+    if(Math.abs(px-d.x0)<8||Math.abs(py-d.y0)<8)return;
+    const m=d.map;
+    const toX=p=>m.xmin+(p-m.L)/m.iw*(m.xmax-m.xmin);
+    const toY=p=>m.ymin+(1-(p-m.T)/m.ih)*(m.ymax-m.ymin);
+    state.ov[state.view]={xmin:toX(Math.min(px,d.x0)),xmax:toX(Math.max(px,d.x0)),
+                         ymin:toY(Math.max(py,d.y0)),ymax:toY(Math.min(py,d.y0))};
+    pushHist();drawPlot();
+  }else{
+    pushHist();
+  }
+});
+
+/* ---------------- live monitor (mini + overlay) ---------------- */
+const mon={t:0,paused:false,lv:[0.34,0.27],clipUntil:0,panes:{T:true,F:true,L:true}};
+function stepMonitor(){
+  if(!mon.paused){
+    mon.t+=0.045;
+    for(let i=0;i<2;i++){
+      mon.lv[i]+=(Math.random()-0.5)*0.07+(0.42-mon.lv[i])*0.04;
+      mon.lv[i]=Math.max(0.06,Math.min(1,mon.lv[i]));
+    }
+    if(Math.random()<0.0035){mon.lv[Math.random()<0.5?0:1]=1;mon.clipUntil=performance.now()+1000;}
+    if(mon.lv[0]>0.97||mon.lv[1]>0.97)mon.clipUntil=Math.max(mon.clipUntil,performance.now()+1000);
+  }
+  const hot=performance.now()<mon.clipUntil;
+  [['hlv0',0],['hlv1',1],['mlv0',0],['mlv1',1],['blv0',0],['blv1',1]].forEach(p=>{
+    const el=document.getElementById(p[0]);if(!el)return;
+    /* the <i> is a cover from the top/right; its size is the *unlit* remainder */
+    const pct=(100-mon.lv[p[1]]*100).toFixed(0)+'%';
+    if(p[0][0]==='h')el.style.width=pct;else el.style.height=pct;
+  });
+  ['hdrClip','monClip','bigClip'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.classList.toggle('hot',hot);});
+  drawTrace($('#monCanvas'),1.4,false);
+  const ov=$('#monOverlay');
+  if(ov&&!ov.hidden){
+    if(mon.panes.T)drawTrace($('#bigTrace'),2.2,true);
+    if(mon.panes.F)drawFFT($('#bigFFT'));
+  }
+  requestAnimationFrame(stepMonitor);
+}
+function drawTrace(cv,amp,grid){
+  if(!cv)return;const g=cv.getContext('2d');if(!g)return;
+  const w=cv.width,h=cv.height;
+  g.clearRect(0,0,w,h);
+  if(grid){g.strokeStyle='#eef0f4';g.beginPath();
+    for(let i=1;i<4;i++){g.moveTo(0,h*i/4);g.lineTo(w,h*i/4);}g.stroke();}
+  for(let ch=0;ch<2;ch++){
+    g.strokeStyle=PALETTE[ch];g.lineWidth=1.4;g.beginPath();
+    for(let x=0;x<=w;x+=2){
+      const y=h/2+h*0.19*amp*Math.sin(x*0.055+mon.t*(ch?2.3:3.1)+ch*2.1)*
+        (0.55+0.45*Math.sin(mon.t*0.8+ch))+(mon.paused?0:(Math.random()-0.5)*2.2)+
+        (ch?h*0.06:-h*0.06);
+      if(x===0)g.moveTo(x,y);else g.lineTo(x,y);
+    }
+    g.stroke();
+  }
+}
+function drawFFT(cv){
+  if(!cv)return;const g=cv.getContext('2d');if(!g)return;
+  const w=cv.width,h=cv.height;
+  g.clearRect(0,0,w,h);
+  g.beginPath();g.moveTo(0,h);
+  for(let x=0;x<=w;x+=2){
+    const f=x/w*500;
+    let y=-50+10*Math.exp(-f/300);
+    PKF.forEach(p=>{y+=p[2]/(1+Math.pow((f-p[0])/p[1],2));});
+    y+=(mon.paused?0:(Math.random()-0.5)*6);
+    const py=h-( (y+60)/100 )*h;
+    g.lineTo(x,Math.max(2,Math.min(h,py)));
+  }
+  g.lineTo(w,h);g.closePath();
+  g.fillStyle='rgba(79,70,229,.12)';g.fill();
+  g.strokeStyle='#4f46e5';g.lineWidth=1.2;g.stroke();
+}
+$('#monitorMini').addEventListener('click',()=>{$('#monOverlay').hidden=false;});
+$('#monClose').addEventListener('click',()=>{$('#monOverlay').hidden=true;});
+$('#monOverlay').addEventListener('click',e=>{if(e.target.id==='monOverlay')$('#monOverlay').hidden=true;});
+$('#popOut').addEventListener('click',()=>toast('In production this pops the monitor out as its own window.'));
+function setPane(k,onOff){
+  mon.panes[k]=onOff;
+  const map={T:'paneT',F:'paneF',L:'paneL'};
+  const el=document.getElementById(map[k]);if(el)el.style.visibility=onOff?'visible':'hidden';
+  $$('.kbd-chips .btn').forEach(b=>{if(b.dataset.pane===k)b.classList.toggle('on',onOff);});
+}
+$$('.kbd-chips .btn').forEach(b=>b.addEventListener('click',()=>{
+  const k=b.dataset.pane;
+  if(k==='P'){mon.paused=!mon.paused;b.classList.toggle('on',mon.paused);}
+  else setPane(k,!mon.panes[k]);
+}));
+document.addEventListener('keydown',e=>{
+  const tag=(e.target&&e.target.tagName)||'';
+  if(tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')return;
+  const ov=$('#monOverlay');
+  if(ov.hidden)return;
+  const k=e.key.toLowerCase();
+  if(k==='escape'){ov.hidden=true;}
+  else if(k==='t')setPane('T',!mon.panes.T);
+  else if(k==='f')setPane('F',!mon.panes.F);
+  else if(k==='l')setPane('L',!mon.panes.L);
+  else if(k==='p'){mon.paused=!mon.paused;
+    $$('.kbd-chips .btn').forEach(b=>{if(b.dataset.pane==='P')b.classList.toggle('on',mon.paused);});}
+});
+
+/* ---------------- narrow mode / drawer / dev bar ---------------- */
+$('#narrowBtn').addEventListener('click',()=>{
+  document.body.classList.toggle('narrow');
+  document.body.classList.remove('tray-open');
+  $('#narrowBtn').classList.toggle('active',document.body.classList.contains('narrow'));
+  drawPlot();
+});
+$('#hamburger').addEventListener('click',()=>document.body.classList.toggle('tray-open'));
+$('#scrim').addEventListener('click',()=>document.body.classList.remove('tray-open'));
+
+/* ---------------- boot ---------------- */
+if(typeof ResizeObserver!=='undefined'){
+  new ResizeObserver(()=>drawPlot()).observe(host);
+}else{
+  window.addEventListener('resize',drawPlot);
+}
+setStage('acquire');
+syncArm();
+renderTray();
+pushHist();
+requestAnimationFrame(stepMonitor);
+})();
+</script>
+</body>
+</html>

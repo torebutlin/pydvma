@@ -1,0 +1,1386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pydvma · Option A — Refined three-pane</title>
+<style>
+:root{
+  --bg:#f4f5f7; --surface:#ffffff; --border:#e3e6eb; --text:#17203a; --muted:#66708a;
+  --radius:10px; --shadow:0 1px 3px rgba(16,24,40,.07);
+  --green:#16a34a; --indigo:#4f46e5; --amber:#d97706; --red:#dc2626; --blue:#2563eb;
+  --mono:ui-monospace, Menlo, Consolas, monospace;
+}
+*{box-sizing:border-box; margin:0; padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font:13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow:hidden;
+}
+button{font:inherit; color:inherit; background:none; border:none; cursor:pointer}
+input,select{font:inherit; color:inherit}
+kbd{font:11px var(--mono); background:#eef1f5; border:1px solid var(--border); border-bottom-width:2px; border-radius:4px; padding:1px 5px}
+
+/* ---------- dev toolbar ---------- */
+.devbar{
+  position:fixed; top:8px; right:10px; z-index:100;
+  display:flex; align-items:center; gap:8px;
+  border:1.5px dashed #b3bac9; border-radius:8px; background:rgba(255,255,255,.92);
+  padding:4px 8px; font-size:11px; color:var(--muted);
+}
+.devbar .tag{background:#eef1f5; border-radius:4px; padding:1px 6px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; font-size:10px}
+.devbar button{border:1px solid var(--border); border-radius:6px; padding:2px 8px; background:#fff; font-size:11px}
+.devbar button.active{background:#e0e7ff; border-color:#a5b4fc; color:#3730a3}
+
+/* ---------- app frame ---------- */
+.app{height:100vh; display:flex; flex-direction:column; background:var(--bg)}
+body.forced .app{max-width:900px; margin:0 auto; border-left:1px solid var(--border); border-right:1px solid var(--border)}
+
+.appbar{
+  flex:0 0 46px; display:flex; align-items:center; gap:16px; padding:0 16px;
+  background:var(--surface); border-bottom:1px solid var(--border);
+}
+.brand{font-size:15px; font-weight:700; letter-spacing:-.01em}
+.brand small{font-weight:500; color:var(--muted); margin-left:6px; font-size:12px}
+.devinfo{color:var(--muted); font-size:11.5px; font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.hdr-levels{margin-left:auto; display:flex; align-items:center; gap:8px; flex:0 0 auto}
+.hdr-levels .lbl{font-size:10px; color:var(--muted); font-family:var(--mono)}
+.hmeter{width:52px; height:6px; background:#eef1f5; border-radius:3px; overflow:hidden}
+.hmeter i{display:block; height:100%; width:20%; border-radius:3px;
+  background:linear-gradient(90deg,#16a34a 0 62%,#f59e0b 62% 85%,#dc2626 85% 100%);
+  background-size:52px 100%; background-repeat:no-repeat}
+.clipflag{font-size:10px; font-weight:700; letter-spacing:.06em; color:#c6ccd8; padding:2px 6px; border-radius:5px; border:1px solid var(--border)}
+.clipflag.on{color:#fff; background:var(--red); border-color:var(--red); animation:clipblink .5s steps(2) infinite}
+@keyframes clipblink{50%{opacity:.55}}
+
+.main{flex:1; display:flex; min-height:0}
+
+/* ---------- section label ---------- */
+.seclabel{font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; margin-bottom:6px; display:flex; align-items:center; gap:6px}
+
+/* ---------- left rail ---------- */
+.rail-left{
+  flex:0 0 260px; background:var(--surface); border-right:1px solid var(--border);
+  display:flex; flex-direction:column; overflow-y:auto; transition:flex-basis .15s ease;
+}
+.rail-left .railhead{display:flex; align-items:center; justify-content:flex-end; padding:6px 8px 0}
+.railbtn{width:24px; height:24px; border-radius:6px; color:var(--muted); font-size:12px; display:inline-flex; align-items:center; justify-content:center}
+.railbtn:hover{background:#eef1f5}
+.rail-left .sec{padding:8px 12px 14px; border-bottom:1px solid #f0f2f5}
+.rail-left .iconrail{display:none; flex-direction:column; align-items:center; gap:6px; padding:8px 0}
+.iconrail button{width:34px; height:30px; border:1px solid var(--border); border-radius:8px; font-size:10.5px; font-weight:700; color:var(--muted); background:#fff}
+.iconrail button.active{background:#e0e7ff; border-color:#a5b4fc; color:#3730a3}
+.iconrail hr{width:22px; border:none; border-top:1px solid var(--border); margin:4px 0}
+.rail-left.collapsed{flex-basis:48px}
+.rail-left.collapsed .sec{display:none}
+.rail-left.collapsed .iconrail{display:flex}
+
+/* vertical segmented view control */
+.seg-v{display:flex; flex-direction:column; border:1px solid var(--border); border-radius:8px; overflow:hidden}
+.seg-v button{padding:7px 10px; text-align:left; background:#fff; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center}
+.seg-v button:last-child{border-bottom:none}
+.seg-v button:hover{background:#f7f8fa}
+.seg-v button.active{background:#eef2ff; color:#3730a3; font-weight:600; box-shadow:inset 3px 0 0 var(--indigo)}
+.seg-v button small{color:var(--muted); font-weight:400; font-size:10.5px}
+
+/* axes section */
+.axgrid{display:grid; grid-template-columns:auto 1fr 1fr; gap:5px 6px; align-items:center; margin-top:6px}
+.axgrid label{font-size:11px; color:var(--muted); font-family:var(--mono)}
+.axfield{width:100%; padding:3px 6px; border:1px solid var(--border); border-radius:6px; font:11px var(--mono); background:#fff; color:var(--text)}
+.axbtnrow{display:flex; gap:6px; flex-wrap:wrap}
+.mini{padding:4px 8px; border:1px solid var(--border); border-radius:7px; background:#fff; font-size:11.5px; color:var(--text)}
+.mini:hover{background:#f7f8fa}
+.mini:active{background:#eef1f5}
+.mini[disabled]{opacity:.45; cursor:default}
+
+/* line list */
+.linetools{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px}
+.stepper{display:flex; align-items:center; gap:2px; margin-left:auto}
+.stepper .mini{padding:2px 7px}
+.stepper .steplabel{font:11px var(--mono); color:var(--text); min-width:44px; text-align:center}
+.linelist{display:flex; flex-direction:column; gap:2px}
+.lrow{display:flex; align-items:center; gap:8px; padding:4px 6px; border-radius:7px; cursor:default}
+.lrow:hover{background:#f7f8fa}
+.lrow.hl{background:#f1f5fd}
+.lrow.sel{background:#e7eefc; box-shadow:inset 0 0 0 1px #c7d7f5}
+.chip{width:16px; height:16px; border-radius:5px; flex:0 0 auto; border:2px solid transparent; cursor:pointer}
+.chip.fade{opacity:.25}
+.chip.off{background:#fff !important; border-color:#c6ccd8}
+.lrow .lab{flex:1; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.lrow.fadelab .lab{color:#a6adbd}
+.lrow.offlab .lab{color:#c1c7d2; text-decoration:line-through}
+.lrow .lab input{width:100%; font-size:12px; padding:1px 4px; border:1px solid var(--indigo); border-radius:4px}
+.lrow .st{font:9.5px var(--mono); color:var(--muted); width:30px; text-align:right}
+
+/* legend section */
+.legrow{display:flex; align-items:center; gap:8px}
+.legrow select{padding:3px 6px; border:1px solid var(--border); border-radius:6px; background:#fff; font-size:12px}
+
+/* ---------- centre column ---------- */
+.centre{flex:1; min-width:0; display:flex; flex-direction:column; padding:10px 12px; gap:8px}
+
+.actions{display:flex; gap:8px; align-items:center}
+.btn{padding:7px 14px; border-radius:8px; font-weight:600; font-size:12.5px; border:1px solid transparent; display:inline-flex; align-items:center; gap:6px}
+.btn:active{transform:translateY(1px)}
+.btn-log{background:var(--green); color:#fff; box-shadow:var(--shadow)}
+.btn-log:hover{background:#15803d}
+.btn-log[disabled]{background:#86c79e; cursor:default}
+.btn-amber{background:#fff; color:var(--amber); border-color:#f0c58a}
+.btn-amber:hover{background:#fff7ed}
+.btn-red{background:#fff; color:var(--red); border-color:#f3b4b4}
+.btn-red:hover{background:#fef2f2}
+.btn-blue{background:#fff; color:var(--blue); border-color:#b3ccf5}
+.btn-blue:hover{background:#eff6ff}
+.btn-indigo{background:var(--indigo); color:#fff}
+.btn-indigo:hover{background:#4338ca}
+.btn-tint{background:#eef2ff; color:#3730a3; border-color:#dde3fb}
+.btn-tint:hover{background:#e0e7ff}
+.icobtn{width:34px; height:32px; border:1px solid var(--border); border-radius:8px; background:#fff; display:inline-flex; align-items:center; justify-content:center; color:var(--muted)}
+.icobtn:hover{background:#f7f8fa}
+.icobtn.active{background:#e0e7ff; border-color:#a5b4fc; color:#3730a3}
+.tools-btn{display:none; margin-left:auto}
+
+/* status banner */
+.banner{
+  min-height:34px; display:flex; align-items:center; gap:10px; padding:5px 12px;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
+  font-size:12.5px;
+}
+.banner.idle .msg-text{color:var(--muted)}
+.chipbtn{padding:2px 10px; border-radius:999px; border:1px solid var(--border); background:#f7f8fa; font-size:11.5px; font-weight:600}
+.chipbtn:hover{background:#eef1f5}
+.chipbtn.warn{color:var(--red); border-color:#f3b4b4}
+.prog{flex:0 0 160px; height:6px; background:#eef1f5; border-radius:3px; overflow:hidden}
+.prog i{display:block; height:100%; width:0; background:var(--green); border-radius:3px; animation:progfill linear forwards}
+.prog.indet i{width:35%; animation:progslide 1s ease-in-out infinite}
+@keyframes progfill{to{width:100%}}
+@keyframes progslide{0%{margin-left:-35%}100%{margin-left:100%}}
+
+/* plot card (the hero) */
+.plot-card{
+  flex:1; min-height:280px; position:relative; display:flex; flex-direction:column;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow);
+}
+.ptoolbar{
+  flex:0 0 auto; display:flex; align-items:center; gap:4px; padding:6px 10px; border-bottom:1px solid #f0f2f5; flex-wrap:wrap;
+}
+.ptoolbar .sep{width:1px; height:18px; background:var(--border); margin:0 5px}
+.ptoolbar .axfield{width:56px}
+.ptoolbar label{font:10.5px var(--mono); color:var(--muted); margin:0 2px 0 6px}
+.tbtn{min-width:28px; height:26px; padding:0 7px; border:1px solid transparent; border-radius:7px; color:var(--muted); font-size:12.5px; display:inline-flex; align-items:center; justify-content:center; gap:4px}
+.tbtn:hover{background:#f2f4f7}
+.tbtn.active{background:#e0e7ff; border-color:#a5b4fc; color:#3730a3}
+.tbtn[disabled]{opacity:.4; cursor:default}
+.plot-host{flex:1; position:relative; min-height:0; overflow:hidden}
+.plot-host svg{display:block; position:absolute; inset:0}
+.plot-host svg text{font-family:var(--mono)}
+#sonoCanvas{position:absolute; display:none; image-rendering:pixelated}
+.rubber{position:absolute; border:1.5px dashed var(--indigo); background:rgba(79,70,229,.08); pointer-events:none; display:none; z-index:5}
+
+/* scope overlay (expanded) */
+.scope-overlay{
+  position:absolute; inset:10px; z-index:30; display:none; flex-direction:column;
+  background:#fff; border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:0 10px 40px rgba(16,24,40,.22);
+}
+.plot-card.scope-open .scope-overlay{display:flex}
+.ov-head{display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--border)}
+.ov-head .dot{width:8px; height:8px; border-radius:50%; background:var(--green); animation:livepulse 1.4s ease infinite}
+@keyframes livepulse{50%{opacity:.35}}
+.ov-head b{font-size:13px}
+.ov-head .kbdrow{display:flex; gap:4px; margin-left:14px}
+.ov-head .spacer{flex:1}
+.ov-body{flex:1; display:flex; min-height:0; gap:10px; padding:10px}
+.ov-plots{flex:1; display:flex; flex-direction:column; gap:10px; min-width:0}
+.ov-pane{flex:1; position:relative; border:1px solid #f0f2f5; border-radius:8px; overflow:hidden; min-height:0; background:#fbfcfe}
+.ov-pane canvas{position:absolute; inset:0; width:100%; height:100%}
+.ov-pane .cap{position:absolute; top:4px; left:8px; font:10px var(--mono); color:var(--muted); z-index:2}
+.ov-levels{flex:0 0 96px; border:1px solid #f0f2f5; border-radius:8px; padding:8px; display:flex; gap:12px; justify-content:center; background:#fbfcfe}
+.vbar{display:flex; flex-direction:column; align-items:center; gap:4px; font:10px var(--mono); color:var(--muted)}
+.vtrack{flex:1; width:20px; background:#eef1f5; border-radius:5px; position:relative; overflow:hidden}
+.vtrack i{position:absolute; left:0; right:0; bottom:0; height:20%;
+  background:linear-gradient(0deg,#16a34a 0 62%,#f59e0b 62% 85%,#dc2626 85% 100%);
+  background-size:100% 130px; background-position:bottom; background-repeat:no-repeat}
+.vclip{font-size:9px; font-weight:700; color:#c6ccd8}
+.vclip.on{color:var(--red); animation:clipblink .5s steps(2) infinite}
+.ov-foot{padding:5px 12px; border-top:1px solid #f0f2f5; font-size:11px; color:var(--muted)}
+.hidden{display:none !important}
+
+/* scope dock strip */
+.scope-dock{
+  flex:0 0 auto; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:var(--shadow); overflow:hidden;
+}
+.scope-dock.hidden-dock{display:none}
+.dock-head{display:flex; align-items:center; gap:8px; padding:3px 10px; border-bottom:1px solid #f0f2f5; color:var(--muted); font-size:11px}
+.dock-head .dot{width:7px; height:7px; border-radius:50%; background:var(--green); animation:livepulse 1.4s ease infinite}
+.dock-head .spacer{flex:1}
+.dock-body{display:flex; align-items:stretch; gap:10px; height:66px; padding:6px 10px}
+.scope-dock.mini .dock-body{display:none}
+#dockCanvas{flex:1; min-width:0; height:100%; border-radius:6px; background:#fbfcfe; border:1px solid #f0f2f5}
+.dock-levels{flex:0 0 130px; display:flex; flex-direction:column; justify-content:center; gap:7px}
+.dock-lrow{display:flex; align-items:center; gap:6px; font:9.5px var(--mono); color:var(--muted)}
+.lvl{flex:1; height:7px; background:#eef1f5; border-radius:4px; overflow:hidden}
+.lvl i{display:block; height:100%; width:20%; border-radius:4px;
+  background:linear-gradient(90deg,#16a34a 0 62%,#f59e0b 62% 85%,#dc2626 85% 100%);
+  background-size:96px 100%; background-repeat:no-repeat}
+.dock-clip{font-size:9px; font-weight:700; color:#c6ccd8; width:26px}
+.dock-clip.on{color:var(--red); animation:clipblink .5s steps(2) infinite}
+
+/* bottom bar */
+.bottombar{display:flex; gap:8px; align-items:center}
+.menu-wrap{position:relative}
+.menu{position:absolute; bottom:calc(100% + 4px); left:0; min-width:150px; background:#fff; border:1px solid var(--border);
+  border-radius:8px; box-shadow:0 6px 24px rgba(16,24,40,.14); padding:4px; display:none; z-index:40}
+.menu.open{display:block}
+.menu button{display:block; width:100%; text-align:left; padding:6px 10px; border-radius:6px; font-size:12.5px}
+.menu button:hover{background:#f2f4f7}
+.bottombar .note{margin-left:auto; font:10.5px var(--mono); color:var(--muted)}
+
+/* ---------- right rail ---------- */
+.rail-right{
+  flex:0 0 300px; background:var(--surface); border-left:1px solid var(--border);
+  display:flex; flex-direction:column; overflow-y:auto; transition:flex-basis .15s ease;
+}
+.rr-head{display:flex; align-items:center; padding:8px 10px 4px; gap:6px}
+.rr-head .seclabel{margin:0}
+.rr-head .spacer{flex:1}
+.rr-close{display:none}
+.rail-right.collapsed{flex-basis:36px}
+.rail-right.collapsed .acc, .rail-right.collapsed .rr-head .seclabel{display:none}
+.rail-right.collapsed .rr-vlabel{display:block}
+.rr-vlabel{display:none; writing-mode:vertical-rl; color:var(--muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin:10px auto}
+
+.acc{border-bottom:1px solid #f0f2f5}
+.acc-head{
+  width:100%; display:flex; align-items:center; gap:8px; padding:9px 12px;
+  font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:600; color:var(--muted); text-align:left;
+}
+.acc-head:hover{background:#f7f8fa; color:var(--text)}
+.acc .caret{margin-left:auto; font-size:10px; transition:transform .15s}
+.acc.open .caret{transform:rotate(180deg)}
+.acc.open .acc-head{color:var(--text)}
+.acc-body{display:none; padding:2px 12px 14px; font-size:12.5px}
+.acc.open .acc-body{display:block}
+.acc.flash .acc-head{animation:secflash 1s ease}
+@keyframes secflash{0%{background:#e0e7ff}100%{background:transparent}}
+
+.frow{display:flex; align-items:center; gap:8px; margin-bottom:8px}
+.frow label{flex:0 0 92px; color:var(--muted); font-size:11.5px}
+.frow select,.frow input[type=text],.frow input[type=number]{
+  flex:1; min-width:0; padding:4px 7px; border:1px solid var(--border); border-radius:7px; background:#fff; font-size:12px}
+.frow input[type=number]{font-family:var(--mono)}
+.frow.checks{gap:6px}
+.frow.checks label{flex:none; color:var(--text); font-size:12px; display:flex; gap:6px; align-items:center}
+.btnrow{display:flex; gap:6px; flex-wrap:wrap; margin-top:4px}
+.btnrow .btn{padding:5px 11px; font-size:12px}
+.sliderrow{margin-bottom:6px}
+.sliderrow .toprow{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px}
+.sliderrow .toprow span{font:11px var(--mono); color:var(--muted)}
+.sliderrow input[type=range]{width:100%; accent-color:var(--indigo)}
+.hint{font-size:11px; color:var(--muted); margin-top:6px}
+.readout{font:11px var(--mono); color:var(--text); background:#f7f8fa; border:1px solid var(--border); border-radius:6px; padding:4px 8px; margin-top:6px}
+
+/* scrim + narrow-mode bottom sheet */
+.scrim{display:none; position:fixed; inset:0; background:rgba(16,24,40,.28); z-index:55}
+body.sheet-open .scrim{display:block}
+
+body.narrow .rail-left{flex-basis:48px}
+body.narrow .rail-left .sec{display:none}
+body.narrow .rail-left .iconrail{display:flex}
+body.narrow .rail-left .railhead{display:none}
+body.narrow .tools-btn{display:inline-flex}
+body.narrow .actions{flex-wrap:wrap}
+body.narrow .devinfo{display:none}
+body.narrow .rail-right{
+  position:fixed; left:50%; bottom:0; transform:translate(-50%,105%);
+  width:min(680px,96vw); max-height:62vh; z-index:60; flex-basis:auto;
+  border:1px solid var(--border); border-bottom:none; border-radius:14px 14px 0 0;
+  box-shadow:0 -8px 30px rgba(16,24,40,.2); transition:transform .25s ease;
+}
+body.narrow.sheet-open .rail-right{transform:translate(-50%,0)}
+body.narrow .rr-collapse{display:none}
+body.narrow .rr-close{display:inline-flex}
+body.narrow .rail-right .rr-vlabel{display:none}
+body.narrow .rail-right .acc{display:block}
+
+/* honest media fallback — same narrow state below 1000px */
+@media (max-width:1000px){
+  .rail-left{flex-basis:48px}
+  .rail-left .sec{display:none}
+  .rail-left .iconrail{display:flex}
+  .rail-left .railhead{display:none}
+  .tools-btn{display:inline-flex}
+  .actions{flex-wrap:wrap}
+  .devinfo{display:none}
+  .rail-right{
+    position:fixed; left:50%; bottom:0; transform:translate(-50%,105%);
+    width:min(680px,96vw); max-height:62vh; z-index:60; flex-basis:auto;
+    border:1px solid var(--border); border-bottom:none; border-radius:14px 14px 0 0;
+    box-shadow:0 -8px 30px rgba(16,24,40,.2); transition:transform .25s ease;
+  }
+  body.sheet-open .rail-right{transform:translate(-50%,0)}
+  .rr-collapse{display:none}
+  .rr-close{display:inline-flex}
+  .rail-right .rr-vlabel{display:none}
+  .rail-right .acc{display:block}
+}
+</style>
+</head>
+<body>
+
+<div class="devbar">
+  <span class="tag">mockup</span>
+  <span>pydvma · Option A — Refined three-pane</span>
+  <button id="narrowBtn" title="Force the ≤1000px narrow layout">⬄ Narrow</button>
+</div>
+
+<div class="app">
+  <header class="appbar">
+    <div class="brand">pydvma<small>Logger</small></div>
+    <div class="devinfo" id="devinfo">NI USB-6003 (Dev3) · fs 44100 Hz · 2 ch · 2.0 s</div>
+    <div class="hdr-levels" title="Live input levels (always visible)">
+      <span class="lbl">ch0</span><div class="hmeter"><i id="hm0"></i></div>
+      <span class="lbl">ch1</span><div class="hmeter"><i id="hm1"></i></div>
+      <span class="clipflag" id="hdrClip">CLIP</span>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- ================= LEFT RAIL ================= -->
+    <aside class="rail-left" id="leftRail">
+      <div class="railhead">
+        <button class="railbtn" id="leftCollapse" title="Collapse to icon rail">«</button>
+      </div>
+
+      <div class="iconrail" id="iconRail">
+        <button data-view="time"  title="Time view">T</button>
+        <button data-view="freq"  title="Frequency view">F</button>
+        <button data-view="tf"    title="Transfer function view">TF</button>
+        <button data-view="sono"  title="Sonogram view">S</button>
+        <hr>
+        <button id="leftExpand" title="Expand rail">»</button>
+      </div>
+
+      <div class="sec">
+        <div class="seclabel">View</div>
+        <div class="seg-v" id="viewSeg">
+          <button data-view="time" class="active">Time <small>V vs s</small></button>
+          <button data-view="freq">Frequency <small>dB vs Hz</small></button>
+          <button data-view="tf">Transfer Function <small>|H| + γ²</small></button>
+          <button data-view="sono">Sonogram <small>Hz vs s</small></button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="seclabel">Axes</div>
+        <div class="axbtnrow">
+          <button class="mini" data-act="autox" title="Autoscale x-axis">Auto X</button>
+          <button class="mini" data-act="autoy" title="Autoscale y-axis">Auto Y</button>
+          <button class="mini" data-act="zback" title="Previous zoom">⟲</button>
+          <button class="mini" data-act="zfwd" title="Next zoom">⟳</button>
+        </div>
+        <div class="axgrid">
+          <label>x</label>
+          <input class="axfield" data-ax="xmin" title="x min">
+          <input class="axfield" data-ax="xmax" title="x max">
+          <label>y</label>
+          <input class="axfield" data-ax="ymin" title="y min">
+          <input class="axfield" data-ax="ymax" title="y max">
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="seclabel">Lines</div>
+        <div class="linetools">
+          <button class="mini" id="btnAll" title="All lines on">All</button>
+          <button class="mini" id="btnNone" title="All lines off">None</button>
+          <button class="mini" id="btnSoloSet" title="Show only the highlighted set">Solo set</button>
+          <button class="mini" id="btnSoloCh" title="Show only the selected channel">Solo chan</button>
+        </div>
+        <div class="linetools">
+          <span style="font-size:11px;color:var(--muted)">Step sets</span>
+          <div class="stepper">
+            <button class="mini" id="stepPrev" title="Highlight previous set">&lt;</button>
+            <span class="steplabel" id="stepLabel">–</span>
+            <button class="mini" id="stepNext" title="Highlight next set">&gt;</button>
+          </div>
+        </div>
+        <div class="linelist" id="lineList"></div>
+        <div class="hint">Chip: click = on / fade / off · double-click a label to rename</div>
+      </div>
+
+      <div class="sec">
+        <div class="seclabel">Legend</div>
+        <div class="legrow">
+          <label style="display:flex;gap:6px;align-items:center;font-size:12px">
+            <input type="checkbox" id="legendShow" checked> Show
+          </label>
+          <select id="legendPos" title="Legend position">
+            <option value="ne">top right</option>
+            <option value="nw">top left</option>
+            <option value="se">bottom right</option>
+            <option value="sw">bottom left</option>
+          </select>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ================= CENTRE ================= -->
+    <section class="centre">
+      <div class="actions">
+        <button class="icobtn active" id="scopeToggle" title="Show / hide oscilloscope strip">
+          <svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+            <path d="M1 7h3l2-5 3 10 2-5h6"/>
+          </svg>
+        </button>
+        <button class="btn btn-log" id="btnLog">● Log Data</button>
+        <button class="btn btn-amber" id="btnDelLast">Delete Last</button>
+        <button class="btn btn-red" id="btnDelAll">Delete All</button>
+        <button class="btn btn-blue" id="btnLoad">Load Data…</button>
+        <button class="btn btn-tint tools-btn" id="btnTools">Tools ▴</button>
+      </div>
+
+      <div class="banner idle" id="banner"><span class="msg-text">Ready.</span></div>
+
+      <div class="plot-card" id="plotCard">
+        <div class="ptoolbar">
+          <button class="tbtn active" id="toolBox" title="Box zoom — drag a rectangle on the plot">⛶</button>
+          <button class="tbtn" id="toolPan" title="Pan">✋</button>
+          <span class="sep"></span>
+          <button class="tbtn" data-act="zback" title="Previous zoom">⟲</button>
+          <button class="tbtn" data-act="zfwd" title="Next zoom">⟳</button>
+          <span class="sep"></span>
+          <button class="tbtn" data-act="autox" title="Autoscale x-axis" style="font-size:11px;font-weight:600">Auto X</button>
+          <button class="tbtn" data-act="autoy" title="Autoscale y-axis" style="font-size:11px;font-weight:600">Auto Y</button>
+          <span class="sep"></span>
+          <label>x</label>
+          <input class="axfield" data-ax="xmin" title="x min">
+          <input class="axfield" data-ax="xmax" title="x max">
+          <label>y</label>
+          <input class="axfield" data-ax="ymin" title="y min">
+          <input class="axfield" data-ax="ymax" title="y max">
+        </div>
+
+        <div class="plot-host" id="plotHost">
+          <div id="plotSvgWrap" style="position:absolute;inset:0"></div>
+          <canvas id="sonoCanvas"></canvas>
+          <div class="rubber" id="rubber"></div>
+        </div>
+
+        <!-- expanded oscilloscope overlay -->
+        <div class="scope-overlay" id="scopeOverlay">
+          <div class="ov-head">
+            <span class="dot"></span><b>Oscilloscope</b>
+            <span style="font:10.5px var(--mono);color:var(--muted)">live · fs 44100 Hz</span>
+            <div class="kbdrow"><kbd>T</kbd><kbd>F</kbd><kbd>L</kbd><kbd>P</kbd></div>
+            <span class="spacer"></span>
+            <button class="tbtn" id="ovPopout" title="opens as own window in production">⧉</button>
+            <button class="tbtn" id="ovClose" title="Collapse back to strip">✕</button>
+          </div>
+          <div class="ov-body">
+            <div class="ov-plots">
+              <div class="ov-pane" id="ovTimePane"><span class="cap">time trace (V)</span><canvas id="ovTimeCanvas"></canvas></div>
+              <div class="ov-pane" id="ovFftPane"><span class="cap">FFT (dB, 0–500 Hz)</span><canvas id="ovFftCanvas"></canvas></div>
+            </div>
+            <div class="ov-levels" id="ovLevelsPane">
+              <div class="vbar"><div class="vclip" id="vclip0">CLIP</div><div class="vtrack"><i id="vl0"></i></div><span>ch0</span></div>
+              <div class="vbar"><div class="vclip" id="vclip1">CLIP</div><div class="vtrack"><i id="vl1"></i></div><span>ch1</span></div>
+            </div>
+          </div>
+          <div class="ov-foot">Keys: <kbd>T</kbd> time · <kbd>F</kbd> freq · <kbd>L</kbd> levels · <kbd>P</kbd> pause <span id="ovPaused" style="color:var(--amber);font-weight:600;display:none">· PAUSED</span></div>
+        </div>
+      </div>
+
+      <!-- docked scope strip -->
+      <div class="scope-dock" id="scopeDock">
+        <div class="dock-head">
+          <span class="dot"></span> Oscilloscope — live monitor
+          <span class="spacer"></span>
+          <button class="tbtn" id="dockExpand" title="Expand oscilloscope">⤢</button>
+          <button class="tbtn" id="dockMini" title="Collapse strip">▾</button>
+        </div>
+        <div class="dock-body">
+          <canvas id="dockCanvas"></canvas>
+          <div class="dock-levels">
+            <div class="dock-lrow"><span>ch0</span><div class="lvl"><i id="dl0"></i></div><span class="dock-clip" id="dc0">CLIP</span></div>
+            <div class="dock-lrow"><span>ch1</span><div class="lvl"><i id="dl1"></i></div><span class="dock-clip" id="dc1">CLIP</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bottombar">
+        <button class="btn btn-tint" id="btnSaveData" title="Save all logged sets to a .dvma file">Save Dataset</button>
+        <div class="menu-wrap">
+          <button class="btn btn-tint" id="btnSaveFig">Save Figure ▾</button>
+          <div class="menu" id="figMenu">
+            <button data-fmt="png">PNG (300 dpi)</button>
+            <button data-fmt="pdf">PDF (vector)</button>
+          </div>
+        </div>
+        <span class="note" id="dataNote">–</span>
+      </div>
+    </section>
+
+    <!-- ================= RIGHT RAIL ================= -->
+    <aside class="rail-right" id="rightRail">
+      <div class="rr-head">
+        <div class="seclabel" style="font-size:11px">Tools</div>
+        <span class="spacer"></span>
+        <button class="railbtn rr-collapse" id="rightCollapse" title="Collapse tools rail">»</button>
+        <button class="railbtn rr-close" id="sheetClose" title="Close tools">✕</button>
+      </div>
+      <div class="rr-vlabel">Tools</div>
+
+      <div class="acc" id="sec-acq">
+        <button class="acc-head">Acquisition Settings <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="frow"><label>Device</label>
+            <select id="acqDevice">
+              <option value="6003">NI USB-6003 (Dev3)</option>
+              <option value="6212">NI USB-6212 (Dev2)</option>
+              <option value="9234">cDAQ1Mod1 — NI 9234</option>
+              <option value="sd">soundcard (sounddevice)</option>
+            </select>
+          </div>
+          <div class="frow"><label>Sample rate</label>
+            <select id="acqFs"><option>8192 Hz</option><option selected>44100 Hz</option><option>51200 Hz</option></select>
+          </div>
+          <div class="frow"><label>Channels</label><input type="number" value="2" min="1" max="8" id="acqCh"></div>
+          <div class="frow"><label>Stored time</label><input type="number" value="2.0" step="0.5" min="0.5" id="acqT"> <span style="color:var(--muted);font-size:11px">s</span></div>
+          <div class="frow checks">
+            <label><input type="checkbox" id="pretrig"> Pretrigger</label>
+            <label style="color:var(--muted);font-size:11px">samples <input type="number" value="1000" style="width:64px;padding:2px 5px;border:1px solid var(--border);border-radius:6px;font:11px var(--mono)"></label>
+          </div>
+          <div class="hint">Pretrigger arms Log Data to wait for a level crossing on channel 0.</div>
+        </div>
+      </div>
+
+      <div class="acc" id="sec-gen">
+        <button class="acc-head">Generate Output <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="frow"><label>Signal</label>
+            <select><option>none</option><option>pseudo-random noise</option><option>swept sine</option><option>gaussian pulse</option></select>
+          </div>
+          <div class="frow"><label>Amplitude</label><input type="number" value="1.0" step="0.1" min="0" max="10"> <span style="color:var(--muted);font-size:11px">V</span></div>
+          <div class="hint">Output plays on ao0 during logging (hardware-timed AO where the device supports it).</div>
+        </div>
+      </div>
+
+      <div class="acc" id="sec-freq">
+        <button class="acc-head">Frequency Analysis <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="frow"><label>Window</label>
+            <select id="fftWindow"><option>hann</option><option>hamming</option><option>blackman</option><option>flattop</option><option>rectangular</option></select>
+          </div>
+          <div class="frow"><label>Averaging</label>
+            <select><option>None</option><option>Within set</option><option>Across sets</option></select>
+          </div>
+          <div class="btnrow"><button class="btn btn-indigo" id="btnCalcFft">Calc FFT</button></div>
+        </div>
+      </div>
+
+      <div class="acc" id="sec-tf">
+        <button class="acc-head">Transfer Function <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="frow"><label>Window</label>
+            <select><option>hann</option><option>hamming</option><option>blackman</option><option>rectangular</option></select>
+          </div>
+          <div class="frow"><label>Averaging</label>
+            <select><option>None</option><option selected>Within set</option><option>Across sets</option></select>
+          </div>
+          <div class="sliderrow">
+            <div class="toprow"><label style="font-size:11.5px;color:var(--muted)">N frames</label><span id="nFramesVal">10</span></div>
+            <input type="range" id="nFrames" min="1" max="30" value="10" step="1">
+            <div class="readout" id="frameLen">Frame length = 5.45 s</div>
+          </div>
+          <div class="btnrow"><button class="btn btn-indigo" id="btnCalcTf">Calc TF</button></div>
+          <div class="hint">Coherence γ² is drawn per line (lighter, dashed, right axis). Slider updates the plot live.</div>
+        </div>
+      </div>
+
+      <div class="acc" id="sec-sono">
+        <button class="acc-head">Sonogram <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="sliderrow">
+            <div class="toprow"><label style="font-size:11.5px;color:var(--muted)">Resolution</label><span id="sonoResVal">80 bins</span></div>
+            <input type="range" id="sonoRes" min="30" max="140" value="80" step="5">
+            <div class="readout" id="sonoReadout">Δf ≈ 10.4 Hz · Δt ≈ 25 ms</div>
+          </div>
+          <div class="btnrow"><button class="btn btn-indigo" id="btnCalcSono">Calc Sonogram</button></div>
+        </div>
+      </div>
+
+      <div class="acc" id="sec-fit">
+        <button class="acc-head">Mode Fitting <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="hint" style="margin:0 0 8px">Box-zoom to a TF peak, then fit.</div>
+          <div class="btnrow">
+            <button class="btn btn-tint" data-fit="1">Fit 1 mode</button>
+            <button class="btn btn-tint" data-fit="2">Fit 2</button>
+            <button class="btn btn-tint" data-fit="3">Fit 3</button>
+          </div>
+          <div class="btnrow">
+            <button class="btn btn-amber" id="btnReject">Reject</button>
+            <button class="btn btn-tint" id="btnSummary">Summary</button>
+            <button class="btn btn-tint" id="btnRecon">Reconstruction</button>
+          </div>
+          <div class="readout" id="fitReadout">No modes fitted yet.</div>
+        </div>
+      </div>
+
+      <div class="acc" id="sec-cal">
+        <button class="acc-head">Calibration &amp; Scaling <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="btnrow">
+            <button class="btn btn-tint" id="btnXiw">× (iω)</button>
+            <button class="btn btn-tint" id="btnXinvIw">× 1/(iω)</button>
+          </div>
+          <div class="frow" style="margin-top:8px"><label>Reference</label>
+            <select id="refSel" style="font-family:var(--mono);font-size:11.5px"></select>
+          </div>
+          <div class="btnrow">
+            <button class="btn btn-indigo" id="btnBestMatch">Best Match</button>
+            <button class="btn btn-tint" id="btnUndoScale">Undo scaling</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="acc" id="sec-edit">
+        <button class="acc-head">Edit Dataset <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="btnrow">
+            <button class="btn btn-tint" id="btnClean">Clean Impulse</button>
+            <button class="btn btn-amber" id="btnDelSel">Delete highlighted set</button>
+          </div>
+          <div class="hint">Clean Impulse zeroes pre-impulse noise on hammer channels.</div>
+        </div>
+      </div>
+
+      <div class="acc" id="sec-export">
+        <button class="acc-head">Export <span class="caret">▾</span></button>
+        <div class="acc-body">
+          <div class="btnrow">
+            <button class="btn btn-tint" id="btnMat">MATLAB (.mat)</button>
+            <button class="btn btn-tint" id="btnCsv">CSV</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<script>
+'use strict';
+/* ============================================================
+   pydvma web-UI mockup · Option A — refined three-pane
+   All data is synthetic; no network, no libraries.
+   ============================================================ */
+const $ = id => document.getElementById(id);
+
+const PALETTE = ['#2563eb','#dc2626','#059669','#d97706','#7c3aed','#0891b2',
+                 '#be185d','#4d7c0f','#9333ea','#0e7490','#b91c1c','#15803d'];
+
+const VIEWCFG = {
+  time:{x:[0,2],   y:[-0.25,0.25], xt:[0,0.5,1,1.5,2], yt:[-0.2,-0.1,0,0.1,0.2], xl:'Time (s)', yl:'Amplitude (V)'},
+  freq:{x:[0,500], y:[-60,40],  xt:[0,100,200,300,400,500], yt:[-60,-40,-20,0,20,40], xl:'Frequency (Hz)', yl:'Amplitude (dB)'},
+  tf:  {x:[0,500], y:[-50,45],  xt:[0,100,200,300,400,500], yt:[-40,-20,0,20,40],     xl:'Frequency (Hz)', yl:'|H(f)| (dB)'},
+  sono:{x:[0,2],   y:[0,500],   xt:[0,0.5,1,1.5,2], yt:[0,100,200,300,400,500],       xl:'Time (s)', yl:'Frequency (Hz)'}
+};
+const VIEW_SECTION = {time:'sec-acq', freq:'sec-freq', tf:'sec-tf', sono:'sec-sono'};
+
+const state = {
+  view:'time', sets:[], setCounter:0, colorCounter:0,
+  curSet:0, curCh:0,
+  nFrames:10, sonoRes:80, recon:false,
+  logging:false, zoomDepth:0
+};
+let stash = null;          // deleted sets for Undo
+let trigTimer = null;      // pretrigger wait timeout
+
+/* ---------------- seeded rng ---------------- */
+function rng(seed){
+  return function(){
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+
+/* ---------------- dataset ---------------- */
+function addSet(name){
+  const idx = state.setCounter++;
+  const set = {name: name || ('set_'+idx), seed: Math.floor(Math.random()*1e9)+idx, channels:[]};
+  for (let ch=0; ch<2; ch++){
+    set.channels.push({ch, label:set.name+' · ch_'+ch, state:'on',
+                       color: PALETTE[state.colorCounter++ % PALETTE.length], _c:{}});
+  }
+  state.sets.push(set);
+  state.curSet = state.sets.length-1;
+  return set;
+}
+function allLines(){
+  const out=[];
+  state.sets.forEach((s,si)=> s.channels.forEach(c=> out.push({set:si, setName:s.name, seed:s.seed, chan:c})));
+  return out;
+}
+function clampCur(){
+  state.curSet = state.sets.length ? clamp(state.curSet,0,state.sets.length-1) : 0;
+}
+
+/* ---------------- synthetic signal data (cached per channel) ---------------- */
+function timeData(seed, chan){
+  if (chan._c.time) return chan._c.time;
+  const r = rng(seed + chan.ch*7919);
+  const f = 14 + r()*9 + chan.ch*5, decay = 2.1 + r()*1.6;
+  const amp = 0.15 + r()*0.09, phase = r()*6.28, t0 = 0.04 + r()*0.04;
+  const pts=[], N=560;
+  for (let i=0;i<N;i++){
+    const t = 2*i/(N-1);
+    let y;
+    if (t < t0) y = (r()-0.5)*0.006;
+    else { const tt=t-t0; y = amp*Math.exp(-decay*tt)*Math.sin(6.28318*f*tt+phase) + (r()-0.5)*0.007; }
+    pts.push([t, clamp(y,-0.25,0.25)]);
+  }
+  chan._c.time = pts; return pts;
+}
+const PEAKS=[80,190,310,460], ANTIS=[132,248,385];
+function freqData(seed, chan){
+  if (chan._c.freq) return chan._c.freq;
+  const r = rng(seed + chan.ch*104729 + 17);
+  const hs = [82,74,62,50].map(h=>h*(0.85+r()*0.3));
+  const ph = r()*6;
+  const pts=[], N=420;
+  for (let i=0;i<N;i++){
+    const f = 500*i/(N-1);
+    let y = -50 + 4*Math.sin(f/55+ph) + (r()-0.5)*4.5;
+    PEAKS.forEach((fp,k)=>{ y += hs[k] / (1 + Math.pow((f-fp)/(9+k),2)); });
+    pts.push([f, clamp(y,-60,40)]);
+  }
+  chan._c.freq = pts; return pts;
+}
+function tfData(seed, chan){
+  if (chan._c.tf) return chan._c.tf;
+  const r = rng(seed + chan.ch*1299709 + 71);
+  const hs = [52,58,48,40].map(h=>h*(0.88+r()*0.24));
+  const N=420, clean=[], noise=[], noise2=[], prox=[], dip=[], fArr=[];
+  for (let i=0;i<N;i++){
+    const f = 500*i/(N-1); fArr.push(f);
+    let y = -18 - f*0.008;
+    PEAKS.forEach((fp,k)=>{ y += hs[k] / (1 + Math.pow((f-fp)/(5+k*0.6),2)); });
+    let d=0;
+    ANTIS.forEach(fa=>{ d += 1/(1+Math.pow((f-fa)/5.5,2)); });
+    y -= d*26;
+    clean.push(y);
+    dip.push(clamp(d*0.55,0,0.85));
+    prox.push(1 + 2.2*d);
+    noise.push(r()-0.5); noise2.push(r()-0.5);
+  }
+  chan._c.tf = {f:fArr, clean, noise, noise2, prox, dip};
+  return chan._c.tf;
+}
+function tfAt(tf, i, N){                 // |H| dB at frame count N
+  return clamp(tf.clean[i] + tf.noise[i]*(7/Math.sqrt(N))*tf.prox[i], -50, 45);
+}
+function cohAt(tf, i, N){                // coherence 0..1
+  return clamp(1 - 0.004 - tf.dip[i] - Math.abs(tf.noise2[i])*(0.5/Math.sqrt(N))*tf.prox[i], 0.03, 1);
+}
+
+/* ---------------- status banner ---------------- */
+const OK = ()=>({label:'OK'});
+function showMsg(text, btns=[], opts={}){
+  const b = $('banner'); b.innerHTML=''; b.classList.toggle('idle', text==='Ready.');
+  const s=document.createElement('span'); s.className='msg-text'; s.textContent=text; b.appendChild(s);
+  if (opts.progress){
+    const p=document.createElement('div'); p.className='prog'+(opts.progress==='indet'?' indet':'');
+    const i=document.createElement('i');
+    if (opts.progress!=='indet') i.style.animationDuration=(opts.progress/1000)+'s';
+    p.appendChild(i); b.appendChild(p);
+  }
+  btns.forEach(bt=>{
+    const c=document.createElement('button');
+    c.className='chipbtn'+(bt.warn?' warn':''); c.textContent=bt.label;
+    c.onclick=()=>{ if (bt.fn) bt.fn(); else clearMsg(); };
+    b.appendChild(c);
+  });
+}
+function clearMsg(){ showMsg('Ready.'); }
+
+/* ---------------- line list ---------------- */
+function renderLines(){
+  const host = $('lineList'); host.innerHTML='';
+  const lines = allLines();
+  if (!lines.length){
+    const d=document.createElement('div'); d.className='hint'; d.textContent='No sets logged yet.';
+    host.appendChild(d);
+  }
+  lines.forEach(L=>{
+    const row=document.createElement('div');
+    row.className='lrow'+(L.set===state.curSet?' hl':'')
+      +(L.set===state.curSet && L.chan.ch===state.curCh?' sel':'')
+      +(L.chan.state==='fade'?' fadelab':'')+(L.chan.state==='off'?' offlab':'');
+    const chip=document.createElement('span');
+    chip.className='chip '+L.chan.state;
+    chip.style.background=L.chan.color;
+    chip.title = {on:'ON — click for FADE', fade:'FADE — click for OFF', off:'OFF — click for ON'}[L.chan.state];
+    chip.onclick=e=>{ e.stopPropagation();
+      L.chan.state = {on:'fade', fade:'off', off:'on'}[L.chan.state];
+      renderLines(); renderPlot();
+    };
+    const lab=document.createElement('span'); lab.className='lab'; lab.textContent=L.chan.label;
+    lab.title='Double-click to rename';
+    lab.ondblclick=e=>{ e.stopPropagation();
+      const inp=document.createElement('input'); inp.value=L.chan.label;
+      lab.textContent=''; lab.appendChild(inp); inp.focus(); inp.select();
+      let done=false;
+      const commit=()=>{ if (done) return; done=true;
+        L.chan.label = inp.value.trim() || L.chan.label; renderLines(); renderPlot(); };
+      inp.onblur=commit;
+      inp.onkeydown=ev=>{
+        if (ev.key==='Enter') commit();
+        if (ev.key==='Escape'){ done=true; renderLines(); }
+      };
+    };
+    const st=document.createElement('span'); st.className='st'; st.textContent=L.chan.state;
+    row.onclick=()=>{ state.curSet=L.set; state.curCh=L.chan.ch; renderLines(); renderPlot(); };
+    row.append(chip,lab,st);
+    host.appendChild(row);
+  });
+  $('stepLabel').textContent = state.sets.length ? state.sets[state.curSet].name : '–';
+  $('dataNote').textContent = state.sets.length
+    ? state.sets.length+' sets · '+lines.length+' lines · fs 44100 Hz' : 'no data';
+  // reference selector for Best Match
+  const ref=$('refSel'); const prev=ref.value; ref.innerHTML='';
+  lines.forEach(L=>{
+    const o=document.createElement('option');
+    o.value=L.setName+'/'+L.chan.ch; o.textContent=L.setName+' · ch_'+L.chan.ch;
+    ref.appendChild(o);
+  });
+  if (prev) ref.value=prev;
+}
+
+/* ---------------- plot rendering (SVG) ---------------- */
+function fmt(v){ return Math.abs(v)>=100 ? String(Math.round(v)) : String(+v.toFixed(2)); }
+
+function renderPlot(){
+  const host=$('plotHost'), wrap=$('plotSvgWrap');
+  const w=host.clientWidth, h=host.clientHeight;
+  if (w<60 || h<60){ return; }
+  const view=state.view, cfg=VIEWCFG[view];
+  const M={l:56, r: view==='tf'?56:18, t:16, b:38};
+  const pw=w-M.l-M.r, ph=h-M.t-M.b;
+  const X=v=> M.l + (v-cfg.x[0])/(cfg.x[1]-cfg.x[0])*pw;
+  const Y=v=> h-M.b - (v-cfg.y[0])/(cfg.y[1]-cfg.y[0])*ph;
+  const YR=v=> h-M.b - v*ph;            // right axis 0..1 (coherence)
+  const s=[];
+  s.push('<svg width="'+w+'" height="'+h+'" xmlns="http://www.w3.org/2000/svg">');
+  s.push('<rect x="'+M.l+'" y="'+M.t+'" width="'+pw+'" height="'+ph+'" fill="#fdfdfe" stroke="#e3e6eb"/>');
+  // grid + ticks
+  cfg.xt.forEach(v=>{ const x=X(v);
+    s.push('<line x1="'+x+'" y1="'+M.t+'" x2="'+x+'" y2="'+(h-M.b)+'" stroke="#f0f2f5"/>');
+    s.push('<line x1="'+x+'" y1="'+(h-M.b)+'" x2="'+x+'" y2="'+(h-M.b+4)+'" stroke="#c6ccd8"/>');
+    s.push('<text x="'+x+'" y="'+(h-M.b+16)+'" font-size="10" fill="#66708a" text-anchor="middle">'+fmt(v)+'</text>');
+  });
+  cfg.yt.forEach(v=>{ const y=Y(v);
+    s.push('<line x1="'+M.l+'" y1="'+y+'" x2="'+(w-M.r)+'" y2="'+y+'" stroke="#f0f2f5"/>');
+    s.push('<line x1="'+(M.l-4)+'" y1="'+y+'" x2="'+M.l+'" y2="'+y+'" stroke="#c6ccd8"/>');
+    s.push('<text x="'+(M.l-7)+'" y="'+(y+3)+'" font-size="10" fill="#66708a" text-anchor="end">'+fmt(v)+'</text>');
+  });
+  // axis titles
+  s.push('<text x="'+(M.l+pw/2)+'" y="'+(h-6)+'" font-size="11" fill="#66708a" text-anchor="middle">'+cfg.xl+'</text>');
+  s.push('<text x="12" y="'+(M.t+ph/2)+'" font-size="11" fill="#66708a" text-anchor="middle" transform="rotate(-90 12 '+(M.t+ph/2)+')">'+cfg.yl+'</text>');
+  if (view==='tf'){
+    [0,0.5,1].forEach(v=>{ const y=YR(v);
+      s.push('<line x1="'+(w-M.r)+'" y1="'+y+'" x2="'+(w-M.r+4)+'" y2="'+y+'" stroke="#c6ccd8"/>');
+      s.push('<text x="'+(w-M.r+7)+'" y="'+(y+3)+'" font-size="10" fill="#66708a">'+v+'</text>');
+    });
+    s.push('<text x="'+(w-10)+'" y="'+(M.t+ph/2)+'" font-size="11" fill="#66708a" text-anchor="middle" transform="rotate(90 '+(w-10)+' '+(M.t+ph/2)+')">Coherence γ²</text>');
+  }
+
+  const lines = allLines().filter(L=>L.chan.state!=='off');
+  const sono = view==='sono';
+  const sc=$('sonoCanvas');
+  sc.style.display = sono ? 'block' : 'none';
+
+  if (!lines.length){
+    s.push('<text x="'+(M.l+pw/2)+'" y="'+(M.t+ph/2)+'" font-size="13" fill="#a6adbd" text-anchor="middle">No visible data — press Log Data, or switch lines on</text>');
+    s.push('</svg>'); wrap.innerHTML=s.join(''); if (sono) sc.style.display='none';
+    return;
+  }
+
+  if (sono){
+    sc.style.left=M.l+1+'px'; sc.style.top=M.t+1+'px';
+    sc.style.width=(pw-2)+'px'; sc.style.height=(ph-2)+'px';
+    const L = lines.find(x=>x.set===state.curSet) || lines[0];
+    s.push('<text x="'+(w-M.r-6)+'" y="'+(M.t+14)+'" font-size="10" fill="#66708a" text-anchor="end">'+L.chan.label+' · '+state.sonoRes+' bins</text>');
+    s.push('</svg>'); wrap.innerHTML=s.join('');
+    drawSono(L);
+    return;
+  }
+
+  // polylines
+  lines.forEach(L=>{
+    const hlt = L.set===state.curSet;
+    const op = L.chan.state==='fade' ? 0.25 : 1;
+    let pts;
+    if (view==='time') pts = timeData(L.seed,L.chan).map(p=>[X(p[0]),Y(p[1])]);
+    else if (view==='freq') pts = freqData(L.seed,L.chan).map(p=>[X(p[0]),Y(p[1])]);
+    else {
+      const tf = tfData(L.seed,L.chan);
+      pts = tf.f.map((f,i)=>[X(f), Y(tfAt(tf,i,state.nFrames))]);
+      const cpts = tf.f.map((f,i)=>(X(f)).toFixed(1)+','+(YR(cohAt(tf,i,state.nFrames))).toFixed(1)).join(' ');
+      s.push('<polyline points="'+cpts+'" fill="none" stroke="'+L.chan.color+'" stroke-width="1.1" stroke-dasharray="4 3" opacity="'+(0.5*op)+'"/>');
+    }
+    const d = pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+    s.push('<polyline points="'+d+'" fill="none" stroke="'+L.chan.color+'" stroke-width="'+(hlt?2.4:1.6)+'" opacity="'+op+'" stroke-linejoin="round"/>');
+  });
+
+  // mode-fit reconstruction overlay (TF only)
+  if (view==='tf' && state.recon){
+    const tf = tfData(lines[0].seed, lines[0].chan);
+    const d = tf.f.map((f,i)=>(X(f)).toFixed(1)+','+(Y(clamp(tf.clean[i],-50,45))).toFixed(1)).join(' ');
+    s.push('<polyline points="'+d+'" fill="none" stroke="#17203a" stroke-width="1.6" stroke-dasharray="6 4" opacity="0.8"/>');
+    s.push('<text x="'+(M.l+8)+'" y="'+(M.t+14)+'" font-size="10" fill="#17203a">— reconstruction (4 modes)</text>');
+  }
+
+  // legend
+  if ($('legendShow').checked){
+    const rows = lines.map(L=>L.chan);
+    const lw = Math.min(200, 30 + 7*Math.max(...rows.map(c=>c.label.length)));
+    const lh = 10 + rows.length*15;
+    const pos = $('legendPos').value;
+    const lx = pos.includes('w') ? M.l+10 : w-M.r-lw-10;
+    const ly = pos.includes('n') ? M.t+10 : h-M.b-lh-10;
+    s.push('<g><rect x="'+lx+'" y="'+ly+'" width="'+lw+'" height="'+lh+'" rx="6" fill="#ffffff" fill-opacity="0.92" stroke="#e3e6eb"/>');
+    rows.forEach((c,i)=>{
+      const yy=ly+13+i*15;
+      s.push('<line x1="'+(lx+8)+'" y1="'+yy+'" x2="'+(lx+24)+'" y2="'+yy+'" stroke="'+c.color+'" stroke-width="2.4" opacity="'+(c.state==='fade'?0.25:1)+'"/>');
+      s.push('<text x="'+(lx+29)+'" y="'+(yy+3.5)+'" font-size="10" fill="'+(c.state==='fade'?'#a6adbd':'#17203a')+'">'+c.label.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</text>');
+    });
+    s.push('</g>');
+  }
+  s.push('</svg>');
+  wrap.innerHTML=s.join('');
+}
+
+/* ---------------- sonogram (canvas) ---------------- */
+function sonoColor(v){
+  v=clamp(v,0,1);
+  const stops=[[0,[13,18,62]],[0.35,[33,64,178]],[0.65,[8,178,200]],[1,[253,224,71]]];
+  for (let i=1;i<stops.length;i++){
+    if (v<=stops[i][0]){
+      const [p0,c0]=stops[i-1], [p1,c1]=stops[i], t=(v-p0)/(p1-p0);
+      return 'rgb('+Math.round(c0[0]+(c1[0]-c0[0])*t)+','+Math.round(c0[1]+(c1[1]-c0[1])*t)+','+Math.round(c0[2]+(c1[2]-c0[2])*t)+')';
+    }
+  }
+  return 'rgb(253,224,71)';
+}
+function drawSono(L){
+  const c=$('sonoCanvas'), tb=state.sonoRes, fb=Math.max(24, Math.round(tb*0.6));
+  c.width=tb; c.height=fb;
+  const ctx=c.getContext('2d');
+  const r=rng((L?L.seed:42)+9001);
+  const modes=[[80,1.0,1.0],[190,1.5,0.85],[310,2.1,0.7],[460,3.0,0.5]];
+  for (let yi=0; yi<fb; yi++){
+    const f = 500*(1 - yi/(fb-1));
+    for (let xi=0; xi<tb; xi++){
+      const t = 2*xi/(tb-1);
+      let v = 0.04 + r()*0.05;
+      modes.forEach(m=>{ v += m[2]*Math.exp(-0.5*Math.pow((f-m[0])/11,2))*Math.exp(-t*m[1]); });
+      v += 0.5*Math.exp(-Math.pow((t-0.05)*16,2));   // broadband impulse column
+      ctx.fillStyle=sonoColor(v);
+      ctx.fillRect(xi,yi,1,1);
+    }
+  }
+}
+
+/* ---------------- axis fields ---------------- */
+function updateAxisFields(){
+  const cfg=VIEWCFG[state.view];
+  document.querySelectorAll('[data-ax]').forEach(inp=>{
+    const k=inp.dataset.ax;
+    inp.value = k==='xmin'?fmt(cfg.x[0]) : k==='xmax'?fmt(cfg.x[1]) : k==='ymin'?fmt(cfg.y[0]) : fmt(cfg.y[1]);
+  });
+}
+
+/* ---------------- view switching + context link ---------------- */
+function setView(v, opts={}){
+  state.view=v;
+  document.querySelectorAll('#viewSeg button, #iconRail button[data-view]').forEach(b=>
+    b.classList.toggle('active', b.dataset.view===v));
+  renderPlot(); updateAxisFields();
+  if (opts.link!==false) openSec(VIEW_SECTION[v], true);
+}
+function openSec(id, flash){
+  document.querySelectorAll('.acc').forEach(a=>{
+    a.classList.toggle('open', a.id===id);
+    a.classList.remove('flash');
+  });
+  const el=$(id);
+  if (el && flash){ void el.offsetWidth; el.classList.add('flash'); }
+}
+document.querySelectorAll('#viewSeg button, #iconRail button[data-view]').forEach(b=>
+  b.addEventListener('click', ()=>setView(b.dataset.view)));
+
+document.querySelectorAll('.acc-head').forEach(hd=>
+  hd.addEventListener('click', ()=>{
+    const acc=hd.parentElement;
+    if (acc.classList.contains('open')){ acc.classList.remove('open'); }
+    else openSec(acc.id,false);
+  }));
+
+/* ---------------- line tools ---------------- */
+$('btnAll').onclick = ()=>{ allLines().forEach(L=>L.chan.state='on'); renderLines(); renderPlot(); };
+$('btnNone').onclick = ()=>{ allLines().forEach(L=>L.chan.state='off'); renderLines(); renderPlot(); };
+$('btnSoloSet').onclick = ()=>{
+  if (!state.sets.length) return;
+  allLines().forEach(L=>L.chan.state = (L.set===state.curSet)?'on':'off');
+  renderLines(); renderPlot();
+  showMsg('Solo: '+state.sets[state.curSet].name+' (both channels).',[OK()]);
+};
+$('btnSoloCh').onclick = ()=>{
+  if (!state.sets.length) return;
+  allLines().forEach(L=>L.chan.state = (L.chan.ch===state.curCh)?'on':'off');
+  renderLines(); renderPlot();
+  showMsg('Solo: ch_'+state.curCh+' across all sets.',[OK()]);
+};
+function stepSet(dir){
+  if (!state.sets.length) return;
+  state.curSet = (state.curSet + dir + state.sets.length) % state.sets.length;
+  renderLines(); renderPlot();
+}
+$('stepPrev').onclick = ()=>stepSet(-1);
+$('stepNext').onclick = ()=>stepSet(1);
+$('legendShow').onchange = renderPlot;
+$('legendPos').onchange = renderPlot;
+
+/* ---------------- log / load / delete ---------------- */
+function finishLog(){
+  const set=addSet();
+  renderLines(); renderPlot();
+  state.logging=false; $('btnLog').disabled=false;
+  showMsg('Logging complete. '+set.name+' added (2 channels, 2.0 s @ 44100 Hz).',[OK()]);
+}
+function doLogPhase(){
+  showMsg('Logging data for 2.0 seconds…',[],{progress:1500});
+  setTimeout(finishLog,1500);
+}
+$('btnLog').onclick = ()=>{
+  if (state.logging) return;
+  state.logging=true; $('btnLog').disabled=true;
+  if ($('pretrig').checked){
+    showMsg('Waiting for trigger on channel 0…',[{label:'Cancel', warn:true, fn:()=>{
+      clearTimeout(trigTimer); trigTimer=null;
+      state.logging=false; $('btnLog').disabled=false;
+      showMsg('Trigger wait cancelled.',[OK()]);
+    }}],{progress:'indet'});
+    trigTimer=setTimeout(()=>{
+      trigTimer=null;
+      showMsg('Trigger detected.');
+      setTimeout(doLogPhase,450);
+    },2000);
+  } else doLogPhase();
+};
+$('btnLoad').onclick = ()=>{
+  const set=addSet('plate_test');
+  set.channels.forEach((c,i)=>c.label='plate_test · ch_'+i);
+  renderLines(); renderPlot();
+  showMsg('Loaded plate_test.dvma — 1 set, 2 channels appended.',[OK()]);
+};
+function undoDelete(){
+  if (!stash) return;
+  if (stash.mode==='all') state.sets = stash.sets;
+  else state.sets.push(...stash.sets);
+  stash=null; clampCur(); renderLines(); renderPlot();
+  showMsg('Restored.',[OK()]);
+}
+$('btnDelLast').onclick = ()=>{
+  if (!state.sets.length){ showMsg('Nothing to delete.',[OK()]); return; }
+  const s=state.sets.pop(); stash={mode:'last', sets:[s]};
+  clampCur(); renderLines(); renderPlot();
+  showMsg(s.name+' deleted.',[{label:'Undo', fn:undoDelete}, OK()]);
+};
+$('btnDelAll').onclick = ()=>{
+  if (!state.sets.length){ showMsg('Nothing to delete.',[OK()]); return; }
+  stash={mode:'all', sets:state.sets}; state.sets=[];
+  clampCur(); renderLines(); renderPlot();
+  showMsg('All data deleted ('+stash.sets.length+' sets).',[{label:'Undo', fn:undoDelete}, OK()]);
+};
+$('btnDelSel').onclick = ()=>{
+  if (!state.sets.length){ showMsg('Nothing to delete.',[OK()]); return; }
+  const s=state.sets.splice(state.curSet,1)[0]; stash={mode:'last', sets:[s]};
+  clampCur(); renderLines(); renderPlot();
+  showMsg(s.name+' deleted.',[{label:'Undo', fn:undoDelete}, OK()]);
+};
+
+/* ---------------- compute actions ---------------- */
+$('btnCalcFft').onclick = ()=>{
+  setView('freq');
+  showMsg('FFT computed — '+$('fftWindow').value+' window, 420 spectral lines.',[OK()]);
+};
+$('btnCalcTf').onclick = ()=>{
+  setView('tf');
+  showMsg('Transfer functions computed — averaging within set, N = '+state.nFrames+' frames.',[OK()]);
+};
+$('btnCalcSono').onclick = ()=>{
+  setView('sono');
+  showMsg('Sonogram computed at '+state.sonoRes+' time bins.',[OK()]);
+};
+$('nFrames').addEventListener('input', e=>{
+  state.nFrames=+e.target.value;
+  $('nFramesVal').textContent=state.nFrames;
+  $('frameLen').textContent='Frame length = '+(60/(state.nFrames+1)).toFixed(2)+' s';
+  if (state.view==='tf') renderPlot();
+});
+$('sonoRes').addEventListener('input', e=>{
+  state.sonoRes=+e.target.value;
+  const fb=Math.max(24, Math.round(state.sonoRes*0.6));
+  $('sonoResVal').textContent=state.sonoRes+' bins';
+  $('sonoReadout').textContent='Δf ≈ '+(500/fb).toFixed(1)+' Hz · Δt ≈ '+Math.round(2000/state.sonoRes)+' ms';
+  if (state.view==='sono') renderPlot();
+});
+
+/* mode fitting */
+document.querySelectorAll('[data-fit]').forEach(b=> b.onclick=()=>{
+  const n=+b.dataset.fit;
+  const fns=[189.6, 310.4, 460.9].slice(0,n), zs=[0.012, 0.008, 0.006].slice(0,n);
+  $('fitReadout').textContent = 'fn = '+fns.map(f=>f.toFixed(1)).join(', ')+' Hz · ζ = '+zs.map(z=>z.toFixed(3)).join(', ');
+  if (state.view!=='tf') setView('tf');
+  showMsg('Fitted '+n+' mode'+(n>1?'s':'')+' in the zoomed band.',[{label:'Reject', warn:true, fn:()=>{ $('fitReadout').textContent='Fit rejected.'; clearMsg(); }}, OK()]);
+});
+$('btnReject').onclick = ()=>{ $('fitReadout').textContent='Last fit rejected.'; state.recon=false; renderPlot(); showMsg('Fit rejected.',[OK()]); };
+$('btnSummary').onclick = ()=>showMsg('Modal summary — 4 modes: 80.2, 189.6, 310.4, 460.9 Hz · ζ = 1.5%, 1.2%, 0.8%, 0.6%.',[OK()]);
+$('btnRecon').onclick = ()=>{
+  state.recon=!state.recon;
+  if (state.view!=='tf') setView('tf'); else renderPlot();
+  showMsg(state.recon?'Reconstruction overlaid (dashed) from fitted modes.':'Reconstruction hidden.',[OK()]);
+};
+
+/* calibration & scaling */
+$('btnXiw').onclick = ()=>showMsg('Converted data × (iω) — displacement → velocity.',[OK()]);
+$('btnXinvIw').onclick = ()=>showMsg('Converted data × 1/(iω) — velocity → displacement.',[OK()]);
+$('btnBestMatch').onclick = ()=>{
+  if (!state.sets.length){ showMsg('No data to scale.',[OK()]); return; }
+  showMsg('Best-match scaling ×0.914 applied (reference '+($('refSel').value||'set_0/0')+').',[{label:'Undo', fn:()=>showMsg('Scaling undone.',[OK()])}, OK()]);
+};
+$('btnUndoScale').onclick = ()=>showMsg('Scaling undone — data restored to logged units.',[OK()]);
+$('btnClean').onclick = ()=>{
+  if (!state.sets.length){ showMsg('No data.',[OK()]); return; }
+  showMsg('Impulse cleaned on '+state.sets[state.curSet].name+'/ch_0 — pre-trigger noise zeroed.',[{label:'Undo', fn:()=>showMsg('Clean undone.',[OK()])}, OK()]);
+};
+$('btnMat').onclick = ()=>showMsg('Exported logged_data.mat ('+state.sets.length+' sets).',[OK()]);
+$('btnCsv').onclick = ()=>showMsg('Exported logged_data_ch0.csv, logged_data_ch1.csv.',[OK()]);
+
+/* save */
+$('btnSaveData').onclick = ()=>showMsg('Dataset saved — logged_data_2026-07-03.dvma ('+state.sets.length+' sets).',[OK()]);
+$('btnSaveFig').onclick = e=>{ e.stopPropagation(); $('figMenu').classList.toggle('open'); };
+document.querySelectorAll('#figMenu button').forEach(b=> b.onclick=()=>{
+  $('figMenu').classList.remove('open');
+  showMsg('Figure saved — fig_'+state.view+'_2026-07-03.'+b.dataset.fmt+'.',[OK()]);
+});
+document.addEventListener('click', e=>{
+  if (!e.target.closest('.menu-wrap')) $('figMenu').classList.remove('open');
+});
+
+/* ---------------- axes / zoom toolbar ---------------- */
+document.querySelectorAll('[data-act]').forEach(b=> b.addEventListener('click', ()=>{
+  const act=b.dataset.act;
+  if (act==='autox'){ updateAxisFields(); renderPlot(); showMsg('X axis autoscaled.',[OK()]); }
+  if (act==='autoy'){ updateAxisFields(); renderPlot(); showMsg('Y axis autoscaled.',[OK()]); }
+  if (act==='zback'){
+    if (state.zoomDepth>0){ state.zoomDepth--; showMsg('Zoom: back (history '+state.zoomDepth+').',[OK()]); }
+    else showMsg('No earlier zoom state.',[OK()]);
+  }
+  if (act==='zfwd'){ showMsg('No later zoom state.',[OK()]); }
+}));
+let tool='box';
+$('toolBox').onclick = ()=>{ tool='box'; $('toolBox').classList.add('active'); $('toolPan').classList.remove('active'); $('plotHost').style.cursor='crosshair'; };
+$('toolPan').onclick = ()=>{ tool='pan'; $('toolPan').classList.add('active'); $('toolBox').classList.remove('active'); $('plotHost').style.cursor='grab'; };
+$('plotHost').style.cursor='crosshair';
+
+/* rubber-band box zoom */
+(function(){
+  const host=$('plotHost'), band=$('rubber');
+  let x0=0, y0=0, active=false;
+  host.addEventListener('pointerdown', e=>{
+    if (tool!=='box' || e.button!==0) return;
+    if ($('plotCard').classList.contains('scope-open')) return;
+    const r=host.getBoundingClientRect();
+    x0=e.clientX-r.left; y0=e.clientY-r.top; active=true;
+    band.style.display='block';
+    band.style.left=x0+'px'; band.style.top=y0+'px'; band.style.width='0'; band.style.height='0';
+    host.setPointerCapture(e.pointerId);
+  });
+  host.addEventListener('pointermove', e=>{
+    if (!active) return;
+    const r=host.getBoundingClientRect();
+    const x1=clamp(e.clientX-r.left,0,r.width), y1=clamp(e.clientY-r.top,0,r.height);
+    band.style.left=Math.min(x0,x1)+'px'; band.style.top=Math.min(y0,y1)+'px';
+    band.style.width=Math.abs(x1-x0)+'px'; band.style.height=Math.abs(y1-y0)+'px';
+  });
+  host.addEventListener('pointerup', e=>{
+    if (!active) return;
+    active=false; band.style.display='none';
+    const wpx=parseFloat(band.style.width), hpx=parseFloat(band.style.height);
+    if (wpx>10 && hpx>10){
+      state.zoomDepth++;
+      showMsg('Zoomed to selection (mock — axes unchanged). History depth '+state.zoomDepth+'.',[OK()]);
+    }
+  });
+})();
+
+/* ---------------- rails, narrow mode, sheet ---------------- */
+$('leftCollapse').onclick = ()=>$('leftRail').classList.add('collapsed');
+$('leftExpand').onclick = ()=>$('leftRail').classList.remove('collapsed');
+$('rightCollapse').onclick = ()=>{
+  const r=$('rightRail'); r.classList.toggle('collapsed');
+  $('rightCollapse').textContent = r.classList.contains('collapsed') ? '«' : '»';
+};
+$('narrowBtn').onclick = ()=>{
+  const on=!document.body.classList.contains('forced');
+  document.body.classList.toggle('forced', on);
+  document.body.classList.toggle('narrow', on || window.matchMedia('(max-width:1000px)').matches);
+  document.body.classList.remove('sheet-open');
+  $('narrowBtn').classList.toggle('active', on);
+  setTimeout(renderPlot,180);
+};
+const mq=window.matchMedia('(max-width:1000px)');
+function syncNarrow(){
+  document.body.classList.toggle('narrow', mq.matches || document.body.classList.contains('forced'));
+  if (!document.body.classList.contains('narrow')) document.body.classList.remove('sheet-open');
+  setTimeout(renderPlot,180);
+}
+if (mq.addEventListener) mq.addEventListener('change', syncNarrow); else mq.addListener(syncNarrow);
+$('btnTools').onclick = ()=>document.body.classList.toggle('sheet-open');
+$('sheetClose').onclick = ()=>document.body.classList.remove('sheet-open');
+$('scrim').onclick = ()=>document.body.classList.remove('sheet-open');
+
+/* device info in header follows the acquisition selector */
+$('acqDevice').onchange = e=>{
+  const names={ '6003':'NI USB-6003 (Dev3)','6212':'NI USB-6212 (Dev2)','9234':'cDAQ1Mod1 — NI 9234','sd':'soundcard' };
+  $('devinfo').textContent = names[e.target.value]+' · fs 44100 Hz · 2 ch · 2.0 s';
+};
+
+/* ---------------- oscilloscope (dock + overlay + header meters) ---------------- */
+$('scopeToggle').onclick = ()=>{
+  const dock=$('scopeDock');
+  dock.classList.toggle('hidden-dock');
+  $('scopeToggle').classList.toggle('active', !dock.classList.contains('hidden-dock'));
+  setTimeout(renderPlot,20);
+};
+$('dockMini').onclick = ()=>{
+  const d=$('scopeDock'); d.classList.toggle('mini');
+  $('dockMini').textContent = d.classList.contains('mini') ? '▴' : '▾';
+  setTimeout(renderPlot,20);
+};
+$('dockExpand').onclick = ()=>$('plotCard').classList.add('scope-open');
+$('ovClose').onclick = ()=>$('plotCard').classList.remove('scope-open');
+$('ovPopout').onclick = ()=>showMsg('Pop-out: opens the scope as its own window in production.',[OK()]);
+
+let scopePaused=false;
+document.addEventListener('keydown', e=>{
+  if (!$('plotCard').classList.contains('scope-open')) return;
+  if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  const k=e.key.toLowerCase();
+  if (k==='t') $('ovTimePane').classList.toggle('hidden');
+  else if (k==='f') $('ovFftPane').classList.toggle('hidden');
+  else if (k==='l') $('ovLevelsPane').classList.toggle('hidden');
+  else if (k==='p'){ scopePaused=!scopePaused; $('ovPaused').style.display=scopePaused?'inline':'none'; }
+  else if (k==='escape') $('plotCard').classList.remove('scope-open');
+  else return;
+  e.preventDefault();
+});
+
+function fitCanvas(c){
+  const dpr=window.devicePixelRatio||1;
+  const w=c.clientWidth, h=c.clientHeight;
+  if (w<4||h<4) return null;
+  if (c.width!==Math.round(w*dpr)||c.height!==Math.round(h*dpr)){ c.width=Math.round(w*dpr); c.height=Math.round(h*dpr); }
+  const ctx=c.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx,w,h};
+}
+let phase=0, lastFrame=0;
+const lvl=[0.3,0.3], clipUntil=[0,0];
+function drawTrace(c){
+  const f=fitCanvas(c); if (!f) return;
+  const {ctx,w,h}=f;
+  ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle='#eef1f5'; ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
+  for (let ch=0; ch<2; ch++){
+    ctx.strokeStyle=PALETTE[ch]; ctx.lineWidth=1.4; ctx.beginPath();
+    const amp=(h/2-6)*(0.35+0.5*lvl[ch]);
+    for (let x=0; x<=w; x+=2){
+      const y=h/2 + amp*Math.sin(x*0.045+phase*(1+ch*0.37)+ch*2.1)
+                  + (Math.random()-0.5)*amp*0.22;
+      if (x===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+}
+function drawFft(c){
+  const f=fitCanvas(c); if (!f) return;
+  const {ctx,w,h}=f;
+  ctx.clearRect(0,0,w,h);
+  for (let ch=0; ch<2; ch++){
+    ctx.strokeStyle=PALETTE[ch]; ctx.lineWidth=1.2; ctx.globalAlpha=ch?0.75:1; ctx.beginPath();
+    for (let x=0; x<=w; x+=2){
+      const fr=500*x/w;
+      let dB=-52+Math.random()*7;
+      PEAKS.forEach((fp,k)=>{ dB += (70-k*9)*(0.8+0.25*lvl[ch]) / (1+Math.pow((fr-fp)/8,2)); });
+      const y=h-4-((clamp(dB,-60,40)+60)/100)*(h-10);
+      if (x===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+}
+function tick(ts){
+  requestAnimationFrame(tick);
+  if (ts-lastFrame < 33) return;      // ~30 fps
+  lastFrame=ts;
+  if (!scopePaused){
+    phase+=0.28;
+    for (let ch=0; ch<2; ch++){
+      let v=0.34+0.2*Math.sin(ts/(760+ch*180)+ch*1.7)+Math.random()*0.14;
+      if (Math.random()<0.005) v=1.0;                  // occasional clip spike
+      lvl[ch]=v;
+      if (v>=0.97) clipUntil[ch]=ts+1000;              // latch 1 s
+    }
+  }
+  const anyClip = ts<clipUntil[0] || ts<clipUntil[1];
+  $('hdrClip').classList.toggle('on', anyClip);
+  ['hm0','hm1'].forEach((id,ch)=>{ $(id).style.width=(lvl[ch]*100)+'%'; });
+  const dock=$('scopeDock');
+  if (!dock.classList.contains('hidden-dock') && !dock.classList.contains('mini')){
+    if (!scopePaused) drawTrace($('dockCanvas'));
+    ['dl0','dl1'].forEach((id,ch)=>{ $(id).style.width=(lvl[ch]*100)+'%'; });
+    ['dc0','dc1'].forEach((id,ch)=>{ $(id).classList.toggle('on', ts<clipUntil[ch]); });
+  }
+  if ($('plotCard').classList.contains('scope-open') && !scopePaused){
+    drawTrace($('ovTimeCanvas'));
+    drawFft($('ovFftCanvas'));
+    ['vl0','vl1'].forEach((id,ch)=>{ $(id).style.height=(lvl[ch]*100)+'%'; });
+    ['vclip0','vclip1'].forEach((id,ch)=>{ $(id).classList.toggle('on', ts<clipUntil[ch]); });
+  }
+}
+
+/* ---------------- boot ---------------- */
+addSet(); addSet(); addSet();
+state.curSet=0; state.curCh=0;
+renderLines();
+updateAxisFields();
+openSec('sec-acq', false);
+renderPlot();
+syncNarrow();
+requestAnimationFrame(tick);
+let rsz=null;
+window.addEventListener('resize', ()=>{ clearTimeout(rsz); rsz=setTimeout(renderPlot,120); });
+</script>
+</body>
+</html>

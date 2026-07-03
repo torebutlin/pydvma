@@ -1,0 +1,1560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pydvma · Option C — Instrument rack</title>
+<style>
+/* ============ tokens (shared design language) ============ */
+:root{
+  --bg:#f4f5f7; --surface:#fff; --border:#e3e6eb; --text:#17203a; --muted:#66708a;
+  --radius:10px; --shadow:0 1px 3px rgba(16,24,40,.07);
+  --green:#16a34a; --red:#dc2626; --indigo:#4f46e5; --blue:#2563eb; --amber:#d97706;
+  --transport:#eceef2; --mon:#1b2130;
+  --mono:ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{background:var(--bg);color:var(--text);font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;}
+input,select{font:inherit;color:var(--text);}
+.mono{font-family:var(--mono);}
+.hidden{display:none !important;}
+.sec{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+.btn{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:5px 10px;font-size:12.5px;cursor:pointer;white-space:nowrap;}
+.btn:hover{border-color:#c9cfda;background:#fafbfc;}
+.btn.on{background:#eef0ff;border-color:#c7cdf9;color:var(--indigo);}
+.btn.indigo{background:var(--indigo);border-color:var(--indigo);color:#fff;}
+.btn.indigo:hover{background:#4338ca;}
+.btn.blue{color:var(--blue);border-color:#bfd3f7;}
+.btn.blue:hover{background:#f2f7ff;}
+.btn.wide{width:100%;justify-content:center;}
+.btn.sm{padding:3px 8px;font-size:11.5px;border-radius:6px;}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px;font-size:11px;border:1px solid var(--border);background:var(--surface);white-space:nowrap;}
+.chip.amber{background:#fef3c7;border-color:#fcd34d;color:#92400e;font-weight:600;}
+.chip.amber button{color:#92400e;text-decoration:underline;font-size:11px;}
+input[type=number],input[type=text],select{border:1px solid var(--border);border-radius:6px;padding:3px 6px;background:#fff;font-size:12px;}
+input[type=range]{accent-color:var(--indigo);}
+input[type=checkbox]{accent-color:var(--indigo);}
+
+/* ============ dev toolbar ============ */
+#devbar{position:fixed;top:8px;right:10px;z-index:200;display:flex;align-items:center;gap:8px;
+  border:1.5px dashed #9aa3b5;background:rgba(255,255,255,.88);border-radius:8px;padding:4px 10px;
+  font-size:11px;color:var(--muted);backdrop-filter:blur(2px);}
+#devbar .btn{padding:2px 8px;font-size:11px;}
+
+/* ============ app frame ============ */
+#app{height:100vh;display:flex;flex-direction:column;}
+body.constrain #app{max-width:900px;margin:0 auto;border-left:1px solid var(--border);border-right:1px solid var(--border);}
+
+/* ============ transport (hardware surface) ============ */
+#transport{background:var(--transport);border-bottom:1px solid #dcdfe6;display:flex;align-items:center;
+  gap:12px;padding:9px 16px;flex:0 0 auto;min-height:64px;flex-wrap:nowrap;}
+.t-sep{width:1px;align-self:stretch;background:#d6dae2;margin:4px 2px;}
+.t-spring{flex:1;}
+#recBtn{width:46px;height:46px;border-radius:50%;border:3px solid var(--green);background:#fff;
+  display:grid;place-items:center;flex:0 0 auto;transition:border-color .2s;}
+#recBtn .dot{width:18px;height:18px;border-radius:50%;background:var(--green);transition:all .2s;}
+#recBtn:hover .dot{transform:scale(1.15);}
+#recBtn.recording{border-color:var(--red);}
+#recBtn.recording .dot{background:var(--red);width:30px;height:30px;animation:pulse 1s infinite;}
+#recBtn.waiting{border-color:var(--amber);}
+#recBtn.waiting .dot{background:var(--amber);animation:pulse .7s infinite;}
+@keyframes pulse{50%{opacity:.45;}}
+.t-col{display:flex;flex-direction:column;align-items:flex-start;gap:4px;}
+#durRead{font-size:15px;cursor:text;padding:1px 4px;border-radius:5px;border:1px solid transparent;}
+#durRead:hover{border-color:#c9cfda;background:#fff;}
+#durRead.rec{color:var(--red);font-weight:600;}
+#durEdit{width:64px;font-family:var(--mono);font-size:14px;}
+#durLab{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+#outChip{cursor:pointer;}
+#outChip:hover{border-color:#c9cfda;}
+#outChip .odot{width:7px;height:7px;border-radius:50%;background:#cbd2df;display:inline-block;}
+#outChip.live .odot{background:var(--indigo);}
+#meters{display:flex;flex-direction:column;gap:4px;min-width:104px;}
+.mrow{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--muted);font-family:var(--mono);}
+.mbar{width:88px;height:6px;border-radius:3px;background:#d9dde5;overflow:hidden;}
+.mbar i{display:block;height:100%;width:20%;background:var(--green);border-radius:3px;transition:width 90ms linear;}
+.mbar i.hot{background:var(--amber);}
+.mbar i.clip{background:var(--red);}
+#clipFlag{font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#c0c6d2;border:1px solid #d3d8e0;
+  border-radius:4px;padding:2px 5px;font-family:var(--mono);}
+#clipFlag.lit{color:#fff;background:var(--red);border-color:var(--red);animation:pulse .5s infinite;}
+.btn.icon{padding:5px 8px;font-size:15px;line-height:1;}
+.narrow-only{display:none !important;}
+
+/* ============ monitor drawer (dark instrument) ============ */
+#monitor{max-height:0;overflow:hidden;transition:max-height .3s ease;background:var(--mon);color:#dbe2f0;flex:0 0 auto;}
+#monitor.open{max-height:212px;}
+.mon-inner{padding:10px 16px 12px;}
+.mon-head{display:flex;align-items:center;gap:10px;font-size:11px;letter-spacing:.05em;margin-bottom:8px;}
+.mon-head .spring{flex:1;}
+.live-dot{width:8px;height:8px;border-radius:50%;background:#34d399;animation:pulse 1.6s infinite;}
+.mon-sub{color:#8b95ad;font-family:var(--mono);font-size:10.5px;}
+.kbd-chips{display:flex;gap:4px;}
+.kbd-chips kbd{font-family:var(--mono);font-size:10px;border:1px solid #3a4258;border-radius:4px;
+  padding:1px 6px;color:#8b95ad;cursor:pointer;background:#232a3c;}
+.kbd-chips kbd.on{color:#e8ecf6;border-color:#5b667f;background:#2d3550;}
+.kbd-chips kbd.paused{color:#fbbf24;border-color:#b4881f;}
+#monClip{font-size:9.5px;font-weight:700;font-family:var(--mono);letter-spacing:.06em;color:#4a5269;
+  border:1px solid #3a4258;border-radius:4px;padding:2px 5px;}
+#monClip.lit{color:#fff;background:var(--red);border-color:var(--red);}
+#popOut{color:#8b95ad;font-size:11px;border:1px solid #3a4258;border-radius:6px;padding:2px 8px;}
+#popOut:hover{color:#dbe2f0;border-color:#5b667f;}
+.mon-body{display:flex;gap:12px;height:140px;}
+.mon-panel{flex:1;position:relative;background:#141926;border:1px solid #2a3145;border-radius:8px;overflow:hidden;}
+.mon-panel canvas{width:100%;height:100%;display:block;}
+.mon-panel.lv{flex:0 0 88px;display:flex;gap:12px;align-items:flex-end;justify-content:center;padding:10px 0 18px;}
+.mon-lab{position:absolute;bottom:3px;left:8px;font-size:9.5px;color:#5b667f;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;}
+.vbar{width:14px;height:100%;background:#232a3c;border-radius:4px;position:relative;overflow:hidden;}
+.vbar i{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,#34d399 60%,#fbbf24 82%,#f87171 94%);height:30%;transition:height 90ms linear;}
+
+/* ============ main split ============ */
+#main{flex:1;display:flex;min-height:0;position:relative;}
+
+/* ---- channel rack ---- */
+#rack{width:280px;flex:0 0 280px;background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;min-height:0;}
+.rack-head{display:flex;align-items:center;gap:6px;padding:10px 10px 8px;border-bottom:1px solid var(--border);}
+.rack-head .sec{flex:1;}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:#fff;}
+.seg button{padding:3px 7px;font-size:10.5px;color:var(--muted);border-right:1px solid var(--border);}
+.seg button:last-child{border-right:none;}
+.seg button:hover{background:#f6f7f9;}
+.seg button.on{background:#eef0ff;color:var(--indigo);font-weight:600;}
+.steppers{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;}
+.steppers button{padding:3px 8px;font-size:12px;color:var(--muted);}
+.steppers button:first-child{border-right:1px solid var(--border);}
+.steppers button:hover{background:#f6f7f9;color:var(--text);}
+#rackSearch{margin:8px 10px 0;padding:4px 8px;width:calc(100% - 20px);font-size:12px;}
+#rackBody{flex:1;overflow-y:auto;padding:8px 10px;}
+.setgrp{border:1px solid var(--border);border-radius:9px;margin-bottom:8px;background:#fff;overflow:hidden;}
+.setgrp.hi{border-color:#a5b4fc;box-shadow:0 0 0 2px rgba(79,70,229,.13);}
+.set-head{display:flex;align-items:center;gap:6px;padding:6px 8px;background:#f8f9fb;cursor:default;}
+.setgrp.hi .set-head{background:#f2f4ff;}
+.caret{font-size:10px;color:var(--muted);width:16px;text-align:center;}
+.set-name{font-weight:600;font-size:12.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text;}
+.badge{font-size:10px;color:var(--muted);background:#eef0f4;border-radius:5px;padding:1px 5px;font-family:var(--mono);}
+.set-del{color:#b7bdca;font-size:14px;width:18px;line-height:1;border-radius:5px;}
+.set-del:hover{color:var(--red);background:#fee2e2;}
+.chrow{display:grid;grid-template-columns:10px 1fr 78px 52px 16px;gap:7px;align-items:center;
+  padding:5px 8px;border-top:1px solid #f0f2f5;}
+.cchip{width:10px;height:10px;border-radius:3px;}
+.chlab{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text;}
+.chrow.fade .chlab{color:var(--muted);}
+.chrow.off .chlab{color:#c3c9d4;text-decoration:line-through;}
+.tri{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
+.tri button{flex:1;padding:2px 0;font-size:8.5px;font-weight:700;letter-spacing:.03em;color:#b7bdca;border-right:1px solid var(--border);width:26px;}
+.tri button:last-child{border-right:none;}
+.tri button.on{background:#e8f7ee;color:var(--green);}
+.tri button.fd{background:#fef7e6;color:var(--amber);}
+.tri button.of{background:#f3f4f7;color:var(--muted);}
+.spark{width:52px;height:16px;display:block;}
+.spark polyline{fill:none;stroke-width:1;}
+.chrow.fade .spark{opacity:.3;}
+.chrow.off .spark{opacity:.14;}
+.dots{color:#b7bdca;font-size:13px;border-radius:5px;line-height:1;}
+.dots:hover{color:var(--text);background:#f0f2f5;}
+.rack-foot{display:flex;gap:8px;padding:10px;border-top:1px solid var(--border);}
+.rack-foot .btn{flex:1;justify-content:center;}
+.inline-edit{width:100%;font-size:12px;padding:1px 4px;border:1px solid var(--indigo);border-radius:5px;}
+#scrim{display:none;position:fixed;inset:0;background:rgba(23,32,58,.35);z-index:55;}
+
+/* ---- centre / stage ---- */
+#centre{flex:1;min-width:0;display:flex;flex-direction:column;padding:14px 16px 8px;gap:12px;}
+#stage{flex:1;min-height:0;display:flex;flex-direction:column;}
+.stage-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 4px;}
+.tabs{display:flex;gap:2px;}
+.tabs button{padding:5px 13px;font-size:12.5px;border-radius:8px;color:var(--muted);border:1px solid transparent;}
+.tabs button:hover{color:var(--text);}
+.tabs button.on{background:#eef0ff;color:var(--indigo);border-color:#c7cdf9;font-weight:600;}
+#zoomBar{display:flex;gap:3px;align-items:center;background:rgba(255,255,255,.9);border:1px solid var(--border);
+  border-radius:8px;padding:2px 4px;z-index:6;}
+#zoomBar button{width:26px;height:24px;border-radius:6px;font-size:12px;color:var(--muted);display:grid;place-items:center;}
+#zoomBar button:hover{background:#f0f2f5;color:var(--text);}
+#zoomBar button.on{background:#eef0ff;color:var(--indigo);}
+#zoomBar button:disabled{opacity:.3;cursor:default;}
+#zoomBar .zb-txt{width:auto;padding:0 7px;font-size:10.5px;font-weight:600;letter-spacing:.02em;}
+#plotwrap{flex:1;position:relative;min-height:0;margin:2px 8px 8px;}
+#plot{position:absolute;inset:0;width:100%;height:100%;}
+#soncv{position:absolute;image-rendering:pixelated;}
+#legend{position:absolute;top:8px;left:64px;background:rgba(255,255,255,.88);border:1px solid var(--border);
+  border-radius:8px;padding:5px 9px;font-size:11px;z-index:5;max-height:40%;overflow-y:auto;}
+.lg{display:flex;align-items:center;gap:6px;cursor:pointer;padding:1.5px 0;user-select:none;}
+.lg i{width:14px;height:3px;border-radius:2px;}
+.lg:hover{color:var(--indigo);}
+.lg.fade{opacity:.4;}
+.lg.off{opacity:.25;text-decoration:line-through;}
+#rubber{position:absolute;border:1px dashed var(--indigo);background:rgba(79,70,229,.08);pointer-events:none;z-index:4;}
+
+/* ---- module strip ---- */
+#modstrip{display:flex;gap:12px;overflow-x:auto;padding:3px 3px 10px;flex:0 0 auto;scroll-behavior:smooth;}
+.module{position:relative;flex:0 0 auto;width:224px;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);box-shadow:var(--shadow);padding:11px 14px 12px;transition:opacity .2s,border-color .2s;
+  background-image:
+    radial-gradient(circle at 7px 7px,#ccd2dd 1.7px,transparent 2.3px),
+    radial-gradient(circle at calc(100% - 7px) 7px,#ccd2dd 1.7px,transparent 2.3px),
+    radial-gradient(circle at 7px calc(100% - 7px),#ccd2dd 1.7px,transparent 2.3px),
+    radial-gradient(circle at calc(100% - 7px) calc(100% - 7px),#ccd2dd 1.7px,transparent 2.3px);}
+.module.active{border-color:#a5b4fc;box-shadow:0 0 0 2px rgba(79,70,229,.14),var(--shadow);}
+#modstrip.hasactive .module:not(.active){opacity:.68;}
+#modstrip .module:hover{opacity:1;}
+.mod-head{margin-bottom:7px;}
+.fld{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);margin:5px 0;}
+.fld select{max-width:118px;}
+.fld input[type=range]{width:104px;}
+.btnrow{display:flex;gap:6px;margin-top:6px;}
+.btnrow .btn{flex:1;justify-content:center;}
+.mod-note{font-size:10.5px;color:var(--muted);font-family:var(--mono);margin-top:4px;}
+.chkrow{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);margin-top:6px;cursor:pointer;}
+
+/* ---- console / feed ---- */
+#consolebar{flex:0 0 30px;display:flex;align-items:center;gap:8px;padding:0 14px;background:var(--surface);
+  border-top:1px solid var(--border);font-family:var(--mono);font-size:11.5px;color:var(--muted);cursor:pointer;user-select:none;}
+#consolebar:hover{color:var(--text);}
+#consolebar .tri-ind{font-size:9px;transition:transform .2s;}
+#consolebar.open .tri-ind{transform:rotate(90deg);}
+.chip.undo{cursor:pointer;color:var(--indigo);border-color:#c7cdf9;padding:1px 8px;font-family:system-ui;}
+.chip.undo:hover{background:#eef0ff;}
+#feed{position:fixed;bottom:38px;left:296px;width:400px;max-width:calc(100vw - 32px);z-index:70;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:0 6px 24px rgba(16,24,40,.16);overflow:hidden;}
+.feed-head{padding:9px 13px 6px;border-bottom:1px solid var(--border);}
+#feedList{max-height:260px;overflow-y:auto;}
+.fev{display:flex;align-items:center;gap:8px;padding:6px 13px;border-bottom:1px solid #f2f4f7;font-size:12px;}
+.fev:last-child{border-bottom:none;}
+.fev .ft{font-family:var(--mono);font-size:10px;color:#a4abbd;flex:0 0 auto;}
+.fev .fx{flex:1;}
+
+/* ---- popover ---- */
+#pop{position:fixed;z-index:150;background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 8px 28px rgba(16,24,40,.18);padding:12px 14px;min-width:200px;}
+#pop .fld{margin:6px 0;}
+#pop .sec{display:block;margin-bottom:6px;}
+.popitem{display:block;width:100%;text-align:left;padding:6px 8px;border-radius:6px;font-size:12.5px;}
+.popitem:hover{background:#f2f4f8;}
+.popitem.danger{color:var(--red);}
+#pop table{border-collapse:collapse;font-size:11.5px;font-family:var(--mono);}
+#pop th{text-align:left;color:var(--muted);font-weight:500;padding:2px 10px 4px 0;border-bottom:1px solid var(--border);}
+#pop td{padding:3px 10px 3px 0;}
+
+/* ---- settings overlay ---- */
+.overlay{position:fixed;inset:0;z-index:160;background:rgba(23,32,58,.45);display:grid;place-items:center;}
+.ovl-card{width:min(660px,94vw);max-height:90vh;overflow-y:auto;background:var(--surface);border-radius:14px;
+  box-shadow:0 20px 60px rgba(16,24,40,.35);padding:22px 26px;}
+.ovl-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.ovl-head h2{font-size:16px;font-weight:650;}
+.ovl-x{font-size:20px;color:var(--muted);width:30px;height:30px;border-radius:8px;}
+.ovl-x:hover{background:#f0f2f5;color:var(--text);}
+.ovl-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 26px;}
+.ovl-grid label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--muted);}
+.ovl-grid input,.ovl-grid select{padding:6px 8px;font-size:13px;}
+.ovl-sub{grid-column:1/-1;margin-top:8px;}
+.ovl-inline{display:flex;gap:14px;align-items:center;grid-column:1/-1;font-size:12.5px;color:var(--muted);}
+.ovl-inline input[type=number]{width:76px;}
+.ovl-foot{display:flex;justify-content:space-between;margin-top:22px;}
+
+/* ============ narrow state ============ */
+body.narrow .t-hide{display:none !important;}
+body.narrow .narrow-only{display:inline-flex !important;}
+body.narrow #rack{position:fixed;left:0;top:0;bottom:0;z-index:60;transform:translateX(-105%);
+  transition:transform .25s ease;box-shadow:8px 0 28px rgba(16,24,40,.2);}
+body.narrow.rack-open #rack{transform:none;}
+body.narrow.rack-open #scrim{display:block;}
+body.narrow #feed{left:12px;}
+body.narrow #transport{gap:9px;padding:9px 12px;}
+@media (max-width:1000px){
+  .t-hide{display:none !important;}
+  .narrow-only{display:inline-flex !important;}
+  #rack{position:fixed;left:0;top:0;bottom:0;z-index:60;transform:translateX(-105%);
+    transition:transform .25s ease;box-shadow:8px 0 28px rgba(16,24,40,.2);}
+  body.rack-open #rack{transform:none;}
+  body.rack-open #scrim{display:block;}
+  #feed{left:12px;}
+  #transport{gap:9px;padding:9px 12px;}
+}
+</style>
+</head>
+<body>
+
+<div id="devbar"><span>mockup · pydvma · Option C — Instrument rack</span><button class="btn" id="narrowBtn">⬄ Narrow</button></div>
+
+<div id="app">
+
+  <!-- ================= TRANSPORT ================= -->
+  <header id="transport">
+    <button id="recBtn" title="Log / record a new set"><span class="dot"></span></button>
+    <div class="t-col">
+      <span id="durLab">Record</span>
+      <span id="durRead" class="mono" title="Click to edit duration">2.0 s</span>
+      <input id="durEdit" class="hidden" type="number" step="0.1" min="0.1" value="2.0">
+    </div>
+    <button id="logOutBtn" class="btn hidden" style="border-color:#86d3a3;color:var(--green);font-weight:600;">▸ Log with output</button>
+    <div class="t-sep"></div>
+    <button id="armBtn" class="btn">Arm pretrigger</button>
+    <span id="armChip" class="chip amber hidden">ARMED · thr 0.05 · ch 0</span>
+    <span id="waitChip" class="chip amber hidden">Waiting for trigger… <button id="cancelWait">Cancel</button></span>
+    <div class="t-sep t-hide"></div>
+    <button id="outChip" class="chip t-hide"><span class="odot"></span><span id="outTxt">output: none</span></button>
+    <button id="monBtn" class="btn t-hide">Monitor</button>
+    <button id="rackBtn" class="btn narrow-only">☰ Sets</button>
+    <button id="tMore" class="btn narrow-only">⋯</button>
+    <div class="t-spring"></div>
+    <div id="meters">
+      <div class="mrow"><span>0</span><div class="mbar"><i id="m0"></i></div></div>
+      <div class="mrow"><span>1</span><div class="mbar"><i id="m1"></i></div></div>
+    </div>
+    <span id="clipFlag">CLIP</span>
+    <button id="gearBtn" class="btn icon t-hide" title="Acquisition settings">⚙</button>
+  </header>
+
+  <!-- ================= MONITOR DRAWER ================= -->
+  <section id="monitor">
+    <div class="mon-inner">
+      <div class="mon-head">
+        <span class="live-dot"></span><strong style="letter-spacing:.09em;">MONITOR</strong>
+        <span class="mon-sub" id="monSub">live · 44.1 kHz · 2 ch</span>
+        <span class="kbd-chips">
+          <kbd data-k="t" class="on" title="Toggle time trace">T</kbd>
+          <kbd data-k="f" class="on" title="Toggle FFT">F</kbd>
+          <kbd data-k="l" class="on" title="Toggle levels">L</kbd>
+          <kbd data-k="p" title="Pause">P</kbd>
+        </span>
+        <span id="monClip">CLIP</span>
+        <span class="spring"></span>
+        <button id="popOut" title="Opens as its own window in production">pop out ⧉</button>
+      </div>
+      <div class="mon-body">
+        <div class="mon-panel" id="monT"><canvas id="mcT"></canvas><span class="mon-lab">time</span></div>
+        <div class="mon-panel" id="monF"><canvas id="mcF"></canvas><span class="mon-lab">fft</span></div>
+        <div class="mon-panel lv" id="monL">
+          <div class="vbar"><i id="vb0"></i></div>
+          <div class="vbar"><i id="vb1"></i></div>
+          <span class="mon-lab">lvl</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= MAIN ================= -->
+  <div id="main">
+
+    <aside id="rack">
+      <div class="rack-head">
+        <span class="sec">Channel rack</span>
+        <div class="seg"><button id="allBtn">All</button><button id="noneBtn">None</button><button id="soloBtn">Solo</button></div>
+        <div class="steppers"><button id="prevSet" title="Previous set">‹</button><button id="nextSet" title="Next set">›</button></div>
+      </div>
+      <input id="rackSearch" type="text" class="hidden" placeholder="Filter sets…">
+      <div id="rackBody"></div>
+      <div class="rack-foot">
+        <button id="loadBtn" class="btn blue">Load Data</button>
+        <button id="saveBtn" class="btn">Save Dataset</button>
+      </div>
+    </aside>
+    <div id="scrim"></div>
+
+    <div id="centre">
+      <div id="stage" class="card">
+        <div class="stage-head">
+          <div id="tabs" class="tabs">
+            <button data-view="time" class="on">Time</button>
+            <button data-view="freq">Frequency</button>
+            <button data-view="tf">TF</button>
+            <button data-view="son">Sonogram</button>
+          </div>
+          <div id="zoomBar">
+            <button id="zbZoom" class="on" title="Box zoom (drag on plot)">⛶</button>
+            <button id="zbPan" title="Pan (drag on plot)">✥</button>
+            <button id="zbBack" title="Zoom back">↩</button>
+            <button id="zbFwd" title="Zoom forward">↪</button>
+            <button id="zbAx" class="zb-txt" title="Autoscale X">Auto X</button>
+            <button id="zbAy" class="zb-txt" title="Autoscale Y">Auto Y</button>
+            <button id="zbMore" title="Set axis limits">⋯</button>
+          </div>
+        </div>
+        <div id="plotwrap">
+          <svg id="plot" preserveAspectRatio="none"></svg>
+          <canvas id="soncv" class="hidden"></canvas>
+          <div id="legend"></div>
+          <div id="rubber" class="hidden"></div>
+        </div>
+      </div>
+
+      <!-- ============ MODULE STRIP ============ -->
+      <div id="modstrip">
+        <div class="module" id="mod-fft" data-mod="freq">
+          <div class="mod-head sec">FFT</div>
+          <div class="fld">Window <select id="fftWin"><option>hann</option><option>hamming</option><option>rectangular</option><option>blackman</option></select></div>
+          <div class="mod-note">Δf = 0.50 Hz · 88 200 pts</div>
+          <button class="btn indigo wide" id="calcFFT" style="margin-top:7px;">Calc FFT</button>
+        </div>
+
+        <div class="module" id="mod-tf" data-mod="tf">
+          <div class="mod-head sec">Transfer Function</div>
+          <div class="fld">Window <select id="tfWin"><option>hann</option><option>hamming</option><option>rectangular</option></select></div>
+          <div class="fld">Averaging <select id="tfAvg"><option>None</option><option selected>within set</option><option>across sets</option></select></div>
+          <div class="fld">N frames <input type="range" id="tfN" min="1" max="30" value="10"><span class="mono" id="tfNread" style="width:18px;text-align:right;">10</span></div>
+          <div class="mod-note" id="frameLen">Frame length = 0.20 s</div>
+          <label class="chkrow"><input type="checkbox" id="cohChk" checked> Show coherence</label>
+          <button class="btn indigo wide" id="calcTF" style="margin-top:7px;">Calc TF</button>
+        </div>
+
+        <div class="module" id="mod-scale">
+          <div class="mod-head sec">Scaling</div>
+          <div class="btnrow"><button class="btn" id="sclIw">× (iω)</button><button class="btn" id="scl1Iw">× 1/(iω)</button></div>
+          <div class="fld">Ref <span style="display:flex;gap:4px;"><select id="refSet" style="max-width:76px;"></select><select id="refCh" style="max-width:58px;"></select></span></div>
+          <div class="btnrow"><button class="btn indigo" id="bestBtn">Best Match</button><button class="btn" id="undoScl">Undo</button></div>
+          <button class="btn wide" id="cleanBtn" style="margin-top:6px;">Clean Impulse</button>
+        </div>
+
+        <div class="module" id="mod-son" data-mod="son">
+          <div class="mod-head sec">Sonogram</div>
+          <div class="fld">Resolution <input type="range" id="sonRes" min="0" max="4" value="2"><span class="mono" id="sonResRead" style="width:34px;text-align:right;">256</span></div>
+          <div class="fld">Dyn range <input type="range" id="sonDyn" min="40" max="100" value="60"><span class="mono" id="sonDynRead" style="width:34px;text-align:right;">60 dB</span></div>
+          <button class="btn indigo wide" id="calcSon" style="margin-top:7px;">Calc Sonogram</button>
+        </div>
+
+        <div class="module" id="mod-fit">
+          <div class="mod-head sec">Mode Fit</div>
+          <div class="fld" style="justify-content:flex-start;gap:6px;">Fit
+            <span class="seg"><button id="fit1">1</button><button id="fit2">2</button><button id="fit3">3</button></span>
+            <span style="font-size:10.5px;">modes in view</span>
+          </div>
+          <div class="btnrow"><button class="btn" id="rejectBtn">Reject</button><button class="btn" id="sumBtn">Summary</button></div>
+          <div class="btnrow"><button class="btn" id="reconBtn">Reconstruction</button></div>
+          <button class="btn indigo wide" id="globalBtn" style="margin-top:6px;">Global optimise</button>
+        </div>
+
+        <div class="module" id="mod-exp">
+          <div class="mod-head sec">Export</div>
+          <div class="fld">Save figure <span style="display:flex;gap:4px;"><button class="btn sm" id="savePng">PNG</button><button class="btn sm" id="savePdf">PDF</button></span></div>
+          <div class="btnrow"><button class="btn" id="expMat">Matlab</button><button class="btn" id="expCsv">CSV</button></div>
+          <label class="chkrow"><input type="checkbox" id="autosave"> Autosave after each log</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= CONSOLE ================= -->
+  <footer id="consolebar">
+    <span class="tri-ind">▸</span>
+    <span id="conMsg">Ready.</span>
+    <span id="conUndo" class="chip undo hidden">Undo</span>
+    <span style="flex:1;"></span>
+    <span id="conCount" style="font-size:10px;color:#a4abbd;"></span>
+  </footer>
+</div>
+
+<div id="feed" class="hidden">
+  <div class="feed-head sec">Activity</div>
+  <div id="feedList"></div>
+</div>
+
+<div id="pop" class="hidden"></div>
+
+<!-- ================= SETTINGS OVERLAY ================= -->
+<div id="settings" class="overlay hidden">
+  <div class="ovl-card">
+    <div class="ovl-head"><h2>Acquisition settings</h2><button class="ovl-x" id="setClose">×</button></div>
+    <div class="ovl-grid">
+      <label>Device
+        <select id="sDev">
+          <option>NI USB-6003 (Dev3)</option>
+          <option>NI USB-6212 (Dev1)</option>
+          <option selected>NI 9234 (cDAQ1Mod1)</option>
+          <option>Soundcard (default input)</option>
+        </select>
+      </label>
+      <label>Sample rate (Hz)
+        <select id="sFs"><option>8192</option><option selected>44100</option><option>48000</option><option>51200</option></select>
+      </label>
+      <label>Channels <input id="sCh" type="number" min="1" max="8" value="2"></label>
+      <label>Stored time (s) <input id="sDur" type="number" min="0.1" step="0.1" value="2.0"></label>
+      <div class="ovl-sub sec">Pretrigger</div>
+      <div class="ovl-inline">
+        <label style="flex-direction:row;align-items:center;gap:6px;"><input type="checkbox" id="sPre"> Enable</label>
+        <label style="flex-direction:row;align-items:center;gap:6px;">Threshold <input id="sThr" type="number" step="0.01" value="0.05"></label>
+        <label style="flex-direction:row;align-items:center;gap:6px;">Channel <input id="sPch" type="number" min="0" value="0"></label>
+        <label style="flex-direction:row;align-items:center;gap:6px;">Samples <input id="sPsm" type="number" value="1000"></label>
+      </div>
+      <div class="ovl-sub sec">Devices (soundcard fallback)</div>
+      <label>Input device
+        <select id="sIn"><option>Default input</option><option>Built-in microphone</option><option>USB audio CODEC</option></select>
+      </label>
+      <label>Output device
+        <select id="sOut"><option>Default output</option><option>Built-in output</option><option>USB audio CODEC</option></select>
+      </label>
+    </div>
+    <div class="ovl-foot">
+      <button class="btn" id="suggestBtn">Suggest settings</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="setCancel">Cancel</button>
+        <button class="btn indigo" id="setApply">Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ================================================================
+   pydvma web-UI mockup — Option C "Instrument rack"
+   Single-file, no external resources. All data is fake.
+   ================================================================ */
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const clamp = (v,a,b) => Math.min(b,Math.max(a,v));
+
+const PAL = ['#2563eb','#dc2626','#059669','#d97706','#7c3aed','#0891b2',
+             '#be185d','#4d7c0f','#9333ea','#0e7490','#b91c1c','#15803d'];
+const MODES = [80,190,310,460];       // modal frequencies (Hz)
+const ANTI  = [132,248,386];          // antiresonances (Hz)
+const LOADNAMES = ['beam_test','plate_tap','cantilever_A','frame_sweep'];
+
+const DEF = {
+  time:{x:[0,2],   y:[-0.3,0.3], xl:'Time (s)',      yl:'Amplitude (V)'},
+  freq:{x:[0,500], y:[-70,50],   xl:'Frequency (Hz)', yl:'Amplitude (dB)'},
+  tf:  {x:[0,500], y:[-70,50],   xl:'Frequency (Hz)', yl:'|H| (dB)'},
+  son: {x:[0,2],   y:[0,500],    xl:'Time (s)',       yl:'Frequency (Hz)'},
+};
+
+const S = {
+  sets:[], nextSet:0, nextLine:0,
+  view:'time', hiSet:0, solo:false, preSolo:null, filter:'',
+  tfN:10, coh:true, sonRes:2, sonDyn:60,
+  fits:[], recon:false, scaleOps:[],
+  output:{type:'none', amp:0.3, f1:10, f2:500, dur:2.0},
+  armed:false, waiting:false, recording:false, waitTimer:null,
+  events:[], feedOpen:false,
+  monitor:{open:false, paused:false, T:true, F:true, L:true},
+  zoom:{time:null,freq:null,tf:null,son:null},
+  hist:{time:[null],freq:[null],tf:[null],son:[null]},
+  hptr:{time:0,freq:0,tf:0,son:0},
+  tool:'zoom', duration:2.0, thr:0.05, pch:0,
+  forceNarrow:false, loadIdx:0,
+};
+let P = null;   // current plot px<->data mapping
+
+/* ---------------- fake data generation ---------------- */
+function genChannel(){
+  const g = 0.75 + Math.random()*0.5;
+  const dec = 1.6 + Math.random()*1.6;
+  const ph = Math.random()*6.28;
+  const nT = 400, time = new Array(nT);
+  const comps = [[8.5+Math.random()*2,1],[20+Math.random()*3,0.55],[33+Math.random()*5,0.3]];
+  for(let i=0;i<nT;i++){
+    const t = i/(nT-1)*2;
+    let y = (Math.random()-0.5)*0.012;
+    if(t>0.06){
+      const tt=t-0.06, env=Math.exp(-dec*tt);
+      for(const [f,a] of comps) y += 0.22*g*a*Math.sin(2*Math.PI*f*tt+ph)*env;
+    }
+    time[i]=y;
+  }
+  const hj = MODES.map(()=>0.85+Math.random()*0.3);
+  const H = [92,76,64,54];
+  const base = f => {
+    let L = -57 + 5*Math.sin(f/85+ph);
+    MODES.forEach((fc,k)=>{ L += H[k]*hj[k]/(1+((f-fc)/13)**2); });
+    return L;
+  };
+  const baseTF = f => {
+    let L = -56 + 4*Math.sin(f/95+ph);
+    MODES.forEach((fc,k)=>{ L += (H[k]*hj[k]+6)/(1+((f-fc)/6)**2); });
+    ANTI.forEach(fa=>{ L -= 26/(1+((f-fa)/5)**2); });
+    return L;
+  };
+  const nF=350, freq=[], tfA=[], tfB=[], tfC=[], cohA=[], cohB=[], cohC=[];
+  const cl = v => clamp(v,0.02,1);
+  for(let i=0;i<nF;i++){
+    const f = i/(nF-1)*500;
+    freq.push(base(f)+(Math.random()-0.5)*3);
+    const t0 = baseTF(f);
+    tfA.push(t0+(Math.random()-0.5)*11);
+    tfB.push(t0+(Math.random()-0.5)*3.5);
+    tfC.push(t0+(Math.random()-0.5)*1.0);
+    let c = 0.985 - 0.3*Math.exp(-f/12);
+    ANTI.forEach(fa=>{ c -= 0.55/(1+((f-fa)/9)**2); });
+    cohA.push(cl(c-Math.random()*0.30));
+    cohB.push(cl(c-Math.random()*0.08));
+    cohC.push(cl(c-Math.random()*0.02));
+  }
+  return {time,freq,tfA,tfB,tfC,cohA,cohB,cohC};
+}
+
+function addSet(name){
+  const id = S.nextSet++;
+  const s = {id, name:name||('set_'+id), dur:S.duration, collapsed:false, channels:[]};
+  for(let c=0;c<2;c++)
+    s.channels.push({label:'ch_'+c, ci:(S.nextLine++)%PAL.length, state:'on', off:0, data:genChannel()});
+  S.sets.push(s);
+  S.hiSet = S.sets.length-1;
+  return s;
+}
+
+function lines(){  // [{set, si, ch, ci}] of all channels
+  const out=[];
+  S.sets.forEach((s,si)=>s.channels.forEach((c,ci)=>out.push({set:s,si,ch:c,ci})));
+  return out;
+}
+
+function tfMix(ch){
+  const N=S.tfN; let a,b,u;
+  if(N<=10){ a=ch.data.tfA; b=ch.data.tfB; u=(N-1)/9; }
+  else { a=ch.data.tfB; b=ch.data.tfC; u=(N-10)/20; }
+  return a.map((v,i)=>v*(1-u)+b[i]*u);
+}
+function cohMix(ch){
+  const N=S.tfN; let a,b,u;
+  if(N<=10){ a=ch.data.cohA; b=ch.data.cohB; u=(N-1)/9; }
+  else { a=ch.data.cohB; b=ch.data.cohC; u=(N-10)/20; }
+  return a.map((v,i)=>v*(1-u)+b[i]*u);
+}
+function seriesFor(view,ch){
+  if(view==='time') return ch.data.time;
+  const tilt = S.scaleOps.filter(o=>o.t==='iw').length - S.scaleOps.filter(o=>o.t==='1iw').length;
+  let arr = (view==='freq') ? ch.data.freq : tfMix(ch);
+  if(tilt!==0 || ch.off!==0){
+    const n=arr.length;
+    arr = arr.map((v,i)=>{
+      const f=Math.max(1,i/(n-1)*500);
+      return v + ch.off + tilt*20*Math.log10(f/120);
+    });
+  }
+  return arr;
+}
+
+/* ---------------- console / activity feed ---------------- */
+function msg(text, undo){
+  S.events.push({time:new Date().toLocaleTimeString([], {hour12:false}), text, undo:undo||null});
+  if(S.events.length>40) S.events.shift();
+  renderConsole();
+}
+function renderConsole(){
+  const last = S.events[S.events.length-1];
+  $('#conMsg').textContent = last ? last.text : 'Ready.';
+  $('#conUndo').classList.toggle('hidden', !(last && last.undo));
+  $('#conCount').textContent = S.events.length ? (S.events.length+' events') : '';
+  const list = $('#feedList');
+  const evs = S.events.slice(-10).reverse();
+  list.innerHTML = evs.map(ev=>{
+    const ei = S.events.indexOf(ev);
+    return `<div class="fev"><span class="ft">${ev.time}</span><span class="fx">${ev.text}</span>`+
+      (ev.undo?`<button class="chip undo" data-ei="${ei}">Undo</button>`:'')+`</div>`;
+  }).join('') || '<div class="fev"><span class="fx" style="color:var(--muted);">No activity yet.</span></div>';
+}
+$('#consolebar').addEventListener('click', e=>{
+  if(e.target.id==='conUndo'){
+    const last=S.events[S.events.length-1];
+    if(last && last.undo){ const fn=last.undo; last.undo=null; fn(); }
+    return;
+  }
+  S.feedOpen = !S.feedOpen;
+  $('#feed').classList.toggle('hidden', !S.feedOpen);
+  $('#consolebar').classList.toggle('open', S.feedOpen);
+});
+$('#feedList').addEventListener('click', e=>{
+  const b=e.target.closest('[data-ei]'); if(!b) return;
+  const ev=S.events[+b.dataset.ei];
+  if(ev && ev.undo){ const fn=ev.undo; ev.undo=null; fn(); }
+});
+
+/* ---------------- popover helper ---------------- */
+const pop = $('#pop');
+let popAnchor=null;
+function openPop(html, anchor){
+  pop.innerHTML = html;
+  pop.classList.remove('hidden');
+  popAnchor = anchor;
+  const r = anchor.getBoundingClientRect();
+  pop.style.left='0px'; pop.style.top='0px';
+  const pw = pop.offsetWidth, phh = pop.offsetHeight;
+  let x = clamp(r.left, 8, window.innerWidth - pw - 8);
+  let y = r.bottom + 6;
+  if(y + phh > window.innerHeight - 8) y = Math.max(8, r.top - phh - 6);
+  pop.style.left = x+'px'; pop.style.top = y+'px';
+}
+function closePop(){ pop.classList.add('hidden'); pop.innerHTML=''; popAnchor=null; }
+document.addEventListener('mousedown', e=>{
+  if(!pop.classList.contains('hidden') && !pop.contains(e.target) && e.target!==popAnchor && !(popAnchor&&popAnchor.contains(e.target))) closePop();
+  if(S.feedOpen && !$('#feed').contains(e.target) && !$('#consolebar').contains(e.target)){
+    S.feedOpen=false; $('#feed').classList.add('hidden'); $('#consolebar').classList.remove('open');
+  }
+});
+
+/* ---------------- axis helpers ---------------- */
+function ticks(a,b,n=6){
+  const span=b-a; if(!(span>0)) return [a];
+  const raw=span/n, mag=Math.pow(10,Math.floor(Math.log10(raw))), norm=raw/mag;
+  const step=(norm<1.5?1:norm<3.5?2:norm<7.5?5:10)*mag;
+  const out=[]; for(let v=Math.ceil(a/step)*step; v<=b+span*1e-9; v+=step) out.push(v);
+  return out;
+}
+const fmt = v => {
+  const a=Math.abs(v);
+  if(a>=100||a===0) return String(Math.round(v));
+  if(a>=1) return String(+v.toFixed(1));
+  return String(+v.toFixed(2));
+};
+
+/* ---------------- plot rendering ---------------- */
+function renderPlot(){
+  const wrap=$('#plotwrap');
+  const W=wrap.clientWidth, H=wrap.clientHeight;
+  if(W<60||H<60) return;
+  const view=S.view, D=DEF[view];
+  const z=S.zoom[view];
+  const xr = z?z.x.slice():D.x.slice(), yr = z?z.y.slice():D.y.slice();
+  const showCoh = view==='tf' && S.coh;
+  const mL=54, mR=showCoh?46:16, mT=12, mB=36;
+  const pw=W-mL-mR, ph=H-mT-mB;
+  P={mL,mT,pw,ph,xr,yr};
+  const X=v=>mL+(v-xr[0])/(xr[1]-xr[0])*pw;
+  const Y=v=>mT+(yr[1]-v)/(yr[1]-yr[0])*ph;
+  let sv=`<clipPath id="pc"><rect x="${mL}" y="${mT}" width="${pw}" height="${ph}"/></clipPath>`;
+  sv+=`<rect x="${mL}" y="${mT}" width="${pw}" height="${ph}" fill="#fdfdfe"/>`;
+  // grid + ticks
+  for(const tx of ticks(xr[0],xr[1])){
+    const x=X(tx);
+    sv+=`<line x1="${x}" y1="${mT}" x2="${x}" y2="${mT+ph}" stroke="#eef0f4"/>`;
+    sv+=`<text x="${x}" y="${mT+ph+15}" font-size="10" fill="#8b93a7" text-anchor="middle" font-family="var(--mono)">${fmt(tx)}</text>`;
+  }
+  for(const ty of ticks(yr[0],yr[1],5)){
+    const y=Y(ty);
+    sv+=`<line x1="${mL}" y1="${y}" x2="${mL+pw}" y2="${y}" stroke="#eef0f4"/>`;
+    sv+=`<text x="${mL-7}" y="${y+3.5}" font-size="10" fill="#8b93a7" text-anchor="end" font-family="var(--mono)">${fmt(ty)}</text>`;
+  }
+  sv+=`<text x="${mL+pw/2}" y="${H-4}" font-size="11" fill="#66708a" text-anchor="middle">${D.xl}</text>`;
+  sv+=`<text transform="rotate(-90 11 ${mT+ph/2})" x="11" y="${mT+ph/2}" font-size="11" fill="#66708a" text-anchor="middle">${D.yl}</text>`;
+
+  const cv=$('#soncv');
+  if(view==='son'){
+    cv.classList.remove('hidden');
+    drawSonogram(cv,mL,mT,pw,ph,xr,yr);
+  }else{
+    cv.classList.add('hidden');
+    sv+=`<g clip-path="url(#pc)">`;
+    for(const L of lines()){
+      if(L.ch.state==='off') continue;
+      const op = L.ch.state==='fade'?0.25:1;
+      const arr=seriesFor(view,L.ch);
+      const n=arr.length, dom = view==='time'?2:500;
+      let pts='';
+      for(let i=0;i<n;i++) pts+=X(i/(n-1)*dom).toFixed(1)+','+Y(arr[i]).toFixed(1)+' ';
+      sv+=`<polyline points="${pts}" fill="none" stroke="${PAL[L.ch.ci]}" stroke-width="1.4" opacity="${op}"/>`;
+      if(showCoh){
+        const coh=cohMix(L.ch);
+        const Yc=v=>mT+(1-v)*ph;
+        let cp='';
+        for(let i=0;i<n;i++) cp+=X(i/(n-1)*500).toFixed(1)+','+Yc(coh[i]).toFixed(1)+' ';
+        sv+=`<polyline points="${cp}" fill="none" stroke="${PAL[L.ch.ci]}" stroke-width="1" opacity="${0.45*op}" stroke-dasharray="4 3"/>`;
+      }
+    }
+    // mode-fit overlays (TF only)
+    if(view==='tf'){
+      const curve=(modes,x0,x1,w)=>{
+        let pts='';
+        for(let i=0;i<=160;i++){
+          const f=x0+i/160*(x1-x0);
+          let L=-62;
+          for(const m of modes) L += m.a/(1+((f-m.fn)/(Math.max(0.8,m.fn*m.z*2)))**2);
+          pts+=X(f).toFixed(1)+','+Y(L).toFixed(1)+' ';
+        }
+        return `<polyline points="${pts}" fill="none" stroke="#17203a" stroke-width="${w}" opacity="0.75" stroke-dasharray="6 4"/>`;
+      };
+      for(const g of S.fits) sv+=curve(g.modes,g.range[0],g.range[1],1.4);
+      if(S.recon && S.fits.length) sv+=curve(S.fits.flatMap(g=>g.modes),xr[0],xr[1],1.8);
+    }
+    sv+=`</g>`;
+  }
+  // frame + right coherence axis
+  sv+=`<rect x="${mL}" y="${mT}" width="${pw}" height="${ph}" fill="none" stroke="#e3e6eb"/>`;
+  if(showCoh){
+    for(const c of [0,0.5,1]){
+      const y=mT+(1-c)*ph;
+      sv+=`<text x="${mL+pw+7}" y="${y+3.5}" font-size="10" fill="#8b93a7" font-family="var(--mono)">${c}</text>`;
+    }
+    sv+=`<text transform="rotate(90 ${W-8} ${mT+ph/2})" x="${W-8}" y="${mT+ph/2}" font-size="11" fill="#66708a" text-anchor="middle">coherence γ²</text>`;
+  }
+  if(view!=='son' && !lines().some(L=>L.ch.state!=='off'))
+    sv+=`<text x="${mL+pw/2}" y="${mT+ph/2}" font-size="13" fill="#a4abbd" text-anchor="middle">no channels on — enable a line in the rack</text>`;
+  const svg=$('#plot');
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  svg.innerHTML=sv;
+  renderLegend();
+  updateZoomBtns();
+}
+
+function drawSonogram(cv,mL,mT,pw,ph,xr,yr){
+  cv.style.left=mL+'px'; cv.style.top=mT+'px';
+  cv.style.width=pw+'px'; cv.style.height=ph+'px';
+  const first = lines().find(L=>L.ch.state!=='off');
+  const resPts=[64,128,256,512,1024][S.sonRes];
+  const rows=clamp(Math.round(resPts/8),8,128);
+  const cols=clamp(Math.round(260/Math.sqrt(resPts)),8,40);
+  cv.width=cols; cv.height=rows;
+  const ctx=cv.getContext('2d');
+  if(!first){ ctx.fillStyle='#f4f5f7'; ctx.fillRect(0,0,cols,rows); return; }
+  const dyn=S.sonDyn;
+  const fade = first.ch.state==='fade';
+  for(let r=0;r<rows;r++){
+    const f = yr[1] - (r+0.5)/rows*(yr[1]-yr[0]);   // top row = high freq
+    for(let c=0;c<cols;c++){
+      const t = xr[0] + (c+0.5)/cols*(xr[1]-xr[0]);
+      let L=-120;
+      if(t>=0.06){
+        const tt=t-0.06;
+        MODES.forEach((fc,k)=>{
+          const A=[0,-5,-11,-17][k], tau=[0.55,0.42,0.3,0.22][k];
+          const l=A - 8.686*tt/tau - ((f-fc)/9)**2*0.9;
+          if(l>L) L=l;
+        });
+        if(tt<0.12) L=Math.max(L,-14-(tt/0.12)*45-f*0.012);
+      }
+      let u=clamp((L+dyn)/dyn,0,1);
+      if(fade) u*=0.35;
+      // colormap: navy -> blue -> cyan -> yellow
+      let rr,gg,bb;
+      if(u<0.4){ const v=u/0.4;      rr=13+v*20;  gg=20+v*60;  bb=45+v*140; }
+      else if(u<0.75){ const v=(u-0.4)/0.35; rr=33+v*20; gg=80+v*120; bb=185+v*35; }
+      else { const v=(u-0.75)/0.25;  rr=53+v*197; gg=200+v*40; bb=220-v*140; }
+      ctx.fillStyle=`rgb(${rr|0},${gg|0},${bb|0})`;
+      ctx.fillRect(c,r,1,1);
+    }
+  }
+}
+
+function renderLegend(){
+  const lg=$('#legend');
+  if(S.view==='son'){
+    const first=lines().find(L=>L.ch.state!=='off');
+    lg.innerHTML = first
+      ? `<div class="lg"><i style="background:${PAL[first.ch.ci]}"></i>${first.set.name}·${first.ch.label} <span style="color:var(--muted)">(first ON)</span></div>`
+      : '';
+    return;
+  }
+  lg.innerHTML = lines().map(L=>
+    `<div class="lg ${L.ch.state==='fade'?'fade':L.ch.state==='off'?'off':''}" data-si="${L.si}" data-ci="${L.ci}" title="Click to cycle on / fade / off">
+      <i style="background:${PAL[L.ch.ci]}"></i>${L.set.name}·${L.ch.label}</div>`).join('');
+}
+$('#legend').addEventListener('click', e=>{
+  const el=e.target.closest('.lg[data-si]'); if(!el) return;
+  cycleState(S.sets[+el.dataset.si].channels[+el.dataset.ci]);
+});
+function cycleState(ch){
+  ch.state = ch.state==='on'?'fade':ch.state==='fade'?'off':'on';
+  renderRack(); renderPlot();
+}
+
+/* ---------------- zoom / pan ---------------- */
+function pushZoom(z){
+  const v=S.view, h=S.hist[v];
+  h.length=S.hptr[v]+1;
+  h.push(z); S.hptr[v]=h.length-1;
+  S.zoom[v]=z;
+  renderPlot();
+}
+function updateZoomBtns(){
+  const v=S.view;
+  $('#zbBack').disabled = S.hptr[v]<=0;
+  $('#zbFwd').disabled  = S.hptr[v]>=S.hist[v].length-1;
+}
+$('#zbZoom').addEventListener('click',()=>{S.tool='zoom';$('#zbZoom').classList.add('on');$('#zbPan').classList.remove('on');});
+$('#zbPan').addEventListener('click',()=>{S.tool='pan';$('#zbPan').classList.add('on');$('#zbZoom').classList.remove('on');});
+$('#zbBack').addEventListener('click',()=>{const v=S.view;if(S.hptr[v]>0){S.hptr[v]--;S.zoom[v]=S.hist[v][S.hptr[v]];renderPlot();}});
+$('#zbFwd').addEventListener('click',()=>{const v=S.view;if(S.hptr[v]<S.hist[v].length-1){S.hptr[v]++;S.zoom[v]=S.hist[v][S.hptr[v]];renderPlot();}});
+$('#zbAx').addEventListener('click',()=>{const v=S.view,c=S.zoom[v];pushZoom(c?{x:DEF[v].x.slice(),y:c.y.slice()}:null);});
+$('#zbAy').addEventListener('click',()=>{const v=S.view,c=S.zoom[v];pushZoom(c?{x:c.x.slice(),y:DEF[v].y.slice()}:null);});
+$('#zbMore').addEventListener('click',e=>{
+  const v=S.view, z=S.zoom[v], xr=z?z.x:DEF[v].x, yr=z?z.y:DEF[v].y;
+  openPop(`<span class="sec">Axis limits</span>
+    <div class="fld">x min <input id="zxm" type="number" value="${+xr[0].toFixed(3)}" style="width:80px"></div>
+    <div class="fld">x max <input id="zxM" type="number" value="${+xr[1].toFixed(3)}" style="width:80px"></div>
+    <div class="fld">y min <input id="zym" type="number" value="${+yr[0].toFixed(3)}" style="width:80px"></div>
+    <div class="fld">y max <input id="zyM" type="number" value="${+yr[1].toFixed(3)}" style="width:80px"></div>
+    <button class="btn indigo wide" id="zApply" style="margin-top:6px;">Apply</button>`, e.currentTarget);
+  $('#zApply').addEventListener('click',()=>{
+    const x0=+$('#zxm').value, x1=+$('#zxM').value, y0=+$('#zym').value, y1=+$('#zyM').value;
+    if(x1>x0 && y1>y0) pushZoom({x:[x0,x1],y:[y0,y1]});
+    closePop();
+  });
+});
+
+let drag=null;
+const wrapEl=$('#plotwrap'), rubber=$('#rubber');
+wrapEl.addEventListener('mousedown', e=>{
+  if(e.button!==0) return;
+  if(e.target.closest('#legend')) return;
+  if(!P) return;
+  const r=wrapEl.getBoundingClientRect();
+  const x=e.clientX-r.left, y=e.clientY-r.top;
+  if(x<P.mL||x>P.mL+P.pw||y<P.mT||y>P.mT+P.ph) return;
+  drag={x0:x,y0:y,xr:P.xr.slice(),yr:P.yr.slice(),pw:P.pw,ph:P.ph,mL:P.mL,mT:P.mT,moved:false};
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e=>{
+  if(!drag) return;
+  const r=wrapEl.getBoundingClientRect();
+  const x=clamp(e.clientX-r.left,drag.mL,drag.mL+drag.pw);
+  const y=clamp(e.clientY-r.top,drag.mT,drag.mT+drag.ph);
+  if(Math.abs(x-drag.x0)>4||Math.abs(y-drag.y0)>4) drag.moved=true;
+  if(S.tool==='zoom'){
+    rubber.classList.remove('hidden');
+    rubber.style.left=Math.min(x,drag.x0)+'px';
+    rubber.style.top=Math.min(y,drag.y0)+'px';
+    rubber.style.width=Math.abs(x-drag.x0)+'px';
+    rubber.style.height=Math.abs(y-drag.y0)+'px';
+  }else{
+    const dx=-(x-drag.x0)/drag.pw*(drag.xr[1]-drag.xr[0]);
+    const dy=(y-drag.y0)/drag.ph*(drag.yr[1]-drag.yr[0]);
+    S.zoom[S.view]={x:[drag.xr[0]+dx,drag.xr[1]+dx],y:[drag.yr[0]+dy,drag.yr[1]+dy]};
+    renderPlot();
+  }
+});
+window.addEventListener('mouseup', e=>{
+  if(!drag) return;
+  const d=drag; drag=null;
+  rubber.classList.add('hidden');
+  if(!d.moved) return;
+  const r=wrapEl.getBoundingClientRect();
+  const x=clamp(e.clientX-r.left,d.mL,d.mL+d.pw);
+  const y=clamp(e.clientY-r.top,d.mT,d.mT+d.ph);
+  const toData=(px,py)=>[
+    d.xr[0]+(px-d.mL)/d.pw*(d.xr[1]-d.xr[0]),
+    d.yr[1]-(py-d.mT)/d.ph*(d.yr[1]-d.yr[0])
+  ];
+  if(S.tool==='zoom'){
+    const [ax,ay]=toData(Math.min(x,d.x0),Math.max(y,d.y0));
+    const [bx,by]=toData(Math.max(x,d.x0),Math.min(y,d.y0));
+    if(bx-ax>1e-9 && by-ay>1e-9) pushZoom({x:[ax,bx],y:[ay,by]});
+  }else{
+    pushZoom(S.zoom[S.view]);   // commit pan into history
+  }
+});
+
+/* ---------------- view tabs + module highlight ---------------- */
+function setView(v){
+  S.view=v;
+  $$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.view===v));
+  renderPlot(); modHi();
+}
+$('#tabs').addEventListener('click',e=>{
+  const b=e.target.closest('[data-view]'); if(b) setView(b.dataset.view);
+});
+function modHi(){
+  const map={freq:'mod-fft', tf:'mod-tf', son:'mod-son'};
+  const id=map[S.view]||null;
+  const strip=$('#modstrip');
+  $$('.module').forEach(m=>m.classList.toggle('active',m.id===id));
+  strip.classList.toggle('hasactive',!!id);
+  if(id){
+    const m=$('#'+id);
+    strip.scrollTo({left:m.offsetLeft-strip.clientWidth/2+m.clientWidth/2,behavior:'smooth'});
+  }
+}
+
+/* ---------------- rack ---------------- */
+function sparkline(ch){
+  const d=ch.data.time, n=d.length; let pts='';
+  for(let i=0;i<n;i+=6) pts+=(i/(n-1)*52).toFixed(1)+','+(8-d[i]/0.3*7).toFixed(1)+' ';
+  return `<svg class="spark" viewBox="0 0 52 16" preserveAspectRatio="none"><polyline points="${pts}" stroke="${PAL[ch.ci]}"/></svg>`;
+}
+function renderRack(){
+  const body=$('#rackBody');
+  const f=S.filter.toLowerCase();
+  body.innerHTML=S.sets.map((s,si)=>{
+    if(f && !s.name.toLowerCase().includes(f)) return '';
+    const rows = s.collapsed ? '' : s.channels.map((c,ci)=>`
+      <div class="chrow ${c.state==='fade'?'fade':c.state==='off'?'off':''}">
+        <span class="cchip" style="background:${PAL[c.ci]}"></span>
+        <span class="chlab" data-act="chname" data-si="${si}" data-ci="${ci}" title="Double-click to rename">${c.label}</span>
+        <span class="tri">
+          <button data-act="st" data-si="${si}" data-ci="${ci}" data-v="on"  class="${c.state==='on'?'on':''}">ON</button>
+          <button data-act="st" data-si="${si}" data-ci="${ci}" data-v="fade" class="${c.state==='fade'?'fd':''}">FD</button>
+          <button data-act="st" data-si="${si}" data-ci="${ci}" data-v="off" class="${c.state==='off'?'of':''}">OFF</button>
+        </span>
+        ${sparkline(c)}
+        <button class="dots" data-act="menu" data-si="${si}" data-ci="${ci}">⋯</button>
+      </div>`).join('');
+    return `<div class="setgrp ${si===S.hiSet?'hi':''}" data-grp="${si}">
+      <div class="set-head">
+        <button class="caret" data-act="collapse" data-si="${si}">${s.collapsed?'▸':'▾'}</button>
+        <span class="set-name" data-act="name" data-si="${si}" title="Double-click to rename">${s.name}</span>
+        <span class="badge">${s.dur.toFixed(1)} s</span>
+        <button class="set-del" data-act="delset" data-si="${si}" title="Delete set">×</button>
+      </div>
+      <div class="set-rows">${rows}</div>
+    </div>`;
+  }).join('');
+  $('#rackSearch').classList.toggle('hidden', S.sets.length<=6);
+  $('#soloBtn').classList.toggle('on', S.solo);
+  renderRefSelects();
+}
+$('#rackBody').addEventListener('click', e=>{
+  const el=e.target.closest('[data-act]'); if(!el) return;
+  const act=el.dataset.act, si=+el.dataset.si, ci=+el.dataset.ci;
+  if(act==='collapse'){ S.sets[si].collapsed=!S.sets[si].collapsed; renderRack(); }
+  else if(act==='delset') delSet(si);
+  else if(act==='st'){ S.sets[si].channels[ci].state=el.dataset.v; renderRack(); renderPlot(); }
+  else if(act==='menu') chMenu(el,si,ci);
+});
+$('#rackBody').addEventListener('dblclick', e=>{
+  const el=e.target.closest('[data-act]'); if(!el) return;
+  const si=+el.dataset.si;
+  if(el.dataset.act==='name')
+    inlineEdit(el,S.sets[si].name,v=>{S.sets[si].name=v;msg(`Renamed set to “${v}”.`);});
+  else if(el.dataset.act==='chname'){
+    const ch=S.sets[si].channels[+el.dataset.ci];
+    inlineEdit(el,ch.label,v=>{ch.label=v;msg(`Renamed channel to “${v}”.`);});
+  }
+});
+function inlineEdit(el,val,commit){
+  const inp=document.createElement('input');
+  inp.className='inline-edit'; inp.value=val;
+  el.replaceWith(inp); inp.focus(); inp.select();
+  let done=false;
+  const fin=ok=>{ if(done)return; done=true;
+    if(ok && inp.value.trim() && inp.value.trim()!==val) commit(inp.value.trim());
+    render(); };
+  inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter')fin(true); if(ev.key==='Escape')fin(false); });
+  inp.addEventListener('blur',()=>fin(true));
+}
+function chMenu(anchor,si,ci){
+  openPop(`
+    <button class="popitem" id="pmCal">Calibrate…</button>
+    <button class="popitem" id="pmRen">Rename…</button>
+    <button class="popitem danger" id="pmDel">Delete channel</button>`, anchor);
+  const s=S.sets[si], ch=s.channels[ci];
+  $('#pmCal').addEventListener('click',()=>{
+    openPop(`<span class="sec">Calibrate ${s.name}·${ch.label}</span>
+      <div class="fld">Sensitivity <input id="calV" type="number" value="100" style="width:70px"> mV/g</div>
+      <button class="btn indigo wide" id="calGo">Apply</button>`, anchor);
+    $('#calGo').addEventListener('click',()=>{
+      msg(`Calibrated ${s.name}·${ch.label}: ${$('#calV').value} mV/g applied.`); closePop();
+    });
+  });
+  $('#pmRen').addEventListener('click',()=>{
+    openPop(`<span class="sec">Rename channel</span>
+      <div class="fld"><input id="renV" type="text" value="${ch.label}" style="width:130px"></div>
+      <button class="btn indigo wide" id="renGo">Apply</button>`, anchor);
+    $('#renV').focus();
+    $('#renGo').addEventListener('click',()=>{
+      const v=$('#renV').value.trim();
+      if(v){ ch.label=v; msg(`Renamed channel to “${v}”.`); }
+      closePop(); render();
+    });
+  });
+  $('#pmDel').addEventListener('click',()=>{
+    closePop();
+    const idx=ci, snap=ch;
+    s.channels.splice(ci,1);
+    if(!s.channels.length){ delSet(si); return; }
+    msg(`Deleted ${s.name}·${snap.label}.`, ()=>{
+      s.channels.splice(Math.min(idx,s.channels.length),0,snap);
+      render(); msg(`Restored ${snap.label} to ${s.name}.`);
+    });
+    render();
+  });
+}
+function delSet(si){
+  const s=S.sets.splice(si,1)[0];
+  if(S.hiSet>=S.sets.length) S.hiSet=Math.max(0,S.sets.length-1);
+  msg(`Deleted ${s.name} (${s.channels.length} channels).`, ()=>{
+    S.sets.splice(Math.min(si,S.sets.length),0,s);
+    render(); msg(`Restored ${s.name}.`);
+  });
+  render();
+}
+$('#allBtn').addEventListener('click',()=>{
+  S.solo=false; S.preSolo=null;
+  lines().forEach(L=>L.ch.state='on');
+  render();
+});
+$('#noneBtn').addEventListener('click',()=>{
+  S.solo=false; S.preSolo=null;
+  lines().forEach(L=>L.ch.state='off');
+  render();
+});
+$('#soloBtn').addEventListener('click',()=>{
+  if(!S.sets.length) return;
+  if(!S.solo){
+    S.preSolo=lines().map(L=>L.ch.state);
+    S.sets.forEach((s,si)=>s.channels.forEach(c=>c.state = si===S.hiSet?'on':'off'));
+    S.solo=true;
+    msg(`Solo: ${S.sets[S.hiSet].name}.`);
+  }else{
+    const snap=S.preSolo, ls=lines();
+    if(snap && snap.length===ls.length) ls.forEach((L,i)=>L.ch.state=snap[i]);
+    else ls.forEach(L=>L.ch.state='on');
+    S.solo=false; S.preSolo=null;
+  }
+  render();
+});
+function stepSet(d){
+  if(!S.sets.length) return;
+  S.hiSet=clamp(S.hiSet+d,0,S.sets.length-1);
+  if(S.solo) S.sets.forEach((s,si)=>s.channels.forEach(c=>c.state = si===S.hiSet?'on':'off'));
+  render();
+  const el=$(`[data-grp="${S.hiSet}"]`);
+  if(el) el.scrollIntoView({block:'nearest',behavior:'smooth'});
+}
+$('#prevSet').addEventListener('click',()=>stepSet(-1));
+$('#nextSet').addEventListener('click',()=>stepSet(1));
+$('#rackSearch').addEventListener('input',e=>{S.filter=e.target.value;renderRack();});
+$('#loadBtn').addEventListener('click',()=>{
+  const nm=LOADNAMES[S.loadIdx++%LOADNAMES.length];
+  addSet(nm);
+  msg(`Loaded ${nm}.dvma (1 set, 2 channels).`);
+  render();
+});
+$('#saveBtn').addEventListener('click',()=>{
+  msg(`Dataset saved: pydvma_${new Date().toISOString().slice(0,10)}.dvma (${S.sets.length} sets).`);
+});
+
+/* ---------------- ref selects (scaling module) ---------------- */
+function renderRefSelects(){
+  const rs=$('#refSet'), rc=$('#refCh');
+  const pv=rs.value;
+  rs.innerHTML=S.sets.map((s,i)=>`<option value="${i}">${s.name}</option>`).join('');
+  if(pv && +pv<S.sets.length) rs.value=pv;
+  const si=+rs.value||0;
+  rc.innerHTML=(S.sets[si]?S.sets[si].channels:[]).map((c,i)=>`<option value="${i}">${c.label}</option>`).join('');
+}
+$('#refSet').addEventListener('change',renderRefSelects);
+
+/* ---------------- transport: record / pretrigger / output ---------------- */
+function renderTransport(){
+  $('#recBtn').classList.toggle('recording',S.recording);
+  $('#recBtn').classList.toggle('waiting',S.waiting);
+  $('#armBtn').classList.toggle('on',S.armed);
+  $('#armChip').classList.toggle('hidden',!S.armed||S.waiting);
+  $('#armChip').textContent=`ARMED · thr ${S.thr} · ch ${S.pch}`;
+  $('#waitChip').classList.toggle('hidden',!S.waiting);
+  if(!S.recording) $('#durRead').textContent=S.duration.toFixed(1)+' s';
+  $('#durRead').classList.toggle('rec',S.recording);
+  const o=S.output;
+  $('#outTxt').textContent = o.type==='none' ? 'output: none'
+    : `output: ${o.type}${o.type==='sweep'?` ${o.f1}–${o.f2} Hz`:''} · ${o.amp} V`;
+  $('#outChip').classList.toggle('live',o.type!=='none');
+  $('#logOutBtn').classList.toggle('hidden',o.type==='none');
+}
+$('#armBtn').addEventListener('click',()=>{
+  if(S.waiting) return;
+  S.armed=!S.armed;
+  msg(S.armed?`Pretrigger armed (threshold ${S.thr} on ch ${S.pch}).`:'Pretrigger disarmed.');
+  renderTransport();
+});
+$('#recBtn').addEventListener('click',()=>startRecord(false));
+$('#logOutBtn').addEventListener('click',()=>startRecord(true));
+$('#cancelWait').addEventListener('click',e=>{
+  e.stopPropagation();
+  if(S.waitTimer){clearTimeout(S.waitTimer);S.waitTimer=null;}
+  S.waiting=false;
+  msg('Trigger wait cancelled.');
+  renderTransport();
+});
+function startRecord(withOutput){
+  if(S.recording||S.waiting) return;
+  if(withOutput) msg(`Output started: ${S.output.type} ${S.output.f1}–${S.output.f2} Hz, ${S.output.amp} V.`);
+  if(S.armed){
+    S.waiting=true; renderTransport();
+    msg('Waiting for trigger…');
+    S.waitTimer=setTimeout(()=>{
+      S.waitTimer=null; S.waiting=false;
+      msg('Trigger detected.');
+      doRecord(withOutput);
+    },2000);
+  }else doRecord(withOutput);
+}
+function doRecord(withOutput){
+  S.recording=true; renderTransport();
+  const t0=performance.now(), DUR=1500;
+  const iv=setInterval(()=>{
+    const el=clamp((performance.now()-t0)/DUR,0,1)*S.duration;
+    $('#durRead').textContent=el.toFixed(1)+' / '+S.duration.toFixed(1)+' s';
+  },80);
+  setTimeout(()=>{
+    clearInterval(iv);
+    S.recording=false;
+    const s=addSet();
+    msg(`Logging complete${withOutput?' (with output)':''}: ${s.name}, 2 channels, ${S.duration.toFixed(1)} s.`);
+    if($('#autosave').checked) msg(`Autosaved dataset after ${s.name}.`);
+    render();
+  },DUR);
+}
+/* duration inline edit */
+$('#durRead').addEventListener('click',()=>{
+  if(S.recording||S.waiting) return;
+  $('#durRead').classList.add('hidden');
+  const ed=$('#durEdit');
+  ed.value=S.duration; ed.classList.remove('hidden'); ed.focus(); ed.select();
+});
+function commitDur(ok){
+  const ed=$('#durEdit');
+  if(ed.classList.contains('hidden')) return;
+  if(ok){
+    const v=parseFloat(ed.value);
+    if(v>0 && v!==S.duration){ S.duration=v; msg(`Stored time set to ${v.toFixed(1)} s.`); }
+  }
+  ed.classList.add('hidden');
+  $('#durRead').classList.remove('hidden');
+  renderTransport();
+}
+$('#durEdit').addEventListener('keydown',e=>{ if(e.key==='Enter')commitDur(true); if(e.key==='Escape')commitDur(false); });
+$('#durEdit').addEventListener('blur',()=>commitDur(true));
+
+/* output popover */
+$('#outChip').addEventListener('click',e=>outputPop(e.currentTarget));
+function outputPop(anchor){
+  const o=S.output;
+  openPop(`<span class="sec">Output signal</span>
+    <div class="fld">Type <select id="poType">
+      <option ${o.type==='none'?'selected':''}>none</option>
+      <option ${o.type==='sweep'?'selected':''}>sweep</option>
+      <option ${o.type==='white'?'selected':''}>white</option>
+      <option ${o.type==='gaussian'?'selected':''}>gaussian</option></select></div>
+    <div class="fld">Amplitude (V) <input id="poAmp" type="number" step="0.05" value="${o.amp}" style="width:64px"></div>
+    <div class="fld">f1 (Hz) <input id="poF1" type="number" value="${o.f1}" style="width:64px"></div>
+    <div class="fld">f2 (Hz) <input id="poF2" type="number" value="${o.f2}" style="width:64px"></div>
+    <div class="fld">Duration (s) <input id="poDur" type="number" step="0.1" value="${o.dur}" style="width:64px"></div>
+    <canvas id="poCv" width="196" height="44" style="border:1px solid var(--border);border-radius:6px;margin:4px 0;display:block;"></canvas>
+    <div class="btnrow"><button class="btn" id="poPrev">Preview</button><button class="btn indigo" id="poApply">Apply</button></div>`,anchor);
+  const draw=()=>{
+    const cv=$('#poCv'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+    ctx.clearRect(0,0,W,H);
+    ctx.strokeStyle='#4f46e5';ctx.lineWidth=1.2;ctx.beginPath();
+    const type=$('#poType').value;
+    let prev=H/2;
+    for(let x=0;x<W;x++){
+      const u=x/W; let y;
+      if(type==='none') y=0;
+      else if(type==='sweep') y=Math.sin(2*Math.PI*(2+u*14)*u*2.2);
+      else if(type==='white') y=(Math.random()*2-1);
+      else y=clamp(((Math.random()+Math.random()+Math.random())/1.5-1)*0.9+((prev-H/2)/(H/2))*0.3,-1,1);
+      const py=H/2-y*H*0.42;
+      x===0?ctx.moveTo(x,py):ctx.lineTo(x,py);
+      prev=py;
+    }
+    ctx.stroke();
+  };
+  draw();
+  $('#poPrev').addEventListener('click',draw);
+  $('#poType').addEventListener('change',draw);
+  $('#poApply').addEventListener('click',()=>{
+    S.output={type:$('#poType').value,amp:+$('#poAmp').value,f1:+$('#poF1').value,f2:+$('#poF2').value,dur:+$('#poDur').value};
+    msg(S.output.type==='none'?'Output disabled.':`Output set: ${S.output.type} ${S.output.f1}–${S.output.f2} Hz, ${S.output.amp} V.`);
+    closePop(); renderTransport();
+  });
+}
+
+/* ---------------- monitor ---------------- */
+$('#monBtn').addEventListener('click',toggleMonitor);
+function toggleMonitor(){
+  S.monitor.open=!S.monitor.open;
+  $('#monitor').classList.toggle('open',S.monitor.open);
+  $('#monBtn').classList.toggle('on',S.monitor.open);
+  if(S.monitor.open) setTimeout(sizeMonCanvases,320);
+  setTimeout(renderPlot,330);
+}
+function sizeMonCanvases(){
+  for(const id of ['mcT','mcF']){
+    const c=$('#'+id);
+    c.width=Math.max(60,c.clientWidth); c.height=Math.max(40,c.clientHeight);
+  }
+}
+$('#popOut').addEventListener('click',()=>msg('Monitor pop-out: opens as its own window in the production build.'));
+function setMonPanel(k,on){
+  S.monitor[k.toUpperCase()]=on;
+  $('#mon'+k.toUpperCase()).style.display=on?'':'none';
+  $(`.kbd-chips kbd[data-k="${k}"]`).classList.toggle('on',on);
+  sizeMonCanvases();
+}
+function monKey(k){
+  if(k==='p'){
+    S.monitor.paused=!S.monitor.paused;
+    $('.kbd-chips kbd[data-k="p"]').classList.toggle('paused',S.monitor.paused);
+    $('.kbd-chips kbd[data-k="p"]').classList.toggle('on',S.monitor.paused);
+  }
+  else if(k==='t') setMonPanel('t',!S.monitor.T);
+  else if(k==='f') setMonPanel('f',!S.monitor.F);
+  else if(k==='l') setMonPanel('l',!S.monitor.L);
+}
+$$('.kbd-chips kbd').forEach(kb=>kb.addEventListener('click',()=>monKey(kb.dataset.k)));
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(!$('#settings').classList.contains('hidden')){$('#settings').classList.add('hidden');return;}
+    if(!pop.classList.contains('hidden')){closePop();return;}
+    if(document.body.classList.contains('rack-open')){document.body.classList.remove('rack-open');return;}
+  }
+  const tag=(e.target.tagName||'').toLowerCase();
+  if(tag==='input'||tag==='select'||tag==='textarea') return;
+  if(!S.monitor.open) return;
+  const k=e.key.toLowerCase();
+  if(['t','f','l','p'].includes(k)){ monKey(k); e.preventDefault(); }
+});
+
+/* ---------------- animation loop (meters + monitor) ---------------- */
+let lvl=[0.35,0.3], clipUntil=0, monPhase=0;
+const fftBins=new Array(48).fill(0);
+function loop(ts){
+  requestAnimationFrame(loop);
+  // transport meters — always live
+  const act=S.recording?0.25:0.09;
+  lvl=lvl.map(v=>clamp(v+(Math.random()-0.49)*act,0.04,1));
+  if(Math.random()<(S.recording?0.01:0.0012)) lvl[Math.random()<0.5?0:1]=0.96+Math.random()*0.04;
+  [0,1].forEach(i=>{
+    const el=$('#m'+i);
+    el.style.width=(lvl[i]*100).toFixed(0)+'%';
+    el.className=lvl[i]>0.92?'clip':lvl[i]>0.7?'hot':'';
+  });
+  if(Math.max(...lvl)>0.92) clipUntil=ts+1000;
+  $('#clipFlag').classList.toggle('lit',ts<clipUntil);
+  // monitor
+  if(S.monitor.open && !S.monitor.paused){
+    monPhase+=0.05;
+    drawMonitor(ts);
+  }
+}
+function drawMonitor(ts){
+  if(S.monitor.T){
+    const cv=$('#mcT');
+    if(cv.width>0){
+      const ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+      ctx.fillStyle='#141926';ctx.fillRect(0,0,W,H);
+      ctx.strokeStyle='#232a3c';ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();
+      [0,1].forEach(k=>{
+        ctx.strokeStyle=PAL[k];ctx.lineWidth=1.2;ctx.beginPath();
+        for(let x=0;x<W;x+=2){
+          const u=x/W;
+          const y=H/2 - (Math.sin(2*Math.PI*(3+k)*u+monPhase*(1.4+k*0.3))*0.3
+                       + Math.sin(2*Math.PI*9*u+monPhase*2.1)*0.08
+                       + (Math.random()-0.5)*0.05)*H*lvl[k]*0.9;
+          x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+      });
+    }
+  }
+  if(S.monitor.F){
+    const cv=$('#mcF');
+    if(cv.width>0){
+      const ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+      ctx.fillStyle='#141926';ctx.fillRect(0,0,W,H);
+      const bw=W/48;
+      for(let i=0;i<48;i++){
+        let t=0.06+0.04*Math.random();
+        MODES.forEach(fc=>{const b=fc/500*48;t+=0.75/(1+((i-b)/1.6)**2);});
+        t*=lvl[0]*1.5*(0.85+0.3*Math.random());
+        fftBins[i]=fftBins[i]*0.7+clamp(t,0,1)*0.3;
+        const h=fftBins[i]*(H-8);
+        ctx.fillStyle=fftBins[i]>0.8?'#f87171':'#5b8ef7';
+        ctx.fillRect(i*bw+1,H-h,bw-2,h);
+      }
+    }
+  }
+  if(S.monitor.L){
+    $('#vb0').style.height=(lvl[0]*100).toFixed(0)+'%';
+    $('#vb1').style.height=(lvl[1]*100).toFixed(0)+'%';
+  }
+  $('#monClip').classList.toggle('lit',ts<clipUntil);
+}
+requestAnimationFrame(loop);
+
+/* ---------------- modules ---------------- */
+$('#calcFFT').addEventListener('click',()=>{
+  setView('freq');
+  msg(`FFT computed (${$('#fftWin').value} window).`);
+});
+$('#tfN').addEventListener('input',()=>{
+  S.tfN=+$('#tfN').value;
+  $('#tfNread').textContent=S.tfN;
+  $('#frameLen').textContent=`Frame length = ${(S.duration/S.tfN).toFixed(2)} s`;
+  if(S.view==='tf') renderPlot();
+});
+$('#cohChk').addEventListener('change',()=>{
+  S.coh=$('#cohChk').checked;
+  if(S.view==='tf') renderPlot();
+});
+$('#calcTF').addEventListener('click',()=>{
+  setView('tf');
+  msg(`TF computed (${$('#tfWin').value}, averaging: ${$('#tfAvg').value}, N = ${S.tfN} frames).`);
+});
+$('#sclIw').addEventListener('click',()=>{
+  S.scaleOps.push({t:'iw'});
+  msg('Applied ×(iω): displacement → velocity scaling.');
+  renderPlot();
+});
+$('#scl1Iw').addEventListener('click',()=>{
+  S.scaleOps.push({t:'1iw'});
+  msg('Applied ×1/(iω): acceleration → velocity scaling.');
+  renderPlot();
+});
+$('#bestBtn').addEventListener('click',()=>{
+  if(S.sets.length<2){ msg('Best match needs at least 2 sets.'); return; }
+  const rsi=+$('#refSet').value||0, rci=+$('#refCh').value||0;
+  const rset=S.sets[rsi]; if(!rset||!rset.channels[rci]){ msg('Pick a valid reference channel.'); return; }
+  const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+  const refM=mean(rset.channels[rci].data.freq);
+  const prev={};
+  S.sets.forEach((s,si)=>{ if(si===rsi) return;
+    s.channels.forEach((c,ci)=>{ prev[si+'_'+ci]=c.off; c.off+=refM-mean(c.data.freq); });
+  });
+  S.scaleOps.push({t:'best',prev});
+  msg(`Best-match scaling applied (ref ${rset.name}·${rset.channels[rci].label}).`);
+  renderPlot();
+});
+$('#undoScl').addEventListener('click',()=>{
+  const op=S.scaleOps.pop();
+  if(!op){ msg('Nothing to undo in scaling.'); return; }
+  if(op.t==='best'){
+    S.sets.forEach((s,si)=>s.channels.forEach((c,ci)=>{
+      const k=si+'_'+ci; if(k in op.prev) c.off=op.prev[k];
+    }));
+  }
+  msg(`Scaling undone (${op.t==='best'?'best match':op.t==='iw'?'×(iω)':'×1/(iω)'}).`);
+  renderPlot();
+});
+$('#cleanBtn').addEventListener('click',()=>{
+  msg('Impulse cleaned: pre-trigger noise zeroed, exponential window applied.');
+});
+$('#sonRes').addEventListener('input',()=>{
+  S.sonRes=+$('#sonRes').value;
+  $('#sonResRead').textContent=[64,128,256,512,1024][S.sonRes];
+  if(S.view==='son') renderPlot();
+});
+$('#sonDyn').addEventListener('input',()=>{
+  S.sonDyn=+$('#sonDyn').value;
+  $('#sonDynRead').textContent=S.sonDyn+' dB';
+  if(S.view==='son') renderPlot();
+});
+$('#calcSon').addEventListener('click',()=>{
+  setView('son');
+  msg(`Sonogram computed (${[64,128,256,512,1024][S.sonRes]} pt, ${S.sonDyn} dB range).`);
+});
+/* mode fit */
+function fitModes(n){
+  if(S.view!=='tf'){ setView('tf'); msg('Switched to TF view — zoom to a peak, then fit.'); return; }
+  const xr=S.zoom.tf?S.zoom.tf.x:DEF.tf.x;
+  const cands=MODES.filter(f=>f>=xr[0]&&f<=xr[1]);
+  if(!cands.length){ msg('No resonance peaks in the current x-range.'); return; }
+  const chosen=cands.slice(0,n);
+  const modes=chosen.map(f=>({
+    fn:f+(Math.random()-0.5)*1.2,
+    z:0.008+Math.random()*0.012,
+    a:58+Math.random()*22
+  }));
+  S.fits.push({modes,range:[xr[0],xr[1]]});
+  msg(`Fitted ${modes.length} mode${modes.length>1?'s':''}: `+
+      modes.map(m=>`${m.fn.toFixed(1)} Hz (ζ=${m.z.toFixed(4)})`).join(', '));
+  renderPlot();
+}
+$('#fit1').addEventListener('click',()=>fitModes(1));
+$('#fit2').addEventListener('click',()=>fitModes(2));
+$('#fit3').addEventListener('click',()=>fitModes(3));
+$('#rejectBtn').addEventListener('click',()=>{
+  if(!S.fits.length){ msg('No fit to reject.'); return; }
+  const g=S.fits.pop();
+  msg(`Rejected last fit (${g.modes.length} mode${g.modes.length>1?'s':''}).`);
+  renderPlot();
+});
+$('#sumBtn').addEventListener('click',e=>{
+  const all=S.fits.flatMap(g=>g.modes);
+  if(!all.length){ msg('No fitted modes yet — zoom to a peak on the TF and press Fit.'); return; }
+  openPop(`<span class="sec">Fitted modes (${all.length})</span>
+    <table><tr><th>#</th><th>fn (Hz)</th><th>ζ</th><th>amp (dB)</th></tr>`+
+    all.map((m,i)=>`<tr><td>${i+1}</td><td>${m.fn.toFixed(2)}</td><td>${m.z.toFixed(4)}</td><td>${m.a.toFixed(1)}</td></tr>`).join('')+
+    `</table>`, e.currentTarget);
+});
+$('#reconBtn').addEventListener('click',e=>{
+  if(!S.fits.length){ msg('No fitted modes to reconstruct from.'); return; }
+  S.recon=!S.recon;
+  e.currentTarget.classList.toggle('on',S.recon);
+  msg(S.recon?'Reconstruction overlay on.':'Reconstruction overlay off.');
+  if(S.view==='tf') renderPlot();
+});
+$('#globalBtn').addEventListener('click',()=>{
+  const all=S.fits.flatMap(g=>g.modes);
+  if(!all.length){ msg('No individual fits to seed the global optimiser.'); return; }
+  all.forEach(m=>{
+    const near=MODES.reduce((a,b)=>Math.abs(b-m.fn)<Math.abs(a-m.fn)?b:a);
+    m.fn+= (near-m.fn)*0.6; m.z=clamp(m.z+(Math.random()-0.5)*0.002,0.004,0.05);
+  });
+  msg(`Global optimiser converged: ${all.length} modes, RMS error 0.42 dB (7 iterations).`);
+  if(S.view==='tf') renderPlot();
+});
+/* export */
+$('#savePng').addEventListener('click',()=>msg('Figure saved: pydvma_fig_1.png (1600×900).'));
+$('#savePdf').addEventListener('click',()=>msg('Figure saved: pydvma_fig_1.pdf (vector).'));
+$('#expMat').addEventListener('click',()=>msg(`Exported to MATLAB: pydvma_export.mat (${S.sets.length} sets).`));
+$('#expCsv').addEventListener('click',()=>msg(`Exported CSV: ${lines().length} files, one per channel.`));
+$('#autosave').addEventListener('change',e=>
+  msg(e.target.checked?'Autosave on: dataset written after every log.':'Autosave off.'));
+
+/* ---------------- settings overlay ---------------- */
+$('#gearBtn').addEventListener('click',()=>$('#settings').classList.remove('hidden'));
+$('#setClose').addEventListener('click',()=>$('#settings').classList.add('hidden'));
+$('#setCancel').addEventListener('click',()=>$('#settings').classList.add('hidden'));
+$('#settings').addEventListener('mousedown',e=>{ if(e.target.id==='settings') $('#settings').classList.add('hidden'); });
+$('#suggestBtn').addEventListener('click',()=>{
+  $('#sFs').value='44100'; $('#sCh').value=2; $('#sDur').value=2.0;
+  $('#sPre').checked=true; $('#sThr').value=0.05; $('#sPch').value=0; $('#sPsm').value=1000;
+  msg('Suggested settings filled in: 44.1 kHz, 2 ch, 2.0 s, pretrigger 1000 samples.');
+});
+$('#setApply').addEventListener('click',()=>{
+  const d=parseFloat($('#sDur').value);
+  if(d>0) S.duration=d;
+  S.thr=parseFloat($('#sThr').value)||0.05;
+  S.pch=parseInt($('#sPch').value)||0;
+  if($('#sPre').checked && !S.armed){ S.armed=true; }
+  if(!$('#sPre').checked) S.armed=false;
+  $('#monSub').textContent=`live · ${(+$('#sFs').value/1000).toFixed(1)} kHz · ${$('#sCh').value} ch`;
+  $('#settings').classList.add('hidden');
+  msg(`Settings applied: ${$('#sDev').value.split(' (')[0]}, ${(+$('#sFs').value/1000).toFixed(1)} kHz, ${$('#sCh').value} ch, ${S.duration.toFixed(1)} s.`);
+  renderTransport();
+});
+
+/* ---------------- narrow mode ---------------- */
+$('#narrowBtn').addEventListener('click',()=>{
+  S.forceNarrow=!S.forceNarrow;
+  $('#narrowBtn').classList.toggle('on',S.forceNarrow);
+  document.body.classList.toggle('constrain',S.forceNarrow);
+  document.body.classList.toggle('narrow',S.forceNarrow||window.matchMedia('(max-width:1000px)').matches);
+  if(!S.forceNarrow) document.body.classList.remove('rack-open');
+  setTimeout(renderPlot,60);
+});
+const mq=window.matchMedia('(max-width:1000px)');
+const mqSync=()=>{
+  document.body.classList.toggle('narrow',S.forceNarrow||mq.matches);
+  if(!mq.matches&&!S.forceNarrow) document.body.classList.remove('rack-open');
+  setTimeout(renderPlot,60);
+};
+if(mq.addEventListener) mq.addEventListener('change',mqSync); else mq.addListener(mqSync);
+mqSync();
+$('#rackBtn').addEventListener('click',()=>document.body.classList.toggle('rack-open'));
+$('#scrim').addEventListener('click',()=>document.body.classList.remove('rack-open'));
+$('#tMore').addEventListener('click',e=>{
+  openPop(`
+    <button class="popitem" id="nmOut">Output signal…</button>
+    <button class="popitem" id="nmMon">${S.monitor.open?'Hide':'Show'} monitor</button>
+    <button class="popitem" id="nmSet">Acquisition settings…</button>`, e.currentTarget);
+  const anchor=e.currentTarget;
+  $('#nmOut').addEventListener('click',()=>outputPop(anchor));
+  $('#nmMon').addEventListener('click',()=>{toggleMonitor();closePop();});
+  $('#nmSet').addEventListener('click',()=>{$('#settings').classList.remove('hidden');closePop();});
+});
+
+/* ---------------- global render + boot ---------------- */
+function render(){ renderRack(); renderPlot(); renderTransport(); }
+window.addEventListener('resize',()=>renderPlot());
+if(window.ResizeObserver) new ResizeObserver(()=>renderPlot()).observe($('#plotwrap'));
+
+addSet(); addSet();
+S.hiSet=0;
+msg('Session restored: 2 sets, 4 channels (fake data — layout mockup).');
+render();
+modHi();
+</script>
+</body>
+</html>
