@@ -33,9 +33,16 @@ matching the Qt scope, synthetic-signal mode, fps instrumentation
     # open http://localhost:8905/scope.html  (mic needs localhost, not file://)
 
 **Gate criterion (from the spec): smooth ≥30 fps live trace in a real
-browser.** Tore judges the *feel* against the pyqtgraph scope. Pass →
-proceed with Stage 2 detailed design; disappoint → stop at Stage 1 +
-frozen Qt, having lost little.
+browser.**
+
+**VERDICT (Tore, 2026-07-03): PASSED — "stable 30 fps, feels live,
+seems like a go."** Stage 2 detailed design is approved to proceed.
+One small curiosity for the Stage 2 rendering work: the fps sat at a
+stable 30 rather than the expected 60 in a real browser (headless
+evidence showed zero jitter/drops at that cadence, so it's a cap
+somewhere — display refresh, browser throttling, or the prototype's
+render loop — not a struggle). Understand it before choosing the
+production rendering approach; not a blocker.
 
 ### Piece 2 — the design session (the main event, needs Tore)
 
