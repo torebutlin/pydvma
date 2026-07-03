@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>pydvma web scope — Stage 2 gate prototype</title>
+<style>
+  /* ------------------------------------------------------------------ */
+  /* Layout: header (controls + stats), three stacked panels, footer.   */
+  /* Panel sizes are fixed by flex once laid out; nothing in the render */
+  /* loop reads or writes layout, so there is no per-frame reflow.      */
+  /* ------------------------------------------------------------------ */
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #0b0e13;
+    color: #d7e1ea;
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  #app { height: 100%; display: flex; flex-direction: column; }
+
+  header {
+    flex: 0 0 auto;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+    padding: 8px 12px 6px 12px;
+  }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: 0.02em; }
+  header h1 span { color: #5b6b7c; font-weight: 400; }
+  .ctrl { display: flex; align-items: center; gap: 6px; color: #9fb0bf; }
+  .ctrl select {
+    background: #151c26; color: #d7e1ea; border: 1px solid #2a3646;
+    border-radius: 4px; padding: 2px 6px; font: inherit;
+  }
+  .ctrl input[type="checkbox"] { accent-color: #3ddc97; }
+  #pausebadge {
+    display: none; padding: 1px 8px; border-radius: 4px;
+    background: #7a3030; color: #ffd9d9; font-weight: 600; letter-spacing: 0.06em;
+  }
+  #pausebadge.on { display: inline-block; }
+
+  #statusbar {
+    margin-left: auto;
+    display: flex; gap: 14px; flex-wrap: wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; color: #8b98a5;
+  }
+  #statusbar b { color: #d7e1ea; font-weight: 600; }
+  #s-fps.good { color: #3ddc97; }
+  #s-fps.bad  { color: #ff6b6b; }
+
+  #notice {
+    flex: 0 0 auto; display: none;
+    margin: 0 12px 6px 12px; padding: 6px 10px;
+    background: #2b2416; border: 1px solid #6b5a2a; border-radius: 6px;
+    color: #e8d49a; font-size: 12.5px;
+  }
+  #notice.show { display: block; }
+
+  main {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 0 12px 6px 12px;
+  }
+  .panel {
+    position: relative; min-height: 0;
+    background: #10151c;
+    border: 1px solid #1c2530; border-radius: 8px;
+    overflow: hidden;
+  }
+  #panel-time   { flex: 3 1 0; }
+  #panel-freq   { flex: 2.2 1 0; }
+  #panel-levels { flex: 0 0 92px; }
+  .panel canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  footer {
+    flex: 0 0 auto; padding: 4px 12px 8px 12px;
+    color: #5b6b7c; font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  footer kbd {
+    background: #1a2230; border: 1px solid #2a3646; border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 5px; color: #b9c7d4; font: inherit;
+  }
+
+  /* Start overlay: AudioContext needs a user gesture in normal browsers. */
+  #overlay {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(6, 9, 14, 0.82); backdrop-filter: blur(2px);
+  }
+  #overlay.hidden { display: none; }
+  #overlay .card {
+    background: #121924; border: 1px solid #263344; border-radius: 12px;
+    padding: 26px 30px; max-width: 460px; text-align: center;
+  }
+  #overlay .card h2 { margin: 0 0 6px 0; font-size: 16px; }
+  #overlay .card p { color: #9fb0bf; font-size: 13px; margin: 6px 0 16px 0; }
+  #overlay button {
+    display: block; width: 100%; margin: 8px 0;
+    background: #1c2a3a; color: #d7e1ea; border: 1px solid #33465e;
+    border-radius: 8px; padding: 10px 14px; font: inherit; font-size: 14px;
+    cursor: pointer;
+  }
+  #overlay button:hover:not(:disabled) { background: #24374e; }
+  #overlay button:disabled { opacity: 0.45; cursor: not-allowed; }
+  #overlay button#btn-mic { border-color: #3ddc97; }
+  #overlay .hint { font-size: 12px; color: #7d8b99; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>pydvma web scope <span>— Stage 2 gate prototype</span></h1>
+    <label class="ctrl">viewed time
+      <select id="viewtime">
+        <option value="0.3" selected>0.3 s</option>
+        <option value="1">1 s</option>
+        <option value="2">2 s</option>
+      </select>
+    </label>
+    <label class="ctrl">
+      <input type="checkbox" id="synth"> Synthetic signal (no mic)
+    </label>
+    <span id="pausebadge">PAUSED</span>
+    <div id="statusbar">
+      <span>fps <b id="s-fps">–</b></span>
+      <span>p95 <b id="s-p95">–</b> ms</span>
+      <span>rate <b id="s-sr">–</b></span>
+      <span>chunk <b id="s-chunk">–</b></span>
+      <span>dropped <b id="s-drop">0</b></span>
+      <span>mode <b id="s-mode">idle</b></span>
+    </div>
+  </header>
+
+  <div id="notice"></div>
+
+  <main>
+    <section class="panel" id="panel-time"><canvas></canvas></section>
+    <section class="panel" id="panel-freq"><canvas></canvas></section>
+    <section class="panel" id="panel-levels"><canvas></canvas></section>
+  </main>
+
+  <footer>
+    <kbd>T</kbd> time &nbsp; <kbd>F</kbd> freq &nbsp; <kbd>L</kbd> levels &nbsp;
+    <kbd>P</kbd> pause &nbsp;—&nbsp; same keys as the Qt oscilloscope
+  </footer>
+</div>
+
+<div id="overlay">
+  <div class="card">
+    <h2>pydvma web scope</h2>
+    <p>Stage 2 gate: smooth &ge;30&nbsp;fps scrolling trace of live input.<br>
+       Browsers require a click before audio can start.</p>
+    <button id="btn-mic">Start &mdash; microphone input</button>
+    <button id="btn-synth">Start &mdash; synthetic signal (no mic)</button>
+    <div class="hint" id="overlay-hint"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+ * pydvma Stage 2 gate prototype — Web Audio oscilloscope.
+ *
+ * Architecture under test (deliberately mirrors the future NI bridge):
+ *
+ *   source (mic or synthetic)
+ *     -> AudioWorkletProcessor (audio thread; posts Float32 chunks)
+ *     -> postMessage            (stand-in for the websocket hop)
+ *     -> main-thread ring buffer (a few seconds)
+ *     -> requestAnimationFrame canvas render (min-max decimation)
+ *
+ * Gate evidence: rolling fps / p95 frame time / dropped-chunk count in
+ * the status bar and on window.__scopeStats.
+ * ===================================================================== */
+
+/* ---------------- Worklet source (inline; Blob URL keeps the file
+ * self-contained). Plain string on purpose: no backticks/${} inside. */
+var WORKLET_SRC = [
+"class ScopeSource extends AudioWorkletProcessor {",
+"  constructor() {",
+"    super();",
+"    this.mode = 'synth';          // 'mic' | 'synth'",
+"    this.CHUNK = 256;             // samples per posted chunk (~5 ms @48k)",
+"    this.buf = new Float32Array(this.CHUNK);",
+"    this.fill = 0;",
+"    this.seq = 0;                 // chunk sequence number (gap => drop)",
+"    this.n = 0;                   // synth sample counter",
+"    this.port.onmessage = (e) => {",
+"      if (e.data && e.data.mode) this.mode = e.data.mode;",
+"    };",
+"  }",
+"  process(inputs, outputs) {",
+"    var inCh = inputs[0] && inputs[0][0];",
+"    var quantum = (inCh && inCh.length) || 128;",
+"    var TWO_PI = 6.283185307179586;",
+"    for (var i = 0; i < quantum; i++) {",
+"      var s;",
+"      if (this.mode === 'mic') {",
+"        s = inCh ? inCh[i] : 0;",
+"      } else {",
+"        // 220 Hz + 3rd harmonic + noise, slow amplitude wobble.",
+"        var t = this.n / sampleRate;",
+"        var amp = 0.45 + 0.25 * Math.sin(TWO_PI * 0.19 * t);",
+"        s = amp * (Math.sin(TWO_PI * 220 * t)",
+"                   + 0.35 * Math.sin(TWO_PI * 660 * t + 0.7))",
+"            + 0.015 * (Math.random() * 2 - 1);",
+"        this.n++;",
+"      }",
+"      this.buf[this.fill++] = s;",
+"      if (this.fill === this.CHUNK) {",
+"        var out = this.buf;",
+"        this.port.postMessage({ seq: this.seq++, samples: out }, [out.buffer]);",
+"        this.buf = new Float32Array(this.CHUNK);",
+"        this.fill = 0;",
+"      }",
+"    }",
+"    return true; // keep processor alive (output stays silent)",
+"  }",
+"}",
+"registerProcessor('scope-source', ScopeSource);"
+].join("\n");
+
+/* ---------------- Constants ---------------- */
+var CHUNK = 256;              // must match worklet CHUNK
+var RING_SECONDS = 8;         // ring capacity (>> max viewed_time of 2 s)
+var FFT_N = 4096;             // spectrum window length
+var Y_MAX = 1.1;              // time-panel amplitude range is +/- Y_MAX
+var DB_TOP = 5, DB_BOT = -105;
+var CLIP_LEVEL = 0.95;
+var VIEW_GRID = { "0.3": { step: 0.05, label: 0.1 },
+                  "1":   { step: 0.2,  label: 0.2 },
+                  "2":   { step: 0.5,  label: 0.5 } };
+
+/* ---------------- State ---------------- */
+var actx = null, workletNode = null, micSource = null, micStream = null;
+var running = false, paused = false;
+var mode = "idle";            // 'idle' | 'mic' | 'synthetic'
+var sampleRate = 0;
+var viewedTime = 0.3;
+
+/* Ring buffer (allocated once sampleRate is known) */
+var ring = null, ringLen = 0;
+var totalWritten = 0;         // monotonically increasing sample count
+var droppedChunks = 0, expectedSeq = -1;
+
+/* Preallocated hot-path buffers */
+var timeBuf = null;           // linear copy of the viewed window
+var fftIn = null, fftRe = null, fftIm = null;
+var hann = null, hannSum = 0;
+var fftRev = null, fftCos = null, fftSin = null;
+var dbSmooth = null;          // smoothed spectrum (dB), FFT_N/2 bins
+var colY = new Float32Array(8192);   // per-pixel-column scratch (y values)
+
+/* Display clock: a software PLL so the trace scrolls at a smooth,
+ * constant rate instead of jumping on ~5 ms chunk arrivals. */
+var displayHead = 0;          // fractional sample index being displayed
+var LATENCY_CHUNKS = 2;       // stay this far behind the write head
+
+/* Levels */
+var peakHold = 0, peakHoldT = 0;
+
+/* Stats */
+var frameCount = 0, statWindowStart = 0, lastFrameT = 0;
+var frameDeltas = new Float32Array(240), deltaCount = 0, deltaIdx = 0;
+var deltaScratch = new Float32Array(240);
+window.__scopeStats = { fps: 0, p95FrameMs: 0, sampleRate: 0,
+                        droppedChunks: 0, mode: "idle", paused: false };
+
+/* ---------------- DOM ---------------- */
+var $ = function (id) { return document.getElementById(id); };
+var elFps = $("s-fps"), elP95 = $("s-p95"), elSr = $("s-sr"),
+    elChunk = $("s-chunk"), elDrop = $("s-drop"), elMode = $("s-mode");
+var synthBox = $("synth"), viewSel = $("viewtime");
+var noticeEl = $("notice"), noticeTimer = 0;
+
+function showNotice(text, sticky) {
+  noticeEl.textContent = text;
+  noticeEl.classList.add("show");
+  if (noticeTimer) clearTimeout(noticeTimer);
+  if (!sticky) noticeTimer = setTimeout(function () {
+    noticeEl.classList.remove("show");
+  }, 8000);
+}
+
+/* ---------------- Panels (canvas + cached grid layer) ---------------- */
+function makePanel(id) {
+  var el = $(id);
+  var canvas = el.querySelector("canvas");
+  return {
+    el: el, canvas: canvas,
+    ctx: canvas.getContext("2d"),
+    grid: document.createElement("canvas"),  // offscreen cached grid
+    gctx: null,
+    W: 0, H: 0, dpr: 1,
+    visible: true,
+    drawGrid: null
+  };
+}
+var pTime = makePanel("panel-time");
+var pFreq = makePanel("panel-freq");
+var pLevels = makePanel("panel-levels");
+pTime.gctx = pTime.grid.getContext("2d");
+pFreq.gctx = pFreq.grid.getContext("2d");
+pLevels.gctx = pLevels.grid.getContext("2d");
+
+function resizePanel(p, cssW, cssH) {
+  var dpr = window.devicePixelRatio || 1;
+  var w = Math.max(1, Math.round(cssW * dpr));
+  var h = Math.max(1, Math.round(cssH * dpr));
+  if (w === p.canvas.width && h === p.canvas.height && dpr === p.dpr) return;
+  p.canvas.width = w;  p.canvas.height = h;
+  p.grid.width = w;    p.grid.height = h;
+  p.W = cssW; p.H = cssH; p.dpr = dpr;
+  p.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  p.gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (p.drawGrid) p.drawGrid();
+}
+var ro = new ResizeObserver(function (entries) {
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i];
+    var p = e.target === pTime.el ? pTime :
+            e.target === pFreq.el ? pFreq : pLevels;
+    var r = e.contentRect;
+    if (r.width > 0 && r.height > 0) resizePanel(p, r.width, r.height);
+  }
+});
+ro.observe(pTime.el); ro.observe(pFreq.el); ro.observe(pLevels.el);
+
+/* ---------------- Grid layers (redrawn on resize / param change) ----- */
+var COL_GRID = "#1e2938", COL_GRID_SOFT = "#182230", COL_TEXT = "#5b6b7c";
+var COL_TRACE_TIME = "#3ddc97", COL_TRACE_FREQ = "#e8b84b";
+var FONT_LABEL = "10px ui-monospace, Menlo, Consolas, monospace";
+var FONT_TITLE = "11px ui-monospace, Menlo, Consolas, monospace";
+
+function yOfAmp(v, H) { return (0.5 - v / (2 * Y_MAX)) * H; }
+function yOfDb(db, H) {
+  var f = (DB_TOP - db) / (DB_TOP - DB_BOT);
+  return Math.min(H, Math.max(0, f * H));
+}
+
+pTime.drawGrid = function () {
+  var g = pTime.gctx, W = pTime.W, H = pTime.H;
+  g.clearRect(0, 0, W, H);
+  g.font = FONT_LABEL; g.textBaseline = "middle";
+  // horizontal amplitude lines
+  var amps = [-1, -0.5, 0, 0.5, 1];
+  for (var i = 0; i < amps.length; i++) {
+    var y = yOfAmp(amps[i], H);
+    g.strokeStyle = amps[i] === 0 ? COL_GRID : COL_GRID_SOFT;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+    g.fillStyle = COL_TEXT;
+    g.fillText((amps[i] > 0 ? "+" : "") + amps[i], 4, y - 7);
+  }
+  // vertical time lines, t = 0 at the right edge
+  var cfg = VIEW_GRID[String(viewedTime)] || { step: viewedTime / 6, label: viewedTime / 3 };
+  g.textBaseline = "alphabetic";
+  for (var t = cfg.step; t < viewedTime + 1e-9; t += cfg.step) {
+    var x = W * (1 - t / viewedTime);
+    g.strokeStyle = COL_GRID_SOFT;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+    if (Math.abs(t / cfg.label - Math.round(t / cfg.label)) < 1e-6) {
+      g.fillStyle = COL_TEXT;
+      g.fillText("-" + (Math.round(t * 100) / 100) + "s", x + 3, H - 5);
+    }
+  }
+  g.font = FONT_TITLE; g.fillStyle = "#7d8b99";
+  g.fillText("TIME — last " + viewedTime + " s   [T]", 8, 14);
+};
+
+pFreq.drawGrid = function () {
+  var g = pFreq.gctx, W = pFreq.W, H = pFreq.H;
+  g.clearRect(0, 0, W, H);
+  g.font = FONT_LABEL; g.textBaseline = "middle";
+  for (var db = 0; db >= -100; db -= 20) {
+    var y = yOfDb(db, H);
+    g.strokeStyle = COL_GRID_SOFT;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+    g.fillStyle = COL_TEXT;
+    g.fillText(db + " dB", 4, Math.max(8, y - 7));
+  }
+  var title = "FREQ — dB vs Hz   [F]";
+  if (sampleRate > 0) {
+    var nyq = sampleRate / 2;
+    var step = nyq > 30000 ? 5000 : 2000;
+    g.textBaseline = "alphabetic";
+    for (var f = step; f < nyq; f += step) {
+      var x = W * f / nyq;
+      g.strokeStyle = COL_GRID_SOFT;
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+      if ((f / step) % 2 === 0) {
+        g.fillStyle = COL_TEXT;
+        g.fillText((f / 1000) + "k", x + 3, H - 5);
+      }
+    }
+    title = "FREQ — 0…" + (nyq / 1000) + " kHz, Hann " + FFT_N + "   [F]";
+  }
+  g.font = FONT_TITLE; g.fillStyle = "#7d8b99";
+  g.fillText(title, 8, 14);
+};
+
+/* Levels bar geometry shared between grid + dynamic layer */
+function levelsBarRect(W, H) {
+  return { x: 70, y: H * 0.42, w: W - 200, h: H * 0.34 };
+}
+pLevels.drawGrid = function () {
+  var g = pLevels.gctx, W = pLevels.W, H = pLevels.H;
+  g.clearRect(0, 0, W, H);
+  var r = levelsBarRect(W, H);
+  // scale ticks 0..1
+  g.font = FONT_LABEL; g.fillStyle = COL_TEXT; g.textBaseline = "alphabetic";
+  var ticks = [0, 0.25, 0.5, 0.75, 1];
+  for (var i = 0; i < ticks.length; i++) {
+    var x = r.x + r.w * ticks[i];
+    g.strokeStyle = COL_GRID;
+    g.beginPath(); g.moveTo(x, r.y - 4); g.lineTo(x, r.y + r.h + 4); g.stroke();
+    g.fillText(String(ticks[i]), x - 6, r.y + r.h + 16);
+  }
+  // clip threshold marker + shaded clip zone
+  var xc = r.x + r.w * CLIP_LEVEL;
+  g.fillStyle = "rgba(255, 90, 90, 0.10)";
+  g.fillRect(xc, r.y - 4, r.x + r.w - xc, r.h + 8);
+  g.strokeStyle = "#a04040";
+  g.beginPath(); g.moveTo(xc, r.y - 6); g.lineTo(xc, r.y + r.h + 6); g.stroke();
+  g.fillStyle = "#a04040";
+  g.fillText("0.95", xc - 10, r.y - 9);
+  // bar outline
+  g.strokeStyle = COL_GRID;
+  g.strokeRect(r.x, r.y, r.w, r.h);
+  g.font = FONT_TITLE; g.fillStyle = "#7d8b99";
+  g.fillText("LEVELS — peak / RMS   [L]", 8, 14);
+};
+
+/* ---------------- FFT (iterative radix-2, preallocated tables) ------- */
+function fftInit(n) {
+  fftRev = new Uint32Array(n);
+  var bits = Math.round(Math.log(n) / Math.LN2);
+  for (var i = 0; i < n; i++) {
+    var r = 0;
+    for (var b = 0; b < bits; b++) r = (r << 1) | ((i >> b) & 1);
+    fftRev[i] = r;
+  }
+  fftCos = new Float32Array(n / 2);
+  fftSin = new Float32Array(n / 2);
+  for (var k = 0; k < n / 2; k++) {
+    fftCos[k] = Math.cos(2 * Math.PI * k / n);
+    fftSin[k] = Math.sin(2 * Math.PI * k / n);
+  }
+}
+function fftRun(re, im) { // in-place forward FFT, length FFT_N
+  var n = FFT_N;
+  for (var i = 0; i < n; i++) {
+    var j = fftRev[i];
+    if (j > i) {
+      var tr = re[i]; re[i] = re[j]; re[j] = tr;
+      var ti = im[i]; im[i] = im[j]; im[j] = ti;
+    }
+  }
+  for (var size = 2; size <= n; size <<= 1) {
+    var half = size >> 1, step = n / size;
+    for (var base = 0; base < n; base += size) {
+      for (var jj = base, k = 0; jj < base + half; jj++, k += step) {
+        var c = fftCos[k], s = fftSin[k];
+        var xr = re[jj + half], xi = im[jj + half];
+        var tre = xr * c + xi * s;     // multiply by e^{-i 2 pi k / n}
+        var tim = xi * c - xr * s;
+        re[jj + half] = re[jj] - tre;
+        im[jj + half] = im[jj] - tim;
+        re[jj] += tre;
+        im[jj] += tim;
+      }
+    }
+  }
+}
+
+/* ---------------- Ring buffer ---------------- */
+function allocBuffers() {
+  ringLen = Math.ceil(RING_SECONDS * sampleRate);
+  ring = new Float32Array(ringLen);            // zero-filled
+  timeBuf = new Float32Array(Math.ceil(2 * sampleRate) + CHUNK);
+  fftIn = new Float32Array(FFT_N);
+  fftRe = new Float32Array(FFT_N);
+  fftIm = new Float32Array(FFT_N);
+  hann = new Float32Array(FFT_N);
+  hannSum = 0;
+  for (var i = 0; i < FFT_N; i++) {
+    hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (FFT_N - 1));
+    hannSum += hann[i];
+  }
+  dbSmooth = new Float32Array(FFT_N / 2);
+  for (var b = 0; b < FFT_N / 2; b++) dbSmooth[b] = DB_BOT;
+  fftInit(FFT_N);
+  totalWritten = 0; displayHead = 0; expectedSeq = -1; droppedChunks = 0;
+}
+
+function onChunk(e) {
+  var d = e.data;
+  if (expectedSeq >= 0 && d.seq !== expectedSeq && d.seq > expectedSeq) {
+    droppedChunks += d.seq - expectedSeq;
+  }
+  expectedSeq = d.seq + 1;
+  var samples = d.samples;
+  var n = samples.length;
+  var w = totalWritten % ringLen;
+  var first = Math.min(n, ringLen - w);
+  ring.set(samples.subarray(0, first), w);
+  if (first < n) ring.set(samples.subarray(first), 0);
+  totalWritten += n;
+}
+
+/* Copy the `count` samples ending at absolute index `end` into dst.
+ * Ring is zero-filled and count << ringLen, so early-startup underflow
+ * just reads zeros. */
+function copyWindow(dst, end, count) {
+  var start = end - count;
+  var s = ((start % ringLen) + ringLen) % ringLen;
+  var first = Math.min(count, ringLen - s);
+  dst.set(ring.subarray(s, s + first), 0);
+  if (first < count) dst.set(ring.subarray(0, count - first), first);
+}
+
+/* ---------------- Trace rendering (hot path) -------------------------
+ * drawTrace is the single entry point for waveform drawing so a later
+ * WebGL implementation only has to replace this one function.
+ * Min-max per pixel column (true oscilloscope decimation: peaks are
+ * preserved, unlike stride downsampling). No allocation in here. */
+function drawTrace(ctx, samples, count, W, H) {
+  ctx.beginPath();
+  if (count > 2 * W) {
+    var idx = 0, last = samples[0];
+    for (var x = 0; x < W; x++) {
+      var end = (((x + 1) * count) / W) | 0;
+      if (end > count) end = count;
+      var mn = last, mx = last;
+      for (; idx < end; idx++) {
+        var v = samples[idx];
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+        last = v;
+      }
+      var yTop = yOfAmp(mx, H);
+      var yBot = yOfAmp(mn, H);
+      if (yBot - yTop < 0.8) yBot = yTop + 0.8;  // keep quiet signal visible
+      ctx.moveTo(x + 0.5, yTop);
+      ctx.lineTo(x + 0.5, yBot);
+    }
+  } else {
+    ctx.moveTo(0, yOfAmp(samples[0], H));
+    for (var i = 1; i < count; i++) {
+      ctx.lineTo((i / (count - 1)) * W, yOfAmp(samples[i], H));
+    }
+  }
+  ctx.stroke();
+}
+
+function renderTime() {
+  var p = pTime, W = p.W, H = p.H;
+  if (W === 0) return;
+  var ctx = p.ctx;
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(p.grid, 0, 0, W, H);
+  if (!ring) return;
+  var count = Math.round(viewedTime * sampleRate);
+  if (count > timeBuf.length) count = timeBuf.length;
+  copyWindow(timeBuf, Math.floor(displayHead), count);
+  ctx.strokeStyle = COL_TRACE_TIME;
+  ctx.lineWidth = 1.2;
+  drawTrace(ctx, timeBuf, count, W, H);
+}
+
+function renderFreq() {
+  var p = pFreq, W = p.W, H = p.H;
+  if (W === 0) return;
+  var ctx = p.ctx;
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(p.grid, 0, 0, W, H);
+  if (!ring) return;
+
+  copyWindow(fftIn, Math.floor(displayHead), FFT_N);
+  for (var i = 0; i < FFT_N; i++) { fftRe[i] = fftIn[i] * hann[i]; fftIm[i] = 0; }
+  fftRun(fftRe, fftIm);
+  var bins = FFT_N / 2;
+  var scale = 2 / hannSum;               // full-scale sine -> ~0 dB
+  for (var b = 0; b < bins; b++) {
+    var mag = Math.sqrt(fftRe[b] * fftRe[b] + fftIm[b] * fftIm[b]) * scale;
+    var db = 20 * Math.log10(mag + 1e-12);
+    if (db < DB_BOT) db = DB_BOT;
+    dbSmooth[b] += 0.45 * (db - dbSmooth[b]);
+  }
+
+  // per-column max envelope of the smoothed spectrum
+  var cols = Math.min(W | 0, colY.length);
+  if (bins >= cols) {
+    var bi = 0;
+    for (var x = 0; x < cols; x++) {
+      var endB = (((x + 1) * bins) / cols) | 0;
+      var best = -1e9;
+      for (; bi < endB; bi++) if (dbSmooth[bi] > best) best = dbSmooth[bi];
+      colY[x] = yOfDb(best, H);
+    }
+  } else {
+    for (var x2 = 0; x2 < cols; x2++) {
+      colY[x2] = yOfDb(dbSmooth[((x2 * bins) / cols) | 0], H);
+    }
+  }
+  // translucent fill under the envelope, then the envelope line
+  ctx.beginPath();
+  ctx.moveTo(0, colY[0]);
+  for (var xf = 1; xf < cols; xf++) ctx.lineTo(xf, colY[xf]);
+  ctx.lineTo(cols - 1, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fillStyle = "rgba(232, 184, 75, 0.10)";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(0, colY[0]);
+  for (var xs = 1; xs < cols; xs++) ctx.lineTo(xs, colY[xs]);
+  ctx.strokeStyle = COL_TRACE_FREQ;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+}
+
+function renderLevels(now) {
+  var p = pLevels, W = p.W, H = p.H;
+  if (W === 0) return;
+  var ctx = p.ctx;
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(p.grid, 0, 0, W, H);
+  if (!ring) return;
+
+  // peak + rms over the last ~100 ms, read straight from the ring
+  var count = Math.min(Math.round(0.1 * sampleRate), ringLen);
+  var end = Math.floor(displayHead);
+  var start = end - count;
+  var peak = 0, sumsq = 0;
+  for (var i = start; i < end; i++) {
+    var v = ring[((i % ringLen) + ringLen) % ringLen];
+    var a = v < 0 ? -v : v;
+    if (a > peak) peak = a;
+    sumsq += v * v;
+  }
+  var rms = Math.sqrt(sumsq / Math.max(1, count));
+
+  if (peak > peakHold) { peakHold = peak; peakHoldT = now; }
+  else if (now - peakHoldT > 1000) { peakHold *= 0.96; }
+
+  var r = levelsBarRect(W, H);
+  var clipped = peak >= CLIP_LEVEL;
+  var barCol = clipped ? "#ff5a5a" : COL_TRACE_TIME;
+
+  // rms bar (solid) + peak extension (dim)
+  var xR = r.w * Math.min(1, rms);
+  var xP = r.w * Math.min(1, peak);
+  ctx.fillStyle = clipped ? "rgba(255,90,90,0.28)" : "rgba(61,220,151,0.22)";
+  ctx.fillRect(r.x, r.y, xP, r.h);
+  ctx.fillStyle = barCol;
+  ctx.fillRect(r.x, r.y, xR, r.h);
+  // peak marker + peak-hold marker
+  ctx.fillRect(r.x + xP - 1, r.y - 2, 2, r.h + 4);
+  ctx.fillStyle = "#d7e1ea";
+  var xH = r.x + r.w * Math.min(1, peakHold);
+  ctx.fillRect(xH - 1, r.y - 4, 2, r.h + 8);
+
+  ctx.font = FONT_LABEL;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = clipped ? "#ff8a8a" : "#9fb0bf";
+  ctx.fillText("peak " + peak.toFixed(3) + "   rms " + rms.toFixed(3) +
+               (clipped ? "   CLIP" : ""),
+               r.x + r.w + 12, r.y + r.h / 2);
+  ctx.textBaseline = "alphabetic";
+}
+
+/* ---------------- Render loop + instrumentation ---------------------- */
+function frame(now) {
+  requestAnimationFrame(frame);
+
+  // frame-interval stats (rAF-to-rAF delta = perceived smoothness)
+  if (lastFrameT > 0) {
+    var dt = now - lastFrameT;
+    if (dt < 500) {                     // ignore tab-hidden gaps
+      frameDeltas[deltaIdx] = dt;
+      deltaIdx = (deltaIdx + 1) % frameDeltas.length;
+      if (deltaCount < frameDeltas.length) deltaCount++;
+    }
+    if (running && !paused && ring && dt < 500) {
+      // display-clock PLL: advance at nominal rate, gently pull toward
+      // (write head - latency margin), hard resync on big error
+      displayHead += (dt / 1000) * sampleRate;
+      var target = totalWritten - LATENCY_CHUNKS * CHUNK;
+      var err = target - displayHead;
+      if (err > sampleRate * 0.5 || err < -sampleRate * 0.5) displayHead = target;
+      else displayHead += err * 0.08;
+      if (displayHead > totalWritten) displayHead = totalWritten;
+      if (displayHead < 0) displayHead = 0;
+    }
+  }
+  lastFrameT = now;
+  frameCount++;
+
+  if (pTime.visible) renderTime();
+  if (pFreq.visible) renderFreq();
+  if (pLevels.visible) renderLevels(now);
+
+  // once-per-second stats rollup (also the only per-second allocations)
+  if (now - statWindowStart >= 1000) {
+    var elapsed = now - statWindowStart;
+    var fps = Math.round(frameCount * 1000 / elapsed);
+    var p95 = 0;
+    if (deltaCount > 0) {
+      deltaScratch.set(frameDeltas.subarray(0, deltaCount));
+      var sorted = deltaScratch.subarray(0, deltaCount).sort();
+      p95 = sorted[Math.max(0, Math.ceil(0.95 * deltaCount) - 1)];
+    }
+    frameCount = 0; statWindowStart = now;
+
+    elFps.textContent = String(fps);
+    elFps.className = fps >= 30 ? "good" : "bad";
+    elP95.textContent = p95.toFixed(1);
+    elSr.textContent = sampleRate ? sampleRate + " Hz" : "–";
+    elChunk.textContent = running ? CHUNK + " smp" : "–";
+    elDrop.textContent = String(droppedChunks);
+    elMode.textContent = mode + (paused ? " (paused)" : "");
+
+    window.__scopeStats = {
+      fps: fps,
+      p95FrameMs: Math.round(p95 * 100) / 100,
+      sampleRate: sampleRate,
+      droppedChunks: droppedChunks,
+      mode: mode,
+      paused: paused,
+      viewedTime: viewedTime
+    };
+  }
+}
+
+/* ---------------- Audio setup ---------------- */
+function workletURL() {
+  var blob = new Blob([WORKLET_SRC], { type: "application/javascript" });
+  return URL.createObjectURL(blob);
+}
+
+async function ensureAudio() {
+  if (actx) return;
+  var AC = window.AudioContext || window.webkitAudioContext;
+  actx = new AC({ latencyHint: "interactive" });
+  await actx.audioWorklet.addModule(workletURL());
+  workletNode = new AudioWorkletNode(actx, "scope-source", {
+    numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1]
+  });
+  // Silent sink keeps the worklet pulled by the render graph.
+  var mute = actx.createGain();
+  mute.gain.value = 0;
+  workletNode.connect(mute).connect(actx.destination);
+  sampleRate = actx.sampleRate;
+  allocBuffers();
+  workletNode.port.onmessage = onChunk;
+  pFreq.drawGrid();   // grid now knows Nyquist
+}
+
+function setMode(m) {
+  mode = m;
+  workletNode.port.postMessage({ mode: m === "mic" ? "mic" : "synth" });
+  elMode.textContent = m;
+}
+
+async function tryMic() {
+  if (micSource) { setMode("mic"); return true; }
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+    showNotice("Microphone needs a secure context — serve this page over " +
+               "http://localhost (e.g. python3 -m http.server), not file://. " +
+               "Falling back to synthetic signal.");
+    return false;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false,
+               autoGainControl: false, channelCount: 1 }
+    });
+    micSource = actx.createMediaStreamSource(micStream);
+    micSource.connect(workletNode);
+    setMode("mic");
+    return true;
+  } catch (err) {
+    showNotice("Microphone unavailable (" + (err && err.name || err) +
+               ") — falling back to synthetic signal.");
+    return false;
+  }
+}
+
+async function start(useMic) {
+  try {
+    await ensureAudio();
+    if (actx.state !== "running") await actx.resume();
+  } catch (err) {
+    showNotice("Audio setup failed: " + err, true);
+    return;
+  }
+  running = true;
+  $("overlay").classList.add("hidden");
+  if (useMic) {
+    var ok = await tryMic();
+    if (!ok) { synthBox.checked = true; setMode("synthetic"); }
+    else synthBox.checked = false;
+  } else {
+    synthBox.checked = true;
+    setMode("synthetic");
+  }
+}
+
+/* ---------------- Controls ---------------- */
+$("btn-mic").addEventListener("click", function () { start(true); });
+$("btn-synth").addEventListener("click", function () { start(false); });
+
+synthBox.addEventListener("change", async function () {
+  synthBox.blur();
+  if (!running) return;   // pre-start: just preselects the mode
+  if (synthBox.checked) setMode("synthetic");
+  else {
+    var ok = await tryMic();
+    if (!ok) { synthBox.checked = true; setMode("synthetic"); }
+  }
+});
+
+viewSel.addEventListener("change", function () {
+  viewedTime = parseFloat(viewSel.value);
+  viewSel.blur();
+  pTime.drawGrid();
+});
+
+/* Keyboard: T/F/L toggle panels (all-off prevented, matching the Qt
+ * oscilloscope), P pauses/resumes. */
+function togglePanel(p, others) {
+  if (p.visible && !others.some(function (o) { return o.visible; })) return;
+  p.visible = !p.visible;
+  p.el.style.display = p.visible ? "" : "none";
+}
+window.addEventListener("keydown", function (e) {
+  if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+  var k = e.key.toLowerCase();
+  if (k === "t") togglePanel(pTime, [pFreq, pLevels]);
+  else if (k === "f") togglePanel(pFreq, [pTime, pLevels]);
+  else if (k === "l") togglePanel(pLevels, [pTime, pFreq]);
+  else if (k === "p") {
+    if (!running) return;
+    paused = !paused;
+    $("pausebadge").className = paused ? "on" : "";
+    if (!paused) displayHead = totalWritten - LATENCY_CHUNKS * CHUNK;
+  }
+});
+
+/* ---------------- Boot ---------------- */
+(function boot() {
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+    $("btn-mic").disabled = true;
+    $("overlay-hint").textContent =
+      "No mic access here: getUserMedia needs a secure context. Serve via " +
+      "http://localhost (python3 -m http.server -d dev/prototypes 8905), " +
+      "not file://. Synthetic mode works regardless.";
+  } else {
+    $("overlay-hint").textContent =
+      "Mic capture uses raw input (echo cancellation / AGC off).";
+  }
+
+  // Silent auto-start attempt: in environments where autoplay is allowed
+  // (e.g. headless/embedded verification), come up in synthetic mode with
+  // no click required. Normal browsers leave the context suspended and
+  // the overlay stays up.
+  (async function () {
+    try {
+      await ensureAudio();
+      if (actx.state === "running") {
+        running = true;
+        $("overlay").classList.add("hidden");
+        synthBox.checked = true;
+        setMode("synthetic");
+        showNotice("Auto-started in synthetic mode (no user gesture needed " +
+                   "in this browser). Untick the checkbox to switch to mic.");
+      }
+    } catch (err) {
+      // Worklet/context setup failed pre-gesture; the Start buttons retry.
+    }
+  })();
+
+  statWindowStart = performance.now();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
