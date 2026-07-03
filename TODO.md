@@ -154,4 +154,17 @@ Found in the structured review on 2026-06-09/10 (parallel per-module reviews, th
 
 ## Plugins / separate repos
 
-- [ ] **ML plugin as a separate repo** — keep `pydvma` dependency-light. Move/design any ML-based tooling (mode classification, signal denoising, anomaly detection, etc.) into its own repository that depends on `pydvma` rather than the other way round.
+- [ ] **ML plugin as a separate repo** — keep `pydvma` dependency-light. Move/design any ML-based tooling (mode classification, signal denoising, anomaly detection, etc.) into its own repository that depends on `pydvma` rather than the other way round. Note: also the natural open-core seam if paid extras are ever wanted (see "Sustainability & impact") — the core tool stays free either way.
+
+## Sustainability & impact
+
+Decided direction (2026-07-03 discussion): the tool stays fully free
+and ungated — no feature-limiting, no license keys; that would fight
+the teaching mission and the no-install student access built in the
+web-UI work. Revenue, if any, comes from institutions, not
+individuals, and any payment routes to the department (not personal
+accounts), which needs Cambridge Enterprise involvement before
+anything goes live.
+
+- [ ] **Institutional supporter tier** — tool remains free; other departments/companies adopting pydvma for their own labs can pay a modest annual supporter fee (order £300–500/yr): named recognition, priority on issues, perhaps a setup call. Implementation is deliberately light: a `SUPPORT.md` / docs page with "using pydvma in your department? get in touch" (mailto costs nothing; no payment infrastructure until someone actually bites). **Prerequisite: talk to Cambridge Enterprise / department** about routing payment to departmental overheads and any IP-policy implications. Zero enquiries in a year = drop it, nothing lost.
+- [ ] **JOSS paper + citation request** — submit pydvma to the Journal of Open Source Software (short ~1–2 page paper; open review on GitHub checks install/docs/tests, all already in place). Gives a DOI + citable reference; add a "please cite" section to README/docs. Best timed after Stage 2 lands ("browser-based no-install vibration analysis for teaching" is a strong hook), but could go earlier. Impact/grant currency rather than revenue — likely worth more than any donation route.
