@@ -171,16 +171,32 @@ channel for TF and impulse-cleaning regardless of excitation type).
   lines only (Qt behaviour, kept).
 - Axis state is per-view and restored when returning to a view; frequency
   range is shared between TF plot types (incl. Nyquist's fmin/fmax).
-- **Legend**: draggable to reposition, toggleable on/off, entries mirror
-  tray tri-state (click to cycle), off-sets omitted (§3), custom labels.
+- **Legend**: draggable to reposition freely, plus a position control
+  (corner presets NE / NW / SE / SW and outside-right) in the plot
+  toolbar's `⋯` popover — presets are explicit choices, dragging does not
+  snap; toggleable on/off; entries mirror tray tri-state (click to cycle);
+  off-sets omitted (§3); custom labels.
 
 ## 7. Figures, saving, export
 
 - **Save Dataset** (header + Export card) writes `.dvma`. **Autosave**: on
-  by default, after every capture/compute, to browser storage (IndexedDB),
-  with a "restore last session" offer on next launch — the
-  students-losing-data mitigation. Explicit save remains the way to get a
-  file.
+  by default, after every capture/compute, with a "restore last session"
+  offer on next launch — the students-losing-data mitigation. Explicit
+  save remains the way to get a file. Where autosave lands depends on the
+  working-directory capability below (real file if possible, browser
+  storage otherwise).
+- **Working directory**: a user-set folder that anchors all file
+  operations — load dialogs open there, saves/exports/autosaves default
+  there. Shown as a chip in the header (click to set/change).
+  Capability-layered:
+  - Chromium browsers: File System Access API directory handle, persisted
+    across sessions (re-grant prompt on revisit); autosave writes a rolling
+    `autosave.dvma` there as a real file.
+  - `pydvma serve` mode: the bridge owns the working directory on the lab
+    PC's real filesystem — same UI concept, works in any browser.
+  - Fallback (Safari/Firefox on the hosted app): browser-storage autosave
+    plus standard download/upload; the chip indicates "Downloads" and
+    saved files carry a session-name prefix.
 - **Load Data** handles all imports: `.dvma` (native JS reader), legacy
   `.npy` pickle (via pyodide), `.mat` JW-logger.
 - **Save Figure**: format checkboxes (PNG / PDF — explicit, no silent
@@ -259,6 +275,17 @@ channel for TF and impulse-cleaning regardless of excitation type).
   tests; visual regression on the figure exporter (white/transparent/dark).
 - **Compatibility:** CLI untouched; `.dvma` format contract from Stage 0.5;
   Qt GUI frozen until the new app passes a real lab dry-run.
+- **Deployment modes and interop** (all ship in parallel, indefinitely):
+  Python CLI (unchanged, the customisation path); hosted web app (Pages
+  `/app/`: analysis + soundcard, zero install); local web app
+  (`pydvma serve`: same UI served by the lab PC, adds NI over websocket,
+  no internet dependency); JupyterLite (`/lite/`, Stage 1, stays); Qt GUI
+  (frozen, deprecated once the web app passes the lab dry-run). One build
+  of the app serves both web modes — it probes for a local bridge and
+  offers NI devices only when one responds. `.dvma` is the interchange
+  format across every mode; the app's Setup card fields map 1:1 to
+  `MySettings`, so a lab-configured session is reproducible from the CLI
+  and vice versa.
 
 ## 12. Deferred / stretch (recorded so they aren't lost)
 
