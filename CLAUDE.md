@@ -1,5 +1,13 @@
 # Working with Claude on pydvma
 
+## Current focus (update when it changes)
+
+As of 2026-07-03: web-UI Stages 0–1 are live; **next up is the
+Stage 2 design session** (the new GUI — mockups, workflow, data
+navigation) plus judging the oscilloscope gate prototype. A fresh
+session should read `dev/2026-07-03-stage2-handoff.md` first — it
+carries the agenda, prototype run instructions, and loose ends.
+
 Auto-loaded by Claude Code at the start of every session. Contributors
 and collaborators: the concrete filesystem paths below are for the
 **maintainer's Windows development machine** (``C:\Users\tb267\...``)
