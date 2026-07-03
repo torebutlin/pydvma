@@ -1666,7 +1666,20 @@
 
     <div class="doc doc-contents first">
 
-        <p>Loads dataset from filename, or displays a dialog if no argument provided.</p>
+        <p>Loads a dataset from <code>filename</code>, or displays a file dialog if no
+filename is given (the dialog needs the GUI extras installed).</p>
+<p>Container detection is by content (zip magic bytes); <code>.mat</code> and
+legacy <code>.npy</code> fall back to extension:</p>
+<ul>
+<li><code>.dvma</code> container files (zip magic bytes) — the default
+  format since 1.5.0; safe, pickle-free (see <code>container</code>).</li>
+<li>legacy <code>.npy</code> pickle saves from pydvma &lt;= 1.4.0 — supported
+  forever. <strong>Trust model:</strong> the legacy path uses
+  <code>np.load(allow_pickle=True)</code>, and unpickling can execute
+  arbitrary code, so only open legacy .npy files you or your lab
+  created. <code>.dvma</code> files do not have this caveat.</li>
+<li><code>.mat</code> (by extension) — JW-logger imports.</li>
+</ul>
 
 
     </div>
@@ -1686,8 +1699,13 @@
 
     <div class="doc doc-contents first">
 
-        <p>Saves dataset class to file 'filename.npy', or provides dialog if no
-filename provided.</p>
+        <p>Saves a DataSet to 'filename.dvma' (container format v2 — a zip
+of manifest.json + pickle-free .npy arrays; see <code>container</code>), or
+provides a dialog if no filename is given.</p>
+<p>Legacy escape hatch: an explicit filename ending in <code>.npy</code>
+writes the pre-1.5.0 pickle format instead, for workflows that
+still need it. New saves should prefer .dvma — it is safe to
+share (loading executes no code) and readable outside Python.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>

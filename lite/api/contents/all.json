@@ -1,0 +1,29 @@
+{
+  "content": [
+    {
+      "content": null,
+      "created": "2026-07-03T08:26:00.451393Z",
+      "format": null,
+      "hash": null,
+      "hash_algorithm": null,
+      "last_modified": "2026-07-03T08:25:17.985037Z",
+      "mimetype": null,
+      "name": "pydvma_analysis.ipynb",
+      "path": "pydvma_analysis.ipynb",
+      "size": 3238,
+      "type": "notebook",
+      "writable": true
+    }
+  ],
+  "created": "2026-07-03T08:26:00.451393Z",
+  "format": "json",
+  "hash": null,
+  "hash_algorithm": null,
+  "last_modified": "2026-07-03T08:26:00.451393Z",
+  "mimetype": null,
+  "name": "",
+  "path": "",
+  "size": null,
+  "type": "directory",
+  "writable": true
+}

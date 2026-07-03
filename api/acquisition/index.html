@@ -1950,7 +1950,9 @@ upper bound on <code>pretrig_samples</code>.</p>
           <div class="doc-md-description">
             <p>Oscilloscope display window in
 seconds (default <code>0.3</code>). When set, overrides <code>num_chunks</code>
-as <code>ceil(viewed_time * fs / chunk_size)</code>.</p>
+as <code>ceil(viewed_time * fs / chunk_size)</code>. Set to None to
+size the oscilloscope buffer directly from <code>num_chunks</code>
+instead.</p>
           </div>
         </li>
         <li class="doc-section-item field-body">

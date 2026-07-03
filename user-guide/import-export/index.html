@@ -1531,15 +1531,23 @@
 </code></pre></div>
 <h2 id="save-and-load-a-dataset-native-format">Save and Load a DataSet (native format)<a class="headerlink" href="#save-and-load-a-dataset-native-format" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Save dataset — opens a file-save dialog if filename is omitted</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">dvma</span><span class="o">.</span><span class="n">save_data</span><span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s1">&#39;dataset.npy&#39;</span><span class="p">)</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">dvma</span><span class="o">.</span><span class="n">save_data</span><span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s1">&#39;dataset&#39;</span><span class="p">)</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Load dataset — opens a file-open dialog if filename is omitted</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">load_data</span><span class="p">(</span><span class="n">filename</span><span class="o">=</span><span class="s1">&#39;dataset.npy&#39;</span><span class="p">)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">dvma</span><span class="o">.</span><span class="n">load_data</span><span class="p">(</span><span class="n">filename</span><span class="o">=</span><span class="s1">&#39;dataset.dvma&#39;</span><span class="p">)</span>
 </code></pre></div>
-<p>Internally this uses <code>numpy.save</code> / <code>numpy.load</code> on a one-element
-object array wrapping the <code>DataSet</code>, so a saved file is a <code>.npy</code>. The
-helpers handle overwrite prompts and dialog fallback; prefer them
-over a raw <code>pickle</code>.</p>
+<p><code>.dvma</code> has been the native format since 1.5: a zip container of
+<code>manifest.json</code> plus pickle-free <code>.npy</code> arrays. Loading a <code>.dvma</code>
+file executes no code, so it's safe to share with others. If
+<code>filename</code> doesn't already end in <code>.dvma</code> or <code>.npy</code>, <code>save_data</code>
+appends <code>.dvma</code> for you. Format detection on load is by content (zip
+magic bytes), not extension, so a renamed file still loads correctly.</p>
+<p>Legacy <code>.npy</code> pickle files from pydvma &lt;= 1.4.0 still load forever.
+To keep writing that legacy pickle format, pass an explicit filename
+ending in <code>.npy</code> — an escape hatch for workflows that still need it,
+but note that unpickling can execute arbitrary code, so only load
+legacy <code>.npy</code> files you or your lab created. The helpers handle
+overwrite prompts and dialog fallback either way.</p>
 <h2 id="export-plots">Export Plots<a class="headerlink" href="#export-plots" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>

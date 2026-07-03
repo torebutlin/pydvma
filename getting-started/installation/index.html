@@ -625,6 +625,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#installation-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#step-3-download-the-template-notebook" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1589,6 +1600,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#installation-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#step-3-download-the-template-notebook" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1705,7 +1727,7 @@
 <h1 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h1>
 <h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Python 3.10 or later (Python 3.13 recommended)</li>
+<li>Python 3.11 or later (Python 3.13 recommended)</li>
 <li>Anaconda or Miniconda (recommended for managing dependencies)</li>
 </ul>
 <h2 id="step-1-install-anaconda">Step 1: Install Anaconda<a class="headerlink" href="#step-1-install-anaconda" title="Permanent link">&para;</a></h2>
@@ -1716,8 +1738,13 @@
 <h3 id="option-a-quick-installation-recommended">Option A: Quick Installation (Recommended)<a class="headerlink" href="#option-a-quick-installation-recommended" title="Permanent link">&para;</a></h3>
 <p>Open the <strong>Anaconda Prompt</strong> (Windows) or terminal (Mac/Linux) and run:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>conda<span class="w"> </span>install<span class="w"> </span>numpy<span class="w"> </span>scipy<span class="w"> </span>jupyter<span class="w"> </span>matplotlib<span class="w"> </span>pyqtgraph<span class="w"> </span>ipympl<span class="w"> </span>ipywidgets<span class="w"> </span>jupyterlab
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>pip<span class="w"> </span>install<span class="w"> </span>sounddevice<span class="w"> </span>pydvma
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;pydvma[full]&quot;</span>
 </code></pre></div>
+<p><code>pydvma[full]</code> pulls in the GUI (Qt/pyqtgraph) and both acquisition
+backends (<code>sounddevice</code> for soundcards, <code>nidaqmx</code> for National
+Instruments hardware) — everything you need for lab use. See
+<a href="#installation-options">Installation options</a> below if you only need
+a subset.</p>
 <h3 id="option-b-installation-in-a-dedicated-environment">Option B: Installation in a Dedicated Environment<a class="headerlink" href="#option-b-installation-in-a-dedicated-environment" title="Permanent link">&para;</a></h3>
 <p>Creating a separate environment keeps pydvma and its dependencies isolated from other projects:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Create a new environment</span>
@@ -1728,12 +1755,44 @@
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># Install dependencies and pydvma</span>
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>conda<span class="w"> </span>install<span class="w"> </span>numpy<span class="w"> </span>scipy<span class="w"> </span>jupyter<span class="w"> </span>matplotlib<span class="w"> </span>pyqtgraph<span class="w"> </span>ipympl<span class="w"> </span>ipywidgets<span class="w"> </span>jupyterlab
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>pip<span class="w"> </span>install<span class="w"> </span>sounddevice<span class="w"> </span>pydvma
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;pydvma[full]&quot;</span>
 </code></pre></div>
 <div class="admonition tip">
 <p class="admonition-title">Activating your environment</p>
 <p>Each time you open a new Anaconda Prompt, you'll need to activate your environment with <code>conda activate pydvma-env</code> before using pydvma.</p>
 </div>
+<h2 id="installation-options">Installation options<a class="headerlink" href="#installation-options" title="Permanent link">&para;</a></h2>
+<p>pydvma is split into a small analysis-only core plus optional
+"extras" for the GUI and each acquisition backend, so you only pull
+in what you need:</p>
+<table>
+<thead>
+<tr>
+<th>Install command</th>
+<th>What you get</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pip install pydvma</code></td>
+<td>Analysis-only core: data structures, FFT/TF/modal analysis, file I/O. No Qt, no hardware drivers — runs anywhere, including in-browser.</td>
+</tr>
+<tr>
+<td><code>pip install "pydvma[qt,soundcard]"</code></td>
+<td>Core + GUI (Logger/Oscilloscope, via <code>qtpy</code>/<code>PyQt5</code>/<code>pyqtgraph</code>) + soundcard acquisition (<code>sounddevice</code>).</td>
+</tr>
+<tr>
+<td><code>pip install "pydvma[ni]"</code></td>
+<td>Core + National Instruments acquisition backend (<code>nidaqmx</code>). Windows/Linux only — see below.</td>
+</tr>
+<tr>
+<td><code>pip install "pydvma[full]"</code></td>
+<td>Everything: GUI plus both acquisition backends. Recommended for lab use.</td>
+</tr>
+</tbody>
+</table>
+<p>The rest of this page uses <code>pydvma[full]</code> throughout, but swap in
+whichever extra matches what you need.</p>
 <h2 id="step-3-download-the-template-notebook">Step 3: Download the Template Notebook<a class="headerlink" href="#step-3-download-the-template-notebook" title="Permanent link">&para;</a></h2>
 <p>Download the template notebook to get started quickly:</p>
 <p><strong><a href="https://raw.githubusercontent.com/torebutlin/pydvma/master/pydvma_template.ipynb">Download pydvma_template.ipynb</a></strong> (right-click and "Save link as...")</p>
@@ -1758,9 +1817,10 @@ available on macOS):</p>
    wrapper tracks NI-DAQmx ABI changes and will print a clear error
    on mismatch.</p>
 <ol>
-<li><strong>Install the Python bindings</strong>:</li>
+<li><strong>Install the Python bindings</strong> (already included if you installed
+   <code>pydvma[full]</code> above; use this if you started from plain <code>pydvma</code>):</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span>nidaqmx
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;pydvma[ni]&quot;</span>
 </code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">macOS</p>
@@ -1779,16 +1839,16 @@ functions are pure-Python and run anywhere.</p>
 <p><strong>Import Error: No module named 'pydvma'</strong></p>
 <p>Make sure pydvma is installed in the correct Python environment. If using a dedicated environment, ensure you've activated it with <code>conda activate pydvma-env</code>.</p>
 <p><strong>Qt Platform Plugin Error</strong></p>
-<p>If you encounter Qt-related errors, try installing qtpy:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span>qtpy
+<p>If you encounter Qt-related errors, make sure the GUI extra is installed:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;pydvma[qt]&quot;</span>
 </code></pre></div>
 <p><strong>Matplotlib Backend Issues</strong></p>
 <p>If plots don't display correctly in Jupyter, add this to the first cell of your notebook:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="o">%</span><span class="n">matplotlib</span> <span class="n">widget</span>
 </code></pre></div>
 <p><strong>Soundcard Not Detected</strong></p>
-<p>Ensure sounddevice is installed and your audio device is properly connected:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>pip<span class="w"> </span>install<span class="w"> </span>sounddevice
+<p>Ensure the soundcard extra is installed and your audio device is properly connected:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;pydvma[soundcard]&quot;</span>
 </code></pre></div>
 <p>You can list available audio devices with:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">sounddevice</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sd</span>
