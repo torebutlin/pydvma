@@ -8,3 +8,4 @@ pymdown-extensions>=10.0
 # JupyterLite build (Stage 1 web UI — lite/)
 jupyterlite-core
 jupyterlite-pyodide-kernel
+jupyter-server
