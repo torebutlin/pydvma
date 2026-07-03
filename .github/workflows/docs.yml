@@ -11,11 +11,21 @@ on:
       - main
   workflow_dispatch:
 
+# Workflow-based Pages deployment (build_type: workflow): the site is
+# built once, uploaded as the official Pages artifact, and deployed
+# atomically by actions/deploy-pages — no gh-pages branch, no legacy
+# Jekyll pipeline.
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -42,24 +52,28 @@ jobs:
           pip install -r requirements-docs.txt
           pip install -e ".[qt,soundcard]"
 
-      - name: Configure Git
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Deploy documentation + JupyterLite
-        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+      - name: Build documentation + JupyterLite
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           mkdocs build --strict
           pip wheel . peakutils --no-deps -w lite/pypi/
           (cd lite && jupyter lite build --output-dir ../site/lite)
-          ghp-import --no-jekyll --push --force site
 
-      - name: Build documentation (PR preview)
-        if: github.event_name == 'pull_request'
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          mkdocs build --strict
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
