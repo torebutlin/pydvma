@@ -2308,6 +2308,13 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   `/engine/glue.py`. `legacy_to_dvma`/`mat_to_dvma` were deferred to Task 13
   (the plan's `container.save(BytesIO())` was wrong — real `container.save`
   takes a filename; Task 13 writes to pyodide `/tmp` then reads back).
+- **A8b (Task 11 quality review — carry-forwards):** Task 11 fixed a boot-error
+  queue hang (queued engine calls now reject on boot failure) + proxy/script
+  minors. Contiguity verified safe (`.ravel()` is order='C' regardless of
+  memory layout — Task 12's decoder is safe). **Task 15:** add a build/CI
+  check that `PYODIDE_VERSION` in `stores/engine.ts` (the CDN packageBaseUrl)
+  matches the vendored `pyodide` devDependency (derive from
+  `pyodide/package.json`) — divergence = numpy/scipy ABI mismatch risk.
 
 ## Self-review record
 
