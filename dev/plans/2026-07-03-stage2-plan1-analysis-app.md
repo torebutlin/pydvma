@@ -2316,6 +2316,21 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   matches the vendored `pyodide` devDependency (derive from
   `pyodide/package.json`) — divergence = numpy/scipy ABI mismatch risk.
 
+- **A9 (Task 12 pre-verified glue additions):** two ops Task 11 didn't ship,
+  verified live: `calculate_tf_averaged(time_data_list, ch_in=0, time_range=None,
+  window=None)` — takes a **LIST of TimeData** (the 'across'/ensemble average,
+  one set per frame; NO N_frames) → TfData; glue `calc_tf_averaged` accepts a
+  list of {time_axis, time_data, n_channels} and builds the list.
+  `clean_impulse(time_data, ch_impulse=0)` → cleaned TimeData ("sets all data
+  outside the impulse to zero"); glue returns the cleaned `{time_axis,
+  time_data}`. Task 12 also introduces the minimal **`?fixture=1`** dev hook
+  (load checked-in `tests/fixtures/impulse.dvma` via `readDvma` → dataset store
+  + selection populate) so the compute→plot loop is drivable/e2e-testable NOW;
+  Task 13 generalises loading (working dir, sniff, autosave, legacy/mat) and
+  reuses it. Task 12 should un-fixme Task 10's tray e2e (it uses `?fixture=1`).
+  Cards must handle engine-queue REJECTION (boot error now rejects, per A8b) —
+  show an error state, never hang.
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
