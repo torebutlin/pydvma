@@ -57,14 +57,26 @@
 
   /**
    * CSS placement for the card. Fractional x/y position the anchor
-   * point inside the host; when x>0.5 we anchor the card's RIGHT edge
-   * (so it grows leftward and its right corner tracks the point), and
-   * when y>0.5 we anchor its BOTTOM edge. This keeps corner presets
-   * flush to the matching plot corner rather than overflowing it.
+   * point inside the host.
+   *
+   * For PRESET / committed (non-drag) placement: when x>0.5 we anchor
+   * the card's RIGHT edge (so it grows leftward and its right corner
+   * tracks the point) and when y>0.5 its BOTTOM edge — this keeps
+   * corner presets (NE, SE, outside-right, …) flush to the matching
+   * plot corner rather than overflowing it.
+   *
+   * WHILE DRAGGING, however, `legend.x`/`legend.y` ARE the card's
+   * top-left fraction (that is what `commit` writes from the pointer),
+   * so we must ALWAYS left/top-anchor during a drag. Applying the
+   * edge-flip mid-drag would reinterpret the same x as a right-edge
+   * offset the instant the left edge crossed 0.5, snapping the card
+   * left by ~its own width under the cursor. So the flip is gated on
+   * `!dragging`. (Drag/click/anchor behaviours are e2e-covered in
+   * Task 9 Playwright.)
    */
   const placement = $derived.by(() => {
-    const anchorRight = legend.x > 0.5;
-    const anchorBottom = legend.y > 0.5;
+    const anchorRight = !dragging && legend.x > 0.5;
+    const anchorBottom = !dragging && legend.y > 0.5;
     const xPct = `${legend.x * 100}%`;
     const yPct = `${legend.y * 100}%`;
     return {
@@ -89,6 +101,12 @@
 
   let armed = false;                 // pointerdown seen, not yet a drag
   let dragging = $state(false);      // a real drag is in progress
+  // Set the instant a press promotes to a drag; cleared on the next
+  // microtask after pointerup. The row's onclick early-returns while
+  // it is set, so a drag that STARTED on a row never spurious-cycles
+  // that row on release (belt-and-braces alongside pointer capture,
+  // which already retargets the synthetic click away from the row).
+  let justDragged = false;
   let activePointer = 0;
   let downClientX = 0, downClientY = 0;  // pointerdown origin (client px)
   // Pointer→fraction needs the host rect; capture it at pointerdown.
@@ -136,6 +154,7 @@
       const moved = Math.hypot(e.clientX - downClientX, e.clientY - downClientY);
       if (moved < DRAG_THRESHOLD_PX) return;
       dragging = true;
+      justDragged = true;                        // suppress the release-click on a row
       card?.setPointerCapture(e.pointerId);
     }
     const px = (e.clientX - hostRect.left) / hostRect.width;
@@ -150,19 +169,32 @@
     }
   }
 
-  function onPointerUp(e: PointerEvent) {
-    if (e.pointerId !== activePointer) return;
-    // A press that never crossed the threshold was a click: let the
-    // row button's own onclick fire; we do nothing but disarm.
-    if (dragging) {
-      try { card?.releasePointerCapture(e.pointerId); } catch { /* already released */ }
-      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-      if (pendingPos) commit(pendingPos);
-    }
+  /** Release capture, cancel any pending rAF, and reset drag state. */
+  function endGesture(pointerId: number) {
+    try { card?.releasePointerCapture(pointerId); } catch { /* already released */ }
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     armed = false;
     dragging = false;
     pendingPos = null;
     hostRect = null;
+    // Clear the release-click guard AFTER this event loop tick, so the
+    // click synthesised by the browser right after pointerup (which is
+    // what would spurious-cycle a row) still sees justDragged === true.
+    if (justDragged) queueMicrotask(() => { justDragged = false; });
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (e.pointerId !== activePointer) return;
+    // A press that never crossed the threshold was a click: let the
+    // row button's own onclick fire; we do nothing but disarm.
+    if (dragging && pendingPos) commit(pendingPos);
+    endGesture(e.pointerId);
+  }
+
+  /** Aborted gesture (e.g. touch cancelled by the OS): reset, no commit. */
+  function onPointerCancel(e: PointerEvent) {
+    if (e.pointerId !== activePointer) return;
+    endGesture(e.pointerId);
   }
 
   // Cancel any pending rAF if the component unmounts mid-drag.
@@ -184,6 +216,7 @@
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
+    onpointercancel={onPointerCancel}
   >
     {#each $entries as e (`${e.setId}:${e.ch}`)}
       <button
@@ -192,7 +225,7 @@
         class:fade={e.state === 'fade'}
         data-testid="legend-entry"
         title="Click to cycle: on → fade → off"
-        onclick={() => selection.cycleLine(e.setId, e.ch)}
+        onclick={() => { if (!justDragged) selection.cycleLine(e.setId, e.ch); }}
       >
         <span class="swatch" style:background={e.color}></span>
         <span class="label">{e.label}</span>
