@@ -38,6 +38,15 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Node is needed only for the Stage-2 web-UI build appended below; the
+      # MkDocs + JupyterLite build above is pure-Python and unaffected.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
       - name: Cache dependencies
         uses: actions/cache@v3
         with:
@@ -59,6 +68,23 @@ jobs:
           mkdocs build --strict
           pip wheel . peakutils --no-deps -w lite/pypi/
           (cd lite && jupyter lite build --output-dir ../site/lite)
+
+      # Build the Stage-2 web UI and add it to the published tree at /app/.
+      # ADDITIVE — mkdocs already populated site/ (and site/lite); this only
+      # writes site/app/, leaving the docs + JupyterLite output untouched.
+      # Vendoring is regenerated here (public/pyodide, public/pypi are
+      # gitignored): npm ci -> fetch-pyodide (stage runtime from node_modules)
+      # -> build-wheels (pip-wheels pydvma+peakutils; isolated build, no
+      # editable install needed) -> npm run build (vite copies public/* into
+      # dist/). The app is served under /pydvma/app/ and uses relative asset
+      # paths (vite base: './'), so no base-path rewrite is required. The whole
+      # site (docs + lite + app) is deployed as ONE Pages artifact by the
+      # deploy job below — a single atomic publish, so there is no gh-pages
+      # push / Pages rate-limit concern here.
+      - name: Build web UI (Stage 2 app)
+        run: |
+          (cd webui && npm ci && ./scripts/fetch-pyodide.sh && ./scripts/build-wheels.sh && npm run build)
+          mkdir -p site/app && cp -r webui/dist/* site/app/
 
       - name: Upload Pages artifact
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

@@ -1,0 +1,72 @@
+name: webui
+
+# Test + build CI for the Stage-2 web UI (webui/). Runs on changes under
+# webui/ or to this workflow. The Pages *deploy* of the built app lives in
+# docs.yml (publishes it at /pydvma/app/) — this workflow only gates quality.
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'webui/**'
+      - '.github/workflows/webui.yml'
+  pull_request:
+    paths:
+      - 'webui/**'
+      - '.github/workflows/webui.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      # build-wheels.sh runs `pip wheel <repo>` in an ISOLATED build env (from
+      # the repo pyproject.toml), so pydvma does NOT need to be pip-installed —
+      # only python + pip must be present. Verified by a clean-venv dry-run.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: npm ci
+
+      # A8b — fail fast if PYODIDE_VERSION (engine.ts) has drifted from the
+      # vendored pyodide runtime. A mismatch is a numpy/scipy ABI hazard: the
+      # jsdelivr CDN serves prebuilt wheels for the DECLARED version, loaded
+      # into the runtime staged from node_modules (see the script header).
+      - run: node scripts/check-pyodide-version.mjs
+
+      - run: npx vitest run
+      - run: npm run check                 # svelte-check + tsc — 0-warning gate
+
+      # --- Vendoring (gitignored build artefacts) must exist before build/e2e.
+      # Order matters: npm ci (installs the pyodide devDep) -> fetch-pyodide
+      # (stages the runtime from node_modules into public/pyodide) ->
+      # build-wheels (pip-wheels pydvma+peakutils into public/pypi) -> build
+      # (vite copies public/* into dist/).
+      - run: ./scripts/fetch-pyodide.sh    # needs only node_modules/pyodide
+      - run: ./scripts/build-wheels.sh     # needs python+pip (isolated build)
+
+      - run: npx playwright install --with-deps chromium
+
+      # e2e in two passes (plan amendment A11): the pyodide-booting @engine
+      # specs boot numpy/scipy+wasm and MUST run serially — three concurrent
+      # boots caused transient failures. Non-@engine specs stay parallel.
+      #
+      # NETWORK DEPENDENCY (A8): the @engine boot fetches prebuilt
+      # numpy/scipy/micropip wheels from the pyodide jsdelivr CDN
+      # (cdn.jsdelivr.net/pyodide/v<ver>/full/). Only pydvma+peakutils are
+      # vendored locally. ubuntu-latest has internet so this works, but a
+      # jsdelivr outage would fail the @engine pass.
+      - run: npx playwright test --grep-invert @engine        # parallel
+      - run: npx playwright test --grep @engine --workers=1   # serial (A11)
+
+      - run: npm run build
