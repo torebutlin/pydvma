@@ -23,6 +23,7 @@
   import ContextCard from './components/ContextCard.svelte';
   import NarrowRail from './components/NarrowRail.svelte';
   import Tray from './components/Tray.svelte';
+  import EngineProbe from './components/EngineProbe.svelte';
   import { createViewState } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
 
@@ -54,6 +55,7 @@
 </script>
 
 <div class="app" class:narrow>
+  <EngineProbe />
   <Header summary="no data" {onload} {onsave} />
   <Ribbon {viewState} {narrow} />
   <ContextCard {narrow} />

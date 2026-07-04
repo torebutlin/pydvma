@@ -11,13 +11,17 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "crosscheck:py": "node scripts/crosscheck-python.mjs"
+    "crosscheck:py": "node scripts/crosscheck-python.mjs",
+    "vendor:pyodide": "bash scripts/fetch-pyodide.sh",
+    "vendor:wheels": "bash scripts/build-wheels.sh",
+    "vendor": "npm run vendor:pyodide && npm run vendor:wheels"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "5.1.1",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^24.13.2",
+    "pyodide": "^0.28.3",
     "svelte": "^5.56.4",
     "svelte-check": "^4.7.1",
     "typescript": "~6.0.2",
