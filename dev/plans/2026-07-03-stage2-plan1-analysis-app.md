@@ -2331,6 +2331,17 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   Cards must handle engine-queue REJECTION (boot error now rejects, per A8b) —
   show an error state, never hang.
 
+- **A10 (Task 13a):** file I/O landed + hardened (autosave serialize deferred
+  into the debounce via a thunk; fsaccess writable aborted on failure;
+  "Converting…" toast during cold-engine legacy loads). npy codec gained a
+  fortran→C read transpose (verified value-correct N-D + complex) so real
+  ≤1.4.0 legacy files — which store sono/coherence column-major — load; write
+  path unaffected (crosscheck passes). **Task 14 REQUIRED:** wire the autosave
+  on/off toggle in the Export card (spec §7) to the existing `autosaveEnabled`
+  $state (Task 13a left it wired but with no UI). **Task 13b** (next): the
+  deferred plot-gesture consolidation (A5) — 3 PlotSurface zoom fixes + full
+  zoom/legend gesture e2e against the `?fixture=1` mounted plot.
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
