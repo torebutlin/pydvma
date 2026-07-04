@@ -2209,6 +2209,10 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   `lineColor(id, ch)` — the single source of truth for legend AND plot model.
   `removeSet(id)` exists already (pulled forward from Task 13). Tasks 8, 10,
   12, 13 must be dispatched against THIS contract, not the Task 4 code listings.
+  Carry-forwards: Task 10/13 — colour-start collision on remove-then-add
+  (optional `nextChannelStart` counter, cosmetic); Task 13 tray delete handler
+  owns any auto-re-solo UX after deleting the soloed set (store deliberately
+  does not re-solo — survivor states are inviolate).
 
 ## Self-review record
 
