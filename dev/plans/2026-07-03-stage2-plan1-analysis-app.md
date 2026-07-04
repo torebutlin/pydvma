@@ -2220,6 +2220,18 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   continuous zoom/pan gestures into ONE setRange per gesture.** `restore`
   takes `unknown`. Resolution fns document fs/duration > 0 preconditions.
 
+- **A4 (Task 6, approved with carry-forwards):** plot core landed; perf gate
+  measured ~30–50 ms (bound 250 ms) — custom-SVG decision confirmed. Task 7
+  pre-work (same files): off-screen-window empty path keyed on `lb >= len ||
+  ub < 0` (NOT `ub < lb` — that breaks between-samples bridging), `xMonotonic?`
+  flag on PlotLine (skip O(n) rescan; model assembly sets it), `Math.round`
+  observed size in PlotSurface, fmtTick exponential fallback below 1e-6 spans,
+  NaN-seeded decimation column fix, aria-label, drop redundant filter,
+  min-width. Task 14 notes: `getSvgElement()` undefined until first RO tick;
+  axis styling is scoped-CSS so the `data-role` restyling pass is load-bearing.
+  Task 15 notes: perf test in CI = warm-up call + min-of-3 + retry(1), keep
+  250 ms; add PlotSurface lifecycle checks to e2e scope.
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
