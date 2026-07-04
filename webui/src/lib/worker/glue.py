@@ -80,8 +80,9 @@ def calc_psd(time_axis, time_data, n_channels, fs, window, n_frames):
 def calc_tf(time_axis, time_data, n_channels, fs, ch_in, window, n_frames):
     """Transfer function from input channel ``ch_in`` to every output channel.
 
-    Returns tf_data (Nf, N_out) complex and coherence (Nf, N_out) — or
-    ``None`` for coherence when pydvma returns none (single-frame case).
+    Returns tf_data (Nf, N_out) complex and coherence (Nf, N_out). pydvma's
+    ``calculate_tf`` always populates ``tf_coherence``; the ``None`` guard
+    below is harmless defence, not a case that occurs in practice.
     """
     td = _time_data(time_axis, time_data, n_channels, fs)
     tf = analysis.calculate_tf(

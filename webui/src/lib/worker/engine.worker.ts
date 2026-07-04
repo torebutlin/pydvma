@@ -7,7 +7,8 @@
 // Boot sequence (one `init` message):
 //   1. loadPyodide({ indexURL: <baseUrl>/pyodide/ })   — vendored runtime
 //   2. loadPackage(['numpy','scipy','micropip'])         — prebuilt in the lock
-//   3. micropip.install(each wheel URL under <baseUrl>/pypi/) — pydvma+peakutils
+//   3. micropip.install([pydvma, peakutils] under <baseUrl>/pypi/, deps:false)
+//      — deps:false keeps install fully offline (no PyPI index lookups)
 //   4. write glue.py to the pyodide FS, pyimport('glue')
 // Thereafter every `{op, payload}` calls `glue[op](**payload)` and marshals
 // the returned dict (arrays -> {shape, data, complex}) back across postMessage.
@@ -55,11 +56,20 @@ async function boot({ baseUrl, wheels, pyodideVersion }: InitPayload): Promise<v
   });
   await pyodide.loadPackage(['numpy', 'scipy', 'micropip']);
   const micropip = pyodide.pyimport('micropip');
-  // Install each wheel from the served /pypi/ dir. callKwargs lets us pass the
-  // list positionally while still being explicit; a plain call also works.
-  for (const w of wheels) {
-    await micropip.install(base + 'pypi/' + w);
-  }
+  // Install BOTH vendored wheels in a SINGLE call with deps disabled. This is
+  // load-bearing for the offline goal: the pydvma wheel declares
+  // `Requires-Dist: peakutils` (and matplotlib), so with the default
+  // deps=True micropip would resolve those from LIVE PyPI *before* our local
+  // peakutils install runs — boot then dies with "Can't fetch metadata for
+  // 'peakutils'" whenever pypi.org is unreachable. deps=false stops ALL index
+  // lookups; the numpy/scipy/micropip runtime deps are already satisfied by
+  // the loadPackage above, and matplotlib is imported only lazily by pydvma
+  // (never on the `import pydvma` + analysis/datastructure/container path this
+  // worker uses), so nothing else is needed. If a future compute path pulls a
+  // package not loaded here, add it to the loadPackage([...]) list — from the
+  // pyodide CDN, never PyPI.
+  const wheelUrls = wheels.map((w) => base + 'pypi/' + w);
+  await micropip.install.callKwargs(wheelUrls, { deps: false });
   // Write glue.py into a dedicated dir and put it on sys.path so `import glue`
   // resolves it. (The FS root `/` is NOT on sys.path; writing to `/glue.py`
   // and importing would fail with ModuleNotFoundError.)
