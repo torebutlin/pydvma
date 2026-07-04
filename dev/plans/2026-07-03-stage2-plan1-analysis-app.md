@@ -2194,6 +2194,22 @@ Matlab/CSV export from the browser, dark app theme (tokens are ready; the
 figure-export dark mode ships now), `pydvma serve` bridge + capability
 metadata + NI, browser-tab-title levels, PWA packaging.
 
+## Amendments during execution (orchestrator-approved; supersede task text above)
+
+- **A1 (Task 3):** `DvmaItem` carries `metaRaw` (verbatim tagged manifest meta;
+  write-wins over decoded `meta`); mutate meta ONLY via `setItemMeta()` from
+  `model/dataset.ts`. `writeDvma` finite-checks everything it serialises,
+  unconditionally. A 4th manifest tag `__float__` (nan/inf/-inf) exists and is
+  handled. Cross-check driver: `npm run crosscheck:py` (portable spawn, no npx).
+- **A2 (Task 4):** selection-store API is **id-based**, not index-based:
+  `addSet` returns a stable `id`; `cycleSet/cycleLine/rename/solo/toggleCollapse/removeSet`
+  take ids; `SetView` carries `{id, index}`; `state` is a numeric lookup
+  `(s, c) => TriState` (no string keys); line colours are assigned at `addSet`
+  (cumulative channel offset into `LINE_PALETTE`), stored, exposed via
+  `lineColor(id, ch)` — the single source of truth for legend AND plot model.
+  `removeSet(id)` exists already (pulled forward from Task 13). Tasks 8, 10,
+  12, 13 must be dispatched against THIS contract, not the Task 4 code listings.
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
