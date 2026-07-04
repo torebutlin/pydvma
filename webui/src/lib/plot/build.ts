@@ -57,7 +57,15 @@ export interface BuiltPlot {
 /** Nyquist lines shorter than this render every point, undecimated. */
 const NYQUIST_DECIMATE_THRESHOLD = 8000;
 
-function dataExtent(lines: PlotLine[], axis: 'x' | 'y', which: 'left' | 'right' | 'any')
+/**
+ * Finite-value extent of `lines` on one axis, filtered by y-axis side
+ * (`which: 'any'` keeps every line). Falls back to `[0, 1]` with no
+ * finite data and pads degenerate (constant) extents by ±1. Exported
+ * for the interaction layer: the zoom guardrail (`clampToData`) and
+ * the toolbar's Auto X / Auto Y need the extent of the lines
+ * currently in the model.
+ */
+export function dataExtent(lines: PlotLine[], axis: 'x' | 'y', which: 'left' | 'right' | 'any')
   : [number, number] {
   let lo = Infinity, hi = -Infinity;
   for (const l of lines) {

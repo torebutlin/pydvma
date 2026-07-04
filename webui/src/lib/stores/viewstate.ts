@@ -26,6 +26,9 @@ const fresh = (): ViewSlice => ({
   legend: { visible: true, x: 0.98, y: 0.02, preset: 'ne' },
 });
 
+/** The store object `createViewState()` returns (for component props). */
+export type ViewState = ReturnType<typeof createViewState>;
+
 const VIEW_IDS = ['time', 'frequency', 'tf', 'sono'] as const;
 /** Max zoom-history entries kept per view; oldest are dropped. */
 const HISTORY_CAP = 50;

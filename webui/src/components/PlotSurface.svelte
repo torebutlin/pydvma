@@ -1,23 +1,58 @@
 <script lang="ts">
   /**
-   * Thin SVG plot renderer. Measures its own box with a
-   * ResizeObserver, delegates ALL geometry to `buildPlot`
-   * (src/lib/plot/build.ts) and renders the result verbatim — no plot
-   * logic lives here. Zoom/pan interaction arrives in a later task.
+   * SVG plot renderer + pointer interaction. Measures its own box
+   * with a ResizeObserver, delegates ALL geometry to `buildPlot`
+   * (src/lib/plot/build.ts) and renders the result verbatim; gesture
+   * MATHS live in src/lib/plot/zoom.ts — only the pointer wiring is
+   * here.
+   *
+   * Interaction (design spec §6), active only when a `viewState`
+   * store is supplied (omit it for a static, non-interactive plot):
+   * - box-zoom mode: drag draws a dashed rubber band; releasing
+   *   commits `rubberBandToRange` → `clampToData` → `setRange`.
+   *   Sub-6-px drags are clicks (no-op).
+   * - pan mode: dragging pans a LOCAL preview range (rAF-throttled,
+   *   no store writes); releasing commits EXACTLY ONE `setRange` —
+   *   gesture coalescing that the store's 50-entry history cap
+   *   depends on (plan amendment A3).
+   * - double-click anywhere on the plot → `autoFit`.
+   * - the guardrail extent is recomputed from the model's lines via
+   *   `dataExtent` (cheap: only runs when the model changes), so
+   *   zoom/pan clamp to the lines currently shown.
+   * - drag gestures are DISABLED on `squareAspect` (Nyquist) models —
+   *   the aspect-locked view is navigated via its fmin/fmax controls
+   *   (mockup behaviour); double-click auto-fit still works.
+   *
+   * The parent must derive `model.xRange`/`model.yRange` from
+   * `viewState.current.range` for committed gestures to take effect.
    *
    * Export hooks: the root <svg> carries `data-testid="plot-svg"`,
-   * each line `data-testid="plot-line"` (Playwright), the background
-   * rect `data-role="plot-bg"` and every piece of axis chrome
+   * each line `data-testid="plot-line"`, the rubber band
+   * `data-testid="rubber-band"` (Playwright), the background rect
+   * `data-role="plot-bg"` and every piece of axis chrome
    * `data-role="axis"` (the figure exporter restyles by these tags).
    *
    * Visual treatment ported from dev/mockups/round2-bench.html:
    * margins L58/T16/B42, R18 (56 with a right axis), #eef0f4
    * gridlines, mono tick labels and muted axis labels.
    */
-  import { buildPlot, type PlotModel } from '../lib/plot/build';
+  import { buildPlot, dataExtent, type PlotModel } from '../lib/plot/build';
   import { fmtTick } from '../lib/plot/scales';
+  import { rubberBandToRange, clampToData, panBy } from '../lib/plot/zoom';
+  import type { ViewState } from '../lib/stores/viewstate';
+  import { get } from 'svelte/store';
 
-  let { model }: { model: PlotModel } = $props();
+  let {
+    model,
+    mode = 'box',
+    viewState = undefined,
+  }: {
+    model: PlotModel;
+    /** Active drag tool; bind ZoomToolbar's `mode` to this. */
+    mode?: 'box' | 'pan';
+    /** View-state store; when absent the plot is non-interactive. */
+    viewState?: ViewState;
+  } = $props();
 
   const uid = $props.id();
   const clipId = `plot-clip-${uid}`;
