@@ -12,7 +12,7 @@ test('nFrames -> frame length matches Qt formula (overlap 0.5)', () => {
 test('round trips: frameLength -> nFrames -> frameLength', () => {
   const a = fromFrameLength(1.0, 30, 44100);
   const b = fromNFrames(a.nFrames, 30, 44100);
-  expect(b.frameLengthS).toBeCloseTo(a.frameLengthS, 1);
+  expect(b.frameLengthS).toBeCloseTo(a.frameLengthS, 6);
 });
 
 test('nFft entry snaps the other two consistently', () => {

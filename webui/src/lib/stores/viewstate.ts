@@ -26,6 +26,10 @@ const fresh = (): ViewSlice => ({
   legend: { visible: true, x: 0.98, y: 0.02, preset: 'ne' },
 });
 
+const VIEW_IDS = ['time', 'frequency', 'tf', 'sono'] as const;
+/** Max zoom-history entries kept per view; oldest are dropped. */
+const HISTORY_CAP = 50;
+
 /**
  * Serialisable view-state store (design spec §11): one `ViewSlice` per
  * view, an active-view pointer, per-view zoom history, and a shared
@@ -50,10 +54,16 @@ export function createViewState() {
 
   /**
    * Set view `id`'s axis range, pushing the previous range onto the
-   * history stack and clearing the redo (`future`) stack.
+   * history stack (capped at 50 entries; oldest dropped) and clearing
+   * the redo (`future`) stack. Continuous gestures (drag-pan, wheel
+   * zoom) should coalesce into ONE setRange per gesture — that
+   * debouncing is the plot interaction layer's job (Task 7), not this
+   * store's.
    */
   function setRange(id: ViewId, range: Range) {
-    patch(id, v => ({ ...v, history: [...v.history, v.range], future: [], range }));
+    patch(id, v => ({
+      ...v, history: [...v.history, v.range].slice(-HISTORY_CAP), future: [], range,
+    }));
   }
 
   /**
@@ -83,7 +93,11 @@ export function createViewState() {
   /** Set the ACTIVE view's TF plot type. */
   function setPlotType(t: TfPlotType) { patch(get(active), v => ({ ...v, plotType: t })); }
 
-  /** Toggle the ACTIVE view's coherence overlay. */
+  /**
+   * Set (not toggle) the ACTIVE view's coherence overlay flag. Scoping
+   * to the active view is safe because this is only ever called from
+   * the active view's context card.
+   */
   function setCoherence(on: boolean) { patch(get(active), v => ({ ...v, coherence: on })); }
 
   /** Set view `id`'s legend placement/visibility. */
@@ -92,9 +106,24 @@ export function createViewState() {
   /** Snapshot the whole state as plain JSON-safe data (spec §11). */
   function serialize() { return { views: get(views), active: get(active) }; }
 
-  /** Restore a snapshot produced by `serialize` (accepts JSON round-trips). */
-  function restore(snap: { views: Record<ViewId, ViewSlice>; active: ViewId }) {
-    views.set(snap.views); active.set(snap.active);
+  /**
+   * Restore a snapshot produced by `serialize` (accepts JSON
+   * round-trips). Invalid snapshots — anything without all four view
+   * slices present as objects — are IGNORED entirely; state is never
+   * partially applied. Each slice is merged over `fresh()` defaults so
+   * stale-schema snapshots missing newer fields get those defaults; an
+   * unrecognised `active` view is coerced to 'time'.
+   */
+  function restore(snap: unknown) {
+    const s = snap as { views?: Record<string, unknown>; active?: unknown } | null;
+    const raw = s?.views;
+    if (typeof raw !== 'object' || raw === null) return;
+    if (!VIEW_IDS.every(id => typeof raw[id] === 'object' && raw[id] !== null)) return;
+    const merged = {} as Record<ViewId, ViewSlice>;
+    for (const id of VIEW_IDS) merged[id] = { ...fresh(), ...(raw[id] as Partial<ViewSlice>) };
+    views.set(merged);
+    active.set((VIEW_IDS as readonly string[]).includes(s!.active as string)
+      ? (s!.active as ViewId) : 'time');
   }
 
   return {

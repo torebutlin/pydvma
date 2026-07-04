@@ -30,6 +30,7 @@ function finish(nFrames: number, durationS: number, fs: number): Resolution {
 /**
  * Resolution from a requested number of frames for a `durationS`-second
  * capture sampled at `fs` Hz. Input is rounded/clamped (see `finish`).
+ * Preconditions: fs > 0, durationS > 0, both finite; NaN inputs propagate.
  */
 export const fromNFrames = (n: number, durationS: number, fs: number): Resolution =>
   finish(n, durationS, fs);
@@ -39,6 +40,7 @@ export const fromNFrames = (n: number, durationS: number, fs: number): Resolutio
  * is floored at one sample (`1/fs`), converted to a frame count via the
  * inverse overlap formula, then snapped to the nearest integer count —
  * so the returned `frameLengthS` may differ slightly from the request.
+ * Preconditions: fs > 0, durationS > 0, both finite; NaN inputs propagate.
  */
 export const fromFrameLength = (frameLengthS: number, durationS: number, fs: number): Resolution =>
   finish((durationS / Math.max(frameLengthS, 1 / fs) - OVERLAP) / (1 - OVERLAP), durationS, fs);
@@ -47,6 +49,7 @@ export const fromFrameLength = (frameLengthS: number, durationS: number, fs: num
  * Resolution from a requested FFT size in samples (min 2, rounded).
  * Equivalent to `fromFrameLength(nFft / fs, ...)`, so the returned
  * `nFft` is re-derived from the snapped integer frame count.
+ * Preconditions: fs > 0, durationS > 0, both finite; NaN inputs propagate.
  */
 export const fromNFft = (nFft: number, durationS: number, fs: number): Resolution =>
   fromFrameLength(Math.max(2, Math.round(nFft)) / fs, durationS, fs);
