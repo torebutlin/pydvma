@@ -32,10 +32,14 @@
   let moreBtn: HTMLButtonElement | undefined = $state();
 
   // Move focus into the drawer when it opens; restore it to the trigger
-  // when it closes.
+  // only on a genuine open->close transition. The initial mount runs with
+  // `open === false`, so restoring on every falsey pass would steal focus
+  // to the ⋯ button on page load — hence the `prevOpen` guard.
+  let prevOpen = false;
   $effect(() => {
     if (open) drawerEl?.focus();
-    else moreBtn?.focus();
+    else if (prevOpen) moreBtn?.focus();
+    prevOpen = open;
   });
 
   function onKeydown(e: KeyboardEvent) {

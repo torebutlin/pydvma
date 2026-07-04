@@ -25,6 +25,10 @@ test('mixed on+off summarises to mixed', () => {
   expect(summariseColumn(['on', 'off', 'on'])).toBe('mixed');
 });
 
+test('mixed fade+off summarises to mixed', () => {
+  expect(summariseColumn(['fade', 'off'])).toBe('mixed');
+});
+
 test('single value summarises to that state', () => {
   expect(summariseColumn(['on'])).toBe('on');
   expect(summariseColumn(['fade'])).toBe('fade');
