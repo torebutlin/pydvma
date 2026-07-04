@@ -2235,18 +2235,23 @@ metadata + NI, browser-tab-title levels, PWA packaging.
 - **A5 (Task 7 recovery):** the interrupted implementer scaffolded PlotSurface's
   zoom props/imports/docstring but never wrote the pointer handlers; it passed
   `npm run check` because `tsconfig.app.json` lacks `noUnusedLocals`. Follow-up
-  commit adds the wiring. **Task 9:** its shell e2e MUST exercise real
-  box-zoom drag + pan + double-click-autofit on the mounted PlotSurface (locks
-  in wiring that has no node-unit coverage). **Task 16:** evaluate enabling
+  commit adds the wiring. **Task 16:** evaluate enabling
   `noUnusedLocals`/`noUnusedParameters` on `tsconfig.app.json` (a dead import
   silently passed review-by-check here).
-  Task 7 APPROVED (all Minor). Three PlotSurface gesture Minors deferred to
-  **Task 9** (fix + assert in its e2e — all DOM-gesture behaviours): (1)
-  `onpointercancel`/lost-capture handler clears rubber-band/panPreview on an
-  interrupted drag; (2) pan-mode needs box-mode's `MIN_DRAG_PX` dead-zone (a
-  click currently pushes a no-op history entry, a pan double-click ~3); (3)
-  latch `mode` gesture-local at pointerdown so a mid-drag flip can't strand
-  panPreview.
+  Task 7 APPROVED (all Minor). **DEFERRED-GESTURE CONSOLIDATION → Task 13**
+  (where `?fixture=1` first mounts a drivable plot in a page; e2e can only run
+  there, so fixes + assertions land together). Task 13 must, as an explicit
+  sub-step BEFORE its file-loading work: (i) apply 3 PlotSurface zoom fixes —
+  `onpointercancel`/lost-capture clears rubber-band/panPreview; pan-mode gets
+  box-mode's `MIN_DRAG_PX` dead-zone (a click currently pushes a no-op history
+  entry, a pan double-click ~3); latch `mode` gesture-local at pointerdown;
+  (ii) add a Playwright plot-interaction spec asserting, on the fixture-loaded
+  mounted plot: box-zoom changes range, pan pushes exactly ONE history entry,
+  double-click auto-fits, pointercancel aborts cleanly; and the Task-8 legend
+  behaviours (already FIXED in 72b2baa, assertions only): drag across x=0.5
+  doesn't jump, row-click cycles, drag-starting-on-a-row does NOT cycle,
+  preset flush (NE/outside-right). **Task 9** stays shell-only per plan (its
+  plot region shows an empty state until data loads).
 
 ## Self-review record
 
