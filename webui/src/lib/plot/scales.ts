@@ -1,0 +1,51 @@
+/**
+ * Axis-scale helpers for the SVG plot layer: 1-2-5 "nice" tick
+ * generation, linear domain→range mapping, and tick-label formatting.
+ *
+ * Pure functions — no DOM, no Svelte. Unit-tested in
+ * `tests/plot/scales.test.ts`.
+ */
+
+/**
+ * Generate "nice" tick positions covering `[min, max]` using a 1-2-5
+ * step ladder, aiming for roughly `target` intervals.
+ *
+ * Ticks land on multiples of the chosen step; values that round to
+ * zero (within floating-point noise of the step) are snapped to exact
+ * `0` so labels never read `-0` or `1e-17`. Degenerate domains
+ * (`max <= min`) return `[min]`.
+ */
+export function niceTicks(min: number, max: number, target = 6): number[] {
+  if (!(max > min)) return [min];
+  const span = max - min;
+  const step0 = span / Math.max(1, target);
+  const mag = 10 ** Math.floor(Math.log10(step0));
+  const norm = step0 / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+  const start = Math.ceil(min / step) * step;
+  const out: number[] = [];
+  for (let v = start; v <= max + step * 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return out;
+}
+
+/**
+ * Linear scale factory: maps domain `[d0, d1]` onto range `[r0, r1]`.
+ *
+ * Inverted ranges are the normal case for SVG y-axes (pass
+ * `r0 = height, r1 = 0` so larger data values render higher up).
+ * No clamping — out-of-domain inputs extrapolate.
+ */
+export const scaleLinear = (d0: number, d1: number, r0: number, r1: number) =>
+  (v: number) => r0 + ((v - d0) / (d1 - d0)) * (r1 - r0);
+
+/**
+ * Format a tick value for display, choosing decimal places from the
+ * axis span: 0 decimals for spans >= 100, scaling up to more decimals
+ * as the span shrinks (span 50 → 1 dp, span 5 → 2 dp, span 0.5 → 3 dp,
+ * capped at 8). Trailing zeros are stripped via numeric round-trip.
+ */
+export function fmtTick(v: number, span: number): string {
+  if (!(span > 0) || !Number.isFinite(span)) return String(v);
+  const d = Math.max(0, Math.min(8, 2 - Math.floor(Math.log10(span))));
+  return (+v.toFixed(d)).toString();
+}
