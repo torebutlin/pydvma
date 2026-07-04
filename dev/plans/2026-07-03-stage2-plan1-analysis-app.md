@@ -2232,6 +2232,15 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   Task 15 notes: perf test in CI = warm-up call + min-of-3 + retry(1), keep
   250 ms; add PlotSurface lifecycle checks to e2e scope.
 
+- **A5 (Task 7 recovery):** the interrupted implementer scaffolded PlotSurface's
+  zoom props/imports/docstring but never wrote the pointer handlers; it passed
+  `npm run check` because `tsconfig.app.json` lacks `noUnusedLocals`. Follow-up
+  commit adds the wiring. **Task 9:** its shell e2e MUST exercise real
+  box-zoom drag + pan + double-click-autofit on the mounted PlotSurface (locks
+  in wiring that has no node-unit coverage). **Task 16:** evaluate enabling
+  `noUnusedLocals`/`noUnusedParameters` on `tsconfig.app.json` (a dead import
+  silently passed review-by-check here).
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
