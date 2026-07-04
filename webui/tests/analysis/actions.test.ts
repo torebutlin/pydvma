@@ -70,6 +70,38 @@ test('loadDataset registers one selection set per TimeData item and seeds time a
   expect(Array.from(d[0].time!.data.re)).toEqual([1, 2, 3, 4, 5, 6]);
 });
 
+test('cleanImpulse re-emits the dataset store so autosave captures the cleaned data', async () => {
+  // Regression: cleanImpulse mutates the source item's arrays IN PLACE (the
+  // item is shared by reference with the `dataset` store). The plot updates
+  // via setDerived, but autosave is driven by a `dataset` subscription — so
+  // without an explicit re-emit the cleaned impulse is never autosaved and a
+  // tab-close loses it. This asserts the store re-emits (and the mutation is
+  // visible for the explicit-Save path too).
+  const sel = createSelection();
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return {
+      time_axis: real([3], [0, 0.5, 1]),
+      time_data: real([3, 2], [0, 0, 3, 4, 0, 0]),   // zeroed outside the impulse
+    };
+    return {};
+  });
+  const actions = createActions(engine, sel);
+  actions.loadDataset(makeDataset(1));
+
+  // Subscribe AFTER load; discount the synchronous initial callback.
+  let emissions = 0;
+  const unsub = actions.dataset.subscribe(() => { emissions++; });
+  emissions = 0;
+
+  await actions.cleanImpulse(0, 0);
+  unsub();
+
+  expect(calls.some(c => c.op === 'clean_impulse')).toBe(true);
+  expect(emissions, 'cleanImpulse must re-emit dataset so autosave fires').toBeGreaterThan(0);
+  const ds = get(actions.dataset)!;
+  expect(Array.from(ds.items[0].arrays.time_data.data)).toEqual([0, 0, 3, 4, 0, 0]);
+});
+
 test("calcTf 'within' issues one calc_tf per set with n_frames from resolution", async () => {
   const sel = createSelection();
   const { engine, calls } = fakeEngine(async () => tfResult());

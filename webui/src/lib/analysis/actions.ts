@@ -303,6 +303,13 @@ export function createActions(engine: EngineStore, selection: Selection) {
       setDerived(ws.setId, {
         time: { axis: newAxis, data: decodeArray({ ...cleaned }) },
       });
+      // The cleaned arrays were mutated in place on the item that lives inside
+      // the `dataset` store, so `derived` (the plot) already updated via
+      // setDerived — but the store itself never re-emitted, and autosave is
+      // driven by a `dataset` subscription (App.svelte). Re-emit the same
+      // object so the cleaned impulse is autosaved; otherwise a clean followed
+      // by a tab-close silently loses the cleanup (explicit Save is unaffected).
+      dataset.update((d) => d);
     });
   }
 
