@@ -29,6 +29,7 @@
     actions,
     freqMode = $bindable('fft'),
     dynRangeDb = $bindable(60),
+    sonoSetIdx = $bindable(0),
   }: {
     narrow?: boolean;
     viewState: ViewState;
@@ -36,6 +37,7 @@
     actions: Actions;
     freqMode?: FreqMode;
     dynRangeDb?: number;
+    sonoSetIdx?: number;
   } = $props();
 
   const labelOf = (id: string): string => STAGES.find((s) => s.id === id)?.label ?? '';
@@ -49,7 +51,7 @@
   {:else if $activeStage === 'tf'}
     <TFCard {viewState} {selection} {actions} />
   {:else if $activeStage === 'sono'}
-    <SonoCard {actions} {selection} bind:dynRangeDb />
+    <SonoCard {actions} {selection} bind:dynRangeDb bind:sonoSetIdx />
   {:else}
     <section class="ctx-card card-controls" aria-label="stage controls">
       <div class="ctx-name">

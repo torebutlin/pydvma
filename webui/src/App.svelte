@@ -52,6 +52,9 @@
   // Card-owned display state that lives above the plot model.
   let freqMode = $state<FreqMode>('fft');
   let dynRangeDb = $state(60);
+  // The sonogram card's selected set index, lifted here so the canvas
+  // heat layer renders THAT set's sonogram (not just the first computed).
+  let sonoSetIdx = $state(0);
   let mode = $state<'box' | 'pan'>('box');
 
   // `?narrow=1` forces the narrow layout; `?fixture=1` auto-loads data.
@@ -143,8 +146,18 @@
 
   let sonoCanvas = $state<HTMLCanvasElement | undefined>();
 
-  /** The sonogram image of the first set that has one (single-set view). */
-  const sono = $derived(setArrays.find((s) => s.sono)?.sono);
+  /**
+   * The sonogram image of the SET the SonoCard has selected (its setId,
+   * looked up via the working-set order the card indexes into), so the
+   * heat layer tracks the card's set/chan choice rather than blindly
+   * showing whichever set was computed first.
+   */
+  const sono = $derived.by(() => {
+    const setId = actions.workingSets()[sonoSetIdx]?.setId;
+    const chosen = setId !== undefined ? $derivedStore[setId]?.sono : undefined;
+    // Fall back to any computed sonogram so a stale index still shows something.
+    return chosen ?? setArrays.find((s) => s.sono)?.sono;
+  });
 
   $effect(() => {
     if (view !== 'sono' || !sonoCanvas || !sono) return;
@@ -188,7 +201,7 @@
   <EngineProbe />
   <Header summary={hasData ? `${setArrays.length} set${setArrays.length === 1 ? '' : 's'}` : 'no data'} {onload} {onsave} />
   <Ribbon {viewState} {narrow} />
-  <ContextCard {narrow} {viewState} {selection} {actions} bind:freqMode bind:dynRangeDb />
+  <ContextCard {narrow} {viewState} {selection} {actions} bind:freqMode bind:dynRangeDb bind:sonoSetIdx />
 
   <main class="main">
     {#if narrow}

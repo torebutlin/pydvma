@@ -11,11 +11,19 @@
  * `decodeArray`s the marshalled result out. Every action awaits the
  * engine (`enqueue` / `whenReady`) and, on REJECTION (boot failure),
  * sets `computeError` rather than hanging (engine store A8b: enqueue
- * rejects, never hangs). Live slider re-issues are debounced (150 ms)
- * and guarded by `latestOnly` so an out-of-order response never
- * clobbers a newer one.
+ * rejects, never hangs).
+ *
+ * Concurrency: live slider re-issues are debounced (150 ms) and each
+ * action kind carries a PER-KIND stale seq (keyed 'fft'/'psd'/'tf'/
+ * 'sono') so an out-of-order response of that SAME kind is dropped —
+ * but a newer call of one kind NEVER cross-drops an in-flight result of
+ * a DIFFERENT kind (that global-counter bug would let a debounced
+ * sonogram slider silently blank an in-flight TF batch, and vice
+ * versa). `busy` is REFERENCE-COUNTED so it stays true until the last
+ * concurrent action settles, and `computeError` is cleared per-kind (a
+ * concurrent action never erases another's error unseen).
  */
-import { get, writable } from 'svelte/store';
+import { writable } from 'svelte/store';
 import type { DvmaDataset, DvmaItem } from '../model/dataset';
 import { itemChannels } from '../model/dataset';
 import type { EngineStore } from '../stores/engine';
@@ -23,23 +31,8 @@ import type { Selection } from '../stores/selection';
 import { decodeArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import { fromNFrames, fromNFft } from './resolution';
 
-/**
- * Wrap an async action so only the LATEST invocation's continuation
- * runs to completion: each call bumps a shared counter, and after the
- * inner promise settles the wrapper returns early if a newer call has
- * since started. Used for live slider re-issues (TF n-frames, sonogram
- * resolution) where out-of-order worker responses must not clobber the
- * newest one. (The action bodies ALSO guard their commit with the same
- * seq for finer-grained per-batch dropping.)
- */
-let latestSeq = 0;
-export function latestOnly<T extends unknown[]>(fn: (...a: T) => Promise<void>) {
-  return async (...a: T): Promise<void> => {
-    const my = ++latestSeq;
-    await fn(...a);
-    if (my !== latestSeq) return;
-  };
-}
+/** Compute-action kind, used as the per-kind stale-guard key. */
+type Kind = 'fft' | 'psd' | 'tf' | 'sono' | 'clean';
 
 /** A worker array crosses either as a plain object or a toJs Map. */
 function mval(v: unknown, k: string): unknown {
@@ -98,24 +91,53 @@ export function createActions(engine: EngineStore, selection: Selection) {
   /** Source sets in load order (one per TimeData item), with cached meta. */
   let working: WorkingSet[] = [];
 
-  /** Stale-guard: each action captures the seq before its worker call. */
-  let seq = 0;
+  /**
+   * Per-kind stale-guard counters. `bump(kind)` returns the token an
+   * action captures BEFORE its worker call; `stale(kind, token)` is true
+   * once a NEWER call of that SAME kind has bumped. Keying by kind is the
+   * fix for the cross-kind clobber bug: a debounced sonogram slider must
+   * not drop an in-flight TF result, and vice versa.
+   */
+  const seqs: Record<Kind, number> = { fft: 0, psd: 0, tf: 0, sono: 0, clean: 0 };
+  const bump = (k: Kind): number => (seqs[k] = seqs[k] + 1);
+  const stale = (k: Kind, token: number): boolean => token !== seqs[k];
+
+  /**
+   * Reference count of in-flight actions. `busy` reflects `busyN > 0`, so
+   * two concurrent actions keep it true until BOTH settle — the first to
+   * finish no longer re-enables the Calc buttons while the other runs.
+   */
+  let busyN = 0;
+
+  /** Which action kind owns the currently-shown `computeError` (or null). */
+  let errorKind: Kind | null = null;
 
   function setDerived(setId: number, patch: Partial<SetArrays>) {
     derived.update(m => ({ ...m, [setId]: { ...m[setId], ...patch, setId } }));
   }
 
-  /** Run `fn`, routing an engine rejection to `computeError` (never hangs). */
-  async function guarded(fn: () => Promise<void>): Promise<void> {
-    computeError.set('');
+  /**
+   * Run `fn`, routing an engine rejection to `computeError` (never
+   * hangs). `kind` scopes the error reset so a concurrent action of a
+   * DIFFERENT kind never wipes this action's error before the user sees
+   * it: entry clears the error only if it belongs to (was set by) this
+   * same kind; a failure records the failing kind. `busy` is
+   * reference-counted so it stays true until the last action settles.
+   */
+  async function guarded(kind: Kind, fn: () => Promise<void>): Promise<void> {
+    if (errorKind === kind) computeError.set('');   // only clear our own prior error
+    busyN += 1;
     busy.set(true);
     try {
       engine.boot();               // idempotent; lazily boots on first compute
       await fn();
+      if (errorKind === kind) { computeError.set(''); errorKind = null; }  // our run succeeded
     } catch (e) {
       computeError.set(e instanceof Error ? e.message : String(e));
+      errorKind = kind;
     } finally {
-      busy.set(false);
+      busyN -= 1;
+      busy.set(busyN > 0);
     }
   }
 
@@ -129,6 +151,7 @@ export function createActions(engine: EngineStore, selection: Selection) {
     dataset.set(ds);
     derived.set({});
     computeError.set('');
+    errorKind = null;              // fresh dataset clears any lingering error owner
     working = [];
     // Selection store has no reset; it is created fresh per app load. We
     // simply addSet for each TimeData item in this dataset.
@@ -159,12 +182,14 @@ export function createActions(engine: EngineStore, selection: Selection) {
 
   /** FFT of every set, writing decoded freq arrays into `derived`. */
   function calcFft(window: string | null) {
-    return guarded(async () => {
+    const my = bump('fft');
+    return guarded('fft', async () => {
       for (const ws of working) {
         const { axis, data, nCh } = timePayload(ws.time);
         const res = await engine.enqueue('calc_fft', {
           time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs, window,
         });
+        if (stale('fft', my)) return;                 // a newer FFT batch won
         setDerived(ws.setId, {
           freq: {
             axis: axisData(mval(res, 'freq_axis')),
@@ -177,13 +202,15 @@ export function createActions(engine: EngineStore, selection: Selection) {
 
   /** PSD (+ CSD coherence matrix) per set, at `n_frames` from `resolution`. */
   function calcPsd(window: string | null, nFrames: number) {
-    return guarded(async () => {
+    const my = bump('psd');
+    return guarded('psd', async () => {
       for (const ws of working) {
         const { axis, data, nCh } = timePayload(ws.time);
         const res = await engine.enqueue('calc_psd', {
           time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
           window: window ?? 'hann', n_frames: nFrames,
         });
+        if (stale('psd', my)) return;                 // a newer PSD batch won
         const freqAxis = axisData(mval(res, 'freq_axis'));
         setDerived(ws.setId, {
           psd: { axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'psd'))) },
@@ -205,15 +232,15 @@ export function createActions(engine: EngineStore, selection: Selection) {
     averaging: 'none' | 'within' | 'across',
     nFrames: number,
   ) {
-    const my = ++seq;
-    return guarded(async () => {
+    const my = bump('tf');
+    return guarded('tf', async () => {
       if (averaging === 'across') {
         const sets = working.map(ws => {
           const { axis, data, nCh } = timePayload(ws.time);
           return { time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs };
         });
         const res = await engine.enqueue('calc_tf_averaged', { sets, ch_in: chIn, window });
-        if (my !== seq) return;                         // stale: a newer TF request won
+        if (stale('tf', my)) return;                    // a newer TF request won
         const axis = axisData(mval(res, 'freq_axis'));
         const tf = tfFromResult(res, axis);
         // Ensemble result attaches to the first set (single averaged curve).
@@ -226,7 +253,7 @@ export function createActions(engine: EngineStore, selection: Selection) {
             time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
             ch_in: chIn, window, n_frames: frames,
           });
-          if (my !== seq) return;                       // stale-drop the whole batch
+          if (stale('tf', my)) return;                  // stale-drop the whole batch
           const fAxis = axisData(mval(res, 'freq_axis'));
           setDerived(ws.setId, { tf: tfFromResult(res, fAxis) });
         }
@@ -238,14 +265,14 @@ export function createActions(engine: EngineStore, selection: Selection) {
   function calcSono(setIdx: number, ch: number, nFft: number) {
     const ws = working[setIdx];
     if (!ws) return Promise.resolve();
-    const my = ++seq;
-    return guarded(async () => {
+    const my = bump('sono');
+    return guarded('sono', async () => {
       const { axis, data, nCh } = timePayload(ws.time);
       const res = await engine.enqueue('calc_sono', {
         time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
         ch, nperseg: nFft, noverlap: nFft >> 1,
       });
-      if (my !== seq) return;
+      if (stale('sono', my)) return;                    // a newer sonogram won
       setDerived(ws.setId, {
         sono: {
           timeAxis: axisData(mval(res, 'time_axis')),
@@ -260,7 +287,7 @@ export function createActions(engine: EngineStore, selection: Selection) {
   function cleanImpulse(setIdx: number, chImpulse: number) {
     const ws = working[setIdx];
     if (!ws) return Promise.resolve();
-    return guarded(async () => {
+    return guarded('clean', async () => {
       const { axis, data, nCh } = timePayload(ws.time);
       const res = await engine.enqueue('clean_impulse', {
         time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs, ch_impulse: chImpulse,

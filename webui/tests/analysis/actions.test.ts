@@ -159,3 +159,75 @@ test('calcSono issues calc_sono with nperseg=nFft, noverlap=nFft/2', async () =>
   expect(sono.payload.nperseg).toBe(64);
   expect(sono.payload.noverlap).toBe(32);
 });
+
+test('two DIFFERENT action kinds racing: neither cross-drops the other', async () => {
+  // Regression for the CRITICAL global-seq bug: a calcSono issued while a
+  // calcTf is in flight must NOT drop the TF result when TF resolves later.
+  // With a single global counter, calcSono's bump makes calcTf's guard read
+  // stale → TF silently dropped (this test FAILS on that code). With a
+  // PER-KIND guard, 'sono' and 'tf' counters are independent → both commit.
+  const sel = createSelection();
+  let releaseTf!: (v: unknown) => void;
+  const { engine } = fakeEngine((op) => {
+    if (op === 'calc_tf') return new Promise(res => { releaseTf = res; });   // TF resolves LAST
+    if (op === 'calc_sono') return Promise.resolve({
+      time_axis: real([2], [0, 1]),
+      freq_axis: real([2], [0, 1]),
+      sono_data: real([2, 2], [1, 2, 3, 4]),
+    });
+    return Promise.resolve({});
+  });
+  const actions = createActions(engine, sel);
+  actions.loadDataset(makeDataset(1));
+
+  const pTf = actions.calcTf(0, null, 'within', 4);   // in flight (deferred)
+  await actions.calcSono(0, 0, 64);                    // completes first, bumps 'sono'
+  releaseTf(tfResult());                               // now let TF settle
+  await pTf;
+
+  const d = get(actions.derived);
+  // BOTH results must be present — the sonogram did not cross-drop the TF.
+  expect(d[0].tf, 'TF result must survive a concurrent sonogram').toBeDefined();
+  expect(d[0].sono, 'sonogram result must be present').toBeDefined();
+});
+
+test('concurrent actions: busy is ref-counted (stays true until the last settles)', async () => {
+  const sel = createSelection();
+  let releaseTf!: (v: unknown) => void;
+  const { engine } = fakeEngine((op) => {
+    if (op === 'calc_tf') return new Promise(res => { releaseTf = res; });
+    if (op === 'calc_sono') return Promise.resolve({
+      time_axis: real([2], [0, 1]), freq_axis: real([2], [0, 1]), sono_data: real([2, 2], [1, 2, 3, 4]),
+    });
+    return Promise.resolve({});
+  });
+  const actions = createActions(engine, sel);
+  actions.loadDataset(makeDataset(1));
+
+  const pTf = actions.calcTf(0, null, 'within', 4);   // still in flight
+  await actions.calcSono(0, 0, 64);                    // one action settled...
+  expect(get(actions.busy), 'busy must stay true while TF is still running').toBe(true);
+  releaseTf(tfResult());
+  await pTf;
+  expect(get(actions.busy), 'busy clears only after the last action settles').toBe(false);
+});
+
+test('a concurrent action does not erase another kind\'s error unseen', async () => {
+  // calcFft fails (sets error); a later successful calcSono of a DIFFERENT
+  // kind must not wipe the FFT error before the user sees it.
+  const sel = createSelection();
+  const { engine } = fakeEngine((op) => {
+    if (op === 'calc_fft') return Promise.reject(new Error('engine failed to boot: boom'));
+    if (op === 'calc_sono') return Promise.resolve({
+      time_axis: real([2], [0, 1]), freq_axis: real([2], [0, 1]), sono_data: real([2, 2], [1, 2, 3, 4]),
+    });
+    return Promise.resolve({});
+  });
+  const actions = createActions(engine, sel);
+  actions.loadDataset(makeDataset(1));
+
+  await actions.calcFft(null);
+  expect(get(actions.computeError)).toContain('engine failed to boot');
+  await actions.calcSono(0, 0, 64);                    // different kind, succeeds
+  expect(get(actions.computeError), 'FFT error must survive a later sonogram success').toContain('engine failed to boot');
+});

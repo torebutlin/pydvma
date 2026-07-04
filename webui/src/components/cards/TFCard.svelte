@@ -12,8 +12,10 @@
    *
    * Calc TF runs `actions.calcTf(chIn, window, averaging, nFrames)`.
    * The N-frames slider re-issues live but is DEBOUNCED (150 ms) and
-   * the action carries its own stale-guard, so dragging never floods
-   * the worker or lets an old response clobber a newer one.
+   * the action carries a per-kind stale seq (key 'tf'), so dragging
+   * never floods the worker or lets an old TF response clobber a newer
+   * one — and, being per-kind, it never cross-drops another kind's
+   * in-flight result.
    */
   import type { ViewState, TfPlotType } from '../../lib/stores/viewstate';
   import type { Selection } from '../../lib/stores/selection';

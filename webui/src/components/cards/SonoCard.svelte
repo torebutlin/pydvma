@@ -8,8 +8,10 @@
    * noverlap=nFft/2 in the worker); a dynamic-range dB input clamps the
    * heat-map floor (consumed by the App's canvas heat layer via
    * `dynRangeDb`). Calc Sonogram runs `actions.calcSono`. The slider
-   * re-issues live but DEBOUNCED (150 ms); the action carries a
-   * stale-guard so an old response never clobbers a newer one.
+   * re-issues live but DEBOUNCED (150 ms); the action carries a per-kind
+   * stale seq (key 'sono') so an old sonogram response never clobbers a
+   * newer one, and — being per-kind — never cross-drops an in-flight
+   * result of another kind (e.g. a running TF batch).
    */
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
@@ -18,21 +20,27 @@
     actions,
     selection,
     dynRangeDb = $bindable(60),
-  }: { actions: Actions; selection: Selection; dynRangeDb?: number } = $props();
+    sonoSetIdx = $bindable(0),
+  }: {
+    actions: Actions;
+    selection: Selection;
+    dynRangeDb?: number;
+    /** Selected source-set index; bound up so App renders THIS set's sono. */
+    sonoSetIdx?: number;
+  } = $props();
 
   const setsView = $derived(selection.setsView);
   const computeError = $derived(actions.computeError);
   const busy = $derived(actions.busy);
 
-  let setIdx = $state(0);
   let ch = $state(0);
   let resExp = $state(9); // slider position → nFft = 2^resExp (default 512)
 
   const nFft = $derived(1 << resExp);
-  const chOptions = $derived($setsView[setIdx]?.nChannels ?? 1);
+  const chOptions = $derived($setsView[sonoSetIdx]?.nChannels ?? 1);
 
   function calc() {
-    if ($setsView.length) actions.calcSono(setIdx, ch, nFft);
+    if ($setsView.length) actions.calcSono(sonoSetIdx, ch, nFft);
   }
 
   let debounceId: ReturnType<typeof setTimeout> | undefined;
@@ -50,7 +58,7 @@
       <div class="grp">
         <span class="grp-lab">source</span>
         <div class="grp-ctl">
-          <select bind:value={setIdx} style="width:96px" aria-label="set">
+          <select bind:value={sonoSetIdx} style="width:96px" aria-label="set">
             {#each $setsView as s, i (s.id)}
               <option value={i}>{s.name}</option>
             {/each}
