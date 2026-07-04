@@ -82,6 +82,11 @@ jobs:
       # deploy job below — a single atomic publish, so there is no gh-pages
       # push / Pages rate-limit concern here.
       - name: Build web UI (Stage 2 app)
+        # Skipped on PRs: the artifact is only uploaded on push/dispatch (below),
+        # so building the app on a PR produces output that is discarded. webui.yml
+        # already gates webui changes on their own PRs. This just avoids the
+        # redundant npm ci + pyodide fetch + wheel build on every docs PR.
+        if: github.event_name != 'pull_request'
         run: |
           (cd webui && npm ci && ./scripts/fetch-pyodide.sh && ./scripts/build-wheels.sh && npm run build)
           mkdir -p site/app && cp -r webui/dist/* site/app/
