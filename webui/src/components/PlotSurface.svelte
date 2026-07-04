@@ -44,7 +44,8 @@
    * presentation attributes), so the visible plot is unchanged; but a
    * standalone `getSvgElement().outerHTML` — which loses the scoped
    * style block — still renders correctly, and the figure exporter's
-   * regexes find real hexes to restyle. Keep CHROME in sync with app.css.
+   * regexes find real hexes to restyle. The hexes come from the shared
+   * CHROME (../lib/plot/chrome), which figure.ts also keys its dark map off.
    *
    * Visual treatment ported from dev/mockups/round2-bench.html:
    * margins L58/T16/B42, R18 (56 with a right axis), #eef0f4
@@ -53,6 +54,7 @@
   import { buildPlot, dataExtent, type PlotModel } from '../lib/plot/build';
   import { fmtTick } from '../lib/plot/scales';
   import { rubberBandToRange, clampToData, panBy } from '../lib/plot/zoom';
+  import { CHROME } from '../lib/plot/chrome';
   import type { ViewState } from '../lib/stores/viewstate';
   import { get } from 'svelte/store';
 
@@ -71,17 +73,10 @@
   const uid = $props.id();
   const clipId = `plot-clip-${uid}`;
 
-  // Inline chrome hexes (decision A) — the resolved values of the app.css
-  // tokens the scoped CSS uses (--surface, .grid literal, --border, --muted).
-  // Emitted as presentation attributes so the SERIALISED svg is self-
-  // contained; on-screen the scoped CSS still governs. The figure exporter
-  // (src/lib/export/figure.ts) keys its dark-mode map on exactly these hexes.
-  const CHROME = {
-    bg: '#ffffff',
-    grid: '#eef0f4',
-    frame: '#e3e6eb',
-    axis: '#66708a',
-  };
+  // CHROME (from ../lib/plot/chrome) holds the inline fill/stroke hexes stamped
+  // on plot-bg + axis elements (decision A) so a serialised export SVG is self-
+  // contained; on-screen the scoped CSS still governs. figure.ts's DARK_MAP is
+  // keyed off these same values — one source, no drift.
 
   let host: HTMLDivElement | undefined = $state();
   let svgEl: SVGSVGElement | undefined = $state();

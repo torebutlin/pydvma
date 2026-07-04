@@ -17,33 +17,39 @@
 // The transform is a PURE string operation (unit-tested); exportPng /
 // exportPdf are browser-only (canvas / jsPDF) and are proven by the LIVE
 // SMOKE in the e2e, not by node tests.
+import { CHROME } from '../plot/chrome';
 
 /** Background treatment for an exported figure. */
 export type BackgroundMode = 'white' | 'transparent' | 'dark';
 
 /**
- * The dark-mode token→dark colour map. Keyed by the EXACT hex PlotSurface
- * emits inline (see app.css tokens + PlotSurface's inline attrs):
+ * The dark-mode chrome→dark colour map. KEYED OFF the shared CHROME values
+ * (not repeated light hexes), so it can never drift from what PlotSurface
+ * actually emits: change a CHROME colour without adding its DARK_MAP entry and
+ * figure.test.ts's `keys(DARK_MAP) === values(CHROME)` assertion fails RED.
  *
- *   plot-bg   #ffffff (--surface)   → #1b2130  (deep slate page)
- *   gridline  #eef0f4 (.grid)       → #2a3346  (dim grid on slate)
- *   frame     #e3e6eb (--border)    → #3a4356  (axis frame, brighter than grid)
- *   tick/lab  #66708a (--muted)     → #c7cede  (legible light-grey text)
+ *   bg    CHROME.bg    (#ffffff) → #1b2130  (deep slate page)
+ *   grid  CHROME.grid  (#eef0f4) → #2a3346  (dim grid on slate)
+ *   frame CHROME.frame (#e3e6eb) → #3a4356  (axis frame, brighter than grid)
+ *   axis  CHROME.axis  (#66708a) → #c7cede  (legible light-grey text)
  *
  * DATA-LINE colours (#2563eb … from the 12-colour palette) are deliberately
- * ABSENT from this map AND the recolouring is scoped to data-role elements,
- * so a data line whose hue happens to collide with a chrome hex would still
- * be preserved.
+ * ABSENT AND the recolouring is scoped to data-role elements, so a data line
+ * whose hue happens to collide with a chrome hex is still preserved.
  */
-const DARK_MAP: Readonly<Record<string, string>> = {
-  '#ffffff': '#1b2130', // plot-bg
-  '#eef0f4': '#2a3346', // gridline stroke
-  '#e3e6eb': '#3a4356', // frame stroke
-  '#66708a': '#c7cede', // tick + axis-label fill
+export const DARK_MAP: Readonly<Record<string, string>> = {
+  [CHROME.bg]: '#1b2130', // plot-bg
+  [CHROME.grid]: '#2a3346', // gridline stroke
+  [CHROME.frame]: '#3a4356', // frame stroke
+  [CHROME.axis]: '#c7cede', // tick + axis-label fill
 };
 
-/** Dark plot-background fill (exported alone as a constant for the renderers). */
-export const DARK_BG = '#1b2130';
+/**
+ * Dark plot-background fill, for the canvas/PDF pre-fill in the renderers.
+ * Derived from DARK_MAP so it can never disagree with the SVG's recoloured
+ * plot-bg (both are "what CHROME.bg maps to in dark mode").
+ */
+export const DARK_BG = DARK_MAP[CHROME.bg];
 
 /**
  * Rewrite ONLY the opening tags that carry a `data-role="axis"` or

@@ -20,6 +20,7 @@
    * arrive in a later plan; for now they are done via the CLI.
    */
   import { exportPdf, exportPng, type BackgroundMode } from '../../lib/export/figure';
+  import { cancelAutosave } from '../../lib/files/autosave';
   import type { WorkDir } from '../../lib/files/workdir';
   import type { Toasts } from '../../lib/stores/toast';
 
@@ -51,6 +52,16 @@
   let bg = $state<BackgroundMode>('white');
   let filename = $state(defaultFigureName(new Date()));
   let busy = $state(false);
+
+  /**
+   * Autosave toggle change: when it goes OFF, cancel any pending debounced
+   * write so a save scheduled by a mutation just before the toggle doesn't
+   * still fire 2 s later. (The bound `autosaveEnabled` already gates future
+   * schedules; this handles the in-flight one.)
+   */
+  function onAutosaveToggle(): void {
+    if (!autosaveEnabled) cancelAutosave();
+  }
 
   /** Default figure name: pydvma_figure_YYYY-MM-DD_HHMM (no extension). */
   function defaultFigureName(now: Date): string {
@@ -162,7 +173,7 @@
         <span class="grp-lab">session</span>
         <div class="grp-ctl">
           <label class="switch">
-            <input type="checkbox" bind:checked={autosaveEnabled} aria-label="autosave" />
+            <input type="checkbox" bind:checked={autosaveEnabled} onchange={onAutosaveToggle} aria-label="autosave" />
             Autosave to browser storage after every change
           </label>
         </div>

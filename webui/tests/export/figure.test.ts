@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
-import { prepareSvg } from '../../src/lib/export/figure';
+import { prepareSvg, DARK_MAP } from '../../src/lib/export/figure';
+import { CHROME } from '../../src/lib/plot/chrome';
 
 // A miniature of the SVG PlotSurface.getSvgElement() serialises AFTER the
 // Step-0 inline-attribute change: plot-bg + every axis element carry inline
@@ -62,4 +63,13 @@ test('dark does not touch a data-role="plot-bg" that is already transparent-safe
   const once = prepareSvg(svg, 'dark');
   const twice = prepareSvg(once, 'dark');
   expect(twice).toBe(once);
+});
+
+test('DARK_MAP keys are EXACTLY the CHROME values (single-source guard)', () => {
+  // The chrome hexes live in one place (lib/plot/chrome). PlotSurface stamps
+  // them inline; DARK_MAP is keyed off them. If someone changes a CHROME
+  // colour but forgets to add its DARK_MAP entry, the dark export would ship
+  // an un-recoloured (light) chrome element with NO error — this fails RED
+  // instead. Compare as sets so ordering never matters.
+  expect(new Set(Object.keys(DARK_MAP))).toEqual(new Set(Object.values(CHROME)));
 });

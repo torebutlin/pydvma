@@ -53,10 +53,15 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 /**
  * Schedule an autosave to `dir`, debounced by 2 s. Rapid calls collapse to a
  * single write once 2 s elapse with no further call. When `enabled` is false
- * the call is a no-op (and does NOT cancel an already-scheduled write — the
- * enabled flag is checked again when the timer fires so a mid-flight disable
- * is honoured). fsaccess dirs get an `autosave.dvma` file; download dirs
- * persist to IndexedDB.
+ * the call is a no-op AND cancels any pending write (calling `autosave(...,
+ * false)` is equivalent to `cancelAutosave()`), so disabling autosave never
+ * lets a stale scheduled write slip through. fsaccess dirs get an
+ * `autosave.dvma` file; download dirs persist to IndexedDB.
+ *
+ * NOTE: only a subsequent `autosave(false)` / `cancelAutosave()` cancels a
+ * pending write — the fired timer does NOT re-read some external enabled flag.
+ * The UI toggle therefore calls `cancelAutosave()` when it goes OFF so a write
+ * scheduled just before the toggle does not fire after it.
  *
  * `source` is a THUNK, not bytes: the (potentially expensive) `writeDvma`
  * serialize is DEFERRED until the debounce timer actually fires, and only the
@@ -83,6 +88,19 @@ export function autosave(
     const bytes = typeof source === 'function' ? source() : source;
     void persist(bytes, dir);
   }, DEBOUNCE_MS);
+}
+
+/**
+ * Cancel a pending (debounced-but-not-yet-fired) autosave. Called when the
+ * user toggles autosave OFF so a write scheduled by a mutation just before the
+ * toggle does not still land 2 s later. No-op when nothing is pending. Does
+ * NOT touch already-persisted bytes — use `clearAutosave()` for that.
+ */
+export function cancelAutosave(): void {
+  if (timer !== null) {
+    clearTimeout(timer);
+    timer = null;
+  }
 }
 
 /** Perform the actual write (folder file for fsaccess, else IndexedDB). */

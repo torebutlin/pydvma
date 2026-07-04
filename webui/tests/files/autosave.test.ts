@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { autosave, clearAutosave, restoreOffer, __setIdb } from '../../src/lib/files/autosave';
+import { autosave, cancelAutosave, clearAutosave, restoreOffer, __setIdb } from '../../src/lib/files/autosave';
 import type { WorkDir } from '../../src/lib/files/workdir';
 
 /** A fake in-memory idb so restoreOffer/clearAutosave are deterministic. */
@@ -83,6 +83,31 @@ describe('autosave debounce', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(dir.save).not.toHaveBeenCalled();
     expect(idb.set).not.toHaveBeenCalled();
+  });
+
+  test('cancelAutosave() drops a pending write (toggle-off after a mutation)', async () => {
+    const dir = fakeFsDir();
+    // A mutation scheduled a write; the user toggles autosave off before 2 s.
+    autosave(new Uint8Array([1]), dir, true);
+    await vi.advanceTimersByTimeAsync(1000); // partway through the debounce
+    cancelAutosave(); // toggle-off cancels the in-flight write
+    await vi.advanceTimersByTimeAsync(5000); // well past when it would have fired
+    expect(dir.save).not.toHaveBeenCalled();
+    expect(idb.set).not.toHaveBeenCalled();
+  });
+
+  test('autosave(..., false) also cancels a pending write (equivalent to cancelAutosave)', async () => {
+    const dir = fakeFsDir();
+    autosave(new Uint8Array([1]), dir, true);
+    await vi.advanceTimersByTimeAsync(1000);
+    autosave(new Uint8Array([2]), dir, false); // disable path clears the timer
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(dir.save).not.toHaveBeenCalled();
+    expect(idb.set).not.toHaveBeenCalled();
+  });
+
+  test('cancelAutosave() is a no-op when nothing is pending', () => {
+    expect(() => cancelAutosave()).not.toThrow();
   });
 
   test('a fresh call restarts the timer (clearTimeout guard)', async () => {

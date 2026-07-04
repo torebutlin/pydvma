@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { statSync } from 'node:fs';
+import { expect, test, type Download, type Page } from '@playwright/test';
 
 /**
  * Task 14 (figure export) e2e — the FALLBACK download path (Playwright's
@@ -11,15 +12,23 @@ import { expect, test } from '@playwright/test';
  * the plot's <svg> is ready to export. The card is reached from the Export
  * stage in the ribbon.
  *
- * These assert the plumbing (a download of the right name fires per checked
- * format). The proof that the exported figure actually RENDERS — white /
- * transparent / dark backgrounds, data line preserved — is the browser live
- * smoke done during development (string tests + a download event do not, on
- * their own, prove pixels).
+ * These assert both the plumbing (a download of the right name fires per
+ * checked format) AND that the written file is non-trivially sized — so a
+ * valid-named-but-BLANK export (exactly where a rendering regression lands)
+ * fails here rather than passing on the filename alone. The pixel-level proof
+ * (white / transparent / dark actually render + differ) is the browser live
+ * smoke done during development; these size floors are the cheap CI guard.
  */
 
+/** Byte size of a completed download's saved file (fallback path). */
+async function downloadSize(download: Download): Promise<number> {
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  return statSync(path!).size;
+}
+
 /** Load the fixture and open the Export stage; returns once the plot is up. */
-async function openExport(page: import('@playwright/test').Page): Promise<void> {
+async function openExport(page: Page): Promise<void> {
   await page.goto('/?fixture=1');
   await expect(page.getByTestId('tray-card-0')).toBeVisible();
   // The Time plot renders straight from the loaded fixture.
@@ -36,6 +45,9 @@ test('Export stage → PNG → Save Figure downloads a .png', async ({ page }) =
   await page.getByRole('button', { name: 'Save Figure' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.png$/);
+  // Non-empty: a real rasterised figure is tens of KB; a blank/failed export
+  // would be near-zero. Floor well under the observed ~150 KB, above trivial.
+  expect(await downloadSize(download)).toBeGreaterThan(1000);
 });
 
 test('Export stage → PDF only → Save Figure downloads a .pdf', async ({ page }) => {
@@ -49,6 +61,9 @@ test('Export stage → PDF only → Save Figure downloads a .pdf', async ({ page
   await page.getByRole('button', { name: 'Save Figure' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.pdf$/);
+  // A real vector PDF of this figure is tens of KB (~75 KB observed); floor at
+  // 1 KB catches an empty/blank-page PDF while staying robust.
+  expect(await downloadSize(download)).toBeGreaterThan(1000);
 });
 
 test('the Time card Save Figure shortcut opens the Export stage', async ({ page }) => {
