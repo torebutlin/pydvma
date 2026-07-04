@@ -18,13 +18,24 @@ repo="$(cd "$here/.." && pwd)"                            # pydvma repo root
 out="$here/public/pypi"
 
 py="${PYTHON:-python}"
-mkdir -p "$out"
-rm -f "$out"/*.whl
+
+# Build into a temp dir first and only replace public/pypi once BOTH wheels
+# succeed. Building straight into public/pypi (after an up-front rm) would, if
+# the second build failed (e.g. offline), leave a half-populated or empty dir
+# with the previous good wheels already deleted — the next boot would then
+# fail. The temp dir is cleaned up on any exit.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
 
 # pydvma itself (built from the repo root's pyproject.toml).
-"$py" -m pip wheel --no-deps -w "$out" "$repo"
+"$py" -m pip wheel --no-deps -w "$tmp" "$repo"
 # peakutils — pydvma imports it in analysis.py; absent from the pyodide lock.
-"$py" -m pip wheel --no-deps -w "$out" peakutils
+"$py" -m pip wheel --no-deps -w "$tmp" peakutils
+
+# Both builds succeeded — swap the wheels into place atomically-ish.
+mkdir -p "$out"
+rm -f "$out"/*.whl
+mv "$tmp"/*.whl "$out"/
 
 echo "built wheels -> $out"
 ls -1 "$out"

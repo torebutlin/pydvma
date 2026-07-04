@@ -43,13 +43,26 @@ export function createEngineStore(
   baseUrl: string = defaultBaseUrl(),
 ) {
   const status = writable<EngineStatus>('idle');
-  const queue: Array<() => void> = [];
-  const readyWaiters: Array<() => void> = [];
+  // Each queued item carries its own `reject` so a boot FAILURE can settle it
+  // (not just a boot success draining it). Without this, a compute call
+  // enqueued during boot would hang forever if boot then errors.
+  interface QueueItem { run: () => void; reject: (e: unknown) => void; }
+  const queue: QueueItem[] = [];
+  const readyWaiters: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
   let booted = false;
+  /** Error captured on boot failure, so callers arriving AFTER the failure
+   *  (when `booted` is already true and drain never re-runs) still get it. */
+  let bootError: Error | null = null;
 
   function drain() {
-    while (queue.length) queue.shift()!();
-    while (readyWaiters.length) readyWaiters.shift()!();
+    while (queue.length) queue.shift()!.run();
+    while (readyWaiters.length) readyWaiters.shift()!.resolve();
+  }
+
+  /** Reject every queued item and ready-waiter with the boot error. */
+  function failAll(err: Error) {
+    while (queue.length) queue.shift()!.reject(err);
+    while (readyWaiters.length) readyWaiters.shift()!.reject(err);
   }
 
   async function boot(): Promise<void> {
@@ -61,30 +74,38 @@ export function createEngineStore(
       status.set('ready');
       drain();
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      bootError = new Error('engine failed to boot: ' + msg);
       console.error('[engine] boot failed:', err);
       status.set('error');
+      failAll(bootError);          // settle anything queued during boot
     }
   }
 
   /**
-   * Resolve once the engine is ready. If already ready, resolves on the next
-   * microtask; otherwise parks until `boot()` reaches 'ready'. Never rejects —
-   * an errored boot leaves the promise pending (callers gate on `status`).
+   * Resolve once the engine is ready. If already ready, resolves immediately;
+   * if boot has already FAILED, rejects with the boot error; otherwise parks
+   * until `boot()` reaches 'ready' (resolve) or errors (reject). Never hangs.
    */
   function whenReady(): Promise<void> {
-    if (get(status) === 'ready') return Promise.resolve();
-    return new Promise<void>((resolve) => readyWaiters.push(resolve));
+    const s = get(status);
+    if (s === 'ready') return Promise.resolve();
+    if (s === 'error') return Promise.reject(bootError ?? new Error('engine failed to boot'));
+    return new Promise<void>((resolve, reject) => readyWaiters.push({ resolve, reject }));
   }
 
   /**
    * Run a compute op, queueing until ready if boot is still in flight. The
    * shell can call this at any time without awaiting boot; the returned
-   * promise settles when the op (eventually) runs.
+   * promise settles when the op runs (on ready) OR rejects if boot fails —
+   * it NEVER hangs. If boot has already errored, it rejects immediately.
    */
   function enqueue<T = unknown>(op: string, payload?: Record<string, unknown>): Promise<T> {
-    if (get(status) === 'ready') return client.call<T>(op, payload);
+    const s = get(status);
+    if (s === 'ready') return client.call<T>(op, payload);
+    if (s === 'error') return Promise.reject(bootError ?? new Error('engine failed to boot'));
     return new Promise<T>((resolve, reject) => {
-      queue.push(() => client.call<T>(op, payload).then(resolve, reject));
+      queue.push({ run: () => client.call<T>(op, payload).then(resolve, reject), reject });
     });
   }
 

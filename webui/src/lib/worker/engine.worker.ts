@@ -91,15 +91,20 @@ function run(op: string, payload: Record<string, unknown>): unknown {
   if (!pyodide || !glue) throw new Error('engine not initialised');
   const fn = glue[op];
   if (fn == null) throw new Error(`unknown op: ${op}`);
-  // Pass kwargs: callKwargs takes (...positional, kwargsObject).
-  const resultProxy = fn.callKwargs(payload);
+  // fn's try/finally wraps the callKwargs too: a Python op that RAISES throws
+  // out of callKwargs, so if it sat outside the try the fn proxy would leak.
   try {
-    return resultProxy.toJs({
-      dict_converter: Object.fromEntries,
-      create_proxies: false,
-    });
+    // Pass kwargs: callKwargs takes (...positional, kwargsObject).
+    const resultProxy = fn.callKwargs(payload);
+    try {
+      return resultProxy.toJs({
+        dict_converter: Object.fromEntries,
+        create_proxies: false,
+      });
+    } finally {
+      if (resultProxy && typeof resultProxy.destroy === 'function') resultProxy.destroy();
+    }
   } finally {
-    if (resultProxy && typeof resultProxy.destroy === 'function') resultProxy.destroy();
     if (typeof fn.destroy === 'function') fn.destroy();
   }
 }

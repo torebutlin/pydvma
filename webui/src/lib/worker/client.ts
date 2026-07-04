@@ -14,6 +14,8 @@ export interface WorkerLike {
   postMessage(message: unknown): void;
   onmessage: ((e: { data: any }) => void) | null;
   onerror: ((e: any) => void) | null;
+  /** Fired when an inbound message fails to deserialize (structured clone). */
+  onmessageerror: ((e: any) => void) | null;
   terminate(): void;
 }
 
@@ -64,11 +66,16 @@ export function createEngineClient(
     else entry.reject(new Error(error ?? 'engine error'));
   };
 
-  worker.onerror = (e: any) => {
-    const err = new Error(e?.message ?? 'engine worker crashed');
+  /** Reject every in-flight call with `err` and clear the map. */
+  function rejectAll(err: Error) {
     for (const { reject } of pending.values()) reject(err);
     pending.clear();
-  };
+  }
+
+  worker.onerror = (e: any) => rejectAll(new Error(e?.message ?? 'engine worker crashed'));
+  // A reply that fails structured-clone deserialization fires onmessageerror
+  // instead of onmessage — without this the matching pending call would leak.
+  worker.onmessageerror = () => rejectAll(new Error('engine message deserialization failed'));
 
   function send<T>(op: string, payload: Record<string, unknown>): Promise<T> {
     if (disposed) return Promise.reject(new Error('engine client disposed'));

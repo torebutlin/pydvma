@@ -17,6 +17,7 @@ function makeFakeWorker() {
     postMessage(m: unknown) { posted.push(m); },
     onmessage: null,
     onerror: null,
+    onmessageerror: null,
     terminate: vi.fn(),
   };
   const reply = (r: unknown) => w.onmessage?.({ data: r });
@@ -80,6 +81,16 @@ test('unknown reply id is ignored (no throw)', () => {
   const { w, reply } = makeFakeWorker();
   createEngineClient(() => w);
   expect(() => reply({ id: 999, ok: true, result: 1 })).not.toThrow();
+});
+
+test('worker onmessageerror (deserialization failure) rejects all pending calls', async () => {
+  const { w } = makeFakeWorker();
+  const client = createEngineClient(() => w);
+  const p1 = client.call('a');
+  const p2 = client.call('b');
+  w.onmessageerror?.({});
+  await expect(p1).rejects.toThrow(/deserialization/);
+  await expect(p2).rejects.toThrow(/deserialization/);
 });
 
 // ---- store: queue-until-ready ----------------------------------------------
@@ -156,4 +167,60 @@ test('store: init failure sets status to error', async () => {
   const store = createEngineStore(client as any, 'http://x/');
   await store.boot();
   expect(get(store.status)).toBe('error');
+});
+
+// ---- store: boot-error must SETTLE queued/awaiting calls (never hang) -------
+// These are the I1 regression tests. On the OLD code (queue held bare thunks,
+// enqueue/whenReady returned a never-settled promise while not ready, and drain
+// only ran on success) both of these would HANG forever — the awaits below
+// would time out. The fix rejects queued items + ready-waiters on boot error
+// and rejects immediately once status==='error'.
+
+/** Fake client whose init() can be rejected on demand (to drive boot failure). */
+function makeRejectableClient() {
+  let rejectInit!: (e: unknown) => void;
+  const initPromise = new Promise<void>((_res, rej) => { rejectInit = rej; });
+  const client = {
+    init: vi.fn(() => initPromise),
+    call: vi.fn(() => Promise.resolve('ok')),
+    dispose: vi.fn(),
+  };
+  // Swallow the unhandled rejection on the shared init promise (the store
+  // catches it; this bare handle would otherwise warn).
+  initPromise.catch(() => {});
+  return { client, rejectInit };
+}
+
+test('store: a call enqueued BEFORE boot error rejects when boot fails', async () => {
+  const { client, rejectInit } = makeRejectableClient();
+  const store = createEngineStore(client as any, 'http://x/');
+
+  store.boot();                       // in flight, status 'loading'
+  const enqueued = store.enqueue('calc_fft');   // parked in the queue
+  const waiting = store.whenReady();            // parked ready-waiter
+  expect(client.call).not.toHaveBeenCalled();
+
+  rejectInit(new Error('wheel install blew up'));
+  await Promise.resolve();            // let boot's catch run
+  await Promise.resolve();
+
+  expect(get(store.status)).toBe('error');
+  await expect(enqueued).rejects.toThrow(/engine failed to boot: wheel install blew up/);
+  await expect(waiting).rejects.toThrow(/engine failed to boot/);
+  expect(client.call).not.toHaveBeenCalled();   // never ran after failure
+});
+
+test('store: a call enqueued AFTER boot error rejects immediately', async () => {
+  const { client, rejectInit } = makeRejectableClient();
+  const store = createEngineStore(client as any, 'http://x/');
+
+  store.boot();
+  rejectInit(new Error('boot exploded'));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(get(store.status)).toBe('error');
+
+  // booted===true, so drain never re-runs — these must reject on their own.
+  await expect(store.enqueue('calc_fft')).rejects.toThrow(/engine failed to boot: boot exploded/);
+  await expect(store.whenReady()).rejects.toThrow(/engine failed to boot/);
 });
