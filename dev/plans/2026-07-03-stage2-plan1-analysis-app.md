@@ -2253,6 +2253,24 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   preset flush (NE/outside-right). **Task 9** stays shell-only per plan (its
   plot region shows an empty state until data loads).
 
+- **A6 (Task 9 APPROVED; carry-forwards to Task 10, which rebuilds the flyover
+  contents):** Task 10 REQUIRED pre/co-work on `NarrowRail.svelte`'s flyover
+  (first dialog in the codebase, sets the precedent): focus the drawer on open,
+  restore focus to the `rail-more` trigger on close, `aria-modal="true"`, a
+  focus trap, and scope the Esc handler (`if (e.key==='Escape' && open)`).
+  Task 10 notes: (1) ContextCard's 118px wide-mode height is a HARD ceiling
+  with near-zero slack — Task 12's real cards (coupled-resolution control etc.)
+  will need a `ctx-body` overflow rule or designed relaxation, and Task 9's
+  `.ctx-body` is a single centred flex row whereas the mockup is
+  `flex-direction:column; gap:7px` with `ctx-row`/`ctx-primary` children →
+  Task 12 REBUILDS the inner structure; (2) both the wide tray `<aside>` and
+  the narrow flyover carry `data-testid="tray"` (mutually exclusive at runtime
+  today) — when Task 10 mounts the real Tray in both, keep the mount points
+  exclusive or scope e2e selectors, else `getByTestId('tray')` strict-mode
+  violates; (3) prop-drilling of `selection`/`viewState` is fine at current
+  depth — switch to `setContext` at App root only if Task 10/12 need them 3+
+  levels deep (tray → set-card → channel-row).
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
