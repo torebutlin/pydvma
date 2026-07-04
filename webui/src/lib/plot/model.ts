@@ -260,9 +260,16 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     }
 
     if (nyquist) {
+      // Nyquist axes are Real(H)/Imag(H), navigated by fmin/fmax (the shared
+      // freq window applied above) — NOT by the committed view range, whose
+      // `.x` is a FREQUENCY band (it doubles as `freqRange`, see
+      // viewstate.sharedFreqRange). Passing that band through as xr/yr would
+      // apply a frequency interval to the Real/Imag axes and squareAspect
+      // would then collapse the locus. Return null so the windowed locus
+      // auto-fits and squares ("fits data, stays square" — design §5).
       return {
         ...EMPTY, lines, squareAspect: true,
-        xLabel: 'Real', yLabel: 'Imag', xRange: xr, yRange: yr,
+        xLabel: 'Real', yLabel: 'Imag', xRange: null, yRange: null,
       };
     }
 

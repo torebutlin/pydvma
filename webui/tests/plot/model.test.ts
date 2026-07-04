@@ -103,6 +103,26 @@ test('tf nyquist: windows to the shared freq range', () => {
   expect(Array.from(m.lines[0].y)).toEqual([4]);
 });
 
+test('tf nyquist: the committed range is a freq band and must NOT reach the Real/Imag axes', () => {
+  // Regression for the App-composition bug: viewstate feeds tf.range.x as BOTH
+  // `freqRange` (the locus window) AND `range` (the axis domain). For Nyquist
+  // the axes are Real/Imag, so the frequency band must be dropped from xRange/
+  // yRange (else squareAspect collapses the locus). Here range.x === freqRange.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: { axis: Float64Array.from([10, 20, 30]), data: decodeArray(cplx([3, 1], [1, 2, 3, 4, 5, 6])) },
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'nyquist', sets, visible: [vis(0, 0, 'on')],
+    freqRange: [15, 25], range: { x: [15, 25], y: null },
+  });
+  expect(m.xRange).toBeNull();          // freq band [15,25] must NOT become the Real axis
+  expect(m.yRange).toBeNull();
+  expect(m.squareAspect).toBe(true);
+  expect(Array.from(m.lines[0].x)).toEqual([3]);   // locus still windowed to f=20
+  expect(Array.from(m.lines[0].y)).toEqual([4]);
+});
+
 test('tf coherence: dashed right-axis lines, y2Range [0,1], same colour', () => {
   const sets: SetArrays[] = [{
     setId: 0,
