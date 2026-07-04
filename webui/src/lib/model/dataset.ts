@@ -6,9 +6,20 @@ export type DataKind = 'TimeData' | 'FreqData' | 'CrossSpecData' | 'TfData'
 export interface DvmaItem {
   kind: DataKind;
   arrays: Record<string, NpyArray>;          // e.g. time_axis, time_data
-  meta: Record<string, unknown>;             // decoded tagged values
-  /** original tagged manifest meta (verbatim), kept so writeDvma can
-   *  round-trip uuid/datetime/array/float tags losslessly */
+  /** Decoded READ view of the item metadata (manifest tags resolved to
+   *  plain strings / numbers / lists). NOTE the write contract: when
+   *  `metaRaw` is present, writeDvma serializes `metaRaw` and IGNORES
+   *  any direct edits made here — mutate metadata via `setItemMeta`,
+   *  which keeps both views consistent. */
+  meta: Record<string, unknown>;
+  /** Original tagged manifest meta (verbatim), kept so writeDvma can
+   *  round-trip `__uuid__` / `__datetime__` / `__array__` / `__float__`
+   *  tags losslessly back to python. Present on items read from a
+   *  .dvma file. JS-authored items must LEAVE THIS UNSET — their plain
+   *  `meta` is finite-checked and written directly. Do NOT delete this
+   *  wholesale to "apply" `meta` edits: python would then reload the
+   *  tagged values (datetime / uuid / ndarray) as plain strings and
+   *  lists. Use `setItemMeta` instead. */
   metaRaw?: Record<string, unknown>;
   settings: Record<string, unknown> | null;
 }
@@ -23,4 +34,19 @@ export interface DvmaDataset {
 export function itemChannels(item: DvmaItem): number {
   const arr = item.arrays.time_data ?? item.arrays.freq_data ?? item.arrays.tf_data;
   return arr && arr.shape.length > 1 ? arr.shape[1] : 1;
+}
+
+/**
+ * Set one metadata key on `item`, keeping the decoded `meta` view and
+ * the tagged `metaRaw` write view consistent: sets `meta[key]` and,
+ * when `metaRaw` is present, `metaRaw[key]` too. `value` must be a
+ * plain JSON-safe value (strings, finite numbers, booleans, null,
+ * arrays/objects of those) — it is written untagged, which python's
+ * _decode_value accepts as-is. Lossless for the edited key; tags on
+ * all untouched keys are preserved.
+ */
+export function setItemMeta(item: DvmaItem, key: string, value: unknown): void {
+  if (key === '__proto__') throw new Error('invalid meta key "__proto__"');
+  item.meta[key] = value;
+  if (item.metaRaw) item.metaRaw[key] = value;
 }

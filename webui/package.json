@@ -10,7 +10,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "crosscheck:py": "node scripts/crosscheck-python.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

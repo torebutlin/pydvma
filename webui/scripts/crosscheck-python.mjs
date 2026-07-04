@@ -34,8 +34,14 @@ function run(cmd, args, opts) {
   return r.status ?? 1;
 }
 
-// 1. JS writes the roundtrip container
-let status = run('npx', ['vitest', 'run', 'tests/codec/crosscheck.test.ts'], {
+// 0. drop any stale roundtrip left by an earlier failed run
+rmSync(roundtrip, { force: true });
+
+// 1. JS writes the roundtrip container — invoke vitest's entry point with
+// this node binary directly (no npx, no shell) so it works on Windows too
+let status = run(process.execPath,
+  [join(webuiDir, 'node_modules', 'vitest', 'vitest.mjs'),
+   'run', 'tests/codec/crosscheck.test.ts'], {
   cwd: webuiDir, env: { ...process.env, DVMA_CROSSCHECK: '1' },
 });
 if (status !== 0 || !existsSync(roundtrip)) {
