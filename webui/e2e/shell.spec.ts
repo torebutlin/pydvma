@@ -20,3 +20,13 @@ test('narrow: rail with word-label ribbon and flyover tray', async ({ page }) =>
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('tray')).toBeHidden();
 });
+
+test.fixme('tray matrix ops (enable in Task 13 when ?fixture=1 exists)', async ({ page }) => {
+  await page.goto('/?fixture=1');
+  const card0 = page.getByTestId('tray-card-0');
+  await card0.getByTestId('set-header').click();     // row cycle
+  await page.getByTestId('chip-ch-1').click();       // column cycle
+  await card0.getByTestId('set-header').dblclick();
+  await page.keyboard.type('hammer'); await page.keyboard.press('Enter');
+  await expect(card0).toContainText('hammer');
+});

@@ -22,6 +22,7 @@
   import Ribbon from './components/Ribbon.svelte';
   import ContextCard from './components/ContextCard.svelte';
   import NarrowRail from './components/NarrowRail.svelte';
+  import Tray from './components/Tray.svelte';
   import { createViewState } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
 
@@ -61,9 +62,8 @@
     {#if narrow}
       <NarrowRail {selection} />
     {:else}
-      <!-- Task 10 fills this region with the real data tray. -->
       <aside class="tray" data-testid="tray">
-        <span class="ph-note">Data tray arrives in Task 10</span>
+        <Tray {selection} />
       </aside>
     {/if}
 
@@ -92,9 +92,7 @@
     flex: 0 0 300px;
     width: 300px;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
+    min-height: 0;
     background: var(--surface);
     border-right: 1px solid var(--border);
   }
@@ -127,10 +125,5 @@
   .es-sub {
     margin: 0;
     font-size: 12.5px;
-  }
-  .ph-note {
-    font-size: 12px;
-    color: var(--muted);
-    font-style: italic;
   }
 </style>

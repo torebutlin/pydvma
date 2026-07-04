@@ -1,0 +1,368 @@
+<script lang="ts">
+  /**
+   * One set card in the data tray (design spec §5; visuals ported from
+   * the `.set-card` block of dev/mockups/round2-bench.html). Renders a
+   * single `SetView` and drives the selection store's per-set and
+   * per-line operations.
+   *
+   * Header: a colour-dot stack (one dot per channel, coloured by
+   * `selection.lineColor`), the set name (double-click → inline rename
+   * committed on Enter/blur, cancelled on Esc), a duration badge, a
+   * collapse chevron and a delete `×`. Clicking the header away from any
+   * control cycles the whole set (`cycleSet`); the guard in
+   * `onHeaderClick` keeps that from firing when the click lands on the
+   * name input, a button, the chevron or the ×.
+   *
+   * When expanded, one row per channel: a colour chip (click →
+   * `cycleLine`, dimmed to 40% when faded), a `ch_{c}` label, a sparkline
+   * and a state badge. Sparklines draw REAL data only — when
+   * `channelData(c)` returns a series it is min-max-decimated to ~60
+   * columns; otherwise a flat muted placeholder line is shown (never
+   * fabricated samples). A set whose lines are all off (`set.allOff`) is
+   * struck through and the whole card dimmed ("out of stock").
+   */
+  import type { Selection, SetView } from '../lib/stores/selection';
+  import { minMaxDecimate } from '../lib/plot/decimate';
+
+  let {
+    selection,
+    set,
+    onDeleteSet,
+    channelData,
+  }: {
+    selection: Selection;
+    set: SetView;
+    onDeleteSet: (id: number) => void;
+    channelData?: (ch: number) => Float64Array | undefined;
+  } = $props();
+
+  const stateStore = $derived(selection.state);
+
+  // Inline-rename state.
+  let editing = $state(false);
+  let draft = $state('');
+
+  function startRename() {
+    draft = set.name;
+    editing = true;
+  }
+  function commitRename() {
+    if (!editing) return;
+    editing = false;
+    const name = draft.trim();
+    if (name && name !== set.name) selection.rename(set.id, name);
+  }
+  function cancelRename() {
+    editing = false;
+  }
+  function onNameKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') commitRename();
+    else if (e.key === 'Escape') cancelRename();
+  }
+
+  // Header click cycles the whole set — but only when the click did not
+  // originate on an interactive control (name/input, button, chevron, ×).
+  function onHeaderClick(e: MouseEvent) {
+    const t = e.target as HTMLElement;
+    if (t.closest('button, input, .set-name')) return;
+    selection.cycleSet(set.id);
+  }
+
+  const SPARK_W = 46;
+  const SPARK_H = 14;
+  const SPARK_COLS = 60;
+
+  /**
+   * Build an SVG polyline `points` string for one channel's sparkline
+   * from real data, or `undefined` when no data is available (caller
+   * renders a flat placeholder instead — no fabricated samples).
+   */
+  function sparkPoints(ch: number): string | undefined {
+    const data = channelData?.(ch);
+    if (!data || data.length === 0) return undefined;
+    const pts = minMaxDecimate(data, 0, data.length - 1, SPARK_COLS);
+    if (pts.length === 0) return undefined;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const [, v] of pts) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    const span = hi - lo || 1;
+    const n = pts.length;
+    return pts
+      .map(([, v], i) => {
+        const x = n === 1 ? 0 : (i / (n - 1)) * SPARK_W;
+        const y = SPARK_H - ((v - lo) / span) * SPARK_H;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      })
+      .join(' ');
+  }
+</script>
+
+<div
+  class="set-card"
+  class:dim={set.allOff}
+  data-testid={`tray-card-${set.index}`}
+>
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div
+    class="set-head"
+    class:struck={set.allOff}
+    data-testid="set-header"
+    onclick={onHeaderClick}
+  >
+    <button
+      class="caret"
+      title={set.collapsed ? 'Expand' : 'Collapse'}
+      aria-label={set.collapsed ? 'Expand set' : 'Collapse set'}
+      onclick={() => selection.toggleCollapse(set.id)}
+    >{set.collapsed ? '▸' : '▾'}</button>
+
+    <span class="dotstack">
+      {#each set.colors as c, ch (ch)}
+        <i style="background:{selection.lineColor(set.id, ch) ?? c}"></i>
+      {/each}
+      <em>{set.nChannels}</em>
+    </span>
+
+    {#if editing}
+      <span class="set-name">
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          type="text"
+          bind:value={draft}
+          onkeydown={onNameKeydown}
+          onblur={commitRename}
+          autofocus
+        />
+      </span>
+    {:else}
+      <span
+        class="set-name"
+        title={set.name}
+        ondblclick={startRename}
+      >{set.name}</span>
+    {/if}
+
+    <span class="dur-badge">{set.durationS} s</span>
+    <button
+      class="xdel"
+      title="Delete set"
+      aria-label="Delete set"
+      onclick={() => onDeleteSet(set.id)}
+    >×</button>
+  </div>
+
+  {#if !set.collapsed}
+    <div class="ch-list">
+      {#each set.colors as c, ch (ch)}
+        {@const st = $stateStore(set.id, ch)}
+        {@const pts = sparkPoints(ch)}
+        <div class="ch-row" class:st-fade={st === 'fade'} class:st-off={st === 'off'}>
+          <button
+            class="ch-chip"
+            style="background:{selection.lineColor(set.id, ch) ?? c}"
+            title={`ch_${ch}: ${st}`}
+            aria-label={`Toggle channel ${ch}`}
+            onclick={() => selection.cycleLine(set.id, ch)}
+          ></button>
+          <span class="ch-lab">ch_{ch}</span>
+          <svg class="spark" viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none" aria-hidden="true">
+            {#if pts}
+              <polyline points={pts} fill="none" stroke={selection.lineColor(set.id, ch) ?? c} stroke-width="1" />
+            {:else}
+              <line x1="0" y1={SPARK_H / 2} x2={SPARK_W} y2={SPARK_H / 2} stroke="var(--border)" stroke-width="1" />
+            {/if}
+          </svg>
+          <span class="state-badge state-{st}">{st}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+</div>
+
+<style>
+  .set-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 8px 10px 6px;
+    margin-bottom: 10px;
+  }
+  .set-card.dim {
+    opacity: 0.5;
+  }
+  .set-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 1px 2px;
+  }
+  .set-head:hover {
+    background: #f6f7fa;
+  }
+  .set-head.struck .set-name {
+    text-decoration: line-through;
+  }
+  .caret {
+    border: none;
+    background: none;
+    color: #a3aabc;
+    cursor: pointer;
+    font-size: 10px;
+    width: 16px;
+    padding: 0;
+    flex: 0 0 auto;
+  }
+  .caret:hover {
+    color: var(--text);
+  }
+  .dotstack {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+  .dotstack i {
+    width: 9px;
+    height: 9px;
+    border-radius: 3px;
+    margin-left: -2px;
+    outline: 1.5px solid #fff;
+  }
+  .dotstack i:first-child {
+    margin-left: 0;
+  }
+  .dotstack em {
+    font: 600 9px var(--font-mono);
+    font-style: normal;
+    color: #8b93a8;
+    margin-left: 2px;
+  }
+  .set-name {
+    font-weight: 650;
+    font-size: 13px;
+    border-radius: 4px;
+    padding: 0 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .set-name input {
+    font: 650 13px var(--font-body);
+    width: 110px;
+    height: 22px;
+    border: 1px solid #a5b4fc;
+    border-radius: 5px;
+    padding: 0 4px;
+  }
+  .dur-badge {
+    margin-left: auto;
+    font: 600 10.5px var(--font-mono);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 5px;
+    background: #f8f9fb;
+    flex: 0 0 auto;
+  }
+  .xdel {
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    background: #fff;
+    border-radius: 5px;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    flex: 0 0 auto;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .set-card:hover .xdel {
+    display: inline-flex;
+  }
+  .xdel:hover {
+    background: #fef2f2;
+  }
+  .ch-list {
+    margin-top: 3px;
+  }
+  .ch-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 2px;
+    border-radius: 6px;
+  }
+  .ch-row:hover {
+    background: #f7f8fb;
+  }
+  .ch-row.st-fade {
+    opacity: 0.55;
+  }
+  .ch-row.st-fade .ch-chip {
+    opacity: 0.4;
+  }
+  .ch-row.st-off {
+    opacity: 0.5;
+  }
+  .ch-row.st-off .ch-chip {
+    opacity: 0.15;
+  }
+  .ch-row.st-off .ch-lab {
+    text-decoration: line-through;
+    color: var(--muted);
+  }
+  .ch-chip {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    flex: 0 0 auto;
+    outline: 1px solid rgba(16, 24, 40, 0.12);
+    outline-offset: 1px;
+  }
+  .ch-lab {
+    font: 12px var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .spark {
+    width: 46px;
+    height: 14px;
+    margin-left: auto;
+    flex: 0 0 auto;
+    opacity: 0.85;
+  }
+  .state-badge {
+    font: 600 9px var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: 4px;
+    padding: 1px 4px;
+    flex: 0 0 auto;
+  }
+  .state-on {
+    color: var(--green);
+    background: #e6f6ec;
+  }
+  .state-fade {
+    color: #b45309;
+    background: #fef3c7;
+  }
+  .state-off {
+    color: var(--muted);
+    background: #eef0f4;
+  }
+</style>

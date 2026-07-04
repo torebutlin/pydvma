@@ -10,20 +10,62 @@
    * (`data-testid="rail-more"`) opens the full data tray as a flyover
    * drawer over a scrim; Escape (or a scrim click) closes it.
    *
-   * The real Tray is Task 10 — the flyover here contains only a
-   * placeholder region tagged `data-testid="tray"` for Task 10 to fill.
-   * The flyover starts CLOSED, so that placeholder is hidden until the
-   * user opens it.
+   * The flyover drawer is the codebase's first modal dialog and sets the
+   * a11y precedent: on open, focus moves into the drawer (which is
+   * `tabindex=-1`); Tab / Shift+Tab are trapped so focus cycles within
+   * the drawer; `aria-modal="true"` marks it; the Escape handler is
+   * scoped to `open`; and on close, focus is restored to the trigger.
+   * It hosts the real `Tray` (Task 10) and starts CLOSED, so the tray
+   * region (`data-testid="tray"`) is hidden until opened.
    */
   import type { Selection } from '../lib/stores/selection';
+  import Tray from './Tray.svelte';
 
   let { selection }: { selection: Selection } = $props();
 
   const setsView = $derived(selection.setsView);
   let open = $state(false);
 
+  // References for focus management: the drawer to focus on open, and the
+  // trigger to restore focus to on close.
+  let drawerEl: HTMLDivElement | undefined = $state();
+  let moreBtn: HTMLButtonElement | undefined = $state();
+
+  // Move focus into the drawer when it opens; restore it to the trigger
+  // when it closes.
+  $effect(() => {
+    if (open) drawerEl?.focus();
+    else moreBtn?.focus();
+  });
+
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') open = false;
+    if (e.key === 'Escape' && open) open = false;
+  }
+
+  /**
+   * Focus trap: keep Tab / Shift+Tab cycling within the drawer while it
+   * is open. Wraps from the last focusable element back to the first
+   * (and vice versa).
+   */
+  function onDrawerKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Tab' || !drawerEl) return;
+    const focusable = drawerEl.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable.length === 0) {
+      e.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === drawerEl)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 </script>
 
@@ -50,9 +92,12 @@
     {/if}
   </div>
   <button
+    bind:this={moreBtn}
     class="rail-more"
     data-testid="rail-more"
     title="Open the full data tray"
+    aria-haspopup="dialog"
+    aria-expanded={open}
     onclick={() => (open = true)}
   >⋯</button>
 </aside>
@@ -60,11 +105,18 @@
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="scrim" onclick={() => (open = false)}></div>
-  <div class="flyover" role="dialog" aria-label="data tray">
-    <!-- Task 10 fills this region with the real tray. -->
-    <div class="tray-placeholder" data-testid="tray">
-      <span class="ph-note">Data tray arrives in Task 10</span>
-    </div>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    bind:this={drawerEl}
+    class="flyover"
+    role="dialog"
+    aria-modal="true"
+    aria-label="data tray"
+    tabindex="-1"
+    data-testid="tray"
+    onkeydown={onDrawerKeydown}
+  >
+    <Tray {selection} />
   </div>
 {/if}
 
@@ -164,16 +216,7 @@
     display: flex;
     flex-direction: column;
   }
-  .tray-placeholder {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
-  }
-  .ph-note {
-    font-size: 12px;
-    color: var(--muted);
-    font-style: italic;
+  .flyover:focus {
+    outline: none;
   }
 </style>
