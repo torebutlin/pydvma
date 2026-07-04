@@ -2342,6 +2342,17 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   deferred plot-gesture consolidation (A5) — 3 PlotSurface zoom fixes + full
   zoom/legend gesture e2e against the `?fixture=1` mounted plot.
 
+- **A11 (Task 13b + Task 15 CI signal):** the deferred plot-gesture work is
+  DONE — 3 PlotSurface fixes (pointercancel/lost-capture abort, pan MIN_DRAG_PX
+  dead-zone, gesture-local mode latch) + a 9-test `plot-gestures.spec.ts`
+  (fails-on-old proven for the two behavioural fixes). A read-only
+  `window.__viewState` hook is gated on `?fixture=1`. **Task 15 CI (IMPORTANT):**
+  `@engine` Playwright tests boot pyodide (numpy/scipy from CDN + wasm) — running
+  them across multiple concurrent workers caused a transient boot failure
+  (3 simultaneous boots). CI must run the `@engine` project with **`workers: 1`
+  (serial)** or a dedicated single-worker project, else flaky. Non-@engine specs
+  can stay parallel.
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
