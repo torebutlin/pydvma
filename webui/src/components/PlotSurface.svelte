@@ -94,10 +94,140 @@
   const ox = $derived(ML + (model.squareAspect ? (iw - side) / 2 : 0));
   const oy = $derived(MT + (model.squareAspect ? (ih - side) / 2 : 0));
 
-  const built = $derived(width > 0 && height > 0 ? buildPlot(model, pw, ph) : null);
+  // Local pan-preview range: while a pan gesture is live, the render
+  // uses THIS instead of model.xRange/yRange so the plot tracks the
+  // drag with zero store writes (the single commit happens on release —
+  // plan amendment A3, the store's 50-entry history cap). null between
+  // gestures → the plot renders straight from the model.
+  type PanRange = { x: [number, number]; y: [number, number] };
+  let panPreview = $state<PanRange | null>(null);
+
+  // Feed the preview into the builder: override the model's ranges only
+  // while a pan is in progress. Everything else (labels, lines, aspect)
+  // is untouched, so committed box-zoom/pan still flow via model.xRange.
+  const renderModel = $derived<PlotModel>(
+    panPreview ? { ...model, xRange: panPreview.x, yRange: panPreview.y } : model
+  );
+
+  const built = $derived(width > 0 && height > 0 ? buildPlot(renderModel, pw, ph) : null);
   const xSpan = $derived(built ? built.xDomain[1] - built.xDomain[0] : 1);
   const ySpan = $derived(built ? built.yDomain[1] - built.yDomain[0] : 1);
   const y2Span = $derived(model.y2Range ? model.y2Range[1] - model.y2Range[0] : 1);
+
+  // ---- Pointer interaction (only when a viewState store is wired) ----
+
+  /** Rubber-band rect in inner-plot-rect pixels, or null when idle. */
+  let band: { x0: number; y0: number; x1: number; y1: number } | null = $state(null);
+  /** Full data extent (guardrail for clampToData); recomputed per model. */
+  const fullExtent = $derived({
+    x: dataExtent(model.lines, 'x', 'any'),
+    y: dataExtent(model.lines, 'y', 'left'),
+  });
+
+  // Pan-gesture bookkeeping (not reactive state — plain closures).
+  let dragging = false;              // a drag gesture is active
+  let panStartX = 0, panStartY = 0;  // pointer origin (inner-rect px)
+  let panStartDom: { x: [number, number]; y: [number, number] } | null = null;
+  let rafId = 0;                     // pending rAF for coalesced pan moves
+  let pendingPan: { dxPx: number; dyPx: number } | null = null;
+  let activePointer = 0;
+
+  /** Pointer position relative to the inner plot rect (data area). */
+  function localXY(e: PointerEvent): { x: number; y: number } | null {
+    if (!svgEl) return null;
+    const r = svgEl.getBoundingClientRect();
+    // Map client px → viewBox px (viewBox is 0..width, 0..height) then
+    // subtract the inner-rect origin so (0,0) is the data area's corner.
+    const sxr = r.width ? width / r.width : 1;
+    const syr = r.height ? height / r.height : 1;
+    return { x: (e.clientX - r.left) * sxr - ox, y: (e.clientY - r.top) * syr - oy };
+  }
+
+  /** Interaction is live only with a store AND a ready, non-Nyquist plot. */
+  function interactive(): boolean {
+    return !!viewState && !!built && pw > 0 && ph > 0 && !model.squareAspect;
+  }
+
+  function onPointerDown(e: PointerEvent) {
+    if (!interactive() || e.button !== 0) return;
+    const p = localXY(e);
+    if (!p) return;
+    dragging = true;
+    activePointer = e.pointerId;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    if (mode === 'pan') {
+      panStartX = p.x; panStartY = p.y;
+      panStartDom = { x: [...built!.xDomain], y: [...built!.yDomain] };
+    } else {
+      band = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+    }
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (!dragging || e.pointerId !== activePointer) return;
+    const p = localXY(e);
+    if (!p) return;
+    if (mode === 'pan') {
+      // Coalesce moves: stash the latest delta, apply once per frame.
+      pendingPan = { dxPx: p.x - panStartX, dyPx: p.y - panStartY };
+      if (!rafId) {
+        rafId = requestAnimationFrame(() => {
+          rafId = 0;
+          if (!pendingPan || !panStartDom) return;
+          const r = panBy(panStartDom, pendingPan, { width: pw, height: ph });
+          const c = clampToData(r as { x: [number, number]; y: [number, number] }, fullExtent);
+          panPreview = { x: c.x!, y: c.y! };
+        });
+      }
+    } else if (band) {
+      band = { ...band, x1: p.x, y1: p.y };
+    }
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (!dragging || e.pointerId !== activePointer) return;
+    dragging = false;
+    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* already released */ }
+    if (mode === 'pan') {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+      // Commit EXACTLY ONE setRange for the whole gesture. Use the final
+      // pointer position (not a stale rAF preview) so the commit matches
+      // where the pointer actually released.
+      if (panStartDom && viewState) {
+        const p = localXY(e);
+        const delta = p
+          ? { dxPx: p.x - panStartX, dyPx: p.y - panStartY }
+          : (pendingPan ?? { dxPx: 0, dyPx: 0 });
+        const r = panBy(panStartDom, delta, { width: pw, height: ph });
+        const c = clampToData(r as { x: [number, number]; y: [number, number] }, fullExtent);
+        viewState.setRange(get(viewState.active), c);
+      }
+      panPreview = null;
+      pendingPan = null;
+      panStartDom = null;
+    } else if (band) {
+      const rect = { x0: band.x0, y0: band.y0, x1: band.x1, y1: band.y1 };
+      band = null;
+      if (viewState && built) {
+        const range = rubberBandToRange(
+          rect,
+          { x: built.xDomain, y: built.yDomain },
+          { width: pw, height: ph }
+        );
+        if (range) {
+          viewState.setRange(get(viewState.active), clampToData(range, fullExtent));
+        }
+      }
+    }
+  }
+
+  function onDblClick() {
+    if (!interactive() || !viewState) return;
+    viewState.autoFit(get(viewState.active));
+  }
+
+  // Cancel any pending pan rAF if the component unmounts mid-gesture.
+  $effect(() => () => { if (rafId) cancelAnimationFrame(rafId); });
 </script>
 
 <div class="plot-surface" bind:this={host}>
@@ -156,7 +286,34 @@
               />
             {/if}
           {/each}
+          {#if band}
+            <rect
+              data-testid="rubber-band"
+              class="rubber-band"
+              x={Math.min(band.x0, band.x1)}
+              y={Math.min(band.y0, band.y1)}
+              width={Math.abs(band.x1 - band.x0)}
+              height={Math.abs(band.y1 - band.y0)}
+            />
+          {/if}
         </g>
+        {#if viewState && !model.squareAspect}
+          <!-- Transparent capture layer over the data area; pointer
+               gestures are measured relative to this rect's origin. -->
+          <rect
+            class="capture"
+            role="application"
+            aria-label="Plot area — drag to {mode === 'pan' ? 'pan' : 'box-zoom'}, double-click to auto-fit"
+            x="0"
+            y="0"
+            width={pw}
+            height={ph}
+            onpointerdown={onPointerDown}
+            onpointermove={onPointerMove}
+            onpointerup={onPointerUp}
+            ondblclick={onDblClick}
+          />
+        {/if}
       </g>
     </svg>
   {/if}
@@ -193,5 +350,18 @@
     fill: var(--muted, #66708a);
     font-size: 11.5px;
     font-family: var(--font-body, system-ui, sans-serif);
+  }
+  .rubber-band {
+    fill: var(--indigo, #4f46e5);
+    fill-opacity: 0.08;
+    stroke: var(--indigo, #4f46e5);
+    stroke-width: 1;
+    stroke-dasharray: 4 3;
+    pointer-events: none;
+  }
+  .capture {
+    fill: transparent;
+    cursor: crosshair;
+    touch-action: none;
   }
 </style>
