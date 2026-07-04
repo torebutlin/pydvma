@@ -97,10 +97,13 @@
     // ?fixture=1 so the e2e fixture load is not clobbered by a restore.
     if (!fixtureRequested) void bootFileRestore();
 
-    // Autosave: on every dataset mutation, schedule a debounced write.
+    // Autosave: on every dataset mutation, schedule a debounced write. Pass a
+    // THUNK, not bytes — writeDvma (a full zip serialize) then runs once when
+    // the 2 s debounce fires, not eagerly on every store emission (and a fresh
+    // loadDataset / Restore no longer re-serializes the bytes just loaded).
     const unsubDataset = datasetStore.subscribe((ds) => {
       if (!ds) return;
-      autosave(writeDvma(ds), workdir, autosaveEnabled);
+      autosave(() => writeDvma(ds), workdir, autosaveEnabled);
     });
 
     if (forcedNarrow || typeof window.matchMedia !== 'function') return () => unsubDataset();
@@ -168,11 +171,19 @@
       engine.boot(); // idempotent; the conversion op needs a live engine
       const op = fmt === 'npy' ? 'legacy_to_dvma' : 'mat_to_dvma';
       const payloadKey = fmt === 'npy' ? 'npy_bytes' : 'mat_bytes';
-      const res = await engine.enqueue<{ dvma: Uint8Array } | Map<string, Uint8Array>>(op, {
-        [payloadKey]: bytes,
-      });
-      const dvma = res instanceof Map ? res.get('dvma')! : res.dvma;
-      return readDvma(dvma instanceof Uint8Array ? dvma : new Uint8Array(dvma));
+      // A cold-engine conversion pays the full pyodide boot (seconds of
+      // silence) — show a transient "Converting…" toast so the wait doesn't
+      // read as a hang, and clear it once the conversion settles.
+      const convertingId = toasts.push(`Converting ${name}…`, { level: 'info', timeout: 600_000 });
+      try {
+        const res = await engine.enqueue<{ dvma: Uint8Array } | Map<string, Uint8Array>>(op, {
+          [payloadKey]: bytes,
+        });
+        const dvma = res instanceof Map ? res.get('dvma')! : res.dvma;
+        return readDvma(dvma instanceof Uint8Array ? dvma : new Uint8Array(dvma));
+      } finally {
+        toasts.dismiss(convertingId);
+      }
     }
     throw new Error(`unrecognised file "${name}" (not a .dvma, legacy .npy, or .mat)`);
   }

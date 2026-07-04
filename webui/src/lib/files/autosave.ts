@@ -51,17 +51,27 @@ export function __setIdb(next: IdbLike): void {
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Schedule an autosave of `bytes` to `dir`, debounced by 2 s. Rapid calls
- * collapse to a single write of the LATEST bytes once 2 s elapse with no
- * further call. When `enabled` is false the call is a no-op (and does NOT
- * cancel an already-scheduled write — the enabled flag is checked again
- * when the timer fires so a mid-flight disable is honoured). fsaccess dirs
- * get an `autosave.dvma` file; download dirs persist to IndexedDB.
+ * Schedule an autosave to `dir`, debounced by 2 s. Rapid calls collapse to a
+ * single write once 2 s elapse with no further call. When `enabled` is false
+ * the call is a no-op (and does NOT cancel an already-scheduled write — the
+ * enabled flag is checked again when the timer fires so a mid-flight disable
+ * is honoured). fsaccess dirs get an `autosave.dvma` file; download dirs
+ * persist to IndexedDB.
  *
- * `bytes` should be the current `writeDvma(dataset)` output; the caller
- * computes it (autosave never touches the dataset model directly).
+ * `source` is a THUNK, not bytes: the (potentially expensive) `writeDvma`
+ * serialize is DEFERRED until the debounce timer actually fires, and only the
+ * latest scheduled thunk is invoked. This is load-bearing — a naive
+ * `autosave(writeDvma(ds), …)` would serialize the whole zip on EVERY store
+ * emission (and re-serialize the bytes just loaded on every loadDataset /
+ * Restore), even though N rapid mutations must yield exactly ONE write. The
+ * thunk collapses N serializes to 1. A raw `Uint8Array` is still accepted for
+ * callers that already hold the bytes.
  */
-export function autosave(bytes: Uint8Array, dir: WorkDir | null, enabled: boolean): void {
+export function autosave(
+  source: Uint8Array | (() => Uint8Array),
+  dir: WorkDir | null,
+  enabled: boolean,
+): void {
   if (timer !== null) clearTimeout(timer);
   if (!enabled) {
     timer = null;
@@ -69,6 +79,8 @@ export function autosave(bytes: Uint8Array, dir: WorkDir | null, enabled: boolea
   }
   timer = setTimeout(() => {
     timer = null;
+    // Serialize NOW (once), only for the write that actually fires.
+    const bytes = typeof source === 'function' ? source() : source;
     void persist(bytes, dir);
   }, DEBOUNCE_MS);
 }

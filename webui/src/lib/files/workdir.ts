@@ -112,10 +112,24 @@ export function wrap(handle: FileSystemDirectoryHandle): WorkDir {
       const fileHandle = await handle.getFileHandle(name, { create: true });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const writable = await (fileHandle as any).createWritable();
-      // Copy into a fresh ArrayBuffer-backed view so we never hand the
-      // writer a SharedArrayBuffer-backed slice.
-      await writable.write(bytes.slice());
-      await writable.close();
+      // createWritable() opens against a temp copy that only replaces the real
+      // file on close(). If write/close throws mid-way we MUST abort() —
+      // otherwise the partial write can still be committed, silently replacing
+      // a good file with a truncated one. Matters most on the autosave path,
+      // where the failure is only console.warn'd. Copy into a fresh
+      // ArrayBuffer-backed view first so we never hand the writer a
+      // SharedArrayBuffer-backed slice.
+      try {
+        await writable.write(bytes.slice());
+        await writable.close();
+      } catch (e) {
+        try {
+          await writable.abort();
+        } catch {
+          /* abort is best-effort; surface the original error below */
+        }
+        throw e;
+      }
     },
     async open(): Promise<{ bytes: Uint8Array; name: string } | null> {
       try {

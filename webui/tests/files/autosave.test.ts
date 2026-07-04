@@ -37,16 +37,34 @@ afterEach(() => {
 });
 
 describe('autosave debounce', () => {
-  test('rapid calls collapse to ONE write after 2s (fsaccess → dir.save)', async () => {
+  test('rapid calls collapse to ONE write after 2s, serializing the thunk once', async () => {
     const dir = fakeFsDir();
-    for (let i = 0; i < 5; i++) autosave(new Uint8Array([i]), dir, true);
+    // The thunk is the (expensive) writeDvma serialize; it MUST run exactly
+    // once — when the debounce fires — no matter how many times we schedule.
+    const marker = new Uint8Array([0x42]);
+    const thunk = vi.fn(() => marker);
+    for (let i = 0; i < 5; i++) autosave(thunk, dir, true);
+    expect(thunk).not.toHaveBeenCalled(); // deferred — no serialize yet
     expect(dir.save).not.toHaveBeenCalled(); // debounced — nothing yet
     await vi.advanceTimersByTimeAsync(1999);
     expect(dir.save).not.toHaveBeenCalled(); // still before the 2s boundary
+    expect(thunk).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
+    expect(thunk).toHaveBeenCalledTimes(1); // N schedules → ONE serialize
     expect(dir.save).toHaveBeenCalledTimes(1); // exactly one write
-    // The last-supplied bytes win (the debounce keeps the latest payload).
-    expect(dir.save).toHaveBeenCalledWith('autosave.dvma', new Uint8Array([4]));
+    expect(dir.save).toHaveBeenCalledWith('autosave.dvma', marker);
+  });
+
+  test('the LATEST thunk wins when different thunks are scheduled', async () => {
+    const dir = fakeFsDir();
+    const stale = vi.fn(() => new Uint8Array([1]));
+    const fresh = vi.fn(() => new Uint8Array([2]));
+    autosave(stale, dir, true);
+    autosave(fresh, dir, true); // supersedes the pending stale thunk
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(stale).not.toHaveBeenCalled(); // never serialized — it was superseded
+    expect(fresh).toHaveBeenCalledTimes(1);
+    expect(dir.save).toHaveBeenCalledWith('autosave.dvma', new Uint8Array([2]));
   });
 
   test('download-kind dir writes to idb, not dir.save', async () => {
