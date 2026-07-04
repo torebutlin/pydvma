@@ -2240,6 +2240,13 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   in wiring that has no node-unit coverage). **Task 16:** evaluate enabling
   `noUnusedLocals`/`noUnusedParameters` on `tsconfig.app.json` (a dead import
   silently passed review-by-check here).
+  Task 7 APPROVED (all Minor). Three PlotSurface gesture Minors deferred to
+  **Task 9** (fix + assert in its e2e — all DOM-gesture behaviours): (1)
+  `onpointercancel`/lost-capture handler clears rubber-band/panPreview on an
+  interrupted drag; (2) pan-mode needs box-mode's `MIN_DRAG_PX` dead-zone (a
+  click currently pushes a no-op history entry, a pan double-click ~3); (3)
+  latch `mode` gesture-local at pointerdown so a mid-drag flip can't strand
+  panPreview.
 
 ## Self-review record
 
