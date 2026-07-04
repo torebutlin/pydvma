@@ -2292,6 +2292,23 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   - `analysis.clean_impulse` exists (Clean Impulse). `MySettings(channels=, fs=,
     device_driver='mock')` is valid (the mock path — no audio/NI in the worker).
 
+- **A8 (Task 11 — pyodide worker BOOTS + round-trips in a real browser;
+  architectural note):** the app runtime + the pydvma/peakutils wheels are
+  vendored locally under `public/pyodide` + `public/pypi` (gitignored), but
+  **numpy/scipy/micropip are fetched from pyodide's jsdelivr CDN at boot**
+  (`packageBaseUrl`). Fine for **Plan 1** (hosted Pages analysis app — users
+  have internet; app shell never blocks on boot per §11, queue-until-ready
+  works). Two consequences: **Task 15 CI** e2e needs network for the CDN (or
+  vendor ~30 MB numpy/scipy wheels); **Plan 3** lab-serve's "no internet
+  dependency" requires those wheels vendored into the served bundle — record
+  in Plan 3 scope. Marshalling convention (LOAD-BEARING for Task 12): every
+  worker array is `{shape:number[], data:Float64Array flat row-major,
+  complex:boolean}`, complex interleaved [re,im,...] — Task 12 decodes mag/
+  phase/re/im from this (JS display transforms only; NO maths). glue lives at
+  `/engine/glue.py`. `legacy_to_dvma`/`mat_to_dvma` were deferred to Task 13
+  (the plan's `container.save(BytesIO())` was wrong — real `container.save`
+  takes a filename; Task 13 writes to pyodide `/tmp` then reads back).
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
