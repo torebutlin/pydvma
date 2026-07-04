@@ -102,3 +102,38 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap):
     sd = analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
     return {'time_axis': _arr(sd.time_axis), 'freq_axis': _arr(sd.freq_axis),
             'sono_data': _arr(np.abs(sd.sono_data[:, :, int(ch)]))}
+
+
+def calc_tf_averaged(sets, ch_in, window):
+    """Ensemble-averaged transfer function across several TimeData sets.
+
+    ``sets`` is a LIST of ``{time_axis, time_data, n_channels, fs}`` dicts —
+    one per measurement in the ensemble (e.g. repeated impulse-hammer taps).
+    Each is rebuilt into a pydvma ``TimeData`` and the whole list is wrapped
+    in a ``TimeDataList`` so ``analysis.calculate_tf_averaged`` can average the
+    cross-spectra BEFORE forming the H1 estimator (no per-set sub-frame
+    averaging — this is averaging *across* independent measurements). Returns
+    tf_data (Nf, N_out) complex and coherence (Nf, N_out), same marshalling as
+    ``calc_tf``.
+    """
+    tdl = datastructure.TimeDataList([
+        _time_data(s['time_axis'], s['time_data'], s['n_channels'], s['fs'])
+        for s in sets
+    ])
+    tf = analysis.calculate_tf_averaged(tdl, ch_in=int(ch_in), window=(window or None))
+    coh = None if tf.tf_coherence is None else _arr(tf.tf_coherence)
+    return {'freq_axis': _arr(tf.freq_axis), 'tf_data': _arr(tf.tf_data), 'coherence': coh}
+
+
+def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):
+    """Zero the noise floor around an impulse on channel ``ch_impulse``.
+
+    Rebuilds a ``TimeData`` from the flat JS arrays, runs
+    ``analysis.clean_impulse`` (estimates the pulse width, keeps the data up to
+    the peak, then half-cosine-ramps the tail to zero), and returns the cleaned
+    capture as ``{time_axis, time_data}`` — ``time_data`` flattened row-major
+    so the JS side can replace the source set's TimeData in place.
+    """
+    td = _time_data(time_axis, time_data, n_channels, fs)
+    cleaned = analysis.clean_impulse(td, ch_impulse=int(ch_impulse))
+    return {'time_axis': _arr(cleaned.time_axis), 'time_data': _arr(cleaned.time_data)}

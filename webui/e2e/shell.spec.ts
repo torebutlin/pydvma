@@ -21,9 +21,10 @@ test('narrow: rail with word-label ribbon and flyover tray', async ({ page }) =>
   await expect(page.getByTestId('tray')).toBeHidden();
 });
 
-test.fixme('tray matrix ops (enable in Task 13 when ?fixture=1 exists)', async ({ page }) => {
+test('tray matrix ops (fixture-loaded set)', async ({ page }) => {
   await page.goto('/?fixture=1');
   const card0 = page.getByTestId('tray-card-0');
+  await expect(card0).toBeVisible();                 // fixture loaded a set into the tray
   await card0.getByTestId('set-header').click();     // row cycle
   await page.getByTestId('chip-ch-1').click();       // column cycle
   await card0.getByTestId('set-header').dblclick();

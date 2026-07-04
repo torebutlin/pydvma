@@ -43,3 +43,245 @@ body {
   color: var(--text);
   font: 13.5px/1.45 var(--font-body);
 }
+
+/* ---------- shared context-card controls (ported from round2-bench.html) ----------
+   Global so the four stage cards (Time/Frequency/TF/Sono) reuse one control
+   language without re-declaring it in each scoped <style>. Card LAYOUT
+   (.ctx-body/.ctx-row/.grp) is provided by ContextCard's frame; these are the
+   reusable inputs the cards drop in. */
+.mono {
+  font-family: var(--font-mono);
+}
+.card-controls .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.card-controls .btn:hover {
+  border-color: #c6cbd6;
+  background: #fafbfc;
+}
+.card-controls .btn:active {
+  transform: translateY(1px);
+}
+.card-controls .btn.indigo {
+  background: var(--indigo);
+  border-color: var(--indigo);
+  color: #fff;
+  font-weight: 600;
+}
+.card-controls .btn.indigo:hover {
+  background: #4338ca;
+}
+.card-controls .btn.sm {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  border-radius: 6px;
+}
+.card-controls .btn.active {
+  background: #eef0ff;
+  border-color: #c7d2fe;
+  color: var(--indigo);
+}
+.card-controls .btn[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.card-controls select,
+.card-controls input[type='text'],
+.card-controls input[type='number'] {
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font: 12.5px inherit;
+  font-family: inherit;
+  padding: 0 7px;
+}
+.card-controls input[type='number'] {
+  width: 62px;
+}
+.card-controls input[type='range'] {
+  accent-color: var(--indigo);
+}
+.card-controls select:disabled,
+.card-controls input:disabled {
+  opacity: 0.5;
+}
+.card-controls .ml {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.card-controls .note {
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.card-controls .seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  height: 28px;
+  background: #fff;
+}
+.card-controls .seg button {
+  border: none;
+  background: #fff;
+  padding: 0 11px;
+  font: 600 12px inherit;
+  font-family: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+}
+.card-controls .seg button:last-child {
+  border-right: none;
+}
+.card-controls .seg button:hover {
+  background: #f6f7fa;
+}
+.card-controls .seg button.active {
+  background: #eef0ff;
+  color: var(--indigo);
+}
+.card-controls .switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+}
+.card-controls .switch input {
+  appearance: none;
+  width: 30px;
+  height: 17px;
+  border-radius: 9px;
+  background: #d3d8e2;
+  position: relative;
+  transition: background 0.15s;
+  cursor: pointer;
+  margin: 0;
+}
+.card-controls .switch input:checked {
+  background: var(--green);
+}
+.card-controls .switch input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.15s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.card-controls .switch input:checked::after {
+  left: 15px;
+}
+
+/* ---------- shared context-card frame (ported from round2-bench.html) ----------
+   Every stage card is a `.ctx-card.card-controls`; the frame/layout below is
+   identical across cards, so it lives here once rather than in each card's
+   scoped <style>. */
+.ctx-card {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 8px 12px;
+  position: relative;
+}
+.ctx-card .ctx-name {
+  flex: 0 0 92px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  border-right: 1px solid var(--border);
+  padding-right: 10px;
+  margin-right: 12px;
+}
+.ctx-card .cn-t {
+  font-weight: 700;
+  font-size: 13px;
+}
+.ctx-card .cn-s {
+  font-size: 9.5px;
+  color: #98a1b5;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ctx-card .ctx-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  overflow-y: auto;
+}
+.ctx-card .ctx-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.ctx-card .grp {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ctx-card .grp-lab {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #98a1b5;
+  white-space: nowrap;
+}
+.ctx-card .grp-ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  white-space: nowrap;
+}
+.ctx-card .ctx-primary {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  margin-left: 14px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+.ctx-card .ctx-err {
+  font-size: 11px;
+  color: #b91c1c;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
