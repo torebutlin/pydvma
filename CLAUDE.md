@@ -2,11 +2,19 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-03: web-UI Stages 0–1 are live; **next up is the
-Stage 2 design session** (the new GUI — mockups, workflow, data
-navigation) plus judging the oscilloscope gate prototype. A fresh
-session should read `dev/2026-07-03-stage2-handoff.md` first — it
-carries the agenda, prototype run instructions, and loose ends.
+As of 2026-07-04: web-UI Stages 0–1 **and Stage 2 Plan 1** (the
+no-install browser **analysis** app, in `webui/`) are live — all
+16 tasks landed, two-stage reviewed, milestone-gate passed (nothing
+pushed yet; the CI/Pages workflows activate on the next `git push`).
+**Next up is a hands-on session** driving the app with real lab
+`.dvma` files, then **Plan 2** (acquisition, monitor/oscilloscope,
+Fit stage, calibration). A fresh session should read
+`dev/2026-07-04-stage2-plan1-handoff.md` first — it carries the run
+instructions (`cd webui && npm run dev`, open
+`http://localhost:5173/?fixture=1`), the gate results, and the
+Plan-2 open questions (multi-channel TF labelling, X-log toggle,
+figure-export fonts). Design spec: `dev/2026-07-03-stage2-gui-design.md`;
+plan: `dev/plans/2026-07-03-stage2-plan1-analysis-app.md`.
 
 Auto-loaded by Claude Code at the start of every session. Contributors
 and collaborators: the concrete filesystem paths below are for the
