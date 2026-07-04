@@ -18,6 +18,14 @@ export interface PlotLine {
   x: ArrayLike<number>; y: ArrayLike<number>;
   color: string; opacity: number; width: number; dashed: boolean;
   yAxis: 'left' | 'right';                        // right = coherence
+  /**
+   * Whether `x` is known to be sorted non-decreasing. Set `true` for
+   * time/frequency axes (model assembly knows this a priori) to skip
+   * the O(n) per-build monotonicity scan; set `false` to force the
+   * parametric fallback without scanning. Absent → scan as before.
+   * Only consulted when a zoom window (`xRange`) is active.
+   */
+  xMonotonic?: boolean;
 }
 
 /**
@@ -96,18 +104,24 @@ function upperBound(x: ArrayLike<number>, v: number): number {
  * - Nyquist (`squareAspect`): x is parametric, so min-max decimation
  *   by index is only safe as a last resort — lines under 8k points
  *   render every sample; longer ones decimate over the full range.
- * - Zoomed (`xRange` set) monotonic lines: binary-search the visible
- *   index window (one sample of margin each side) and decimate only
- *   that, so off-screen samples cost nothing and never render.
+ * - Zoomed (`xRange` set) monotonic lines (`xMonotonic`, or a scan
+ *   when the flag is absent): binary-search the visible index window
+ *   (one sample of margin each side) and decimate only that, so
+ *   off-screen samples cost nothing and never render. A window that
+ *   falls entirely outside the data produces an EMPTY path; a window
+ *   between two adjacent samples keeps the bridging segment via the
+ *   ±1-sample margins.
  * - Everything else: min-max decimate the full range at ~1 column
  *   per px (floor 64).
  *
- * Non-finite samples (NaN gaps) are skipped, splitting nothing — the
- * path simply bridges across them.
+ * Non-finite samples (NaN gaps) are skipped, splitting nothing:
+ * decimation seeds each pixel column's min/max from the column's
+ * first FINITE sample (all-NaN columns emit no points), and the path
+ * builder bridges across any non-finite point that remains.
  */
 export function buildPlot(model: PlotModel, width: number, height: number): BuiltPlot {
   let xDomain = model.xRange ?? dataExtent(model.lines, 'x', 'any');
-  let yDomain = model.yRange ?? dataExtent(model.lines.filter(l => l.yAxis === 'left'), 'y', 'left');
+  let yDomain = model.yRange ?? dataExtent(model.lines, 'y', 'left');
 
   if (model.squareAspect) {                        // spec §5: Nyquist square, fit data
     const xs = xDomain[1] - xDomain[0], ys = yDomain[1] - yDomain[0];
@@ -131,11 +145,20 @@ export function buildPlot(model: PlotModel, width: number, height: number): Buil
       pts = Array.from({ length: len }, (_, k) => [k, line.y[k]] as [number, number]);
     } else {
       let i0 = 0, i1 = len - 1;
-      if (!model.squareAspect && model.xRange && isMonotonicNonDecreasing(line.x)) {
-        // Zoom window: decimate only the visible slice (+1 sample margin).
-        i0 = Math.max(0, lowerBound(line.x, xDomain[0]) - 1);
-        i1 = Math.min(len - 1, upperBound(line.x, xDomain[1]) + 1);
-        if (i1 < i0) { i0 = 0; i1 = -1; }           // window entirely off-screen
+      if (!model.squareAspect && model.xRange
+        && (line.xMonotonic ?? isMonotonicNonDecreasing(line.x))) {
+        const lb = lowerBound(line.x, xDomain[0]);
+        const ub = upperBound(line.x, xDomain[1]);
+        if (lb >= len || ub < 0) {
+          i0 = 0; i1 = -1;                          // window entirely outside the data → empty path
+        } else {
+          // Zoom window: decimate only the visible slice (+1 sample
+          // margin each side). NOTE: a window BETWEEN two adjacent
+          // samples has ub === lb - 1 — that is NOT empty; the margins
+          // keep the bridging segment across the window alive.
+          i0 = Math.max(0, lb - 1);
+          i1 = Math.min(len - 1, ub + 1);
+        }
       }
       pts = minMaxDecimate(line.y, i0, i1, columns);
     }

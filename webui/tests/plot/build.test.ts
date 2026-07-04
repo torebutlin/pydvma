@@ -64,6 +64,45 @@ test('non-monotonic x with a zoom window falls back to the full range', () => {
   expect(pathXs(b.paths[0].d).length).toBe(m);
 });
 
+test('zoom window entirely outside the data emits an empty path', () => {
+  const mk = (xRange: [number, number]) => buildPlot({
+    lines: [{
+      x: Float64Array.from({ length: 100 }, (_, i) => i),        // 0 .. 99
+      y: new Float64Array(100), color: '#000', opacity: 1, width: 1, dashed: false,
+      yAxis: 'left' as const,
+    }],
+    xLabel: '', yLabel: '', xRange, yRange: [-1, 1],
+  }, 400, 200);
+  expect(mk([200, 300]).paths[0].d).toBe('');       // right of all data
+  expect(mk([-50, -10]).paths[0].d).toBe('');       // left of all data
+});
+
+test('zoom window between two adjacent samples keeps the bridging segment', () => {
+  // xRange (0.4, 0.6) contains NO sample (ub < lb) but must NOT be
+  // treated as off-screen: the ±1-sample margins bridge across it.
+  const b = buildPlot({
+    lines: [{
+      x: Float64Array.from([0, 1, 2, 3]), y: Float64Array.from([0, 1, 0, 1]),
+      color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left',
+    }],
+    xLabel: '', yLabel: '', xRange: [0.4, 0.6], yRange: [-1, 2],
+  }, 400, 200);
+  expect(pathXs(b.paths[0].d).length).toBe(2);      // exactly the two bridging samples
+});
+
+test('xMonotonic flag bypasses the scan in both directions', () => {
+  const x = Float64Array.from({ length: 100 }, (_, i) => i);
+  const y = new Float64Array(100);
+  const mk = (xMonotonic: boolean) => buildPlot({
+    lines: [{ x, y, color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left', xMonotonic }],
+    xLabel: '', yLabel: '', xRange: [200, 300], yRange: [-1, 1],
+  }, 400, 200);
+  // true → window-sliced (off-screen → empty), no scan needed
+  expect(mk(true).paths[0].d).toBe('');
+  // false → parametric fallback: full range rendered despite monotonic x
+  expect(pathXs(mk(false).paths[0].d).length).toBe(100);
+});
+
 test('short Nyquist lines skip decimation entirely', () => {
   const m = 5000;                                    // < 8k threshold, > 2*columns
   const x = Float64Array.from({ length: m }, (_, i) => Math.cos(i / 100));

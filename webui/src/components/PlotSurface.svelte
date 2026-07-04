@@ -36,8 +36,10 @@
     if (!host) return;
     const ro = new ResizeObserver((entries) => {
       const r = entries[entries.length - 1].contentRect;
-      width = r.width;
-      height = r.height;
+      // Round to whole px: sub-pixel resize deltas would otherwise
+      // churn a full plot rebuild for invisible size changes.
+      width = Math.round(r.width);
+      height = Math.round(r.height);
     });
     ro.observe(host);
     return () => ro.disconnect();
@@ -70,6 +72,8 @@
       data-testid="plot-svg"
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 {width} {height}"
+      role="img"
+      aria-label={model.yLabel + ' vs ' + model.xLabel}
     >
       <rect data-role="plot-bg" class="plot-bg" x="0" y="0" width={width} height={height} />
       <defs>
@@ -129,6 +133,7 @@
     width: 100%;
     height: 100%;
     min-height: 220px;
+    min-width: 180px;
   }
   svg {
     display: block;

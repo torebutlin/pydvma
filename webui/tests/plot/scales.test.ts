@@ -29,3 +29,16 @@ test('fmtTick picks decimals from the span', () => {
   expect(fmtTick(0.25, 0.5)).toBe('0.25');
   expect(fmtTick(-0.1, 0.5)).toBe('-0.1');
 });
+
+test('fmtTick handles very large spans with 0 decimals', () => {
+  expect(fmtTick(2_000_000, 1e6)).toBe('2000000');
+  expect(fmtTick(-500_000, 1e6)).toBe('-500000');
+});
+
+test('fmtTick switches to exponential below 1e-6 spans', () => {
+  // The old fixed 8-dp cap would render every tick on a 1e-9 span as '0'.
+  expect(fmtTick(3e-9, 1e-9)).toBe('3.0e-9');
+  expect(fmtTick(2.5e-9, 1e-9)).toBe('2.5e-9');
+  expect(fmtTick(-1.5e-8, 1e-8)).toBe('-1.5e-8');
+  expect(fmtTick(0, 1e-9)).toBe('0');
+});

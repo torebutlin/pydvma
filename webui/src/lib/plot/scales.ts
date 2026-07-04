@@ -43,9 +43,14 @@ export const scaleLinear = (d0: number, d1: number, r0: number, r1: number) =>
  * axis span: 0 decimals for spans >= 100, scaling up to more decimals
  * as the span shrinks (span 50 → 1 dp, span 5 → 2 dp, span 0.5 → 3 dp,
  * capped at 8). Trailing zeros are stripped via numeric round-trip.
+ *
+ * Spans below 1e-6 switch to exponential notation (1 decimal of
+ * mantissa) — the fixed 8-dp cap would otherwise mislabel ticks on
+ * e.g. a 1e-9 span. Exact `0` still renders as `'0'`.
  */
 export function fmtTick(v: number, span: number): string {
   if (!(span > 0) || !Number.isFinite(span)) return String(v);
+  if (span < 1e-6) return v === 0 ? '0' : v.toExponential(1);
   const d = Math.max(0, Math.min(8, 2 - Math.floor(Math.log10(span))));
   return (+v.toFixed(d)).toString();
 }

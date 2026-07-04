@@ -16,7 +16,12 @@
  * Returns `[index, value]` pairs — indices into the ORIGINAL array,
  * so the caller can look up the matching x value. Windows short
  * enough to draw directly (`n <= 2 * columns`) are passed through
- * untouched, one point per sample.
+ * untouched, one point per sample (including non-finite ones).
+ *
+ * Non-finite samples (NaN gaps): each column's min/max seed from the
+ * column's first FINITE sample, so a leading NaN can never swallow a
+ * spike; columns containing no finite sample at all emit nothing (the
+ * caller's path builder bridges across the gap).
  *
  * Assumes samples are ordered by x along the index axis (true for
  * time and frequency data). Not meaningful for parametric curves
@@ -33,9 +38,12 @@ export function minMaxDecimate(
   for (let c = 0; c < columns; c++) {
     const a = i0 + Math.floor((c * n) / columns);
     const b = i0 + Math.floor(((c + 1) * n) / columns) - 1;
-    let lo = y[a], hi = y[a], loI = a, hiI = a;
-    for (let i = a + 1; i <= b; i++) {
-      if (y[i] < lo) { lo = y[i]; loI = i; }
+    let s = a;                                     // seed from the first FINITE sample
+    while (s <= b && !Number.isFinite(y[s])) s++;
+    if (s > b) continue;                           // all-NaN column: emits nothing
+    let lo = y[s], hi = y[s], loI = s, hiI = s;
+    for (let i = s + 1; i <= b; i++) {
+      if (y[i] < lo) { lo = y[i]; loI = i; }       // NaN compares false → skipped
       if (y[i] > hi) { hi = y[i]; hiI = i; }
     }
     out.push(loI <= hiI ? [loI, lo] : [hiI, hi]);
