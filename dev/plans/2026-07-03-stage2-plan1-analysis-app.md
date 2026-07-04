@@ -2353,6 +2353,19 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   (serial)** or a dedicated single-worker project, else flaky. Non-@engine specs
   can stay parallel.
 
+- **A12 (Task 14 APPROVED + a product call for Tore):** figure export done —
+  PNG/PDF × white/transparent/dark, self-contained SVG (inline hex via
+  `CHROME`; a second bug — the `.capture` rect exporting opaque-black — was
+  caught only by the mandatory render-the-real-file smoke), dark-map recolours
+  all axis chrome + preserves data lines, autosave toggle now wired (A10 done).
+  Fix round collapsed the colour duplication (DARK_MAP keys off CHROME +
+  drift-assertion test) and added `cancelAutosave`. **FOR TORE (milestone gate):**
+  exported tick/axis-label TEXT falls back to a default font (jsPDF Helvetica /
+  SVG default) — the app's mono/body fonts aren't inlined onto the text
+  elements. Roughly at parity with the old Qt export, but if he wants WYSIWYG
+  fonts in figures, it's a small follow-up (inline font-family/size like the
+  colours were). Raise it at the hands-on session.
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
