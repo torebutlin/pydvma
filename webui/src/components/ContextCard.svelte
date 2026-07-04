@@ -17,27 +17,47 @@
   import type { Selection } from '../lib/stores/selection';
   import type { Actions } from '../lib/analysis/actions';
   import type { FreqMode } from '../lib/plot/model';
+  import type { WorkDir } from '../lib/files/workdir';
+  import type { Toasts } from '../lib/stores/toast';
   import TimeCard from './cards/TimeCard.svelte';
   import FrequencyCard from './cards/FrequencyCard.svelte';
   import TFCard from './cards/TFCard.svelte';
   import SonoCard from './cards/SonoCard.svelte';
+  import ExportCard from './cards/ExportCard.svelte';
 
   let {
     narrow = false,
     viewState,
     selection,
     actions,
+    getSvg,
+    workdir,
+    onsave,
+    toasts,
+    hasData = false,
     freqMode = $bindable('fft'),
     dynRangeDb = $bindable(60),
     sonoSetIdx = $bindable(0),
+    autosaveEnabled = $bindable(true),
   }: {
     narrow?: boolean;
     viewState: ViewState;
     selection: Selection;
     actions: Actions;
+    /** Active plot's <svg> accessor (Export card figure source). */
+    getSvg: () => SVGSVGElement | undefined;
+    /** Working directory for Save Figure / Save Dataset. */
+    workdir: WorkDir | null;
+    /** Header's Save Dataset handler (reused by the Export card). */
+    onsave: () => void;
+    /** Shared toast store. */
+    toasts: Toasts;
+    /** Whether any dataset is loaded (gates figure export). */
+    hasData?: boolean;
     freqMode?: FreqMode;
     dynRangeDb?: number;
     sonoSetIdx?: number;
+    autosaveEnabled?: boolean;
   } = $props();
 
   const labelOf = (id: string): string => STAGES.find((s) => s.id === id)?.label ?? '';
@@ -52,6 +72,8 @@
     <TFCard {viewState} {selection} {actions} />
   {:else if $activeStage === 'sono'}
     <SonoCard {actions} {selection} bind:dynRangeDb bind:sonoSetIdx />
+  {:else if $activeStage === 'export'}
+    <ExportCard {getSvg} {workdir} {onsave} {toasts} {hasData} bind:autosaveEnabled />
   {:else}
     <section class="ctx-card card-controls" aria-label="stage controls">
       <div class="ctx-name">

@@ -8,9 +8,11 @@
    * Wiring: `[Full]` / `[First 0.2 s]` drive `viewState` range on the
    * time view; Clean Impulse calls `actions.cleanImpulse` for the
    * highlighted set's chosen channel; the channel select spans the
-   * widest loaded set. Save Figure is disabled until Task 14 wires the
-   * export dialog.
+   * widest loaded set. Save Figure jumps to the Export stage (Task 14),
+   * whose ExportCard hosts the PNG/PDF figure dialog — one export flow,
+   * reachable from the labsheet's Time card as a shortcut.
    */
+  import { activeStage } from '../../lib/stores/stages';
   import type { ViewState } from '../../lib/stores/viewstate';
   import type { Selection } from '../../lib/stores/selection';
   import type { Actions } from '../../lib/analysis/actions';
@@ -68,7 +70,8 @@
       <div class="grp">
         <span class="grp-lab">figure</span>
         <div class="grp-ctl">
-          <button class="btn" disabled title="Save Figure (arrives in Task 14)">Save Figure</button>
+          <button class="btn" title="Open the figure-export dialog (Export stage)"
+            onclick={() => activeStage.set('export')}>Save Figure</button>
         </div>
       </div>
     </div>

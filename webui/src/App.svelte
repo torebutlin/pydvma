@@ -74,6 +74,15 @@
   let sonoSetIdx = $state(0);
   let mode = $state<'box' | 'pan'>('box');
 
+  // Reference to the CURRENTLY MOUNTED primary PlotSurface (single / Bode
+  // magnitude / sono axes), bound in each plot branch below. The Export card
+  // reads its <svg> via `getSvg` to serialise the figure. One ref suffices:
+  // only one primary plot is mounted at a time (the branches are mutually
+  // exclusive), and it is re-bound as the view switches.
+  let plotRef = $state<PlotSurface | undefined>();
+  /** Active plot's root <svg>, or undefined when no plot is mounted. */
+  const getSvg = (): SVGSVGElement | undefined => plotRef?.getSvgElement();
+
   // `?narrow=1` forces the narrow layout; `?fixture=1` auto-loads data.
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const forcedNarrow = params.get('narrow') === '1';
@@ -373,7 +382,21 @@
     {onpickdir}
   />
   <Ribbon {viewState} {narrow} />
-  <ContextCard {narrow} {viewState} {selection} {actions} bind:freqMode bind:dynRangeDb bind:sonoSetIdx />
+  <ContextCard
+    {narrow}
+    {viewState}
+    {selection}
+    {actions}
+    {getSvg}
+    {workdir}
+    {onsave}
+    {toasts}
+    {hasData}
+    bind:freqMode
+    bind:dynRangeDb
+    bind:sonoSetIdx
+    bind:autosaveEnabled
+  />
 
   <main class="main">
     {#if narrow}
@@ -393,13 +416,13 @@
       {:else if view === 'sono'}
         <div class="plot-host">
           <canvas bind:this={sonoCanvas} data-testid="sono-canvas" class="sono-heat"></canvas>
-          <PlotSurface model={sonoAxisModel} {viewState} />
+          <PlotSurface bind:this={plotRef} model={sonoAxisModel} {viewState} />
           <ZoomToolbar {viewState} dataExtent={extent} bind:mode />
         </div>
       {:else if bode}
         <div class="plot-host bode">
           <div class="bode-pane">
-            <PlotSurface {model} {mode} {viewState} />
+            <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
             <ZoomToolbar {viewState} dataExtent={extent} bind:mode />
             <Legend {selection} {viewState} />
           </div>
@@ -409,7 +432,7 @@
         </div>
       {:else}
         <div class="plot-host">
-          <PlotSurface {model} {mode} {viewState} />
+          <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
           <ZoomToolbar {viewState} dataExtent={extent} bind:mode />
           <Legend {selection} {viewState} />
         </div>

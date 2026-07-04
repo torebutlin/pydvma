@@ -38,6 +38,14 @@
    * `data-role="plot-bg"` and every piece of axis chrome
    * `data-role="axis"` (the figure exporter restyles by these tags).
    *
+   * Self-contained-SVG rule (Task 14, decision A): the plot-bg and axis
+   * chrome carry INLINE fill/stroke hexes (CHROME.*) in ADDITION to their
+   * scoped CSS classes. On-screen the scoped CSS wins (CSS beats
+   * presentation attributes), so the visible plot is unchanged; but a
+   * standalone `getSvgElement().outerHTML` — which loses the scoped
+   * style block — still renders correctly, and the figure exporter's
+   * regexes find real hexes to restyle. Keep CHROME in sync with app.css.
+   *
    * Visual treatment ported from dev/mockups/round2-bench.html:
    * margins L58/T16/B42, R18 (56 with a right axis), #eef0f4
    * gridlines, mono tick labels and muted axis labels.
@@ -62,6 +70,18 @@
 
   const uid = $props.id();
   const clipId = `plot-clip-${uid}`;
+
+  // Inline chrome hexes (decision A) — the resolved values of the app.css
+  // tokens the scoped CSS uses (--surface, .grid literal, --border, --muted).
+  // Emitted as presentation attributes so the SERIALISED svg is self-
+  // contained; on-screen the scoped CSS still governs. The figure exporter
+  // (src/lib/export/figure.ts) keys its dark-mode map on exactly these hexes.
+  const CHROME = {
+    bg: '#ffffff',
+    grid: '#eef0f4',
+    frame: '#e3e6eb',
+    axis: '#66708a',
+  };
 
   let host: HTMLDivElement | undefined = $state();
   let svgEl: SVGSVGElement | undefined = $state();
@@ -301,35 +321,35 @@
       role="img"
       aria-label={model.yLabel + ' vs ' + model.xLabel}
     >
-      <rect data-role="plot-bg" class="plot-bg" x="0" y="0" width={width} height={height} />
+      <rect data-role="plot-bg" class="plot-bg" x="0" y="0" width={width} height={height} fill={CHROME.bg} />
       <defs>
         <clipPath id={clipId}><rect x="0" y="0" width={pw} height={ph} /></clipPath>
       </defs>
 
       {#each built.xTicks as t (t.v)}
-        <line data-role="axis" class="grid" x1={ox + t.px} y1={oy} x2={ox + t.px} y2={oy + ph} />
-        <text data-role="axis" class="tick" x={ox + t.px} y={oy + ph + 15} text-anchor="middle"
+        <line data-role="axis" class="grid" x1={ox + t.px} y1={oy} x2={ox + t.px} y2={oy + ph} stroke={CHROME.grid} />
+        <text data-role="axis" class="tick" x={ox + t.px} y={oy + ph + 15} text-anchor="middle" fill={CHROME.axis}
           >{fmtTick(t.v, xSpan)}</text>
       {/each}
       {#each built.yTicks as t (t.v)}
-        <line data-role="axis" class="grid" x1={ox} y1={oy + t.px} x2={ox + pw} y2={oy + t.px} />
-        <text data-role="axis" class="tick" x={ox - 7} y={oy + t.px + 3.5} text-anchor="end"
+        <line data-role="axis" class="grid" x1={ox} y1={oy + t.px} x2={ox + pw} y2={oy + t.px} stroke={CHROME.grid} />
+        <text data-role="axis" class="tick" x={ox - 7} y={oy + t.px + 3.5} text-anchor="end" fill={CHROME.axis}
           >{fmtTick(t.v, ySpan)}</text>
       {/each}
       {#each built.y2Ticks as t (t.v)}
-        <text data-role="axis" class="tick" x={ox + pw + 7} y={oy + t.px + 3.5} text-anchor="start"
+        <text data-role="axis" class="tick" x={ox + pw + 7} y={oy + t.px + 3.5} text-anchor="start" fill={CHROME.axis}
           >{fmtTick(t.v, y2Span)}</text>
       {/each}
 
-      <rect data-role="axis" class="frame" x={ox} y={oy} width={pw} height={ph} />
+      <rect data-role="axis" class="frame" x={ox} y={oy} width={pw} height={ph} fill="none" stroke={CHROME.frame} />
 
-      <text data-role="axis" class="axlab" x={ox + pw / 2} y={height - 6} text-anchor="middle"
+      <text data-role="axis" class="axlab" x={ox + pw / 2} y={height - 6} text-anchor="middle" fill={CHROME.axis}
         >{model.xLabel}</text>
       <text data-role="axis" class="axlab" transform="translate(14 {oy + ph / 2}) rotate(-90)"
-        text-anchor="middle">{model.yLabel}</text>
+        text-anchor="middle" fill={CHROME.axis}>{model.yLabel}</text>
       {#if model.y2Label && built.y2Ticks.length > 0}
         <text data-role="axis" class="axlab" transform="translate({width - 8} {oy + ph / 2}) rotate(90)"
-          text-anchor="middle">{model.y2Label}</text>
+          text-anchor="middle" fill={CHROME.axis}>{model.y2Label}</text>
       {/if}
 
       <g transform="translate({ox} {oy})">
@@ -360,9 +380,15 @@
         </g>
         {#if viewState && !model.squareAspect}
           <!-- Transparent capture layer over the data area; pointer
-               gestures are measured relative to this rect's origin. -->
+               gestures are measured relative to this rect's origin.
+               fill="transparent" is INLINE (not just scoped CSS): it is
+               the last-painted element over the data, so in a standalone
+               export SVG — where the scoped CSS is gone — a missing fill
+               would default to opaque BLACK and hide the whole plot. -->
           <rect
             class="capture"
+            data-role="capture"
+            fill="transparent"
             role="application"
             aria-label="Plot area — drag to {mode === 'pan' ? 'pan' : 'box-zoom'}, double-click to auto-fit"
             x="0"
