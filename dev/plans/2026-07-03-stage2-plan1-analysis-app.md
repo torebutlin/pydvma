@@ -2271,6 +2271,27 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   depth — switch to `setContext` at App root only if Task 10/12 need them 3+
   levels deep (tray → set-card → channel-row).
 
+- **A7 (Task 11 pre-verified pydvma API — orchestrator ran the signatures; use
+  these, NOT the plan's glue.py assumptions):**
+  - `TimeData(time_axis, time_data, settings, ...)`; `time_data` is
+    `(N_samples, N_channels)`, `time_axis` `(N_samples,)`.
+  - `calculate_fft(time_data, time_range=None, window=None)` → FreqData
+    `.freq_axis (Nf,)`, `.freq_data (Nf, N_chan)` complex128.
+  - `calculate_cross_spectrum_matrix(time_data, time_range=None, window=None,
+    N_frames=1, overlap=0.5)` → `.freq_axis`, `.Pxy (Nc,Nc,Nf)`, `.Cxy
+    (Nc,Nc,Nf)`. PSD = `np.real(np.einsum('iif->if', cs.Pxy))` → `(Nc, Nf)`.
+  - `calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1,
+    overlap=0.5)` → `.tf_data (Nf, N_out)` complex128, `.tf_coherence (Nf,
+    N_out)` or None. (N_out = non-input channels.)
+  - **`calculate_sonogram(time_data, nperseg=None, noverlap=None)`** — takes
+    `nperseg`/`noverlap`, **NOT `N_frames`** (plan's glue was wrong). Returns
+    SonoData `.time_axis`, `.freq_axis`, `.sono_data (Nf, Nt, N_chan)`
+    complex128 → glue takes a channel index and returns `np.abs(sono_data[:,:,ch])`
+    (2-D). Map the coupled-resolution control: `nperseg = nFft`,
+    `noverlap = nFft//2` (overlap 0.5).
+  - `analysis.clean_impulse` exists (Clean Impulse). `MySettings(channels=, fs=,
+    device_driver='mock')` is valid (the mock path — no audio/NI in the worker).
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
