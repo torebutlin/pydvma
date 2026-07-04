@@ -16,7 +16,8 @@ export interface DvmaItem {
    *  round-trip `__uuid__` / `__datetime__` / `__array__` / `__float__`
    *  tags losslessly back to python. Present on items read from a
    *  .dvma file. JS-authored items must LEAVE THIS UNSET — their plain
-   *  `meta` is finite-checked and written directly. Do NOT delete this
+   *  `meta` is written directly (writeDvma finite-checks whichever
+   *  view it serializes). Do NOT delete this
    *  wholesale to "apply" `meta` edits: python would then reload the
    *  tagged values (datetime / uuid / ndarray) as plain strings and
    *  lists. Use `setItemMeta` instead. */

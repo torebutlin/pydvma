@@ -131,9 +131,12 @@ export function readDvma(bytes: Uint8Array): DvmaDataset {
  * JS — plain strings/numbers/lists, which python's _decode_value
  * accepts as-is. The manifest must stay strict JSON (python reads it
  * with the default parser), and JSON.stringify silently turns
- * NaN/Infinity into null — so untagged non-finite floats in a
- * fallback `meta` (or in `settings`) are rejected here rather than
- * corrupted.
+ * NaN/Infinity into null — so whatever metadata/settings are about to
+ * be serialized are ALWAYS finite-checked and rejected rather than
+ * corrupted. (Python-written values pass trivially: their manifest
+ * came through json.dumps(allow_nan=False) and __float__ tag values
+ * are strings; the check catches bare non-finite numbers injected
+ * later, e.g. via setItemMeta.)
  */
 export function writeDvma(ds: DvmaDataset): Uint8Array {
   const files: Record<string, Uint8Array> = {};
@@ -150,10 +153,8 @@ export function writeDvma(ds: DvmaDataset): Uint8Array {
       arrays[field] = member;
     }
     const meta = item.metaRaw ?? item.meta;
-    if (item.metaRaw === undefined) {
-      assertFiniteJson(meta, `items[${index}].meta`);
-      assertFiniteJson(item.settings, `items[${index}].settings`);  // null-safe
-    }
+    assertFiniteJson(meta, `items[${index}].meta`);
+    assertFiniteJson(item.settings, `items[${index}].settings`);  // null-safe
     manifest.items.push({ kind: item.kind, arrays, meta, settings: item.settings });
   });
   files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest, null, 1));

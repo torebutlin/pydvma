@@ -104,3 +104,9 @@ test('rejects non-finite meta on a JS-authored item (no metaRaw)', () => {
   expect(() => writeDvma({ formatVersion: 1, pydvmaVersion: 'x', items: [jsItem] }))
     .toThrow(/items\[0\]\.meta\.gain/);
 });
+
+test('rejects non-finite meta injected via setItemMeta on a python-read item', () => {
+  const ds = readDvma(bytes);
+  setItemMeta(ds.items[0], 'gain', NaN);   // lands in metaRaw, which writeDvma serializes
+  expect(() => writeDvma(ds)).toThrow(/gain/);
+});
