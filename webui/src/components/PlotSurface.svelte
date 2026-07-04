@@ -14,7 +14,13 @@
    * - pan mode: dragging pans a LOCAL preview range (rAF-throttled,
    *   no store writes); releasing commits EXACTLY ONE `setRange` —
    *   gesture coalescing that the store's 50-entry history cap
-   *   depends on (plan amendment A3).
+   *   depends on (plan amendment A3). A pan under 6 px total travel is
+   *   a click and commits nothing (matches box mode's click dead-zone).
+   * - the drag `mode` is latched at pointerdown, so a mid-drag mode flip
+   *   can't reroute an in-flight gesture onto the wrong branch.
+   * - pointercancel / lostpointercapture (interrupted gesture: touch
+   *   stolen, OS focus loss) clears the band / pan preview and resets
+   *   state WITHOUT committing — a fresh pointerdown then starts clean.
    * - double-click anywhere on the plot → `autoFit`.
    * - the guardrail extent is recomputed from the model's lines via
    *   `dataExtent` (cheap: only runs when the model changes), so
@@ -131,6 +137,33 @@
   let rafId = 0;                     // pending rAF for coalesced pan moves
   let pendingPan: { dxPx: number; dyPx: number } | null = null;
   let activePointer = 0;
+  // `mode` latched at pointerdown: the whole gesture's move/up handlers
+  // branch on THIS, not the live prop, so a mid-drag mode flip
+  // (programmatic/keyboard) can't route a pan-started gesture through the
+  // box branch on release and strand `panPreview`.
+  let gestureMode: 'box' | 'pan' = 'box';
+
+  /** Drags below this many px (total travel) are treated as clicks. */
+  const MIN_DRAG_PX = 6;
+
+  /**
+   * Abandon the in-flight gesture WITHOUT committing a setRange: clear
+   * the rubber band, cancel any pending pan rAF, drop the pan preview,
+   * and reset all drag bookkeeping. Shared by pointercancel and
+   * lostpointercapture (interrupted gestures — touch stolen, OS focus
+   * loss — deliver no pointerup, so without this the dashed band or an
+   * applied panPreview would stay painted). A fresh pointerdown then
+   * starts from clean state.
+   */
+  function abortGesture() {
+    dragging = false;
+    activePointer = 0;
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    band = null;
+    panPreview = null;
+    pendingPan = null;
+    panStartDom = null;
+  }
 
   /** Pointer position relative to the inner plot rect (data area). */
   function localXY(e: PointerEvent): { x: number; y: number } | null {
@@ -154,8 +187,11 @@
     if (!p) return;
     dragging = true;
     activePointer = e.pointerId;
+    // Latch the mode for the whole gesture (fix: mid-drag mode flips must
+    // not switch which branch move/up take).
+    gestureMode = mode;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    if (mode === 'pan') {
+    if (gestureMode === 'pan') {
       panStartX = p.x; panStartY = p.y;
       panStartDom = { x: [...built!.xDomain], y: [...built!.yDomain] };
     } else {
@@ -167,7 +203,7 @@
     if (!dragging || e.pointerId !== activePointer) return;
     const p = localXY(e);
     if (!p) return;
-    if (mode === 'pan') {
+    if (gestureMode === 'pan') {
       // Coalesce moves: stash the latest delta, apply once per frame.
       pendingPan = { dxPx: p.x - panStartX, dyPx: p.y - panStartY };
       if (!rafId) {
@@ -187,8 +223,9 @@
   function onPointerUp(e: PointerEvent) {
     if (!dragging || e.pointerId !== activePointer) return;
     dragging = false;
+    activePointer = 0;
     try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* already released */ }
-    if (mode === 'pan') {
+    if (gestureMode === 'pan') {
       if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
       // Commit EXACTLY ONE setRange for the whole gesture. Use the final
       // pointer position (not a stale rAF preview) so the commit matches
@@ -198,9 +235,16 @@
         const delta = p
           ? { dxPx: p.x - panStartX, dyPx: p.y - panStartY }
           : (pendingPan ?? { dxPx: 0, dyPx: 0 });
-        const r = panBy(panStartDom, delta, { width: pw, height: ph });
-        const c = clampToData(r as { x: [number, number]; y: [number, number] }, fullExtent);
-        viewState.setRange(get(viewState.active), c);
+        // Dead-zone (fix): a pan that never travelled past MIN_DRAG_PX is a
+        // click, not a pan — committing it would push a no-op history entry
+        // (a click pushes 1, a double-click ~3). Below threshold: commit
+        // nothing. (Box mode already rejects sub-threshold drags upstream
+        // via rubberBandToRange returning null.)
+        if (Math.hypot(delta.dxPx, delta.dyPx) >= MIN_DRAG_PX) {
+          const r = panBy(panStartDom, delta, { width: pw, height: ph });
+          const c = clampToData(r as { x: [number, number]; y: [number, number] }, fullExtent);
+          viewState.setRange(get(viewState.active), c);
+        }
       }
       panPreview = null;
       pendingPan = null;
@@ -219,6 +263,23 @@
         }
       }
     }
+  }
+
+  /**
+   * Interrupted gesture (touch stolen, OS focus loss, capture lost): no
+   * pointerup arrives, so run the shared cleanup and commit nothing. The
+   * `activePointer` guard means a stale event for a non-active pointer is
+   * ignored (except lostpointercapture, which the browser fires without a
+   * usable pointerId match — it always means our capture is gone).
+   */
+  function onPointerCancel(e: PointerEvent) {
+    if (!dragging || e.pointerId !== activePointer) return;
+    abortGesture();
+  }
+
+  function onLostPointerCapture() {
+    if (!dragging) return;
+    abortGesture();
   }
 
   function onDblClick() {
@@ -311,6 +372,8 @@
             onpointerdown={onPointerDown}
             onpointermove={onPointerMove}
             onpointerup={onPointerUp}
+            onpointercancel={onPointerCancel}
+            onlostpointercapture={onLostPointerCapture}
             ondblclick={onDblClick}
           />
         {/if}

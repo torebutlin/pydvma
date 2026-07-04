@@ -78,6 +78,13 @@
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const forcedNarrow = params.get('narrow') === '1';
   const fixtureRequested = params.get('fixture') === '1';
+  // `?fixture=1` also opens a read-only e2e test hook: `window.__viewState`
+  // exposes the live view-state store so Playwright can assert on the
+  // active view's range and zoom-history length without brittle DOM
+  // scraping. Gated on the fixture flag so it never exists in normal runs.
+  if (typeof window !== 'undefined' && fixtureRequested) {
+    (window as unknown as { __viewState?: typeof viewState }).__viewState = viewState;
+  }
 
   let mediaNarrow = $state(false);
   const narrow = $derived(forcedNarrow || mediaNarrow);
