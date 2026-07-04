@@ -2214,6 +2214,12 @@ metadata + NI, browser-tab-title levels, PWA packaging.
   owns any auto-re-solo UX after deleting the soloed set (store deliberately
   does not re-solo — survivor states are inviolate).
 
+- **A3 (Task 5):** `restore()` validates snapshots (all four ViewId slices
+  present, merged over `fresh()`, bad `active` → 'time'; invalid snapshots
+  ignored). `setRange` history is capped at 50 — **Task 7 must coalesce
+  continuous zoom/pan gestures into ONE setRange per gesture.** `restore`
+  takes `unknown`. Resolution fns document fs/duration > 0 preconditions.
+
 ## Self-review record
 
 - Spec coverage for Plan-1 scope verified against §13 (see Task 16 Step 3 for
