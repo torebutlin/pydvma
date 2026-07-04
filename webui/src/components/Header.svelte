@@ -10,22 +10,30 @@
    * actions, which invoke the `onload` / `onsave` callbacks — wired to
    * real handlers in Task 13; here they just emit.
    *
-   * The flex slot between the mark and the actions is RESERVED for the
-   * live level meters / CLIP indicator that arrive in Plan 2, and the
-   * autosave + working-dir chips that arrive in Task 13. They are left
-   * as empty placeholders on purpose — no fake meters or data.
+   * The flex slot between the mark and the actions holds the working-dir
+   * chip (Task 13): it shows the chosen folder's name (File System Access
+   * API) or "Downloads" in the download/upload fallback, and clicking it
+   * fires `onpickdir` to (re)pick a folder. The live level meters / CLIP
+   * indicator (Plan 2) will share this slot later — left as an empty
+   * placeholder for now (no fake meters or data).
    */
   let {
     summary = 'no data',
+    workdirName = 'Downloads',
     onload = () => {},
     onsave = () => {},
+    onpickdir = () => {},
   }: {
     /** Summary-chip text, e.g. "44.1 kHz · 2 sets"; "no data" when empty. */
     summary?: string;
-    /** Fired by the Load Data button (real handler wired in Task 13). */
+    /** Working-directory chip label: folder name, or "Downloads" (fallback). */
+    workdirName?: string;
+    /** Fired by the Load Data button (App wires the load pipeline). */
     onload?: () => void;
-    /** Fired by the Save Dataset button (real handler wired in Task 13). */
+    /** Fired by the Save Dataset button (App wires the save pipeline). */
     onsave?: () => void;
+    /** Fired by the working-dir chip to (re)pick a folder. */
+    onpickdir?: () => void;
   } = $props();
 </script>
 
@@ -36,7 +44,15 @@
     title="Current acquisition settings — editing arrives in Setup (Plan 2)"
   >{summary}</button>
 
-  <!-- Reserved: level meters / CLIP (Plan 2), autosave + working-dir chips (Task 13). -->
+  <!-- Working-directory chip: click to pick a folder (or download fallback). -->
+  <button
+    class="chipbtn dir"
+    data-testid="workdir-chip"
+    title="Working folder — where Save Dataset writes and autosave persists. Click to choose."
+    onclick={onpickdir}
+  ><span class="dir-ico" aria-hidden="true">▾</span>{workdirName}</button>
+
+  <!-- Reserved: level meters / CLIP indicator (Plan 2). -->
   <div class="hdr-slot" aria-hidden="true"></div>
 
   <div class="hdr-right">
@@ -88,6 +104,14 @@
   .chipbtn:hover {
     border-color: #c6cbd6;
     background: #fff;
+  }
+  .chipbtn.dir {
+    font: 12px var(--font-mono);
+    max-width: 200px;
+  }
+  .dir-ico {
+    font-size: 9px;
+    color: var(--muted);
   }
   /* Reserved flex slot — grows to push actions right until Plan 2/Task 13 fill it. */
   .hdr-slot {

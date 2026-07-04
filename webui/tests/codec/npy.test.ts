@@ -36,14 +36,32 @@ test('round-trips float64 and complex128', () => {
   }
 });
 
-test('rejects fortran order', () => {
-  const a = parseNpy(fix('f8_2x3.npy'));
-  const forged = new Uint8Array(serializeNpy(a));
-  // Overwrite 'False' -> 'True ' in place at its byte offset. (Decoding the
-  // whole prefix as UTF-8 and re-encoding would mangle the 0x93 magic byte.)
+test('reads fortran order, transposed to C-order (legacy sono/coherence)', () => {
+  // Legacy pydvma stores some multi-D arrays (sonogram, coherence) as
+  // fortran_order=True. Build a fortran-ordered 2x3 whose LOGICAL values are
+  // [[0,1,2],[3,4,5]]: C-order storage is 0,1,2,3,4,5; F-order (column-major)
+  // is 0,3,1,4,2,5. parseNpy must transpose it back to row-major on read.
+  const forged = new Uint8Array(
+    serializeNpy({ shape: [2, 3], isComplex: false, data: Float64Array.from([0, 3, 1, 4, 2, 5]) }),
+  );
+  const at = new TextDecoder('latin1').decode(forged.subarray(0, 128)).indexOf('False');
+  forged.set(new TextEncoder().encode('True '), at); // flip the flag; keep the F-order bytes
+  const a = parseNpy(forged);
+  expect(a.shape).toEqual([2, 3]);
+  expect(Array.from(a.data as Float64Array)).toEqual([0, 1, 2, 3, 4, 5]); // C-order
+});
+
+test('reads fortran-order complex, interleaved and transposed', () => {
+  // Logical 2x2 complex [[1+2i, 3+4i],[5+6i, 7+8i]]. Interleaved C-order is
+  // 1,2,3,4,5,6,7,8. F-order (column-major over elements) is 1,2,5,6,3,4,7,8.
+  const forged = new Uint8Array(
+    serializeNpy({ shape: [2, 2], isComplex: true, data: Float64Array.from([1, 2, 5, 6, 3, 4, 7, 8]) }),
+  );
   const at = new TextDecoder('latin1').decode(forged.subarray(0, 128)).indexOf('False');
   forged.set(new TextEncoder().encode('True '), at);
-  expect(() => parseNpy(forged)).toThrow(/fortran/i);
+  const a = parseNpy(forged);
+  expect(a.isComplex).toBe(true);
+  expect(Array.from(a.data as Float64Array)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]); // C-order [re,im,...]
 });
 
 test('rejects truncated data', () => {

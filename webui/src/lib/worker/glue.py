@@ -15,9 +15,11 @@ Real arrays ravel; complex arrays interleave ``[re, im, re, im, ...]``. The
 JS side has one uniform decoder for both. Maths always runs here in pydvma —
 never reimplemented in JS.
 """
+import io
+
 import numpy as np
 import pydvma as dvma
-from pydvma import analysis, datastructure
+from pydvma import analysis, container, datastructure
 
 
 def _arr(a):
@@ -123,6 +125,48 @@ def calc_tf_averaged(sets, ch_in, window):
     tf = analysis.calculate_tf_averaged(tdl, ch_in=int(ch_in), window=(window or None))
     coh = None if tf.tf_coherence is None else _arr(tf.tf_coherence)
     return {'freq_axis': _arr(tf.freq_axis), 'tf_data': _arr(tf.tf_data), 'coherence': coh}
+
+
+def legacy_to_dvma(npy_bytes):
+    """Convert a legacy pickle ``.npy`` (pydvma <=1.4.0) to ``.dvma`` bytes.
+
+    Old pydvma saved a dataset as a length-1 object ndarray pickled into a
+    ``.npy`` file (``np.save(..., np.array([DataSet(...)]))``). ``npy_bytes``
+    arrives as a JS ``Uint8Array`` (which ``bytes(...)`` faithfully turns into
+    a Python ``bytes``); it is loaded with ``allow_pickle=True`` /
+    ``fix_imports=True`` (Py2->Py3 pickle compatibility), the single ``DataSet``
+    is pulled out (``d[0]``), and ``container.save`` writes a real ``.dvma``
+    zip. That file is read back from pyodide's in-memory ``/tmp`` and returned
+    as ``{'dvma': <bytes>}``.
+
+    The returned Python ``bytes`` marshals across the worker's ``toJs``
+    (``create_proxies=False``) boundary as a JS ``Uint8Array`` — exactly what
+    the client feeds to ``readDvma``. (``container.save`` takes a FILENAME, not
+    a buffer, so the ``/tmp`` hop is required; pyodide's FS is in-memory.)
+    """
+    d = np.load(io.BytesIO(bytes(npy_bytes)), allow_pickle=True, fix_imports=True)
+    container.save(d[0], '/tmp/legacy.dvma')
+    with open('/tmp/legacy.dvma', 'rb') as f:
+        return {'dvma': f.read()}
+
+
+def mat_to_dvma(mat_bytes):
+    """Import a JW-logger MATLAB ``.mat`` file and return ``.dvma`` bytes.
+
+    ``mat_bytes`` (a JS ``Uint8Array``) is written to pyodide's in-memory
+    ``/tmp`` because ``pydvma.file.import_from_matlab_jwlogger`` reads from a
+    FILENAME (signature ``(filename=None)``). The resulting dataset is saved
+    with ``container.save`` and the ``.dvma`` bytes read back, returned as
+    ``{'dvma': <bytes>}`` — marshalled to a JS ``Uint8Array`` for ``readDvma``,
+    same as ``legacy_to_dvma``.
+    """
+    from pydvma import file as pfile
+    with open('/tmp/import.mat', 'wb') as f:
+        f.write(bytes(mat_bytes))
+    ds = pfile.import_from_matlab_jwlogger(filename='/tmp/import.mat')
+    container.save(ds, '/tmp/import.dvma')
+    with open('/tmp/import.dvma', 'rb') as f:
+        return {'dvma': f.read()}
 
 
 def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):

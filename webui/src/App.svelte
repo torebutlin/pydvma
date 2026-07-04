@@ -27,20 +27,37 @@
   import ZoomToolbar from './components/ZoomToolbar.svelte';
   import Legend from './components/Legend.svelte';
   import EngineProbe from './components/EngineProbe.svelte';
+  import ToastHost from './components/ToastHost.svelte';
   import { createViewState } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
   import { createEngineStore } from './lib/stores/engine';
+  import { createToasts } from './lib/stores/toast';
   import { createActions } from './lib/analysis/actions';
   import { buildPlotModel, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
   import { dataExtent, type PlotModel } from './lib/plot/build';
-  import { readDvma } from './lib/codec/dvma';
+  import { readDvma, writeDvma } from './lib/codec/dvma';
+  import { sniffFormat } from './lib/files/sniff';
+  import { fallbackDir, pickWorkDir, restoreWorkDir, type WorkDir } from './lib/files/workdir';
+  import { autosave, clearAutosave, restoreOffer } from './lib/files/autosave';
+  import type { DvmaDataset } from './lib/model/dataset';
   import impulseUrl from './assets/impulse.dvma?url';
 
   // Shared stores — created once at app root.
   const viewState = createViewState();
   const selection = createSelection();
   const engine = createEngineStore();
+  const toasts = createToasts();
   const actions = createActions(engine, selection);
+
+  // ---- File I/O state (Task 13): working directory + autosave ----
+  // The working directory is where Save writes and autosave persists.
+  // Null until restored/picked → the pipeline falls back to download/upload.
+  let workdir = $state<WorkDir | null>(null);
+  const workdirName = $derived(workdir?.name ?? 'Downloads');
+  // Autosave defaults ON; every dataset mutation schedules a debounced write.
+  let autosaveEnabled = $state(true);
+  // The current dataset (subscribed below to drive autosave).
+  const datasetStore = actions.dataset;
 
   const derivedStore = actions.derived;
   const computeError = actions.computeError;
@@ -74,17 +91,148 @@
         .catch((e) => console.error('[fixture] load failed:', e));
     }
 
-    if (forcedNarrow || typeof window.matchMedia !== 'function') return;
+    // Restore last session's working folder (File System Access API), then
+    // offer to restore an autosaved session if one is waiting in IndexedDB.
+    // Both are best-effort and never block the shell. Skipped under
+    // ?fixture=1 so the e2e fixture load is not clobbered by a restore.
+    if (!fixtureRequested) void bootFileRestore();
+
+    // Autosave: on every dataset mutation, schedule a debounced write.
+    const unsubDataset = datasetStore.subscribe((ds) => {
+      if (!ds) return;
+      autosave(writeDvma(ds), workdir, autosaveEnabled);
+    });
+
+    if (forcedNarrow || typeof window.matchMedia !== 'function') return () => unsubDataset();
     const mq = window.matchMedia('(max-width: 1000px)');
     mediaNarrow = mq.matches;
     const update = (e: MediaQueryListEvent) => (mediaNarrow = e.matches);
     mq.addEventListener('change', update);
-    return () => mq.removeEventListener('change', update);
+    return () => {
+      unsubDataset();
+      mq.removeEventListener('change', update);
+    };
   });
 
-  // Load / Save are wired to real handlers in Task 13; here they no-op.
-  const onload = () => {};
-  const onsave = () => {};
+  /**
+   * Boot-time file restore: reconnect last session's working folder, then
+   * — if an autosave is waiting — show a "Restore last session?" toast.
+   * Restore parses the autosaved bytes and loads them; Dismiss clears the
+   * autosave so it never re-offers.
+   */
+  async function bootFileRestore(): Promise<void> {
+    try {
+      const dir = await restoreWorkDir();
+      if (dir) workdir = dir;
+    } catch (e) {
+      console.warn('[workdir] restore failed:', e);
+    }
+    let saved: Uint8Array | null = null;
+    try {
+      saved = await restoreOffer();
+    } catch (e) {
+      console.warn('[autosave] restore read failed:', e);
+    }
+    if (!saved) return;
+    const bytes = saved;
+    toasts.push('Restore last session?', {
+      level: 'info',
+      actions: [
+        {
+          label: 'Restore',
+          run: () => {
+            try {
+              actions.loadDataset(readDvma(bytes));
+            } catch (e) {
+              toasts.push(`Restore failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+            }
+          },
+        },
+        { label: 'Dismiss', run: () => void clearAutosave() },
+      ],
+    });
+  }
+
+  // ---- Load / Save pipeline (Task 13) ----
+
+  /**
+   * Convert loaded file bytes to a DvmaDataset by format. `.dvma` reads
+   * directly; legacy `.npy` and JW-logger `.mat` go through the engine
+   * (glue.py converts them to a .dvma container which `readDvma` then
+   * parses). The engine call boots pyodide lazily on first use.
+   */
+  async function toDataset(bytes: Uint8Array, name: string): Promise<DvmaDataset> {
+    const fmt = sniffFormat(bytes, name);
+    if (fmt === 'dvma') return readDvma(bytes);
+    if (fmt === 'npy' || fmt === 'mat') {
+      engine.boot(); // idempotent; the conversion op needs a live engine
+      const op = fmt === 'npy' ? 'legacy_to_dvma' : 'mat_to_dvma';
+      const payloadKey = fmt === 'npy' ? 'npy_bytes' : 'mat_bytes';
+      const res = await engine.enqueue<{ dvma: Uint8Array } | Map<string, Uint8Array>>(op, {
+        [payloadKey]: bytes,
+      });
+      const dvma = res instanceof Map ? res.get('dvma')! : res.dvma;
+      return readDvma(dvma instanceof Uint8Array ? dvma : new Uint8Array(dvma));
+    }
+    throw new Error(`unrecognised file "${name}" (not a .dvma, legacy .npy, or .mat)`);
+  }
+
+  /** Load Data: open a file via the working dir (or fallback), parse, load. */
+  const onload = async () => {
+    const dir = workdir ?? fallbackDir();
+    let picked: { bytes: Uint8Array; name: string } | null;
+    try {
+      picked = await dir.open();
+    } catch (e) {
+      toasts.push(`Could not open file: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+      return;
+    }
+    if (!picked) return; // user cancelled
+    try {
+      const ds = await toDataset(picked.bytes, picked.name);
+      actions.loadDataset(ds);
+      toasts.push(`Loaded ${picked.name}`, { level: 'success' });
+    } catch (e) {
+      toasts.push(`Load failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+    }
+  };
+
+  /** Default save filename: pydvma_YYYY-MM-DD_HHMM.dvma from the clock. */
+  function defaultSaveName(now: Date): string {
+    const p = (n: number) => String(n).padStart(2, '0');
+    const stamp = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}`;
+    return `pydvma_${stamp}.dvma`;
+  }
+
+  /** Save Dataset: prompt a name, write the .dvma, persist via the working dir. */
+  const onsave = async () => {
+    const ds = $datasetStore;
+    if (!ds) {
+      toasts.push('Nothing to save yet — load or acquire data first.', { level: 'info' });
+      return;
+    }
+    const suggested = defaultSaveName(new Date());
+    const name = window.prompt('Save dataset as…', suggested);
+    if (!name) return; // cancelled
+    const filename = name.toLowerCase().endsWith('.dvma') ? name : `${name}.dvma`;
+    try {
+      const bytes = writeDvma(ds);
+      const dir = workdir ?? fallbackDir();
+      await dir.save(filename, bytes);
+      await clearAutosave(); // a clean save supersedes any pending autosave
+      toasts.push(`Saved ${filename}`, { level: 'success' });
+    } catch (e) {
+      toasts.push(`Save failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+    }
+  };
+
+  /** Working-dir chip: (re)pick a folder (or fall back to download mode). */
+  const onpickdir = async () => {
+    workdir = await pickWorkDir();
+    if (workdir.kind === 'fsaccess') {
+      toasts.push(`Working folder: ${workdir.name}`, { level: 'success' });
+    }
+  };
 
   // ---- Plot model assembly (derived: dataset + selection + view) ----
 
@@ -199,7 +347,13 @@
 
 <div class="app" class:narrow>
   <EngineProbe />
-  <Header summary={hasData ? `${setArrays.length} set${setArrays.length === 1 ? '' : 's'}` : 'no data'} {onload} {onsave} />
+  <Header
+    summary={hasData ? `${setArrays.length} set${setArrays.length === 1 ? '' : 's'}` : 'no data'}
+    {workdirName}
+    {onload}
+    {onsave}
+    {onpickdir}
+  />
   <Ribbon {viewState} {narrow} />
   <ContextCard {narrow} {viewState} {selection} {actions} bind:freqMode bind:dynRangeDb bind:sonoSetIdx />
 
@@ -247,6 +401,8 @@
       {/if}
     </section>
   </main>
+
+  <ToastHost {toasts} />
 </div>
 
 <style>

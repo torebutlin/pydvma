@@ -12,6 +12,39 @@ const MAGIC = [0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59];
 // "unsupported dtype" rejection — the parse switch is exhaustive over these keys.
 const ELEM_BYTES = { '<f8': 8, '<f4': 4, '<c16': 16, '|b1': 1, '<i8': 8, '<i4': 4 } as const;
 
+/**
+ * Reorder a typed array from Fortran (column-major) storage to C (row-major)
+ * order for the given logical `shape`. `perElem` is the number of scalar
+ * slots per logical element (2 for interleaved complex, else 1). numpy can
+ * save a `fortran_order: True` .npy — pydvma's legacy sonogram/coherence
+ * arrays are stored this way — and the whole rest of this codebase assumes
+ * C-order buffers, so we transpose on read once rather than thread an order
+ * flag everywhere. 0/1-D arrays are already identical in both orders and
+ * pass through untouched.
+ */
+function fortranToC<T extends Float64Array | Float32Array | Uint8Array>(
+  src: T, shape: number[], perElem: number,
+): T {
+  if (shape.length < 2) return src;
+  const n = shape.reduce((a, b) => a * b, 1);
+  // C strides (row-major) and F strides (column-major) over logical elements.
+  const cStride = new Array(shape.length).fill(1);
+  for (let d = shape.length - 2; d >= 0; d--) cStride[d] = cStride[d + 1] * shape[d + 1];
+  const fStride = new Array(shape.length).fill(1);
+  for (let d = 1; d < shape.length; d++) fStride[d] = fStride[d - 1] * shape[d - 1];
+  const out = new (src.constructor as new (len: number) => T)(n * perElem);
+  const idx = new Array(shape.length).fill(0);
+  for (let c = 0; c < n; c++) {
+    // Multi-index for C-order position c → source offset via F strides.
+    let rem = c;
+    for (let d = 0; d < shape.length; d++) { idx[d] = Math.floor(rem / cStride[d]); rem -= idx[d] * cStride[d]; }
+    let f = 0;
+    for (let d = 0; d < shape.length; d++) f += idx[d] * fStride[d];
+    for (let e = 0; e < perElem; e++) out[c * perElem + e] = src[f * perElem + e];
+  }
+  return out;
+}
+
 export function parseNpy(bytes: Uint8Array): NpyArray {
   if (bytes.length < 10) throw new Error('not a .npy file');
   for (let i = 0; i < 6; i++) if (bytes[i] !== MAGIC[i]) throw new Error('not a .npy file');
@@ -25,7 +58,7 @@ export function parseNpy(bytes: Uint8Array): NpyArray {
   const fortran = /'fortran_order':\s*(True|False)/.exec(header)?.[1];
   const shapeTxt = /'shape':\s*\(([^)]*)\)/.exec(header)?.[1];
   if (!descr || !fortran || shapeTxt === undefined) throw new Error(`bad npy header: ${header}`);
-  if (fortran === 'True') throw new Error('fortran_order arrays are not supported');
+  const isFortran = fortran === 'True';
   const shape = shapeTxt.split(',').map(s => s.trim()).filter(Boolean).map(Number);
   if (shape.some(n => !Number.isInteger(n) || n < 0)) throw new Error(`bad npy shape: (${shapeTxt})`);
   const count = shape.reduce((a, b) => a * b, 1);
@@ -37,21 +70,25 @@ export function parseNpy(bytes: Uint8Array): NpyArray {
   const raw = bytes.slice(dataStart);
   if (raw.byteLength < count * elemBytes)
     throw new Error(`truncated .npy: need ${count * elemBytes} data bytes, got ${raw.byteLength}`);
+  // Fortran-stored multi-D arrays are transposed to C-order here so every
+  // downstream consumer sees the same row-major layout.
+  const fix = <T extends Float64Array | Float32Array | Uint8Array>(d: T, perElem: number): T =>
+    isFortran ? fortranToC(d, shape, perElem) : d;
   switch (descr as keyof typeof ELEM_BYTES) {
-    case '<f8': return { shape, isComplex: false, data: new Float64Array(raw.buffer, 0, count) };
-    case '<f4': return { shape, isComplex: false, data: new Float32Array(raw.buffer, 0, count) };
-    case '<c16': return { shape, isComplex: true, data: new Float64Array(raw.buffer, 0, count * 2) };
-    case '|b1': return { shape, isComplex: false, data: raw.subarray(0, count) };
+    case '<f8': return { shape, isComplex: false, data: fix(new Float64Array(raw.buffer, 0, count), 1) };
+    case '<f4': return { shape, isComplex: false, data: fix(new Float32Array(raw.buffer, 0, count), 1) };
+    case '<c16': return { shape, isComplex: true, data: fix(new Float64Array(raw.buffer, 0, count * 2), 2) };
+    case '|b1': return { shape, isComplex: false, data: fix(raw.subarray(0, count), 1) };
     case '<i8': {
       // int64 widened to float64: exact only within ±2^53
       const big = new BigInt64Array(raw.buffer, 0, count);
       const out = new Float64Array(count);
       for (let i = 0; i < count; i++) out[i] = Number(big[i]);
-      return { shape, isComplex: false, data: out };
+      return { shape, isComplex: false, data: fix(out, 1) };
     }
     case '<i4': {
       const ints = new Int32Array(raw.buffer, 0, count);
-      return { shape, isComplex: false, data: Float64Array.from(ints) };
+      return { shape, isComplex: false, data: fix(Float64Array.from(ints), 1) };
     }
   }
 }
