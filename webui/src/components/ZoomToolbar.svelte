@@ -35,6 +35,7 @@
    */
   import type { ViewState } from '../lib/stores/viewstate';
   import { fmtTick } from '../lib/plot/scales';
+  import { presetToXY, type LegendPreset } from '../lib/plot/legendPos';
 
   let {
     viewState,
@@ -90,6 +91,29 @@
     viewState.setRange($active, { x: [x0, x1], y: [y0, y1] });
     popOpen = false;
   }
+
+  // ---- Legend controls (mirrors into the active view's legend slice) ----
+
+  /** The active view's legend slice, read live for two-way sync. */
+  const legend = $derived($current.legend);
+
+  /** Preset buttons, labelled for the popover row. */
+  const PRESETS: { id: LegendPreset; label: string }[] = [
+    { id: 'ne', label: 'NE' }, { id: 'nw', label: 'NW' },
+    { id: 'se', label: 'SE' }, { id: 'sw', label: 'SW' },
+    { id: 'outside-right', label: 'Out ▸' },
+  ];
+
+  /** Show/hide the legend without disturbing its placement. */
+  function setLegendVisible(visible: boolean) {
+    viewState.setLegend($active, { ...legend, visible });
+  }
+
+  /** Snap the legend to a corner/edge preset (records the preset id). */
+  function applyPreset(id: LegendPreset) {
+    const { x, y } = presetToXY(id);
+    viewState.setLegend($active, { ...legend, x, y, preset: id });
+  }
 </script>
 
 <div class="zoom-bar" data-testid="zoom-toolbar" role="toolbar" aria-label="Plot navigation">
@@ -121,6 +145,22 @@
     <div class="row end">
       <button class="btn" onclick={() => (popOpen = false)}>Cancel</button>
       <button class="btn apply" onclick={applyLimits}>Apply</button>
+    </div>
+
+    <div class="sep"></div>
+    <div class="row">
+      <span class="grp">Legend</span>
+      <label class="toggle">
+        <input type="checkbox" checked={legend.visible}
+          onchange={(e) => setLegendVisible(e.currentTarget.checked)} />
+        <span>Show</span>
+      </label>
+    </div>
+    <div class="row presets" data-testid="legend-presets">
+      {#each PRESETS as p (p.id)}
+        <button class="pbtn" class:active={legend.visible && legend.preset === p.id}
+          title="Move legend: {p.label}" onclick={() => applyPreset(p.id)}>{p.label}</button>
+      {/each}
     </div>
   </div>
 {/if}
@@ -212,6 +252,48 @@
     background: #f2f4f8;
   }
   .btn.apply {
+    background: #eef0ff;
+    border-color: #c7d2fe;
+    color: var(--indigo, #4f46e5);
+  }
+  .sep {
+    height: 1px;
+    background: var(--border, #e3e6eb);
+    margin: 9px 0 7px;
+  }
+  .grp {
+    font: 600 11.5px var(--font-body, system-ui, sans-serif);
+    color: var(--text, #1b2437);
+  }
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    font: 11.5px var(--font-body, system-ui, sans-serif);
+    color: var(--muted, #66708a);
+    width: auto;
+    cursor: pointer;
+  }
+  .presets {
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .pbtn {
+    border: 1px solid var(--border, #e3e6eb);
+    background: #fff;
+    border-radius: 6px;
+    height: 24px;
+    min-width: 34px;
+    padding: 0 7px;
+    font: 600 11px var(--font-body, system-ui, sans-serif);
+    color: var(--text, #1b2437);
+    cursor: pointer;
+  }
+  .pbtn:hover {
+    background: #f2f4f8;
+  }
+  .pbtn.active {
     background: #eef0ff;
     border-color: #c7d2fe;
     color: var(--indigo, #4f46e5);

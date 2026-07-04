@@ -26,6 +26,9 @@ export interface SetView extends SetRecord { index: number; allOff: boolean; col
 /** One legend row. `setId` is the set's stable identity, not its position. */
 export interface LegendEntry { setId: number; ch: number; label: string; color: string; state: TriState; }
 
+/** The store object `createSelection()` returns (for component props). */
+export type Selection = ReturnType<typeof createSelection>;
+
 /**
  * Tri-state (on / fade / off) selection store for the sets-by-channels
  * matrix in the data-navigation panel.
