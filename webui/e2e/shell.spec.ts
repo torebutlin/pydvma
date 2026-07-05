@@ -10,11 +10,15 @@ test('wide shell: header buttons, unnumbered ribbon, gated stages', async ({ pag
   await expect(ribbon.getByRole('button', { name: 'Frequency' })).toBeEnabled();
   await expect(ribbon).not.toContainText(/[0-9]\./); // no numbering
 
-  // Gated stages (Acquire/Setup/Fit) are NAVIGABLE — clickable, and show an
+  // Setup/Acquire/Live are now real stages (the acquisition first-cut flips
+  // the liveSource capability on `acquire.init()`), so they render real cards.
+  // Fit stays gated (no fit engine) but NAVIGABLE — clicking it shows an
   // explanatory placeholder rather than a dead-disabled button.
   const acquire = ribbon.getByRole('button', { name: 'Acquire' });
   await expect(acquire).toBeEnabled();
-  await acquire.click();
+  const fit = ribbon.getByRole('button', { name: 'Fit' });
+  await expect(fit).toBeEnabled();          // gated but clickable
+  await fit.click();
   await expect(page.getByText(/arrives in a future update/i)).toBeVisible();
 });
 
