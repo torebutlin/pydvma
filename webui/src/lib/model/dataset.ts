@@ -3,6 +3,30 @@ import type { NpyArray } from '../codec/npy';
 export type DataKind = 'TimeData' | 'FreqData' | 'CrossSpecData' | 'TfData'
   | 'SonoData' | 'ModalData' | 'MetaData';
 
+/**
+ * Persisted UI state per item (Plan 2 persistence, additive to manifest).
+ *
+ * Stored as a `ui` key on each manifest item entry, alongside `kind`,
+ * `arrays`, `meta`, and `settings`. Python's `container.load` ignores
+ * unknown manifest keys, so this is backwards-compatible — a `.dvma`
+ * written with `ui` opens in older pydvma without error. Conversely,
+ * a `.dvma` without `ui` loads fine here (all fields optional).
+ *
+ * - `channel_labels`: sparse map `{ "0": "hammer", "2": "accel" }`;
+ *   keys are channel indices (stringified), values are custom labels.
+ *   Missing entries use the default `ch_${i}`.
+ * - `analysis`: per-view analysis settings that were active for this
+ *   set at save time. Partial — missing keys take `defaults()` on load.
+ */
+export interface DvmaItemUi {
+  channel_labels?: Record<string, string>;
+  analysis?: {
+    freq?: { window?: string; mode?: 'fft' | 'psd' | 'csd'; nFrames?: number };
+    tf?: { chIn?: number; window?: string; averaging?: 'none' | 'within' | 'across'; nFrames?: number };
+    sono?: { nFft?: number; dynRangeDb?: number };
+  };
+}
+
 export interface DvmaItem {
   kind: DataKind;
   arrays: Record<string, NpyArray>;          // e.g. time_axis, time_data
@@ -23,6 +47,10 @@ export interface DvmaItem {
    *  lists. Use `setItemMeta` instead. */
   metaRaw?: Record<string, unknown>;
   settings: Record<string, unknown> | null;
+  /** Persisted UI state: custom channel labels and per-set analysis
+   *  settings. Additive; absent on files written by older pydvma or
+   *  before any UI customisation. See `DvmaItemUi`. */
+  ui?: DvmaItemUi;
 }
 
 export interface DvmaDataset {
