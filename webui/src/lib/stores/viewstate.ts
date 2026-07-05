@@ -7,10 +7,22 @@ export type TfPlotType = 'mag' | 'phase' | 'bode' | 'real' | 'imag' | 'nyquist';
 /** Axis ranges; `null` means "auto-fit to data" on that axis. */
 export interface Range { x: [number, number] | null; y: [number, number] | null; }
 
+/** Axis scale: linear or log10. See `ViewSlice.xScale`/`yScale`. */
+export type AxisScale = 'lin' | 'log';
+
 /**
  * Per-view UI state slice: current axis range, zoom history (undo /
  * redo stacks), TF plot type (used by the tf view only; ignored
- * elsewhere), coherence overlay flag, and legend placement.
+ * elsewhere), coherence overlay flag, legend placement, and the axis
+ * scale toggles (R3).
+ *
+ * `xScale` = the FREQUENCY x-axis: `'log'` renders decade log10 on the
+ * frequency/tf views (the time view's x is time and stays linear
+ * regardless). `yScale` = the MAGNITUDE representation, a model change
+ * not just an axis scale: `'log'` (default) → dB (`20·log10|H|`,
+ * `10·log10` PSD); `'lin'` → linear `|H|` / raw PSD. Applies to the
+ * magnitude views (FFT mag / TF mag / PSD); ignored on
+ * phase/real/imag/Nyquist and the time view.
  */
 export interface ViewSlice {
   range: Range;
@@ -18,6 +30,8 @@ export interface ViewSlice {
   plotType: TfPlotType;              // used by tf only; ignored elsewhere
   coherence: boolean;
   legend: { visible: boolean; x: number; y: number; preset: string | null };
+  xScale: AxisScale;                 // frequency axis lin↔log10 (freq/tf only)
+  yScale: AxisScale;                 // magnitude dB (log, default) ↔ linear
 }
 
 const fresh = (): ViewSlice => ({
@@ -26,6 +40,9 @@ const fresh = (): ViewSlice => ({
   // Default to the TOP-LEFT (nw): the zoom/nav toolbar occupies the
   // top-right, so an 'ne' default legend would sit under its buttons.
   legend: { visible: true, x: 0.02, y: 0.02, preset: 'nw' },
+  // x linear; y log so magnitude renders in dB by default (unchanged
+  // from the pre-R3 behaviour).
+  xScale: 'lin', yScale: 'log',
 });
 
 /** The store object `createViewState()` returns (for component props). */
@@ -105,6 +122,16 @@ export function createViewState() {
    */
   function setCoherence(on: boolean) { patch(get(active), v => ({ ...v, coherence: on })); }
 
+  /**
+   * Set the ACTIVE view's frequency x-axis scale (`'lin'`/`'log'`).
+   * Scoped to the active view (like `setPlotType`) because it is only
+   * ever driven from the active view's toolbar/card.
+   */
+  function setXScale(s: AxisScale) { patch(get(active), v => ({ ...v, xScale: s })); }
+
+  /** Set the ACTIVE view's magnitude scale (`'log'` = dB, `'lin'` = |H|). */
+  function setYScale(s: AxisScale) { patch(get(active), v => ({ ...v, yScale: s })); }
+
   /** Set view `id`'s legend placement/visibility. */
   function setLegend(id: ViewId, legend: ViewSlice['legend']) { patch(id, v => ({ ...v, legend })); }
 
@@ -139,7 +166,7 @@ export function createViewState() {
     sharedFreqRange: derived(views, $v => $v.tf.range.x ?? $v.frequency.range.x),
 
     activate, setRange, back, forward, autoFit,
-    setPlotType, setCoherence, setLegend,
+    setPlotType, setCoherence, setXScale, setYScale, setLegend,
     serialize, restore,
   };
 }

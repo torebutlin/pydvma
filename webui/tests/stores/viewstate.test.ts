@@ -87,6 +87,56 @@ test('zoom history is capped at 50 entries; back() still walks correctly', () =>
   expect(get(vs.current).range.x).toEqual([0, 10]);
 });
 
+// ---- axis scale toggles (R3) ----
+
+test('xScale/yScale default lin/log; setters scope to the active view', () => {
+  const vs = createViewState();
+  // Defaults: x linear, y log (magnitude stays dB by default).
+  expect(get(vs.current).xScale).toBe('lin');
+  expect(get(vs.current).yScale).toBe('log');
+
+  vs.activate('frequency');
+  vs.setXScale('log');
+  vs.setYScale('lin');
+  expect(get(vs.current).xScale).toBe('log');
+  expect(get(vs.current).yScale).toBe('lin');
+
+  // A different view is untouched (per-view, not global).
+  vs.activate('tf');
+  expect(get(vs.current).xScale).toBe('lin');
+  expect(get(vs.current).yScale).toBe('log');
+});
+
+test('restore merges xScale/yScale defaults over a stale snapshot lacking them', () => {
+  const vs = createViewState();
+  vs.activate('frequency');
+  vs.setXScale('log');
+  const snap = JSON.parse(JSON.stringify(vs.serialize()));
+  // Simulate an OLD snapshot from before R3: strip the new fields.
+  for (const id of ['time', 'frequency', 'tf', 'sono']) {
+    delete snap.views[id].xScale;
+    delete snap.views[id].yScale;
+  }
+  const vs2 = createViewState();
+  vs2.restore(snap);
+  vs2.activate('frequency');
+  // Missing fields fall back to the fresh() defaults, not undefined.
+  expect(get(vs2.current).xScale).toBe('lin');
+  expect(get(vs2.current).yScale).toBe('log');
+});
+
+test('xScale/yScale round-trip through serialize/restore', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  vs.setXScale('log');
+  vs.setYScale('lin');
+  const vs2 = createViewState();
+  vs2.restore(JSON.parse(JSON.stringify(vs.serialize())));
+  vs2.activate('tf');
+  expect(get(vs2.current).xScale).toBe('log');
+  expect(get(vs2.current).yScale).toBe('lin');
+});
+
 test('state is serialisable and restorable (debuggability, spec §11)', () => {
   const vs = createViewState();
   vs.setRange('sono', { x: [0, 2], y: [0, 1500] });
