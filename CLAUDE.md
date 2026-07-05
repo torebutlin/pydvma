@@ -11,12 +11,24 @@ tasks R1–R5) added per-set analysis settings + a tray-following
 Dataset dropdown, the ΔF resolution control (slider + editable
 textbox), log/lin axis toggles (x freq, y dB↔linear), TF **out/in**
 channel labels (fixed the multi-channel bug), and per-line relabel.
-All two-stage reviewed; combined suite green (pytest 205, vitest 226,
-e2e 26+7, build OK). **Still NOTHING pushed** — the CI/Pages workflows
-activate on the next `git push` (Tore's call). **Next up:** another
-hands-on pass on the redesign, then **Plan 2** (acquisition, a "Live"
-oscilloscope tab, Fit stage, calibration, a Figures/export-preview
-tab). Fresh session: read `dev/2026-07-05-hands-on-feedback.md`
+**Plan 2 in progress (a dispatch session, rescued 2026-07-05):** two
+chunks landed and are now committed. (1) **`.dvma` UI-state
+persistence** — per-set analysis settings + channel labels round-trip
+via an additive `ui` manifest key (`DvmaItemUi`); backwards-compatible
+(Python's `container.load` ignores it; older files load fine);
+`stampUiState()` writes on save/autosave, `loadDataset` restores. (2) A
+**first-cut acquisition + "Live" oscilloscope** (~1150 LOC + ~45 tests):
+Web Audio `lib/audio/source.ts`, `acquire`/`monitor` stores, an
+`OscCanvas` scope, Setup/Acquire/Live stage cards, and the
+setup/acquire/live stages. **CAVEAT: the acquisition/Live chunk has NOT
+yet been through the project's two-stage review** — it typechecks and
+its unit tests pass, but treat it as unreviewed until that's done. (The
+dispatch session hit a stale-git-lock issue and left the work
+uncommitted; the interactive session cleared two stale 0-byte
+`.git/*.lock` files and rescued it.) **Still NOTHING pushed** — CI/Pages
+activate on the next `git push` (Tore's call). **Next up:** review the
+acquisition/Live chunk, then a hands-on pass, then continue **Plan 2**
+(Fit stage, calibration, a Figures/export-preview tab). Fresh session: read `dev/2026-07-05-hands-on-feedback.md`
 (triage + what landed + the for-Tore notes) and the redesign plan;
 run instructions `cd webui && npm run dev`, open
 `http://localhost:5173/?fixture=1` (or `?fixture=3ch` for the
