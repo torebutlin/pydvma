@@ -14,8 +14,15 @@
    * name input, a button, the chevron or the ×.
    *
    * When expanded, one row per channel: a colour chip (click →
-   * `cycleLine`, dimmed to 40% when faded), a `ch_{c}` label, a sparkline
-   * and a state badge. Sparklines draw REAL data only — when
+   * `cycleLine`, dimmed to 40% when faded), a channel label (custom via
+   * `selection.channelLabel`, default `ch_{c}`; double-click → inline
+   * rename committed on Enter/blur, cancelled on Esc — mirrors the
+   * set-name rename), a sparkline and a state badge. The row is a
+   * `<button>` that cycles the tri-state on click; `onChRowClick` guards
+   * that cycle so it never fires while the rename input is open or when
+   * the click lands on the input itself (a single click still cycles; a
+   * double-click on the label edits). Sparklines draw REAL data only —
+   * when
    * `channelData(c)` returns a series it is min-max-decimated to ~60
    * columns; otherwise a flat muted placeholder line is shown (never
    * fabricated samples). A set whose lines are all off (`set.allOff`) is
@@ -37,8 +44,9 @@
   } = $props();
 
   const stateStore = $derived(selection.state);
+  const labelStore = $derived(selection.channelLabel);
 
-  // Inline-rename state.
+  // Inline set-name-rename state.
   let editing = $state(false);
   let draft = $state('');
 
@@ -60,12 +68,52 @@
     else if (e.key === 'Escape') cancelRename();
   }
 
+  // Inline channel-label-rename state (Task R5) — MIRRORS the set-name
+  // rename: double-click the `.ch-lab` → text input, committed on
+  // Enter/blur, cancelled on Esc. Only one channel edits at a time.
+  let editingCh = $state<number | null>(null);
+  let chDraft = $state('');
+
+  function startChRename(ch: number) {
+    chDraft = $labelStore(set.id, ch);
+    editingCh = ch;
+  }
+  function commitChRename() {
+    if (editingCh === null) return;
+    const ch = editingCh;
+    editingCh = null;
+    // renameChannel trims and treats blank as "reset to default", so we
+    // can hand it the raw draft — including an emptied field (reset).
+    selection.renameChannel(set.id, ch, chDraft);
+  }
+  function cancelChRename() {
+    editingCh = null;
+  }
+  function onChKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') commitChRename();
+    else if (e.key === 'Escape') cancelChRename();
+  }
+
   // Header click cycles the whole set — but only when the click did not
   // originate on an interactive control (name/input, button, chevron, ×).
   function onHeaderClick(e: MouseEvent) {
     const t = e.target as HTMLElement;
     if (t.closest('button, input, .set-name')) return;
     selection.cycleSet(set.id);
+  }
+
+  // The channel row is a <button> that cycles the tri-state on click.
+  // Guard the cycle so it does NOT fire while a rename input is open, when
+  // the click lands on the rename input, OR when it lands on the `.ch-lab`
+  // itself — the label is the rename affordance (double-click → edit), so
+  // like the set-name span it must be excluded from the toggle target, or
+  // a double-click's two `click` events would cycle the line twice on the
+  // way to opening the editor. A click anywhere ELSE on the row (chip,
+  // sparkline, badge) still cycles. Mirrors `onHeaderClick`'s guard list.
+  function onChRowClick(ch: number, e: MouseEvent) {
+    const t = e.target as HTMLElement;
+    if (editingCh === ch || t.closest('input, .ch-lab')) return;
+    selection.cycleLine(set.id, ch);
   }
 
   const SPARK_W = 46;
@@ -161,21 +209,45 @@
         {@const pts = sparkPoints(ch)}
         <!-- The WHOLE row cycles the line (chip + label + sparkline + badge),
              not just the colour chip — matches the mockup's click target. -->
+        {@const chLab = $labelStore(set.id, ch)}
         <button
           type="button"
           class="ch-row"
           class:st-fade={st === 'fade'}
           class:st-off={st === 'off'}
+          class:editing={editingCh === ch}
           data-testid={`ch-row-${ch}`}
-          title={`ch_${ch}: ${st} — click to cycle on → fade → off`}
+          title={`${chLab}: ${st} — click to cycle on → fade → off`}
           aria-label={`Toggle channel ${ch} (currently ${st})`}
-          onclick={() => selection.cycleLine(set.id, ch)}
+          onclick={(e) => onChRowClick(ch, e)}
         >
           <span
             class="ch-chip"
             style="background:{selection.lineColor(set.id, ch) ?? c}"
           ></span>
-          <span class="ch-lab">ch_{ch}</span>
+          {#if editingCh === ch}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="ch-lab-input"
+              type="text"
+              data-testid={`ch-lab-input-${ch}`}
+              bind:value={chDraft}
+              onkeydown={onChKeydown}
+              onblur={commitChRename}
+              onclick={(e) => e.stopPropagation()}
+              onmousedown={(e) => e.stopPropagation()}
+              ondblclick={(e) => e.stopPropagation()}
+              autofocus
+            />
+          {:else}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <span
+              class="ch-lab"
+              data-testid={`ch-lab-${ch}`}
+              title="Double-click to rename"
+              ondblclick={(e) => { e.stopPropagation(); startChRename(ch); }}
+            >{chLab}</span>
+          {/if}
           <svg class="spark" viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none" aria-hidden="true">
             {#if pts}
               <polyline points={pts} fill="none" stroke={selection.lineColor(set.id, ch) ?? c} stroke-width="1" />
@@ -351,6 +423,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .ch-lab-input {
+    font: 12px var(--font-mono);
+    width: 96px;
+    height: 20px;
+    border: 1px solid #a5b4fc;
+    border-radius: 5px;
+    padding: 0 4px;
+    box-sizing: border-box;
+  }
+  /* Keep the row from tinting/underlining the label while editing. */
+  .ch-row.editing {
+    cursor: default;
+  }
+  .ch-row.editing.st-off .ch-lab-input {
+    text-decoration: none;
   }
   .spark {
     width: 46px;

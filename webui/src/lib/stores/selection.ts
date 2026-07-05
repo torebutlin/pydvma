@@ -51,12 +51,25 @@ export function createSelection() {
   const sets = writable<SetRecord[]>([]);
   const states = writable<Map<string, TriState>>(new Map());
   const collapsed = writable<Set<number>>(new Set());
+  /**
+   * Custom per-channel labels (Task R5), a sparse Map keyed `"id:channel"`
+   * — a missing key means "use the default" (`ch_${c}`). Renaming a line
+   * writes here; a blank/whitespace label deletes the key (reset to
+   * default). Keyed by set id like `states`, so a `removeSet` cleanup and
+   * the never-reused id scheme keep labels from leaking between sets.
+   * IN-SESSION only for v1 — not persisted to `.dvma` (matches R1's
+   * per-set-settings decision).
+   * TODO: persist channel labels into the manifest as an additive
+   * follow-up (with the deferred per-set-settings persistence).
+   */
+  const labels = writable<Map<string, string>>(new Map());
   /** id of the currently soloed/highlighted set (initially 0). */
   const highlight = writable<number>(0);
   let nextId = 0;
 
   const key = (id: number, c: number) => `${id}:${c}`;
   const stateOf = (m: Map<string, TriState>, id: number, c: number) => m.get(key(id, c)) ?? 'on';
+  const labelOf = (m: Map<string, string>, id: number, c: number) => m.get(key(id, c)) ?? `ch_${c}`;
   const findSet = (id: number) => get(sets).find(s => s.id === id);
 
   function mutate(fn: (m: Map<string, TriState>) => void) {
@@ -93,6 +106,14 @@ export function createSelection() {
     sets, collapsed, highlight,
     /** Lookup function store: `$state(setId, ch)` -> TriState. */
     state: derived(states, m => (id: number, c: number) => stateOf(m, id, c)),
+    /**
+     * Lookup function store: `$channelLabel(setId, ch)` -> display label
+     * (Task R5). The custom label if one was set via `renameChannel`,
+     * else the default `ch_${ch}`. This is the accessor the tray, the
+     * legend and the TF out/in transform all read, so a rename shows up
+     * everywhere consistently.
+     */
+    channelLabel: derived(labels, m => (id: number, c: number) => labelOf(m, id, c)),
 
     /**
      * Register a dataset and return its stable id. Line colours are
@@ -125,6 +146,11 @@ export function createSelection() {
       const removed = list[idx];
       sets.set(list.filter(s => s.id !== id));
       mutate(m => { for (let c = 0; c < removed.nChannels; c++) m.delete(key(id, c)); });
+      labels.update(m => {
+        const n = new Map(m);
+        for (let c = 0; c < removed.nChannels; c++) n.delete(key(id, c));
+        return n;
+      });
       collapsed.update(cs => { const n = new Set(cs); n.delete(id); return n; });
       if (get(highlight) === id) {
         const rest = get(sets);
@@ -134,6 +160,24 @@ export function createSelection() {
     /** Rename set `id` (label edits propagate to the legend). */
     rename(id: number, name: string) {
       sets.update(l => l.map(s => (s.id === id ? { ...s, name } : s)));
+    },
+    /**
+     * Give line (set `id`, channel `ch`) a custom label (Task R5). The
+     * label is trimmed; a blank/whitespace label DELETES the custom entry
+     * so the channel reverts to its default `ch_${ch}`. Unknown set id is
+     * a no-op. Edits flow to the tray, the legend (`"<set> · <label>"`)
+     * and — via `channelLabel` — the TF out/in labels. Same copy-on-write
+     * discipline as the tri-state map: subscribers see one atomic update.
+     */
+    renameChannel(id: number, ch: number, label: string) {
+      if (!findSet(id)) return;
+      const trimmed = label.trim();
+      labels.update(m => {
+        const n = new Map(m);
+        if (trimmed) n.set(key(id, ch), trimmed);
+        else n.delete(key(id, ch));   // blank → reset to default
+        return n;
+      });
     },
     /** Line colour for (set id, channel) — the single source of truth
      *  the plot model must consume. Undefined for unknown id/channel. */
@@ -230,7 +274,7 @@ export function createSelection() {
       return soloed ?? 'all';
     }),
 
-    legendEntries: derived([sets, states], ([$sets, $states]) => {
+    legendEntries: derived([sets, states, labels], ([$sets, $states, $labels]) => {
       const out: LegendEntry[] = [];
       $sets.forEach(set => {
         const allOff = Array.from({ length: set.nChannels }, (_, c) => stateOf($states, set.id, c))
@@ -240,7 +284,7 @@ export function createSelection() {
           const st = stateOf($states, set.id, c);
           if (st === 'off') continue;
           out.push({ setId: set.id, ch: c, state: st,
-            label: `${set.name} · ch_${c}`,
+            label: `${set.name} · ${labelOf($labels, set.id, c)}`,
             color: set.colors[c] });
         }
       });

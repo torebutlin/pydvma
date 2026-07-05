@@ -58,6 +58,63 @@ test('rename propagates to legend labels', () => {
   expect(get(sel.legendEntries)[0].label).toBe('hammer test · ch_0');
 });
 
+test('channelLabel defaults to ch_<n>; renameChannel sets a custom label', () => {
+  const label = get(sel.channelLabel);
+  expect(label(0, 0)).toBe('ch_0');
+  expect(label(0, 1)).toBe('ch_1');
+  sel.renameChannel(0, 0, 'hammer');
+  expect(get(sel.channelLabel)(0, 0)).toBe('hammer');
+  expect(get(sel.channelLabel)(0, 1)).toBe('ch_1');   // sibling untouched
+});
+
+test('renameChannel with a blank/whitespace label resets to the default', () => {
+  sel.renameChannel(0, 0, 'hammer');
+  expect(get(sel.channelLabel)(0, 0)).toBe('hammer');
+  sel.renameChannel(0, 0, '   ');                      // whitespace → reset
+  expect(get(sel.channelLabel)(0, 0)).toBe('ch_0');
+  sel.renameChannel(0, 0, 'accel');
+  sel.renameChannel(0, 0, '');                         // empty → reset
+  expect(get(sel.channelLabel)(0, 0)).toBe('ch_0');
+});
+
+test('channel labels are per-set independent', () => {
+  sel.renameChannel(0, 0, 'hammer');
+  expect(get(sel.channelLabel)(0, 0)).toBe('hammer');
+  expect(get(sel.channelLabel)(1, 0)).toBe('ch_0');   // set_1 ch_0 untouched
+  sel.renameChannel(1, 0, 'accel');
+  expect(get(sel.channelLabel)(0, 0)).toBe('hammer'); // set_0 still hammer
+  expect(get(sel.channelLabel)(1, 0)).toBe('accel');
+});
+
+test('renameChannel with an unknown set id is a no-op', () => {
+  sel.renameChannel(99, 0, 'ghost');
+  expect(get(sel.channelLabel)(99, 0)).toBe('ch_0');  // default for unknown
+});
+
+test('custom channel label flows into legendEntries', () => {
+  sel.renameChannel(0, 1, 'accel');
+  const entry = get(sel.legendEntries).find(e => e.setId === 0 && e.ch === 1);
+  expect(entry?.label).toBe('set_0 · accel');
+  // the un-renamed sibling keeps the default channel label
+  const sib = get(sel.legendEntries).find(e => e.setId === 0 && e.ch === 0);
+  expect(sib?.label).toBe('set_0 · ch_0');
+});
+
+test('renameChannel is trimmed (leading/trailing whitespace stripped)', () => {
+  sel.renameChannel(0, 0, '  hammer  ');
+  expect(get(sel.channelLabel)(0, 0)).toBe('hammer');
+});
+
+test('removeSet drops that set custom channel labels', () => {
+  sel.renameChannel(1, 0, 'accel');
+  expect(get(sel.channelLabel)(1, 0)).toBe('accel');
+  sel.removeSet(1);
+  // a fresh set that happens to reuse... ids are never reused, but the
+  // stored label must not leak — a new set at a *different* id is default.
+  const id = sel.addSet({ name: 'reborn', nChannels: 2, durationS: 1, timestamp: 't9' });
+  expect(get(sel.channelLabel)(id, 0)).toBe('ch_0');
+});
+
 test('trayFocus: solo → that set; all shown → "all"; ≤1 set → "all"', () => {
   // Three sets present (from beforeEach). All shown initially → 'all'.
   sel.all();

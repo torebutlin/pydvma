@@ -75,6 +75,7 @@
   const computeError = actions.computeError;
   const active = viewState.active;
   const legendEntries = selection.legendEntries;
+  const channelLabel = selection.channelLabel;   // custom per-line labels (R5)
   const sharedFreqRange = viewState.sharedFreqRange;
   const currentSlice = viewState.current;
 
@@ -324,11 +325,14 @@
    * entries are transformed to the out/in form (input dropped, lines
    * labelled `ch_out/ch_in`) so the legend matches the plot exactly
    * (R4); every other view uses the raw entries. Same transform drives
-   * `visible`, so the two never diverge.
+   * `visible`, so the two never diverge. The custom channel labels (R5)
+   * are threaded in as the `label` accessor so a renamed line reads e.g.
+   * `hammer/accel` in the out/in label; the non-TF views already carry
+   * the custom label through `legendEntries`.
    */
   const viewEntries = $derived<LegendEntry[]>(
     view === 'tf'
-      ? tfTransformEntries($legendEntries, tfChInFor)
+      ? tfTransformEntries($legendEntries, tfChInFor, $channelLabel)
       : $legendEntries,
   );
 
