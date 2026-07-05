@@ -51,6 +51,23 @@ now covered by an `@engine` e2e (it had none).
     Per-channel labels need new storage in the selection store + `.dvma`
     persistence, and interact with the TF out/in labelling (below) — so this
     is done deliberately in the design pass, not as a quick patch.
+    **DONE (Task R5, 2026-07-05).** A sparse per-channel `labels` Map in
+    `selection.ts` backs `renameChannel(setId, ch, label)` (trimmed; blank
+    → reset to `ch_<n>`) + a `channelLabel` derived lookup; `removeSet`
+    clears a set's labels and `legendEntries` renders `"<set> ·
+    <channelLabel>"`. In `TrayCard` each channel `.ch-lab` double-clicks
+    to an inline input (Enter/blur commit, Esc cancel), mirroring the
+    set-name rename; `onChRowClick` excludes the label + input from the
+    tri-state toggle target so a double-click never cycles the line (a
+    single click elsewhere on the row still cycles). Custom labels reach
+    the TF out/in labels via `channelLabel` threaded into
+    `tfTransformEntries` (e.g. `accel/hammer`). IN-SESSION only for v1
+    (matches R1's persistence call) — a `// TODO: persist channel labels`
+    marks the deferred `.dvma` follow-up so the codec stays untouched.
+    New selection + tfChannels unit tests, a non-@engine
+    `channel-relabel.spec.ts` e2e, and a custom-label assertion added to
+    the `@engine` tf-channels e2e. Verified in-browser (tray + legend show
+    the rename; single click still cycles).
 
 ## D. Plan-2 design — needs a steer on approach/priority
 
