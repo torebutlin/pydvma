@@ -37,9 +37,26 @@ scope pop-out). (The dispatch session hit a stale-git-lock issue and
 left everything uncommitted; the interactive session cleared two stale
 0-byte `.git/*.lock` files, rescued it, fixed a stale shell e2e, and
 did the review + leak fixes.) **Still NOTHING pushed** — CI/Pages
-activate on the next `git push`. **Next up:** Tore's hands-on + design
-call on acquisition, then continue **Plan 2** (Fit stage, calibration,
-a Figures/export-preview tab). Fresh session: read `dev/2026-07-05-hands-on-feedback.md`
+activate on the next `git push`.
+
+**START THE NEXT SESSION HERE:** Tore did a round-2 hands-on
+(2026-07-05) — full feedback in
+**`dev/2026-07-05-acquisition-hands-on-feedback.md`** (read it first).
+Headlines: acquisition/Live wants a **design-first pass against the
+round-2 mockups** (`dev/mockups/round2-bench.html`) — bring back the
+mini-oscilloscope (live time trace + FFT + levels, compact bottom-left
+that expands to fill the figure area = the Live tab). Discrete fixes
+queued there too: **TF with 1 channel CRASHES** (R4 out/in remap → zero
+output channels — fix gracefully); **legend off-lines should be
+struck-through, not disappear** (can't re-enable them otherwise);
+**PSD/TF/Sono should recompute live** on slider/setting change (not only
+the Calc button); Time card "Impulse channel" → **"Input channel"** and
+its logged-time badge to **3 s.f.** (shows 1.999977); Setup device
+lookup **on page load** + a basic/full toggle with an expand-the-bar
+mode; Acquire needs a fuller settings summary. **Revisit the C1 monitor
+fix** — the mini-monitor should persist across tabs with its OWN
+start/stop, not auto-stop on leaving Live. Then continue **Plan 2**
+(Fit stage, calibration, a Figures/export-preview tab). Fresh session: read `dev/2026-07-05-hands-on-feedback.md`
 (triage + what landed + the for-Tore notes) and the redesign plan;
 run instructions `cd webui && npm run dev`, open
 `http://localhost:5173/?fixture=1` (or `?fixture=3ch` for the
