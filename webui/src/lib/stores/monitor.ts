@@ -64,6 +64,11 @@ export function createMonitorStore(acquire: AcquireStore) {
 
   let handle: MonitorHandle | null = null;
   let paused = false;
+  // Generation token: bumped on every start() and stop()/cancel so an
+  // in-flight `startMonitor` promise can tell it was superseded/cancelled
+  // while it awaited, and tear its just-opened stream down instead of
+  // reviving a monitor the user already stopped (I2/I3).
+  let startGen = 0;
 
   /**
    * The monitor callback — processes each audio chunk from the source
@@ -107,7 +112,8 @@ export function createMonitorStore(acquire: AcquireStore) {
    * device settings from the acquire store so Setup controls both.
    */
   async function start(): Promise<void> {
-    if (handle) return; // already running
+    if (handle || get(status) === 'starting') return; // already running/starting (I3)
+    const gen = ++startGen;                            // this start's generation (I2)
     status.set('starting');
     errorMsg.set('');
     paused = false;
@@ -126,10 +132,15 @@ export function createMonitorStore(acquire: AcquireStore) {
     ringRev = 0;
 
     try {
-      handle = await startMonitor(
+      const h = await startMonitor(
         { deviceId: cfg.deviceId || undefined, sampleRate: cfg.sampleRate, channelCount: cfg.channelCount },
         ondata,
       );
+      // stop()/cancel bumped the generation while we awaited — this start was
+      // superseded/cancelled. Tear the just-opened stream down and bail
+      // without reviving the monitor the user already stopped (I2).
+      if (gen !== startGen) { h.stop(); return; }
+      handle = h;
       // Update ring config from actual hardware values.
       ringFs = handle.fs;
       ringChannels = handle.nChannels;
@@ -142,6 +153,7 @@ export function createMonitorStore(acquire: AcquireStore) {
       }
       status.set('streaming');
     } catch (e) {
+      if (gen !== startGen) return;   // cancelled while awaiting — leave the newer state alone
       const msg = e instanceof Error ? e.message : String(e);
       status.set('error');
       errorMsg.set(msg);
@@ -150,6 +162,7 @@ export function createMonitorStore(acquire: AcquireStore) {
 
   /** Stop the monitor and release all resources. */
   function stop(): void {
+    startGen++;            // invalidate any in-flight start() (I2)
     handle?.stop();
     handle = null;
     paused = false;

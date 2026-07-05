@@ -7,7 +7,7 @@ import { expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { createMonitorStore } from '../../src/lib/stores/monitor';
 import { createAcquireStore } from '../../src/lib/stores/acquire';
 import { capabilities } from '../../src/lib/stores/stages';
-import type { MonitorChunk } from '../../src/lib/audio/source';
+import { startMonitor, type MonitorChunk, type MonitorHandle } from '../../src/lib/audio/source';
 
 // ---- Mock the audio source layer ----
 
@@ -28,6 +28,7 @@ vi.mock('../../src/lib/audio/source', async () => {
 beforeEach(() => {
   capturedOndata = null;
   mockStop.mockClear();
+  vi.mocked(startMonitor).mockClear();   // reset call count per test (I3 asserts it)
   capabilities.set({ liveSource: false, fitEngine: false });
   vi.stubGlobal('navigator', {
     mediaDevices: {
@@ -55,6 +56,42 @@ test('start transitions to streaming and stop returns to idle', async () => {
   mon.stop();
   expect(get(mon.status)).toBe('idle');
   expect(mockStop).toHaveBeenCalled();
+});
+
+test('stop() during start does NOT revive the monitor and releases the stream (I2)', async () => {
+  const mon = createMonitorStore(makeAcquire());
+  // Defer this one startMonitor so we can stop() while it is still in flight.
+  let resolveStart!: (h: MonitorHandle) => void;
+  vi.mocked(startMonitor).mockImplementationOnce(
+    () => new Promise<MonitorHandle>((res) => { resolveStart = res; }),
+  );
+
+  const p = mon.start();                 // 'starting', awaiting our deferred promise
+  mon.stop();                            // user cancels before it resolves
+  expect(get(mon.status)).toBe('idle');
+  resolveStart({ stop: mockStop, fs: 44100, nChannels: 2 });  // now it resolves
+  await p;
+
+  // The cancelled monitor must NOT come back to life, and the stream that was
+  // opened after the cancel must be torn down (not orphaned).
+  expect(get(mon.status)).toBe('idle');
+  expect(mockStop).toHaveBeenCalled();
+});
+
+test('double start() opens only one monitor (I3)', async () => {
+  const mon = createMonitorStore(makeAcquire());
+  let resolveStart!: (h: MonitorHandle) => void;
+  vi.mocked(startMonitor).mockImplementationOnce(
+    () => new Promise<MonitorHandle>((res) => { resolveStart = res; }),
+  );
+
+  const p1 = mon.start();
+  const p2 = mon.start();                // guarded by the synchronous 'starting' sentinel
+  resolveStart({ stop: mockStop, fs: 44100, nChannels: 2 });
+  await Promise.all([p1, p2]);
+
+  expect(vi.mocked(startMonitor)).toHaveBeenCalledTimes(1);
+  expect(get(mon.status)).toBe('streaming');
 });
 
 test('pause and resume toggle status', async () => {

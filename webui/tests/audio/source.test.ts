@@ -141,3 +141,25 @@ test('startRecording completes and returns correct shape', async () => {
   // First sample should be sin(0) ≈ 0.
   expect(Math.abs(rec.data[0])).toBeLessThan(0.01);
 });
+
+test('startRecording releases the mic if AudioContext/node setup throws (C2)', async () => {
+  const track = { stop: vi.fn() };
+  const stream = { getTracks: () => [track], getAudioTracks: () => [{ getSettings: () => ({ channelCount: 1 }) }] };
+  (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockResolvedValue(stream);
+
+  // An AudioContext whose node construction throws (as Safari/large channel
+  // counts realistically do) — the mic is already open at this point.
+  class ThrowingAudioContext {
+    sampleRate = 44100;
+    destination = {};
+    createMediaStreamSource() { return { connect: vi.fn(), disconnect: vi.fn(), channelCount: 1 }; }
+    createScriptProcessor(): never { throw new Error('createScriptProcessor unsupported'); }
+    close = vi.fn();
+  }
+  vi.stubGlobal('AudioContext', ThrowingAudioContext);
+
+  const handle = startRecording({ sampleRate: 44100, channelCount: 1, durationS: 2 });
+  await expect(handle.promise).rejects.toThrow(/Could not start audio capture/);
+  // The mic opened by getUserMedia must be released, not left live.
+  expect(track.stop, 'the opened mic must be released on setup failure').toHaveBeenCalled();
+});

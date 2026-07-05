@@ -154,32 +154,43 @@ export function startRecording(cfg: RecordConfig): RecordingHandle {
       throw new Error('cancelled');
     }
 
-    // 2. Create AudioContext at requested sample rate.
-    const ctx = new AudioContext({ sampleRate: cfg.sampleRate });
-    const actualFs = ctx.sampleRate;
-    const source = ctx.createMediaStreamSource(stream);
-
-    // Determine actual channel count — the stream may give fewer than requested.
-    const actualChannels = Math.min(
-      cfg.channelCount,
-      source.channelCount || stream.getAudioTracks()[0]?.getSettings?.()?.channelCount || 1,
-    );
-
-    const totalSamples = Math.ceil(actualFs * cfg.durationS);
-
-    // Pre-allocate interleaved buffer: (totalSamples, actualChannels) row-major.
-    const buf = new Float64Array(totalSamples * actualChannels);
+    // 2. Create AudioContext + nodes. The mic is now open, so any throw here
+    // (unsupported sample rate, too many channels, or an OOM on the
+    // pre-allocated buffer at extreme settings) must release the stream
+    // before rethrowing — else the mic stays live with no handle (C2).
+    // TODO: migrate ScriptProcessorNode → AudioWorklet (lower latency, no jank).
+    let ctx: AudioContext | undefined;
+    let actualFs!: number;
+    let source!: MediaStreamAudioSourceNode;
+    let actualChannels!: number;
+    let totalSamples!: number;
+    let buf!: Float64Array;
+    let processor!: ScriptProcessorNode;
+    try {
+      ctx = new AudioContext({ sampleRate: cfg.sampleRate });
+      actualFs = ctx.sampleRate;
+      source = ctx.createMediaStreamSource(stream);
+      // Actual channel count — the stream may give fewer than requested.
+      actualChannels = Math.min(
+        cfg.channelCount,
+        source.channelCount || stream.getAudioTracks()[0]?.getSettings?.()?.channelCount || 1,
+      );
+      totalSamples = Math.ceil(actualFs * cfg.durationS);
+      // Pre-allocate interleaved buffer: (totalSamples, actualChannels) row-major.
+      buf = new Float64Array(totalSamples * actualChannels);
+      processor = ctx.createScriptProcessor(BUFFER_SIZE, actualChannels, actualChannels);
+    } catch (e) {
+      try { ctx?.close(); } catch { /* */ }
+      stream.getTracks().forEach((t) => t.stop());
+      throw new Error(`Could not start audio capture: ${e instanceof Error ? e.message : e}`);
+    }
     let writePos = 0; // next sample index (per channel)
-
-    // 3. Record via ScriptProcessorNode.
-    // TODO: migrate to AudioWorklet for lower latency + no main-thread jank.
-    const processor = ctx.createScriptProcessor(BUFFER_SIZE, actualChannels, actualChannels);
 
     return new Promise<Recording>((resolve, reject) => {
       function cleanup() {
         try { processor.disconnect(); } catch { /* */ }
         try { source.disconnect(); } catch { /* */ }
-        try { ctx.close(); } catch { /* */ }
+        try { ctx?.close(); } catch { /* */ }
         stream.getTracks().forEach((t) => t.stop());
       }
 
@@ -274,16 +285,29 @@ export async function startMonitor(
     throw new Error(`Could not open audio input: ${e instanceof Error ? e.message : e}`);
   }
 
-  const ctx = new AudioContext({ sampleRate: cfg.sampleRate });
-  const actualFs = ctx.sampleRate;
-  const source = ctx.createMediaStreamSource(stream);
-
-  const actualChannels = Math.min(
-    cfg.channelCount,
-    source.channelCount || stream.getAudioTracks()[0]?.getSettings?.()?.channelCount || 1,
-  );
-
-  const processor = ctx.createScriptProcessor(BUFFER_SIZE, actualChannels, actualChannels);
+  // The mic is now open. If any of the AudioContext/node construction below
+  // throws (e.g. an unsupported sample rate on Safari, or too many channels
+  // for createScriptProcessor), release the stream before rethrowing —
+  // otherwise the mic stays live with no handle to stop it (C2).
+  let ctx: AudioContext | undefined;
+  let actualFs!: number;
+  let source!: MediaStreamAudioSourceNode;
+  let actualChannels!: number;
+  let processor!: ScriptProcessorNode;
+  try {
+    ctx = new AudioContext({ sampleRate: cfg.sampleRate });
+    actualFs = ctx.sampleRate;
+    source = ctx.createMediaStreamSource(stream);
+    actualChannels = Math.min(
+      cfg.channelCount,
+      source.channelCount || stream.getAudioTracks()[0]?.getSettings?.()?.channelCount || 1,
+    );
+    processor = ctx.createScriptProcessor(BUFFER_SIZE, actualChannels, actualChannels);
+  } catch (e) {
+    try { ctx?.close(); } catch { /* */ }
+    stream.getTracks().forEach((t) => t.stop());
+    throw new Error(`Could not start audio monitor: ${e instanceof Error ? e.message : e}`);
+  }
   let stopped = false;
 
   processor.onaudioprocess = (ev: AudioProcessingEvent) => {
@@ -308,7 +332,7 @@ export async function startMonitor(
     stopped = true;
     try { processor.disconnect(); } catch { /* */ }
     try { source.disconnect(); } catch { /* */ }
-    try { ctx.close(); } catch { /* */ }
+    try { ctx?.close(); } catch { /* */ }
     stream.getTracks().forEach((t) => t.stop());
   }
 

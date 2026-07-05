@@ -57,10 +57,9 @@ export function createSelection() {
    * writes here; a blank/whitespace label deletes the key (reset to
    * default). Keyed by set id like `states`, so a `removeSet` cleanup and
    * the never-reused id scheme keep labels from leaking between sets.
-   * IN-SESSION only for v1 — not persisted to `.dvma` (matches R1's
-   * per-set-settings decision).
-   * TODO: persist channel labels into the manifest as an additive
-   * follow-up (with the deferred per-set-settings persistence).
+   * PERSISTED to `.dvma`: `getLabelsForSet` feeds `stampUiState`, which
+   * writes them onto each item's `ui.channel_labels`; `loadDataset`
+   * restores them on open (additive, backwards-compatible manifest key).
    */
   const labels = writable<Map<string, string>>(new Map());
   /** id of the currently soloed/highlighted set (initially 0). */

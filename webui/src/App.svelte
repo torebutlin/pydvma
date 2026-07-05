@@ -71,6 +71,15 @@
   // Reads device config from the acquire store so Setup configures both.
   const monitor = createMonitorStore(acquire);
 
+  // C1 (acquisition review): stop the Live monitor whenever we leave the Live
+  // stage. Otherwise the mic + AudioContext + scope stay alive after
+  // navigating away (the LiveCard Stop button was the ONLY other stop, so a
+  // tab switch left the mic on until page reload). Idempotent when already
+  // stopped, so the initial 'time' render is a harmless no-op.
+  $effect(() => {
+    if ($activeStage !== 'live') monitor.stop();
+  });
+
   // ---- File I/O state (Task 13): working directory + autosave ----
   // The working directory is where Save writes and autosave persists.
   // Null until restored/picked → the pipeline falls back to download/upload.
