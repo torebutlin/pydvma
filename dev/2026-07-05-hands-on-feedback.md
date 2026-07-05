@@ -74,18 +74,26 @@ now covered by an `@engine` e2e (it had none).
 11. **Per-dataset analysis settings + selector.** Each set may be processed
     differently (its own PSD/TF settings). Add a **"select dataset" dropdown**
     (incl. *All* + each set) that keeps in sync with the left-card selection;
-    when *All* is shown and settings differ, display **"–mixed–"**. This is
-    the biggest change — it moves analysis settings from global to per-set and
-    reshapes the Freq/TF/Sono cards.
+    when *All* is shown and settings differ, display **"–mixed–"**.
+    **DONE (Task R1).** New `analysisSettings` store (per-set, keyed by setId)
+    + `analysisTarget`; the Dataset dropdown **follows the tray** (confirmed
+    design), and `calc*` run per-target. **For Tore:** picking a set in the
+    dropdown SOLOS it (hides other sets while you configure that one) — that's
+    inherent to "dropdown follows tray"; say if you'd rather a lighter
+    highlight that keeps all lines visible.
 12. **PSD/ΔF controls as slider + text box.** For PSD etc., expose ΔF (and the
     resolution family) as a **slider paired with a text box**. Text box accepts
     values outside the slider range (slider clamps to its end-stops); sliders
-    ship a sensible default range. Open question Tore raised: **precompute the
-    full slider range** for a slick feel? → Recommendation: yes for lab-sized
-    data (cheap); gate on data size so huge captures don't stall. Advise
-    precompute-when-small, compute-on-release-when-large.
-13. **Log/lin toggles for BOTH x and y.** (Tore: yes to both.) Plot-core +
-    view-state feature.
+    ship a sensible default range.
+    **DONE (Task R2).** Shared `ResolutionControl`: coupled N ↔ frame-length ↔
+    nFFT ↔ **editable ΔF**; text box holds out-of-range values while the slider
+    pins to its end-stop; default range derived from fs·duration; precompute
+    live for small data, defer to release above 500 k samples.
+13. **Log/lin toggles for BOTH x and y.** (Tore: yes to both.)
+    **DONE (Task R3).** Toolbar toggles: **x = frequency lin↔log10** (decade
+    ticks, DC bin dropped, log-aware zoom/pan) and **y = dB↔linear magnitude**
+    (a model change: `20·log10|H|` ↔ `|H|`, label follows). Shown only on the
+    views where each is meaningful.
 14. **TF channel labelling = output/input.** (Tore's pick: the "out/in"
     approach — clearest when different sets have different channel
     arrangements.) This also fixes the confirmed multi-channel TF bug (E1:

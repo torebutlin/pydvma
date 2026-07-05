@@ -2,19 +2,26 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-04: web-UI Stages 0–1 **and Stage 2 Plan 1** (the
-no-install browser **analysis** app, in `webui/`) are live — all
-16 tasks landed, two-stage reviewed, milestone-gate passed (nothing
-pushed yet; the CI/Pages workflows activate on the next `git push`).
-**Next up is a hands-on session** driving the app with real lab
-`.dvma` files, then **Plan 2** (acquisition, monitor/oscilloscope,
-Fit stage, calibration). A fresh session should read
-`dev/2026-07-04-stage2-plan1-handoff.md` first — it carries the run
-instructions (`cd webui && npm run dev`, open
-`http://localhost:5173/?fixture=1`), the gate results, and the
-Plan-2 open questions (multi-channel TF labelling, X-log toggle,
-figure-export fonts). Design spec: `dev/2026-07-03-stage2-gui-design.md`;
-plan: `dev/plans/2026-07-03-stage2-plan1-analysis-app.md`.
+As of 2026-07-05: web-UI Stages 0–1 **and Stage 2 Plan 1** (the
+no-install browser **analysis** app, in `webui/`) are live, plus a
+**post-hands-on refinement round**: after Tore's first hands-on
+session, 5 shipped-feature bugs were fixed, a layout-polish pass
+landed, and an **analysis-card redesign** (`dev/plans/2026-07-05-analysis-card-redesign.md`,
+tasks R1–R5) added per-set analysis settings + a tray-following
+Dataset dropdown, the ΔF resolution control (slider + editable
+textbox), log/lin axis toggles (x freq, y dB↔linear), TF **out/in**
+channel labels (fixed the multi-channel bug), and per-line relabel.
+All two-stage reviewed; combined suite green (pytest 205, vitest 226,
+e2e 26+7, build OK). **Still NOTHING pushed** — the CI/Pages workflows
+activate on the next `git push` (Tore's call). **Next up:** another
+hands-on pass on the redesign, then **Plan 2** (acquisition, a "Live"
+oscilloscope tab, Fit stage, calibration, a Figures/export-preview
+tab). Fresh session: read `dev/2026-07-05-hands-on-feedback.md`
+(triage + what landed + the for-Tore notes) and the redesign plan;
+run instructions `cd webui && npm run dev`, open
+`http://localhost:5173/?fixture=1` (or `?fixture=3ch` for the
+multi-channel TF fixture). Earlier handoff:
+`dev/2026-07-04-stage2-plan1-handoff.md`.
 
 Auto-loaded by Claude Code at the start of every session. Contributors
 and collaborators: the concrete filesystem paths below are for the

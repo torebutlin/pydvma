@@ -1,5 +1,13 @@
 # Stage 2 · Plan 1.5 — analysis-card redesign (build plan)
 
+> **STATUS: all five tasks landed 2026-07-05** (R1–R5), each two-stage
+> reviewed, combined suite green (pytest 205 · vitest 226 · check 0/0 ·
+> e2e 26 non-@engine + 7 @engine · build OK), and the whole redesign
+> smoke-verified in-browser together. Not pushed. Deferred/for-Tore notes:
+> the dropdown-solos-the-set coupling (R1), a channel label's single-click
+> is reserved for rename so only the rest of the row toggles (R5),
+> per-set settings + channel labels are in-session (not yet in `.dvma`).
+
 Source: `dev/2026-07-05-hands-on-feedback.md` §C10 + §D (Tore's hands-on
 review). Builds on the layout polish (block B, landed). Five tasks; R1 is the
 load-bearing architecture change, the rest layer on top. Same execution model
