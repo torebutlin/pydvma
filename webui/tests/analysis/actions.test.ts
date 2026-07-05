@@ -2,8 +2,17 @@ import { get, writable } from 'svelte/store';
 import { expect, test } from 'vitest';
 import { createActions } from '../../src/lib/analysis/actions';
 import { createSelection } from '../../src/lib/stores/selection';
+import { createAnalysisSettings } from '../../src/lib/stores/analysisSettings';
 import type { EngineStore } from '../../src/lib/stores/engine';
 import type { DvmaDataset, DvmaItem } from '../../src/lib/model/dataset';
+
+/** Build the (selection, settings, actions) trio bound to a fake engine. */
+function harness(engine: EngineStore) {
+  const sel = createSelection();
+  const settings = createAnalysisSettings(sel);
+  const actions = createActions(engine, sel, settings);
+  return { sel, settings, actions };
+}
 
 /** A marshalled complex array (interleaved [re,im,…]) as glue.py returns. */
 const cplx = (shape: number[], interleaved: number[]) =>
@@ -59,9 +68,8 @@ const tfResult = () => ({
 });
 
 test('loadDataset registers one selection set per TimeData item and seeds time arrays', () => {
-  const sel = createSelection();
   const { engine } = fakeEngine(async () => ({}));
-  const actions = createActions(engine, sel);
+  const { sel, actions } = harness(engine);
   actions.loadDataset(makeDataset(2));
   expect(get(sel.sets)).toHaveLength(2);
   const d = get(actions.derived);
@@ -77,7 +85,6 @@ test('cleanImpulse re-emits the dataset store so autosave captures the cleaned d
   // without an explicit re-emit the cleaned impulse is never autosaved and a
   // tab-close loses it. This asserts the store re-emits (and the mutation is
   // visible for the explicit-Save path too).
-  const sel = createSelection();
   const { engine, calls } = fakeEngine(async (op) => {
     if (op === 'clean_impulse') return {
       time_axis: real([3], [0, 0.5, 1]),
@@ -85,7 +92,7 @@ test('cleanImpulse re-emits the dataset store so autosave captures the cleaned d
     };
     return {};
   });
-  const actions = createActions(engine, sel);
+  const { actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
 
   // Subscribe AFTER load; discount the synchronous initial callback.
@@ -93,7 +100,7 @@ test('cleanImpulse re-emits the dataset store so autosave captures the cleaned d
   const unsub = actions.dataset.subscribe(() => { emissions++; });
   emissions = 0;
 
-  await actions.cleanImpulse(0, 0);
+  await actions.cleanImpulse(0, 0);           // setId 0
   unsub();
 
   expect(calls.some(c => c.op === 'clean_impulse')).toBe(true);
@@ -102,12 +109,12 @@ test('cleanImpulse re-emits the dataset store so autosave captures the cleaned d
   expect(Array.from(ds.items[0].arrays.time_data.data)).toEqual([0, 0, 3, 4, 0, 0]);
 });
 
-test("calcTf 'within' issues one calc_tf per set with n_frames from resolution", async () => {
-  const sel = createSelection();
+test("calcTf 'within' issues one calc_tf per set with n_frames from settings", async () => {
   const { engine, calls } = fakeEngine(async () => tfResult());
-  const actions = createActions(engine, sel);
+  const { settings, actions } = harness(engine);
   actions.loadDataset(makeDataset(2));
-  await actions.calcTf(0, 'hann', 'within', 7);
+  settings.patch('all', 'tf', { averaging: 'within', nFrames: 7, window: 'hann' });
+  await actions.calcTf('all');
   const tf = calls.filter(c => c.op === 'calc_tf');
   expect(tf).toHaveLength(2);
   expect(tf[0].payload.n_frames).toBe(7);
@@ -115,30 +122,77 @@ test("calcTf 'within' issues one calc_tf per set with n_frames from resolution",
 });
 
 test("calcTf 'none' issues calc_tf per set with n_frames = 1", async () => {
-  const sel = createSelection();
   const { engine, calls } = fakeEngine(async () => tfResult());
-  const actions = createActions(engine, sel);
+  const { settings, actions } = harness(engine);
   actions.loadDataset(makeDataset(2));
-  await actions.calcTf(0, null, 'none', 20);
+  settings.patch('all', 'tf', { averaging: 'none', nFrames: 20, window: 'none' });
+  await actions.calcTf('all');
   const tf = calls.filter(c => c.op === 'calc_tf');
   expect(tf).toHaveLength(2);
   expect(tf.every(c => c.payload.n_frames === 1)).toBe(true);
+  expect(tf.every(c => c.payload.window === null)).toBe(true);   // 'none' → null
 });
 
 test("calcTf 'across' issues one calc_tf_averaged over all sets", async () => {
-  const sel = createSelection();
   const { engine, calls } = fakeEngine(async () => tfResult());
-  const actions = createActions(engine, sel);
+  const { settings, actions } = harness(engine);
   actions.loadDataset(makeDataset(3));
-  await actions.calcTf(1, 'hann', 'across', 5);
+  settings.patch('all', 'tf', { averaging: 'across', chIn: 1, window: 'hann', nFrames: 5 });
+  await actions.calcTf('all');
   const avg = calls.filter(c => c.op === 'calc_tf_averaged');
   expect(avg).toHaveLength(1);
   expect((avg[0].payload.sets as unknown[]).length).toBe(3);
   expect(avg[0].payload.ch_in).toBe(1);
 });
 
+test('calcTf targets ONE set with ITS OWN window; other sets untouched', async () => {
+  const { engine, calls } = fakeEngine(async () => tfResult());
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(2));       // setIds 0 and 1
+  const [a, b] = get(sel.sets).map(s => s.id);
+  settings.patch(a, 'tf', { window: 'hann', averaging: 'within', nFrames: 4 });
+  settings.patch(b, 'tf', { window: 'flattop', averaging: 'within', nFrames: 9 });
+
+  await actions.calcTf(b);                    // target just set b
+  const tf = calls.filter(c => c.op === 'calc_tf');
+  expect(tf).toHaveLength(1);                 // ran ONLY the targeted set
+  expect(tf[0].payload.window).toBe('flattop');
+  expect(tf[0].payload.n_frames).toBe(9);
+});
+
+test('calcFft targets per-set: two sets, different windows, one calc_fft each', async () => {
+  const { engine, calls } = fakeEngine(async () => ({
+    freq_axis: real([2], [0, 1]), freq_data: cplx([2, 2], [1, 0, 1, 0, 1, 0, 1, 0]),
+  }));
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(2));
+  const [a, b] = get(sel.sets).map(s => s.id);
+  settings.patch(a, 'freq', { window: 'hann' });
+  settings.patch(b, 'freq', { window: 'flattop' });
+
+  await actions.calcFft('all');
+  const fft = calls.filter(c => c.op === 'calc_fft');
+  expect(fft).toHaveLength(2);
+  expect(fft.map(c => c.payload.window).sort()).toEqual(['flattop', 'hann']);
+});
+
+test("calcPsd reads each set's window + n_frames from settings", async () => {
+  const { engine, calls } = fakeEngine(async () => ({
+    freq_axis: real([2], [0, 1]),
+    psd: real([2, 2], [1, 2, 3, 4]),
+    Cxy: real([2, 2], [1, 1, 1, 1]),
+  }));
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+  settings.patch(a, 'freq', { window: 'flattop', nFrames: 12 });
+  await actions.calcPsd(a);
+  const psd = calls.find(c => c.op === 'calc_psd')!;
+  expect(psd.payload.window).toBe('flattop');
+  expect(psd.payload.n_frames).toBe(12);
+});
+
 test('stale calcTf resolves out of order: only the latest result is kept', async () => {
-  const sel = createSelection();
   // First call resolves LATE (deferred), second resolves immediately.
   let releaseFirst!: (v: unknown) => void;
   let n = 0;
@@ -153,11 +207,11 @@ test('stale calcTf resolves out of order: only the latest result is kept', async
       coherence: real([3, 1], [1, 1, 1]),
     });
   });
-  const actions = createActions(engine, sel);
+  const { actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
 
-  const p1 = actions.calcTf(0, null, 'within', 4);   // stale (resolves last)
-  const p2 = actions.calcTf(0, null, 'within', 8);   // latest
+  const p1 = actions.calcTf('all');   // stale (resolves last)
+  const p2 = actions.calcTf('all');   // latest
   await p2;
   releaseFirst(tfResult());                          // now let the first settle
   await p1;
@@ -168,25 +222,25 @@ test('stale calcTf resolves out of order: only the latest result is kept', async
 });
 
 test('engine rejection sets computeError and does not hang', async () => {
-  const sel = createSelection();
   const { engine } = fakeEngine(async () => { throw new Error('engine failed to boot: bang'); });
-  const actions = createActions(engine, sel);
+  const { actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
-  await actions.calcFft(null);
+  await actions.calcFft('all');
   expect(get(actions.computeError)).toContain('engine failed to boot');
   expect(get(actions.busy)).toBe(false);
 });
 
-test('calcSono issues calc_sono with nperseg=nFft, noverlap=nFft/2', async () => {
-  const sel = createSelection();
+test('calcSono issues calc_sono with nperseg=nFft (from settings), noverlap=nFft/2', async () => {
   const { engine, calls } = fakeEngine(async () => ({
     time_axis: real([2], [0, 1]),
     freq_axis: real([2], [0, 1]),
     sono_data: real([2, 2], [1, 2, 3, 4]),
   }));
-  const actions = createActions(engine, sel);
+  const { sel, settings, actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
-  await actions.calcSono(0, 0, 64);
+  const a = get(sel.sets)[0].id;
+  settings.patch(a, 'sono', { nFft: 64 });
+  await actions.calcSono(a, 0);
   const sono = calls.find(c => c.op === 'calc_sono')!;
   expect(sono.payload.nperseg).toBe(64);
   expect(sono.payload.noverlap).toBe(32);
@@ -198,7 +252,6 @@ test('two DIFFERENT action kinds racing: neither cross-drops the other', async (
   // With a single global counter, calcSono's bump makes calcTf's guard read
   // stale → TF silently dropped (this test FAILS on that code). With a
   // PER-KIND guard, 'sono' and 'tf' counters are independent → both commit.
-  const sel = createSelection();
   let releaseTf!: (v: unknown) => void;
   const { engine } = fakeEngine((op) => {
     if (op === 'calc_tf') return new Promise(res => { releaseTf = res; });   // TF resolves LAST
@@ -209,11 +262,11 @@ test('two DIFFERENT action kinds racing: neither cross-drops the other', async (
     });
     return Promise.resolve({});
   });
-  const actions = createActions(engine, sel);
+  const { actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
 
-  const pTf = actions.calcTf(0, null, 'within', 4);   // in flight (deferred)
-  await actions.calcSono(0, 0, 64);                    // completes first, bumps 'sono'
+  const pTf = actions.calcTf('all');                   // in flight (deferred)
+  await actions.calcSono(0, 0);                         // completes first, bumps 'sono'
   releaseTf(tfResult());                               // now let TF settle
   await pTf;
 
@@ -224,7 +277,6 @@ test('two DIFFERENT action kinds racing: neither cross-drops the other', async (
 });
 
 test('concurrent actions: busy is ref-counted (stays true until the last settles)', async () => {
-  const sel = createSelection();
   let releaseTf!: (v: unknown) => void;
   const { engine } = fakeEngine((op) => {
     if (op === 'calc_tf') return new Promise(res => { releaseTf = res; });
@@ -233,11 +285,11 @@ test('concurrent actions: busy is ref-counted (stays true until the last settles
     });
     return Promise.resolve({});
   });
-  const actions = createActions(engine, sel);
+  const { actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
 
-  const pTf = actions.calcTf(0, null, 'within', 4);   // still in flight
-  await actions.calcSono(0, 0, 64);                    // one action settled...
+  const pTf = actions.calcTf('all');                   // still in flight
+  await actions.calcSono(0, 0);                         // one action settled...
   expect(get(actions.busy), 'busy must stay true while TF is still running').toBe(true);
   releaseTf(tfResult());
   await pTf;
@@ -247,7 +299,6 @@ test('concurrent actions: busy is ref-counted (stays true until the last settles
 test('a concurrent action does not erase another kind\'s error unseen', async () => {
   // calcFft fails (sets error); a later successful calcSono of a DIFFERENT
   // kind must not wipe the FFT error before the user sees it.
-  const sel = createSelection();
   const { engine } = fakeEngine((op) => {
     if (op === 'calc_fft') return Promise.reject(new Error('engine failed to boot: boom'));
     if (op === 'calc_sono') return Promise.resolve({
@@ -255,11 +306,11 @@ test('a concurrent action does not erase another kind\'s error unseen', async ()
     });
     return Promise.resolve({});
   });
-  const actions = createActions(engine, sel);
+  const { actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
 
-  await actions.calcFft(null);
+  await actions.calcFft('all');
   expect(get(actions.computeError)).toContain('engine failed to boot');
-  await actions.calcSono(0, 0, 64);                    // different kind, succeeds
+  await actions.calcSono(0, 0);                         // different kind, succeeds
   expect(get(actions.computeError), 'FFT error must survive a later sonogram success').toContain('engine failed to boot');
 });

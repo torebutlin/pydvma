@@ -31,15 +31,15 @@
   const maxChannels = $derived($setsView.reduce((m, s) => Math.max(m, s.nChannels), 0));
   let impulseCh = $state(0);
 
-  /** Which loaded set index the highlighted set maps to (Clean Impulse target). */
-  const targetIdx = $derived.by(() => {
+  /** The highlighted set's id (Clean Impulse target), or the first set. */
+  const targetId = $derived.by(() => {
     const list = $setsView;
-    const i = list.findIndex((s) => s.id === $highlight);
-    return i === -1 ? (list.length ? 0 : -1) : i;
+    if (list.some((s) => s.id === $highlight)) return $highlight;
+    return list.length ? list[0].id : -1;
   });
 
   function clean() {
-    if (targetIdx >= 0) actions.cleanImpulse(targetIdx, impulseCh);
+    if (targetId >= 0) actions.cleanImpulse(targetId, impulseCh);
   }
 </script>
 
@@ -74,7 +74,7 @@
   <div class="ctx-primary">
     <button
       class="btn indigo"
-      disabled={$busy || targetIdx < 0}
+      disabled={$busy || targetId < 0}
       title="Zero the pre-impulse noise and window the tail"
       onclick={clean}>Clean Impulse</button
     >

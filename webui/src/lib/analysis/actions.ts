@@ -28,6 +28,7 @@ import type { DvmaDataset, DvmaItem } from '../model/dataset';
 import { itemChannels } from '../model/dataset';
 import type { EngineStore } from '../stores/engine';
 import type { Selection } from '../stores/selection';
+import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
 import { decodeArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import { fromNFrames, fromNFft } from './resolution';
 
@@ -77,12 +78,21 @@ function timePayload(item: DvmaItem): { axis: Float64Array; data: Float64Array; 
 }
 
 /**
- * Create the analysis actions bound to an engine + selection store.
- * Exposes the working `dataset` store, the decoded `derived` store the
- * plot model consumes, and a `computeError` string store the cards show
- * on engine failure. Actions are thin: marshal → enqueue → decode.
+ * Create the analysis actions bound to an engine + selection store, plus
+ * the per-set `analysisSettings` store. Exposes the working `dataset`
+ * store, the decoded `derived` store the plot model consumes, and a
+ * `computeError` string store the cards show on engine failure. Actions
+ * are thin: marshal → enqueue → decode.
+ *
+ * PER-SET TARGETING (Task R1): `calcFft` / `calcPsd` / `calcTf` take a
+ * `target: 'all' | setId` and read EACH targeted set's settings from
+ * `settings` (window / mode / nFrames / chIn / averaging), so different
+ * sets can be processed with different settings. `target === 'all'` runs
+ * every working set; a setId runs just that one. `settings` is optional
+ * so the actions stay unit-testable in isolation; when omitted the calc
+ * functions fall back to per-set `defaults()`.
  */
-export function createActions(engine: EngineStore, selection: Selection) {
+export function createActions(engine: EngineStore, selection: Selection, settings?: AnalysisSettings) {
   const dataset = writable<DvmaDataset | null>(null);
   const derived = writable<DerivedMap>({});
   const computeError = writable<string>('');
@@ -90,6 +100,24 @@ export function createActions(engine: EngineStore, selection: Selection) {
 
   /** Source sets in load order (one per TimeData item), with cached meta. */
   let working: WorkingSet[] = [];
+
+  /** The working sets a target names: one set, or all of them. */
+  function targeted(target: AnalysisTarget): WorkingSet[] {
+    if (target === 'all') return working;
+    const ws = working.find((w) => w.setId === target);
+    return ws ? [ws] : [];
+  }
+
+  /** Per-set settings for `view`, from the store or per-set defaults. */
+  function freqSettings(setId: number) {
+    return settings?.get(setId, 'freq') ?? { window: 'hann', mode: 'fft' as const, nFrames: 10 };
+  }
+  function tfSettings(setId: number) {
+    return settings?.get(setId, 'tf') ?? { chIn: 0, window: 'hann', averaging: 'within' as const, nFrames: 10 };
+  }
+  function sonoSettings(setId: number) {
+    return settings?.get(setId, 'sono') ?? { nFft: 512, dynRangeDb: 60 };
+  }
 
   /**
    * Per-kind stale-guard counters. `bump(kind)` returns the token an
@@ -180,14 +208,20 @@ export function createActions(engine: EngineStore, selection: Selection) {
     derived.set(seed);
   }
 
-  /** FFT of every set, writing decoded freq arrays into `derived`. */
-  function calcFft(window: string | null) {
+  /**
+   * FFT of the targeted set(s), each with ITS OWN window from `settings`,
+   * writing decoded freq arrays into `derived`. `target === 'all'` runs
+   * every set; a setId runs just that one.
+   */
+  function calcFft(target: AnalysisTarget = 'all') {
     const my = bump('fft');
     return guarded('fft', async () => {
-      for (const ws of working) {
+      for (const ws of targeted(target)) {
+        const { window } = freqSettings(ws.setId);
         const { axis, data, nCh } = timePayload(ws.time);
         const res = await engine.enqueue('calc_fft', {
-          time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs, window,
+          time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
+          window: window === 'none' ? null : window,
         });
         if (stale('fft', my)) return;                 // a newer FFT batch won
         setDerived(ws.setId, {
@@ -200,15 +234,20 @@ export function createActions(engine: EngineStore, selection: Selection) {
     });
   }
 
-  /** PSD (+ CSD coherence matrix) per set, at `n_frames` from `resolution`. */
-  function calcPsd(window: string | null, nFrames: number) {
+  /**
+   * PSD (+ CSD coherence matrix) of the targeted set(s), each at ITS OWN
+   * window + n_frames from `settings`. `target === 'all'` runs every set.
+   */
+  function calcPsd(target: AnalysisTarget = 'all') {
     const my = bump('psd');
     return guarded('psd', async () => {
-      for (const ws of working) {
+      for (const ws of targeted(target)) {
+        const s = freqSettings(ws.setId);
+        const window = s.window === 'none' ? null : s.window;
         const { axis, data, nCh } = timePayload(ws.time);
         const res = await engine.enqueue('calc_psd', {
           time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
-          window: window ?? 'hann', n_frames: nFrames,
+          window: window ?? 'hann', n_frames: s.nFrames,
         });
         if (stale('psd', my)) return;                 // a newer PSD batch won
         const freqAxis = axisData(mval(res, 'freq_axis'));
@@ -221,50 +260,64 @@ export function createActions(engine: EngineStore, selection: Selection) {
   }
 
   /**
-   * Transfer function. `averaging`:
-   * - 'none'   → calc_tf per set with n_frames = 1
-   * - 'within' → calc_tf per set with n_frames from `resolution`
-   * - 'across' → one calc_tf_averaged over ALL sets' time_data (ensemble)
+   * Transfer function of the targeted set(s), each reading ITS OWN
+   * chIn / window / averaging / nFrames from `settings`. Per set:
+   * - 'none'   → calc_tf with n_frames = 1
+   * - 'within' → calc_tf with the set's n_frames
+   * - 'across' → one calc_tf_averaged over ALL working sets' time_data
+   *   (an ensemble op — inherently multi-set; it uses the target set's
+   *   chIn/window, attaches the single averaged curve to the first set,
+   *   and ignores the per-set loop). `target === 'all'` runs every set.
    */
-  function calcTf(
-    chIn: number,
-    window: string | null,
-    averaging: 'none' | 'within' | 'across',
-    nFrames: number,
-  ) {
+  function calcTf(target: AnalysisTarget = 'all') {
     const my = bump('tf');
     return guarded('tf', async () => {
-      if (averaging === 'across') {
-        const sets = working.map(ws => {
+      const sets = targeted(target);
+      // 'across' is an ensemble over ALL sets; the target set names the
+      // chIn/window to use. If any targeted set requests 'across', run the
+      // ensemble once and stop (a single averaged curve, not per-set).
+      const acrossSet = sets.find((ws) => tfSettings(ws.setId).averaging === 'across');
+      if (acrossSet) {
+        const { chIn, window } = tfSettings(acrossSet.setId);
+        const ensemble = working.map(ws => {
           const { axis, data, nCh } = timePayload(ws.time);
           return { time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs };
         });
-        const res = await engine.enqueue('calc_tf_averaged', { sets, ch_in: chIn, window });
+        const res = await engine.enqueue('calc_tf_averaged', {
+          sets: ensemble, ch_in: chIn, window: window === 'none' ? null : window,
+        });
         if (stale('tf', my)) return;                    // a newer TF request won
         const axis = axisData(mval(res, 'freq_axis'));
         const tf = tfFromResult(res, axis);
         // Ensemble result attaches to the first set (single averaged curve).
         if (working.length) setDerived(working[0].setId, { tf });
-      } else {
+        return;
+      }
+      for (const ws of sets) {
+        const { chIn, window, averaging, nFrames } = tfSettings(ws.setId);
         const frames = averaging === 'none' ? 1 : nFrames;
-        for (const ws of working) {
-          const { axis, data, nCh } = timePayload(ws.time);
-          const res = await engine.enqueue('calc_tf', {
-            time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
-            ch_in: chIn, window, n_frames: frames,
-          });
-          if (stale('tf', my)) return;                  // stale-drop the whole batch
-          const fAxis = axisData(mval(res, 'freq_axis'));
-          setDerived(ws.setId, { tf: tfFromResult(res, fAxis) });
-        }
+        const { axis, data, nCh } = timePayload(ws.time);
+        const res = await engine.enqueue('calc_tf', {
+          time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
+          ch_in: chIn, window: window === 'none' ? null : window, n_frames: frames,
+        });
+        if (stale('tf', my)) return;                  // stale-drop the whole batch
+        const fAxis = axisData(mval(res, 'freq_axis'));
+        setDerived(ws.setId, { tf: tfFromResult(res, fAxis) });
       }
     });
   }
 
-  /** Sonogram of one channel of one set (nperseg=nFft, noverlap=nFft/2). */
-  function calcSono(setIdx: number, ch: number, nFft: number) {
-    const ws = working[setIdx];
+  /**
+   * Sonogram of one channel of one set (nperseg=nFft, noverlap=nFft/2).
+   * `target` names the set by id ('all' uses the first working set); the
+   * set's `nFft` comes from `settings`. `ch` is passed explicitly (the
+   * sonogram channel is a card control, not a per-set stored setting).
+   */
+  function calcSono(target: AnalysisTarget, ch: number) {
+    const ws = target === 'all' ? working[0] : working.find((w) => w.setId === target);
     if (!ws) return Promise.resolve();
+    const { nFft } = sonoSettings(ws.setId);
     const my = bump('sono');
     return guarded('sono', async () => {
       const { axis, data, nCh } = timePayload(ws.time);
@@ -283,9 +336,12 @@ export function createActions(engine: EngineStore, selection: Selection) {
     });
   }
 
-  /** Clean the impulse on `chImpulse` of set `setIdx`, replacing its TimeData. */
-  function cleanImpulse(setIdx: number, chImpulse: number) {
-    const ws = working[setIdx];
+  /**
+   * Clean the impulse on `chImpulse` of the set named by `target`
+   * (setId; 'all' uses the first working set), replacing its TimeData.
+   */
+  function cleanImpulse(target: AnalysisTarget, chImpulse: number) {
+    const ws = target === 'all' ? working[0] : working.find((w) => w.setId === target);
     if (!ws) return Promise.resolve();
     return guarded('clean', async () => {
       const { axis, data, nCh } = timePayload(ws.time);

@@ -16,7 +16,7 @@
   import type { ViewState } from '../lib/stores/viewstate';
   import type { Selection } from '../lib/stores/selection';
   import type { Actions } from '../lib/analysis/actions';
-  import type { FreqMode } from '../lib/plot/model';
+  import type { AnalysisSettings } from '../lib/stores/analysisSettings';
   import type { WorkDir } from '../lib/files/workdir';
   import type { Toasts } from '../lib/stores/toast';
   import TimeCard from './cards/TimeCard.svelte';
@@ -30,20 +30,20 @@
     viewState,
     selection,
     actions,
+    analysisSettings,
     getSvg,
     workdir,
     onsave,
     toasts,
     hasData = false,
-    freqMode = $bindable('fft'),
-    dynRangeDb = $bindable(60),
-    sonoSetIdx = $bindable(0),
     autosaveEnabled = $bindable(true),
   }: {
     narrow?: boolean;
     viewState: ViewState;
     selection: Selection;
     actions: Actions;
+    /** Per-set analysis settings + shared target (Task R1). */
+    analysisSettings: AnalysisSettings;
     /** Active plot's <svg> accessor (Export card figure source). */
     getSvg: () => SVGSVGElement | undefined;
     /** Working directory for Save Figure / Save Dataset. */
@@ -54,9 +54,6 @@
     toasts: Toasts;
     /** Whether any dataset is loaded (gates figure export). */
     hasData?: boolean;
-    freqMode?: FreqMode;
-    dynRangeDb?: number;
-    sonoSetIdx?: number;
     autosaveEnabled?: boolean;
   } = $props();
 
@@ -75,11 +72,11 @@
   {#if $activeStage === 'time'}
     <TimeCard {viewState} {selection} {actions} />
   {:else if $activeStage === 'frequency'}
-    <FrequencyCard {actions} {selection} bind:freqMode />
+    <FrequencyCard {actions} {selection} {analysisSettings} />
   {:else if $activeStage === 'tf'}
-    <TFCard {viewState} {selection} {actions} />
+    <TFCard {viewState} {selection} {actions} {analysisSettings} />
   {:else if $activeStage === 'sono'}
-    <SonoCard {actions} {selection} bind:dynRangeDb bind:sonoSetIdx />
+    <SonoCard {actions} {selection} {analysisSettings} />
   {:else if $activeStage === 'export'}
     <ExportCard {getSvg} {workdir} {onsave} {toasts} {hasData} bind:autosaveEnabled />
   {:else}

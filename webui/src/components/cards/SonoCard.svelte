@@ -1,53 +1,70 @@
 <script lang="ts">
   /**
-   * Sonogram-stage context card (design spec §3; visuals ported from
-   * the `data-card="sonogram"` block of round2-bench.html).
+   * Sonogram-stage context card (design spec §3; Task R1 per-set
+   * redesign).
    *
-   * Set/channel selects choose the source; a live resolution slider
-   * maps to the STFT window size `nFft = 2^slider` (nperseg=nFft,
-   * noverlap=nFft/2 in the worker); a dynamic-range dB input clamps the
-   * heat-map floor (consumed by the App's canvas heat layer via
-   * `dynRangeDb`). Calc Sonogram runs `actions.calcSono`. The slider
+   * FIRST control is the "Dataset ▾" dropdown bound to the shared
+   * `analysisTarget` (follows the tray). It replaces the old free-standing
+   * "source set" select — the sonogram now runs the TARGET set. A channel
+   * select chooses which channel of that set to transform (the channel is
+   * a transient card control, not a per-set stored setting). The STFT
+   * window size (`nFft = 2^slider`) and heat-map dynamic range two-way
+   * bind to the FOCUSED set's sono settings via the `analysisSettings`
+   * store, with "–mixed–" shown when the target is `'all'` and sets
+   * disagree.
+   *
+   * Calc Sonogram runs `actions.calcSono(target, ch)`. The slider
    * re-issues live but DEBOUNCED (150 ms); the action carries a per-kind
-   * stale seq (key 'sono') so an old sonogram response never clobbers a
-   * newer one, and — being per-kind — never cross-drops an in-flight
-   * result of another kind (e.g. a running TF batch).
+   * stale seq (key 'sono').
    */
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
+  import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
 
   let {
     actions,
     selection,
-    dynRangeDb = $bindable(60),
-    sonoSetIdx = $bindable(0),
-  }: {
-    actions: Actions;
-    selection: Selection;
-    dynRangeDb?: number;
-    /** Selected source-set index; bound up so App renders THIS set's sono. */
-    sonoSetIdx?: number;
-  } = $props();
+    analysisSettings,
+  }: { actions: Actions; selection: Selection; analysisSettings: AnalysisSettings } = $props();
 
   const setsView = $derived(selection.setsView);
   const computeError = $derived(actions.computeError);
   const busy = $derived(actions.busy);
 
-  let ch = $state(0);
-  let resExp = $state(9); // slider position → nFft = 2^resExp (default 512)
+  const target = $derived(analysisSettings.analysisTarget);
+  const settingsMap = $derived(analysisSettings.map);
+  const sono = $derived((void $settingsMap, analysisSettings.settingFor($target, 'sono')));
+  const mixed = (key: 'nFft' | 'dynRangeDb') =>
+    (void $settingsMap, $target === 'all' && analysisSettings.isMixed('sono', key));
 
-  const nFft = $derived(1 << resExp);
-  const chOptions = $derived($setsView[sonoSetIdx]?.nChannels ?? 1);
+  let ch = $state(0);
+
+  // nFft ↔ slider exponent (nFft = 2^resExp). Mixed → the readout shows –mixed–.
+  const nFft = $derived(sono.nFft);
+  const resExp = $derived(Math.round(Math.log2(nFft)));
+
+  // Channel options come from the target set (first set for 'all').
+  const targetView = $derived(
+    $target === 'all' ? $setsView[0] : $setsView.find((s) => s.id === $target),
+  );
+  const chOptions = $derived(targetView?.nChannels ?? 1);
+
+  const patch = (partial: Partial<{ nFft: number; dynRangeDb: number }>) =>
+    analysisSettings.patch($target, 'sono', partial);
 
   function calc() {
-    if ($setsView.length) actions.calcSono(sonoSetIdx, ch, nFft);
+    if ($setsView.length) actions.calcSono($target, ch);
   }
 
   let debounceId: ReturnType<typeof setTimeout> | undefined;
   function onRes(v: number) {
-    resExp = v;
+    patch({ nFft: 1 << v });
     clearTimeout(debounceId);
     debounceId = setTimeout(calc, 150);
+  }
+
+  function onTarget(v: string) {
+    analysisSettings.setTarget(v === 'all' ? 'all' : Number(v));
   }
 </script>
 
@@ -56,11 +73,14 @@
   <div class="ctx-body">
     <div class="ctx-row">
       <div class="grp">
-        <span class="grp-lab">source</span>
+        <span class="grp-lab">dataset</span>
         <div class="grp-ctl">
-          <select bind:value={sonoSetIdx} style="width:96px" aria-label="set">
-            {#each $setsView as s, i (s.id)}
-              <option value={i}>{s.name}</option>
+          <select value={$target === 'all' ? 'all' : String($target)}
+            onchange={(e) => onTarget(e.currentTarget.value)}
+            style="width:120px" aria-label="dataset">
+            <option value="all">All sets</option>
+            {#each $setsView as s (s.id)}
+              <option value={String(s.id)}>{s.name}</option>
             {/each}
           </select>
           <select bind:value={ch} style="width:66px" aria-label="channel">
@@ -71,18 +91,20 @@
         </div>
       </div>
       <div class="grp">
-        <span class="grp-lab">resolution — {nFft} pt</span>
+        <span class="grp-lab">resolution — {mixed('nFft') ? '–mixed–' : `${nFft} pt`}</span>
         <div class="grp-ctl">
           <input type="range" min="6" max="12" value={resExp}
             oninput={(e) => onRes(+e.currentTarget.value)} style="width:96px" aria-label="resolution" />
-          <span class="mono" style="font-size:11.5px">nFFT = {nFft}</span>
+          <span class="mono" style="font-size:11.5px">nFFT = {mixed('nFft') ? '–mixed–' : nFft}</span>
         </div>
       </div>
       <div class="grp">
         <span class="grp-lab">dynamic range</span>
         <div class="grp-ctl">
-          <input type="number" bind:value={dynRangeDb} step="10" min="30" max="120"
-            style="width:56px" aria-label="dynamic range dB" /><span class="ml">dB</span>
+          <input type="number" value={mixed('dynRangeDb') ? '' : sono.dynRangeDb}
+            placeholder={mixed('dynRangeDb') ? '–mixed–' : ''}
+            onchange={(e) => patch({ dynRangeDb: +e.currentTarget.value })}
+            step="10" min="30" max="120" style="width:56px" aria-label="dynamic range dB" /><span class="ml">dB</span>
         </div>
       </div>
     </div>

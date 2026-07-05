@@ -31,6 +31,7 @@
   import { activeStage } from './lib/stores/stages';
   import { createViewState } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
+  import { createAnalysisSettings } from './lib/stores/analysisSettings';
   import { createEngineStore } from './lib/stores/engine';
   import { createToasts } from './lib/stores/toast';
   import { createActions } from './lib/analysis/actions';
@@ -46,9 +47,12 @@
   // Shared stores — created once at app root.
   const viewState = createViewState();
   const selection = createSelection();
+  // Per-set analysis settings (Task R1): keyed by setId, target-driven
+  // dropdown-follows-tray. Created before actions so calc* can read it.
+  const analysisSettings = createAnalysisSettings(selection);
   const engine = createEngineStore();
   const toasts = createToasts();
-  const actions = createActions(engine, selection);
+  const actions = createActions(engine, selection, analysisSettings);
 
   // ---- File I/O state (Task 13): working directory + autosave ----
   // The working directory is where Save writes and autosave persists.
@@ -67,12 +71,18 @@
   const sharedFreqRange = viewState.sharedFreqRange;
   const currentSlice = viewState.current;
 
-  // Card-owned display state that lives above the plot model.
-  let freqMode = $state<FreqMode>('fft');
-  let dynRangeDb = $state(60);
-  // The sonogram card's selected set index, lifted here so the canvas
-  // heat layer renders THAT set's sonogram (not just the first computed).
-  let sonoSetIdx = $state(0);
+  // Display state derived from the per-set settings store, keyed to the
+  // current analysis target (Task R1): the plot's spectral quantity and
+  // the sonogram heat-map range now follow the FOCUSED set's settings
+  // rather than App-owned local state.
+  const analysisTarget = analysisSettings.analysisTarget;
+  const settingsMap = analysisSettings.map;   // subscribe so the deriveds re-run on patch
+  const freqMode = $derived<FreqMode>(
+    (void $settingsMap, analysisSettings.settingFor($analysisTarget, 'freq').mode),
+  );
+  const dynRangeDb = $derived(
+    (void $settingsMap, analysisSettings.settingFor($analysisTarget, 'sono').dynRangeDb),
+  );
   let mode = $state<'box' | 'pan'>('box');
 
   // Reference to the CURRENTLY MOUNTED primary PlotSurface (single / Bode
@@ -343,15 +353,15 @@
   let sonoCanvas = $state<HTMLCanvasElement | undefined>();
 
   /**
-   * The sonogram image of the SET the SonoCard has selected (its setId,
-   * looked up via the working-set order the card indexes into), so the
-   * heat layer tracks the card's set/chan choice rather than blindly
-   * showing whichever set was computed first.
+   * The sonogram image of the SET the analysis target names (its setId;
+   * 'all' shows the first working set), so the heat layer tracks the
+   * dataset dropdown rather than blindly showing whichever set was
+   * computed first.
    */
   const sono = $derived.by(() => {
-    const setId = actions.workingSets()[sonoSetIdx]?.setId;
+    const setId = $analysisTarget === 'all' ? actions.workingSets()[0]?.setId : $analysisTarget;
     const chosen = setId !== undefined ? $derivedStore[setId]?.sono : undefined;
-    // Fall back to any computed sonogram so a stale index still shows something.
+    // Fall back to any computed sonogram so a stale target still shows something.
     return chosen ?? setArrays.find((s) => s.sono)?.sono;
   });
 
@@ -410,14 +420,12 @@
     {viewState}
     {selection}
     {actions}
+    {analysisSettings}
     {getSvg}
     {workdir}
     {onsave}
     {toasts}
     {hasData}
-    bind:freqMode
-    bind:dynRangeDb
-    bind:sonoSetIdx
     bind:autosaveEnabled
   />
 
