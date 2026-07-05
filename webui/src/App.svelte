@@ -45,6 +45,9 @@
   import { fallbackDir, pickWorkDir, restoreWorkDir, type WorkDir } from './lib/files/workdir';
   import { autosave, clearAutosave, restoreOffer } from './lib/files/autosave';
   import type { DvmaDataset } from './lib/model/dataset';
+  import { createAcquireStore } from './lib/stores/acquire';
+  import { createMonitorStore } from './lib/stores/monitor';
+  import OscCanvas from './components/OscCanvas.svelte';
   import impulseUrl from './assets/impulse.dvma?url';
   // 3-channel fixture (Task R4) for exercising the TF out/in remap end to
   // end; loaded ONLY under `?fixture=3ch` so shipped `?fixture=1` stays the
@@ -60,6 +63,13 @@
   const engine = createEngineStore();
   const toasts = createToasts();
   const actions = createActions(engine, selection, analysisSettings);
+  // Acquisition store (Plan 2): manages Web Audio device enumeration +
+  // recording lifecycle; the liveSource capability gate flips on init.
+  const acquire = createAcquireStore();
+  // Monitor store (Plan 2 Live): real-time oscilloscope feed. Created
+  // here and passed to both LiveCard (controls) and OscCanvas (render).
+  // Reads device config from the acquire store so Setup configures both.
+  const monitor = createMonitorStore(acquire);
 
   // ---- File I/O state (Task 13): working directory + autosave ----
   // The working directory is where Save writes and autosave persists.
@@ -130,6 +140,11 @@
         .catch((e) => console.error('[fixture] load failed:', e));
     }
 
+    // Boot the acquisition store: probe for Web Audio support, enumerate
+    // input devices, and flip the liveSource capability gate so Setup +
+    // Acquire tabs become enabled.
+    void acquire.init();
+
     // Restore last session's working folder (File System Access API), then
     // offer to restore an autosaved session if one is waiting in IndexedDB.
     // Both are best-effort and never block the shell. Skipped under
@@ -140,9 +155,11 @@
     // THUNK, not bytes — writeDvma (a full zip serialize) then runs once when
     // the 2 s debounce fires, not eagerly on every store emission (and a fresh
     // loadDataset / Restore no longer re-serializes the bytes just loaded).
+    // stampUiState is called inside the thunk so channel labels + analysis
+    // settings are captured at serialization time (Plan 2 persistence).
     const unsubDataset = datasetStore.subscribe((ds) => {
       if (!ds) return;
-      autosave(() => writeDvma(ds), workdir, autosaveEnabled);
+      autosave(() => { actions.stampUiState(); return writeDvma(ds); }, workdir, autosaveEnabled);
     });
 
     if (forcedNarrow || typeof window.matchMedia !== 'function') return () => unsubDataset();
@@ -266,6 +283,7 @@
     if (!name) return; // cancelled
     const filename = name.toLowerCase().endsWith('.dvma') ? name : `${name}.dvma`;
     try {
+      actions.stampUiState();        // persist channel labels + analysis settings
       const bytes = writeDvma(ds);
       const dir = workdir ?? fallbackDir();
       await dir.save(filename, bytes);
@@ -487,6 +505,8 @@
     {selection}
     {actions}
     {analysisSettings}
+    {acquire}
+    {monitor}
     {getSvg}
     {workdir}
     {onsave}
@@ -505,7 +525,11 @@
     {/if}
 
     <section class="plot" aria-label="plot">
-      {#if !hasData}
+      {#if $activeStage === 'live'}
+        <div class="plot-host">
+          <OscCanvas {monitor} />
+        </div>
+      {:else if !hasData}
         <div class="empty-state">
           <p class="es-title">No data</p>
           <p class="es-sub">Load Data to begin</p>

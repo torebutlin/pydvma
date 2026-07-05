@@ -17,6 +17,8 @@
   import type { Selection } from '../lib/stores/selection';
   import type { Actions } from '../lib/analysis/actions';
   import type { AnalysisSettings } from '../lib/stores/analysisSettings';
+  import type { AcquireStore } from '../lib/stores/acquire';
+  import type { MonitorStore } from '../lib/stores/monitor';
   import type { WorkDir } from '../lib/files/workdir';
   import type { Toasts } from '../lib/stores/toast';
   import TimeCard from './cards/TimeCard.svelte';
@@ -24,6 +26,9 @@
   import TFCard from './cards/TFCard.svelte';
   import SonoCard from './cards/SonoCard.svelte';
   import ExportCard from './cards/ExportCard.svelte';
+  import SetupCard from './cards/SetupCard.svelte';
+  import AcquireCard from './cards/AcquireCard.svelte';
+  import LiveCard from './cards/LiveCard.svelte';
 
   let {
     narrow = false,
@@ -31,6 +36,8 @@
     selection,
     actions,
     analysisSettings,
+    acquire,
+    monitor,
     getSvg,
     workdir,
     onsave,
@@ -44,6 +51,10 @@
     actions: Actions;
     /** Per-set analysis settings + shared target (Task R1). */
     analysisSettings: AnalysisSettings;
+    /** Acquisition store (Plan 2 Web Audio). */
+    acquire: AcquireStore;
+    /** Monitor store (Plan 2 Live oscilloscope). */
+    monitor: MonitorStore;
     /** Active plot's <svg> accessor (Export card figure source). */
     getSvg: () => SVGSVGElement | undefined;
     /** Working directory for Save Figure / Save Dataset. */
@@ -61,15 +72,19 @@
 
   /** Why a not-yet-built stage is empty — shown in its placeholder card. */
   const noteFor = (id: string): string =>
-    id === 'setup' || id === 'acquire'
-      ? 'Recording from a live input arrives in a future update. For now, Load Data to analyse an existing .dvma recording.'
-      : id === 'fit'
-        ? 'Modal curve-fitting arrives in a future update.'
-        : 'Controls arrive in a later plan.';
+    id === 'fit'
+      ? 'Modal curve-fitting arrives in a future update.'
+      : 'Controls arrive in a later plan.';
 </script>
 
 <div class="ctx-zone" class:narrow>
-  {#if $activeStage === 'time'}
+  {#if $activeStage === 'setup'}
+    <SetupCard {acquire} />
+  {:else if $activeStage === 'acquire'}
+    <AcquireCard {acquire} {actions} {toasts} />
+  {:else if $activeStage === 'live'}
+    <LiveCard {monitor} />
+  {:else if $activeStage === 'time'}
     <TimeCard {viewState} {selection} {actions} />
   {:else if $activeStage === 'frequency'}
     <FrequencyCard {actions} {selection} {analysisSettings} />

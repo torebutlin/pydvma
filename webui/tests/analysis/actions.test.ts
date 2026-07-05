@@ -5,6 +5,7 @@ import { createSelection } from '../../src/lib/stores/selection';
 import { createAnalysisSettings } from '../../src/lib/stores/analysisSettings';
 import type { EngineStore } from '../../src/lib/stores/engine';
 import type { DvmaDataset, DvmaItem } from '../../src/lib/model/dataset';
+import { readDvma, writeDvma } from '../../src/lib/codec/dvma';
 
 /** Build the (selection, settings, actions) trio bound to a fake engine. */
 function harness(engine: EngineStore) {
@@ -337,4 +338,121 @@ test('a concurrent action does not erase another kind\'s error unseen', async ()
   expect(get(actions.computeError)).toContain('engine failed to boot');
   await actions.calcSono(0, 0);                         // different kind, succeeds
   expect(get(actions.computeError), 'FFT error must survive a later sonogram success').toContain('engine failed to boot');
+});
+
+// ---- Plan 2 persistence: loadDataset restore + stampUiState ----
+
+test('loadDataset restores channel labels from item.ui', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  const ds = makeDataset(1);
+  ds.items[0].ui = { channel_labels: { '0': 'hammer', '1': 'accel' } };
+  actions.loadDataset(ds);
+  const ids = get(sel.sets);
+  expect(get(sel.channelLabel)(ids[0].id, 0)).toBe('hammer');
+  expect(get(sel.channelLabel)(ids[0].id, 1)).toBe('accel');
+});
+
+test('loadDataset restores analysis settings from item.ui', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, settings, actions } = harness(engine);
+  const ds = makeDataset(1);
+  ds.items[0].ui = {
+    analysis: {
+      freq: { window: 'flattop', mode: 'psd', nFrames: 20 },
+      tf: { chIn: 1, window: 'blackman', averaging: 'across', nFrames: 7 },
+      sono: { nFft: 2048, dynRangeDb: 40 },
+    },
+  };
+  actions.loadDataset(ds);
+  const setId = get(sel.sets)[0].id;
+  const f = settings.get(setId, 'freq');
+  expect(f.window).toBe('flattop');
+  expect(f.mode).toBe('psd');
+  expect(f.nFrames).toBe(20);
+  const t = settings.get(setId, 'tf');
+  expect(t.chIn).toBe(1);
+  expect(t.window).toBe('blackman');
+  expect(t.averaging).toBe('across');
+  expect(t.nFrames).toBe(7);
+  const s = settings.get(setId, 'sono');
+  expect(s.nFft).toBe(2048);
+  expect(s.dynRangeDb).toBe(40);
+});
+
+test('loadDataset with no ui field uses default settings and labels', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, settings, actions } = harness(engine);
+  const ds = makeDataset(1);
+  // No ui field at all — should not crash.
+  actions.loadDataset(ds);
+  const setId = get(sel.sets)[0].id;
+  expect(get(sel.channelLabel)(setId, 0)).toBe('ch_0');   // default label
+  const f = settings.get(setId, 'freq');
+  expect(f.window).toBe('hann');                           // default
+  expect(f.mode).toBe('fft');
+});
+
+test('stampUiState writes labels and settings onto DvmaItems', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const setId = get(sel.sets)[0].id;
+
+  // Set custom labels and non-default settings.
+  sel.renameChannel(setId, 0, 'impact');
+  settings.patch(setId, 'freq', { window: 'flattop', mode: 'psd', nFrames: 25 });
+
+  actions.stampUiState();
+
+  const ds = get(actions.dataset)!;
+  const item = ds.items.find(i => i.kind === 'TimeData')!;
+  expect(item.ui).toBeDefined();
+  expect(item.ui!.channel_labels).toEqual({ '0': 'impact' });
+  expect(item.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'psd', nFrames: 25 });
+});
+
+test('stampUiState omits ui when labels and settings are all defaults', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+
+  // No custom labels, all default settings — stamp should clear ui.
+  actions.stampUiState();
+
+  const ds = get(actions.dataset)!;
+  const item = ds.items.find(i => i.kind === 'TimeData')!;
+  expect(item.ui).toBeUndefined();
+});
+
+test('full round-trip: stamp → writeDvma → readDvma → loadDataset restores labels + settings', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(2));
+  const [a, b] = get(sel.sets).map(s => s.id);
+
+  // Customise set A labels and settings; leave set B at defaults.
+  sel.renameChannel(a, 1, 'response');
+  settings.patch(a, 'tf', { chIn: 1, averaging: 'across', nFrames: 3 });
+
+  // Stamp + serialise.
+  actions.stampUiState();
+  const bytes = writeDvma(get(actions.dataset)!);
+
+  // Fresh harness — load the round-tripped dataset.
+  const { sel: sel2, settings: s2, actions: a2 } = harness(engine);
+  a2.loadDataset(readDvma(bytes));
+
+  const ids2 = get(sel2.sets).map(s => s.id);
+  // Set A (now first) should have the custom label + tf settings.
+  expect(get(sel2.channelLabel)(ids2[0], 1)).toBe('response');
+  expect(get(sel2.channelLabel)(ids2[0], 0)).toBe('ch_0');    // default
+  const tf = s2.get(ids2[0], 'tf');
+  expect(tf.chIn).toBe(1);
+  expect(tf.averaging).toBe('across');
+  expect(tf.nFrames).toBe(3);
+
+  // Set B should still have defaults.
+  expect(get(sel2.channelLabel)(ids2[1], 0)).toBe('ch_0');
+  expect(s2.get(ids2[1], 'tf').averaging).toBe('within');     // default
 });

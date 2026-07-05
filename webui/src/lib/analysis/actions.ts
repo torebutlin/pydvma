@@ -23,12 +23,13 @@
  * concurrent action settles, and `computeError` is cleared per-kind (a
  * concurrent action never erases another's error unseen).
  */
-import { writable } from 'svelte/store';
-import type { DvmaDataset, DvmaItem } from '../model/dataset';
+import { writable, get } from 'svelte/store';
+import type { DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 import { itemChannels } from '../model/dataset';
 import type { EngineStore } from '../stores/engine';
 import type { Selection } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
+import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import { fromNFrames, fromNFft } from './resolution';
 
@@ -174,6 +175,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * selection tray (name / channel count / duration / timestamp from
    * item meta), and seed the derived map with the time arrays so the
    * time view plots immediately (no compute needed).
+   *
+   * Plan 2 persistence: after seeding, restore persisted UI state from
+   * each item's `ui` field — custom channel labels flow to the selection
+   * store, per-set analysis settings flow to the analysisSettings store.
+   * Missing `ui` (older files) leaves both at their defaults.
    */
   function loadDataset(ds: DvmaDataset) {
     dataset.set(ds);
@@ -204,8 +210,71 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           }),
         },
       };
+
+      // Restore persisted UI state (Plan 2 persistence).
+      const ui = item.ui;
+      if (ui) {
+        // Channel labels — sparse map keyed by stringified channel index.
+        if (ui.channel_labels) {
+          for (const [chStr, label] of Object.entries(ui.channel_labels)) {
+            const ch = Number(chStr);
+            if (Number.isFinite(ch) && ch >= 0 && ch < nCh && typeof label === 'string') {
+              selection.renameChannel(setId, ch, label);
+            }
+          }
+        }
+        // Per-set analysis settings — merge saved partials over defaults.
+        if (ui.analysis && settings) {
+          if (ui.analysis.freq) settings.patch(setId, 'freq', ui.analysis.freq);
+          if (ui.analysis.tf) settings.patch(setId, 'tf', ui.analysis.tf);
+          if (ui.analysis.sono) settings.patch(setId, 'sono', ui.analysis.sono);
+        }
+      }
     });
     derived.set(seed);
+  }
+
+  /**
+   * Write the current channel labels and per-set analysis settings onto
+   * each working set's DvmaItem.ui so the next `writeDvma` persists them
+   * in the manifest. Called from the save / autosave path BEFORE
+   * serialization (Plan 2 persistence).
+   *
+   * Mutates items in place (they live inside the `dataset` store by
+   * reference); no store emission is needed — the caller serializes
+   * immediately after.
+   */
+  function stampUiState(): void {
+    for (const ws of working) {
+      const ui: DvmaItemUi = {};
+
+      // Channel labels (sparse).
+      const labels = selection.getLabelsForSet(ws.setId);
+      if (labels) ui.channel_labels = labels;
+
+      // Per-set analysis settings (full snapshot per view).
+      if (settings) {
+        const freq = settings.get(ws.setId, 'freq');
+        const tf = settings.get(ws.setId, 'tf');
+        const sono = settings.get(ws.setId, 'sono');
+        const d = defaults();
+        // Only include views that differ from defaults (keep files lean),
+        // but always include all if ANY field was customised.
+        const freqChanged = freq.window !== d.freq.window || freq.mode !== d.freq.mode || freq.nFrames !== d.freq.nFrames;
+        const tfChanged = tf.chIn !== d.tf.chIn || tf.window !== d.tf.window || tf.averaging !== d.tf.averaging || tf.nFrames !== d.tf.nFrames;
+        const sonoChanged = sono.nFft !== d.sono.nFft || sono.dynRangeDb !== d.sono.dynRangeDb;
+        if (freqChanged || tfChanged || sonoChanged) {
+          ui.analysis = {};
+          if (freqChanged) ui.analysis.freq = { ...freq };
+          if (tfChanged) ui.analysis.tf = { ...tf };
+          if (sonoChanged) ui.analysis.sono = { ...sono };
+        }
+      }
+
+      // Only set `ui` when there's something to persist (avoids empty
+      // objects in the manifest for sets with all-default state).
+      ws.time.ui = Object.keys(ui).length > 0 ? ui : undefined;
+    }
   }
 
   /**
@@ -374,9 +443,52 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     });
   }
 
+  /**
+   * Add a recorded TimeData item to the existing dataset (or create one
+   * if empty).  The item is appended, registered with the selection
+   * tray, and seeded into the derived map so the time view shows it
+   * immediately.  Returns the new set's `setId`.
+   *
+   * Plan 2 acquisition: called by the AcquireCard after a successful
+   * recording — the item comes from `recordingToItem` in acquire.ts.
+   */
+  function addRecordedSet(item: DvmaItem): number {
+    // Ensure a dataset exists.
+    let ds = get(dataset);
+    if (!ds) {
+      ds = { formatVersion: 2, pydvmaVersion: 'webui', items: [] };
+    }
+    ds.items.push(item);
+    dataset.set(ds);
+
+    const nCh = itemChannels(item);
+    const axis = item.arrays.time_axis?.data;
+    const dur = axis && axis.length ? axis[axis.length - 1] - axis[0] : 0;
+    const name = (item.meta.test_name as string) || 'set';
+    const timestamp = (item.meta.timestring as string) || '';
+    const setId = selection.addSet({ name, nChannels: nCh, durationS: dur, timestamp });
+    const ws: WorkingSet = { setId, time: item, fs: sampleRate(item), durationS: dur, nChannels: nCh };
+    working.push(ws);
+
+    // Seed the time arrays so the time view draws immediately.
+    setDerived(setId, {
+      time: {
+        axis: Float64Array.from(item.arrays.time_axis.data),
+        data: decodeArray({
+          shape: item.arrays.time_data.shape,
+          data: item.arrays.time_data.data as Float64Array,
+          complex: item.arrays.time_data.isComplex,
+        }),
+      },
+    });
+
+    return setId;
+  }
+
   return {
     dataset, derived, computeError, busy,
-    loadDataset, calcFft, calcPsd, calcTf, calcSono, cleanImpulse,
+    loadDataset, addRecordedSet, stampUiState,
+    calcFft, calcPsd, calcTf, calcSono, cleanImpulse,
     /** Source-set metadata for cards (set index → fs / duration / channels). */
     workingSets: () => working.map(w => ({
       setId: w.setId, fs: w.fs, durationS: w.durationS, nChannels: w.nChannels,

@@ -11,14 +11,15 @@ import type { ViewId } from './viewstate';
  * stage is enabled.
  */
 export interface StageDef {
-  id: 'setup' | 'acquire' | 'time' | 'frequency' | 'tf' | 'sono' | 'fit' | 'export';
+  id: 'setup' | 'acquire' | 'live' | 'time' | 'frequency' | 'tf' | 'sono' | 'fit' | 'export';
   label: string;
-  view: ViewId | null;               // null = keeps current view (export)
+  view: ViewId | null;               // null = keeps current view (export) or own render (live)
   needs: 'none' | 'liveSource' | 'fitEngine';
 }
 export const STAGES: StageDef[] = [
   { id: 'setup', label: 'Setup', view: null, needs: 'liveSource' },
   { id: 'acquire', label: 'Acquire', view: 'time', needs: 'liveSource' },
+  { id: 'live', label: 'Live', view: null, needs: 'liveSource' },
   { id: 'time', label: 'Time', view: 'time', needs: 'none' },
   { id: 'frequency', label: 'Frequency', view: 'frequency', needs: 'none' },
   { id: 'tf', label: 'TF', view: 'tf', needs: 'none' },
