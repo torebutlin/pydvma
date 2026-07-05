@@ -55,5 +55,24 @@ test.describe('@engine', () => {
     await expect(page.getByTestId('plot-line')).toHaveCount(4);
     // Legend is unchanged (2 out/in rows — coherence shares the line).
     await expect(page.getByTestId('legend-entry')).toHaveCount(2);
+
+    // R5: renaming channels in the tray flows into the TF out/in label.
+    // Rename ch_0 (the input) → "hammer" and ch_1 (an output) → "accel";
+    // the TF line then reads "accel/hammer" (output/input) in the legend.
+    const card = page.getByTestId('tray-card-0');
+    await card.getByTestId('ch-lab-0').dblclick();
+    await card.getByTestId('ch-lab-input-0').fill('hammer');
+    await card.getByTestId('ch-lab-input-0').press('Enter');
+    await card.getByTestId('ch-lab-1').dblclick();
+    await card.getByTestId('ch-lab-input-1').fill('accel');
+    await card.getByTestId('ch-lab-input-1').press('Enter');
+
+    const relabelled = await page.getByTestId('legend-entry').allInnerTexts();
+    const flat2 = relabelled.map((s) => s.trim());
+    // The output/input label uses the custom names on both halves.
+    expect(flat2.some((l) => l.endsWith('accel/hammer'))).toBe(true);
+    // ch_2 was left unnamed, so it still reads its default numerator over
+    // the renamed input: "ch_2/hammer".
+    expect(flat2.some((l) => l.endsWith('ch_2/hammer'))).toBe(true);
   });
 });

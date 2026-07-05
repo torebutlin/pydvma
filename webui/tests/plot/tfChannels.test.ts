@@ -83,6 +83,19 @@ test('tfTransformEntries: per-set chIn, mixed sets', () => {
   ]);
 });
 
+test('tfTransformEntries: custom channel labels (R5) reach the out/in label', () => {
+  // The App call site passes selection.channelLabel as the accessor, so a
+  // renamed line reads e.g. `hammer/accel` in the TF out/in label. The
+  // "set · " prefix from the raw legend label is preserved.
+  const entries = [
+    { setId: 0, ch: 0, label: 'A · accel' },   // ch_0 renamed → accel (input)
+    { setId: 0, ch: 1, label: 'A · hammer' },  // ch_1 renamed → hammer (output)
+  ];
+  const label = (_setId: number, ch: number) => (ch === 0 ? 'accel' : 'hammer');
+  const out = tfTransformEntries(entries, () => 0, label);   // chIn=0
+  expect(out.map(e => e.label)).toEqual(['A · hammer/accel']);
+});
+
 test('tfTransformEntries: preserves extra entry fields (colour/state)', () => {
   const entries = [
     { setId: 0, ch: 0, label: 'in', color: '#111', state: 'on' as const },
