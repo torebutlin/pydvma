@@ -15,6 +15,7 @@
  */
 import type { PlotLine, PlotModel } from './build';
 import type { TfPlotType } from '../stores/viewstate';
+import { tfColumn } from './tfChannels';
 
 /** The flat `{shape, data, complex}` dict every worker array crosses as. */
 export interface MarshalledArray {
@@ -65,7 +66,8 @@ export interface VisibleLine { setId: number; ch: number; state: LineState; colo
  * A set's derived arrays, already decoded from the worker marshalling.
  * Only the arrays relevant to the active view need be present; a set
  * with no array for the active view contributes no lines (empty pane,
- * no throw). `nOut` (TF) is the output-channel count of `tf`.
+ * no throw). The `tf` slice's `data` is `(Nf, Nout)` where `Nout =
+ * nChannels − 1` (the input channel is dropped) — see its field doc.
  */
 export interface SetArrays {
   setId: number;
@@ -73,7 +75,19 @@ export interface SetArrays {
   freq?: { axis: Float64Array; data: DecodedArray };          // FFT: freq_data (Nf, Nc) complex
   psd?: { axis: Float64Array; data: DecodedArray };           // PSD: psd (Nc, Nf) real
   csd?: { axis: Float64Array; data: DecodedArray };           // CSD: |Cxy| pairs (Nc, Nc, Nf)
-  tf?: { axis: Float64Array; data: DecodedArray; coherence?: DecodedArray }; // tf_data (Nf, Nout)
+  /**
+   * TF slice. `data` is `tf_data (Nf, Nout)` — the input channel is
+   * DROPPED by `calculate_tf`, so `Nout = nChannels − 1` OUTPUT columns
+   * in ascending channel order. `chIn` (the input channel it was
+   * computed with) and `nChannels` (the source channel count) are
+   * carried so the model can remap a visible source channel to its
+   * output column and skip the input line (Task R4). `nChannels` falls
+   * back to `Nout + 1` when absent (contiguous 0..N−1 assumption).
+   */
+  tf?: {
+    axis: Float64Array; data: DecodedArray; coherence?: DecodedArray;
+    chIn?: number; nChannels?: number;
+  };
   /** Sonogram magnitude image (Nf, Nt) plus its two axes (canvas heat layer). */
   sono?: { timeAxis: Float64Array; freqAxis: Float64Array; data: DecodedArray };
 }
@@ -156,7 +170,9 @@ function baseLine(x: Float64Array, y: Float64Array, v: VisibleLine): PlotLine {
  *   pairs deferred). Sub-mode via `freqMode`.
  * - tf: apply `tfPlotType` to complex tf_data columns — mag (dB), phase
  *   (degrees, atan2), real, imag; nyquist parametrises x=re/y=im with
- *   `squareAspect` and windows to `freqRange`. `bode` is NOT a single
+ *   `squareAspect` and windows to `freqRange`. Each visible source
+ *   channel is remapped to its OUTPUT column (tf_data drops the input
+ *   channel, R4); the input channel draws no line. `bode` is NOT a single
  *   pane: the card builds a 'mag' model and a 'phase' model and stacks
  *   them, so `bode` here degrades to the 'mag' pane.
  * - coherence overlay: for tf mag/phase (never nyquist/real/imag), a
@@ -257,10 +273,17 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       const t = byId.get(v.setId)?.tf;
       if (!t) continue;
       const nout = t.data.shape[1] ?? 1;                     // tf_data (Nf, Nout)
-      if (v.ch >= nout) continue;
+      // R4: tf_data drops the INPUT channel, so a visible source channel
+      // maps to its OUTPUT column (position within channels ∖ {chIn});
+      // the input channel itself has no column (skip — no line). Without
+      // the remap a >2-channel set mislabels lines and drops a channel.
+      const chIn = t.chIn ?? 0;
+      const nChannels = t.nChannels ?? nout + 1;
+      const col = tfColumn(v.ch, chIn, nChannels);
+      if (col === null || col >= nout) continue;             // input channel or out of range
       const nf = t.axis.length;
-      const reCol = column(t.data.re, nf, nout, v.ch);
-      const imCol = t.data.im ? column(t.data.im, nf, nout, v.ch) : new Float64Array(nf);
+      const reCol = column(t.data.re, nf, nout, col);
+      const imCol = t.data.im ? column(t.data.im, nf, nout, col) : new Float64Array(nf);
 
       if (nyquist) {
         // Parametric curve: x=re, y=im, sliced to the shared freq window.
@@ -318,10 +341,14 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       for (const v of args.visible) {
         const t = byId.get(v.setId)?.tf;
         if (!t?.coherence) continue;
-        const nout = t.coherence.shape[1] ?? 1;
-        if (v.ch >= nout) continue;
+        const nout = t.coherence.shape[1] ?? 1;              // coherence is (Nf, N_out) too
+        // Same input-dropped remap as the TF lines above (R4).
+        const chIn = t.chIn ?? 0;
+        const nChannels = t.nChannels ?? nout + 1;
+        const col = tfColumn(v.ch, chIn, nChannels);
+        if (col === null || col >= nout) continue;
         const nf = t.axis.length;
-        const y = column(t.coherence.re, nf, nout, v.ch);
+        const y = column(t.coherence.re, nf, nout, col);
         lines.push({
           x: t.axis, y, color: v.color, opacity: 0.7,
           width: 1, dashed: true, yAxis: 'right', xMonotonic: true,

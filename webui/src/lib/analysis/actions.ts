@@ -288,9 +288,12 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         });
         if (stale('tf', my)) return;                    // a newer TF request won
         const axis = axisData(mval(res, 'freq_axis'));
-        const tf = tfFromResult(res, axis);
-        // Ensemble result attaches to the first set (single averaged curve).
-        if (working.length) setDerived(working[0].setId, { tf });
+        // The ensemble curve is attached to the FIRST set; carry the chIn
+        // it was computed with (and that set's channel count) so the model
+        // remaps out/in against the same input channel (R4).
+        const first = working[0];
+        const tf = tfFromResult(res, axis, chIn, first?.nChannels);
+        if (first) setDerived(first.setId, { tf });
         return;
       }
       for (const ws of sets) {
@@ -303,7 +306,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         });
         if (stale('tf', my)) return;                  // stale-drop the whole batch
         const fAxis = axisData(mval(res, 'freq_axis'));
-        setDerived(ws.setId, { tf: tfFromResult(res, fAxis) });
+        // Carry this set's chIn + channel count onto the slice so the plot
+        // model remaps its out/in columns/labels correctly (R4).
+        setDerived(ws.setId, { tf: tfFromResult(res, fAxis, chIn, ws.nChannels) });
       }
     });
   }
@@ -385,13 +390,22 @@ function axisData(v: unknown): Float64Array {
   return d instanceof Float64Array ? d : Float64Array.from((d as number[]) ?? []);
 }
 
-/** Build a SetArrays.tf slice from a calc_tf-shaped worker result. */
-function tfFromResult(res: unknown, axis: Float64Array): NonNullable<SetArrays['tf']> {
+/**
+ * Build a SetArrays.tf slice from a calc_tf-shaped worker result. `chIn`
+ * (the input channel the TF was computed with) and `nChannels` (the
+ * source channel count) are carried onto the slice so `buildPlotModel`
+ * can remap each visible source channel to its output column — `tf_data`
+ * drops the input channel, so it is `(Nf, nChannels − 1)` (Task R4).
+ */
+function tfFromResult(
+  res: unknown, axis: Float64Array, chIn: number, nChannels?: number,
+): NonNullable<SetArrays['tf']> {
   const coh = mval(res, 'coherence');
   return {
     axis,
     data: decodeArray(asMarshalled(mval(res, 'tf_data'))),
     coherence: coh == null ? undefined : decodeArray(asMarshalled(coh)),
+    chIn, nChannels,
   };
 }
 

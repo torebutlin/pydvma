@@ -36,6 +36,9 @@
   import { createToasts } from './lib/stores/toast';
   import { createActions } from './lib/analysis/actions';
   import { buildPlotModel, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
+  import { tfTransformEntries } from './lib/plot/tfChannels';
+  import type { LegendEntry } from './lib/stores/selection';
+  import { readable } from 'svelte/store';
   import { dataExtent, type PlotModel } from './lib/plot/build';
   import { readDvma, writeDvma } from './lib/codec/dvma';
   import { sniffFormat } from './lib/files/sniff';
@@ -297,14 +300,47 @@
     };
   });
 
-  /** Visible (on/fade) lines from the legend entries (off lines omitted). */
+  const view = $derived($active);
+
+  /**
+   * Per-set TF input channel (Task R4): the `chIn` the set's TF was
+   * computed with, read off its decoded `tf` slice. `undefined` before
+   * Calc TF (or for a set with no TF) → the transform leaves that set's
+   * entries untouched. One accessor feeds BOTH the legend transform and
+   * the visible-line list so plot and legend stay in lock-step.
+   */
+  const tfChInFor = $derived((setId: number): number | undefined => $derivedStore[setId]?.tf?.chIn);
+
+  /**
+   * Legend entries the ACTIVE view renders. For TF, the raw per-channel
+   * entries are transformed to the out/in form (input dropped, lines
+   * labelled `ch_out/ch_in`) so the legend matches the plot exactly
+   * (R4); every other view uses the raw entries. Same transform drives
+   * `visible`, so the two never diverge.
+   */
+  const viewEntries = $derived<LegendEntry[]>(
+    view === 'tf'
+      ? tfTransformEntries($legendEntries, tfChInFor)
+      : $legendEntries,
+  );
+
+  /** A store wrapper so `Legend` can take the TF entries as an override. */
+  const tfLegend = $derived(view === 'tf' ? readable(viewEntries) : undefined);
+
+  /**
+   * Visible (on/fade) lines fed to the plot model, derived from the SAME
+   * `viewEntries` the legend shows (off lines already omitted). For TF
+   * this means the input channel is dropped here too, so a stale render
+   * can never show a line the legend hides. The model still remaps each
+   * surviving source channel to its output column via the tf slice's
+   * `chIn` — this list only decides WHICH channels appear.
+   */
   const visible = $derived<VisibleLine[]>(
-    $legendEntries.map((e) => ({
+    viewEntries.map((e) => ({
       setId: e.setId, ch: e.ch, state: e.state === 'off' ? 'fade' : e.state, color: e.color,
     })),
   );
 
-  const view = $derived($active);
   const range = $derived($currentSlice.range);
   const plotType = $derived($currentSlice.plotType);
   const coherence = $derived($currentSlice.coherence);
@@ -473,7 +509,7 @@
           <div class="bode-pane">
             <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
             <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
-            <Legend {selection} {viewState} />
+            <Legend {selection} {viewState} entriesOverride={tfLegend} />
           </div>
           <div class="bode-pane">
             <PlotSurface model={phaseModel} {mode} {viewState} />
@@ -483,7 +519,7 @@
         <div class="plot-host">
           <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
           <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
-          <Legend {selection} {viewState} />
+          <Legend {selection} {viewState} entriesOverride={tfLegend} />
         </div>
       {/if}
       {#if $computeError}

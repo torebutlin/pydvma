@@ -33,21 +33,32 @@
    * live (legend position is not history-tracked) but are rAF-coalesced
    * for smoothness; the final position also commits on pointerup.
    */
-  import type { Selection } from '../lib/stores/selection';
+  import type { LegendEntry, Selection } from '../lib/stores/selection';
   import type { ViewState } from '../lib/stores/viewstate';
   import { clampLegend } from '../lib/plot/legendPos';
-  import { get } from 'svelte/store';
+  import { get, type Readable } from 'svelte/store';
 
   let {
     selection,
     viewState,
+    entriesOverride,
   }: {
     selection: Selection;
     viewState: ViewState;
+    /**
+     * Optional view-aware entry list (Task R4). When present the legend
+     * renders THESE rows instead of the raw `selection.legendEntries` —
+     * the TF view passes its out/in-labelled, input-dropped entries so
+     * the legend matches exactly what the plot draws. Clicking a row
+     * still cycles the underlying (setId, ch) line, so the tri-state
+     * behaviour is unchanged. Omitted (undefined) → the raw legend.
+     */
+    entriesOverride?: Readable<LegendEntry[]> | undefined;
   } = $props();
 
   // Derived (not destructured) so the component tracks reassigned props.
-  const entries = $derived(selection.legendEntries);
+  // An override store wins; otherwise the raw per-channel legend.
+  const entries = $derived(entriesOverride ?? selection.legendEntries);
   const current = $derived(viewState.current);
 
   const legend = $derived($current.legend);

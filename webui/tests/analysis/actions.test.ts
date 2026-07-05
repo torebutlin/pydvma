@@ -121,6 +121,30 @@ test("calcTf 'within' issues one calc_tf per set with n_frames from settings", a
   expect(calls.some(c => c.op === 'calc_tf_averaged')).toBe(false);
 });
 
+test('calcTf carries chIn + nChannels onto the tf slice (R4 out/in remap)', async () => {
+  const { engine } = fakeEngine(async () => tfResult());
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));           // one 2-channel set
+  const a = get(sel.sets)[0].id;
+  settings.patch(a, 'tf', { averaging: 'within', chIn: 1, window: 'hann', nFrames: 4 });
+  await actions.calcTf(a);
+  const tf = get(actions.derived)[a].tf!;
+  expect(tf.chIn).toBe(1);                        // the input channel it ran with
+  expect(tf.nChannels).toBe(2);                   // source channel count (for the remap)
+});
+
+test('calcTf across carries the ensemble chIn onto the first set slice (R4)', async () => {
+  const { engine } = fakeEngine(async () => tfResult());
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(3));
+  settings.patch('all', 'tf', { averaging: 'across', chIn: 1, window: 'hann', nFrames: 5 });
+  await actions.calcTf('all');
+  const first = get(sel.sets)[0].id;
+  const tf = get(actions.derived)[first].tf!;
+  expect(tf.chIn).toBe(1);                        // ensemble ran with chIn=1
+  expect(tf.nChannels).toBe(2);                   // first set's channel count
+});
+
 test("calcTf 'none' issues calc_tf per set with n_frames = 1", async () => {
   const { engine, calls } = fakeEngine(async () => tfResult());
   const { settings, actions } = harness(engine);
