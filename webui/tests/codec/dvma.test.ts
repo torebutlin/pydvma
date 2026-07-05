@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { zipSync } from 'fflate';
 import { readDvma, writeDvma } from '../../src/lib/codec/dvma';
-import { itemChannels, setItemMeta, type DvmaItem } from '../../src/lib/model/dataset';
+import { itemChannels, setItemMeta, type DvmaItem, type DvmaItemUi } from '../../src/lib/model/dataset';
 
 const bytes = new Uint8Array(readFileSync('tests/fixtures/impulse.dvma'));
 
@@ -109,4 +109,73 @@ test('rejects non-finite meta injected via setItemMeta on a python-read item', (
   const ds = readDvma(bytes);
   setItemMeta(ds.items[0], 'gain', NaN);   // lands in metaRaw, which writeDvma serializes
   expect(() => writeDvma(ds)).toThrow(/gain/);
+});
+
+// ---- Plan 2 persistence: ui field round-trip ----
+
+test('write -> read round trip preserves ui.channel_labels', () => {
+  const ds = readDvma(bytes);
+  const td = ds.items.find(i => i.kind === 'TimeData')!;
+  td.ui = { channel_labels: { '0': 'hammer', '1': 'accel' } };
+  const ds2 = readDvma(writeDvma(ds));
+  const td2 = ds2.items.find(i => i.kind === 'TimeData')!;
+  expect(td2.ui).toBeDefined();
+  expect(td2.ui!.channel_labels).toEqual({ '0': 'hammer', '1': 'accel' });
+});
+
+test('write -> read round trip preserves ui.analysis settings', () => {
+  const ds = readDvma(bytes);
+  const td = ds.items.find(i => i.kind === 'TimeData')!;
+  td.ui = {
+    analysis: {
+      freq: { window: 'flattop', mode: 'psd', nFrames: 20 },
+      tf: { chIn: 1, window: 'hann', averaging: 'across', nFrames: 5 },
+      sono: { nFft: 1024, dynRangeDb: 80 },
+    },
+  };
+  const ds2 = readDvma(writeDvma(ds));
+  const td2 = ds2.items.find(i => i.kind === 'TimeData')!;
+  expect(td2.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'psd', nFrames: 20 });
+  expect(td2.ui!.analysis!.tf).toEqual({ chIn: 1, window: 'hann', averaging: 'across', nFrames: 5 });
+  expect(td2.ui!.analysis!.sono).toEqual({ nFft: 1024, dynRangeDb: 80 });
+});
+
+test('ui field absent on items with no ui state (keeps files clean)', () => {
+  const ds = readDvma(bytes);
+  // No ui set on any item → the manifest entry should have no ui key.
+  const ds2 = readDvma(writeDvma(ds));
+  ds2.items.forEach(item => {
+    expect(item.ui).toBeUndefined();
+  });
+});
+
+test('readDvma ignores non-object ui gracefully', () => {
+  const ds = readDvma(bytes);
+  // Manually write a dataset whose manifest ui is a string (bad data).
+  const src = writeDvma(ds);
+  const ds2 = readDvma(src);
+  // Simulate a manifest with ui: "garbage" by re-zipping.
+  const manifest = {
+    format: 'dvma-dataset', format_version: 1, pydvma_version: '1.5.0',
+    items: [{ kind: 'TimeData', arrays: {}, meta: {}, settings: null, ui: 'garbage' }],
+  };
+  const parsed = readDvma(zipManifest(manifest));
+  // Non-object ui should be silently ignored (undefined).
+  expect(parsed.items[0].ui).toBeUndefined();
+});
+
+test('ui with both labels and analysis round-trips together', () => {
+  const ds = readDvma(bytes);
+  const td = ds.items.find(i => i.kind === 'TimeData')!;
+  td.ui = {
+    channel_labels: { '1': 'response' },
+    analysis: { freq: { window: 'blackman', mode: 'csd', nFrames: 15 } },
+  };
+  const ds2 = readDvma(writeDvma(ds));
+  const td2 = ds2.items.find(i => i.kind === 'TimeData')!;
+  expect(td2.ui!.channel_labels).toEqual({ '1': 'response' });
+  expect(td2.ui!.analysis!.freq).toEqual({ window: 'blackman', mode: 'csd', nFrames: 15 });
+  // tf and sono should be absent (not written).
+  expect(td2.ui!.analysis!.tf).toBeUndefined();
+  expect(td2.ui!.analysis!.sono).toBeUndefined();
 });

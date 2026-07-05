@@ -274,6 +274,26 @@ export function createSelection() {
       return soloed ?? 'all';
     }),
 
+    /**
+     * Read all custom channel labels for set `id` as a sparse
+     * `Record<string, string>` keyed by channel index (stringified).
+     * Returns `undefined` when the set has NO custom labels at all
+     * (so callers can distinguish "no labels" from "empty object" and
+     * skip serialisation). Used by `stampUiState` (Plan 2 persistence).
+     */
+    getLabelsForSet(id: number): Record<string, string> | undefined {
+      const rec = findSet(id);
+      if (!rec) return undefined;
+      const m = get(labels);
+      const out: Record<string, string> = {};
+      let any = false;
+      for (let c = 0; c < rec.nChannels; c++) {
+        const lbl = m.get(key(id, c));
+        if (lbl) { out[String(c)] = lbl; any = true; }
+      }
+      return any ? out : undefined;
+    },
+
     legendEntries: derived([sets, states, labels], ([$sets, $states, $labels]) => {
       const out: LegendEntry[] = [];
       $sets.forEach(set => {

@@ -4,7 +4,7 @@
 // contract; python's container.load must accept everything writeDvma emits.
 import { unzipSync, zipSync } from 'fflate';
 import { parseNpy, serializeNpy, type NpyArray } from './npy';
-import type { DataKind, DvmaDataset, DvmaItem } from '../model/dataset';
+import type { DataKind, DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 
 const FORMAT_NAME = 'dvma-dataset';
 const FORMAT_VERSION = 1;
@@ -89,6 +89,7 @@ export function readDvma(bytes: Uint8Array): DvmaDataset {
     arrays?: Record<string, string>;
     meta?: Record<string, unknown>;
     settings?: Record<string, unknown> | null;
+    ui?: unknown;
   }, i: number) => {
     const kind = entry.kind;
     if (!KNOWN_KINDS.has(kind))
@@ -110,7 +111,12 @@ export function readDvma(bytes: Uint8Array): DvmaDataset {
       metaRaw[k] = v;
       meta[k] = decodeValue(v);
     }
-    return { kind, arrays, meta, metaRaw, settings: entry.settings ?? null };
+    // Restore persisted UI state (Plan 2 persistence): channel labels +
+    // per-set analysis settings. Absent on files from older pydvma — the
+    // field stays undefined and loadDataset seeds defaults.
+    const ui: DvmaItemUi | undefined =
+      entry.ui && typeof entry.ui === 'object' ? (entry.ui as DvmaItemUi) : undefined;
+    return { kind, arrays, meta, metaRaw, settings: entry.settings ?? null, ui };
   });
   return {
     formatVersion: manifest.format_version,
@@ -155,7 +161,14 @@ export function writeDvma(ds: DvmaDataset): Uint8Array {
     const meta = item.metaRaw ?? item.meta;
     assertFiniteJson(meta, `items[${index}].meta`);
     assertFiniteJson(item.settings, `items[${index}].settings`);  // null-safe
-    manifest.items.push({ kind: item.kind, arrays, meta, settings: item.settings });
+    // Persist UI state (Plan 2): channel labels + analysis settings. Omit
+    // the key entirely when empty so files stay clean for older readers.
+    const entry: Record<string, unknown> = { kind: item.kind, arrays, meta, settings: item.settings };
+    if (item.ui && Object.keys(item.ui).length > 0) {
+      assertFiniteJson(item.ui, `items[${index}].ui`);
+      entry.ui = item.ui;
+    }
+    manifest.items.push(entry);
   });
   files['manifest.json'] = new TextEncoder().encode(JSON.stringify(manifest, null, 1));
   return zipSync(files, { level: 6 });
