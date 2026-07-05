@@ -46,7 +46,7 @@ test('tfLineLabel: custom label accessor relabels both halves (R5 hook)', () => 
   expect(tfLineLabel(7, 2, 1, custom)).toBe('s7c2/s7c1');
 });
 
-test('tfTransformEntries: drops input channel, relabels out/in', () => {
+test('tfTransformEntries: drops input channel, relabels out/in, keeps set prefix', () => {
   const entries = [
     { setId: 0, ch: 0, label: 'A · ch_0' },
     { setId: 0, ch: 1, label: 'A · ch_1' },
@@ -54,7 +54,13 @@ test('tfTransformEntries: drops input channel, relabels out/in', () => {
   ];
   const out = tfTransformEntries(entries, () => 0);   // chIn=0 for set 0
   expect(out.map(e => e.ch)).toEqual([1, 2]);          // ch_0 (input) dropped
-  expect(out.map(e => e.label)).toEqual(['ch_1/ch_0', 'ch_2/ch_0']);
+  expect(out.map(e => e.label)).toEqual(['A · ch_1/ch_0', 'A · ch_2/ch_0']);
+});
+
+test('tfTransformEntries: no set prefix (bare label) → bare out/in', () => {
+  const entries = [{ setId: 0, ch: 0, label: 'ch_0' }, { setId: 0, ch: 1, label: 'ch_1' }];
+  const out = tfTransformEntries(entries, () => 0);
+  expect(out.map(e => e.label)).toEqual(['ch_1/ch_0']);
 });
 
 test('tfTransformEntries: set with no TF yet passes through unchanged', () => {

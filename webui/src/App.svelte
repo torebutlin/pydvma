@@ -46,6 +46,10 @@
   import { autosave, clearAutosave, restoreOffer } from './lib/files/autosave';
   import type { DvmaDataset } from './lib/model/dataset';
   import impulseUrl from './assets/impulse.dvma?url';
+  // 3-channel fixture (Task R4) for exercising the TF out/in remap end to
+  // end; loaded ONLY under `?fixture=3ch` so shipped `?fixture=1` stays the
+  // 2-channel impulse. Imported as a bundled URL from the test fixtures.
+  import impulse3chUrl from '../tests/fixtures/impulse3ch.dvma?url';
 
   // Shared stores — created once at app root.
   const viewState = createViewState();
@@ -97,10 +101,14 @@
   /** Active plot's root <svg>, or undefined when no plot is mounted. */
   const getSvg = (): SVGSVGElement | undefined => plotRef?.getSvgElement();
 
-  // `?narrow=1` forces the narrow layout; `?fixture=1` auto-loads data.
+  // `?narrow=1` forces the narrow layout; `?fixture=1` auto-loads the
+  // 2-channel impulse; `?fixture=3ch` auto-loads the 3-channel fixture
+  // (TF out/in e2e). Any recognised fixture flag opens the e2e hooks below.
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const forcedNarrow = params.get('narrow') === '1';
-  const fixtureRequested = params.get('fixture') === '1';
+  const fixtureParam = params.get('fixture');
+  const fixtureRequested = fixtureParam === '1' || fixtureParam === '3ch';
+  const fixtureUrl = fixtureParam === '3ch' ? impulse3chUrl : impulseUrl;
   // `?fixture=1` also opens a read-only e2e test hook: `window.__viewState`
   // exposes the live view-state store so Playwright can assert on the
   // active view's range and zoom-history length without brittle DOM
@@ -113,9 +121,9 @@
   const narrow = $derived(forcedNarrow || mediaNarrow);
 
   onMount(() => {
-    // Fixture hook: fetch the checked-in .dvma and load it into the tray.
+    // Fixture hook: fetch the selected checked-in .dvma into the tray.
     if (fixtureRequested) {
-      fetch(impulseUrl)
+      fetch(fixtureUrl)
         .then((r) => r.arrayBuffer())
         .then((buf) => actions.loadDataset(readDvma(new Uint8Array(buf))))
         .catch((e) => console.error('[fixture] load failed:', e));

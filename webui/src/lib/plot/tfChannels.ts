@@ -60,10 +60,20 @@ export function tfLineLabel(
 export interface TfEntryLike { setId: number; ch: number; label: string; }
 
 /**
+ * Separator between the set-name prefix and the channel part of a legend
+ * label (`"set · ch_0"`). The TF transform preserves the prefix (so lines
+ * from different sets stay distinguishable) and rewrites only the channel
+ * part to `out/in`. Kept in sync with `selection.legendEntries`.
+ */
+const LABEL_SEP = ' · ';
+
+/**
  * View-aware TF transform (Task R4): rewrite raw per-channel legend
  * entries into the out/in form the TF pane draws, so the legend and the
  * plot NEVER disagree. Drops each set's input channel (no TF line) and
- * relabels every surviving line `output/input` (e.g. `ch_1/ch_0`).
+ * relabels every surviving line `output/input` (e.g. `ch_1/ch_0`),
+ * preserving any `"set · "` prefix from the original label so multi-set
+ * legends stay distinguishable (`"A · ch_1/ch_0"`).
  *
  * `chInFor(setId)` gives the input channel the set's TF was computed with
  * (from the tf slice); a set with no TF result yet (`undefined`) keeps
@@ -82,7 +92,9 @@ export function tfTransformEntries<E extends TfEntryLike>(
     const chIn = chInFor(e.setId);
     if (chIn === undefined) { out.push(e); continue; }   // no TF yet — pass through
     if (e.ch === chIn) continue;                          // input channel: no line
-    out.push({ ...e, label: tfLineLabel(e.setId, e.ch, chIn, label) });
+    const sep = e.label.lastIndexOf(LABEL_SEP);
+    const prefix = sep >= 0 ? e.label.slice(0, sep + LABEL_SEP.length) : '';
+    out.push({ ...e, label: prefix + tfLineLabel(e.setId, e.ch, chIn, label) });
   }
   return out;
 }
