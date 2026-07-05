@@ -58,6 +58,26 @@ test('rename propagates to legend labels', () => {
   expect(get(sel.legendEntries)[0].label).toBe('hammer test · ch_0');
 });
 
+test('trayFocus: solo → that set; all shown → "all"; ≤1 set → "all"', () => {
+  // Three sets present (from beforeEach). All shown initially → 'all'.
+  sel.all();
+  expect(get(sel.trayFocus)).toBe('all');
+  sel.solo(1);
+  expect(get(sel.trayFocus)).toBe(1);          // exactly one set fully on
+  // Bringing a second set back on leaves a non-solo state → 'all'.
+  sel.cycleSet(0);                             // set_0 on
+  expect(get(sel.trayFocus)).toBe('all');
+  // A partial/faded set is not a clean solo.
+  sel.solo(2); sel.cycleLine(2, 1);           // set_2 now mixed on/fade
+  expect(get(sel.trayFocus)).toBe('all');
+});
+
+test('trayFocus: a single set reads as "all" (no solo distinction)', () => {
+  const one = createSelection();
+  one.addSet({ name: 'only', nChannels: 2, durationS: 1, timestamp: 't0' });
+  expect(get(one.trayFocus)).toBe('all');
+});
+
 test('removeSet keeps surviving sets intact; ids stable, index reflows', () => {
   sel.cycleLine(0, 1);                        // 0:1 -> fade
   sel.cycleLine(2, 3); sel.cycleLine(2, 3);   // 2:3 -> off

@@ -82,6 +82,11 @@ test('analysisTarget defaults to all', () => {
   expect(get(settings.analysisTarget)).toBe('all');
 });
 
+test('a single loaded set reads as target "all" (no solo distinction)', () => {
+  sel.addSet({ name: 'only', nChannels: 2, durationS: 1, timestamp: 't0' });
+  expect(get(settings.analysisTarget)).toBe('all');   // not the lone set id
+});
+
 test('setTarget(setId) solos in the tray; target follows; no loop', () => {
   const a = sel.addSet({ name: 'a', nChannels: 2, durationS: 1, timestamp: 't0' });
   const b = sel.addSet({ name: 'b', nChannels: 2, durationS: 1, timestamp: 't1' });

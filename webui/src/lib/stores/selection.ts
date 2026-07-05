@@ -212,7 +212,9 @@ export function createSelection() {
      * set back on (leaving a solo) correctly reads as `'all'`.
      */
     trayFocus: derived([sets, states], ([$sets, $states]): 'all' | number => {
-      if ($sets.length === 0) return 'all';
+      // 0 or 1 set: no meaningful solo distinction — read as 'all' so the
+      // dataset dropdown shows "All sets" by default on a single-set load.
+      if ($sets.length <= 1) return 'all';
       let soloed: number | null = null;
       for (const set of $sets) {
         const on = Array.from({ length: set.nChannels }, (_, c) => stateOf($states, set.id, c));
