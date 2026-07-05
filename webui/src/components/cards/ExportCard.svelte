@@ -181,7 +181,10 @@
     </div>
   </div>
   <div class="ctx-primary">
-    <button class="btn indigo" disabled={busy || !hasData} onclick={saveFigure}>Save Figure</button>
+    <!-- The execute verb — the top bar's "Save Figure" opens this stage; this
+         button writes the ticked formats. Distinct label avoids two identical
+         "Save Figure" buttons on screen at once. -->
+    <button class="btn indigo" disabled={busy || !hasData} onclick={saveFigure}>Export</button>
   </div>
 </section>
 

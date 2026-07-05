@@ -12,7 +12,6 @@
    * whose ExportCard hosts the PNG/PDF figure dialog — one export flow,
    * reachable from the labsheet's Time card as a shortcut.
    */
-  import { activeStage } from '../../lib/stores/stages';
   import type { ViewState } from '../../lib/stores/viewstate';
   import type { Selection } from '../../lib/stores/selection';
   import type { Actions } from '../../lib/analysis/actions';
@@ -65,13 +64,6 @@
           <button class="btn sm" onclick={() => viewState.setRange('time', { x: [0, 0.2], y: null })}
             >First 0.2 s</button
           >
-        </div>
-      </div>
-      <div class="grp">
-        <span class="grp-lab">figure</span>
-        <div class="grp-ctl">
-          <button class="btn" title="Open the figure-export dialog (Export stage)"
-            onclick={() => activeStage.set('export')}>Save Figure</button>
         </div>
       </div>
     </div>

@@ -233,13 +233,15 @@ body {
   letter-spacing: 0.06em;
 }
 .ctx-card .ctx-body {
+  order: 2;                 /* Title → action button → settings (design polish) */
   flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 7px;
   min-width: 0;
-  overflow-y: auto;
+  /* No inner scroll — the context zone grows to fit the card instead
+     (see .ctx-zone). A scrolling settings strip reads as broken. */
 }
 .ctx-card .ctx-row {
   display: flex;
@@ -270,12 +272,13 @@ body {
   white-space: nowrap;
 }
 .ctx-card .ctx-primary {
+  order: 1;                 /* sits right of the title, before the settings */
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  margin-left: 14px;
-  padding-left: 14px;
-  border-left: 1px solid var(--border);
+  margin-right: 14px;
+  padding-right: 14px;
+  border-right: 1px solid var(--border);
 }
 .ctx-card .ctx-err {
   font-size: 11px;

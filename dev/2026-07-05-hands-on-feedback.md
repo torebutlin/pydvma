@@ -29,21 +29,21 @@ now covered by an `@engine` e2e (it had none).
    missed off-card before the drag threshold) promoted a later hover-move to
    a drag. Cleared on a no-button move. `36886a8`.
 
-## B. UX polish — Tore decided, queued (no further input needed)
+## B. UX polish — DONE (2026-07-05, verified in-browser)
 
-6. **Save Figure on every view.** Currently only Time has it, and it lives in
-   the context bar. Move it to the **top bar between Load Data and Save
-   Dataset**; it exports whatever view is active.
-7. **Context bar must never scroll.** Selecting PSD overflowed the bar and
-   forced scrolling. The bar height should always fit its contents (may grow
-   a little); no inner scroll.
-8. **Action button placement.** In wide view the action button (Calc FFT /
-   Clean Impulse …) is far right. Reflow each card to **Title → Action
-   Button → contextual settings**, button pinned just right of the section
-   heading (fixed, not floating with menu length).
-9. **Setup / Acquire disabled UX.** They're greyed and silent. Make them
-   navigable (or at least show a status/explanatory message on why they're
-   unavailable yet), rather than dead-grey with no response.
+6. **Save Figure on every view.** ✅ Moved to the **top bar** between Load Data
+   and Save Dataset (disabled until data loads); opens the Export stage from
+   any view. The Export card's execute button is renamed **Export** so there
+   aren't two "Save Figure" buttons at once. Removed the Time card's copy.
+7. **Context bar never scrolls.** ✅ Dropped the fixed 118px height (now a
+   min-height floor) and removed the `.ctx-body` inner scroll — the zone grows
+   to fit (measured 118→133px for PSD, no scroll).
+8. **Action button placement.** ✅ Reflowed via one shared-CSS `order` change:
+   **Title → Action Button → settings**, button pinned right of the fixed-width
+   heading (consistent across cards).
+9. **Setup / Acquire (and Fit) navigable.** ✅ No longer dead-disabled — dimmed
+   but clickable; selecting one shows an explanatory placeholder ("Recording
+   from a live input arrives in a future update…").
 
 ## C. Per-line relabel (bug-ish, deferred into the design pass)
 

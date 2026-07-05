@@ -4,10 +4,18 @@ test('wide shell: header buttons, unnumbered ribbon, gated stages', async ({ pag
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Load Data' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save Dataset' })).toBeVisible();
+  // Save Figure lives in the top bar now; disabled until data is loaded.
+  await expect(page.getByRole('button', { name: 'Save Figure' })).toBeDisabled();
   const ribbon = page.getByRole('navigation', { name: 'stages' });
   await expect(ribbon.getByRole('button', { name: 'Frequency' })).toBeEnabled();
-  await expect(ribbon.getByRole('button', { name: 'Acquire' })).toBeDisabled();
   await expect(ribbon).not.toContainText(/[0-9]\./); // no numbering
+
+  // Gated stages (Acquire/Setup/Fit) are NAVIGABLE — clickable, and show an
+  // explanatory placeholder rather than a dead-disabled button.
+  const acquire = ribbon.getByRole('button', { name: 'Acquire' });
+  await expect(acquire).toBeEnabled();
+  await acquire.click();
+  await expect(page.getByText(/arrives in a future update/i)).toBeVisible();
 });
 
 test('narrow: rail with word-label ribbon and flyover tray', async ({ page }) => {

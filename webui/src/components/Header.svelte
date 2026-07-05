@@ -22,7 +22,9 @@
     workdirName = 'Downloads',
     onload = () => {},
     onsave = () => {},
+    onsavefigure = () => {},
     onpickdir = () => {},
+    canSaveFigure = false,
   }: {
     /** Summary-chip text, e.g. "44.1 kHz · 2 sets"; "no data" when empty. */
     summary?: string;
@@ -32,8 +34,12 @@
     onload?: () => void;
     /** Fired by the Save Dataset button (App wires the save pipeline). */
     onsave?: () => void;
+    /** Fired by Save Figure — opens the export flow for the ACTIVE view. */
+    onsavefigure?: () => void;
     /** Fired by the working-dir chip to (re)pick a folder. */
     onpickdir?: () => void;
+    /** Enables Save Figure (a dataset is loaded, so there's a plot). */
+    canSaveFigure?: boolean;
   } = $props();
 </script>
 
@@ -57,6 +63,12 @@
 
   <div class="hdr-right">
     <button class="btn blue-o" title="Load a dataset (.dvma)" onclick={onload}>Load Data</button>
+    <button
+      class="btn"
+      title="Export the current plot as a figure (PNG / PDF)"
+      disabled={!canSaveFigure}
+      onclick={onsavefigure}
+    >Save Figure</button>
     <button class="btn green" title="Save everything to a .dvma dataset" onclick={onsave}>Save Dataset</button>
   </div>
 </header>
@@ -146,6 +158,14 @@
   }
   .btn:active {
     transform: translateY(1px);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .btn:disabled:hover {
+    border-color: var(--border);
+    background: #fff;
   }
   .btn.blue-o {
     color: #2563eb;

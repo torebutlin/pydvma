@@ -61,6 +61,14 @@
   } = $props();
 
   const labelOf = (id: string): string => STAGES.find((s) => s.id === id)?.label ?? '';
+
+  /** Why a not-yet-built stage is empty — shown in its placeholder card. */
+  const noteFor = (id: string): string =>
+    id === 'setup' || id === 'acquire'
+      ? 'Recording from a live input arrives in a future update. For now, Load Data to analyse an existing .dvma recording.'
+      : id === 'fit'
+        ? 'Modal curve-fitting arrives in a future update.'
+        : 'Controls arrive in a later plan.';
 </script>
 
 <div class="ctx-zone" class:narrow>
@@ -81,7 +89,7 @@
         <span class="cn-s">stage</span>
       </div>
       <div class="ctx-body">
-        <span class="ctx-note">controls arrive in a later plan</span>
+        <span class="ctx-note">{noteFor($activeStage)}</span>
       </div>
     </section>
   {/if}
@@ -90,7 +98,9 @@
 <style>
   .ctx-zone {
     flex: 0 0 auto;
-    height: 118px;
+    /* Grows to fit the tallest card (e.g. PSD's resolution row) rather than
+       clipping/scrolling — 118px is the floor, not a fixed ceiling. */
+    min-height: 118px;
     padding: 9px 16px;
     background: var(--bg);
   }
@@ -98,11 +108,5 @@
     font-size: 12px;
     color: var(--muted);
     font-style: italic;
-  }
-
-  /* Narrow mode: card may grow, so relax the fixed height to a floor. */
-  .ctx-zone.narrow {
-    height: auto;
-    min-height: 118px;
   }
 </style>

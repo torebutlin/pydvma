@@ -37,12 +37,14 @@ async function openExport(page: Page): Promise<void> {
   await expect(page.getByRole('region', { name: 'Export stage controls' })).toBeVisible();
 }
 
-test('Export stage → PNG → Save Figure downloads a .png', async ({ page }) => {
+test('Export stage → PNG → Export downloads a .png', async ({ page }) => {
   await openExport(page);
 
-  // PNG is the default-checked format; PDF is off. Save Figure → one .png.
+  // PNG is the default-checked format; PDF is off. Export → one .png. The
+  // card's execute button is "Export" (scoped to the card; the ribbon also
+  // has an "Export" stage button).
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Save Figure' }).click();
+  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.png$/);
   // Non-empty: a real rasterised figure is tens of KB; a blank/failed export
@@ -50,7 +52,7 @@ test('Export stage → PNG → Save Figure downloads a .png', async ({ page }) =
   expect(await downloadSize(download)).toBeGreaterThan(1000);
 });
 
-test('Export stage → PDF only → Save Figure downloads a .pdf', async ({ page }) => {
+test('Export stage → PDF only → Export downloads a .pdf', async ({ page }) => {
   await openExport(page);
 
   // Uncheck PNG, check PDF → the single download is the .pdf.
@@ -58,7 +60,7 @@ test('Export stage → PDF only → Save Figure downloads a .pdf', async ({ page
   await page.getByRole('checkbox', { name: 'PDF' }).check();
 
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Save Figure' }).click();
+  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.pdf$/);
   // A real vector PDF of this figure is tens of KB (~75 KB observed); floor at
@@ -66,10 +68,11 @@ test('Export stage → PDF only → Save Figure downloads a .pdf', async ({ page
   expect(await downloadSize(download)).toBeGreaterThan(1000);
 });
 
-test('the Time card Save Figure shortcut opens the Export stage', async ({ page }) => {
+test('the top-bar Save Figure opens the Export stage from any view', async ({ page }) => {
   await page.goto('/?fixture=1');
   await expect(page.getByTestId('tray-card-0')).toBeVisible();
-  // The Time stage is active by default; its Save Figure jumps to Export.
+  // Save Figure now lives in the top bar (works from every view); Time is the
+  // default view. Clicking it jumps to the Export stage.
   await page.getByRole('button', { name: 'Save Figure' }).click();
   await expect(page.getByRole('region', { name: 'Export stage controls' })).toBeVisible();
 });

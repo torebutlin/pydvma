@@ -28,14 +28,16 @@
   const labelFor = (s: StageDef): string =>
     narrow && s.id === 'frequency' ? 'Freq' : s.label;
 
-  /** Explain why a gated stage is disabled (design spec §2 tooltips). */
+  /** Explain why a gated stage has no controls yet (design spec §2 tooltips). */
   const disabledTitle = (s: StageDef): string =>
     s.needs === 'liveSource'
-      ? 'needs a live data source (Plan 2)'
-      : 'mode fitting arrives in Plan 2';
+      ? 'Recording from a live input arrives in a future update'
+      : 'Modal curve-fitting arrives in a future update';
 
+  // Gated stages (Setup/Acquire/Fit in Plan 1) are still NAVIGABLE: clicking
+  // one selects it and shows an explanatory placeholder card, rather than a
+  // dead-grey no-op. Activating its view (when it has one) is harmless.
   function select(s: StageDef & { enabled: boolean }) {
-    if (!s.enabled) return;
     activeStage.set(s.id);
     if (s.view !== null) viewState.activate(s.view);
   }
@@ -46,8 +48,8 @@
     {#if i > 0}<span class="sep" aria-hidden="true">·</span>{/if}
     <button
       class="stage"
-      class:active={s.enabled && $activeStage === s.id}
-      disabled={!s.enabled}
+      class:active={$activeStage === s.id}
+      class:gated={!s.enabled}
       title={s.enabled ? s.label : disabledTitle(s)}
       onclick={() => select(s)}
     >{labelFor(s)}</button>
@@ -91,9 +93,14 @@
     color: var(--indigo);
     font-weight: 600;
   }
-  .stage:disabled {
-    opacity: 0.45;
-    cursor: default;
+  /* Gated stages read as "available to visit, not yet built" — dimmed but
+     still clickable (they show an explanatory placeholder), not dead-grey. */
+  .stage.gated:not(.active) {
+    color: #b0b6c4;
+  }
+  .stage.gated:not(.active):hover {
+    color: var(--text);
+    background: #f6f7fa;
   }
   .sep {
     color: #d3d8e2;

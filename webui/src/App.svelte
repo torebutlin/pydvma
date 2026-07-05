@@ -28,6 +28,7 @@
   import Legend from './components/Legend.svelte';
   import EngineProbe from './components/EngineProbe.svelte';
   import ToastHost from './components/ToastHost.svelte';
+  import { activeStage } from './lib/stores/stages';
   import { createViewState } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
   import { createEngineStore } from './lib/stores/engine';
@@ -399,6 +400,8 @@
     {workdirName}
     {onload}
     {onsave}
+    onsavefigure={() => activeStage.set('export')}
+    canSaveFigure={hasData}
     {onpickdir}
   />
   <Ribbon {viewState} {narrow} />
