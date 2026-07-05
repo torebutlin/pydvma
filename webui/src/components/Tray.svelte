@@ -27,7 +27,15 @@
   import { summariseColumn, type ColumnState } from '../lib/stores/channelSummary';
   import TrayCard from './TrayCard.svelte';
 
-  let { selection }: { selection: Selection } = $props();
+  let {
+    selection,
+    /** Real time-series for a (setId, ch) so cards can draw sparklines.
+     *  Reassigned by the parent when decoded data changes (keeps previews live). */
+    channelData,
+  }: {
+    selection: Selection;
+    channelData?: (setId: number, ch: number) => Float64Array | undefined;
+  } = $props();
 
   const setsView = $derived(selection.setsView);
   const stateStore = $derived(selection.state);
@@ -87,7 +95,12 @@
       <p class="tray-empty">No data loaded</p>
     {:else}
       {#each $setsView as set (set.id)}
-        <TrayCard {selection} {set} onDeleteSet={selection.removeSet} />
+        <TrayCard
+          {selection}
+          {set}
+          onDeleteSet={selection.removeSet}
+          channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
+        />
       {/each}
     {/if}
   </div>

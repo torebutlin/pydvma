@@ -159,14 +159,22 @@
       {#each set.colors as c, ch (ch)}
         {@const st = $stateStore(set.id, ch)}
         {@const pts = sparkPoints(ch)}
-        <div class="ch-row" class:st-fade={st === 'fade'} class:st-off={st === 'off'}>
-          <button
+        <!-- The WHOLE row cycles the line (chip + label + sparkline + badge),
+             not just the colour chip — matches the mockup's click target. -->
+        <button
+          type="button"
+          class="ch-row"
+          class:st-fade={st === 'fade'}
+          class:st-off={st === 'off'}
+          data-testid={`ch-row-${ch}`}
+          title={`ch_${ch}: ${st} — click to cycle on → fade → off`}
+          aria-label={`Toggle channel ${ch} (currently ${st})`}
+          onclick={() => selection.cycleLine(set.id, ch)}
+        >
+          <span
             class="ch-chip"
             style="background:{selection.lineColor(set.id, ch) ?? c}"
-            title={`ch_${ch}: ${st}`}
-            aria-label={`Toggle channel ${ch}`}
-            onclick={() => selection.cycleLine(set.id, ch)}
-          ></button>
+          ></span>
           <span class="ch-lab">ch_{ch}</span>
           <svg class="spark" viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none" aria-hidden="true">
             {#if pts}
@@ -176,7 +184,7 @@
             {/if}
           </svg>
           <span class="state-badge state-{st}">{st}</span>
-        </div>
+        </button>
       {/each}
     </div>
   {/if}
@@ -301,6 +309,15 @@
     gap: 7px;
     padding: 3px 2px;
     border-radius: 6px;
+    /* Reset <button> defaults so the row reads as a plain interactive strip. */
+    width: 100%;
+    box-sizing: border-box;
+    border: none;
+    background: transparent;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
   }
   .ch-row:hover {
     background: #f7f8fb;
@@ -325,9 +342,6 @@
     width: 14px;
     height: 14px;
     border-radius: 4px;
-    border: none;
-    padding: 0;
-    cursor: pointer;
     flex: 0 0 auto;
     outline: 1px solid rgba(16, 24, 40, 0.12);
     outline-offset: 1px;

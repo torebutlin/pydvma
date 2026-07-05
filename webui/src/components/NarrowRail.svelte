@@ -21,7 +21,14 @@
   import type { Selection } from '../lib/stores/selection';
   import Tray from './Tray.svelte';
 
-  let { selection }: { selection: Selection } = $props();
+  let {
+    selection,
+    /** Forwarded to the hosted Tray so narrow-mode sparklines draw real data. */
+    channelSeries,
+  }: {
+    selection: Selection;
+    channelSeries?: (setId: number, ch: number) => Float64Array | undefined;
+  } = $props();
 
   const setsView = $derived(selection.setsView);
   let open = $state(false);
@@ -120,7 +127,7 @@
     data-testid="tray"
     onkeydown={onDrawerKeydown}
   >
-    <Tray {selection} />
+    <Tray {selection} channelData={channelSeries} />
   </div>
 {/if}
 

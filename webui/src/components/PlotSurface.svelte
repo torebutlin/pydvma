@@ -62,12 +62,20 @@
     model,
     mode = 'box',
     viewState = undefined,
+    overlay = false,
   }: {
     model: PlotModel;
     /** Active drag tool; bind ZoomToolbar's `mode` to this. */
     mode?: 'box' | 'pan';
     /** View-state store; when absent the plot is non-interactive. */
     viewState?: ViewState;
+    /**
+     * Axis-overlay mode: draw the frame/ticks/labels but make the plot-area
+     * background TRANSPARENT and omit gridlines, so a heat layer (the
+     * sonogram `<canvas>`) mounted BEHIND this surface shows through. Without
+     * this the opaque `plot-bg` rect hides the canvas entirely.
+     */
+    overlay?: boolean;
   } = $props();
 
   const uid = $props.id();
@@ -316,18 +324,23 @@
       role="img"
       aria-label={model.yLabel + ' vs ' + model.xLabel}
     >
-      <rect data-role="plot-bg" class="plot-bg" x="0" y="0" width={width} height={height} fill={CHROME.bg} />
+      <rect data-role="plot-bg" class="plot-bg" x="0" y="0" width={width} height={height}
+        fill={overlay ? 'transparent' : CHROME.bg} />
       <defs>
         <clipPath id={clipId}><rect x="0" y="0" width={pw} height={ph} /></clipPath>
       </defs>
 
       {#each built.xTicks as t (t.v)}
-        <line data-role="axis" class="grid" x1={ox + t.px} y1={oy} x2={ox + t.px} y2={oy + ph} stroke={CHROME.grid} />
+        {#if !overlay}
+          <line data-role="axis" class="grid" x1={ox + t.px} y1={oy} x2={ox + t.px} y2={oy + ph} stroke={CHROME.grid} />
+        {/if}
         <text data-role="axis" class="tick" x={ox + t.px} y={oy + ph + 15} text-anchor="middle" fill={CHROME.axis}
           >{fmtTick(t.v, xSpan)}</text>
       {/each}
       {#each built.yTicks as t (t.v)}
-        <line data-role="axis" class="grid" x1={ox} y1={oy + t.px} x2={ox + pw} y2={oy + t.px} stroke={CHROME.grid} />
+        {#if !overlay}
+          <line data-role="axis" class="grid" x1={ox} y1={oy + t.px} x2={ox + pw} y2={oy + t.px} stroke={CHROME.grid} />
+        {/if}
         <text data-role="axis" class="tick" x={ox - 7} y={oy + t.px + 3.5} text-anchor="end" fill={CHROME.axis}
           >{fmtTick(t.v, ySpan)}</text>
       {/each}

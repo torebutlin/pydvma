@@ -47,4 +47,56 @@ test.describe('@engine', () => {
     expect(frame).not.toBeNull();
     expect(Math.abs(frame!.w - frame!.h)).toBeLessThan(0.2 * frame!.w);
   });
+
+  test('fixture → Sonogram → Calc renders a filled, painted heat canvas', async ({ page }) => {
+    await page.goto('/?fixture=1');
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Sonogram' }).click();
+    await page.getByRole('button', { name: 'Calc Sonogram' }).click();
+
+    const canvas = page.getByTestId('sono-canvas');
+    await expect(canvas).toBeVisible({ timeout: 200_000 });
+
+    // The canvas element mounts immediately in the sono view; wait until the
+    // worker result has actually PAINTED it (non-trivial alpha coverage)
+    // before measuring — otherwise we read the empty default buffer.
+    await expect.poll(async () => page.evaluate(() => {
+      const c = document.querySelector('[data-testid="sono-canvas"]') as HTMLCanvasElement;
+      const img = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+      let painted = 0;
+      for (let i = 3; i < img.length; i += 4) if (img[i]) painted++;
+      return painted / (c.width * c.height);
+    }), { timeout: 200_000 }).toBeGreaterThan(0.9);
+
+    // The two shipped bugs: (1) the canvas rendered at its intrinsic buffer
+    // size (a ~38px sliver) instead of filling the data rect; (2) the axis
+    // SVG's opaque plot-bg hid the heat. Assert the canvas fills most of the
+    // host, the overlay plot-bg is transparent, and the buffer has real
+    // viridis structure (>1 distinct colour, spanning floor→peak).
+    const info = await page.evaluate(() => {
+      const c = document.querySelector('[data-testid="sono-canvas"]') as HTMLCanvasElement;
+      const host = c.closest('.plot-host') as HTMLElement;
+      const r = c.getBoundingClientRect(), hr = host.getBoundingClientRect();
+      const ctx = c.getContext('2d')!;
+      const img = ctx.getImageData(0, 0, c.width, c.height).data;
+      const colours = new Set<string>();
+      let painted = 0;
+      for (let i = 0; i < img.length; i += 4) {
+        if (img[i + 3]) painted++;
+        colours.add(`${img[i]},${img[i + 1]},${img[i + 2]}`);
+      }
+      const bg = document.querySelector('[data-role="plot-bg"]')?.getAttribute('fill');
+      return {
+        fillsHost: r.width > hr.width * 0.7 && r.height > hr.height * 0.6,
+        paintedFrac: painted / (c.width * c.height),
+        distinctColours: colours.size,
+        plotBg: bg,
+      };
+    });
+    expect(info.fillsHost).toBe(true);
+    expect(info.plotBg).toBe('transparent');
+    expect(info.paintedFrac).toBeGreaterThan(0.9);
+    expect(info.distinctColours).toBeGreaterThan(3);
+  });
 });

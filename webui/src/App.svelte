@@ -266,6 +266,26 @@
   /** Decoded per-set arrays as a list, keyed for the model builder. */
   const setArrays = $derived(Object.values($derivedStore) as SetArrays[]);
 
+  /**
+   * Real time-series accessor for tray sparklines: channel `ch` of set
+   * `setId`, extracted from the decoded TimeData (row-major (Ns, Nc), same
+   * as the time-view builder). Rebuilt as a fresh closure whenever the
+   * decoded store changes, so previews go live as data loads or is cleaned.
+   */
+  const channelSeries = $derived.by(() => {
+    const store = $derivedStore;
+    return (setId: number, ch: number): Float64Array | undefined => {
+      const t = store[setId]?.time;
+      if (!t) return undefined;
+      const cols = t.data.shape[1] ?? 1;
+      if (ch >= cols) return undefined;
+      const n = t.axis.length;
+      const out = new Float64Array(n);
+      for (let i = 0; i < n; i++) out[i] = t.data.re[i * cols + ch];
+      return out;
+    };
+  });
+
   /** Visible (on/fade) lines from the legend entries (off lines omitted). */
   const visible = $derived<VisibleLine[]>(
     $legendEntries.map((e) => ({
@@ -400,10 +420,10 @@
 
   <main class="main">
     {#if narrow}
-      <NarrowRail {selection} />
+      <NarrowRail {selection} {channelSeries} />
     {:else}
       <aside class="tray" data-testid="tray">
-        <Tray {selection} />
+        <Tray {selection} channelData={channelSeries} />
       </aside>
     {/if}
 
@@ -416,7 +436,7 @@
       {:else if view === 'sono'}
         <div class="plot-host">
           <canvas bind:this={sonoCanvas} data-testid="sono-canvas" class="sono-heat"></canvas>
-          <PlotSurface bind:this={plotRef} model={sonoAxisModel} {viewState} />
+          <PlotSurface bind:this={plotRef} model={sonoAxisModel} {viewState} overlay />
           <ZoomToolbar {viewState} dataExtent={extent} bind:mode />
         </div>
       {:else if bode}
@@ -498,13 +518,15 @@
   }
   .sono-heat {
     position: absolute;
-    /* Align to PlotSurface's inner data rect (margins L58/T16/R18/B42). */
+    /* Align to PlotSurface's inner data rect (margins L58/T16/R18/B42).
+       A <canvas> is a REPLACED element, so `width/height:auto` resolves to
+       its intrinsic buffer size (nt×nf, e.g. 38×257) instead of stretching
+       to the L/T/R/B inset box — leaving a tiny sliver. Size it explicitly to
+       the data rect so the buffer scales up to fill it. */
     left: 58px;
     top: 16px;
-    right: 18px;
-    bottom: 42px;
-    width: auto;
-    height: auto;
+    width: calc(100% - 58px - 18px);
+    height: calc(100% - 16px - 42px);
     image-rendering: pixelated;
   }
   .empty-state {
