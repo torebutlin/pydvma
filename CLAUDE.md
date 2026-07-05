@@ -20,15 +20,26 @@ via an additive `ui` manifest key (`DvmaItemUi`); backwards-compatible
 **first-cut acquisition + "Live" oscilloscope** (~1150 LOC + ~45 tests):
 Web Audio `lib/audio/source.ts`, `acquire`/`monitor` stores, an
 `OscCanvas` scope, Setup/Acquire/Live stage cards, and the
-setup/acquire/live stages. **CAVEAT: the acquisition/Live chunk has NOT
-yet been through the project's two-stage review** — it typechecks and
-its unit tests pass, but treat it as unreviewed until that's done. (The
-dispatch session hit a stale-git-lock issue and left the work
-uncommitted; the interactive session cleared two stale 0-byte
-`.git/*.lock` files and rescued it.) **Still NOTHING pushed** — CI/Pages
-activate on the next `git push` (Tore's call). **Next up:** review the
-acquisition/Live chunk, then a hands-on pass, then continue **Plan 2**
-(Fit stage, calibration, a Figures/export-preview tab). Fresh session: read `dev/2026-07-05-hands-on-feedback.md`
+setup/acquire/live stages. The acquisition/Live chunk has now been **reviewed** (verdict:
+SHIP-WITH-FIXES) and its **Critical/Important leaks fixed** — C1 (leaving
+Live left the mic + AudioContext alive → now stopped on stage change),
+C2 (mic stream leaked if AudioContext setup threw → now released), and
+I2/I3 (cancel-revives / double-start-orphans monitor races) — with
+regression tests. Remaining are Minors (M1 liveSource gate flips on API
+existence not permission; M2 toggle-while-paused redraw lag; M3
+unbounded pre-alloc at extreme settings; M4 latent ringBuf race) and the
+fact that it is still a **first cut** — soundcard INPUT capture only; no
+trigger/pretrigger, no output/stimulus, still on the deprecated
+ScriptProcessorNode. It has NOT had Tore's DESIGN sign-off (built by a
+dispatch session without a plan doc), so its shape may not match his
+acquisition vision (Log button + OUT badge, pretrigger, output signals,
+scope pop-out). (The dispatch session hit a stale-git-lock issue and
+left everything uncommitted; the interactive session cleared two stale
+0-byte `.git/*.lock` files, rescued it, fixed a stale shell e2e, and
+did the review + leak fixes.) **Still NOTHING pushed** — CI/Pages
+activate on the next `git push`. **Next up:** Tore's hands-on + design
+call on acquisition, then continue **Plan 2** (Fit stage, calibration,
+a Figures/export-preview tab). Fresh session: read `dev/2026-07-05-hands-on-feedback.md`
 (triage + what landed + the for-Tore notes) and the redesign plan;
 run instructions `cd webui && npm run dev`, open
 `http://localhost:5173/?fixture=1` (or `?fixture=3ch` for the
