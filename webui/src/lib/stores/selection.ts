@@ -201,6 +201,33 @@ export function createSelection() {
           .every(v => v === 'off'),
       }))),
 
+    /**
+     * Tray-focus signal: `setId` when the tray is showing exactly ONE
+     * set (every line of that set 'on', every line of every OTHER set
+     * 'off') — i.e. a clean `solo` state — and `'all'` otherwise
+     * (multiple sets visible, or a mixed/partial selection). This is the
+     * signal the analysisSettings store's `analysisTarget` follows so the
+     * "Dataset ▾" dropdown mirrors what the tray is showing. It reads the
+     * displayed state, NOT the persisted `highlight`, so cycling a second
+     * set back on (leaving a solo) correctly reads as `'all'`.
+     */
+    trayFocus: derived([sets, states], ([$sets, $states]): 'all' | number => {
+      if ($sets.length === 0) return 'all';
+      let soloed: number | null = null;
+      for (const set of $sets) {
+        const on = Array.from({ length: set.nChannels }, (_, c) => stateOf($states, set.id, c));
+        const allOn = on.length > 0 && on.every(v => v === 'on');
+        const allOff = on.every(v => v === 'off');
+        if (allOn) {
+          if (soloed !== null) return 'all';   // two fully-on sets → not a solo
+          soloed = set.id;
+        } else if (!allOff) {
+          return 'all';                        // a partial/faded set → not a clean solo
+        }
+      }
+      return soloed ?? 'all';
+    }),
+
     legendEntries: derived([sets, states], ([$sets, $states]) => {
       const out: LegendEntry[] = [];
       $sets.forEach(set => {
