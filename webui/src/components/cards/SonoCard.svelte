@@ -56,11 +56,29 @@
     if ($setsView.length) actions.calcSono($target, ch);
   }
 
+  // Slider exponent range (2^6 = 64 .. 2^12 = 4096 pt STFT windows).
+  const RES_MIN_EXP = 6;
+  const RES_MAX_EXP = 12;
+
   let debounceId: ReturnType<typeof setTimeout> | undefined;
   function onRes(v: number) {
     patch({ nFft: 1 << v });
     clearTimeout(debounceId);
     debounceId = setTimeout(calc, 150);
+  }
+
+  /**
+   * Text-box entry for nFFT: snap an arbitrary point count to the nearest
+   * power of two (the STFT window must be 2^k), then reuse `onRes`. The
+   * TEXT BOX accepts values OUTSIDE the slider's exponent range; the
+   * SLIDER clamps to its end-stops (R2 point 3), mirroring
+   * `ResolutionControl` for the frame-count family. Non-positive / NaN
+   * entries are ignored.
+   */
+  function onNFftText(v: number) {
+    if (!Number.isFinite(v) || v < 1) return;
+    const exp = Math.round(Math.log2(v));   // nearest power of two
+    onRes(exp);                             // patch stores 1<<exp; slider clamps
   }
 
   function onTarget(v: string) {
@@ -93,9 +111,16 @@
       <div class="grp">
         <span class="grp-lab">resolution — {mixed('nFft') ? '–mixed–' : `${nFft} pt`}</span>
         <div class="grp-ctl">
-          <input type="range" min="6" max="12" value={resExp}
+          <input type="range" min={RES_MIN_EXP} max={RES_MAX_EXP}
+            value={Math.min(RES_MAX_EXP, Math.max(RES_MIN_EXP, resExp))}
             oninput={(e) => onRes(+e.currentTarget.value)} style="width:96px" aria-label="resolution" />
-          <span class="mono" style="font-size:11.5px">nFFT = {mixed('nFft') ? '–mixed–' : nFft}</span>
+          <span class="ml">nFFT</span>
+          <input type="number" step="1" min="1"
+            value={mixed('nFft') ? '' : nFft}
+            placeholder={mixed('nFft') ? '–mixed–' : ''}
+            onchange={(e) => onNFftText(+e.currentTarget.value)}
+            style="width:64px" aria-label="nFFT" />
+          <span class="note">pt</span>
         </div>
       </div>
       <div class="grp">

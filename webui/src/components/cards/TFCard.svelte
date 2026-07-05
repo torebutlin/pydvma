@@ -23,7 +23,7 @@
   import type { Selection } from '../../lib/stores/selection';
   import type { Actions } from '../../lib/analysis/actions';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
-  import { fromNFrames } from '../../lib/analysis/resolution';
+  import ResolutionControl from '../ResolutionControl.svelte';
 
   let {
     viewState,
@@ -45,9 +45,18 @@
     (void $settingsMap, $target === 'all' && analysisSettings.isMixed('tf', key));
 
   const maxChannels = $derived($setsView.reduce((m, s) => Math.max(m, s.nChannels), 0));
-  const fs = $derived(actions.workingSets()[0]?.fs ?? 1000);
-  const durationS = $derived($setsView[0]?.durationS ?? 1);
-  const frameLengthS = $derived(fromNFrames(tf.nFrames, durationS, fs).frameLengthS);
+
+  // Resolution seeds off the TARGET set's fs + duration (R1-minor fix):
+  // a specific set target uses THAT set's metadata; 'all' uses the first
+  // (representative) set. `fs` lives only on the working sets.
+  const repId = $derived($target === 'all' ? $setsView[0]?.id : $target);
+  const ws = $derived(actions.workingSets());
+  const fs = $derived(ws.find((w) => w.setId === repId)?.fs ?? 1000);
+  const durationS = $derived(
+    $setsView.find((s) => s.id === repId)?.durationS
+      ?? ws.find((w) => w.setId === repId)?.durationS
+      ?? 1,
+  );
 
   const plotType = $derived($current.plotType);
   const coherence = $derived($current.coherence);
@@ -134,12 +143,14 @@
         </div>
       </div>
       <div class="grp" class:dim={tf.averaging === 'none' || tf.averaging === 'across'}>
-        <span class="grp-lab">frames — live</span>
+        <span class="grp-lab">resolution — live</span>
         <div class="grp-ctl">
-          <input type="range" min="1" max="30" value={tf.nFrames}
-            disabled={tf.averaging !== 'within'}
-            oninput={(e) => onFrames(+e.currentTarget.value)} style="width:104px" aria-label="N frames" />
-          <span class="mono" style="font-size:11.5px">N = {mixed('nFrames') ? '–mixed–' : tf.nFrames} · Frame length = {frameLengthS.toFixed(2)} s</span>
+          {#if tf.averaging === 'within'}
+            <ResolutionControl {fs} {durationS} nFrames={tf.nFrames}
+              mixed={mixed('nFrames')} onchange={onFrames} />
+          {:else}
+            <span class="note">averaging off — resolution N/A</span>
+          {/if}
         </div>
       </div>
       <div class="grp">

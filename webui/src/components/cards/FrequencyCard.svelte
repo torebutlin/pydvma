@@ -25,7 +25,7 @@
   import type { Selection } from '../../lib/stores/selection';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
   import type { FreqMode } from '../../lib/plot/model';
-  import { fromNFrames, fromNFft, fromFrameLength, type Resolution } from '../../lib/analysis/resolution';
+  import ResolutionControl from '../ResolutionControl.svelte';
 
   let {
     actions,
@@ -48,12 +48,18 @@
 
   const freqMode = $derived(freq.mode as FreqMode);
 
-  // Coupled resolution: seed the frame-length/Δf readout from the target
-  // set's duration + fs (first set for 'all').
-  const first = $derived($setsView[0]);
-  const fs = $derived(actions.workingSets()[0]?.fs ?? 1000);
-  const durationS = $derived(first?.durationS ?? 1);
-  const res = $derived<Resolution>(fromNFrames(freq.nFrames, durationS, fs));
+  // Coupled resolution seeds off the TARGET set's fs + duration (R1-minor
+  // fix): for a specific set target, use THAT set's metadata; for 'all',
+  // use the first (representative) set. `fs` only lives on the working
+  // sets (not on setsView), so look both up by the resolved setId.
+  const repId = $derived($target === 'all' ? $setsView[0]?.id : $target);
+  const ws = $derived(actions.workingSets());
+  const fs = $derived(ws.find((w) => w.setId === repId)?.fs ?? 1000);
+  const durationS = $derived(
+    $setsView.find((s) => s.id === repId)?.durationS
+      ?? ws.find((w) => w.setId === repId)?.durationS
+      ?? 1,
+  );
 
   const MODES: { id: FreqMode; label: string }[] = [
     { id: 'fft', label: 'FFT' },
@@ -65,9 +71,6 @@
 
   const patch = (partial: Partial<{ window: string; mode: FreqMode; nFrames: number }>) =>
     analysisSettings.patch($target, 'freq', partial);
-  function setFrames(n: number) { patch({ nFrames: fromNFrames(n, durationS, fs).nFrames }); }
-  function setFrameLen(s: number) { patch({ nFrames: fromFrameLength(s, durationS, fs).nFrames }); }
-  function setNFft(n: number) { patch({ nFrames: fromNFft(n, durationS, fs).nFrames }); }
 
   function calc() {
     if (freqMode === 'fft') actions.calcFft($target);
@@ -121,22 +124,11 @@
     {#if averaged}
       <div class="ctx-row">
         <div class="grp">
-          <span class="grp-lab">resolution — {res.nFrames} frames</span>
+          <span class="grp-lab">resolution</span>
           <div class="grp-ctl">
-            <input type="range" min="1" max="30" value={res.nFrames}
-              oninput={(e) => setFrames(+e.currentTarget.value)}
-              style="width:104px" aria-label="number of frames" />
-            <span class="ml">N</span>
-            <input type="number" min="1" max="60" value={mixed('nFrames') ? '' : res.nFrames}
-              placeholder={mixed('nFrames') ? '–mixed–' : ''}
-              onchange={(e) => setFrames(+e.currentTarget.value)} style="width:52px" aria-label="N frames" />
-            <span class="ml">frame&nbsp;s</span>
-            <input type="number" step="0.01" value={res.frameLengthS.toFixed(2)}
-              onchange={(e) => setFrameLen(+e.currentTarget.value)} style="width:64px" aria-label="frame length seconds" />
-            <span class="ml">nFFT</span>
-            <input type="number" value={res.nFft}
-              onchange={(e) => setNFft(+e.currentTarget.value)} style="width:64px" aria-label="nFFT" />
-            <span class="note mono">Δf = {res.dF.toFixed(2)} Hz</span>
+            <ResolutionControl {fs} {durationS} nFrames={freq.nFrames}
+              mixed={mixed('nFrames')}
+              onchange={(n) => patch({ nFrames: n })} />
           </div>
         </div>
       </div>
