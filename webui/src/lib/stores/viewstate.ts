@@ -23,7 +23,9 @@ export interface ViewSlice {
 const fresh = (): ViewSlice => ({
   range: { x: null, y: null }, history: [], future: [],
   plotType: 'mag', coherence: true,
-  legend: { visible: true, x: 0.98, y: 0.02, preset: 'ne' },
+  // Default to the TOP-LEFT (nw): the zoom/nav toolbar occupies the
+  // top-right, so an 'ne' default legend would sit under its buttons.
+  legend: { visible: true, x: 0.02, y: 0.02, preset: 'nw' },
 });
 
 /** The store object `createViewState()` returns (for component props). */

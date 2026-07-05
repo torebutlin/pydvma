@@ -149,6 +149,12 @@
 
   function onPointerMove(e: PointerEvent) {
     if ((!armed && !dragging) || e.pointerId !== activePointer || !hostRect) return;
+    // Safety: if we're still only ARMED (not yet captured) and the primary
+    // button is no longer held, the pointerup happened off-card before the
+    // drag threshold and we never saw it — so `armed` is stale. Clear it and
+    // bail, otherwise a later hover-move would spuriously promote to a drag
+    // ("the legend picks itself up without a click").
+    if (!dragging && (e.buttons & 1) === 0) { armed = false; return; }
     // Promote an armed press to a drag once it travels past the threshold.
     if (!dragging) {
       const moved = Math.hypot(e.clientX - downClientX, e.clientY - downClientY);
