@@ -5,7 +5,7 @@
  * renderer; unit-tested in `tests/plot/build.test.ts` and budgeted by
  * `tests/plot/perf.test.ts`.
  */
-import { niceTicks, scaleLinear } from './scales';
+import { niceTicks, scaleLinear, scaleLog, decadeTicks, logDomain } from './scales';
 import { minMaxDecimate } from './decimate';
 
 /**
@@ -38,6 +38,15 @@ export interface PlotModel {
   lines: PlotLine[];
   xLabel: string; yLabel: string; y2Label?: string;
   squareAspect?: boolean;                          // Nyquist
+  /**
+   * X-axis mapping (R3 frequency lin↔log toggle). `'log'` maps the x
+   * domain through log10 with decade ticks, clamping a non-positive
+   * lower bound (e.g. a DC f=0 bin) to the first positive x datum and
+   * dropping any x ≤ 0 sample. Absent/`'lin'` → the linear path, byte
+   * for byte as before. Ignored on `squareAspect` (Nyquist) models,
+   * whose axes are Real/Imag, not frequency.
+   */
+  xScale?: 'lin' | 'log';
   xRange: [number, number] | null; yRange: [number, number] | null;
   y2Range?: [number, number];
 }
@@ -79,6 +88,23 @@ export function dataExtent(lines: PlotLine[], axis: 'x' | 'y', which: 'left' | '
   if (lo === Infinity) return [0, 1];
   if (lo === hi) return [lo - 1, hi + 1];
   return [lo, hi];
+}
+
+/**
+ * Smallest finite POSITIVE x value across `lines`, or `undefined` when
+ * none exists. Used to clamp a log-x domain's lower bound to the first
+ * plottable frequency when autoscale (or the committed range) reaches
+ * down to the DC (f=0) bin.
+ */
+function minPositiveX(lines: PlotLine[]): number | undefined {
+  let lo = Infinity;
+  for (const l of lines) {
+    for (let i = 0; i < l.x.length; i++) {
+      const v = l.x[i];
+      if (Number.isFinite(v) && v > 0 && v < lo) lo = v;
+    }
+  }
+  return lo === Infinity ? undefined : lo;
 }
 
 /** True if `x` never decreases (time/frequency axes always qualify). */
@@ -139,7 +165,15 @@ export function buildPlot(model: PlotModel, width: number, height: number): Buil
     yDomain = [yc - span / 2, yc + span / 2];
   }
 
-  const sx = scaleLinear(xDomain[0], xDomain[1], 0, width);
+  // Log-x (R3): clamp a non-positive lower bound (DC bin, or an
+  // over-panned range) to the first positive frequency, then map through
+  // log10. Never applies to Nyquist (its x is Real(H), not frequency).
+  const logX = model.xScale === 'log' && !model.squareAspect;
+  if (logX) xDomain = logDomain(xDomain, minPositiveX(model.lines));
+
+  const sx = logX
+    ? scaleLog(xDomain[0], xDomain[1], 0, width)
+    : scaleLinear(xDomain[0], xDomain[1], 0, width);
   const sy = scaleLinear(yDomain[0], yDomain[1], height, 0);
   const sy2 = scaleLinear(model.y2Range?.[0] ?? 0, model.y2Range?.[1] ?? 1, height, 0);
   const columns = Math.max(64, Math.floor(width));
@@ -181,7 +215,8 @@ export function buildPlot(model: PlotModel, width: number, height: number): Buil
 
   return {
     paths, xDomain, yDomain,
-    xTicks: niceTicks(xDomain[0], xDomain[1]).map(v => ({ v, px: sx(v) })),
+    xTicks: (logX ? decadeTicks(xDomain[0], xDomain[1]) : niceTicks(xDomain[0], xDomain[1]))
+      .map(v => ({ v, px: sx(v) })),
     yTicks: niceTicks(yDomain[0], yDomain[1]).map(v => ({ v, px: sy(v) })),
     y2Ticks: model.y2Range ? niceTicks(model.y2Range[0], model.y2Range[1], 4).map(v => ({ v, px: sy2(v) })) : [],
   };

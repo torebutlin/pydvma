@@ -103,6 +103,56 @@ test('xMonotonic flag bypasses the scan in both directions', () => {
   expect(pathXs(mk(false).paths[0].d).length).toBe(100);
 });
 
+test('xScale "log": ticks are decades and mapping is log10', () => {
+  // A line spanning 1 .. 1000 Hz; explicit log-x domain.
+  const n = 2000;
+  const x = Float64Array.from({ length: n }, (_, i) => 1 + i * (1000 / (n - 1)));
+  const y = Float64Array.from({ length: n }, () => 1);
+  const width = 300;
+  const b = buildPlot({
+    lines: [{ x, y, color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left', xMonotonic: true }],
+    xLabel: 'Frequency (Hz)', yLabel: '|H|', xScale: 'log', xRange: [1, 1000], yRange: [0, 2],
+  }, width, 300);
+  // Decade ticks, and each decade is width/3 px apart (log 1→1000 over 300px).
+  expect(b.xTicks.map(t => t.v)).toEqual([1, 10, 100, 1000]);
+  expect(b.xTicks[0].px).toBeCloseTo(0, 6);
+  expect(b.xTicks[1].px).toBeCloseTo(100, 6);
+  expect(b.xTicks[2].px).toBeCloseTo(200, 6);
+  expect(b.xTicks[3].px).toBeCloseTo(300, 6);
+});
+
+test('xScale "log": a DC (x=0) sample is dropped, not thrown, and domain clamps positive', () => {
+  // Autoscale (xRange null) with a leading f=0 bin. The log domain must
+  // clamp its lower bound to the first positive frequency, and the f=0
+  // sample must not emit a point (log10(0) = -Inf → non-finite → skipped).
+  const x = Float64Array.from([0, 1, 10, 100]);
+  const y = Float64Array.from([5, 1, 1, 1]);
+  const b = buildPlot({
+    lines: [{ x, y, color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left', xMonotonic: true }],
+    xLabel: 'Frequency (Hz)', yLabel: '|H|', xScale: 'log', xRange: null, yRange: [0, 6],
+  }, 300, 300);
+  // Domain lower bound clamped to the first positive datum (1), not 0.
+  expect(b.xDomain[0]).toBeCloseTo(1, 9);
+  expect(b.xDomain[1]).toBeCloseTo(100, 9);
+  // Ticks are decades within [1,100].
+  expect(b.xTicks.map(t => t.v)).toEqual([1, 10, 100]);
+  // The path has 3 finite points (f=0 dropped), all within the pixel box.
+  const xs = pathXs(b.paths[0].d);
+  expect(xs.length).toBe(3);
+  for (const X of xs) { expect(X).toBeGreaterThanOrEqual(-0.5); expect(X).toBeLessThanOrEqual(300.5); }
+});
+
+test('xScale absent/"lin" keeps the linear path exactly as before', () => {
+  const b = buildPlot({
+    lines: [line()], xLabel: 't', yLabel: 'V', xRange: [0, 2], yRange: null,
+  }, 800, 400);
+  const bLin = buildPlot({
+    lines: [line()], xLabel: 't', yLabel: 'V', xScale: 'lin', xRange: [0, 2], yRange: null,
+  }, 800, 400);
+  expect(b.xTicks.map(t => t.v)).toEqual(bLin.xTicks.map(t => t.v));
+  expect(b.paths[0].d).toBe(bLin.paths[0].d);
+});
+
 test('short Nyquist lines skip decimation entirely', () => {
   const m = 5000;                                    // < 8k threshold, > 2*columns
   const x = Float64Array.from({ length: m }, (_, i) => Math.cos(i / 100));

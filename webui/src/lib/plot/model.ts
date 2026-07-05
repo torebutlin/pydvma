@@ -95,6 +95,24 @@ export interface PlotModelArgs {
   freqRange?: [number, number] | null;
   /** Committed axis range for the active view (`null` axis = auto-fit). */
   range?: { x: [number, number] | null; y: [number, number] | null };
+  /**
+   * Per-view frequency x-axis scale (R3). `'log'` → the model carries
+   * `xScale:'log'` so `buildPlot` maps the frequency axis through log10
+   * with decade ticks. Applies to frequency/tf x-axes (which are
+   * frequency); the TIME view's x is time and is always linear (log time
+   * is nonsensical), so this is ignored there. Ignored on Nyquist (its x
+   * is Real(H)). Default `'lin'`.
+   */
+  xScale?: 'lin' | 'log';
+  /**
+   * Per-view magnitude representation (R3), a MODEL change, not just an
+   * axis scale. `'log'` (default) → dB: `20·log10|H|` (FFT/TF mag),
+   * `10·log10` (PSD). `'lin'` → linear magnitude: `|H|` (FFT/TF), raw
+   * PSD, with the y-label dropping "(dB)". Applies to MAGNITUDE views
+   * only (FFT mag / TF mag / Bode-mag / PSD); ignored for TF
+   * phase/real/imag/Nyquist and the time view.
+   */
+  yScale?: 'lin' | 'log';
 }
 
 const EMPTY: PlotModel = {
@@ -147,6 +165,13 @@ function baseLine(x: Float64Array, y: Float64Array, v: VisibleLine): PlotLine {
  * - sono: no lines (the heat layer is a canvas); returns axis labels
  *   and the committed range so PlotSurface draws empty axes beneath it.
  *
+ * Axis toggles (R3, per-view): `args.xScale='log'` threads onto the
+ * frequency/tf models as `xScale:'log'` (decade log-x in `buildPlot`);
+ * time/sono/Nyquist stay linear-x. `args.yScale='lin'` switches the
+ * MAGNITUDE views (FFT mag / PSD / TF mag / Bode-mag) from dB to linear
+ * `|H|`/raw-PSD and drops "(dB)" from the y-label; phase/real/imag/csd
+ * and non-magnitude views ignore it.
+ *
  * An empty/absent-array view yields an empty model — never throws.
  */
 export function buildPlotModel(args: PlotModelArgs): PlotModel {
@@ -169,8 +194,11 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
 
   if (args.view === 'frequency') {
     const mode = args.freqMode ?? 'fft';
+    // yScale='lin' emits LINEAR magnitude (|H|, raw psd); 'log' (default)
+    // emits dB. csd already plots linear |Cxy| and is unaffected.
+    const linMag = args.yScale === 'lin';
     const lines: PlotLine[] = [];
-    let yLabel = 'Magnitude (dB)';
+    let yLabel = linMag ? 'Magnitude' : 'Magnitude (dB)';
     for (const v of args.visible) {
       const s = byId.get(v.setId);
       if (mode === 'fft') {
@@ -181,7 +209,8 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         const y = new Float64Array(nf);
         for (let i = 0; i < nf; i++) {
           const idx = i * cols + v.ch;
-          y[i] = magDb(f.data.re[idx], f.data.im ? f.data.im[idx] : 0);
+          const re = f.data.re[idx], im = f.data.im ? f.data.im[idx] : 0;
+          y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
         }
         lines.push(baseLine(f.axis, y, v));
       } else if (mode === 'psd') {
@@ -190,9 +219,12 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         if (v.ch >= nc) continue;
         const nf = p.axis.length;
         const y = new Float64Array(nf);
-        for (let i = 0; i < nf; i++) y[i] = powDb(p.data.re[v.ch * nf + i]);
+        for (let i = 0; i < nf; i++) {
+          const x = p.data.re[v.ch * nf + i];
+          y[i] = linMag ? x : powDb(x);
+        }
         lines.push(baseLine(p.axis, y, v));
-        yLabel = 'PSD (dB)';
+        yLabel = linMag ? 'PSD' : 'PSD (dB)';
       } else {                                               // csd: |Cxy[ch,ch]| (coherence diagonal)
         const c = s?.csd; if (!c) continue;                  // Cxy shape (Nc, Nc, Nf)
         const nc = c.data.shape[0] ?? 1;
@@ -209,7 +241,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         yLabel = 'CSD (coherence)';
       }
     }
-    return { ...EMPTY, lines, xLabel: 'Frequency (Hz)', yLabel, xRange: xr, yRange: yr };
+    return { ...EMPTY, lines, xLabel: 'Frequency (Hz)', yLabel, xScale: args.xScale, xRange: xr, yRange: yr };
   }
 
   if (args.view === 'tf') {
@@ -248,10 +280,13 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         continue;
       }
 
+      // Magnitude honours the y-toggle: 'lin' → |H| (linear), 'log'
+      // (default) → dB. Phase/real/imag are untouched by yScale.
+      const linMag = args.yScale === 'lin';
       const y = new Float64Array(nf);
       for (let i = 0; i < nf; i++) {
         const re = reCol[i], im = imCol[i];
-        if (type === 'mag') y[i] = magDb(re, im);
+        if (type === 'mag') y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
         else if (type === 'phase') y[i] = (Math.atan2(im, re) * 180) / Math.PI;
         else if (type === 'real') y[i] = re;
         else y[i] = im;                                      // 'imag'
@@ -273,7 +308,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       };
     }
 
-    const yLabel = type === 'mag' ? '|H| (dB)'
+    const yLabel = type === 'mag' ? (args.yScale === 'lin' ? '|H|' : '|H| (dB)')
       : type === 'phase' ? 'Phase (deg)'
       : type === 'real' ? 'Re(H)' : 'Im(H)';
 
@@ -295,7 +330,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     }
 
     return {
-      ...EMPTY, lines, xLabel: 'Frequency (Hz)', yLabel, xRange: xr, yRange: yr,
+      ...EMPTY, lines, xLabel: 'Frequency (Hz)', yLabel, xScale: args.xScale, xRange: xr, yRange: yr,
       ...(cohShown ? { y2Range: [0, 1] as [number, number], y2Label: 'coherence γ²' } : {}),
     };
   }

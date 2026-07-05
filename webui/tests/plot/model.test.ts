@@ -185,6 +185,88 @@ test('channel index beyond a set is skipped, not thrown', () => {
   expect(m.lines).toHaveLength(0);
 });
 
+// ---- y-scale toggle: dB (log magnitude) ↔ linear magnitude (R3) ----
+
+test('frequency FFT yScale="lin": y = |H| (linear), label drops the dB', () => {
+  // 3+4i → |H| = 5 (linear), not 20·log10(5).
+  const sets: SetArrays[] = [{
+    setId: 0,
+    freq: { axis: Float64Array.from([100]), data: decodeArray(cplx([1, 1], [3, 4])) },
+  }];
+  const m = buildPlotModel({ view: 'frequency', freqMode: 'fft', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] });
+  expect(m.lines[0].y[0]).toBeCloseTo(5, 9);
+  expect(m.yLabel).toBe('Magnitude');
+});
+
+test('frequency FFT yScale="log" (default) is unchanged: dB + (dB) label', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    freq: { axis: Float64Array.from([100]), data: decodeArray(cplx([1, 1], [3, 4])) },
+  }];
+  const m = buildPlotModel({ view: 'frequency', freqMode: 'fft', yScale: 'log', sets, visible: [vis(0, 0, 'on')] });
+  expect(m.lines[0].y[0]).toBeCloseTo(20 * Math.log10(5), 9);
+  expect(m.yLabel).toBe('Magnitude (dB)');
+});
+
+test('frequency PSD yScale="lin": linear psd, no 10·log10, label drops dB', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 2], [10, 100, 1, 1000])) },
+  }];
+  const m = buildPlotModel({ view: 'frequency', freqMode: 'psd', yScale: 'lin', sets, visible: [vis(0, 1, 'on')] });
+  expect(Array.from(m.lines[0].y)).toEqual([1, 1000]);       // raw psd, ch1
+  expect(m.yLabel).toBe('PSD');
+});
+
+test('tf mag yScale="lin": y = |H| (linear), label is |H|', () => {
+  // 10+0i → |H| = 10 (linear), not 20 dB.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: { axis: Float64Array.from([50]), data: decodeArray(cplx([1, 1], [10, 0])) },
+  }];
+  const m = buildPlotModel({ view: 'tf', tfPlotType: 'mag', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] });
+  expect(m.lines[0].y[0]).toBeCloseTo(10, 9);
+  expect(m.yLabel).toBe('|H|');
+});
+
+test('tf bode yScale="lin": magnitude pane is linear |H| with |H| label', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: { axis: Float64Array.from([50]), data: decodeArray(cplx([1, 1], [10, 0])) },
+  }];
+  const m = buildPlotModel({ view: 'tf', tfPlotType: 'bode', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] });
+  expect(m.lines[0].y[0]).toBeCloseTo(10, 9);
+  expect(m.yLabel).toBe('|H|');
+});
+
+test('yScale="lin" is IGNORED on phase/real/imag (leave as-is)', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: { axis: Float64Array.from([50]), data: decodeArray(cplx([1, 1], [0, 1])) },
+  }];
+  // phase stays degrees regardless of yScale.
+  const ph = buildPlotModel({ view: 'tf', tfPlotType: 'phase', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] });
+  expect(ph.lines[0].y[0]).toBeCloseTo(90, 9);
+  expect(ph.yLabel).toBe('Phase (deg)');
+  // real stays Re(H).
+  const re = buildPlotModel({ view: 'tf', tfPlotType: 'real', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] });
+  expect(re.lines[0].y[0]).toBeCloseTo(0, 9);
+  expect(re.yLabel).toBe('Re(H)');
+});
+
+test('xScale threads onto the model for frequency; time x stays linear', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    freq: { axis: Float64Array.from([1, 10, 100]), data: decodeArray(cplx([3, 1], [1, 0, 1, 0, 1, 0])) },
+    time: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 1], [1, 2])) },
+  }];
+  const f = buildPlotModel({ view: 'frequency', freqMode: 'fft', xScale: 'log', sets, visible: [vis(0, 0, 'on')] });
+  expect(f.xScale).toBe('log');
+  // Time view never goes log even if xScale='log' is passed (nonsensical).
+  const t = buildPlotModel({ view: 'time', xScale: 'log', sets, visible: [vis(0, 0, 'on')] });
+  expect(t.xScale).not.toBe('log');
+});
+
 test('bode plot type degrades to the magnitude pane (card stacks two)', () => {
   const sets: SetArrays[] = [{
     setId: 0,
