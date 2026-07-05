@@ -41,18 +41,37 @@
     viewState,
     dataExtent,
     mode = $bindable('box'),
+    showXScale = false,
+    showYScale = false,
   }: {
     viewState: ViewState;
     /** X/Y extent of the lines currently visible in the plot model. */
     dataExtent: { x: [number, number]; y: [number, number] };
     /** Active drag tool; bind and pass through to PlotSurface. */
     mode?: 'box' | 'pan';
+    /**
+     * Show the frequency x-axis lin↔log toggle (R3). App passes `true`
+     * only on frequency/tf views (where x is frequency); the time/sono
+     * views leave it off — log time is nonsensical.
+     */
+    showXScale?: boolean;
+    /**
+     * Show the magnitude dB↔linear toggle (R3). App passes `true` only
+     * on magnitude-capable views/sub-modes (FFT mag / PSD / TF mag /
+     * Bode-mag); it stays off on phase/real/imag/Nyquist so the label
+     * never misrepresents a non-magnitude pane.
+     */
+    showYScale?: boolean;
   } = $props();
 
   // Derived (not destructured) so the toolbar tracks a reassigned viewState prop.
   const current = $derived(viewState.current);
   const active = $derived(viewState.active);
   const uid = $props.id();
+
+  // Live axis-scale state for the segmented toggles (R3).
+  const xScale = $derived($current.xScale);
+  const yScale = $derived($current.yScale);
 
   let popOpen = $state(false);
   let xminS = $state(''), xmaxS = $state(''), yminS = $state(''), ymaxS = $state('');
@@ -129,6 +148,27 @@
   <button class="zbtn" title="Autoscale Y (fits selected lines only)" onclick={autoY}>Auto Y</button>
   <button class="zbtn" class:active={popOpen} aria-expanded={popOpen}
     title="Manual axis limits" onclick={() => (popOpen = !popOpen)}>⋯</button>
+
+  {#if showXScale}
+    <span class="zdiv" aria-hidden="true"></span>
+    <span class="seg" role="group" aria-label="Frequency axis scale" data-testid="xscale-toggle">
+      <span class="seg-label">x</span>
+      <button class="sbtn" class:active={xScale === 'lin'} aria-pressed={xScale === 'lin'}
+        title="Linear frequency axis" onclick={() => viewState.setXScale('lin')}>lin</button>
+      <button class="sbtn" class:active={xScale === 'log'} aria-pressed={xScale === 'log'}
+        title="Log10 frequency axis (decades)" onclick={() => viewState.setXScale('log')}>log</button>
+    </span>
+  {/if}
+  {#if showYScale}
+    {#if !showXScale}<span class="zdiv" aria-hidden="true"></span>{/if}
+    <span class="seg" role="group" aria-label="Magnitude scale" data-testid="yscale-toggle">
+      <span class="seg-label">y</span>
+      <button class="sbtn" class:active={yScale === 'log'} aria-pressed={yScale === 'log'}
+        title="Magnitude in dB (log)" onclick={() => viewState.setYScale('log')}>dB</button>
+      <button class="sbtn" class:active={yScale === 'lin'} aria-pressed={yScale === 'lin'}
+        title="Linear magnitude" onclick={() => viewState.setYScale('lin')}>lin</button>
+    </span>
+  {/if}
 </div>
 
 {#if popOpen}
@@ -198,6 +238,47 @@
     color: var(--text, #1b2437);
   }
   .zbtn.active {
+    background: #eef0ff;
+    border-color: #c7d2fe;
+    color: var(--indigo, #4f46e5);
+  }
+  /* Thin separator between the nav buttons and the scale toggles. */
+  .zdiv {
+    width: 1px;
+    align-self: stretch;
+    margin: 2px 1px;
+    background: var(--border, #e3e6eb);
+  }
+  /* Segmented lin|log toggle: label + two tight buttons that read as one control. */
+  .seg {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .seg-label {
+    color: var(--muted, #66708a);
+    font: 600 11px var(--font-mono, ui-monospace, Menlo, monospace);
+    padding: 0 2px 0 1px;
+  }
+  .sbtn {
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 6px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 6px;
+    cursor: pointer;
+    color: var(--muted, #66708a);
+    font: 600 11px var(--font-body, system-ui, sans-serif);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sbtn:hover {
+    background: #f2f4f8;
+    color: var(--text, #1b2437);
+  }
+  .sbtn.active {
     background: #eef0ff;
     border-color: #c7d2fe;
     color: var(--indigo, #4f46e5);

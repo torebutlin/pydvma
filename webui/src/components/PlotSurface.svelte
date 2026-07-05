@@ -147,10 +147,36 @@
 
   /** Rubber-band rect in inner-plot-rect pixels, or null when idle. */
   let band: { x0: number; y0: number; x1: number; y1: number } | null = $state(null);
+
+  // Log-x gesture support (R3): the pixel↔data mapping is log10 on the x
+  // axis when the model's xScale is 'log' (never on Nyquist). The zoom /
+  // pan / clamp maths are pure LINEAR functions, so we run them in
+  // LOG-SPACE for x (pixels are linear in log-space, exactly how the
+  // scale renders) and exponentiate the committed x range back. y is
+  // always linear. `tx`/`itx` are identity for a linear x axis, so the
+  // linear path is byte-for-byte unchanged.
+  const logX = $derived(renderModel.xScale === 'log' && !model.squareAspect);
+  const tx = (v: number): number => (logX ? Math.log10(v) : v);
+  const itx = (v: number): number => (logX ? 10 ** v : v);
+  /** Transform a data-space {x,y} window into the gesture math space. */
+  const toGesture = (r: { x: [number, number]; y: [number, number] }) =>
+    ({ x: [tx(r.x[0]), tx(r.x[1])] as [number, number], y: r.y });
+  /** Invert a gesture-space x range back to data space (y untouched). */
+  const fromGestureX = (x: [number, number]): [number, number] => [itx(x[0]), itx(x[1])];
+
   /** Full data extent (guardrail for clampToData); recomputed per model. */
   const fullExtent = $derived({
     x: dataExtent(model.lines, 'x', 'any'),
     y: dataExtent(model.lines, 'y', 'left'),
+  });
+  /**
+   * The clamp guardrail extent in GESTURE space. For log-x the raw data
+   * extent can reach the DC (f=0) bin, which has no log; use the built
+   * domain's clamped-positive lower bound so the guardrail stays finite.
+   */
+  const gestureExtent = $derived({
+    x: [tx(logX ? (built?.xDomain[0] ?? fullExtent.x[0]) : fullExtent.x[0]), tx(fullExtent.x[1])] as [number, number],
+    y: fullExtent.y,
   });
 
   // Pan-gesture bookkeeping (not reactive state — plain closures).
@@ -216,7 +242,9 @@
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     if (gestureMode === 'pan') {
       panStartX = p.x; panStartY = p.y;
-      panStartDom = { x: [...built!.xDomain], y: [...built!.yDomain] };
+      // Captured in GESTURE space (log-x → log10) so panBy's linear delta
+      // is correct on a log axis; committed values are inverted back.
+      panStartDom = toGesture({ x: [built!.xDomain[0], built!.xDomain[1]], y: [built!.yDomain[0], built!.yDomain[1]] });
     } else {
       band = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
     }
@@ -234,8 +262,9 @@
           rafId = 0;
           if (!pendingPan || !panStartDom) return;
           const r = panBy(panStartDom, pendingPan, { width: pw, height: ph });
-          const c = clampToData(r as { x: [number, number]; y: [number, number] }, fullExtent);
-          panPreview = { x: c.x!, y: c.y! };
+          const c = clampToData(r as { x: [number, number]; y: [number, number] }, gestureExtent);
+          // Invert x back to data space for the render preview (y is linear).
+          panPreview = { x: fromGestureX(c.x!), y: c.y! };
         });
       }
     } else if (band) {
@@ -265,8 +294,8 @@
         // via rubberBandToRange returning null.)
         if (Math.hypot(delta.dxPx, delta.dyPx) >= MIN_DRAG_PX) {
           const r = panBy(panStartDom, delta, { width: pw, height: ph });
-          const c = clampToData(r as { x: [number, number]; y: [number, number] }, fullExtent);
-          viewState.setRange(get(viewState.active), c);
+          const c = clampToData(r as { x: [number, number]; y: [number, number] }, gestureExtent);
+          viewState.setRange(get(viewState.active), { x: fromGestureX(c.x!), y: c.y! });
         }
       }
       panPreview = null;
@@ -276,13 +305,16 @@
       const rect = { x0: band.x0, y0: band.y0, x1: band.x1, y1: band.y1 };
       band = null;
       if (viewState && built) {
+        // Run the band→range maths in GESTURE space (log-x → log10) so a
+        // box on a log axis maps correctly, then invert x back to data.
         const range = rubberBandToRange(
           rect,
-          { x: built.xDomain, y: built.yDomain },
+          toGesture({ x: built.xDomain, y: built.yDomain }),
           { width: pw, height: ph }
         );
         if (range) {
-          viewState.setRange(get(viewState.active), clampToData(range, fullExtent));
+          const c = clampToData(range, gestureExtent);
+          viewState.setRange(get(viewState.active), { x: c.x ? fromGestureX(c.x) : null, y: c.y });
         }
       }
     }

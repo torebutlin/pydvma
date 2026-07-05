@@ -308,13 +308,31 @@
   const range = $derived($currentSlice.range);
   const plotType = $derived($currentSlice.plotType);
   const coherence = $derived($currentSlice.coherence);
+  // Per-view axis-scale toggles (R3): frequency x lin↔log, magnitude
+  // dB↔linear. Threaded into the model so buildPlotModel branches the
+  // magnitude maths / y-label and buildPlot picks the log-x mapping.
+  const xScale = $derived($currentSlice.xScale);
+  const yScale = $derived($currentSlice.yScale);
   const bode = $derived(view === 'tf' && plotType === 'bode');
+
+  // Which axis toggles to surface in the toolbar (R3). x-log applies
+  // where x IS frequency: the frequency view, and the tf view except
+  // Nyquist (whose x is Real(H), not frequency). y (dB↔lin) applies to
+  // MAGNITUDE panes only: frequency fft/psd (csd is a coherence, not a
+  // dB magnitude), and tf mag/bode (not phase/real/imag/nyquist).
+  const showXScale = $derived(
+    view === 'frequency' || (view === 'tf' && plotType !== 'nyquist'),
+  );
+  const showYScale = $derived(
+    (view === 'frequency' && (freqMode === 'fft' || freqMode === 'psd'))
+    || (view === 'tf' && (plotType === 'mag' || plotType === 'bode')),
+  );
 
   /** Single-pane model for the active view (magnitude pane when Bode). */
   const model = $derived<PlotModel>(
     buildPlotModel({
       view, sets: setArrays, visible, freqMode, tfPlotType: plotType,
-      coherence, freqRange: $sharedFreqRange, range,
+      coherence, freqRange: $sharedFreqRange, range, xScale, yScale,
     }),
   );
 
@@ -323,7 +341,7 @@
     bode
       ? buildPlotModel({
           view, sets: setArrays, visible, tfPlotType: 'phase',
-          coherence: false, freqRange: $sharedFreqRange, range,
+          coherence: false, freqRange: $sharedFreqRange, range, xScale,
         })
       : model,
   );
@@ -454,7 +472,7 @@
         <div class="plot-host bode">
           <div class="bode-pane">
             <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
-            <ZoomToolbar {viewState} dataExtent={extent} bind:mode />
+            <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
             <Legend {selection} {viewState} />
           </div>
           <div class="bode-pane">
@@ -464,7 +482,7 @@
       {:else}
         <div class="plot-host">
           <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
-          <ZoomToolbar {viewState} dataExtent={extent} bind:mode />
+          <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
           <Legend {selection} {viewState} />
         </div>
       {/if}
