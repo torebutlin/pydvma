@@ -76,6 +76,14 @@ now covered by an `@engine` e2e (it had none).
     >2-channel sets). Label each TF line `out/in` (e.g. `ch1/ch0`); the input
     channel shows no TF line. Alt to keep in reserve: label by output channel
     with the input named in a legend header (`Input: <ch>`).
+    **DONE (Task R4, 2026-07-05).** `chIn`/`nChannels` carried onto the tf
+    slice; `lib/plot/tfChannels.ts` remaps each visible source channel to
+    its output column (input → no line) and labels `ch_out/ch_in`; the same
+    transform drives the legend (via a `Legend` `entriesOverride`) so plot
+    and legend agree. Coherence overlay uses the same remap. New 3-channel
+    fixture (`webui/tests/fixtures/impulse3ch.dvma`) + model/tfChannels unit
+    suites + an `@engine` e2e; the channel-label part is factored so R5's
+    custom labels slot in. Verified in-browser (2 out/in lines, input absent).
 15. **Oscilloscope as a "Live" tab.** A dedicated **Live** tab across the top
     (between Acquire and Time) in ADDITION to a small window bottom-left — two
     ways to reach the scope. Depends on the acquisition chunk (Web Audio /
