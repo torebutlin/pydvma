@@ -80,4 +80,52 @@ test.describe('@engine', () => {
       });
     }, { timeout: 10_000 }).toBe(true);
   });
+
+  test('box-zoom on a LOG-x frequency axis commits a positive, narrowed x-range', async ({ page }) => {
+    // R3 follow-up: the gesture maths runs in LOG space on x then exponentiates
+    // the committed range. This asserts a real drag on a log axis commits a
+    // sane range — both bounds > 0 (10^v can never be ≤0) and narrower than the
+    // full extent — the one path the R2+R3 review flagged as untested.
+    await page.goto('/?fixture=1');
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+    await page.locator(stage('Freq')).click();
+    await page.getByRole('button', { name: 'Calc FFT' }).click();
+    await expect(page.getByTestId('plot-line').first()).toBeVisible({ timeout: 200_000 });
+
+    await page.getByTestId('xscale-toggle').getByRole('button', { name: 'log' }).click();
+    await expect.poll(() => page.evaluate(
+      () => !!(window as unknown as { __viewState?: unknown }).__viewState,
+    )).toBe(true);
+
+    /** Active view's committed x-range, read via the ?fixture=1 hook. */
+    const rangeX = () => page.evaluate(() => new Promise<[number, number] | null>((res) => {
+      const vs = (window as unknown as { __viewState?: {
+        current: { subscribe: (f: (v: { range: { x: [number, number] | null } }) => void) => () => void };
+      } }).__viewState!;
+      const unsub = vs.current.subscribe((v) => res(v.range.x));
+      unsub();
+    }));
+
+    expect(await rangeX()).toBeNull();   // starts auto-fit
+
+    const frame = await page.evaluate(() => {
+      const f = document.querySelector('[data-testid="plot-svg"] rect.frame') as SVGGraphicsElement | null;
+      if (!f) return null;
+      const b = f.getBoundingClientRect();
+      return { x: b.x, y: b.y, w: b.width, h: b.height };
+    });
+    expect(frame).not.toBeNull();
+
+    // Drag a rectangle in the RIGHT portion of the log axis (higher, all-positive
+    // frequencies) — comfortably larger than the 6 px click dead-zone.
+    await page.mouse.move(frame!.x + frame!.w * 0.5, frame!.y + frame!.h * 0.3);
+    await page.mouse.down();
+    await page.mouse.move(frame!.x + frame!.w * 0.85, frame!.y + frame!.h * 0.7, { steps: 8 });
+    await page.mouse.up();
+
+    const after = await rangeX();
+    expect(after).not.toBeNull();
+    expect(after![0]).toBeGreaterThan(0);          // log commit is always positive
+    expect(after![1]).toBeGreaterThan(after![0]);  // a proper (lo < hi) band
+  });
 });
