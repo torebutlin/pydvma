@@ -37,19 +37,32 @@ Verified: 307 vitest + 38 Playwright e2e green (incl. a fake-mic
 `live.spec.ts`), svelte-check 0 errors, visual check against the
 mockup. **Still NOTHING pushed** — CI/Pages activate on next `git push`.
 
-**START THE NEXT SESSION HERE:** Tore should do a **round-3 hands-on**
-of the new acquisition/Live design (this pass implements his round-2
-asks but still needs his design sign-off). Known not-done: narrow-mode
-mini strip (mockup `.rail-mon`); still ScriptProcessorNode (AudioWorklet
-migration pending); no pretrigger/output-stimulus UI or capture;
-minors M1 (liveSource gate) + M2 (pause redraw lag) remain. Then
-continue **Plan 2**: Fit stage, calibration, a Figures/export-preview
-tab, and the `pydvma serve` launch-config path (Setup-from-notebook,
-believed Plan-2/3 scope). Run: `cd webui && npm run dev`, open
-`http://localhost:5173/?fixture=1` (or `?fixture=3ch`). Feedback docs:
-`dev/2026-07-05-acquisition-hands-on-feedback.md` (round 2, now done),
-`dev/2026-07-05-hands-on-feedback.md` (round 1 + for-Tore notes).
-Earlier handoff: `dev/2026-07-04-stage2-plan1-handoff.md`.
+**Round-3 feedback also landed (2026-07-07)**: PSD mixed-fs crash
+root-caused to the 32-bit WASM nominal-size limit in
+`sliding_window_view` (fixed in `pydvma/analysis.py` via direct
+`as_strided`, byte-identical, + glue-side guard for stale wheels);
+per-kind `computeErrors` (a failed TF no longer poisons Sonogram);
+Δf-intent distribution for mixed-fs "All sets" targets; live slider
+drag; tray title cycles the whole set; Live scope custom view-time +
+fmax + Welch-PSD averaging mode; Setup-full grouped device options
+with a marked nidaq slot. Tore's directive: **pushing authorized at
+checkpoints; goal = fully replaced GUI** (Qt stays until his final
+confirmation) with full NI-DAQ + the three modes —
+`dev/plans/2026-07-07-full-gui-replacement-plan.md` is the roadmap.
+
+**START THE NEXT SESSION HERE:** execute the replacement plan. Wave A
+(Fit stage / calibration / Figures-export) has a ready brief:
+`dev/plans/2026-07-07-waveA-fit-cal-export-brief.md`. Then Wave B
+(`pydvma serve` websocket bridge + BridgeSource + launch-config) and
+Wave C (NI-DAQ over the bridge — Mac = mocks only; Windows session
+verifies). Known not-done small items: narrow-mode mini strip,
+AudioWorklet migration, browser pretrigger/output-stimulus, minors
+M1/M2, Fit-N semantics + unit-string authoring queued for Tore. Run:
+`cd webui && npm run dev`, open `http://localhost:5173/?fixture=1`
+(or `?fixture=3ch`). Feedback trail: round 3
+`dev/2026-07-07-round3-feedback.md`; round 2
+`dev/2026-07-05-acquisition-hands-on-feedback.md`; round 1
+`dev/2026-07-05-hands-on-feedback.md`.
 
 Auto-loaded by Claude Code at the start of every session. Contributors
 and collaborators: the concrete filesystem paths below are for the
