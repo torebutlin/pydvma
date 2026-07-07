@@ -194,6 +194,15 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     and ``Cxy`` is a 0/0 ratio. It is returned as 0 in that degenerate case
     rather than NaN; treat it as "no information at DC", not a real coherence.
 
+    Memory: the per-segment windows are built with ``as_strided`` directly at
+    the final ``(N_chans, N_seg, nperseg)`` shape rather than via
+    ``sliding_window_view`` + slicing. The latter materialises an intermediate
+    whose *nominal* size is ``N_chans * (N_samples - nperseg + 1) * nperseg``;
+    on a 32-bit build (pyodide/WASM, ``npy_intp`` = int32) numpy rejects that
+    view with "array is too big" for a large ``nperseg`` on a long, high-rate
+    record, even though it is only a view. The direct stride keeps the nominal
+    size at ``N_chans * N_seg * nperseg`` and is numerically byte-identical.
+
     Args:
         time_data (<TimeData> object): time series data
         time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
@@ -235,6 +244,16 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     # scipy._spectral_helper uses (N_samples - noverlap) // step segments.
     N_seg = max(1, (N_samples - noverlap) // step)
     fs = time_data.settings.fs
+    # Guard BEFORE the as_strided below: a window longer than the record
+    # (only possible for N_frames < 1) must raise, not read out of bounds.
+    # The previous sliding_window_view raised its own ValueError here;
+    # as_strided performs no bounds checking, so the check is now ours.
+    if nperseg > N_samples:
+        raise ValueError(
+            f'N_frames={N_frames} gives a segment length nperseg={nperseg} '
+            f'longer than the record ({N_samples} samples); N_frames must '
+            f'be at least 1.'
+        )
 
     win = signal.windows.get_window(window, nperseg)
 
@@ -244,10 +263,29 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     # non-contiguous axis subtly changes the per-segment residual at the
     # DC bin (~1e-17 in the mean → O(1) noise in coherence at DC).
     # Output shape: (N_chans, N_seg, nperseg).
+    #
+    # Stride DIRECTLY to the N_seg decimated windows. The obvious
+    # `sliding_window_view(data_T, nperseg)[..., ::step, :]` first
+    # materialises EVERY one of the (N_samples - nperseg + 1) sliding
+    # windows and then throws most away; even though that intermediate is
+    # only a strided view, numpy validates its NOMINAL size
+    # (N_chans × (N_samples - nperseg + 1) × nperseg). On a 32-bit build
+    # (e.g. pyodide/WASM, where ``npy_intp`` is int32 and the size ceiling
+    # is 2**31-1 bytes) that check raises "array is too big" for large
+    # nFFT on a long, high-fs record — a 2 s, 44.1 kHz capture at
+    # N_frames≈23 gives nperseg≈7350 and a ~4.7 GB nominal view — even
+    # though the real work is tiny. Building the final
+    # (N_chans, N_seg, nperseg) view by hand with `as_strided` has the
+    # SAME strides and memory layout (so detrend/FFT stay byte-identical)
+    # but a nominal size of only N_chans × N_seg × nperseg.
     data_T = np.ascontiguousarray(data_selected.T)
-    sv = np.lib.stride_tricks.sliding_window_view(
-        data_T, window_shape=nperseg, axis=-1
-    )[..., :N_seg * step:step, :]
+    row_stride, col_stride = data_T.strides
+    sv = np.lib.stride_tricks.as_strided(
+        data_T,
+        shape=(N_chans, N_seg, nperseg),
+        strides=(row_stride, step * col_stride, col_stride),
+        writeable=False,
+    )
     segs = signal.detrend(sv, axis=-1, type='constant')
     segs *= win
 

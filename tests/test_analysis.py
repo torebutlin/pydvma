@@ -350,6 +350,57 @@ class TestCrossSpectrumMatrix:
         expected = np.fft.rfftfreq(nperseg, 1 / fs)
         np.testing.assert_allclose(csd.freq_axis, expected, rtol=1e-12, atol=1e-12)
 
+    def test_large_nperseg_high_rate_record(self):
+        """Large nFFT on a long, high-rate record must compute (and match scipy).
+
+        Regression for the web-UI PSD crash: a 2 s, 44.1 kHz single-channel
+        capture at N_frames=23 gives nperseg≈7350. The old
+        ``sliding_window_view`` + slice built an intermediate view of nominal
+        size N_chans*(N_samples-nperseg+1)*nperseg ≈ 5.9e8 elements (~4.7 GB
+        for float64) — accepted here on 64-bit but rejected on the 32-bit
+        pyodide engine as "array is too big". The ``as_strided`` build keeps
+        the nominal size at N_seg*nperseg. This pins BOTH that it runs and
+        that the diagonal still equals ``scipy.signal.welch`` exactly.
+        """
+        fs = 44100
+        N = 88200                       # 2 s
+        N_frames = 23
+        overlap = 0.5
+        rng = np.random.default_rng(4)
+        data = rng.standard_normal((N, 1))
+        td = _make_time_data(data, fs)
+
+        csd = analysis.calculate_cross_spectrum_matrix(
+            td, window='hann', N_frames=N_frames, overlap=overlap,
+        )
+
+        nperseg = int(np.ceil(N / (N_frames + 1) / (1 - overlap)))
+        noverlap = int(np.ceil(overlap * nperseg))
+        assert nperseg == 7350
+        freqlength = len(np.fft.rfftfreq(nperseg))
+        assert csd.Pxy.shape == (1, 1, freqlength)
+
+        f, Pxx = signal.welch(
+            data[:, 0], fs, window='hann',
+            nperseg=nperseg, noverlap=noverlap, scaling='spectrum',
+        )
+        np.testing.assert_allclose(csd.freq_axis, f, rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(csd.Pxy[0, 0, :], Pxx, rtol=1e-12, atol=1e-12)
+
+    def test_nperseg_longer_than_record_raises(self):
+        """N_frames=0 (nperseg > N_samples) raises, never reads out of bounds.
+
+        The old ``sliding_window_view`` raised its own ValueError for a
+        window longer than the input; ``as_strided`` does no bounds
+        checking, so ``calculate_cross_spectrum_matrix`` now guards
+        explicitly. Pins the guard (and its actionable message) so the
+        degenerate case can never silently return garbage.
+        """
+        rng = np.random.default_rng(5)
+        td = _make_time_data(rng.standard_normal((256, 1)), 1000)
+        with pytest.raises(ValueError, match='N_frames'):
+            analysis.calculate_cross_spectrum_matrix(td, N_frames=0)
+
 
 # ---------- calculate_tf ----------
 
