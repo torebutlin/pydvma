@@ -27,6 +27,7 @@
   } = $props();
 
   const settings = $derived(acquire.settings);
+  const devices = $derived(acquire.devices);
   const status = $derived(acquire.status);
   const statusText = $derived(acquire.statusText);
   const errorMsg = $derived(acquire.errorMsg);
@@ -39,11 +40,23 @@
     recording ? `${$elapsed.toFixed(1)} / ${$settings.durationS.toFixed(1)} s` : '',
   );
 
-  /** Settings summary chip: "44.1 kHz · 1 ch · 2.0 s". */
+  /** Human name of the selected input device ('Default' when unset). */
+  const deviceName = $derived.by(() => {
+    const id = $settings.deviceId;
+    if (!id) return 'Default input';
+    const d = $devices.find((x) => x.deviceId === id);
+    return d?.label ?? 'Selected device';
+  });
+
+  /**
+   * Fuller settings summary (round-2 feedback): fs · channels · duration ·
+   * device · pretrigger.  Pretrigger is shown honestly as "no pretrig"
+   * since the capture path does not implement it yet.
+   */
   const summary = $derived.by(() => {
     const s = $settings;
     const fs = s.sampleRate >= 1000 ? `${(s.sampleRate / 1000).toFixed(1)} kHz` : `${s.sampleRate} Hz`;
-    return `${fs} · ${s.channelCount} ch · ${s.durationS.toFixed(1)} s`;
+    return `${fs} · ${s.channelCount} ch · ${s.durationS.toFixed(1)} s · ${deviceName} · no pretrig`;
   });
 
   async function logData() {
@@ -78,7 +91,12 @@
       <div class="grp">
         <span class="grp-lab">settings</span>
         <div class="grp-ctl">
-          <span class="ml">{summary}</span>
+          <button
+            class="btn sm sum-chip mono"
+            onclick={() => activeStage.set('setup')}
+            title="Jump to Setup to edit these"
+            data-testid="acquire-summary"
+          >{summary}</button>
           <button class="btn sm" onclick={() => activeStage.set('setup')}>Edit</button>
         </div>
       </div>
@@ -110,6 +128,17 @@
 </section>
 
 <style>
+  .sum-chip {
+    background: #f8f9fb !important;
+    border-radius: 13px !important;
+    max-width: 420px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sum-chip:hover {
+    background: #fff !important;
+  }
   .log-btn {
     background: var(--green) !important;
     border-color: var(--green) !important;
