@@ -23,6 +23,7 @@
   import type { Selection } from '../../lib/stores/selection';
   import type { Actions } from '../../lib/analysis/actions';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
+  import { createLiveCalc } from '../../lib/analysis/liveCalc';
   import ResolutionControl from '../ResolutionControl.svelte';
 
   let {
@@ -74,16 +75,22 @@
 
   function calc() { actions.calcTf($target); }
 
+  // Live recompute (round-2 feedback): once a TF exists for this target,
+  // changing the input channel / window / averaging / resolution
+  // re-estimates it (debounced). Gated on an existing result so an edit
+  // before the first Calc TF never boots the engine — the Calc button
+  // forces that first compute. `patchLive` = patch THEN schedule.
+  const live = createLiveCalc(() => actions.hasComputed($target, 'tf'), calc);
+  const patchLive = (partial: Partial<{ chIn: number; window: string; averaging: 'none' | 'within' | 'across'; nFrames: number }>) => {
+    patch(partial);
+    live.schedule();
+  };
+  function onFrames(n: number) { patchLive({ nFrames: n }); }
+  // Drop a pending live recompute if the card unmounts (stage switch).
+  $effect(() => () => live.cancel());
+
   function onTarget(v: string) {
     analysisSettings.setTarget(v === 'all' ? 'all' : Number(v));
-  }
-
-  // Live N-frames: write to the store, then debounce the worker re-issue.
-  let debounceId: ReturnType<typeof setTimeout> | undefined;
-  function onFrames(n: number) {
-    patch({ nFrames: n });
-    clearTimeout(debounceId);
-    debounceId = setTimeout(calc, 150);
   }
 
   // Nyquist fmin/fmax are bound to the shared freq range (tf view range).
@@ -118,7 +125,7 @@
         <div class="grp-ctl">
           <span class="ml">in</span>
           <select value={mixed('chIn') ? '' : String(tf.chIn)}
-            onchange={(e) => patch({ chIn: Number(e.currentTarget.value) })}
+            onchange={(e) => patchLive({ chIn: Number(e.currentTarget.value) })}
             style="width:64px" aria-label="input channel">
             {#if mixed('chIn')}<option value="" disabled>–mixed–</option>{/if}
             {#each Array.from({ length: Math.max(1, maxChannels) }, (_, c) => c) as c (c)}
@@ -127,13 +134,13 @@
           </select>
           <span class="ml">window</span>
           <select value={mixed('window') ? '' : tf.window}
-            onchange={(e) => patch({ window: e.currentTarget.value })} aria-label="window">
+            onchange={(e) => patchLive({ window: e.currentTarget.value })} aria-label="window">
             {#if mixed('window')}<option value="" disabled>–mixed–</option>{/if}
             <option>hann</option><option>hamming</option><option>none</option>
           </select>
           <span class="ml">avg</span>
           <select value={mixed('averaging') ? '' : tf.averaging}
-            onchange={(e) => patch({ averaging: e.currentTarget.value as 'none' | 'within' | 'across' })}
+            onchange={(e) => patchLive({ averaging: e.currentTarget.value as 'none' | 'within' | 'across' })}
             aria-label="averaging">
             {#if mixed('averaging')}<option value="" disabled>–mixed–</option>{/if}
             <option value="none">none</option>

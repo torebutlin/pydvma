@@ -25,6 +25,7 @@
   import type { Selection } from '../../lib/stores/selection';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
   import type { FreqMode } from '../../lib/plot/model';
+  import { createLiveCalc } from '../../lib/analysis/liveCalc';
   import ResolutionControl from '../ResolutionControl.svelte';
 
   let {
@@ -77,6 +78,22 @@
     else actions.calcPsd($target);
   }
 
+  // Live recompute (round-2 feedback): once a spectrum has been computed
+  // for this target, changing the quantity / window / resolution re-runs
+  // it (debounced). Gated on an existing result so a tweak before the
+  // first Calc never boots the engine — the Calc button forces that first
+  // compute. `patchLive` = patch the setting THEN schedule the recompute.
+  const live = createLiveCalc(
+    () => actions.hasComputed($target, 'freq') || actions.hasComputed($target, 'psd'),
+    calc,
+  );
+  const patchLive = (partial: Partial<{ window: string; mode: FreqMode; nFrames: number }>) => {
+    patch(partial);
+    live.schedule();
+  };
+  // Drop a pending live recompute if the card unmounts (stage switch).
+  $effect(() => () => live.cancel());
+
   function onTarget(v: string) {
     analysisSettings.setTarget(v === 'all' ? 'all' : Number(v));
   }
@@ -105,7 +122,7 @@
           <span class="seg" role="group" aria-label="spectral quantity" class:mixed={mixed('mode')}>
             {#each MODES as m (m.id)}
               <button class:active={!mixed('mode') && freqMode === m.id} data-spec={m.id}
-                onclick={() => patch({ mode: m.id })}>{m.label}</button>
+                onclick={() => patchLive({ mode: m.id })}>{m.label}</button>
             {/each}
           </span>
         </div>
@@ -114,7 +131,7 @@
         <span class="grp-lab">window</span>
         <div class="grp-ctl">
           <select value={mixed('window') ? '' : freq.window}
-            onchange={(e) => patch({ window: e.currentTarget.value })} aria-label="window">
+            onchange={(e) => patchLive({ window: e.currentTarget.value })} aria-label="window">
             {#if mixed('window')}<option value="" disabled>–mixed–</option>{/if}
             <option>hann</option><option>hamming</option><option>flattop</option><option>none</option>
           </select>
@@ -128,7 +145,7 @@
           <div class="grp-ctl">
             <ResolutionControl {fs} {durationS} nFrames={freq.nFrames}
               mixed={mixed('nFrames')}
-              onchange={(n) => patch({ nFrames: n })} />
+              onchange={(n) => patchLive({ nFrames: n })} />
           </div>
         </div>
       </div>

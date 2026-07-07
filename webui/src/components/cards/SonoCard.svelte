@@ -13,13 +13,16 @@
    * store, with "–mixed–" shown when the target is `'all'` and sets
    * disagree.
    *
-   * Calc Sonogram runs `actions.calcSono(target, ch)`. The slider
-   * re-issues live but DEBOUNCED (150 ms); the action carries a per-kind
-   * stale seq (key 'sono').
+   * Calc Sonogram runs `actions.calcSono(target, ch)`. Once a sonogram
+   * exists, the STFT-window slider / nFFT box and the channel select
+   * re-issue live but DEBOUNCED (150 ms) and gated on an existing result
+   * (`createLiveCalc`), so a tweak before the first Calc never boots the
+   * engine; the action carries a per-kind stale seq (key 'sono').
    */
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
+  import { createLiveCalc } from '../../lib/analysis/liveCalc';
 
   let {
     actions,
@@ -60,12 +63,15 @@
   const RES_MIN_EXP = 6;
   const RES_MAX_EXP = 12;
 
-  let debounceId: ReturnType<typeof setTimeout> | undefined;
+  // Live recompute (round-2 feedback), gated on an existing sonogram so a
+  // slider/channel tweak before the first Calc never boots the engine.
+  const live = createLiveCalc(() => actions.hasComputed($target, 'sono'), calc);
   function onRes(v: number) {
     patch({ nFft: 1 << v });
-    clearTimeout(debounceId);
-    debounceId = setTimeout(calc, 150);
+    live.schedule();
   }
+  // Drop a pending live recompute if the card unmounts (stage switch).
+  $effect(() => () => live.cancel());
 
   /**
    * Text-box entry for nFFT: snap an arbitrary point count to the nearest
@@ -101,7 +107,7 @@
               <option value={String(s.id)}>{s.name}</option>
             {/each}
           </select>
-          <select bind:value={ch} style="width:66px" aria-label="channel">
+          <select bind:value={ch} onchange={() => live.schedule()} style="width:66px" aria-label="channel">
             {#each Array.from({ length: Math.max(1, chOptions) }, (_, c) => c) as c (c)}
               <option value={c}>ch_{c}</option>
             {/each}
