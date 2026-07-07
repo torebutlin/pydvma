@@ -23,7 +23,7 @@
  * OscCanvas and the Live scope.
  */
 import { writable, get } from 'svelte/store';
-import { startMonitor, type MonitorHandle, type MonitorCallback } from '../audio/source';
+import type { MonitorHandle, MonitorCallback } from '../audio/source';
 import type { AcquireStore } from './acquire';
 
 // ---- types ----
@@ -237,7 +237,9 @@ export function createMonitorStore(acquire: AcquireStore) {
     ringRev = 0;
 
     try {
-      const h = await startMonitor(
+      // Route through the acquire store's active provider (Web Audio or the
+      // serve bridge). Read at start() time so a provider swap is picked up.
+      const h = await acquire.provider.startMonitor(
         {
           deviceId: cfg.deviceId || undefined,
           sampleRate: cfg.sampleRate,

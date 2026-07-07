@@ -41,6 +41,15 @@
   const devices = $derived(acquire.devices);
   const settings = $derived(acquire.settings);
   const deviceCaps = $derived(acquire.deviceCaps);
+  // Bridge state (Wave B): non-null caps means the app is driving a
+  // `pydvma serve` bridge instead of the browser soundcard. The NI-DAQ
+  // group renders only when the bridge reports the 'nidaq' backend (no
+  // dead controls), and the mic-permission hint is suppressed (bridge
+  // devices always carry real labels).
+  const bridgeCaps = $derived(acquire.bridgeCaps);
+  const bridgeConfig = $derived(acquire.bridgeConfig);
+  const isBridge = $derived($bridgeCaps != null);
+  const hasNidaq = $derived($bridgeCaps?.backends.includes('nidaq') ?? false);
 
   // Permission is granted once ANY device reports a real label.
   const permissionGranted = $derived($devices.some((d) => d.hasLabel));
@@ -95,6 +104,30 @@
   }
   function requestPermission() {
     void acquire.requestPermission();
+  }
+
+  // ---- NI-DAQ group handlers (bridge only) ----
+  // Each sends through the acquire store's bridge config, which the bridge
+  // merges into the next `configure` message as MySettings kwargs.
+  function onIepeChange(e: Event) {
+    acquire.patchBridge({ iepeExcitCurrentA: Number((e.target as HTMLSelectElement).value) });
+  }
+  function onTermChange(e: Event) {
+    const v = (e.target as HTMLSelectElement).value;
+    acquire.patchBridge({ niMode: v || undefined });
+  }
+  /** Blank pretrigger-samples clears it (free-run capture); else an integer. */
+  function onPretrigSamples(e: Event) {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    acquire.patchBridge({ pretrigSamples: raw === '' ? null : Math.max(0, Math.round(Number(raw)) || 0) });
+  }
+  function onPretrigThreshold(e: Event) {
+    const v = Number((e.target as HTMLInputElement).value);
+    if (isFinite(v)) acquire.patchBridge({ pretrigThreshold: v });
+  }
+  function onPretrigChannel(e: Event) {
+    const v = Math.max(0, Math.round(Number((e.target as HTMLInputElement).value)) || 0);
+    acquire.patchBridge({ pretrigChannel: v });
   }
   /** Format a capability range like "1–2" / "≤ 96 kHz", or "—" when unknown. */
   function fmtRange(r: { min?: number; max?: number } | undefined, unit = '', k = 1): string {
@@ -169,7 +202,7 @@
           </select>
         </div>
       </div>
-      {#if !permissionGranted}
+      {#if !permissionGranted && !isBridge}
         <div class="grp">
           <span class="grp-lab">microphone</span>
           <div class="grp-ctl">
@@ -248,8 +281,78 @@
             <span class="ml">ms latency</span>
           </div>
         </div>
-        <!-- nidaq slot: a future NI-DAQ group (IEPE, terminal config,
-             pretrigger) drops in here as another <div class="grp"> block. -->
+        <!-- nidaq slot (Wave B): rendered ONLY when the bridge reports the
+             'nidaq' backend (no dead controls on the Web-Audio path).
+             IEPE excitation, terminal configuration, and pretrigger all
+             send through the acquire store's bridge config → the next
+             `configure` message's MySettings kwargs. -->
+        {#if hasNidaq}
+          <div class="grp" data-testid="setup-nidaq">
+            <span class="grp-lab">NI-DAQ input</span>
+            <div class="grp-ctl">
+              <select
+                aria-label="IEPE excitation current"
+                title="IEPE/ICP constant-current excitation (NI 9234 only)"
+                value={String($bridgeConfig.iepeExcitCurrentA ?? 0)}
+                onchange={onIepeChange}
+                style="width:96px"
+              >
+                <option value="0">IEPE off</option>
+                <option value="0.002">IEPE 2 mA</option>
+              </select>
+              <select
+                aria-label="terminal configuration"
+                title="Analog-input terminal configuration"
+                value={$bridgeConfig.niMode ?? ''}
+                onchange={onTermChange}
+                style="width:96px"
+              >
+                <option value="">default</option>
+                <option value="DAQmx_Val_RSE">RSE</option>
+                <option value="DAQmx_Val_NRSE">NRSE</option>
+                <option value="DAQmx_Val_Diff">diff</option>
+              </select>
+            </div>
+          </div>
+          <div class="grp" data-testid="setup-pretrigger">
+            <span class="grp-lab">pretrigger</span>
+            <div class="grp-ctl">
+              <input
+                type="number"
+                min="0"
+                step="1"
+                placeholder="off"
+                value={$bridgeConfig.pretrigSamples ?? ''}
+                onchange={onPretrigSamples}
+                title="Pretrigger samples (blank = free-run, no trigger)"
+                aria-label="pretrigger samples"
+                style="width:76px"
+              />
+              <span class="ml">samples</span>
+              <input
+                type="number"
+                step="0.01"
+                value={$bridgeConfig.pretrigThreshold ?? ''}
+                onchange={onPretrigThreshold}
+                placeholder="thresh"
+                title="Trigger amplitude threshold"
+                aria-label="pretrigger threshold"
+                style="width:64px"
+              />
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={$bridgeConfig.pretrigChannel ?? ''}
+                onchange={onPretrigChannel}
+                placeholder="ch"
+                title="Trigger channel index"
+                aria-label="pretrigger channel"
+                style="width:52px"
+              />
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
   </div>

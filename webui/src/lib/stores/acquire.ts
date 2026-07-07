@@ -10,14 +10,18 @@
  * SetupCard and AcquireCard components.
  */
 import { writable, get } from 'svelte/store';
-import {
-  enumerateInputDevices,
-  startRecording,
-  type AudioInputDevice,
-  type RecordConfig,
-  type Recording,
-  type RecordingHandle,
+import type {
+  AudioInputDevice,
+  RecordConfig,
+  Recording,
+  RecordingHandle,
 } from '../audio/source';
+import {
+  WebAudioProvider,
+  type SourceProvider,
+  type BridgeCaps,
+  type BridgeConfig,
+} from '../audio/provider';
 import type { DvmaDataset, DvmaItem } from '../model/dataset';
 import { capabilities } from './stages';
 
@@ -87,7 +91,7 @@ const DEFAULT_SETTINGS: AcquireSettings = {
 
 // ---- store factory ----
 
-export function createAcquireStore() {
+export function createAcquireStore(initialProvider?: SourceProvider) {
   const devices = writable<AudioInputDevice[]>([]);
   const settings = writable<AcquireSettings>({ ...DEFAULT_SETTINGS });
   const status = writable<AcquireStatus>('idle');
@@ -96,6 +100,19 @@ export function createAcquireStore() {
   const elapsed = writable<number>(0);
   /** Capabilities of the granted device (populated after permission). */
   const deviceCaps = writable<DeviceCaps | null>(null);
+  /**
+   * The acquisition backend (Wave B).  Defaults to Web Audio so nothing
+   * changes when no `pydvma serve` bridge is present; App.svelte swaps in
+   * a BridgeProvider via {@link setProvider} before `init` when one is
+   * detected.  Mutable so the swap is a single reassignment the
+   * monitor store (which reads `acquire.provider`) picks up on its next
+   * `start()`.
+   */
+  let provider: SourceProvider = initialProvider ?? new WebAudioProvider();
+  /** Bridge capability document (null for Web Audio or a dead bridge). */
+  const bridgeCaps = writable<BridgeCaps | null>(null);
+  /** Bridge-only NI/driver kwargs (SetupCard's NI group edits these). */
+  const bridgeConfig = writable<BridgeConfig>({});
 
   let handle: RecordingHandle | null = null;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
@@ -103,12 +120,32 @@ export function createAcquireStore() {
   let lastRecording: Recording | null = null;
 
   /**
+   * Swap the acquisition backend (App.svelte mode selection).  Re-applies
+   * any staged bridge config to the new provider so a SetupCard edit made
+   * before the swap is not lost.
+   */
+  function setProvider(p: SourceProvider): void {
+    provider = p;
+    p.setConfig?.(get(bridgeConfig));
+  }
+
+  /**
+   * Patch the bridge NI/driver config and forward it to the provider so
+   * it is merged into the next `configure` message.  A no-op on Web Audio
+   * (the provider has no `setConfig`).
+   */
+  function patchBridge(p: Partial<BridgeConfig>): void {
+    bridgeConfig.update((c) => ({ ...c, ...p }));
+    provider.setConfig?.(get(bridgeConfig));
+  }
+
+  /**
    * Refresh the device list.  Call after a user gesture to get real
    * labels (browsers hide labels until permission is granted).
    */
   async function refreshDevices(): Promise<void> {
     try {
-      const list = await enumerateInputDevices();
+      const list = await provider.enumerateInputDevices();
       devices.set(list);
       // Flip the liveSource capability so Setup/Acquire tabs enable.
       if (list.length > 0) {
@@ -163,10 +200,26 @@ export function createAcquireStore() {
   }
 
   /**
-   * Probe for Web Audio support and kick-start device enumeration.
-   * Called once at app boot.
+   * Probe the active backend and kick-start device enumeration.  Called
+   * once at app boot (after App.svelte has selected the provider).
+   *
+   * - Bridge: fetch `capabilities()`; on success flip the liveSource gate,
+   *   store the caps (SetupCard reads them for the NI group), and
+   *   enumerate the bridge devices.  A dead bridge (null caps) leaves the
+   *   gate off so the app degrades gracefully.
+   * - Web Audio: require `getUserMedia`, flip the gate immediately (before
+   *   enumeration completes so the tabs are clickable), then enumerate.
    */
   async function init(): Promise<void> {
+    if (provider.kind === 'bridge') {
+      const caps = await provider.capabilities();
+      bridgeCaps.set(caps);
+      if (caps) {
+        capabilities.update((c) => ({ ...c, liveSource: true }));
+        await refreshDevices();
+      }
+      return;
+    }
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
     // Enable the liveSource gate immediately (even before enumeration
     // completes) so Setup/Acquire tabs are clickable.
@@ -193,7 +246,7 @@ export function createAcquireStore() {
       latency: cfg.latency,
     };
 
-    handle = startRecording(rcfg);
+    handle = provider.startRecording(rcfg);
 
     // Poll elapsed time for progress display.
     elapsedTimer = setInterval(() => {
@@ -243,12 +296,22 @@ export function createAcquireStore() {
     errorMsg,
     elapsed,
     deviceCaps,
+    /** Bridge capability document (null for Web Audio / a dead bridge). */
+    bridgeCaps,
+    /** Bridge-only NI/driver config (SetupCard's NI group edits these). */
+    bridgeConfig,
     init,
     refreshDevices,
     requestPermission,
     record,
     cancel,
     patch,
+    patchBridge,
+    setProvider,
+    /** The active acquisition backend (Web Audio or the serve bridge). */
+    get provider() { return provider; },
+    /** True while a `pydvma serve` bridge is the active backend. */
+    get isBridge() { return provider.kind === 'bridge'; },
     /** The last successful recording, for bridge code to consume. */
     get lastRecording() { return lastRecording; },
   };

@@ -7,52 +7,60 @@ import { expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { createMonitorStore } from '../../src/lib/stores/monitor';
 import { createAcquireStore } from '../../src/lib/stores/acquire';
 import { capabilities } from '../../src/lib/stores/stages';
-import { startMonitor, type MonitorChunk, type MonitorHandle } from '../../src/lib/audio/source';
+import type { MonitorChunk, MonitorHandle } from '../../src/lib/audio/source';
+import type { SourceProvider } from '../../src/lib/audio/provider';
 
-// ---- Mock the audio source layer ----
+// ---- Inject a fake provider (the Wave B provider seam) ----
+// The monitor now drives `acquire.provider.startMonitor`; these tests inject
+// a fake provider whose startMonitor is a spy, replacing the old
+// vi.mock-of-source approach while keeping every assertion's intent.
 
 let capturedOndata: ((chunk: MonitorChunk) => void) | null = null;
 let capturedCfg: Record<string, unknown> | null = null;
 const mockStop = vi.fn();
 
-vi.mock('../../src/lib/audio/source', async () => {
-  const actual = await vi.importActual<typeof import('../../src/lib/audio/source')>('../../src/lib/audio/source');
-  return {
-    ...actual,
-    startMonitor: vi.fn(async (cfg: Record<string, unknown>, ondata: (chunk: MonitorChunk) => void) => {
+/** A fake provider whose startMonitor is a spy the tests can drive. */
+function makeFakeProvider() {
+  const startMonitor = vi.fn(
+    async (cfg: Record<string, unknown>, ondata: (chunk: MonitorChunk) => void) => {
       capturedCfg = cfg;
       capturedOndata = ondata;
-      return { stop: mockStop, fs: 44100, nChannels: 2 };
-    }),
+      return { stop: mockStop, fs: 44100, nChannels: 2 } as MonitorHandle;
+    },
+  );
+  const provider: SourceProvider = {
+    kind: 'webaudio',
+    capabilities: async () => null,
+    enumerateInputDevices: async () => [],
+    startRecording: () => ({ promise: Promise.resolve() as never, cancel() {}, elapsed: () => 0 }),
+    startMonitor: startMonitor as unknown as SourceProvider['startMonitor'],
   };
-});
+  return { provider, startMonitor };
+}
+
+/** Build a monitor store over a fresh acquire store + fake provider. */
+function setup() {
+  const { provider, startMonitor } = makeFakeProvider();
+  const acq = createAcquireStore(provider);
+  const mon = createMonitorStore(acq);
+  return { mon, acq, provider, startMonitor };
+}
 
 beforeEach(() => {
   capturedOndata = null;
   capturedCfg = null;
   mockStop.mockClear();
-  vi.mocked(startMonitor).mockClear();   // reset call count per test (I3 asserts it)
   capabilities.set({ liveSource: false, fitEngine: false });
-  vi.stubGlobal('navigator', {
-    mediaDevices: {
-      enumerateDevices: vi.fn().mockResolvedValue([]),
-      getUserMedia: vi.fn(),
-    },
-  });
 });
 afterEach(() => vi.restoreAllMocks());
 
-function makeAcquire() {
-  return createAcquireStore();
-}
-
 test('status starts idle', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   expect(get(mon.status)).toBe('idle');
 });
 
 test('start transitions to streaming and stop returns to idle', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
   expect(get(mon.status)).toBe('streaming');
 
@@ -62,10 +70,10 @@ test('start transitions to streaming and stop returns to idle', async () => {
 });
 
 test('stop() during start does NOT revive the monitor and releases the stream (I2)', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon, startMonitor } = setup();
   // Defer this one startMonitor so we can stop() while it is still in flight.
   let resolveStart!: (h: MonitorHandle) => void;
-  vi.mocked(startMonitor).mockImplementationOnce(
+  startMonitor.mockImplementationOnce(
     () => new Promise<MonitorHandle>((res) => { resolveStart = res; }),
   );
 
@@ -82,9 +90,9 @@ test('stop() during start does NOT revive the monitor and releases the stream (I
 });
 
 test('double start() opens only one monitor (I3)', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon, startMonitor } = setup();
   let resolveStart!: (h: MonitorHandle) => void;
-  vi.mocked(startMonitor).mockImplementationOnce(
+  startMonitor.mockImplementationOnce(
     () => new Promise<MonitorHandle>((res) => { resolveStart = res; }),
   );
 
@@ -93,12 +101,12 @@ test('double start() opens only one monitor (I3)', async () => {
   resolveStart({ stop: mockStop, fs: 44100, nChannels: 2 });
   await Promise.all([p1, p2]);
 
-  expect(vi.mocked(startMonitor)).toHaveBeenCalledTimes(1);
+  expect(startMonitor).toHaveBeenCalledTimes(1);
   expect(get(mon.status)).toBe('streaming');
 });
 
 test('pause and resume toggle status', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
 
   mon.pause();
@@ -109,7 +117,7 @@ test('pause and resume toggle status', async () => {
 });
 
 test('togglePause alternates between streaming and paused', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
 
   mon.togglePause();
@@ -120,7 +128,7 @@ test('togglePause alternates between streaming and paused', async () => {
 });
 
 test('ring buffer populates on audio data and snapshot returns chronological copy', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
 
   // Feed a chunk of data (2 channels, 100 samples).
@@ -154,7 +162,7 @@ test('ring buffer populates on audio data and snapshot returns chronological cop
 });
 
 test('levels update on each audio chunk', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
 
   // A sine wave on ch0, silence on ch1.
@@ -184,7 +192,7 @@ test('levels update on each audio chunk', async () => {
 });
 
 test('paused monitor still updates levels but does not advance ring revision', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
 
   // Feed one chunk to get a baseline revision.
@@ -215,7 +223,7 @@ test('paused monitor still updates levels but does not advance ring revision', a
 });
 
 test('snapshot returns empty channels when not started', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   const snap = mon.snapshot();
   expect(snap.channels).toHaveLength(0);
   expect(snap.fs).toBe(44100);
@@ -223,7 +231,7 @@ test('snapshot returns empty channels when not started', () => {
 });
 
 test('stacked and autoscaleY default to false/true', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   expect(get(mon.stacked)).toBe(false);
   expect(get(mon.autoscaleY)).toBe(true);
 });
@@ -231,7 +239,7 @@ test('stacked and autoscaleY default to false/true', () => {
 // ---- round-2 osc settings ----
 
 test('osc display settings have sensible defaults', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   expect(get(mon.windowS)).toBe(0.1);
   expect(get(mon.fftYLog)).toBe(true);   // dB by default
   expect(get(mon.fftXLog)).toBe(false);  // linear freq by default
@@ -240,7 +248,7 @@ test('osc display settings have sensible defaults', () => {
 });
 
 test('setWindow clamps and re-allocates the ring while streaming', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();               // fs 44100 (from mock handle)
   const len01 = mon.ringLength;
   expect(len01).toBe(Math.ceil(44100 * 0.1));
@@ -258,7 +266,7 @@ test('setWindow clamps and re-allocates the ring while streaming', async () => {
 });
 
 test('clip flag latches at peak ≥ 0.95 and resets on demand', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
   expect(get(mon.clipLatched)).toBe(false);
 
@@ -279,7 +287,7 @@ test('clip flag latches at peak ≥ 0.95 and resets on demand', async () => {
 });
 
 test('start() resets a previously latched clip flag', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
   capturedOndata!({ data: new Float32Array([1, 1]), nSamples: 1, nChannels: 2, fs: 44100 });
   expect(get(mon.clipLatched)).toBe(true);
@@ -290,7 +298,7 @@ test('start() resets a previously latched clip flag', async () => {
 });
 
 test('togglePane flips a single pane', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   mon.togglePane('freq');
   expect(get(mon.panes)).toEqual({ time: true, freq: false, levels: true });
   mon.togglePane('freq');
@@ -300,7 +308,7 @@ test('togglePane flips a single pane', () => {
 // ---- round-3 FFT / PSD settings ----
 
 test('round-3 fft settings have sensible defaults', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   expect(get(mon.fftFMax)).toBe(null);          // full / Nyquist by default
   expect(get(mon.spectrumMode)).toBe('instant');
   expect(get(mon.psdSegments)).toBe(4);
@@ -308,7 +316,7 @@ test('round-3 fft settings have sensible defaults', () => {
 });
 
 test('setFftFMax accepts a value, clamps below the floor, and null = full', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   mon.setFftFMax(2000);
   expect(get(mon.fftFMax)).toBe(2000);
   mon.setFftFMax(1);                            // below MIN_FMAX_HZ (10) → clamped
@@ -320,7 +328,7 @@ test('setFftFMax accepts a value, clamps below the floor, and null = full', () =
 });
 
 test('setSpectrumMode toggles between instant and psd (invalid → instant)', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   mon.setSpectrumMode('psd');
   expect(get(mon.spectrumMode)).toBe('psd');
   mon.setSpectrumMode('instant');
@@ -331,7 +339,7 @@ test('setSpectrumMode toggles between instant and psd (invalid → instant)', ()
 });
 
 test('setPsdSegments clamps to an integer ≥ 1', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   mon.setPsdSegments(8);
   expect(get(mon.psdSegments)).toBe(8);
   mon.setPsdSegments(2.9);
@@ -343,7 +351,7 @@ test('setPsdSegments clamps to an integer ≥ 1', () => {
 });
 
 test('setPsdSmoothing clamps to [0, 0.95]', () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   mon.setPsdSmoothing(0.5);
   expect(get(mon.psdSmoothing)).toBe(0.5);
   mon.setPsdSmoothing(2);                        // over the cap
@@ -355,8 +363,7 @@ test('setPsdSmoothing clamps to [0, 0.95]', () => {
 });
 
 test('monitor passes the latency hint through to startMonitor', async () => {
-  const acq = makeAcquire();
-  const mon = createMonitorStore(acq);
+  const { mon, acq } = setup();
   await mon.start();
   expect(capturedCfg!.latency).toBeUndefined();  // no hint by default
   mon.stop();
@@ -368,8 +375,7 @@ test('monitor passes the latency hint through to startMonitor', async () => {
 });
 
 test('monitor passes the getUserMedia DSP constraints through to startMonitor', async () => {
-  const acq = makeAcquire();
-  const mon = createMonitorStore(acq);
+  const { mon, acq } = setup();
   await mon.start();
   // Defaults: all three off (raw measurement).
   expect(capturedCfg).toMatchObject({
@@ -387,7 +393,7 @@ test('monitor passes the getUserMedia DSP constraints through to startMonitor', 
 });
 
 test('lifecycle contract: settings changes do NOT stop the monitor (only stop() idles it)', async () => {
-  const mon = createMonitorStore(makeAcquire());
+  const { mon } = setup();
   await mon.start();
   expect(get(mon.status)).toBe('streaming');
 

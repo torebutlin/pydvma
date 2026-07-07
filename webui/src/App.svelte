@@ -48,6 +48,7 @@
   import type { DvmaDataset } from './lib/model/dataset';
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
+  import { selectProvider } from './lib/audio/provider';
   import MiniMonitor from './components/MiniMonitor.svelte';
   import LiveScope from './components/LiveScope.svelte';
   import FitChip from './components/FitChip.svelte';
@@ -159,10 +160,21 @@
         .catch((e) => console.error('[fixture] load failed:', e));
     }
 
-    // Boot the acquisition store: probe for Web Audio support, enumerate
-    // input devices, and flip the liveSource capability gate so Setup +
-    // Acquire tabs become enabled.
-    void acquire.init();
+    // Select the acquisition backend, then boot the acquire store. Wave B:
+    // when the app is opened through `pydvma serve` (a `?bridge=ws://…`
+    // param, an injected `window.__pydvma_bridge`, or a same-origin
+    // `/config` document) the BridgeProvider drives real hardware over a
+    // WebSocket; otherwise the WebAudioProvider keeps the browser-soundcard
+    // path. `init` then flips the liveSource gate + enumerates devices for
+    // whichever backend was chosen (mirrors the old inline `acquire.init`).
+    void (async () => {
+      try {
+        acquire.setProvider(await selectProvider());
+      } catch (e) {
+        console.warn('[bridge] provider selection failed, using Web Audio:', e);
+      }
+      await acquire.init();
+    })();
 
     // Release the mic if the browser tab is closed or navigated away while
     // the monitor is live (onDestroy covers in-app teardown; these cover
@@ -614,7 +626,11 @@
     {:else}
       <aside class="tray" data-testid="tray">
         <div class="tray-scroll">
-          <Tray {selection} channelData={channelSeries} />
+          <!-- Calibration handlers passed explicitly (they take precedence
+               over the calibrationController fallback bridge inside Tray). -->
+          <Tray {selection} channelData={channelSeries}
+            getCalibration={actions.getCalibration}
+            applyCalibration={actions.setCalFactors} />
         </div>
         <MiniMonitor {monitor} />
       </aside>
