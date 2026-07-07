@@ -78,18 +78,43 @@ the selected device's ladder; bridged sets keep their container
 metadata. Suites: pytest 247, vitest 410, svelte-check 0/0,
 Playwright 46 + bridge e2e 3/3 vs a real mock-driver server.
 
+**Windows NI hardware session DONE (2026-07-07, checkpoint 4):** the
+full Wave-C checklist (`dev/plans/2026-07-07-waveC-windows-checklist.md`
+— results block at the top) passed on all three real devices; §3+§4
+verified end-to-end over the ws protocol (39 headless checks, 0 fail;
+pretrigger crossing at exactly `pretrig_samples` through the whole
+bridge stack on every device; IEPE capture off the real accel now
+wired on **cDAQ1Mod1/ai1**). Five real defects found+fixed with tests:
+(1) pretrigger missed under host load — NI callback now **drains the
+read backlog** + ~5 s DAQmx input buffer (multiple of chunk_size,
+else -200877) + timeout clock starts at stimulus start + `_closing`
+teardown flag; (2) **DSA fs coercion** (9234: request 8000 → get
+8533.33!) — recorder adopts the true `samp_clk_rate` into
+settings.fs, resizes buffers, stream-reuse still matches via
+`_requested_fs`, AO warns; (3) default RSE crashed cDAQ configure —
+`resolve_terminal_config_for_entry` falls back to the module's
+supported config; (4) out-of-range `output_fs` → clear preflight;
+caps now report `ai_vmax`/`ao_vmax` (9260 rail 4.2426 V < default
+output_VmaxNI 5.0 — webui should clamp, not yet wired); (5) stale
+re-trigger between captures — stored buffer zeroed before unfreezing.
+Full pytest green on the hardware machine (hardware + mock, incl. new
+`tests/test_streams_ni_callback.py`). No Node.js on the Windows box —
+browser UI itself still mock-e2e only.
+
 **START THE NEXT SESSION HERE:** (1) **Tore hands-on round 4** — new
 surface: Fit, calibration, exports, Live PSD mode, Setup full, and
-the bridge (`pip install -e .[serve,soundcard]` then `pydvma-serve
---driver soundcard --open`). Queued decisions: Fit-N/Global optimise,
-CSV all-kinds vs current-view, unit axis labels, implicit 1000-sample
-bare-arm default, output UI shape. (2) **Windows hardware session** —
-run `dev/plans/2026-07-07-waveC-windows-checklist.md` (three NI
-devices, loopbacks, IEPE, output sweep, VmaxNI checks — the NI path
-is mock-verified only until then). (3) **Wave D polish**: narrow-rail
-mini, AudioWorklet, dark theme, wheel-embedding webui/dist (pyproject
-TODO), M1/M2, browser-side (Web Audio) output stimulus + pretrigger.
-(4) Qt teardown ONLY after Tore's explicit confirmation. Roadmap:
+the bridge — NI path now real-hardware-verified (`pip install -e
+.[serve,ni,soundcard]` then `pydvma-serve --driver nidaq --open`, or
+`--driver soundcard` on Mac). Queued decisions: Fit-N/Global
+optimise, CSV all-kinds vs current-view, unit axis labels, implicit
+1000-sample bare-arm default, output UI shape. (2) **Webui follow-ups
+from the hardware session**: clamp `output_VmaxNI` to the new
+`ao_vmax` cap in Setup; surface the coerced-fs note (BridgeProvider
+already adopts `configured.fs`); consider `ai_vmax` for the VmaxNI
+picker. (3) **Wave D polish**: narrow-rail mini, AudioWorklet, dark
+theme, wheel-embedding webui/dist (pyproject TODO), M1/M2,
+browser-side (Web Audio) output stimulus + pretrigger. (4) Qt
+teardown ONLY after Tore's explicit confirmation. Roadmap:
 `dev/plans/2026-07-07-full-gui-replacement-plan.md`. Run: `cd webui
 && npm run dev`, `http://localhost:5173/?fixture=1` (or `?fixture=3ch`);
 feedback trail: `dev/2026-07-07-round3-feedback.md` and earlier.

@@ -1,5 +1,52 @@
 # Wave C — Windows NI hardware-session checklist
 
+> **RUN 2026-07-07 (Windows hardware session) — ALL SECTIONS PASS.**
+> §1 hardware pytest suite green on all three devices (incl. new
+> tests); §2 capabilities match reality; §3+§4 verified end-to-end
+> over the ws protocol with a headless client (39 checks, 0 fail):
+> enumeration/caps, monitor, log ± pretrigger (crossing at exactly
+> `pretrig_samples` on ALL three devices through the bridge), IEPE on
+> the real accel (cDAQ ai1), output sweep 9260→9234, volts scaling +
+> rail saturation. Hardware wired this session: `ao0 → ai0` loopback
+> on each device **plus an IEPE accelerometer on `cDAQ1Mod1/ai1`**.
+>
+> Five real defects found and fixed (all with new tests):
+> 1. **Pretrigger misses under host load** — the rolling buffers
+>    advanced one chunk per callback, so a stalled host (npm install
+>    saturating the machine) left buffer time behind real time and the
+>    crossing never reached the check window before timeout. Fixed
+>    with a backlog **drain loop** in the NI callback + ~5 s DAQmx
+>    input-buffer headroom (multiple of chunk_size — DAQmx -200877
+>    otherwise) + the pretrig_timeout clock now starts when the
+>    stimulus starts, and teardown got a `_closing` flag.
+> 2. **DSA fs coercion silently wrong** — the 9234 coerces off-ladder
+>    rates (measured: request 8000 → 8533.33 Hz, 5000 → 5120!) while
+>    settings.fs kept the requested value, skewing every time/freq
+>    axis. The recorder now adopts `task.timing.samp_clk_rate` into
+>    settings.fs (buffers resized; stream-reuse still matches the
+>    original ask via `_requested_fs`); AO prints a coercion warning.
+> 3. **NI_mode impossible on DSA** — MySettings default RSE crashed
+>    cDAQ configure with raw DAQmx -200077 through the bridge; now
+>    `resolve_terminal_config_for_entry` falls back to the module's
+>    supported config with a printed note.
+> 4. **output_fs beyond AO hardware** — raw -200077 (6003 AO max is
+>    5 kS/s); now a clear preflight ValueError, plus `ai_vmax` /
+>    `ao_vmax` added to device_capabilities so clients can clamp
+>    (the 9260 rail 4.2426 V is BELOW the default output_VmaxNI=5!).
+> 5. **Stale re-trigger between captures** — after a triggered
+>    capture the old signal re-rolled through the trigger window and
+>    re-armed `trigger_detected`, making the serve poller emit a
+>    spurious `triggered` on the next armed capture; the stored
+>    buffer is now zeroed before unfreezing.
+>
+> Deviations/caveats confirmed: 6003 label-swap not hit (loopback fine
+> as wired); `triggered` status remains best-effort (fast triggers can
+> read `armed → timeout` while the returned data is still correctly
+> positioned). Webui already adopts the configured `fs` (bridge.ts),
+> so coerced rates flow through. Node.js was not installed on this
+> machine, so §3 ran headlessly over the ws protocol; the browser UI
+> itself was e2e-tested against the mock driver earlier (Wave C).
+
 Runnable verification for the Wave-C NI work (`pydvma serve` bridge NI
 depth + `_ni_backend.device_capabilities`). **Everything in Wave C was
 written and tested on macOS with a MOCKED `nidaqmx`** — no NI code has
@@ -235,12 +282,14 @@ should not affect `pydvma serve`.
 
 ## Sign-off
 
-- [ ] §1 hardware pytest suite green on all three devices.
-- [ ] §2 `device_capabilities` matches real hardware.
-- [ ] §3 bridge + webui drives each device (enumerate / monitor / log ±
-      pretrigger / IEPE / output).
-- [ ] §4 VmaxNI scaling behaves as described.
-- [ ] Caveats in §5 understood; any deviations recorded above.
+- [x] §1 hardware pytest suite green on all three devices.
+- [x] §2 `device_capabilities` matches real hardware.
+- [x] §3 bridge drives each device (enumerate / monitor / log ±
+      pretrigger / IEPE / output) — headless ws client; browser UI
+      itself still mock-only (no Node.js on this machine).
+- [x] §4 VmaxNI scaling behaves as described.
+- [x] Caveats in §5 understood; deviations recorded in the results
+      block at the top.
 
 File any surprises back into `CLAUDE.md` (hardware section) and the
 Wave-C notes so the next session inherits them.
