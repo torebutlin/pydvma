@@ -109,6 +109,28 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     return ws ? [ws] : [];
   }
 
+  /** Display name of a set (for user-facing messages), from the selection. */
+  function nameOf(setId: number): string {
+    return get(selection.sets).find((s) => s.id === setId)?.name ?? 'set';
+  }
+
+  /**
+   * Whether `target` already has a computed result for `view` — the gate
+   * for the analysis cards' LIVE recompute (round-2 feedback). A setting
+   * change recomputes only once a first result exists, so a stray tweak
+   * before the first explicit Calc never boots the engine (the Calc button
+   * stays the first-compute trigger). `target === 'all'` is true when ANY
+   * working set has the view; a setId checks just that set.
+   */
+  function hasComputed(
+    target: AnalysisTarget,
+    view: 'time' | 'freq' | 'psd' | 'csd' | 'tf' | 'sono',
+  ): boolean {
+    const d = get(derived);
+    const ids = target === 'all' ? working.map((w) => w.setId) : [target];
+    return ids.some((id) => d[id]?.[view] !== undefined);
+  }
+
   /** Per-set settings for `view`, from the store or per-set defaults. */
   function freqSettings(setId: number) {
     return settings?.get(setId, 'freq') ?? { window: 'hann', mode: 'fft' as const, nFrames: 10 };
@@ -342,11 +364,23 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const my = bump('tf');
     return guarded('tf', async () => {
       const sets = targeted(target);
-      // 'across' is an ensemble over ALL sets; the target set names the
-      // chIn/window to use. If any targeted set requests 'across', run the
-      // ensemble once and stop (a single averaged curve, not per-set).
+      // A transfer function maps ONE input channel to the remaining OUTPUT
+      // channels, so `calculate_tf` returns tf_data of shape (Nf, N−1). A
+      // single-channel set therefore has ZERO output columns (tf_data is
+      // (Nf, 0)) and the post-R4 model correctly draws NOTHING — which read
+      // as a crash/broken TF to the user (round-2 feedback). Guard here:
+      // skip any set that can't produce an output line and surface a clear
+      // message via `computeError` instead of issuing a meaningless worker
+      // call. `< 2` channels ⇒ no output.
       const acrossSet = sets.find((ws) => tfSettings(ws.setId).averaging === 'across');
       if (acrossSet) {
+        // 'across' is an ensemble over ALL sets; the target set names the
+        // chIn/window to use. The averaged curve attaches to the FIRST set,
+        // so that set must have an output channel too.
+        const first = working[0];
+        if (!first || first.nChannels < 2) {
+          throw new Error(tfNoOutputMessage(first ? [nameOf(first.setId)] : []));
+        }
         const { chIn, window } = tfSettings(acrossSet.setId);
         const ensemble = working.map(ws => {
           const { axis, data, nCh } = timePayload(ws.time);
@@ -357,15 +391,17 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         });
         if (stale('tf', my)) return;                    // a newer TF request won
         const axis = axisData(mval(res, 'freq_axis'));
-        // The ensemble curve is attached to the FIRST set; carry the chIn
-        // it was computed with (and that set's channel count) so the model
-        // remaps out/in against the same input channel (R4).
-        const first = working[0];
-        const tf = tfFromResult(res, axis, chIn, first?.nChannels);
-        if (first) setDerived(first.setId, { tf });
+        // Carry the chIn it was computed with (and that set's channel count)
+        // so the model remaps out/in against the same input channel (R4).
+        const tf = tfFromResult(res, axis, chIn, first.nChannels);
+        setDerived(first.setId, { tf });
         return;
       }
-      for (const ws of sets) {
+      // Per-set: run only the sets that HAVE an output channel; collect the
+      // single-channel ones so we can explain why they produced no TF.
+      const runnable = sets.filter((ws) => ws.nChannels >= 2);
+      const skipped = sets.filter((ws) => ws.nChannels < 2);
+      for (const ws of runnable) {
         const { chIn, window, averaging, nFrames } = tfSettings(ws.setId);
         const frames = averaging === 'none' ? 1 : nFrames;
         const { axis, data, nCh } = timePayload(ws.time);
@@ -378,6 +414,14 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // Carry this set's chIn + channel count onto the slice so the plot
         // model remaps its out/in columns/labels correctly (R4).
         setDerived(ws.setId, { tf: tfFromResult(res, fAxis, chIn, ws.nChannels) });
+      }
+      if (stale('tf', my)) return;                    // a newer batch superseded us
+      // Any valid sets are now drawn; if we skipped single-channel sets,
+      // tell the user why (routes to `computeError` via `guarded`, shown on
+      // the TF card + under the plot). A pure single-channel target computes
+      // nothing and shows only this message.
+      if (skipped.length > 0) {
+        throw new Error(tfNoOutputMessage(skipped.map((ws) => nameOf(ws.setId))));
       }
     });
   }
@@ -488,7 +532,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   return {
     dataset, derived, computeError, busy,
     loadDataset, addRecordedSet, stampUiState,
-    calcFft, calcPsd, calcTf, calcSono, cleanImpulse,
+    calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
     /** Source-set metadata for cards (set index → fs / duration / channels). */
     workingSets: () => working.map(w => ({
       setId: w.setId, fs: w.fs, durationS: w.durationS, nChannels: w.nChannels,
@@ -519,6 +563,20 @@ function tfFromResult(
     coherence: coh == null ? undefined : decodeArray(asMarshalled(coh)),
     chIn, nChannels,
   };
+}
+
+/**
+ * User-facing message for a TF requested on a set with no output channel.
+ * A transfer function maps one INPUT channel to the remaining OUTPUT
+ * channels, so a single-channel set has nothing to estimate. Surfaced via
+ * `computeError` (the TF card + plot error banners) rather than crashing
+ * or drawing a silent, empty TF (round-2 feedback).
+ */
+function tfNoOutputMessage(names: string[]): string {
+  const base = 'Transfer function needs at least one output channel besides the input';
+  if (names.length === 0) return `${base}.`;
+  if (names.length === 1) return `${base} — set “${names[0]}” has only one channel.`;
+  return `${base} — single-channel sets: ${names.join(', ')}.`;
 }
 
 export type Actions = ReturnType<typeof createActions>;

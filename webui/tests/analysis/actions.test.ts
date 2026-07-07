@@ -38,6 +38,23 @@ function makeDataset(nSets = 2): DvmaDataset {
   return { formatVersion: 1, pydvmaVersion: '1.5.0', items };
 }
 
+/** Build a TimeData-only dataset with one set per entry of `channels`. */
+function makeDatasetCh(channels: number[]): DvmaDataset {
+  const items: DvmaItem[] = channels.map((nc, s) => ({
+    kind: 'TimeData',
+    arrays: {
+      time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+      time_data: {
+        shape: [3, nc], isComplex: false,
+        data: Float64Array.from(Array.from({ length: 3 * nc }, (_, i) => i + 1)),
+      },
+    },
+    meta: { test_name: `set_${s}`, timestring: `t${s}` },
+    settings: { fs: 2 },
+  }));
+  return { formatVersion: 1, pydvmaVersion: '1.5.0', items };
+}
+
 interface Recorded { op: string; payload: Record<string, unknown>; }
 
 /**
@@ -183,6 +200,59 @@ test('calcTf targets ONE set with ITS OWN window; other sets untouched', async (
   expect(tf).toHaveLength(1);                 // ran ONLY the targeted set
   expect(tf[0].payload.window).toBe('flattop');
   expect(tf[0].payload.n_frames).toBe(9);
+});
+
+// ---- Single-channel TF guard (round-2 bug: a 1-channel set has no output
+// channel, so calculate_tf returns tf_data (Nf, 0) and the plot draws
+// nothing — "TF crashed". Guard: skip it, surface a clear message.) ----
+
+test('calcTf on a single-channel set issues NO worker call and surfaces a clear message', async () => {
+  const { engine, calls } = fakeEngine(async () => tfResult());
+  const { actions } = harness(engine);
+  actions.loadDataset(makeDatasetCh([1]));           // one 1-channel set
+  await actions.calcTf('all');
+  expect(calls.some((c) => c.op === 'calc_tf'), 'no meaningless worker call').toBe(false);
+  expect(get(actions.computeError)).toMatch(/output channel/i);
+  expect(get(actions.busy), 'must not hang').toBe(false);
+});
+
+test('calcTf mixed 1ch + 2ch: runs the 2ch set, skips the 1ch, warns which was skipped', async () => {
+  const { engine, calls } = fakeEngine(async () => tfResult());
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDatasetCh([1, 2]));        // set 0 = 1ch, set 1 = 2ch
+  const [a, b] = get(sel.sets).map((s) => s.id);
+  await actions.calcTf('all');
+  const tf = calls.filter((c) => c.op === 'calc_tf');
+  expect(tf, 'only the multi-channel set ran').toHaveLength(1);
+  expect(get(actions.derived)[b].tf, '2-channel set computed').toBeDefined();
+  expect(get(actions.derived)[a]?.tf, '1-channel set skipped').toBeUndefined();
+  expect(get(actions.computeError)).toMatch(/output channel/i);
+  expect(get(actions.computeError)).toContain('set_0');   // names the skipped set
+});
+
+test("calcTf 'across' with single-channel sets surfaces the message, no crash", async () => {
+  const { engine, calls } = fakeEngine(async () => tfResult());
+  const { settings, actions } = harness(engine);
+  actions.loadDataset(makeDatasetCh([1, 1]));
+  settings.patch('all', 'tf', { averaging: 'across', chIn: 0, window: 'hann', nFrames: 5 });
+  await actions.calcTf('all');
+  expect(calls.some((c) => c.op === 'calc_tf_averaged')).toBe(false);
+  expect(get(actions.computeError)).toMatch(/output channel/i);
+});
+
+test('hasComputed: false before Calc, true for the computed view after', async () => {
+  const { engine } = fakeEngine(async () => ({
+    freq_axis: real([2], [0, 1]), freq_data: cplx([2, 2], [1, 0, 1, 0, 1, 0, 1, 0]),
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));               // one 2-channel set
+  const id = get(sel.sets)[0].id;
+  expect(actions.hasComputed('all', 'freq')).toBe(false);
+  expect(actions.hasComputed(id, 'freq')).toBe(false);
+  await actions.calcFft('all');
+  expect(actions.hasComputed('all', 'freq')).toBe(true);
+  expect(actions.hasComputed(id, 'freq')).toBe(true);
+  expect(actions.hasComputed('all', 'tf'), 'other views still uncomputed').toBe(false);
 });
 
 test('calcFft targets per-set: two sets, different windows, one calc_fft each', async () => {
