@@ -327,6 +327,40 @@ test('setFftFMax accepts a value, clamps below the floor, and null = full', () =
   expect(get(mon.fftFMax)).toBe(null);
 });
 
+test('fft frequency band defaults to full span (fmin/fmax null, mode full)', () => {
+  const { mon } = setup();
+  expect(get(mon.fftFMin)).toBe(null);
+  expect(get(mon.fftFMax)).toBe(null);
+  expect(get(mon.fftFreqMode)).toBe('full');
+});
+
+test('setFftFMin accepts a value, clamps below zero, and null = natural edge', () => {
+  const { mon } = setup();
+  mon.setFftFMin(500);
+  expect(get(mon.fftFMin)).toBe(500);
+  mon.setFftFMin(-10);                          // negative → clamped to 0
+  expect(get(mon.fftFMin)).toBe(0);
+  mon.setFftFMin(null);
+  expect(get(mon.fftFMin)).toBe(null);
+  mon.setFftFMin(Number.NaN);                   // non-finite → natural edge
+  expect(get(mon.fftFMin)).toBe(null);
+});
+
+test('setFftFreqMode: range keeps the band, full resets fmin/fmax to the edges', () => {
+  const { mon } = setup();
+  mon.setFftFreqMode('range');
+  expect(get(mon.fftFreqMode)).toBe('range');
+  mon.setFftFMin(200);
+  mon.setFftFMax(2000);
+  expect(get(mon.fftFMin)).toBe(200);
+  expect(get(mon.fftFMax)).toBe(2000);
+  // Switching back to full restores the whole span (both null).
+  mon.setFftFreqMode('full');
+  expect(get(mon.fftFreqMode)).toBe('full');
+  expect(get(mon.fftFMin)).toBe(null);
+  expect(get(mon.fftFMax)).toBe(null);
+});
+
 test('setSpectrumMode toggles between instant and psd (invalid → instant)', () => {
   const { mon } = setup();
   mon.setSpectrumMode('psd');

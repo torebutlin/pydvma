@@ -114,6 +114,21 @@ export function createMonitorStore(acquire: AcquireStore) {
    * store doesn't know fs), so an over-large value just shows full span.
    */
   const fftFMax = writable<number | null>(null);
+  /**
+   * FFT MIN frequency to display, in Hz (round-4 item 6).  `null` = the
+   * band's natural lower edge (DC on a linear axis, the first bin on a log
+   * axis).  Paired with {@link fftFMax} so the Live scope can window the
+   * spectrum to an arbitrary `[fmin, fmax]` band, not just a max.
+   */
+  const fftFMin = writable<number | null>(null);
+  /**
+   * FFT frequency-axis mode: `'full'` shows the whole span (fmin/fmax both
+   * ignored — the natural edges); `'range'` honours the fmin/fmax band.  A
+   * UI convenience so the "range" boxes can be revealed/remembered even when
+   * momentarily blank; the draw path reads fmin/fmax directly (both `null` in
+   * `'full'`), so it stays back-compatible with the pre-range behaviour.
+   */
+  const fftFreqMode = writable<'full' | 'range'>('full');
   /** FFT-pane spectrum mode: instantaneous amplitude vs averaged PSD. */
   const spectrumMode = writable<SpectrumMode>('instant');
   /** Number of Welch averaging segments in PSD mode. */
@@ -329,6 +344,26 @@ export function createMonitorStore(acquire: AcquireStore) {
     fftFMax.set(Math.max(MIN_FMAX_HZ, hz));
   }
 
+  /**
+   * Set the FFT MIN-frequency zoom (Hz), or `null` for the band's natural
+   * lower edge.  A finite value is clamped to ≥ 0; the draw path further
+   * clamps it below the displayed max so an inverted band never renders.
+   */
+  function setFftFMin(hz: number | null): void {
+    if (hz == null || !isFinite(hz)) { fftFMin.set(null); return; }
+    fftFMin.set(Math.max(0, hz));
+  }
+
+  /**
+   * Set the FFT frequency-axis mode.  `'full'` also resets fmin/fmax to
+   * `null` (the natural edges) so leaving "range" reliably restores the whole
+   * span; `'range'` leaves the current fmin/fmax in place (blank ⇒ edge).
+   */
+  function setFftFreqMode(mode: 'full' | 'range'): void {
+    if (mode === 'full') { fftFMin.set(null); fftFMax.set(null); fftFreqMode.set('full'); }
+    else fftFreqMode.set('range');
+  }
+
   /** Switch the FFT pane between instantaneous and averaged-PSD modes. */
   function setSpectrumMode(mode: SpectrumMode): void {
     spectrumMode.set(mode === 'psd' ? 'psd' : 'instant');
@@ -366,6 +401,8 @@ export function createMonitorStore(acquire: AcquireStore) {
     fftYLog,
     fftXLog,
     fftFMax,
+    fftFMin,
+    fftFreqMode,
     spectrumMode,
     psdSegments,
     psdSmoothing,
@@ -380,6 +417,8 @@ export function createMonitorStore(acquire: AcquireStore) {
     togglePause,
     setWindow,
     setFftFMax,
+    setFftFMin,
+    setFftFreqMode,
     setSpectrumMode,
     setPsdSegments,
     setPsdSmoothing,

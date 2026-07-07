@@ -162,7 +162,7 @@
         </div>
       </div>
       <div class="grp" class:dim={tf.averaging === 'none' || tf.averaging === 'across'}>
-        <span class="grp-lab">resolution — live</span>
+        <span class="grp-lab">averaging — live</span>
         <div class="grp-ctl">
           {#if tf.averaging === 'within'}
             <ResolutionControl {fs} {durationS} nFrames={tf.nFrames}

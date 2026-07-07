@@ -15,6 +15,7 @@
    */
   import type { MonitorStore } from '../../lib/stores/monitor';
   import { WINDOW_PRESETS_S, PSD_SEGMENT_CHOICES } from '../../lib/stores/monitor';
+  import Segmented from '../Segmented.svelte';
 
   let {
     monitor,
@@ -30,6 +31,8 @@
   const fftYLogStore = $derived(monitor.fftYLog);
   const fftXLogStore = $derived(monitor.fftXLog);
   const fftFMaxStore = $derived(monitor.fftFMax);
+  const fftFMinStore = $derived(monitor.fftFMin);
+  const fftFreqModeStore = $derived(monitor.fftFreqMode);
   const modeStore = $derived(monitor.spectrumMode);
   const segmentsStore = $derived(monitor.psdSegments);
   const smoothingStore = $derived(monitor.psdSmoothing);
@@ -37,12 +40,20 @@
   const isStreaming = $derived($status === 'streaming' || $status === 'paused');
   const isPaused = $derived($status === 'paused');
   const isPsd = $derived($modeStore === 'psd');
-  // The window select shows the preset options plus a synthesised "custom"
-  // entry when the current value isn't one of them (so it stays selectable).
+
+  // ── View-time combo (item 5): a preset dropdown PLUS a 'custom…' entry.
+  // Picking 'custom' reveals a typebox (pre-filled with the current value);
+  // a loaded/typed non-preset value auto-selects custom so it stays editable.
+  let showCustomWindow = $state(false);
   const isPresetWindow = $derived(
     (WINDOW_PRESETS_S as readonly number[]).includes($windowStore),
   );
+  const customWindowActive = $derived(showCustomWindow || !isPresetWindow);
+  const windowSelectValue = $derived(customWindowActive ? 'custom' : String($windowStore));
+
+  const isRangeFreq = $derived($fftFreqModeStore === 'range');
   const fMaxValue = $derived($fftFMaxStore == null ? '' : $fftFMaxStore);
+  const fMinValue = $derived($fftFMinStore == null ? '' : $fftFMinStore);
 
   function startMonitor() {
     void monitor.start();
@@ -53,8 +64,11 @@
   function togglePause() {
     monitor.togglePause();
   }
-  function onWindowChange(e: Event) {
-    monitor.setWindow(Number((e.target as HTMLSelectElement).value));
+  function onWindowSelect(e: Event) {
+    const v = (e.target as HTMLSelectElement).value;
+    if (v === 'custom') { showCustomWindow = true; return; }
+    showCustomWindow = false;
+    monitor.setWindow(Number(v));
   }
   function onWindowInput(e: Event) {
     const v = Number((e.target as HTMLInputElement).value);
@@ -63,6 +77,10 @@
   function onFMaxInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value.trim();
     monitor.setFftFMax(raw === '' ? null : Number(raw));
+  }
+  function onFMinInput(e: Event) {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    monitor.setFftFMin(raw === '' ? null : Number(raw));
   }
   function onSegments(e: Event) {
     monitor.setPsdSegments(Number((e.target as HTMLSelectElement).value));
@@ -110,71 +128,106 @@
       <div class="grp">
         <span class="grp-lab">view time</span>
         <div class="grp-ctl">
-          <select aria-label="viewed time window" value={$windowStore} onchange={onWindowChange} style="width:74px">
+          <select aria-label="viewed time window" value={windowSelectValue} onchange={onWindowSelect} style="width:82px">
             {#each WINDOW_PRESETS_S as w (w)}
-              <option value={w}>{fmtWindow(w)}</option>
+              <option value={String(w)}>{fmtWindow(w)}</option>
             {/each}
-            {#if !isPresetWindow}
-              <option value={$windowStore}>{fmtWindow($windowStore)}</option>
-            {/if}
+            <option value="custom">custom…</option>
           </select>
-          <input
-            type="number"
-            aria-label="custom time window in seconds"
-            data-testid="live-window-input"
-            min="0.02"
-            max="5"
-            step="0.01"
-            value={$windowStore}
-            onchange={onWindowInput}
-            title="Custom viewed window (0.02–5 s)"
-            style="width:64px"
-          />
-          <span class="ml">s</span>
+          {#if customWindowActive}
+            <input
+              type="number"
+              aria-label="custom time window in seconds"
+              data-testid="live-window-input"
+              min="0.02"
+              max="5"
+              step="0.01"
+              value={$windowStore}
+              onchange={onWindowInput}
+              title="Custom viewed window (0.02–5 s)"
+              style="width:64px"
+            />
+            <span class="ml">s</span>
+          {/if}
         </div>
       </div>
       <div class="grp">
         <span class="grp-lab">fft axes</span>
         <div class="grp-ctl">
-          <button class="btn sm" class:active={$fftYLogStore} onclick={() => monitor.fftYLog.update((v) => !v)}
-            title="FFT magnitude: dB (log) or linear">{$fftYLogStore ? 'dB' : 'lin'}</button>
-          <button class="btn sm" class:active={$fftXLogStore} onclick={() => monitor.fftXLog.update((v) => !v)}
-            title="FFT frequency axis: log or linear">{$fftXLogStore ? 'log f' : 'lin f'}</button>
+          <Segmented
+            ariaLabel="FFT magnitude scale"
+            value={$fftYLogStore}
+            onchange={(v) => monitor.fftYLog.set(v)}
+            options={[
+              { value: true, label: 'dB', title: 'FFT magnitude in dB (log)' },
+              { value: false, label: 'lin', title: 'Linear FFT magnitude' },
+            ]}
+          />
+          <Segmented
+            ariaLabel="FFT frequency axis scale"
+            value={$fftXLogStore}
+            onchange={(v) => monitor.fftXLog.set(v)}
+            options={[
+              { value: false, label: 'lin f', title: 'Linear frequency axis' },
+              { value: true, label: 'log f', title: 'Log frequency axis' },
+            ]}
+          />
         </div>
       </div>
       <div class="grp">
-        <span class="grp-lab">fft fmax</span>
+        <span class="grp-lab">fft freq</span>
         <div class="grp-ctl">
-          <button
-            class="btn sm"
-            class:active={$fftFMaxStore == null}
-            onclick={() => monitor.setFftFMax(null)}
-            title="Show the full frequency span (Nyquist)"
-          >Full</button>
-          <input
-            type="number"
-            aria-label="fft max frequency in Hz"
-            data-testid="live-fmax-input"
-            min="10"
-            step="10"
-            value={fMaxValue}
-            onchange={onFMaxInput}
-            placeholder="Nyq"
-            title="Zoom the FFT frequency axis to this max (Hz); blank = full"
-            style="width:74px"
+          <Segmented
+            ariaLabel="FFT frequency range mode"
+            value={$fftFreqModeStore}
+            onchange={(m) => monitor.setFftFreqMode(m)}
+            options={[
+              { value: 'full', label: 'Full', title: 'Show the full frequency span (Nyquist)' },
+              { value: 'range', label: 'Range', title: 'Zoom the FFT to a min–max frequency band' },
+            ]}
           />
-          <span class="ml">Hz</span>
+          {#if isRangeFreq}
+            <input
+              type="number"
+              aria-label="fft min frequency in Hz"
+              data-testid="live-fmin-input"
+              min="0"
+              step="10"
+              value={fMinValue}
+              onchange={onFMinInput}
+              placeholder="0"
+              title="Band start (Hz); blank = 0 / DC"
+              style="width:60px"
+            />
+            <span class="ml">–</span>
+            <input
+              type="number"
+              aria-label="fft max frequency in Hz"
+              data-testid="live-fmax-input"
+              min="10"
+              step="10"
+              value={fMaxValue}
+              onchange={onFMaxInput}
+              placeholder="Nyq"
+              title="Band end (Hz); blank = Nyquist"
+              style="width:66px"
+            />
+            <span class="ml">Hz</span>
+          {/if}
         </div>
       </div>
       <div class="grp">
         <span class="grp-lab">spectrum</span>
         <div class="grp-ctl">
-          <div class="seg" role="group" aria-label="spectrum mode">
-            <button class:active={!isPsd} onclick={() => monitor.setSpectrumMode('instant')}
-              data-testid="live-mode-fft" title="Instantaneous per-frame FFT (amplitude)">FFT</button>
-            <button class:active={isPsd} onclick={() => monitor.setSpectrumMode('psd')}
-              data-testid="live-mode-psd" title="Averaged Welch power spectral density (unit²/Hz)">PSD</button>
-          </div>
+          <Segmented
+            ariaLabel="spectrum mode"
+            value={$modeStore}
+            onchange={(m) => monitor.setSpectrumMode(m)}
+            options={[
+              { value: 'instant', label: 'FFT', title: 'Instantaneous per-frame FFT (amplitude)', testid: 'live-mode-fft' },
+              { value: 'psd', label: 'PSD', title: 'Averaged Welch power spectral density (unit²/Hz)', testid: 'live-mode-psd' },
+            ]}
+          />
         </div>
       </div>
       {#if isPsd}

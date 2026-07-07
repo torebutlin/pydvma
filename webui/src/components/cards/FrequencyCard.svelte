@@ -161,7 +161,7 @@
     {#if averaged}
       <div class="ctx-row">
         <div class="grp">
-          <span class="grp-lab">resolution</span>
+          <span class="grp-lab">averaging</span>
           <div class="grp-ctl">
             <ResolutionControl {fs} {durationS} nFrames={freq.nFrames}
               mixed={mixed('nFrames')}

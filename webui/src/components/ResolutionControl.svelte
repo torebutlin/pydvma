@@ -91,7 +91,7 @@
   style="width:104px"
   aria-label="resolution frames"
 />
-<span class="ml">N</span>
+<span class="ml">N&nbsp;frames</span>
 <input
   type="number" min="1" step="1"
   value={mixed ? '' : res.nFrames}

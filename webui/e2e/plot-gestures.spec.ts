@@ -70,16 +70,30 @@ async function setMode(page: Page, mode: 'box' | 'pan'): Promise<void> {
 }
 
 /**
- * Move the legend to the SW corner (bottom-left) via the toolbar popover,
- * clear of the top-right ZoomToolbar which otherwise intercepts clicks on
- * the default NE-placed legend rows.
+ * Open the ZoomToolbar's expanded panel (round-4 redesign: HOVERING the
+ * toolbar auto-opens it — no more ⋯ click). Hovering fires pointerenter on the
+ * wrapper, which reveals the axis-limits + legend panel.
+ */
+async function openPanel(page: Page): Promise<void> {
+  await page.getByTestId('zoom-toolbar').hover();
+  await expect(page.getByTestId('axis-popover')).toBeVisible();
+}
+
+/** Collapse the panel by moving the pointer well clear of the toolbar. */
+async function closePanel(page: Page): Promise<void> {
+  await page.mouse.move(4, 520);
+  await expect(page.getByTestId('axis-popover')).toHaveCount(0);
+}
+
+/**
+ * Move the legend to the SW corner (bottom-left) via the toolbar panel, clear
+ * of the top-right ZoomToolbar which otherwise intercepts clicks on the
+ * default NE-placed legend rows.
  */
 async function legendToSW(page: Page): Promise<void> {
-  await page.getByTitle('Manual axis limits').click();
-  await expect(page.getByTestId('axis-popover')).toBeVisible();
+  await openPanel(page);
   await page.getByTitle('Move legend: SW').click();
-  await page.getByTitle('Manual axis limits').click(); // close the popover
-  await expect(page.getByTestId('axis-popover')).toHaveCount(0);
+  await closePanel(page); // collapse so it doesn't overlap later interactions
 }
 
 /** Goto the fixture plot and wait for a real line + a legend entry. */
@@ -136,11 +150,11 @@ test.describe('plot zoom gestures', () => {
     expect(panned.historyLen).toBe(zoomed.historyLen + 1); // exactly one, not ten
 
     // And Back returns fully to the pre-pan range; Forward re-applies the pan.
-    await page.getByTitle('Back (previous axis range)').click();
+    await page.getByTitle('Undo view change (previous axis range)').click();
     const back = await snap(page);
     expect(back.range.x![0]).toBeCloseTo(zoomed.range.x![0], 6);
     expect(back.range.x![1]).toBeCloseTo(zoomed.range.x![1], 6);
-    await page.getByTitle('Forward').click();
+    await page.getByTitle('Redo view change (next axis range)').click();
     const fwd = await snap(page);
     expect(fwd.range.x![0]).toBeCloseTo(panned.range.x![0], 6);
     expect(fwd.range.x![1]).toBeCloseTo(panned.range.x![1], 6);
@@ -326,9 +340,8 @@ test.describe('plot legend gestures', () => {
 
   test('presets snap the legend flush (NE / outside-right)', async ({ page }) => {
     await openFixture(page);
-    // Open the ⋯ popover and click the NE preset.
-    await page.getByTitle('Manual axis limits').click();
-    await expect(page.getByTestId('axis-popover')).toBeVisible();
+    // Hover the toolbar to reveal the panel, then click the NE preset.
+    await openPanel(page);
     await page.getByTitle('Move legend: NE').click();
 
     const card = page.getByTestId('legend');
@@ -349,7 +362,7 @@ test.describe('plot legend gestures', () => {
 
     // outside-right → the card sits JUST PAST the right edge: its right
     // offset goes negative (right = (1 - 1.02)*100% = -2% of host).
-    await page.getByTitle('Move legend: Out ▸').click();
+    await page.getByTitle('Move legend: outside (right of the plot)').click();
     const out = await card.evaluate((el) => ({
       inlineLeft: (el as HTMLElement).style.left,
       rightPx: parseFloat(getComputedStyle(el).right),

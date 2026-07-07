@@ -93,6 +93,96 @@ test('tf nyquist: squareAspect, x=re/y=im, no dB', () => {
   expect(m.lines[0].xMonotonic).toBe(false);
 });
 
+// ── Axis units in labels (round-4 item 6) ──────────────────────────────────
+
+test('unit labels: time y-axis shows the shared engineering unit', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    time: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 2], [1, 2, 3, 4])) },
+    units: ['m/s²', 'm/s²'],
+  }];
+  const m = buildPlotModel({ view: 'time', sets, visible: [vis(0, 0, 'on'), vis(0, 1, 'on')] });
+  expect(m.yLabel).toBe('Amplitude (m/s²)');
+});
+
+test('unit labels: mixed units across visible channels fall back to plain Amplitude', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    time: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 2], [1, 2, 3, 4])) },
+    units: ['m/s²', 'N'],
+  }];
+  const m = buildPlotModel({ view: 'time', sets, visible: [vis(0, 0, 'on'), vis(0, 1, 'on')] });
+  expect(m.yLabel).toBe('Amplitude');
+});
+
+test("unit labels: absent or default 'V' units keep the plain fallback", () => {
+  const absent: SetArrays[] = [{
+    setId: 0,
+    time: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 1], [1, 2])) },
+  }];
+  expect(buildPlotModel({ view: 'time', sets: absent, visible: [vis(0, 0, 'on')] }).yLabel)
+    .toBe('Amplitude');
+
+  const volts: SetArrays[] = [{
+    setId: 0,
+    time: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 1], [1, 2])) },
+    units: ['V'],
+  }];
+  expect(buildPlotModel({ view: 'time', sets: volts, visible: [vis(0, 0, 'on')] }).yLabel)
+    .toBe('Amplitude');
+});
+
+test('unit labels: frequency magnitude carries the unit before (dB) / in linear', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    freq: { axis: Float64Array.from([100]), data: decodeArray(cplx([1, 1], [3, 4])) },
+    units: ['Pa'],
+  }];
+  expect(buildPlotModel({ view: 'frequency', freqMode: 'fft', sets, visible: [vis(0, 0, 'on')] }).yLabel)
+    .toBe('Magnitude (Pa, dB)');
+  expect(buildPlotModel({ view: 'frequency', freqMode: 'fft', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] }).yLabel)
+    .toBe('Magnitude (Pa)');
+});
+
+test('unit labels: PSD is power, so the unit reads as unit²/Hz', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [10, 100])) },
+    units: ['m/s²'],
+  }];
+  expect(buildPlotModel({ view: 'frequency', freqMode: 'psd', sets, visible: [vis(0, 0, 'on')] }).yLabel)
+    .toBe('PSD ((m/s²)²/Hz, dB)');
+  expect(buildPlotModel({ view: 'frequency', freqMode: 'psd', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] }).yLabel)
+    .toBe('PSD ((m/s²)²/Hz)');
+});
+
+test('unit labels: TF magnitude reads as the out/in ratio unit', () => {
+  // ch0 (input) = N, ch1 (output) = m/s² → ratio (m/s²)/N.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: { axis: Float64Array.from([50]), data: decodeArray(cplx([1, 1], [0, 1])), chIn: 0, nChannels: 2 },
+    units: ['N', 'm/s²'],
+  }];
+  expect(buildPlotModel({ view: 'tf', tfPlotType: 'mag', sets, visible: [vis(0, 1, 'on')] }).yLabel)
+    .toBe('|H| ((m/s²)/N, dB)');
+  expect(buildPlotModel({ view: 'tf', tfPlotType: 'mag', yScale: 'lin', sets, visible: [vis(0, 1, 'on')] }).yLabel)
+    .toBe('|H| ((m/s²)/N)');
+  // Phase stays degrees regardless of units.
+  expect(buildPlotModel({ view: 'tf', tfPlotType: 'phase', sets, visible: [vis(0, 1, 'on')] }).yLabel)
+    .toBe('Phase (deg)');
+});
+
+test('unit labels: TF ratio is dropped when the input unit is unknown', () => {
+  // Output has a unit but the input channel is default 'V' → not determinable.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: { axis: Float64Array.from([50]), data: decodeArray(cplx([1, 1], [0, 1])), chIn: 0, nChannels: 2 },
+    units: ['V', 'm/s²'],
+  }];
+  expect(buildPlotModel({ view: 'tf', tfPlotType: 'mag', sets, visible: [vis(0, 1, 'on')] }).yLabel)
+    .toBe('|H| (dB)');
+});
+
 test('tf nyquist: windows to the shared freq range', () => {
   const sets: SetArrays[] = [{
     setId: 0,

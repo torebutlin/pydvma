@@ -65,20 +65,31 @@ test('Live scope offers a custom view-time, an fmax zoom, and a PSD spectrum mod
   const ribbon = page.getByRole('navigation', { name: 'stages' });
   await ribbon.getByRole('button', { name: 'Live' }).click();
 
-  // View time: a typable custom value the presets don't include (combo).
+  // View time: a preset dropdown PLUS a 'custom…' entry; picking custom
+  // reveals a typebox pre-filled with the current value.
+  await expect(page.getByTestId('live-window-input')).toBeHidden(); // default is a preset
+  await page.getByLabel('viewed time window').selectOption('custom');
   const win = page.getByTestId('live-window-input');
   await expect(win).toBeVisible();
   await win.fill('0.3');
   await win.blur();
   await expect(win).toHaveValue('0.3');
 
-  // fmax zoom: type a band max, then "Full" resets to Nyquist (blank input).
+  // FFT frequency band: Full (default) hides the boxes; Range reveals a
+  // min–max pair, and Full collapses them again.
+  await expect(page.getByTestId('live-fmax-input')).toBeHidden();
+  await page.getByRole('button', { name: 'Range' }).click();
+  const fmin = page.getByTestId('live-fmin-input');
   const fmax = page.getByTestId('live-fmax-input');
+  await expect(fmax).toBeVisible();
+  await fmin.fill('200');
+  await fmin.blur();
   await fmax.fill('2000');
   await fmax.blur();
+  await expect(fmin).toHaveValue('200');
   await expect(fmax).toHaveValue('2000');
   await page.getByRole('button', { name: 'Full' }).click();
-  await expect(fmax).toHaveValue('');
+  await expect(fmax).toBeHidden();
 
   // Spectrum mode: switching to PSD reveals the averaging control.
   await expect(page.getByTestId('live-psd-avg')).toBeHidden();

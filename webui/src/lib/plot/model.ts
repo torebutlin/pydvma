@@ -107,6 +107,78 @@ export interface SetArrays {
    * Indexed by SOURCE channel (0..nChannels−1), same index space as `visible`.
    */
   calFactors?: number[];
+  /**
+   * Per-SOURCE-CHANNEL engineering unit string (round-4 item 6), used ONLY to
+   * annotate plot axis labels — never to transform data. Indexed by source
+   * channel like `calFactors`. Sourced from the `.dvma`/`.npy` `units` meta
+   * (the same field the Calibrate dialog persists). Absent, empty, or the
+   * uncalibrated default (`'V'`, see `DEFAULT_UNIT`) are treated as "no
+   * meaningful unit" so the label keeps its plain fallback ('Amplitude',
+   * 'Magnitude', '|H|'); a shared non-default unit across all VISIBLE channels
+   * is surfaced in the axis label. See `commonUnit` / `tfRatioUnit`.
+   */
+  units?: string[];
+}
+
+/**
+ * Units that carry NO engineering meaning for labelling: absent/empty, or the
+ * uncalibrated default `'V'` (round-4 decision — "keep 'Amplitude' when units
+ * are absent/all default"). Compared case-insensitively after trimming.
+ */
+const DEFAULT_UNITS = new Set(['', 'v']);
+
+/** A channel's unit if it is meaningful (non-default), else `null`. */
+function meaningfulUnit(u: string | undefined): string | null {
+  if (typeof u !== 'string') return null;
+  const t = u.trim();
+  return DEFAULT_UNITS.has(t.toLowerCase()) ? null : t;
+}
+
+/**
+ * Parenthesise a COMPOUND unit (one containing anything other than a letter or
+ * digit, e.g. `m/s²`) so it composes unambiguously in a ratio or a square —
+ * `(m/s²)/N`, `(m/s²)²/Hz` — while a simple unit is left bare (`Pa`, `N`).
+ */
+function wrapUnit(u: string): string {
+  return /[^\p{L}\p{N}]/u.test(u) ? `(${u})` : u;
+}
+
+/**
+ * The single engineering unit shared by ALL visible channels, or `null` when
+ * the sets disagree or any visible channel has no meaningful unit. Drives the
+ * time/frequency amplitude labels: `null` → the plain fallback (matching the
+ * pre-item-6 behaviour), a value → e.g. `Amplitude (m/s²)`.
+ */
+function commonUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): string | null {
+  let unit: string | null = null;
+  for (const v of visible) {
+    const u = meaningfulUnit(byId.get(v.setId)?.units?.[v.ch]);
+    if (!u) return null;                 // absent/default on any line → no label unit
+    if (unit === null) unit = u;
+    else if (unit !== u) return null;    // mixed real units → plain fallback
+  }
+  return unit;
+}
+
+/**
+ * The TF ratio unit `out/in` when determinable: all visible OUTPUT channels
+ * share one meaningful unit AND all their input channels share one meaningful
+ * unit. Otherwise `null` (label keeps `|H|`). e.g. an accel-over-force TF →
+ * `(m/s²)/N`.
+ */
+function tfRatioUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): string | null {
+  let outU: string | null = null, inU: string | null = null;
+  for (const v of visible) {
+    const set = byId.get(v.setId);
+    const t = set?.tf;
+    if (!t) continue;                    // no TF for this line → contributes nothing
+    const o = meaningfulUnit(set?.units?.[v.ch]);
+    const i = meaningfulUnit(set?.units?.[t.chIn ?? 0]);
+    if (!o || !i) return null;
+    if (outU === null) outU = o; else if (outU !== o) return null;
+    if (inU === null) inU = i; else if (inU !== i) return null;
+  }
+  return outU && inU ? `${wrapUnit(outU)}/${wrapUnit(inU)}` : null;
 }
 
 /** Per-source-channel display cal factor for a set (default 1 = identity). */
@@ -327,7 +399,9 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       if (cal !== 1) for (let i = 0; i < y.length; i++) y[i] *= cal;
       lines.push(baseLine(s.axis, y, v));
     }
-    return { ...EMPTY, lines, xLabel: 'Time (s)', yLabel: 'Amplitude', xRange: xr, yRange: yr };
+    const unit = commonUnit(byId, args.visible);
+    const yLabel = unit ? `Amplitude (${unit})` : 'Amplitude';
+    return { ...EMPTY, lines, xLabel: 'Time (s)', yLabel, xRange: xr, yRange: yr };
   }
 
   if (args.view === 'frequency') {
@@ -336,7 +410,18 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     // emits dB. csd already plots linear |Cxy| and is unaffected.
     const linMag = args.yScale === 'lin';
     const lines: PlotLine[] = [];
-    let yLabel = linMag ? 'Magnitude' : 'Magnitude (dB)';
+    // Unit annotation (item 6): the shared engineering unit across visible
+    // channels, if any. CSD is dimensionless (coherence) so it takes no unit.
+    // FFT amplitude carries the channel unit; PSD is power → unit²/Hz.
+    const unit = mode === 'csd' ? null : commonUnit(byId, args.visible);
+    // PSD is power → unit²/Hz; parenthesise a compound unit so the square is
+    // unambiguous ('m/s²' → '(m/s²)²/Hz', but 'Pa' → 'Pa²/Hz').
+    const psdUnit = unit ? `${wrapUnit(unit)}²/Hz` : '';
+    const yLabel = mode === 'psd'
+      ? (unit ? (linMag ? `PSD (${psdUnit})` : `PSD (${psdUnit}, dB)`) : (linMag ? 'PSD' : 'PSD (dB)'))
+      : mode === 'csd'
+        ? 'CSD (coherence)'
+        : (unit ? (linMag ? `Magnitude (${unit})` : `Magnitude (${unit}, dB)`) : (linMag ? 'Magnitude' : 'Magnitude (dB)'));
     for (const v of args.visible) {
       const s = byId.get(v.setId);
       if (mode === 'fft') {
@@ -365,7 +450,6 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           y[i] = linMag ? x : powDb(x);
         }
         lines.push(baseLine(p.axis, y, v));
-        yLabel = linMag ? 'PSD' : 'PSD (dB)';
       } else {                                               // csd: |Cxy[ch,ch]| (coherence diagonal)
         const c = s?.csd; if (!c) continue;                  // Cxy shape (Nc, Nc, Nf)
         const nc = c.data.shape[0] ?? 1;
@@ -379,7 +463,6 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           y[i] = Math.hypot(re, im);
         }
         lines.push(baseLine(c.axis, y, v));
-        yLabel = 'CSD (coherence)';
       }
     }
     return { ...EMPTY, lines, xLabel: 'Frequency (Hz)', yLabel, xScale: args.xScale, xRange: xr, yRange: yr };
@@ -466,9 +549,15 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       };
     }
 
-    const yLabel = type === 'mag' ? (args.yScale === 'lin' ? '|H|' : '|H| (dB)')
+    // Unit annotation (item 6): a TF is a RATIO, so its unit is out/in when
+    // both are determinable (e.g. (m/s²)/N). Phase is degrees regardless.
+    const ratioUnit = tfRatioUnit(byId, args.visible);
+    const yLabel = type === 'mag'
+        ? (linMag ? (ratioUnit ? `|H| (${ratioUnit})` : '|H|')
+                  : (ratioUnit ? `|H| (${ratioUnit}, dB)` : '|H| (dB)'))
       : type === 'phase' ? 'Phase (deg)'
-      : type === 'real' ? 'Re(H)' : 'Im(H)';
+      : type === 'real' ? (ratioUnit ? `Re(H) (${ratioUnit})` : 'Re(H)')
+      : (ratioUnit ? `Im(H) (${ratioUnit})` : 'Im(H)');
 
     // Coherence overlay: mag/phase only (bode → mag), right axis, dashed.
     const cohShown = !!args.coherence && (type === 'mag' || type === 'phase');

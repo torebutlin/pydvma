@@ -90,11 +90,12 @@
     const xLog = get(monitor.fftXLog);
     const mode = get(monitor.spectrumMode);
     const fMaxCfg = get(monitor.fftFMax);
+    const fMinCfg = get(monitor.fftFMin);
     const segments = get(monitor.psdSegments);
     const smoothing = get(monitor.psdSmoothing);
 
     // Rev-skip: nothing changed and we're not re-entering → don't repaint.
-    const sig = `${yLog}|${xLog}|${mode}|${fMaxCfg}|${segments}|${smoothing}`;
+    const sig = `${yLog}|${xLog}|${mode}|${fMinCfg}|${fMaxCfg}|${segments}|${smoothing}`;
     if (snap.rev === lastRev && sig === lastSig && !becameActive) return;
     lastRev = snap.rev;
     lastSig = sig;
@@ -166,18 +167,25 @@
     // Display frequency span: clamp the configured max to Nyquist.
     let fMaxDisplay = fMaxCfg == null ? nyquist : Math.min(fMaxCfg, nyquist);
     if (!(fMaxDisplay > 0)) fMaxDisplay = nyquist;
+    // Low edge of the display band: DC (linear) / first bin (log), raised to a
+    // configured `fMinCfg` when set. Guard against an inverted/degenerate band.
+    const df0 = freqsByCh[0][1] - freqsByCh[0][0] || nyquist;
+    const naturalLow = xLog ? Math.max(df0, 1) : 0;
+    let fMinDisplay = fMinCfg == null ? naturalLow : Math.max(naturalLow, fMinCfg);
+    if (!(fMinDisplay < fMaxDisplay)) fMinDisplay = naturalLow;
 
     // Value → display transform (dB uses 20·log for amplitude, 10·log for power).
     const dbFactor = isPsd ? 10 : 20;
     const toDisp = (v: number): number =>
       yLog ? (v > 0 ? dbFactor * Math.log10(v) : -Infinity) : v;
 
-    // Y range over the DISPLAYED band only.
+    // Y range over the DISPLAYED band only ([fMinDisplay, fMaxDisplay]).
     let vMax = -Infinity;
     for (let ch = 0; ch < nCh; ch++) {
       const f = freqsByCh[ch], vv = plotVals[ch];
       for (let k = 0; k < vv.length; k++) {
         if (f[k] > fMaxDisplay) break;
+        if (f[k] < fMinDisplay) continue;
         const d = toDisp(vv[k]);
         if (isFinite(d) && d > vMax) vMax = d;
       }
@@ -193,15 +201,13 @@
       return MARGIN.top + plotH * (1 - Math.max(0, Math.min(1, t)));
     };
 
-    // X mapping: frequency → pixel over [fMin, fMaxDisplay].
-    const df = freqsByCh[0][1] - freqsByCh[0][0] || nyquist;
-    const fMin = xLog ? Math.max(df, 1) : 0;
-    const logMin = Math.log10(Math.max(fMin, 1e-6));
-    const logMax = Math.log10(Math.max(fMaxDisplay, fMin + 1));
+    // X mapping: frequency → pixel over [fMinDisplay, fMaxDisplay].
+    const logMin = Math.log10(Math.max(fMinDisplay, 1e-6));
+    const logMax = Math.log10(Math.max(fMaxDisplay, fMinDisplay + 1));
     const mapX = (f: number): number => {
       const t = xLog
-        ? (Math.log10(Math.max(f, fMin)) - logMin) / (logMax - logMin || 1)
-        : f / (fMaxDisplay || 1);
+        ? (Math.log10(Math.max(f, fMinDisplay)) - logMin) / (logMax - logMin || 1)
+        : (f - fMinDisplay) / ((fMaxDisplay - fMinDisplay) || 1);
       return MARGIN.left + plotW * Math.max(0, Math.min(1, t));
     };
 
@@ -219,7 +225,9 @@
     // Traces (filled area + stroke), one per channel, over the display band.
     for (let ch = 0; ch < nCh; ch++) {
       const f = freqsByCh[ch], vv = plotVals[ch];
-      const startBin = xLog ? 1 : 0; // skip DC on a log axis
+      let startBin = xLog ? 1 : 0; // skip DC on a log axis
+      // Advance to the first bin inside the display band's low edge.
+      while (startBin < vv.length && f[startBin] < fMinDisplay) startBin++;
       // Find the last bin within the display band.
       let endBin = startBin;
       for (let k = startBin; k < vv.length; k++) {
@@ -251,13 +259,15 @@
     // Axis labels.
     ctx.fillStyle = '#6b7280';
     ctx.font = '10px system-ui, sans-serif';
+    const fmtHz = (v: number): string => v >= 1000
+      ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)} kHz`
+      : `${Math.round(v)} Hz`;
     ctx.textAlign = 'right';
-    const fLabel = fMaxDisplay >= 1000
-      ? `${(fMaxDisplay / 1000).toFixed(fMaxDisplay >= 10000 ? 0 : 1)} kHz`
-      : `${Math.round(fMaxDisplay)} Hz`;
-    ctx.fillText(fLabel, MARGIN.left + plotW, h - MARGIN.bottom + 14);
+    ctx.fillText(fmtHz(fMaxDisplay), MARGIN.left + plotW, h - MARGIN.bottom + 14);
     ctx.textAlign = 'left';
-    ctx.fillText(xLog ? 'log f' : '0', MARGIN.left, h - MARGIN.bottom + 14);
+    // Left edge shows the band start when a min is set; else the axis origin.
+    const leftLabel = xLog ? 'log f' : (fMinDisplay > 0 ? fmtHz(fMinDisplay) : '0');
+    ctx.fillText(leftLabel, MARGIN.left, h - MARGIN.bottom + 14);
     // Y-axis unit label (amplitude vs power density).
     ctx.textAlign = 'right';
     const yLabel = isPsd ? (yLog ? 'dB/Hz' : 'u²/Hz') : (yLog ? 'dB' : 'lin');
