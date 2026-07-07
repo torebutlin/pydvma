@@ -39,12 +39,36 @@ export interface AcquireSettings {
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
+  /**
+   * Optional input-latency HINT in seconds (Setup "full" → timing).  `0`
+   * or undefined = let the browser choose; a positive value is passed to
+   * getUserMedia as an `ideal` latency constraint.
+   */
+  latency?: number;
 }
 
-/** Best-effort capabilities of the granted input device (from getCapabilities). */
+/** A [min, max] capability range as reported by `getCapabilities`. */
+export interface DeviceCapRange {
+  min?: number;
+  max?: number;
+}
+
+/**
+ * Best-effort capabilities + current settings of the granted input device,
+ * read from the track's `getCapabilities()` / `getSettings()`.  Everything
+ * is optional — browsers report a variable subset (Chromium is the richest;
+ * Firefox/Safari report little).  Consumed by Setup's "full" panel to show
+ * the device's supported ranges and to constrain the fs/channel inputs.
+ */
 export interface DeviceCaps {
-  maxChannels?: number;
-  sampleRate?: number;
+  /** Supported channel-count range. */
+  channelCount?: DeviceCapRange;
+  /** Supported sample-rate range (Hz). */
+  sampleRate?: DeviceCapRange;
+  /** Supported latency range (seconds), where reported. */
+  latency?: DeviceCapRange;
+  /** The track's CURRENT settings once the stream opened. */
+  current?: { sampleRate?: number; channelCount?: number; latency?: number };
 }
 
 export type AcquireStore = ReturnType<typeof createAcquireStore>;
@@ -110,11 +134,23 @@ export function createAcquireStore() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       try {
         const track = stream.getAudioTracks()[0];
-        const caps = track?.getCapabilities?.();
-        const set = track?.getSettings?.();
+        // `latency` isn't in every TS DOM lib's MediaTrack* types yet, so
+        // augment the casts to read it without an `any` escape hatch.
+        const caps = track?.getCapabilities?.() as
+          (MediaTrackCapabilities & { latency?: { min?: number; max?: number } }) | undefined;
+        const set = track?.getSettings?.() as
+          (MediaTrackSettings & { latency?: number }) | undefined;
+        const range = (r?: { min?: number; max?: number }): DeviceCapRange | undefined =>
+          r && (r.min != null || r.max != null) ? { min: r.min, max: r.max } : undefined;
         deviceCaps.set({
-          maxChannels: caps?.channelCount?.max,
-          sampleRate: set?.sampleRate ?? caps?.sampleRate?.max,
+          channelCount: range(caps?.channelCount),
+          sampleRate: range(caps?.sampleRate),
+          latency: range(caps?.latency),
+          current: {
+            sampleRate: set?.sampleRate,
+            channelCount: set?.channelCount,
+            latency: set?.latency,
+          },
         });
       } catch {
         // getCapabilities/getSettings are optional — details just stay hidden.
@@ -154,6 +190,7 @@ export function createAcquireStore() {
       echoCancellation: cfg.echoCancellation,
       noiseSuppression: cfg.noiseSuppression,
       autoGainControl: cfg.autoGainControl,
+      latency: cfg.latency,
     };
 
     handle = startRecording(rcfg);

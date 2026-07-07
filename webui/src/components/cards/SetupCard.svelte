@@ -10,15 +10,24 @@
    *   are still blank we surface an "Allow microphone access" hint that
    *   requests permission (via a throwaway stream) and re-enumerates —
    *   we never force a permission prompt on app load, only here.
-   * - A basic ↔ full toggle.  "Full" reveals a second row of REAL
-   *   settings — the echo-cancellation / noise-suppression / auto-gain
-   *   getUserMedia constraints (all default OFF; the browser turns them on
-   *   by default, which corrupts measurement data) plus device details.
+   * - A basic ↔ full toggle.  "Full" reveals the FULL soundcard option set
+   *   (round-3), grouped BY DOMAIN so a future NI-DAQ group can slot in
+   *   without a redesign:
+   *     · device     — the granted track's reported capability RANGES
+   *                     (channel count, sample-rate, latency) from
+   *                     `getCapabilities()`, which also constrain the basic
+   *                     fs/channel inputs where known.
+   *     · processing — the echo-cancellation / noise-suppression / auto-gain
+   *                     getUserMedia constraints (all default OFF; the browser
+   *                     turns them on by default, which corrupts measurement
+   *                     data).
+   *     · timing     — an optional input-latency hint.
    *   The context zone grows to fit the taller card, squashing the plot
    *   downwards (the maintainer's "extended-area mode").
    *
-   * NO pretrigger / output-signal UI here — those capture-path features
-   * are not implemented, so no dead controls.
+   * NO pretrigger / output-signal / NI-DAQ UI here yet — those capture-path
+   * features are not implemented, so no dead controls (see the nidaq slot
+   * comment in the full row).
    */
   import { onMount } from 'svelte';
   import type { AcquireStore } from '../../lib/stores/acquire';
@@ -44,6 +53,19 @@
   // Duration presets.
   const DURATIONS = [0.5, 1, 2, 5, 10, 30, 60];
 
+  // ---- capability-derived constraints (populated after mic permission) ----
+  // Max channels the device supports (caps the channel input); 32 fallback.
+  const maxChannels = $derived($deviceCaps?.channelCount?.max ?? 32);
+  const srMin = $derived($deviceCaps?.sampleRate?.min);
+  const srMax = $derived($deviceCaps?.sampleRate?.max);
+  // A sample rate the granted device actually supports.
+  const rateAllowed = (fs: number): boolean =>
+    (srMin == null || fs >= srMin) && (srMax == null || fs <= srMax);
+  // Current input latency hint, shown in the timing group (ms in the UI).
+  const latencyMs = $derived(
+    $settings.latency && $settings.latency > 0 ? Math.round($settings.latency * 1000) : '',
+  );
+
   onMount(() => {
     // Enumerate on arrival (round-2: don't wait for "Log data").
     void acquire.refreshDevices();
@@ -56,17 +78,31 @@
     acquire.patch({ sampleRate: Number((e.target as HTMLSelectElement).value) });
   }
   function onChannelsChange(e: Event) {
-    const v = Math.max(1, Math.min(32, Number((e.target as HTMLInputElement).value) || 1));
+    const v = Math.max(1, Math.min(maxChannels, Number((e.target as HTMLInputElement).value) || 1));
     acquire.patch({ channelCount: v });
   }
   function onDurationChange(e: Event) {
     acquire.patch({ durationS: Number((e.target as HTMLSelectElement).value) });
+  }
+  function onLatencyChange(e: Event) {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    // UI is in ms; store is in seconds. Blank / non-positive clears the hint.
+    const ms = raw === '' ? 0 : Number(raw);
+    acquire.patch({ latency: isFinite(ms) && ms > 0 ? ms / 1000 : undefined });
   }
   function refreshDevices() {
     void acquire.refreshDevices();
   }
   function requestPermission() {
     void acquire.requestPermission();
+  }
+  /** Format a capability range like "1–2" / "≤ 96 kHz", or "—" when unknown. */
+  function fmtRange(r: { min?: number; max?: number } | undefined, unit = '', k = 1): string {
+    if (!r || (r.min == null && r.max == null)) return '—';
+    const f = (v: number) => (k !== 1 ? `${(v / k).toFixed(v / k >= 10 ? 0 : 1)}` : `${v}`);
+    if (r.min != null && r.max != null) return `${f(r.min)}–${f(r.max)}${unit}`;
+    if (r.max != null) return `≤ ${f(r.max)}${unit}`;
+    return `≥ ${f(r.min!)}${unit}`;
   }
 </script>
 
@@ -103,7 +139,7 @@
         <div class="grp-ctl">
           <select style="width:84px" aria-label="sample rate" value={$settings.sampleRate} onchange={onFsChange}>
             {#each SAMPLE_RATES as fs (fs)}
-              <option value={fs}>{fs >= 1000 ? `${fs / 1000}k` : fs}</option>
+              <option value={fs} disabled={!rateAllowed(fs)}>{fs >= 1000 ? `${fs / 1000}k` : fs}</option>
             {/each}
           </select>
           <span class="ml">Hz</span>
@@ -115,7 +151,7 @@
           <input
             type="number"
             min="1"
-            max="32"
+            max={maxChannels}
             value={$settings.channelCount}
             onchange={onChannelsChange}
             style="width:52px"
@@ -146,9 +182,35 @@
     </div>
 
     {#if full}
+      <!--
+        FULL soundcard option set, grouped by domain (device / processing /
+        timing).  Structured so a future NI-DAQ group (IEPE excitation,
+        terminal config, pretrigger) can slot in as another <div class="grp">
+        block right here — see the "nidaq slot" marker below — without
+        redesigning the row.  Basic mode above is untouched.
+      -->
       <div class="ctx-row full-row" data-testid="setup-full">
+        <!-- domain: device — reported capability ranges (getCapabilities). -->
         <div class="grp">
-          <span class="grp-lab">signal processing (off = raw measurement)</span>
+          <span class="grp-lab">device capabilities</span>
+          <div class="grp-ctl">
+            {#if $deviceCaps}
+              <span class="mono note" data-testid="setup-caps">
+                {fmtRange($deviceCaps.channelCount)} ch ·
+                {fmtRange($deviceCaps.sampleRate, ' kHz', 1000)} ·
+                lat {fmtRange($deviceCaps.latency, ' ms', 0.001)}
+                {#if $deviceCaps.current?.sampleRate}
+                  <br />now {($deviceCaps.current.sampleRate / 1000).toFixed(1)} kHz{#if $deviceCaps.current.channelCount} · {$deviceCaps.current.channelCount} ch{/if}
+                {/if}
+              </span>
+            {:else}
+              <span class="note">allow mic access to read capabilities</span>
+            {/if}
+          </div>
+        </div>
+        <!-- domain: processing — getUserMedia DSP flags (all default OFF). -->
+        <div class="grp">
+          <span class="grp-lab">processing (off = raw measurement)</span>
           <div class="grp-ctl">
             <label class="switch" title="Browser echo cancellation — leave OFF for measurement">
               <input type="checkbox" checked={$settings.echoCancellation}
@@ -167,20 +229,27 @@
             </label>
           </div>
         </div>
+        <!-- domain: timing — input latency hint (best-effort). -->
         <div class="grp">
-          <span class="grp-lab">device details</span>
+          <span class="grp-lab">timing</span>
           <div class="grp-ctl">
-            {#if $deviceCaps}
-              <span class="mono note">
-                {#if $deviceCaps.maxChannels}max {$deviceCaps.maxChannels} ch · {/if}
-                {#if $deviceCaps.sampleRate}default {($deviceCaps.sampleRate / 1000).toFixed(1)} kHz{/if}
-                {#if !$deviceCaps.maxChannels && !$deviceCaps.sampleRate}not reported{/if}
-              </span>
-            {:else}
-              <span class="note">allow mic access to read capabilities</span>
-            {/if}
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={latencyMs}
+              onchange={onLatencyChange}
+              placeholder="auto"
+              title="Preferred input latency hint (ms); blank = browser default"
+              data-testid="setup-latency"
+              aria-label="input latency hint in milliseconds"
+              style="width:64px"
+            />
+            <span class="ml">ms latency</span>
           </div>
         </div>
+        <!-- nidaq slot: a future NI-DAQ group (IEPE, terminal config,
+             pretrigger) drops in here as another <div class="grp"> block. -->
       </div>
     {/if}
   </div>

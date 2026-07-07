@@ -52,6 +52,15 @@ export interface RecordConfig {
   echoCancellation?: boolean;
   noiseSuppression?: boolean;
   autoGainControl?: boolean;
+  /**
+   * Preferred input latency HINT in seconds (getUserMedia `latency`
+   * constraint).  Optional — omit to let the browser pick.  A lower value
+   * favours responsiveness (smaller device buffers) at the cost of more
+   * xrun risk; the browser treats it as `ideal`, so it is best-effort only.
+   * Surfaced in Setup's "full" panel because it becomes relevant for the
+   * NI-DAQ path (hardware buffer sizing) later.
+   */
+  latency?: number;
 }
 
 /**
@@ -62,7 +71,8 @@ export interface RecordConfig {
  * voice use, but every one of them corrupts a measurement signal
  * (echo-cancellation subtracts a copy of the output, noise-suppression
  * spectrally gates, auto-gain applies a time-varying gain).  We opt out
- * unless the caller passes `true`.
+ * unless the caller passes `true`.  A `latency` hint is passed through only
+ * when the caller supplies a finite positive value (else the browser picks).
  */
 function buildAudioConstraints(cfg: Omit<RecordConfig, 'durationS'>): MediaTrackConstraints {
   return {
@@ -72,6 +82,9 @@ function buildAudioConstraints(cfg: Omit<RecordConfig, 'durationS'>): MediaTrack
     echoCancellation: cfg.echoCancellation ?? false,
     noiseSuppression: cfg.noiseSuppression ?? false,
     autoGainControl: cfg.autoGainControl ?? false,
+    ...(typeof cfg.latency === 'number' && cfg.latency > 0
+      ? { latency: { ideal: cfg.latency } }
+      : {}),
   };
 }
 

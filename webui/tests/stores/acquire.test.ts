@@ -59,7 +59,15 @@ test('default settings are sensible', () => {
 });
 
 test('requestPermission opens a throwaway stream then re-enumerates', async () => {
-  const track = { stop: vi.fn(), getCapabilities: () => ({ channelCount: { max: 2 } }), getSettings: () => ({ sampleRate: 48000 }) };
+  const track = {
+    stop: vi.fn(),
+    getCapabilities: () => ({
+      channelCount: { min: 1, max: 2 },
+      sampleRate: { min: 8000, max: 96000 },
+      latency: { min: 0.01, max: 0.1 },
+    }),
+    getSettings: () => ({ sampleRate: 48000, channelCount: 2, latency: 0.02 }),
+  };
   const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
   (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockResolvedValue(stream);
 
@@ -68,8 +76,23 @@ test('requestPermission opens a throwaway stream then re-enumerates', async () =
 
   expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled();
   expect(track.stop).toHaveBeenCalled();                 // throwaway stream released
-  expect(get(store.deviceCaps)).toEqual({ maxChannels: 2, sampleRate: 48000 });
+  // Round-3: the full capability ranges + current settings are surfaced.
+  expect(get(store.deviceCaps)).toEqual({
+    channelCount: { min: 1, max: 2 },
+    sampleRate: { min: 8000, max: 96000 },
+    latency: { min: 0.01, max: 0.1 },
+    current: { sampleRate: 48000, channelCount: 2, latency: 0.02 },
+  });
   expect(get(store.devices)).toHaveLength(1);            // re-enumerated
+});
+
+test('latency hint defaults to unset and round-trips through patch', () => {
+  const store = createAcquireStore();
+  expect(get(store.settings).latency).toBeUndefined();   // no hint by default
+  store.patch({ latency: 0.02 });
+  expect(get(store.settings).latency).toBe(0.02);
+  store.patch({ latency: undefined });
+  expect(get(store.settings).latency).toBeUndefined();   // clearable
 });
 
 test('status starts idle', () => {

@@ -44,15 +44,48 @@ test('mini ⤢ expand navigates to the Live stage scope', async ({ page }) => {
   await expect(page.getByTestId('fft-canvas')).toBeVisible();
 });
 
-test('Setup full toggle grows the settings area with the raw-measurement constraints', async ({ page }) => {
+test('Setup full carries the full soundcard option set grouped by domain', async ({ page }) => {
   await page.goto('/');
   const ribbon = page.getByRole('navigation', { name: 'stages' });
   await ribbon.getByRole('button', { name: 'Setup' }).click();
 
   await expect(page.getByTestId('setup-full')).toBeHidden(); // basic view by default
   await page.getByRole('button', { name: /Full/ }).click();
-  await expect(page.getByTestId('setup-full')).toBeVisible(); // second row of real settings appears
-  await expect(page.getByTestId('setup-full')).toContainText(/echo/i);
+  const full = page.getByTestId('setup-full');
+  await expect(full).toBeVisible();                          // extended settings row appears
+  // Grouped by domain: device capabilities / processing / timing.
+  await expect(full).toContainText(/device capabilities/i);
+  await expect(full).toContainText(/echo/i);                // processing flags unchanged
+  await expect(full).toContainText(/timing/i);
+  await expect(page.getByTestId('setup-latency')).toBeVisible(); // latency hint input
+});
+
+test('Live scope offers a custom view-time, an fmax zoom, and a PSD spectrum mode', async ({ page }) => {
+  await page.goto('/');
+  const ribbon = page.getByRole('navigation', { name: 'stages' });
+  await ribbon.getByRole('button', { name: 'Live' }).click();
+
+  // View time: a typable custom value the presets don't include (combo).
+  const win = page.getByTestId('live-window-input');
+  await expect(win).toBeVisible();
+  await win.fill('0.3');
+  await win.blur();
+  await expect(win).toHaveValue('0.3');
+
+  // fmax zoom: type a band max, then "Full" resets to Nyquist (blank input).
+  const fmax = page.getByTestId('live-fmax-input');
+  await fmax.fill('2000');
+  await fmax.blur();
+  await expect(fmax).toHaveValue('2000');
+  await page.getByRole('button', { name: 'Full' }).click();
+  await expect(fmax).toHaveValue('');
+
+  // Spectrum mode: switching to PSD reveals the averaging control.
+  await expect(page.getByTestId('live-psd-avg')).toBeHidden();
+  await page.getByTestId('live-mode-psd').click();
+  await expect(page.getByTestId('live-psd-avg')).toBeVisible();
+  await page.getByTestId('live-mode-fft').click();
+  await expect(page.getByTestId('live-psd-avg')).toBeHidden();
 });
 
 test('Acquire summary shows device and an honest pretrigger state', async ({ page }) => {
