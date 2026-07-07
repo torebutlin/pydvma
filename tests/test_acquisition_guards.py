@@ -230,3 +230,49 @@ class TestNiCallbackInterval:
         from pydvma import streams
         with pytest.raises(ValueError, match='chunk_size'):
             streams._ni_callback_interval(0)
+
+
+class TestOutputRatePreflight:
+    """`_check_output_rate_within_hardware` turns an out-of-bounds
+    ``output_fs`` into a clear ValueError naming the hardware limit,
+    instead of the raw DAQmx -200077 seen on the real USB-6003 (AO max
+    5 kS/s) during the 2026-07-07 hardware session."""
+
+    _ENTRY = {'name': 'Dev3', 'product_type': 'USB-6003',
+              'is_chassis': False, 'ai_channel_count': 8,
+              'ao_channel_count': 2, 'module_names': [],
+              'module_ai_counts': {}, 'module_ao_counts': {}}
+
+    def _patch_caps(self, monkeypatch, caps):
+        from pydvma import streams
+        monkeypatch.setattr(streams._ni_backend, 'entry_capabilities',
+                            lambda entry, resolver=None: caps)
+
+    def test_rate_above_hw_max_raises_clearly(self, monkeypatch):
+        from pydvma import streams
+        self._patch_caps(monkeypatch, {'ao_max_rate': 5000.0,
+                                       'ao_min_rate': 0.02})
+        with pytest.raises(ValueError, match='5000'):
+            streams._check_output_rate_within_hardware(self._ENTRY, 8000.0)
+
+    def test_rate_below_hw_min_raises_clearly(self, monkeypatch):
+        from pydvma import streams
+        self._patch_caps(monkeypatch, {'ao_max_rate': 51200.0,
+                                       'ao_min_rate': 1613.0})
+        with pytest.raises(ValueError, match='1613'):
+            streams._check_output_rate_within_hardware(self._ENTRY, 1000.0)
+
+    def test_rate_within_bounds_passes(self, monkeypatch):
+        from pydvma import streams
+        self._patch_caps(monkeypatch, {'ao_max_rate': 5000.0,
+                                       'ao_min_rate': 0.02})
+        streams._check_output_rate_within_hardware(self._ENTRY, 5000.0)
+
+    def test_probe_failure_falls_through(self, monkeypatch):
+        from pydvma import streams
+
+        def boom(entry, resolver=None):
+            raise RuntimeError('no driver')
+
+        monkeypatch.setattr(streams._ni_backend, 'entry_capabilities', boom)
+        streams._check_output_rate_within_hardware(self._ENTRY, 8000.0)

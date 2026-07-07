@@ -1,6 +1,7 @@
 from . import acquisition
 from . import _ni_backend
 
+import copy
 import numpy as np
 import pprint as pp
 import time
@@ -185,14 +186,31 @@ def start_stream(settings):
         # and applied at read time.
         if (REC_NI is not None
                 and isinstance(REC_NI, cls)
-                and REC_NI.audio_stream is not None
-                and _ni_settings_signature(REC_NI.settings)
-                    == _ni_settings_signature(settings)):
-            REC_NI.settings = settings
-            REC_NI.trigger_detected = False
-            REC_NI.trigger_first_detected_message = False
-            REC = REC_NI
-            return
+                and REC_NI.audio_stream is not None):
+            sig_running = _ni_settings_signature(REC_NI.settings)
+            match = _ni_settings_signature(settings) == sig_running
+            if not match:
+                # DSA hardware may have coerced the running task's rate
+                # (e.g. 5000 -> 5120 on an NI 9234; see the coercion
+                # note in `_build_and_start_ai_task`). A caller
+                # re-asking for the ORIGINAL rate describes the same
+                # hardware config, so reuse the task — and adopt the
+                # coerced rate — rather than rebuilding (which would
+                # repeat the ~2 s IEPE warmup on every capture).
+                requested = getattr(REC_NI, '_requested_fs', None)
+                if (requested is not None
+                        and float(settings.fs) == float(requested)):
+                    probe = copy.copy(settings)
+                    probe.fs = REC_NI.settings.fs
+                    if _ni_settings_signature(probe) == sig_running:
+                        settings.fs = REC_NI.settings.fs
+                        match = True
+            if match:
+                REC_NI.settings = settings
+                REC_NI.trigger_detected = False
+                REC_NI.trigger_first_detected_message = False
+                REC = REC_NI
+                return
 
         # Rebuild path: hardware config changed (different device,
         # channels, fs, IEPE current, ...) or there's no live task.
@@ -601,26 +619,7 @@ class Recorder_NI_nidaqmx(object):
         self.trigger_detected = False
         self.trigger_first_detected_message = False
 
-        self.osc_time_axis = np.arange(
-            0,
-            (settings.num_chunks * settings.chunk_size) / settings.fs,
-            1 / settings.fs,
-        )
-        self.osc_freq_axis = np.fft.rfftfreq(len(self.osc_time_axis), 1 / settings.fs)
-        self.osc_time_data = np.zeros(
-            shape=(settings.num_chunks * settings.chunk_size, settings.channels)
-        )
-        self.osc_time_data_windowed = np.zeros_like(self.osc_time_data)
-        self.osc_freq_data = np.abs(np.fft.rfft(self.osc_time_data, axis=0))
-
-        self.stored_num_chunks = 2 + int(
-            np.ceil((settings.stored_time * settings.fs) / settings.chunk_size)
-        )
-        self.stored_time_data = np.zeros(
-            shape=(self.stored_num_chunks * settings.chunk_size, settings.channels)
-        )
-        self.stored_time_data_windowed = np.zeros_like(self.stored_time_data)
-        self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data, axis=0))
+        self._alloc_buffers()
 
         entries = _ni_backend.enumerate_devices()
         if not entries:
@@ -650,6 +649,40 @@ class Recorder_NI_nidaqmx(object):
             self._reader = None
             self._read_buffer = None
             self._callback_ref = None  # keep a strong reference for nidaqmx
+            self._closing = False  # set by end_stream; callback bails out
+            self._requested_fs = None  # pre-coercion fs; see start_stream
+
+    def _alloc_buffers(self):
+        '''(Re)allocate the osc/stored rolling buffers and axes from
+        ``self.settings``.
+
+        Split out of ``__init__`` because the buffer geometry depends on
+        ``settings.fs``, and on DSA hardware the true rate is only known
+        after the task's sample clock is configured —
+        `_build_and_start_ai_task` re-calls this when DAQmx coerces the
+        requested rate (see the coercion note there).
+        '''
+        settings = self.settings
+        self.osc_time_axis = np.arange(
+            0,
+            (settings.num_chunks * settings.chunk_size) / settings.fs,
+            1 / settings.fs,
+        )
+        self.osc_freq_axis = np.fft.rfftfreq(len(self.osc_time_axis), 1 / settings.fs)
+        self.osc_time_data = np.zeros(
+            shape=(settings.num_chunks * settings.chunk_size, settings.channels)
+        )
+        self.osc_time_data_windowed = np.zeros_like(self.osc_time_data)
+        self.osc_freq_data = np.abs(np.fft.rfft(self.osc_time_data, axis=0))
+
+        self.stored_num_chunks = 2 + int(
+            np.ceil((settings.stored_time * settings.fs) / settings.chunk_size)
+        )
+        self.stored_time_data = np.zeros(
+            shape=(self.stored_num_chunks * settings.chunk_size, settings.channels)
+        )
+        self.stored_time_data_windowed = np.zeros_like(self.stored_time_data)
+        self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data, axis=0))
 
     def available_devices(self):
         entries = _ni_backend.enumerate_devices()
@@ -673,6 +706,43 @@ class Recorder_NI_nidaqmx(object):
         )
 
     def stream_audio_callback(self):
+        '''Consume acquired samples and advance the rolling buffers.
+
+        Runs on the nidaqmx every-N-samples event thread. Reads and
+        processes one chunk, then **drains any backlog**: while the
+        DAQmx input buffer already holds at least another whole chunk,
+        keeps reading and processing. The rolling buffers advance one
+        chunk per *processed* chunk, so without the drain a host stall
+        (paging, USB contention, a busy CPU) would leave buffer time
+        lagging real time indefinitely — and the pretrigger check,
+        which needs the crossing to roll into
+        ``stored_time_data[chunk_size:2*chunk_size]``, could miss its
+        timeout even though the trigger physically fired. The drain
+        bounds that lag to roughly one callback latency.
+        '''
+        if self._closing:
+            return 0
+        if not self._read_and_process_chunk():
+            return 0
+        try:
+            while (not self._closing
+                   and self.audio_stream is not None
+                   and self.audio_stream.in_stream.avail_samp_per_chan
+                       >= self.settings.chunk_size):
+                if not self._read_and_process_chunk():
+                    break
+        except Exception:
+            # avail_samp_per_chan can raise if the task is being torn
+            # down mid-callback; the next event (if any) resumes.
+            pass
+        return 0
+
+    def _read_and_process_chunk(self):
+        '''Read exactly one chunk from the task and process it.
+
+        Returns True on success, False if the read failed (error is
+        printed, not raised — this runs on the driver callback thread).
+        '''
         try:
             self._reader.read_many_sample(
                 self._read_buffer,
@@ -680,12 +750,25 @@ class Recorder_NI_nidaqmx(object):
                 timeout=10.0,
             )
         except Exception as e:
-            print('nidaqmx read error:', e)
-            return 0
-
+            # Expected (and harmless) when end_stream closes the task
+            # while a read is in flight on the callback thread — stay
+            # quiet then; anything else is worth surfacing.
+            if not self._closing:
+                print('nidaqmx read error:', e)
+            return False
         # Reader fills shape (channels, chunk_size); downstream wants
         # (chunk_size, channels) to match the soundcard path.
-        data_array = self._read_buffer.T
+        self._process_chunk(self._read_buffer.T)
+        return True
+
+    def _process_chunk(self, data_array):
+        '''Advance osc/stored rolling buffers by one chunk and run the
+        pretrigger state machine (see the class docstring).
+
+        ``data_array`` has shape (chunk_size, channels). The stored
+        buffer freezes once ``trigger_detected`` is set; the osc
+        (monitor) buffer always advances.
+        '''
         self.osc_data_chunk = data_array
 
         for i in range(self.settings.channels):
@@ -713,7 +796,6 @@ class Recorder_NI_nidaqmx(object):
         ]
         if np.any(np.abs(trigger_check) > self.settings.pretrig_threshold):
             self.trigger_detected = True
-        return 0
 
     def init_stream(self, settings, _input_=True, _output_=False):
         # Tear down any previous task on this recorder
@@ -751,11 +833,20 @@ class Recorder_NI_nidaqmx(object):
             self._build_and_start_ai_task(settings)
 
     def _build_and_start_ai_task(self, settings):
+        # A fresh task gets a fresh teardown flag (it stays True after
+        # end_stream so straggler callback events from the old task
+        # keep bailing out).
+        self._closing = False
+
         # Callback cadence must equal the per-callback read size —
         # see _ni_callback_interval.
         AutoRegN = _ni_callback_interval(settings.chunk_size)
 
-        term_config = _ni_backend.resolve_terminal_config(settings.NI_mode)
+        # Device-aware: falls back (with a printed note) when the
+        # requested NI_mode is impossible on this hardware — e.g. the
+        # MySettings default RSE on a pseudo-diff-only DSA module.
+        term_config = _ni_backend.resolve_terminal_config_for_entry(
+            self.device_entry, settings.NI_mode)
         task = ni.Task()
         task.ai_channels.add_ai_voltage_chan(
             self.set_channels(),
@@ -768,6 +859,48 @@ class Recorder_NI_nidaqmx(object):
             sample_mode=ni.constants.AcquisitionType.CONTINUOUS,
             samps_per_chan=int(settings.chunk_size),
         )
+
+        # DSA modules (NI 9234) run only on their fixed rate ladder and
+        # DAQmx **silently coerces** any other request — measured on the
+        # real 9234: asking for 8000 Hz actually samples at 8533.33 Hz,
+        # 5000 -> 5120. Adopt the true rate into settings.fs (and
+        # re-size the rolling buffers, which depend on fs) so time and
+        # frequency axes, .dvma metadata, and downstream TF/modal fits
+        # stay correct; otherwise every frequency would be off by the
+        # coercion ratio (up to ~7 %). The original ask is kept in
+        # `_requested_fs` so `start_stream` can still recognise a
+        # repeat request as the same hardware config (stream reuse).
+        self._requested_fs = float(settings.fs)
+        try:
+            actual_fs = float(task.timing.samp_clk_rate)
+        except (ni.errors.DaqError, AttributeError):
+            actual_fs = None
+        if actual_fs and abs(actual_fs - float(settings.fs)) > 1e-6:
+            print(
+                'Requested fs = {:g} Hz was coerced to {:g} Hz by {} '
+                '(hardware rate ladder); using the actual rate.'
+                .format(float(settings.fs), actual_fs, self.device_name)
+            )
+            settings.fs = actual_fs
+            self._alloc_buffers()
+
+        # Give the DAQmx input buffer several seconds of headroom. The
+        # driver default (10 kS at these rates = 2 s at fs=5000) means
+        # a host stall longer than that overflows the buffer (-200279)
+        # and kills the capture; with headroom the samples just queue
+        # and the drain loop in `stream_audio_callback` catches the
+        # rolling buffers back up when callbacks resume. The size must
+        # be an exact multiple of the every-N event interval
+        # (chunk_size) — DAQmx rejects other sizes with -200877 on
+        # DMA/USB-bulk transfers (seen on the real cDAQ-9174).
+        try:
+            chunks_5s = int(np.ceil(5 * float(settings.fs)
+                                    / settings.chunk_size))
+            min_buf = chunks_5s * int(settings.chunk_size)
+            if task.in_stream.input_buf_size < min_buf:
+                task.in_stream.input_buf_size = min_buf
+        except (ni.errors.DaqError, AttributeError):
+            pass  # keep the driver default if the property is refused
 
         # Per-channel IEPE / ICP excitation. Setting any channel's
         # excitation requires the sample clock to be configured first
@@ -882,6 +1015,11 @@ class Recorder_NI_nidaqmx(object):
     def end_stream(self):
         global REC
         REC = None
+        # Tell the callback thread to bail out before the task handle
+        # goes away — its drain loop may be mid-read (see
+        # `stream_audio_callback`); reads against a closing task raise
+        # cleanly and are suppressed while this flag is set.
+        self._closing = True
         if self.audio_stream is not None:
             try:
                 self.audio_stream.stop()
@@ -994,6 +1132,40 @@ def _check_output_vmax_within_hardware(device_entry, requested_vmax):
         )
 
 
+def _check_output_rate_within_hardware(device_entry, requested_fs):
+    """Raise ValueError if ``requested_fs`` is outside the AO module's
+    hardware sample-rate bounds, with a message naming the real limit.
+
+    E.g. the USB-6003's AO tops out at 5 kS/s (software-timed) and the
+    NI 9260 (DSA) cannot go below ~1613 S/s; without this preflight a
+    bad ``output_fs`` surfaces as a raw DAQmx -200077 at task creation.
+    Best-effort: if the capability probe fails, fall through and let
+    DAQmx report the violation itself.
+    """
+    try:
+        caps = _ni_backend.entry_capabilities(device_entry)
+    except Exception:
+        return
+    hw_max = caps.get('ao_max_rate')
+    hw_min = caps.get('ao_min_rate')
+    if hw_max and requested_fs > float(hw_max) + 1e-6:
+        raise ValueError(
+            'output_fs = {:g} Hz exceeds the maximum AO sample rate of '
+            '{} ({:g} Hz). Lower output_fs, or call '
+            'dvma.suggest_ni_settings(device_index=...) for safe '
+            'defaults.'.format(requested_fs, device_entry['name'],
+                               float(hw_max))
+        )
+    if hw_min and requested_fs < float(hw_min) - 1e-6:
+        raise ValueError(
+            'output_fs = {:g} Hz is below the minimum AO sample rate of '
+            '{} ({:g} Hz). Raise output_fs, or call '
+            'dvma.suggest_ni_settings(device_index=...) for safe '
+            'defaults.'.format(requested_fs, device_entry['name'],
+                               float(hw_min))
+        )
+
+
 def setup_output_NI_nidaqmx(settings, output):
     '''Build and stage (but not start) a finite-sample AO task on nidaqmx.
 
@@ -1059,6 +1231,7 @@ def setup_output_NI_nidaqmx(settings, output):
     # much friendlier, especially when the call comes from the GUI's
     # default-settings path.
     _check_output_vmax_within_hardware(device_entry, settings.output_VmaxNI)
+    _check_output_rate_within_hardware(device_entry, float(settings.output_fs))
 
     task = ni.Task()
     task.ao_channels.add_ao_voltage_chan(
@@ -1084,6 +1257,29 @@ def setup_output_NI_nidaqmx(settings, output):
         sample_mode=ni.constants.AcquisitionType.FINITE,
         samps_per_chan=int(N_output),
     )
+
+    # DSA AO modules (NI 9260) coerce off-ladder rates just like DSA AI
+    # (see the coercion note in `_build_and_start_ai_task`). The
+    # waveform was generated at `output_fs`, so playback at a coerced
+    # rate shifts the stimulus frequencies by the coercion ratio — warn
+    # so the user knows the drive band moved (with use_output_as_ch0
+    # the *recorded* drive is the measured loopback, so TFs stay
+    # correct).
+    try:
+        actual_out_fs = float(task.timing.samp_clk_rate)
+    except (ni.errors.DaqError, AttributeError):
+        actual_out_fs = None
+    if (not clock_source and actual_out_fs
+            and abs(actual_out_fs - float(settings.output_fs)) > 1e-6):
+        print(
+            'WARNING: requested output_fs = {:g} Hz was coerced to {:g} Hz '
+            'by {} (hardware rate ladder); the stimulus plays at {:.4g}x '
+            'the intended frequencies. Set output_fs to a supported rate '
+            'to avoid this.'.format(
+                float(settings.output_fs), actual_out_fs,
+                device_entry['name'],
+                actual_out_fs / float(settings.output_fs))
+        )
 
     # nidaqmx write: shape is (n_channels, n_samples) for multi-channel,
     # or 1D for single channel. `output` here is (N_output, n_channels).

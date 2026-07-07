@@ -323,7 +323,8 @@ class FakeCapDevice(object):
     def __init__(self, name, product_type='NI 9234', ai=4, ao=0,
                  ai_max_multi=51200.0, ai_max_single=51200.0, ai_min=1000.0,
                  ao_max=None, ao_min=None, simultaneous=True,
-                 iepe_vals=(0.0, 0.002), term_cfg_names=('PSEUDO_DIFF',)):
+                 iepe_vals=(0.0, 0.002), term_cfg_names=('PSEUDO_DIFF',),
+                 ai_rngs=(-5.0, 5.0), ao_rngs=()):
         self.name = name
         self.product_type = product_type
         self.ai_max_multi_chan_rate = ai_max_multi
@@ -333,6 +334,9 @@ class FakeCapDevice(object):
         self.ao_min_rate = ao_min
         self.ai_simultaneous_sampling_supported = simultaneous
         self.ai_current_int_excit_discrete_vals = list(iepe_vals)
+        # flat [min, max, min, max, ...] like the real ai/ao_voltage_rngs
+        self.ai_voltage_rngs = list(ai_rngs)
+        self.ao_voltage_rngs = list(ao_rngs)
         term = [_FakeTermCfg(n) for n in term_cfg_names]
         self.ai_physical_chans = [
             _FakeCapPhysChan('%s/ai%d' % (name, i), term) for i in range(ai)
@@ -389,6 +393,8 @@ class TestDeviceCapabilities:
         assert caps['iepe_currents'] == [0.002]      # 0.0 dropped
         assert caps['terminal_configs'] == ['DAQmx_Val_PseudoDiff']
         assert caps['ao_supported'] is False         # AI-only module
+        assert caps['ai_vmax'] == 5.0                # 9234 fixed ±5 V
+        assert caps['ao_vmax'] is None               # no AO axis
 
     def test_ai_max_rate_falls_back_to_single(self):
         dev = FakeCapDevice('Dev1', ai_max_multi=None, ai_max_single=100000.0)
@@ -455,6 +461,7 @@ class TestEntryCapabilities:
             ai_max_multi=None, ai_max_single=None, ai_min=None,
             ao_max=51200.0, ao_min=1613.0, simultaneous=True,
             iepe_vals=(), term_cfg_names=(),
+            ai_rngs=(), ao_rngs=(-4.242641, 4.242641),
         )
         resolver = {'cDAQ1Mod1': ai_dev, 'cDAQ1Mod2': ao_dev}.__getitem__
         caps = _ni.entry_capabilities(entry, resolver=resolver)
@@ -464,10 +471,12 @@ class TestEntryCapabilities:
         assert caps['iepe_supported'] is True
         assert caps['iepe_currents'] == [0.002]
         assert caps['terminal_configs'] == ['DAQmx_Val_PseudoDiff']
+        assert caps['ai_vmax'] == 5.0
         # ...AO fields from the AO module.
         assert caps['ao_max_rate'] == 51200.0
         assert caps['ao_min_rate'] == 1613.0
         assert caps['ao_supported'] is True
+        assert caps['ao_vmax'] == pytest.approx(4.242641)  # 9260 rail
 
     def test_chassis_ai_only(self):
         entry = _chassis_entry('cDAQ1', 'cDAQ-9171',
@@ -477,3 +486,68 @@ class TestEntryCapabilities:
         assert caps['ai_max_rate'] == 51200.0
         assert caps['ao_max_rate'] is None
         assert caps['ao_supported'] is False
+
+
+class _FakeTerminalConfiguration(object):
+    """Stand-in for the nidaqmx TerminalConfiguration enum class."""
+    RSE = _FakeEnumValue('RSE')
+    NRSE = _FakeEnumValue('NRSE')
+    DIFF = _FakeEnumValue('DIFF')
+    PSEUDO_DIFF = _FakeEnumValue('PSEUDO_DIFF')
+
+
+class TestResolveTerminalConfigForEntry:
+    """Device-aware NI_mode resolution (found on the real cDAQ-9174:
+    the MySettings default RSE is impossible on the 9234, which used to
+    surface as raw DAQmx -200077 through the serve bridge)."""
+
+    @pytest.fixture(autouse=True)
+    def patch_term_cfg(self, monkeypatch):
+        monkeypatch.setattr(_ni, 'TerminalConfiguration',
+                            _FakeTerminalConfiguration)
+
+    def test_supported_mode_passes_through(self, capsys):
+        entry = _usb_entry('Dev1', 'USB-6212', ai=16, ao=2)
+        dev = FakeCapDevice('Dev1', product_type='USB-6212', ai=16, ao=2,
+                            iepe_vals=(), term_cfg_names=('RSE', 'DIFF'))
+        cfg = _ni.resolve_terminal_config_for_entry(
+            entry, 'DAQmx_Val_RSE', resolver=lambda n: dev)
+        assert cfg is _FakeTerminalConfiguration.RSE
+        assert capsys.readouterr().out == ''
+
+    def test_unsupported_mode_falls_back_with_note(self, capsys):
+        # 9234-like DSA module: pseudo-diff only. Requesting the default
+        # RSE must fall back rather than crash at channel creation.
+        entry = _chassis_entry('cDAQ1', 'cDAQ-9174',
+                               [('cDAQ1Mod1', 4, 0)])
+        ai_dev = FakeCapDevice('cDAQ1Mod1')  # pseudo-diff only
+        cfg = _ni.resolve_terminal_config_for_entry(
+            entry, 'DAQmx_Val_RSE', resolver=lambda n: ai_dev)
+        assert cfg is _FakeTerminalConfiguration.PSEUDO_DIFF
+        out = capsys.readouterr().out
+        assert 'DAQmx_Val_RSE' in out and 'DAQmx_Val_PseudoDiff' in out
+        assert 'cDAQ1' in out
+
+    def test_no_capability_info_returns_requested(self):
+        # Probe reports nothing (e.g. AO-only module) — DAQmx decides.
+        entry = _usb_entry('Dev1', 'USB-6003', ai=8, ao=2)
+        dev = _MissingAxisDevice()
+        cfg = _ni.resolve_terminal_config_for_entry(
+            entry, 'DAQmx_Val_Diff', resolver=lambda n: dev)
+        assert cfg is _FakeTerminalConfiguration.DIFF
+
+    def test_probe_failure_returns_requested(self):
+        entry = _usb_entry('Dev1', 'USB-6003', ai=8, ao=2)
+
+        def boom(name):
+            raise RuntimeError('no driver')
+
+        cfg = _ni.resolve_terminal_config_for_entry(
+            entry, 'DAQmx_Val_RSE', resolver=boom)
+        assert cfg is _FakeTerminalConfiguration.RSE
+
+    def test_unknown_mode_still_raises(self):
+        entry = _usb_entry('Dev1', 'USB-6003', ai=8, ao=2)
+        with pytest.raises(ValueError):
+            _ni.resolve_terminal_config_for_entry(
+                entry, 'DAQmx_Val_Bogus', resolver=lambda n: None)

@@ -677,3 +677,34 @@ def test_suggest_ni_settings_end_to_end(device_entry, device_index):
     assert ds.time_data_list[0].time_data.shape[0] == int(0.2 * s.fs)
 
 
+def test_dsa_fs_coercion_adopts_actual_rate(device_entry, device_index):
+    """DSA modules silently coerce off-ladder sample rates (measured on
+    the real NI 9234: requesting 8000 Hz actually samples at
+    8533.33 Hz). The recorder must adopt the true rate into
+    ``settings.fs`` so time/frequency axes and .dvma metadata stay
+    correct, and a repeat request at the original rate must still
+    REUSE the running task (else every capture would repeat the ~2 s
+    IEPE warmup)."""
+    from pydvma import _ni_backend
+    caps = _ni_backend.entry_capabilities(device_entry)
+    if not caps.get('simultaneous'):
+        pytest.skip('rate-ladder coercion applies to DSA hardware only')
+
+    s = _settings_for(device_entry, device_index, channels=1,
+                      stored_time=0.2, fs=8000)
+    ds = dvma.log_data(s)
+    rec = dvma.streams.REC
+    actual = float(rec.audio_stream.timing.samp_clk_rate)
+    assert s.fs == pytest.approx(actual)
+    assert s.fs != 8000  # 8000 is off the 9234 ladder — must have moved
+    assert ds.time_data_list[0].time_data.shape[0] == int(0.2 * s.fs)
+
+    # Re-request the ORIGINAL rate: same hardware config -> stream reuse
+    # (and the caller's settings adopt the coerced rate again).
+    s2 = _settings_for(device_entry, device_index, channels=1,
+                       stored_time=0.2, fs=8000)
+    dvma.streams.start_stream(s2)
+    assert dvma.streams.REC is rec
+    assert s2.fs == pytest.approx(actual)
+
+

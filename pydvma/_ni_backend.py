@@ -65,6 +65,41 @@ def resolve_terminal_config(ni_mode):
     return getattr(TerminalConfiguration, enum_name)
 
 
+def resolve_terminal_config_for_entry(entry, ni_mode, resolver=None):
+    """Resolve ``NI_mode`` against what the entry's AI hardware supports.
+
+    Returns the requested TerminalConfiguration when the device supports
+    it. When the AI module advertises a set of supported configs (via
+    `entry_capabilities`) that does **not** include the requested one —
+    e.g. DSA modules like the NI 9234 accept only pseudo-differential
+    while ``MySettings`` defaults to ``'DAQmx_Val_RSE'`` — falls back to
+    the module's first supported config with a printed one-line note,
+    instead of letting DAQmx fail channel creation with an opaque
+    -200077. Verified against the real cDAQ-9174 + NI 9234 (2026-07-07
+    Windows hardware session).
+
+    If the capability probe fails or reports nothing, the requested
+    config is returned unchanged and DAQmx has the final say.
+
+    ``resolver`` is forwarded to `entry_capabilities` for the Mac-side
+    mocked tests.
+    """
+    requested = resolve_terminal_config(ni_mode)  # validates the name
+    try:
+        supported = entry_capabilities(entry, resolver=resolver).get(
+            'terminal_configs') or []
+    except Exception:
+        return requested
+    if not supported or ni_mode in supported:
+        return requested
+    fallback = supported[0]
+    print(
+        "NI_mode {!r} is not supported by {} (supports: {}); using {!r}."
+        .format(ni_mode, entry['name'], ', '.join(supported), fallback)
+    )
+    return resolve_terminal_config(fallback)
+
+
 # Accept either name: nidaqmx uses `COMPACT_DAQ_CHASSIS` (observed on
 # nidaqmx 2026 Q2); some older / alternate builds exposed `C_DAQ_CHASSIS`.
 # Comparing by `.name` avoids a hard dependency on the exact enum layout.
@@ -403,6 +438,12 @@ def device_capabilities(name, device=None):
         - ``terminal_configs`` — legacy ``DAQmx_Val_*`` names supported
           by the first AI channel (see `_terminal_configs`).
         - ``ao_supported`` — the device exposes ≥1 AO physical channel.
+        - ``ai_vmax`` / ``ao_vmax`` — largest symmetric voltage range
+          (volts) from ``ai_voltage_rngs`` / ``ao_voltage_rngs``, or
+          ``None`` when unreported. Lets clients clamp ``VmaxNI`` /
+          ``output_VmaxNI`` before the driver rejects them — e.g. the
+          NI 9260 rail is ±4.2426 V, *below* the MySettings default
+          ``output_VmaxNI = 5.0``.
 
     Property names are verified against the nidaqmx-python source
     (``nidaqmx/system/device.py`` and ``physical_channel.py``); the same
@@ -432,6 +473,13 @@ def device_capabilities(name, device=None):
     iepe_currents = [float(v) for v in iepe_vals if float(v) > 0.0]
     ao_chan_count = _safe(lambda: len(list(device.ao_physical_chans)), 0) or 0
 
+    def _max_symmetric(ranges):
+        # ranges is a flat [min, max, min, max, ...] list from
+        # ai/ao_voltage_rngs; the largest symmetric range is the
+        # largest |max| among the pairs.
+        vals = [abs(float(v)) for v in (ranges or [])]
+        return max(vals) if vals else None
+
     return {
         'ai_max_rate': ai_multi if ai_multi is not None else ai_single,
         'ai_max_single_chan_rate': ai_single,
@@ -444,6 +492,8 @@ def device_capabilities(name, device=None):
         'iepe_currents': iepe_currents,
         'terminal_configs': _terminal_configs(device),
         'ao_supported': ao_chan_count > 0,
+        'ai_vmax': _max_symmetric(_safe(lambda: list(device.ai_voltage_rngs))),
+        'ao_vmax': _max_symmetric(_safe(lambda: list(device.ao_voltage_rngs))),
     }
 
 
@@ -493,4 +543,6 @@ def entry_capabilities(entry, resolver=None):
         'iepe_currents': ai_caps.get('iepe_currents', []),
         'terminal_configs': ai_caps.get('terminal_configs', []),
         'ao_supported': bool(ao_mod) or bool(ao_caps.get('ao_supported', False)),
+        'ai_vmax': ai_caps.get('ai_vmax'),
+        'ao_vmax': ao_caps.get('ao_vmax'),
     }
