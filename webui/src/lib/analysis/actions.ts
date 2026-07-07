@@ -45,6 +45,7 @@ import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import type { ViewId } from '../stores/viewstate';
 import type { ModalStore } from '../stores/modal';
+import type { Toasts } from '../stores/toast';
 import { normalizeFactors, normalizeUnits } from '../model/calibration';
 import { calibrationController } from '../stores/calibrationController';
 import { fromNFrames, fromNFft } from './resolution';
@@ -206,7 +207,7 @@ function populatedViews(seed: DerivedMap): ViewId[] {
  * so the actions stay unit-testable in isolation; when omitted the calc
  * functions fall back to per-set `defaults()`.
  */
-export function createActions(engine: EngineStore, selection: Selection, settings?: AnalysisSettings, modal?: ModalStore) {
+export function createActions(engine: EngineStore, selection: Selection, settings?: AnalysisSettings, modal?: ModalStore, toasts?: Toasts) {
   const dataset = writable<DvmaDataset | null>(null);
   const derived = writable<DerivedMap>({});
   /**
@@ -791,16 +792,29 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     return pool.find((w) => d[w.setId]?.tf && (d[w.setId]!.tf!.data.shape[1] ?? 0) > 0);
   }
 
+  /** Actions that change the mode set (get a one-level undo snapshot). */
+  type FitAction = 'fit' | 'reject' | 'recon' | 'refine' | 'delete_one';
+  const DESTRUCTIVE: ReadonlySet<FitAction> = new Set(['reject', 'delete_one', 'refine']);
+
   /**
-   * Modal fit / reject / reconstruction over one set's TF (Task A1). The
-   * engine (`calc_fit`) is STATELESS — the modal store holds the accumulated
-   * matrix `M` and this re-sends it, so add/replace/delete all round-trip
-   * through the store. `action`:
+   * Modal fit / reject / delete-one / refine / reconstruction over one set's
+   * TF (Task A1; round-4 items 9-10). The engine (`calc_fit`) is STATELESS —
+   * the modal store holds the accumulated matrix `M` and this re-sends it, so
+   * add/replace/delete/refine all round-trip through the store. `action`:
    *
-   * - `'fit'`   — fit `nModes` mode(s) over `freqRange` (the CURRENT visible
-   *   TF window, `viewState.sharedFreqRange`) and add/replace into the model.
-   * - `'reject'`— delete modes whose fn lies in `freqRange`.
-   * - `'recon'` — recompute the overlays from the current model (no fit).
+   * - `'fit'`        — fit `nModes` mode(s) over `freqRange` (the CURRENT
+   *   visible TF window) and add/replace into the model.
+   * - `'reject'`     — delete modes whose fn lies in `freqRange`.
+   * - `'delete_one'` — delete the single mode at `index` (the chip's × button).
+   * - `'refine'`     — simultaneously refine ALL modes (seeded from `M`, over
+   *   the modes' band; `freqRange` is ignored). Auto-reverts (via the store's
+   *   undo slot) when the engine reports the refinement did not improve.
+   * - `'recon'`      — recompute the overlays from the current model (no fit);
+   *   used when the mute set changes.
+   *
+   * Destructive actions push a one-level undo snapshot BEFORE the round-trip.
+   * The mute list is sent for `'recon'` only (after fit/delete the mode rows
+   * shift, so the muted set is reset by the store and irrelevant here).
    *
    * The fit scopes to ONE target set (deterministic; Qt's joint multi-set fit
    * is deferred). The store's matrix is only re-sent when it targets the SAME
@@ -810,8 +824,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     target: AnalysisTarget = 'all',
     freqRange: [number, number] | null = null,
     mt: MeasurementType = 'acc',
-    action: 'fit' | 'reject' | 'recon' = 'fit',
+    action: FitAction = 'fit',
     nModes = 1,
+    index?: number,
   ) {
     if (!modal) return Promise.resolve();
     const ws = fitSet(target);
@@ -821,6 +836,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const chIn = slice.chIn ?? 0;
     const nChannels = slice.nChannels ?? nTf + 1;
     const my = bump('fit');
+    // Snapshot for undo / auto-revert BEFORE the model changes.
+    if (DESTRUCTIVE.has(action)) modal.pushUndo();
     return guarded('fit', async () => {
       // Interleave the decoded complex tf_data back to [re, im, …] for the
       // worker (the glue de-interleaves into a complex matrix).
@@ -839,10 +856,29 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         n_channels: nChannels, fs: ws.fs, measurement_type: mt, action, n_modes: nModes,
       };
       if (M) payload.M = M;
-      if (freqRange) payload.freq_range = freqRange;
+      if (freqRange && action !== 'refine') payload.freq_range = freqRange;
+      if (action === 'delete_one' && index !== undefined) payload.index = index;
+      if (action === 'recon') payload.mute = modal.mutedIndices();
       const res = await engine.enqueue('calc_fit', payload);
       if (stale('fit', my)) return;                     // a newer fit won
       modal.applyResult(res, { setId: ws.setId, chIn, nChannels });
+      // Refine auto-revert: if the engine reports it did not improve /
+      // converge, restore the pre-refine model and explain (round-4 item 10).
+      if (action === 'refine') {
+        const converged = mval(res, 'converged');
+        if (converged === false) {
+          modal.undo();
+          toasts?.push('Refine did not improve the fit — reverted to the previous modes.',
+            { level: 'info' });
+        } else {
+          const before = Number(mval(res, 'cost_before'));
+          const after = Number(mval(res, 'cost_after'));
+          if (Number.isFinite(before) && Number.isFinite(after) && before > 0) {
+            const pct = Math.max(0, Math.round((1 - after / before) * 100));
+            toasts?.push(`Refined modes — residual down ${pct}%.`, { level: 'success' });
+          }
+        }
+      }
     });
   }
 

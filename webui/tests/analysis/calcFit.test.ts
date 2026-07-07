@@ -112,6 +112,67 @@ test('reject action forwards action=reject', async () => {
   expect(fit!.payload.action).toBe('reject');
 });
 
+test('delete_one forwards action=delete_one with the mode index', async () => {
+  const { actions, calls } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);   // one mode
+  await actions.calcFit('all', null, 'acc', 'delete_one', 1, 0);
+  const del = calls.filter((c) => c.op === 'calc_fit').at(-1)!;
+  expect(del.payload.action).toBe('delete_one');
+  expect(del.payload.index).toBe(0);
+});
+
+test('recon (mute recompute) sends the muted indices', async () => {
+  const { actions, modal, calls } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);   // one mode, index 0
+  modal.toggleMute(0);
+  await actions.calcFit('all', null, 'acc', 'recon');
+  const recon = calls.filter((c) => c.op === 'calc_fit').at(-1)!;
+  expect(recon.payload.action).toBe('recon');
+  expect(recon.payload.mute).toEqual([0]);
+});
+
+test('refine keeps the improved result and leaves an undo slot', async () => {
+  // fit returns one mode; refine returns a refined mode + converged:true.
+  const refined = () => ({
+    ...fitResult(), fn: real([1], [82]), zn: real([1], [0.018]),
+    M: real([1, 6], [82, 0.018, 1, 0, 0, 0]),
+    converged: true, cost_before: 1, cost_after: 0.2,
+  });
+  const { actions, modal } = harness((op, p) =>
+    op === 'calc_tf' ? tfResult() : op === 'calc_fit'
+      ? (p.action === 'refine' ? refined() : fitResult()) : {});
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  await actions.calcFit('all', null, 'acc', 'refine');
+  const s = get(modal);
+  expect(s.modes.map((m) => m.fn)).toEqual([82]);   // refined value kept
+  expect(s.undo).not.toBeNull();                     // manual undo still available
+});
+
+test('refine AUTO-REVERTS to the pre-refine model when the engine reports not converged', async () => {
+  // refine returns a WORSE model with converged:false — the store must revert.
+  const worse = () => ({
+    ...fitResult(), fn: real([1], [999]), zn: real([1], [0.5]),
+    M: real([1, 6], [999, 0.5, 1, 0, 0, 0]),
+    converged: false, cost_before: 1, cost_after: 5,
+  });
+  const { actions, modal } = harness((op, p) =>
+    op === 'calc_tf' ? tfResult() : op === 'calc_fit'
+      ? (p.action === 'refine' ? worse() : fitResult()) : {});
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);   // mode at 80
+  await actions.calcFit('all', null, 'acc', 'refine');         // engine says worse
+  const s = get(modal);
+  expect(s.modes.map((m) => m.fn)).toEqual([80]);   // reverted to the fit, not 999
+  expect(s.undo).toBeNull();                         // revert consumed the slot
+});
+
 test('calcFit no-ops (no engine call) before any TF exists', async () => {
   const { actions, calls } = harness(() => ({}));
   actions.loadDataset(makeDataset());

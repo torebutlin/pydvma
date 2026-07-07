@@ -70,7 +70,7 @@
   // with the actions (which run the stateless calc_fit and push results in)
   // and the Fit card (controls) + the plot recon overlay.
   const modal = createModalStore();
-  const actions = createActions(engine, selection, analysisSettings, modal);
+  const actions = createActions(engine, selection, analysisSettings, modal, toasts);
   // Acquisition store (Plan 2): manages Web Audio device enumeration +
   // recording lifecycle; the liveSource capability gate flips on init.
   const acquire = createAcquireStore();
@@ -498,7 +498,10 @@
     if (m.setId === null || (!m.local && !m.global)) return null;
     return {
       setId: m.setId, chIn: m.chIn, nChannels: m.nChannels,
-      local: m.local ?? undefined, global: m.global ?? undefined,
+      // Local overlay honours its own visibility toggle (round-4 item 9);
+      // the model gates the global overlay on `showGlobal`.
+      local: (m.showLocal && m.local) ? m.local : undefined,
+      global: m.global ?? undefined,
       showGlobal: m.showGlobal,
     };
   });
@@ -686,7 +689,7 @@
           <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
           <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
           <Legend {selection} {viewState} entriesOverride={tfLegend} />
-          {#if $activeStage === 'fit'}<FitChip {modal} />{/if}
+          {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
         </div>
       {/if}
       {#if $computeErrors[activeErrorKind]}

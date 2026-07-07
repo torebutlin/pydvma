@@ -368,10 +368,37 @@ def _modal_summary(md):
             'an': _arr(np.atleast_2d(md.an)), 'pn': _arr(np.atleast_2d(md.pn))}
 
 
+def _global_recon(md, f, measurement_type, mute, n_tf):
+    """Marshal the GLOBAL (residual-free) reconstruction of ``md`` over ``f``,
+    EXCLUDING any muted modes.
+
+    ``mute`` is the list of mode-row indices the user has muted in the chip
+    (round-4 item 9 — a muted mode stays in ``M`` and in the summary, but is
+    dropped from the whole-model overlay). Muting is realised statelessly: the
+    JS store keeps the full ``M`` and re-sends the mute list, and here we
+    reconstruct from a filtered copy so nothing in the stored model changes.
+    Returns ``(freq_axis_arr, tf_data_arr)`` marshalled — empty when the
+    filtered model has no surviving modes.
+    """
+    empty = (_arr(np.zeros(0)), _arr(np.zeros((0, int(n_tf)), dtype=complex)))
+    if md is None or np.size(md.M) == 0:
+        return empty
+    rows = np.atleast_2d(md.M)
+    mute_idx = set(int(i) for i in (mute or []))
+    keep = [i for i in range(rows.shape[0]) if i not in mute_idx]
+    if not keep:
+        return empty
+    md_vis = datastructure.ModalData(settings=md.settings, test_name=md.test_name)
+    for i in keep:
+        md_vis.add_mode(rows[i])
+    rg = modal.reconstruct_transfer_function_global(md_vis, f, measurement_type)
+    return _arr(rg.freq_axis), _arr(rg.tf_data)
+
+
 def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
              M=None, freq_range=None, measurement_type='acc',
-             action='fit', n_modes=1):
-    """Single-mode modal fit / reject / reconstruction over one set's TF.
+             action='fit', n_modes=1, index=None, mute=None):
+    """Modal fit / reject / delete-one / refine / reconstruction over one set's TF.
 
     STATELESS (spec §11): the JS modal store owns the accumulated modal matrix
     ``M`` and re-sends it every call; this op never keeps state between calls.
@@ -385,15 +412,23 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
       modes' LOCAL reconstruction (dense over ``freq_range``, residuals kept)
       as the pink overlay.
     - ``action == 'reject'`` — delete modes with ``fn`` in ``freq_range``.
-    - ``action == 'recon'`` — no fit; just recompute the overlays from ``M``.
+    - ``action == 'delete_one'`` — delete the single mode at row ``index``
+      (round-4 item 9: the chip's per-mode × button).
+    - ``action == 'refine'`` — simultaneously refine EVERY mode from the current
+      ``M`` (``modal.modal_refine``; seeded from ``M``, over the modes' band).
+      Adds ``{converged, cost_before, cost_after}`` to the result so the store
+      can auto-revert when the refinement did not improve (round-4 item 10).
+    - ``action == 'recon'`` — no fit; just recompute the overlays from ``M``
+      (used when the mute set changes).
 
     Every call also returns the GLOBAL reconstruction (residual-free, over the
-    measured freq axis) so the store's "Reconstruction" toggle needs no extra
-    round-trip. ``measurement_type`` is ``'acc'``/``'vel'``/``'dsp'``. Returns
-    ``{M, fn, zn, an, pn, message, recon_freq_axis, recon_tf_data,
-    global_freq_axis, global_tf_data}`` — all via ``_arr``; recon TFs are
-    complex ``(Nf, n_tf)`` matching the measured columns 1:1 (empty for a
-    reject / a model that ends empty).
+    measured freq axis, EXCLUDING muted modes — see ``mute``) so the store's
+    overlay toggles need no extra round-trip. ``measurement_type`` is
+    ``'acc'``/``'vel'``/``'dsp'``. Returns ``{M, fn, zn, an, pn, message,
+    recon_freq_axis, recon_tf_data, global_freq_axis, global_tf_data}`` (plus
+    ``converged``/``cost_before``/``cost_after`` for ``refine``) — all via
+    ``_arr``; recon TFs are complex ``(Nf, n_tf)`` matching the measured
+    columns 1:1 (empty for a reject / a model that ends empty).
     """
     tf = _tf_from_flat(freq_axis, tf_data, n_tf, fs, n_channels)
     f = tf.freq_axis
@@ -407,6 +442,7 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
     md = _rebuild_modal(M, tf.settings, tf.test_name)
     new_modes = []
     message = ''
+    refine_info = None
 
     if action == 'fit':
         mag = np.abs(tf.tf_data[:, 0]) if tf.tf_data.shape[1] > 0 else np.abs(f) * 0
@@ -436,10 +472,33 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
                 md = _delete_modes(md, in_range)   # None when the last mode(s) go
                 message = 'Mode fits deleted.'
 
+    elif action == 'delete_one':
+        if md is not None and np.size(md.M) > 0 and index is not None:
+            n_rows = np.atleast_2d(md.M).shape[0]
+            idx = int(index)
+            if 0 <= idx < n_rows:
+                md = _delete_modes(md, [idx])      # None when it was the last mode
+                message = 'Mode deleted.'
+
+    elif action == 'refine':
+        # Ignore any visible window: refine the WHOLE model over the modes' band
+        # (modal_refine's own default). Seeded from the current M.
+        if md is not None and np.atleast_2d(md.M).shape[0] >= 1:
+            md_refined, refine_info = modal.modal_refine(
+                md, datastructure.TfDataList([tf]),
+                freq_range=None, measurement_type=measurement_type)
+            md = md_refined
+            message = ('Refined {} mode(s).'.format(np.atleast_2d(md.M).shape[0])
+                       if refine_info['converged'] else 'Refinement did not improve the fit.')
+
     # action == 'recon' (or any other) just re-marshals md + overlays below.
 
     out = _modal_summary(md)
     out['message'] = message
+    if refine_info is not None:
+        out['converged'] = bool(refine_info['converged'])
+        out['cost_before'] = float(refine_info['cost_before'])
+        out['cost_after'] = float(refine_info['cost_after'])
 
     # Local reconstruction (pink) — only the just-fitted modes, dense over the
     # fit window. Empty for reject / recon (no fresh fit to highlight).
@@ -455,14 +514,11 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
         out['recon_freq_axis'] = _arr(np.zeros(0))
         out['recon_tf_data'] = _arr(np.zeros((0, int(n_tf)), dtype=complex))
 
-    # Global reconstruction (grey dashed) — residual-free, whole measured axis.
-    if md is not None and np.size(md.M) > 0:
-        rg = modal.reconstruct_transfer_function_global(md, f, measurement_type)
-        out['global_freq_axis'] = _arr(rg.freq_axis)
-        out['global_tf_data'] = _arr(rg.tf_data)
-    else:
-        out['global_freq_axis'] = _arr(np.zeros(0))
-        out['global_tf_data'] = _arr(np.zeros((0, int(n_tf)), dtype=complex))
+    # Global reconstruction (grey dashed) — residual-free, whole measured axis,
+    # excluding any muted modes (the muted modes stay in the summary above).
+    g_axis, g_data = _global_recon(md, f, measurement_type, mute, n_tf)
+    out['global_freq_axis'] = g_axis
+    out['global_tf_data'] = g_data
 
     return out
 

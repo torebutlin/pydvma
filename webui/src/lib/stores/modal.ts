@@ -1,32 +1,46 @@
 /**
- * Modal-fit state store (Wave-A Task A1).
+ * Modal-fit state store (Wave-A Task A1; round-4 items 9-10).
  *
  * Holds ONE modal model per dataset — the browser analogue of Qt's
  * `dataset.modal_data_list[0]`. The engine (`glue.calc_fit`) is STATELESS
  * (spec §11): this store owns the accumulated modal matrix `M` and
- * re-sends it on every fit / reject, decoding each result back into:
+ * re-sends it on every fit / reject / delete / refine, decoding each result
+ * back into:
  *
  *   - `matrix`   — the marshalled `M` the store re-sends (opaque to the UI);
  *   - `modes`    — per-mode `{fn, zn, Q}` for the floating mode chip
  *                  (mockup `#fitChip`, round2-bench.html:1602-1606);
  *   - `local`    — the just-fitted modes' LOCAL reconstruction (pink solid
  *                  overlay, dense over the fit window);
- *   - `global`   — the whole-model GLOBAL reconstruction (grey dashed overlay,
- *                  shown when `showGlobal` is on — the "Reconstruction" toggle).
+ *   - `global`   — the whole-model GLOBAL reconstruction (grey dashed overlay),
+ *                  recomputed by the engine EXCLUDING muted modes.
+ *
+ * Round-4 additions:
+ *   - `muted`    — per-mode mute flags. A muted mode stays in `M` and in the
+ *                  chip, but is excluded from the global overlay (the engine
+ *                  reconstructs from a filtered `M`; recompute is driven by an
+ *                  `action:'recon'` call carrying the mute indices). Preserved
+ *                  across a mute-recompute / refine (mode COUNT unchanged),
+ *                  reset whenever the mode set changes (fit / delete).
+ *   - `showLocal`/`showGlobal` — independent visibility toggles for the two
+ *                  overlays (App gates `local` on `showLocal`; the model gates
+ *                  `global` on `showGlobal`).
+ *   - `mt`       — the current measurement type ('acc'|'vel'|'dsp'), mirrored
+ *                  from the Fit card so per-mode deletes / mutes recompute the
+ *                  overlays with the right `(iω)^p` power even though the chip
+ *                  has no TF-type control of its own.
+ *   - `undo`     — one level of undo (previous whole state) set before a
+ *                  destructive/refine action; also the vehicle for refine
+ *                  auto-revert. `null` when there is nothing to undo.
  *
  * `setId` records which set the model targets so a re-fit against a
- * DIFFERENT set (with a possibly different channel count) starts fresh
- * instead of trying to accumulate incompatible modes. `chIn` / `nChannels`
- * are carried so the recon overlay maps each reconstruction column back to
- * its source channel with the SAME out/in remap the measured TF uses
- * (`tfColumn`), keeping plot and legend in lock-step (Task R4 precedent).
- *
- * A single modal model across MULTIPLE sets' TFs (Qt fits the whole
- * `tf_data_list` jointly) is deferred — the webui fits one target set's TF,
- * which is deterministic and robust. Flagged for Tore.
+ * DIFFERENT set starts fresh instead of accumulating incompatible modes.
+ * `chIn` / `nChannels` map each reconstruction column back to its source
+ * channel with the SAME out/in remap the measured TF uses (`tfColumn`).
  */
 import { get, writable } from 'svelte/store';
 import { decodeArray, type DecodedArray, type MarshalledArray } from '../plot/model';
+import type { MeasurementType } from '../analysis/actions';
 
 /** One fitted mode's summary for the chip table (`Q = 1/(2ζ)`). */
 export interface ModalMode { fn: number; zn: number; Q: number; }
@@ -46,15 +60,26 @@ export interface ModalState {
   matrix: MarshalledArray | null;
   /** Per-mode summaries for the floating chip. */
   modes: ModalMode[];
+  /** Per-mode mute flags (same length/order as `modes`). */
+  muted: boolean[];
+  /** Measurement type mirrored from the Fit card (drives recon recompute). */
+  mt: MeasurementType;
   /** Engine message from the last fit (poor-fit / phase warnings). */
   message: string;
   /** Local (pink) reconstruction of the just-fitted modes, or `null`. */
   local: ReconArrays | null;
-  /** Global (grey dashed) reconstruction of the whole model, or `null`. */
+  /** Global (grey dashed) reconstruction of the visible model, or `null`. */
   global: ReconArrays | null;
-  /** Whether the global reconstruction overlay is shown ("Reconstruction"). */
+  /** Whether the global reconstruction overlay is shown. */
   showGlobal: boolean;
+  /** Whether the local reconstruction overlay is shown (default on). */
+  showLocal: boolean;
+  /** One-level undo snapshot (state before the last destructive action). */
+  undo: UndoSnapshot | null;
 }
+
+/** Everything undo restores — the whole state minus the undo slot itself. */
+export type UndoSnapshot = Omit<ModalState, 'undo'>;
 
 /** A worker array crosses either as a plain object or a `toJs` Map. */
 function mval(v: unknown, k: string): unknown {
@@ -87,8 +112,15 @@ function reconOf(axisRaw: unknown, dataRaw: unknown): ReconArrays | null {
 function empty(): ModalState {
   return {
     setId: null, chIn: 0, nChannels: 0, matrix: null,
-    modes: [], message: '', local: null, global: null, showGlobal: false,
+    modes: [], muted: [], mt: 'acc', message: '',
+    local: null, global: null, showGlobal: false, showLocal: true, undo: null,
   };
+}
+
+/** Snapshot the restorable part of `s` (everything but its own undo slot). */
+function snapshot(s: ModalState): UndoSnapshot {
+  const { undo: _drop, ...rest } = s;
+  return rest;
 }
 
 /**
@@ -104,8 +136,10 @@ export function createModalStore() {
 
   /**
    * Decode a `calc_fit` engine result into the store, carrying the fit
-   * context. Preserves the current `showGlobal` toggle across updates so a
-   * fresh fit does not silently hide/show the global overlay.
+   * context. Preserves the `showGlobal` / `showLocal` toggles and the `undo`
+   * slot across updates. `muted` is preserved when the mode COUNT is
+   * unchanged (a mute-recompute or a refine leaves indices meaningful) and
+   * reset to all-false otherwise (fit / delete shift the rows).
    */
   function applyResult(result: unknown, ctx: FitContext): void {
     const fn = axisData(mval(result, 'fn'));
@@ -117,17 +151,21 @@ export function createModalStore() {
     }
     const matrixRaw = asMarshalled(mval(result, 'M'));
     const matrix = (matrixRaw.shape[0] ?? 0) > 0 ? matrixRaw : null;
-    store.update((s) => ({
-      ...s,
-      setId: matrix ? ctx.setId : null,
-      chIn: ctx.chIn,
-      nChannels: ctx.nChannels,
-      matrix,
-      modes,
-      message: (mval(result, 'message') as string) ?? '',
-      local: reconOf(mval(result, 'recon_freq_axis'), mval(result, 'recon_tf_data')),
-      global: reconOf(mval(result, 'global_freq_axis'), mval(result, 'global_tf_data')),
-    }));
+    store.update((s) => {
+      const keepMute = modes.length === s.modes.length && s.muted.length === modes.length;
+      return {
+        ...s,
+        setId: matrix ? ctx.setId : null,
+        chIn: ctx.chIn,
+        nChannels: ctx.nChannels,
+        matrix,
+        modes,
+        muted: keepMute ? s.muted : new Array(modes.length).fill(false),
+        message: (mval(result, 'message') as string) ?? '',
+        local: reconOf(mval(result, 'recon_freq_axis'), mval(result, 'recon_tf_data')),
+        global: reconOf(mval(result, 'global_freq_axis'), mval(result, 'global_tf_data')),
+      };
+    });
   }
 
   return {
@@ -140,6 +178,32 @@ export function createModalStore() {
     setShowGlobal: (b: boolean) => store.update((s) => ({ ...s, showGlobal: b })),
     /** Toggle the global reconstruction overlay. */
     toggleGlobal: () => store.update((s) => ({ ...s, showGlobal: !s.showGlobal })),
+    /** Show/hide the local reconstruction overlay. */
+    setShowLocal: (b: boolean) => store.update((s) => ({ ...s, showLocal: b })),
+    /** Toggle the local reconstruction overlay. */
+    toggleLocal: () => store.update((s) => ({ ...s, showLocal: !s.showLocal })),
+    /** Mirror the Fit card's measurement type (used by recon recompute). */
+    setMt: (mt: MeasurementType) => store.update((s) => (s.mt === mt ? s : { ...s, mt })),
+    /** Toggle mode `i`'s mute flag (the recompute is driven by the caller). */
+    toggleMute: (i: number) => store.update((s) => {
+      if (i < 0 || i >= s.muted.length) return s;
+      const muted = s.muted.slice();
+      muted[i] = !muted[i];
+      return { ...s, muted };
+    }),
+    /** Indices of currently-muted modes (sent to the engine for recon). */
+    mutedIndices: (): number[] => {
+      const m = get(store).muted;
+      const out: number[] = [];
+      for (let i = 0; i < m.length; i++) if (m[i]) out.push(i);
+      return out;
+    },
+    /** Capture the current state into the one-level undo slot. */
+    pushUndo: () => store.update((s) => ({ ...s, undo: snapshot(s) })),
+    /** Restore the undo snapshot (and clear the slot). No-op if none. */
+    undo: () => store.update((s) => (s.undo ? { ...s.undo, undo: null } : s)),
+    /** Drop the undo slot without restoring (e.g. after a clean success). */
+    clearUndo: () => store.update((s) => (s.undo ? { ...s, undo: null } : s)),
     /** Reset to empty (new dataset, or the target set went away). */
     reset: () => store.set(empty()),
   };

@@ -530,8 +530,10 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           const { x, y, xMonotonic } = tfXY(slice.axis, re, im, type, linMag, window);
           lines.push({ x, y, color, opacity: 1, width, dashed, yAxis: 'left', xMonotonic });
         };
-        if (recon.local) draw(recon.local, RECON_LOCAL, false, 2.2);
-        if (recon.global && recon.showGlobal) draw(recon.global, RECON_GLOBAL, true, 1.4);
+        // Widths bumped for legibility (round-4 item 9 — the dashed global
+        // read as too subtle); mockup colours kept.
+        if (recon.local) draw(recon.local, RECON_LOCAL, false, 2.8);
+        if (recon.global && recon.showGlobal) draw(recon.global, RECON_GLOBAL, true, 2.2);
       }
     }
 

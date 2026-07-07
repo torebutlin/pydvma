@@ -11,14 +11,18 @@
    *     accumulate them into the dataset's modal model (`calc_fit` action
    *     'fit'; Fit 2/3 split the window at detected peaks — best-effort);
    *   - Reject — delete modes whose fn lies in the visible window;
-   *   - Reconstruction — toggle the global (grey dashed) reconstruction overlay.
+   *   - Refine — simultaneously refine ALL fitted modes (round-4 item 10;
+   *     `calc_fit` action 'refine'), auto-reverting if it does not improve;
+   *   - Local / Global — independent visibility toggles for the pink local
+   *     (just-fitted) and grey-dashed global (whole-model) recon overlays
+   *     (round-4 item 9 — the dashed global read as too subtle on its own).
+   *   - Undo — appears after a destructive/refine action; one level.
    *
    * The mockup's "Summary" is realised as the ALWAYS-ON floating mode chip
-   * (`FitChip`, mounted over the plot by App), so no separate button is needed;
-   * this card's primary slot shows a running "N mode(s) fitted" count.
-   * "Global optimise" from the mockup is OMITTED — pydvma has no simultaneous
-   * multi-mode entry point (deferred; flagged to Tore), and a dead disabled
-   * button is worse than none.
+   * (`FitChip`, mounted over the plot by App), which also carries the per-mode
+   * mute / delete controls; this card's primary slot shows a running "N
+   * mode(s) fitted" count. "Global optimise" from the mockup is realised as
+   * Refine (a refine-from-current, not a from-scratch global fit).
    *
    * TF measurement type ('acc'|'vel'|'dsp') is a Fit-card control here (Qt
    * keeps it on the TF card's "TF type" combo); it drives the `(iω)^p` power
@@ -65,9 +69,20 @@
 
   const range = $derived<[number, number] | null>($sharedFreq ?? null);
 
-  function fit(nModes: number) { actions.calcFit($target, range, mt, 'fit', nModes); }
+  // Mirror the measurement type into the modal store so the chip's per-mode
+  // delete / mute recompute the overlays with the same (iω)^p power.
+  $effect(() => { modal.setMt(mt); });
+
+  // Refine / undo operate on the SAME set the model targets.
+  const modelTarget = $derived($modalState.setId ?? $target);
+  const nModes = $derived($modalState.modes.length);
+
+  function fit(n: number) { actions.calcFit($target, range, mt, 'fit', n); }
   function reject() { actions.calcFit($target, range, mt, 'reject'); }
-  function toggleRecon() { modal.toggleGlobal(); }
+  function refine() { actions.calcFit(modelTarget, null, mt, 'refine'); }
+  function undo() { modal.undo(); }
+  function toggleLocal() { modal.toggleLocal(); }
+  function toggleGlobal() { modal.toggleGlobal(); }
 </script>
 
 <section class="ctx-card card-controls" aria-label="Fit stage controls">
@@ -86,13 +101,27 @@
         </div>
       </div>
       <div class="grp">
-        <span class="grp-lab">inspect</span>
+        <span class="grp-lab">modes</span>
         <div class="grp-ctl">
           <button class="btn" disabled={$busy} onclick={reject}
             title="Delete mode fits whose frequency lies in the visible window">Reject</button>
+          <button class="btn indigo-t" disabled={$busy || nModes < 2} onclick={refine}
+            title="Refine all fitted modes simultaneously (neighbouring modes interact); auto-reverts if it does not improve">Refine</button>
+          {#if $modalState.undo}
+            <button class="btn" disabled={$busy} onclick={undo}
+              title="Undo the last modal change">↶ Undo</button>
+          {/if}
+        </div>
+      </div>
+      <div class="grp">
+        <span class="grp-lab">overlays</span>
+        <div class="grp-ctl">
+          <button class="btn" class:on={$modalState.showLocal}
+            disabled={$modalState.setId === null} onclick={toggleLocal}
+            title="Toggle the local (just-fitted) reconstruction overlay">Local</button>
           <button class="btn" class:on={$modalState.showGlobal}
-            disabled={$modalState.setId === null} onclick={toggleRecon}
-            title="Toggle the global modal reconstruction overlay">Reconstruction</button>
+            disabled={$modalState.setId === null} onclick={toggleGlobal}
+            title="Toggle the global (whole-model) reconstruction overlay">Global</button>
         </div>
       </div>
       <div class="grp">

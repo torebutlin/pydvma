@@ -81,4 +81,67 @@ test('reset returns to the empty state', () => {
   expect(s.modes).toEqual([]);
   expect(s.matrix).toBeNull();
   expect(s.showGlobal).toBe(false);
+  expect(s.muted).toEqual([]);
+  expect(s.showLocal).toBe(true);
+  expect(s.undo).toBeNull();
+});
+
+test('showLocal toggles independently (default on) and mt mirrors the card', () => {
+  const m = createModalStore();
+  expect(get(m).showLocal).toBe(true);   // local overlay shown by default
+  m.toggleLocal();
+  expect(get(m).showLocal).toBe(false);
+  m.setShowLocal(true);
+  expect(get(m).showLocal).toBe(true);
+  expect(get(m).mt).toBe('acc');
+  m.setMt('vel');
+  expect(get(m).mt).toBe('vel');
+});
+
+test('undo slot: pushUndo snapshots, undo restores, one level only', () => {
+  const m = createModalStore();
+  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });  // 2 modes
+  expect(get(m).undo).toBeNull();
+
+  m.pushUndo();                                   // snapshot the 2-mode model
+  expect(get(m).undo).not.toBeNull();
+
+  // A destructive change: reject down to nothing.
+  m.applyResult({
+    M: real([0, 0], []), fn: real([0], []), zn: real([0], []),
+    an: real([0, 0], []), pn: real([0, 0], []), message: 'Mode fits deleted.',
+    recon_freq_axis: real([0], []), recon_tf_data: cplx([0, 1], []),
+    global_freq_axis: real([0], []), global_tf_data: cplx([0, 1], []),
+  }, { setId: 3, chIn: 0, nChannels: 2 });
+  expect(get(m).modes).toEqual([]);
+
+  m.undo();                                        // restore the 2-mode model
+  const s = get(m);
+  expect(s.modes.map((x) => x.fn)).toEqual([80, 220]);
+  expect(s.setId).toBe(3);
+  expect(s.undo).toBeNull();                       // slot cleared after undo
+});
+
+test('mute: toggleMute flips flags, mutedIndices reports them, preserved across same-count applyResult', () => {
+  const m = createModalStore();
+  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });  // 2 modes
+  expect(get(m).muted).toEqual([false, false]);
+
+  m.toggleMute(1);
+  expect(get(m).muted).toEqual([false, true]);
+  expect(m.mutedIndices()).toEqual([1]);
+
+  // A recon recompute (same mode count) must PRESERVE the mute flags…
+  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });
+  expect(get(m).muted).toEqual([false, true]);
+
+  // …but a structural change (different count) resets them.
+  m.applyResult({
+    M: real([1, 6], [80, 0.02, 1, 0, 0, 0]),
+    fn: real([1], [80]), zn: real([1], [0.02]),
+    an: real([1, 1], [1]), pn: real([1, 1], [0]), message: '',
+    recon_freq_axis: real([2], [60, 110]), recon_tf_data: cplx([2, 1], [1, 0, 1, 0]),
+    global_freq_axis: real([2], [0, 500]), global_tf_data: cplx([2, 1], [0.5, 0, 0.5, 0]),
+  }, { setId: 3, chIn: 0, nChannels: 2 });
+  expect(get(m).muted).toEqual([false]);
 });
