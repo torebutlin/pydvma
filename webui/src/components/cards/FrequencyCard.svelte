@@ -26,6 +26,7 @@
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
   import type { FreqMode } from '../../lib/plot/model';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
+  import { distributeByDf } from '../../lib/analysis/resolutionControl';
   import ResolutionControl from '../ResolutionControl.svelte';
 
   let {
@@ -35,7 +36,7 @@
   }: { actions: Actions; selection: Selection; analysisSettings: AnalysisSettings } = $props();
 
   const setsView = $derived(selection.setsView);
-  const computeError = $derived(actions.computeError);
+  const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
 
   const target = $derived(analysisSettings.analysisTarget);
@@ -48,6 +49,10 @@
     (void $settingsMap, $target === 'all' && analysisSettings.isMixed('freq', key));
 
   const freqMode = $derived(freq.mode as FreqMode);
+  // This card owns the FFT error in FFT mode and the PSD error otherwise
+  // (PSD + CSD both compute via calcPsd). Per-kind so a TF/sono failure
+  // never shows here (Round-3 item 2).
+  const errKind = $derived(freqMode === 'fft' ? 'fft' : 'psd');
 
   // Coupled resolution seeds off the TARGET set's fs + duration (R1-minor
   // fix): for a specific set target, use THAT set's metadata; for 'all',
@@ -91,6 +96,21 @@
     patch(partial);
     live.schedule();
   };
+
+  /**
+   * Apply a resolution edit. A single-set target stores its own nFrames.
+   * For 'all', the edit is a Δf INTENT distributed per-set in each set's own
+   * fs/duration terms (mixed-fs correctness, Round-3 item 1) — equal-duration
+   * sets receive the same nFrames, so this matches the old uniform behaviour
+   * there.
+   */
+  function onResolution(n: number) {
+    if ($target !== 'all') { patchLive({ nFrames: n }); return; }
+    for (const { setId, nFrames } of distributeByDf(n, durationS, fs, actions.workingSets())) {
+      analysisSettings.patch(setId, 'freq', { nFrames });
+    }
+    live.schedule();
+  }
   // Drop a pending live recompute if the card unmounts (stage switch).
   $effect(() => () => live.cancel());
 
@@ -145,7 +165,7 @@
           <div class="grp-ctl">
             <ResolutionControl {fs} {durationS} nFrames={freq.nFrames}
               mixed={mixed('nFrames')}
-              onchange={(n) => patchLive({ nFrames: n })} />
+              onchange={onResolution} />
           </div>
         </div>
       </div>
@@ -153,8 +173,8 @@
     {#if freqMode === 'csd'}
       <span class="note">CSD shows |Cxy| on the diagonal (coherence); cross-power pairs deferred.</span>
     {/if}
-    {#if $computeError}
-      <div class="ctx-err" role="alert">{$computeError}</div>
+    {#if $computeErrors[errKind]}
+      <div class="ctx-err" role="alert">{$computeErrors[errKind]}</div>
     {/if}
   </div>
   <div class="ctx-primary">

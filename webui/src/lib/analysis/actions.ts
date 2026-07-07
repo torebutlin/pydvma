@@ -10,8 +10,15 @@
  * (spec §11); this module only reshapes flat JS buffers in and
  * `decodeArray`s the marshalled result out. Every action awaits the
  * engine (`enqueue` / `whenReady`) and, on REJECTION (boot failure),
- * sets `computeError` rather than hanging (engine store A8b: enqueue
- * rejects, never hangs).
+ * records the failure in `computeErrors` rather than hanging (engine
+ * store A8b: enqueue rejects, never hangs).
+ *
+ * Errors are PER-KIND (Round-3 item 2): `computeErrors` is a keyed store
+ * `{ fft, psd, tf, sono, clean }` so each card banner shows only its own
+ * kind's error, App's under-plot banner shows the ACTIVE view's kind, and
+ * starting a calc clears ONLY that kind. A failed TF therefore can no
+ * longer poison the Sonogram card (the old single `computeError` + owner
+ * flag left one kind's error stuck on every card until a same-kind run).
  *
  * Concurrency: live slider re-issues are debounced (150 ms) and each
  * action kind carries a PER-KIND stale seq (keyed 'fft'/'psd'/'tf'/
@@ -20,8 +27,7 @@
  * a DIFFERENT kind (that global-counter bug would let a debounced
  * sonogram slider silently blank an in-flight TF batch, and vice
  * versa). `busy` is REFERENCE-COUNTED so it stays true until the last
- * concurrent action settles, and `computeError` is cleared per-kind (a
- * concurrent action never erases another's error unseen).
+ * concurrent action settles.
  */
 import { writable, get } from 'svelte/store';
 import type { DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
@@ -33,8 +39,12 @@ import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import { fromNFrames, fromNFft } from './resolution';
 
-/** Compute-action kind, used as the per-kind stale-guard key. */
+/** Compute-action kind, used as the per-kind stale-guard + error key. */
 type Kind = 'fft' | 'psd' | 'tf' | 'sono' | 'clean';
+
+/** A fresh, all-clear per-kind error record. */
+const emptyErrors = (): Record<Kind, string> =>
+  ({ fft: '', psd: '', tf: '', sono: '', clean: '' });
 
 /** A worker array crosses either as a plain object or a toJs Map. */
 function mval(v: unknown, k: string): unknown {
@@ -82,7 +92,7 @@ function timePayload(item: DvmaItem): { axis: Float64Array; data: Float64Array; 
  * Create the analysis actions bound to an engine + selection store, plus
  * the per-set `analysisSettings` store. Exposes the working `dataset`
  * store, the decoded `derived` store the plot model consumes, and a
- * `computeError` string store the cards show on engine failure. Actions
+ * per-kind `computeErrors` store the cards show on engine failure. Actions
  * are thin: marshal → enqueue → decode.
  *
  * PER-SET TARGETING (Task R1): `calcFft` / `calcPsd` / `calcTf` take a
@@ -96,8 +106,17 @@ function timePayload(item: DvmaItem): { axis: Float64Array; data: Float64Array; 
 export function createActions(engine: EngineStore, selection: Selection, settings?: AnalysisSettings) {
   const dataset = writable<DvmaDataset | null>(null);
   const derived = writable<DerivedMap>({});
-  const computeError = writable<string>('');
+  /**
+   * Per-kind compute errors (Round-3 item 2): one slot per action kind so a
+   * card banner shows only its own kind's failure and one kind's failure
+   * never surfaces on another card. `''` means "no error for this kind".
+   */
+  const computeErrors = writable<Record<Kind, string>>(emptyErrors());
   const busy = writable<boolean>(false);
+
+  /** Set/clear one kind's error (no-op emit when unchanged). */
+  const setError = (kind: Kind, msg: string) =>
+    computeErrors.update((e) => (e[kind] === msg ? e : { ...e, [kind]: msg }));
 
   /** Source sets in load order (one per TimeData item), with cached meta. */
   let working: WorkingSet[] = [];
@@ -160,32 +179,28 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    */
   let busyN = 0;
 
-  /** Which action kind owns the currently-shown `computeError` (or null). */
-  let errorKind: Kind | null = null;
-
   function setDerived(setId: number, patch: Partial<SetArrays>) {
     derived.update(m => ({ ...m, [setId]: { ...m[setId], ...patch, setId } }));
   }
 
   /**
-   * Run `fn`, routing an engine rejection to `computeError` (never
-   * hangs). `kind` scopes the error reset so a concurrent action of a
-   * DIFFERENT kind never wipes this action's error before the user sees
-   * it: entry clears the error only if it belongs to (was set by) this
-   * same kind; a failure records the failing kind. `busy` is
-   * reference-counted so it stays true until the last action settles.
+   * Run `fn`, routing an engine rejection to THIS kind's slot in
+   * `computeErrors` (never hangs). Errors are per-kind, so a concurrent
+   * action of a DIFFERENT kind never touches this kind's error: entry
+   * clears only this kind, success clears only this kind, failure records
+   * only this kind. `busy` is reference-counted so it stays true until the
+   * last action settles.
    */
   async function guarded(kind: Kind, fn: () => Promise<void>): Promise<void> {
-    if (errorKind === kind) computeError.set('');   // only clear our own prior error
+    setError(kind, '');            // clear only THIS kind's prior error
     busyN += 1;
     busy.set(true);
     try {
       engine.boot();               // idempotent; lazily boots on first compute
       await fn();
-      if (errorKind === kind) { computeError.set(''); errorKind = null; }  // our run succeeded
+      setError(kind, '');          // our run succeeded — clear this kind
     } catch (e) {
-      computeError.set(e instanceof Error ? e.message : String(e));
-      errorKind = kind;
+      setError(kind, e instanceof Error ? e.message : String(e));
     } finally {
       busyN -= 1;
       busy.set(busyN > 0);
@@ -206,8 +221,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   function loadDataset(ds: DvmaDataset) {
     dataset.set(ds);
     derived.set({});
-    computeError.set('');
-    errorKind = null;              // fresh dataset clears any lingering error owner
+    computeErrors.set(emptyErrors());   // fresh dataset clears every kind's error
     working = [];
     // Selection store has no reset; it is created fresh per app load. We
     // simply addSet for each TimeData item in this dataset.
@@ -328,25 +342,40 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   /**
    * PSD (+ CSD coherence matrix) of the targeted set(s), each at ITS OWN
    * window + n_frames from `settings`. `target === 'all'` runs every set.
+   *
+   * PARTIAL FAILURE (Round-3 item 1): each set is computed independently in
+   * its own try/catch, so a set the engine CAN'T handle (e.g. a resolution
+   * too fine for the 32-bit browser engine → glue.py raises a clear message)
+   * does not stop the others. Sets that succeed render; the failing sets are
+   * collected into ONE named `psd` error naming each set and its reason.
    */
   function calcPsd(target: AnalysisTarget = 'all') {
     const my = bump('psd');
     return guarded('psd', async () => {
+      const failed: string[] = [];
       for (const ws of targeted(target)) {
         const s = freqSettings(ws.setId);
         const window = s.window === 'none' ? null : s.window;
         const { axis, data, nCh } = timePayload(ws.time);
-        const res = await engine.enqueue('calc_psd', {
-          time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
-          window: window ?? 'hann', n_frames: s.nFrames,
-        });
-        if (stale('psd', my)) return;                 // a newer PSD batch won
-        const freqAxis = axisData(mval(res, 'freq_axis'));
-        setDerived(ws.setId, {
-          psd: { axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'psd'))) },
-          csd: { axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'Cxy'))) },
-        });
+        try {
+          const res = await engine.enqueue('calc_psd', {
+            time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
+            window: window ?? 'hann', n_frames: s.nFrames,
+          });
+          if (stale('psd', my)) return;               // a newer PSD batch won
+          const freqAxis = axisData(mval(res, 'freq_axis'));
+          setDerived(ws.setId, {
+            psd: { axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'psd'))) },
+            csd: { axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'Cxy'))) },
+          });
+        } catch (e) {
+          // One set failing must not abort the batch — record which set and
+          // why, keep going, and surface the collected message at the end.
+          failed.push(`${nameOf(ws.setId)}: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
+      if (stale('psd', my)) return;                   // a newer batch superseded us
+      if (failed.length) throw new Error(psdFailedMessage(failed));
     });
   }
 
@@ -370,7 +399,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // (Nf, 0)) and the post-R4 model correctly draws NOTHING — which read
       // as a crash/broken TF to the user (round-2 feedback). Guard here:
       // skip any set that can't produce an output line and surface a clear
-      // message via `computeError` instead of issuing a meaningless worker
+      // message via `computeErrors.tf` instead of issuing a meaningless worker
       // call. `< 2` channels ⇒ no output.
       const acrossSet = sets.find((ws) => tfSettings(ws.setId).averaging === 'across');
       if (acrossSet) {
@@ -417,9 +446,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       }
       if (stale('tf', my)) return;                    // a newer batch superseded us
       // Any valid sets are now drawn; if we skipped single-channel sets,
-      // tell the user why (routes to `computeError` via `guarded`, shown on
-      // the TF card + under the plot). A pure single-channel target computes
-      // nothing and shows only this message.
+      // tell the user why (routes to `computeErrors.tf` via `guarded`, shown
+      // on the TF card + under the plot). A pure single-channel target
+      // computes nothing and shows only this message.
       if (skipped.length > 0) {
         throw new Error(tfNoOutputMessage(skipped.map((ws) => nameOf(ws.setId))));
       }
@@ -530,7 +559,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   return {
-    dataset, derived, computeError, busy,
+    dataset, derived, computeErrors, busy,
     loadDataset, addRecordedSet, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
     /** Source-set metadata for cards (set index → fs / duration / channels). */
@@ -569,7 +598,7 @@ function tfFromResult(
  * User-facing message for a TF requested on a set with no output channel.
  * A transfer function maps one INPUT channel to the remaining OUTPUT
  * channels, so a single-channel set has nothing to estimate. Surfaced via
- * `computeError` (the TF card + plot error banners) rather than crashing
+ * `computeErrors.tf` (the TF card + plot error banners) rather than crashing
  * or drawing a silent, empty TF (round-2 feedback).
  */
 function tfNoOutputMessage(names: string[]): string {
@@ -577,6 +606,17 @@ function tfNoOutputMessage(names: string[]): string {
   if (names.length === 0) return `${base}.`;
   if (names.length === 1) return `${base} — set “${names[0]}” has only one channel.`;
   return `${base} — single-channel sets: ${names.join(', ')}.`;
+}
+
+/**
+ * User-facing message for one or more sets whose PSD could not be computed
+ * (Round-3 item 1). Each `entry` is already `"<set name>: <reason>"`; the
+ * successful sets have already rendered, so this names only the failures.
+ * Surfaced via `computeErrors.psd`.
+ */
+function psdFailedMessage(entries: string[]): string {
+  if (entries.length === 1) return `PSD could not be computed — ${entries[0]}`;
+  return `PSD could not be computed for some sets — ${entries.join('; ')}`;
 }
 
 export type Actions = ReturnType<typeof createActions>;

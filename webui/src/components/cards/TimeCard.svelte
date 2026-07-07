@@ -24,7 +24,7 @@
 
   const setsView = $derived(selection.setsView);
   const highlight = $derived(selection.highlight);
-  const computeError = $derived(actions.computeError);
+  const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
 
   // Widest set drives the impulse-channel options.
@@ -67,8 +67,8 @@
         </div>
       </div>
     </div>
-    {#if $computeError}
-      <div class="ctx-err" role="alert">{$computeError}</div>
+    {#if $computeErrors.clean}
+      <div class="ctx-err" role="alert">{$computeErrors.clean}</div>
     {/if}
   </div>
   <div class="ctx-primary">

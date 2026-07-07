@@ -102,6 +102,45 @@ export function resolveFrom(
   }
 }
 
+/** One set's (fs, duration) plus its selection id, for `distributeByDf`. */
+export interface ResolutionTarget { setId: number; fs: number; durationS: number; }
+
+/**
+ * Distribute a resolution edit made on ONE representative set across many
+ * targets by PRESERVING Δf (Round-3 item 1 — "Δf is the user's intent").
+ *
+ * When the analysis target is "All sets", the user edits the resolution
+ * against a single representative set (its fs/duration). Writing that
+ * representative's raw `nFrames` onto every set is only correct when the
+ * sets share a duration: `nFrames` depends on duration and Δf, NOT on fs.
+ * This maps the edit to its Δf on the representative, then gives each target
+ * the integer `nFrames` that yields that SAME Δf in ITS OWN fs/duration
+ * terms — so mixed-fs sets stay consistent and mixed-duration sets each keep
+ * the intended frequency resolution. Equal-duration targets all get the same
+ * `nFrames` (no spurious disagreement).
+ *
+ * Preconditions match `resolution.ts`: every fs/duration > 0 and finite.
+ */
+export function distributeByDf(
+  nFramesRep: number,
+  repDurationS: number,
+  repFs: number,
+  targets: ResolutionTarget[],
+): { setId: number; nFrames: number }[] {
+  const dF = resolveFrom('frames', nFramesRep, repDurationS, repFs).dF;
+  return targets.map((t) => ({
+    setId: t.setId,
+    // `nFrames` depends only on duration and Δf, so an equal-duration
+    // target takes the representative's value VERBATIM — the Δf round-trip
+    // quantises through the integer nFFT (e.g. a typed N=528 would come
+    // back 525), and the typed number box must hold exactly what the user
+    // entered. Only a genuinely different duration needs the conversion.
+    nFrames: t.durationS === repDurationS
+      ? Math.max(1, Math.round(nFramesRep))
+      : resolveFrom('dF', dF, t.durationS, t.fs).nFrames,
+  }));
+}
+
 /**
  * Precompute gate (R2 point 5). The resolution maths is closed-form and
  * cheap (`resolution.ts`, no worker call), so "precompute" here means:

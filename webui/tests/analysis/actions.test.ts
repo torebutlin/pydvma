@@ -212,7 +212,7 @@ test('calcTf on a single-channel set issues NO worker call and surfaces a clear 
   actions.loadDataset(makeDatasetCh([1]));           // one 1-channel set
   await actions.calcTf('all');
   expect(calls.some((c) => c.op === 'calc_tf'), 'no meaningless worker call').toBe(false);
-  expect(get(actions.computeError)).toMatch(/output channel/i);
+  expect(get(actions.computeErrors).tf).toMatch(/output channel/i);
   expect(get(actions.busy), 'must not hang').toBe(false);
 });
 
@@ -226,8 +226,8 @@ test('calcTf mixed 1ch + 2ch: runs the 2ch set, skips the 1ch, warns which was s
   expect(tf, 'only the multi-channel set ran').toHaveLength(1);
   expect(get(actions.derived)[b].tf, '2-channel set computed').toBeDefined();
   expect(get(actions.derived)[a]?.tf, '1-channel set skipped').toBeUndefined();
-  expect(get(actions.computeError)).toMatch(/output channel/i);
-  expect(get(actions.computeError)).toContain('set_0');   // names the skipped set
+  expect(get(actions.computeErrors).tf).toMatch(/output channel/i);
+  expect(get(actions.computeErrors).tf).toContain('set_0');   // names the skipped set
 });
 
 test("calcTf 'across' with single-channel sets surfaces the message, no crash", async () => {
@@ -237,7 +237,7 @@ test("calcTf 'across' with single-channel sets surfaces the message, no crash", 
   settings.patch('all', 'tf', { averaging: 'across', chIn: 0, window: 'hann', nFrames: 5 });
   await actions.calcTf('all');
   expect(calls.some((c) => c.op === 'calc_tf_averaged')).toBe(false);
-  expect(get(actions.computeError)).toMatch(/output channel/i);
+  expect(get(actions.computeErrors).tf).toMatch(/output channel/i);
 });
 
 test('hasComputed: false before Calc, true for the computed view after', async () => {
@@ -287,6 +287,56 @@ test("calcPsd reads each set's window + n_frames from settings", async () => {
   expect(psd.payload.n_frames).toBe(12);
 });
 
+// ---- PSD partial failure (Round-3 item 1): a set the engine can't handle
+// (e.g. glue.py rejects an oversized resolution) must not stop the others;
+// the successful set renders and the failing one gets a NAMED message. ----
+
+test('calcPsd all-sets: a set the engine rejects is named; the others still compute', async () => {
+  const { engine, calls } = fakeEngine((op, payload) => {
+    if (op !== 'calc_psd') return Promise.resolve({});
+    // Reject the set whose n_channels==1 (stand-in for the oversized set);
+    // succeed for the 2-channel set.
+    if (payload.n_channels === 1) {
+      return Promise.reject(new Error('PSD at this resolution needs too large an internal buffer for the browser engine.'));
+    }
+    return Promise.resolve({
+      freq_axis: real([2], [0, 1]), psd: real([2, 2], [1, 2, 3, 4]), Cxy: real([2, 2], [1, 1, 1, 1]),
+    });
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDatasetCh([2, 1]));           // set_0 = 2ch (ok), set_1 = 1ch (rejected)
+  const [a, b] = get(sel.sets).map((s) => s.id);
+
+  await actions.calcPsd('all');
+  expect(calls.filter((c) => c.op === 'calc_psd')).toHaveLength(2);   // BOTH attempted
+  expect(get(actions.derived)[a]?.psd, '2-channel set rendered').toBeDefined();
+  expect(get(actions.derived)[b]?.psd, 'rejected set has no psd').toBeUndefined();
+  const err = get(actions.computeErrors).psd;
+  expect(err).toContain('set_1');                       // names the failing set
+  expect(err).toMatch(/internal buffer|too large/i);    // carries the engine reason
+  expect(get(actions.busy), 'must not hang').toBe(false);
+});
+
+test('calcPsd clears the psd error on a subsequent all-success run', async () => {
+  let failNext = true;
+  const { engine } = fakeEngine((op, payload) => {
+    if (op !== 'calc_psd') return Promise.resolve({});
+    if (failNext && payload.n_channels === 1) {
+      return Promise.reject(new Error('too big'));
+    }
+    return Promise.resolve({
+      freq_axis: real([2], [0, 1]), psd: real([2, 2], [1, 2, 3, 4]), Cxy: real([2, 2], [1, 1, 1, 1]),
+    });
+  });
+  const { actions } = harness(engine);
+  actions.loadDataset(makeDatasetCh([1]));              // single set that first fails
+  await actions.calcPsd('all');
+  expect(get(actions.computeErrors).psd).not.toBe('');
+  failNext = false;                                     // now it succeeds
+  await actions.calcPsd('all');
+  expect(get(actions.computeErrors).psd, 'a clean run clears the psd error').toBe('');
+});
+
 test('stale calcTf resolves out of order: only the latest result is kept', async () => {
   // First call resolves LATE (deferred), second resolves immediately.
   let releaseFirst!: (v: unknown) => void;
@@ -316,12 +366,12 @@ test('stale calcTf resolves out of order: only the latest result is kept', async
   expect(d[0].tf!.axis.length).toBe(3);
 });
 
-test('engine rejection sets computeError and does not hang', async () => {
+test('engine rejection sets the fft computeErrors slot and does not hang', async () => {
   const { engine } = fakeEngine(async () => { throw new Error('engine failed to boot: bang'); });
   const { actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
   await actions.calcFft('all');
-  expect(get(actions.computeError)).toContain('engine failed to boot');
+  expect(get(actions.computeErrors).fft).toContain('engine failed to boot');
   expect(get(actions.busy)).toBe(false);
 });
 
@@ -405,9 +455,36 @@ test('a concurrent action does not erase another kind\'s error unseen', async ()
   actions.loadDataset(makeDataset(1));
 
   await actions.calcFft('all');
-  expect(get(actions.computeError)).toContain('engine failed to boot');
+  expect(get(actions.computeErrors).fft).toContain('engine failed to boot');
   await actions.calcSono(0, 0);                         // different kind, succeeds
-  expect(get(actions.computeError), 'FFT error must survive a later sonogram success').toContain('engine failed to boot');
+  expect(get(actions.computeErrors).fft, 'FFT error must survive a later sonogram success').toContain('engine failed to boot');
+  expect(get(actions.computeErrors).sono, 'sono kind stays clear on success').toBe('');
+});
+
+// ---- Per-kind error scoping (Round-3 item 2): a failed TF must NOT poison
+// the Sonogram. A single global error store showed the TF message on the
+// sono card and made sono look dead; per-kind slots keep each card's error
+// isolated and let sono compute normally. ----
+
+test('a failed TF does not block or poison a later Sonogram', async () => {
+  const { engine, calls } = fakeEngine((op) => {
+    if (op === 'calc_sono') return Promise.resolve({
+      time_axis: real([2], [0, 1]), freq_axis: real([2], [0, 1]), sono_data: real([2, 2], [1, 2, 3, 4]),
+    });
+    return Promise.resolve({});
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDatasetCh([1]));              // single-channel → TF has no output
+  const setId = get(sel.sets)[0].id;
+
+  await actions.calcTf('all');                          // fails gracefully (tf slot)
+  expect(get(actions.computeErrors).tf).toMatch(/output channel/i);
+
+  await actions.calcSono('all', 0);                     // must still compute
+  expect(calls.some((c) => c.op === 'calc_sono'), 'sono actually ran').toBe(true);
+  expect(get(actions.derived)[setId]?.sono, 'sono produced output').toBeDefined();
+  expect(get(actions.computeErrors).sono, 'sono has NO error of its own').toBe('');
+  expect(get(actions.computeErrors).tf, 'the TF error stays on the TF kind only').toMatch(/output channel/i);
 });
 
 // ---- Plan 2 persistence: loadDataset restore + stampUiState ----

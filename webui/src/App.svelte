@@ -94,7 +94,7 @@
   const datasetStore = actions.dataset;
 
   const derivedStore = actions.derived;
-  const computeError = actions.computeError;
+  const computeErrors = actions.computeErrors;
   const active = viewState.active;
   const legendEntries = selection.legendEntries;
   const legendRows = selection.legendRows;       // off-inclusive (legend display)
@@ -357,6 +357,20 @@
   const view = $derived($active);
 
   /**
+   * Compute-error kind for the ACTIVE view (Round-3 item 2): the under-plot
+   * banner shows only the error belonging to what is on screen, so a failed
+   * TF never bleeds its message onto the frequency/sono plots. The frequency
+   * view maps to 'fft' or 'psd' by the current spectral mode; the time view
+   * maps to the clean-impulse op.
+   */
+  const activeErrorKind = $derived(
+    view === 'tf' ? 'tf'
+    : view === 'sono' ? 'sono'
+    : view === 'time' ? 'clean'
+    : freqMode === 'fft' ? 'fft' : 'psd',
+  );
+
+  /**
    * Per-set TF input channel (Task R4): the `chIn` the set's TF was
    * computed with, read off its decoded `tf` slice. `undefined` before
    * Calc TF (or for a set with no TF) → the transform leaves that set's
@@ -601,8 +615,8 @@
           <Legend {selection} {viewState} entriesOverride={tfLegend} />
         </div>
       {/if}
-      {#if $computeError}
-        <div class="plot-err" role="alert">Compute failed: {$computeError}</div>
+      {#if $computeErrors[activeErrorKind]}
+        <div class="plot-err" role="alert">Compute failed: {$computeErrors[activeErrorKind]}</div>
       {/if}
     </section>
   </main>

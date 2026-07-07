@@ -71,10 +71,36 @@ def calc_psd(time_axis, time_data, n_channels, fs, window, n_frames):
     PSD is the diagonal of the cross-spectrum matrix:
     ``real(einsum('iif->if', Pxy))`` -> (Nc, Nf). Cxy is (Nc, Nc, Nf).
     Defaults to a Hann window when none is given.
+
+    Engine guard: the shipped pyodide wheel (pydvma 1.5.0) builds the
+    per-segment windows inside ``calculate_cross_spectrum_matrix`` via a
+    ``sliding_window_view`` whose *nominal* size is
+    ``Nc * (N_samples - nperseg + 1) * nperseg``. On the 32-bit WASM engine
+    numpy rejects that view with "array is too big" for a large ``nperseg``
+    on a long, high-rate record (e.g. a 2 s, 44.1 kHz capture at a fine Δf) —
+    an opaque failure the user cannot act on. We catch that specific overflow
+    and re-raise a clear, actionable message so ONE oversized set surfaces a
+    named error while the other sets still compute (the JS ``calcPsd`` runs
+    each set independently). Upstream (repo) pydvma now strides directly to
+    the decimated windows and no longer overflows, so this branch is inert
+    once a wheel with that fix ships — no fixed size cap is imposed here that
+    would over-block the fixed engine.
     """
     td = _time_data(time_axis, time_data, n_channels, fs)
-    cs = analysis.calculate_cross_spectrum_matrix(
-        td, window=(window or 'hann'), N_frames=int(n_frames))
+    try:
+        cs = analysis.calculate_cross_spectrum_matrix(
+            td, window=(window or 'hann'), N_frames=int(n_frames))
+    except (ValueError, MemoryError) as e:
+        msg = str(e).lower()
+        if isinstance(e, MemoryError) or 'too big' in msg or 'maximum possible size' in msg:
+            n_samples = int(td.time_data.shape[0])
+            raise ValueError(
+                'PSD at this resolution needs too large an internal buffer for '
+                'the browser engine ({} samples × {} averaging frames). '
+                'Use a coarser Δf (fewer or shorter frames).'.format(
+                    n_samples, int(n_frames))
+            ) from e
+        raise
     psd = np.real(np.einsum('iif->if', cs.Pxy))
     return {'freq_axis': _arr(cs.freq_axis), 'psd': _arr(psd), 'Cxy': _arr(cs.Cxy)}
 

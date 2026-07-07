@@ -31,7 +31,7 @@
   }: { actions: Actions; selection: Selection; analysisSettings: AnalysisSettings } = $props();
 
   const setsView = $derived(selection.setsView);
-  const computeError = $derived(actions.computeError);
+  const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
 
   const target = $derived(analysisSettings.analysisTarget);
@@ -139,8 +139,8 @@
         </div>
       </div>
     </div>
-    {#if $computeError}
-      <div class="ctx-err" role="alert">{$computeError}</div>
+    {#if $computeErrors.sono}
+      <div class="ctx-err" role="alert">{$computeErrors.sono}</div>
     {/if}
   </div>
   <div class="ctx-primary">

@@ -21,12 +21,13 @@
    * (fs, duration) via `defaultFrameRange` — 1 .. a sane per-record max,
    * not a fixed 1..30.
    *
-   * PRECOMPUTE / LIVE vs DEFER (R2 point 5): the coupled read-outs update
-   * live on every slider `input` for SMALL sets (cheap closed-form maths,
-   * so dragging feels instant). For LARGE sets (`shouldDeferLive`) the
-   * live write-back is deferred to slider `change` (release) so a heavy
-   * record never stutters mid-drag. Text-box commits always apply
-   * immediately regardless of size.
+   * LIVE STREAMING (Round-3 item 4): the slider commits on every `input`
+   * so the coupled read-outs AND the parent's live recompute follow the
+   * thumb during a drag (not only on release). The coupling maths is cheap
+   * closed-form, and the parent's live recompute is debounced (150 ms) with
+   * a per-kind stale-guard, so streaming never floods the engine. `change`
+   * (release) commits a final settle. (This supersedes the earlier
+   * defer-large-sets-to-release behaviour.)
    *
    * MIXED (R2 / R1 carry): when `mixed` is set (target 'all' with sets
    * that disagree) the boxes show a "–mixed–" placeholder; the first edit
@@ -37,7 +38,6 @@
     defaultFrameRange,
     sliderPosition,
     resolveFrom,
-    shouldDeferLive,
     type ResolutionQuantity,
   } from '../lib/analysis/resolutionControl';
 
@@ -60,10 +60,8 @@
     onchange: (nFrames: number) => void;
   } = $props();
 
-  // Slider range + precompute gate both derive from the set metadata.
+  // Slider range derives from the set metadata.
   const range = $derived(defaultFrameRange(durationS, fs));
-  const nSamples = $derived(Math.round(durationS * fs));
-  const defer = $derived(shouldDeferLive(nSamples));
 
   // Full coupled snapshot for the current frame count (drives every box).
   const res = $derived(resolveFrom('frames', nFrames, durationS, fs));
@@ -76,13 +74,11 @@
     onchange(resolveFrom(quantity, value, durationS, fs).nFrames);
   }
 
-  // Slider: live for small sets, deferred to release for large ones.
-  function onSliderInput(v: number) {
-    if (!defer) commit('frames', v);
-  }
-  function onSliderChange(v: number) {
-    if (defer) commit('frames', v);
-  }
+  // Slider streams during drag: commit on every `input` so the read-outs
+  // and the parent's (debounced) live recompute follow the thumb. `change`
+  // (release) commits a final settle (Round-3 item 4).
+  function onSliderInput(v: number) { commit('frames', v); }
+  function onSliderChange(v: number) { commit('frames', v); }
 </script>
 
 <input

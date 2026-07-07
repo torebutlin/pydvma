@@ -5,6 +5,7 @@ import {
   PRECOMPUTE_SAMPLE_CAP,
   shouldDeferLive,
   resolveFrom,
+  distributeByDf,
 } from '../../src/lib/analysis/resolutionControl';
 import { fromNFrames } from '../../src/lib/analysis/resolution';
 
@@ -83,6 +84,47 @@ test('resolveFrom(dF,...) inverts to frame length (dF = 1/frameLength)', () => {
   // A requested Δf of 2 Hz means a 0.5 s frame; the mapping must honour that.
   const r = resolveFrom('dF', 2, 30, 44100);
   expect(r.frameLengthS).toBeCloseTo(0.5, 2);
+});
+
+// --- distributeByDf: 'All sets' resolution edit preserves Δf per set -------
+
+test('distributeByDf: equal-duration sets all get the SAME nFrames (mixed fs)', () => {
+  // Reproduces the round-3 case: fixture fs=2000, recorded fs=44100, both 2 s.
+  // The user edits resolution on the representative (fs=2000) to N=23; every
+  // set must keep the SAME Δf → the same nFrames (nFrames depends on duration
+  // + Δf, NOT on fs), so the sets do not spuriously disagree.
+  const targets = [
+    { setId: 0, fs: 2000, durationS: 2 },
+    { setId: 1, fs: 44100, durationS: 2 },
+  ];
+  const out = distributeByDf(23, 2, 2000, targets);
+  expect(out.map((o) => o.setId)).toEqual([0, 1]);
+  expect(out[0].nFrames).toBe(23);
+  expect(out[1].nFrames).toBe(23);   // same Δf, same duration → same nFrames
+});
+
+test('distributeByDf: equal-duration pass-through is EXACT (no Δf quantisation)', () => {
+  // A typed N must hold verbatim in the number box: 528 through the
+  // Δf→nFFT round-trip came back 525 (integer-nFFT quantisation), which
+  // broke the "typed value holds" contract (resolution e2e). Equal-duration
+  // targets take the representative's nFrames verbatim.
+  const out = distributeByDf(528, 2, 2000, [
+    { setId: 0, fs: 2000, durationS: 2 },
+    { setId: 1, fs: 44100, durationS: 2 },
+  ]);
+  expect(out[0].nFrames).toBe(528);
+  expect(out[1].nFrames).toBe(528);
+});
+
+test('distributeByDf: unequal-duration sets keep the intended Δf, not nFrames', () => {
+  // Representative: 2 s at 2000 Hz, N=23 → some Δf. A 4 s set at 8000 Hz must
+  // adopt the nFrames that reproduces THAT Δf, which DIFFERS from a naive 23.
+  const repDf = resolveFrom('frames', 23, 2, 2000).dF;
+  const out = distributeByDf(23, 2, 2000, [{ setId: 5, fs: 8000, durationS: 4 }]);
+  expect(out[0].nFrames).not.toBe(23);                 // NOT the naive uniform copy
+  const gotDf = resolveFrom('frames', out[0].nFrames, 4, 8000).dF;
+  // Δf preserved to within integer-nFFT rounding (~0.1%), not exactly.
+  expect(gotDf).toBeCloseTo(repDf, 1);
 });
 
 // --- precompute gate: small = live, large = defer --------------------------

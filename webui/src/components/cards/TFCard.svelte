@@ -24,6 +24,7 @@
   import type { Actions } from '../../lib/analysis/actions';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
+  import { distributeByDf } from '../../lib/analysis/resolutionControl';
   import ResolutionControl from '../ResolutionControl.svelte';
 
   let {
@@ -36,7 +37,7 @@
   const setsView = $derived(selection.setsView);
   const current = $derived(viewState.current);
   const sharedFreq = $derived(viewState.sharedFreqRange);
-  const computeError = $derived(actions.computeError);
+  const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
 
   const target = $derived(analysisSettings.analysisTarget);
@@ -85,7 +86,18 @@
     patch(partial);
     live.schedule();
   };
-  function onFrames(n: number) { patchLive({ nFrames: n }); }
+  /**
+   * A single-set target stores its own nFrames; for 'all' the edit is a Δf
+   * INTENT distributed per-set in each set's own fs/duration terms (mixed-fs
+   * correctness, Round-3 item 1). Equal-duration sets get the same nFrames.
+   */
+  function onFrames(n: number) {
+    if ($target !== 'all') { patchLive({ nFrames: n }); return; }
+    for (const { setId, nFrames } of distributeByDf(n, durationS, fs, actions.workingSets())) {
+      analysisSettings.patch(setId, 'tf', { nFrames });
+    }
+    live.schedule();
+  }
   // Drop a pending live recompute if the card unmounts (stage switch).
   $effect(() => () => live.cancel());
 
@@ -190,8 +202,8 @@
         </div>
       </div>
     </div>
-    {#if $computeError}
-      <div class="ctx-err" role="alert">{$computeError}</div>
+    {#if $computeErrors.tf}
+      <div class="ctx-err" role="alert">{$computeErrors.tf}</div>
     {/if}
   </div>
   <div class="ctx-primary">
