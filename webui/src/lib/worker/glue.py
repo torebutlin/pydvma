@@ -327,6 +327,32 @@ def _fit_subranges(f, mag, freq_range, n_modes):
     return [[edges[i], edges[i + 1]] for i in range(len(chosen))]
 
 
+def _delete_modes(md, indices):
+    """Delete rows ``indices`` from ``md``, returning the shrunk ModalData —
+    or ``None`` when every mode is removed.
+
+    Works around a pydvma bug (present in the shipped 1.5.0 wheel and repo
+    ``datastructure.py``): ``ModalData.delete_mode`` unconditionally calls
+    ``modal.unpack_matrix(self.M)`` on the POST-delete matrix, and
+    ``unpack_matrix`` indexes ``X[0, :]`` — so deleting the LAST remaining
+    mode leaves a ``(0, 6)`` matrix and raises ``IndexError: index 0 is out
+    of bounds for axis 0 with size 0`` (the round-4 "Fit → Reject" crash at
+    ``glue.py`` line ~410, and the same latent crash when a re-fit replaces
+    every existing mode in its window). We detect the "no survivors" case up
+    front and return an empty model (``None``) instead of invoking the
+    crashing path; when at least one mode survives, ``delete_mode`` is safe
+    and is used directly. Stateless: the caller re-marshals whatever we
+    return, so ``None`` cleanly clears the JS store's mode chip.
+    """
+    rows = np.atleast_2d(md.M)
+    keep = np.ones(rows.shape[0], dtype=bool)
+    keep[np.asarray(indices, dtype=int)] = False
+    if not keep.any():
+        return None
+    md.delete_mode(np.asarray(indices, dtype=int))
+    return md
+
+
 def _modal_summary(md):
     """Marshal a ModalData's matrix + per-mode summary arrays for the JS store.
 
@@ -395,7 +421,7 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
             fn_all = np.atleast_2d(md.M)[:, 0]
             in_range = np.where((fn_all > freq_range[0]) & (fn_all < freq_range[1]))[0]
             if in_range.size > 0:
-                md.delete_mode(in_range)
+                md = _delete_modes(md, in_range)   # None if the window covered them all
         for row in new_modes:
             if md is None or np.size(md.M) == 0:
                 md = datastructure.ModalData(row, settings=tf.settings, test_name=tf.test_name)
@@ -407,7 +433,7 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
             fn_all = np.atleast_2d(md.M)[:, 0]
             in_range = np.where((fn_all > freq_range[0]) & (fn_all < freq_range[1]))[0]
             if in_range.size > 0:
-                md.delete_mode(in_range)
+                md = _delete_modes(md, in_range)   # None when the last mode(s) go
                 message = 'Mode fits deleted.'
 
     # action == 'recon' (or any other) just re-marshals md + overlays below.

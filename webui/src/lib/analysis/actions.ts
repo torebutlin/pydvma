@@ -37,11 +37,13 @@
 import { writable, get } from 'svelte/store';
 import type { DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 import { itemChannels, setItemMeta } from '../model/dataset';
+import type { NpyArray } from '../codec/npy';
 import type { EngineStore } from '../stores/engine';
 import type { Selection } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
 import { defaults, type PerSetSettings } from '../stores/analysisSettings';
-import { decodeArray, type MarshalledArray, type SetArrays } from '../plot/model';
+import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
+import type { ViewId } from '../stores/viewstate';
 import type { ModalStore } from '../stores/modal';
 import { normalizeFactors, normalizeUnits } from '../model/calibration';
 import { calibrationController } from '../stores/calibrationController';
@@ -104,6 +106,89 @@ function timePayload(item: DvmaItem): { axis: Float64Array; data: Float64Array; 
   const axis = Float64Array.from(item.arrays.time_axis.data);
   const data = Float64Array.from(item.arrays.time_data.data);
   return { axis, data, nCh: itemChannels(item) };
+}
+
+/** Decode a loaded-file `NpyArray` into the plot model's `DecodedArray`. */
+function decodeNpy(a: NpyArray): DecodedArray {
+  return decodeArray({ shape: a.shape, data: a.data as Float64Array, complex: a.isComplex });
+}
+
+/**
+ * Derived-view slice(s) a loaded non-TimeData item contributes, so its view
+ * shows on load WITHOUT a recompute (round-4 bug 3: a legacy `.npy` that
+ * already carried a TF loaded the time series but never the TF). Returns a
+ * partial `SetArrays` to merge onto the item's source set, or `null` for
+ * kinds we don't restore. `srcChannels` is the source set's channel count.
+ *
+ * Restored: `FreqData → freq` (Frequency/FFT view); `TfData → tf` (TF view,
+ * with the out/in remap fields); `CrossSpecData → csd` (coherence). NOT
+ * restored as a slice: stored `SonoData` is a 3-D complex `(Nf, Nt, Nc)`
+ * cube whereas the webui's sono slice is a 2-D per-channel magnitude image,
+ * and PSD is derivable from the stored `Pxy` — both are left to an on-demand
+ * Calc (the FFT still shows). `ModalData`/`MetaData` carry no plottable slice.
+ *
+ * chIn CONVENTION: pydvma's `TfData` carries NO input-channel field — only
+ * its `Nout` output columns and an `id_link` to the source `TimeData` — so
+ * the input channel a loaded TF was measured against is UNKNOWABLE from the
+ * file. We restore `chIn = 0`: pydvma's default and the overwhelmingly
+ * common case (Qt's `calculate_tf_set(ch_in=0)`). The out/in remap then
+ * drops source channel 0 and maps the surviving channels to the TF columns.
+ */
+function sliceForLoadedItem(item: DvmaItem, srcChannels: number): Partial<SetArrays> | null {
+  const A = item.arrays;
+  switch (item.kind) {
+    case 'FreqData':
+      if (!A.freq_axis || !A.freq_data) return null;
+      return { freq: { axis: Float64Array.from(A.freq_axis.data), data: decodeNpy(A.freq_data) } };
+    case 'TfData':
+      if (!A.freq_axis || !A.tf_data) return null;
+      return {
+        tf: {
+          axis: Float64Array.from(A.freq_axis.data),
+          data: decodeNpy(A.tf_data),
+          coherence: A.tf_coherence ? decodeNpy(A.tf_coherence) : undefined,
+          chIn: 0, nChannels: srcChannels,
+        },
+      };
+    case 'CrossSpecData':
+      if (!A.freq_axis || !A.Cxy) return null;
+      return { csd: { axis: Float64Array.from(A.freq_axis.data), data: decodeNpy(A.Cxy) } };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Source-channel count for a set created for an ORPHAN derived item — one
+ * whose source `TimeData` is absent from the file (e.g. a TF-only export).
+ * A `TfData` restores as `Nout + 1` source channels (the dropped input plus
+ * its outputs, chIn = 0 convention); `FreqData` uses its own column count;
+ * `CrossSpecData` its matrix dimension; anything else falls back to 1.
+ */
+function orphanChannels(item: DvmaItem): number {
+  const A = item.arrays;
+  if (item.kind === 'TfData' && A.tf_data) return (A.tf_data.shape[1] ?? 0) + 1;
+  if (item.kind === 'FreqData' && A.freq_data) return A.freq_data.shape[1] ?? 1;
+  if (item.kind === 'CrossSpecData' && A.Cxy) return A.Cxy.shape[0] ?? 1;
+  return 1;
+}
+
+/**
+ * First populated view in the priority order time → frequency → tf → sono
+ * (round-4 bug 4). `frequency` counts as populated when ANY of FFT / PSD /
+ * coherence is present. Returns the ordered list of populated views so the
+ * caller can both pick a jump target (`[0]`) and test whether the current
+ * view is among them. Empty when the dataset has nothing plottable.
+ */
+function populatedViews(seed: DerivedMap): ViewId[] {
+  const sets = Object.values(seed);
+  const any = (pred: (s: SetArrays) => boolean) => sets.some(pred);
+  const out: ViewId[] = [];
+  if (any((s) => !!s.time)) out.push('time');
+  if (any((s) => !!s.freq || !!s.psd || !!s.csd)) out.push('frequency');
+  if (any((s) => !!s.tf)) out.push('tf');
+  if (any((s) => !!s.sono)) out.push('sono');
+  return out;
 }
 
 /**
@@ -236,15 +321,21 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * store, per-set analysis settings flow to the analysisSettings store.
    * Missing `ui` (older files) leaves both at their defaults.
    */
-  function loadDataset(ds: DvmaDataset) {
+  function loadDataset(ds: DvmaDataset): ViewId[] {
     dataset.set(ds);
     derived.set({});
     computeErrors.set(emptyErrors());   // fresh dataset clears every kind's error
     modal?.reset();                     // drop any prior dataset's modal fit
     working = [];
     // Selection store has no reset; it is created fresh per app load. We
-    // simply addSet for each TimeData item in this dataset.
+    // simply addSet for each item in this dataset.
     const seed: DerivedMap = {};
+    // Map a source TimeData's `unique_id` → its setId so DERIVED items
+    // (FreqData/TfData/CrossSpecData, linked by `id_link`) attach to the
+    // right set (round-4 bug 3).
+    const linkToSet = new Map<string, number>();
+
+    // ---- Pass 1: TimeData items → selection sets + seeded time slice ----
     ds.items.forEach(item => {
       if (item.kind !== 'TimeData') return;
       const nCh = itemChannels(item);
@@ -254,6 +345,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const timestamp = (item.meta.timestring as string) || '';
       const setId = selection.addSet({ name, nChannels: nCh, durationS, timestamp });
       working.push({ setId, time: item, fs: sampleRate(item), durationS, nChannels: nCh });
+      const uid = item.meta.unique_id;
+      if (typeof uid === 'string') linkToSet.set(uid, setId);
       seed[setId] = {
         setId,
         time: {
@@ -268,6 +361,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // read in engineering units immediately on load (Task A2). Absent /
         // all-ones ⇒ identity — the plot model treats it as no-op.
         calFactors: normalizeFactors(item.meta.channel_cal_factors, nCh),
+        // Per-channel engineering units for axis labels (round-4): 'V'/absent
+        // reads as unlabelled, so uncalibrated sets keep the plain 'Amplitude'.
+        units: normalizeUnits(item.meta.units, nCh),
       };
 
       // Restore persisted UI state (Plan 2 persistence).
@@ -290,7 +386,49 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         }
       }
     });
+
+    // ---- Pass 2: DERIVED items (Freq/Tf/CrossSpec) → seeded view slices ----
+    // A file that carries a TF/FFT/coherence should show those views on load,
+    // not just the time series (round-4 bug 3). Each derived item links to its
+    // source TimeData via `id_link`; an ORPHAN one (source absent, e.g. a
+    // TF-only export) gets its OWN display set so its view still shows.
+    ds.items.forEach(item => {
+      if (item.kind === 'TimeData') return;
+      const link = item.meta.id_link;
+      const linkedSet = typeof link === 'string' ? linkToSet.get(link) : undefined;
+
+      if (linkedSet !== undefined) {
+        // Source TimeData present: seed the view slice onto its set.
+        const srcChannels = working.find((w) => w.setId === linkedSet)!.nChannels;
+        const slice = sliceForLoadedItem(item, srcChannels);
+        if (slice) seed[linkedSet] = { ...seed[linkedSet], ...slice, setId: linkedSet };
+        return;
+      }
+
+      // Orphan (source TimeData absent). Only worth a standalone display set
+      // if the item yields a plottable slice — an orphan SonoData / ModalData
+      // has nothing to show, so it is skipped rather than left as an empty set.
+      const nCh = orphanChannels(item);
+      const slice = sliceForLoadedItem(item, nCh);
+      if (!slice) return;
+      const name = (item.meta.test_name as string) || item.kind;
+      const timestamp = (item.meta.timestring as string) || '';
+      const newId = selection.addSet({ name, nChannels: nCh, durationS: 0, timestamp });
+      // Kept in `working` (with the derived item as its source) so the set is
+      // targetable — a loaded TF is fittable; a recompute would fail through
+      // the normal guarded path (no time series), not crash.
+      working.push({ setId: newId, time: item, fs: sampleRate(item), durationS: 0, nChannels: nCh });
+      if (typeof link === 'string') linkToSet.set(link, newId);
+      seed[newId] = {
+        setId: newId,
+        calFactors: normalizeFactors(item.meta.channel_cal_factors, nCh),
+        units: normalizeUnits(item.meta.units, nCh),
+        ...slice,
+      };
+    });
+
     derived.set(seed);
+    return populatedViews(seed);
   }
 
   /**
@@ -491,9 +629,18 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const my = bump('sono');
     return guarded('sono', async () => {
       const { axis, data, nCh } = timePayload(ws.time);
+      // Clamp the requested channel to the set's channel range (round-4 bug
+      // 1). The sono channel select (`ch`) is card-local state that is NOT
+      // reset when the analysis target switches to a set with FEWER channels
+      // (e.g. selecting ch_1 on a 2-channel set, then logging a mono take):
+      // an out-of-range `ch` makes the engine's `sono_data[:, :, ch]` raise
+      // `IndexError`, so the sonogram silently renders NOTHING while PSD/FFT
+      // (which process every channel) still work. Clamping keeps a stale
+      // select from blanking the plot; SonoCard also resets the select.
+      const safeCh = Math.min(Math.max(0, Math.floor(ch)), Math.max(0, nCh - 1));
       const res = await engine.enqueue('calc_sono', {
         time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
-        ch, nperseg: nFft, noverlap: nFft >> 1,
+        ch: safeCh, nperseg: nFft, noverlap: nFft >> 1,
       });
       if (stale('sono', my)) return;                    // a newer sonogram won
       setDerived(ws.setId, {
@@ -578,6 +725,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         }),
       },
       calFactors: normalizeFactors(item.meta.channel_cal_factors, nCh),
+      units: normalizeUnits(item.meta.units, nCh),
     });
 
     return setId;
@@ -621,7 +769,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     if (units !== undefined) {
       setItemMeta(ws.time, 'units', normalizeUnits(units, ws.nChannels));
     }
-    setDerived(setId, { calFactors: norm });
+    setDerived(setId, {
+      calFactors: norm,
+      units: normalizeUnits(units !== undefined ? units : ws.time.meta.units, ws.nChannels),
+    });
     dataset.update((d) => d);            // re-emit so autosave persists the edit
   }
 

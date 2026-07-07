@@ -100,14 +100,23 @@ test('Export stage → Export CSV downloads a raw-values .csv (first line is rea
     'exporter not wired yet — ContextCard must pass exporter={actions}',
   );
 
-  const downloadPromise = page.waitForEvent('download');
+  // fixture=1 (impulse.dvma) carries Time + FFT + TF, and loading now seeds
+  // the derived views (round-4 bug 3), so an all-kinds CSV export writes one
+  // file per kind: <base>-time.csv, <base>-freq.csv, <base>-tf.csv. Collect
+  // every download the single click fires.
+  const downloads: Download[] = [];
+  page.on('download', (d) => downloads.push(d));
   await csvBtn.click();
-  const download = await downloadPromise;
-  // fixture=1 has only time data → one file, named <base>-time.csv.
-  expect(download.suggestedFilename()).toMatch(/-time\.csv$/);
-  const text = readFileSync((await download.path())!, 'utf8');
+  await expect.poll(() => downloads.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(3);
+  const names = downloads.map((d) => d.suggestedFilename());
+  expect(names.some((n) => /-time\.csv$/.test(n))).toBe(true);
+  expect(names.some((n) => /-freq\.csv$/.test(n))).toBe(true);
+  expect(names.some((n) => /-tf\.csv$/.test(n))).toBe(true);
+
+  // The time CSV: axis starts at 0; every cell is numpy's %.18e (no complex parens).
+  const timeDl = downloads.find((d) => /-time\.csv$/.test(d.suggestedFilename()))!;
+  const text = readFileSync((await timeDl.path())!, 'utf8');
   const firstLine = text.split('\n')[0];
-  // The time axis starts at 0; every cell is numpy's %.18e (no complex parens).
   expect(firstLine.startsWith('0.000000000000000000e+00,')).toBe(true);
   expect(firstLine).toMatch(/^-?\d\.\d{18}e[+-]\d{2}(,-?\d\.\d{18}e[+-]\d{2})+$/);
 });

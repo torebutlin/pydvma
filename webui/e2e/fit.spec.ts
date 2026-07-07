@@ -56,5 +56,15 @@ test.describe('@engine', () => {
     await expect(chip).toContainText('mode 1', { timeout: 60_000 });
     await expect(chip).not.toContainText('mode 2');
     await expect(page.locator('.ctx-err')).toHaveCount(0);
+
+    // Reject: deleting the LAST remaining mode over the visible window must
+    // NOT raise (round-4 bug 2 — glue `delete_mode` crashed with an
+    // IndexError as the matrix emptied). The chip returns to "No fit" and no
+    // error banner appears on the card or under the plot.
+    await page.getByRole('button', { name: 'Reject' }).click();
+    await expect(chip).toContainText('No fit', { timeout: 60_000 });
+    await expect(chip).not.toContainText('mode 1');
+    await expect(page.locator('.ctx-err')).toHaveCount(0);
+    await expect(page.locator('.plot-err')).toHaveCount(0);
   });
 });

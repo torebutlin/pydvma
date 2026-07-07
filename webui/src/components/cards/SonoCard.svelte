@@ -52,6 +52,17 @@
   );
   const chOptions = $derived(targetView?.nChannels ?? 1);
 
+  // Keep the channel select inside the target set's range (round-4 bug 1).
+  // `ch` is card-local state that survives a target switch, so moving to a
+  // set with fewer channels (e.g. selecting ch_1 then logging a mono take)
+  // would leave `ch` pointing at a channel that no longer exists — the
+  // engine's `sono_data[:, :, ch]` then raises and the sonogram renders
+  // NOTHING. Snap back to ch_0 whenever the current channel falls out of
+  // range so a Calc always targets a real channel.
+  $effect(() => {
+    if (ch >= chOptions) ch = 0;
+  });
+
   const patch = (partial: Partial<{ nFft: number; dynRangeDb: number }>) =>
     analysisSettings.patch($target, 'sono', partial);
 

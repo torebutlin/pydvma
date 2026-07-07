@@ -391,6 +391,27 @@ test('calcSono issues calc_sono with nperseg=nFft (from settings), noverlap=nFft
   expect(sono.payload.noverlap).toBe(32);
 });
 
+test('calcSono clamps an out-of-range channel to the set range (round-4 bug 1)', async () => {
+  // Regression: the sono channel select is card-local state that survives a
+  // target switch, so a stale ch (e.g. ch_1 picked on a 2-channel set) can
+  // exceed a MONO set's channel count. Sent as-is the engine raises IndexError
+  // and the sonogram renders nothing while PSD still works. calcSono must
+  // clamp the channel so the engine only ever sees a real channel index.
+  const { engine, calls } = fakeEngine(async () => ({
+    time_axis: real([2], [0, 1]),
+    freq_axis: real([2], [0, 1]),
+    sono_data: real([2, 2], [1, 2, 3, 4]),
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDatasetCh([1]));         // one MONO set
+  const a = get(sel.sets)[0].id;
+  await actions.calcSono(a, 5);                     // stale, out-of-range channel
+  const sono = calls.find(c => c.op === 'calc_sono')!;
+  expect(sono.payload.ch).toBe(0);                  // clamped to the only channel
+  // The result is committed (not dropped by the clamp), so a sono slice lands.
+  expect(get(actions.derived)[a].sono).toBeDefined();
+});
+
 test('two DIFFERENT action kinds racing: neither cross-drops the other', async () => {
   // Regression for the CRITICAL global-seq bug: a calcSono issued while a
   // calcTf is in flight must NOT drop the TF result when TF resolves later.

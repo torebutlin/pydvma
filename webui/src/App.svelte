@@ -29,7 +29,7 @@
   import EngineProbe from './components/EngineProbe.svelte';
   import ToastHost from './components/ToastHost.svelte';
   import { activeStage, capabilities } from './lib/stores/stages';
-  import { createViewState } from './lib/stores/viewstate';
+  import { createViewState, type ViewId } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
   import { createAnalysisSettings } from './lib/stores/analysisSettings';
   import { createEngineStore } from './lib/stores/engine';
@@ -39,7 +39,7 @@
   import { buildPlotModel, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
   import { tfTransformEntries } from './lib/plot/tfChannels';
   import type { LegendEntry } from './lib/stores/selection';
-  import { readable } from 'svelte/store';
+  import { readable, get } from 'svelte/store';
   import { dataExtent, type PlotModel } from './lib/plot/build';
   import { readDvma, writeDvma } from './lib/codec/dvma';
   import { sniffFormat } from './lib/files/sniff';
@@ -156,7 +156,7 @@
     if (fixtureRequested) {
       fetch(fixtureUrl)
         .then((r) => r.arrayBuffer())
-        .then((buf) => actions.loadDataset(readDvma(new Uint8Array(buf))))
+        .then((buf) => loadAndFocus(readDvma(new Uint8Array(buf))))
         .catch((e) => console.error('[fixture] load failed:', e));
     }
 
@@ -246,7 +246,7 @@
           label: 'Restore',
           run: () => {
             try {
-              actions.loadDataset(readDvma(bytes));
+              loadAndFocus(readDvma(bytes));
             } catch (e) {
               toasts.push(`Restore failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
             }
@@ -258,6 +258,24 @@
   }
 
   // ---- Load / Save pipeline (Task 13) ----
+
+  /**
+   * Load a dataset and jump the active view to one that HAS data (round-4
+   * bug 4). `actions.loadDataset` seeds every populated view's slices and
+   * returns the populated views in priority order (time → frequency → tf →
+   * sono). If the current view already has data we keep it; otherwise we
+   * switch to the first populated view — so a TF-only file lands on TF, a
+   * frequency-only file on Frequency, etc. Both the plot view and the
+   * ribbon stage move together so the context card follows. Shared by every
+   * load entry point (Load Data, fixture, session restore).
+   */
+  function loadAndFocus(ds: DvmaDataset): void {
+    const views = actions.loadDataset(ds);
+    if (views.length && !views.includes(get(active) as ViewId)) {
+      viewState.activate(views[0]);
+      activeStage.set(views[0]);
+    }
+  }
 
   /**
    * Convert loaded file bytes to a DvmaDataset by format. `.dvma` reads
@@ -302,7 +320,7 @@
     if (!picked) return; // user cancelled
     try {
       const ds = await toDataset(picked.bytes, picked.name);
-      actions.loadDataset(ds);
+      loadAndFocus(ds);
       toasts.push(`Loaded ${picked.name}`, { level: 'success' });
     } catch (e) {
       toasts.push(`Load failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
