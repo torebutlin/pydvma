@@ -12,14 +12,16 @@ test('wide shell: header buttons, unnumbered ribbon, gated stages', async ({ pag
 
   // Setup/Acquire/Live are now real stages (the acquisition first-cut flips
   // the liveSource capability on `acquire.init()`), so they render real cards.
-  // Fit stays gated (no fit engine) but NAVIGABLE — clicking it shows an
-  // explanatory placeholder rather than a dead-disabled button.
+  // Fit is a real stage too (Wave A1) but gated until a TF is computed
+  // (`fitEngine` flips on the first TF): still NAVIGABLE — clicking it shows
+  // the Fit card with its fit buttons disabled and a what-to-do note.
   const acquire = ribbon.getByRole('button', { name: 'Acquire' });
   await expect(acquire).toBeEnabled();
   const fit = ribbon.getByRole('button', { name: 'Fit' });
   await expect(fit).toBeEnabled();          // gated but clickable
   await fit.click();
-  await expect(page.getByText(/arrives in a future update/i)).toBeVisible();
+  await expect(page.getByText(/needs a computed transfer function/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Fit 1' })).toBeDisabled();
 });
 
 test('narrow: rail with word-label ribbon and flyover tray', async ({ page }) => {

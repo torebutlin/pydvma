@@ -19,7 +19,12 @@ import io
 
 import numpy as np
 import pydvma as dvma
-from pydvma import analysis, container, datastructure
+from pydvma import analysis, container, datastructure, modal
+
+try:
+    import peakutils as _pu
+except Exception:                       # pragma: no cover - peakutils ships in the wheel
+    _pu = None
 
 
 def _arr(a):
@@ -207,3 +212,353 @@ def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):
     td = _time_data(time_axis, time_data, n_channels, fs)
     cleaned = analysis.clean_impulse(td, ch_impulse=int(ch_impulse))
     return {'time_axis': _arr(cleaned.time_axis), 'time_data': _arr(cleaned.time_data)}
+
+
+# --------------------------------------------------------------------------- #
+# Modal fitting (Wave-A Task A1)
+# --------------------------------------------------------------------------- #
+
+def _complex_grid(flat, n_cols):
+    """De-interleave a flat complex buffer into a ``(rows, n_cols)`` array.
+
+    JS marshals a complex array as ``[re, im, re, im, ...]`` (row-major); this
+    reverses that into a numpy complex matrix. ``n_cols`` is the column count
+    (TF output channels), so ``rows`` follows from the buffer length.
+    """
+    g = np.asarray(flat, dtype=np.float64).ravel()
+    z = g[0::2] + 1j * g[1::2]
+    return z.reshape(-1, int(n_cols))
+
+
+def _tf_from_flat(freq_axis, tf_data, n_tf, fs, n_channels):
+    """Rebuild a pydvma ``TfData`` from the marshalled measured TF columns.
+
+    ``tf_data`` is the interleaved-complex buffer of shape ``(Nf, n_tf)`` (the
+    OUTPUT columns ``calculate_tf`` produced), ``n_tf`` the output-column count.
+    A minimal ``MySettings`` carries ``fs`` / source ``n_channels`` for the
+    reconstruction helpers (which override ``settings.channels`` themselves).
+    ``channel_cal_factors`` defaults to ones — the browser applies calibration
+    at display time (model.ts seam), so the engine fits RAW columns and the
+    overlay stays consistent with the plotted (uncalibrated) TF.
+    """
+    f = np.asarray(freq_axis, dtype=np.float64)
+    G = _complex_grid(tf_data, n_tf)
+    return datastructure.TfData(f, G, None, _settings(fs, n_channels))
+
+
+def _rebuild_modal(M, settings, test_name=None):
+    """Reconstruct a ``ModalData`` from a marshalled ``M`` matrix (or ``None``).
+
+    ``M`` is the ``{shape, data, complex}`` dict the JS modal store round-trips
+    (stateless engine — the store holds ``M`` and re-sends it). Each row is a
+    packed mode ``[fn, zn, an*N, pn*N, rk*N, rm*N]``; they are replayed through
+    ``add_mode`` so the summary arrays (fn/zn/an/pn) and channel count refresh.
+    Returns ``None`` when there is no prior matrix (a fresh model).
+    """
+    if not M:                            # None / JsNull / empty
+        return None
+    shape = list(_get(M, 'shape') or [])
+    data = np.asarray(_get(M, 'data'), dtype=np.float64).ravel()
+    if data.size == 0 or len(shape) != 2 or shape[0] == 0:
+        return None
+    rows = data.reshape(int(shape[0]), int(shape[1]))
+    md = datastructure.ModalData(settings=settings, test_name=test_name)
+    for row in rows:
+        md.add_mode(row)
+    return md
+
+
+def _get(d, k):
+    """Read key ``k`` from a payload that may arrive as a dict, a Map-like
+    JsProxy, or a plain-object JsProxy.
+
+    Top-level kwargs are converted by ``callKwargs``, but payload values
+    NESTED inside lists/objects cross the FFI as ``JsProxy``. A Map-like
+    proxy exposes ``.get``; a plain-object proxy exposes its properties as
+    Python attributes — but does NOT support ``in`` (raises "argument of
+    type 'pyodide.ffi.JsProxy' is not iterable", the export_mat bug), so
+    the membership test must not be used here. Missing keys → None.
+    """
+    if isinstance(d, dict):
+        return d.get(k)
+    get = getattr(d, 'get', None)
+    if callable(get):
+        return get(k)
+    return getattr(d, k, None)
+
+
+def _fit_subranges(f, mag, freq_range, n_modes):
+    """Split ``freq_range`` into up to ``n_modes`` single-peak sub-windows.
+
+    pydvma's ``modal_fit_all_channels`` fits ONE mode per call, so multi-mode
+    ("Fit 2 / Fit 3") is realised by detecting the strongest peaks in the
+    visible window (peakutils, shipped in the engine) and fitting each in its
+    own sub-range, split at the midpoints between adjacent peaks. Degrades
+    gracefully: ``n_modes == 1``, too few points, a flat window, or a missing
+    peakutils all fall back to a single fit over the whole ``freq_range``; if
+    fewer than ``n_modes`` peaks are found only those are fitted.
+    """
+    lo, hi = float(freq_range[0]), float(freq_range[1])
+    if n_modes <= 1 or _pu is None:
+        return [[lo, hi]]
+    sel = np.where((f > lo) & (f < hi))[0]
+    if sel.size < 3:
+        return [[lo, hi]]
+    fw = f[sel]
+    mw = np.asarray(mag, dtype=np.float64)[sel]
+    mmax = np.max(mw)
+    if not np.isfinite(mmax) or mmax <= 0:
+        return [[lo, hi]]
+    min_dist = max(1, int(mw.size * 0.02))
+    try:
+        idx = _pu.indexes(mw / mmax, thres=0.1, min_dist=min_dist)
+    except Exception:
+        idx = np.array([], dtype=int)
+    idx = np.asarray(idx, dtype=int)
+    if idx.size == 0:
+        return [[lo, hi]]
+    # Keep the n_modes strongest peaks, then order them by frequency.
+    order = np.argsort(mw[idx])[::-1][:int(n_modes)]
+    chosen = np.sort(fw[idx[order]])
+    edges = [lo]
+    for i in range(len(chosen) - 1):
+        edges.append(0.5 * (chosen[i] + chosen[i + 1]))
+    edges.append(hi)
+    return [[edges[i], edges[i + 1]] for i in range(len(chosen))]
+
+
+def _modal_summary(md):
+    """Marshal a ModalData's matrix + per-mode summary arrays for the JS store.
+
+    Returns ``M`` (the full parameter matrix the store re-sends) plus the
+    fn/zn/an/pn summaries that drive the floating mode chip. An empty / ``None``
+    model returns zero-length arrays so the store can clear its table.
+    """
+    if md is None or len(np.atleast_2d(md.M)) == 0 or np.size(md.M) == 0:
+        empty = np.zeros(0)
+        return {'M': _arr(np.zeros((0, 0))), 'fn': _arr(empty), 'zn': _arr(empty),
+                'an': _arr(np.zeros((0, 0))), 'pn': _arr(np.zeros((0, 0)))}
+    return {'M': _arr(md.M), 'fn': _arr(md.fn), 'zn': _arr(md.zn),
+            'an': _arr(np.atleast_2d(md.an)), 'pn': _arr(np.atleast_2d(md.pn))}
+
+
+def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
+             M=None, freq_range=None, measurement_type='acc',
+             action='fit', n_modes=1):
+    """Single-mode modal fit / reject / reconstruction over one set's TF.
+
+    STATELESS (spec §11): the JS modal store owns the accumulated modal matrix
+    ``M`` and re-sends it every call; this op never keeps state between calls.
+    Mirrors the Qt driver (``gui.py:fit_mode`` / ``reject_mode`` /
+    ``view_modal_reconstruction``):
+
+    - ``action == 'fit'``  — fit ``n_modes`` mode(s) over ``freq_range``
+      (``modal_fit_all_channels``; Fit 2/3 via ``_fit_subranges``), delete any
+      existing modes whose ``fn`` falls in that window (so re-fitting a peak
+      REPLACES it), then ``add_mode`` the new one(s). Returns the just-fitted
+      modes' LOCAL reconstruction (dense over ``freq_range``, residuals kept)
+      as the pink overlay.
+    - ``action == 'reject'`` — delete modes with ``fn`` in ``freq_range``.
+    - ``action == 'recon'`` — no fit; just recompute the overlays from ``M``.
+
+    Every call also returns the GLOBAL reconstruction (residual-free, over the
+    measured freq axis) so the store's "Reconstruction" toggle needs no extra
+    round-trip. ``measurement_type`` is ``'acc'``/``'vel'``/``'dsp'``. Returns
+    ``{M, fn, zn, an, pn, message, recon_freq_axis, recon_tf_data,
+    global_freq_axis, global_tf_data}`` — all via ``_arr``; recon TFs are
+    complex ``(Nf, n_tf)`` matching the measured columns 1:1 (empty for a
+    reject / a model that ends empty).
+    """
+    tf = _tf_from_flat(freq_axis, tf_data, n_tf, fs, n_channels)
+    f = tf.freq_axis
+    # `not freq_range` catches None, a JS-null proxy, and an empty range; a
+    # real [lo, hi] (Python list or JS array proxy) is truthy.
+    if not freq_range:
+        freq_range = [float(f[0]), float(f[-1])]
+    else:
+        freq_range = [float(freq_range[0]), float(freq_range[1])]
+
+    md = _rebuild_modal(M, tf.settings, tf.test_name)
+    new_modes = []
+    message = ''
+
+    if action == 'fit':
+        mag = np.abs(tf.tf_data[:, 0]) if tf.tf_data.shape[1] > 0 else np.abs(f) * 0
+        for lo, hi in _fit_subranges(f, mag, freq_range, int(n_modes)):
+            m = modal.modal_fit_all_channels(
+                datastructure.TfDataList([tf]), freq_range=[lo, hi],
+                measurement_type=measurement_type)
+            new_modes.append(np.asarray(m.M[0, :], dtype=np.float64))
+        message = modal.MESSAGE
+        # Replace any existing modes in the fitted window, then add the new ones.
+        if md is not None and np.size(md.M) > 0:
+            fn_all = np.atleast_2d(md.M)[:, 0]
+            in_range = np.where((fn_all > freq_range[0]) & (fn_all < freq_range[1]))[0]
+            if in_range.size > 0:
+                md.delete_mode(in_range)
+        for row in new_modes:
+            if md is None or np.size(md.M) == 0:
+                md = datastructure.ModalData(row, settings=tf.settings, test_name=tf.test_name)
+            else:
+                md.add_mode(row)
+
+    elif action == 'reject':
+        if md is not None and np.size(md.M) > 0:
+            fn_all = np.atleast_2d(md.M)[:, 0]
+            in_range = np.where((fn_all > freq_range[0]) & (fn_all < freq_range[1]))[0]
+            if in_range.size > 0:
+                md.delete_mode(in_range)
+                message = 'Mode fits deleted.'
+
+    # action == 'recon' (or any other) just re-marshals md + overlays below.
+
+    out = _modal_summary(md)
+    out['message'] = message
+
+    # Local reconstruction (pink) — only the just-fitted modes, dense over the
+    # fit window. Empty for reject / recon (no fresh fit to highlight).
+    if new_modes:
+        m_local = datastructure.ModalData(settings=tf.settings, test_name=tf.test_name)
+        for row in new_modes:
+            m_local.add_mode(row)
+        f_local = np.linspace(freq_range[0], freq_range[1], 500)
+        rc = modal.reconstruct_transfer_function(m_local, f_local, measurement_type)
+        out['recon_freq_axis'] = _arr(rc.freq_axis)
+        out['recon_tf_data'] = _arr(rc.tf_data)
+    else:
+        out['recon_freq_axis'] = _arr(np.zeros(0))
+        out['recon_tf_data'] = _arr(np.zeros((0, int(n_tf)), dtype=complex))
+
+    # Global reconstruction (grey dashed) — residual-free, whole measured axis.
+    if md is not None and np.size(md.M) > 0:
+        rg = modal.reconstruct_transfer_function_global(md, f, measurement_type)
+        out['global_freq_axis'] = _arr(rg.freq_axis)
+        out['global_tf_data'] = _arr(rg.tf_data)
+    else:
+        out['global_freq_axis'] = _arr(np.zeros(0))
+        out['global_tf_data'] = _arr(np.zeros((0, int(n_tf)), dtype=complex))
+
+    return out
+
+
+def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=None):
+    """Modal damping from a sonogram's per-band free decay (Sono card).
+
+    Wraps ``analysis.calculate_damping_from_sono``: builds a ``TimeData``, runs
+    the log-decrement fit on channel ``ch``'s STFT bands (``nperseg`` window),
+    and returns per-detected-mode ``fn`` (Hz) and ``Qn = 1/(2 zeta)`` for the
+    chip table. ``start_time`` (seconds) picks the free-decay start; ``None``
+    lets pydvma infer it (pretrigger-based, with a fallback). The full
+    per-fit plotting dict is discarded — only fn/Qn surface in the UI.
+    """
+    td = _time_data(time_axis, time_data, n_channels, fs)
+    # `not start_time` handles None / a JS-null proxy (an explicit 0.0 start
+    # also defers to inference — harmless, the free-decay start is never 0).
+    st = float(start_time) if start_time else None
+    fn, Qn, _fit = analysis.calculate_damping_from_sono(
+        td, n_chan=int(ch), nperseg=int(nperseg), start_time=st)
+    return {'fn': _arr(np.asarray(fn)), 'Qn': _arr(np.asarray(Qn))}
+
+
+# --------------------------------------------------------------------------- #
+# Matlab export (Wave-A shared spine — Agent 2 calls this)
+# --------------------------------------------------------------------------- #
+
+def _common_axis(axes, decimated=False):
+    """Common axis for interpolation, matching ``file.export_to_matlab``.
+
+    For frequency/tf: ``arange(0, fmax + df, df)`` with the FINEST ``df`` and
+    the largest ``fmax`` across sets. For time (``decimated=False`` unused here;
+    time uses its own branch). Sets are then ``np.interp``-ed onto this axis and
+    column-concatenated.
+    """
+    df = np.inf
+    fmax = 0.0
+    for ax in axes:
+        a = np.asarray(ax, dtype=np.float64)
+        if a.size < 2:
+            continue
+        df = min(df, float(np.mean(np.diff(a))))
+        fmax = max(fmax, float(a[-1]))
+    if not np.isfinite(df) or df <= 0:
+        return np.zeros(0)
+    return np.arange(0, fmax + df, df)
+
+
+def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
+    """Build a MATLAB ``.mat`` from the working sets, matching pydvma's schema.
+
+    Reproduces ``file.export_to_matlab`` (spec brief §D) WITHOUT reconstructing
+    a full DataSet: each per-kind set arrives as ``{axis, data|re/im, cols}``
+    from ``actions.exportMat`` and is interpolated onto a per-kind common axis
+    (finest resolution, widest span), then column-concatenated. Keys:
+    ``time_axis_all/time_data_all`` (real), ``freq_axis_all/freq_data_all`` and
+    ``tf_axis_all/tf_data_all`` (complex, preserved). No coherence; RAW values
+    (calibration is a display-time transform, not baked into exports). Only
+    kinds with data are included. Returns ``{'mat': <bytes>}`` — a JS
+    ``Uint8Array`` the client saves.
+    """
+    from scipy import io as sio
+
+    data_matlab = {}
+    time_sets = list(time_sets or [])
+    freq_sets = list(freq_sets or [])
+    tf_sets = list(tf_sets or [])
+
+    # TIME (real) — common axis arange(0, T, 1/fs) with the max T / max fs.
+    if time_sets:
+        T = 0.0
+        fs = 0.0
+        n_time = 0
+        parsed = []
+        for s in time_sets:
+            ax = np.asarray(_get(s, 'axis'), dtype=np.float64)
+            cols = int(_get(s, 'cols'))
+            dat = np.asarray(_get(s, 'data'), dtype=np.float64).reshape(-1, cols)
+            parsed.append((ax, dat))
+            n = ax.size
+            if n > 1:
+                T = max(T, float(ax[-1] * n / (n - 1)))
+                fs = max(fs, 1.0 / float(np.mean(np.diff(ax))))
+            n_time += cols
+        if fs > 0 and T > 0:
+            t = np.arange(0, T, 1.0 / fs)
+            all_ = np.zeros((len(t), n_time))
+            c = -1
+            for ax, dat in parsed:
+                for i in range(dat.shape[1]):
+                    c += 1
+                    all_[:, c] = np.interp(t, ax, dat[:, i], right=0)
+            data_matlab['time_axis_all'] = np.transpose(np.atleast_2d(t))
+            data_matlab['time_data_all'] = all_
+
+    # FFT + TF (complex) share the same interp/concat shape.
+    for key, sets in (('freq', freq_sets), ('tf', tf_sets)):
+        if not sets:
+            continue
+        parsed = []
+        n_cols = 0
+        for s in sets:
+            ax = np.asarray(_get(s, 'axis'), dtype=np.float64)
+            cols = int(_get(s, 'cols'))
+            re = np.asarray(_get(s, 're'), dtype=np.float64).reshape(-1, cols)
+            im_raw = _get(s, 'im')
+            im = (np.zeros_like(re) if im_raw is None
+                  else np.asarray(im_raw, dtype=np.float64).reshape(-1, cols))
+            parsed.append((ax, re + 1j * im))
+            n_cols += cols
+        f = _common_axis([ax for ax, _ in parsed])
+        if f.size == 0:
+            continue
+        all_ = np.zeros((len(f), n_cols), dtype=complex)
+        c = -1
+        for ax, G in parsed:
+            for i in range(G.shape[1]):
+                c += 1
+                all_[:, c] = np.interp(f, ax, G[:, i], right=0)
+        data_matlab['{}_axis_all'.format(key)] = np.transpose(np.atleast_2d(f))
+        data_matlab['{}_data_all'.format(key)] = all_
+
+    buf = io.BytesIO()
+    sio.savemat(buf, data_matlab)
+    return {'mat': buf.getvalue()}

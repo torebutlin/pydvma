@@ -14,11 +14,16 @@
  * store A8b: enqueue rejects, never hangs).
  *
  * Errors are PER-KIND (Round-3 item 2): `computeErrors` is a keyed store
- * `{ fft, psd, tf, sono, clean }` so each card banner shows only its own
- * kind's error, App's under-plot banner shows the ACTIVE view's kind, and
+ * `{ fft, psd, tf, sono, clean, fit }` so each card banner shows only its
+ * own kind's error, App's under-plot banner shows the ACTIVE view's kind, and
  * starting a calc clears ONLY that kind. A failed TF therefore can no
  * longer poison the Sonogram card (the old single `computeError` + owner
  * flag left one kind's error stuck on every card until a same-kind run).
+ *
+ * Modal fit (Task A1): `calcFit` runs the STATELESS `calc_fit` engine op and
+ * pushes the decoded result into the injected `modal` store (which owns the
+ * accumulated modal matrix and re-sends it). `exportMat` / `exportArrays` are
+ * shared-spine accessors the Export card (a sibling agent) consumes.
  *
  * Concurrency: live slider re-issues are debounced (150 ms) and each
  * action kind carries a PER-KIND stale seq (keyed 'fft'/'psd'/'tf'/
@@ -37,14 +42,25 @@ import type { Selection } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
 import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type MarshalledArray, type SetArrays } from '../plot/model';
+import type { ModalStore } from '../stores/modal';
 import { fromNFrames, fromNFft } from './resolution';
 
 /** Compute-action kind, used as the per-kind stale-guard + error key. */
-type Kind = 'fft' | 'psd' | 'tf' | 'sono' | 'clean';
+type Kind = 'fft' | 'psd' | 'tf' | 'sono' | 'clean' | 'fit';
 
 /** A fresh, all-clear per-kind error record. */
 const emptyErrors = (): Record<Kind, string> =>
-  ({ fft: '', psd: '', tf: '', sono: '', clean: '' });
+  ({ fft: '', psd: '', tf: '', sono: '', clean: '', fit: '' });
+
+/** Measurement type for the modal fit (Qt's "TF type" combo). */
+export type MeasurementType = 'acc' | 'vel' | 'dsp';
+
+/** A per-set export accessor slice (raw decoded columns for the CSV builder). */
+export interface ExportSetArrays {
+  setId: number;
+  axis: Float64Array;
+  columns: Float64Array[] | { re: Float64Array; im: Float64Array }[];
+}
 
 /** A worker array crosses either as a plain object or a toJs Map. */
 function mval(v: unknown, k: string): unknown {
@@ -103,7 +119,7 @@ function timePayload(item: DvmaItem): { axis: Float64Array; data: Float64Array; 
  * so the actions stay unit-testable in isolation; when omitted the calc
  * functions fall back to per-set `defaults()`.
  */
-export function createActions(engine: EngineStore, selection: Selection, settings?: AnalysisSettings) {
+export function createActions(engine: EngineStore, selection: Selection, settings?: AnalysisSettings, modal?: ModalStore) {
   const dataset = writable<DvmaDataset | null>(null);
   const derived = writable<DerivedMap>({});
   /**
@@ -168,7 +184,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * fix for the cross-kind clobber bug: a debounced sonogram slider must
    * not drop an in-flight TF result, and vice versa.
    */
-  const seqs: Record<Kind, number> = { fft: 0, psd: 0, tf: 0, sono: 0, clean: 0 };
+  const seqs: Record<Kind, number> = { fft: 0, psd: 0, tf: 0, sono: 0, clean: 0, fit: 0 };
   const bump = (k: Kind): number => (seqs[k] = seqs[k] + 1);
   const stale = (k: Kind, token: number): boolean => token !== seqs[k];
 
@@ -222,6 +238,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset.set(ds);
     derived.set({});
     computeErrors.set(emptyErrors());   // fresh dataset clears every kind's error
+    modal?.reset();                     // drop any prior dataset's modal fit
     working = [];
     // Selection store has no reset; it is created fresh per app load. We
     // simply addSet for each TimeData item in this dataset.
@@ -558,10 +575,167 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     return setId;
   }
 
+  /**
+   * Resolve the working set a fit `target` names AND that has a computed TF.
+   * A setId picks that set (if it has a TF); `'all'` picks the FIRST set with
+   * a TF. `undefined` when nothing fittable exists — `calcFit` no-ops.
+   */
+  function fitSet(target: AnalysisTarget): WorkingSet | undefined {
+    const d = get(derived);
+    const pool = target === 'all' ? working : working.filter((w) => w.setId === target);
+    return pool.find((w) => d[w.setId]?.tf && (d[w.setId]!.tf!.data.shape[1] ?? 0) > 0);
+  }
+
+  /**
+   * Modal fit / reject / reconstruction over one set's TF (Task A1). The
+   * engine (`calc_fit`) is STATELESS — the modal store holds the accumulated
+   * matrix `M` and this re-sends it, so add/replace/delete all round-trip
+   * through the store. `action`:
+   *
+   * - `'fit'`   — fit `nModes` mode(s) over `freqRange` (the CURRENT visible
+   *   TF window, `viewState.sharedFreqRange`) and add/replace into the model.
+   * - `'reject'`— delete modes whose fn lies in `freqRange`.
+   * - `'recon'` — recompute the overlays from the current model (no fit).
+   *
+   * The fit scopes to ONE target set (deterministic; Qt's joint multi-set fit
+   * is deferred). The store's matrix is only re-sent when it targets the SAME
+   * set, so switching sets starts a fresh model rather than mixing geometries.
+   */
+  function calcFit(
+    target: AnalysisTarget = 'all',
+    freqRange: [number, number] | null = null,
+    mt: MeasurementType = 'acc',
+    action: 'fit' | 'reject' | 'recon' = 'fit',
+    nModes = 1,
+  ) {
+    if (!modal) return Promise.resolve();
+    const ws = fitSet(target);
+    if (!ws) return Promise.resolve();                  // no TF to fit
+    const slice = get(derived)[ws.setId]!.tf!;
+    const nTf = slice.data.shape[1] ?? 0;
+    const chIn = slice.chIn ?? 0;
+    const nChannels = slice.nChannels ?? nTf + 1;
+    const my = bump('fit');
+    return guarded('fit', async () => {
+      // Interleave the decoded complex tf_data back to [re, im, …] for the
+      // worker (the glue de-interleaves into a complex matrix).
+      const re = slice.data.re, im = slice.data.im;
+      const n = slice.axis.length * nTf;
+      const flat = new Float64Array(n * 2);
+      for (let i = 0; i < n; i++) { flat[2 * i] = re[i]; flat[2 * i + 1] = im ? im[i] : 0; }
+      // Accumulate only when the stored model already targets THIS set.
+      const cur = modal.get();
+      const M = cur.setId === ws.setId ? cur.matrix : null;
+      // OMIT null optionals — pyodide passes a JS `null` as a falsy `JsNull`
+      // proxy (not Python `None`), so sending them would break the engine's
+      // `is None` defaults; leaving the keys off lets the Python defaults apply.
+      const payload: Record<string, unknown> = {
+        freq_axis: slice.axis, tf_data: flat, n_tf: nTf, ch_in: chIn,
+        n_channels: nChannels, fs: ws.fs, measurement_type: mt, action, n_modes: nModes,
+      };
+      if (M) payload.M = M;
+      if (freqRange) payload.freq_range = freqRange;
+      const res = await engine.enqueue('calc_fit', payload);
+      if (stale('fit', my)) return;                     // a newer fit won
+      modal.applyResult(res, { setId: ws.setId, chIn, nChannels });
+    });
+  }
+
+  /**
+   * Sonogram-derived modal damping for one channel of the target set (Task
+   * A1; Sono card "Fit damping"). Returns the raw `{fn, Qn}` arrays for the
+   * card's chip table — nothing is stored in `derived` (it is a one-shot
+   * readout, not a plotted slice). `'all'` uses the first working set.
+   */
+  async function calcDamping(target: AnalysisTarget, ch: number, nFft: number): Promise<{ fn: Float64Array; Qn: Float64Array }> {
+    const ws = target === 'all' ? working[0] : working.find((w) => w.setId === target);
+    if (!ws) return { fn: new Float64Array(0), Qn: new Float64Array(0) };
+    const { axis, data, nCh } = timePayload(ws.time);
+    // `start_time` is omitted (not sent as JS null — see calcFit note) so the
+    // engine infers the free-decay start.
+    const res = await engine.enqueue('calc_damping', {
+      time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
+      ch, nperseg: nFft,
+    });
+    return { fn: axisData(mval(res, 'fn')), Qn: axisData(mval(res, 'Qn')) };
+  }
+
+  /**
+   * Raw decoded per-set arrays for the CSV builder (Wave-A shared spine —
+   * Agent 2 owns the CSV/preview UI). PURE accessor, no engine call: reads
+   * the decoded `derived` slices and splits each into per-channel columns.
+   * `'time'` returns real `Float64Array` columns; `'freq'`/`'tf'` return
+   * complex `{re, im}` columns. Sets without the requested kind are skipped.
+   */
+  function exportArrays(kind: 'time' | 'freq' | 'tf'): ExportSetArrays[] {
+    const d = get(derived);
+    const out: ExportSetArrays[] = [];
+    for (const ws of working) {
+      const slice = kind === 'time' ? d[ws.setId]?.time
+        : kind === 'freq' ? d[ws.setId]?.freq
+          : d[ws.setId]?.tf;
+      if (!slice) continue;
+      const { axis, data } = slice;
+      const rows = axis.length;
+      const cols = data.shape[1] ?? 1;
+      if (kind === 'time') {
+        const columns: Float64Array[] = [];
+        for (let c = 0; c < cols; c++) {
+          const col = new Float64Array(rows);
+          for (let r = 0; r < rows; r++) col[r] = data.re[r * cols + c];
+          columns.push(col);
+        }
+        out.push({ setId: ws.setId, axis, columns });
+      } else {
+        const columns: { re: Float64Array; im: Float64Array }[] = [];
+        for (let c = 0; c < cols; c++) {
+          const cre = new Float64Array(rows), cim = new Float64Array(rows);
+          for (let r = 0; r < rows; r++) {
+            const idx = r * cols + c;
+            cre[r] = data.re[idx]; cim[r] = data.im ? data.im[idx] : 0;
+          }
+          columns.push({ re: cre, im: cim });
+        }
+        out.push({ setId: ws.setId, axis, columns });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Build a MATLAB `.mat` of every computed kind and return its bytes
+   * (Wave-A shared spine — Agent 2's Export card calls this). Sends each
+   * set's raw decoded row-major buffers (the `DecodedArray.re`/`im` are
+   * already row-major (rows, cols)) to the `export_mat` glue op, which
+   * interpolates onto a per-kind common axis, column-concatenates, and
+   * `scipy.io.savemat`s. RAW values (no cal factors); no coherence.
+   */
+  async function exportMat(): Promise<Uint8Array> {
+    const d = get(derived);
+    const time_sets: unknown[] = [];
+    const freq_sets: unknown[] = [];
+    const tf_sets: unknown[] = [];
+    for (const ws of working) {
+      const t = d[ws.setId]?.time;
+      if (t) time_sets.push({ axis: t.axis, data: t.data.re, cols: t.data.shape[1] ?? 1 });
+      // Complex kinds always carry `im`; include it only when present (never
+      // send a JS null — the engine treats a missing key as zero imag).
+      const f = d[ws.setId]?.freq;
+      if (f) freq_sets.push({ axis: f.axis, re: f.data.re, ...(f.data.im ? { im: f.data.im } : {}), cols: f.data.shape[1] ?? 1 });
+      const tf = d[ws.setId]?.tf;
+      if (tf) tf_sets.push({ axis: tf.axis, re: tf.data.re, ...(tf.data.im ? { im: tf.data.im } : {}), cols: tf.data.shape[1] ?? 1 });
+    }
+    engine.boot();
+    const res = await engine.enqueue('export_mat', { time_sets, freq_sets, tf_sets });
+    const mat = mval(res, 'mat');
+    return mat instanceof Uint8Array ? mat : Uint8Array.from(mat as ArrayLike<number>);
+  }
+
   return {
-    dataset, derived, computeErrors, busy,
+    dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
+    calcFit, calcDamping, exportArrays, exportMat,
     /** Source-set metadata for cards (set index → fs / duration / channels). */
     workingSets: () => working.map(w => ({
       setId: w.setId, fs: w.fs, durationS: w.durationS, nChannels: w.nChannels,

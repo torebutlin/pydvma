@@ -90,6 +90,32 @@
   function onTarget(v: string) {
     analysisSettings.setTarget(v === 'all' ? 'all' : Number(v));
   }
+
+  // --- Damping fit (Task A1) ---------------------------------------------
+  // Log-decrement damping from the decay of each sonogram band, on the same
+  // target set + channel + STFT window. Results (fn / Qn per detected mode)
+  // show in a small popover chip; independent of the sonogram calc so it can
+  // run without first computing the heat map.
+  let dampModes = $state<{ fn: number; Qn: number }[] | null>(null);
+  let dampBusy = $state(false);
+  let dampError = $state('');
+
+  async function fitDamping() {
+    if (!$setsView.length) return;
+    dampBusy = true;
+    dampError = '';
+    try {
+      const { fn, Qn } = await actions.calcDamping($target, ch, nFft);
+      const rows: { fn: number; Qn: number }[] = [];
+      for (let i = 0; i < fn.length; i++) rows.push({ fn: fn[i], Qn: Qn[i] });
+      dampModes = rows;
+    } catch (e) {
+      dampError = e instanceof Error ? e.message : String(e);
+      dampModes = null;
+    } finally {
+      dampBusy = false;
+    }
+  }
 </script>
 
 <section class="ctx-card card-controls" aria-label="Sonogram stage controls">
@@ -139,11 +165,69 @@
         </div>
       </div>
     </div>
+    <div class="ctx-row">
+      <div class="grp">
+        <span class="grp-lab">damping</span>
+        <div class="grp-ctl">
+          <button class="btn" disabled={dampBusy || $setsView.length === 0} onclick={fitDamping}
+            title="Fit modal damping from the decay of each sonogram band">
+            {dampBusy ? 'Fitting…' : 'Fit damping'}</button>
+          <span class="note">log-decrement of sonogram bands</span>
+          {#if dampModes}
+            <div class="damp-table mono" role="status" aria-label="fitted damping">
+              {#if dampModes.length}
+                <table>
+                  <thead><tr><th>fn (Hz)</th><th>Qn</th></tr></thead>
+                  <tbody>
+                    {#each dampModes as m, i (i)}
+                      <tr><td>{m.fn.toFixed(1)}</td><td>{m.Qn.toFixed(1)}</td></tr>
+                    {/each}
+                  </tbody>
+                </table>
+              {:else}
+                <span class="note">no decaying modes detected</span>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
     {#if $computeErrors.sono}
       <div class="ctx-err" role="alert">{$computeErrors.sono}</div>
+    {/if}
+    {#if dampError}
+      <div class="ctx-err" role="alert">{dampError}</div>
     {/if}
   </div>
   <div class="ctx-primary">
     <button class="btn indigo" disabled={$busy || $setsView.length === 0} onclick={calc}>Calc Sonogram</button>
   </div>
 </section>
+
+<style>
+  .damp-table {
+    display: inline-block;
+    margin-left: 4px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    padding: 3px 7px;
+  }
+  .damp-table table {
+    border-collapse: collapse;
+    font-size: 11.5px;
+  }
+  .damp-table th {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #98a1b5;
+    font-weight: 600;
+    text-align: right;
+    padding: 1px 8px 2px 0;
+  }
+  .damp-table td {
+    text-align: right;
+    padding: 1px 8px 1px 0;
+  }
+</style>

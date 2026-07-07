@@ -32,7 +32,7 @@
   const disabledTitle = (s: StageDef): string =>
     s.needs === 'liveSource'
       ? 'Recording from a live input arrives in a future update'
-      : 'Modal curve-fitting arrives in a future update';
+      : 'Fit needs a computed transfer function — run Calc TF first';
 
   // Gated stages (Setup/Acquire/Fit in Plan 1) are still NAVIGABLE: clicking
   // one selects it and shows an explanatory placeholder card, rather than a

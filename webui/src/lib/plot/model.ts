@@ -90,6 +90,39 @@ export interface SetArrays {
   };
   /** Sonogram magnitude image (Nf, Nt) plus its two axes (canvas heat layer). */
   sono?: { timeAxis: Float64Array; freqAxis: Float64Array; data: DecodedArray };
+  /**
+   * CALIBRATION SEAM (Wave-A; a calibration agent wires the UI/persistence).
+   * Per-SOURCE-CHANNEL multiplier applied at DISPLAY time, mirroring Qt
+   * (`plotting.py:267/271/299`): `value × calFactors[ch]`. Absent / `undefined`
+   * ⇒ ALL-ONES ⇒ identity, so today's behaviour is unchanged. Semantics per
+   * branch (see `calOf` / `calRatio`):
+   *   - time / FFT: the signal / complex spectrum is scaled by `cal[ch]`
+   *     (an AMPLITUDE factor) before the dB/linear/phase transform;
+   *   - PSD: power, so the amplitude factor enters SQUARED — `× cal[ch]²`;
+   *   - CSD (coherence): dimensionless, cal cancels — left untouched;
+   *   - TF: each output column is scaled by the RATIO `cal[out]/cal[in]`
+   *     (Qt stores this ratio on the TfData; the webui derives it from the
+   *     source cal factors), applied to BOTH the measured line and its modal
+   *     reconstruction overlay so they stay in engineering-unit lock-step.
+   * Indexed by SOURCE channel (0..nChannels−1), same index space as `visible`.
+   */
+  calFactors?: number[];
+}
+
+/** Per-source-channel display cal factor for a set (default 1 = identity). */
+function calOf(set: SetArrays | undefined, ch: number): number {
+  const c = set?.calFactors?.[ch];
+  return typeof c === 'number' && Number.isFinite(c) ? c : 1;
+}
+
+/**
+ * TF display cal RATIO for output channel `out` against input `chIn`:
+ * `cal[out]/cal[in]` (Qt's `TfData.channel_cal_factors` semantics). Default
+ * 1 when either factor is absent. Applied to the complex TF column before the
+ * plot-type transform.
+ */
+function calRatio(set: SetArrays | undefined, out: number, chIn: number): number {
+  return calOf(set, out) / calOf(set, chIn);
 }
 
 /** Everything `buildPlotModel` needs, kept plain for node testing. */
@@ -127,7 +160,31 @@ export interface PlotModelArgs {
    * phase/real/imag/Nyquist and the time view.
    */
   yScale?: 'lin' | 'log';
+  /**
+   * Modal-reconstruction overlay (Task A1) — extra TF PlotLines drawn on top
+   * of the measured TF, the coherence-overlay precedent (`plot/model.ts` TF
+   * branch). `null`/absent ⇒ nothing drawn (the non-Fit stages). Present only
+   * on the Fit stage. For each VISIBLE measured line whose set is `setId`, the
+   * matching reconstruction column (same out/in remap via `tfColumn`, so plot
+   * and legend never disagree — Task R4) is overlaid:
+   *   - `local`  → pink solid (`#be185d`), the just-fitted modes over the fit
+   *     window (mockup round2-bench.html:1588);
+   *   - `global` → grey dashed (`#66708a`), the whole-model residual-free
+   *     reconstruction, drawn only when `showGlobal` (the "Reconstruction"
+   *     toggle) is on (mockup:1589).
+   * `chIn`/`nChannels` are the target set's TF geometry (for `tfColumn`).
+   */
+  recon?: {
+    setId: number; chIn: number; nChannels: number;
+    local?: { axis: Float64Array; data: DecodedArray };
+    global?: { axis: Float64Array; data: DecodedArray };
+    showGlobal: boolean;
+  } | null;
 }
+
+/** Recon overlay stroke colours (mockup round2-bench.html:1588-1590). */
+const RECON_LOCAL = '#be185d';    // pink solid — the just-fitted modes
+const RECON_GLOBAL = '#66708a';   // grey dashed — the whole-model reconstruction
 
 const EMPTY: PlotModel = {
   lines: [], xLabel: '', yLabel: '', xRange: null, yRange: null,
@@ -159,6 +216,57 @@ function baseLine(x: Float64Array, y: Float64Array, v: VisibleLine): PlotLine {
   };
 }
 
+/** TF plot family excluding Bode (which degrades to 'mag'). */
+type TfLineType = 'mag' | 'phase' | 'real' | 'imag' | 'nyquist';
+
+/**
+ * Transform one complex TF column into plotted `(x, y)` for a TF `type`,
+ * shared by the measured lines AND the modal-reconstruction overlay so the
+ * two are drawn identically. `reCol`/`imCol` are the column's real/imag
+ * parts (already cal-scaled by the caller); `axis` its frequency axis.
+ * Nyquist parametrises `x=Re, y=Im` and windows to `window` (the shared freq
+ * band), returning `xMonotonic:false`; all other types map `x=axis` with the
+ * per-type y (mag dB or linear, phase deg, real, imag) and `xMonotonic:true`.
+ */
+function tfXY(
+  axis: Float64Array, reCol: Float64Array, imCol: Float64Array,
+  type: TfLineType, linMag: boolean, window: [number, number] | null,
+): { x: Float64Array; y: Float64Array; xMonotonic: boolean } {
+  const nf = axis.length;
+  if (type === 'nyquist') {
+    if (window) {
+      const [lo, hi] = window;
+      const xs: number[] = [], ys: number[] = [];
+      for (let i = 0; i < nf; i++) {
+        if (axis[i] >= lo && axis[i] <= hi) { xs.push(reCol[i]); ys.push(imCol[i]); }
+      }
+      return { x: Float64Array.from(xs), y: Float64Array.from(ys), xMonotonic: false };
+    }
+    return { x: reCol, y: imCol, xMonotonic: false };
+  }
+  const y = new Float64Array(nf);
+  for (let i = 0; i < nf; i++) {
+    const re = reCol[i], im = imCol[i];
+    if (type === 'mag') y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
+    else if (type === 'phase') y[i] = (Math.atan2(im, re) * 180) / Math.PI;
+    else if (type === 'real') y[i] = re;
+    else y[i] = im;                                        // 'imag'
+  }
+  return { x: axis, y, xMonotonic: true };
+}
+
+/** A cal-scaled real/imag column pair of a complex `(Nf, nCols)` buffer. */
+function calScaledColumn(data: DecodedArray, nf: number, cols: number, col: number, cal: number): { re: Float64Array; im: Float64Array } {
+  const re = new Float64Array(nf), im = new Float64Array(nf);
+  const hasIm = !!data.im;
+  for (let i = 0; i < nf; i++) {
+    const idx = i * cols + col;
+    re[i] = data.re[idx] * cal;
+    im[i] = hasIm ? data.im![idx] * cal : 0;
+  }
+  return { re, im };
+}
+
 /**
  * Assemble the `PlotModel` for the active view from decoded set arrays
  * and the visible-line list.
@@ -181,6 +289,17 @@ function baseLine(x: Float64Array, y: Float64Array, v: VisibleLine): PlotLine {
  * - sono: no lines (the heat layer is a canvas); returns axis labels
  *   and the committed range so PlotSurface draws empty axes beneath it.
  *
+ * Calibration seam (Wave-A): each set may carry `calFactors` (per source
+ * channel); the display value is scaled by it — amplitude for time/FFT, its
+ * square for PSD (power), the `cal[out]/cal[in]` ratio for TF. Absent ⇒
+ * all-ones ⇒ identity (today's behaviour). See `SetArrays.calFactors`.
+ *
+ * Modal reconstruction (Task A1): `args.recon` overlays the fitted model on
+ * the TF pane — pink solid (local, just-fitted modes) and grey dashed
+ * (global, when its toggle is on), one overlay per visible measured line of
+ * the fit's target set, honouring the same out/in remap so plot and legend
+ * agree. Non-TF views ignore it.
+ *
  * Axis toggles (R3, per-view): `args.xScale='log'` threads onto the
  * frequency/tf models as `xScale:'log'` (decade log-x in `buildPlot`);
  * time/sono/Nyquist stay linear-x. `args.yScale='lin'` switches the
@@ -198,11 +317,14 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
   if (args.view === 'time') {
     const lines: PlotLine[] = [];
     for (const v of args.visible) {
-      const s = byId.get(v.setId)?.time;
+      const set = byId.get(v.setId);
+      const s = set?.time;
       if (!s) continue;
       const cols = s.data.shape[1] ?? 1;
       if (v.ch >= cols) continue;
       const y = column(s.data.re, s.axis.length, cols, v.ch);
+      const cal = calOf(set, v.ch);                        // display cal (default 1)
+      if (cal !== 1) for (let i = 0; i < y.length; i++) y[i] *= cal;
       lines.push(baseLine(s.axis, y, v));
     }
     return { ...EMPTY, lines, xLabel: 'Time (s)', yLabel: 'Amplitude', xRange: xr, yRange: yr };
@@ -222,10 +344,11 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         const cols = f.data.shape[1] ?? 1;
         if (v.ch >= cols) continue;
         const nf = f.axis.length;
+        const cal = calOf(s, v.ch);                        // amplitude cal (default 1)
         const y = new Float64Array(nf);
         for (let i = 0; i < nf; i++) {
           const idx = i * cols + v.ch;
-          const re = f.data.re[idx], im = f.data.im ? f.data.im[idx] : 0;
+          const re = f.data.re[idx] * cal, im = (f.data.im ? f.data.im[idx] : 0) * cal;
           y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
         }
         lines.push(baseLine(f.axis, y, v));
@@ -234,9 +357,11 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         const nc = p.data.shape[0] ?? 1;
         if (v.ch >= nc) continue;
         const nf = p.axis.length;
+        // PSD is POWER, so the amplitude cal enters squared (× cal²).
+        const cal2 = calOf(s, v.ch) ** 2;
         const y = new Float64Array(nf);
         for (let i = 0; i < nf; i++) {
-          const x = p.data.re[v.ch * nf + i];
+          const x = p.data.re[v.ch * nf + i] * cal2;
           y[i] = linMag ? x : powDb(x);
         }
         lines.push(baseLine(p.axis, y, v));
@@ -268,9 +393,13 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     const nyquist = type === 'nyquist';
     const window = nyquist ? (args.freqRange ?? null) : null;
 
+    // Magnitude honours the y-toggle: 'lin' → |H| (linear), 'log' (default)
+    // → dB. Phase/real/imag/nyquist ignore it.
+    const linMag = args.yScale === 'lin';
     const lines: PlotLine[] = [];
     for (const v of args.visible) {
-      const t = byId.get(v.setId)?.tf;
+      const set = byId.get(v.setId);
+      const t = set?.tf;
       if (!t) continue;
       const nout = t.data.shape[1] ?? 1;                     // tf_data (Nf, Nout)
       // R4: tf_data drops the INPUT channel, so a visible source channel
@@ -282,39 +411,45 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       const col = tfColumn(v.ch, chIn, nChannels);
       if (col === null || col >= nout) continue;             // input channel or out of range
       const nf = t.axis.length;
-      const reCol = column(t.data.re, nf, nout, col);
-      const imCol = t.data.im ? column(t.data.im, nf, nout, col) : new Float64Array(nf);
+      // Apply the display cal RATIO cal[out]/cal[in] (default 1) before the
+      // plot-type transform, matching Qt's per-output-column TF cal.
+      const ratio = calRatio(set, v.ch, chIn);
+      const { re, im } = calScaledColumn(t.data, nf, nout, col, ratio);
+      const { x, y, xMonotonic } = tfXY(t.axis, re, im, type, linMag, window);
+      lines.push({
+        x, y, color: v.color, opacity: OPACITY[v.state],
+        width: 1.5, dashed: false, yAxis: 'left', xMonotonic,
+      });
+    }
 
-      if (nyquist) {
-        // Parametric curve: x=re, y=im, sliced to the shared freq window.
-        let x = reCol, y = imCol;
-        if (window) {
-          const [lo, hi] = window;
-          const xs: number[] = [], ys: number[] = [];
-          for (let i = 0; i < nf; i++) {
-            if (t.axis[i] >= lo && t.axis[i] <= hi) { xs.push(reCol[i]); ys.push(imCol[i]); }
-          }
-          x = Float64Array.from(xs); y = Float64Array.from(ys);
-        }
-        lines.push({
-          x, y, color: v.color, opacity: OPACITY[v.state],
-          width: 1.5, dashed: false, yAxis: 'left', xMonotonic: false,
-        });
-        continue;
+    // Modal-reconstruction overlay (Task A1) — extra PlotLines drawn over the
+    // measured TF for the fit's target set. For each VISIBLE measured line of
+    // that set, overlay the matching reconstruction column (same out/in remap
+    // + cal ratio as the measured line, so plot and legend never disagree):
+    // pink solid = local (just-fitted modes), grey dashed = global (shown only
+    // when the "Reconstruction" toggle is on). Off lines are already dropped
+    // from `args.visible`, so they get no overlay either.
+    const recon = args.recon;
+    if (recon) {
+      for (const v of args.visible) {
+        if (v.setId !== recon.setId) continue;
+        const col = tfColumn(v.ch, recon.chIn, recon.nChannels);
+        if (col === null) continue;
+        const ratio = calRatio(byId.get(v.setId), v.ch, recon.chIn);
+        const draw = (
+          slice: { axis: Float64Array; data: DecodedArray },
+          color: string, dashed: boolean, width: number,
+        ) => {
+          const nout = slice.data.shape[1] ?? 1;
+          if (col >= nout) return;
+          const nf = slice.axis.length;
+          const { re, im } = calScaledColumn(slice.data, nf, nout, col, ratio);
+          const { x, y, xMonotonic } = tfXY(slice.axis, re, im, type, linMag, window);
+          lines.push({ x, y, color, opacity: 1, width, dashed, yAxis: 'left', xMonotonic });
+        };
+        if (recon.local) draw(recon.local, RECON_LOCAL, false, 2.2);
+        if (recon.global && recon.showGlobal) draw(recon.global, RECON_GLOBAL, true, 1.4);
       }
-
-      // Magnitude honours the y-toggle: 'lin' → |H| (linear), 'log'
-      // (default) → dB. Phase/real/imag are untouched by yScale.
-      const linMag = args.yScale === 'lin';
-      const y = new Float64Array(nf);
-      for (let i = 0; i < nf; i++) {
-        const re = reCol[i], im = imCol[i];
-        if (type === 'mag') y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
-        else if (type === 'phase') y[i] = (Math.atan2(im, re) * 180) / Math.PI;
-        else if (type === 'real') y[i] = re;
-        else y[i] = im;                                      // 'imag'
-      }
-      lines.push(baseLine(t.axis, y, v));
     }
 
     if (nyquist) {

@@ -28,13 +28,14 @@
   import Legend from './components/Legend.svelte';
   import EngineProbe from './components/EngineProbe.svelte';
   import ToastHost from './components/ToastHost.svelte';
-  import { activeStage } from './lib/stores/stages';
+  import { activeStage, capabilities } from './lib/stores/stages';
   import { createViewState } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
   import { createAnalysisSettings } from './lib/stores/analysisSettings';
   import { createEngineStore } from './lib/stores/engine';
   import { createToasts } from './lib/stores/toast';
   import { createActions } from './lib/analysis/actions';
+  import { createModalStore } from './lib/stores/modal';
   import { buildPlotModel, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
   import { tfTransformEntries } from './lib/plot/tfChannels';
   import type { LegendEntry } from './lib/stores/selection';
@@ -49,6 +50,7 @@
   import { createMonitorStore } from './lib/stores/monitor';
   import MiniMonitor from './components/MiniMonitor.svelte';
   import LiveScope from './components/LiveScope.svelte';
+  import FitChip from './components/FitChip.svelte';
   import impulseUrl from './assets/impulse.dvma?url';
   // 3-channel fixture (Task R4) for exercising the TF out/in remap end to
   // end; loaded ONLY under `?fixture=3ch` so shipped `?fixture=1` stays the
@@ -63,7 +65,11 @@
   const analysisSettings = createAnalysisSettings(selection);
   const engine = createEngineStore();
   const toasts = createToasts();
-  const actions = createActions(engine, selection, analysisSettings);
+  // Modal-fit state (Task A1): one model per dataset, owned here and shared
+  // with the actions (which run the stateless calc_fit and push results in)
+  // and the Fit card (controls) + the plot recon overlay.
+  const modal = createModalStore();
+  const actions = createActions(engine, selection, analysisSettings, modal);
   // Acquisition store (Plan 2): manages Web Audio device enumeration +
   // recording lifecycle; the liveSource capability gate flips on init.
   const acquire = createAcquireStore();
@@ -448,11 +454,31 @@
     || (view === 'tf' && (plotType === 'mag' || plotType === 'bode')),
   );
 
+  /**
+   * Modal-reconstruction overlay (Task A1). Drawn ONLY on the Fit stage
+   * (which reuses view 'tf'), and only once a fit exists for a target set —
+   * so the TF stage itself stays clean. Passes the local (pink) + global
+   * (grey dashed) reconstruction slices and the "Reconstruction" toggle to
+   * the model builder, which overlays them per visible measured line.
+   */
+  const modalState = modal;   // subscribe with $modalState
+  const reconArg = $derived.by(() => {
+    if ($activeStage !== 'fit') return null;
+    const m = $modalState;
+    if (m.setId === null || (!m.local && !m.global)) return null;
+    return {
+      setId: m.setId, chIn: m.chIn, nChannels: m.nChannels,
+      local: m.local ?? undefined, global: m.global ?? undefined,
+      showGlobal: m.showGlobal,
+    };
+  });
+
   /** Single-pane model for the active view (magnitude pane when Bode). */
   const model = $derived<PlotModel>(
     buildPlotModel({
       view, sets: setArrays, visible, freqMode, tfPlotType: plotType,
       coherence, freqRange: $sharedFreqRange, range, xScale, yScale,
+      recon: reconArg,
     }),
   );
 
@@ -473,6 +499,18 @@
   });
 
   const hasData = $derived(setArrays.length > 0);
+
+  /**
+   * Flip the `fitEngine` capability once a TF result first exists (Task A1;
+   * mirrors how `acquire.init` flips `liveSource`). The Fit stage stays
+   * greyed until there is a transfer function to fit; it then latches on
+   * (like liveSource) — a TF is the only prerequisite. `setArrays` is
+   * derived from the decoded store, so this re-runs as results land.
+   */
+  const anyTf = $derived(setArrays.some((s) => s.tf));
+  $effect(() => {
+    if (anyTf) capabilities.update((c) => (c.fitEngine ? c : { ...c, fitEngine: true }));
+  });
 
   // ---- Sonogram heat layer (canvas beneath empty PlotSurface axes) ----
 
@@ -561,6 +599,7 @@
     {analysisSettings}
     {acquire}
     {monitor}
+    {modal}
     {getSvg}
     {workdir}
     {onsave}
@@ -613,6 +652,7 @@
           <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
           <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
           <Legend {selection} {viewState} entriesOverride={tfLegend} />
+          {#if $activeStage === 'fit'}<FitChip {modal} />{/if}
         </div>
       {/if}
       {#if $computeErrors[activeErrorKind]}

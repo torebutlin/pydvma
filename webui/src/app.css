@@ -90,10 +90,23 @@ body {
   font-size: 11.5px;
   border-radius: 6px;
 }
-.card-controls .btn.active {
+.card-controls .btn.active,
+.card-controls .btn.on {
   background: #eef0ff;
   border-color: #c7d2fe;
   color: var(--indigo);
+}
+/* Tinted-indigo action button (mockup `.btn.indigo-t`) — the Fit-card peak
+   buttons. Lighter than the solid `.indigo` primary. */
+.card-controls .btn.indigo-t {
+  background: #eef0ff;
+  border-color: #c7d2fe;
+  color: var(--indigo);
+  font-weight: 600;
+}
+.card-controls .btn.indigo-t:hover {
+  background: #e0e7ff;
+  border-color: #c7d2fe;
 }
 .card-controls .btn[disabled] {
   opacity: 0.45;

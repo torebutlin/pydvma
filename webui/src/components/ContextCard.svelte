@@ -19,12 +19,14 @@
   import type { AnalysisSettings } from '../lib/stores/analysisSettings';
   import type { AcquireStore } from '../lib/stores/acquire';
   import type { MonitorStore } from '../lib/stores/monitor';
+  import type { ModalStore } from '../lib/stores/modal';
   import type { WorkDir } from '../lib/files/workdir';
   import type { Toasts } from '../lib/stores/toast';
   import TimeCard from './cards/TimeCard.svelte';
   import FrequencyCard from './cards/FrequencyCard.svelte';
   import TFCard from './cards/TFCard.svelte';
   import SonoCard from './cards/SonoCard.svelte';
+  import FitCard from './cards/FitCard.svelte';
   import ExportCard from './cards/ExportCard.svelte';
   import SetupCard from './cards/SetupCard.svelte';
   import AcquireCard from './cards/AcquireCard.svelte';
@@ -38,6 +40,7 @@
     analysisSettings,
     acquire,
     monitor,
+    modal,
     getSvg,
     workdir,
     onsave,
@@ -55,6 +58,8 @@
     acquire: AcquireStore;
     /** Monitor store (Plan 2 Live oscilloscope). */
     monitor: MonitorStore;
+    /** Modal-fit store (Task A1) — drives the Fit card. */
+    modal: ModalStore;
     /** Active plot's <svg> accessor (Export card figure source). */
     getSvg: () => SVGSVGElement | undefined;
     /** Working directory for Save Figure / Save Dataset. */
@@ -71,10 +76,7 @@
   const labelOf = (id: string): string => STAGES.find((s) => s.id === id)?.label ?? '';
 
   /** Why a not-yet-built stage is empty — shown in its placeholder card. */
-  const noteFor = (id: string): string =>
-    id === 'fit'
-      ? 'Modal curve-fitting arrives in a future update.'
-      : 'Controls arrive in a later plan.';
+  const noteFor = (_id: string): string => 'Controls arrive in a later plan.';
 </script>
 
 <div class="ctx-zone" class:narrow>
@@ -92,8 +94,10 @@
     <TFCard {viewState} {selection} {actions} {analysisSettings} />
   {:else if $activeStage === 'sono'}
     <SonoCard {actions} {selection} {analysisSettings} />
+  {:else if $activeStage === 'fit'}
+    <FitCard {actions} {analysisSettings} {viewState} {modal} />
   {:else if $activeStage === 'export'}
-    <ExportCard {getSvg} {workdir} {onsave} {toasts} {hasData} bind:autosaveEnabled />
+    <ExportCard {getSvg} {workdir} {onsave} {toasts} {hasData} exporter={actions} bind:autosaveEnabled />
   {:else}
     <section class="ctx-card card-controls" aria-label="stage controls">
       <div class="ctx-name">
