@@ -297,6 +297,76 @@ test('togglePane flips a single pane', () => {
   expect(get(mon.panes).freq).toBe(true);
 });
 
+// ---- round-3 FFT / PSD settings ----
+
+test('round-3 fft settings have sensible defaults', () => {
+  const mon = createMonitorStore(makeAcquire());
+  expect(get(mon.fftFMax)).toBe(null);          // full / Nyquist by default
+  expect(get(mon.spectrumMode)).toBe('instant');
+  expect(get(mon.psdSegments)).toBe(4);
+  expect(get(mon.psdSmoothing)).toBe(0);
+});
+
+test('setFftFMax accepts a value, clamps below the floor, and null = full', () => {
+  const mon = createMonitorStore(makeAcquire());
+  mon.setFftFMax(2000);
+  expect(get(mon.fftFMax)).toBe(2000);
+  mon.setFftFMax(1);                            // below MIN_FMAX_HZ (10) → clamped
+  expect(get(mon.fftFMax)).toBe(10);
+  mon.setFftFMax(null);
+  expect(get(mon.fftFMax)).toBe(null);
+  mon.setFftFMax(Number.NaN);                   // non-finite → full
+  expect(get(mon.fftFMax)).toBe(null);
+});
+
+test('setSpectrumMode toggles between instant and psd (invalid → instant)', () => {
+  const mon = createMonitorStore(makeAcquire());
+  mon.setSpectrumMode('psd');
+  expect(get(mon.spectrumMode)).toBe('psd');
+  mon.setSpectrumMode('instant');
+  expect(get(mon.spectrumMode)).toBe('instant');
+  // Anything not 'psd' falls back to 'instant'.
+  mon.setSpectrumMode('bogus' as unknown as 'instant');
+  expect(get(mon.spectrumMode)).toBe('instant');
+});
+
+test('setPsdSegments clamps to an integer ≥ 1', () => {
+  const mon = createMonitorStore(makeAcquire());
+  mon.setPsdSegments(8);
+  expect(get(mon.psdSegments)).toBe(8);
+  mon.setPsdSegments(2.9);
+  expect(get(mon.psdSegments)).toBe(2);         // floored
+  mon.setPsdSegments(0);
+  expect(get(mon.psdSegments)).toBe(1);         // min 1
+  mon.setPsdSegments(-5);
+  expect(get(mon.psdSegments)).toBe(1);
+});
+
+test('setPsdSmoothing clamps to [0, 0.95]', () => {
+  const mon = createMonitorStore(makeAcquire());
+  mon.setPsdSmoothing(0.5);
+  expect(get(mon.psdSmoothing)).toBe(0.5);
+  mon.setPsdSmoothing(2);                        // over the cap
+  expect(get(mon.psdSmoothing)).toBe(0.95);
+  mon.setPsdSmoothing(-1);                       // below 0
+  expect(get(mon.psdSmoothing)).toBe(0);
+  mon.setPsdSmoothing(Number.NaN);
+  expect(get(mon.psdSmoothing)).toBe(0);
+});
+
+test('monitor passes the latency hint through to startMonitor', async () => {
+  const acq = makeAcquire();
+  const mon = createMonitorStore(acq);
+  await mon.start();
+  expect(capturedCfg!.latency).toBeUndefined();  // no hint by default
+  mon.stop();
+
+  acq.patch({ latency: 0.02 });
+  await mon.start();
+  expect(capturedCfg!.latency).toBe(0.02);
+  mon.stop();
+});
+
 test('monitor passes the getUserMedia DSP constraints through to startMonitor', async () => {
   const acq = makeAcquire();
   const mon = createMonitorStore(acq);

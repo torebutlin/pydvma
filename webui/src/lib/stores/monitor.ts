@@ -42,6 +42,13 @@ export interface PaneState {
   levels: boolean;
 }
 
+/**
+ * FFT-pane spectrum mode: `'instant'` = the per-frame amplitude spectrum
+ * (today's behaviour, unit amplitude), `'psd'` = an averaged Welch power
+ * spectral density over the ring buffer (unit²/Hz, lower variance).
+ */
+export type SpectrumMode = 'instant' | 'psd';
+
 export type MonitorStore = ReturnType<typeof createMonitorStore>;
 
 // ---- constants ----
@@ -60,6 +67,19 @@ const MAX_WINDOW_S = 5;
 export const WINDOW_PRESETS_S = [0.05, 0.1, 0.2, 0.5, 1] as const;
 /** Peak level at or above which the latching clip flag trips. */
 const CLIP_THRESHOLD = 0.95;
+
+/** Smallest FFT max-frequency the user may zoom to (Hz). */
+const MIN_FMAX_HZ = 10;
+/** The Welch averaging choices surfaced in the LiveCard's PSD mode. */
+export const PSD_SEGMENT_CHOICES = [1, 2, 4, 8, 16] as const;
+/** Default number of Welch averaging segments in PSD mode. */
+const DEFAULT_PSD_SEGMENTS = 4;
+/**
+ * Max exponential temporal-smoothing factor for PSD mode (0 = off).  The
+ * canvas blends `s ← a·s + (1−a)·new` each frame; capped below 1 so the
+ * display can never freeze entirely.
+ */
+const MAX_PSD_SMOOTHING = 0.95;
 
 // ---- store factory ----
 
@@ -87,6 +107,23 @@ export function createMonitorStore(acquire: AcquireStore) {
   const fftYLog = writable(true);
   /** FFT frequency axis: log when true, linear when false. */
   const fftXLog = writable(false);
+  /**
+   * FFT max frequency to display, in Hz.  `null` = "full" (Nyquist,
+   * `fs/2`), which is the default; a finite value zooms the frequency
+   * axis to the interesting band.  Clamped to Nyquist at draw time (the
+   * store doesn't know fs), so an over-large value just shows full span.
+   */
+  const fftFMax = writable<number | null>(null);
+  /** FFT-pane spectrum mode: instantaneous amplitude vs averaged PSD. */
+  const spectrumMode = writable<SpectrumMode>('instant');
+  /** Number of Welch averaging segments in PSD mode. */
+  const psdSegments = writable<number>(DEFAULT_PSD_SEGMENTS);
+  /**
+   * Exponential temporal-smoothing factor applied to the PSD across
+   * frames (0 = off, up to {@link MAX_PSD_SMOOTHING}).  Cheap extra
+   * variance reduction layered on top of the Welch spatial averaging.
+   */
+  const psdSmoothing = writable<number>(0);
   /** Which Live-scope panes are visible. */
   const panes = writable<PaneState>({ time: true, freq: true, levels: true });
 
@@ -208,6 +245,7 @@ export function createMonitorStore(acquire: AcquireStore) {
           echoCancellation: cfg.echoCancellation,
           noiseSuppression: cfg.noiseSuppression,
           autoGainControl: cfg.autoGainControl,
+          latency: cfg.latency,
         },
         ondata,
       );
@@ -279,6 +317,32 @@ export function createMonitorStore(acquire: AcquireStore) {
     }
   }
 
+  /**
+   * Set the FFT max-frequency zoom (Hz), or `null` for "full" (Nyquist).
+   * A finite value is clamped to ≥ {@link MIN_FMAX_HZ}; the upper clamp to
+   * Nyquist happens at draw time where the sample rate is known.
+   */
+  function setFftFMax(hz: number | null): void {
+    if (hz == null || !isFinite(hz)) { fftFMax.set(null); return; }
+    fftFMax.set(Math.max(MIN_FMAX_HZ, hz));
+  }
+
+  /** Switch the FFT pane between instantaneous and averaged-PSD modes. */
+  function setSpectrumMode(mode: SpectrumMode): void {
+    spectrumMode.set(mode === 'psd' ? 'psd' : 'instant');
+  }
+
+  /** Set the Welch averaging segment count (clamped ≥ 1, integer). */
+  function setPsdSegments(n: number): void {
+    psdSegments.set(Math.max(1, Math.floor(n) || 1));
+  }
+
+  /** Set the PSD temporal-smoothing factor (clamped to [0, MAX]). */
+  function setPsdSmoothing(a: number): void {
+    if (!isFinite(a)) { psdSmoothing.set(0); return; }
+    psdSmoothing.set(Math.max(0, Math.min(MAX_PSD_SMOOTHING, a)));
+  }
+
   /** Clear the latching clip flag (called when the user clicks a CLIP pill). */
   function resetClip(): void {
     clipLatched.set(false);
@@ -299,6 +363,10 @@ export function createMonitorStore(acquire: AcquireStore) {
     windowS,
     fftYLog,
     fftXLog,
+    fftFMax,
+    spectrumMode,
+    psdSegments,
+    psdSmoothing,
     panes,
     /** Revision counter — subscribe to get notified on new ring data. */
     ringRevision,
@@ -309,6 +377,10 @@ export function createMonitorStore(acquire: AcquireStore) {
     resume,
     togglePause,
     setWindow,
+    setFftFMax,
+    setSpectrumMode,
+    setPsdSegments,
+    setPsdSmoothing,
     resetClip,
     togglePane,
 

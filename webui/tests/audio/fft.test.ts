@@ -6,7 +6,7 @@
  */
 import { expect, test } from 'vitest';
 import {
-  prevPow2, nextPow2, hannWindow, fftRadix2, magnitudeSpectrum,
+  prevPow2, nextPow2, hannWindow, fftRadix2, magnitudeSpectrum, welchPsd,
 } from '../../src/lib/audio/fft';
 
 test('prevPow2 / nextPow2 bracket a value correctly', () => {
@@ -109,4 +109,89 @@ test('magnitudeSpectrum uses the largest power-of-two window ≤ length', () => 
 test('magnitudeSpectrum returns an empty spectrum for tiny inputs', () => {
   expect(magnitudeSpectrum(new Float64Array(1)).size).toBe(1);
   expect(magnitudeSpectrum([]).mag.length).toBe(1);
+});
+
+// ---- welchPsd (averaged PSD mode) ----
+
+test('welchPsd derives a power-of-two segment length and one-sided shape', () => {
+  const L = 1024;
+  const x = new Float64Array(L);
+  // Default target 4 segments @ 50% overlap → nperseg = prevPow2(2L/5) = 256.
+  const r = welchPsd(x, { fs: 1000 });
+  expect(r.nperseg).toBe(256);
+  expect(r.psd.length).toBe(256 / 2 + 1);
+  expect(r.freqs.length).toBe(256 / 2 + 1);
+  expect(r.df).toBeCloseTo(1000 / 256, 9);
+  expect(r.freqs[1]).toBeCloseTo(r.df, 9);
+  // 50% overlap over 1024 with nperseg 256, step 128 → 7 segments.
+  expect(r.nSegments).toBe(7);
+});
+
+test('welchPsd puts a tone at the correct frequency bin', () => {
+  const nper = 1024;
+  const fs = 1024;                       // → df = 1 Hz for a full-length segment
+  const bin = 50;                        // 50 Hz
+  const x = new Float64Array(nper);
+  for (let n = 0; n < nper; n++) x[n] = Math.sin((2 * Math.PI * bin * n) / nper);
+  const r = welchPsd(x, { fs, segments: 1 }); // one full-length segment
+  expect(r.nperseg).toBe(1024);
+  expect(r.nSegments).toBe(1);
+  let argmax = 0;
+  for (let k = 1; k < r.psd.length; k++) if (r.psd[k] > r.psd[argmax]) argmax = k;
+  expect(argmax).toBe(bin);
+  expect(r.freqs[bin]).toBeCloseTo(bin, 6);
+});
+
+test('welchPsd integrates back to the signal mean-square (Parseval, rect window)', () => {
+  const L = 512;
+  const fs = 800;
+  const x = new Float64Array(L);
+  for (let n = 0; n < L; n++) x[n] = Math.sin(n) + 0.4 * Math.cos(3 * n) - 0.15 * Math.sin(0.5 * n);
+  let ms = 0;
+  for (let n = 0; n < L; n++) ms += x[n] * x[n];
+  ms /= L;
+  // Rectangular window, single segment → the density integral equals ms.
+  const r = welchPsd(x, { fs, segments: 1, applyHann: false });
+  let integral = 0;
+  for (let k = 0; k < r.psd.length; k++) integral += r.psd[k] * r.df;
+  expect(integral).toBeCloseTo(ms, 6);
+});
+
+test('welchPsd of white noise is flat-ish at ≈ 2σ²/fs', () => {
+  // Deterministic LCG so the test is reproducible.
+  let s = 123456789 >>> 0;
+  const rand = () => { s = (1664525 * s + 1013904223) >>> 0; return s / 0xffffffff; };
+  const L = 8192;
+  const fs = 1000;
+  const x = new Float64Array(L);
+  for (let n = 0; n < L; n++) x[n] = (rand() * 2 - 1) * Math.sqrt(3); // var ≈ 1
+  let ms = 0;
+  for (let n = 0; n < L; n++) ms += x[n] * x[n];
+  ms /= L;
+
+  const r = welchPsd(x, { fs, segments: 16 });   // heavy averaging → low variance
+  const expected = (2 * ms) / fs;                 // one-sided white PSD level
+
+  // Mean over interior bins should sit near the expected flat level.
+  let sum = 0, cnt = 0;
+  for (let k = 1; k < r.psd.length - 1; k++) { sum += r.psd[k]; cnt++; }
+  const mean = sum / cnt;
+  expect(mean).toBeGreaterThan(expected * 0.6);
+  expect(mean).toBeLessThan(expected * 1.4);
+
+  // "flat-ish": the mean of the lower third and upper third of the band agree
+  // to within a factor of 2 (no strong slope for white noise).
+  const third = Math.floor(r.psd.length / 3);
+  let lo = 0, hi = 0;
+  for (let k = 1; k < third; k++) lo += r.psd[k];
+  for (let k = r.psd.length - third; k < r.psd.length - 1; k++) hi += r.psd[k];
+  lo /= (third - 1); hi /= (third - 1);
+  expect(hi / lo).toBeGreaterThan(0.5);
+  expect(hi / lo).toBeLessThan(2.0);
+});
+
+test('welchPsd returns an empty result for tiny inputs or a bad fs', () => {
+  expect(welchPsd(new Float64Array(1), { fs: 1000 }).nSegments).toBe(0);
+  expect(welchPsd([], { fs: 1000 }).psd.length).toBe(1);
+  expect(welchPsd(new Float64Array(64), { fs: 0 }).nSegments).toBe(0);
 });

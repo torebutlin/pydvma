@@ -135,3 +135,112 @@ export function magnitudeSpectrum(
   }
   return { mag, size };
 }
+
+/** Options for {@link welchPsd}. */
+export interface WelchOptions {
+  /** Sample rate in Hz — sets the PSD's per-Hz normalisation and axis. */
+  fs: number;
+  /**
+   * Target number of averaging segments.  The segment length is derived
+   * from this and the input length assuming 50 % overlap
+   * (`nperseg ≈ 2·L/(segments+1)`, rounded DOWN to a power of two), so a
+   * larger count trades frequency resolution for a smoother estimate.
+   * Clamped to ≥ 1; the *actual* segments averaged is returned as
+   * `nSegments` (it can differ once `nperseg` is snapped to a power of two).
+   */
+  segments?: number;
+  /** Apply a Hann window per segment (default true — reduces leakage). */
+  applyHann?: boolean;
+}
+
+/** Result of {@link welchPsd}. */
+export interface WelchResult {
+  /**
+   * One-sided power spectral density, length `nperseg/2 + 1`, in
+   * units of (signal-unit)²/Hz.  Bin 0 (DC) and Nyquist are NOT doubled;
+   * interior bins carry the one-sided ×2 factor, so
+   * `Σ psd[k]·df ≈ mean-square(signal)` (Parseval for the density scaling).
+   */
+  psd: Float64Array;
+  /** Matching one-sided frequency axis in Hz (`freqs[k] = k·df`). */
+  freqs: Float64Array;
+  /** Segment length actually used (a power of two ≤ input length). */
+  nperseg: number;
+  /** Number of overlapping segments actually averaged (≥ 1). */
+  nSegments: number;
+  /** Frequency resolution in Hz (`fs / nperseg`). */
+  df: number;
+}
+
+/**
+ * Welch power-spectral-density estimate for the Live scope's averaged
+ * FFT ("PSD") mode.
+ *
+ * The window is split into 50 %-overlapping segments of length `nperseg`
+ * (a power of two derived from the requested `segments` count), each
+ * Hann-windowed and transformed, and the modified periodograms are
+ * averaged.  This trades frequency resolution for a much lower-variance
+ * spectrum than a single instantaneous FFT — the standard tool for
+ * reading a noise floor or a steady tone's level.
+ *
+ * Scaling is scipy-style "density": each periodogram is
+ * `|X[k]|² / (fs·Σw²)`, one-sided (interior bins ×2), so the result is a
+ * true PSD in unit²/Hz and integrates back to the signal's mean square.
+ * For white noise of variance σ² the interior PSD is flat at ≈ 2σ²/fs.
+ *
+ * Returns a length-1 empty PSD for inputs shorter than 2 samples or a
+ * non-positive `fs`.
+ */
+export function welchPsd(
+  samples: Float32Array | Float64Array | number[],
+  opts: WelchOptions,
+): WelchResult {
+  const L = samples.length;
+  const fs = opts.fs;
+  if (L < 2 || !(fs > 0)) {
+    return { psd: new Float64Array(1), freqs: new Float64Array(1), nperseg: 1, nSegments: 0, df: 0 };
+  }
+  const applyHann = opts.applyHann ?? true;
+  const target = Math.max(1, Math.floor(opts.segments ?? 4));
+
+  // Segment length from the target count assuming 50 % overlap, snapped
+  // DOWN to a power of two and never longer than the input.
+  let nperseg = prevPow2(Math.floor((2 * L) / (target + 1)));
+  nperseg = Math.max(2, Math.min(nperseg, prevPow2(L)));
+  const step = Math.max(1, nperseg >> 1); // 50 % overlap
+  const half = nperseg >> 1;
+
+  // Window + its power Σw² for the density normalisation.
+  const w = applyHann ? hannWindow(nperseg) : null;
+  let U = nperseg;
+  if (w) { U = 0; for (let i = 0; i < nperseg; i++) U += w[i] * w[i]; }
+  const norm = fs * (U || 1);
+
+  const acc = new Float64Array(half + 1);
+  const re = new Float64Array(nperseg);
+  const im = new Float64Array(nperseg);
+  let nSeg = 0;
+  for (let start = 0; start + nperseg <= L; start += step) {
+    im.fill(0);
+    for (let i = 0; i < nperseg; i++) {
+      const v = samples[start + i];
+      re[i] = w ? v * w[i] : v;
+    }
+    fftRadix2(re, im);
+    for (let k = 0; k <= half; k++) {
+      const p = (re[k] * re[k] + im[k] * im[k]) / norm;
+      acc[k] += (k === 0 || k === half) ? p : 2 * p;
+    }
+    nSeg++;
+  }
+
+  const psd = new Float64Array(half + 1);
+  const inv = nSeg > 0 ? 1 / nSeg : 0;
+  for (let k = 0; k <= half; k++) psd[k] = acc[k] * inv;
+
+  const df = fs / nperseg;
+  const freqs = new Float64Array(half + 1);
+  for (let k = 0; k <= half; k++) freqs[k] = k * df;
+
+  return { psd, freqs, nperseg, nSegments: nSeg, df };
+}
