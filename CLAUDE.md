@@ -65,20 +65,31 @@ showing bridge devices + an NI group when the bridge reports nidaq.
 Bridge e2e (BRIDGE_E2E=1) passes against a real mock-driver server.
 Suites: pytest 225, vitest 396, svelte-check 0/0, Playwright 46.
 
+**Wave C LANDED too (checkpoint 3):** serve reports real per-device
+capabilities (fs ladders / max channels / device_caps, keyed
+driver:index; NI via additive `_ni_backend.device_capabilities`
+helpers — property names verified against nidaqmx-python source,
+mock-tested only on Mac); `log` takes an output-stimulus object
+(sweep/gaussian/uniform via `signal_generator`, as Qt's
+LogDataThread) and streams armed→triggered/timeout pretrigger status
+events. Acquire has the mockup's output group (OUT badge) +
+pretrigger arm, both capability-gated; Setup fs/channels constrain to
+the selected device's ladder; bridged sets keep their container
+metadata. Suites: pytest 247, vitest 410, svelte-check 0/0,
+Playwright 46 + bridge e2e 3/3 vs a real mock-driver server.
+
 **START THE NEXT SESSION HERE:** (1) **Tore hands-on round 4** — new
-surface: Fit, calibration, exports, Live scope PSD mode, Setup full,
-and `pydvma-serve` (try `pydvma-serve --driver soundcard --open` for
-the real-hardware loop; requires `pip install -e .[serve,soundcard]`).
-Queued decisions for him: Fit-N semantics/Global optimise, CSV
-all-kinds vs current-view, unit-string display (axis labels don't yet
-read `units`), bridged-set metadata (recordingToItem drops container
-meta/labels — follow-up). (2) **Wave C** — NI depth over the bridge:
-fs ladders/capabilities per device, AO/output-stimulus + pretrigger
-UI on Acquire (serve already accepts the MySettings kwargs), VmaxNI
-scaling, and `dev/plans/…windows-checklist` for the hardware session
-(NI-DAQmx does NOT run on Mac — mocks only here). (3) Wave-D polish
-backlog: narrow-rail mini, AudioWorklet, dark theme, wheel-embedding
-webui/dist (pyproject TODO), M1/M2. Roadmap:
+surface: Fit, calibration, exports, Live PSD mode, Setup full, and
+the bridge (`pip install -e .[serve,soundcard]` then `pydvma-serve
+--driver soundcard --open`). Queued decisions: Fit-N/Global optimise,
+CSV all-kinds vs current-view, unit axis labels, implicit 1000-sample
+bare-arm default, output UI shape. (2) **Windows hardware session** —
+run `dev/plans/2026-07-07-waveC-windows-checklist.md` (three NI
+devices, loopbacks, IEPE, output sweep, VmaxNI checks — the NI path
+is mock-verified only until then). (3) **Wave D polish**: narrow-rail
+mini, AudioWorklet, dark theme, wheel-embedding webui/dist (pyproject
+TODO), M1/M2, browser-side (Web Audio) output stimulus + pretrigger.
+(4) Qt teardown ONLY after Tore's explicit confirmation. Roadmap:
 `dev/plans/2026-07-07-full-gui-replacement-plan.md`. Run: `cd webui
 && npm run dev`, `http://localhost:5173/?fixture=1` (or `?fixture=3ch`);
 feedback trail: `dev/2026-07-07-round3-feedback.md` and earlier.
