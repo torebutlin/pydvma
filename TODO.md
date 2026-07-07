@@ -14,7 +14,7 @@ Ordering is by dependency and hardware availability, not by priority alone. Mac 
 3. **TF / PSD / CSD speedup** in `calculate_cross_spectrum_matrix` — done. Replaced the `O(N_chan^2)` `scipy.signal.csd` + `scipy.signal.coherence` loop with a single vectorised pass: detrend + window + rfft once across all channels, then form the full cross-spectrum tensor via `einsum('isf,jsf->ijf', X.conj(), X) / N_seg`. Coherence is derived from the same tensor. Output is byte-equivalent to scipy reference to within FFT round-off (the layout had to put the FFT axis last and contiguous, otherwise numpy's pairwise summation block order subtly changed the residual at the DC bin and blew up coherence-at-DC). Benchmarked speedups on `(N_chans × N_samples × N_frames)` shapes: `(2 × 10k × 4)` 2.1→0.3 ms (6.6×), `(4 × 10k × 8)` 7.4→0.8 ms (9.4×), `(8 × 50k × 16)` 161→13 ms (12×), `(16 × 50k × 16)` 640→36 ms (18×). All 20 golden tests + existing 51 hardware/etc tests still pass.
 4. **Rolling code review + rolling docs audit** — during steps 2–3, capture any issues noticed and fix the corresponding `docs/` pages for files you touch. Avoid a big up-front review.
 5. **nidaqmx prep (desk work on Mac)** — read the `nidaqmx-python` API, sketch the shape of a migrated `Recorder_NI`, and build a mocked `streams.py` test harness that doesn't require real hardware. The goal is to arrive at the Windows machine with a ready-to-drop-in plan.
-6. **Bug-fix batch (added 2026-06-10)** — done same day: all 20 High/Medium/Low items in "Confirmed bugs — code review (June 2026)" fixed with regression tests (see that section's header note). Remaining tail: hardware-verify the `AutoRegN` fix in the next Phase C session.
+6. **Bug-fix batch (added 2026-06-10)** — done same day: all 20 High/Medium/Low items in "Confirmed bugs — code review (June 2026)" fixed with regression tests (see that section's header note). ~~Remaining tail: hardware-verify the `AutoRegN` fix in the next Phase C session.~~ **Verified 2026-07-07** on all three devices (`chunk_size=2048` captures cleanly; see `dev/plans/2026-07-07-waveC-windows-checklist.md`).
 
 ### Phase B — Mac-only, GUI & analysis (after Phase A)
 
@@ -28,12 +28,20 @@ Do in this order:
 
 ### Phase C — Windows or Linux with NI hardware (intermittent access)
 
-Treat these as one coherent package, done together in each hardware session because they share hardware risk and setup cost:
+**Phase C complete as of 2026-07-07.** Items 11–14 all landed across
+earlier sessions and the 2026-07-07 hardware session verified the
+whole package on the real lab kit (USB-6003, USB-6212, cDAQ-9174 with
+9234+9260; results in `dev/plans/2026-07-07-waveC-windows-checklist.md`).
+That session also fixed five hardware-surfaced defects: pretrigger
+backlog drain under host load, DSA fs-coercion adoption into
+`settings.fs`, device-aware terminal-config fallback, output
+rate/voltage preflights (+ `ai_vmax`/`ao_vmax` capabilities), and a
+stale re-trigger between captures.
 
-11. **nidaqmx migration of `Recorder_NI`** — drop in the plan from step 5.
-12. **NI cDAQ support** — naturally fits nidaqmx's task-based API.
-13. **Trigger & logging audit** across soundcard (`Recorder`) and NI paths.
-14. **Turn off ±1 scaling for the NI path** — use `VmaxNI`. (Soundcard side of this can be done on Mac in Phase B if wanted, but is easier to do with NI side together for consistency.)
+11. ~~**nidaqmx migration of `Recorder_NI`**~~ — done (nidaqmx is the sole NI backend; PyDAQmx removed).
+12. ~~**NI cDAQ support**~~ — done (chassis-collapsed enumeration, DSA/IEPE, module-spanning channels).
+13. ~~**Trigger & logging audit**~~ — done across soundcard and NI paths; pretrigger positioning now asserted on hardware end-to-end (incl. through the `pydvma serve` bridge).
+14. ~~**Turn off ±1 scaling for the NI path — use `VmaxNI`**~~ — done; NI data is stored in volts, `VmaxNI` sets the AI range only (verified on the ao0→ai0 loopbacks: stored numbers identical at VmaxNI 10 vs 2, saturation at the rail).
 
 Because Windows access is intermittent, design each hardware session to be pauseable: small, well-specified tasks with tests runnable on Mac via mocks between sessions.
 
@@ -51,7 +59,7 @@ Because Windows access is intermittent, design each hardware session to be pause
 
 Found in the structured review on 2026-06-09/10 (parallel per-module reviews, then every High/Medium claim manually verified against master — line numbers checked, the two headline maths claims confirmed empirically). Mac test suite was green (115 passed / 4 hardware-skipped) at review time: none of these were covered by existing tests.
 
-**All 20 items fixed 2026-06-10** (commits `b9fac21`…`27e2608`), each TDD-style with a regression test watched fail first; suite now 157 passed / 4 hardware-skipped. New test files: `test_datastructure.py`, `test_modal.py`, `test_plotting.py` (headless Agg), `test_gui_logic.py` (Qt offscreen), `test_file.py`, plus additions to `test_analysis.py` and `test_acquisition_guards.py`. Line numbers below refer to pre-fix master. One caveat: the `AutoRegN` fix is implemented and unit-tested but its DAQmx-layer behaviour still needs confirming on real NI hardware — see the item note.
+**All 20 items fixed 2026-06-10** (commits `b9fac21`…`27e2608`), each TDD-style with a regression test watched fail first; suite now 157 passed / 4 hardware-skipped. New test files: `test_datastructure.py`, `test_modal.py`, `test_plotting.py` (headless Agg), `test_gui_logic.py` (Qt offscreen), `test_file.py`, plus additions to `test_analysis.py` and `test_acquisition_guards.py`. Line numbers below refer to pre-fix master. One caveat: the `AutoRegN` fix is implemented and unit-tested but its DAQmx-layer behaviour still needs confirming on real NI hardware — see the item note. (**Confirmed 2026-07-07**: non-standard `chunk_size=2048` captures cleanly on all three devices.)
 
 ### High
 

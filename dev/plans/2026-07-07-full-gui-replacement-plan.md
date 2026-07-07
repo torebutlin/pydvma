@@ -82,6 +82,14 @@ coherent group lands.
 
 ## Wave C — NI support through the bridge (Mac = mocks only)
 
+> **DONE + HARDWARE-VERIFIED 2026-07-07** — the Windows session ran
+> the full C2 checklist against all three real devices (39 headless
+> ws-protocol checks, 0 fail) and fixed five defects it surfaced
+> (callback backlog drain, DSA fs-coercion adoption, terminal-config
+> fallback, output preflights + `ai_vmax`/`ao_vmax` caps, stale
+> re-trigger). Results + details:
+> `dev/plans/2026-07-07-waveC-windows-checklist.md` (top block).
+
 NI-DAQmx does not run on macOS: ALL NI work here is desk work +
 mocked tests (`_ni_backend` enumeration/channel-string logic is
 already Mac-tested); **hardware verification happens in a Windows
@@ -100,10 +108,18 @@ CLAUDE.md; `tests/test_acquisition_hardware.py` conventions).
 ## Wave D — replacement finish (needs Tore)
 
 - Round-N hands-on cycles on each wave's output (established rhythm).
+- Webui follow-ups from the 2026-07-07 hardware session: clamp
+  `output_VmaxNI` to the new `ao_vmax` capability in Setup; surface
+  the DSA coerced-fs note in the UI (BridgeProvider already adopts
+  `configured.fs`); consider `ai_vmax` for the VmaxNI picker.
 - Qt GUI: stays untouched; final tidy-up (removal/deprecation of
   `gui.py`/pyqtgraph deps) ONLY after Tore's explicit confirmation.
-- Docs: MkDocs pages for the webui modes; labsheet migration notes;
-  October-readiness check.
+- Docs: MkDocs pages for the webui modes — installation.md and
+  index.md currently document only core/[qt]/[ni]/[full] + the
+  JupyterLite notebook; the `[serve]` extra, `pydvma-serve`, and the
+  Pages app at `/app/` are not yet on the published site (deliberate
+  while pre-release). Labsheet migration notes; October-readiness
+  check.
 
 ## Standing constraints
 
