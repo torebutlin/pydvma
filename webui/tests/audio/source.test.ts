@@ -9,7 +9,36 @@ const MOCK_DEVICES: MediaDeviceInfo[] = [
   { deviceId: 'spk-1', label: 'Speakers', groupId: 'g1', kind: 'audiooutput', toJSON: () => ({}) },
 ];
 
+// ---- worklet-path (primary) mocks ----
+// Tests that stub a bare AudioContext WITHOUT `audioWorklet` exercise the
+// ScriptProcessorNode FALLBACK; these add a working AudioWorklet surface so
+// the primary path can be driven too.
+
+let lastWorkletNode: MockAudioWorkletNode | null = null;
+class MockAudioWorkletNode {
+  port = { onmessage: null as ((ev: unknown) => void) | null, close: vi.fn() };
+  connect = vi.fn();
+  disconnect = vi.fn();
+  processorOptions: { chunkFrames?: number; nChannels?: number } | undefined;
+  constructor(_ctx: unknown, _name: string, options?: { processorOptions?: unknown }) {
+    this.processorOptions = options?.processorOptions as this['processorOptions'];
+    lastWorkletNode = this;
+  }
+}
+/** An AudioContext class (rate `fs`) whose `audioWorklet.addModule` uses `addModule`. */
+function workletCtxClass(fs: number, addModule: ReturnType<typeof vi.fn>) {
+  return class MockWorkletAudioContext {
+    sampleRate = fs;
+    destination = {};
+    audioWorklet = { addModule };
+    createMediaStreamSource() { return { connect: vi.fn(), disconnect: vi.fn(), channelCount: 1 }; }
+    createScriptProcessor() { return { connect: vi.fn(), disconnect: vi.fn(), onaudioprocess: null }; }
+    close = vi.fn();
+  };
+}
+
 beforeEach(() => {
+  lastWorkletNode = null;
   vi.stubGlobal('navigator', {
     mediaDevices: {
       enumerateDevices: vi.fn().mockResolvedValue(MOCK_DEVICES),
@@ -17,7 +46,7 @@ beforeEach(() => {
     },
   });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 test('enumerateInputDevices filters to audioinput only', async () => {
   const devices = await enumerateInputDevices();
@@ -140,6 +169,69 @@ test('startRecording completes and returns correct shape', async () => {
   expect(rec.timeAxis[TOTAL - 1]).toBeCloseTo((TOTAL - 1) / FS, 6);
   // First sample should be sin(0) ≈ 0.
   expect(Math.abs(rec.data[0])).toBeLessThan(0.01);
+});
+
+test('startRecording completes on the AudioWorklet path and returns correct shape', async () => {
+  const FS = 8000;
+  const DURATION = 0.05; // 400 samples at 8 kHz
+  const TOTAL = Math.ceil(FS * DURATION);
+
+  const track = { stop: vi.fn() };
+  const stream = { getTracks: () => [track], getAudioTracks: () => [{ getSettings: () => ({ channelCount: 1 }) }] };
+  (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockResolvedValue(stream);
+
+  const addModule = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('AudioContext', workletCtxClass(FS, addModule));
+  vi.stubGlobal('AudioWorkletNode', MockAudioWorkletNode);
+
+  const cfg: RecordConfig = { sampleRate: FS, channelCount: 1, durationS: DURATION };
+  const handle = startRecording(cfg);
+
+  // Wait for the async setup (getUserMedia + addModule) to wire the port.
+  await new Promise(r => setTimeout(r, 10));
+
+  expect(addModule).toHaveBeenCalledTimes(1);
+  expect(lastWorkletNode).not.toBeNull();
+  // Recording cadence == old ScriptProcessorNode BUFFER_SIZE (4096).
+  expect(lastWorkletNode!.processorOptions?.chunkFrames).toBe(4096);
+
+  // Drive interleaved mono chunks over the port; the final chunk overshoots
+  // TOTAL so the consume()/remaining clamp is exercised.
+  const BLOCK = 256;
+  let delivered = 0;
+  while (delivered < TOTAL && lastWorkletNode!.port.onmessage) {
+    const chunk = new Float32Array(BLOCK);
+    for (let i = 0; i < BLOCK; i++) chunk[i] = Math.sin(2 * Math.PI * 440 * (delivered + i) / FS);
+    lastWorkletNode!.port.onmessage!({ data: { data: chunk, nSamples: BLOCK, nChannels: 1 } });
+    delivered += BLOCK;
+  }
+
+  const rec = await handle.promise;
+  expect(rec.fs).toBe(FS);
+  expect(rec.nChannels).toBe(1);
+  expect(rec.nSamples).toBe(TOTAL);
+  expect(rec.data.length).toBe(TOTAL * 1);
+  expect(rec.timeAxis.length).toBe(TOTAL);
+  expect(rec.timeAxis[0]).toBe(0);
+  expect(rec.timeAxis[TOTAL - 1]).toBeCloseTo((TOTAL - 1) / FS, 6);
+  expect(Math.abs(rec.data[0])).toBeLessThan(0.01); // sin(0) ≈ 0
+  expect(track.stop).toHaveBeenCalled();
+});
+
+test('startRecording releases the mic if the worklet module fails to load (C2)', async () => {
+  const track = { stop: vi.fn() };
+  const stream = { getTracks: () => [track], getAudioTracks: () => [{ getSettings: () => ({ channelCount: 1 }) }] };
+  (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockResolvedValue(stream);
+
+  // addModule rejects (a fetch failure or worklet syntax error) — the mic is
+  // already open, so it must be released before rethrowing.
+  const addModule = vi.fn().mockRejectedValue(new Error('addModule failed'));
+  vi.stubGlobal('AudioContext', workletCtxClass(44100, addModule));
+  vi.stubGlobal('AudioWorkletNode', MockAudioWorkletNode);
+
+  const handle = startRecording({ sampleRate: 44100, channelCount: 1, durationS: 2 });
+  await expect(handle.promise).rejects.toThrow(/Could not start audio capture/);
+  expect(track.stop, 'the opened mic must be released when addModule rejects').toHaveBeenCalled();
 });
 
 test('startRecording releases the mic if AudioContext/node setup throws (C2)', async () => {
