@@ -123,20 +123,38 @@ domain root — the deployed app's engine had never worked. Fixed
 subpath e2e (second Playwright webServer mounts dist at /pydvma/app/).
 Live site verified computing after deploy.
 
-**START THE NEXT SESSION HERE:** (1) **Tore hands-on round 4**
-(restart it — the engine-boot failure he hit was the rebuild race):
-`pip install -e .[serve,soundcard]` then `pydvma-serve --driver
-soundcard --open` (or `--driver nidaq` on the PC). Queued decisions:
-Fit-N/Global optimise, CSV all-kinds vs current-view, unit axis
-labels, implicit 1000-sample bare-arm default, output UI shape.
-(2) **Design-facing Wave-D leftovers** (post-hands-on): dark theme,
-narrow-rail mini strip, browser-side (Web Audio) output stimulus +
-pretrigger, M1/M2 minors. (3) Next Windows visit: eyeball the 9260
-clamp note + coerced-fs note on real hardware (vitest-only here).
+**ROUND 4 FULLY LANDED (pushed to 771c42b):** all of
+`dev/2026-07-07-round4-feedback.md` — 3 bugs root-caused (sono
+channel clamp; Reject crash = pydvma `unpack_matrix` on an emptied M,
+FIXED in datastructure/modal + glue guard for stale wheels; legacy
+files' derived kinds now LOAD via two-pass id_link seeding, chIn=0
+convention) + view-jump-on-load; ZoomToolbar redesigned (curl
+undo/redo, hover-expand, live transposed x/y limits, 2×2 legend grid,
+shared Segmented lin|log idiom app-wide incl. Live); Live view-time
+custom entry + freq Full|Range min-max; 'averaging'/'N frames'
+labels; unit-aware axis labels (units threaded through derived);
+pretrig bare-arm 100 + editable on the arm; output duration/device/
+channels controls; **Fit mode editing** (chip per-mode mute/×-delete,
+one-level undo, Local/Global overlay toggles, thicker recon strokes)
+and **Refine** (`modal.modal_refine`, additive: simultaneous
+all-modes fit seeded from M, auto-revert via undo slot when
+worse/non-converged). ALSO fixed this round: the DEPLOYED Pages app's
+engine had never booted (base URL resolved against origin, dropping
+/pydvma/app/ — fixed + permanent subpath @engine e2e). Suites:
+pytest 282, vitest 465, svelte-check 0/0, Playwright 47 + bridge 6/6.
+
+**START THE NEXT SESSION HERE:** (1) **Tore hands-on round 5** on the
+round-4 surface (live Pages app now genuinely works — hard reload).
+Queued design questions: fit-as-tray-card (recon lines with normal
+per-line controls), CSV all-kinds confirmed good?, mute icons OK?
+(2) **Design-facing leftovers**: dark theme, narrow-rail mini strip,
+browser-side (Web Audio) output stimulus + pretrigger, M1/M2 minors,
+MkDocs pages for the webui modes (installation.md has [serve] now;
+index/labsheet notes pending — October readiness). (3) Next Windows
+visit: eyeball the 9260 clamp + coerced-fs notes on real hardware.
 (4) Qt teardown ONLY after Tore's explicit confirmation. Roadmap:
-`dev/plans/2026-07-07-full-gui-replacement-plan.md`. Run: `cd webui
-&& npm run dev`, `http://localhost:5173/?fixture=1` (or `?fixture=3ch`);
-feedback trail: `dev/2026-07-07-round3-feedback.md` and earlier.
+`dev/plans/2026-07-07-full-gui-replacement-plan.md`; feedback trail:
+`dev/2026-07-07-round4-feedback.md` and earlier.
 
 Auto-loaded by Claude Code at the start of every session. Contributors
 and collaborators: the concrete filesystem paths below are for the
