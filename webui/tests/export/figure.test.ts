@@ -15,8 +15,8 @@ const svg =
   '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400">' +
   '<rect data-role="plot-bg" width="800" height="400" fill="#ffffff"/>' +
   '<line data-role="axis" stroke="#eef0f4"/>' + // gridline
-  '<text data-role="axis" fill="#66708a">1</text>' + // tick label (muted)
-  '<text data-role="axis" fill="#66708a">Time (s)</text>' + // axis label (muted)
+  '<text data-role="axis" class="tick" fill="#66708a">1</text>' + // tick label (muted)
+  '<text data-role="axis" class="axlab" fill="#66708a">Time (s)</text>' + // axis label (muted)
   '<rect data-role="axis" stroke="#e3e6eb" fill="none"/>' + // frame
   '<path data-testid="plot-line" stroke="#2563eb" d="M0,0L10,10"/></svg>'; // data line
 
@@ -24,8 +24,62 @@ test('white keeps white bg', () => {
   expect(prepareSvg(svg, 'white')).toContain('fill="#ffffff"');
 });
 
-test('white leaves the SVG otherwise unchanged', () => {
-  expect(prepareSvg(svg, 'white')).toBe(svg);
+test('white stamps explicit fonts but leaves every colour + the structure intact', () => {
+  const o = prepareSvg(svg, 'white');
+  // Colours untouched (fidelity change is fonts only).
+  expect(o).toContain('fill="#ffffff"'); // plot-bg
+  expect(o).toContain('fill="#66708a"'); // tick + axlab
+  expect(o).toContain('stroke="#eef0f4"'); // gridline
+  expect(o).toContain('stroke="#e3e6eb"'); // frame
+  expect(o).toContain('stroke="#2563eb"'); // data line
+  // Fonts now explicit (the self-contained-SVG font fix).
+  expect(o).toContain('font-family="ui-monospace, Menlo, monospace"');
+  expect(o).toContain('font-family="system-ui, sans-serif"');
+});
+
+// --- Font fidelity (Task A3): the exported SVG must carry explicit inline
+// font-family/size so PNG rasterisation + svg2pdf don't fall back to a
+// default (16px Times under svg2pdf). Stamped by class onto <text> nodes,
+// for EVERY background. ---
+
+test('fonts: tick text gets the monospace stack at 10.5px', () => {
+  const o = prepareSvg(svg, 'white');
+  expect(o).toMatch(
+    /<text font-size="10\.5px" font-family="ui-monospace, Menlo, monospace"[^>]*class="tick"/,
+  );
+});
+
+test('fonts: axis-label text gets the body stack at 11.5px', () => {
+  const o = prepareSvg(svg, 'white');
+  expect(o).toMatch(
+    /<text font-size="11\.5px" font-family="system-ui, sans-serif"[^>]*class="axlab"/,
+  );
+});
+
+test('fonts: each stack ends in a generic family so svg2pdf maps to a core font (not Times)', () => {
+  // svg2pdf's fontAliases: monospace→courier, sans-serif→helvetica; a stack
+  // that ends in a generic family never falls through to the Times default.
+  const o = prepareSvg(svg, 'white');
+  expect(o).toContain('monospace"'); // tick stack ends in monospace
+  expect(o).toContain('sans-serif"'); // axlab stack ends in sans-serif
+});
+
+test('fonts: non-text elements (lines, rects, paths) are never stamped', () => {
+  const o = prepareSvg(svg, 'white');
+  // The gridline <line> and data <path> must not gain a font attribute.
+  expect(o).not.toMatch(/<line[^>]*font-/);
+  expect(o).not.toMatch(/<path[^>]*font-/);
+});
+
+test('fonts: stamping is idempotent (re-running white is stable)', () => {
+  const once = prepareSvg(svg, 'white');
+  expect(prepareSvg(once, 'white')).toBe(once);
+});
+
+test('fonts: dark stamps fonts AND still recolours the chrome', () => {
+  const o = prepareSvg(svg, 'dark');
+  expect(o).toContain('font-family="ui-monospace, Menlo, monospace"');
+  expect(o).toMatch(/data-role="axis"[^>]*fill="#c7cede"/); // dark recolour intact
 });
 
 test('transparent strips bg fill only', () => {

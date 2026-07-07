@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { expect, test, type Download, type Page } from '@playwright/test';
 
 /**
@@ -44,7 +44,7 @@ test('Export stage → PNG → Export downloads a .png', async ({ page }) => {
   // card's execute button is "Export" (scoped to the card; the ribbon also
   // has an "Export" stage button).
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export' }).click();
+  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export', exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.png$/);
   // Non-empty: a real rasterised figure is tens of KB; a blank/failed export
@@ -60,7 +60,7 @@ test('Export stage → PDF only → Export downloads a .pdf', async ({ page }) =
   await page.getByRole('checkbox', { name: 'PDF' }).check();
 
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export' }).click();
+  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export', exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.pdf$/);
   // A real vector PDF of this figure is tens of KB (~75 KB observed); floor at
@@ -75,4 +75,63 @@ test('the top-bar Save Figure opens the Export stage from any view', async ({ pa
   // default view. Clicking it jumps to the Export stage.
   await page.getByRole('button', { name: 'Save Figure' }).click();
   await expect(page.getByRole('region', { name: 'Export stage controls' })).toBeVisible();
+});
+
+/**
+ * Data export (Task A3): CSV (pure TS) + Matlab (engine `scipy.io.savemat`).
+ *
+ * These need the `exporter` accessor wired into the card
+ * (`ContextCard` passing `exporter={actions}`, a one-line Wave-A integration
+ * step). Until that lands the Matlab/CSV buttons are DISABLED by design, so
+ * each test skips itself when the button is disabled rather than failing —
+ * they activate automatically once the wiring + `actions.exportArrays` /
+ * `actions.exportMat` are in place. The card's execute buttons are scoped to
+ * the Export region so the ribbon's own "Export" stage button never matches.
+ */
+test('Export stage → Export CSV downloads a raw-values .csv (first line is real %.18e)', async ({
+  page,
+}) => {
+  await openExport(page);
+  const region = page.getByRole('region', { name: 'Export stage controls' });
+  const csvBtn = region.getByRole('button', { name: 'Export CSV' });
+  await expect(csvBtn).toBeVisible();
+  test.skip(
+    await csvBtn.isDisabled(),
+    'exporter not wired yet — ContextCard must pass exporter={actions}',
+  );
+
+  const downloadPromise = page.waitForEvent('download');
+  await csvBtn.click();
+  const download = await downloadPromise;
+  // fixture=1 has only time data → one file, named <base>-time.csv.
+  expect(download.suggestedFilename()).toMatch(/-time\.csv$/);
+  const text = readFileSync((await download.path())!, 'utf8');
+  const firstLine = text.split('\n')[0];
+  // The time axis starts at 0; every cell is numpy's %.18e (no complex parens).
+  expect(firstLine.startsWith('0.000000000000000000e+00,')).toBe(true);
+  expect(firstLine).toMatch(/^-?\d\.\d{18}e[+-]\d{2}(,-?\d\.\d{18}e[+-]\d{2})+$/);
+});
+
+test.describe('@engine', () => {
+  test.setTimeout(240_000);
+
+  test('Export stage → Export Matlab downloads a non-empty .mat', async ({ page }) => {
+    await openExport(page);
+    const region = page.getByRole('region', { name: 'Export stage controls' });
+    const matBtn = region.getByRole('button', { name: 'Export Matlab' });
+    await expect(matBtn).toBeVisible();
+    test.skip(
+      await matBtn.isDisabled(),
+      'exporter not wired yet — ContextCard must pass exporter={actions}',
+    );
+
+    // First .mat export boots pyodide (scipy.io.savemat) — allow the full boot.
+    const downloadPromise = page.waitForEvent('download', { timeout: 200_000 });
+    await matBtn.click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/\.mat$/);
+    // A real .mat with a time array is comfortably > 100 bytes; a blank/failed
+    // export would be near-zero.
+    expect(await downloadSize(download)).toBeGreaterThan(100);
+  });
 });

@@ -67,6 +67,48 @@ function mapRoleTags(svgText: string, fn: (tag: string) => string): string {
 }
 
 /**
+ * Export font specs, MIRRORING PlotSurface's scoped CSS (`.tick` / `.axlab`).
+ * On screen the plot styles text via component CSS using CSS custom
+ * properties (`var(--font-mono …)` / `var(--font-body …)`); a standalone
+ * serialised <svg> loses BOTH the <style> and those `:root` variables, so
+ * exported text would fall back to the SVG default (16px, and Times under
+ * svg2pdf — an ugly serif). We restamp each text element with an explicit
+ * family stack and px size so the exported PNG/PDF are self-contained — the
+ * same treatment PlotSurface already gives fill/stroke.
+ *
+ * Each stack ENDS in a generic family: svg2pdf's `fontAliases` maps
+ * `monospace → courier` and `sans-serif → helvetica`, so the resolver picks
+ * a sensible core font instead of falling through to Times (verified in
+ * svg2pdf.js `getAttribute` → presentation-attribute fallback + the
+ * `fontAliases` table). KEEP IN SYNC with PlotSurface.svelte's `.tick` /
+ * `.axlab` rules.
+ */
+export const EXPORT_FONTS = {
+  tick: { family: 'ui-monospace, Menlo, monospace', size: '10.5px' },
+  axlab: { family: 'system-ui, sans-serif', size: '11.5px' },
+} as const;
+
+/**
+ * Stamp explicit `font-family` / `font-size` PRESENTATION ATTRIBUTES onto
+ * every `<text>` element, choosing the spec by the element's `.tick` /
+ * `.axlab` class (the plot's two text roles; any other `<text>` is treated as
+ * a label). Presentation attributes are honoured by BOTH export paths: the
+ * browser rasterises them for the PNG `<img>` draw, and svg2pdf reads them via
+ * its `getAttribute` presentation-attribute fallback for the PDF. Idempotent
+ * (an element already carrying the attribute is left as-is) and a pure string
+ * op on a serialised COPY, so the live plot is never touched.
+ */
+function stampFonts(svgText: string): string {
+  return svgText.replace(/<text\b[^>]*>/g, (tag) => {
+    const spec = /class="[^"]*\btick\b[^"]*"/.test(tag) ? EXPORT_FONTS.tick : EXPORT_FONTS.axlab;
+    let out = tag;
+    if (!/\bfont-family=/.test(out)) out = out.replace(/^<text\b/, `<text font-family="${spec.family}"`);
+    if (!/\bfont-size=/.test(out)) out = out.replace(/^<text\b/, `<text font-size="${spec.size}"`);
+    return out;
+  });
+}
+
+/**
  * Produce a SELF-CONTAINED SVG string restyled for the chosen background.
  *
  *   'white'       — returned unchanged (the on-screen white figure).
@@ -78,21 +120,24 @@ function mapRoleTags(svgText: string, fn: (tag: string) => string): string {
  *                   preserved.
  *
  * The input is expected to be PlotSurface's serialised <svg> (data-role tags
- * carrying inline fill/stroke). Idempotent for 'dark' (the mapped hexes are
- * not themselves keys), so re-running is stable.
+ * carrying inline fill/stroke). Font fidelity is needed for EVERY background
+ * (white included), so fonts are stamped first, then the background-specific
+ * recolouring is applied. Idempotent for 'dark' (the mapped hexes are not
+ * themselves keys) and for the font stamp, so re-running is stable.
  */
 export function prepareSvg(svgText: string, mode: BackgroundMode): string {
-  if (mode === 'white') return svgText;
+  const svg = stampFonts(svgText);
+  if (mode === 'white') return svg;
 
   if (mode === 'transparent') {
     // Only the plot-bg rect loses its fill; everything else stays.
-    return mapRoleTags(svgText, (tag) =>
+    return mapRoleTags(svg, (tag) =>
       /data-role="plot-bg"/.test(tag) ? tag.replace(/fill="[^"]*"/, 'fill="none"') : tag,
     );
   }
 
   // dark: recolour every inline chrome hex on data-role elements.
-  return mapRoleTags(svgText, (tag) => {
+  return mapRoleTags(svg, (tag) => {
     let out = tag;
     for (const [from, to] of Object.entries(DARK_MAP)) {
       // Replace the hex only inside a fill=/stroke= attribute value, case-

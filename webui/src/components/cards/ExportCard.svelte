@@ -16,10 +16,14 @@
    *     (threaded down as a bindable prop). This is where Task 13a's
    *     autosave switch finally gets a UI.
    *
-   * Matlab / CSV export are shown DISABLED with an honest tooltip — those
-   * arrive in a later plan; for now they are done via the CLI.
+   * Matlab / CSV data export are enabled when an `exporter` accessor is wired
+   * (the analysis `actions`): Matlab downloads engine-built `.mat` bytes
+   * (`scipy.io.savemat`), CSV serialises the raw arrays in pure TS
+   * (src/lib/export/data.ts). When no exporter is provided they fall back to
+   * DISABLED with an honest tooltip.
    */
   import { exportPdf, exportPng, type BackgroundMode } from '../../lib/export/figure';
+  import { buildCsvFiles, type Exporter } from '../../lib/export/data';
   import { cancelAutosave } from '../../lib/files/autosave';
   import type { WorkDir } from '../../lib/files/workdir';
   import type { Toasts } from '../../lib/stores/toast';
@@ -30,6 +34,8 @@
     onsave,
     toasts,
     hasData = false,
+    exporter = undefined,
+    datasetName = undefined,
     autosaveEnabled = $bindable(true),
   }: {
     /** Accessor for the active plot's root <svg> (null when no plot mounted). */
@@ -40,8 +46,15 @@
     onsave: () => void;
     /** Shared toast store for success/error feedback. */
     toasts: Toasts;
-    /** Whether any dataset is loaded (gates Save Figure). */
+    /** Whether any dataset is loaded (gates Save Figure + data export). */
     hasData?: boolean;
+    /**
+     * Data-export accessor (the analysis `actions`, which satisfies this
+     * minimal surface). Absent → Matlab/CSV stay disabled with a tooltip.
+     */
+    exporter?: Exporter;
+    /** Dataset name for the exported `.mat` / `.csv` base (else 'logged_data'). */
+    datasetName?: string;
     /** App-wide autosave flag (bindable — this card owns its UI). */
     autosaveEnabled?: boolean;
   } = $props();
@@ -130,6 +143,54 @@
       busy = false;
     }
   }
+
+  /** Data-export filename base: the dataset name, else pydvma's logger default. */
+  function dataBaseName(): string {
+    return (datasetName?.trim() || 'logged_data').replace(/\.(mat|csv)$/i, '');
+  }
+
+  /**
+   * Export Matlab: the engine builds the `.mat` (scipy.io.savemat, schema
+   * matching pydvma export_to_matlab); this only downloads the bytes.
+   */
+  async function exportMatlab(): Promise<void> {
+    if (!exporter) return;
+    busy = true;
+    try {
+      const bytes = await exporter.exportMat();
+      await write(`${dataBaseName()}.mat`, bytes);
+      toasts.push('Exported Matlab (.mat)', { level: 'success' });
+    } catch (e) {
+      toasts.push(`Matlab export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+    } finally {
+      busy = false;
+    }
+  }
+
+  /**
+   * Export CSV: one raw-values file per data kind present (time / freq / tf),
+   * mirroring the "save the whole dataset" theme of Save Dataset + Matlab.
+   * Built in pure TS to reproduce pydvma export_to_csv exactly.
+   */
+  async function exportCsv(): Promise<void> {
+    if (!exporter) return;
+    busy = true;
+    try {
+      const files = buildCsvFiles(exporter, dataBaseName());
+      if (files.length === 0) {
+        toasts.push('No data to export yet.', { level: 'info' });
+        return;
+      }
+      const enc = new TextEncoder();
+      for (const f of files) await write(f.name, enc.encode(f.text));
+      const kinds = files.map((f) => f.name.replace(/^.*-(\w+)\.csv$/, '$1')).join(' + ');
+      toasts.push(`Exported CSV (${kinds})`, { level: 'success' });
+    } catch (e) {
+      toasts.push(`CSV export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
 <section class="ctx-card card-controls" aria-label="Export stage controls">
@@ -140,10 +201,20 @@
         <span class="grp-lab">dataset</span>
         <div class="grp-ctl">
           <button class="btn" onclick={onsave}>Save Dataset</button>
-          <button class="btn" disabled title="export via CLI for now — browser export in a later plan"
-            >Matlab</button>
-          <button class="btn" disabled title="export via CLI for now — browser export in a later plan"
-            >CSV</button>
+          <button
+            class="btn"
+            disabled={busy || !hasData || !exporter}
+            title={exporter
+              ? 'Export all data as a Matlab .mat file'
+              : 'Data export unavailable — engine not connected'}
+            onclick={exportMatlab}>Export Matlab</button>
+          <button
+            class="btn"
+            disabled={busy || !hasData || !exporter}
+            title={exporter
+              ? 'Export data as CSV (one file per kind: time / freq / tf)'
+              : 'Data export unavailable — engine not connected'}
+            onclick={exportCsv}>Export CSV</button>
         </div>
       </div>
       <div class="grp">
