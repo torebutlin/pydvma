@@ -31,7 +31,7 @@
    */
   import { onMount } from 'svelte';
   import type { AcquireStore } from '../../lib/stores/acquire';
-  import { deviceCapsFor } from '../../lib/audio/provider';
+  import { deviceCapsFor, clampVoltage, PYDVMA_DEFAULT_VMAX } from '../../lib/audio/provider';
 
   let {
     acquire,
@@ -49,6 +49,7 @@
   // devices always carry real labels).
   const bridgeCaps = $derived(acquire.bridgeCaps);
   const bridgeConfig = $derived(acquire.bridgeConfig);
+  const coercedFs = $derived(acquire.coercedFs);
   const isBridge = $derived($bridgeCaps != null);
   const hasNidaq = $derived($bridgeCaps?.backends.includes('nidaq') ?? false);
 
@@ -96,6 +97,30 @@
   const latencyMs = $derived(
     $settings.latency && $settings.latency > 0 ? Math.round($settings.latency * 1000) : '',
   );
+
+  // ---- NI voltage rails (bridge caps) ----
+  // Largest symmetric input/output ranges the selected NI device reports;
+  // undefined when unknown (mock/soundcard, or a device that didn't report).
+  const aiVmaxCap = $derived(bridgeSelCaps?.ai_vmax);
+  const aoVmaxCap = $derived(bridgeSelCaps?.ao_vmax);
+  // Effective values shown in the fields: the explicit config or the pydvma
+  // default (5 V) the server would otherwise use. The store proactively
+  // clamps these to the device rail on device select, so a field showing
+  // e.g. 4.24 V after picking the 9260-fed chassis IS the clamped default.
+  const vmaxNIValue = $derived($bridgeConfig.vmaxNI ?? PYDVMA_DEFAULT_VMAX);
+  const outputVmaxNIValue = $derived($bridgeConfig.outputVmaxNI ?? PYDVMA_DEFAULT_VMAX);
+  // True when the AO rail sits below the pydvma default — the field was (or
+  // will be) clamped down and we explain why (the motivating 9260 bug).
+  const aoRailBelowDefault = $derived(aoVmaxCap != null && aoVmaxCap < PYDVMA_DEFAULT_VMAX);
+
+  /** Format a sample rate: integer as-is, else 1 d.p. (8533.3). */
+  function fmtHz(hz: number): string {
+    return Number.isInteger(hz) ? String(hz) : hz.toFixed(1);
+  }
+  /** Trim a voltage to a short, human-readable string (4.2426 → "4.24"). */
+  function fmtVolts(v: number): string {
+    return Number.isInteger(v) ? String(v) : v.toFixed(2);
+  }
 
   onMount(() => {
     // Enumerate on arrival (round-2: don't wait for "Log data").
@@ -150,6 +175,18 @@
   function onPretrigChannel(e: Event) {
     const v = Math.max(0, Math.round(Number((e.target as HTMLInputElement).value)) || 0);
     acquire.patchBridge({ pretrigChannel: v });
+  }
+  /** NI input range (VmaxNI), clamped to the device's ai_vmax rail. */
+  function onVmaxNI(e: Event) {
+    const v = Number((e.target as HTMLInputElement).value);
+    if (!isFinite(v) || v <= 0) return;
+    acquire.patchBridge({ vmaxNI: clampVoltage(v, aiVmaxCap) });
+  }
+  /** NI output range (output_VmaxNI), clamped to the device's ao_vmax rail. */
+  function onOutputVmaxNI(e: Event) {
+    const v = Number((e.target as HTMLInputElement).value);
+    if (!isFinite(v) || v <= 0) return;
+    acquire.patchBridge({ outputVmaxNI: clampVoltage(v, aoVmaxCap) });
   }
   /** Format a capability range like "1–2" / "≤ 96 kHz", or "—" when unknown. */
   function fmtRange(r: { min?: number; max?: number } | undefined, unit = '', k = 1): string {
@@ -235,6 +272,17 @@
         </div>
       {/if}
     </div>
+
+    {#if $coercedFs}
+      <!-- DSA coerced-fs note: the device snapped an off-ladder request to a
+           legal step (e.g. 8000 → 8533.3 Hz on the 9234). Axes read at the
+           TRUE rate — never silently at the requested one. -->
+      <div class="ctx-row">
+        <span class="note coerce-note" data-testid="setup-coerced-fs">
+          device runs at {fmtHz($coercedFs.configured)} Hz (requested {fmtHz($coercedFs.requested)})
+        </span>
+      </div>
+    {/if}
 
     {#if full}
       <!--
@@ -374,6 +422,56 @@
               />
             </div>
           </div>
+          <!-- NI voltage rails: input (VmaxNI) + output (output_VmaxNI),
+               each clamped to the selected device's reported range so a
+               requested range never exceeds the hardware. The 9260's ±4.24 V
+               output rail is BELOW the pydvma 5 V default; the store clamps
+               the default down and this note explains why. -->
+          <div class="grp" data-testid="setup-vmax">
+            <span class="grp-lab">NI voltage range (±V)</span>
+            <div class="grp-ctl">
+              <span class="ml">in</span>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                max={aiVmaxCap ?? undefined}
+                value={vmaxNIValue}
+                onchange={onVmaxNI}
+                title={aiVmaxCap != null
+                  ? `Input full-scale (VmaxNI); device rail ±${fmtVolts(aiVmaxCap)} V`
+                  : 'Input full-scale (VmaxNI)'}
+                aria-label="NI input voltage range"
+                data-testid="vmax-ni"
+                style="width:64px"
+              />
+              <span class="ml">out</span>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                max={aoVmaxCap ?? undefined}
+                value={outputVmaxNIValue}
+                onchange={onOutputVmaxNI}
+                title={aoVmaxCap != null
+                  ? `Output full-scale (output_VmaxNI); device rail ±${fmtVolts(aoVmaxCap)} V`
+                  : 'Output full-scale (output_VmaxNI)'}
+                aria-label="NI output voltage range"
+                data-testid="output-vmax-ni"
+                style="width:64px"
+              />
+              {#if aiVmaxCap != null || aoVmaxCap != null}
+                <span class="note" data-testid="vmax-hint">
+                  rail{aiVmaxCap != null ? ` in ±${fmtVolts(aiVmaxCap)}` : ''}{aoVmaxCap != null ? ` out ±${fmtVolts(aoVmaxCap)}` : ''} V
+                </span>
+              {/if}
+            </div>
+            {#if aoRailBelowDefault}
+              <span class="note coerce-note" data-testid="vmax-clamp-note">
+                output clamped to device rail ±{fmtVolts(aoVmaxCap!)} V (default {PYDVMA_DEFAULT_VMAX} V would saturate)
+              </span>
+            {/if}
+          </div>
         {/if}
       </div>
     {/if}
@@ -394,5 +492,10 @@
     border-top: 1px dashed var(--border);
     padding-top: 7px;
     margin-top: 2px;
+  }
+  /* Coerced-fs / voltage-clamp advisories — visible but not an error. */
+  .coerce-note {
+    color: var(--amber, #b45309);
+    font-weight: 500;
   }
 </style>

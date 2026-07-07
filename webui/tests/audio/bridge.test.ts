@@ -22,7 +22,10 @@ import {
 import {
   deviceCapsFor,
   outputCapable,
+  clampVoltage,
+  PYDVMA_DEFAULT_VMAX,
   type BridgeCaps,
+  type ConfiguredInfo,
   type LogStatusEvent,
 } from '../../src/lib/audio/provider';
 import type { MonitorChunk } from '../../src/lib/audio/source';
@@ -514,4 +517,125 @@ test('deviceCapsFor falls back to the NI ai_channel_count when max_channels lack
 test('outputCapable / deviceCapsFor are null-safe for the Web Audio path', () => {
   expect(outputCapable(null, 'x')).toBe(false);
   expect(deviceCapsFor(null, 'x')).toBeNull();
+});
+
+// ---- Wave D follow-up: voltage caps + clamp helper ----
+
+test('deviceCapsFor surfaces per-device ai_vmax / ao_vmax voltage rails', () => {
+  const caps: BridgeCaps = {
+    v: 1,
+    backends: ['nidaq'],
+    devices: {
+      soundcard: [],
+      nidaq: [{
+        name: 'cDAQ1', product_type: 'cDAQ-9174', is_chassis: true,
+        ai_channel_count: 4, ao_channel_count: 2,
+        module_names: [], module_ai_counts: {}, module_ao_counts: {},
+      }],
+    },
+    fs_ladders: { 'nidaq:0': [51200] },
+    max_channels: { 'nidaq:0': { input: 4, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      // 9234 AI rail ±5 V; 9260 AO rail ±4.2426 V (below the 5 V default!).
+      'nidaq:0': { driver: 'nidaq', index: 0, name: 'cDAQ1', ao: true, ai_vmax: 5, ao_vmax: 4.2426 },
+    },
+  };
+  expect(deviceCapsFor(caps, 'nidaq:0')).toMatchObject({
+    fs_ladder: [51200], max_channels: 4, ao: true, ai_vmax: 5, ao_vmax: 4.2426,
+  });
+});
+
+test('deviceCapsFor omits non-positive / absent vmax (mock/soundcard have none)', () => {
+  const caps: BridgeCaps = {
+    v: 1, backends: ['mock'],
+    devices: { soundcard: [], nidaq: [] },
+    fs_ladders: {}, max_channels: null, pretrigger: true, ao: true,
+    device_caps: {
+      'mock:0': { driver: 'mock', index: 0, name: 'Mock', ao: true }, // no vmax keys
+      'nidaq:9': { driver: 'nidaq', index: 9, name: 'weird', ao: false, ai_vmax: 0, ao_vmax: -1 },
+    },
+  };
+  expect(deviceCapsFor(caps, 'mock:0')?.ai_vmax).toBeUndefined();
+  const ni = deviceCapsFor(caps, 'nidaq:9');
+  expect(ni?.ai_vmax).toBeUndefined(); // 0 rejected (not > 0)
+  expect(ni?.ao_vmax).toBeUndefined(); // -1 rejected
+});
+
+test('clampVoltage clamps down to a rail but passes through when under it or when no cap', () => {
+  expect(clampVoltage(5, 4.2426)).toBe(4.2426); // over the rail → clamped
+  expect(clampVoltage(3, 4.2426)).toBe(3);       // under the rail → unchanged
+  expect(clampVoltage(5, undefined)).toBe(5);    // no cap (mock/soundcard) → unchanged
+  expect(clampVoltage(5, 0)).toBe(5);            // non-positive cap ignored
+  expect(PYDVMA_DEFAULT_VMAX).toBe(5);           // mirrors options.py VmaxNI=5
+});
+
+test('VmaxNI / output_VmaxNI kwargs flow into the configure message', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ vmaxNI: 5, outputVmaxNI: 4.2426 });
+  const rh = bp.startRecording({ deviceId: 'nidaq:0', sampleRate: 51200, channelCount: 4, durationS: 1 });
+  fake.open();
+  await tick();
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings).toMatchObject({ VmaxNI: 5, output_VmaxNI: 4.2426 });
+  void rh.promise.catch(() => {});
+});
+
+// ---- Wave D follow-up: onConfigured (DSA coerced-fs) ----
+
+test('onConfigured fires from a monitor configure with requested vs resolved fs', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const infos: ConfiguredInfo[] = [];
+  bp.onConfigured((i) => infos.push(i));
+
+  const monP = bp.startMonitor({ sampleRate: 8000, channelCount: 2 }, () => {});
+  fake.open();
+  await tick();
+  // The device coerces 8000 → 8533.33 (DSA snap) and reports it in `configured`.
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8533.33, channels: 2 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  expect(infos).toEqual([{ requestedFs: 8000, configuredFs: 8533.33, channels: 2 }]);
+});
+
+test('onConfigured fires from a log configure too (requested == resolved when honoured)', async () => {
+  const { bytes, nSamples, nChannels, fs } = dvmaWithMeta();
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const infos: ConfiguredInfo[] = [];
+  bp.onConfigured((i) => infos.push(i));
+
+  const rh = bp.startRecording({ sampleRate: fs, channelCount: nChannels, durationS: 0.5 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs, channels: nChannels });
+  await tick();
+  fake.emitJson({ type: 'log_result', nChannels, nSamples, fs, byteLength: bytes.length });
+  await tick();
+  fake.emitBinary(containerFrame(bytes, nChannels, nSamples, fs));
+  await rh.promise;
+
+  expect(infos).toEqual([{ requestedFs: fs, configuredFs: fs, channels: nChannels }]);
+});
+
+test('onConfigured is skipped when the configured reply carries no usable fs', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const infos: ConfiguredInfo[] = [];
+  bp.onConfigured((i) => infos.push(i));
+
+  const monP = bp.startMonitor({ sampleRate: 44100, channelCount: 1 }, () => {});
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', channels: 1 }); // no fs
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  expect(infos).toEqual([]);
 });

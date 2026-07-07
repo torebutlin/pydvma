@@ -4,7 +4,10 @@ import { createAcquireStore, recordingToItem, recordingToDataset, type AcquireSe
 import { capabilities } from '../../src/lib/stores/stages';
 import type { Recording } from '../../src/lib/audio/source';
 import type {
+  BridgeCaps,
+  BridgeConfig,
   BridgeRecordingMeta,
+  ConfiguredInfo,
   LogStatusEvent,
   SourceProvider,
 } from '../../src/lib/audio/provider';
@@ -237,4 +240,110 @@ test('bridge record resets pretrigStatus and lastRecordingMeta at the start of e
   expect(store.lastRecordingMeta).toBeNull();
   // Even with a null-meta provider, the status events still flowed.
   expect(get(store.pretrigStatus)).toBe('timeout');
+});
+
+// ---- Wave D follow-up: voltage clamp + DSA coerced-fs note ----
+
+/**
+ * A bridge fake carrying a cDAQ device_caps entry (9234 AI rail ±5 V, 9260
+ * AO rail ±4.2426 V) plus injectable hooks: `fireConfigured` drives the
+ * onConfigured sink, `config()` reads the last kwargs forwarded to setConfig.
+ */
+function richBridgeProvider() {
+  let configuredCb: ((info: ConfiguredInfo) => void) | null = null;
+  let lastConfig: BridgeConfig = {};
+  const caps: BridgeCaps = {
+    v: 1,
+    backends: ['nidaq'],
+    devices: {
+      soundcard: [],
+      nidaq: [{
+        name: 'cDAQ1', product_type: 'cDAQ-9174', is_chassis: true,
+        ai_channel_count: 4, ao_channel_count: 2,
+        module_names: [], module_ai_counts: {}, module_ao_counts: {},
+      }],
+    },
+    fs_ladders: { 'nidaq:0': [51200] },
+    max_channels: { 'nidaq:0': { input: 4, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      'nidaq:0': { driver: 'nidaq', index: 0, name: 'cDAQ1', ao: true, ai_vmax: 5, ao_vmax: 4.2426 },
+    },
+  };
+  const provider: SourceProvider = {
+    kind: 'bridge',
+    async capabilities() { return caps; },
+    async enumerateInputDevices() {
+      return [{ deviceId: 'nidaq:0', label: 'NI: cDAQ1 (4 ch)', groupId: 'nidaq', hasLabel: true }];
+    },
+    startRecording() {
+      return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 };
+    },
+    async startMonitor() { return { stop() {}, fs: 51200, nChannels: 4 }; },
+    setConfig(cfg) { lastConfig = { ...cfg }; },
+    onLogStatus() {},
+    onConfigured(cb) { configuredCb = cb; },
+    lastMeta() { return null; },
+  };
+  return {
+    provider,
+    fireConfigured: (info: ConfiguredInfo) => configuredCb?.(info),
+    config: () => lastConfig,
+  };
+}
+
+test('selecting a device clamps output_VmaxNI down to the ao_vmax rail (motivating 9260 bug)', async () => {
+  const { provider, config } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  // Nothing selected yet → no clamp (deviceId '').
+  expect(get(store.bridgeConfig).outputVmaxNI).toBeUndefined();
+  // Select the chassis: the pydvma 5 V default exceeds the 9260's ±4.2426 V
+  // rail, so the store clamps output_VmaxNI down AND forwards it to the bridge.
+  store.patch({ deviceId: 'nidaq:0' });
+  expect(get(store.bridgeConfig).outputVmaxNI).toBe(4.2426);
+  expect(config().outputVmaxNI).toBe(4.2426);
+  // The AI rail equals the 5 V default → VmaxNI left unset (no needless clamp).
+  expect(get(store.bridgeConfig).vmaxNI).toBeUndefined();
+});
+
+test('an over-range VmaxNI is clamped to the device ai_vmax on device select', async () => {
+  const { provider } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  store.patchBridge({ vmaxNI: 10 });        // user asked for ±10 V input range
+  store.patch({ deviceId: 'nidaq:0' });
+  expect(get(store.bridgeConfig).vmaxNI).toBe(5); // clamped to the 9234 ±5 rail
+});
+
+test('coercedFs is set on a DSA rate snap and cleared on an exact honour', async () => {
+  const { provider, fireConfigured } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  expect(get(store.coercedFs)).toBeNull();
+  // Requested 8000, device runs 8533.33 (9234 off-ladder snap).
+  fireConfigured({ requestedFs: 8000, configuredFs: 8533.33, channels: 2 });
+  expect(get(store.coercedFs)).toEqual({ requested: 8000, configured: 8533.33 });
+  // A later exact honour clears the note.
+  fireConfigured({ requestedFs: 44100, configuredFs: 44100, channels: 1 });
+  expect(get(store.coercedFs)).toBeNull();
+});
+
+test('sub-Hz float noise in the resolved rate is treated as an exact honour', async () => {
+  const { provider, fireConfigured } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  fireConfigured({ requestedFs: 48000, configuredFs: 48000.01, channels: 1 });
+  expect(get(store.coercedFs)).toBeNull();
+});
+
+test('editing the requested fs or device clears a standing coerced-fs note', async () => {
+  const { provider, fireConfigured } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  fireConfigured({ requestedFs: 8000, configuredFs: 8533.33, channels: 2 });
+  expect(get(store.coercedFs)).not.toBeNull();
+  store.patch({ sampleRate: 16000 });
+  expect(get(store.coercedFs)).toBeNull();
 });

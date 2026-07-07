@@ -19,7 +19,7 @@
    */
   import type { AcquireStore } from '../../lib/stores/acquire';
   import { recordingToItem } from '../../lib/stores/acquire';
-  import { outputCapable } from '../../lib/audio/provider';
+  import { outputCapable, deviceCapsFor, clampVoltage } from '../../lib/audio/provider';
   import type { Actions } from '../../lib/analysis/actions';
   import type { Toasts } from '../../lib/stores/toast';
   import { activeStage } from '../../lib/stores/stages';
@@ -43,6 +43,7 @@
   const bridgeCaps = $derived(acquire.bridgeCaps);
   const bridgeConfig = $derived(acquire.bridgeConfig);
   const pretrigStatus = $derived(acquire.pretrigStatus);
+  const coercedFs = $derived(acquire.coercedFs);
 
   const recording = $derived($status === 'recording');
 
@@ -50,6 +51,8 @@
   // Output (stimulus) group: only when the bridge advertises AO for the
   // selected device. The Web Audio path (null caps) is always hidden.
   const showOutput = $derived(outputCapable($bridgeCaps, $settings.deviceId));
+  // The selected device's output voltage rail (ao_vmax); clamps the amplitude.
+  const aoVmaxCap = $derived(deviceCapsFor($bridgeCaps, $settings.deviceId)?.ao_vmax);
   // Pretrigger arm: only when the bridge advertises pretrigger.
   const showPretrig = $derived($bridgeCaps?.pretrigger ?? false);
 
@@ -67,6 +70,11 @@
   /** UI label for a signal_generator token ('uniform' shows as "white"). */
   function typeLabel(t: string): string {
     return t === 'uniform' ? 'white' : t;
+  }
+
+  /** Format a sample rate: integer as-is, else 1 d.p. (8533.3). */
+  function fmtHz(hz: number): string {
+    return Number.isInteger(hz) ? String(hz) : hz.toFixed(1);
   }
 
   /** Whether the OUT badge shows on the Log button (output armed). */
@@ -128,7 +136,9 @@
   }
   function onOutputAmp(e: Event) {
     const v = Number((e.target as HTMLInputElement).value);
-    if (isFinite(v)) acquire.patchBridge({ outputAmp: v });
+    // Clamp to the device's output rail (ao_vmax) so the drive never exceeds
+    // the hardware — the 9260 rail (±4.24 V) is below the pydvma 5 V default.
+    if (isFinite(v)) acquire.patchBridge({ outputAmp: clampVoltage(v, aoVmaxCap) });
   }
   function onOutputF1(e: Event) {
     const v = Number((e.target as HTMLInputElement).value);
@@ -224,6 +234,8 @@
             <span class="ml">amp (V)</span>
             <input
               type="number" step="0.1" style="width:54px"
+              max={aoVmaxCap ?? undefined}
+              title={aoVmaxCap != null ? `Output amplitude (V); device rail ±${aoVmaxCap.toFixed(2)} V` : 'Output amplitude (V)'}
               aria-label="output amplitude"
               value={outputAmp} onchange={onOutputAmp} disabled={!outputOn}
             />
@@ -280,6 +292,15 @@
         </div>
       {/if}
     </div>
+    {#if $coercedFs}
+      <!-- DSA coerced-fs note: the device runs at a different rate than
+           requested (off-ladder snap). Shown so axes are read at the true rate. -->
+      <div class="ctx-row">
+        <span class="note coerce-note" data-testid="acquire-coerced-fs">
+          device runs at {fmtHz($coercedFs.configured)} Hz (requested {fmtHz($coercedFs.requested)})
+        </span>
+      </div>
+    {/if}
     {#if pretrigLine}
       <div class="ctx-row">
         <span class="note" data-testid="pretrig-status">{pretrigLine}</span>
@@ -344,5 +365,10 @@
   }
   .cancel-btn:hover {
     background: #fef2f2 !important;
+  }
+  /* DSA coerced-fs advisory — visible but not an error. */
+  .coerce-note {
+    color: var(--amber, #b45309);
+    font-weight: 500;
   }
 </style>

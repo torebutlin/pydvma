@@ -159,4 +159,26 @@ test.describe('pydvma serve bridge', () => {
     // The buffered capture still lands as a set despite no trigger.
     await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(1, { timeout: 20000 });
   });
+
+  test('Wave D regression: an honoured mock rate shows no DSA coerced-fs note', async ({ page }) => {
+    // The mock driver reports no vmax caps and echoes the requested fs
+    // exactly, so this can only be a NEGATIVE regression: exercise the
+    // onConfigured wiring end-to-end and confirm no spurious coerced-fs note
+    // fires. (The positive clamp/coercion paths are covered in vitest with
+    // fake caps — the mock never triggers them.)
+    await page.goto(`/?bridge=${encodeURIComponent(WS_URL)}`);
+    const ribbon = page.getByRole('navigation', { name: 'stages' });
+    await expect(ribbon.getByRole('button', { name: 'Setup' })).not.toHaveClass(/gated/, { timeout: 20000 });
+    await ribbon.getByRole('button', { name: 'Setup' }).click();
+    const deviceSelect = page.getByRole('combobox', { name: 'input device' });
+    await expect(deviceSelect).toContainText('Mock signal generator');
+    await deviceSelect.selectOption({ label: 'Mock signal generator' });
+
+    // Force a configure round-trip via the mini monitor.
+    await page.getByTestId('mini-start').click();
+    await expect(page.getByTestId('mini-stop')).toBeVisible({ timeout: 20000 });
+    // The mock honoured the requested rate → the coerced-fs note stays absent.
+    await expect(page.getByTestId('setup-coerced-fs')).toHaveCount(0);
+    await page.getByTestId('mini-stop').click();
+  });
 });

@@ -82,6 +82,21 @@ export interface DeviceCapsEntry {
   max_channels?: number;
   /** Whether THIS device can drive analog output (`device_caps[deviceId].ao`). */
   ao?: boolean;
+  /**
+   * Largest symmetric analog-INPUT voltage range in volts, from the server's
+   * `device_caps[deviceId].ai_vmax` (NI only; `_ni_backend.device_capabilities`).
+   * The UI clamps `VmaxNI` to this so a requested input range never exceeds
+   * the hardware rail.  Absent on mock/soundcard (unreported).
+   */
+  ai_vmax?: number;
+  /**
+   * Largest symmetric analog-OUTPUT voltage range in volts, from the server's
+   * `device_caps[deviceId].ao_vmax`.  The UI clamps `output_VmaxNI` and the
+   * output-amplitude field to this — the NI 9260 rail is ±4.2426 V, BELOW the
+   * pydvma default `output_VmaxNI = 5.0`, which would silently saturate output.
+   * Absent on mock/soundcard.
+   */
+  ao_vmax?: number;
 }
 
 /** Per-device input/output channel counts (`max_channels[deviceId]`). */
@@ -152,10 +167,29 @@ export interface BridgeRecordingMeta {
 export type LogStatusEvent = 'armed' | 'triggered' | 'timeout';
 
 /**
+ * The outcome of a `configure` round-trip: the sample rate the UI asked for
+ * versus the rate the device actually resolved to.  DSA modules (e.g. the
+ * NI 9234) snap an off-ladder request to the nearest legal step — measured:
+ * request 8000 → get 8533.33 Hz — and the server adopts the TRUE rate, so
+ * `requestedFs` and `configuredFs` can differ.  The UI surfaces the mismatch
+ * as a non-error note so time/frequency axes are never read at the wrong
+ * rate silently.  Emitted by the bridge for BOTH monitor and log configures.
+ */
+export interface ConfiguredInfo {
+  /** The sample rate the UI requested (`RecordConfig.sampleRate`). */
+  requestedFs: number;
+  /** The sample rate the device resolved to (the `configured` status `fs`). */
+  configuredFs: number;
+  /** The resolved channel count (the `configured` status `channels`). */
+  channels: number;
+}
+
+/**
  * Build the effective per-device constraints for a `deviceId` from the
  * server's three per-device maps: the fs ladder from `fs_ladders[deviceId]`,
- * the max INPUT channel count from `max_channels[deviceId].input`, and the
- * per-device AO flag from `device_caps[deviceId].ao`.  Falls back to an NI
+ * the max INPUT channel count from `max_channels[deviceId].input`, the
+ * per-device AO flag from `device_caps[deviceId].ao`, and the per-device
+ * voltage rails `ai_vmax` / `ao_vmax` (NI only).  Falls back to an NI
  * device's `ai_channel_count` (from the enumerate entry) for the channel
  * cap when the `max_channels` map has no entry.  Returns `null` when nothing
  * is known (the UI then imposes no bridge-derived constraint).
@@ -178,6 +212,10 @@ export function deviceCapsFor(
 
   const dc = caps.device_caps?.[deviceId];
   if (dc && typeof dc.ao === 'boolean') out.ao = dc.ao;
+  // Voltage rails (NI only): pass through when the server reports a finite,
+  // positive symmetric range so the UI can clamp VmaxNI / output_VmaxNI.
+  if (dc && typeof dc.ai_vmax === 'number' && dc.ai_vmax > 0) out.ai_vmax = dc.ai_vmax;
+  if (dc && typeof dc.ao_vmax === 'number' && dc.ao_vmax > 0) out.ao_vmax = dc.ao_vmax;
 
   // Fallback: NI enumerate entry's ai_channel_count when the map is absent.
   if (out.max_channels == null) {
@@ -207,6 +245,26 @@ export function outputCapable(caps: BridgeCaps | null, deviceId?: string): boole
 }
 
 /**
+ * pydvma's `MySettings` default full-scale voltage (`options.py`:
+ * `VmaxNI = 5`, and `output_VmaxNI` defaults to `VmaxNI`).  When the webui
+ * sends no explicit `VmaxNI` / `output_VmaxNI`, the server uses this — so it
+ * is the "current value" a device rail below it must clamp against.
+ */
+export const PYDVMA_DEFAULT_VMAX = 5;
+
+/**
+ * Clamp a full-scale voltage to a device rail.  Returns `value` unchanged
+ * when no finite positive `cap` is known (mock/soundcard, or a device that
+ * did not report a range); otherwise the smaller of the two.  Used for both
+ * the NI input range (`VmaxNI` vs `ai_vmax`) and the output range /
+ * amplitude (`output_VmaxNI` / `outputAmp` vs `ao_vmax`).
+ */
+export function clampVoltage(value: number, cap?: number): number {
+  if (cap == null || !Number.isFinite(cap) || cap <= 0) return value;
+  return value > cap ? cap : value;
+}
+
+/**
  * Bridge-only configuration merged into the next `configure` message as
  * `MySettings` kwargs (the NI-DAQ group in SetupCard supplies these).
  * IGNORED by the Web Audio provider.  Field names mirror the camelCase
@@ -222,6 +280,19 @@ export interface BridgeConfig {
   iepeExcitCurrentA?: number;
   /** Terminal configuration as a pydvma NI_mode token (e.g. 'DAQmx_Val_RSE'). */
   niMode?: string;
+  /**
+   * NI analog-INPUT full-scale voltage → `MySettings.VmaxNI` (±V passed as
+   * min/max to `add_ai_voltage_chan`).  Clamped to the device's `ai_vmax`
+   * rail before send.  Unset → the server's pydvma default (5 V).
+   */
+  vmaxNI?: number;
+  /**
+   * NI analog-OUTPUT full-scale voltage → `MySettings.output_VmaxNI`.
+   * Clamped to the device's `ao_vmax` rail — the NI 9260 rail (±4.2426 V)
+   * is below the pydvma default (5 V), which would silently saturate output.
+   * Unset → the server's default (`= VmaxNI`).
+   */
+  outputVmaxNI?: number;
   /** Pretrigger sample count (null = no pretrigger / free-run capture). */
   pretrigSamples?: number | null;
   pretrigThreshold?: number;
@@ -276,6 +347,13 @@ export interface SourceProvider {
    * capture runs.  No-op on Web Audio (which has no pretrigger).
    */
   onLogStatus?(cb: (event: LogStatusEvent) => void): void;
+  /**
+   * Bridge-only: register a persistent callback fired after every
+   * `configure` round-trip (monitor OR log) with the requested vs
+   * device-resolved sample rate, so the UI can surface a DSA coerced-fs
+   * note.  No-op on Web Audio (no server-side coercion).
+   */
+  onConfigured?(cb: (info: ConfiguredInfo) => void): void;
   /**
    * Bridge-only: container metadata from the most recent logged capture
    * (device driver actually used, calibration, units, test name), or `null`.

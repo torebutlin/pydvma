@@ -30,6 +30,7 @@ import type {
   BridgeCaps,
   BridgeConfig,
   BridgeRecordingMeta,
+  ConfiguredInfo,
   DeviceCapsEntry,
   DeviceChannelCounts,
   LogStatusEvent,
@@ -237,6 +238,8 @@ export class BridgeProvider implements SourceProvider {
   private extraConfig: BridgeConfig = {};
   /** Persistent sink for log-scoped pretrigger status events. */
   private logStatusCb: ((event: LogStatusEvent) => void) | null = null;
+  /** Persistent sink for configure round-trips (requested vs resolved fs). */
+  private configuredCb: ((info: ConfiguredInfo) => void) | null = null;
   /** Provenance metadata from the most recent logged capture. */
   private lastRecordingMeta: BridgeRecordingMeta | null = null;
 
@@ -258,6 +261,32 @@ export class BridgeProvider implements SourceProvider {
    */
   onLogStatus(cb: (event: LogStatusEvent) => void): void {
     this.logStatusCb = cb;
+  }
+
+  /**
+   * Register the persistent sink for configure round-trips.  Fired after
+   * every `configured` status (monitor OR log) with the requested sample
+   * rate and the rate the device resolved to, so the UI can show a DSA
+   * coerced-fs note (request 8000 → device 8533.33 Hz).
+   */
+  onConfigured(cb: (info: ConfiguredInfo) => void): void {
+    this.configuredCb = cb;
+  }
+
+  /**
+   * Surface a `configured` status to {@link configuredCb} with the requested
+   * fs paired against the device-resolved `fs` (and channel count).  Ignores
+   * a reply that carries no usable `fs` so a soundcard/mock echo without one
+   * never emits a spurious note.
+   */
+  private emitConfigured(requestedFs: number, status: Record<string, unknown>): void {
+    const configuredFs = Number(status.fs);
+    if (!Number.isFinite(configuredFs) || configuredFs <= 0) return;
+    this.configuredCb?.({
+      requestedFs,
+      configuredFs,
+      channels: Number(status.channels) || 0,
+    });
   }
 
   /** Provenance metadata from the most recent logged capture, or `null`. */
@@ -462,6 +491,10 @@ export class BridgeProvider implements SourceProvider {
     if (ec.inputChannelsSpec) s.input_channels_spec = ec.inputChannelsSpec;
     if (ec.iepeExcitCurrentA != null) s.iepe_excit_current_A = ec.iepeExcitCurrentA;
     if (ec.niMode) s.NI_mode = ec.niMode;
+    // Voltage rails (already clamped to the device's ai_vmax/ao_vmax by the
+    // store before they reach here) map onto MySettings' VmaxNI / output_VmaxNI.
+    if (ec.vmaxNI != null) s.VmaxNI = ec.vmaxNI;
+    if (ec.outputVmaxNI != null) s.output_VmaxNI = ec.outputVmaxNI;
     if (ec.pretrigSamples !== undefined) s.pretrig_samples = ec.pretrigSamples;
     if (ec.pretrigThreshold != null) s.pretrig_threshold = ec.pretrigThreshold;
     if (ec.pretrigChannel != null) s.pretrig_channel = ec.pretrigChannel;
@@ -526,6 +559,7 @@ export class BridgeProvider implements SourceProvider {
       this.onChunk = ondata;
       this.sendJson({ type: 'configure', settings: this.buildSettings(cfg) });
       const status = await this.waitFor((m) => m.type === 'status' && m.event === 'configured');
+      this.emitConfigured(cfg.sampleRate, status);
       this.sendJson({ type: 'start_monitor' });
       await this.waitFor((m) => m.type === 'status' && m.event === 'monitoring');
 
@@ -556,7 +590,8 @@ export class BridgeProvider implements SourceProvider {
     const promise = (async (): Promise<Recording> => {
       await this.connect();
       this.sendJson({ type: 'configure', settings: this.buildSettings(cfg, cfg.durationS) });
-      await this.waitFor((m) => m.type === 'status' && m.event === 'configured');
+      const configured = await this.waitFor((m) => m.type === 'status' && m.event === 'configured');
+      this.emitConfigured(cfg.sampleRate, configured);
       if (cancelled) {
         try { this.sendJson({ type: 'cancel' }); } catch { /* */ }
         throw new Error('cancelled');

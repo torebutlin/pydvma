@@ -18,10 +18,14 @@ import type {
 } from '../audio/source';
 import {
   WebAudioProvider,
+  deviceCapsFor,
+  clampVoltage,
+  PYDVMA_DEFAULT_VMAX,
   type SourceProvider,
   type BridgeCaps,
   type BridgeConfig,
   type BridgeRecordingMeta,
+  type ConfiguredInfo,
   type LogStatusEvent,
 } from '../audio/provider';
 import type { DvmaDataset, DvmaItem } from '../model/dataset';
@@ -38,6 +42,18 @@ export type AcquireStatus = 'idle' | 'recording' | 'done' | 'error';
  * the buffered set is still captured).
  */
 export type PretrigStatus = '' | LogStatusEvent;
+
+/**
+ * A DSA coerced-sample-rate note: the rate the UI requested vs the rate the
+ * device actually runs at.  `null` when the device honoured the request
+ * exactly (soundcard / mock / an on-ladder NI rate).  Non-null means the
+ * device snapped an off-ladder request (e.g. requested 8000 → runs at
+ * 8533.33 Hz on the NI 9234) and the axes must be read at `configured`.
+ */
+export interface CoercedFs {
+  requested: number;
+  configured: number;
+}
 
 export interface AcquireSettings {
   deviceId: string;     // '' = browser default
@@ -129,6 +145,13 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    * `timeout` as the capture progresses.
    */
   const pretrigStatus = writable<PretrigStatus>('');
+  /**
+   * DSA coerced-fs note (bridge only).  Set by the provider's `onConfigured`
+   * callback after every configure round-trip (monitor OR log) when the
+   * device resolves to a different rate than requested; cleared on an exact
+   * match and whenever the user edits the requested fs / device.
+   */
+  const coercedFs = writable<CoercedFs | null>(null);
 
   let handle: RecordingHandle | null = null;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
@@ -143,12 +166,19 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
   let lastRecordingMeta: BridgeRecordingMeta | null = null;
 
   /**
-   * Wire the provider's optional log-status sink to {@link pretrigStatus}
-   * so the Acquire card can show `armed → triggered/timeout`.  A no-op on
-   * Web Audio (no `onLogStatus`).  Called on every provider install.
+   * Wire the provider's optional sinks: the log-status sink to
+   * {@link pretrigStatus} (`armed → triggered/timeout`), and the
+   * configure sink to {@link coercedFs} (DSA coerced-rate note).  Both are
+   * no-ops on Web Audio.  Called on every provider install.
    */
   function wireProvider(p: SourceProvider): void {
     p.onLogStatus?.((event) => pretrigStatus.set(event));
+    p.onConfigured?.((info: ConfiguredInfo) => {
+      // A sub-Hz difference is float noise (an exact honour); anything larger
+      // is a real DSA coercion the user must see. Refresh OR clear the note.
+      const differs = Math.abs(info.configuredFs - info.requestedFs) >= 0.5;
+      coercedFs.set(differs ? { requested: info.requestedFs, configured: info.configuredFs } : null);
+    });
   }
   wireProvider(provider);
 
@@ -171,6 +201,37 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
   function patchBridge(p: Partial<BridgeConfig>): void {
     bridgeConfig.update((c) => ({ ...c, ...p }));
     provider.setConfig?.(get(bridgeConfig));
+  }
+
+  /**
+   * Clamp the NI voltage config to the SELECTED device's rails so the
+   * effective input/output range never exceeds the hardware.  Called
+   * whenever the caps or the selected device change (device switch / caps
+   * arrival) and on demand from SetupCard.
+   *
+   * The effective value is the explicit `vmaxNI` / `outputVmaxNI` or, when
+   * unset, the pydvma default (5 V) the server would otherwise use — so a
+   * device whose rail is below 5 V (the NI 9260 at ±4.2426 V) is clamped
+   * DOWN from the default too, not just when the user typed an over-range
+   * value.  THE MOTIVATING BUG: an unclamped 5 V default silently saturates
+   * the 9260's output.  A no-op unless a bridge device with a known rail is
+   * selected; idempotent (re-running never oscillates — once clamped the
+   * effective value equals the rail).
+   */
+  function reclampVoltages(): void {
+    const sel = deviceCapsFor(get(bridgeCaps), get(settings).deviceId);
+    if (!sel) return;
+    const cur = get(bridgeConfig);
+    const patch: Partial<BridgeConfig> = {};
+    if (sel.ai_vmax != null) {
+      const clamped = clampVoltage(cur.vmaxNI ?? PYDVMA_DEFAULT_VMAX, sel.ai_vmax);
+      if (clamped !== (cur.vmaxNI ?? PYDVMA_DEFAULT_VMAX)) patch.vmaxNI = clamped;
+    }
+    if (sel.ao_vmax != null) {
+      const clamped = clampVoltage(cur.outputVmaxNI ?? PYDVMA_DEFAULT_VMAX, sel.ao_vmax);
+      if (clamped !== (cur.outputVmaxNI ?? PYDVMA_DEFAULT_VMAX)) patch.outputVmaxNI = clamped;
+    }
+    if (Object.keys(patch).length) patchBridge(patch);
   }
 
   /**
@@ -251,6 +312,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       if (caps) {
         capabilities.update((c) => ({ ...c, liveSource: true }));
         await refreshDevices();
+        // Clamp voltages to the (possibly already-selected) device's rails.
+        reclampVoltages();
       }
       return;
     }
@@ -322,9 +385,16 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     handle?.cancel();
   }
 
-  /** Patch one or more settings fields. */
+  /**
+   * Patch one or more settings fields.  Editing the requested sample rate or
+   * the device invalidates any standing DSA coerced-fs note (it referred to
+   * the old request) and re-clamps the NI voltage config to the newly
+   * selected device's rails.
+   */
   function patch(p: Partial<AcquireSettings>): void {
     settings.update((s) => ({ ...s, ...p }));
+    if (p.sampleRate !== undefined || p.deviceId !== undefined) coercedFs.set(null);
+    if (p.deviceId !== undefined) reclampVoltages();
   }
 
   return {
@@ -341,6 +411,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     bridgeConfig,
     /** Pretrigger lifecycle for the Acquire status line ('' when inactive). */
     pretrigStatus,
+    /** DSA coerced-fs note (null = the device honoured the requested rate). */
+    coercedFs,
     init,
     refreshDevices,
     requestPermission,
@@ -348,6 +420,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     cancel,
     patch,
     patchBridge,
+    reclampVoltages,
     setProvider,
     /** The active acquisition backend (Web Audio or the serve bridge). */
     get provider() { return provider; },
