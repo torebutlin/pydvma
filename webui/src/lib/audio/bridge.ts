@@ -29,6 +29,10 @@ import type {
   AudioInputDevice,
   BridgeCaps,
   BridgeConfig,
+  BridgeRecordingMeta,
+  DeviceCapsEntry,
+  DeviceChannelCounts,
+  LogStatusEvent,
   MonitorCallback,
   MonitorHandle,
   NiDeviceEntry,
@@ -37,6 +41,12 @@ import type {
   RecordingHandle,
   SourceProvider,
 } from './provider';
+
+/** Status-frame events that belong to a log's pretrigger lifecycle. */
+const LOG_STATUS_EVENTS: ReadonlySet<string> = new Set(['armed', 'triggered', 'timeout']);
+
+/** pydvma's `MySettings` default `chunk_size` (the pretrigger context buffer). */
+const PYDVMA_DEFAULT_CHUNK_SIZE = 100;
 
 // ---- protocol constants (mirror pydvma/serve.py) ----
 
@@ -171,6 +181,37 @@ export function recordingFromDvma(bytes: Uint8Array): Recording {
   return { data, timeAxis, fs, nChannels, nSamples };
 }
 
+/**
+ * Extract the provenance metadata from a bridged `.dvma` container so a
+ * bridged set keeps its real identity (device driver actually used,
+ * calibration, units, test name, timestamp) instead of being relabelled
+ * `'web_audio'`.  Reads the single `TimeData` item's `meta` (units /
+ * channel_cal_factors / test_name / timestring / timestamp) and `settings`
+ * (device_driver).  Returns `null` when the container carries nothing worth
+ * preserving.  Values are already tag-decoded by {@link readDvma} to plain
+ * JSON-safe scalars/lists, so they can be written straight back into a
+ * JS-authored DvmaItem.
+ */
+export function recordingMetaFromDvma(bytes: Uint8Array): BridgeRecordingMeta | null {
+  const ds = readDvma(bytes);
+  const item = ds.items.find((it) => it.kind === 'TimeData');
+  if (!item) return null;
+  const meta = item.meta ?? {};
+  const settings = item.settings ?? {};
+  const out: BridgeRecordingMeta = {};
+  if (typeof meta.test_name === 'string') out.testName = meta.test_name;
+  if (typeof meta.timestring === 'string') out.timestring = meta.timestring;
+  if (typeof meta.timestamp === 'string') out.timestamp = meta.timestamp;
+  if (meta.units != null) out.units = meta.units;
+  if (Array.isArray(meta.channel_cal_factors)) {
+    out.channelCalFactors = (meta.channel_cal_factors as unknown[]).map(Number);
+  }
+  if (settings && typeof (settings as Record<string, unknown>).device_driver === 'string') {
+    out.deviceDriver = (settings as Record<string, unknown>).device_driver as string;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 // ---- the provider ----
 
 export class BridgeProvider implements SourceProvider {
@@ -194,6 +235,10 @@ export class BridgeProvider implements SourceProvider {
   private capsCache: BridgeCaps | null = null;
   /** NI/driver kwargs merged into every configure (set by SetupCard). */
   private extraConfig: BridgeConfig = {};
+  /** Persistent sink for log-scoped pretrigger status events. */
+  private logStatusCb: ((event: LogStatusEvent) => void) | null = null;
+  /** Provenance metadata from the most recent logged capture. */
+  private lastRecordingMeta: BridgeRecordingMeta | null = null;
 
   constructor(url: string, wsFactory: (url: string) => WsLike = defaultWsFactory) {
     this.url = url;
@@ -203,6 +248,21 @@ export class BridgeProvider implements SourceProvider {
   /** Stash NI/driver kwargs merged into the next configure message. */
   setConfig(cfg: BridgeConfig): void {
     this.extraConfig = { ...this.extraConfig, ...cfg };
+  }
+
+  /**
+   * Register the persistent sink for log-scoped pretrigger status events
+   * (`armed` / `triggered` / `timeout`).  These arrive as `status` frames
+   * WHILE a `log` is awaiting `log_result`; they are not awaited by any
+   * waiter, so the provider routes them here instead of dropping them.
+   */
+  onLogStatus(cb: (event: LogStatusEvent) => void): void {
+    this.logStatusCb = cb;
+  }
+
+  /** Provenance metadata from the most recent logged capture, or `null`. */
+  lastMeta(): BridgeRecordingMeta | null {
+    return this.lastRecordingMeta;
   }
 
   // -- connection --
@@ -316,6 +376,14 @@ export class BridgeProvider implements SourceProvider {
       if (this.pendingContainer) { this.pendingContainer.reject(err); this.pendingContainer = null; }
       return;
     }
+    // Log-scoped pretrigger lifecycle: `armed` / `triggered` / `timeout`
+    // arrive while a `log` is awaiting `log_result` and are not awaited by
+    // any waiter — surface them to the status sink (a `timeout` is NOT an
+    // error: the capture still resolves with the buffered set).
+    if (msg.type === 'status' && typeof msg.event === 'string' && LOG_STATUS_EVENTS.has(msg.event)) {
+      this.logStatusCb?.(msg.event as LogStatusEvent);
+      return;
+    }
     for (let i = 0; i < this.pending.length; i++) {
       if (this.pending[i].match(msg)) {
         const [p] = this.pending.splice(i, 1);
@@ -397,7 +465,54 @@ export class BridgeProvider implements SourceProvider {
     if (ec.pretrigSamples !== undefined) s.pretrig_samples = ec.pretrigSamples;
     if (ec.pretrigThreshold != null) s.pretrig_threshold = ec.pretrigThreshold;
     if (ec.pretrigChannel != null) s.pretrig_channel = ec.pretrigChannel;
+
+    // A pretrigger's context buffer (`chunk_size`, pydvma default 100) must
+    // be at least as large as `pretrig_samples`, else the recorder rejects
+    // the config. When arming a LOG capture (durationS given), raise
+    // chunk_size to fit an effective sample count above that default — so a
+    // bare arm (the mockup's 1000) works on the small default buffer.
+    if (durationS != null && ec.pretrigArmed) {
+      const samples = ec.pretrigSamples ?? 1000;
+      if (samples > PYDVMA_DEFAULT_CHUNK_SIZE) s.chunk_size = samples;
+    }
     return s;
+  }
+
+  /**
+   * Build the `log` message's `pretrigger` field from the Acquire arm
+   * switch + Setup's pretrigger params.  `null` (free-run capture) unless
+   * `pretrigArmed` is set; when armed, an object the server maps onto
+   * `MySettings.pretrig_*` (samples/threshold/channel/timeout).
+   */
+  private buildPretrigger(): Record<string, unknown> | null {
+    const ec = this.extraConfig;
+    if (!ec.pretrigArmed) return null;
+    // The server arms only when `samples` is non-null; a bare arm (no
+    // Setup pretrig-samples) defaults to the mockup's 1000 so arming
+    // actually arms rather than silently free-running.
+    const p: Record<string, unknown> = {
+      samples: ec.pretrigSamples ?? 1000,
+    };
+    if (ec.pretrigThreshold != null) p.threshold = ec.pretrigThreshold;
+    if (ec.pretrigChannel != null) p.channel = ec.pretrigChannel;
+    if (ec.pretrigTimeout != null) p.timeout = ec.pretrigTimeout;
+    return p;
+  }
+
+  /**
+   * Build the `log` message's `output` (stimulus) field from the Acquire
+   * output group.  `null` unless `outputEnabled`; when on, `{type, amp,
+   * f1, f2}` mapping to pydvma's `signal_generator` / `Output_Signal_Settings`.
+   */
+  private buildOutput(): Record<string, unknown> | null {
+    const ec = this.extraConfig;
+    if (!ec.outputEnabled) return null;
+    return {
+      type: ec.outputType ?? 'sweep',
+      amp: ec.outputAmp ?? 0,
+      f1: ec.outputF1 ?? 0,
+      f2: ec.outputF2 ?? 0,
+    };
   }
 
   // -- monitor --
@@ -446,7 +561,12 @@ export class BridgeProvider implements SourceProvider {
         try { this.sendJson({ type: 'cancel' }); } catch { /* */ }
         throw new Error('cancelled');
       }
-      this.sendJson({ type: 'log', duration: cfg.durationS, pretrigger: null });
+      this.sendJson({
+        type: 'log',
+        duration: cfg.durationS,
+        pretrigger: this.buildPretrigger(),
+        output: this.buildOutput(),
+      });
       await this.waitFor((m) => m.type === 'log_result');
       const bytes = await new Promise<Uint8Array>((resolve, reject) => {
         // The container frame follows log_result; it may (rarely) have
@@ -459,6 +579,7 @@ export class BridgeProvider implements SourceProvider {
         }
         this.pendingContainer = { resolve, reject };
       });
+      this.lastRecordingMeta = recordingMetaFromDvma(bytes);
       return recordingFromDvma(bytes);
     })();
 
@@ -501,7 +622,7 @@ function nowMs(): number {
 /** Coerce a capabilities JSON message into a well-typed BridgeCaps. */
 function normalizeCaps(m: Record<string, unknown>): BridgeCaps {
   const devices = (m.devices ?? {}) as { soundcard?: unknown; nidaq?: unknown };
-  return {
+  const caps: BridgeCaps = {
     v: Number(m.v) || PROTOCOL_VERSION,
     backends: Array.isArray(m.backends) ? (m.backends as string[]) : [],
     devices: {
@@ -509,8 +630,26 @@ function normalizeCaps(m: Record<string, unknown>): BridgeCaps {
       nidaq: Array.isArray(devices.nidaq) ? (devices.nidaq as NiDeviceEntry[]) : [],
     },
     fs_ladders: (m.fs_ladders ?? {}) as Record<string, number[]>,
-    max_channels: m.max_channels == null ? null : Number(m.max_channels),
+    max_channels: normalizeMaxChannels(m.max_channels),
     pretrigger: Boolean(m.pretrigger),
     ao: Boolean(m.ao),
   };
+  // Per-device caps (Wave C) — additive; only attach a well-formed object.
+  if (m.device_caps && typeof m.device_caps === 'object' && !Array.isArray(m.device_caps)) {
+    caps.device_caps = m.device_caps as Record<string, DeviceCapsEntry>;
+  }
+  return caps;
+}
+
+/**
+ * Pass `max_channels` through: a Wave-C per-device `{input, output}` map
+ * (keyed by deviceId), a legacy scalar, or `null`.  Anything else → `null`.
+ * Consumers read per-device counts via {@link deviceCapsFor}, never this
+ * raw value.
+ */
+function normalizeMaxChannels(v: unknown): BridgeCaps['max_channels'] {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    return v as Record<string, DeviceChannelCounts>;
+  }
+  return typeof v === 'number' ? v : null;
 }

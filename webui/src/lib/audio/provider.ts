@@ -63,9 +63,43 @@ export interface NiDeviceEntry {
 }
 
 /**
+ * A per-device capability object as advertised by the server in
+ * {@link BridgeCaps.device_caps}, keyed by `deviceId` (`<driver>:<index>`,
+ * e.g. `'nidaq:0'`).  The server's objects are richer than this (driver /
+ * index / name / candidate_rates / ai_max_rate / iepe_* / terminal_configs
+ * …) and passed through verbatim; the fields declared here are the ones the
+ * UI reads.  The primary source of the fs ladder and channel counts is the
+ * top-level {@link BridgeCaps.fs_ladders} / {@link BridgeCaps.max_channels}
+ * maps — see {@link deviceCapsFor}, which returns a NORMALIZED entry built
+ * from all three maps.  All fields optional/additive.
+ */
+export interface DeviceCapsEntry {
+  /** Discrete allowed sample rates in Hz (server `fs_ladders[deviceId]`). */
+  fs_ladder?: number[];
+  /** Maximum continuous sample rate in Hz (when no discrete ladder is given). */
+  max_fs?: number;
+  /** Maximum input (AI) channel count (`max_channels[deviceId].input`). */
+  max_channels?: number;
+  /** Whether THIS device can drive analog output (`device_caps[deviceId].ao`). */
+  ao?: boolean;
+}
+
+/** Per-device input/output channel counts (`max_channels[deviceId]`). */
+export interface DeviceChannelCounts {
+  input: number;
+  output: number;
+}
+
+/**
  * The `capabilities` document a `pydvma serve` bridge advertises on
  * `hello` (see `pydvma/serve.py` `build_capabilities`).  `null` is the
  * Web-Audio "there is no bridge" answer.
+ *
+ * Wave C made `fs_ladders` / `max_channels` **per-device maps** keyed by
+ * `deviceId` (`'<driver>:<index>'`), and added a richer `device_caps` map.
+ * `v` stays `1` (additive growth).  A legacy scalar/`null` `max_channels`
+ * is still tolerated for back-compat; read per-device constraints through
+ * {@link deviceCapsFor}, never these maps directly.
  */
 export interface BridgeCaps {
   v: number;
@@ -75,10 +109,101 @@ export interface BridgeCaps {
     soundcard: string[];
     nidaq: NiDeviceEntry[];
   };
+  /** Per-device candidate sample rates keyed by `deviceId`. */
   fs_ladders: Record<string, number[]>;
-  max_channels: number | null;
+  /**
+   * Per-device `{input, output}` channel counts keyed by `deviceId`.  A
+   * legacy scalar / `null` (v1's first cut) is tolerated.
+   */
+  max_channels: Record<string, DeviceChannelCounts> | number | null;
   pretrigger: boolean;
   ao: boolean;
+  /**
+   * Per-device capability map keyed by `deviceId` (`'nidaq:0'`,
+   * `'soundcard:1'`, `'mock:0'`).  Additive (Wave C): absent → the UI uses
+   * the free/global defaults.
+   */
+  device_caps?: Record<string, DeviceCapsEntry>;
+}
+
+/**
+ * Container metadata carried out of a bridged `.dvma` capture so a bridged
+ * set keeps its real provenance instead of being relabelled as a browser
+ * `'web_audio'` set.  All optional; `null` on the Web Audio path (which has
+ * no container to read).  Populated by {@link BridgeProvider.lastMeta} from
+ * the logged `.dvma`'s single `TimeData` item (`meta` + `settings`).
+ */
+export interface BridgeRecordingMeta {
+  /** `meta.test_name` — the capture's name from the server. */
+  testName?: string;
+  /** `meta.timestring` — the server's human timestamp. */
+  timestring?: string;
+  /** `meta.timestamp` — the server's ISO timestamp (decoded `__datetime__`). */
+  timestamp?: string;
+  /** `meta.units` — per-channel engineering units, if the server set them. */
+  units?: unknown;
+  /** `meta.channel_cal_factors` — per-channel calibration multipliers. */
+  channelCalFactors?: number[];
+  /** `settings.device_driver` — the backend actually used ('nidaq'/'soundcard'/'mock'). */
+  deviceDriver?: string;
+}
+
+/** A pretrigger lifecycle event surfaced during a log (Wave C). */
+export type LogStatusEvent = 'armed' | 'triggered' | 'timeout';
+
+/**
+ * Build the effective per-device constraints for a `deviceId` from the
+ * server's three per-device maps: the fs ladder from `fs_ladders[deviceId]`,
+ * the max INPUT channel count from `max_channels[deviceId].input`, and the
+ * per-device AO flag from `device_caps[deviceId].ao`.  Falls back to an NI
+ * device's `ai_channel_count` (from the enumerate entry) for the channel
+ * cap when the `max_channels` map has no entry.  Returns `null` when nothing
+ * is known (the UI then imposes no bridge-derived constraint).
+ */
+export function deviceCapsFor(
+  caps: BridgeCaps | null,
+  deviceId: string | undefined,
+): DeviceCapsEntry | null {
+  if (!caps || !deviceId) return null;
+  const out: DeviceCapsEntry = {};
+
+  const ladder = caps.fs_ladders?.[deviceId];
+  if (Array.isArray(ladder) && ladder.length) out.fs_ladder = ladder;
+
+  const mc = caps.max_channels;
+  if (mc && typeof mc === 'object') {
+    const entry = (mc as Record<string, DeviceChannelCounts>)[deviceId];
+    if (entry && typeof entry.input === 'number') out.max_channels = entry.input;
+  }
+
+  const dc = caps.device_caps?.[deviceId];
+  if (dc && typeof dc.ao === 'boolean') out.ao = dc.ao;
+
+  // Fallback: NI enumerate entry's ai_channel_count when the map is absent.
+  if (out.max_channels == null) {
+    const i = deviceId.indexOf(':');
+    const driver = i >= 0 ? deviceId.slice(0, i) : deviceId;
+    const index = i >= 0 ? Number(deviceId.slice(i + 1)) : 0;
+    if (driver === 'nidaq') {
+      const ni = caps.devices.nidaq[index];
+      if (ni && ni.ai_channel_count > 0) out.max_channels = ni.ai_channel_count;
+    }
+  }
+
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Whether the Acquire card's output (stimulus) group should render for the
+ * given bridge + selected device.  Gated on the bridge advertising analog
+ * output (`caps.ao`); a per-device `ao: false` override hides it for that
+ * device.  The Web Audio path (null caps) is always hidden — browser output
+ * stimulus is a later item.
+ */
+export function outputCapable(caps: BridgeCaps | null, deviceId?: string): boolean {
+  if (!caps || !caps.ao) return false;
+  const dc = deviceId ? caps.device_caps?.[deviceId] : undefined;
+  return dc?.ao !== false;
 }
 
 /**
@@ -101,6 +226,30 @@ export interface BridgeConfig {
   pretrigSamples?: number | null;
   pretrigThreshold?: number;
   pretrigChannel?: number;
+  /** Pretrigger timeout in seconds (Acquire arm area). */
+  pretrigTimeout?: number;
+  /**
+   * Acquire-card "arm" switch: when true, `startRecording` sends the
+   * pretrigger object on the `log` message so the capture waits for the
+   * threshold crossing.  False (default) → `log.pretrigger = null`
+   * (free-run capture), regardless of the pretrig params above.
+   */
+  pretrigArmed?: boolean;
+
+  /**
+   * Acquire-card output (stimulus) group.  When `outputEnabled`, the `log`
+   * message carries `output = {type, amp, f1, f2}`, mapping to pydvma's
+   * `Output_Signal_Settings` / `signal_generator`.  `outputType` uses the
+   * signal_generator tokens: `'sweep'` (linear chirp f1→f2), `'uniform'`
+   * (band-limited uniform/white noise; shown as "white" in the UI), or
+   * `'gaussian'` (band-limited Gaussian noise).  Amplitude is in volts;
+   * f1/f2 are the sweep endpoints or noise band corners in Hz.
+   */
+  outputEnabled?: boolean;
+  outputType?: 'sweep' | 'uniform' | 'gaussian';
+  outputAmp?: number;
+  outputF1?: number;
+  outputF2?: number;
 }
 
 /**
@@ -121,6 +270,18 @@ export interface SourceProvider {
   ): Promise<MonitorHandle>;
   /** Bridge-only: stash NI/driver kwargs for the next configure (no-op on Web Audio). */
   setConfig?(cfg: BridgeConfig): void;
+  /**
+   * Bridge-only: register a persistent callback for log-scoped pretrigger
+   * status events (`armed` / `triggered` / `timeout`) surfaced while a
+   * capture runs.  No-op on Web Audio (which has no pretrigger).
+   */
+  onLogStatus?(cb: (event: LogStatusEvent) => void): void;
+  /**
+   * Bridge-only: container metadata from the most recent logged capture
+   * (device driver actually used, calibration, units, test name), or `null`.
+   * Web Audio returns `null` (no container to read).
+   */
+  lastMeta?(): BridgeRecordingMeta | null;
   /** Bridge-only: release the socket + reject pending ops (no-op on Web Audio). */
   dispose?(): void;
 }

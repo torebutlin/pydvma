@@ -12,13 +12,21 @@ import {
   BridgeProvider,
   decodeHeader,
   recordingFromDvma,
+  recordingMetaFromDvma,
   MAGIC,
   HEADER_SIZE,
   MSG_CHUNK,
   MSG_CONTAINER,
   type WsLike,
 } from '../../src/lib/audio/bridge';
+import {
+  deviceCapsFor,
+  outputCapable,
+  type BridgeCaps,
+  type LogStatusEvent,
+} from '../../src/lib/audio/provider';
 import type { MonitorChunk } from '../../src/lib/audio/source';
+import type { DvmaDataset } from '../../src/lib/model/dataset';
 import { recordingToDataset } from '../../src/lib/stores/acquire';
 import { writeDvma } from '../../src/lib/codec/dvma';
 
@@ -302,4 +310,208 @@ test('setConfig NI kwargs flow into the configure message', async () => {
   // The configure reply never arrives in this test; keep the pending
   // promise from surfacing as an unhandled rejection when the socket is GC'd.
   void rh.promise.catch(() => {});
+});
+
+// ---- Wave C: output stimulus + pretrigger arm on the log message ----
+
+/** Build a real .dvma carrying full container provenance (units, cal, driver). */
+function dvmaWithMeta() {
+  const nSamples = 4, nChannels = 2, fs = 8000;
+  const timeAxis = Float64Array.from({ length: nSamples }, (_, i) => i / fs);
+  const data = Float64Array.from({ length: nSamples * nChannels }, (_, i) => i + 0.5);
+  const ds: DvmaDataset = {
+    formatVersion: 2,
+    pydvmaVersion: 'webui',
+    items: [{
+      kind: 'TimeData',
+      arrays: {
+        time_axis: { shape: [nSamples], data: timeAxis, isComplex: false },
+        time_data: { shape: [nSamples, nChannels], data, isComplex: false },
+      },
+      meta: {
+        test_name: 'hammer_test',
+        timestring: '2026-07-07 12:00:00',
+        timestamp: '2026-07-07T12:00:00',
+        units: ['V', 'V'],
+        channel_cal_factors: [2.5, 1.0],
+      },
+      settings: { fs, channels: nChannels, stored_time: nSamples / fs, device_driver: 'nidaq' },
+    }],
+  };
+  return { bytes: writeDvma(ds), nSamples, nChannels, fs };
+}
+
+test('output kwargs pass through onto the log message when enabled (contract)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ outputEnabled: true, outputType: 'sweep', outputAmp: 0.5, outputF1: 20, outputF2: 2000 });
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 2, durationS: 0.5 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 2 });
+  await tick();
+  const logMsg = fake.sentJson().find((m) => m.type === 'log');
+  // The wire contract for the stimulus: log.output = {type, amp, f1, f2}.
+  expect(logMsg).toMatchObject({ output: { type: 'sweep', amp: 0.5, f1: 20, f2: 2000 } });
+  void rh.promise.catch(() => {});
+});
+
+test('output + pretrigger are null on the log message when disabled (free-run)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 0.5 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await tick();
+  const logMsg = fake.sentJson().find((m) => m.type === 'log');
+  expect(logMsg!.output).toBeNull();
+  expect(logMsg!.pretrigger).toBeNull();
+  void rh.promise.catch(() => {});
+});
+
+test('an armed pretrigger sends the pretrigger object; status events surface and a timeout still resolves', async () => {
+  const { bytes, nSamples, nChannels, fs } = dvmaWithMeta();
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const events: LogStatusEvent[] = [];
+  bp.onLogStatus((e) => events.push(e));
+  bp.setConfig({ pretrigArmed: true, pretrigSamples: 500, pretrigThreshold: 0.05, pretrigChannel: 1, pretrigTimeout: 0.2 });
+
+  const rh = bp.startRecording({ sampleRate: fs, channelCount: nChannels, durationS: 0.5 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs, channels: nChannels });
+  await tick();
+  // The log message carries the pretrigger object (arm authoritative).
+  const logMsg = fake.sentJson().find((m) => m.type === 'log');
+  expect(logMsg).toMatchObject({
+    pretrigger: { samples: 500, threshold: 0.05, channel: 1, timeout: 0.2 },
+  });
+
+  // Server arms, then times out (MockRecorder never triggers) — NOT an error.
+  fake.emitJson({ type: 'status', event: 'armed' });
+  fake.emitJson({ type: 'status', event: 'timeout' });
+  await tick();
+  expect(events).toEqual(['armed', 'timeout']);
+
+  // The capture still lands, and its provenance is preserved.
+  fake.emitJson({ type: 'log_result', nChannels, nSamples, fs, byteLength: bytes.length });
+  await tick();
+  fake.emitBinary(containerFrame(bytes, nChannels, nSamples, fs));
+  const rec = await rh.promise;
+  expect(rec.nSamples).toBe(nSamples);
+  expect(bp.lastMeta()).toMatchObject({ deviceDriver: 'nidaq', testName: 'hammer_test' });
+});
+
+test('arming a log raises chunk_size to fit the pretrigger buffer in the configure message', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ pretrigArmed: true }); // bare arm → default 1000 samples
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 2, durationS: 0.5 });
+  fake.open();
+  await tick();
+  // configure is sent immediately (before the configured reply); it must
+  // carry chunk_size >= the effective pretrig samples so log_data accepts it.
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings).toMatchObject({ chunk_size: 1000 });
+  void rh.promise.catch(() => {});
+});
+
+test('a small pretrigger sample count leaves chunk_size at the server default', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ pretrigArmed: true, pretrigSamples: 64 });
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 0.5 });
+  fake.open();
+  await tick();
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  // 64 <= default 100 → no chunk_size override (server keeps its default).
+  expect(cfg!.settings.chunk_size).toBeUndefined();
+  void rh.promise.catch(() => {});
+});
+
+// ---- Wave C: bridged-set metadata join ----
+
+test('recordingMetaFromDvma extracts provenance from a container', () => {
+  const { bytes } = dvmaWithMeta();
+  expect(recordingMetaFromDvma(bytes)).toEqual({
+    testName: 'hammer_test',
+    timestring: '2026-07-07 12:00:00',
+    timestamp: '2026-07-07T12:00:00',
+    units: ['V', 'V'],
+    channelCalFactors: [2.5, 1.0],
+    deviceDriver: 'nidaq',
+  });
+});
+
+test('recordingMetaFromDvma reads the driver from a bare (web_audio) container', () => {
+  const nSamples = 2, nChannels = 1, fs = 1000;
+  const timeAxis = Float64Array.from({ length: nSamples }, (_, i) => i / fs);
+  const data = Float64Array.from([0.1, 0.2]);
+  const bytes = writeDvma(recordingToDataset({ data, timeAxis, fs, nChannels, nSamples }, 'x'));
+  const meta = recordingMetaFromDvma(bytes);
+  expect(meta?.deviceDriver).toBe('web_audio');
+  expect(meta?.testName).toBe('x');
+});
+
+// ---- Wave C: per-device caps ----
+
+test('normalizeCaps parses per-device caps; outputCapable honours a per-device ao override', async () => {
+  // Real Wave-C shape: fs_ladders / max_channels are per-device maps keyed
+  // by deviceId; device_caps carries the per-device ao flag.
+  const caps = {
+    ...CAPS,
+    ao: true,
+    fs_ladders: { 'nidaq:0': [25600, 51200], 'soundcard:0': [44100, 48000] },
+    max_channels: {
+      'nidaq:0': { input: 4, output: 2 },
+      'soundcard:0': { input: 2, output: 2 },
+    },
+    device_caps: {
+      'mock:0': { driver: 'mock', index: 0, name: 'Mock', ao: true },
+      'nidaq:0': { driver: 'nidaq', index: 0, name: 'cDAQ1Mod1', ao: false },
+      'soundcard:0': { driver: 'soundcard', index: 0, name: 'Built-in Mic', ao: true },
+    },
+  };
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(caps);
+  const c = await capsP;
+  expect(c!.device_caps!['nidaq:0'].ao).toBe(false);
+  // deviceCapsFor reads fs from fs_ladders[id], channels from max_channels[id].input.
+  expect(deviceCapsFor(c, 'nidaq:0')).toEqual({ fs_ladder: [25600, 51200], max_channels: 4, ao: false });
+  // Global ao true, but nidaq:0 has per-device ao:false → output group hidden;
+  // soundcard:0 has per-device ao:true → visible.
+  expect(outputCapable(c, 'nidaq:0')).toBe(false);
+  expect(outputCapable(c, 'soundcard:0')).toBe(true);
+});
+
+test('deviceCapsFor falls back to the NI ai_channel_count when max_channels lacks an entry', () => {
+  const caps: BridgeCaps = {
+    v: 1,
+    backends: ['nidaq'],
+    devices: {
+      soundcard: [],
+      nidaq: [{
+        name: 'cDAQ1Mod1', product_type: 'NI 9234', is_chassis: false,
+        ai_channel_count: 4, ao_channel_count: 0,
+        module_names: [], module_ai_counts: {}, module_ao_counts: {},
+      }],
+    },
+    fs_ladders: { 'nidaq:0': [51200] },
+    max_channels: null,
+    pretrigger: true,
+    ao: false,
+  };
+  expect(deviceCapsFor(caps, 'nidaq:0')).toEqual({ fs_ladder: [51200], max_channels: 4 });
+  expect(outputCapable(caps, 'nidaq:0')).toBe(false); // no global ao
+});
+
+test('outputCapable / deviceCapsFor are null-safe for the Web Audio path', () => {
+  expect(outputCapable(null, 'x')).toBe(false);
+  expect(deviceCapsFor(null, 'x')).toBeNull();
 });

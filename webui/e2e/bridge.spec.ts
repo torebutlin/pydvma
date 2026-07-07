@@ -103,4 +103,60 @@ test.describe('pydvma serve bridge', () => {
     await page.getByRole('button', { name: 'Log Data' }).click();
     await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(1, { timeout: 20000 });
   });
+
+  /** Setup → Acquire with the Mock device selected and a short duration. */
+  async function gotoAcquireWithMock(page: import('@playwright/test').Page) {
+    await page.goto(`/?bridge=${encodeURIComponent(WS_URL)}`);
+    const ribbon = page.getByRole('navigation', { name: 'stages' });
+    await expect(ribbon.getByRole('button', { name: 'Setup' })).not.toHaveClass(/gated/, { timeout: 20000 });
+    await ribbon.getByRole('button', { name: 'Setup' }).click();
+    const deviceSelect = page.getByRole('combobox', { name: 'input device' });
+    await expect(deviceSelect).toContainText('Mock signal generator');
+    await deviceSelect.selectOption({ label: 'Mock signal generator' });
+    await page.getByRole('combobox', { name: 'duration' }).selectOption('0.5');
+    await ribbon.getByRole('button', { name: 'Acquire' }).click();
+  }
+
+  test('Wave C: the output group renders (mock reports ao) and a log WITH output lands a set', async ({ page }) => {
+    await gotoAcquireWithMock(page);
+
+    // The mock backend reports ao:true (setup_output_mock), so the Acquire
+    // output group renders. If a server build predates that capability,
+    // self-skip rather than fail (do not fake it).
+    const outGroup = page.getByTestId('acquire-output');
+    if (!(await outGroup.isVisible().catch(() => false))) {
+      test.skip(true, 'server does not report AO capability — no output group');
+    }
+
+    // Arm the output stimulus → the Log button gains the OUT badge, and the
+    // log message carries output = {type, amp, f1, f2}.
+    await page.getByTestId('output-on').check();
+    await expect(page.getByTestId('out-badge')).toBeVisible();
+
+    await page.getByTestId('log-btn').click();
+    await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(1, { timeout: 20000 });
+  });
+
+  test('Wave C: an armed pretrigger shows "armed" and a mock timeout still lands a set', async ({ page }) => {
+    await gotoAcquireWithMock(page);
+
+    // Pretrigger arm renders only when the bridge advertises pretrigger.
+    const arm = page.getByTestId('pretrig-arm');
+    if (!(await arm.isVisible().catch(() => false))) {
+      test.skip(true, 'server does not report pretrigger capability');
+    }
+    await arm.check();
+    // A short timeout keeps the mock's never-trigger path quick.
+    await page.getByTestId('pretrig-timeout').fill('0.3');
+
+    await page.getByTestId('log-btn').click();
+
+    // The bridge surfaces the server's `armed` status event; this state is
+    // stable for the length of the capture (the transient `timeout` right
+    // before completion — MockRecorder never triggers — is covered by the
+    // fake-transport unit test, and the view switches to Time on completion).
+    await expect(page.getByTestId('pretrig-status')).toContainText('armed', { timeout: 20000 });
+    // The buffered capture still lands as a set despite no trigger.
+    await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(1, { timeout: 20000 });
+  });
 });

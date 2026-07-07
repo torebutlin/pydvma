@@ -21,6 +21,8 @@ import {
   type SourceProvider,
   type BridgeCaps,
   type BridgeConfig,
+  type BridgeRecordingMeta,
+  type LogStatusEvent,
 } from '../audio/provider';
 import type { DvmaDataset, DvmaItem } from '../model/dataset';
 import { capabilities } from './stages';
@@ -28,6 +30,14 @@ import { capabilities } from './stages';
 // ---- types ----
 
 export type AcquireStatus = 'idle' | 'recording' | 'done' | 'error';
+
+/**
+ * Pretrigger lifecycle for the Acquire card's status line.  `''` = no
+ * pretrigger active; the bridge surfaces `armed` (waiting for the trigger
+ * crossing), then `triggered` (crossing seen) or `timeout` (no crossing —
+ * the buffered set is still captured).
+ */
+export type PretrigStatus = '' | LogStatusEvent;
 
 export interface AcquireSettings {
   deviceId: string;     // '' = browser default
@@ -113,20 +123,44 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
   const bridgeCaps = writable<BridgeCaps | null>(null);
   /** Bridge-only NI/driver kwargs (SetupCard's NI group edits these). */
   const bridgeConfig = writable<BridgeConfig>({});
+  /**
+   * Pretrigger lifecycle for the Acquire status line (bridge only).  Reset
+   * to `''` at each record start; the bridge pushes `armed`/`triggered`/
+   * `timeout` as the capture progresses.
+   */
+  const pretrigStatus = writable<PretrigStatus>('');
 
   let handle: RecordingHandle | null = null;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
   /** The most recent recording result (consumed by the acquire → dataset bridge). */
   let lastRecording: Recording | null = null;
+  /**
+   * Provenance metadata for the most recent BRIDGE capture (device driver
+   * actually used, calibration, units, name).  `null` for Web Audio.
+   * Consumed by AcquireCard's `recordingToItem(rec, name, meta)` join so a
+   * bridged set is not relabelled `'web_audio'`.
+   */
+  let lastRecordingMeta: BridgeRecordingMeta | null = null;
+
+  /**
+   * Wire the provider's optional log-status sink to {@link pretrigStatus}
+   * so the Acquire card can show `armed → triggered/timeout`.  A no-op on
+   * Web Audio (no `onLogStatus`).  Called on every provider install.
+   */
+  function wireProvider(p: SourceProvider): void {
+    p.onLogStatus?.((event) => pretrigStatus.set(event));
+  }
+  wireProvider(provider);
 
   /**
    * Swap the acquisition backend (App.svelte mode selection).  Re-applies
    * any staged bridge config to the new provider so a SetupCard edit made
-   * before the swap is not lost.
+   * before the swap is not lost, and re-wires the log-status sink.
    */
   function setProvider(p: SourceProvider): void {
     provider = p;
     p.setConfig?.(get(bridgeConfig));
+    wireProvider(p);
   }
 
   /**
@@ -234,6 +268,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     statusText.set(`Logging data for ${cfg.durationS.toFixed(1)} s…`);
     errorMsg.set('');
     elapsed.set(0);
+    pretrigStatus.set('');
+    lastRecordingMeta = null;
 
     const rcfg: RecordConfig = {
       deviceId: cfg.deviceId || undefined,
@@ -256,6 +292,9 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     try {
       const rec = await handle.promise;
       lastRecording = rec;
+      // Bridge captures carry container provenance (real device driver,
+      // calibration, units, name); Web Audio returns null.
+      lastRecordingMeta = provider.lastMeta?.() ?? null;
       status.set('done');
       statusText.set('Recording complete.');
       // Refresh device labels now that permission has been granted.
@@ -300,6 +339,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     bridgeCaps,
     /** Bridge-only NI/driver config (SetupCard's NI group edits these). */
     bridgeConfig,
+    /** Pretrigger lifecycle for the Acquire status line ('' when inactive). */
+    pretrigStatus,
     init,
     refreshDevices,
     requestPermission,
@@ -314,6 +355,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     get isBridge() { return provider.kind === 'bridge'; },
     /** The last successful recording, for bridge code to consume. */
     get lastRecording() { return lastRecording; },
+    /** Provenance metadata for the last BRIDGE capture (null for Web Audio). */
+    get lastRecordingMeta() { return lastRecordingMeta; },
   };
 }
 
@@ -326,12 +369,32 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
  * The item mirrors what pydvma's Python `log_data` produces: `time_axis`
  * is a 1-D array [N], `time_data` is row-major [N, C], and `settings`
  * carries `fs`, `channels`, `stored_time`.
+ *
+ * `meta` (Wave C) is optional container provenance from a BRIDGE capture:
+ * when present, the item keeps the real device driver used (not the
+ * hard-coded `'web_audio'`), plus calibration factors, units, test name,
+ * and timestamp read from the logged `.dvma`.  The Web Audio path passes no
+ * `meta` and behaves exactly as before (`device_driver: 'web_audio'`, a
+ * fresh browser timestamp/name).
  */
-export function recordingToItem(rec: Recording, name?: string): DvmaItem {
+export function recordingToItem(
+  rec: Recording,
+  name?: string,
+  meta?: BridgeRecordingMeta | null,
+): DvmaItem {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const timestring = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+  const browserTimestring = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
     `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  // Prefer the bridge container's own timestamp/name; fall back to the
+  // browser-generated ones (Web Audio path, unchanged).
+  const timestring = meta?.timestring ?? browserTimestring;
+  const testName = name || meta?.testName || `set_${timestring.replace(/[: ]/g, '_')}`;
+
+  const itemMeta: Record<string, unknown> = { test_name: testName, timestring };
+  if (meta?.timestamp != null) itemMeta.timestamp = meta.timestamp;
+  if (meta?.units != null) itemMeta.units = meta.units;
+  if (meta?.channelCalFactors != null) itemMeta.channel_cal_factors = meta.channelCalFactors;
 
   return {
     kind: 'TimeData',
@@ -347,15 +410,12 @@ export function recordingToItem(rec: Recording, name?: string): DvmaItem {
         isComplex: false,
       },
     },
-    meta: {
-      test_name: name || `set_${timestring.replace(/[: ]/g, '_')}`,
-      timestring,
-    },
+    meta: itemMeta,
     settings: {
       fs: rec.fs,
       channels: rec.nChannels,
       stored_time: rec.nSamples / rec.fs,
-      device_driver: 'web_audio',
+      device_driver: meta?.deviceDriver ?? 'web_audio',
     },
   };
 }

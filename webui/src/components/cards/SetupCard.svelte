@@ -31,6 +31,7 @@
    */
   import { onMount } from 'svelte';
   import type { AcquireStore } from '../../lib/stores/acquire';
+  import { deviceCapsFor } from '../../lib/audio/provider';
 
   let {
     acquire,
@@ -62,14 +63,35 @@
   // Duration presets.
   const DURATIONS = [0.5, 1, 2, 5, 10, 30, 60];
 
-  // ---- capability-derived constraints (populated after mic permission) ----
+  // ---- capability-derived constraints ----
+  // Bridge per-device caps (Wave C): when bridged and the selected device
+  // carries caps (an fs ladder / max rate / max channels), they constrain
+  // the fs select + channels input, taking precedence over the Web Audio
+  // getCapabilities() values. Absent → the Web Audio behaviour below.
+  const bridgeSelCaps = $derived(deviceCapsFor($bridgeCaps, $settings.deviceId));
+  // fs options: a bridge device's discrete DSA ladder replaces the standard
+  // soundcard list; otherwise the standard list (constrained by ranges).
+  const fsOptions = $derived(
+    bridgeSelCaps?.fs_ladder && bridgeSelCaps.fs_ladder.length
+      ? bridgeSelCaps.fs_ladder
+      : SAMPLE_RATES,
+  );
   // Max channels the device supports (caps the channel input); 32 fallback.
-  const maxChannels = $derived($deviceCaps?.channelCount?.max ?? 32);
+  const maxChannels = $derived(
+    bridgeSelCaps?.max_channels ?? $deviceCaps?.channelCount?.max ?? 32,
+  );
   const srMin = $derived($deviceCaps?.sampleRate?.min);
   const srMax = $derived($deviceCaps?.sampleRate?.max);
-  // A sample rate the granted device actually supports.
-  const rateAllowed = (fs: number): boolean =>
-    (srMin == null || fs >= srMin) && (srMax == null || fs <= srMax);
+  // A sample rate the selected device actually supports. On a bridge ladder
+  // every rendered rate IS the ladder, so all are allowed; otherwise honour
+  // the bridge max_fs / the Web Audio min–max range.
+  const rateAllowed = (fs: number): boolean => {
+    if (bridgeSelCaps?.fs_ladder && bridgeSelCaps.fs_ladder.length) {
+      return bridgeSelCaps.fs_ladder.includes(fs);
+    }
+    const maxFs = bridgeSelCaps?.max_fs ?? srMax;
+    return (srMin == null || fs >= srMin) && (maxFs == null || fs <= maxFs);
+  };
   // Current input latency hint, shown in the timing group (ms in the UI).
   const latencyMs = $derived(
     $settings.latency && $settings.latency > 0 ? Math.round($settings.latency * 1000) : '',
@@ -171,7 +193,7 @@
         <span class="grp-lab">sample rate</span>
         <div class="grp-ctl">
           <select style="width:84px" aria-label="sample rate" value={$settings.sampleRate} onchange={onFsChange}>
-            {#each SAMPLE_RATES as fs (fs)}
+            {#each fsOptions as fs (fs)}
               <option value={fs} disabled={!rateAllowed(fs)}>{fs >= 1000 ? `${fs / 1000}k` : fs}</option>
             {/each}
           </select>
