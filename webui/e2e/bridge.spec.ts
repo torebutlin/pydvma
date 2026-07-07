@@ -160,6 +160,55 @@ test.describe('pydvma serve bridge', () => {
     await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(1, { timeout: 20000 });
   });
 
+  test('round-4: the pretrigger arm control edits the sample count and a log lands a set', async ({ page }) => {
+    await gotoAcquireWithMock(page);
+
+    const arm = page.getByTestId('pretrig-arm');
+    if (!(await arm.isVisible().catch(() => false))) {
+      test.skip(true, 'server does not report pretrigger capability');
+    }
+    await arm.check();
+
+    // The editable samples input appears on the arm control, prefilled with the
+    // bare-arm default (100 — round-4 item 11, was a wasteful 1000).
+    const samples = page.getByTestId('pretrig-samples-arm');
+    await expect(samples).toBeVisible();
+    await expect(samples).toHaveValue('100');
+    // Edit it directly on the arm control (drives the same store value Setup shows).
+    await samples.fill('150');
+    // A short timeout keeps the mock's never-trigger path quick.
+    await page.getByTestId('pretrig-timeout').fill('0.3');
+
+    await page.getByTestId('log-btn').click();
+    // The server arms with the edited count; MockRecorder times out but the
+    // buffered set still lands.
+    await expect(page.getByTestId('pretrig-status')).toContainText('armed', { timeout: 20000 });
+    await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(1, { timeout: 20000 });
+  });
+
+  test('round-4: the output group exposes duration + device/channels and a fuller-output log lands a set', async ({ page }) => {
+    await gotoAcquireWithMock(page);
+
+    const outGroup = page.getByTestId('acquire-output');
+    if (!(await outGroup.isVisible().catch(() => false))) {
+      test.skip(true, 'server does not report AO capability — no output group');
+    }
+    await page.getByTestId('output-on').check();
+    await expect(page.getByTestId('out-badge')).toBeVisible();
+
+    // Fuller controls (round-4 item 12): an explicit output duration…
+    await page.getByTestId('output-duration').fill('0.3');
+    // …and, when the bridge lists AO devices, an output device + channel count.
+    const dev = page.getByTestId('output-device');
+    if (await dev.isVisible().catch(() => false)) {
+      await dev.selectOption({ label: 'Mock signal generator' });
+      await page.getByTestId('output-channels').fill('1');
+    }
+
+    await page.getByTestId('log-btn').click();
+    await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(1, { timeout: 20000 });
+  });
+
   test('Wave D regression: an honoured mock rate shows no DSA coerced-fs note', async ({ page }) => {
     // The mock driver reports no vmax caps and echoes the requested fs
     // exactly, so this can only be a NEGATIVE regression: exercise the

@@ -22,8 +22,10 @@ import {
 import {
   deviceCapsFor,
   outputCapable,
+  outputDevices,
   clampVoltage,
   PYDVMA_DEFAULT_VMAX,
+  BARE_ARM_PRETRIG_SAMPLES,
   type BridgeCaps,
   type ConfiguredInfo,
   type LogStatusEvent,
@@ -407,17 +409,37 @@ test('an armed pretrigger sends the pretrigger object; status events surface and
   expect(bp.lastMeta()).toMatchObject({ deviceDriver: 'nidaq', testName: 'hammer_test' });
 });
 
-test('arming a log raises chunk_size to fit the pretrigger buffer in the configure message', async () => {
+test('an explicit large pretrigger sample count raises chunk_size to fit the buffer', async () => {
   const fake = makeFakeWs();
   const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
-  bp.setConfig({ pretrigArmed: true }); // bare arm → default 1000 samples
+  bp.setConfig({ pretrigArmed: true, pretrigSamples: 500 }); // > default chunk_size 100
   const rh = bp.startRecording({ sampleRate: 8000, channelCount: 2, durationS: 0.5 });
   fake.open();
   await tick();
   // configure is sent immediately (before the configured reply); it must
   // carry chunk_size >= the effective pretrig samples so log_data accepts it.
   const cfg = fake.sentJson().find((m) => m.type === 'configure');
-  expect(cfg!.settings).toMatchObject({ chunk_size: 1000 });
+  expect(cfg!.settings).toMatchObject({ chunk_size: 500 });
+  void rh.promise.catch(() => {});
+});
+
+test('a bare arm defaults to 100 samples and does NOT raise chunk_size (round-4 item 11)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ pretrigArmed: true }); // bare arm → default 100 (= default chunk_size)
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 2, durationS: 0.5 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 2 });
+  await tick();
+  // 100 <= default chunk_size 100 → no override (the old 1000 default wastefully
+  // enlarged the buffer; 100 fits the default context buffer).
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings.chunk_size).toBeUndefined();
+  // …and the log's pretrigger object carries the 100-sample default.
+  expect(BARE_ARM_PRETRIG_SAMPLES).toBe(100); // matches options.py default chunk_size
+  const logMsg = fake.sentJson().find((m) => m.type === 'log');
+  expect(logMsg!.pretrigger).toMatchObject({ samples: BARE_ARM_PRETRIG_SAMPLES });
   void rh.promise.catch(() => {});
 });
 
@@ -431,6 +453,45 @@ test('a small pretrigger sample count leaves chunk_size at the server default', 
   const cfg = fake.sentJson().find((m) => m.type === 'configure');
   // 64 <= default 100 → no chunk_size override (server keeps its default).
   expect(cfg!.settings.chunk_size).toBeUndefined();
+  void rh.promise.catch(() => {});
+});
+
+test('fuller output kwargs: duration on the output spec, device/channels on configure (round-4 item 12)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({
+    outputEnabled: true, outputType: 'sweep', outputAmp: 0.4, outputF1: 20, outputF2: 2000,
+    outputDuration: 0.25, outputDeviceId: 'nidaq:1', outputChannels: 2,
+  });
+  const rh = bp.startRecording({ deviceId: 'nidaq:0', sampleRate: 51200, channelCount: 4, durationS: 1 });
+  fake.open();
+  await tick();
+  // Output device + channels ride the configure message as MySettings kwargs.
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings).toMatchObject({
+    output_device_driver: 'nidaq', output_device_index: 1, output_channels: 2,
+  });
+  fake.emitJson({ type: 'status', event: 'configured', fs: 51200, channels: 4 });
+  await tick();
+  // The stimulus waveform + its duration ride the log message's output spec.
+  const logMsg = fake.sentJson().find((m) => m.type === 'log');
+  expect(logMsg).toMatchObject({
+    output: { type: 'sweep', amp: 0.4, f1: 20, f2: 2000, duration: 0.25 },
+  });
+  void rh.promise.catch(() => {});
+});
+
+test('output device/channels are omitted from configure when output is disabled', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  // Device/channels set, but the stimulus is OFF → they stay out of configure.
+  bp.setConfig({ outputEnabled: false, outputDeviceId: 'nidaq:1', outputChannels: 2 });
+  const rh = bp.startRecording({ deviceId: 'nidaq:0', sampleRate: 51200, channelCount: 4, durationS: 1 });
+  fake.open();
+  await tick();
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings.output_device_driver).toBeUndefined();
+  expect(cfg!.settings.output_channels).toBeUndefined();
   void rh.promise.catch(() => {});
 });
 
@@ -517,6 +578,49 @@ test('deviceCapsFor falls back to the NI ai_channel_count when max_channels lack
 test('outputCapable / deviceCapsFor are null-safe for the Web Audio path', () => {
   expect(outputCapable(null, 'x')).toBe(false);
   expect(deviceCapsFor(null, 'x')).toBeNull();
+});
+
+// ---- Wave D / round-4: output-device enumeration ----
+
+test('outputDevices lists AO-capable devices with names + output channel counts', () => {
+  const caps: BridgeCaps = {
+    v: 1,
+    backends: ['mock', 'nidaq'],
+    devices: {
+      soundcard: [],
+      nidaq: [{
+        name: 'cDAQ1', product_type: 'cDAQ-9174', is_chassis: true,
+        ai_channel_count: 4, ao_channel_count: 2,
+        module_names: [], module_ai_counts: {}, module_ao_counts: {},
+      }],
+    },
+    fs_ladders: { 'nidaq:0': [51200] },
+    max_channels: { 'nidaq:0': { input: 4, output: 2 }, 'mock:0': { input: 2, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      'mock:0': { driver: 'mock', index: 0, name: 'Mock signal generator', ao: true },
+      'nidaq:0': { driver: 'nidaq', index: 0, name: 'cDAQ1', ao: true, ao_vmax: 4.2426 },
+      // An input-only device (ao:false) must NOT appear as an output option.
+      'nidaq:1': { driver: 'nidaq', index: 1, name: 'input-only', ao: false },
+    },
+  };
+  const out = outputDevices(caps);
+  expect(out.map((d) => d.deviceId).sort()).toEqual(['mock:0', 'nidaq:0']);
+  const ni = out.find((d) => d.deviceId === 'nidaq:0');
+  expect(ni).toMatchObject({ label: 'cDAQ1', maxChannels: 2 });
+  // mock has no max_channels entry → maxChannels undefined but still listed.
+  expect(out.find((d) => d.deviceId === 'mock:0')).toMatchObject({ label: 'Mock signal generator' });
+});
+
+test('outputDevices is empty for the Web Audio path or a bridge with no AO', () => {
+  expect(outputDevices(null)).toEqual([]);
+  const noAo: BridgeCaps = {
+    v: 1, backends: ['nidaq'], devices: { soundcard: [], nidaq: [] },
+    fs_ladders: {}, max_channels: null, pretrigger: true, ao: false,
+    device_caps: { 'nidaq:0': { driver: 'nidaq', index: 0, name: 'x', ao: false } },
+  };
+  expect(outputDevices(noAo)).toEqual([]);
 });
 
 // ---- Wave D follow-up: voltage caps + clamp helper ----

@@ -25,6 +25,7 @@
  * There is no auto-reconnect (lab-local single-user stance).
  */
 import { readDvma } from '../codec/dvma';
+import { BARE_ARM_PRETRIG_SAMPLES } from './provider';
 import type {
   AudioInputDevice,
   BridgeCaps,
@@ -499,13 +500,27 @@ export class BridgeProvider implements SourceProvider {
     if (ec.pretrigThreshold != null) s.pretrig_threshold = ec.pretrigThreshold;
     if (ec.pretrigChannel != null) s.pretrig_channel = ec.pretrigChannel;
 
+    // Output (AO) device + channel selection (Acquire output group), sent as
+    // whitelisted MySettings kwargs only when the stimulus is enabled. The
+    // driver/index are derived from the selected output deviceId exactly like
+    // the input device; output_channels sizes the generated waveform.
+    if (ec.outputEnabled) {
+      const od = parseDeviceId(ec.outputDeviceId);
+      if (od) {
+        s.output_device_driver = od.driver;
+        if (od.driver !== 'mock') s.output_device_index = od.index;
+      }
+      if (ec.outputChannels != null) s.output_channels = ec.outputChannels;
+    }
+
     // A pretrigger's context buffer (`chunk_size`, pydvma default 100) must
     // be at least as large as `pretrig_samples`, else the recorder rejects
     // the config. When arming a LOG capture (durationS given), raise
-    // chunk_size to fit an effective sample count above that default — so a
-    // bare arm (the mockup's 1000) works on the small default buffer.
+    // chunk_size to fit an effective sample count above that default. The
+    // bare-arm default now equals the default chunk_size (100), so a bare arm
+    // fits WITHOUT enlarging the buffer — only a larger explicit count does.
     if (durationS != null && ec.pretrigArmed) {
-      const samples = ec.pretrigSamples ?? 1000;
+      const samples = ec.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES;
       if (samples > PYDVMA_DEFAULT_CHUNK_SIZE) s.chunk_size = samples;
     }
     return s;
@@ -521,10 +536,11 @@ export class BridgeProvider implements SourceProvider {
     const ec = this.extraConfig;
     if (!ec.pretrigArmed) return null;
     // The server arms only when `samples` is non-null; a bare arm (no
-    // Setup pretrig-samples) defaults to the mockup's 1000 so arming
-    // actually arms rather than silently free-running.
+    // Setup / arm-control pretrig-samples) defaults to BARE_ARM_PRETRIG_SAMPLES
+    // (100 — matches the default chunk_size) so arming actually arms rather
+    // than silently free-running.
     const p: Record<string, unknown> = {
-      samples: ec.pretrigSamples ?? 1000,
+      samples: ec.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES,
     };
     if (ec.pretrigThreshold != null) p.threshold = ec.pretrigThreshold;
     if (ec.pretrigChannel != null) p.channel = ec.pretrigChannel;
@@ -535,17 +551,23 @@ export class BridgeProvider implements SourceProvider {
   /**
    * Build the `log` message's `output` (stimulus) field from the Acquire
    * output group.  `null` unless `outputEnabled`; when on, `{type, amp,
-   * f1, f2}` mapping to pydvma's `signal_generator` / `Output_Signal_Settings`.
+   * f1, f2}` (plus an optional `duration`) mapping to pydvma's
+   * `signal_generator` / `Output_Signal_Settings`.  The output device +
+   * channel selection travels separately, as MySettings kwargs in the
+   * configure message (see {@link buildSettings}).
    */
   private buildOutput(): Record<string, unknown> | null {
     const ec = this.extraConfig;
     if (!ec.outputEnabled) return null;
-    return {
+    const out: Record<string, unknown> = {
       type: ec.outputType ?? 'sweep',
       amp: ec.outputAmp ?? 0,
       f1: ec.outputF1 ?? 0,
       f2: ec.outputF2 ?? 0,
     };
+    // Optional stimulus duration (server default = the capture duration).
+    if (ec.outputDuration != null && ec.outputDuration > 0) out.duration = ec.outputDuration;
+    return out;
   }
 
   // -- monitor --

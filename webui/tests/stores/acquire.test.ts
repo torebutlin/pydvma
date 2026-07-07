@@ -347,3 +347,39 @@ test('editing the requested fs or device clears a standing coerced-fs note', asy
   store.patch({ sampleRate: 16000 });
   expect(get(store.coercedFs)).toBeNull();
 });
+
+// ---- round-4: pretrigger arm-control precedence + fuller output kwargs ----
+
+test('the arm control and Setup edit the SAME pretrigSamples store value (precedence)', async () => {
+  const { provider, config } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  // Setup's NI-group field sets it…
+  store.patchBridge({ pretrigSamples: 250 });
+  expect(get(store.bridgeConfig).pretrigSamples).toBe(250);
+  expect(config().pretrigSamples).toBe(250);      // forwarded to the bridge
+  // …and the Acquire arm control overwrites the SAME field (no separate value).
+  store.patchBridge({ pretrigSamples: 512 });
+  expect(get(store.bridgeConfig).pretrigSamples).toBe(512);
+  expect(config().pretrigSamples).toBe(512);
+  // Clearing it (blank arm input) restores the bridge's bare-arm default path.
+  store.patchBridge({ pretrigSamples: null });
+  expect(get(store.bridgeConfig).pretrigSamples).toBeNull();
+});
+
+test('fuller output kwargs (duration + device/channels) round-trip through patchBridge', async () => {
+  const { provider, config } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  store.patchBridge({
+    outputEnabled: true, outputDuration: 0.25, outputDeviceId: 'nidaq:0', outputChannels: 2,
+  });
+  const cfg = get(store.bridgeConfig);
+  expect(cfg).toMatchObject({
+    outputEnabled: true, outputDuration: 0.25, outputDeviceId: 'nidaq:0', outputChannels: 2,
+  });
+  // Forwarded to the provider so the next configure/log picks them up.
+  expect(config()).toMatchObject({
+    outputDuration: 0.25, outputDeviceId: 'nidaq:0', outputChannels: 2,
+  });
+});

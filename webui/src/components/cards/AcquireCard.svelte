@@ -19,7 +19,13 @@
    */
   import type { AcquireStore } from '../../lib/stores/acquire';
   import { recordingToItem } from '../../lib/stores/acquire';
-  import { outputCapable, deviceCapsFor, clampVoltage } from '../../lib/audio/provider';
+  import {
+    outputCapable,
+    deviceCapsFor,
+    clampVoltage,
+    outputDevices,
+    BARE_ARM_PRETRIG_SAMPLES,
+  } from '../../lib/audio/provider';
   import type { Actions } from '../../lib/analysis/actions';
   import type { Toasts } from '../../lib/stores/toast';
   import { activeStage } from '../../lib/stores/stages';
@@ -62,10 +68,22 @@
   const outputAmp = $derived($bridgeConfig.outputAmp ?? 0.3);
   const outputF1 = $derived($bridgeConfig.outputF1 ?? 10);
   const outputF2 = $derived($bridgeConfig.outputF2 ?? 500);
+  // Fuller output controls (round-4 item 12): duration + output device/channels.
+  const outputDuration = $derived($bridgeConfig.outputDuration);
+  const outputDeviceId = $derived($bridgeConfig.outputDeviceId ?? '');
+  const outputChannels = $derived($bridgeConfig.outputChannels ?? 1);
+  // AO-capable devices the bridge advertises (empty → the device select hides).
+  const outDevices = $derived(outputDevices($bridgeCaps));
+  const outMaxChannels = $derived(
+    outDevices.find((d) => d.deviceId === outputDeviceId)?.maxChannels,
+  );
 
   // ---- pretrigger arm state ----
   const armed = $derived($bridgeConfig.pretrigArmed ?? false);
   const pretrigTimeout = $derived($bridgeConfig.pretrigTimeout ?? 1.0);
+  // Editable-on-arm sample count (round-4 item 11): the SAME store value Setup
+  // shows, defaulting to BARE_ARM_PRETRIG_SAMPLES (100) when unset.
+  const pretrigSamples = $derived($bridgeConfig.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES);
 
   /** UI label for a signal_generator token ('uniform' shows as "white"). */
   function typeLabel(t: string): string {
@@ -97,10 +115,17 @@
   const summary = $derived.by(() => {
     const s = $settings;
     const fs = s.sampleRate >= 1000 ? `${(s.sampleRate / 1000).toFixed(1)} kHz` : `${s.sampleRate} Hz`;
-    const pre = showPretrig && armed ? 'armed' : 'no pretrig';
+    // Pretrigger now shows its (editable) sample count when armed.
+    const pre = showPretrig && armed ? `armed ${pretrigSamples}` : 'no pretrig';
     let out = '';
     if (outActive) {
-      out = ` · out: ${typeLabel(outputType)} ${outputAmp}V ${outputF1}-${outputF2}`;
+      // Fuller output description (round-4 item 3): type · amp · band ·
+      // duration, then the chosen output device + channel count when set.
+      const durTxt = (outputDuration ?? s.durationS).toFixed(1);
+      const dev = outDevices.find((d) => d.deviceId === outputDeviceId);
+      const devTxt = dev ? ` → ${dev.label}` : '';
+      const chTxt = outputChannels > 1 ? ` ${outputChannels}ch` : '';
+      out = ` · out: ${typeLabel(outputType)} ${outputAmp}V ${outputF1}-${outputF2}Hz ${durTxt}s${devTxt}${chTxt}`;
     }
     return `${fs} · ${s.channelCount} ch · ${s.durationS.toFixed(1)} s · ${deviceName} · ${pre}${out}`;
   });
@@ -148,6 +173,22 @@
     const v = Number((e.target as HTMLInputElement).value);
     if (isFinite(v)) acquire.patchBridge({ outputF2: v });
   }
+  /** Output duration (s); blank / non-positive clears it (server = capture dur). */
+  function onOutputDuration(e: Event) {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    const v = raw === '' ? undefined : Number(raw);
+    acquire.patchBridge({ outputDuration: v != null && isFinite(v) && v > 0 ? v : undefined });
+  }
+  /** Output device (AO); blank = same as input device / server default. */
+  function onOutputDevice(e: Event) {
+    const v = (e.target as HTMLSelectElement).value;
+    acquire.patchBridge({ outputDeviceId: v || undefined });
+  }
+  /** Output channel count, capped to the selected device's AO channel count. */
+  function onOutputChannels(e: Event) {
+    const v = Math.max(1, Math.round(Number((e.target as HTMLInputElement).value)) || 1);
+    acquire.patchBridge({ outputChannels: outMaxChannels != null ? Math.min(v, outMaxChannels) : v });
+  }
 
   // ---- pretrigger handlers ----
   function onArmToggle(e: Event) {
@@ -156,6 +197,18 @@
   function onTimeout(e: Event) {
     const v = Number((e.target as HTMLInputElement).value);
     if (isFinite(v) && v > 0) acquire.patchBridge({ pretrigTimeout: v });
+  }
+  /**
+   * Edit the pretrigger sample count directly on the arm control — writes the
+   * SAME `bridgeConfig.pretrigSamples` Setup's NI-group field edits (single
+   * source of truth, so the two never fight).  Blank clears it (the bridge
+   * then falls back to BARE_ARM_PRETRIG_SAMPLES); else a positive integer.
+   */
+  function onArmSamples(e: Event) {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    acquire.patchBridge({
+      pretrigSamples: raw === '' ? null : Math.max(1, Math.round(Number(raw)) || BARE_ARM_PRETRIG_SAMPLES),
+    });
   }
 
   async function logData() {
@@ -251,6 +304,37 @@
               aria-label="output f2"
               value={outputF2} onchange={onOutputF2} disabled={!outputOn}
             />
+            <span class="ml">dur (s)</span>
+            <input
+              type="number" step="0.1" min="0" style="width:56px"
+              placeholder={$settings.durationS.toFixed(1)}
+              title="Output duration (s); blank = match capture duration"
+              aria-label="output duration"
+              data-testid="output-duration"
+              value={outputDuration ?? ''} onchange={onOutputDuration} disabled={!outputOn}
+            />
+            {#if outDevices.length}
+              <span class="ml">device</span>
+              <select
+                title="Output (AO) device; 'same as input' uses the input device"
+                aria-label="output device"
+                data-testid="output-device"
+                value={outputDeviceId} onchange={onOutputDevice} disabled={!outputOn}
+              >
+                <option value="">same as input</option>
+                {#each outDevices as d (d.deviceId)}
+                  <option value={d.deviceId}>{d.label}</option>
+                {/each}
+              </select>
+              <span class="ml">out ch</span>
+              <input
+                type="number" min="1" max={outMaxChannels ?? undefined} style="width:48px"
+                title={outMaxChannels != null ? `Output channels (device max ${outMaxChannels})` : 'Output channels'}
+                aria-label="output channels"
+                data-testid="output-channels"
+                value={outputChannels} onchange={onOutputChannels} disabled={!outputOn}
+              />
+            {/if}
           </div>
         </div>
       {/if}
@@ -271,6 +355,14 @@
               arm
             </label>
             {#if armed}
+              <span class="ml">samples</span>
+              <input
+                type="number" step="1" min="1" style="width:64px"
+                title="Pretrigger sample count (defaults to 100; same value as Setup)"
+                aria-label="pretrigger samples"
+                data-testid="pretrig-samples-arm"
+                value={pretrigSamples} onchange={onArmSamples}
+              />
               <span class="ml">timeout (s)</span>
               <input
                 type="number" step="0.1" min="0" style="width:56px"

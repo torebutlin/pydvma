@@ -522,6 +522,65 @@ def test_configure_forwards_output_kwargs_to_settings():
     run_async(scenario)
 
 
+def test_configure_forwards_output_device_selection():
+    """Round-4 item 12: output DEVICE + CHANNEL selection rides the existing
+    configure.settings whitelist (output_device_driver / output_device_index /
+    output_channels are ordinary MySettings kwargs) — no protocol addition —
+    and lands on the recorder's settings unchanged."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'num_chunks': 4, 'viewed_time': None,
+                    'output_device_driver': 'mock', 'output_device_index': 0,
+                    'output_channels': 2,
+                })
+                status = await _recv_json(ws)
+                assert status['event'] == 'configured'
+                s = streams.REC.settings
+                assert s.output_device_driver == 'mock'
+                assert s.output_device_index == 0
+                assert s.output_channels == 2
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_log_output_duration_shorter_than_capture():
+    """Round-4 item 12: the output-spec `duration` key (already accepted by
+    `_build_output_signal`) drives a stimulus SHORTER than the capture; the
+    captured set length still follows the CAPTURE duration, and the container
+    frame lands as usual."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                    'output_channels': 1,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            output={'type': 'sweep', 'amp': 0.05,
+                                    'f1': 100, 'f2': 1000, 'duration': 0.05},
+                            test_name='out-dur')
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'
+                # Capture length follows the CAPTURE duration, not the output's.
+                assert meta['nSamples'] == int(0.1 * 8000)
+                assert meta['nChannels'] == 2  # no use_output_as_ch0 prepend
+
+                frame = await _recv_binary(ws, timeout=10.0)
+                assert serve_mod.decode_header(frame)['msgType'] == \
+                    serve_mod.MSG_CONTAINER
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
 def test_log_with_output_prepends_stimulus_channel():
     """A `log` carrying an `output` sweep builds the waveform and drives
     log_data(..., output=y); with use_output_as_ch0 the generated signal

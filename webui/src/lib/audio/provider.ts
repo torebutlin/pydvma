@@ -97,6 +97,11 @@ export interface DeviceCapsEntry {
    * Absent on mock/soundcard.
    */
   ao_vmax?: number;
+  /**
+   * Human-readable device name (server `device_caps[deviceId].name`).  Used
+   * as the label of the Acquire output-device select (see {@link outputDevices}).
+   */
+  name?: string;
 }
 
 /** Per-device input/output channel counts (`max_channels[deviceId]`). */
@@ -244,6 +249,39 @@ export function outputCapable(caps: BridgeCaps | null, deviceId?: string): boole
   return dc?.ao !== false;
 }
 
+/** An analog-output-capable device for the Acquire output-device select. */
+export interface OutputDevice {
+  /** `<driver>:<index>` id (matches the input `deviceId` encoding). */
+  deviceId: string;
+  /** Human-readable label (the device's `name`, or its id as a fallback). */
+  label: string;
+  /** Maximum output (AO) channel count, when the server reports one. */
+  maxChannels?: number;
+}
+
+/**
+ * The analog-output-capable devices a bridge advertises, for the Acquire
+ * output group's device select.  Reads `device_caps` for every entry with
+ * `ao: true` and pairs it with the output channel count from
+ * `max_channels[deviceId].output` (when present).  Returns `[]` for the Web
+ * Audio path (null caps) or a bridge with no AO — the select is then hidden.
+ */
+export function outputDevices(caps: BridgeCaps | null): OutputDevice[] {
+  if (!caps || !caps.ao || !caps.device_caps) return [];
+  const out: OutputDevice[] = [];
+  const mc = caps.max_channels;
+  for (const [deviceId, entry] of Object.entries(caps.device_caps)) {
+    if (!entry || entry.ao !== true) continue;
+    let maxChannels: number | undefined;
+    if (mc && typeof mc === 'object') {
+      const e = (mc as Record<string, DeviceChannelCounts>)[deviceId];
+      if (e && typeof e.output === 'number' && e.output > 0) maxChannels = e.output;
+    }
+    out.push({ deviceId, label: entry.name ?? deviceId, maxChannels });
+  }
+  return out;
+}
+
 /**
  * pydvma's `MySettings` default full-scale voltage (`options.py`:
  * `VmaxNI = 5`, and `output_VmaxNI` defaults to `VmaxNI`).  When the webui
@@ -251,6 +289,18 @@ export function outputCapable(caps: BridgeCaps | null, deviceId?: string): boole
  * is the "current value" a device rail below it must clamp against.
  */
 export const PYDVMA_DEFAULT_VMAX = 5;
+
+/**
+ * Default pretrigger sample count used when the pretrigger is ARMED without an
+ * explicit sample count set (a "bare arm").  100 matches pydvma's `MySettings`
+ * default `chunk_size` (`options.py`), so a bare arm fits the default
+ * pre-trigger context buffer WITHOUT forcing `chunk_size` up — the round-4
+ * fix for the old default of 1000, which exceeded the default chunk size and
+ * wastefully enlarged the buffer.  Editable directly on the Acquire arm
+ * control and shared with Setup's pretrigger-samples field (both write the
+ * same `BridgeConfig.pretrigSamples`).
+ */
+export const BARE_ARM_PRETRIG_SAMPLES = 100;
 
 /**
  * Clamp a full-scale voltage to a device rail.  Returns `value` unchanged
@@ -321,6 +371,24 @@ export interface BridgeConfig {
   outputAmp?: number;
   outputF1?: number;
   outputF2?: number;
+  /**
+   * Output stimulus duration in seconds → the `log.output.duration` key
+   * (already accepted by the server's `_build_output_signal`).  Unset →
+   * omitted, so the server defaults it to the capture duration (`stored_time`).
+   */
+  outputDuration?: number;
+  /**
+   * Selected output (AO) device as `<driver>:<index>` (e.g. `'nidaq:1'`),
+   * mapped to `MySettings.output_device_driver` / `output_device_index` in the
+   * configure message.  Unset → the server uses the input device / its
+   * default output.  Only sent when `outputEnabled`.
+   */
+  outputDeviceId?: string;
+  /**
+   * Number of output (AO) channels → `MySettings.output_channels`.  Unset →
+   * the server default (1).  Only sent when `outputEnabled`.
+   */
+  outputChannels?: number;
 }
 
 /**
