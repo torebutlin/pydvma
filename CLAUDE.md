@@ -2,66 +2,54 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-05: web-UI Stages 0–1 **and Stage 2 Plan 1** (the
-no-install browser **analysis** app, in `webui/`) are live, plus a
-**post-hands-on refinement round**: after Tore's first hands-on
-session, 5 shipped-feature bugs were fixed, a layout-polish pass
-landed, and an **analysis-card redesign** (`dev/plans/2026-07-05-analysis-card-redesign.md`,
-tasks R1–R5) added per-set analysis settings + a tray-following
-Dataset dropdown, the ΔF resolution control (slider + editable
-textbox), log/lin axis toggles (x freq, y dB↔linear), TF **out/in**
-channel labels (fixed the multi-channel bug), and per-line relabel.
-**Plan 2 in progress (a dispatch session, rescued 2026-07-05):** two
-chunks landed and are now committed. (1) **`.dvma` UI-state
-persistence** — per-set analysis settings + channel labels round-trip
-via an additive `ui` manifest key (`DvmaItemUi`); backwards-compatible
-(Python's `container.load` ignores it; older files load fine);
-`stampUiState()` writes on save/autosave, `loadDataset` restores. (2) A
-**first-cut acquisition + "Live" oscilloscope** (~1150 LOC + ~45 tests):
-Web Audio `lib/audio/source.ts`, `acquire`/`monitor` stores, an
-`OscCanvas` scope, Setup/Acquire/Live stage cards, and the
-setup/acquire/live stages. The acquisition/Live chunk has now been **reviewed** (verdict:
-SHIP-WITH-FIXES) and its **Critical/Important leaks fixed** — C1 (leaving
-Live left the mic + AudioContext alive → now stopped on stage change),
-C2 (mic stream leaked if AudioContext setup threw → now released), and
-I2/I3 (cancel-revives / double-start-orphans monitor races) — with
-regression tests. Remaining are Minors (M1 liveSource gate flips on API
-existence not permission; M2 toggle-while-paused redraw lag; M3
-unbounded pre-alloc at extreme settings; M4 latent ringBuf race) and the
-fact that it is still a **first cut** — soundcard INPUT capture only; no
-trigger/pretrigger, no output/stimulus, still on the deprecated
-ScriptProcessorNode. It has NOT had Tore's DESIGN sign-off (built by a
-dispatch session without a plan doc), so its shape may not match his
-acquisition vision (Log button + OUT badge, pretrigger, output signals,
-scope pop-out). (The dispatch session hit a stale-git-lock issue and
-left everything uncommitted; the interactive session cleared two stale
-0-byte `.git/*.lock` files, rescued it, fixed a stale shell e2e, and
-did the review + leak fixes.) **Still NOTHING pushed** — CI/Pages
-activate on the next `git push`.
+As of 2026-07-07: web-UI Stages 0–1, **Stage 2 Plan 1** (the no-install
+browser **analysis** app in `webui/`), the analysis-card redesign
+(R1–R5), `.dvma` UI-state persistence, and now the **full round-2
+feedback round** are ALL implemented and committed on master.
+The round-2 work (orchestrated session, 2026-07-07; ten commits
+`888f710..1624320`) landed every item in
+`dev/2026-07-05-acquisition-hands-on-feedback.md`:
 
-**START THE NEXT SESSION HERE:** Tore did a round-2 hands-on
-(2026-07-05) — full feedback in
-**`dev/2026-07-05-acquisition-hands-on-feedback.md`** (read it first).
-Headlines: acquisition/Live wants a **design-first pass against the
-round-2 mockups** (`dev/mockups/round2-bench.html`) — bring back the
-mini-oscilloscope (live time trace + FFT + levels, compact bottom-left
-that expands to fill the figure area = the Live tab). Discrete fixes
-queued there too: **TF with 1 channel CRASHES** (R4 out/in remap → zero
-output channels — fix gracefully); **legend off-lines should be
-struck-through, not disappear** (can't re-enable them otherwise);
-**PSD/TF/Sono should recompute live** on slider/setting change (not only
-the Calc button); Time card "Impulse channel" → **"Input channel"** and
-its logged-time badge to **3 s.f.** (shows 1.999977); Setup device
-lookup **on page load** + a basic/full toggle with an expand-the-bar
-mode; Acquire needs a fuller settings summary. **Revisit the C1 monitor
-fix** — the mini-monitor should persist across tabs with its OWN
-start/stop, not auto-stop on leaving Live. Then continue **Plan 2**
-(Fit stage, calibration, a Figures/export-preview tab). Fresh session: read `dev/2026-07-05-hands-on-feedback.md`
-(triage + what landed + the for-Tore notes) and the redesign plan;
-run instructions `cd webui && npm run dev`, open
-`http://localhost:5173/?fixture=1` (or `?fixture=3ch` for the
-multi-channel TF fixture). Earlier handoff:
-`dev/2026-07-04-stage2-plan1-handoff.md`.
+- **Analysis fixes:** TF on a single-channel set no longer goes blank
+  (named-set message via `computeError`; root cause was the R4 out/in
+  remap leaving zero output columns); legend off-lines stay listed
+  struck-through and cycle back on (`selection.legendRows`; the TF
+  view's App-level override included); PSD/TF/Sono **recompute live**
+  (debounced `lib/analysis/liveCalc.ts`, gated so the FIRST compute is
+  still the Calc button); Time card "input channel" rename + tray
+  duration badge at 3 s.f.
+- **Acquisition design pass** (design-first, from
+  `dev/mockups/round2-bench.html` distilled by a scout agent): the
+  **persistent mini-oscilloscope** (`MiniMonitor.svelte`) docks at the
+  tray foot on every stage with its OWN start/stop (C1 auto-stop
+  removed — teardown release via onDestroy + pagehide/beforeunload;
+  I2/I3/C2 guards intact); ⤢ expands into the **Live tab** =
+  `LiveScope.svelte` (time + live **FFT** (`lib/audio/fft.ts`, tested
+  TS radix-2/Hann) + levels grid, T/F/L/P chips); monitor store gained
+  windowS presets (clamped — M3 fixed), dB/lin + log/lin f, latching
+  CLIP; **Setup** enumerates devices on mount + basic↔full
+  extended-area mode; **Acquire** summary shows fs·ch·T·device·pretrig.
+- **Bonus measurement fix:** getUserMedia echoCancellation /
+  noiseSuppression / autoGainControl now default **OFF** (browser
+  defaults silently filter measurement audio); toggles in Setup full.
+
+Verified: 307 vitest + 38 Playwright e2e green (incl. a fake-mic
+`live.spec.ts`), svelte-check 0 errors, visual check against the
+mockup. **Still NOTHING pushed** — CI/Pages activate on next `git push`.
+
+**START THE NEXT SESSION HERE:** Tore should do a **round-3 hands-on**
+of the new acquisition/Live design (this pass implements his round-2
+asks but still needs his design sign-off). Known not-done: narrow-mode
+mini strip (mockup `.rail-mon`); still ScriptProcessorNode (AudioWorklet
+migration pending); no pretrigger/output-stimulus UI or capture;
+minors M1 (liveSource gate) + M2 (pause redraw lag) remain. Then
+continue **Plan 2**: Fit stage, calibration, a Figures/export-preview
+tab, and the `pydvma serve` launch-config path (Setup-from-notebook,
+believed Plan-2/3 scope). Run: `cd webui && npm run dev`, open
+`http://localhost:5173/?fixture=1` (or `?fixture=3ch`). Feedback docs:
+`dev/2026-07-05-acquisition-hands-on-feedback.md` (round 2, now done),
+`dev/2026-07-05-hands-on-feedback.md` (round 1 + for-Tore notes).
+Earlier handoff: `dev/2026-07-04-stage2-plan1-handoff.md`.
 
 Auto-loaded by Claude Code at the start of every session. Contributors
 and collaborators: the concrete filesystem paths below are for the
