@@ -26,7 +26,14 @@ qt = ["qtpy", "PyQt5", "pyqtgraph", "seaborn"]
 # acquisition backends
 soundcard = ["sounddevice"]
 ni = ["nidaqmx"]
-full = ["pydvma[qt,soundcard,ni]"]
+# `pydvma serve` — the local WebSocket acquisition bridge for the
+# browser UI. `websockets` is pure-Python with no transitive deps.
+serve = ["websockets"]
+full = ["pydvma[qt,soundcard,ni,serve]"]
+
+[project.scripts]
+# `pydvma serve` bridge; also runnable as `python -m pydvma.serve`.
+pydvma-serve = "pydvma.serve:main"
 
 [project.urls]
 Homepage = "https://github.com/torebutlin/pydvma"
@@ -36,3 +43,11 @@ packages = ["pydvma"]
 
 [tool.setuptools.package-data]
 pydvma = ["*.png"]
+# TODO (packaging, Wave-B follow-up): ship the built browser UI inside
+# the wheel so `pydvma-serve` works from a pip install with no repo
+# checkout. This needs a build step that stages `webui/dist` into the
+# package tree (e.g. `pydvma/_webui/`) plus a package-data glob such as
+# `pydvma = ["*.png", "_webui/**/*"]`. Out of scope for the bridge
+# itself (decision #5): today `--ui-dir` (default <repo>/webui/dist)
+# serves the UI, and an installed wheel without a build shows the
+# bridge's no-UI help page.

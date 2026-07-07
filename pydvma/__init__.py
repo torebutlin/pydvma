@@ -40,6 +40,17 @@ _LAZY_NAMES = {
     'Logger': '.gui',
     'Oscilloscope': '.gui',
     'PlotData': '.plotting',
+    # `serve` is the whole submodule (the local acquisition bridge),
+    # not a class inside one — deferred so `import pydvma` never pulls
+    # the optional `websockets` dependency.
+    'serve': '.serve',
+}
+
+# Friendly-error hints for lazy modules whose optional deps may be
+# missing: {module: (human-readable package list, extras name)}.
+_LAZY_EXTRAS = {
+    '.gui': ('qtpy, PyQt5, pyqtgraph', 'qt'),
+    '.serve': ('websockets', 'serve'),
 }
 
 
@@ -50,13 +61,19 @@ def __getattr__(name):
         try:
             mod = importlib.import_module(mod_name, __name__)
         except ImportError as e:
-            if mod_name != '.gui':
+            extras = _LAZY_EXTRAS.get(mod_name)
+            if extras is None:
                 raise
+            packages, extra = extras
             raise ImportError(
-                'pydvma.{} needs the GUI dependencies (qtpy, PyQt5, '
-                'pyqtgraph). Install them with: pip install pydvma[qt]. '
-                'Original error: {}'.format(name, e)
+                'pydvma.{} needs optional dependencies ({}). Install '
+                'them with: pip install pydvma[{}]. Original error: {}'
+                .format(name, packages, extra, e)
             ) from e
+        # Submodule entries (name == module basename) resolve to the
+        # module itself; class entries resolve to the named attribute.
+        if mod_name.lstrip('.') == name:
+            return mod
         return getattr(mod, name)
     raise AttributeError(
         'module {!r} has no attribute {!r}'.format(__name__, name)
