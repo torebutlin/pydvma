@@ -198,8 +198,126 @@ def test_build_capabilities_shape():
     assert 'mock' in cap['backends']           # mock is always available
     assert set(cap['devices'].keys()) == {'soundcard', 'nidaq'}
     assert cap['pretrigger'] is True
-    assert 'ao' in cap
-    assert 'fs_ladders' in cap and 'max_channels' in cap
+    assert cap['ao'] is True                   # mock backend always outputs
+    # Wave-C per-device cap maps (were {} / None placeholders in v1).
+    assert isinstance(cap['fs_ladders'], dict)
+    assert isinstance(cap['max_channels'], dict)
+    assert isinstance(cap['device_caps'], dict)
+    # The mock backend has a stable stub entry in device_caps.
+    assert cap['device_caps']['mock:0']['ao'] is True
+
+
+def test_build_capabilities_includes_nidaq_caps_when_present(monkeypatch):
+    """The nidaq branch of build_capabilities wires enumerate_devices +
+    entry_capabilities into the per-device maps. nidaqmx never imports on
+    Mac, so fake the backend to exercise the assembly here."""
+    fake_entry = {
+        'name': 'cDAQ1', 'product_type': 'cDAQ-9174', 'is_chassis': True,
+        'ai_channel_count': 4, 'ao_channel_count': 2,
+        'module_names': ['cDAQ1Mod1', 'cDAQ1Mod2'],
+        'module_ai_counts': {'cDAQ1Mod1': 4, 'cDAQ1Mod2': 0},
+        'module_ao_counts': {'cDAQ1Mod1': 0, 'cDAQ1Mod2': 2},
+    }
+    fake_caps = {
+        'ai_max_rate': 51200.0, 'ai_min_rate': 1613.0,
+        'ao_max_rate': 51200.0, 'ao_min_rate': 1613.0,
+        'simultaneous': True, 'iepe_supported': True,
+        'iepe_currents': [0.002],
+        'terminal_configs': ['DAQmx_Val_PseudoDiff'], 'ao_supported': True,
+    }
+    monkeypatch.setattr(serve_mod.streams, 'ni', object())
+    monkeypatch.setattr(serve_mod._ni_backend, 'enumerate_devices',
+                        lambda: [dict(fake_entry)])
+    monkeypatch.setattr(serve_mod._ni_backend, 'entry_capabilities',
+                        lambda e: dict(fake_caps))
+
+    cap = serve_mod.build_capabilities()
+    assert 'nidaq' in cap['backends']
+    entry = cap['devices']['nidaq'][0]
+    assert entry['name'] == 'cDAQ1'
+    assert entry['caps']['simultaneous'] is True     # inline caps on entry
+    dc = cap['device_caps']['nidaq:0']
+    assert dc['simultaneous'] is True and dc['iepe_supported'] is True
+    assert dc['ao'] is True
+    assert cap['max_channels']['nidaq:0'] == {'input': 4, 'output': 2}
+    # fs ladder bounded by [ai_min_rate, ai_max_rate].
+    ladder = cap['fs_ladders']['nidaq:0']
+    assert ladder and all(1613.0 <= r <= 51200.0 for r in ladder)
+
+
+def test_build_capabilities_soundcard_per_device_caps():
+    """When sounddevice is importable, each soundcard device carries its
+    own fs-ladder + channel counts keyed by ``soundcard:<index>``."""
+    if streams.sd is None:
+        pytest.skip('sounddevice not available')
+    cap = serve_mod.build_capabilities()
+    assert 'soundcard' in cap['backends']
+    names = cap['devices']['soundcard']
+    if not names:
+        pytest.skip('no soundcard devices enumerated')
+    for i in range(len(names)):
+        did = 'soundcard:%d' % i
+        assert did in cap['device_caps']
+        assert did in cap['fs_ladders']
+        assert did in cap['max_channels']
+        c = cap['device_caps'][did]
+        assert set(c) >= {'max_input_channels', 'max_output_channels',
+                          'default_samplerate', 'candidate_rates', 'ao'}
+        assert cap['max_channels'][did]['input'] == c['max_input_channels']
+        assert isinstance(cap['fs_ladders'][did], list)
+
+
+# ---- unit: output-signal builder ----------------------------------------
+
+class TestBuildOutputSignal:
+
+    def _settings(self, **kw):
+        base = dict(device_driver='mock', channels=2, fs=8000, chunk_size=100,
+                    num_chunks=4, viewed_time=None, output_channels=1)
+        base.update(kw)
+        return dvma.MySettings(**base)
+
+    def test_none_spec_returns_no_output(self):
+        s = self._settings()
+        assert serve_mod._build_output_signal(s, None) == (None, False)
+
+    def test_type_none_returns_no_output(self):
+        s = self._settings()
+        y, gen = serve_mod._build_output_signal(s, {'type': 'none'})
+        assert y is None and gen is False
+
+    def test_sweep_builds_waveform(self):
+        s = self._settings()
+        y, gen = serve_mod._build_output_signal(
+            s, {'type': 'sweep', 'amp': 0.05, 'f1': 100, 'f2': 1000,
+                'duration': 0.1})
+        assert gen is True
+        assert y.shape == (int(0.1 * s.output_fs), s.output_channels)
+        assert np.max(np.abs(y)) <= s.output_vmax() + 1e-9
+
+    def test_white_aliases_uniform(self):
+        s = self._settings()
+        y, gen = serve_mod._build_output_signal(
+            s, {'type': 'white', 'amp': 0.05, 'f1': 100, 'f2': 1000,
+                'duration': 0.1})
+        assert gen is True and y.shape[1] == s.output_channels
+
+    def test_unknown_type_rejected(self):
+        s = self._settings()
+        with pytest.raises(ValueError, match='unknown output type'):
+            serve_mod._build_output_signal(s, {'type': 'square'})
+
+    def test_unknown_key_rejected(self):
+        s = self._settings()
+        with pytest.raises(ValueError, match='unknown output key'):
+            serve_mod._build_output_signal(
+                s, {'type': 'sweep', 'bogus': 1})
+
+    def test_nyquist_violation_rejected(self):
+        s = self._settings(fs=8000)
+        with pytest.raises(ValueError, match='Nyquist'):
+            serve_mod._build_output_signal(
+                s, {'type': 'sweep', 'f1': 0, 'f2': 5000})  # > 4000 = fs/2
 
 
 # ---- live: hello / configure --------------------------------------------
@@ -372,6 +490,147 @@ def test_log_before_configure_errors():
                 err = await _recv_json(ws)
                 assert err['type'] == 'error'
                 assert 'configure' in err['message']
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+# ---- live: output / stimulus --------------------------------------------
+
+def test_configure_forwards_output_kwargs_to_settings():
+    """The MySettings output_* fields flow in through configure.settings
+    and land on the recorder's settings unchanged."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'num_chunks': 4, 'viewed_time': None,
+                    'output_channels': 2, 'output_fs': 16000,
+                    'output_VmaxNI': 3.0, 'use_output_as_ch0': True,
+                })
+                status = await _recv_json(ws)
+                assert status['event'] == 'configured'
+                s = streams.REC.settings
+                assert s.output_channels == 2
+                assert s.output_fs == 16000
+                assert s.output_VmaxNI == 3.0
+                assert s.use_output_as_ch0 is True
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_log_with_output_prepends_stimulus_channel():
+    """A `log` carrying an `output` sweep builds the waveform and drives
+    log_data(..., output=y); with use_output_as_ch0 the generated signal
+    is prepended, so the captured set has channels+output_channels."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                    'output_channels': 1, 'use_output_as_ch0': True,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            output={'type': 'sweep', 'amp': 0.05,
+                                    'f1': 100, 'f2': 1000, 'duration': 0.1},
+                            test_name='with-output')
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'
+                # 2 input channels + 1 prepended output channel.
+                assert meta['nChannels'] == 3
+
+                frame = await _recv_binary(ws, timeout=10.0)
+                dvma_bytes = frame[serve_mod.HEADER_SIZE:]
+                ds = container.load(io.BytesIO(dvma_bytes))
+                td = ds.time_data_list[0]
+                assert td.time_data.shape == (int(0.1 * 8000), 3)
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_log_rejects_unknown_output_key():
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            output={'type': 'sweep', 'bogus': 1})
+                err = await _recv_json(ws)
+                assert err['type'] == 'error'
+                assert 'unknown output key' in err['message']
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_log_rejects_output_above_nyquist():
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            output={'type': 'sweep', 'f1': 0, 'f2': 5000})
+                err = await _recv_json(ws)
+                assert err['type'] == 'error'
+                assert 'Nyquist' in err['message']
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+# ---- live: pretrigger status events -------------------------------------
+
+def test_pretrigger_armed_then_timeout_then_result():
+    """MockRecorder never triggers, so an armed pretriggered log walks the
+    timeout fallback: status 'armed' -> status 'timeout' -> log_result ->
+    container frame."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1,
+                            pretrigger={'samples': 50, 'threshold': 0.2,
+                                        'timeout': 0.3},
+                            test_name='pretrig-timeout')
+
+                events = []
+                meta = None
+                for _ in range(10):
+                    msg = await _recv_json(ws, timeout=10.0)
+                    if msg['type'] == 'status':
+                        events.append(msg['event'])
+                    elif msg['type'] == 'log_result':
+                        meta = msg
+                        break
+                assert events == ['armed', 'timeout']
+                assert meta is not None and meta['testName'] == 'pretrig-timeout'
+
+                # the container frame still follows and loads.
+                frame = await _recv_binary(ws, timeout=10.0)
+                assert serve_mod.decode_header(frame)['msgType'] == \
+                    serve_mod.MSG_CONTAINER
         finally:
             await _stop_server(task)
     run_async(scenario)

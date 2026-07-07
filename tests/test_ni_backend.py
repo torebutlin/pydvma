@@ -289,3 +289,191 @@ class TestAISampleClockSource:
         entry = _chassis_entry('cDAQ1', 'cDAQ-9185',
                                [('cDAQ1Mod1', 4, 0), ('cDAQ1Mod3', 0, 4)])
         assert _ni.ai_sample_clock_source(entry) is None
+
+
+# ---- device_capabilities / entry_capabilities ----------------------------
+#
+# These exercise the Wave-C capability probe against fake devices exposing
+# the real nidaqmx Device / PhysicalChannel property names (verified
+# against nidaqmx-python's device.py / physical_channel.py):
+#   ai_max_multi_chan_rate, ai_max_single_chan_rate, ai_min_rate,
+#   ao_max_rate, ao_min_rate, ai_simultaneous_sampling_supported,
+#   ai_current_int_excit_discrete_vals, and (per physical channel)
+#   ai_term_cfgs.
+
+
+class _FakeTermCfg(object):
+    """Stand-in for an nidaqmx TerminalConfiguration enum member."""
+    def __init__(self, name):
+        self.name = name
+
+
+class _FakeCapPhysChan(object):
+    def __init__(self, name, term_cfgs):
+        self.name = name
+        self.ai_term_cfgs = list(term_cfgs)
+
+
+class FakeCapDevice(object):
+    """Fake nidaqmx Device exposing the capability properties.
+
+    Defaults model an NI 9234-class DSA AI module (simultaneous
+    sampling, 2 mA IEPE, pseudo-differential only).
+    """
+    def __init__(self, name, product_type='NI 9234', ai=4, ao=0,
+                 ai_max_multi=51200.0, ai_max_single=51200.0, ai_min=1000.0,
+                 ao_max=None, ao_min=None, simultaneous=True,
+                 iepe_vals=(0.0, 0.002), term_cfg_names=('PSEUDO_DIFF',)):
+        self.name = name
+        self.product_type = product_type
+        self.ai_max_multi_chan_rate = ai_max_multi
+        self.ai_max_single_chan_rate = ai_max_single
+        self.ai_min_rate = ai_min
+        self.ao_max_rate = ao_max
+        self.ao_min_rate = ao_min
+        self.ai_simultaneous_sampling_supported = simultaneous
+        self.ai_current_int_excit_discrete_vals = list(iepe_vals)
+        term = [_FakeTermCfg(n) for n in term_cfg_names]
+        self.ai_physical_chans = [
+            _FakeCapPhysChan('%s/ai%d' % (name, i), term) for i in range(ai)
+        ]
+        self.ao_physical_chans = [
+            FakePhysChan('%s/ao%d' % (name, i)) for i in range(ao)
+        ]
+
+
+class _MissingAxisDevice(object):
+    """AO-only module: every ``ai_*`` property raises (mimics DAQmx
+    -200197 'requested property not supported'), like the NI 9260."""
+    name = 'AOonly'
+    product_type = 'NI 9260'
+    ai_physical_chans = []
+
+    def __init__(self):
+        self.ao_physical_chans = [FakePhysChan('AOonly/ao0'),
+                                  FakePhysChan('AOonly/ao1')]
+        self.ao_max_rate = 51200.0
+        self.ao_min_rate = 1613.0
+
+    @property
+    def ai_max_multi_chan_rate(self):
+        raise RuntimeError('DAQmx -200197')
+
+    @property
+    def ai_max_single_chan_rate(self):
+        raise RuntimeError('DAQmx -200197')
+
+    @property
+    def ai_min_rate(self):
+        raise RuntimeError('DAQmx -200197')
+
+    @property
+    def ai_simultaneous_sampling_supported(self):
+        raise RuntimeError('DAQmx -200197')
+
+    @property
+    def ai_current_int_excit_discrete_vals(self):
+        raise RuntimeError('DAQmx -200197')
+
+
+class TestDeviceCapabilities:
+
+    def test_dsa_ai_module(self):
+        dev = FakeCapDevice('cDAQ1Mod1')  # 9234-like defaults
+        caps = _ni.device_capabilities('cDAQ1Mod1', device=dev)
+        assert caps['ai_max_rate'] == 51200.0
+        assert caps['ai_max_single_chan_rate'] == 51200.0
+        assert caps['ai_min_rate'] == 1000.0
+        assert caps['simultaneous'] is True
+        assert caps['iepe_supported'] is True
+        assert caps['iepe_currents'] == [0.002]      # 0.0 dropped
+        assert caps['terminal_configs'] == ['DAQmx_Val_PseudoDiff']
+        assert caps['ao_supported'] is False         # AI-only module
+
+    def test_ai_max_rate_falls_back_to_single(self):
+        dev = FakeCapDevice('Dev1', ai_max_multi=None, ai_max_single=100000.0)
+        caps = _ni.device_capabilities('Dev1', device=dev)
+        assert caps['ai_max_rate'] == 100000.0
+
+    def test_multiplexed_usb_no_iepe(self):
+        dev = FakeCapDevice(
+            'Dev1', product_type='USB-6003', ai=8, ao=2,
+            ai_max_multi=100000.0, ai_max_single=100000.0, ai_min=0.0,
+            simultaneous=False, iepe_vals=(), term_cfg_names=('RSE', 'DIFF'),
+        )
+        caps = _ni.device_capabilities('Dev1', device=dev)
+        assert caps['simultaneous'] is False
+        assert caps['iepe_supported'] is False
+        assert caps['iepe_currents'] == []
+        assert caps['terminal_configs'] == ['DAQmx_Val_RSE', 'DAQmx_Val_Diff']
+        assert caps['ao_supported'] is True          # 2 AO channels
+
+    def test_missing_ai_axis_degrades_to_none(self):
+        # An AO-only module must not raise — the _safe guard swallows the
+        # -200197 and reports None / empty for the absent AI axis.
+        caps = _ni.device_capabilities('AOonly', device=_MissingAxisDevice())
+        assert caps['ai_max_rate'] is None
+        assert caps['ai_min_rate'] is None
+        assert caps['simultaneous'] is None
+        assert caps['iepe_supported'] is False
+        assert caps['terminal_configs'] == []
+        assert caps['ao_supported'] is True
+        assert caps['ao_max_rate'] == 51200.0
+
+    def test_requires_nidaqmx_when_no_device_given(self, monkeypatch):
+        monkeypatch.setattr(_ni, 'nidaqmx', None)
+        with pytest.raises(RuntimeError):
+            _ni.device_capabilities('Dev1')
+
+
+class TestEntryCapabilities:
+
+    def test_standalone_device(self):
+        entry = _usb_entry('Dev1', 'USB-6212', ai=16, ao=2)
+        dev = FakeCapDevice(
+            'Dev1', product_type='USB-6212', ai=16, ao=2,
+            ai_max_multi=400000.0, ai_max_single=400000.0, ai_min=0.0,
+            ao_max=250000.0, ao_min=0.0, simultaneous=False,
+            iepe_vals=(), term_cfg_names=('RSE', 'NRSE', 'DIFF'),
+        )
+        caps = _ni.entry_capabilities(entry, resolver=lambda n: dev)
+        assert caps['ai_max_rate'] == 400000.0
+        assert caps['ao_max_rate'] == 250000.0
+        assert caps['simultaneous'] is False
+        assert caps['ao_supported'] is True
+
+    def test_chassis_merges_ai_and_ao_modules(self):
+        # cDAQ-9174: Mod1 = 9234 AI (IEPE, simultaneous, pseudo-diff);
+        # Mod2 = 9260 AO. Chassis-level caps come from the modules.
+        entry = _chassis_entry(
+            'cDAQ1', 'cDAQ-9174',
+            [('cDAQ1Mod1', 4, 0), ('cDAQ1Mod2', 0, 2)],
+        )
+        ai_dev = FakeCapDevice('cDAQ1Mod1')  # 9234-like
+        ao_dev = FakeCapDevice(
+            'cDAQ1Mod2', product_type='NI 9260', ai=0, ao=2,
+            ai_max_multi=None, ai_max_single=None, ai_min=None,
+            ao_max=51200.0, ao_min=1613.0, simultaneous=True,
+            iepe_vals=(), term_cfg_names=(),
+        )
+        resolver = {'cDAQ1Mod1': ai_dev, 'cDAQ1Mod2': ao_dev}.__getitem__
+        caps = _ni.entry_capabilities(entry, resolver=resolver)
+        # AI fields sourced from the AI module...
+        assert caps['ai_max_rate'] == 51200.0
+        assert caps['simultaneous'] is True
+        assert caps['iepe_supported'] is True
+        assert caps['iepe_currents'] == [0.002]
+        assert caps['terminal_configs'] == ['DAQmx_Val_PseudoDiff']
+        # ...AO fields from the AO module.
+        assert caps['ao_max_rate'] == 51200.0
+        assert caps['ao_min_rate'] == 1613.0
+        assert caps['ao_supported'] is True
+
+    def test_chassis_ai_only(self):
+        entry = _chassis_entry('cDAQ1', 'cDAQ-9171',
+                               [('cDAQ1Mod1', 4, 0)])
+        ai_dev = FakeCapDevice('cDAQ1Mod1')
+        caps = _ni.entry_capabilities(entry, resolver=lambda n: ai_dev)
+        assert caps['ai_max_rate'] == 51200.0
+        assert caps['ao_max_rate'] is None
+        assert caps['ao_supported'] is False

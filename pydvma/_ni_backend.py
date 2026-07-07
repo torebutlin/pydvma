@@ -314,3 +314,183 @@ def ai_sample_clock_source(device_entry):
     if device_entry['is_chassis']:
         return None
     return '/%s/ai/SampleClock' % device_entry['name']
+
+
+# Inverse of TERMINAL_CONFIG_MAP: an nidaqmx TerminalConfiguration enum
+# member name -> the legacy ``DAQmx_Val_*`` string pydvma's ``NI_mode``
+# and `resolve_terminal_config` speak, so a queried terminal-config list
+# round-trips back to a value you can hand to `resolve_terminal_config`.
+_TERMINAL_CONFIG_NAME_TO_LEGACY = {v: k for k, v in TERMINAL_CONFIG_MAP.items()}
+
+
+def _safe(fn, default=None):
+    """Call ``fn()``; return its result, or ``default`` on any exception.
+
+    NI modules that lack an axis (an AO-only module has no AI properties,
+    and vice-versa) raise DAQmx -200197 when the missing ``ai_*`` /
+    ``ao_*`` property is read; a device that is offline can raise other
+    DaqErrors. Capability probing should degrade to "not reported"
+    rather than propagate — hence this catch-all guard.
+    """
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def _terminal_configs(dev):
+    """Supported AI terminal configs for a device, as pydvma legacy names.
+
+    Terminal configuration is a *per-physical-channel* property in
+    nidaqmx (``PhysicalChannel.ai_term_cfgs`` -> a list of
+    ``TerminalConfiguration`` enum members) — there is no device-level
+    equivalent — so this reads the FIRST AI physical channel's list and
+    maps each enum member back to the ``DAQmx_Val_*`` string pydvma's
+    ``NI_mode`` uses (e.g. ``RSE`` -> ``'DAQmx_Val_RSE'``,
+    ``PSEUDO_DIFF`` -> ``'DAQmx_Val_PseudoDiff'``). Returns ``[]`` when
+    the device exposes no AI channels or the property can't be read.
+    """
+    chans = _safe(lambda: list(dev.ai_physical_chans), []) or []
+    if not chans:
+        return []
+    cfgs = _safe(lambda: list(chans[0].ai_term_cfgs), []) or []
+    out = []
+    for c in cfgs:
+        legacy = _TERMINAL_CONFIG_NAME_TO_LEGACY.get(getattr(c, 'name', None))
+        if legacy is not None and legacy not in out:
+            out.append(legacy)
+    return out
+
+
+def device_capabilities(name, device=None):
+    """Query a single NI device's acquisition capabilities via nidaqmx.
+
+    Additive companion to `enumerate_devices` for the ``pydvma serve``
+    capabilities handshake: enumerate tells you *what* devices exist,
+    this tells you what one of them can *do*.
+
+    Parameters
+    ----------
+    name : str
+        DAQmx device/module name, e.g. ``'Dev1'`` or ``'cDAQ1Mod1'``.
+    device : optional
+        A pre-resolved nidaqmx ``Device`` (or a fake exposing the same
+        properties — the Mac-side tests inject one). When ``None`` the
+        name is resolved via ``nidaqmx.system.Device(name)``; that path
+        needs nidaqmx importable (raises ``RuntimeError`` otherwise).
+
+    Returns
+    -------
+    dict
+        - ``ai_max_rate`` — ``ai_max_multi_chan_rate`` (the realistic
+          multi-channel ceiling), falling back to
+          ``ai_max_single_chan_rate`` when the multi property is absent.
+        - ``ai_max_single_chan_rate`` — single-channel AI max rate.
+        - ``ai_min_rate`` — minimum AI rate.
+        - ``ao_max_rate`` / ``ao_min_rate`` — AO rate bounds.
+          All rate fields are floats, or ``None`` when the axis/property
+          is not reported by the device.
+        - ``simultaneous`` — ``ai_simultaneous_sampling_supported``:
+          ``True`` on delta-sigma (DSA) modules with a per-channel ADC
+          (e.g. the NI 9234 — no inter-channel skew), ``False`` on
+          multiplexed devices (USB-6003/6212, whose single ADC scans the
+          channel list so samples are skewed by the convert time).
+        - ``iepe_supported`` / ``iepe_currents`` — from
+          ``ai_current_int_excit_discrete_vals``. A non-empty currents
+          list (e.g. ``[0.002]`` on the 9234) means those values are
+          legal for ``iepe_excit_current_A``; ``0.0`` (off) is always
+          implicitly allowed and is not listed.
+        - ``terminal_configs`` — legacy ``DAQmx_Val_*`` names supported
+          by the first AI channel (see `_terminal_configs`).
+        - ``ao_supported`` — the device exposes ≥1 AO physical channel.
+
+    Property names are verified against the nidaqmx-python source
+    (``nidaqmx/system/device.py`` and ``physical_channel.py``); the same
+    ``ai_max_single_chan_rate`` / ``ai_min_rate`` / ``ao_max_rate`` /
+    ``ai_current_int_excit_discrete_vals`` are already relied on by
+    `pydvma._ni_device_specs.get_device_info`.
+
+    Sample-rate ladder caveat
+    -------------------------
+    DSA modules (e.g. the NI 9234) accept only a *discrete* set of rates
+    derived from the module timebase (``fs_base / (256 · n)``). nidaqmx
+    exposes the ``ai_min_rate`` / ``ai_max_*`` *bounds* but NOT the full
+    ladder, and silently coerces a requested rate to the nearest legal
+    step at task-create time. Treat the rate fields here as bounds, not
+    a promise that every rate between them is achievable on a DSA module.
+    """
+    if device is None:
+        if nidaqmx is None:
+            raise RuntimeError('nidaqmx is not installed')
+        device = _nidaq_system.Device(name)
+
+    ai_multi = _safe(lambda: float(device.ai_max_multi_chan_rate))
+    ai_single = _safe(lambda: float(device.ai_max_single_chan_rate))
+    iepe_vals = _safe(lambda: list(device.ai_current_int_excit_discrete_vals), []) or []
+    # Report only the >0 discrete currents; 0.0 (no excitation) is always
+    # implicitly allowed and would otherwise make iepe_supported wrong.
+    iepe_currents = [float(v) for v in iepe_vals if float(v) > 0.0]
+    ao_chan_count = _safe(lambda: len(list(device.ao_physical_chans)), 0) or 0
+
+    return {
+        'ai_max_rate': ai_multi if ai_multi is not None else ai_single,
+        'ai_max_single_chan_rate': ai_single,
+        'ai_min_rate': _safe(lambda: float(device.ai_min_rate)),
+        'ao_max_rate': _safe(lambda: float(device.ao_max_rate)),
+        'ao_min_rate': _safe(lambda: float(device.ao_min_rate)),
+        'simultaneous': _safe(
+            lambda: bool(device.ai_simultaneous_sampling_supported)),
+        'iepe_supported': len(iepe_currents) > 0,
+        'iepe_currents': iepe_currents,
+        'terminal_configs': _terminal_configs(device),
+        'ao_supported': ao_chan_count > 0,
+    }
+
+
+def entry_capabilities(entry, resolver=None):
+    """Merged capabilities for one `enumerate_devices` entry.
+
+    A standalone USB/PCIe device reports every axis itself, so this just
+    calls `device_capabilities` on it. A cDAQ **chassis** reports nothing
+    at the chassis level — its AI/AO capabilities live on the slotted
+    modules — so this queries the first AI-providing module for the AI
+    fields (rate ladder, simultaneous sampling, IEPE, terminal configs)
+    and the first AO-providing module for the AO fields, then merges
+    them (mirroring how `_ni_device_specs.suggest_ni_settings` splits AI
+    and AO across modules).
+
+    ``resolver`` maps a device/module name to an object exposing the
+    nidaqmx Device properties; it defaults to ``nidaqmx.system.Device``
+    and is injected by the Mac-side tests.
+    """
+    if resolver is None:
+        if nidaqmx is None:
+            raise RuntimeError('nidaqmx is not installed')
+        resolver = lambda n: _nidaq_system.Device(n)  # noqa: E731
+
+    if not entry['is_chassis']:
+        caps = device_capabilities(entry['name'], device=resolver(entry['name']))
+        caps['ao_supported'] = bool(
+            caps['ao_supported'] or entry['ao_channel_count'] > 0)
+        return caps
+
+    ai_mod = next((m for m in entry['module_names']
+                   if entry['module_ai_counts'].get(m, 0) > 0), None)
+    ao_mod = next((m for m in entry['module_names']
+                   if entry['module_ao_counts'].get(m, 0) > 0), None)
+    ai_caps = (device_capabilities(ai_mod, device=resolver(ai_mod))
+               if ai_mod else {})
+    ao_caps = (device_capabilities(ao_mod, device=resolver(ao_mod))
+               if ao_mod else {})
+    return {
+        'ai_max_rate': ai_caps.get('ai_max_rate'),
+        'ai_max_single_chan_rate': ai_caps.get('ai_max_single_chan_rate'),
+        'ai_min_rate': ai_caps.get('ai_min_rate'),
+        'ao_max_rate': ao_caps.get('ao_max_rate'),
+        'ao_min_rate': ao_caps.get('ao_min_rate'),
+        'simultaneous': ai_caps.get('simultaneous'),
+        'iepe_supported': bool(ai_caps.get('iepe_supported', False)),
+        'iepe_currents': ai_caps.get('iepe_currents', []),
+        'terminal_configs': ai_caps.get('terminal_configs', []),
+        'ao_supported': bool(ao_mod) or bool(ao_caps.get('ao_supported', False)),
+    }

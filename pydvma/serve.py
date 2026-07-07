@@ -43,22 +43,84 @@ Client → server (``{"type": ...}``):
                  and calls ``streams.start_stream``; replies ``status``
 ``start_monitor``  begin the ~30 Hz incremental oscilloscope feed
 ``stop_monitor``   stop the feed
-``log``          ``{duration, pretrigger|null, test_name?}`` — runs
-                 ``acquisition.log_data`` in a worker thread; replies
-                 ``log_result`` then a binary ``.dvma`` container frame
+``log``          ``{duration, pretrigger|null, output?, test_name?}`` —
+                 runs ``acquisition.log_data`` in a worker thread;
+                 replies ``log_result`` then a binary ``.dvma``
+                 container frame. See "Output / stimulus" and
+                 "Pretrigger status events" below.
 ``cancel``       best-effort stop of the monitor / in-flight log
 ===============  ==================================================
 
 Server → client:
 
 * ``capabilities`` — ``{v, backends, devices:{soundcard, nidaq},
-  fs_ladders, max_channels, pretrigger, ao}``.
+  fs_ladders, max_channels, device_caps, pretrigger, ao}``.  All keys
+  are stable across the additive Wave-C growth; ``v`` stays ``1``.
+  ``fs_ladders`` and ``max_channels`` are now **per-device maps** keyed
+  by ``"<driver>:<index>"`` (e.g. ``"soundcard:0"``, ``"nidaq:0"``):
+  ``fs_ladders[id]`` is a list of candidate sample rates and
+  ``max_channels[id]`` is ``{input, output}``.  ``device_caps[id]`` is
+  a richer per-device object (soundcard: max in/out channels, default
+  samplerate, candidate rates, ``ao``; NI: ``ai_max_rate``,
+  ``ai_min_rate``, ``simultaneous``, ``ao_max_rate``, ``iepe_supported``
+  / ``iepe_currents``, ``terminal_configs``, ``ao``).  Each ``nidaq``
+  device entry also carries its cap object inline under ``caps`` (an
+  additive key — the pre-existing enumerate fields are unchanged).
+  ``ao`` (top-level) is ``True`` when any backend can output.
 * ``status`` — acknowledgement of ``configure`` / monitor lifecycle,
-  carries the resolved stream geometry.
+  carries the resolved stream geometry; also the pretrigger arming
+  events ``armed`` / ``triggered`` / ``timeout`` (see below).
 * ``log_result`` — capture metadata (``nChannels``, ``nSamples``,
   ``fs``, ``testName``, ``byteLength``) immediately followed by the
   ``.dvma`` binary frame.
 * ``error`` — ``{message}`` for any rejected request.
+
+Output / stimulus (Wave C)
+==========================
+
+The MySettings ``output_*`` fields (``output_device_driver``,
+``output_device_index``, ``output_channels``, ``output_channels_spec``,
+``output_fs``, ``output_VmaxNI``, ``output_VmaxSC``,
+``use_output_as_ch0``) are ordinary constructor kwargs, so they flow in
+through the normal ``configure.settings`` whitelist — no protocol change
+needed.  The stimulus *waveform* is described separately, in an optional
+``output`` object on the ``log`` message::
+
+    {"type": "log", "duration": 2.0, "pretrigger": null,
+     "output": {"type": "sweep", "amp": 0.1, "f1": 20, "f2": 2000,
+                "duration": 1.0}}
+
+``type`` is one of ``sweep`` / ``gaussian`` / ``uniform`` (``white`` is
+accepted as an alias for ``uniform``; ``none`` / ``null`` = no output);
+``amp`` is in volts; ``f1`` / ``f2`` are the sweep endpoints or the
+noise band-pass corners in Hz; ``duration`` defaults to the log
+duration.  Keys outside ``{type, amp, f1, f2, duration}`` are rejected.
+When present, the server builds the waveform with
+``acquisition.signal_generator`` (rejecting ``max(f1,f2) > fs/2`` with a
+clear Nyquist error, mirroring the Qt logger's ``create_output_signal``)
+and hands it to ``acquisition.log_data(..., output=y)`` exactly the way
+``gui.LogDataThread`` does — including the ``use_output_as_ch0`` prepend.
+
+Pretrigger status events (Wave C)
+=================================
+
+When a ``log`` arms a pretrigger (``pretrigger`` carries a non-null
+``samples``), the connection pushes lifecycle ``status`` frames so the
+UI can show an "armed / waiting for trigger" state:
+
+* ``{event: "armed"}`` — emitted immediately, before the blocking
+  capture starts.
+* ``{event: "triggered"}`` — emitted (once) if the recorder's
+  ``trigger_detected`` flag is observed to flip ``True`` while the
+  capture runs.  A companion asyncio task polls that flag at
+  :data:`PRETRIG_POLL_HZ` (~10 Hz) from the event loop while the capture
+  blocks in the executor thread.  Best-effort: on a fast trigger the
+  flag may be reset by ``log_data`` before a poll sees it — the
+  authoritative outcome is always the ``log_result`` that follows.
+* ``{event: "timeout"}`` — emitted if the arming window closed without
+  ``trigger_detected`` ever being seen (the ``pretrig_timeout`` fallback
+  in ``log_data``).  ``MockRecorder`` never triggers, so the mock
+  backend always exercises this path — armed → timeout → log_result.
 
 Binary frame header (little-endian, 20 bytes)::
 
@@ -172,6 +234,17 @@ DEFAULT_PORT = 8760
 DEFAULT_HOST = '127.0.0.1'
 #: Monitor feed cadence (frames/second).  Decision #3: ~30 Hz.
 MONITOR_HZ = 30.0
+#: Poll cadence (Hz) for the pretrigger ``trigger_detected`` flag while a
+#: pretriggered ``log`` capture blocks in the executor thread.
+PRETRIG_POLL_HZ = 10.0
+
+#: Standard capture sample rates advertised as fs-ladder candidates.  The
+#: soundcard backend filters these with ``sd.check_input_settings``; the
+#: NI backend bounds them by the device's reported ``ai_min_rate`` /
+#: ``ai_max_rate`` (a DSA module snaps a requested rate to its discrete
+#: ladder at task-create time — see ``_ni_backend.device_capabilities``).
+_STANDARD_RATES = (8000, 11025, 16000, 22050, 32000, 44100, 48000,
+                   88200, 96000, 176400, 192000)
 
 #: MySettings constructor kwargs the ``configure`` message accepts.
 #: Derived from the signature so it stays in sync automatically; any key
@@ -315,51 +388,201 @@ class _MonitorCursor:
 
 # ---- capabilities ----
 
+def _bounded_standard_rates(fs_min, fs_max) -> list[int]:
+    """The :data:`_STANDARD_RATES` that fall within ``[fs_min, fs_max]``.
+
+    Either bound may be ``None`` (unbounded on that side).  Best-effort
+    fs-ladder candidates for an NI device — see the DSA discrete-ladder
+    caveat on ``_ni_backend.device_capabilities``: these are candidates
+    inside the reported bounds, not a guarantee that every one is legal
+    on a DSA module.
+    """
+    lo = float(fs_min) if fs_min else 0.0
+    hi = float(fs_max) if fs_max else float('inf')
+    return [int(r) for r in _STANDARD_RATES if lo <= r <= hi]
+
+
+def _soundcard_candidate_rates(sd, index: int, max_in: int,
+                               default_sr: float) -> list[int]:
+    """Standard rates the soundcard input device accepts (best-effort).
+
+    Probes each standard rate with ``sd.check_input_settings`` (cheap —
+    PortAudio answers whether the format is supported without opening a
+    stream).  The device's ``default_samplerate`` is always included.
+    Output-only devices (``max_in <= 0``) just get their default rate.
+    If the probe API is missing or misbehaves, the full standard list is
+    returned unfiltered rather than an empty one.
+    """
+    rates: set[int] = set()
+    if default_sr and default_sr > 0:
+        rates.add(int(round(default_sr)))
+    if max_in <= 0:
+        return sorted(rates)
+    checker = getattr(sd, 'check_input_settings', None)
+    if checker is None:
+        return sorted(rates | {int(r) for r in _STANDARD_RATES})
+    try:
+        for r in _STANDARD_RATES:
+            try:
+                checker(device=index, channels=1, samplerate=float(r))
+                rates.add(int(r))
+            except Exception:
+                pass  # unsupported at this rate on this device — skip it
+    except Exception:
+        # The probe API itself is unusable (signature mismatch, etc.):
+        # advertise the full standard list rather than trust it.
+        return sorted(rates | {int(r) for r in _STANDARD_RATES})
+    return sorted(rates)
+
+
+def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
+    """Per-device soundcard capabilities from ``sounddevice.query_devices``.
+
+    Returns ``(names, caps_by_index)`` where ``names`` is the
+    list-of-name shape ``devices.soundcard`` has always carried (kept
+    backward-compatible) and ``caps_by_index[i]`` holds
+    ``max_input_channels`` / ``max_output_channels`` /
+    ``default_samplerate`` / ``candidate_rates`` / ``ao``.  Fully guarded
+    — any PortAudio hiccup yields ``([], {})`` so the handshake never
+    breaks.
+    """
+    sd = streams.sd
+    if sd is None:
+        return [], {}
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        return [], {}
+    names: list[str] = []
+    caps: dict[int, dict] = {}
+    for i, d in enumerate(devices):
+        try:
+            name = d['name']
+            max_in = int(d.get('max_input_channels', 0))
+            max_out = int(d.get('max_output_channels', 0))
+            default_sr = float(d.get('default_samplerate', 0.0) or 0.0)
+        except Exception:
+            names.append(str(d))
+            continue
+        names.append(name)
+        caps[i] = {
+            'driver': 'soundcard', 'index': i, 'name': name,
+            'max_input_channels': max_in,
+            'max_output_channels': max_out,
+            'default_samplerate': default_sr,
+            'candidate_rates': _soundcard_candidate_rates(
+                sd, i, max_in, default_sr),
+            'ao': max_out > 0,
+        }
+    return names, caps
+
+
+def _nidaq_device_caps() -> tuple[list[dict], dict[int, dict]]:
+    """Per-device NI capabilities, and the enumerated entries with caps
+    attached inline.
+
+    Returns ``(entries, caps_by_index)``.  ``entries`` is
+    ``_ni_backend.enumerate_devices()`` output with an additive ``caps``
+    key merged onto each entry (so the webui can read a device's caps
+    straight off the enumerate list); ``caps_by_index[i]`` is the same
+    cap object.  Guarded end-to-end — a device that fails to answer a
+    capability query yields ``{}`` for that device rather than aborting
+    the handshake.  Only called when ``nidaqmx`` is importable.
+    """
+    try:
+        entries = list(_ni_backend.enumerate_devices())
+    except Exception:
+        return [], {}
+    caps_by_index: dict[int, dict] = {}
+    for i, e in enumerate(entries):
+        try:
+            c = _ni_backend.entry_capabilities(e)
+        except Exception:
+            c = {}
+        entry = dict(e)
+        entry['caps'] = c
+        entries[i] = entry
+        caps_by_index[i] = c
+    return entries, caps_by_index
+
+
 def build_capabilities() -> dict[str, Any]:
     """Build the ``capabilities`` payload advertised on ``hello``.
 
     Reports which backends this process can drive (``mock`` always;
     ``soundcard`` when ``sounddevice`` imported; ``nidaq`` when
-    ``nidaqmx`` imported), the enumerated devices for each, and the
-    pretrigger / analog-output feature flags.  All lookups are guarded
-    so a half-installed driver never breaks the handshake.
+    ``nidaqmx`` imported), the enumerated devices for each, and **real
+    per-device capabilities** — sample-rate ladders, channel counts, and
+    a rich ``device_caps`` map (see the module docstring for the exact
+    shape).  All lookups are guarded so a half-installed or flaky driver
+    never breaks the handshake.
     """
     backends = ['mock']
     devices: dict[str, list] = {'soundcard': [], 'nidaq': []}
 
+    fs_ladders: dict[str, list[int]] = {}
+    max_channels: dict[str, dict[str, int]] = {}
+    device_caps: dict[str, dict] = {
+        # The mock backend has no real device to probe; a stable stub
+        # keeps the map uniform (and its AO is always available via
+        # `streams.setup_output_mock`).
+        'mock:0': {'driver': 'mock', 'index': 0,
+                   'name': 'Mock signal generator', 'ao': True},
+    }
+
     if streams.sd is not None:
         backends.append('soundcard')
-        try:
-            names = streams.get_devices_soundcard()
-            if names:
-                devices['soundcard'] = list(names)
-        except Exception:
-            pass
+        sc_names, sc_caps = _soundcard_device_caps()
+        if sc_names:
+            devices['soundcard'] = sc_names
+        for i, c in sc_caps.items():
+            did = 'soundcard:%d' % i
+            device_caps[did] = c
+            fs_ladders[did] = c['candidate_rates']
+            max_channels[did] = {'input': c['max_input_channels'],
+                                 'output': c['max_output_channels']}
 
     if streams.ni is not None:
         backends.append('nidaq')
-        try:
-            devices['nidaq'] = _ni_backend.enumerate_devices()
-        except Exception:
-            devices['nidaq'] = []
+        entries, ni_caps = _nidaq_device_caps()
+        devices['nidaq'] = entries
+        for i, c in ni_caps.items():
+            did = 'nidaq:%d' % i
+            e = entries[i]
+            device_caps[did] = {
+                'driver': 'nidaq', 'index': i, 'name': e.get('name'),
+                'product_type': e.get('product_type'),
+                'is_chassis': e.get('is_chassis'),
+                'ai_channel_count': e.get('ai_channel_count'),
+                'ao_channel_count': e.get('ao_channel_count'),
+                **c,
+                'ao': bool(c.get('ao_supported'))
+                or (e.get('ao_channel_count') or 0) > 0,
+            }
+            fs_ladders[did] = _bounded_standard_rates(
+                c.get('ai_min_rate'), c.get('ai_max_rate'))
+            max_channels[did] = {'input': int(e.get('ai_channel_count') or 0),
+                                 'output': int(e.get('ao_channel_count') or 0)}
+
+    ao = any(bool(c.get('ao')) for c in device_caps.values())
 
     return {
         'v': PROTOCOL_VERSION,
         'backends': backends,
         'devices': devices,
-        # DSA modules coerce fs onto a discrete divider ladder; the base
-        # soundcard path accepts arbitrary rates. We do not enumerate a
-        # per-device ladder here (best-effort — left for a follow-up).
-        'fs_ladders': {},
-        'max_channels': None,
+        # Per-device maps keyed by "<driver>:<index>" (Wave C); were an
+        # empty {} / None placeholder in v1's first cut.
+        'fs_ladders': fs_ladders,
+        'max_channels': max_channels,
+        'device_caps': device_caps,
         'pretrigger': True,
-        'ao': True,
+        'ao': ao,
     }
 
 
 # ---- capture helper (runs in a worker thread) ----
 
-def _capture_to_dvma(settings, test_name):
+def _capture_to_dvma(settings, test_name, output=None):
     """Run a blocking capture and serialise it to ``.dvma`` bytes.
 
     Executed in a thread-pool worker because ``acquisition.log_data``
@@ -369,8 +592,14 @@ def _capture_to_dvma(settings, test_name):
     written through :func:`pydvma.container.save` (the one save story)
     to a temp file and read back as bytes — the browser owns the "save
     to disk" step (decision #4).
+
+    ``output`` is an optional ``(N, output_channels)`` stimulus waveform
+    in volts (built by :func:`acquisition.signal_generator`); it is
+    forwarded verbatim to ``log_data(..., output=...)`` so the AO path
+    (and ``settings.use_output_as_ch0``) behaves exactly as it does for
+    the Qt logger.
     """
-    dataset = acquisition.log_data(settings, test_name=test_name)
+    dataset = acquisition.log_data(settings, test_name=test_name, output=output)
     td = dataset.time_data_list[0]
     n_samples, n_channels = td.time_data.shape
 
@@ -386,6 +615,74 @@ def _capture_to_dvma(settings, test_name):
         except OSError:
             pass
     return dvma_bytes, int(n_samples), int(n_channels)
+
+
+# ---- output / stimulus ----
+
+#: Waveform types accepted in a ``log`` ``output`` spec, mapped to
+#: ``acquisition.signal_generator``'s ``sig`` argument.  ``white`` is an
+#: alias for band-limited uniform noise.
+_OUTPUT_TYPE_ALIASES = {
+    'sweep': 'sweep', 'gaussian': 'gaussian',
+    'uniform': 'uniform', 'white': 'uniform',
+}
+#: Keys accepted inside a ``log`` ``output`` object; anything else is
+#: rejected with a clear error.
+_OUTPUT_SPEC_KEYS = frozenset({'type', 'amp', 'f1', 'f2', 'duration'})
+
+
+def _build_output_signal(settings, output_spec):
+    """Turn a ``log`` message ``output`` object into a stimulus waveform.
+
+    Returns ``(y, generated)`` where ``y`` is an
+    ``(N, output_channels)`` volts array from
+    :func:`acquisition.signal_generator` (or ``None`` when the spec asks
+    for no output) and ``generated`` is True only when a waveform was
+    built.  Mirrors the Qt logger's ``create_output_signal``: the
+    Nyquist guard rejects ``max(f1, f2) > min(fs, output_fs) / 2`` with a
+    clear error, and the type/amp/f1/f2/duration fields map onto
+    ``signal_generator``'s ``sig`` / ``amplitude`` / ``f`` / ``T``.
+
+    Raises ``ValueError`` on a non-object spec, an unknown key, an
+    unknown ``type``, or a Nyquist violation.
+    """
+    if output_spec is None:
+        return None, False
+    if not isinstance(output_spec, dict):
+        raise ValueError('log.output must be an object or null')
+    unknown = set(output_spec) - _OUTPUT_SPEC_KEYS
+    if unknown:
+        raise ValueError(
+            'unknown output key(s): %s. Allowed: %s'
+            % (', '.join(sorted(map(str, unknown))),
+               ', '.join(sorted(_OUTPUT_SPEC_KEYS))))
+    raw_type = output_spec.get('type')
+    if raw_type is None or str(raw_type).lower() in ('none', ''):
+        return None, False
+    sig = _OUTPUT_TYPE_ALIASES.get(str(raw_type).lower())
+    if sig is None:
+        raise ValueError(
+            'unknown output type %r; expected one of %s (or none)'
+            % (raw_type, ', '.join(sorted(_OUTPUT_TYPE_ALIASES))))
+
+    amp = float(output_spec.get('amp', 0.0))
+    f1 = float(output_spec.get('f1', 0.0))
+    f2 = float(output_spec.get('f2', 0.0))
+    duration = output_spec.get('duration')
+    T = float(settings.stored_time) if duration is None else float(duration)
+
+    f_max = max(f1, f2)
+    fs_min = min(float(settings.fs), float(settings.output_fs))
+    if f_max > fs_min / 2:
+        raise ValueError(
+            'highest output frequency %g Hz exceeds Nyquist '
+            '(min input/output fs %g Hz / 2 = %g Hz)'
+            % (f_max, fs_min, fs_min / 2))
+
+    _t, y = acquisition.signal_generator(
+        settings, sig=sig, T=T, amplitude=amp, f=[f1, f2],
+        selected_channels='all')
+    return y, True
 
 
 # ---- the no-UI fallback page ----
@@ -751,12 +1048,30 @@ class _Connection:
             await self._send_error('log.pretrigger must be an object or null')
             return
 
+        # Optional stimulus: build the AO waveform here (validation errors
+        # surface as a clean `error` before the capture starts).
+        try:
+            output_array, _generated = _build_output_signal(
+                settings, msg.get('output'))
+        except ValueError as exc:
+            await self._send_error(str(exc))
+            return
+
         test_name = msg.get('test_name') or msg.get('testName')
+
+        armed = settings.pretrig_samples is not None
+        if armed:
+            await self._send_json({'type': 'status', 'event': 'armed',
+                                   'streamId': self.stream_id})
 
         loop = asyncio.get_running_loop()
         self._log_task = asyncio.ensure_future(
-            loop.run_in_executor(None, _capture_to_dvma, settings, test_name)
+            loop.run_in_executor(
+                None, _capture_to_dvma, settings, test_name, output_array)
         )
+        triggered = {'seen': False}
+        poll_task = (asyncio.create_task(self._poll_trigger(triggered))
+                     if armed else None)
         try:
             dvma_bytes, n_samples, n_channels = await self._log_task
         except asyncio.CancelledError:
@@ -764,6 +1079,16 @@ class _Connection:
             return
         finally:
             self._log_task = None
+            if poll_task is not None:
+                poll_task.cancel()
+                try:
+                    await poll_task
+                except asyncio.CancelledError:
+                    pass
+
+        if armed and not triggered['seen']:
+            await self._send_json({'type': 'status', 'event': 'timeout',
+                                   'streamId': self.stream_id})
 
         await self._send_json({
             'type': 'log_result',
@@ -777,6 +1102,33 @@ class _Connection:
         frame = encode_container(self.stream_id, self._next_seq(), dvma_bytes,
                                  n_channels, n_samples, float(settings.fs))
         await self.ws.send(frame)
+
+    async def _poll_trigger(self, triggered: dict) -> None:
+        """Emit a one-shot ``triggered`` status when the recorder arms.
+
+        Polls ``streams.REC.trigger_detected`` at :data:`PRETRIG_POLL_HZ`
+        from the event loop while a pretriggered capture blocks in the
+        executor thread.  Sets ``triggered['seen']`` and sends the status
+        frame the first time the flag is observed True, then returns; the
+        caller cancels this task once the capture completes.  Best-effort:
+        ``MockRecorder`` never triggers (so this only ever times out under
+        the mock), and on a very fast real trigger ``log_data`` may reset
+        the flag before a poll catches it — the authoritative outcome is
+        the following ``log_result``.
+        """
+        tick = 1.0 / PRETRIG_POLL_HZ
+        while True:
+            rec = streams.REC
+            if rec is not None and getattr(rec, 'trigger_detected', False):
+                triggered['seen'] = True
+                try:
+                    await self._send_json({'type': 'status',
+                                           'event': 'triggered',
+                                           'streamId': self.stream_id})
+                except Exception:
+                    pass
+                return
+            await asyncio.sleep(tick)
 
     async def _on_cancel(self) -> None:
         """Best-effort cancel: stop the monitor and any in-flight log.
