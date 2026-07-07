@@ -243,8 +243,8 @@
           value={xScale}
           onchange={(s) => viewState.setXScale(s)}
           options={[
-            { value: 'lin', label: 'lin', title: 'Linear frequency axis' },
-            { value: 'log', label: 'log', title: 'Log10 frequency axis (decades)' },
+            { value: 'lin' as const, label: 'lin', title: 'Linear frequency axis' },
+            { value: 'log' as const, label: 'log', title: 'Log10 frequency axis (decades)' },
           ]}
         />
       {/if}
@@ -256,8 +256,8 @@
           value={yScale}
           onchange={(s) => viewState.setYScale(s)}
           options={[
-            { value: 'log', label: 'dB', title: 'Magnitude in dB (log)' },
-            { value: 'lin', label: 'lin', title: 'Linear magnitude' },
+            { value: 'log' as const, label: 'dB', title: 'Magnitude in dB (log)' },
+            { value: 'lin' as const, label: 'lin', title: 'Linear magnitude' },
           ]}
         />
       {/if}

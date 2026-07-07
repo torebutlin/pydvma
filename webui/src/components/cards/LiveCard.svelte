@@ -182,8 +182,8 @@
             value={$fftFreqModeStore}
             onchange={(m) => monitor.setFftFreqMode(m)}
             options={[
-              { value: 'full', label: 'Full', title: 'Show the full frequency span (Nyquist)' },
-              { value: 'range', label: 'Range', title: 'Zoom the FFT to a min–max frequency band' },
+              { value: 'full' as const, label: 'Full', title: 'Show the full frequency span (Nyquist)' },
+              { value: 'range' as const, label: 'Range', title: 'Zoom the FFT to a min–max frequency band' },
             ]}
           />
           {#if isRangeFreq}
@@ -224,8 +224,8 @@
             value={$modeStore}
             onchange={(m) => monitor.setSpectrumMode(m)}
             options={[
-              { value: 'instant', label: 'FFT', title: 'Instantaneous per-frame FFT (amplitude)', testid: 'live-mode-fft' },
-              { value: 'psd', label: 'PSD', title: 'Averaged Welch power spectral density (unit²/Hz)', testid: 'live-mode-psd' },
+              { value: 'instant' as const, label: 'FFT', title: 'Instantaneous per-frame FFT (amplitude)', testid: 'live-mode-fft' },
+              { value: 'psd' as const, label: 'PSD', title: 'Averaged Welch power spectral density (unit²/Hz)', testid: 'live-mode-psd' },
             ]}
           />
         </div>
