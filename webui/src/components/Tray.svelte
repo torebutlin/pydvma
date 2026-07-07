@@ -23,19 +23,74 @@
    * semantics (‹ › move the highlight) so Solo isolates "the set the
    * steppers point at".
    */
+  import { get } from 'svelte/store';
   import type { Selection } from '../lib/stores/selection';
   import { summariseColumn, type ColumnState } from '../lib/stores/channelSummary';
+  import { factorToSensitivity, sensitivityToFactor, type CalRow } from '../lib/model/calibration';
+  import { calibrationController } from '../lib/stores/calibrationController';
   import TrayCard from './TrayCard.svelte';
+  import CalibrateDialog from './CalibrateDialog.svelte';
 
   let {
     selection,
     /** Real time-series for a (setId, ch) so cards can draw sparklines.
      *  Reassigned by the parent when decoded data changes (keeps previews live). */
     channelData,
+    /** Read a set's persisted calibration (factors + units) — Task A2. */
+    getCalibration,
+    /** Persist a set's calibration (factors + units). Both must be supplied
+     *  together to enable the per-card Calibrate button. */
+    applyCalibration,
   }: {
     selection: Selection;
     channelData?: (setId: number, ch: number) => Float64Array | undefined;
+    getCalibration?: (setId: number) => { factors: number[]; units: string[] };
+    applyCalibration?: (setId: number, factors: number[], units: string[]) => void;
   } = $props();
+
+  // Prefer explicit props (idiomatic / testable); otherwise use the app-scoped
+  // controller the actions layer publishes (avoids a prop thread through App).
+  const controller = $derived($calibrationController);
+  const readCal = $derived(getCalibration ?? controller?.getCalibration);
+  const writeCal = $derived(applyCalibration ?? controller?.setCalFactors);
+  const canCalibrate = $derived(!!readCal && !!writeCal);
+
+  // The set whose Calibrate dialog is open (null = closed), plus the rows it
+  // was seeded with. Rebuilt each open from the persisted factors/units and
+  // the current channel labels (Task A2).
+  let calSetId = $state<number | null>(null);
+  let calName = $state('');
+  let calRows = $state<CalRow[]>([]);
+
+  function openCalibrate(setId: number) {
+    if (!readCal) return;
+    const set = $setsView.find((s) => s.id === setId);
+    if (!set) return;
+    const { factors, units } = readCal(setId);
+    const label = get(selection.channelLabel);
+    calRows = Array.from({ length: set.nChannels }, (_, ch) => ({
+      ch,
+      label: label(setId, ch),
+      // Show the SENSITIVITY (1/factor) the stored cal factor implies; the
+      // dialog collects a sensitivity and the parent converts it back.
+      sensitivity: factorToSensitivity(factors[ch] ?? 1),
+      unit: units[ch] ?? 'V',
+    }));
+    calName = set.name;
+    calSetId = setId;
+  }
+
+  function closeCalibrate() {
+    calSetId = null;
+  }
+
+  function commitCalibrate(results: { sensitivity: number; unit: string }[]) {
+    if (calSetId === null || !writeCal) return;
+    const factors = results.map((r) => sensitivityToFactor(r.sensitivity));
+    const units = results.map((r) => r.unit);
+    writeCal(calSetId, factors, units);
+    calSetId = null;
+  }
 
   const setsView = $derived(selection.setsView);
   const stateStore = $derived(selection.state);
@@ -99,12 +154,24 @@
           {selection}
           {set}
           onDeleteSet={selection.removeSet}
+          onCalibrate={canCalibrate ? openCalibrate : undefined}
           channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
         />
       {/each}
     {/if}
   </div>
 </div>
+
+{#if calSetId !== null}
+  {#key calSetId}
+    <CalibrateDialog
+      setName={calName}
+      rows={calRows}
+      onApply={commitCalibrate}
+      onCancel={closeCalibrate}
+    />
+  {/key}
+{/if}
 
 <style>
   .tray-inner {

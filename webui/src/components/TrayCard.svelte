@@ -45,11 +45,14 @@
     selection,
     set,
     onDeleteSet,
+    onCalibrate,
     channelData,
   }: {
     selection: Selection;
     set: SetView;
     onDeleteSet: (id: number) => void;
+    /** Open the per-set calibration dialog (Task A2). Absent → no cal button. */
+    onCalibrate?: (id: number) => void;
     channelData?: (ch: number) => Float64Array | undefined;
   } = $props();
 
@@ -266,6 +269,15 @@
     {/if}
 
     <span class="dur-badge">{sigFigs(set.durationS)} s</span>
+    {#if onCalibrate}
+      <button
+        class="cal-btn"
+        data-testid="cal-open"
+        title="Calibrate channels…"
+        aria-label={`Calibrate ${set.name}`}
+        onclick={() => onCalibrate?.(set.id)}
+      >cal</button>
+    {/if}
     <button
       class="xdel"
       title="Delete set"
@@ -432,6 +444,31 @@
     padding: 1px 5px;
     background: #f8f9fb;
     flex: 0 0 auto;
+  }
+  .cal-btn {
+    border: 1px solid var(--border);
+    color: var(--muted);
+    background: #fff;
+    border-radius: 5px;
+    height: 18px;
+    padding: 0 6px;
+    font: 600 9.5px var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    cursor: pointer;
+    flex: 0 0 auto;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+  .set-card:hover .cal-btn {
+    display: inline-flex;
+  }
+  .cal-btn:hover {
+    border-color: var(--indigo);
+    color: var(--indigo);
+    background: #f5f6ff;
   }
   .xdel {
     border: 1px solid #fecaca;

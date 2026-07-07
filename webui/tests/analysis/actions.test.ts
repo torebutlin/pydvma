@@ -603,3 +603,115 @@ test('full round-trip: stamp → writeDvma → readDvma → loadDataset restores
   expect(get(sel2.channelLabel)(ids2[1], 0)).toBe('ch_0');
   expect(s2.get(ids2[1], 'tf').averaging).toBe('within');     // default
 });
+
+// ---- Calibration (Wave-A Task A2): loadDataset seeds derived.calFactors from
+// item meta; getCalibration reads it back; setCalFactors writes meta + derived
+// + re-emits; a codec round-trip preserves the edited factors. ----
+
+test('loadDataset seeds derived.calFactors from item.meta.channel_cal_factors', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  const ds = makeDataset(1);                       // one 2-channel set
+  ds.items[0].meta.channel_cal_factors = [10, 1];
+  ds.items[0].meta.units = ['g', 'V'];
+  actions.loadDataset(ds);
+  const id = get(sel.sets)[0].id;
+  expect(get(actions.derived)[id].calFactors).toEqual([10, 1]);
+});
+
+test('loadDataset defaults calFactors to all-ones when meta has none', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));             // no channel_cal_factors in meta
+  const id = get(sel.sets)[0].id;
+  expect(get(actions.derived)[id].calFactors).toEqual([1, 1]);   // identity
+});
+
+test('getCalibration returns normalized factors + units (defaults V, length == channels)', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  const ds = makeDataset(1);
+  ds.items[0].meta.channel_cal_factors = [5];      // short: pad to 2
+  ds.items[0].meta.units = ['N'];                  // short: pad with 'V'
+  actions.loadDataset(ds);
+  const id = get(sel.sets)[0].id;
+  expect(actions.getCalibration(id)).toEqual({ factors: [5, 1], units: ['N', 'V'] });
+});
+
+test('setCalFactors writes item meta (channel_cal_factors + units) AND the derived slice', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+
+  actions.setCalFactors(id, [10, 2], ['g', 'm/s²']);
+
+  // Derived slice (drives the plot) updated.
+  expect(get(actions.derived)[id].calFactors).toEqual([10, 2]);
+  // Source item meta persisted (the .dvma field, not the ui blob).
+  const item = get(actions.dataset)!.items[0];
+  expect(item.meta.channel_cal_factors).toEqual([10, 2]);
+  expect(item.meta.units).toEqual(['g', 'm/s²']);
+});
+
+test('setCalFactors guards length: pads/truncates factors to the channel count', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));             // 2 channels
+  const id = get(sel.sets)[0].id;
+
+  actions.setCalFactors(id, [7]);                  // too short → pad with 1
+  expect(get(actions.derived)[id].calFactors).toEqual([7, 1]);
+
+  actions.setCalFactors(id, [3, 4, 5, 6]);         // too long → truncate
+  expect(get(actions.derived)[id].calFactors).toEqual([3, 4]);
+});
+
+test('setCalFactors re-emits the dataset store so autosave captures the calibration', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+
+  let emissions = 0;
+  const unsub = actions.dataset.subscribe(() => { emissions++; });
+  emissions = 0;                                   // discount the initial sync callback
+  actions.setCalFactors(id, [10, 1]);
+  unsub();
+  expect(emissions, 'setCalFactors must re-emit dataset for autosave').toBeGreaterThan(0);
+});
+
+test('setCalFactors keeps meta + metaRaw consistent on a codec-loaded item', () => {
+  // A .dvma-loaded item carries metaRaw (tagged). setItemMeta must update BOTH
+  // views so writeDvma (which serializes metaRaw) sees the new factors.
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  const ds = makeDataset(1);
+  ds.items[0].metaRaw = { ...ds.items[0].meta };   // simulate a codec-loaded item
+  actions.loadDataset(ds);
+  const id = get(sel.sets)[0].id;
+
+  actions.setCalFactors(id, [4, 8], ['g', 'g']);
+  const item = get(actions.dataset)!.items[0];
+  expect(item.meta.channel_cal_factors).toEqual([4, 8]);
+  expect(item.metaRaw!.channel_cal_factors).toEqual([4, 8]);
+  expect(item.metaRaw!.units).toEqual(['g', 'g']);
+});
+
+test('codec round-trip: setCalFactors → writeDvma → readDvma → loadDataset preserves factors + units', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+
+  actions.setCalFactors(id, [10, 1], ['g', 'V']);
+  const bytes = writeDvma(get(actions.dataset)!);
+
+  // Fresh harness — load the round-tripped dataset.
+  const { sel: sel2, actions: a2 } = harness(engine);
+  a2.loadDataset(readDvma(bytes));
+  const id2 = get(sel2.sets)[0].id;
+
+  expect(get(a2.derived)[id2].calFactors).toEqual([10, 1]);     // seeded on load
+  expect(a2.getCalibration(id2)).toEqual({ factors: [10, 1], units: ['g', 'V'] });
+});

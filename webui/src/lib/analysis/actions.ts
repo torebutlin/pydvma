@@ -36,13 +36,15 @@
  */
 import { writable, get } from 'svelte/store';
 import type { DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
-import { itemChannels } from '../model/dataset';
+import { itemChannels, setItemMeta } from '../model/dataset';
 import type { EngineStore } from '../stores/engine';
 import type { Selection } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
 import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import type { ModalStore } from '../stores/modal';
+import { normalizeFactors, normalizeUnits } from '../model/calibration';
+import { calibrationController } from '../stores/calibrationController';
 import { fromNFrames, fromNFft } from './resolution';
 
 /** Compute-action kind, used as the per-kind stale-guard + error key. */
@@ -262,6 +264,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
             complex: item.arrays.time_data.isComplex,
           }),
         },
+        // Thread stored per-channel calibration into the display seam so plots
+        // read in engineering units immediately on load (Task A2). Absent /
+        // all-ones ⇒ identity — the plot model treats it as no-op.
+        calFactors: normalizeFactors(item.meta.channel_cal_factors, nCh),
       };
 
       // Restore persisted UI state (Plan 2 persistence).
@@ -560,7 +566,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const ws: WorkingSet = { setId, time: item, fs: sampleRate(item), durationS: dur, nChannels: nCh };
     working.push(ws);
 
-    // Seed the time arrays so the time view draws immediately.
+    // Seed the time arrays so the time view draws immediately, plus any
+    // calibration the recorder attached (channel_sensitivities → cal factors).
     setDerived(setId, {
       time: {
         axis: Float64Array.from(item.arrays.time_axis.data),
@@ -570,10 +577,57 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           complex: item.arrays.time_data.isComplex,
         }),
       },
+      calFactors: normalizeFactors(item.meta.channel_cal_factors, nCh),
     });
 
     return setId;
   }
+
+  /**
+   * Read a set's persisted calibration for the Calibrate dialog (Task A2):
+   * the per-channel `channel_cal_factors` multipliers and engineering `units`,
+   * both normalised to the set's channel count (defaults: factor `1`, unit
+   * `'V'`). Reads from the source `DvmaItem` meta — the authoritative store
+   * that `.dvma` persists — not the derived slice. Unknown set ⇒ empty arrays.
+   */
+  function getCalibration(setId: number): { factors: number[]; units: string[] } {
+    const ws = working.find((w) => w.setId === setId);
+    if (!ws) return { factors: [], units: [] };
+    return {
+      factors: normalizeFactors(ws.time.meta.channel_cal_factors, ws.nChannels),
+      units: normalizeUnits(ws.time.meta.units, ws.nChannels),
+    };
+  }
+
+  /**
+   * Persist a set's calibration and reflect it in the live plot (Task A2).
+   *
+   * `factors` are pydvma's plain `channel_cal_factors` multipliers (the dialog
+   * converts the user's sensitivity via `1/sensitivity` before calling this).
+   * Both `factors` and the optional per-channel `units` are padded/truncated to
+   * the set's channel count so the stored arrays never desync from the data.
+   *
+   * Writes through `setItemMeta` (keeping the decoded `meta` and tagged
+   * `metaRaw` views consistent, the real `channel_cal_factors` / `units`
+   * manifest fields both codecs round-trip — NOT the `ui` blob), patches the
+   * derived `calFactors` slice so `buildPlotModel` re-scales at once, and
+   * re-emits the `dataset` store so the autosave subscription captures it.
+   */
+  function setCalFactors(setId: number, factors: number[], units?: readonly string[]): void {
+    const ws = working.find((w) => w.setId === setId);
+    if (!ws) return;
+    const norm = normalizeFactors(factors, ws.nChannels);
+    setItemMeta(ws.time, 'channel_cal_factors', norm);
+    if (units !== undefined) {
+      setItemMeta(ws.time, 'units', normalizeUnits(units, ws.nChannels));
+    }
+    setDerived(setId, { calFactors: norm });
+    dataset.update((d) => d);            // re-emit so autosave persists the edit
+  }
+
+  // Publish the calibration API so the tray's Calibrate dialog can reach it
+  // without a prop thread through App.svelte (see `calibrationController`).
+  calibrationController.set({ getCalibration, setCalFactors });
 
   /**
    * Resolve the working set a fit `target` names AND that has a computed TF.
@@ -736,6 +790,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     loadDataset, addRecordedSet, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
     calcFit, calcDamping, exportArrays, exportMat,
+    getCalibration, setCalFactors,
     /** Source-set metadata for cards (set index → fs / duration / channels). */
     workingSets: () => working.map(w => ({
       setId: w.setId, fs: w.fs, durationS: w.durationS, nChannels: w.nChannels,
