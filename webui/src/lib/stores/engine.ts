@@ -24,12 +24,22 @@ export const ENGINE_WHEELS = ['pydvma-1.5.0-py3-none-any.whl', 'PeakUtils-1.3.5-
  */
 export const PYODIDE_VERSION = '0.28.3';
 
-/** Absolute origin+base so the worker can build absolute asset URLs. */
+/** Absolute page-relative base so the worker can build absolute asset URLs. */
 function defaultBaseUrl(): string {
   const base = (import.meta as any).env?.BASE_URL ?? '/';
-  const origin = typeof location !== 'undefined' ? location.origin : '';
-  // BASE_URL may be relative ('./') under `base: './'`; resolve against origin.
-  return new URL(base, origin || 'http://localhost').href;
+  // Resolve against the PAGE URL, never the bare origin: with `base: './'`
+  // BASE_URL is RELATIVE, and the app may be served from a sub-path — the
+  // deployed GitHub Pages site lives at /pydvma/app/. Resolving './' against
+  // the origin dropped that sub-path, so the worker fetched /pyodide/… from
+  // the domain root and the engine failed to boot ("Importing a module
+  // script failed") on the live site only — every dev/preview/e2e server
+  // sits at the root, which is why tests never caught it (they now do:
+  // e2e/subpath.spec.ts). document.baseURI resolves ./ to the page's
+  // directory in both dev ('/') and built ('./') modes.
+  const ref = (typeof document !== 'undefined' && document.baseURI)
+    ? document.baseURI
+    : (typeof location !== 'undefined' ? location.href : 'http://localhost/');
+  return new URL(base, ref).href;
 }
 
 /**
