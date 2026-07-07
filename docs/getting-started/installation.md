@@ -60,10 +60,59 @@ in what you need:
 | `pip install pydvma` | Analysis-only core: data structures, FFT/TF/modal analysis, file I/O. No Qt, no hardware drivers — runs anywhere, including in-browser. |
 | `pip install "pydvma[qt,soundcard]"` | Core + GUI (Logger/Oscilloscope, via `qtpy`/`PyQt5`/`pyqtgraph`) + soundcard acquisition (`sounddevice`). |
 | `pip install "pydvma[ni]"` | Core + National Instruments acquisition backend (`nidaqmx`). Windows/Linux only — see below. |
-| `pip install "pydvma[full]"` | Everything: GUI plus both acquisition backends. Recommended for lab use. |
+| `pip install "pydvma[serve]"` | Core + the `pydvma-serve` bridge (`websockets` only), which serves the browser app locally and drives real hardware from it. See [Running the browser app locally](#running-the-browser-app-locally-pydvma-serve). |
+| `pip install "pydvma[full]"` | Everything: GUI plus both acquisition backends and the serve bridge. Recommended for lab use. |
 
 The rest of this page uses `pydvma[full]` throughout, but swap in
 whichever extra matches what you need.
+
+## Running the browser app locally (`pydvma-serve`)
+
+pydvma also has a browser-based app (analysis plus live acquisition) that
+you can run straight from a `pip` install — no Node.js, no repo checkout,
+no build step. The built UI is bundled inside the wheel and served by a
+tiny local bridge that also drives your real hardware.
+
+```bash
+pip install "pydvma[serve]"      # or pydvma[full]
+pydvma-serve --open              # serves the app and opens your browser
+```
+
+`pydvma-serve` listens on `http://127.0.0.1:8760` (loopback only). Pick a
+data source with `--driver`:
+
+```bash
+pydvma-serve --driver mock       # demo signal generator, no hardware
+pydvma-serve --driver soundcard  # needs pydvma[soundcard]
+pydvma-serve --driver nidaq      # needs pydvma[ni] + NI-DAQmx (Win/Linux)
+```
+
+Useful flags: `--port` (change the port), `--ui-dir` (serve a UI directory
+you built yourself instead of the bundled one), `--open` (open a browser
+on start). Run `pydvma-serve --help` for the full list.
+
+!!! note "Which UI is served"
+    `pydvma-serve` serves, in order of preference: an explicit `--ui-dir`;
+    the freshly built `webui/dist` if you are running from a source
+    checkout; otherwise the UI bundled in the installed wheel. If none is
+    available it shows a short help page with the WebSocket bridge still
+    live at `/ws`.
+
+!!! info "Maintainers: bundling the UI into the wheel"
+    The bundled UI lives at `pydvma/_webui` and is a build artefact (not
+    committed). To produce a release wheel that contains it:
+
+    ```bash
+    cd webui && npm ci && npm run vendor   # fetch pyodide + build engine wheels
+    cd .. && python scripts/stage_webui.py # runs `npm run build`, mirrors dist -> pydvma/_webui
+    python -m build --wheel                # fat wheel: contains pydvma/_webui
+    ```
+
+    The separate lean "engine" wheel that the browser loads via pyodide is
+    built by `webui/scripts/build-wheels.sh` with `PYDVMA_LEAN_WHEEL=1`,
+    which the in-tree build backend honours by excluding `pydvma/_webui`.
+    Source distributions never contain the staged UI, so build the fat
+    wheel directly from the staged tree (not from an sdist).
 
 ## Step 3: Download the Template Notebook
 

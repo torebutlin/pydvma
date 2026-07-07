@@ -1,0 +1,11 @@
+# The in-tree PEP 517 backend must ride along in the sdist so a wheel can
+# be built from an unpacked sdist (build-system.backend-path = ["."]).
+include _pydvma_build.py
+
+# The staged browser UI (pydvma/_webui) is a large gitignored build
+# artefact. Keep it out of the sdist unconditionally — the source
+# distribution stays reproducible from version control, and the fat wheel
+# is built directly from the staged working tree instead. (The build
+# backend also hides it during any sdist build; this prune is belt-and-
+# braces for tools that read MANIFEST.in directly.)
+prune pydvma/_webui

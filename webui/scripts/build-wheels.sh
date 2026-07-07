@@ -28,7 +28,15 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # pydvma itself (built from the repo root's pyproject.toml).
-"$py" -m pip wheel --no-deps -w "$tmp" "$repo"
+#
+# PYDVMA_LEAN_WHEEL=1 tells the in-tree build backend (_pydvma_build.py) to
+# EXCLUDE the staged browser UI (pydvma/_webui) from this wheel. That
+# directory embeds a full pyodide runtime + the bundled app; without the
+# guard, a repo that has been staged for the fat local-install wheel (via
+# scripts/stage_webui.py) would bundle tens of MB of pyodide *inside* the
+# very wheel pyodide then micropip-installs — pointless recursion. The
+# guard keeps this engine wheel lean regardless of local staging state.
+PYDVMA_LEAN_WHEEL=1 "$py" -m pip wheel --no-deps -w "$tmp" "$repo"
 # peakutils — pydvma imports it in analysis.py; absent from the pyodide lock.
 "$py" -m pip wheel --no-deps -w "$tmp" peakutils
 

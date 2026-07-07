@@ -5,6 +5,14 @@ labs/.ipynb_checkpoints/
 build/
 dist/
 pydvma.egg-info/
+
+# Staged browser UI for the wheel: `scripts/stage_webui.py` mirrors
+# `webui/dist` here so `pydvma-serve` works from a pip install. It is a
+# build artefact (rebuilt from webui/), never committed. A transient
+# `pydvma/_webui.__lean_hidden__` may appear if a lean build is
+# interrupted (see _pydvma_build.py); ignore it too.
+pydvma/_webui/
+pydvma/_webui.__lean_hidden__/
 .spyproject/
 example.log
 

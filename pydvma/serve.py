@@ -17,8 +17,10 @@ Design constraints (locked by the Wave-B brief,
   listener on ``127.0.0.1`` (loopback only — no auth, lab-local stance).
   ``GET /ws`` upgrades to the control WebSocket; every other ``GET`` is
   handled by :meth:`BridgeServer._process_request`, which serves the
-  built UI (``--ui-dir``, default ``<repo>/webui/dist``) and the
-  ``/config`` launch document.
+  built UI (``--ui-dir``, defaulting to the dev checkout's
+  ``<repo>/webui/dist`` or, in an installed wheel, the packaged
+  ``pydvma/_webui`` — see :func:`_resolve_ui_dir`) and the ``/config``
+  launch document.
 * **Pure-Python dependency.**  Only ``websockets`` is required (the
   ``[serve]`` extra); it has zero transitive deps and works under the
   base install everywhere pydvma runs.
@@ -188,6 +190,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
+import contextlib
+import importlib.resources
 import inspect
 import io
 import json
@@ -256,15 +261,77 @@ _SETTINGS_WHITELIST = frozenset(
 )
 
 
+#: Kept-open context stack for any UI directory materialised out of a
+#: non-filesystem loader (a zip-imported wheel).  Closed at process exit
+#: so an extracted temp copy lives exactly as long as the server.
+_UI_RESOURCE_STACK = contextlib.ExitStack()
+atexit.register(_UI_RESOURCE_STACK.close)
+
+
 def _repo_default_ui_dir() -> Path:
-    """Return the default ``--ui-dir`` (``<repo>/webui/dist``).
+    """Return the dev-checkout UI dir (``<repo>/webui/dist``).
 
     Resolved relative to this file so an editable checkout serves the
-    freshly built UI.  Installed wheels don't ship the built UI yet
-    (see the packaging TODO in ``pyproject.toml``); when this path does
-    not exist the server returns a helpful 404 page instead.
+    freshly built UI.  In an installed wheel this path
+    (``site-packages/webui/dist``) does not exist, so resolution falls
+    through to the packaged copy — see :func:`_resolve_ui_dir`.
     """
     return Path(__file__).resolve().parents[1] / 'webui' / 'dist'
+
+
+def _packaged_ui_dir() -> Path | None:
+    """Return the UI bundled inside the installed package, or ``None``.
+
+    The built browser UI is staged into ``pydvma/_webui`` (by
+    ``scripts/stage_webui.py``) and shipped in the wheel via the
+    ``_webui/**/*`` package-data glob.  Located through
+    :mod:`importlib.resources` rather than a ``__file__``-relative path so
+    it resolves correctly however the package is installed — including a
+    zip-imported wheel, where the directory is extracted to a temporary
+    location kept alive for the process lifetime.  Returns ``None`` when
+    no UI was packaged (e.g. the lean engine wheel), so the caller can
+    fall back to the no-UI help page.
+    """
+    try:
+        root = importlib.resources.files('pydvma') / '_webui'
+    except (ModuleNotFoundError, TypeError, FileNotFoundError):
+        return None
+    # Common case: the package is unpacked on disk (regular pip install
+    # and editable checkouts alike), so the resource is already a real
+    # directory we can serve straight from.
+    try:
+        on_disk = Path(os.fspath(root))
+    except TypeError:
+        on_disk = None
+    if on_disk is not None:
+        return on_disk if on_disk.is_dir() else None
+    # Non-filesystem loader (zip-imported wheel): materialise once.
+    try:
+        if not root.is_dir():
+            return None
+    except (FileNotFoundError, OSError):
+        return None
+    extracted = _UI_RESOURCE_STACK.enter_context(importlib.resources.as_file(root))
+    return Path(extracted)
+
+
+def _resolve_ui_dir(explicit: str | None) -> Path | None:
+    """Resolve which built UI directory ``pydvma serve`` should serve.
+
+    Priority (decision #3 of the wheel-packaging brief):
+
+    1. an explicit ``--ui-dir`` (returned as given, even if missing — the
+       server then shows the no-UI page, surfacing the bad path);
+    2. the dev checkout's ``<repo>/webui/dist`` when it exists;
+    3. the UI packaged inside the installed wheel (``pydvma/_webui``);
+    4. ``None`` — nothing to serve, so the bridge shows its help page.
+    """
+    if explicit is not None:
+        return Path(explicit).expanduser().resolve()
+    repo = _repo_default_ui_dir()
+    if repo.exists():
+        return repo
+    return _packaged_ui_dir()
 
 
 # ---- binary frame encoding ----
@@ -1181,8 +1248,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument('--host', default=DEFAULT_HOST,
                         help='bind address (default: %s, loopback only)' % DEFAULT_HOST)
     parser.add_argument('--ui-dir', default=None,
-                        help='directory of the built UI to serve '
-                             '(default: <repo>/webui/dist when it exists)')
+                        help='directory of the built UI to serve (default: '
+                             '<repo>/webui/dist in a checkout, else the UI '
+                             'packaged in the installed wheel)')
     parser.add_argument('--settings', default=None,
                         help='JSON file pre-loaded and served at /config')
     parser.add_argument('--driver', default='mock',
@@ -1202,11 +1270,7 @@ def main(argv=None) -> int:
     """
     args = build_arg_parser().parse_args(argv)
 
-    if args.ui_dir is not None:
-        ui_dir = Path(args.ui_dir).expanduser().resolve()
-    else:
-        default = _repo_default_ui_dir()
-        ui_dir = default if default.exists() else None
+    ui_dir = _resolve_ui_dir(args.ui_dir)
 
     settings_json = _load_settings_file(args.settings) if args.settings else {}
 

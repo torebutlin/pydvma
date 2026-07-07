@@ -1,6 +1,10 @@
 [build-system]
 requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+# In-tree backend = setuptools plus the lean/fat webui split (see
+# _pydvma_build.py). It only changes whether pydvma/_webui is packaged;
+# everything else is stock setuptools.build_meta.
+build-backend = "_pydvma_build"
+backend-path = ["."]
 
 [project]
 name = "pydvma"
@@ -42,12 +46,21 @@ Homepage = "https://github.com/torebutlin/pydvma"
 packages = ["pydvma"]
 
 [tool.setuptools.package-data]
-pydvma = ["*.png"]
-# TODO (packaging, Wave-B follow-up): ship the built browser UI inside
-# the wheel so `pydvma-serve` works from a pip install with no repo
-# checkout. This needs a build step that stages `webui/dist` into the
-# package tree (e.g. `pydvma/_webui/`) plus a package-data glob such as
-# `pydvma = ["*.png", "_webui/**/*"]`. Out of scope for the bridge
-# itself (decision #5): today `--ui-dir` (default <repo>/webui/dist)
-# serves the UI, and an installed wheel without a build shows the
-# bridge's no-UI help page.
+# `_webui/**/*` ships the built browser UI (staged from `webui/dist` by
+# `scripts/stage_webui.py`) inside the wheel, so `pip install
+# pydvma[serve]` + `pydvma-serve` serves the app with no repo checkout.
+# `pydvma.serve` resolves the UI in this order: explicit `--ui-dir` >
+# `<repo>/webui/dist` (dev checkout) > this packaged `pydvma/_webui`
+# (importlib.resources) > a no-UI help page.
+#
+# Two wheels, one glob:
+#   * Fat wheel (local install / PyPI): `python -m build --wheel` (or
+#     `pip wheel .`) after staging — `_webui` is present so the glob
+#     bundles it. See docs/getting-started/installation.md for the flow.
+#   * Lean engine wheel (vendored into pyodide by
+#     webui/scripts/build-wheels.sh): built with `PYDVMA_LEAN_WHEEL=1`,
+#     which the in-tree backend (`_pydvma_build.py`) honours by hiding
+#     `_webui` for the build — the browser wheel stays tiny.
+# The sdist never carries `_webui` (it is a gitignored build artefact);
+# build the fat wheel directly from the staged tree, not from the sdist.
+pydvma = ["*.png", "_webui/**/*"]
