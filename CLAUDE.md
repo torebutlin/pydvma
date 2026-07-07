@@ -112,10 +112,16 @@ install pydvma[serve]` + `pydvma-serve` works with no checkout
 pyodide engine wheel lean via PYDVMA_LEAN_WHEEL in build-wheels.sh;
 scratch-venv verified; installation.md documents [serve]). Suites:
 pytest 271, vitest 434, svelte-check 0/0, Playwright 46 + bridge e2e
-4/4. NOTE: a mid-rebuild race between background agents and Tore's
-live `pydvma-serve` session caused a transient "engine failed to
-boot" during his hands-on — not a product bug; hands-on against a
-tree with agents running needs a reload after builds settle.
+4/4. NOTE: Tore's round-4 "engine failed to boot" was TWO separate
+things: (a) a mid-rebuild race between background agents and his live
+`pydvma-serve` session (transient — reload after builds settle), and
+(b) a REAL day-one bug on the deployed Pages site: the engine's asset
+base URL resolved BASE_URL ('./') against the bare origin, dropping
+the /pydvma/app/ sub-path, so the worker fetched /pyodide/… from the
+domain root — the deployed app's engine had never worked. Fixed
+(`258e231`, resolve against document.baseURI) + a permanent @engine
+subpath e2e (second Playwright webServer mounts dist at /pydvma/app/).
+Live site verified computing after deploy.
 
 **START THE NEXT SESSION HERE:** (1) **Tore hands-on round 4**
 (restart it — the engine-boot failure he hit was the rebuild race):
