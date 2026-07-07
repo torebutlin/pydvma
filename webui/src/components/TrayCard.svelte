@@ -6,12 +6,21 @@
    * per-line operations.
    *
    * Header: a colour-dot stack (one dot per channel, coloured by
-   * `selection.lineColor`), the set name (double-click → inline rename
-   * committed on Enter/blur, cancelled on Esc), a duration badge, a
-   * collapse chevron and a delete `×`. Clicking the header away from any
-   * control cycles the whole set (`cycleSet`); the guard in
-   * `onHeaderClick` keeps that from firing when the click lands on the
-   * name input, a button, the chevron or the ×.
+   * `selection.lineColor`), the set name, a duration badge, a collapse
+   * chevron and a delete `×`.
+   *
+   * The set name is the whole-set tri-state control (round-3 item 3): a
+   * SINGLE click cycles the entire set (`cycleSet`: on → fade → off, a
+   * mixed set snapping to 'on' first), a DOUBLE click opens the inline
+   * rename (committed on Enter/blur, cancelled on Esc). The two are
+   * disambiguated with a deferred-click timer (`onTitleClick` schedules
+   * the cycle; `onTitleDblClick` cancels it and renames) so a rename never
+   * also cycles. The title is a `role="button"` (Enter/Space cycle, F2
+   * renames) so the action is keyboard-reachable. Clicking the header
+   * anywhere ELSE (away from the title and the buttons/input) also cycles
+   * the set, instantly; `onHeaderClick` guards controls and mid-rename
+   * clicks. A set uniformly 'off' is struck-through + card-dimmed
+   * (`set.allOff`); uniformly 'fade' dims just the title (`set.allFade`).
    *
    * When expanded, one row per channel: a colour chip (click →
    * `cycleLine`, dimmed to 40% when faded), a channel label (custom via
@@ -95,11 +104,64 @@
     else if (e.key === 'Escape') cancelChRename();
   }
 
-  // Header click cycles the whole set — but only when the click did not
-  // originate on an interactive control (name/input, button, chevron, ×).
+  // ── Whole-set tri-state via the card title (round-3 item 3) ──────────
+  // Clicking the title cycles the WHOLE set (`cycleSet`: on → fade → off,
+  // mixed → on first); double-clicking the title still opens the inline
+  // rename. Because a double-click also delivers two `click` events, a
+  // naked single-click handler would cycle (twice) on the way to renaming.
+  // We disambiguate with the standard deferred-click timer: a click on the
+  // title schedules the cycle after a short window, and a following
+  // dblclick cancels it and renames instead. (Spatial separation — used by
+  // the channel rows, where the rename-able `.ch-lab` is simply excluded
+  // from the row's cycle target — is not an option here because item 3
+  // asks the title ITSELF to be the cycle target.)
+  const DBLCLICK_MS = 220;
+  let titleClickTimer: ReturnType<typeof setTimeout> | null = null;
+  function clearTitleTimer() {
+    if (titleClickTimer !== null) {
+      clearTimeout(titleClickTimer);
+      titleClickTimer = null;
+    }
+  }
+  function onTitleClick() {
+    if (editing) return;                 // a click while editing must not cycle
+    clearTitleTimer();                   // collapse the 2nd click of a dblclick
+    titleClickTimer = setTimeout(() => {
+      titleClickTimer = null;
+      selection.cycleSet(set.id);
+    }, DBLCLICK_MS);
+  }
+  function onTitleDblClick() {
+    clearTitleTimer();                   // cancel the pending single-click cycle
+    if (editing) return;
+    startRename();
+  }
+  // Keyboard: the title is a role=button, so Enter/Space cycle (no
+  // dblclick race, so cycle immediately) and F2 renames (the OS-standard
+  // rename key) — keeps the whole-set action reachable without a mouse.
+  function onTitleKeydown(e: KeyboardEvent) {
+    if (editing) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      clearTitleTimer();
+      selection.cycleSet(set.id);
+    } else if (e.key === 'F2') {
+      e.preventDefault();
+      clearTitleTimer();
+      startRename();
+    }
+  }
+
+  // Clicking the header AWAY from the title + controls also cycles the set
+  // (a bigger mouse target), instantly — no dblclick action lives there, so
+  // no deferral is needed. Guarded against controls (name/input, buttons,
+  // chevron, ×) and against firing mid-rename. Clears any pending title
+  // cycle so a title-click-then-header-click can't double-fire.
   function onHeaderClick(e: MouseEvent) {
+    if (editing) return;
     const t = e.target as HTMLElement;
     if (t.closest('button, input, .set-name')) return;
+    clearTitleTimer();
     selection.cycleSet(set.id);
   }
 
@@ -158,6 +220,7 @@
   <div
     class="set-head"
     class:struck={set.allOff}
+    class:faded={set.allFade}
     data-testid="set-header"
     onclick={onHeaderClick}
   >
@@ -180,6 +243,7 @@
         <!-- svelte-ignore a11y_autofocus -->
         <input
           type="text"
+          data-testid="set-name-input"
           bind:value={draft}
           onkeydown={onNameKeydown}
           onblur={commitRename}
@@ -187,10 +251,17 @@
         />
       </span>
     {:else}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <span
         class="set-name"
-        title={set.name}
-        ondblclick={startRename}
+        role="button"
+        tabindex="0"
+        data-testid="set-name"
+        title={`${set.name} — click to cycle the whole set on/fade/off; double-click (or F2) to rename`}
+        aria-label={`${set.name}: set ${set.allOff ? 'hidden' : set.allFade ? 'faded' : 'shown'} — press Enter to cycle visibility, F2 to rename`}
+        onclick={onTitleClick}
+        ondblclick={onTitleDblClick}
+        onkeydown={onTitleKeydown}
       >{set.name}</span>
     {/if}
 
@@ -288,6 +359,17 @@
   }
   .set-head.struck .set-name {
     text-decoration: line-through;
+  }
+  /* Whole set uniformly faded → dim the title, mirroring how a faded ROW
+     reads (rows use opacity ~0.55). Struck (all-off) still wins visually
+     via the whole-card .dim + line-through above. */
+  .set-head.faded .set-name {
+    opacity: 0.55;
+  }
+  /* Keyboard focus ring for the now-focusable title (role=button). */
+  .set-name:focus-visible {
+    outline: 2px solid #a5b4fc;
+    outline-offset: 1px;
   }
   .caret {
     border: none;

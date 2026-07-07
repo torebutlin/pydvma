@@ -29,6 +29,43 @@ test('mixed set cycles to uniform on first', () => {
   expect(get(sel.state)(1, 1)).toBe('on');
 });
 
+test('cycleSet from a mixed set: mixed → on → fade → off → on', () => {
+  sel.cycleLine(1, 0);                       // set_1 mixed: (fade, on)
+  const setState = () => [get(sel.state)(1, 0), get(sel.state)(1, 1)];
+  sel.cycleSet(1); expect(setState()).toEqual(['on', 'on']);     // mixed → on
+  sel.cycleSet(1); expect(setState()).toEqual(['fade', 'fade']); // on → fade
+  sel.cycleSet(1); expect(setState()).toEqual(['off', 'off']);   // fade → off
+  sel.cycleSet(1); expect(setState()).toEqual(['on', 'on']);     // off → on (wrap)
+});
+
+test('cycleSet with an unknown id is a no-op', () => {
+  sel.cycleSet(99);
+  expect(get(sel.state)(0, 0)).toBe('on');
+  expect(get(sel.state)(1, 0)).toBe('on');
+});
+
+test('setsView.allFade: true only when every line is uniformly fade', () => {
+  // set_0 (2ch): all on → neither flag.
+  expect(get(sel.setsView)[0].allFade).toBe(false);
+  expect(get(sel.setsView)[0].allOff).toBe(false);
+  // Cycle the whole set once: on → fade → allFade true, allOff false.
+  sel.cycleSet(0);
+  expect(get(sel.setsView)[0].allFade).toBe(true);
+  expect(get(sel.setsView)[0].allOff).toBe(false);
+  // Another whole-set cycle: fade → off → allOff true, allFade false.
+  sel.cycleSet(0);
+  expect(get(sel.setsView)[0].allFade).toBe(false);
+  expect(get(sel.setsView)[0].allOff).toBe(true);
+});
+
+test('setsView.allFade is false for a mixed (part-fade) set', () => {
+  sel.cycleSet(0);                           // both lines fade
+  sel.cycleLine(0, 0);                       // 0:0 fade → off → mixed (off, fade)
+  const v = get(sel.setsView)[0];
+  expect(v.allFade).toBe(false);
+  expect(v.allOff).toBe(false);
+});
+
 test('channel cycle applies across all sets, including collapsed', () => {
   sel.cycleChannel(1);
   expect(get(sel.state)(0, 1)).toBe('fade');

@@ -21,8 +21,13 @@ export const LINE_PALETTE = [
 export interface SetEntry { name: string; nChannels: number; durationS: number; timestamp: string; }
 /** A set as stored: input fields plus stable `id` and owned line `colors`. */
 export interface SetRecord extends SetEntry { id: number; colors: string[]; }
-/** Render-ready view: identity (`id`) plus current ordering (`index`). */
-export interface SetView extends SetRecord { index: number; allOff: boolean; collapsed: boolean; }
+/**
+ * Render-ready view: identity (`id`) plus current ordering (`index`) and
+ * two whole-set state flags. `allOff` when every line is 'off' (card
+ * struck-through / "out of stock"); `allFade` when every line is 'fade'
+ * (title dimmed). Both are false for a mixed set or an all-'on' set.
+ */
+export interface SetView extends SetRecord { index: number; allOff: boolean; allFade: boolean; collapsed: boolean; }
 /** One legend row. `setId` is the set's stable identity, not its position. */
 export interface LegendEntry { setId: number; ch: number; label: string; color: string; state: TriState; }
 
@@ -192,9 +197,16 @@ export function createSelection() {
       mutate(m => m.set(key(id, c), NEXT[stateOf(m, id, c)]));
     },
     /**
-     * Cycle a whole set (card-header click). If the set's lines are
-     * uniform they all advance one step together; if MIXED they first
-     * snap to uniform 'on' — so a click always produces a coherent set.
+     * Cycle a whole set as a group (tray card-title / header click).
+     *
+     * Convention for the MIXED case: when the set's lines are NOT all in
+     * the same tri-state, the first click coerces every line to 'on'
+     * (rather than trying to advance each line independently or picking a
+     * "majority" state). That gives the user a single predictable "reset
+     * to fully shown" step from any tangle of per-line states. Once the
+     * set is uniform, each further click advances all lines together
+     * on → fade → off → on. So the observable sequence from a mixed set
+     * is: mixed → on → fade → off → on → …  Unknown id is a no-op.
      */
     cycleSet(id: number) {
       const rec = findSet(id); if (!rec) return;
@@ -241,11 +253,14 @@ export function createSelection() {
     },
 
     setsView: derived([sets, states, collapsed], ([$sets, $states, $collapsed]) =>
-      $sets.map((set, index): SetView => ({
-        ...set, index, collapsed: $collapsed.has(set.id),
-        allOff: Array.from({ length: set.nChannels }, (_, c) => stateOf($states, set.id, c))
-          .every(v => v === 'off'),
-      }))),
+      $sets.map((set, index): SetView => {
+        const st = Array.from({ length: set.nChannels }, (_, c) => stateOf($states, set.id, c));
+        return {
+          ...set, index, collapsed: $collapsed.has(set.id),
+          allOff: st.every(v => v === 'off'),
+          allFade: st.length > 0 && st.every(v => v === 'fade'),
+        };
+      })),
 
     /**
      * Tray-focus signal: `setId` when the tray is showing exactly ONE
