@@ -101,20 +101,33 @@ Full pytest green on the hardware machine (hardware + mock, incl. new
 `tests/test_streams_ni_callback.py`). No Node.js on the Windows box —
 browser UI itself still mock-e2e only.
 
-**START THE NEXT SESSION HERE:** (1) **Tore hands-on round 4** — new
-surface: Fit, calibration, exports, Live PSD mode, Setup full, and
-the bridge — NI path now real-hardware-verified (`pip install -e
-.[serve,ni,soundcard]` then `pydvma-serve --driver nidaq --open`, or
-`--driver soundcard` on Mac). Queued decisions: Fit-N/Global
-optimise, CSV all-kinds vs current-view, unit axis labels, implicit
-1000-sample bare-arm default, output UI shape. (2) **Webui follow-ups
-from the hardware session**: clamp `output_VmaxNI` to the new
-`ao_vmax` cap in Setup; surface the coerced-fs note (BridgeProvider
-already adopts `configured.fs`); consider `ai_vmax` for the VmaxNI
-picker. (3) **Wave D polish**: narrow-rail mini, AudioWorklet, dark
-theme, wheel-embedding webui/dist (pyproject TODO), M1/M2,
-browser-side (Web Audio) output stimulus + pretrigger. (4) Qt
-teardown ONLY after Tore's explicit confirmation. Roadmap:
+**Wave-D core LANDED (checkpoint 5):** the hardware-session webui
+follow-ups (VmaxNI/output_VmaxNI capability-clamped to
+`ai_vmax`/`ao_vmax` — the 9260 rail fix applied proactively; output
+amp clamp; DSA coerced-fs note on Setup + Acquire); **AudioWorklet**
+capture (2048/4096 accumulation, discrete channel interpretation, C2
+on addModule-reject, SPN fallback); **wheel-embedded UI** — `pip
+install pydvma[serve]` + `pydvma-serve` works with no checkout
+(stage_webui.py → pydvma/_webui; in-tree PEP 517 backend keeps the
+pyodide engine wheel lean via PYDVMA_LEAN_WHEEL in build-wheels.sh;
+scratch-venv verified; installation.md documents [serve]). Suites:
+pytest 271, vitest 434, svelte-check 0/0, Playwright 46 + bridge e2e
+4/4. NOTE: a mid-rebuild race between background agents and Tore's
+live `pydvma-serve` session caused a transient "engine failed to
+boot" during his hands-on — not a product bug; hands-on against a
+tree with agents running needs a reload after builds settle.
+
+**START THE NEXT SESSION HERE:** (1) **Tore hands-on round 4**
+(restart it — the engine-boot failure he hit was the rebuild race):
+`pip install -e .[serve,soundcard]` then `pydvma-serve --driver
+soundcard --open` (or `--driver nidaq` on the PC). Queued decisions:
+Fit-N/Global optimise, CSV all-kinds vs current-view, unit axis
+labels, implicit 1000-sample bare-arm default, output UI shape.
+(2) **Design-facing Wave-D leftovers** (post-hands-on): dark theme,
+narrow-rail mini strip, browser-side (Web Audio) output stimulus +
+pretrigger, M1/M2 minors. (3) Next Windows visit: eyeball the 9260
+clamp note + coerced-fs note on real hardware (vitest-only here).
+(4) Qt teardown ONLY after Tore's explicit confirmation. Roadmap:
 `dev/plans/2026-07-07-full-gui-replacement-plan.md`. Run: `cd webui
 && npm run dev`, `http://localhost:5173/?fixture=1` (or `?fixture=3ch`);
 feedback trail: `dev/2026-07-07-round3-feedback.md` and earlier.
