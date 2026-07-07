@@ -30,6 +30,7 @@
    */
   import type { Selection, SetView } from '../lib/stores/selection';
   import { minMaxDecimate } from '../lib/plot/decimate';
+  import { sigFigs } from '../lib/format';
 
   let {
     selection,
@@ -193,7 +194,7 @@
       >{set.name}</span>
     {/if}
 
-    <span class="dur-badge">{set.durationS} s</span>
+    <span class="dur-badge">{sigFigs(set.durationS)} s</span>
     <button
       class="xdel"
       title="Delete set"

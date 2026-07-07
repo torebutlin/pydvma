@@ -48,9 +48,9 @@
   <div class="ctx-body">
     <div class="ctx-row">
       <div class="grp">
-        <span class="grp-lab">impulse channel</span>
+        <span class="grp-lab">input channel</span>
         <div class="grp-ctl">
-          <select bind:value={impulseCh} style="width:84px" aria-label="impulse channel">
+          <select bind:value={impulseCh} style="width:84px" aria-label="input channel">
             {#each Array.from({ length: Math.max(1, maxChannels) }, (_, c) => c) as c (c)}
               <option value={c}>ch_{c}</option>
             {/each}
