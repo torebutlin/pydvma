@@ -3,16 +3,24 @@
  *
  * Manages the real-time audio monitor lifecycle: start/stop streaming,
  * a ring buffer of recent samples for canvas rendering, per-channel
- * peak/RMS level metering, pause toggle, and display options (stacked
- * traces, autoscale).
+ * peak/RMS level metering, pause toggle, a latching clip flag, and the
+ * scope's display options (stacked traces, autoscale, viewed time
+ * window, FFT axis scaling, and which panes are shown on the Live tab).
  *
  * The monitor uses the continuous `startMonitor` API from the audio
  * source layer (distinct from `startRecording` which accumulates a
  * fixed-duration capture).  The ring buffer holds a configurable
- * window of history (default ~100 ms) — enough to render a smooth
- * oscilloscope trace at 30–60 fps without storing megabytes.
+ * window of history — enough to render a smooth oscilloscope trace and
+ * compute a live FFT at 30–60 fps without storing megabytes.
  *
- * Created once at the app root and threaded to LiveCard.
+ * Lifecycle contract (round-2 redesign): the monitor is a persistent
+ * "mini-oscilloscope" that lives bottom-left across ALL stages.  It runs
+ * until the USER stops it (from the mini monitor or the Live card) or the
+ * whole app tears down — it is NOT auto-stopped on stage change.  App.svelte
+ * owns the teardown (onDestroy + pagehide/beforeunload → `stop()`).
+ *
+ * Created once at the app root and threaded to MiniMonitor, LiveCard,
+ * OscCanvas and the Live scope.
  */
 import { writable, get } from 'svelte/store';
 import { startMonitor, type MonitorHandle, type MonitorCallback } from '../audio/source';
@@ -27,19 +35,39 @@ export interface ChannelLevel {
   rms: number;    // RMS over the current callback
 }
 
+/** Which panes the expanded Live scope shows (time trace / FFT / levels). */
+export interface PaneState {
+  time: boolean;
+  freq: boolean;
+  levels: boolean;
+}
+
 export type MonitorStore = ReturnType<typeof createMonitorStore>;
 
 // ---- constants ----
 
 /** Default ring buffer window in seconds.  ~100 ms at 44.1 kHz = 4410 samples. */
 const DEFAULT_WINDOW_S = 0.1;
+/** Smallest viewable window — a couple of buffers' worth. */
+const MIN_WINDOW_S = 0.02;
+/**
+ * Hard cap on the viewed window, and therefore on ring allocation
+ * (review note M3: an unbounded pre-alloc at extreme settings could OOM).
+ * At 96 kHz × 16 ch × 5 s that is still only ~30 MB of Float32.
+ */
+const MAX_WINDOW_S = 5;
+/** The selectable window presets surfaced in the LiveCard. */
+export const WINDOW_PRESETS_S = [0.05, 0.1, 0.2, 0.5, 1] as const;
+/** Peak level at or above which the latching clip flag trips. */
+const CLIP_THRESHOLD = 0.95;
 
 // ---- store factory ----
 
 /**
  * Create the monitor store.  Reads device/sample-rate/channel config
- * from the companion `AcquireStore` so Setup configures both recording
- * AND monitoring in one place.
+ * (and the getUserMedia constraint flags) from the companion
+ * `AcquireStore` so Setup configures both recording AND monitoring in
+ * one place.
  */
 export function createMonitorStore(acquire: AcquireStore) {
   const status = writable<MonitorStatus>('idle');
@@ -47,9 +75,23 @@ export function createMonitorStore(acquire: AcquireStore) {
   const stacked = writable(false);
   const autoscaleY = writable(true);
   const levels = writable<ChannelLevel[]>([]);
+  // Latching clip flag: trips when any channel peak ≥ CLIP_THRESHOLD and
+  // STAYS tripped until the user resets it (or a fresh start()).  The mini
+  // + Live CLIP pills read this; clicking a pill calls resetClip().
+  const clipLatched = writable(false);
+
+  // ---- scope display settings (osc-specific) ----
+  /** Viewed time window in seconds (also the ring-buffer span). */
+  const windowS = writable<number>(DEFAULT_WINDOW_S);
+  /** FFT magnitude axis: dB (log) when true, linear when false. */
+  const fftYLog = writable(true);
+  /** FFT frequency axis: log when true, linear when false. */
+  const fftXLog = writable(false);
+  /** Which Live-scope panes are visible. */
+  const panes = writable<PaneState>({ time: true, freq: true, levels: true });
 
   // Ring buffer: per-channel Float32Arrays, circular write position.
-  // Exposed as a snapshot for the canvas renderer.
+  // Exposed as a snapshot for the canvas + FFT renderers.
   let ringBuf: Float32Array[] = [];
   let ringLen = 0;        // allocated length per channel
   let ringPos = 0;        // next write position (wraps)
@@ -70,16 +112,44 @@ export function createMonitorStore(acquire: AcquireStore) {
   // reviving a monitor the user already stopped (I2/I3).
   let startGen = 0;
 
+  /** Ring length (samples/channel) for a given fs + window, clamped (M3). */
+  function ringLenFor(fs: number, seconds: number): number {
+    const clamped = Math.min(MAX_WINDOW_S, Math.max(MIN_WINDOW_S, seconds));
+    return Math.max(256, Math.ceil(fs * clamped));
+  }
+
+  /** (Re)allocate the ring buffer to `nCh × len` zero-filled channels. */
+  function allocRing(nCh: number, len: number): void {
+    ringBuf = [];
+    for (let ch = 0; ch < nCh; ch++) ringBuf.push(new Float32Array(len));
+    ringLen = len;
+    ringPos = 0;
+  }
+
+  /**
+   * Drop the ring buffer so `snapshot()` reports "no data" and the scope
+   * shows its empty prompt.  Used on stop() and on a start() failure so a
+   * dead monitor never leaves stale zero-filled traces on screen.
+   */
+  function clearRing(): void {
+    ringBuf = [];
+    ringLen = 0;
+    ringPos = 0;
+    ringRev++;
+    ringRevision.set(ringRev);
+  }
+
   /**
    * The monitor callback — processes each audio chunk from the source
-   * layer.  When paused, still reads levels (for the meter) but skips
-   * the ring buffer write so the trace freezes.
+   * layer.  When paused, still reads levels (for the meter + clip flag)
+   * but skips the ring buffer write so the trace freezes.
    */
   const ondata: MonitorCallback = (chunk) => {
     // Compute per-channel levels.
     const nCh = chunk.nChannels;
     const n = chunk.nSamples;
     const lvls: ChannelLevel[] = [];
+    let clippedThisChunk = false;
     for (let ch = 0; ch < nCh; ch++) {
       let peak = 0;
       let sumSq = 0;
@@ -89,16 +159,19 @@ export function createMonitorStore(acquire: AcquireStore) {
         if (a > peak) peak = a;
         sumSq += v * v;
       }
+      if (peak >= CLIP_THRESHOLD) clippedThisChunk = true;
       lvls.push({ peak, rms: Math.sqrt(sumSq / n) });
     }
     levels.set(lvls);
+    if (clippedThisChunk) clipLatched.set(true);
 
     if (paused) return;
+    if (ringLen === 0) return; // not allocated (shouldn't happen while streaming)
 
     // Write into ring buffer.
     for (let i = 0; i < n; i++) {
       const wp = (ringPos + i) % ringLen;
-      for (let ch = 0; ch < nCh; ch++) {
+      for (let ch = 0; ch < nCh && ch < ringBuf.length; ch++) {
         ringBuf[ch][wp] = chunk.data[i * nCh + ch];
       }
     }
@@ -109,31 +182,33 @@ export function createMonitorStore(acquire: AcquireStore) {
 
   /**
    * Start the monitor (opens the mic and begins streaming).  Reads
-   * device settings from the acquire store so Setup controls both.
+   * device settings + constraint flags from the acquire store so Setup
+   * controls both.  Resets the latching clip flag for the fresh session.
    */
   async function start(): Promise<void> {
     if (handle || get(status) === 'starting') return; // already running/starting (I3)
     const gen = ++startGen;                            // this start's generation (I2)
     status.set('starting');
     errorMsg.set('');
+    clipLatched.set(false);
     paused = false;
 
     const cfg = get(acquire.settings);
     ringFs = cfg.sampleRate;
     ringChannels = cfg.channelCount;
-    ringLen = Math.max(256, Math.ceil(cfg.sampleRate * DEFAULT_WINDOW_S));
-
-    // Allocate ring buffer.
-    ringBuf = [];
-    for (let ch = 0; ch < cfg.channelCount; ch++) {
-      ringBuf.push(new Float32Array(ringLen));
-    }
-    ringPos = 0;
+    allocRing(cfg.channelCount, ringLenFor(cfg.sampleRate, get(windowS)));
     ringRev = 0;
 
     try {
       const h = await startMonitor(
-        { deviceId: cfg.deviceId || undefined, sampleRate: cfg.sampleRate, channelCount: cfg.channelCount },
+        {
+          deviceId: cfg.deviceId || undefined,
+          sampleRate: cfg.sampleRate,
+          channelCount: cfg.channelCount,
+          echoCancellation: cfg.echoCancellation,
+          noiseSuppression: cfg.noiseSuppression,
+          autoGainControl: cfg.autoGainControl,
+        },
         ondata,
       );
       // stop()/cancel bumped the generation while we awaited — this start was
@@ -141,20 +216,16 @@ export function createMonitorStore(acquire: AcquireStore) {
       // without reviving the monitor the user already stopped (I2).
       if (gen !== startGen) { h.stop(); return; }
       handle = h;
-      // Update ring config from actual hardware values.
+      // Update ring config from actual hardware values (fs and channel
+      // count may differ from what we requested) and re-allocate to match.
       ringFs = handle.fs;
       ringChannels = handle.nChannels;
-      // Re-allocate if channel count differs from requested.
-      if (handle.nChannels !== cfg.channelCount) {
-        ringBuf = [];
-        for (let ch = 0; ch < handle.nChannels; ch++) {
-          ringBuf.push(new Float32Array(ringLen));
-        }
-      }
+      allocRing(handle.nChannels, ringLenFor(handle.fs, get(windowS)));
       status.set('streaming');
     } catch (e) {
       if (gen !== startGen) return;   // cancelled while awaiting — leave the newer state alone
       const msg = e instanceof Error ? e.message : String(e);
+      clearRing();                    // no stale zero traces behind the error
       status.set('error');
       errorMsg.set(msg);
     }
@@ -166,6 +237,7 @@ export function createMonitorStore(acquire: AcquireStore) {
     handle?.stop();
     handle = null;
     paused = false;
+    clearRing();           // clear the trace so a stopped scope shows its prompt
     status.set('idle');
     levels.set([]);
   }
@@ -190,12 +262,44 @@ export function createMonitorStore(acquire: AcquireStore) {
     else if (get(status) === 'streaming') pause();
   }
 
+  /**
+   * Set the viewed time window (seconds).  Clamped to
+   * [MIN_WINDOW_S, MAX_WINDOW_S]; when streaming the ring buffer is
+   * re-allocated live so the trace + FFT immediately reflect the new
+   * span (the old history is dropped — a longer/shorter window is a
+   * fresh view, not a resample).
+   */
+  function setWindow(seconds: number): void {
+    const clamped = Math.min(MAX_WINDOW_S, Math.max(MIN_WINDOW_S, seconds));
+    windowS.set(clamped);
+    if (ringBuf.length > 0) {
+      allocRing(ringChannels, ringLenFor(ringFs, clamped));
+      ringRev++;
+      ringRevision.set(ringRev);
+    }
+  }
+
+  /** Clear the latching clip flag (called when the user clicks a CLIP pill). */
+  function resetClip(): void {
+    clipLatched.set(false);
+  }
+
+  /** Toggle one Live-scope pane (time / freq / levels). */
+  function togglePane(which: keyof PaneState): void {
+    panes.update((p) => ({ ...p, [which]: !p[which] }));
+  }
+
   return {
     status,
     errorMsg,
     stacked,
     autoscaleY,
     levels,
+    clipLatched,
+    windowS,
+    fftYLog,
+    fftXLog,
+    panes,
     /** Revision counter — subscribe to get notified on new ring data. */
     ringRevision,
 
@@ -204,6 +308,9 @@ export function createMonitorStore(acquire: AcquireStore) {
     pause,
     resume,
     togglePause,
+    setWindow,
+    resetClip,
+    togglePane,
 
     /**
      * Read a snapshot of the ring buffer for rendering.  Returns per-
@@ -215,7 +322,7 @@ export function createMonitorStore(acquire: AcquireStore) {
     snapshot(): { channels: Float32Array[]; fs: number; rev: number } {
       if (ringBuf.length === 0) return { channels: [], fs: ringFs, rev: ringRev };
       const out: Float32Array[] = [];
-      for (let ch = 0; ch < ringChannels; ch++) {
+      for (let ch = 0; ch < ringChannels && ch < ringBuf.length; ch++) {
         const arr = new Float32Array(ringLen);
         // Copy in chronological order: [ringPos..end, 0..ringPos).
         const tail = ringLen - ringPos;

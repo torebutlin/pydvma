@@ -12,13 +12,15 @@ import { startMonitor, type MonitorChunk, type MonitorHandle } from '../../src/l
 // ---- Mock the audio source layer ----
 
 let capturedOndata: ((chunk: MonitorChunk) => void) | null = null;
+let capturedCfg: Record<string, unknown> | null = null;
 const mockStop = vi.fn();
 
 vi.mock('../../src/lib/audio/source', async () => {
   const actual = await vi.importActual<typeof import('../../src/lib/audio/source')>('../../src/lib/audio/source');
   return {
     ...actual,
-    startMonitor: vi.fn(async (_cfg: unknown, ondata: (chunk: MonitorChunk) => void) => {
+    startMonitor: vi.fn(async (cfg: Record<string, unknown>, ondata: (chunk: MonitorChunk) => void) => {
+      capturedCfg = cfg;
       capturedOndata = ondata;
       return { stop: mockStop, fs: 44100, nChannels: 2 };
     }),
@@ -27,6 +29,7 @@ vi.mock('../../src/lib/audio/source', async () => {
 
 beforeEach(() => {
   capturedOndata = null;
+  capturedCfg = null;
   mockStop.mockClear();
   vi.mocked(startMonitor).mockClear();   // reset call count per test (I3 asserts it)
   capabilities.set({ liveSource: false, fitEngine: false });
@@ -223,4 +226,111 @@ test('stacked and autoscaleY default to false/true', () => {
   const mon = createMonitorStore(makeAcquire());
   expect(get(mon.stacked)).toBe(false);
   expect(get(mon.autoscaleY)).toBe(true);
+});
+
+// ---- round-2 osc settings ----
+
+test('osc display settings have sensible defaults', () => {
+  const mon = createMonitorStore(makeAcquire());
+  expect(get(mon.windowS)).toBe(0.1);
+  expect(get(mon.fftYLog)).toBe(true);   // dB by default
+  expect(get(mon.fftXLog)).toBe(false);  // linear freq by default
+  expect(get(mon.panes)).toEqual({ time: true, freq: true, levels: true });
+  expect(get(mon.clipLatched)).toBe(false);
+});
+
+test('setWindow clamps and re-allocates the ring while streaming', async () => {
+  const mon = createMonitorStore(makeAcquire());
+  await mon.start();               // fs 44100 (from mock handle)
+  const len01 = mon.ringLength;
+  expect(len01).toBe(Math.ceil(44100 * 0.1));
+
+  mon.setWindow(0.5);
+  expect(get(mon.windowS)).toBe(0.5);
+  expect(mon.ringLength).toBe(Math.ceil(44100 * 0.5));
+
+  // Clamp: absurd values are pinned to [0.02, 5] s.
+  mon.setWindow(999);
+  expect(get(mon.windowS)).toBe(5);
+  expect(mon.ringLength).toBe(Math.ceil(44100 * 5));
+
+  mon.stop();
+});
+
+test('clip flag latches at peak ≥ 0.95 and resets on demand', async () => {
+  const mon = createMonitorStore(makeAcquire());
+  await mon.start();
+  expect(get(mon.clipLatched)).toBe(false);
+
+  // A hot chunk (peak 0.99) trips the latch.
+  const hot: MonitorChunk = { data: new Float32Array([0.99, 0.1]), nSamples: 1, nChannels: 2, fs: 44100 };
+  capturedOndata!(hot);
+  expect(get(mon.clipLatched)).toBe(true);
+
+  // A quiet chunk does NOT clear it (it latches).
+  const quiet: MonitorChunk = { data: new Float32Array([0.1, 0.1]), nSamples: 1, nChannels: 2, fs: 44100 };
+  capturedOndata!(quiet);
+  expect(get(mon.clipLatched)).toBe(true);
+
+  // Explicit reset clears it.
+  mon.resetClip();
+  expect(get(mon.clipLatched)).toBe(false);
+  mon.stop();
+});
+
+test('start() resets a previously latched clip flag', async () => {
+  const mon = createMonitorStore(makeAcquire());
+  await mon.start();
+  capturedOndata!({ data: new Float32Array([1, 1]), nSamples: 1, nChannels: 2, fs: 44100 });
+  expect(get(mon.clipLatched)).toBe(true);
+  mon.stop();
+  await mon.start();
+  expect(get(mon.clipLatched)).toBe(false);
+  mon.stop();
+});
+
+test('togglePane flips a single pane', () => {
+  const mon = createMonitorStore(makeAcquire());
+  mon.togglePane('freq');
+  expect(get(mon.panes)).toEqual({ time: true, freq: false, levels: true });
+  mon.togglePane('freq');
+  expect(get(mon.panes).freq).toBe(true);
+});
+
+test('monitor passes the getUserMedia DSP constraints through to startMonitor', async () => {
+  const acq = makeAcquire();
+  const mon = createMonitorStore(acq);
+  await mon.start();
+  // Defaults: all three off (raw measurement).
+  expect(capturedCfg).toMatchObject({
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  });
+  mon.stop();
+
+  // A user override reaches the source layer too.
+  acq.patch({ echoCancellation: true });
+  await mon.start();
+  expect(capturedCfg!.echoCancellation).toBe(true);
+  mon.stop();
+});
+
+test('lifecycle contract: settings changes do NOT stop the monitor (only stop() idles it)', async () => {
+  const mon = createMonitorStore(makeAcquire());
+  await mon.start();
+  expect(get(mon.status)).toBe('streaming');
+
+  // Changing display settings / window must not tear the monitor down —
+  // the round-2 redesign replaced the auto-stop-on-stage-change behaviour
+  // with explicit user stop only.
+  mon.setWindow(0.2);
+  mon.stacked.set(true);
+  mon.togglePane('levels');
+  expect(get(mon.status)).toBe('streaming');
+  expect(mockStop).not.toHaveBeenCalled();
+
+  mon.stop();
+  expect(get(mon.status)).toBe('idle');
+  expect(mockStop).toHaveBeenCalled();
 });
