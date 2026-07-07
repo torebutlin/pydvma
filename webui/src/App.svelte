@@ -17,7 +17,7 @@
    * sharing x; the sonogram view draws a `<canvas>` viridis heat layer
    * beneath empty PlotSurface axes.
    */
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import Header from './components/Header.svelte';
   import Ribbon from './components/Ribbon.svelte';
   import ContextCard from './components/ContextCard.svelte';
@@ -47,7 +47,8 @@
   import type { DvmaDataset } from './lib/model/dataset';
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
-  import OscCanvas from './components/OscCanvas.svelte';
+  import MiniMonitor from './components/MiniMonitor.svelte';
+  import LiveScope from './components/LiveScope.svelte';
   import impulseUrl from './assets/impulse.dvma?url';
   // 3-channel fixture (Task R4) for exercising the TF out/in remap end to
   // end; loaded ONLY under `?fixture=3ch` so shipped `?fixture=1` stays the
@@ -71,14 +72,16 @@
   // Reads device config from the acquire store so Setup configures both.
   const monitor = createMonitorStore(acquire);
 
-  // C1 (acquisition review): stop the Live monitor whenever we leave the Live
-  // stage. Otherwise the mic + AudioContext + scope stay alive after
-  // navigating away (the LiveCard Stop button was the ONLY other stop, so a
-  // tab switch left the mic on until page reload). Idempotent when already
-  // stopped, so the initial 'time' render is a harmless no-op.
-  $effect(() => {
-    if ($activeStage !== 'live') monitor.stop();
-  });
+  // Monitor lifecycle (round-2 redesign): the monitor is a PERSISTENT
+  // bottom-left mini-oscilloscope that lives across all stages, with its
+  // own start/stop (MiniMonitor + LiveCard). It is NO LONGER auto-stopped
+  // when leaving the Live stage — that C1 fix conflicted with the desired
+  // design. Instead the mic is released only when the USER stops it or the
+  // whole app tears down: onDestroy below, plus pagehide/beforeunload
+  // handlers registered in onMount for real browser navigation/close. The
+  // I2/I3 start-race guards and the C2 setup-throw stream release still
+  // apply inside the store + source layer.
+  onDestroy(() => monitor.stop());
 
   // ---- File I/O state (Task 13): working directory + autosave ----
   // The working directory is where Save writes and autosave persists.
@@ -94,6 +97,7 @@
   const computeError = actions.computeError;
   const active = viewState.active;
   const legendEntries = selection.legendEntries;
+  const legendRows = selection.legendRows;       // off-inclusive (legend display)
   const channelLabel = selection.channelLabel;   // custom per-line labels (R5)
   const sharedFreqRange = viewState.sharedFreqRange;
   const currentSlice = viewState.current;
@@ -154,6 +158,17 @@
     // Acquire tabs become enabled.
     void acquire.init();
 
+    // Release the mic if the browser tab is closed or navigated away while
+    // the monitor is live (onDestroy covers in-app teardown; these cover
+    // real page unload, where Svelte's onDestroy may not run).
+    const onUnload = () => monitor.stop();
+    window.addEventListener('pagehide', onUnload);
+    window.addEventListener('beforeunload', onUnload);
+    const cleanupUnload = () => {
+      window.removeEventListener('pagehide', onUnload);
+      window.removeEventListener('beforeunload', onUnload);
+    };
+
     // Restore last session's working folder (File System Access API), then
     // offer to restore an autosaved session if one is waiting in IndexedDB.
     // Both are best-effort and never block the shell. Skipped under
@@ -171,7 +186,9 @@
       autosave(() => { actions.stampUiState(); return writeDvma(ds); }, workdir, autosaveEnabled);
     });
 
-    if (forcedNarrow || typeof window.matchMedia !== 'function') return () => unsubDataset();
+    if (forcedNarrow || typeof window.matchMedia !== 'function') {
+      return () => { unsubDataset(); cleanupUnload(); };
+    }
     const mq = window.matchMedia('(max-width: 1000px)');
     mediaNarrow = mq.matches;
     const update = (e: MediaQueryListEvent) => (mediaNarrow = e.matches);
@@ -179,6 +196,7 @@
     return () => {
       unsubDataset();
       mq.removeEventListener('change', update);
+      cleanupUnload();
     };
   });
 
@@ -348,14 +366,16 @@
   const tfChInFor = $derived((setId: number): number | undefined => $derivedStore[setId]?.tf?.chIn);
 
   /**
-   * Legend entries the ACTIVE view renders. For TF, the raw per-channel
-   * entries are transformed to the out/in form (input dropped, lines
-   * labelled `ch_out/ch_in`) so the legend matches the plot exactly
-   * (R4); every other view uses the raw entries. Same transform drives
-   * `visible`, so the two never diverge. The custom channel labels (R5)
-   * are threaded in as the `label` accessor so a renamed line reads e.g.
-   * `hammer/accel` in the out/in label; the non-TF views already carry
-   * the custom label through `legendEntries`.
+   * PLOT-facing entries for the ACTIVE view (off lines dropped). For TF,
+   * the raw per-channel entries are transformed to the out/in form
+   * (input dropped, lines labelled `ch_out/ch_in`) so what is DRAWN
+   * matches the R4 remap; every other view uses the raw entries. This
+   * feeds `visible` below; the legend LISTS the off-inclusive
+   * `legendRows` instead (see `tfLegend`), so a line toggled off leaves
+   * the plot but stays in the legend struck-through. The custom channel
+   * labels (R5) are threaded in as the `label` accessor so a renamed
+   * line reads e.g. `hammer/accel` in the out/in label; the non-TF views
+   * already carry the custom label through `legendEntries`.
    */
   const viewEntries = $derived<LegendEntry[]>(
     view === 'tf'
@@ -363,8 +383,19 @@
       : $legendEntries,
   );
 
-  /** A store wrapper so `Legend` can take the TF entries as an override. */
-  const tfLegend = $derived(view === 'tf' ? readable(viewEntries) : undefined);
+  /**
+   * A store wrapper so `Legend` can take the TF entries as an override.
+   * Built from the OFF-INCLUSIVE `legendRows` (not `viewEntries`) so an
+   * off TF line stays listed struck-through and can be cycled back on —
+   * same round-2 fix the non-TF legend got. The transform still drops
+   * the input channel (it has no TF line, off or on) and preserves each
+   * row's tri-state through the spread.
+   */
+  const tfLegend = $derived(
+    view === 'tf'
+      ? readable(tfTransformEntries($legendRows, tfChInFor, $channelLabel))
+      : undefined,
+  );
 
   /**
    * Visible (on/fade) lines fed to the plot model, derived from the SAME
@@ -529,14 +560,17 @@
       <NarrowRail {selection} {channelSeries} />
     {:else}
       <aside class="tray" data-testid="tray">
-        <Tray {selection} channelData={channelSeries} />
+        <div class="tray-scroll">
+          <Tray {selection} channelData={channelSeries} />
+        </div>
+        <MiniMonitor {monitor} />
       </aside>
     {/if}
 
     <section class="plot" aria-label="plot">
       {#if $activeStage === 'live'}
         <div class="plot-host">
-          <OscCanvas {monitor} />
+          <LiveScope {monitor} />
         </div>
       {:else if !hasData}
         <div class="empty-state">
@@ -591,9 +625,17 @@
     flex: 0 0 300px;
     width: 300px;
     display: flex;
+    flex-direction: column;
     min-height: 0;
     background: var(--surface);
     border-right: 1px solid var(--border);
+  }
+  /* The tray body scrolls; the MiniMonitor is pinned to the tray foot
+     (flex:0 0 auto) so it stays visible on every stage. */
+  .tray-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
   }
   .plot {
     flex: 1;
