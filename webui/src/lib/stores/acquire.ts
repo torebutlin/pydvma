@@ -30,6 +30,21 @@ export interface AcquireSettings {
   sampleRate: number;
   channelCount: number;
   durationS: number;
+  /**
+   * getUserMedia DSP constraints — see source.ts `buildAudioConstraints`.
+   * All default OFF: the browser enables them for voice, but each
+   * corrupts a measurement signal, so pydvma opts out unless the user
+   * turns one on in Setup's "full" panel.
+   */
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+}
+
+/** Best-effort capabilities of the granted input device (from getCapabilities). */
+export interface DeviceCaps {
+  maxChannels?: number;
+  sampleRate?: number;
 }
 
 export type AcquireStore = ReturnType<typeof createAcquireStore>;
@@ -41,6 +56,9 @@ const DEFAULT_SETTINGS: AcquireSettings = {
   sampleRate: 44100,
   channelCount: 1,
   durationS: 2.0,
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
 };
 
 // ---- store factory ----
@@ -52,6 +70,8 @@ export function createAcquireStore() {
   const statusText = writable<string>('');
   const errorMsg = writable<string>('');
   const elapsed = writable<number>(0);
+  /** Capabilities of the granted device (populated after permission). */
+  const deviceCaps = writable<DeviceCaps | null>(null);
 
   let handle: RecordingHandle | null = null;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
@@ -73,6 +93,37 @@ export function createAcquireStore() {
     } catch {
       // Silently degrade — devices stay empty, tabs stay disabled.
     }
+  }
+
+  /**
+   * Explicitly request microphone permission so device labels + real
+   * capabilities become available WITHOUT starting a recording.  Opens a
+   * throwaway stream (which triggers the browser's permission prompt),
+   * reads the granted track's capabilities/settings for the Setup "full"
+   * panel's device details, stops the stream, then re-enumerates so the
+   * dropdown shows real device names.  Called from Setup's "Allow
+   * microphone access" hint — never on app load.
+   */
+  async function requestPermission(): Promise<void> {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      try {
+        const track = stream.getAudioTracks()[0];
+        const caps = track?.getCapabilities?.();
+        const set = track?.getSettings?.();
+        deviceCaps.set({
+          maxChannels: caps?.channelCount?.max,
+          sampleRate: set?.sampleRate ?? caps?.sampleRate?.max,
+        });
+      } catch {
+        // getCapabilities/getSettings are optional — details just stay hidden.
+      }
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {
+      // Permission denied or no device — labels stay hidden, hint remains.
+    }
+    await refreshDevices();
   }
 
   /**
@@ -100,6 +151,9 @@ export function createAcquireStore() {
       sampleRate: cfg.sampleRate,
       channelCount: cfg.channelCount,
       durationS: cfg.durationS,
+      echoCancellation: cfg.echoCancellation,
+      noiseSuppression: cfg.noiseSuppression,
+      autoGainControl: cfg.autoGainControl,
     };
 
     handle = startRecording(rcfg);
@@ -151,8 +205,10 @@ export function createAcquireStore() {
     statusText,
     errorMsg,
     elapsed,
+    deviceCaps,
     init,
     refreshDevices,
+    requestPermission,
     record,
     cancel,
     patch,

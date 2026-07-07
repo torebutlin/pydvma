@@ -52,6 +52,24 @@ test('default settings are sensible', () => {
   expect(s.channelCount).toBe(1);
   expect(s.durationS).toBe(2.0);
   expect(s.deviceId).toBe('');
+  // DSP constraints default OFF (raw measurement — browsers default them on).
+  expect(s.echoCancellation).toBe(false);
+  expect(s.noiseSuppression).toBe(false);
+  expect(s.autoGainControl).toBe(false);
+});
+
+test('requestPermission opens a throwaway stream then re-enumerates', async () => {
+  const track = { stop: vi.fn(), getCapabilities: () => ({ channelCount: { max: 2 } }), getSettings: () => ({ sampleRate: 48000 }) };
+  const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
+  (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockResolvedValue(stream);
+
+  const store = createAcquireStore();
+  await store.requestPermission();
+
+  expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled();
+  expect(track.stop).toHaveBeenCalled();                 // throwaway stream released
+  expect(get(store.deviceCaps)).toEqual({ maxChannels: 2, sampleRate: 48000 });
+  expect(get(store.devices)).toHaveLength(1);            // re-enumerated
 });
 
 test('status starts idle', () => {

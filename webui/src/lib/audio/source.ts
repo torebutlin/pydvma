@@ -27,8 +27,10 @@
 /** A discovered audio input device. */
 export interface AudioInputDevice {
   deviceId: string;
-  label: string;        // human-readable; '' until permission granted
+  label: string;        // human-readable; a synthetic fallback until permission granted
   groupId: string;
+  /** True when the browser gave a REAL label (i.e. mic permission granted). */
+  hasLabel: boolean;
 }
 
 /** Configuration for a recording session. */
@@ -37,6 +39,40 @@ export interface RecordConfig {
   sampleRate: number;   // requested; actual may differ
   channelCount: number; // requested; actual may differ
   durationS: number;    // seconds to record
+  /**
+   * getUserMedia processing constraints.  ALL DEFAULT TO `false` — see
+   * {@link buildAudioConstraints}.  The browser turns these ON by
+   * default (they are tuned for voice chat), but each one non-linearly
+   * distorts a measurement signal: `echoCancellation` subtracts a filtered
+   * copy of the output, `noiseSuppression` gates/spectrally-subtracts, and
+   * `autoGainControl` applies a slow time-varying gain.  For vibration /
+   * acoustics measurement they must be off, so pydvma opts out unless the
+   * user explicitly re-enables one.
+   */
+  echoCancellation?: boolean;
+  noiseSuppression?: boolean;
+  autoGainControl?: boolean;
+}
+
+/**
+ * Build the getUserMedia audio track constraints from a config.
+ *
+ * The three DSP flags default to `false`: browsers enable
+ * echoCancellation / noiseSuppression / autoGainControl by default for
+ * voice use, but every one of them corrupts a measurement signal
+ * (echo-cancellation subtracts a copy of the output, noise-suppression
+ * spectrally gates, auto-gain applies a time-varying gain).  We opt out
+ * unless the caller passes `true`.
+ */
+function buildAudioConstraints(cfg: Omit<RecordConfig, 'durationS'>): MediaTrackConstraints {
+  return {
+    ...(cfg.deviceId ? { deviceId: { exact: cfg.deviceId } } : {}),
+    channelCount: { ideal: cfg.channelCount },
+    sampleRate: { ideal: cfg.sampleRate },
+    echoCancellation: cfg.echoCancellation ?? false,
+    noiseSuppression: cfg.noiseSuppression ?? false,
+    autoGainControl: cfg.autoGainControl ?? false,
+  };
 }
 
 /** Result of a completed recording. */
@@ -105,7 +141,12 @@ export async function enumerateInputDevices(): Promise<AudioInputDevice[]> {
   const all = await navigator.mediaDevices.enumerateDevices();
   return all
     .filter((d) => d.kind === 'audioinput')
-    .map((d) => ({ deviceId: d.deviceId, label: d.label || `Input ${d.deviceId.slice(0, 6)}`, groupId: d.groupId }));
+    .map((d) => ({
+      deviceId: d.deviceId,
+      label: d.label || `Input ${d.deviceId.slice(0, 6) || 'default'}`,
+      groupId: d.groupId,
+      hasLabel: !!d.label,
+    }));
 }
 
 // ---- recording ----
@@ -128,16 +169,7 @@ export function startRecording(cfg: RecordConfig): RecordingHandle {
 
   const promise = (async (): Promise<Recording> => {
     // 1. Open the microphone stream.
-    const constraints: MediaStreamConstraints = {
-      audio: {
-        ...(cfg.deviceId ? { deviceId: { exact: cfg.deviceId } } : {}),
-        channelCount: { ideal: cfg.channelCount },
-        sampleRate: { ideal: cfg.sampleRate },
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-    };
+    const constraints: MediaStreamConstraints = { audio: buildAudioConstraints(cfg) };
 
     let stream: MediaStream;
     try {
@@ -264,16 +296,7 @@ export async function startMonitor(
 ): Promise<MonitorHandle> {
   const BUFFER_SIZE = 2048; // smaller than recording for lower latency
 
-  const constraints: MediaStreamConstraints = {
-    audio: {
-      ...(cfg.deviceId ? { deviceId: { exact: cfg.deviceId } } : {}),
-      channelCount: { ideal: cfg.channelCount },
-      sampleRate: { ideal: cfg.sampleRate },
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-    },
-  };
+  const constraints: MediaStreamConstraints = { audio: buildAudioConstraints(cfg) };
 
   let stream: MediaStream;
   try {

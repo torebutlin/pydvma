@@ -107,6 +107,35 @@ test('startMonitor.stop releases stream and audio context', async () => {
   expect(ondata).not.toHaveBeenCalled();
 });
 
+test('startMonitor requests raw-measurement constraints by default (echo/noise/agc OFF)', async () => {
+  const gum = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>;
+  const handle = await startMonitor({ sampleRate: 44100, channelCount: 1 }, vi.fn());
+  expect(gum).toHaveBeenCalledWith(expect.objectContaining({
+    audio: expect.objectContaining({
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    }),
+  }));
+  handle.stop();
+});
+
+test('startMonitor forwards explicit DSP constraint overrides to getUserMedia', async () => {
+  const gum = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>;
+  const handle = await startMonitor(
+    { sampleRate: 44100, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    vi.fn(),
+  );
+  expect(gum).toHaveBeenCalledWith(expect.objectContaining({
+    audio: expect.objectContaining({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    }),
+  }));
+  handle.stop();
+});
+
 test('startMonitor rejects on permission denied', async () => {
   const err = new DOMException('Permission denied', 'NotAllowedError');
   (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockRejectedValue(err);
