@@ -30,13 +30,16 @@ def log_data(settings, test_name=None, rec=None, output=None):
       and synchronized against ``stored_time`` via WaitUntilTaskDone).
     * **Pretrigger armed** (``pretrig_samples`` set): waits up to
       ``settings.pretrig_timeout`` seconds for the monitored channel
-      to cross ``settings.pretrig_threshold``. On trigger, returns a
-      window of ``stored_time * fs`` samples straddling the trigger
-      sample so that ``pretrig_samples`` of pre-trigger data appears
-      at the start of the returned buffer. **On timeout with no
-      trigger** the function does not raise — it falls back to
-      returning the tail of the buffer (same as the no-pretrigger
-      path) with ``trigger_detected = False``.
+      to cross ``settings.pretrig_threshold``. When an ``output``
+      stimulus is supplied the timeout clock starts once the stimulus
+      is actually playing (the ~1 s settle sleep and AO task setup are
+      not counted against it). On trigger, returns a window of
+      ``stored_time * fs`` samples straddling the trigger sample so
+      that ``pretrig_samples`` of pre-trigger data appears at the
+      start of the returned buffer. **On timeout with no trigger** the
+      function does not raise — it falls back to returning the tail of
+      the buffer (same as the no-pretrigger path) with
+      ``trigger_detected = False``.
 
     Parameters
     ----------
@@ -175,6 +178,12 @@ def log_data(settings, test_name=None, rec=None, output=None):
                 s = output_signal(settings,output)
                 # rec.write(output.astype('float32'))
                 start_output_flag = False
+                # Restart the timeout clock now the stimulus is actually
+                # playing: the settle sleep above plus AO task setup can
+                # cost 1 s+ (more on a loaded machine), and counting that
+                # against pretrig_timeout made short timeouts expire
+                # before the trigger had a fair chance to fire.
+                t0 = time.time()
 
             time.sleep(0.2)
         if (time.time()-t0 > settings.pretrig_timeout):
@@ -195,8 +204,17 @@ def log_data(settings, test_name=None, rec=None, output=None):
             start_index = detected_sample - settings.pretrig_samples
             end_index   = start_index + number_samples
             stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
-        streams.REC.trigger_detected = False # don't start stream again until sorted out trigger detection
-        
+        # Zero the stored buffer BEFORE unfreezing: the captured signal
+        # is still sitting in it, and once appends resume it re-rolls
+        # through the trigger-check window and spuriously re-arms
+        # `trigger_detected` between captures (observed live: the serve
+        # bridge's trigger poller then reports "triggered" on the next
+        # armed capture before log_data has re-zeroed anything). While
+        # `trigger_detected` is still True the callback is frozen, so
+        # this zeroing cannot race an append.
+        streams.REC.stored_time_data[:] = 0.0
+        streams.REC.trigger_detected = False
+
         MESSAGE = 'Logging complete.\n'
         print(MESSAGE)
 

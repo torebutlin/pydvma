@@ -177,6 +177,21 @@ class TestLogDataPretrigger:
         with pytest.raises(ValueError, match='pretrig_samples'):
             dvma.log_data(s)
 
+    def test_pretrigger_leaves_no_stale_trigger_state(self):
+        """After a pretriggered capture completes, the stored buffer
+        must be zeroed and trigger_detected cleared — otherwise the
+        captured signal re-rolls through the trigger-check window and
+        spuriously re-arms between captures (observed live through the
+        serve bridge on real NI hardware: the next armed capture
+        reported "triggered" before any stimulus played)."""
+        import numpy as np
+        s = _mock_settings(channels=1, fs=10000, stored_time=0.1,
+                           chunk_size=1000, pretrig_samples=200,
+                           pretrig_threshold=99.0, pretrig_timeout=0.2)
+        dvma.log_data(s)
+        assert streams.REC.trigger_detected is False
+        assert np.all(streams.REC.stored_time_data == 0.0)
+
 
 class TestOutputAndSignalGenerator:
 
