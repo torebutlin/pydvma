@@ -74,5 +74,20 @@ test.describe('@engine', () => {
     // ch_2 was left unnamed, so it still reads its default numerator over
     // the renamed input: "ch_2/hammer".
     expect(flat2.some((l) => l.endsWith('ch_2/hammer'))).toBe(true);
+
+    // Round-2 legend fix applies to the TF override too: cycling a line
+    // to OFF (two clicks: on → fade → off) keeps its row listed struck-
+    // through (.off) instead of dropping it, and one more click cycles it
+    // back on. The plot line count drops and recovers with it (coherence
+    // is on: 2 mag + 2 coh lines; one output off removes its pair).
+    const offRow = page.getByTestId('legend-entry').first();
+    await offRow.click();
+    await offRow.click();
+    await expect(page.getByTestId('legend-entry')).toHaveCount(2);
+    await expect(offRow).toHaveClass(/off/);
+    await expect(page.getByTestId('plot-line')).toHaveCount(2);
+    await offRow.click();
+    await expect(offRow).not.toHaveClass(/off/);
+    await expect(page.getByTestId('plot-line')).toHaveCount(4);
   });
 });

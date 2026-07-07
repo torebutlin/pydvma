@@ -8,7 +8,14 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: 'e2e',
-  use: { baseURL: 'http://localhost:4173' },
+  use: {
+    baseURL: 'http://localhost:4173',
+    // Fake mic so the Live monitor's getUserMedia resolves headlessly with a
+    // built-in sine source (used by live.spec.ts); harmless for other specs.
+    launchOptions: {
+      args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+    },
+  },
   webServer: {
     command: 'npm run build && npm run preview',
     port: 4173,
