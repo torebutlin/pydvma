@@ -50,19 +50,38 @@ checkpoints; goal = fully replaced GUI** (Qt stays until his final
 confirmation) with full NI-DAQ + the three modes —
 `dev/plans/2026-07-07-full-gui-replacement-plan.md` is the roadmap.
 
-**START THE NEXT SESSION HERE:** execute the replacement plan. Wave A
-(Fit stage / calibration / Figures-export) has a ready brief:
-`dev/plans/2026-07-07-waveA-fit-cal-export-brief.md`. Then Wave B
-(`pydvma serve` websocket bridge + BridgeSource + launch-config) and
-Wave C (NI-DAQ over the bridge — Mac = mocks only; Windows session
-verifies). Known not-done small items: narrow-mode mini strip,
-AudioWorklet migration, browser pretrigger/output-stimulus, minors
-M1/M2, Fit-N semantics + unit-string authoring queued for Tore. Run:
-`cd webui && npm run dev`, open `http://localhost:5173/?fixture=1`
-(or `?fixture=3ch`). Feedback trail: round 3
-`dev/2026-07-07-round3-feedback.md`; round 2
-`dev/2026-07-05-acquisition-hands-on-feedback.md`; round 1
-`dev/2026-07-05-hands-on-feedback.md`.
+**Waves A + B LANDED (2026-07-07, checkpoint 2):** the webui now has
+the **modal Fit stage** (Fit 1/2/3 via peak-split, Reject,
+Reconstruction overlays, fn/ζ/Q chip, gated until a TF exists),
+**sonogram damping fit**, **per-channel calibration** (mockup dialog;
+stores real `channel_cal_factors` + `units` manifest fields;
+display-time scaling incl. TF ratio), **browser MATLAB/CSV export**
+(file.py schema parity) + figure font fidelity, AND the full
+**`pydvma serve` bridge**: `pydvma/serve.py` (websockets, protocol
+v1, mock/soundcard/nidaq drivers, serves webui/dist + /config) with
+the webui `SourceProvider` seam + `BridgeProvider`
+(`window.__pydvma_bridge` / `?bridge=` / `/config` probe), Setup
+showing bridge devices + an NI group when the bridge reports nidaq.
+Bridge e2e (BRIDGE_E2E=1) passes against a real mock-driver server.
+Suites: pytest 225, vitest 396, svelte-check 0/0, Playwright 46.
+
+**START THE NEXT SESSION HERE:** (1) **Tore hands-on round 4** — new
+surface: Fit, calibration, exports, Live scope PSD mode, Setup full,
+and `pydvma-serve` (try `pydvma-serve --driver soundcard --open` for
+the real-hardware loop; requires `pip install -e .[serve,soundcard]`).
+Queued decisions for him: Fit-N semantics/Global optimise, CSV
+all-kinds vs current-view, unit-string display (axis labels don't yet
+read `units`), bridged-set metadata (recordingToItem drops container
+meta/labels — follow-up). (2) **Wave C** — NI depth over the bridge:
+fs ladders/capabilities per device, AO/output-stimulus + pretrigger
+UI on Acquire (serve already accepts the MySettings kwargs), VmaxNI
+scaling, and `dev/plans/…windows-checklist` for the hardware session
+(NI-DAQmx does NOT run on Mac — mocks only here). (3) Wave-D polish
+backlog: narrow-rail mini, AudioWorklet, dark theme, wheel-embedding
+webui/dist (pyproject TODO), M1/M2. Roadmap:
+`dev/plans/2026-07-07-full-gui-replacement-plan.md`. Run: `cd webui
+&& npm run dev`, `http://localhost:5173/?fixture=1` (or `?fixture=3ch`);
+feedback trail: `dev/2026-07-07-round3-feedback.md` and earlier.
 
 Auto-loaded by Claude Code at the start of every session. Contributors
 and collaborators: the concrete filesystem paths below are for the
