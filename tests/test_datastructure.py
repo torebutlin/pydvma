@@ -120,6 +120,35 @@ class TestModalDataModeBookkeeping:
         datastructure.ModalData(settings=settings)
         assert settings.channels == 5  # was being zeroed in place
 
+    def test_delete_last_mode_empties_model_without_raising(self):
+        """Round-4 bug 2: deleting the LAST remaining mode used to raise
+        IndexError inside modal.unpack_matrix (X[0, :] on a (0, 6) matrix),
+        crashing both the webui Reject and Qt's Reject. The model must end
+        up valid and empty."""
+        n_tfs = 2
+        m = datastructure.ModalData(_make_modal_row(100.0, 0.01, n_tfs))
+        m.add_mode(_make_modal_row(200.0, 0.02, n_tfs))
+
+        m.delete_mode(0)          # down to one mode — always worked
+        m.delete_mode(0)          # delete the LAST mode — used to raise
+
+        assert m.M.shape[0] == 0
+        assert m.channels == n_tfs          # channel count preserved
+        assert m.fn.size == 0 and m.zn.size == 0
+        assert np.shape(m.an) == (0, n_tfs)
+        assert np.shape(m.pn) == (0, n_tfs)
+
+    def test_delete_all_modes_at_once_empties_model(self):
+        """Deleting every row in a single call (the glue reject path) must
+        also leave a valid empty model rather than raising."""
+        n_tfs = 3
+        m = datastructure.ModalData(_make_modal_row(100.0, 0.01, n_tfs))
+        m.add_mode(_make_modal_row(200.0, 0.02, n_tfs))
+        m.delete_mode([0, 1])
+        assert m.M.shape[0] == 0
+        assert m.fn.size == 0
+        assert m.channels == n_tfs
+
 
 # ---------- DataSet.calculate_cross_spectrum_matrix_set ----------
 

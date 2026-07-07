@@ -319,8 +319,20 @@ def unpack(x):
     return fn,zn,an,pn,rk,rm
 
 def unpack_matrix(X):
-    # unpacks modal parameters into set of variables
-    N_tfs = int((len(X[0,:])-2)/4)
+    '''
+    Unpack a stacked modal matrix ``X`` (one packed mode per row,
+    ``[fn, zn, an*N, pn*N, rk*N, rm*N]``) into per-parameter arrays.
+
+    Robust to an EMPTY model: a ``(0, 2+4*N)`` matrix (every mode deleted)
+    returns zero-length ``fn``/``zn`` and ``(0, N)`` ``an``/``pn``/``rk``/``rm``
+    instead of raising. The channel count is read from the column count
+    (``X.shape[1]``), NOT by indexing row 0 — indexing ``X[0, :]`` on an
+    emptied ``(0, 6)`` matrix is exactly what crashed
+    ``ModalData.delete_mode`` when the last mode was removed (the round-4
+    "Fit -> Reject" IndexError, also on Qt's Reject path).
+    '''
+    X = np.atleast_2d(X)
+    N_tfs = int((X.shape[1]-2)/4)
 
     fn = X[:,0]
     zn = X[:,1]
@@ -377,3 +389,150 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc'):
     tf_data = datastructure.TfData(f,G,None,settings,units=modal_data.units,channel_cal_factors=None,id_link=modal_data.id_link,test_name=modal_data.test_name)
     tf_data.flag_modal_TF = True
     return tf_data
+
+
+#%% SIMULTANEOUS MULTI-MODE REFINEMENT
+def _f_residual_refine(x_flat, n_modes, row_len, f, G0, measurement_type):
+    '''
+    Least-squares residual for simultaneous multi-mode refinement.
+
+    ``x_flat`` is the ``n_modes`` packed mode rows (each of length
+    ``row_len = 2 + 4*N_tfs``) concatenated row-major (i.e. ``M.ravel()``).
+    The model TF is the SUM over modes of ``f_TF_all_channels`` — each mode's
+    modal contribution PLUS its per-channel local residual terms (rk, rm) —
+    matching ``reconstruct_transfer_function``. Returns the real-then-imag
+    flattened error ``model - G0`` (length ``2*len(f)*N_tfs``).
+    '''
+    rows = x_flat.reshape(n_modes, row_len)
+    G = np.zeros_like(G0)
+    for r in range(n_modes):
+        G = G + f_TF_all_channels(rows[r], f, measurement_type)
+    e = G - G0
+    e = np.concatenate((np.real(e), np.imag(e)))
+    return e.reshape(np.size(e))
+
+
+def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='acc'):
+    '''
+    Simultaneously refine ALL modes in ``modal_data`` against the measured
+    transfer functions, seeded from the current fit.
+
+    Individual modes are typically fitted in isolation or in small peak-split
+    groups (``modal_fit_all_channels`` / the webui Fit 1/2/3 flow), so
+    neighbouring modes' skirts bias each other. This runs a single
+    ``scipy.optimize.least_squares`` over the WHOLE packed parameter set
+    (every mode's ``[fn, zn, an*N, pn*N, rk*N, rm*N]`` row, seeded from
+    ``modal_data.M``), letting all modes move together against the summed
+    reconstruction model (``_f_residual_refine``).
+
+    Like ``modal_fit_all_channels``, the measured TFs are scaled by their
+    ``channel_cal_factors`` when building the target ``G0``, so the seed
+    ``modal_data.M`` (produced by that fitter) and the refined result live in
+    the SAME cal-scaled parameter space and remain directly comparable.
+
+    ``freq_range`` (``[lo, hi]`` Hz) defaults to the span of the fitted natural
+    frequencies padded so each peak's half-power skirts are included
+    (``max(0.25*span, 5*max(fn*zn), 5% of the top fn)``), clamped to the
+    measured axis. Narrowing to the modes' band converges more reliably than
+    the full axis (out-of-band data the N-mode model cannot represent would
+    otherwise dominate the cost).
+
+    Convergence / non-convergence is REPORTED, never enforced here. Returns
+    ``(ModalData, info)`` where ``info`` is
+    ``{'converged': bool, 'cost_before': float, 'cost_after': float}``.
+    ``converged`` is ``least_squares`` success AND the refined cost not worse
+    than the seed cost (both are ``0.5*sum(residual**2)`` of the same
+    residual, so directly comparable). Per the contract, the refined
+    ModalData and info are returned EVEN WHEN the fit did not improve or did
+    not converge — the CALLER decides whether to keep or revert (the webui
+    auto-reverts to the pre-refine model on ``converged == False``). On a
+    pathological ``least_squares`` failure the seed model is returned unchanged
+    with ``converged == False``.
+
+    Mac-runnable, no hardware. Mirrors ``modal_fit_all_channels`` for
+    ``settings`` / ``id_link`` / ``test_name`` provenance.
+    '''
+    if modal_data is None or np.size(np.atleast_2d(modal_data.M)) == 0:
+        raise ValueError('modal_refine needs a ModalData with at least one mode.')
+
+    M = np.atleast_2d(modal_data.M).astype(np.float64)
+    n_modes, row_len = M.shape
+    N_tfs = int((row_len - 2) / 4)
+
+    f_axis = np.asarray(tf_data_list[0].freq_axis, dtype=np.float64)
+
+    # default window: the modes' band, padded by the widest half-power skirt
+    if freq_range is None:
+        fn_fit = M[:, 0]
+        zn_fit = M[:, 1]
+        lo_fn, hi_fn = float(np.min(fn_fit)), float(np.max(fn_fit))
+        span = hi_fn - lo_fn
+        bw = float(np.max(fn_fit * np.clip(zn_fit, 0.0, None))) if fn_fit.size else 0.0
+        pad = max(0.25 * span, 5.0 * bw, 0.05 * max(hi_fn, 1.0))
+        freq_range = [lo_fn - pad, hi_fn + pad]
+    freq_range = [max(float(f_axis[0]), float(freq_range[0])),
+                  min(float(f_axis[-1]), float(freq_range[1]))]
+
+    sel = np.where((f_axis > freq_range[0]) & (f_axis < freq_range[1]))[0]
+    if sel.size < max(4, row_len):
+        # too narrow to constrain the parameters — refine over the full axis
+        sel = np.arange(f_axis.size)
+    f = f_axis[sel]
+
+    # compile the measured TFs (cal-scaled) into G0, as modal_fit_all_channels does
+    cols = []
+    for tf_data in tf_data_list:
+        if getattr(tf_data, 'flag_modal_TF', False):
+            continue
+        for n_chan in range(tf_data.tf_data.shape[1]):
+            cols.append(tf_data.tf_data[sel, n_chan] * tf_data.channel_cal_factors[n_chan])
+    if len(cols) == 0:
+        raise ValueError('modal_refine needs at least one measured (non-reconstruction) TF.')
+    if len(cols) != N_tfs:
+        raise ValueError(
+            'modal_refine: measured TF channel count ({}) does not match the '
+            'modal model channel count ({}).'.format(len(cols), N_tfs))
+    G0 = np.array(cols, dtype=complex).T  # (len(f), N_tfs)
+
+    # seed + bounds (mirrors modal_fit_all_channels, tiled across modes)
+    x0 = M.ravel().astype(np.float64)
+    lo_row = np.concatenate(([f_axis[0]], [0.0],
+                             np.full(N_tfs, -np.inf), np.full(N_tfs, -np.pi/2),
+                             np.zeros(N_tfs), np.zeros(N_tfs)))
+    hi_row = np.concatenate(([f_axis[-1]], [1.0],
+                             np.full(N_tfs, np.inf), np.full(N_tfs, np.pi/2),
+                             np.full(N_tfs, np.inf), np.full(N_tfs, np.inf)))
+    lower = np.tile(lo_row, n_modes)
+    upper = np.tile(hi_row, n_modes)
+    x0 = np.clip(x0, lower, upper)
+
+    args = (n_modes, row_len, f, G0, measurement_type)
+    cost_before = 0.5 * float(np.sum(_f_residual_refine(x0, *args) ** 2))
+
+    try:
+        r = optimize.least_squares(_f_residual_refine, x0, bounds=(lower, upper),
+                                   max_nfev=2000, args=args)
+        x_ref = r.x
+        cost_after = float(r.cost)
+        success = bool(r.success)
+    except Exception:
+        # pathological input — hand back the seed unchanged, flagged not converged
+        x_ref = x0
+        cost_after = cost_before
+        success = False
+
+    converged = bool(success and np.isfinite(cost_after)
+                     and cost_after <= cost_before * (1.0 + 1e-9))
+
+    settings = tf_data_list[0].settings
+    test_name = tf_data_list[0].test_name
+    id_link = [tf.id_link for tf in tf_data_list
+               if not getattr(tf, 'flag_modal_TF', False)]
+    m_ref = datastructure.ModalData(settings=settings, id_link=id_link, test_name=test_name)
+    for row in x_ref.reshape(n_modes, row_len):
+        m_ref.add_mode(row)
+
+    info = {'converged': converged,
+            'cost_before': float(cost_before),
+            'cost_after': float(cost_after)}
+    return m_ref, info

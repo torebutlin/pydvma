@@ -142,3 +142,104 @@ class TestModalFitRoundTrip:
         assert an[0] > 0
         assert abs(pn[0]) < np.deg2rad(15)
         assert m.channels == 1
+
+
+# ---------- simultaneous multi-mode refinement (modal_refine) ----------
+
+def _modal_row(fn, zn, an, pn=0.0, rk=0.0, rm=0.0, n_tfs=1):
+    """Pack one mode in the modal.py 'x' layout: [fn, zn, an×N, pn×N, rk×N, rm×N]."""
+    return np.concatenate((
+        [fn], [zn],
+        np.full(n_tfs, an), np.full(n_tfs, pn),
+        np.full(n_tfs, rk), np.full(n_tfs, rm),
+    ))
+
+
+def _measured_tf_from_modes(rows, f, fs=1000, measurement_type='acc'):
+    """Build a MEASURED TfData (flag_modal_TF=False) as the exact modal sum of
+    `rows` over axis `f`, so a fit seeded near the truth can drive cost→0."""
+    n_tfs = int((len(rows[0]) - 2) / 4)
+    truth = datastructure.ModalData(rows[0], settings=options.MySettings(fs=fs, channels=n_tfs))
+    for r in rows[1:]:
+        truth.add_mode(r)
+    recon = modal.reconstruct_transfer_function(truth, f, measurement_type)
+    settings = options.MySettings(fs=fs, channels=n_tfs)
+    return datastructure.TfData(f, recon.tf_data, None, settings), truth
+
+
+class TestModalRefine:
+
+    def test_refine_improves_cost_for_interacting_modes(self):
+        """Two nearby modes whose skirts interact: a seed perturbed off the
+        truth (as isolated/pair fits would be) must be pulled back so the
+        simultaneous refinement reduces cost and reports convergence."""
+        f = np.linspace(20.0, 260.0, 600)
+        true_rows = [_modal_row(100.0, 0.020, 1.0e5),
+                     _modal_row(140.0, 0.030, 0.8e5)]
+        tf_meas, truth = _measured_tf_from_modes(true_rows, f)
+
+        # seed: fn/zn deliberately off (the neighbours biased the isolated fits)
+        seed = datastructure.ModalData(
+            _modal_row(95.0, 0.032, 1.0e5),
+            settings=options.MySettings(fs=1000, channels=1))
+        seed.add_mode(_modal_row(146.0, 0.021, 0.8e5))
+
+        refined, info = modal.modal_refine(
+            seed, datastructure.TfDataList([tf_meas]), measurement_type='acc')
+
+        assert info['converged'] is True
+        assert info['cost_after'] < info['cost_before']
+        # refined natural frequencies land much closer to the truth
+        fn_ref = np.sort(refined.fn)
+        assert abs(fn_ref[0] - 100.0) < 1.0
+        assert abs(fn_ref[1] - 140.0) < 1.0
+        assert refined.channels == 1
+        assert refined.M.shape[0] == 2
+
+    def test_refine_three_modes_multichannel(self):
+        """Three modes across two channels: refinement keeps the channel
+        geometry and returns a same-shaped model."""
+        f = np.linspace(20.0, 400.0, 800)
+        n_tfs = 2
+        true_rows = [_modal_row(80.0, 0.02, 1.0e5, n_tfs=n_tfs),
+                     _modal_row(160.0, 0.025, 0.7e5, n_tfs=n_tfs),
+                     _modal_row(300.0, 0.03, 0.5e5, n_tfs=n_tfs)]
+        tf_meas, truth = _measured_tf_from_modes(true_rows, f)
+
+        seed = datastructure.ModalData(
+            _modal_row(84.0, 0.03, 1.0e5, n_tfs=n_tfs),
+            settings=options.MySettings(fs=1000, channels=n_tfs))
+        seed.add_mode(_modal_row(155.0, 0.018, 0.7e5, n_tfs=n_tfs))
+        seed.add_mode(_modal_row(305.0, 0.04, 0.5e5, n_tfs=n_tfs))
+
+        refined, info = modal.modal_refine(
+            seed, datastructure.TfDataList([tf_meas]))
+
+        assert info['cost_after'] <= info['cost_before']
+        assert refined.channels == n_tfs
+        assert refined.M.shape == (3, 2 + 4 * n_tfs)
+
+    def test_refine_reports_non_convergence_without_raising(self):
+        """Pathological input (a non-finite sample in the measured TF) must be
+        REPORTED (converged=False) — never raised — and still hand back a
+        valid ModalData so the caller can revert."""
+        f = np.linspace(20.0, 260.0, 400)
+        true_rows = [_modal_row(100.0, 0.02, 1.0e5),
+                     _modal_row(160.0, 0.03, 0.8e5)]
+        tf_meas, truth = _measured_tf_from_modes(true_rows, f)
+        tf_meas.tf_data[10, 0] = np.nan     # least_squares can't start here
+
+        refined, info = modal.modal_refine(
+            truth, datastructure.TfDataList([tf_meas]))
+
+        assert info['converged'] is False
+        assert refined.M.shape[0] == 2      # seed handed back, still valid
+        assert set(info) == {'converged', 'cost_before', 'cost_after'}
+
+    def test_refine_empty_model_raises(self):
+        """Refining a model with no modes is a programming error."""
+        f = np.linspace(20.0, 260.0, 200)
+        tf_meas, _ = _measured_tf_from_modes([_modal_row(100.0, 0.02, 1e5)], f)
+        empty = datastructure.ModalData(settings=options.MySettings(fs=1000, channels=1))
+        with pytest.raises(ValueError, match='at least one mode'):
+            modal.modal_refine(empty, datastructure.TfDataList([tf_meas]))

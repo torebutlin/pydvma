@@ -835,8 +835,16 @@ class ModalData():
 
     def delete_mode(self,mode_number):
         '''
-        Deletes one mode (row) from the modal matrix by index and
+        Deletes one or more modes (rows) from the modal matrix by index and
         refreshes the unpacked summary properties (fn, zn, an, pn).
+
+        Deleting the LAST remaining mode is valid: the matrix becomes an
+        empty ``(0, 2+4*channels)`` and the summaries become zero-length
+        (fn/zn) / ``(0, channels)`` (an/pn). This no longer raises the
+        IndexError that ``modal.unpack_matrix`` used to throw on an emptied
+        matrix (the round-4 "Fit -> Reject" crash, and the same latent crash
+        on Qt's Reject). ``channels`` is preserved — it is encoded in the
+        column count, not the number of mode rows.
         '''
         self.M = np.delete(self.M,mode_number,0)
         self.channels = int((self.M.shape[1] - 2) / 4)
