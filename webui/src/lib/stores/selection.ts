@@ -45,7 +45,10 @@ export type Selection = ReturnType<typeof createSelection>;
  * cross-set channel cycle, all/none/solo) mutate a copy of the Map so
  * subscribers see one atomic update. Sets with more than 4 channels
  * start collapsed in the UI; a set whose lines are all 'off' is flagged
- * `allOff` (rendered struck-through) and omitted from the legend.
+ * `allOff` (rendered struck-through). Off lines are dropped from
+ * `legendEntries` (the PLOT-facing list) but KEPT in `legendRows` (the
+ * LEGEND-facing list) so a line toggled off stays listed, struck-through,
+ * and can be cycled back on.
  */
 export function createSelection() {
   const sets = writable<SetRecord[]>([]);
@@ -303,6 +306,30 @@ export function createSelection() {
           const st = stateOf($states, set.id, c);
           if (st === 'off') continue;
           out.push({ setId: set.id, ch: c, state: st,
+            label: `${set.name} · ${labelOf($labels, set.id, c)}`,
+            color: set.colors[c] });
+        }
+      });
+      return out;
+    }),
+
+    /**
+     * Legend DISPLAY rows — like `legendEntries` but KEEPS every line,
+     * including 'off' ones (and lines of a fully-off set), each tagged with
+     * its current tri-state. This is what the plot Legend renders so an off
+     * line stays listed (struck-through, like the tray) and can be clicked
+     * back on — round-2 feedback: a line vanishing from the legend the
+     * moment it went off was a dead end (no way to re-enable it there).
+     *
+     * `legendEntries` remains the PLOT-facing list (off dropped) that the
+     * visible-line derivation consumes, so the two never disagree on what
+     * is DRAWN; `legendRows` only governs what the legend LISTS.
+     */
+    legendRows: derived([sets, states, labels], ([$sets, $states, $labels]) => {
+      const out: LegendEntry[] = [];
+      $sets.forEach(set => {
+        for (let c = 0; c < set.nChannels; c++) {
+          out.push({ setId: set.id, ch: c, state: stateOf($states, set.id, c),
             label: `${set.name} · ${labelOf($labels, set.id, c)}`,
             color: set.colors[c] });
         }

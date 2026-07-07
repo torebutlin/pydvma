@@ -6,14 +6,14 @@
    *
    * Wiring contract (documented design choice): like `ZoomToolbar`,
    * this takes the WHOLE `selection` and `viewState` store objects
-   * rather than narrow callbacks. It reads `selection.legendEntries`
-   * (a derived store that already omits off lines and fully-off sets),
-   * mirrors the data-tray's tri-state by calling `selection.cycleLine`,
-   * and persists placement via `viewState.setLegend(active, …)` while
-   * reading the current legend slice from `viewState.current`.
-   * Callbacks would just re-implement this surface, and the stores'
-   * identities are stable for the component's lifetime (created once
-   * at app startup).
+   * rather than narrow callbacks. It reads `selection.legendRows` (a
+   * derived store that lists EVERY line, off ones included, each tagged
+   * with its tri-state), mirrors the data-tray's tri-state by calling
+   * `selection.cycleLine`, and persists placement via
+   * `viewState.setLegend(active, …)` while reading the current legend
+   * slice from `viewState.current`. Callbacks would just re-implement
+   * this surface, and the stores' identities are stable for the
+   * component's lifetime (created once at app startup).
    *
    * Placement is FRACTIONAL (`legend.x` / `legend.y` in `[0, 1]`, spec
    * convention, see `lib/plot/legendPos`). The card anchors to the
@@ -23,9 +23,10 @@
    * `legend.visible === false`.
    *
    * Rows mirror the tray: a colour swatch + label per entry; a `fade`
-   * entry renders the whole row at 40% opacity. Clicking a row cycles
-   * that line (on → fade → off → on); the store update flows back
-   * through `legendEntries` and re-renders (off lines then drop out).
+   * entry renders the whole row at 40% opacity, an `off` entry is dimmed
+   * and struck-through (still listed, so it can be re-enabled). Clicking
+   * a row cycles that line (on → fade → off → on); the store update flows
+   * back through `legendRows` and re-renders in place.
    *
    * Free drag: pointer-drag the card → `clampLegend(newFractionalPos)`
    * → `setLegend(active, { …legend, x, y, preset: null })`. Dragging
@@ -47,18 +48,19 @@
     viewState: ViewState;
     /**
      * Optional view-aware entry list (Task R4). When present the legend
-     * renders THESE rows instead of the raw `selection.legendEntries` —
-     * the TF view passes its out/in-labelled, input-dropped entries so
-     * the legend matches exactly what the plot draws. Clicking a row
-     * still cycles the underlying (setId, ch) line, so the tri-state
-     * behaviour is unchanged. Omitted (undefined) → the raw legend.
+     * renders THESE rows instead of `selection.legendRows` — the TF view
+     * passes its out/in-labelled, input-dropped entries so the legend
+     * matches exactly what the plot draws. Clicking a row still cycles the
+     * underlying (setId, ch) line, so the tri-state behaviour is
+     * unchanged. Omitted (undefined) → the off-inclusive legend rows.
      */
     entriesOverride?: Readable<LegendEntry[]> | undefined;
   } = $props();
 
   // Derived (not destructured) so the component tracks reassigned props.
-  // An override store wins; otherwise the raw per-channel legend.
-  const entries = $derived(entriesOverride ?? selection.legendEntries);
+  // An override store wins; otherwise the off-inclusive per-channel rows
+  // (off lines stay listed, struck-through, so they can be re-enabled).
+  const entries = $derived(entriesOverride ?? selection.legendRows);
   const current = $derived(viewState.current);
 
   const legend = $derived($current.legend);
@@ -240,8 +242,9 @@
         type="button"
         class="row"
         class:fade={e.state === 'fade'}
+        class:off={e.state === 'off'}
         data-testid="legend-entry"
-        title="Click to cycle: on → fade → off"
+        title="Click to cycle: on → fade → off → on"
         onclick={() => { if (!justDragged) selection.cycleLine(e.setId, e.ch); }}
       >
         <span class="swatch" style:background={e.color}></span>
@@ -290,6 +293,18 @@
   }
   .row.fade {
     opacity: 0.4;
+  }
+  /* Off lines stay listed but read as "disabled": dimmed row, faded
+     swatch and a struck-through label (mirrors the tray's off style). */
+  .row.off {
+    opacity: 0.5;
+  }
+  .row.off .swatch {
+    opacity: 0.25;
+  }
+  .row.off .label {
+    text-decoration: line-through;
+    color: var(--muted, #6b7280);
   }
   .swatch {
     flex: 0 0 auto;

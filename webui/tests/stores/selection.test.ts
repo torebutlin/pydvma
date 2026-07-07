@@ -46,11 +46,35 @@ test('solo isolates one set; steppers move the solo', () => {
   expect(get(sel.state)(1, 0)).toBe('off');
 });
 
-test('allOff flags a fully-off set (legend omission + strikethrough)', () => {
+test('allOff: legendEntries (plot list) omits the off set; legendRows (legend UI) keeps it', () => {
   sel.cycleSet(0); sel.cycleSet(0);           // on -> fade -> off
   expect(get(sel.setsView)[0].allOff).toBe(true);
+  // Plot-facing list drops the off set (nothing to DRAW)...
   expect(get(sel.legendEntries).some(e => e.setId === 0)).toBe(false);
   expect(get(sel.legendEntries).some(e => e.setId === 1)).toBe(true);
+  // ...but the legend UI keeps every line so an off line can be re-enabled.
+  const rows0 = get(sel.legendRows).filter(e => e.setId === 0);
+  expect(rows0).toHaveLength(2);
+  expect(rows0.every(e => e.state === 'off')).toBe(true);
+});
+
+test('legendRows keeps an individually-off line (struck-through, re-enableable)', () => {
+  sel.cycleLine(0, 1); sel.cycleLine(0, 1);   // 0:1 on -> fade -> off
+  // Dropped from the plot list...
+  expect(get(sel.legendEntries).some(e => e.setId === 0 && e.ch === 1)).toBe(false);
+  // ...but still listed in the legend rows, carrying its 'off' state.
+  const row = get(sel.legendRows).find(e => e.setId === 0 && e.ch === 1);
+  expect(row?.state).toBe('off');
+  // The sibling on-line is present and 'on'.
+  expect(get(sel.legendRows).find(e => e.setId === 0 && e.ch === 0)?.state).toBe('on');
+});
+
+test('legendRows carries labels + colours like legendEntries', () => {
+  sel.rename(0, 'hammer test');
+  sel.renameChannel(0, 1, 'accel');
+  const row = get(sel.legendRows).find(e => e.setId === 0 && e.ch === 1);
+  expect(row?.label).toBe('hammer test · accel');
+  expect(row?.color).toBe(get(sel.legendEntries).find(e => e.setId === 0 && e.ch === 1)?.color);
 });
 
 test('rename propagates to legend labels', () => {

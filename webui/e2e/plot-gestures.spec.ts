@@ -236,14 +236,23 @@ test.describe('plot legend gestures', () => {
     // on → fade: the row goes to 40% opacity (via the .fade class).
     await row.click();
     await expect(row).toHaveClass(/fade/);
-    // fade → off: the row drops out of the legend AND a plot line disappears.
+    // fade → off: the row STAYS in the legend (struck-through, .off) so it
+    // can be re-enabled — but its plot line is removed (round-2 feedback:
+    // off lines must not vanish from the legend).
     await page.getByTestId('legend-entry').first().click();
+    await expect(page.getByTestId('legend-entry').first()).toHaveClass(/off/);
     await expect
       .poll(() => page.getByTestId('legend-entry').count())
-      .toBeLessThan(rowsBefore); // the off entry left the legend
+      .toBe(rowsBefore); // the off entry is still listed
     await expect
       .poll(() => page.getByTestId('plot-line').count())
-      .toBeLessThan(linesBefore); // and its plot line was removed
+      .toBeLessThan(linesBefore); // but its plot line was removed
+    // off → on: clicking the struck-through row brings the line back.
+    await page.getByTestId('legend-entry').first().click();
+    await expect(page.getByTestId('legend-entry').first()).not.toHaveClass(/off/);
+    await expect
+      .poll(() => page.getByTestId('plot-line').count())
+      .toBe(linesBefore); // line restored
   });
 
   test('a drag on a row does NOT cycle it', async ({ page }) => {
