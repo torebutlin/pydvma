@@ -1,6 +1,15 @@
 # Quick Start
 
-This guide will help you get started with pydvma quickly.
+This guide will help you get started with the **Python interface** to
+pydvma quickly — scripting acquisition and analysis in a notebook.
+
+!!! tip "Prefer a point-and-click interface?"
+    For interactive work, the **[web logger](../web-logger/index.md)** is
+    now the recommended interface — including a **no-install** browser app
+    at [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/).
+    The desktop **Qt Logger** shown below (`dvma.Logger(...)`) still works
+    but is **legacy** (bug-fixes only) — see
+    [From the Qt logger](../web-logger/migration.md).
 
 ## Opening the Template
 

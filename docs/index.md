@@ -26,51 +26,74 @@ At present the library has basic functionality for:
 - Interactive tools for standard acquisition and analysis
 - Oscilloscope view of input signals
 
-## Analyse data in your browser — no install
+## Two interfaces, one analysis core
 
-Saved a dataset in the lab? You can load and analyse it right now at
-<strong><a href="lite/lab/index.html">the pydvma browser notebook</a></strong>
-— Python runs inside your browser (nothing to install, files never
-leave your machine). Drag your `.dvma` or `.npy` file into its file
-browser and follow the notebook.
+pydvma has two front-ends over the same analysis engine:
 
-<!-- Raw HTML anchor on purpose: the site is a GitHub *project* page
-served under /pydvma/, so a root-absolute markdown link would 404 in
-production, while a relative markdown link trips mkdocs --strict
-(target is outside the docs tree — jupyter lite build adds it at
-deploy time). The HTML href is relative and skips link checking. -->
+- the **[web logger](web-logger/index.md)** — a browser-based interface
+  for acquiring, monitoring, analysing, fitting and exporting data. This
+  is the **recommended** way to use pydvma interactively, and it runs in
+  three modes (below); and
+- the **Python interface** — `import pydvma as dvma` in a notebook or
+  script, for full customisation and scripted workflows.
 
-## Quick Start
+A desktop **Qt logger** GUI is also still available, but it is now
+**legacy** (bug-fixes only) as the web logger replaces it — see
+[From the Qt logger](web-logger/migration.md).
 
-### Installation
+## The web logger — no install for two of the three modes
 
-For lab use — GUI plus acquisition backends (soundcard and/or NI-DAQmx):
+| Mode | Open it | What you get |
+| ---- | ------- | ------------ |
+| **Pages app** | [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/) | Full analysis of saved files **plus soundcard capture** — nothing to install |
+| **Local bridge** | `pip install "pydvma[serve]"`, then `pydvma-serve --open` | The same app driving **real hardware** (soundcard or **NI-DAQ**) on your machine |
+| **JupyterLite** | [torebutlin.github.io/pydvma/lite/](https://torebutlin.github.io/pydvma/lite/) | `import pydvma` in a browser notebook — no install |
+
+Saved a dataset in the lab? Open the
+**[Pages app](https://torebutlin.github.io/pydvma/app/)** (or the
+[JupyterLite notebook](https://torebutlin.github.io/pydvma/lite/)) and
+drag your `.dvma`, `.npy` or `.mat` file straight in — Python runs inside
+your browser, and files never leave your machine. See
+[the web logger guide](web-logger/index.md) for the full workflow.
+
+## Quick start
+
+### Analyse or measure in the browser — no install
+
+Open **[torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/)**
+and either load a saved file or capture from a soundcard. Full walkthrough:
+[the web logger](web-logger/index.md).
+
+### Drive real hardware locally
 
 ```bash
-pip install "pydvma[full]"
+pip install "pydvma[serve]"     # add [ni] for National Instruments
+pydvma-serve --open             # serves the app + bridge, opens a browser
+pydvma-serve --driver nidaq --open
 ```
 
-Plain `pip install pydvma` installs the analysis-only core (data
-structures, FFT/TF/modal analysis, file I/O) with no Qt or hardware
-dependencies — it runs anywhere, including in-browser via
-[pydvma-lite](#analyse-data-in-your-browser-no-install) (see above).
+See [Installation](getting-started/installation.md) and
+[NI hardware over the bridge](web-logger/ni-hardware.md).
 
-### Basic Usage
+### Script it in Python
 
 ```python
 import pydvma as dvma
 
-%matplotlib widget
-settings = dvma.MySettings()
-logger = dvma.Logger(settings)
+dataset = dvma.load_data('measurement.dvma')   # or record with log_data
+freq = dvma.calculate_fft(dataset.time_data_list[0])
 ```
 
-For more detailed instructions, see the [Getting Started](getting-started/installation.md) guide.
+Install the Python interface with `pip install pydvma` (analysis-only
+core; add `[qt,soundcard,ni]` for the desktop logger and hardware
+backends). See [Installation](getting-started/installation.md) and the
+[Python interface guides](user-guide/acquisition.md).
 
 ## Documentation Overview
 
 - **[Getting Started](getting-started/installation.md)**: Installation and setup instructions
-- **[User Guide](user-guide/acquisition.md)**: Comprehensive guides for common tasks
+- **[Web Logger](web-logger/index.md)**: The browser-based interface — acquisition, live monitoring, analysis, modal fitting, calibration and export
+- **[Python Interface](user-guide/acquisition.md)**: Scripting acquisition and analysis in notebooks
 - **[API Reference](api/analysis.md)**: Detailed API documentation
 - **[Examples](examples/basic.md)**: Practical examples and tutorials
 

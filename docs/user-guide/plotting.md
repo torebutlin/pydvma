@@ -4,6 +4,12 @@ Brief guide for plotting with pydvma's built-in tools and matplotlib.
 
 ## GUI Plotting
 
+!!! note "The Qt Logger is legacy"
+    The desktop **Qt Logger** GUI described here still works but is now
+    **legacy** (bug-fixes only). For interactive plotting and view
+    switching, prefer the **[web logger](../web-logger/index.md)** and its
+    [analysis views](../web-logger/analysis.md).
+
 The Logger GUI provides interactive plotting:
 
 ```python

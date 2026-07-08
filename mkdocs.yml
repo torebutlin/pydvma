@@ -89,7 +89,18 @@ nav:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
       - Basic Usage: getting-started/basic-usage.md
-  - User Guide:
+  - Web Logger:
+      - Overview: web-logger/index.md
+      - Acquisition & Setup: web-logger/acquisition.md
+      - Live Monitoring: web-logger/live-monitoring.md
+      - Analysis Views: web-logger/analysis.md
+      - Modal Fitting: web-logger/modal-fitting.md
+      - Calibration & Units: web-logger/calibration.md
+      - Saving & Exporting: web-logger/export.md
+      - The .dvma File Format: web-logger/dvma-format.md
+      - NI Hardware over the Bridge: web-logger/ni-hardware.md
+      - From the Qt Logger: web-logger/migration.md
+  - Python Interface:
       - Data Acquisition: user-guide/acquisition.md
       - Data Analysis: user-guide/analysis.md
       - Modal Analysis: user-guide/modal-analysis.md

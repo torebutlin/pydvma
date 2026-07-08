@@ -1,5 +1,23 @@
 # Installation
 
+## Which pydvma do I need?
+
+How you install pydvma depends on what you want to do. The
+[web logger](../web-logger/index.md) runs in three modes, and two of
+them need **no installation at all**:
+
+| I want to... | What to use | Install |
+| ------------ | ----------- | ------- |
+| **Analyse saved data** (or capture from a soundcard) with nothing to install | Open the **Pages app** at [`torebutlin.github.io/pydvma/app/`](https://torebutlin.github.io/pydvma/app/) | **None** |
+| **Script analysis in a notebook**, no install | Open the **[JupyterLite site](https://torebutlin.github.io/pydvma/lite/)** and `import pydvma` | **None** |
+| **Acquire from real hardware in the browser** (soundcard or **NI-DAQ**) | Run the **local bridge**: `pydvma-serve` | `pip install "pydvma[serve]"` (`[ni]` for NI) |
+| **Work in Python / Jupyter on your own machine** | `import pydvma as dvma` | `pip install pydvma` (add extras below) |
+| **Run the desktop Qt logger** (legacy) | `dvma.Logger(...)` | `pip install "pydvma[qt,soundcard]"` |
+
+If you only need to analyse data or record from a soundcard, **you can
+stop here** — open the [Pages app](https://torebutlin.github.io/pydvma/app/).
+The rest of this page covers installing pydvma on your own machine.
+
 ## Requirements
 
 - Python 3.11 or later (Python 3.13 recommended)
@@ -55,16 +73,21 @@ pydvma is split into a small analysis-only core plus optional
 "extras" for the GUI and each acquisition backend, so you only pull
 in what you need:
 
-| Install command | What you get |
-| ---------------- | ------------- |
-| `pip install pydvma` | Analysis-only core: data structures, FFT/TF/modal analysis, file I/O. No Qt, no hardware drivers — runs anywhere, including in-browser. |
-| `pip install "pydvma[qt,soundcard]"` | Core + GUI (Logger/Oscilloscope, via `qtpy`/`PyQt5`/`pyqtgraph`) + soundcard acquisition (`sounddevice`). |
-| `pip install "pydvma[ni]"` | Core + National Instruments acquisition backend (`nidaqmx`). Windows/Linux only — see below. |
-| `pip install "pydvma[serve]"` | Core + the `pydvma-serve` bridge (`websockets` only), which serves the browser app locally and drives real hardware from it. See [Running the browser app locally](#running-the-browser-app-locally-pydvma-serve). |
-| `pip install "pydvma[full]"` | Everything: GUI plus both acquisition backends and the serve bridge. Recommended for lab use. |
+| Extra | Install command | What it adds |
+| ----- | --------------- | ------------ |
+| *(none)* | `pip install pydvma` | Analysis-only core: data structures, FFT/TF/modal analysis, file I/O. No Qt, no hardware drivers — runs anywhere, including in-browser. |
+| `soundcard` | `pip install "pydvma[soundcard]"` | Soundcard acquisition (`sounddevice`). |
+| `ni` | `pip install "pydvma[ni]"` | National Instruments acquisition backend (`nidaqmx`). Windows/Linux only — see below. |
+| `qt` | `pip install "pydvma[qt]"` | The legacy desktop GUI (Logger/Oscilloscope, via `qtpy`/`PyQt5`/`pyqtgraph`/`seaborn`). |
+| `serve` | `pip install "pydvma[serve]"` | The `pydvma-serve` bridge (`websockets` only) — serves the browser app locally and drives real hardware from it. See [Running the browser app locally](#running-the-browser-app-locally-pydvma-serve). |
+| `full` | `pip install "pydvma[full]"` | Everything: `qt` + `soundcard` + `ni` + `serve`. Recommended for a full lab install. |
 
-The rest of this page uses `pydvma[full]` throughout, but swap in
-whichever extra matches what you need.
+Extras combine, so pick what your mode needs — e.g.
+`pip install "pydvma[serve,ni]"` for the browser app driving NI hardware
+through the local bridge, or `pip install "pydvma[qt,soundcard]"` for the
+legacy desktop logger with soundcard capture. The rest of this page uses
+`pydvma[full]` throughout, but swap in whichever extra matches what you
+need.
 
 ## Running the browser app locally (`pydvma-serve`)
 
