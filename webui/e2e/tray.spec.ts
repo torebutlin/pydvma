@@ -50,6 +50,35 @@ test('single click on the title cycles the whole set together', async ({ page })
   await expect(header).not.toHaveClass(/struck/);
 });
 
+test('small sets start expanded; collapsing shows a clear expand affordance (item 5)', async ({ page }) => {
+  // Round-6 item 5: the auto-collapse threshold was raised (4 → 16) so common
+  // many-channel sets start EXPANDED, and a collapsed card gets an obvious
+  // "Show N channels" strip instead of only the tiny header caret. The
+  // 2-channel fixture is below the threshold, so it starts expanded; we drive
+  // the collapse/expand affordance from there (no engine / big-file load needed).
+  await page.goto('/?fixture=1');
+  const card = card0(page);
+  await expect(card).toBeVisible();
+
+  // Starts expanded: channel rows are immediately visible, no expand hint.
+  await expect(card.getByTestId('ch-list')).toBeVisible();
+  await expect(card.getByTestId('ch-row-0')).toBeVisible();
+  await expect(card.getByTestId('expand-hint')).toHaveCount(0);
+
+  // Collapse via the header caret → rows hidden, wide "Show 2 channels" strip.
+  await card.getByRole('button', { name: 'Collapse set' }).click();
+  await expect(card.getByTestId('ch-list')).toHaveCount(0);
+  const hint = card.getByTestId('expand-hint');
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText(/Show 2 channels/);
+
+  // Clicking the hint re-expands (and does not cycle the set — rows stay ON).
+  await hint.click();
+  await expect(card.getByTestId('ch-list')).toBeVisible();
+  await expect(card.getByTestId('expand-hint')).toHaveCount(0);
+  await expect(card.getByTestId('ch-row-0').locator('.state-badge')).toHaveText('on');
+});
+
 test('double click on the title renames WITHOUT cycling the set', async ({ page }) => {
   await page.goto('/?fixture=1');
   const card = card0(page);

@@ -225,6 +225,22 @@
   const MIN_DRAG_PX = 6;
 
   /**
+   * Toggle a global `plot-gesture-active` class on the document root for the
+   * duration of a drag gesture (round-6 item 4). The plot surfaces already
+   * carry a baseline `user-select: none`, so a selection can never ANCHOR in
+   * the plot; this global flag is the belt-and-suspenders that also suppresses
+   * selection which a fast diagonal drag would otherwise paint across the tray
+   * / legend / page (the "everything flashes selection-blue" bug). Removed on
+   * pointerup / cancel / lost-capture so text stays normally selectable
+   * between gestures (rename inputs included). No-op outside the browser (SSR).
+   */
+  function setGestureActive(on: boolean) {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('plot-gesture-active', on);
+    }
+  }
+
+  /**
    * Abandon the in-flight gesture WITHOUT committing a setRange: clear
    * the rubber band, cancel any pending pan rAF, drop the pan preview,
    * and reset all drag bookkeeping. Shared by pointercancel and
@@ -236,6 +252,7 @@
   function abortGesture() {
     dragging = false;
     activePointer = 0;
+    setGestureActive(false);
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     band = null;
     panPreview = null;
@@ -265,6 +282,7 @@
     if (!p) return;
     dragging = true;
     activePointer = e.pointerId;
+    setGestureActive(true);
     // Latch the mode for the whole gesture (fix: mid-drag mode flips must
     // not switch which branch move/up take).
     gestureMode = mode;
@@ -305,6 +323,7 @@
     if (!dragging || e.pointerId !== activePointer) return;
     dragging = false;
     activePointer = 0;
+    setGestureActive(false);
     try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* already released */ }
     if (gestureMode === 'pan') {
       if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
@@ -371,8 +390,10 @@
     autoFitNow();
   }
 
-  // Cancel any pending pan rAF if the component unmounts mid-gesture.
-  $effect(() => () => { if (rafId) cancelAnimationFrame(rafId); });
+  // Cancel any pending pan rAF and clear the global gesture flag if the
+  // component unmounts mid-gesture (else a stranded `plot-gesture-active`
+  // would keep the page's text unselectable).
+  $effect(() => () => { if (rafId) cancelAnimationFrame(rafId); setGestureActive(false); });
 </script>
 
 <div class="plot-surface" bind:this={host}>
@@ -484,6 +505,11 @@
     height: 100%;
     min-height: 220px;
     min-width: 180px;
+    /* A plot gesture must never anchor a native text selection in the SVG
+       chrome (tick labels, axis labels). Without this, a fast box-zoom /
+       pan drag paints the plot text selection-blue (round-6 item 4). */
+    user-select: none;
+    -webkit-user-select: none;
   }
   svg {
     display: block;
@@ -523,5 +549,7 @@
     fill: transparent;
     cursor: crosshair;
     touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
   }
 </style>

@@ -32,6 +32,55 @@ test('back from first zoom restores the initial null (autofit) range', () => {
   expect(get(vs.current).range.x).toEqual([0, 0.25]);
 });
 
+// ── Transient (live-drag) commits (round-6 item 6) ─────────────────────────
+test('a transient gesture with many live frames records exactly ONE history entry', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  const h0 = get(vs.current).history.length;
+  vs.beginTransient('tf');
+  for (let f = 0; f < 60; f++) vs.setRangeLive('tf', { x: [f, 500 - f], y: null });
+  // Live frames update the range but push NO history.
+  expect(get(vs.current).range.x).toEqual([59, 441]);
+  expect(get(vs.current).history.length).toBe(h0);
+  vs.commitTransient('tf', { x: [60, 440], y: null });
+  expect(get(vs.current).range.x).toEqual([60, 440]);
+  expect(get(vs.current).history.length).toBe(h0 + 1);   // exactly one entry for the whole drag
+});
+
+test('undo after a transient gesture returns to the PRE-drag range (one step)', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  vs.setRange('tf', { x: [0, 1000], y: null });          // committed starting window
+  vs.beginTransient('tf');
+  vs.setRangeLive('tf', { x: [100, 200], y: null });
+  vs.setRangeLive('tf', { x: [300, 400], y: null });
+  vs.commitTransient('tf', { x: [300, 400], y: null });
+  expect(get(vs.current).range.x).toEqual([300, 400]);
+  vs.back('tf');
+  expect(get(vs.current).range.x).toEqual([0, 1000]);    // straight back past all live frames
+});
+
+test('cancelTransient reverts the live preview without touching history', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  vs.setRange('tf', { x: [0, 800], y: null });
+  const h0 = get(vs.current).history.length;
+  vs.beginTransient('tf');
+  vs.setRangeLive('tf', { x: [50, 90], y: null });
+  vs.cancelTransient('tf');
+  expect(get(vs.current).range.x).toEqual([0, 800]);     // reverted
+  expect(get(vs.current).history.length).toBe(h0);       // no new entry
+});
+
+test('commitTransient with no open gesture acts as a plain setRange (one entry)', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  const h0 = get(vs.current).history.length;
+  vs.commitTransient('tf', { x: [10, 20], y: null });    // e.g. a numeric-field edit
+  expect(get(vs.current).range.x).toEqual([10, 20]);
+  expect(get(vs.current).history.length).toBe(h0 + 1);
+});
+
 test('frequency x-range is shared across the TF plot-type family', () => {
   const vs = createViewState();
   vs.activate('tf');

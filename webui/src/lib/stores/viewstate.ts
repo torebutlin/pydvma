@@ -153,6 +153,53 @@ export function createViewState() {
   /** Set view `id`'s primary axis range (frequency window + magnitude y). */
   function setRange(id: ViewId, range: Range) { commit(id, () => ({ range })); }
 
+  // ── Transient (live-drag) commits (round-6 item 6) ─────────────────────────
+  // A continuous gesture — the Nyquist frequency brush — wants the plot to
+  // re-window on EVERY animation frame while the pointer moves, yet record just
+  // ONE undo step for the whole gesture. Without a transient path, routing each
+  // live frame through `setRange` would fill the round-5 snapshot history with
+  // ~60 entries per drag. The protocol per gesture is:
+  //   beginTransient(id)          → snapshot the pre-drag navigable state
+  //   setRangeLive(id, range)×N   → update the range with NO history push
+  //   commitTransient(id, range)  → close, pushing exactly the ONE pre-drag
+  //                                 snapshot (so undo returns to before the drag)
+  //   cancelTransient(id)         → abort, reverting the live preview, no history
+  // A commit/cancel with no open gesture is a normal one-shot (numeric-box edits
+  // reuse `commitTransient`, which then just delegates to `setRange`).
+  const transientSnap: Partial<Record<ViewId, RangeSnapshot>> = {};
+
+  /** Open a transient gesture on view `id`: snapshot the current navigable state. */
+  function beginTransient(id: ViewId) {
+    if (transientSnap[id]) return;                    // already open — ignore re-entry
+    transientSnap[id] = snapOf(get(views)[id]);
+  }
+
+  /** Live preview frame: set the primary range with NO history/future change. */
+  function setRangeLive(id: ViewId, range: Range) {
+    patch(id, v => ({ ...v, range }));
+  }
+
+  /**
+   * Close a transient gesture (or, with no open gesture, act as a plain
+   * `setRange`): push EXACTLY the one pre-drag snapshot onto history, clear the
+   * redo stack, and apply the final `range`. One drag ⇒ one undo step.
+   */
+  function commitTransient(id: ViewId, range: Range) {
+    const snap = transientSnap[id];
+    delete transientSnap[id];
+    if (snap === undefined) { setRange(id, range); return; }
+    patch(id, v => ({
+      ...v, history: [...v.history, snap].slice(-HISTORY_CAP), future: [], range,
+    }));
+  }
+
+  /** Abort a transient gesture: revert the live preview to the pre-drag state. */
+  function cancelTransient(id: ViewId) {
+    const snap = transientSnap[id];
+    delete transientSnap[id];
+    if (snap !== undefined) patch(id, v => ({ ...v, ...snap }));
+  }
+
   /**
    * Set the tf view's Nyquist Real/Imag display window (round-5 item 4). Only
    * meaningful when the tf plotType is `'nyquist'`; recorded in history so the
@@ -276,6 +323,7 @@ export function createViewState() {
     sharedFreqRange: derived(views, $v => $v.tf.range.x ?? $v.frequency.range.x),
 
     activate, setRange, back, forward, autoFit,
+    beginTransient, setRangeLive, commitTransient, cancelTransient,
     setNyquistRange, setPhaseRange, setBodePhaseRange, setCoherenceAuto,
     setPlotType, setCoherence, setXScale, setYScale, setLegend,
     serialize, restore,

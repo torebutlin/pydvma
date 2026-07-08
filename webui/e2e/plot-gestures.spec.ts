@@ -198,6 +198,28 @@ test.describe('plot zoom gestures', () => {
     expect(after.range.y).toBeNull();
   });
 
+  test('a box-zoom drag near axis text leaves NO native selection (item 4)', async ({ page }) => {
+    await openFixture(page);
+    await setMode(page, 'box');
+    const f = await frameBox(page);
+    // Start the drag hard against the bottom-left corner (right by the "0" x-tick
+    // and "-0.5" y-tick) and sweep diagonally across the plot — the exact
+    // gesture that used to paint the page selection-blue.
+    await page.mouse.move(f.x + 6, f.y + f.h - 4);
+    await page.mouse.down();
+    await page.mouse.move(f.x + f.w * 0.7, f.y + f.h * 0.3, { steps: 12 });
+    // While the drag is live the document root carries the selection guard.
+    expect(await page.evaluate(() =>
+      document.documentElement.classList.contains('plot-gesture-active'))).toBe(true);
+    await page.mouse.up();
+
+    // No text got selected, and the guard class is cleared afterwards.
+    const selLen = await page.evaluate(() => (window.getSelection()?.toString() ?? '').length);
+    expect(selLen).toBe(0);
+    expect(await page.evaluate(() =>
+      document.documentElement.classList.contains('plot-gesture-active'))).toBe(false);
+  });
+
   test('pointercancel aborts a box drag cleanly; a later box-zoom still works', async ({ page }) => {
     await openFixture(page);
     const before = await snap(page);

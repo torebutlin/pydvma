@@ -28,6 +28,18 @@ export const LINE_PALETTE = [
  * actions layer's `syncModal` for the pseudo-set's lifecycle.
  */
 export type SetRole = 'data' | 'fit';
+
+/**
+ * Auto-collapse threshold (round-6 item 5). A set with MORE than this many
+ * channels starts collapsed in the tray; everything up to and including it
+ * starts EXPANDED so its channel rows are immediately accessible. Raised from
+ * the round-2 value of 4 — a 10-channel orphan-TF set (the JW ruler grid) read
+ * as "compressed" when it started collapsed showing only the colour-dot strip.
+ * The card's row area is height-capped with its own scroll (see TrayCard), so
+ * even a large expanded set stays bounded; genuinely huge sets (> 16 channels)
+ * still start collapsed to keep the tray scannable.
+ */
+export const AUTO_COLLAPSE_CHANNELS = 16;
 /** Input shape for `addSet` — what the caller knows about a dataset. */
 export interface SetEntry {
   name: string; nChannels: number; durationS: number; timestamp: string;
@@ -67,8 +79,9 @@ export type Selection = ReturnType<typeof createSelection>;
  * missing key means 'on', so newly added sets default to fully visible
  * even after a global `none()`. Batch operations (whole-set cycle,
  * cross-set channel cycle, all/none/solo) mutate a copy of the Map so
- * subscribers see one atomic update. Sets with more than 4 channels
- * start collapsed in the UI; a set whose lines are all 'off' is flagged
+ * subscribers see one atomic update. Sets with more than
+ * `AUTO_COLLAPSE_CHANNELS` channels start collapsed in the UI; a set whose
+ * lines are all 'off' is flagged
  * `allOff` (rendered struck-through). Off lines are dropped from
  * `legendEntries` (the PLOT-facing list) but KEPT in `legendRows` (the
  * LEGEND-facing list) so a line toggled off stays listed, struck-through,
@@ -199,7 +212,7 @@ export function createSelection() {
      * is the total channel count of the DATA sets present at add time — and
      * stored on the record, so they never change afterwards. New lines
      * default to 'on' (sparse-map default), even after a prior `none()`.
-     * Sets with more than 4 channels start collapsed.
+     * Sets with more than `AUTO_COLLAPSE_CHANNELS` channels start collapsed.
      *
      * `entry.role` (default `'data'`) marks the modal-fit pseudo-set (round-5
      * item 13); a fit set does NOT advance the palette offset (so adding /
@@ -219,7 +232,7 @@ export function createSelection() {
         : Array.from({ length: entry.nChannels },
           (_, c) => LINE_PALETTE[(start + c) % LINE_PALETTE.length]);
       sets.update(l => [...l, { ...entry, id, role, colors }]);
-      if (entry.nChannels > 4) collapsed.update(cs => new Set(cs).add(id));
+      if (entry.nChannels > AUTO_COLLAPSE_CHANNELS) collapsed.update(cs => new Set(cs).add(id));
       return id;
     },
     /**

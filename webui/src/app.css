@@ -147,6 +147,21 @@
   box-sizing: border-box;
 }
 
+/* ---------- plot-gesture selection guard (round-6 item 4) ----------
+   While a plot drag is live (box-zoom / pan / the Nyquist frequency brush),
+   PlotSurface / NyquistBrush stamp `plot-gesture-active` on <html>. A fast
+   diagonal drag would otherwise begin a native text selection and paint the
+   tray / legend / page selection-blue. The plot surfaces also carry a baseline
+   `user-select: none` (so a selection can't ANCHOR there); this global flag
+   additionally suppresses any selection that a drag drags OVER while active.
+   It is transient — removed on pointerup / cancel — so rename inputs and all
+   other text stay normally selectable between gestures. */
+:root.plot-gesture-active,
+:root.plot-gesture-active * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
 html,
 body {
   height: 100%;

@@ -67,6 +67,8 @@ test('setsView.allFade is false for a mixed (part-fade) set', () => {
 });
 
 test('channel cycle applies across all sets, including collapsed', () => {
+  sel.toggleCollapse(2);                        // collapse set_2 so the case is real
+  expect(get(sel.setsView)[2].collapsed).toBe(true);
   sel.cycleChannel(1);
   expect(get(sel.state)(0, 1)).toBe('fade');
   expect(get(sel.state)(1, 1)).toBe('fade');
@@ -271,14 +273,18 @@ test('addSet after none() defaults the new lines to on', () => {
   expect(sel.lineColor(id, 0)).toBe(LINE_PALETTE[0]);
 });
 
-test('sets with >4 channels auto-collapse; toggleCollapse flips', () => {
+test('only sets past AUTO_COLLAPSE_CHANNELS auto-collapse; toggleCollapse flips', () => {
+  // Round-6 item 5: the threshold was raised from 4 to 16 so common
+  // many-channel sets (e.g. a 10-channel orphan-TF grid) start EXPANDED.
+  const big = sel.addSet({ name: 'big', nChannels: 20, durationS: 1, timestamp: 't3' }); // > 16
   let view = get(sel.setsView);
-  expect(view[2].collapsed).toBe(true);       // 8-channel set
-  expect(view[0].collapsed).toBe(false);      // 2-channel set
-  sel.toggleCollapse(2); sel.toggleCollapse(0);
+  expect(view[0].collapsed).toBe(false);      // 2-channel set — expanded
+  expect(view[2].collapsed).toBe(false);      // 8-channel set — now expanded (was collapsed at >4)
+  expect(view.find((v) => v.id === big)!.collapsed).toBe(true); // 20-channel set — collapsed
+  sel.toggleCollapse(0); sel.toggleCollapse(big);
   view = get(sel.setsView);
-  expect(view[2].collapsed).toBe(false);
   expect(view[0].collapsed).toBe(true);
+  expect(view.find((v) => v.id === big)!.collapsed).toBe(false);
 });
 
 test('colours assigned at addSet by cumulative offset; stable across cycling and removal', () => {

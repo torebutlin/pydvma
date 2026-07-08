@@ -1,6 +1,7 @@
 <script lang="ts">
   /**
-   * Frequency-band brush for the Nyquist view (round-5 item 4, Tore's design).
+   * Frequency-band brush for the Nyquist view (round-5 item 4, Tore's design;
+   * round-6 item 6 v2).
    *
    * A narrow magnitude-|H|(f) strip rendered ABOVE the Nyquist plot, spanning
    * the FULL committed frequency extent, with a highlighted draggable band that
@@ -8,14 +9,24 @@
    * that Calc, Fit and the windowed Nyquist locus all read. Interacting with
    * the band scrubs that range, so the Nyquist locus (and the fit window) can
    * be steered directly from here:
-   *   - drag the band body → TRANSLATE the range;
-   *   - drag either edge handle → RESIZE that end;
-   *   - drag on empty strip → CREATE a fresh band;
-   *   - double-click the strip → reset to the FULL range.
+   *   - drag the band BODY → TRANSLATE the range (cursor: grab/grabbing;
+   *     the interior is a generous target — the edge grips never swallow it);
+   *   - drag either edge handle → RESIZE that end (cursor: ew-resize);
+   *   - drag on empty strip → CREATE a fresh band (cursor: crosshair);
+   *   - double-click the strip → reset to the FULL range;
+   *   - the two numeric fields in the head → type an exact min/max (Hz),
+   *     committed on change / Enter.
    *
-   * Like the plot's pan gesture, a drag previews LOCALLY and commits EXACTLY
-   * ONE `onchange` on release (the parent routes it through `viewState.setRange`
-   * so the toolbar's curl undo/redo captures each brush edit as one step).
+   * v2 LIVE re-windowing (round-6 item 6): a drag no longer waits for release.
+   * While the pointer moves the brush emits `onpreview` (throttled to one
+   * animation frame) so the Nyquist plot re-windows CONTINUOUSLY; on release it
+   * emits `onchange` once. The parent routes the live frames through
+   * `viewState.setRangeLive` (no history) and the release through
+   * `commitTransient`, so the whole gesture is a SINGLE undo step — the round-5
+   * snapshot history never fills with 60 entries per drag. The drag math is
+   * anchored to the band captured at pointer-down (`baseLo`/`baseHi`), NOT the
+   * live `band` prop, so live re-windowing under the pointer can't feed back
+   * into the reference frame.
    *
    * The strip is intentionally minimal + fast: the magnitude curves are
    * decimated to ~2 samples per pixel before the path is built.
@@ -30,6 +41,9 @@
     band,
     xScale = 'lin',
     onchange,
+    onpreview,
+    onstart,
+    oncancel,
     onfull,
   }: {
     /** |H|(f) magnitude lines (y already in the plot's dB/linear units) over the full extent. */
@@ -40,8 +54,16 @@
     band: [number, number];
     /** Frequency axis scale, matched to the TF plot's x scale. */
     xScale?: 'lin' | 'log';
-    /** Fired once on release with the new committed band. */
+    /** Fired once on release (and on numeric-field commit) with the new committed band. */
     onchange: (lo: number, hi: number) => void;
+    /** Fired per animation frame WHILE dragging with the live band — for live
+     *  re-windowing without a history entry. Absent ⇒ the plot only updates on release. */
+    onpreview?: (lo: number, hi: number) => void;
+    /** Fired at drag start so the parent can open a transient (one-undo) gesture. */
+    onstart?: () => void;
+    /** Fired when a drag is abandoned (click / degenerate / cancel) so the parent
+     *  can revert any live preview without recording history. */
+    oncancel?: () => void;
     /** Fired on double-click: reset to the full extent. */
     onfull: () => void;
   } = $props();
@@ -49,7 +71,7 @@
   const H = 58;                 // strip height (px)
   const PAD_L = 8, PAD_R = 8;   // horizontal insets so edge handles never clip
   const TOP = 4, BOT = 16;      // vertical insets (BOT leaves room for tick labels)
-  const HANDLE_PX = 7;          // edge-grab tolerance
+  const HANDLE_PX = 6;          // max edge-grab tolerance (px)
 
   let width = $state(0);
   let svgEl: SVGSVGElement | undefined = $state();
@@ -120,13 +142,44 @@
     return d;
   }
 
-  // ---- drag state (local preview; commits once on release) ----
-  type DragMode = 'move' | 'resize-lo' | 'resize-hi' | 'create';
-  let dragMode: DragMode | null = null;
+  // ---- hit zones + cursors ----
+  type Zone = 'move' | 'resize-lo' | 'resize-hi' | 'create';
+
+  /**
+   * The interaction zone under strip-px `px`, measured against the CURRENT
+   * committed band. The edge grip shrinks with the band so a narrow band always
+   * keeps a body zone (fix for round-6 item 6a: the two 7-px grips used to
+   * swallow the whole band, leaving nothing to grab for a translate).
+   */
+  function zoneAt(px: number): Zone {
+    const lo = toPx(band[0]), hi = toPx(band[1]);
+    const bw = hi - lo;
+    const edge = Math.min(HANDLE_PX, bw * 0.25);
+    if (bw > 6 && Math.abs(px - lo) <= edge) return 'resize-lo';
+    if (bw > 6 && Math.abs(px - hi) <= edge) return 'resize-hi';
+    if (px >= lo && px <= hi) return 'move';
+    return 'create';
+  }
+
+  let hoverZone = $state<Zone>('create');
+  /** Cursor: the drag zone while dragging, else the hover zone. */
+  const activeCursor = $derived.by(() => {
+    const z = dragMode ?? hoverZone;
+    if (z === 'move') return dragMode ? 'grabbing' : 'grab';
+    if (z === 'resize-lo' || z === 'resize-hi') return 'ew-resize';
+    return 'crosshair';
+  });
+
+  // ---- drag state (local preview; live frames throttled to rAF) ----
+  let dragMode = $state<Zone | null>(null);
   let dragPointer = 0;
-  let grabOffset = 0;           // for 'move': px between pointer and band lo
+  let grabOffset = 0;           // for 'move': px between pointer and band lo (at down)
   let createAnchor = 0;        // for 'create': freq where the drag began
+  let baseLo = 0, baseHi = 0;  // band captured at pointer-down (drag reference frame)
   let preview = $state<[number, number] | null>(null);
+
+  let rafId = 0;
+  let pendingPreview: [number, number] | null = null;
 
   /** The band the strip currently DISPLAYS: the live preview, or the committed prop. */
   const shownBand = $derived<[number, number]>(preview ?? band);
@@ -140,39 +193,61 @@
     return (e.clientX - r.left) * sx;
   }
 
+  /** Emit `onpreview` at most once per frame with the latest previewed band. */
+  function schedulePreview() {
+    if (!onpreview || rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      if (pendingPreview && onpreview) onpreview(pendingPreview[0], pendingPreview[1]);
+    });
+  }
+  function cancelRaf() {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    pendingPreview = null;
+  }
+
   function onDown(e: PointerEvent) {
     if (e.button !== 0) return;
     const px = localX(e);
-    const lo = toPx(band[0]), hi = toPx(band[1]);
-    if (Math.abs(px - lo) <= HANDLE_PX) dragMode = 'resize-lo';
-    else if (Math.abs(px - hi) <= HANDLE_PX) dragMode = 'resize-hi';
-    else if (px > lo && px < hi) { dragMode = 'move'; grabOffset = px - lo; }
-    else { dragMode = 'create'; createAnchor = toF(px); }
+    baseLo = band[0]; baseHi = band[1];
+    const zone = zoneAt(px);
+    dragMode = zone;
+    if (zone === 'move') { grabOffset = px - toPx(band[0]); preview = [baseLo, baseHi]; }
+    else if (zone === 'create') { createAnchor = toF(px); preview = [createAnchor, createAnchor]; }
+    else { preview = [baseLo, baseHi]; }   // resize starts at the current band
     dragPointer = e.pointerId;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    onMove(e);   // seed the preview immediately
+    onstart?.();                            // parent opens a transient (one-undo) gesture
   }
 
+  /** Pointer move: drag the band (live) when a gesture is active, else track the hover cursor. */
   function onMove(e: PointerEvent) {
-    if (dragMode === null || e.pointerId !== dragPointer) return;
+    if (dragMode === null) { hoverZone = zoneAt(localX(e)); return; }
+    if (e.pointerId !== dragPointer) return;
     const px = localX(e);
     const f = toF(px);
     const [fmin, fmax] = fullExtent;
-    let lo = band[0], hi = band[1];
-    if (dragMode === 'resize-lo') { lo = Math.min(f, band[1]); hi = band[1]; }
-    else if (dragMode === 'resize-hi') { lo = band[0]; hi = Math.max(f, band[0]); }
+    let lo = baseLo, hi = baseHi;
+    if (dragMode === 'resize-lo') { lo = Math.min(f, baseHi); hi = baseHi; }
+    else if (dragMode === 'resize-hi') { lo = baseLo; hi = Math.max(f, baseLo); }
     else if (dragMode === 'create') { lo = Math.min(createAnchor, f); hi = Math.max(createAnchor, f); }
     else {                                         // move: translate keeping width
-      const width = band[1] - band[0];
+      const w = baseHi - baseLo;
       const newLoPx = px - grabOffset;
       lo = toF(newLoPx);
       // Preserve width in DATA units for a linear axis; for log, translate by px
       // then re-derive hi so the visual width stays put.
-      hi = log ? toF(newLoPx + (hiPx - loPx)) : lo + width;
-      if (hi > fmax) { hi = fmax; lo = log ? toF(toPx(fmax) - (hiPx - loPx)) : fmax - width; }
-      if (lo < fmin) { lo = fmin; hi = log ? toF(toPx(fmin) + (hiPx - loPx)) : fmin + width; }
+      const basePxW = toPx(baseHi) - toPx(baseLo);
+      hi = log ? toF(newLoPx + basePxW) : lo + w;
+      if (hi > fmax) { hi = fmax; lo = log ? toF(toPx(fmax) - basePxW) : fmax - w; }
+      if (lo < fmin) { lo = fmin; hi = log ? toF(toPx(fmin) + basePxW) : fmin + w; }
     }
     preview = [Math.max(fmin, lo), Math.min(fmax, hi)];
+    // Live re-window (throttled): don't emit on a sub-pixel jitter click.
+    if (toPx(preview[1]) - toPx(preview[0]) >= 3) {
+      pendingPreview = preview;
+      schedulePreview();
+    }
   }
 
   function onUp(e: PointerEvent) {
@@ -180,24 +255,88 @@
     try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* already released */ }
     const p = preview;
     dragMode = null; dragPointer = 0; preview = null;
-    if (!p) return;
+    cancelRaf();
+    if (!p) { oncancel?.(); return; }
     const [lo, hi] = p;
-    // Reject a degenerate band (a click or a sub-pixel drag) — keep the committed one.
-    if (!(hi > lo) || toPx(hi) - toPx(lo) < 3) return;
-    if (lo !== band[0] || hi !== band[1]) onchange(lo, hi);
+    // Reject a degenerate band (a click / sub-pixel drag) or a no-move gesture —
+    // measured against the PRE-DRAG base (the live band has been scrubbing along
+    // with the preview, so it can't be the reference). Revert the live preview.
+    const degenerate = !(hi > lo) || toPx(hi) - toPx(lo) < 3;
+    const unchanged = lo === baseLo && hi === baseHi;
+    if (degenerate || unchanged) { oncancel?.(); return; }
+    onchange(lo, hi);
   }
 
   function onCancel(e: PointerEvent) {
     if (e.pointerId !== dragPointer) return;
     dragMode = null; dragPointer = 0; preview = null;
+    cancelRaf();
+    oncancel?.();
   }
+
+  function onLeave() {
+    if (dragMode === null) hoverZone = 'create';
+  }
+
+  // ---- numeric min/max fields ----
+  /** Compact, editable rendering of a band edge (Hz). */
+  function fmtNum(v: number): string {
+    if (!Number.isFinite(v)) return '';
+    const a = Math.abs(v);
+    if (a >= 100) return v.toFixed(0);
+    if (a >= 10) return v.toFixed(1);
+    return v.toFixed(2);
+  }
+
+  /** Clamp + validate a typed [lo, hi] against the full extent, then commit once. */
+  function commitFields(rawLo: string, rawHi: string) {
+    let lo = parseFloat(rawLo), hi = parseFloat(rawHi);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;   // ignore garbage input
+    const [fmin, fmax] = fullExtent;
+    lo = Math.min(Math.max(lo, fmin), fmax);
+    hi = Math.min(Math.max(hi, fmin), fmax);
+    if (!(hi > lo)) return;                                      // reject a degenerate/inverted band
+    if (lo === band[0] && hi === band[1]) return;               // no change
+    onchange(lo, hi);
+  }
+  const commitLo = (raw: string) => commitFields(raw, String(band[1]));
+  const commitHi = (raw: string) => commitFields(String(band[0]), raw);
+  function onFieldKey(e: KeyboardEvent) {
+    if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();  // blur → change → commit
+  }
+
+  $effect(() => () => cancelRaf());   // drop a pending live frame on unmount
 </script>
 
 <div class="brush" data-testid="nyquist-brush" bind:clientWidth={width}>
   <div class="brush-head">
     <span class="brush-lab">frequency band</span>
-    <span class="brush-val" data-testid="nyquist-brush-readout"
-      >{fmtTick(shownBand[0], shownBand[1] - shownBand[0])} – {fmtTick(shownBand[1], shownBand[1] - shownBand[0])} Hz</span>
+    <span class="brush-fields">
+      <input
+        class="fld mono"
+        type="number"
+        step="any"
+        inputmode="decimal"
+        data-testid="nyquist-brush-min"
+        aria-label="Frequency band min"
+        value={fmtNum(shownBand[0])}
+        onchange={(e) => commitLo(e.currentTarget.value)}
+        onkeydown={onFieldKey}
+      />
+      <span class="dash">–</span>
+      <input
+        class="fld mono"
+        type="number"
+        step="any"
+        inputmode="decimal"
+        data-testid="nyquist-brush-max"
+        aria-label="Frequency band max"
+        value={fmtNum(shownBand[1])}
+        onchange={(e) => commitHi(e.currentTarget.value)}
+        onkeydown={onFieldKey}
+      />
+      <span class="unit">Hz</span>
+    </span>
   </div>
   {#if width > 0}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -206,11 +345,13 @@
       class="brush-svg"
       viewBox="0 0 {width} {H}"
       height={H}
+      style="cursor: {activeCursor}"
       aria-label="Frequency band: {shownBand[0].toFixed(1)} to {shownBand[1].toFixed(1)} Hz"
       onpointerdown={onDown}
       onpointermove={onMove}
       onpointerup={onUp}
       onpointercancel={onCancel}
+      onpointerleave={onLeave}
       onlostpointercapture={onCancel}
       ondblclick={onfull}
     >
@@ -226,8 +367,15 @@
       <!-- Selected band + edge handles. -->
       <rect class="band" data-testid="nyquist-brush-band"
         x={loPx} y={TOP} width={Math.max(1, hiPx - loPx)} height={plotH} />
-      <line class="handle" data-testid="nyquist-brush-handle-lo" x1={loPx} y1={TOP} x2={loPx} y2={TOP + plotH} />
-      <line class="handle" data-testid="nyquist-brush-handle-hi" x1={hiPx} y1={TOP} x2={hiPx} y2={TOP + plotH} />
+      <!-- Edge grips: a hairline + a rounded knob so the resizable ends read as distinct. -->
+      <g class="handle" data-testid="nyquist-brush-handle-lo">
+        <line x1={loPx} y1={TOP} x2={loPx} y2={TOP + plotH} />
+        <rect class="knob" x={loPx - 2} y={TOP + plotH / 2 - 7} width="4" height="14" rx="2" />
+      </g>
+      <g class="handle" data-testid="nyquist-brush-handle-hi">
+        <line x1={hiPx} y1={TOP} x2={hiPx} y2={TOP + plotH} />
+        <rect class="knob" x={hiPx - 2} y={TOP + plotH / 2 - 7} width="4" height="14" rx="2" />
+      </g>
       <!-- End tick labels for orientation. -->
       <text class="edge" x={PAD_L} y={H - 4} text-anchor="start">{fmtTick(fullExtent[0], fullExtent[1] - fullExtent[0])}</text>
       <text class="edge" x={PAD_L + innerW} y={H - 4} text-anchor="end">{fmtTick(fullExtent[1], fullExtent[1] - fullExtent[0])}</text>
@@ -247,24 +395,57 @@
   }
   .brush-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
-    padding: 0 2px 2px;
+    gap: 8px;
+    padding: 0 2px 3px;
   }
   .brush-lab {
     font: 600 11px var(--font-body, system-ui, sans-serif);
     color: var(--muted, #66708a);
     letter-spacing: 0.02em;
   }
-  .brush-val {
-    font: 11px var(--font-mono, ui-monospace, Menlo, monospace);
+  .brush-fields {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--muted, #66708a);
+  }
+  .brush-fields .fld {
+    width: 62px;
+    height: 22px;
+    border: 1px solid var(--border, #e3e6eb);
+    border-radius: 5px;
+    padding: 0 5px;
+    background: var(--control-bg, #fff);
     color: var(--text, #1b2437);
+    font: 11px var(--font-mono, ui-monospace, Menlo, monospace);
+    text-align: right;
+  }
+  /* Drop the spinner arrows — the value is scrubbed by the band or typed. */
+  .brush-fields .fld::-webkit-outer-spin-button,
+  .brush-fields .fld::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+  .brush-fields .fld {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  .brush-fields .fld:focus {
+    outline: none;
+    border-color: var(--accent-soft-border, #c7d2fe);
+  }
+  .brush-fields .dash {
+    font: 11px var(--font-mono, ui-monospace, Menlo, monospace);
+  }
+  .brush-fields .unit {
+    font: 10px var(--font-mono, ui-monospace, Menlo, monospace);
   }
   .brush-svg {
     display: block;
     width: 100%;
     touch-action: none;
-    cursor: ew-resize;
   }
   .strip-bg {
     fill: var(--surface-2);
@@ -287,9 +468,16 @@
     stroke-width: 1;
     pointer-events: none;
   }
-  .handle {
+  .handle line {
     stroke: var(--indigo, #4f46e5);
     stroke-width: 2;
+  }
+  .handle .knob {
+    fill: var(--indigo, #4f46e5);
+    stroke: var(--surface, #fff);
+    stroke-width: 1;
+  }
+  .handle {
     pointer-events: none;
   }
   .edge {

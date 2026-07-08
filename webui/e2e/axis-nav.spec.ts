@@ -146,6 +146,57 @@ test.describe('Nyquist axis navigation (item 4)', () => {
     expect(after.historyLen).toBe(before.historyLen + 1);         // exactly one commit
   });
 
+  test('the brush numeric min/max fields commit the shared freq window (item 6b)', async ({ page }) => {
+    await openTf(page);
+    await page.getByLabel('plot type').selectOption('nyquist');
+    await expect(page.getByTestId('nyquist-brush')).toBeVisible();
+
+    // Typing a min then a max (each committed on Enter) lands on range.x — the
+    // SAME window Calc/Fit read — same as dragging the band, but exact.
+    await page.getByTestId('nyquist-brush-min').fill('250');
+    await page.getByTestId('nyquist-brush-min').press('Enter');
+    await page.getByTestId('nyquist-brush-max').fill('750');
+    await page.getByTestId('nyquist-brush-max').press('Enter');
+    await expect.poll(async () => (await tfSlice(page)).range.x, { timeout: 4000 }).toEqual([250, 750]);
+  });
+
+  test('dragging the brush band re-windows LIVE and records ONE history step (item 6c)', async ({ page }) => {
+    await openTf(page);
+    await page.getByLabel('plot type').selectOption('nyquist');
+    // Narrow to a sub-band so the body is draggable (not full width).
+    await openPanel(page);
+    await page.getByLabel('Frequency min').fill('400');
+    await page.getByLabel('Frequency max').fill('900');
+    await expect.poll(async () => (await tfSlice(page)).range.x, { timeout: 4000 }).toEqual([400, 900]);
+    await closePanel(page);
+
+    const before = await tfSlice(page);
+    const band = page.getByTestId('nyquist-brush-band');
+    const bb = await band.boundingBox();
+    if (!bb) throw new Error('brush band has no box');
+    // Press and move the band leftward WITHOUT releasing yet.
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bb.x + bb.width / 2 - 30, bb.y + bb.height / 2, { steps: 8 });
+
+    // LIVE: the committed window has ALREADY moved to lower frequencies mid-drag…
+    await expect
+      .poll(async () => (await tfSlice(page)).range.x![0], { timeout: 2000 })
+      .toBeLessThan(before.range.x![0]);
+    // …but no history was pushed yet (the live frames are transient).
+    expect((await tfSlice(page)).historyLen).toBe(before.historyLen);
+
+    await page.mouse.up();
+    // The whole gesture commits exactly ONE undo step.
+    await expect.poll(async () => (await tfSlice(page)).historyLen).toBe(before.historyLen + 1);
+    const after = await tfSlice(page);
+    expect(after.range.x![0]).toBeLessThan(before.range.x![0]);
+
+    // A single Undo returns straight to the pre-drag window (past all live frames).
+    await page.getByTitle('Undo view change (previous axis range)').click();
+    await expect.poll(async () => (await tfSlice(page)).range.x).toEqual([400, 900]);
+  });
+
   test('double-clicking the brush strip resets to the full frequency range', async ({ page }) => {
     await openTf(page);
     await page.getByLabel('plot type').selectOption('nyquist');

@@ -36,6 +36,13 @@
    * columns; otherwise a flat muted placeholder line is shown (never
    * fabricated samples). A set whose lines are all off (`set.allOff`) is
    * struck through and the whole card dimmed ("out of stock").
+   *
+   * When COLLAPSED, the rows are replaced by a wide "▾ Show N channels" strip
+   * (round-6 item 5) so a many-channel set's rows are one obvious click away —
+   * the tiny header caret alone read as "compressed". Sets over
+   * `AUTO_COLLAPSE_CHANNELS` channels start collapsed; smaller sets start
+   * expanded. The expanded `.ch-list` is height-capped with its own scroll so a
+   * large set stays bounded inside the (also-scrolling) tray column.
    */
   import type { Selection, SetView } from '../lib/stores/selection';
   import { minMaxDecimate } from '../lib/plot/decimate';
@@ -300,8 +307,22 @@
     >×</button>
   </div>
 
-  {#if !set.collapsed}
-    <div class="ch-list">
+  {#if set.collapsed}
+    <!-- Collapsed affordance (round-6 item 5): a wide, obviously-clickable
+         strip so a many-channel set's rows are discoverably one click away
+         (the tiny header caret alone read as "compressed"). Toggles the same
+         collapse flag as the caret; it is a <button>, so `onHeaderClick`'s
+         control guard keeps it from also cycling the set. -->
+    <button
+      type="button"
+      class="expand-hint"
+      data-testid="expand-hint"
+      title={`Show ${set.nChannels} channels`}
+      aria-label={`Expand ${set.name} — show ${set.nChannels} channels`}
+      onclick={() => selection.toggleCollapse(set.id)}
+    >▾ Show {set.nChannels} channels</button>
+  {:else}
+    <div class="ch-list" data-testid="ch-list">
       {#each set.colors as c, ch (ch)}
         {@const st = $stateStore(set.id, ch)}
         {@const pts = sparkPoints(ch)}
@@ -517,6 +538,39 @@
   }
   .ch-list {
     margin-top: 3px;
+    /* Cap the row area so a large expanded set (round-6 item 5) stays bounded
+       and scrolls INTERNALLY rather than pushing the tray down — small sets
+       never reach this height, so they read exactly as before. ~11 rows show
+       before the inner scroll engages (16+ channels). */
+    max-height: 264px;
+    overflow-y: auto;
+  }
+  /* Slim, unobtrusive scrollbar for the capped row area. */
+  .ch-list::-webkit-scrollbar {
+    width: 8px;
+  }
+  .ch-list::-webkit-scrollbar-thumb {
+    background: var(--track);
+    border-radius: 4px;
+  }
+  /* Collapsed-state expand affordance: a full-width, clearly interactive strip. */
+  .expand-hint {
+    display: block;
+    width: 100%;
+    margin-top: 5px;
+    padding: 5px 8px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 7px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font: 600 11px var(--font-mono);
+    text-align: center;
+    cursor: pointer;
+  }
+  .expand-hint:hover {
+    border-color: var(--indigo);
+    color: var(--indigo);
+    background: var(--accent-soft);
   }
   .ch-row {
     display: flex;
