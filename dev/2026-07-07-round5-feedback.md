@@ -68,3 +68,18 @@ fixtures instead):
 - Queued design idea remains: fit-as-tray-card (recon lines with
   normal per-line controls); modal-data restore from .dvma could ride
   that.
+
+## Additions (same session, after dispatch)
+
+12. **CWT sonogram**: add continuous wavelet transform as a sonogram
+    METHOD option (STFT | CWT), usable by the damping fits too.
+    pydvma-side (note scipy.signal.cwt was removed in scipy 1.15 —
+    numpy Morlet implementation or PyWavelets-if-in-pyodide).
+13. **Fit-as-tray-card: implement** — the modal model becomes a tray
+    card whose reconstruction lines get normal per-line controls
+    (tri-state/solo/legend), + modal data saves/restores through
+    .dvma (ModalData already round-trips the container).
+14. **Narrow rail mini-monitor strip: yes** (mockup .rail-mon).
+15. **Docs: all logger docs now** — full MkDocs update for the web
+    logger (three modes, serve, hardware, guides); the 4C6/div-c
+    labsheets are PARKED (separate repo, later).
