@@ -55,6 +55,16 @@ All of this is saved in the [`.dvma` file](dvma-format.md) as the
 calibrated — in the web logger, in Python, or in the JupyterLite
 notebook.
 
+## Best Match scaling writes here too
+
+The TF card's **[Best match](analysis.md#scaling-xi-and-best-match)**
+button (relative TF scaling, the Qt `best_match` tool) does not keep its
+own separate factors — it writes the computed scale factors straight into
+these per-channel `channel_cal_factors`. So after a Best Match the factors
+are visible and editable in this dialog, they persist in the `.dvma` file,
+and the scaling is undone by reopening Calibrate and resetting the
+affected channels' sensitivities to 1.
+
 ## NI IEPE/ICP sensors
 
 When acquiring IEPE/ICP accelerometers through the bridge, enable the

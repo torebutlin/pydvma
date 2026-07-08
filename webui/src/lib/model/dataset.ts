@@ -17,9 +17,13 @@ export type DataKind = 'TimeData' | 'FreqData' | 'CrossSpecData' | 'TfData'
  *   Missing entries use the default `ch_${i}`.
  * - `analysis`: per-view analysis settings that were active for this
  *   set at save time. Partial — missing keys take `defaults()` on load.
+ * - `iw_power`: the x(iω) DISPLAY power (round-6 Qt-parity Scaling tool) — a
+ *   per-set integer in [-2, +2] applied to the FFT/TF views at display time.
+ *   Absent / 0 ⇒ identity. Webui-only display state (python ignores it).
  */
 export interface DvmaItemUi {
   channel_labels?: Record<string, string>;
+  iw_power?: number;
   analysis?: {
     freq?: { window?: string; mode?: 'fft' | 'psd' | 'csd'; nFrames?: number };
     tf?: { chIn?: number; window?: string; averaging?: 'none' | 'within' | 'across'; nFrames?: number };

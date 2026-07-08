@@ -210,6 +210,59 @@ def calc_tf_averaged(sets, ch_in, window):
     return {'freq_axis': _arr(tf.freq_axis), 'tf_data': _arr(tf.tf_data), 'coherence': coh}
 
 
+def calc_best_match(sets, freq_range=None, set_ref=0, ch_ref=0):
+    """Relative TF scaling factors (Qt's ``analysis.best_match``).
+
+    Mirrors the Qt logger's Scaling tool (``gui.py:best_match`` →
+    ``analysis.best_match``): every set's transfer-function columns are rescaled
+    to best match ONE reference column of ONE reference set over the visible
+    frequency window, so a family of TFs measured at different drive levels /
+    gains can be overlaid. The factor is the RMS-magnitude ratio to the
+    reference (with the sign taken from a real least-squares fit), computed on a
+    common interpolated grid.
+
+    ``sets`` is a LIST of ``{freq_axis, tf_data, n_tf}`` payloads — one per set's
+    measured TF (the same interleaved-complex ``[re, im, ...]`` marshalling the
+    fit path uses; ``n_tf`` is the OUTPUT-column count). Each is rebuilt into a
+    pydvma ``TfData`` and wrapped in a ``TfDataList`` so ``analysis.best_match``
+    interpolates every set/column onto the reference grid over ``freq_range``.
+
+    ``freq_range`` is ``[lo, hi]`` Hz (the app's committed shared frequency
+    window); ``None`` (or a malformed range) falls back to the reference set's
+    full band. ``set_ref``/``ch_ref`` index the reference set (in ``sets`` order)
+    and its reference OUTPUT column.
+
+    Returns ``{'factors': [<per-column array>, ...]}`` — one marshalled real
+    array of per-column factors per set, in ``sets`` order. The JS side
+    (``actions.calcBestMatch``) folds each column's factor into the SOURCE
+    channel's ``channel_cal_factors`` through the existing calibration path
+    (display-time ``cal[out]/cal[in]`` scaling + ``.dvma`` persistence), so
+    Best Match is Undo-able by resetting calibration and the factors stay
+    visible/editable in the Calibrate dialog — the pragmatic webui adaptation of
+    Qt's ``set_calibration_factors_all`` (Qt stores the factor per TF column;
+    the webui stores it per source channel).
+    """
+    tfs = []
+    for s in sets:
+        fa = np.asarray(_get(s, 'freq_axis'), dtype=np.float64)
+        ntf = int(_get(s, 'n_tf'))
+        G = _complex_grid(_get(s, 'tf_data'), ntf)
+        # settings only carry a nominal channel count; best_match ignores fs.
+        tfs.append(datastructure.TfData(fa, G, None, _settings(1.0, ntf + 1)))
+    tdl = datastructure.TfDataList(tfs)
+    sref = int(set_ref)
+    # A concrete 2-element range is required: analysis.best_match indexes
+    # freq_range[0]/[1] directly (its own linspace). `not freq_range` catches
+    # Python None, a JS-null proxy (JsNull — truthy to `is None`, so it must be
+    # tested with `not`), and an empty range; a real [lo, hi] is truthy.
+    if not freq_range or (hasattr(freq_range, '__len__') and len(freq_range) < 2):
+        fr = np.asarray(tdl[sref].freq_axis[[0, -1]], dtype=np.float64)
+    else:
+        fr = np.asarray([float(freq_range[0]), float(freq_range[1])], dtype=np.float64)
+    factors = analysis.best_match(tdl, freq_range=fr, set_ref=sref, ch_ref=int(ch_ref))
+    return {'factors': [_arr(np.asarray(f, dtype=np.float64)) for f in factors]}
+
+
 def legacy_to_dvma(npy_bytes):
     """Convert a legacy pickle ``.npy`` (pydvma <=1.4.0) to ``.dvma`` bytes.
 

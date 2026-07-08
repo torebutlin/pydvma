@@ -571,6 +571,38 @@ async function probeServeConfig(fetchImpl: typeof fetch): Promise<boolean> {
   }
 }
 
+/**
+ * Fetch and parse the same-origin `/config` document `pydvma serve` publishes
+ * (the served `--settings` MySettings JSON, or `{}` when none was given).
+ * Returns the parsed object, or `null` when the fetch fails / is not JSON /
+ * is empty — so a bridge boot can prefill Setup from it (`mapServeConfig`)
+ * WITHOUT a second detection round-trip.  Same short abort timeout as the
+ * detection probe so a static host never stalls boot.  `null` (not `{}`) is
+ * returned for an empty object so the caller can skip the "settings loaded"
+ * toast when there is nothing to load.
+ */
+export async function fetchServeConfig(
+  fetchImpl?: typeof fetch,
+): Promise<Record<string, unknown> | null> {
+  const f = fetchImpl ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : undefined);
+  if (!f) return null;
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 1000) : null;
+  try {
+    const res = await f('/config', ctrl ? { signal: ctrl.signal } : undefined);
+    if (!res.ok) return null;
+    const ctype = res.headers.get('content-type') ?? '';
+    if (!ctype.includes('application/json')) return null;
+    const body = await res.json();
+    if (body == null || typeof body !== 'object' || Array.isArray(body)) return null;
+    return Object.keys(body).length > 0 ? (body as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Options for {@link selectProvider} (all injectable so it is testable). */
 export interface SelectProviderOptions {
   /** Location search string (defaults to `window.location.search`). */

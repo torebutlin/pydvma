@@ -139,6 +139,22 @@ export interface SetArrays {
    * is surfaced in the axis label. See `commonUnit` / `tfRatioUnit`.
    */
   units?: string[];
+  /**
+   * x(iω) DISPLAY POWER (Qt's Scaling tool `multiply_by_power_of_iw`, but
+   * NON-DESTRUCTIVE — a per-set display multiplier, never a mutation of the
+   * stored arrays). An integer `p` in `[-2, +2]`; the complex FFT / TF value is
+   * multiplied by `(iω)^p` (ω = 2πf) at DISPLAY time BEFORE the plot-type
+   * transform, so `+1` differentiates (displacement→velocity→acceleration) and
+   * `-1` integrates. Absent / `0` ⇒ identity (today's behaviour). Applied to
+   * the FFT sub-mode of the frequency view and to every TF plot type (mag /
+   * phase / real / imag / Nyquist) — NOT to PSD (power) or CSD (coherence).
+   * The DC bin (f = 0) maps to 0 for any `p ≠ 0` (Qt sets `iw[0]=inf`). The
+   * axis unit label follows the derivative order (`m` → `m/s` → `m/s²`). This
+   * display power does NOT feed the modal fit — the fit always reads the RAW TF
+   * with its own `measurement_type` (see `calc_fit` / FitCard docs). Indexed
+   * per SET (all channels of a set share one power).
+   */
+  iwPower?: number;
 }
 
 /**
@@ -164,17 +180,83 @@ function wrapUnit(u: string): string {
   return /[^\p{L}\p{N}]/u.test(u) ? `(${u})` : u;
 }
 
+/** Superscript glyphs for a signed integer exponent (matches the 'm/s²' style). */
+const SUPERSCRIPT: Record<string, string> = {
+  '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+  '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻',
+};
+/** Render `n` as a unit-exponent superscript (`2` → `²`, `-1` → `⁻¹`). */
+function superscript(n: number): string {
+  return String(n).split('').map((c) => SUPERSCRIPT[c] ?? c).join('');
+}
+
+/**
+ * Apply `p` differentiations (×(iω)^p) to an engineering unit's TIME dimension:
+ * each `+1` divides by seconds (d/dt), each `−1` multiplies by seconds (∫dt).
+ * The unit is modelled as `base / s^k`; `p` shifts `k` by `p` and the result is
+ * re-rendered in the stored superscript style — so the axis label follows the
+ * derivative ladder as the x(iω) power changes:
+ *
+ *   'm'    (+1 → 'm/s',  +2 → 'm/s²')      integrating 'm/s²' (−1 → 'm/s', −2 → 'm')
+ *   'N'    (+1 → 'N/s')                     'Pa' (−1 → 'Pa·s')
+ *
+ * `p === 0` returns the unit unchanged. The recognised suffixes are `/s`,
+ * `/sⁿ` (ASCII `/s2` or superscript), and `·s`, `·sⁿ`; anything else is treated
+ * as `k = 0` (a bare base). A resulting `k === 0` drops the suffix.
+ */
+export function differentiateUnit(unit: string, p: number): string {
+  if (!p) return unit;
+  // Parse a trailing seconds factor into (base, k) where the unit is base/s^k.
+  let base = unit;
+  let k = 0;
+  // Normalise superscript digits back to ASCII for parsing.
+  const deSup = (s: string) =>
+    s.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (c) => String('⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(c)));
+  const m = unit.match(/^(.*?)([/·])s((?:[⁰¹²³⁴⁵⁶⁷⁸⁹]+)|\d+)?$/u);
+  if (m) {
+    base = m[1];
+    const order = m[3] ? parseInt(deSup(m[3]), 10) : 1;
+    k = m[2] === '/' ? order : -order;
+  }
+  const nk = k + p;
+  if (nk === 0) return base;
+  if (nk > 0) return `${base}/s${nk === 1 ? '' : superscript(nk)}`;
+  const a = -nk;
+  return `${base}·s${a === 1 ? '' : superscript(a)}`;
+}
+
+/**
+ * Complex multiplier `(iω)^p` (ω = 2πf) for the x(iω) display transform
+ * (round-6 Qt-parity Scaling tool). `i^p` is an exact 90° rotation for integer
+ * `p`; `ω^p` scales the magnitude. The DC bin (f = 0) collapses to 0 for any
+ * `p ≠ 0` — mirroring Qt's `iw[0]=inf` (∫) / `ω=0` (d/dt) so a divide-by-zero
+ * never leaks. `p === 0` is identity. Returns `[re, im]` of the multiplier.
+ */
+export function iwFactor(f: number, p: number): [number, number] {
+  if (!p) return [1, 0];
+  const w = 2 * Math.PI * f;
+  if (w === 0) return [0, 0];             // DC: 0 for differentiate AND integrate
+  const mag = Math.pow(w, p);
+  // i^p for integer p: 0→(1,0) 1→(0,1) 2→(-1,0) 3→(0,-1), period 4.
+  const r = ((p % 4) + 4) % 4;
+  const rot: [number, number] = r === 0 ? [1, 0] : r === 1 ? [0, 1] : r === 2 ? [-1, 0] : [0, -1];
+  return [mag * rot[0], mag * rot[1]];
+}
+
 /**
  * The single engineering unit shared by ALL visible channels, or `null` when
  * the sets disagree or any visible channel has no meaningful unit. Drives the
  * time/frequency amplitude labels: `null` → the plain fallback (matching the
  * pre-item-6 behaviour), a value → e.g. `Amplitude (m/s²)`.
  */
-function commonUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): string | null {
+function commonUnit(byId: Map<number, SetArrays>, visible: VisibleLine[], applyIw = false): string | null {
   let unit: string | null = null;
   for (const v of visible) {
-    const u = meaningfulUnit(byId.get(v.setId)?.units?.[v.ch]);
+    const set = byId.get(v.setId);
+    let u = meaningfulUnit(set?.units?.[v.ch]);
     if (!u) return null;                 // absent/default on any line → no label unit
+    // x(iω) power shifts the unit along the derivative ladder (fft only).
+    if (applyIw && set?.iwPower) u = differentiateUnit(u, set.iwPower);
     if (unit === null) unit = u;
     else if (unit !== u) return null;    // mixed real units → plain fallback
   }
@@ -194,9 +276,12 @@ function tfRatioUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): stri
     const t = set?.tf;
     if (!t) continue;                    // no TF for this line → contributes nothing
     if (t.chIn === null) return null;    // orphan TF: no input channel → no ratio unit
-    const o = meaningfulUnit(set?.units?.[v.ch]);
+    let o = meaningfulUnit(set?.units?.[v.ch]);
     const i = meaningfulUnit(set?.units?.[t.chIn ?? 0]);
     if (!o || !i) return null;
+    // x(iω) power multiplies the whole TF (a ratio), shifting the NUMERATOR's
+    // derivative order — (m/s²)/N integrated once reads (m/s)/N.
+    if (set?.iwPower) o = differentiateUnit(o, set.iwPower);
     if (outU === null) outU = o; else if (outU !== o) return null;
     if (inU === null) inU = i; else if (inU !== i) return null;
   }
@@ -384,6 +469,21 @@ function calScaledColumn(data: DecodedArray, nf: number, cols: number, col: numb
 }
 
 /**
+ * Multiply a complex `(re, im)` column by `(iω)^p` IN PLACE (the x(iω) display
+ * transform, round-6). `p === 0` is a no-op. Shared by the measured TF lines
+ * and their modal-reconstruction overlay so both move together under the tool.
+ */
+function applyIwColumn(axis: Float64Array, re: Float64Array, im: Float64Array, p: number): void {
+  if (!p) return;
+  for (let i = 0; i < re.length; i++) {
+    const [fr, fi] = iwFactor(axis[i], p);
+    const r = re[i], m = im[i];
+    re[i] = r * fr - m * fi;
+    im[i] = r * fi + m * fr;
+  }
+}
+
+/**
  * Assemble the `PlotModel` for the active view from decoded set arrays
  * and the visible-line list.
  *
@@ -462,7 +562,9 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     // Unit annotation (item 6): the shared engineering unit across visible
     // channels, if any. CSD is dimensionless (coherence) so it takes no unit.
     // FFT amplitude carries the channel unit; PSD is power → unit²/Hz.
-    const unit = mode === 'csd' ? null : commonUnit(byId, args.visible);
+    // FFT honours the x(iω) display power (round-6 Qt-parity); PSD (power) and
+    // CSD (coherence) do not, so their unit label ignores it too.
+    const unit = mode === 'csd' ? null : commonUnit(byId, args.visible, mode === 'fft');
     // PSD is power → unit²/Hz; parenthesise a compound unit so the square is
     // unambiguous ('m/s²' → '(m/s²)²/Hz', but 'Pa' → 'Pa²/Hz').
     const psdUnit = unit ? `${wrapUnit(unit)}²/Hz` : '';
@@ -482,10 +584,15 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         if (v.ch >= cols) continue;
         const nf = f.axis.length;
         const cal = calOf(s, v.ch);                        // amplitude cal (default 1)
+        const p = s?.iwPower ?? 0;                          // x(iω) display power
         const y = new Float64Array(nf);
         for (let i = 0; i < nf; i++) {
           const idx = i * cols + v.ch;
-          const re = f.data.re[idx] * cal, im = (f.data.im ? f.data.im[idx] : 0) * cal;
+          let re = f.data.re[idx] * cal, im = (f.data.im ? f.data.im[idx] : 0) * cal;
+          if (p) {                                          // ×(iω)^p before the magnitude
+            const [fr, fi] = iwFactor(f.axis[i], p);
+            [re, im] = [re * fr - im * fi, re * fi + im * fr];
+          }
           y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
         }
         lines.push(baseLine(f.axis, y, v));
@@ -570,6 +677,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       // plot-type transform, matching Qt's per-output-column TF cal.
       const ratio = calRatio(set, v.ch, chIn);
       const { re, im } = calScaledColumn(t.data, nf, nout, col, ratio);
+      applyIwColumn(t.axis, re, im, set?.iwPower ?? 0);     // x(iω) display power
       const { x, y, xMonotonic } = tfXY(t.axis, re, im, type, linMag, window);
       lines.push({
         // A modal-fit pseudo-set line (round-5 item 13) is dashed so it reads
@@ -594,6 +702,10 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         const col = tfColumn(v.ch, recon.chIn, recon.nChannels);
         if (col === null) continue;
         const ratio = calRatio(byId.get(v.setId), v.ch, recon.chIn);
+        // The recon overlays the MEASURED line, so it inherits that set's x(iω)
+        // display power to stay visually locked to it (the power is display-only
+        // and never fed the fit itself).
+        const iwP = byId.get(v.setId)?.iwPower ?? 0;
         const draw = (
           slice: { axis: Float64Array; data: DecodedArray },
           color: string, dashed: boolean, width: number,
@@ -602,6 +714,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           if (col >= nout) return;
           const nf = slice.axis.length;
           const { re, im } = calScaledColumn(slice.data, nf, nout, col, ratio);
+          applyIwColumn(slice.axis, re, im, iwP);
           const { x, y, xMonotonic } = tfXY(slice.axis, re, im, type, linMag, window);
           lines.push({ x, y, color, opacity: 1, width, dashed, yAxis: 'left', xMonotonic });
         };

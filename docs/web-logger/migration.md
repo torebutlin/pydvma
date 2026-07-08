@@ -39,6 +39,18 @@ page maps what you did in the Qt logger onto where it lives now.
 | **Generate output** panel | **Acquire** output stimulus (sweep / white / Gaussian) — bridge only |
 | Save / Load / Export | **Export** stage (`.dvma`, `.mat`, CSV, PNG/PDF) |
 | Per-channel calibration | **Calibrate** dialog (sensitivity → cal factors, units) |
+| **Scaling** tool — Best Match, x(iω) | TF card's **[scaling](analysis.md#scaling-xi-and-best-match)** group (Best match + x(iω)^p) |
+
+!!! note "x(iω) is non-destructive in the web logger"
+    The Qt Scaling tool's **x(iω)** button called `multiply_by_power_of_iw`,
+    which **mutates** the stored `FreqData`/`TfData` in place. The web
+    logger's **x(iω)^p** is instead a **per-set display transform** — it
+    changes only what is plotted, never the stored arrays, so a set that
+    recomputes or is re-fitted keeps its measured values. (It is persisted
+    per set in the `.dvma` file and does not feed the modal fit.) **Best
+    Match** matches Qt's maths and, like Qt's `set_calibration_factors_all`,
+    writes through the calibration path — in the web logger that is the
+    per-source-channel `channel_cal_factors`.
 
 The data model is identical underneath: the web logger's analysis runs
 the very same pydvma core (in a pyodide worker in the browser, or in the
@@ -82,13 +94,25 @@ publishes it at the bridge's `/config` endpoint:
 pydvma-serve --driver nidaq --settings my_lab_config.json --open
 ```
 
-The app fetches `/config` on start; a JSON document there is the "opened
-through `pydvma serve`" signature, so the app **automatically switches
-on live acquisition** (rather than falling back to browser Web Audio).
-You then choose the device, sample rate and channels in **Setup**. This
-is the closest analogue to handing `MySettings` to `Logger(...)` — the
+The app fetches `/config` on start. A JSON document there is both the
+"opened through `pydvma serve`" signature (so the app **automatically
+switches on live acquisition** rather than falling back to browser Web
+Audio) **and a launch configuration the app consumes**: the served
+`MySettings` fields **pre-fill Setup and Acquire** — sample rate,
+channels, duration, the selected device (`device_driver` +
+`device_index`, matched against the enumerated devices), the pretrigger
+(`pretrig_samples`/`threshold`/`channel`/`timeout`, armed when a sample
+count is given), the output stimulus, the NI voltage rails
+(`VmaxNI`/`output_VmaxNI`), and IEPE/terminal settings where the NI group
+is shown. A toast confirms *"Settings loaded from pydvma-serve
+--settings"*.
+
+This is the direct analogue of handing `MySettings` to `Logger(...)` — the
 notebook (or a launch script) starts the bridge with your lab's
-configuration, and the student opens the tab.
+configuration and the student opens the tab already set up. The prefill
+runs **once at boot** and only fills defaults, so any change you make
+afterwards in Setup is never overwritten; unknown or malformed fields are
+skipped silently.
 
 !!! note "Bridge auto-detection"
     You do not normally need to configure anything: opening the app

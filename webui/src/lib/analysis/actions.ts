@@ -48,7 +48,27 @@ import type { ModalStore, ModalState, ReconArrays } from '../stores/modal';
 import type { Toasts } from '../stores/toast';
 import { normalizeFactors, normalizeUnits } from '../model/calibration';
 import { calibrationController } from '../stores/calibrationController';
+import { tfColumn } from '../plot/tfChannels';
 import { fromNFrames, fromNFft } from './resolution';
+
+/** Clamp an x(iω) display power to an integer in [-2, +2] (0 = identity). */
+function normalizeIwPower(v: unknown): number {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(-2, Math.min(2, n)) : 0;
+}
+
+/**
+ * SOURCE channel that TF output column `col` came from — the inverse of
+ * {@link tfColumn}. A measured TF dropped the input channel `chIn`, so
+ * `col` maps back to `col < chIn ? col : col + 1`; an ORPHAN TF (`chIn`
+ * null) is identity (columns are the channels). Used by Best Match to fold a
+ * per-column scale factor into the right source channel's calibration.
+ */
+function sourceOfColumn(col: number, chIn: number | null, nChannels: number): number {
+  void nChannels;
+  if (chIn === null) return col;
+  return col < chIn ? col : col + 1;
+}
 
 /** Compute-action kind, used as the per-kind stale-guard + error key. */
 type Kind = 'fft' | 'psd' | 'tf' | 'sono' | 'clean' | 'fit';
@@ -391,6 +411,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // Per-channel engineering units for axis labels (round-4): 'V'/absent
         // reads as unlabelled, so uncalibrated sets keep the plain 'Amplitude'.
         units: normalizeUnits(item.meta.units, nCh),
+        // x(iω) display power (round-6 Qt-parity Scaling tool), persisted in ui.
+        iwPower: normalizeIwPower(item.ui?.iw_power),
       };
 
       // Restore persisted UI state (Plan 2 persistence).
@@ -452,6 +474,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         setId: newId,
         calFactors: normalizeFactors(item.meta.channel_cal_factors, nCh),
         units: normalizeUnits(item.meta.units, nCh),
+        iwPower: normalizeIwPower(item.ui?.iw_power),
         ...slice,
       };
     });
@@ -540,6 +563,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // Channel labels (sparse).
       const labels = selection.getLabelsForSet(ws.setId);
       if (labels) ui.channel_labels = labels;
+
+      // x(iω) display power (round-6): persist only when non-identity.
+      const iwP = get(derived)[ws.setId]?.iwPower ?? 0;
+      if (iwP) ui.iw_power = iwP;
 
       // Per-set analysis settings (full snapshot per view).
       if (settings) {
@@ -915,6 +942,118 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   // Publish the calibration API so the tray's Calibrate dialog can reach it
   // without a prop thread through App.svelte (see `calibrationController`).
   calibrationController.set({ getCalibration, setCalFactors });
+
+  // --------------------------------------------------------------------- //
+  // Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match
+  // --------------------------------------------------------------------- //
+
+  /** Read a set's x(iω) display power (0 = identity). */
+  function getIwPower(setId: number): number {
+    return get(derived)[setId]?.iwPower ?? 0;
+  }
+
+  /**
+   * Set a set's x(iω) DISPLAY power (round-6 Qt-parity Scaling tool, the
+   * NON-DESTRUCTIVE analogue of Qt's `multiply_by_power_of_iw`). `power` is an
+   * integer in [-2, +2]; the FFT/TF views multiply the complex value by
+   * `(iω)^p` at DISPLAY time (see `model.ts`), so `+1` differentiates and `-1`
+   * integrates — the stored arrays are NEVER mutated, so a set that recomputes
+   * stays correct. Persisted per-set in `.dvma` UI state (`iw_power`, via
+   * `stampUiState`) and autosaved. Any modal-fit pseudo-set overlaying the set
+   * inherits the same power so its reconstruction stays visually locked to the
+   * (transformed) measured line. The display power does NOT feed the modal fit
+   * (that reads the raw TF + its own measurement_type).
+   */
+  function setIwPower(setId: number, power: number): void {
+    const ws = working.find((w) => w.setId === setId);
+    if (!ws) return;
+    const p = normalizeIwPower(power);
+    setDerived(setId, { iwPower: p });
+    // Keep an overlaying fit pseudo-set locked to the same display power.
+    const fit = fitSets.get(setId);
+    if (fit && get(derived)[fit.id]) setDerived(fit.id, { iwPower: p });
+    dataset.update((d) => d);            // re-emit so autosave persists the change
+  }
+
+  /**
+   * Best Match relative scaling (round-6 Qt-parity — Qt's `analysis.best_match`
+   * + `set_calibration_factors_all`). Rescales EVERY TF-bearing set's output
+   * columns to best match ONE reference column of set `refSetId` over
+   * `freqRange` (the committed shared frequency window; `null` = each set's full
+   * band), then folds the resulting factor into the SOURCE channel's
+   * `channel_cal_factors` through the EXISTING calibration path — so the scaling
+   * is display-time, `.dvma`-persisted, Undo-able (re-open Calibrate + reset),
+   * and visible/editable in the Calibrate dialog afterwards.
+   *
+   * `refChannel` is a SOURCE channel of the reference set; it maps to its TF
+   * output column (falling back to column 0 if it names the input channel). The
+   * reference column gets factor ~1 (matches itself, times its current cal
+   * factor); every other set/column is scaled relative to it. Toasts the applied
+   * per-set factors; no-ops (with a toast) when no TF exists yet.
+   */
+  async function calcBestMatch(
+    refSetId: number, refChannel: number, freqRange: [number, number] | null = null,
+  ): Promise<void> {
+    const specs = working.map(tfSpecOf).filter((s): s is FitSpec => s !== null);
+    if (specs.length === 0) {
+      toasts?.push('Best match needs a transfer function — Calc TF first.', { level: 'info' });
+      return;
+    }
+    const found = specs.findIndex((s) => s.ws.setId === refSetId);
+    const refIdx = found >= 0 ? found : 0;
+    const refSpec = specs[refIdx];
+    // Reference OUTPUT column from the chosen source channel (input → column 0).
+    const refCol = tfColumn(refChannel, refSpec.chIn, refSpec.nChannels) ?? 0;
+    const refCal = getCalibration(refSpec.ws.setId).factors[refChannel] ?? 1;
+
+    engine.boot();
+    busyN += 1;
+    busy.set(true);
+    try {
+      const payload: Record<string, unknown> = {
+        sets: specs.map((s) => ({
+          freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.nCols), n_tf: s.nCols,
+        })),
+        set_ref: refIdx,
+        ch_ref: refCol,
+      };
+      // Omit freq_range when null: a JS null crosses the FFI as a truthy JsNull
+      // proxy, so leaving the key off lets the engine's full-band default apply.
+      if (freqRange) payload.freq_range = freqRange;
+      const res = await engine.enqueue('calc_best_match', payload);
+      const raw = mval(res, 'factors');
+      const factorList: Float64Array[] = Array.isArray(raw)
+        ? (raw as unknown[]).map((a) => axisData(a))
+        : [];
+      const summary: string[] = [];
+      specs.forEach((s, i) => {
+        const facs = factorList[i];
+        if (!facs) return;
+        const cur = getCalibration(s.ws.setId);
+        const next = cur.factors.slice();
+        for (let c = 0; c < s.nCols; c++) {
+          const sc = sourceOfColumn(c, s.chIn, s.nChannels);
+          const f = facs[c];
+          if (sc >= 0 && sc < next.length && Number.isFinite(f) && f !== 0) {
+            next[sc] = refCal * f;
+          }
+        }
+        setCalFactors(s.ws.setId, next, cur.units);
+        // Report the reference column's factor per set as the headline number.
+        const head = facs[Math.min(refCol, facs.length - 1)];
+        summary.push(`${nameOf(s.ws.setId)} ×${Number.isFinite(head) ? head.toPrecision(3) : '1'}`);
+      });
+      toasts?.push(
+        `Best match → ${nameOf(refSpec.ws.setId)}: ${summary.join(', ')}`,
+        { level: 'success' },
+      );
+    } catch (e) {
+      toasts?.push(`Best match failed: ${e instanceof Error ? e.message : String(e)}`, { level: 'error' });
+    } finally {
+      busyN -= 1;
+      busy.set(busyN > 0);
+    }
+  }
 
   // --------------------------------------------------------------------- //
   // Modal-fit pseudo-set + persistence (round-5 item 13)
@@ -1467,6 +1606,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
     calcFit, calcDamping, exportArrays, exportMat, setCsdPair,
     getCalibration, setCalFactors,
+    /** Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match. */
+    getIwPower, setIwPower, calcBestMatch,
     /** Modal-fit pseudo-set (round-5 item 13): visibility state + toggle + clear. */
     fitVisible, setFitVisible, clearFit,
     /** The modal-fit pseudo-set's selection id store (null when none), for App. */

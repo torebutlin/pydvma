@@ -51,7 +51,8 @@
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
   import { initTheme } from './lib/stores/theme';
-  import { selectProvider } from './lib/audio/provider';
+  import { selectProvider, fetchServeConfig } from './lib/audio/provider';
+  import { mapServeConfig } from './lib/audio/serveConfig';
   import MiniMonitor from './components/MiniMonitor.svelte';
   import LiveScope from './components/LiveScope.svelte';
   import FitChip from './components/FitChip.svelte';
@@ -192,6 +193,12 @@
         console.warn('[bridge] provider selection failed, using Web Audio:', e);
       }
       await acquire.init();
+      // Launch-config prefill (round-6): when opened through `pydvma serve
+      // --settings`, map the served MySettings JSON onto the Setup/Acquire
+      // stores ONCE at boot (after device enumeration, so device_driver+index
+      // resolve against real devices; before the user edits anything). Only
+      // overrides defaults — a later user edit is never clobbered.
+      if (acquire.isBridge) await applyServeConfig();
     })();
 
     // Release the mic if the browser tab is closed or navigated away while
@@ -235,6 +242,28 @@
       cleanupUnload();
     };
   });
+
+  /**
+   * Launch-config prefill (round-6): fetch the `/config` MySettings JSON that
+   * `pydvma serve --settings` publishes and apply it to the Acquire settings +
+   * bridge config ONCE at boot. `mapServeConfig` resolves `device_driver` /
+   * `device_index` against the already-enumerated device list; unknown / bad
+   * fields are skipped. A short toast confirms a non-empty load. Best-effort —
+   * a missing / static `/config` (returns null) is a silent no-op.
+   */
+  async function applyServeConfig(): Promise<void> {
+    try {
+      const config = await fetchServeConfig();
+      if (!config) return;
+      const patch = mapServeConfig(config, get(acquire.devices));
+      if (!patch) return;
+      if (Object.keys(patch.bridge).length) acquire.patchBridge(patch.bridge);
+      if (Object.keys(patch.settings).length) acquire.patch(patch.settings);
+      toasts.push('Settings loaded from pydvma-serve --settings', { level: 'info' });
+    } catch (e) {
+      console.warn('[serve-config] prefill failed:', e);
+    }
+  }
 
   /**
    * Boot-time file restore: reconnect last session's working folder, then

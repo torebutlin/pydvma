@@ -65,6 +65,36 @@ Good coherence (near 1) means low noise and a linear, causal response;
 dips flag noise, non-linearity, or a poor reference — the same
 interpretation as in the [Python guide](../user-guide/analysis.md#coherence-function).
 
+### Scaling: x(iω) and Best Match
+
+The TF card carries a small **scaling** group — the web-logger equivalent
+of the old Qt logger's Scaling tool.
+
+- **x(iω)^ p** (`p` in −2 … +2) — differentiate or integrate the
+  displayed spectrum by multiplying it by `(iω)^p`: `+1` converts
+  displacement → velocity → acceleration, `−1` integrates back. The axis
+  unit label follows the derivative ladder (`m` → `m/s` → `m/s²`).
+
+    This is a **non-destructive, per-set display transform** — it changes
+    only what is plotted, never the stored arrays, so a set that
+    recomputes (or is re-fitted) is unaffected. It differs from Python
+    `multiply_by_power_of_iw`, which mutates the `FreqData`/`TfData` in
+    place. The power applies to the **FFT** view and every **TF** plot
+    type (not PSD or coherence), is saved per set in the `.dvma` file, and
+    does **not** feed the modal fit — [modal fitting](modal-fitting.md)
+    always reads the raw transfer function with its own measurement type.
+
+- **Best match** — pick a **ref ch** (a channel of the focused set) and
+  press **Best match** to rescale every TF so the family best overlays
+  that reference channel over the currently visible frequency window (the
+  Qt `best_match` maths: an RMS-magnitude ratio with a least-squares
+  sign). The factors are written through the ordinary
+  [calibration](calibration.md) path — a per-channel `channel_cal_factors`
+  multiplier — so they persist in the `.dvma` file, show up (and are
+  editable) in the Calibrate dialog afterwards, and are undone by reopening
+  Calibrate and resetting the sensitivities. A toast reports the applied
+  per-set factors.
+
 !!! note "Nyquist and Bode navigation"
     In **Nyquist** view the card exposes **fmin/fmax** fields linked to
     the shared TF frequency range. A draggable frequency-band *brush*

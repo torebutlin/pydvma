@@ -115,6 +115,31 @@
       viewState.setRange('tf', { x: [lo, hi], y: $current.range.y });
     }
   }
+
+  // ── Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match ──
+  // Both live on the TF card (Qt keeps them in a Scaling tool alongside the TF
+  // view). x(iω) is a per-set NON-DESTRUCTIVE display multiplier; Best Match
+  // writes relative factors through the existing calibration path.
+  const derivedStore = $derived(actions.derived);
+  /** Representative x(iω) power for the current target (rep set for 'all'). */
+  const iwPower = $derived(repId != null ? ($derivedStore[repId]?.iwPower ?? 0) : 0);
+  /** Any TF-bearing set exists → Best Match + the scaling group are meaningful. */
+  const anyTf = $derived(
+    Object.values($derivedStore).some((s) => s?.tf && (s.tf.data.shape[1] ?? 0) > 0),
+  );
+  const IW_POWERS = [-2, -1, 0, 1, 2];
+  /** Set the x(iω) power for the target ('all' → every data set). */
+  function setIw(p: number) {
+    if ($target === 'all') { for (const s of $setsView) actions.setIwPower(s.id, p); }
+    else if (repId != null) actions.setIwPower(repId, p);
+  }
+
+  /** Best-Match reference channel (a source channel of the reference set). */
+  let refCh = $state(1);
+  function bestMatch() {
+    if (repId == null) return;
+    actions.calcBestMatch(repId, refCh, $sharedFreq ?? null);
+  }
 </script>
 
 <section class="ctx-card card-controls" aria-label="TF stage controls">
@@ -201,6 +226,30 @@
               onchange={(e) => setNyqRange(nyqMin, +e.currentTarget.value)} />
             <span class="note">range linked to TF zoom</span>
           {/if}
+        </div>
+      </div>
+      <div class="grp">
+        <span class="grp-lab">scaling</span>
+        <div class="grp-ctl">
+          <span class="ml" title="differentiate/integrate the displayed FFT/TF: ×(iω)^p (non-destructive)">x(iω)^</span>
+          <select value={String(iwPower)}
+            onchange={(e) => setIw(Number(e.currentTarget.value))}
+            style="width:56px" aria-label="x(iw) power" data-testid="iw-power">
+            {#each IW_POWERS as p (p)}
+              <option value={String(p)}>{p > 0 ? `+${p}` : p}</option>
+            {/each}
+          </select>
+          <span class="ml">ref ch</span>
+          <select bind:value={refCh} style="width:64px" aria-label="best-match reference channel"
+            data-testid="best-match-ref">
+            {#each Array.from({ length: Math.max(1, maxChannels) }, (_, c) => c) as c (c)}
+              <option value={c}>ch_{c}</option>
+            {/each}
+          </select>
+          <button class="btn sm" disabled={$busy || !anyTf} onclick={bestMatch}
+            data-testid="best-match" title="rescale every TF to best match the reference channel over the visible window">
+            Best match
+          </button>
         </div>
       </div>
     </div>

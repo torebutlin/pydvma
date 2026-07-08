@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import net from 'node:net';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -229,5 +231,81 @@ test.describe('pydvma serve bridge', () => {
     // The mock honoured the requested rate → the coerced-fs note stays absent.
     await expect(page.getByTestId('setup-coerced-fs')).toHaveCount(0);
     await page.getByTestId('mini-stop').click();
+  });
+});
+
+/**
+ * Launch-config prefill (round-6 Qt-parity): `pydvma serve --settings file.json`
+ * serves a MySettings JSON at `/config`, and the app now CONSUMES it — mapping
+ * fs / channels / duration / device / pretrigger / output onto the Setup +
+ * Acquire stores at boot.  This spec spawns a SECOND server that serves BOTH the
+ * built UI (`--ui-dir webui/dist`) and the settings, then opens the app AT that
+ * server's own origin (no `?bridge=` param — the same-origin `/config` probe
+ * detects the bridge), so `/config` is same-origin exactly as in a real
+ * `pydvma-serve` deployment.  Requires `webui/dist` to be built.
+ */
+const SETTINGS_PORT = Number(process.env.BRIDGE_SETTINGS_PORT ?? 8764);
+const SETTINGS_ORIGIN = `http://127.0.0.1:${SETTINGS_PORT}`;
+const DIST_DIR = path.join(REPO_ROOT, 'webui', 'dist');
+
+test.describe('pydvma serve --settings launch prefill', () => {
+  test.skip(!BRIDGE_E2E, 'set BRIDGE_E2E=1 (needs pydvma + websockets + a built webui/dist)');
+
+  let settingsServer: ChildProcessWithoutNullStreams | undefined;
+  let settingsFile: string | undefined;
+
+  test.beforeAll(async () => {
+    if (!BRIDGE_E2E) return;
+    if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
+      throw new Error(`webui/dist not built (${DIST_DIR}); run \`npm run build\` first`);
+    }
+    settingsFile = path.join(os.tmpdir(), `pydvma-serve-settings-${Date.now()}.json`);
+    fs.writeFileSync(settingsFile, JSON.stringify({
+      fs: 8000, channels: 3, stored_time: 5,
+      device_driver: 'mock',
+      pretrig_samples: 150, pretrig_timeout: 3,
+      output: { type: 'sweep', amp: 0.4, f1: 20, f2: 800 },
+    }));
+    settingsServer = spawn('python3', [
+      '-m', 'pydvma.serve', '--driver', 'mock', '--port', String(SETTINGS_PORT),
+      '--settings', settingsFile, '--ui-dir', DIST_DIR,
+    ], { cwd: REPO_ROOT, stdio: 'pipe' });
+    settingsServer.stdout.on('data', () => { /* drain */ });
+    settingsServer.stderr.on('data', () => { /* drain */ });
+    await waitForPort(SETTINGS_PORT);
+  });
+
+  test.afterAll(async () => {
+    if (settingsServer) { settingsServer.kill('SIGINT'); await new Promise((r) => setTimeout(r, 300)); }
+    if (settingsFile) { try { fs.unlinkSync(settingsFile); } catch { /* */ } }
+  });
+
+  test('Setup + Acquire are prefilled from the served MySettings', async ({ page }) => {
+    // Open the app AT the settings server's origin so /config is same-origin.
+    await page.goto(`${SETTINGS_ORIGIN}/`);
+    const ribbon = page.getByRole('navigation', { name: 'stages' });
+    await expect(ribbon.getByRole('button', { name: 'Setup' })).not.toHaveClass(/gated/, { timeout: 20000 });
+    await ribbon.getByRole('button', { name: 'Setup' }).click();
+
+    // Core input fields reflect the served fs / channels / duration.
+    await expect(page.getByRole('combobox', { name: 'sample rate' })).toHaveValue('8000');
+    await expect(page.getByRole('spinbutton', { name: 'channel count' })).toHaveValue('3');
+    await expect(page.getByRole('combobox', { name: 'duration' })).toHaveValue('5');
+
+    // The device dropdown resolved device_driver='mock' → the mock entry.
+    await expect(page.getByRole('combobox', { name: 'input device' }))
+      .toHaveValue(/mock:0/);
+
+    // Acquire: the armed pretrigger + output group reflect the served config
+    // (only where the mock advertises the capability).
+    await ribbon.getByRole('button', { name: 'Acquire' }).click();
+    const arm = page.getByTestId('pretrig-arm');
+    if (await arm.isVisible().catch(() => false)) {
+      await expect(arm).toBeChecked();
+    }
+    const outOn = page.getByTestId('output-on');
+    if (await outOn.isVisible().catch(() => false)) {
+      await expect(outOn).toBeChecked();
+    }
   });
 });

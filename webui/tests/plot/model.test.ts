@@ -1,6 +1,8 @@
 import { expect, test } from 'vitest';
-import { buildPlotModel, decodeArray, type MarshalledArray, type SetArrays, type VisibleLine }
-  from '../../src/lib/plot/model';
+import {
+  buildPlotModel, decodeArray, differentiateUnit, iwFactor,
+  type MarshalledArray, type SetArrays, type VisibleLine,
+} from '../../src/lib/plot/model';
 
 /** A marshalled real array with the given shape and flat row-major data. */
 const real = (shape: number[], data: number[]): MarshalledArray =>
@@ -571,4 +573,99 @@ test('R4 coherence overlay uses the SAME out/in remap (input dropped)', () => {
   expect(coh).toHaveLength(2);                  // input has no coherence line
   expect(coh[0].y[0]).toBeCloseTo(0.9, 9);      // ch_1 → col0
   expect(coh[1].y[0]).toBeCloseTo(0.7, 9);      // ch_2 → col1
+});
+
+// ── x(iω) display transform (round-6 Qt-parity Scaling tool) ────────────────
+
+test('iwFactor: (iω)^p is an exact 90° rotation × ω^p; DC → 0 for p≠0', () => {
+  expect(iwFactor(5, 0)).toEqual([1, 0]);       // identity
+  const w = 2 * Math.PI * 2;                     // f=2 → ω=4π
+  const [r1, i1] = iwFactor(2, 1);               // (iω)^1 = iω = (0, ω)
+  expect(r1).toBeCloseTo(0, 9);
+  expect(i1).toBeCloseTo(w, 9);
+  const [r2, i2] = iwFactor(2, 2);               // (iω)^2 = -ω²
+  expect(r2).toBeCloseTo(-w * w, 6);
+  expect(i2).toBeCloseTo(0, 9);
+  const [rm, im] = iwFactor(2, -1);              // (iω)^-1 = -i/ω = (0, -1/ω)
+  expect(rm).toBeCloseTo(0, 9);
+  expect(im).toBeCloseTo(-1 / w, 9);
+  expect(iwFactor(0, 1)).toEqual([0, 0]);        // DC differentiate → 0
+  expect(iwFactor(0, -1)).toEqual([0, 0]);       // DC integrate → 0
+});
+
+test('differentiateUnit: shifts a unit along the /sⁿ derivative ladder', () => {
+  expect(differentiateUnit('m', 0)).toBe('m');
+  expect(differentiateUnit('m', 1)).toBe('m/s');
+  expect(differentiateUnit('m', 2)).toBe('m/s²');
+  expect(differentiateUnit('m/s²', -1)).toBe('m/s');
+  expect(differentiateUnit('m/s²', -2)).toBe('m');
+  expect(differentiateUnit('m', -1)).toBe('m·s');
+  expect(differentiateUnit('N', 1)).toBe('N/s');
+});
+
+test('frequency FFT honours the x(iω) display power (linear magnitude)', () => {
+  const w = 2 * Math.PI * 2;                     // f=2 → ω
+  const sets: SetArrays[] = [{
+    setId: 0, iwPower: 1,
+    freq: { axis: Float64Array.from([2]), data: decodeArray(cplx([1, 1], [1, 0])) }, // H=1
+  }];
+  const m = buildPlotModel({
+    view: 'frequency', freqMode: 'fft', sets, visible: [vis(0, 0, 'on')], yScale: 'lin',
+  });
+  expect(m.lines[0].y[0]).toBeCloseTo(w, 6);     // |iω·1| = ω
+});
+
+test('frequency FFT DC bin collapses to 0 under x(iω) power', () => {
+  const sets: SetArrays[] = [{
+    setId: 0, iwPower: 1,
+    freq: { axis: Float64Array.from([0, 2]), data: decodeArray(cplx([2, 1], [1, 0, 1, 0])) },
+  }];
+  const m = buildPlotModel({
+    view: 'frequency', freqMode: 'fft', sets, visible: [vis(0, 0, 'on')], yScale: 'lin',
+  });
+  expect(m.lines[0].y[0]).toBeCloseTo(0, 12);    // DC → 0
+});
+
+test('x(iω) power moves the FFT unit label up the ladder (m → m/s²)', () => {
+  const mk = (p: number): SetArrays[] => [{
+    setId: 0, iwPower: p, units: ['m'],
+    freq: { axis: Float64Array.from([2]), data: decodeArray(cplx([1, 1], [1, 0])) },
+  }];
+  const label = (p: number) => buildPlotModel({
+    view: 'frequency', freqMode: 'fft', sets: mk(p), visible: [vis(0, 0, 'on')], yScale: 'lin',
+  }).yLabel;
+  expect(label(0)).toBe('Magnitude (m)');
+  expect(label(1)).toBe('Magnitude (m/s)');
+  expect(label(2)).toBe('Magnitude (m/s²)');
+});
+
+test('PSD ignores the x(iω) display power (value and label unchanged)', () => {
+  const sets: SetArrays[] = [{
+    setId: 0, iwPower: 2, units: ['m'],
+    psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [10, 100])) },
+  }];
+  const m = buildPlotModel({
+    view: 'frequency', freqMode: 'psd', sets, visible: [vis(0, 0, 'on')], yScale: 'lin',
+  });
+  expect(Array.from(m.lines[0].y)).toEqual([10, 100]);   // no iω scaling
+  expect(m.yLabel).toBe('PSD (m²/Hz)');                  // unit not differentiated
+});
+
+test('TF magnitude honours x(iω) power and the ratio unit follows the numerator', () => {
+  // 2-channel measured TF, chIn=0 → 1 output column. H = 1+0i at f=2.
+  const sets: SetArrays[] = [{
+    setId: 0, iwPower: 1, units: ['N', 'm/s²'],   // in=N (ch0), out=m/s² (ch1)
+    tf: {
+      axis: Float64Array.from([2]),
+      data: decodeArray(cplx([1, 1], [1, 0])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const w = 2 * Math.PI * 2;
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', sets, visible: [vis(0, 1, 'on')], yScale: 'lin',
+  });
+  expect(m.lines[0].y[0]).toBeCloseTo(w, 6);              // |iω·H|
+  // numerator m/s² differentiated once → m/s³; ratio (m/s³)/N.
+  expect(m.yLabel).toBe('|H| ((m/s³)/N)');
 });
