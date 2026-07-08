@@ -53,6 +53,28 @@ test('patch to an unknown set id is a no-op', () => {
   expect(999 in get(settings.map)).toBe(false);
 });
 
+// --- Sonogram single-set target (round-6 item 3) ---------------------------
+
+test('sonoTarget defaults to null and prunes to null when its set is removed', () => {
+  // The Sono card owns DEFAULTING sonoTarget to a valid time-bearing set; the
+  // store's job is to prune a stale id so the card re-defaults (never points at
+  // a gone set). Starts null.
+  expect(get(settings.sonoTarget)).toBe(null);
+
+  const a = sel.addSet({ name: 'a', nChannels: 2, durationS: 1, timestamp: 't0' });
+  const b = sel.addSet({ name: 'b', nChannels: 2, durationS: 1, timestamp: 't1' });
+  settings.sonoTarget.set(a);
+  expect(get(settings.sonoTarget)).toBe(a);
+
+  // Removing a DIFFERENT set leaves the target alone.
+  sel.removeSet(b);
+  expect(get(settings.sonoTarget)).toBe(a);
+
+  // Removing the targeted set prunes it to null.
+  sel.removeSet(a);
+  expect(get(settings.sonoTarget)).toBe(null);
+});
+
 test('isMixed: false with <2 sets; true when sets disagree; cleared by patch-all', () => {
   const a = sel.addSet({ name: 'a', nChannels: 1, durationS: 1, timestamp: 't0' });
   expect(settings.isMixed('freq', 'window')).toBe(false);     // single set

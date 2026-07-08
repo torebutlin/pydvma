@@ -97,6 +97,16 @@ export function createAnalysisSettings(selection: Selection) {
   const map = writable<Record<number, PerSetSettings>>({});
   /** Shared focus: which set(s) the analysis cards target. Default 'all'. */
   const analysisTarget = writable<AnalysisTarget>('all');
+  /**
+   * Explicit SINGLE-set target for the SONOGRAM (round-6 item 3). The sonogram
+   * is a per-set, per-channel view with NO 'all' aggregate and no orphan/fit
+   * target, so it targets ONE time-bearing set independently of the shared
+   * `analysisTarget` (which the FFT/TF cards share and may leave at 'all').
+   * `null` = none chosen yet, or no time-bearing set exists. SonoCard keeps it
+   * pointing at a valid time-bearing set; App's heat renderer reads it to pick
+   * which set's image to paint. Pruned to `null` when its set is removed.
+   */
+  const sonoTarget = writable<number | null>(null);
 
   /**
    * Re-entrancy guard for the target↔tray coupling. When we deliberately
@@ -125,6 +135,10 @@ export function createAnalysisSettings(selection: Selection) {
       }
       return changed ? next : m;
     });
+    // Prune the explicit sonogram target if its set is gone (round-6 item 3) —
+    // SonoCard then re-defaults to a valid time-bearing set (or disables Calc).
+    const st = get(sonoTarget);
+    if (st !== null && !present.has(st)) sonoTarget.set(null);
   });
 
   // Tray → target: when the tray settles on one soloed set, follow it;
@@ -213,6 +227,11 @@ export function createAnalysisSettings(selection: Selection) {
     map: { subscribe: map.subscribe },
     /** Shared analysis target: read to bind the "Dataset ▾" dropdown. */
     analysisTarget,
+    /**
+     * Explicit single-set sonogram target (round-6 item 3): the setId the Sono
+     * card + heat renderer use, or `null` when no time-bearing set is chosen.
+     */
+    sonoTarget,
     /** Set the target AND drive the tray to match (use from the dropdown). */
     setTarget,
     /** One set's settings for a view. */

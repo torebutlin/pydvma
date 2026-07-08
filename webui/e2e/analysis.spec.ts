@@ -1,4 +1,49 @@
-import { expect, test } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
+import { expect, test, type Page } from '@playwright/test';
+
+/** Absolute path to a checked-in fixture under webui/tests/fixtures. */
+function fixturePath(name: string): string {
+  return fileURLToPath(new URL(`../tests/fixtures/${name}`, import.meta.url));
+}
+
+/** Click Load Data and answer the fallback file chooser with `path`. */
+async function loadViaFallback(page: Page, path: string): Promise<void> {
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Load Data' }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles(path);
+}
+
+/** Fraction of opaque (alpha>0) pixels in the sono heat canvas. */
+function sonoPaintFrac(page: Page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('[data-testid="sono-canvas"]') as HTMLCanvasElement;
+    const img = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let painted = 0;
+    for (let i = 3; i < img.length; i += 4) if (img[i]) painted++;
+    return painted / (c.width * c.height);
+  });
+}
+
+/**
+ * Orphan-only tray (round-6 items 2/3): a TF-only load has NO time signal, so
+ * the sonogram cannot run. Fast (no engine): loads the checked-in orphan
+ * `.dvma` via the fallback input and asserts Calc Sonogram is DISABLED with a
+ * clear note — instead of the opaque deref error + white plot Tore hit.
+ */
+test('orphan-only tray disables Calc Sonogram with a clear note', async ({ page }) => {
+  await page.goto('/');
+  await loadViaFallback(page, fixturePath('orphan_tf_3col.dvma'));
+  await expect(page.getByTestId('tray-card-0')).toBeVisible();
+
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Sonogram' }).click();
+  const region = page.getByRole('region', { name: 'Sonogram stage controls' });
+  // No time-bearing set ⇒ no dataset dropdown, an inline marker, and a note.
+  await expect(region.getByTestId('sono-no-time')).toBeVisible();
+  await expect(region.getByLabel('dataset', { exact: true })).toHaveCount(0);
+  await expect(region.getByText(/needs a time-domain signal/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Calc Sonogram' })).toBeDisabled();
+});
 
 /**
  * @engine — the analysis golden path (Task 12). Loads the checked-in
@@ -98,6 +143,42 @@ test.describe('@engine', () => {
     expect(info.plotBg).toBe('transparent');
     expect(info.paintedFrac).toBeGreaterThan(0.9);
     expect(info.distinctColours).toBeGreaterThan(3);
+  });
+
+  test('multiset + orphan: Sonogram targets a time-bearing set, excludes the orphan, paints in BOTH themes (round-6 items 2/3)', async ({ page }) => {
+    // grid_data-like: two time-bearing 2-channel sets PLUS one orphan TF (no
+    // time series). The exact tray that blanked Tore's sonogram. Load it, and
+    // prove the sonogram targets a time set, the orphan is not offered, and the
+    // heat paints in light AND dark (the dark-theme white-plot concern).
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+
+    await page.goto('/');
+    await loadViaFallback(page, fixturePath('multiset_orphan.dvma'));
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Sonogram' }).click();
+    const region = page.getByRole('region', { name: 'Sonogram stage controls' });
+    const ds = region.getByLabel('dataset', { exact: true });
+    // Only the two TIME-BEARING sets — the orphan TF is filtered out (no 'All
+    // sets' either).
+    await expect(ds.locator('option')).toHaveText(['ms_a', 'ms_b']);
+
+    // Compute in the initial theme and assert the heat canvas fills with data.
+    await page.getByRole('button', { name: 'Calc Sonogram' }).click();
+    await expect(page.getByTestId('sono-canvas')).toBeVisible({ timeout: 200_000 });
+    await expect.poll(() => sonoPaintFrac(page), { timeout: 200_000 }).toBeGreaterThan(0.9);
+
+    // Flip the theme and recompute: the viridis heat is data-driven, so it must
+    // paint just as fully in the other theme (no white plot in dark).
+    const before = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+    await page.getByTestId('theme-toggle').click();
+    const after = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+    expect(after).not.toBe(before);
+    await page.getByRole('button', { name: 'Calc Sonogram' }).click();
+    await expect.poll(() => sonoPaintFrac(page), { timeout: 60_000 }).toBeGreaterThan(0.9);
+
+    expect(errors, 'no uncaught page errors during the sono flow').toEqual([]);
   });
 
   test('fixture → Sonogram → CWT method → Calc renders a painted heat canvas (round-5 item 12)', async ({ page }) => {

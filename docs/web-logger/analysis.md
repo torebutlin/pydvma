@@ -91,7 +91,13 @@ Two methods are available via the **STFT | CWT** switch:
 
 Common controls:
 
-- **dataset** and **channel** selectors.
+- **dataset** and **channel** selectors. Unlike the other cards, the
+  sonogram has **no *All sets* option** — it is a single-set,
+  single-channel view, so you pick exactly one set and one channel. The
+  dropdown lists only **time-bearing** sets: a loaded spectrum or
+  transfer function on its own has no time signal to transform, so those
+  sets are excluded. If nothing time-bearing is loaded, **Calc
+  Sonogram** is disabled with a note explaining why.
 - **dynamic range** — the dB span of the colour map (30–120 dB).
 - **Fit damping** — estimates modal damping from the log-decrement of
   the time-frequency bands, listing `fn (Hz)` and `Qn` per detected

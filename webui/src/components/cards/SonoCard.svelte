@@ -1,21 +1,30 @@
 <script lang="ts">
   /**
-   * Sonogram-stage context card (design spec §3; Task R1 per-set
-   * redesign).
+   * Sonogram-stage context card (design spec §3; round-6 item 3 explicit
+   * single-target redesign).
    *
-   * FIRST control is the "Dataset ▾" dropdown bound to the shared
-   * `analysisTarget` (follows the tray). It replaces the old free-standing
-   * "source set" select — the sonogram now runs the TARGET set. A channel
-   * select chooses which channel of that set to transform (the channel is
-   * a transient card control, not a per-set stored setting). The STFT
-   * window size (`nFft = 2^slider`) and heat-map dynamic range two-way
-   * bind to the FOCUSED set's sono settings via the `analysisSettings`
-   * store, with "–mixed–" shown when the target is `'all'` and sets
-   * disagree.
+   * FIRST control is a "dataset" dropdown that — UNLIKE the FFT/TF cards —
+   * has NO "All sets" option: the sonogram is a single-set, single-channel
+   * heat map, so it targets exactly ONE set. The dropdown lists only
+   * TIME-BEARING sets: round-5's orphan-TF / spectrum sets (a TF-only
+   * `.mat`/`.dvma` load) carry no time series to transform, and running a
+   * sonogram on one used to deref a missing array and blank the plot with an
+   * opaque error (round-6 item 2). Those sets are filtered out via
+   * `actions.workingSets().hasTime`; the modal-fit pseudo-set is already
+   * excluded by `dataSetsView` (round-5 item 13).
    *
-   * Calc Sonogram runs `actions.calcSono(target, ch)`. Once a sonogram
-   * exists, the STFT-window slider / nFFT box and the channel select
-   * re-issue live but DEBOUNCED (150 ms) and gated on an existing result
+   * The chosen set lives in the SHARED `analysisSettings.sonoTarget` store
+   * (App's heat renderer reads the same store). It defaults to the tray focus
+   * when that is a single time-bearing set, else the first time-bearing set;
+   * it re-defaults if its set is removed, and is `null` (Calc disabled, with a
+   * note) when no time-bearing set exists. A channel select chooses which
+   * channel to transform (transient card state, not a stored setting). The
+   * STFT window / CWT params / heat-map dynamic range two-way bind to the
+   * TARGET set's `sono` settings (per-set persistence, round-5 item 13).
+   *
+   * Calc Sonogram runs `actions.calcSono(targetId, ch)`. Once a sonogram
+   * exists, the STFT-window slider / nFFT box and the channel select re-issue
+   * live but DEBOUNCED (150 ms) and gated on an existing result
    * (`createLiveCalc`), so a tweak before the first Calc never boots the
    * engine; the action carries a per-kind stale seq (key 'sono').
    */
@@ -32,16 +41,44 @@
   }: { actions: Actions; selection: Selection; analysisSettings: AnalysisSettings } = $props();
 
   // DATA sets only (round-5 item 13): the modal-fit pseudo-set is not a
-  // sonogram target, so it must not appear in the "Dataset ▾" dropdown.
+  // sonogram target, so it must not appear in the "dataset" dropdown.
   const setsView = $derived(selection.dataSetsView);
   const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
+  const trayFocus = $derived(selection.trayFocus);
 
-  const target = $derived(analysisSettings.analysisTarget);
+  const sonoTarget = $derived(analysisSettings.sonoTarget);
   const settingsMap = $derived(analysisSettings.map);
-  const sono = $derived((void $settingsMap, analysisSettings.settingFor($target, 'sono')));
-  const mixed = (key: 'nFft' | 'dynRangeDb') =>
-    (void $settingsMap, $target === 'all' && analysisSettings.isMixed('sono', key));
+
+  // TIME-BEARING sets only (round-6 items 2/3): orphan TF/spectrum sets have
+  // no time series to transform. `workingSets()` is not itself a store, so key
+  // the derived on `$setsView` — which emits whenever a set is added/removed —
+  // to re-read the has-time flags in step with the tray.
+  const timeIds = $derived(
+    (void $setsView, new Set(actions.workingSets().filter((w) => w.hasTime).map((w) => w.setId))),
+  );
+  const timeSets = $derived($setsView.filter((s) => timeIds.has(s.id)));
+
+  // The concrete single target (a setId) or null when no time-bearing set
+  // exists. Keep `sonoTarget` valid: if the stored id is missing/stale, default
+  // to the tray focus (when it names a time-bearing set) else the first
+  // time-bearing set. Runs reactively and converges (writes only when invalid).
+  const targetId = $derived($sonoTarget);
+  $effect(() => {
+    const ids = timeSets.map((s) => s.id);
+    if (targetId !== null && ids.includes(targetId)) return;   // already valid
+    const focus = $trayFocus;
+    const next = typeof focus === 'number' && ids.includes(focus)
+      ? focus
+      : ids.length ? ids[0] : null;
+    if (next !== targetId) sonoTarget.set(next);
+  });
+
+  // Target set's per-set sono settings (defaults when nothing is chosen — the
+  // controls are disabled in that state anyway).
+  const sono = $derived(
+    (void $settingsMap, analysisSettings.settingFor(targetId ?? 'all', 'sono')),
+  );
 
   let ch = $state(0);
 
@@ -49,18 +86,19 @@
   // constant-Q — separates close low-frequency modes an STFT window smears).
   const method = $derived(sono.method);
 
-  // nFft ↔ slider exponent (nFft = 2^resExp). Mixed → the readout shows –mixed–.
+  // nFft ↔ slider exponent (nFft = 2^resExp).
   const nFft = $derived(sono.nFft);
   const resExp = $derived(Math.round(Math.log2(nFft)));
 
   // CWT log-frequency density (voices per octave).
   const VPO_OPTIONS = [8, 12, 16, 24, 32];
 
-  // Channel options come from the target set (first set for 'all').
-  const targetView = $derived(
-    $target === 'all' ? $setsView[0] : $setsView.find((s) => s.id === $target),
-  );
+  // Channel options come from the target set.
+  const targetView = $derived(timeSets.find((s) => s.id === targetId));
   const chOptions = $derived(targetView?.nChannels ?? 1);
+
+  // No time-bearing set to target ⇒ Calc disabled with a note.
+  const noTimeSet = $derived(timeSets.length === 0);
 
   // Keep the channel select inside the target set's range (round-4 bug 1).
   // `ch` is card-local state that survives a target switch, so moving to a
@@ -73,8 +111,9 @@
     if (ch >= chOptions) ch = 0;
   });
 
-  const patch = (partial: Partial<SonoSettings>) =>
-    analysisSettings.patch($target, 'sono', partial);
+  const patch = (partial: Partial<SonoSettings>) => {
+    if (targetId !== null) analysisSettings.patch(targetId, 'sono', partial);
+  };
 
   // Switching method re-runs live (gated on an existing sonogram) so the heat
   // map updates immediately when toggling STFT ↔ CWT.
@@ -96,7 +135,11 @@
   }
 
   function calc() {
-    if ($setsView.length) actions.calcSono($target, ch);
+    if (targetId !== null) actions.calcSono(targetId, ch);
+  }
+
+  function onTarget(v: string) {
+    sonoTarget.set(Number(v));
   }
 
   // Slider exponent range (2^6 = 64 .. 2^12 = 4096 pt STFT windows).
@@ -105,7 +148,7 @@
 
   // Live recompute (round-2 feedback), gated on an existing sonogram so a
   // slider/channel tweak before the first Calc never boots the engine.
-  const live = createLiveCalc(() => actions.hasComputed($target, 'sono'), calc);
+  const live = createLiveCalc(() => targetId !== null && actions.hasComputed(targetId, 'sono'), calc);
   function onRes(v: number) {
     patch({ nFft: 1 << v });
     live.schedule();
@@ -127,10 +170,6 @@
     onRes(exp);                             // patch stores 1<<exp; slider clamps
   }
 
-  function onTarget(v: string) {
-    analysisSettings.setTarget(v === 'all' ? 'all' : Number(v));
-  }
-
   // --- Damping fit (Task A1) ---------------------------------------------
   // Log-decrement damping from the decay of each sonogram band, on the same
   // target set + channel + STFT window. Results (fn / Qn per detected mode)
@@ -141,11 +180,11 @@
   let dampError = $state('');
 
   async function fitDamping() {
-    if (!$setsView.length) return;
+    if (targetId === null) return;
     dampBusy = true;
     dampError = '';
     try {
-      const { fn, Qn } = await actions.calcDamping($target, ch, nFft);
+      const { fn, Qn } = await actions.calcDamping(targetId, ch, nFft);
       const rows: { fn: number; Qn: number }[] = [];
       for (let i = 0; i < fn.length; i++) rows.push({ fn: fn[i], Qn: Qn[i] });
       dampModes = rows;
@@ -165,19 +204,22 @@
       <div class="grp">
         <span class="grp-lab">dataset</span>
         <div class="grp-ctl">
-          <select value={$target === 'all' ? 'all' : String($target)}
-            onchange={(e) => onTarget(e.currentTarget.value)}
-            style="width:120px" aria-label="dataset">
-            <option value="all">All sets</option>
-            {#each $setsView as s (s.id)}
-              <option value={String(s.id)}>{s.name}</option>
-            {/each}
-          </select>
-          <select bind:value={ch} onchange={() => live.schedule()} style="width:66px" aria-label="channel">
-            {#each Array.from({ length: Math.max(1, chOptions) }, (_, c) => c) as c (c)}
-              <option value={c}>ch_{c}</option>
-            {/each}
-          </select>
+          {#if noTimeSet}
+            <span class="note" role="note" data-testid="sono-no-time">no time-bearing set</span>
+          {:else}
+            <select value={targetId === null ? '' : String(targetId)}
+              onchange={(e) => onTarget(e.currentTarget.value)}
+              style="width:120px" aria-label="dataset">
+              {#each timeSets as s (s.id)}
+                <option value={String(s.id)}>{s.name}</option>
+              {/each}
+            </select>
+            <select bind:value={ch} onchange={() => live.schedule()} style="width:66px" aria-label="channel">
+              {#each Array.from({ length: Math.max(1, chOptions) }, (_, c) => c) as c (c)}
+                <option value={c}>ch_{c}</option>
+              {/each}
+            </select>
+          {/if}
         </div>
       </div>
       <div class="grp">
@@ -197,15 +239,14 @@
       </div>
       {#if method === 'stft'}
         <div class="grp">
-          <span class="grp-lab">resolution — {mixed('nFft') ? '–mixed–' : `${nFft} pt`}</span>
+          <span class="grp-lab">resolution — {nFft} pt</span>
           <div class="grp-ctl">
             <input type="range" min={RES_MIN_EXP} max={RES_MAX_EXP}
               value={Math.min(RES_MAX_EXP, Math.max(RES_MIN_EXP, resExp))}
               oninput={(e) => onRes(+e.currentTarget.value)} style="width:96px" aria-label="resolution" />
             <span class="ml">nFFT</span>
             <input type="number" step="1" min="1"
-              value={mixed('nFft') ? '' : nFft}
-              placeholder={mixed('nFft') ? '–mixed–' : ''}
+              value={nFft}
               onchange={(e) => onNFftText(+e.currentTarget.value)}
               style="width:64px" aria-label="nFFT" />
             <span class="note">pt</span>
@@ -240,8 +281,7 @@
       <div class="grp">
         <span class="grp-lab">dynamic range</span>
         <div class="grp-ctl">
-          <input type="number" value={mixed('dynRangeDb') ? '' : sono.dynRangeDb}
-            placeholder={mixed('dynRangeDb') ? '–mixed–' : ''}
+          <input type="number" value={sono.dynRangeDb}
             onchange={(e) => patch({ dynRangeDb: +e.currentTarget.value })}
             step="10" min="30" max="120" style="width:56px" aria-label="dynamic range dB" /><span class="ml">dB</span>
         </div>
@@ -251,7 +291,7 @@
       <div class="grp">
         <span class="grp-lab">damping</span>
         <div class="grp-ctl">
-          <button class="btn" disabled={dampBusy || $setsView.length === 0} onclick={fitDamping}
+          <button class="btn" disabled={dampBusy || noTimeSet || targetId === null} onclick={fitDamping}
             title="Fit modal damping from the decay of each sonogram band">
             {dampBusy ? 'Fitting…' : 'Fit damping'}</button>
           <span class="note">log-decrement of {method === 'cwt' ? 'CWT' : 'sonogram'} bands</span>
@@ -274,6 +314,12 @@
         </div>
       </div>
     </div>
+    {#if noTimeSet}
+      <div class="ctx-note" role="note">
+        The sonogram needs a time-domain signal. Load or record a set with time
+        data — a loaded spectrum or transfer function alone cannot be transformed.
+      </div>
+    {/if}
     {#if $computeErrors.sono}
       <div class="ctx-err" role="alert">{$computeErrors.sono}</div>
     {/if}
@@ -282,11 +328,17 @@
     {/if}
   </div>
   <div class="ctx-primary">
-    <button class="btn indigo" disabled={$busy || $setsView.length === 0} onclick={calc}>Calc Sonogram</button>
+    <button class="btn indigo" disabled={$busy || noTimeSet || targetId === null} onclick={calc}>Calc Sonogram</button>
   </div>
 </section>
 
 <style>
+  /* Mirrors ContextCard's .ctx-note (Svelte styles are component-scoped). */
+  .ctx-note {
+    font-size: 12px;
+    color: var(--muted);
+    font-style: italic;
+  }
   .damp-table {
     display: inline-block;
     margin-left: 4px;
