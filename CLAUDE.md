@@ -45,35 +45,38 @@ subpath (/pydvma/app/) is e2e-guarded (engine base-URL bug class).
 The engine wheel (public/pypi, gitignored) rebuilds via
 webui/scripts/build-wheels.sh — version must stay 1.5.0 (ENGINE_WHEELS).
 
-**Suites at close:** pytest 311 / 4 hardware-skipped; vitest 592;
-svelte-check 0/0; Playwright 69 + bridge e2e 7/7 (BRIDGE_E2E=1 vs a
-real spawned server).
+**Suites at close:** pytest 352 / 15 capability-skipped (Windows PC,
+all NI hardware live); vitest 592; svelte-check 0/0; Playwright 69 +
+bridge e2e 7/7 (BRIDGE_E2E=1 vs a real spawned server).
 
-**START THE NEXT SESSION HERE — it will be on the WINDOWS PC** (Tore
-is switching machines; this Mac session ends after the Qt teardown):
-(1) `git pull`, then `pip install -e .[serve,ni,soundcard]` (NB the
-`[qt]` extra no longer exists — do not install it). (2) **NI recheck
-session**: run the full pytest (hardware tests auto-run there;
-expect the pre-teardown hardware set incl.
-tests/test_streams_ni_callback.py + test_acquisition_hardware.py);
-then `pydvma-serve --driver nidaq --open` and hands-on the webui
-against real devices — MULTI-CHANNEL capture recheck (the standing
-gap: everything since round 5 was verified single-ch on Mac +
-mock/protocol only), pretrigger + output sweep on each device, and
-EYEBALL the two round-D notes on real hardware: the 9260
-`output clamped to device rail ±4.24 V` note in Setup-full's NI
-group, and the DSA coerced-fs note (request 8000 on the 9234 → note
-should read 8533.3). `data/examples/` has real files for the
-analysis-side checks (see its README). (3) After that session, Tore
-tests solo over days/weeks — sessions should expect FEEDBACK-driven
-work, not new feature waves. Round-7 hands-on surface: shared-pole
-fitting, Best match / x(iω) scaling group, /config prefill, sono
-single-targeting, brush v2, dark mode. (4) Small flagged follow-ups: CSD
-PHASE (glue must return complex Pxy), browser pretrig threshold
-control, log-y CWT heat rendering, CSD pair auto-enable on hidden
-channel, orphan-fit browser e2e (task_c158292c), PWA manifest
-(installability — manifest-first, offline later). (3) October
-readiness: labsheets live in the OTHER repo (parked). (4) **The Qt GUI
+**The Windows NI recheck is DONE** (2026-07-08, this PC — full
+write-up in `dev/2026-07-08-windows-ni-recheck.md`): full pytest
+green with hardware live; the standing multi-channel gap is closed
+(real 4-ch bridge capture on the 9234 + 4-ch live scope and Log in
+the built UI); pretrigger + output sweep verified through the bridge
+on all three devices (`dev/bridge_hw_check.py`, 38/38 — a reusable
+headless harness, run it against `pydvma-serve --driver nidaq` after
+any acquisition-path change); both round-D notes eyeballed in the
+real UI with real caps ("output clamped to device rail ±4.24 V";
+"device runs at 8533.3 Hz (requested 8000)"). One NEW finding
+flagged, not fixed: the webui never sets `output_fs` (MySettings
+defaults it to fs), so a 6003 with stimulus at fs > 5000 fails at
+log time with a loud, actionable error — the UI should clamp via
+device_caps.ao_max_rate + note, rail-clamp pattern (task_01e8edaf).
+
+**NEXT SESSIONS: Tore tests solo over days/weeks — expect
+FEEDBACK-driven work, not new feature waves.** Round-7 hands-on
+surface: shared-pole fitting, Best match / x(iω) scaling group,
+/config prefill, sono single-targeting, brush v2, dark mode;
+analysis-side checks with `data/examples/` (see its README). Still
+untested on real hardware: IEPE with a live accelerometer (loopback
+can't exercise a sensor chain). Small flagged follow-ups: webui
+output_fs clamp (above), CSD PHASE (glue must return complex Pxy),
+browser pretrig threshold control, log-y CWT heat rendering, CSD
+pair auto-enable on hidden channel, orphan-fit browser e2e
+(task_c158292c), PWA manifest (installability — manifest-first,
+offline later). October readiness: labsheets live in the OTHER repo
+(parked). **The Qt GUI
 was REMOVED** (2026-07-08, Tore's final confirmation after the round-6
 parity audit closed): `pydvma/gui.py` + the orphan `oscilloscope.py` /
 `logger_tester.py` and the Qt-only tests are deleted, the `[qt]` extra
