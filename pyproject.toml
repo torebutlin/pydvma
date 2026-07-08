@@ -8,7 +8,7 @@ backend-path = ["."]
 
 [project]
 name = "pydvma"
-version = "1.5.0"          # keep in sync with pydvma/datastructure.py (enforced by tests/test_packaging.py)
+version = "2.0.0"          # keep in sync with pydvma/datastructure.py (enforced by tests/test_packaging.py)
 description = "Python package for dynamics and vibration measurement and analysis"
 readme = "README.md"
 license = "BSD-3-Clause"

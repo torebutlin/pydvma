@@ -43,7 +43,10 @@ memory-bounded by design. Nested FFI payloads are JsProxy/JsNull —
 glue uses .get/getattr/`not x`, JS omits null keys. The deployed
 subpath (/pydvma/app/) is e2e-guarded (engine base-URL bug class).
 The engine wheel (public/pypi, gitignored) rebuilds via
-webui/scripts/build-wheels.sh — version must stay 1.5.0 (ENGINE_WHEELS).
+webui/scripts/build-wheels.sh — keep ENGINE_WHEELS
+(webui/src/lib/stores/engine.ts) in sync on version bumps: the
+hard-coded `pydvma-<version>-py3-none-any.whl` filename must match the
+rebuilt engine wheel or the app breaks at boot (as of v2.0.0).
 
 **Suites at close:** pytest 352 / 15 capability-skipped (Windows PC,
 all NI hardware live); vitest 592; svelte-check 0/0; Playwright 69 +

@@ -6,6 +6,13 @@ the interactive way to use pydvma, and has **replaced** the earlier
 desktop [Qt logger](migration.md), which was removed once the web logger
 reached full parity.
 
+!!! info "New in 2.0.0"
+    **pydvma 2.0.0 is the first release built around the web logger.**
+    Removing the desktop Qt GUI is a breaking change, hence the major
+    version bump. The last version that shipped the Qt logger is the
+    [`qt-final` git tag](migration.md); everything you *script* in Python
+    is unchanged.
+
 It is **one interface that runs in three modes**, so the same tool
 covers no-install analysis at home, soundcard measurements from any
 laptop, and full NI acquisition on a lab PC.
