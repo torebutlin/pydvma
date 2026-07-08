@@ -287,6 +287,46 @@ test("calcPsd reads each set's window + n_frames from settings", async () => {
   expect(psd.payload.n_frames).toBe(12);
 });
 
+// ---- CSD pair (round-5 item 7): the pair is stamped on the csd slice at
+// calc time and can be re-stamped live (no recompute) via setCsdPair. ----
+
+test('calcPsd stamps the CSD pair (default 0,1) on the coherence slice', async () => {
+  const { engine } = fakeEngine(async () => ({
+    freq_axis: real([2], [0, 1]),
+    psd: real([2, 2], [1, 2, 3, 4]),
+    Cxy: real([2, 2, 2], [1, 1, 1, 1, 1, 1, 1, 1]),
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  await actions.calcPsd(id);
+  const csd = get(actions.derived)[id].csd!;
+  expect(csd.i).toBe(0);
+  expect(csd.j).toBe(1);
+});
+
+test('setCsdPair re-stamps the slice live from settings, with no recompute', async () => {
+  const { engine, calls } = fakeEngine(async () => ({
+    freq_axis: real([2], [0, 1]),
+    psd: real([2, 2], [1, 2, 3, 4]),
+    Cxy: real([2, 2, 2], [1, 1, 1, 1, 1, 1, 1, 1]),
+  }));
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDatasetCh([3]));           // a 3-channel set
+  const id = get(sel.sets)[0].id;
+  await actions.calcPsd(id);
+  const before = calls.filter((c) => c.op === 'calc_psd').length;
+
+  settings.patch(id, 'freq', { csdX: 1, csdY: 2 });
+  actions.setCsdPair(id);
+
+  const csd = get(actions.derived)[id].csd!;
+  expect(csd.i).toBe(1);
+  expect(csd.j).toBe(2);
+  // Pure display change — no extra engine calls.
+  expect(calls.filter((c) => c.op === 'calc_psd').length).toBe(before);
+});
+
 // ---- PSD partial failure (Round-3 item 1): a set the engine can't handle
 // (e.g. glue.py rejects an oversized resolution) must not stop the others;
 // the successful set renders and the failing one gets a NAMED message. ----
@@ -621,7 +661,8 @@ test('stampUiState writes labels and settings onto DvmaItems', () => {
   const item = ds.items.find(i => i.kind === 'TimeData')!;
   expect(item.ui).toBeDefined();
   expect(item.ui!.channel_labels).toEqual({ '0': 'impact' });
-  expect(item.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'psd', nFrames: 25 });
+  // The CSD pair (round-5 item 7) rides along in the persisted freq settings.
+  expect(item.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'psd', nFrames: 25, csdX: 0, csdY: 1 });
 });
 
 test('stampUiState omits ui when labels and settings are all defaults', () => {

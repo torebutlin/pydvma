@@ -38,6 +38,7 @@
   import { createModalStore } from './lib/stores/modal';
   import { buildPlotModel, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
   import { tfTransformEntries } from './lib/plot/tfChannels';
+  import { csdPairEntries } from './lib/plot/csdChannels';
   import type { LegendEntry } from './lib/stores/selection';
   import { readable, get } from 'svelte/store';
   import { dataExtent, type PlotModel } from './lib/plot/build';
@@ -409,11 +410,13 @@
   /**
    * Per-set TF input channel (Task R4): the `chIn` the set's TF was
    * computed with, read off its decoded `tf` slice. `undefined` before
-   * Calc TF (or for a set with no TF) → the transform leaves that set's
-   * entries untouched. One accessor feeds BOTH the legend transform and
-   * the visible-line list so plot and legend stay in lock-step.
+   * Calc TF (or for a set with no TF), or `null` for an ORPHAN TF whose
+   * columns are the lines (round-5 item 3) → the transform leaves that
+   * set's entries untouched (plain per-channel labels). One accessor feeds
+   * BOTH the legend transform and the visible-line list so plot and legend
+   * stay in lock-step.
    */
-  const tfChInFor = $derived((setId: number): number | undefined => $derivedStore[setId]?.tf?.chIn);
+  const tfChInFor = $derived((setId: number): number | null | undefined => $derivedStore[setId]?.tf?.chIn);
 
   /**
    * PLOT-facing entries for the ACTIVE view (off lines dropped). For TF,
@@ -446,6 +449,34 @@
       ? readable(tfTransformEntries($legendRows, tfChInFor, $channelLabel))
       : undefined,
   );
+
+  /**
+   * Per-set CSD pair (round-5 item 7): the `(i, j)` channels the set's
+   * cross-spectrum plots, read off its decoded `csd` slice. `undefined` before
+   * Calc CSD (or for a set with no CSD) → the legend transform leaves that
+   * set's rows untouched.
+   */
+  const csdPairFor = $derived((setId: number): { i: number; j: number } | undefined => {
+    const c = $derivedStore[setId]?.csd;
+    return c ? { i: c.i ?? 0, j: c.j ?? 1 } : undefined;
+  });
+
+  /**
+   * CSD legend override — collapses each set's per-channel rows to the single
+   * pair row `S(x,y)` the plot draws (round-5 item 7), so the legend and the
+   * one-line-per-set cross-spectrum agree. Built from the off-inclusive
+   * `legendRows` so an off pair line stays listed struck-through, like TF.
+   * Only active in CSD mode; the model self-selects the pair line regardless,
+   * so `visible` needs no CSD filter.
+   */
+  const csdLegend = $derived(
+    view === 'frequency' && freqMode === 'csd'
+      ? readable(csdPairEntries($legendRows, csdPairFor, $channelLabel))
+      : undefined,
+  );
+
+  /** The active view's legend override (TF out/in, or CSD pair), else none. */
+  const legendOverride = $derived(tfLegend ?? csdLegend);
 
   /**
    * Visible (on/fade) lines fed to the plot model, derived from the SAME
@@ -678,7 +709,7 @@
           <div class="bode-pane">
             <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
             <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
-            <Legend {selection} {viewState} entriesOverride={tfLegend} />
+            <Legend {selection} {viewState} entriesOverride={legendOverride} />
           </div>
           <div class="bode-pane">
             <PlotSurface model={phaseModel} {mode} {viewState} />
@@ -688,7 +719,7 @@
         <div class="plot-host">
           <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
           <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
-          <Legend {selection} {viewState} entriesOverride={tfLegend} />
+          <Legend {selection} {viewState} entriesOverride={legendOverride} />
           {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
         </div>
       {/if}

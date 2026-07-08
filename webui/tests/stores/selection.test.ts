@@ -83,6 +83,50 @@ test('solo isolates one set; steppers move the solo', () => {
   expect(get(sel.state)(1, 0)).toBe('off');
 });
 
+// ── Line-level Solo / step (round-5 item 3) ────────────────────────────────
+test('soloLine isolates one line across all sets; others go off', () => {
+  sel.soloLine(2, 3);                          // set_2, channel 3
+  expect(get(sel.state)(2, 3)).toBe('on');
+  expect(get(sel.state)(2, 0)).toBe('off');    // sibling channel off
+  expect(get(sel.state)(0, 0)).toBe('off');    // other set off
+  expect(get(sel.state)(1, 0)).toBe('off');
+  expect(get(sel.lineHighlight)).toEqual({ setId: 2, ch: 3 });
+  expect(get(sel.highlight)).toBe(2);          // owning set becomes highlighted
+});
+
+test('soloLine: unknown set or out-of-range channel is a no-op', () => {
+  sel.soloLine(99, 0);
+  expect(get(sel.lineHighlight)).toBeNull();
+  sel.soloLine(0, 5);                          // set_0 has only 2 channels
+  expect(get(sel.lineHighlight)).toBeNull();
+});
+
+test('stepLine walks every (set,ch) line in order and wraps', () => {
+  // Flattened order: (0,0)(0,1)(1,0)(1,1)(2,0..7) = 12 lines.
+  sel.stepLine(1);                             // first › → line 0 = (0,0)
+  expect(get(sel.lineHighlight)).toEqual({ setId: 0, ch: 0 });
+  sel.stepLine(1);                             // → (0,1)
+  expect(get(sel.lineHighlight)).toEqual({ setId: 0, ch: 1 });
+  sel.stepLine(1);                             // → (1,0)
+  expect(get(sel.lineHighlight)).toEqual({ setId: 1, ch: 0 });
+  expect(get(sel.state)(1, 0)).toBe('on');     // stepping solos the line
+  expect(get(sel.state)(0, 1)).toBe('off');
+  sel.stepLine(-1);                            // back to (0,1)
+  expect(get(sel.lineHighlight)).toEqual({ setId: 0, ch: 1 });
+});
+
+test('stepLine(-1) from no highlight wraps to the last line', () => {
+  sel.stepLine(-1);
+  expect(get(sel.lineHighlight)).toEqual({ setId: 2, ch: 7 });   // last (set_2, ch 7)
+});
+
+test('removeSet clears a line-highlight that pointed at the removed set', () => {
+  sel.soloLine(1, 0);
+  expect(get(sel.lineHighlight)).toEqual({ setId: 1, ch: 0 });
+  sel.removeSet(1);
+  expect(get(sel.lineHighlight)).toBeNull();
+});
+
 test('allOff: legendEntries (plot list) omits the off set; legendRows (legend UI) keeps it', () => {
   sel.cycleSet(0); sel.cycleSet(0);           // on -> fade -> off
   expect(get(sel.setsView)[0].allOff).toBe(true);

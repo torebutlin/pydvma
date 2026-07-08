@@ -59,6 +59,46 @@ test('frequency PSD: y = 10·log10(psd) with (Nc, Nf) layout', () => {
   expect(m.yLabel).toBe('PSD (dB)');
 });
 
+// ── CSD pair (round-5 item 7) ──────────────────────────────────────────────
+// Cxy (Nc=2, Nc=2, Nf=1) row-major, coherence: [[1, 0.5],[0.5, 1]].
+// psd (Nc=2, Nf=1) auto-power: Pxx = [4, 9].
+// |Pxy[0,1]| = sqrt(Cxy[0,1]·Pxx[0]·Pxx[1]) = sqrt(0.5·4·9) = sqrt(18).
+const csdSet = (): SetArrays[] => [{
+  setId: 0,
+  psd: { axis: Float64Array.from([0]), data: decodeArray(real([2, 1], [4, 9])) },
+  csd: { axis: Float64Array.from([0]), data: decodeArray(real([2, 2, 1], [1, 0.5, 0.5, 1])), i: 0, j: 1 },
+}];
+
+test('csd: one line per set = |Pxy[i,j]| reconstructed from coherence + auto-power', () => {
+  const m = buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets: csdSet(),
+    visible: [vis(0, 0, 'on'), vis(0, 1, 'on')],   // both channels visible…
+  });
+  expect(m.lines).toHaveLength(1);                 // …but ONE pair line
+  expect(m.lines[0].y[0]).toBeCloseTo(Math.sqrt(18), 9);
+  expect(m.yLabel).toBe('CSD |S_xy|');
+});
+
+test('csd: the pair line is carried on the Y channel (X channel draws nothing)', () => {
+  const m = buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets: csdSet(),
+    visible: [vis(0, 0, 'on')],                    // only the X channel visible
+  });
+  expect(m.lines).toHaveLength(0);                 // no Y channel visible ⇒ no pair line
+});
+
+test('csd: default pair (i,j absent) falls back to 0,1; dB by default', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    psd: { axis: Float64Array.from([0]), data: decodeArray(real([2, 1], [4, 9])) },
+    csd: { axis: Float64Array.from([0]), data: decodeArray(real([2, 2, 1], [1, 0.5, 0.5, 1])) },
+  }];
+  const m = buildPlotModel({ view: 'frequency', freqMode: 'csd', sets, visible: [vis(0, 1, 'on')] });
+  expect(m.lines).toHaveLength(1);
+  expect(m.lines[0].y[0]).toBeCloseTo(20 * Math.log10(Math.sqrt(18)), 9);   // dB default
+  expect(m.yLabel).toBe('CSD |S_xy| (dB)');
+});
+
 // A 2-channel TF slice: input ch0 dropped, ONE output column (ch_1).
 // The visible OUTPUT channel is ch 1; the model remaps it to column 0.
 test('tf mag: 20·log10|H| in dB', () => {
@@ -77,6 +117,29 @@ test('tf phase: atan2(im,re) in degrees', () => {
   }];
   const m = buildPlotModel({ view: 'tf', tfPlotType: 'phase', sets, visible: [vis(0, 1, 'on')] });
   expect(m.lines[0].y[0]).toBeCloseTo(90, 9);
+});
+
+test('tf orphan (chIn null): all columns draw as distinct lines (identity)', () => {
+  // Round-5 item 3: an orphan TF (no measured input) has chIn=null and
+  // nChannels === Nout. Every source channel maps to its OWN column (identity),
+  // so 3 columns → 3 lines, colour matching each visible channel. tf_data
+  // (Nf=1, Nout=3): columns carry magnitudes 1, 2, 3.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([50]),
+      data: decodeArray(cplx([1, 3], [1, 0, 2, 0, 3, 0])),   // (Nf, Nout=3), re=[1,2,3]
+      chIn: null, nChannels: 3,
+    },
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', yScale: 'lin', sets,
+    visible: [vis(0, 0, 'on', '#a'), vis(0, 1, 'on', '#b'), vis(0, 2, 'on', '#c')],
+  });
+  // Three lines, one per column, NONE dropped (no input channel).
+  expect(m.lines).toHaveLength(3);
+  expect(m.lines.map((l) => l.y[0])).toEqual([1, 2, 3]);     // |H| per column
+  expect(m.lines.map((l) => l.color)).toEqual(['#a', '#b', '#c']);
 });
 
 test('tf nyquist: squareAspect, x=re/y=im, no dB', () => {

@@ -50,6 +50,11 @@
   );
   const customWindowActive = $derived(showCustomWindow || !isPresetWindow);
   const windowSelectValue = $derived(customWindowActive ? 'custom' : String($windowStore));
+  // Memory-safe upper bound for the custom window (round-5 item 8): recomputed
+  // on stream-state / window change (fs·channels drive it). setWindow enforces
+  // the real clamp; this only bounds the input hint.
+  const windowMax = $derived.by(() => { void $status; void $windowStore; return monitor.maxWindowS(); });
+  const windowMaxLabel = $derived(windowMax >= 1 ? `${Math.round(windowMax)}` : windowMax.toFixed(2));
 
   const isRangeFreq = $derived($fftFreqModeStore === 'range');
   const fMaxValue = $derived($fftFMaxStore == null ? '' : $fftFMaxStore);
@@ -140,11 +145,11 @@
               aria-label="custom time window in seconds"
               data-testid="live-window-input"
               min="0.02"
-              max="5"
+              max={windowMax}
               step="0.01"
               value={$windowStore}
               onchange={onWindowInput}
-              title="Custom viewed window (0.02–5 s)"
+              title={`Custom viewed window (0.02–${windowMaxLabel} s; capped by memory at high fs/channels)`}
               style="width:64px"
             />
             <span class="ml">s</span>

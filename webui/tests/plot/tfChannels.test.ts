@@ -36,6 +36,14 @@ test('tfColumn: channel outside the set → null', () => {
   expect(tfColumn(-1, 0, 3)).toBeNull();
 });
 
+test('tfColumn chIn=null (orphan TF): identity — columns are the lines', () => {
+  // Round-5 item 3: no measured input to drop, so every channel maps to its
+  // OWN column and NONE is skipped. 11 columns → 11 lines, ch_c → column c.
+  for (let c = 0; c < 11; c++) expect(tfColumn(c, null, 11)).toBe(c);
+  expect(tfColumn(11, null, 11)).toBeNull();   // still bounded by nChannels
+  expect(tfColumn(-1, null, 11)).toBeNull();
+});
+
 test('tfLineLabel: output/input, default ch_${n}', () => {
   expect(tfLineLabel(0, 1, 0)).toBe('ch_1/ch_0');   // args: setId, chOut, chIn
   expect(tfLineLabel(5, 2, 0)).toBe('ch_2/ch_0');
@@ -66,6 +74,19 @@ test('tfTransformEntries: no set prefix (bare label) → bare out/in', () => {
 test('tfTransformEntries: set with no TF yet passes through unchanged', () => {
   const entries = [{ setId: 9, ch: 0, label: 'B · ch_0' }, { setId: 9, ch: 1, label: 'B · ch_1' }];
   const out = tfTransformEntries(entries, () => undefined);   // no chIn known
+  expect(out).toEqual(entries);
+});
+
+test('tfTransformEntries: orphan TF (chIn null) keeps every column, plain labels', () => {
+  // Round-5 item 3: an orphan TF drops nothing and does NOT relabel to out/in
+  // — the columns are the lines, listed per-channel. Every entry survives with
+  // its original plain label.
+  const entries = [
+    { setId: 0, ch: 0, label: 'ruler · ch_0' },
+    { setId: 0, ch: 1, label: 'ruler · ch_1' },
+    { setId: 0, ch: 2, label: 'ruler · ch_2' },
+  ];
+  const out = tfTransformEntries(entries, () => null);   // orphan: no input
   expect(out).toEqual(entries);
 });
 

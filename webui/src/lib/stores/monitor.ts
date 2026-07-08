@@ -58,13 +58,39 @@ const DEFAULT_WINDOW_S = 0.1;
 /** Smallest viewable window — a couple of buffers' worth. */
 const MIN_WINDOW_S = 0.02;
 /**
- * Hard cap on the viewed window, and therefore on ring allocation
- * (review note M3: an unbounded pre-alloc at extreme settings could OOM).
- * At 96 kHz × 16 ch × 5 s that is still only ~30 MB of Float32.
+ * Ceiling on the viewed window (round-5 item 8: raise the too-low 5 s cap so
+ * long records fit).  The EFFECTIVE cap is the smaller of this and the
+ * memory-bounded {@link maxWindowSFor} — a flat 30 s would OOM at high
+ * fs·channels (96 kHz × 16 ch × 30 s × Float32 ≈ 184 MB).
  */
-const MAX_WINDOW_S = 5;
+const HARD_MAX_WINDOW_S = 30;
+/**
+ * Memory budget for the ring pre-allocation, in bytes (round-5 item 8).
+ * The ring is `nCh × fs × seconds × 4` bytes (Float32), so the memory-safe
+ * max window is `RING_BUDGET_BYTES / (fs · nCh · 4)`.  64 MiB keeps a typical
+ * 48 kHz × 2 ch monitor at the full 30 s cap while capping a punishing
+ * 96 kHz × 16 ch setup at ~10.9 s (≈64 MiB) instead of ~184 MB at a flat 30 s.
+ * (`snapshot()` copies the ring each frame, so peak is ~2× this transiently.)
+ */
+const RING_BUDGET_BYTES = 64 * 1024 * 1024;
+/** Bytes per stored sample — the ring holds Float32 (`Float32Array`). */
+const BYTES_PER_SAMPLE = 4;
+
+/**
+ * Memory-safe maximum viewed window (seconds) for a given sample rate and
+ * channel count (round-5 item 8).  The smaller of {@link HARD_MAX_WINDOW_S}
+ * and the {@link RING_BUDGET_BYTES} budget divided by the per-second ring
+ * cost (`fs · nCh · 4` bytes), floored at {@link MIN_WINDOW_S} so a pathological
+ * fs/channel combination still yields a usable (if tiny) window.  Exported for
+ * the LiveCard (custom-window `max`) and for tests.
+ */
+export function maxWindowSFor(fs: number, nCh: number): number {
+  const perSecond = Math.max(1, fs) * Math.max(1, nCh) * BYTES_PER_SAMPLE;
+  const budgeted = RING_BUDGET_BYTES / perSecond;
+  return Math.max(MIN_WINDOW_S, Math.min(HARD_MAX_WINDOW_S, budgeted));
+}
 /** The selectable window presets surfaced in the LiveCard. */
-export const WINDOW_PRESETS_S = [0.05, 0.1, 0.2, 0.5, 1] as const;
+export const WINDOW_PRESETS_S = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10] as const;
 /** Peak level at or above which the latching clip flag trips. */
 const CLIP_THRESHOLD = 0.95;
 
@@ -164,10 +190,27 @@ export function createMonitorStore(acquire: AcquireStore) {
   // reviving a monitor the user already stopped (I2/I3).
   let startGen = 0;
 
-  /** Ring length (samples/channel) for a given fs + window, clamped (M3). */
-  function ringLenFor(fs: number, seconds: number): number {
-    const clamped = Math.min(MAX_WINDOW_S, Math.max(MIN_WINDOW_S, seconds));
+  /**
+   * Ring length (samples/channel) for a given fs + window, clamped to the
+   * memory-safe window for THIS fs and channel count (round-5 item 8; M3).
+   * `nCh` is needed because the safe max depends on the total ring cost
+   * (`fs · nCh · 4` bytes) — see {@link maxWindowSFor}.
+   */
+  function ringLenFor(fs: number, seconds: number, nCh: number): number {
+    const clamped = Math.min(maxWindowSFor(fs, nCh), Math.max(MIN_WINDOW_S, seconds));
     return Math.max(256, Math.ceil(fs * clamped));
+  }
+
+  /**
+   * The memory-safe max viewed window (seconds) for the CURRENT config: the
+   * live stream's fs/channels while streaming, else the pending acquire
+   * settings.  The LiveCard reads this to bound its custom-window input so the
+   * user can never request a window that would blow the ring budget.
+   */
+  function currentMaxWindowS(): number {
+    if (ringBuf.length > 0) return maxWindowSFor(ringFs, ringChannels);
+    const cfg = get(acquire.settings);
+    return maxWindowSFor(cfg.sampleRate, cfg.channelCount);
   }
 
   /** (Re)allocate the ring buffer to `nCh × len` zero-filled channels. */
@@ -248,7 +291,7 @@ export function createMonitorStore(acquire: AcquireStore) {
     const cfg = get(acquire.settings);
     ringFs = cfg.sampleRate;
     ringChannels = cfg.channelCount;
-    allocRing(cfg.channelCount, ringLenFor(cfg.sampleRate, get(windowS)));
+    allocRing(cfg.channelCount, ringLenFor(cfg.sampleRate, get(windowS), cfg.channelCount));
     ringRev = 0;
 
     try {
@@ -275,7 +318,7 @@ export function createMonitorStore(acquire: AcquireStore) {
       // count may differ from what we requested) and re-allocate to match.
       ringFs = handle.fs;
       ringChannels = handle.nChannels;
-      allocRing(handle.nChannels, ringLenFor(handle.fs, get(windowS)));
+      allocRing(handle.nChannels, ringLenFor(handle.fs, get(windowS), handle.nChannels));
       status.set('streaming');
     } catch (e) {
       if (gen !== startGen) return;   // cancelled while awaiting — leave the newer state alone
@@ -318,17 +361,19 @@ export function createMonitorStore(acquire: AcquireStore) {
   }
 
   /**
-   * Set the viewed time window (seconds).  Clamped to
-   * [MIN_WINDOW_S, MAX_WINDOW_S]; when streaming the ring buffer is
-   * re-allocated live so the trace + FFT immediately reflect the new
-   * span (the old history is dropped — a longer/shorter window is a
-   * fresh view, not a resample).
+   * Set the viewed time window (seconds).  Clamped to `[MIN_WINDOW_S,
+   * currentMaxWindowS()]` — the upper bound is the memory-safe max for the
+   * current fs/channels (round-5 item 8), so a longer window is honoured up to
+   * the 30 s ceiling on modest configs but bounded to ~64 MiB of ring on heavy
+   * ones.  When streaming the ring buffer is re-allocated live so the trace +
+   * FFT immediately reflect the new span (the old history is dropped — a
+   * longer/shorter window is a fresh view, not a resample).
    */
   function setWindow(seconds: number): void {
-    const clamped = Math.min(MAX_WINDOW_S, Math.max(MIN_WINDOW_S, seconds));
+    const clamped = Math.min(currentMaxWindowS(), Math.max(MIN_WINDOW_S, seconds));
     windowS.set(clamped);
     if (ringBuf.length > 0) {
-      allocRing(ringChannels, ringLenFor(ringFs, clamped));
+      allocRing(ringChannels, ringLenFor(ringFs, clamped, ringChannels));
       ringRev++;
       ringRevision.set(ringRev);
     }
@@ -416,6 +461,8 @@ export function createMonitorStore(acquire: AcquireStore) {
     resume,
     togglePause,
     setWindow,
+    /** Memory-safe max viewed window (s) for the current fs/channels (item 8). */
+    maxWindowS: currentMaxWindowS,
     setFftFMax,
     setFftFMin,
     setFftFreqMode,

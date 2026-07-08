@@ -17,11 +17,15 @@
    * set (`selection.cycleChannel`). Each chip's mini dot is coloured by
    * `summariseColumn` over that channel's tri-state across all sets.
    *
-   * SOLO TARGET: Solo needs one set to isolate. We target the currently
-   * highlighted set (`selection.highlight`) when it is still present in
-   * the view, else fall back to the first set. This matches the stepper
-   * semantics (‹ › move the highlight) so Solo isolates "the set the
-   * steppers point at".
+   * SOLO / ‹ › GRANULARITY (round-5 item 3): the buttons adapt to the
+   * data. With MULTIPLE sets they operate per-SET — Solo isolates the
+   * highlighted set (or the first), ‹ › step between sets (`selection.solo`
+   * / `selection.step`). With a SINGLE multi-channel set (e.g. an 11-point
+   * orphan-TF ruler grid, where set-level Solo/‹ › are inert because there
+   * is only one set to isolate/step) they operate per-LINE — Solo isolates
+   * the highlighted line (or the first), ‹ › step through the set's channels
+   * (`selection.soloLine` / `selection.stepLine`). This keeps the tested
+   * multi-set behaviour intact while making the single-set case useful.
    */
   import { get } from 'svelte/store';
   import type { Selection } from '../lib/stores/selection';
@@ -95,6 +99,12 @@
   const setsView = $derived(selection.setsView);
   const stateStore = $derived(selection.state);
   const highlight = $derived(selection.highlight);
+  const lineHighlight = $derived(selection.lineHighlight);
+
+  // Line-level Solo/‹ › engage when the tray shows exactly one set — its
+  // channels are then the natural things to isolate and step through
+  // (round-5 item 3). More than one set keeps the per-set behaviour.
+  const singleSet = $derived($setsView.length === 1);
 
   // Widest set drives the channel-chip row (union of channel indices).
   const maxChannels = $derived(
@@ -109,12 +119,34 @@
     return summariseColumn(col);
   }
 
-  // Solo target: the highlighted set if still present, else the first set.
+  // The line to isolate/step from in single-set mode: the highlighted line
+  // when it still exists in the (one) set, else the set's first channel.
+  function currentLine(): { setId: number; ch: number } | null {
+    const list = $setsView;
+    if (list.length === 0) return null;
+    const hl = $lineHighlight;
+    if (hl && list.some(s => s.id === hl.setId && hl.ch < s.nChannels)) return hl;
+    return { setId: list[0].id, ch: 0 };
+  }
+
+  // Solo: isolate the highlighted LINE (single set) or SET (multiple sets).
   function onSolo() {
     const list = $setsView;
     if (list.length === 0) return;
+    if (singleSet) {
+      const cl = currentLine();
+      if (cl) selection.soloLine(cl.setId, cl.ch);
+      return;
+    }
     const target = list.some(s => s.id === $highlight) ? $highlight : list[0].id;
     selection.solo(target);
+  }
+
+  // ‹ ›: step the line-solo (single set) or the set-solo (multiple sets).
+  function onStep(dir: 1 | -1) {
+    if ($setsView.length === 0) return;
+    if (singleSet) selection.stepLine(dir);
+    else selection.step(dir);
   }
 </script>
 
@@ -123,9 +155,9 @@
     <span class="sec-label">Data</span>
     <button class="btn sm" title="All channels of all sets on" onclick={() => selection.all()}>All</button>
     <button class="btn sm" title="All channels of all sets off" onclick={() => selection.none()}>None</button>
-    <button class="btn sm" title="Show only the highlighted set" onclick={onSolo}>Solo</button>
-    <button class="btn sm" title="Highlight previous set" aria-label="Previous set" onclick={() => selection.step(-1)}>‹</button>
-    <button class="btn sm" title="Highlight next set" aria-label="Next set" onclick={() => selection.step(1)}>›</button>
+    <button class="btn sm" title={singleSet ? 'Show only the highlighted channel' : 'Show only the highlighted set'} onclick={onSolo}>Solo</button>
+    <button class="btn sm" title={singleSet ? 'Highlight previous channel' : 'Highlight previous set'} aria-label={singleSet ? 'Previous channel' : 'Previous set'} onclick={() => onStep(-1)}>‹</button>
+    <button class="btn sm" title={singleSet ? 'Highlight next channel' : 'Highlight next set'} aria-label={singleSet ? 'Next channel' : 'Next set'} onclick={() => onStep(1)}>›</button>
   </div>
 
   {#if maxChannels > 0}

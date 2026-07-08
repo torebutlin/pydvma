@@ -128,14 +128,22 @@ function decodeNpy(a: NpyArray): DecodedArray {
  * and PSD is derivable from the stored `Pxy` — both are left to an on-demand
  * Calc (the FFT still shows). `ModalData`/`MetaData` carry no plottable slice.
  *
- * chIn CONVENTION: pydvma's `TfData` carries NO input-channel field — only
- * its `Nout` output columns and an `id_link` to the source `TimeData` — so
- * the input channel a loaded TF was measured against is UNKNOWABLE from the
- * file. We restore `chIn = 0`: pydvma's default and the overwhelmingly
- * common case (Qt's `calculate_tf_set(ch_in=0)`). The out/in remap then
- * drops source channel 0 and maps the surviving channels to the TF columns.
+ * chIn CONVENTION (two cases):
+ *   - LINKED TF (a source `TimeData` IS in the file): its input channel was
+ *     dropped when the TF was computed, but pydvma's `TfData` carries NO
+ *     input-channel field, so it is UNKNOWABLE from the file. We restore
+ *     `chIn = 0` — pydvma's default and overwhelmingly common case (Qt's
+ *     `calculate_tf_set(ch_in=0)`); the out/in remap then drops source
+ *     channel 0 and maps the survivors to the TF columns.
+ *   - ORPHAN TF (`orphan = true`; no source `TimeData`, e.g. a JW-logger
+ *     `.mat` whose `yspec` is a bare TF matrix): there is NO measured input
+ *     to drop, so the columns ARE the lines. We restore `chIn = null` and
+ *     `nChannels = Nout`, and the model maps each channel to its own column
+ *     (identity) — 11 columns ⇒ 11 distinct lines/chips (round-5 item 3).
  */
-function sliceForLoadedItem(item: DvmaItem, srcChannels: number): Partial<SetArrays> | null {
+function sliceForLoadedItem(
+  item: DvmaItem, srcChannels: number, orphan = false,
+): Partial<SetArrays> | null {
   const A = item.arrays;
   switch (item.kind) {
     case 'FreqData':
@@ -148,7 +156,7 @@ function sliceForLoadedItem(item: DvmaItem, srcChannels: number): Partial<SetArr
           axis: Float64Array.from(A.freq_axis.data),
           data: decodeNpy(A.tf_data),
           coherence: A.tf_coherence ? decodeNpy(A.tf_coherence) : undefined,
-          chIn: 0, nChannels: srcChannels,
+          chIn: orphan ? null : 0, nChannels: srcChannels,
         },
       };
     case 'CrossSpecData':
@@ -162,13 +170,14 @@ function sliceForLoadedItem(item: DvmaItem, srcChannels: number): Partial<SetArr
 /**
  * Source-channel count for a set created for an ORPHAN derived item — one
  * whose source `TimeData` is absent from the file (e.g. a TF-only export).
- * A `TfData` restores as `Nout + 1` source channels (the dropped input plus
- * its outputs, chIn = 0 convention); `FreqData` uses its own column count;
- * `CrossSpecData` its matrix dimension; anything else falls back to 1.
+ * An orphan `TfData` restores as `Nout` source channels — its columns ARE
+ * the lines (chIn = null convention, round-5 item 3), so an 11-column ruler-
+ * grid TF yields 11 channels/chips/lines, NOT 12. `FreqData` uses its own
+ * column count; `CrossSpecData` its matrix dimension; anything else → 1.
  */
 function orphanChannels(item: DvmaItem): number {
   const A = item.arrays;
-  if (item.kind === 'TfData' && A.tf_data) return (A.tf_data.shape[1] ?? 0) + 1;
+  if (item.kind === 'TfData' && A.tf_data) return A.tf_data.shape[1] ?? 1;
   if (item.kind === 'FreqData' && A.freq_data) return A.freq_data.shape[1] ?? 1;
   if (item.kind === 'CrossSpecData' && A.Cxy) return A.Cxy.shape[0] ?? 1;
   return 1;
@@ -256,7 +265,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   /** Per-set settings for `view`, from the store or per-set defaults. */
   function freqSettings(setId: number) {
-    return settings?.get(setId, 'freq') ?? { window: 'hann', mode: 'fft' as const, nFrames: 10 };
+    return settings?.get(setId, 'freq') ?? { window: 'hann', mode: 'fft' as const, nFrames: 10, csdX: 0, csdY: 1 };
   }
   function tfSettings(setId: number) {
     return settings?.get(setId, 'tf') ?? { chIn: 0, window: 'hann', averaging: 'within' as const, nFrames: 10 };
@@ -409,8 +418,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // Orphan (source TimeData absent). Only worth a standalone display set
       // if the item yields a plottable slice — an orphan SonoData / ModalData
       // has nothing to show, so it is skipped rather than left as an empty set.
+      // `orphan = true` restores an orphan TF with chIn = null (columns are
+      // the lines) instead of the linked chIn = 0 convention (round-5 item 3).
       const nCh = orphanChannels(item);
-      const slice = sliceForLoadedItem(item, nCh);
+      const slice = sliceForLoadedItem(item, nCh, true);
       if (!slice) return;
       const name = (item.meta.test_name as string) || item.kind;
       const timestamp = (item.meta.timestring as string) || '';
@@ -526,9 +537,14 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           });
           if (stale('psd', my)) return;               // a newer PSD batch won
           const freqAxis = axisData(mval(res, 'freq_axis'));
+          // Stamp the CSD pair (round-5 item 7) from the set's freq settings so
+          // the cross-spectrum plots the chosen (X, Y) pair immediately.
           setDerived(ws.setId, {
             psd: { axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'psd'))) },
-            csd: { axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'Cxy'))) },
+            csd: {
+              axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'Cxy'))),
+              i: s.csdX, j: s.csdY,
+            },
           });
         } catch (e) {
           // One set failing must not abort the batch — record which set and
@@ -539,6 +555,24 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       if (stale('psd', my)) return;                   // a newer batch superseded us
       if (failed.length) throw new Error(psdFailedMessage(failed));
     });
+  }
+
+  /**
+   * Re-stamp the CSD pair (X, Y) on the targeted set(s)' already-computed
+   * coherence slice from their freq settings (round-5 item 7). The FULL
+   * coherence + auto-power matrices are already present, so switching the pair
+   * is a pure DISPLAY change — no recompute, no engine boot. A set with no CSD
+   * slice yet is skipped (the pair is picked up at the next Calc). The caller
+   * (FrequencyCard) patches the settings first, then calls this.
+   */
+  function setCsdPair(target: AnalysisTarget = 'all') {
+    for (const ws of targeted(target)) {
+      const cur = get(derived)[ws.setId]?.csd;
+      if (!cur) continue;
+      const { csdX, csdY } = freqSettings(ws.setId);
+      if (cur.i === csdX && cur.j === csdY) continue;
+      setDerived(ws.setId, { csd: { ...cur, i: csdX, j: csdY } });
+    }
   }
 
   /**
@@ -833,7 +867,12 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     if (!ws) return Promise.resolve();                  // no TF to fit
     const slice = get(derived)[ws.setId]!.tf!;
     const nTf = slice.data.shape[1] ?? 0;
-    const chIn = slice.chIn ?? 0;
+    // Preserve an orphan TF's null chIn (columns are the lines) rather than
+    // collapsing it to 0 — so the reconstruction overlay uses the SAME
+    // identity remap as the measured lines (round-5 item 3). `slice.chIn ?? 0`
+    // would silently drop line 0 in the overlay. For an orphan, nChannels
+    // is already Nout, so nTf === nChannels.
+    const chIn = slice.chIn === undefined ? 0 : slice.chIn;
     const nChannels = slice.nChannels ?? nTf + 1;
     const my = bump('fit');
     // Snapshot for undo / auto-revert BEFORE the model changes.
@@ -852,9 +891,13 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // proxy (not Python `None`), so sending them would break the engine's
       // `is None` defaults; leaving the keys off lets the Python defaults apply.
       const payload: Record<string, unknown> = {
-        freq_axis: slice.axis, tf_data: flat, n_tf: nTf, ch_in: chIn,
+        freq_axis: slice.axis, tf_data: flat, n_tf: nTf,
         n_channels: nChannels, fs: ws.fs, measurement_type: mt, action, n_modes: nModes,
       };
+      // Omit ch_in for an orphan TF (chIn null): a JS `null` marshals as a
+      // truthy JsNull proxy, breaking the engine's `is None` default — leaving
+      // the key off lets Python's ch_in=0 default apply. A numeric chIn is sent.
+      if (chIn !== null) payload.ch_in = chIn;
       if (M) payload.M = M;
       if (freqRange && action !== 'refine') payload.freq_range = freqRange;
       if (action === 'delete_one' && index !== undefined) payload.index = index;
@@ -976,7 +1019,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
-    calcFit, calcDamping, exportArrays, exportMat,
+    calcFit, calcDamping, exportArrays, exportMat, setCsdPair,
     getCalibration, setCalFactors,
     /** Source-set metadata for cards (set index → fs / duration / channels). */
     workingSets: () => working.map(w => ({

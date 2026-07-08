@@ -4,7 +4,7 @@
  */
 import { get } from 'svelte/store';
 import { expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { createMonitorStore } from '../../src/lib/stores/monitor';
+import { createMonitorStore, maxWindowSFor } from '../../src/lib/stores/monitor';
 import { createAcquireStore } from '../../src/lib/stores/acquire';
 import { capabilities } from '../../src/lib/stores/stages';
 import type { MonitorChunk, MonitorHandle } from '../../src/lib/audio/source';
@@ -257,12 +257,45 @@ test('setWindow clamps and re-allocates the ring while streaming', async () => {
   expect(get(mon.windowS)).toBe(0.5);
   expect(mon.ringLength).toBe(Math.ceil(44100 * 0.5));
 
-  // Clamp: absurd values are pinned to [0.02, 5] s.
+  // Clamp: absurd values pin to the memory-safe max (round-5 item 8). At
+  // 44.1 kHz × 2 ch the 64 MiB budget allows ~190 s, so the 30 s hard ceiling
+  // wins.
   mon.setWindow(999);
-  expect(get(mon.windowS)).toBe(5);
-  expect(mon.ringLength).toBe(Math.ceil(44100 * 5));
+  expect(get(mon.windowS)).toBe(30);
+  expect(mon.ringLength).toBe(Math.ceil(44100 * 30));
 
   mon.stop();
+});
+
+// ── Memory-bounded view-time cap (round-5 item 8) ──────────────────────────
+test('maxWindowSFor: typical fs/channels reach the 30 s ceiling', () => {
+  // 48 kHz × 2 ch: 64 MiB / (48000·2·4) ≈ 174 s → capped to the 30 s ceiling.
+  expect(maxWindowSFor(48000, 2)).toBe(30);
+  expect(maxWindowSFor(44100, 1)).toBe(30);
+});
+
+test('maxWindowSFor: heavy fs/channels are bounded by the ~64 MiB ring budget', () => {
+  // 96 kHz × 16 ch: 64 MiB / (96000·16·4) ≈ 10.9 s < 30 s ceiling.
+  const s = maxWindowSFor(96000, 16);
+  expect(s).toBeLessThan(30);
+  const ringBytes = 96000 * 16 * s * 4;         // nCh·fs·seconds·Float32
+  expect(ringBytes).toBeLessThanOrEqual(64 * 1024 * 1024 + 1);
+  expect(s).toBeCloseTo((64 * 1024 * 1024) / (96000 * 16 * 4), 5);
+});
+
+test('maxWindowSFor: never drops below the floor', () => {
+  // A pathological 192 kHz × 64 ch → tiny budget, but still ≥ the 0.02 s floor.
+  expect(maxWindowSFor(192000, 64)).toBeGreaterThanOrEqual(0.02);
+});
+
+test('setWindow honours the memory budget at high channel counts', async () => {
+  // Drive the fake handle to a heavy config by overriding acquire settings so
+  // the ring realloc + clamp use the bounded max, not the 30 s ceiling.
+  const { mon, acq } = setup();
+  acq.patch({ sampleRate: 96000, channelCount: 16 });
+  const cap = maxWindowSFor(96000, 16);
+  mon.setWindow(30);                              // ask for the ceiling…
+  expect(get(mon.windowS)).toBeCloseTo(cap, 6);   // …get the budgeted cap
 });
 
 test('clip flag latches at peak ≥ 0.95 and resets on demand', async () => {

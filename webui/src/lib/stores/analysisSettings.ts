@@ -30,8 +30,17 @@ import type { Selection } from './selection';
 /** The three analysis "views" that own per-set settings. */
 export type SettingsView = 'freq' | 'tf' | 'sono';
 
-/** Frequency-card settings: spectral quantity + window + averaging frames. */
-export interface FreqSettings { window: string; mode: 'fft' | 'psd' | 'csd'; nFrames: number; }
+/**
+ * Frequency-card settings: spectral quantity + window + averaging frames, plus
+ * the CSD channel pair (round-5 item 7). `csdX`/`csdY` are the two channels of
+ * the cross-spectrum `S_xy = E[X_csdX* · X_csdY]`; they are display-only (the
+ * full coherence matrix is computed once, so changing the pair re-plots without
+ * a recompute) and ignored outside CSD mode. Defaults 0/1.
+ */
+export interface FreqSettings {
+  window: string; mode: 'fft' | 'psd' | 'csd'; nFrames: number;
+  csdX: number; csdY: number;
+}
 /** TF-card settings: input channel, window, averaging mode, averaging frames. */
 export interface TfSettings { chIn: number; window: string; averaging: 'none' | 'within' | 'across'; nFrames: number; }
 /** Sonogram-card settings: STFT window size and heat-map dynamic range. */
@@ -52,7 +61,7 @@ export interface ViewSettings { freq: FreqSettings; tf: TfSettings; sono: SonoSe
  */
 export function defaults(): PerSetSettings {
   return {
-    freq: { window: 'hann', mode: 'fft', nFrames: 10 },
+    freq: { window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1 },
     tf: { chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 },
     sono: { nFft: 512, dynRangeDb: 60 },
   };

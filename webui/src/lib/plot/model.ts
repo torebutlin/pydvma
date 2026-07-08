@@ -74,19 +74,31 @@ export interface SetArrays {
   time?: { axis: Float64Array; data: DecodedArray };          // TimeData: data (Ns, Nc)
   freq?: { axis: Float64Array; data: DecodedArray };          // FFT: freq_data (Nf, Nc) complex
   psd?: { axis: Float64Array; data: DecodedArray };           // PSD: psd (Nc, Nf) real
-  csd?: { axis: Float64Array; data: DecodedArray };           // CSD: |Cxy| pairs (Nc, Nc, Nf)
   /**
-   * TF slice. `data` is `tf_data (Nf, Nout)` — the input channel is
-   * DROPPED by `calculate_tf`, so `Nout = nChannels − 1` OUTPUT columns
-   * in ascending channel order. `chIn` (the input channel it was
-   * computed with) and `nChannels` (the source channel count) are
-   * carried so the model can remap a visible source channel to its
-   * output column and skip the input line (Task R4). `nChannels` falls
-   * back to `Nout + 1` when absent (contiguous 0..N−1 assumption).
+   * CSD slice (round-5 item 7). `data` is the COHERENCE matrix `Cxy (Nc, Nc,
+   * Nf)` real; combined with the auto-power (`psd`) it reconstructs the
+   * cross-spectrum MAGNITUDE for the selected pair `(i, j)` — the convention
+   * is `S_xy = Pxy[i,j] = E[X_i* · X_j]` (pydvma's
+   * `calculate_cross_spectrum_matrix`, `scipy.signal.csd(x_i, y_j)`), and
+   * `|Pxy[i,j]|² = Cxy[i,j] · Pxx[i] · Pxx[j]`. `i`/`j` are the user-chosen
+   * pair (defaults 0/1); the model draws ONE line per set — the pair line,
+   * carried on the Y channel `j`. Absent `i`/`j` fall back to 0/1.
+   */
+  csd?: { axis: Float64Array; data: DecodedArray; i?: number; j?: number };
+  /**
+   * TF slice. `data` is `tf_data (Nf, Nout)`. `chIn` selects the geometry:
+   *   - a NUMBER: `calculate_tf` DROPPED that input channel, so `Nout =
+   *     nChannels − 1` OUTPUT columns in ascending order; the model remaps
+   *     each visible source channel to its output column and skips the input
+   *     line (Task R4). `nChannels` falls back to `Nout + 1` when absent.
+   *   - `null`: an ORPHAN TF (a loaded TF-only file with no measured input,
+   *     round-5 item 3) — nothing was dropped, so `Nout = nChannels` and each
+   *     source channel maps to its OWN column (identity, via `tfColumn`).
+   * `nChannels` is the source channel count either way.
    */
   tf?: {
     axis: Float64Array; data: DecodedArray; coherence?: DecodedArray;
-    chIn?: number; nChannels?: number;
+    chIn?: number | null; nChannels?: number;
   };
   /** Sonogram magnitude image (Nf, Nt) plus its two axes (canvas heat layer). */
   sono?: { timeAxis: Float64Array; freqAxis: Float64Array; data: DecodedArray };
@@ -172,6 +184,7 @@ function tfRatioUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): stri
     const set = byId.get(v.setId);
     const t = set?.tf;
     if (!t) continue;                    // no TF for this line → contributes nothing
+    if (t.chIn === null) return null;    // orphan TF: no input channel → no ratio unit
     const o = meaningfulUnit(set?.units?.[v.ch]);
     const i = meaningfulUnit(set?.units?.[t.chIn ?? 0]);
     if (!o || !i) return null;
@@ -190,11 +203,12 @@ function calOf(set: SetArrays | undefined, ch: number): number {
 /**
  * TF display cal RATIO for output channel `out` against input `chIn`:
  * `cal[out]/cal[in]` (Qt's `TfData.channel_cal_factors` semantics). Default
- * 1 when either factor is absent. Applied to the complex TF column before the
- * plot-type transform.
+ * 1 when either factor is absent. An ORPHAN TF (`chIn === null`) has no input
+ * channel to normalise against, so the ratio is just `cal[out]` (divisor 1).
+ * Applied to the complex TF column before the plot-type transform.
  */
-function calRatio(set: SetArrays | undefined, out: number, chIn: number): number {
-  return calOf(set, out) / calOf(set, chIn);
+function calRatio(set: SetArrays | undefined, out: number, chIn: number | null): number {
+  return calOf(set, out) / (chIn === null ? 1 : calOf(set, chIn));
 }
 
 /** Everything `buildPlotModel` needs, kept plain for node testing. */
@@ -247,7 +261,7 @@ export interface PlotModelArgs {
    * `chIn`/`nChannels` are the target set's TF geometry (for `tfColumn`).
    */
   recon?: {
-    setId: number; chIn: number; nChannels: number;
+    setId: number; chIn: number | null; nChannels: number;
     local?: { axis: Float64Array; data: DecodedArray };
     global?: { axis: Float64Array; data: DecodedArray };
     showGlobal: boolean;
@@ -346,8 +360,10 @@ function calScaledColumn(data: DecodedArray, nf: number, cols: number, col: numb
  * - time: one line per visible (set,ch) from TimeData (x=time_axis,
  *   y=channel column), monotonic x.
  * - frequency: FFT → 20·log10|freq_data col ch| (dB); PSD → 10·log10(psd
- *   row ch); CSD → 20·log10|Cxy[ch,ch]| honestly labelled (off-diagonal
- *   pairs deferred). Sub-mode via `freqMode`.
+ *   row ch); CSD → the cross-spectrum magnitude |S_xy| for the user-chosen
+ *   pair (i, j), ONE line per set carried on the Y channel j (round-5 item 7:
+ *   `|Pxy[i,j]|² = Cxy[i,j]·Pxx[i]·Pxx[j]`, convention `S_xy = E[X_i* X_j]`).
+ *   Sub-mode via `freqMode`.
  * - tf: apply `tfPlotType` to complex tf_data columns — mag (dB), phase
  *   (degrees, atan2), real, imag; nyquist parametrises x=re/y=im with
  *   `squareAspect` and windows to `freqRange`. Each visible source
@@ -420,7 +436,10 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     const yLabel = mode === 'psd'
       ? (unit ? (linMag ? `PSD (${psdUnit})` : `PSD (${psdUnit}, dB)`) : (linMag ? 'PSD' : 'PSD (dB)'))
       : mode === 'csd'
-        ? 'CSD (coherence)'
+        // Cross-spectrum magnitude for the chosen pair (round-5 item 7). dB by
+        // default (cross-spectra span orders of magnitude); linear honours the
+        // frequency view's dB↔lin toggle if it is set.
+        ? (linMag ? 'CSD |S_xy|' : 'CSD |S_xy| (dB)')
         : (unit ? (linMag ? `Magnitude (${unit})` : `Magnitude (${unit}, dB)`) : (linMag ? 'Magnitude' : 'Magnitude (dB)'));
     for (const v of args.visible) {
       const s = byId.get(v.setId);
@@ -450,17 +469,35 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           y[i] = linMag ? x : powDb(x);
         }
         lines.push(baseLine(p.axis, y, v));
-      } else {                                               // csd: |Cxy[ch,ch]| (coherence diagonal)
-        const c = s?.csd; if (!c) continue;                  // Cxy shape (Nc, Nc, Nf)
+      } else {                                               // csd: cross-spectrum |S_xy| for the pair (i, j)
+        const c = s?.csd; if (!c) continue;                  // Cxy (coherence) shape (Nc, Nc, Nf)
         const nc = c.data.shape[0] ?? 1;
         const nf = c.axis.length;
-        if (v.ch >= nc) continue;
+        // ONE line per set — the pair line, carried on the Y channel `j`
+        // (round-5 item 7). App filters the legend to this same channel, so
+        // plot + legend agree; the model still self-selects here so a direct
+        // caller (or an unfiltered visible list) draws only the pair.
+        const iCh = c.i ?? 0;
+        const jCh = c.j ?? 1;
+        if (v.ch !== jCh || iCh >= nc || jCh >= nc) continue;
+        // |Pxy[i,j]|² = Cxy[i,j] · Pxx[i] · Pxx[j]. Cxy is the magnitude-squared
+        // coherence; the auto-powers Pxx come from the sibling `psd` slice
+        // (both are produced by the same calc_psd call). Without `psd` (e.g. a
+        // bare loaded coherence matrix) fall back to the raw coherence.
+        const pxx = s?.psd;
         const y = new Float64Array(nf);
-        const base = (v.ch * nc + v.ch) * nf;                // diagonal [ch,ch,:]
-        for (let i = 0; i < nf; i++) {
-          const re = c.data.re[base + i];
-          const im = c.data.im ? c.data.im[base + i] : 0;
-          y[i] = Math.hypot(re, im);
+        const baseIJ = (iCh * nc + jCh) * nf;                // Cxy[i, j, :]
+        for (let f = 0; f < nf; f++) {
+          const coh = Math.max(0, c.data.re[baseIJ + f]);    // magnitude-squared coherence ≥ 0
+          let mag: number;
+          if (pxx) {
+            const pi = Math.abs(pxx.data.re[iCh * nf + f]);
+            const pj = Math.abs(pxx.data.re[jCh * nf + f]);
+            mag = Math.sqrt(coh * pi * pj);                  // |Pxy[i,j]|
+          } else {
+            mag = Math.sqrt(coh);                            // no auto-power → |coherence|
+          }
+          y[f] = linMag ? mag : (mag > 0 ? 20 * Math.log10(mag) : -300);
         }
         lines.push(baseLine(c.axis, y, v));
       }
@@ -485,11 +522,13 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       const t = set?.tf;
       if (!t) continue;
       const nout = t.data.shape[1] ?? 1;                     // tf_data (Nf, Nout)
-      // R4: tf_data drops the INPUT channel, so a visible source channel
-      // maps to its OUTPUT column (position within channels ∖ {chIn});
-      // the input channel itself has no column (skip — no line). Without
-      // the remap a >2-channel set mislabels lines and drops a channel.
-      const chIn = t.chIn ?? 0;
+      // R4: a MEASURED TF drops the INPUT channel, so a visible source
+      // channel maps to its OUTPUT column (position within channels ∖ {chIn})
+      // and the input channel has no column (skip — no line). An ORPHAN TF
+      // (chIn === null, round-5 item 3) dropped nothing, so tfColumn maps each
+      // channel to its own column (identity). `chIn ?? 0` would collapse the
+      // orphan null to 0 and wrongly drop a line — preserve null explicitly.
+      const chIn = t.chIn === undefined ? 0 : t.chIn;
       const nChannels = t.nChannels ?? nout + 1;
       const col = tfColumn(v.ch, chIn, nChannels);
       if (col === null || col >= nout) continue;             // input channel or out of range
@@ -568,8 +607,8 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         const t = byId.get(v.setId)?.tf;
         if (!t?.coherence) continue;
         const nout = t.coherence.shape[1] ?? 1;              // coherence is (Nf, N_out) too
-        // Same input-dropped remap as the TF lines above (R4).
-        const chIn = t.chIn ?? 0;
+        // Same remap as the TF lines above (R4 measured / orphan identity).
+        const chIn = t.chIn === undefined ? 0 : t.chIn;
         const nChannels = t.nChannels ?? nout + 1;
         const col = tfColumn(v.ch, chIn, nChannels);
         if (col === null || col >= nout) continue;

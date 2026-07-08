@@ -17,6 +17,7 @@ import { createActions } from '../../src/lib/analysis/actions';
 import { createSelection } from '../../src/lib/stores/selection';
 import { createEngineStore } from '../../src/lib/stores/engine';
 import { readDvma } from '../../src/lib/codec/dvma';
+import { buildPlotModel, type SetArrays, type VisibleLine } from '../../src/lib/plot/model';
 import type { EngineClient } from '../../src/lib/worker/client';
 import type { DvmaDataset, DvmaItem } from '../../src/lib/model/dataset';
 import type { NpyArray } from '../../src/lib/codec/npy';
@@ -111,16 +112,51 @@ test('bug 4: a TF-only file (no TimeData) makes an orphan set and lands on the T
   };
   const views = a.loadDataset(ds);
 
-  // An orphan set is created so the TF still shows; chIn=0 ⇒ Nout+1 channels.
+  // An orphan set is created so the TF still shows. Round-5 item 3: an orphan
+  // TF has NO measured input, so its columns ARE the lines — chIn = null and
+  // nChannels = Nout (1 column here), NOT Nout + 1.
   expect(get(sel.sets)).toHaveLength(1);
   const setId = get(sel.sets)[0].id;
-  expect(get(sel.sets)[0].nChannels).toBe(2);
+  expect(get(sel.sets)[0].nChannels).toBe(1);
   const d = get(a.derived);
   expect(d[setId].tf).toBeDefined();
-  expect(d[setId].tf!.nChannels).toBe(2);
+  expect(d[setId].tf!.chIn).toBeNull();
+  expect(d[setId].tf!.nChannels).toBe(1);
 
   // No time series ⇒ the only populated view is TF, so App jumps there.
   expect(views).toEqual(['tf']);
+});
+
+test('round-5 item 3: a multi-column orphan TF makes N chips/lines (columns are the lines)', () => {
+  // An 11-column ruler-grid orphan TF (the ruler_grid_acc_3.mat shape) must
+  // load as 11 source channels — one chip and one distinct line per column —
+  // NOT 12 (the old chIn=0 convention that added a phantom input channel and
+  // left 11 chips but only 10 drawable lines).
+  const cols = 11;
+  const nf = 2;
+  const interleaved: number[] = [];
+  for (let f = 0; f < nf; f++) for (let c = 0; c < cols; c++) interleaved.push(c + 1, 0);
+  const orphan: DvmaItem = {
+    kind: 'TfData',
+    arrays: {
+      freq_axis: realArr([nf], [0, 1]),
+      tf_data: cplxArr([nf, cols], interleaved),   // (Nf, 11) complex
+    },
+    meta: { test_name: 'ruler', timestring: 't0' },   // NO id_link ⇒ orphan
+    settings: { fs: 2 },
+  };
+  const { sel, a } = actions();
+  a.loadDataset({ formatVersion: 1, pydvmaVersion: '1.5.0', items: [orphan] });
+
+  expect(get(sel.sets)).toHaveLength(1);
+  const set = get(sel.sets)[0];
+  expect(set.nChannels).toBe(cols);                 // 11 chips, CH 0..10
+  // 11 distinct colours (identity mapping ⇒ chip colour == line colour).
+  expect(new Set(set.colors).size).toBe(cols);
+  const setId = set.id;
+  const d = get(a.derived);
+  expect(d[setId].tf!.chIn).toBeNull();             // orphan ⇒ no input to drop
+  expect(d[setId].tf!.nChannels).toBe(cols);
 });
 
 test('bug 4: an FFT-only file lands on the Frequency view', () => {
@@ -175,4 +211,37 @@ test('an unlinked derived item (missing id_link) still shows via its own set', (
   expect(get(sel.sets)).toHaveLength(2);        // source set + orphan TF set
   const d = get(a.derived);
   expect(Object.values(d).some((s) => s.tf)).toBe(true);
+});
+
+test('round-5 item 3 end-to-end: a real orphan-TF .dvma → 3 chips + 3 distinct plotted lines', () => {
+  // orphan_tf_3col.dvma is written by pydvma's container.save from a bare
+  // TfData (4 freq points × 3 columns, NO source TimeData, NO id_link) — the
+  // shape a JW-logger `.mat` import produces. This exercises the FULL read
+  // path (readDvma → loadDataset) and the orphan convention: 3 columns ⇒ 3
+  // source channels (chIn=null identity), 3 distinct chip colours, and — fed
+  // through buildPlotModel — 3 distinct plotted lines, none dropped.
+  const bytes = new Uint8Array(readFileSync('tests/fixtures/orphan_tf_3col.dvma'));
+  const { sel, a } = actions();
+  const views = a.loadDataset(readDvma(bytes));
+
+  expect(views).toEqual(['tf']);                     // TF-only ⇒ lands on TF
+  expect(get(sel.sets)).toHaveLength(1);
+  const set = get(sel.sets)[0];
+  expect(set.nChannels).toBe(3);                     // 3 chips (CH 0..2), NOT 4
+  expect(new Set(set.colors).size).toBe(3);          // 3 distinct colours
+  const setId = set.id;
+  const slice = get(a.derived)[setId].tf!;
+  expect(slice.chIn).toBeNull();                     // orphan ⇒ no input to drop
+  expect(slice.nChannels).toBe(3);
+  expect(slice.data.shape).toEqual([4, 3]);
+
+  // Fed through the plot model, all 3 columns draw as distinct lines whose
+  // colours match the tray chips (identity mapping — none dropped).
+  const setArrays: SetArrays[] = [{ setId, tf: slice }];
+  const visible: VisibleLine[] = [0, 1, 2].map((ch) => ({
+    setId, ch, state: 'on', color: set.colors[ch],
+  }));
+  const model = buildPlotModel({ view: 'tf', tfPlotType: 'mag', sets: setArrays, visible });
+  expect(model.lines).toHaveLength(3);
+  expect(model.lines.map((l) => l.color)).toEqual(set.colors);
 });

@@ -17,9 +17,14 @@
    * `actions.calcFft(target)` (FFT) or `actions.calcPsd(target)`
    * (PSD/CSD, one op fills both psd + Cxy).
    *
-   * CSD note: only the coherence matrix `Cxy` is available from the
-   * worker, so CSD displays |Cxy[ch,ch]| and is labelled "CSD
-   * (coherence)"; the off-diagonal cross-power pairs are deferred.
+   * CSD (round-5 item 7): a PAIR selector — two channel dropdowns X and Y —
+   * chooses the cross-spectrum `S_xy = Pxy[X,Y] = E[X* · Y]` (pydvma's
+   * `calculate_cross_spectrum_matrix` / `scipy.signal.csd(x,y)` convention,
+   * stated next to the selectors). Changing the pair is a DISPLAY-only re-plot
+   * (`actions.setCsdPair`, no recompute — the full coherence + auto-power
+   * matrices are already computed). Hidden for single-channel sets (a CSD needs
+   * a pair). The plot draws one line per set — `|Pxy[X,Y]|`, reconstructed as
+   * `sqrt(Cxy[X,Y]·Pxx[X]·Pxx[Y])`.
    */
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
@@ -49,6 +54,20 @@
     (void $settingsMap, $target === 'all' && analysisSettings.isMixed('freq', key));
 
   const freqMode = $derived(freq.mode as FreqMode);
+
+  // CSD pair (round-5 item 7): channel count that bounds the X/Y dropdowns —
+  // the focused set's for a specific target, else the widest set for 'all'.
+  const pairNCh = $derived(
+    $target === 'all'
+      ? $setsView.reduce((m, s) => Math.max(m, s.nChannels), 0)
+      : ($setsView.find((s) => s.id === $target)?.nChannels ?? 0),
+  );
+  // A CSD needs a pair — the selectors are hidden for single-channel sets.
+  const csdHasPair = $derived(pairNCh >= 2);
+  // Changing the pair is a pure display change: patch the setting, then
+  // re-stamp the already-computed coherence slice (no recompute).
+  function setCsdX(n: number) { patch({ csdX: n }); actions.setCsdPair($target); }
+  function setCsdY(n: number) { patch({ csdY: n }); actions.setCsdPair($target); }
   // This card owns the FFT error in FFT mode and the PSD error otherwise
   // (PSD + CSD both compute via calcPsd). Per-kind so a TF/sono failure
   // never shows here (Round-3 item 2).
@@ -75,7 +94,7 @@
   const averaged = $derived(freqMode !== 'fft');
   const calcLabel = $derived(freqMode === 'fft' ? 'Calc FFT' : freqMode === 'psd' ? 'Calc PSD' : 'Calc CSD');
 
-  const patch = (partial: Partial<{ window: string; mode: FreqMode; nFrames: number }>) =>
+  const patch = (partial: Partial<{ window: string; mode: FreqMode; nFrames: number; csdX: number; csdY: number }>) =>
     analysisSettings.patch($target, 'freq', partial);
 
   function calc() {
@@ -171,7 +190,32 @@
       </div>
     {/if}
     {#if freqMode === 'csd'}
-      <span class="note">CSD shows |Cxy| on the diagonal (coherence); cross-power pairs deferred.</span>
+      <div class="ctx-row">
+        {#if csdHasPair}
+          <div class="grp">
+            <span class="grp-lab">CSD pair</span>
+            <div class="grp-ctl">
+              <span class="ml">X</span>
+              <select value={String(freq.csdX)} aria-label="CSD channel X"
+                onchange={(e) => setCsdX(Number(e.currentTarget.value))} style="width:64px">
+                {#each Array.from({ length: pairNCh }, (_, c) => c) as c (c)}
+                  <option value={String(c)}>ch_{c}</option>
+                {/each}
+              </select>
+              <span class="ml">Y</span>
+              <select value={String(freq.csdY)} aria-label="CSD channel Y"
+                onchange={(e) => setCsdY(Number(e.currentTarget.value))} style="width:64px">
+                {#each Array.from({ length: pairNCh }, (_, c) => c) as c (c)}
+                  <option value={String(c)}>ch_{c}</option>
+                {/each}
+              </select>
+              <span class="note">S_xy = E[X* Y]</span>
+            </div>
+          </div>
+        {:else}
+          <span class="note">CSD needs a 2+ channel set (a pair to cross-correlate).</span>
+        {/if}
+      </div>
     {/if}
     {#if $computeErrors[errKind]}
       <div class="ctx-err" role="alert">{$computeErrors[errKind]}</div>

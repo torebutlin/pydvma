@@ -30,7 +30,7 @@
    */
   import type { Actions, MeasurementType } from '../../lib/analysis/actions';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
-  import type { ViewState } from '../../lib/stores/viewstate';
+  import type { ViewState, TfPlotType } from '../../lib/stores/viewstate';
   import type { ModalStore } from '../../lib/stores/modal';
 
   let {
@@ -50,6 +50,19 @@
   const target = $derived(analysisSettings.analysisTarget);
   const sharedFreq = $derived(viewState.sharedFreqRange);
   const modalState = $derived(modal);
+
+  // View-type chips (round-5 item 9): the Fit stage reuses the 'tf' view, so
+  // the same projection options as the TF card must be reachable while fitting
+  // — you fit against whatever projection reads best (Nyquist circles, Bode,
+  // real/imag). Drives the ACTIVE ('tf') view's plotType, so the plot and the
+  // TF card's selector stay in lock-step.
+  const current = $derived(viewState.current);
+  const plotType = $derived($current.plotType);
+  const PLOT_TYPES: { id: TfPlotType; label: string }[] = [
+    { id: 'mag', label: 'Mag (dB)' }, { id: 'phase', label: 'Phase' },
+    { id: 'bode', label: 'Bode' }, { id: 'real', label: 'Real' },
+    { id: 'imag', label: 'Imag' }, { id: 'nyquist', label: 'Nyquist' },
+  ];
   // Gate: fitting needs a computed TF. Mirrors the ribbon's `fitEngine`
   // capability (which flips on the first TF); until then the fit buttons
   // are disabled and the card explains what to do — the stage stays
@@ -129,6 +142,15 @@
         <div class="grp-ctl">
           <select bind:value={mt} aria-label="TF measurement type">
             {#each MT as m (m.id)}<option value={m.id}>{m.label}</option>{/each}
+          </select>
+        </div>
+      </div>
+      <div class="grp">
+        <span class="grp-lab">view</span>
+        <div class="grp-ctl">
+          <select value={plotType} aria-label="TF plot type"
+            onchange={(e) => viewState.setPlotType(e.currentTarget.value as TfPlotType)}>
+            {#each PLOT_TYPES as p (p.id)}<option value={p.id}>{p.label}</option>{/each}
           </select>
         </div>
       </div>

@@ -52,8 +52,12 @@ export interface ReconArrays { axis: Float64Array; data: DecodedArray; }
 export interface ModalState {
   /** Set the model targets, or `null` when empty (no fit yet). */
   setId: number | null;
-  /** Input channel of the target set's TF (for the out/in overlay remap). */
-  chIn: number;
+  /**
+   * Input channel of the target set's TF (for the out/in overlay remap), or
+   * `null` for an ORPHAN TF whose columns are the lines (round-5 item 3) —
+   * `tfColumn` reads `null` as an identity mapping.
+   */
+  chIn: number | null;
   /** Source channel count of the target set (for the out/in overlay remap). */
   nChannels: number;
   /** Marshalled modal matrix `M` re-sent to the engine (`null` = empty). */
@@ -131,8 +135,9 @@ function snapshot(s: ModalState): UndoSnapshot {
 export function createModalStore() {
   const store = writable<ModalState>(empty());
 
-  /** Context for a fit: which set's TF was fitted and its channel geometry. */
-  interface FitContext { setId: number; chIn: number; nChannels: number; }
+  /** Context for a fit: which set's TF was fitted and its channel geometry
+   *  (`chIn === null` for an orphan TF — round-5 item 3). */
+  interface FitContext { setId: number; chIn: number | null; nChannels: number; }
 
   /**
    * Decode a `calc_fit` engine result into the store, carrying the fit

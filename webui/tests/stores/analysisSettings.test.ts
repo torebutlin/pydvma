@@ -13,7 +13,7 @@ beforeEach(() => {
 
 test('defaults() match the cards prior local defaults; fresh object each call', () => {
   const d = defaults();
-  expect(d.freq).toEqual({ window: 'hann', mode: 'fft', nFrames: 10 });
+  expect(d.freq).toEqual({ window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1 });
   expect(d.tf).toEqual({ chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 });
   expect(d.sono).toEqual({ nFft: 512, dynRangeDb: 60 });
   expect(defaults()).not.toBe(d);         // not aliased

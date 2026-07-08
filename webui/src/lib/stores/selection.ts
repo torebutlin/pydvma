@@ -72,6 +72,16 @@ export function createSelection() {
   const labels = writable<Map<string, string>>(new Map());
   /** id of the currently soloed/highlighted set (initially 0). */
   const highlight = writable<number>(0);
+  /**
+   * The currently soloed/stepped LINE (round-5 item 3), or `null` when no
+   * line-level solo is active. `soloLine`/`stepLine` drive it so that a
+   * SINGLE multi-channel set (e.g. an 11-point orphan TF, where set-level
+   * Solo/‹ › are inert because there is only one set) can isolate and step
+   * through its individual lines. Kept as a `{setId, ch}` (not a flat index)
+   * so it survives reorders/removals; a stale value just restarts stepping
+   * from the first line.
+   */
+  const lineHighlight = writable<{ setId: number; ch: number } | null>(null);
   let nextId = 0;
 
   const key = (id: number, c: number) => `${id}:${c}`;
@@ -109,8 +119,50 @@ export function createSelection() {
     solo(list[((from + dir) % n + n) % n].id);
   }
 
+  /** Flat list of every (setId, ch) LINE in display order (all channels). */
+  function allLines(): { setId: number; ch: number }[] {
+    const out: { setId: number; ch: number }[] = [];
+    for (const set of get(sets)) for (let c = 0; c < set.nChannels; c++) out.push({ setId: set.id, ch: c });
+    return out;
+  }
+
+  /**
+   * Isolate ONE line (round-5 item 3): line (`setId`, `ch`) goes 'on', every
+   * other line of every set goes 'off'. Records `lineHighlight` and moves the
+   * set `highlight` to the owning set. Unknown set / out-of-range channel is a
+   * no-op. This is the line-level analogue of `solo`, used by the tray when a
+   * single multi-channel set makes set-level Solo pointless.
+   */
+  function soloLine(setId: number, ch: number) {
+    const rec = findSet(setId);
+    if (!rec || ch < 0 || ch >= rec.nChannels) return;
+    highlight.set(setId);
+    lineHighlight.set({ setId, ch });
+    mutate(m => get(sets).forEach(set => {
+      for (let c = 0; c < set.nChannels; c++) {
+        m.set(key(set.id, c), set.id === setId && c === ch ? 'on' : 'off');
+      }
+    }));
+  }
+
+  /**
+   * Move the line-solo one line forward/back across ALL (set, channel) lines
+   * in display order, wrapping at the ends, and isolate it (`soloLine`). The
+   * highlight is stored as `{setId, ch}`, so it survives reorders/removals; if
+   * the highlighted line no longer exists, stepping restarts from the first.
+   * No-op when there are no lines.
+   */
+  function stepLine(dir: 1 | -1) {
+    const lines = allLines(); const n = lines.length; if (!n) return;
+    const cur = get(lineHighlight);
+    const at = cur ? lines.findIndex(l => l.setId === cur.setId && l.ch === cur.ch) : -1;
+    const from = at === -1 ? (dir === 1 ? -1 : 0) : at;   // first › lands on line 0
+    const next = lines[((from + dir) % n + n) % n];
+    soloLine(next.setId, next.ch);
+  }
+
   return {
-    sets, collapsed, highlight,
+    sets, collapsed, highlight, lineHighlight,
     /** Lookup function store: `$state(setId, ch)` -> TriState. */
     state: derived(states, m => (id: number, c: number) => stateOf(m, id, c)),
     /**
@@ -159,6 +211,10 @@ export function createSelection() {
         return n;
       });
       collapsed.update(cs => { const n = new Set(cs); n.delete(id); return n; });
+      // Drop a line-highlight that pointed at the removed set (round-5 item 3);
+      // stepLine would otherwise restart from line 0 anyway, but clearing keeps
+      // the store from holding a dangling reference.
+      if (get(lineHighlight)?.setId === id) lineHighlight.set(null);
       if (get(highlight) === id) {
         const rest = get(sets);
         highlight.set(rest.length ? rest[Math.min(idx, rest.length - 1)].id : -1);
@@ -243,6 +299,8 @@ export function createSelection() {
     },
     solo,
     step,
+    soloLine,
+    stepLine,
     /** Toggle the collapsed flag for set `id`. */
     toggleCollapse(id: number) {
       collapsed.update(cs => {
