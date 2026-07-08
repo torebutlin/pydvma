@@ -17,6 +17,10 @@ import type {
   RecordingHandle,
 } from '../audio/source';
 import {
+  enumerateOutputDevices,
+  supportsOutputDeviceSelection,
+} from '../audio/source';
+import {
   WebAudioProvider,
   deviceCapsFor,
   clampVoltage,
@@ -27,6 +31,7 @@ import {
   type BridgeRecordingMeta,
   type ConfiguredInfo,
   type LogStatusEvent,
+  type OutputDevice,
 } from '../audio/provider';
 import type { DvmaDataset, DvmaItem } from '../model/dataset';
 import { capabilities } from './stages';
@@ -152,6 +157,21 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    * match and whenever the user edits the requested fs / device.
    */
   const coercedFs = writable<CoercedFs | null>(null);
+  /**
+   * The active backend kind as a REACTIVE store (constructor + {@link setProvider}).
+   * AcquireCard reads it to light up the output-stimulus + pretrigger groups for
+   * the Web Audio path (round-5 #10) WITHOUT touching {@link bridgeCaps} — that
+   * stays `null` for Web Audio so SetupCard's `bridgeCaps != null` bridge
+   * detection is unaffected.
+   */
+  const kind = writable<'webaudio' | 'bridge'>(provider.kind);
+  /**
+   * Audio OUTPUT devices for the Web Audio stimulus sink select (round-5 #10),
+   * populated in {@link init} where the browser can select an output
+   * (Chromium `setSinkId`).  Empty on Safari/Firefox / the bridge path, so the
+   * device select hides and playback goes to the default device.
+   */
+  const webOutputDevices = writable<OutputDevice[]>([]);
 
   let handle: RecordingHandle | null = null;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
@@ -189,6 +209,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    */
   function setProvider(p: SourceProvider): void {
     provider = p;
+    kind.set(p.kind);
     p.setConfig?.(get(bridgeConfig));
     wireProvider(p);
   }
@@ -322,6 +343,18 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     // completes) so Setup/Acquire tabs are clickable.
     capabilities.update((c) => ({ ...c, liveSource: true }));
     await refreshDevices();
+    // Web Audio also supports an output stimulus + pretrigger (round-5 #10).
+    // Enumerate output devices for the stimulus sink select where the browser
+    // can select one (Chromium); on Safari/Firefox this stays empty and the
+    // select hides (playback → default device).
+    try {
+      if (supportsOutputDeviceSelection()) {
+        const outs = await enumerateOutputDevices();
+        webOutputDevices.set(outs.map((d) => ({ deviceId: d.deviceId, label: d.label })));
+      }
+    } catch {
+      // Degrade silently — default output only.
+    }
   }
 
   /** Start a recording with current settings. */
@@ -413,6 +446,10 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     pretrigStatus,
     /** DSA coerced-fs note (null = the device honoured the requested rate). */
     coercedFs,
+    /** Active backend kind ('webaudio' | 'bridge') as a reactive store. */
+    kind,
+    /** Web Audio output-device list for the stimulus sink select (round-5 #10). */
+    webOutputDevices,
     init,
     refreshDevices,
     requestPermission,

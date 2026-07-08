@@ -432,15 +432,41 @@ export interface SourceProvider {
   dispose?(): void;
 }
 
-// ---- Web Audio provider (wraps source.ts verbatim) ----
+// ---- Web Audio provider (wraps source.ts + browser output/pretrigger) ----
 
 /**
- * The default backend: the browser soundcard via the Web Audio API.  A
- * thin pass-through to `source.ts` so the pre-Wave-B behaviour is
- * byte-for-byte unchanged when no bridge is present.
+ * Default browser output-stimulus amplitude when the user flips output on
+ * without editing the field — matches the Acquire card's displayed default
+ * (0.3).  A NORMALISED gain (0..1); the browser DAC has no calibrated volts.
+ */
+export const WEB_AUDIO_DEFAULT_OUTPUT_AMP = 0.3;
+
+/**
+ * Default absolute pretrigger threshold (normalised |x|) for the Web Audio
+ * armed capture.  The browser has no Setup NI-group threshold control, so this
+ * fixed default stands in — modest enough to sit above the digital noise floor
+ * yet cross on a firm tap / a played tone.  (A dedicated browser threshold
+ * control is a documented follow-up; a timeout falls back to an ordinary
+ * capture, so an un-crossed arm still yields a full-length set.)
+ */
+export const WEB_AUDIO_DEFAULT_PRETRIG_THRESHOLD = 0.05;
+
+/**
+ * The default backend: the browser soundcard via the Web Audio API.  Wraps
+ * `source.ts`; the pre-Wave-B capture behaviour is byte-for-byte unchanged
+ * when no output/pretrigger is configured.  Round-5 item 10 lets it ALSO drive
+ * a browser output stimulus + armed pretrigger — it stores the Acquire card's
+ * {@link BridgeConfig} via {@link setConfig} (the SAME object the bridge uses)
+ * and maps the browser-relevant fields into the Web-Audio `RecordConfig`
+ * extensions on {@link startRecording}.  NI/driver fields are ignored.
  */
 export class WebAudioProvider implements SourceProvider {
   readonly kind = 'webaudio' as const;
+
+  /** Acquire output/pretrigger config (browser-relevant fields only). */
+  private config: BridgeConfig = {};
+  /** Pretrigger lifecycle sink (armed → triggered/timeout). */
+  private statusCb: ((event: LogStatusEvent) => void) | null = null;
 
   /** Web Audio has no bridge capability document. */
   async capabilities(): Promise<BridgeCaps | null> {
@@ -451,8 +477,24 @@ export class WebAudioProvider implements SourceProvider {
     return webEnumerateInputDevices();
   }
 
+  /**
+   * Stash the Acquire output/pretrigger config so the next capture can drive
+   * the browser output stimulus + armed pretrigger.  Only the browser-relevant
+   * fields are read (output {@link BridgeConfig.outputEnabled} group,
+   * pretrigger {@link BridgeConfig.pretrigArmed} group); NI/driver kwargs are
+   * ignored on this path.
+   */
+  setConfig(cfg: BridgeConfig): void {
+    this.config = { ...cfg };
+  }
+
+  /** Register the pretrigger lifecycle sink (armed → triggered / timeout). */
+  onLogStatus(cb: (event: LogStatusEvent) => void): void {
+    this.statusCb = cb;
+  }
+
   startRecording(cfg: RecordConfig): RecordingHandle {
-    return webStartRecording(cfg);
+    return webStartRecording({ ...cfg, ...this.recordExtras() });
   }
 
   startMonitor(
@@ -460,6 +502,40 @@ export class WebAudioProvider implements SourceProvider {
     ondata: MonitorCallback,
   ): Promise<MonitorHandle> {
     return webStartMonitor(cfg, ondata);
+  }
+
+  /**
+   * Map the stored {@link BridgeConfig} into the Web-Audio `RecordConfig`
+   * extensions: an `output` stimulus when `outputEnabled`, a `pretrig` block
+   * when `pretrigArmed`.  Frequency / amplitude defaults mirror the Acquire
+   * card's displayed defaults so "flip on → Log" plays exactly what the
+   * summary shows.  Amplitude is a normalised gain (clamped to ±1 at play
+   * time).
+   */
+  private recordExtras(): Pick<RecordConfig, 'output' | 'pretrig'> {
+    const c = this.config;
+    const extras: Pick<RecordConfig, 'output' | 'pretrig'> = {};
+    if (c.outputEnabled) {
+      extras.output = {
+        type: c.outputType ?? 'sweep',
+        amp: c.outputAmp ?? WEB_AUDIO_DEFAULT_OUTPUT_AMP,
+        f1: c.outputF1 ?? 10,
+        f2: c.outputF2 ?? 500,
+        durationS: c.outputDuration,
+        deviceId: c.outputDeviceId,
+        channels: c.outputChannels,
+      };
+    }
+    if (c.pretrigArmed) {
+      extras.pretrig = {
+        channel: c.pretrigChannel ?? 0,
+        threshold: c.pretrigThreshold ?? WEB_AUDIO_DEFAULT_PRETRIG_THRESHOLD,
+        pretrigSamples: c.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES,
+        timeoutS: c.pretrigTimeout ?? 1.0,
+        onStatus: this.statusCb ?? undefined,
+      };
+    }
+    return extras;
   }
 }
 

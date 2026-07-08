@@ -11,11 +11,10 @@
    * (addRecordedSet) — carrying the bridge container's provenance metadata
    * when bridged — and the view switches to Time.
    *
-   * The output + pretrigger groups are BRIDGE-only and capability-gated:
-   * the output group renders only when the bridge advertises analog output
-   * (`outputCapable`), and the arm switch only when it advertises
-   * pretrigger.  On the Web Audio path both are hidden — a browser output
-   * stimulus is a later item (see the web-audio output slot comment below).
+   * The output + pretrigger groups are capability-gated: for a bridge, on the
+   * advertised analog output (`outputCapable`) / pretrigger; for the Web Audio
+   * path (round-5 #10), both are always available — the browser drives the
+   * output stimulus + armed pretrigger itself (see `source.ts`).
    */
   import type { AcquireStore } from '../../lib/stores/acquire';
   import { recordingToItem } from '../../lib/stores/acquire';
@@ -50,17 +49,25 @@
   const bridgeConfig = $derived(acquire.bridgeConfig);
   const pretrigStatus = $derived(acquire.pretrigStatus);
   const coercedFs = $derived(acquire.coercedFs);
+  // Web Audio (round-5 #10) supports the output stimulus + pretrigger too,
+  // surfaced via the store's reactive `kind` + enumerated output devices —
+  // kept OUT of bridgeCaps so SetupCard's `bridgeCaps != null` bridge detection
+  // is unaffected.
+  const kind = $derived(acquire.kind);
+  const webOutputDevices = $derived(acquire.webOutputDevices);
+  const isWebAudio = $derived($kind === 'webaudio');
 
   const recording = $derived($status === 'recording');
 
-  // ---- capability gates (bridge only) ----
-  // Output (stimulus) group: only when the bridge advertises AO for the
-  // selected device. The Web Audio path (null caps) is always hidden.
-  const showOutput = $derived(outputCapable($bridgeCaps, $settings.deviceId));
-  // The selected device's output voltage rail (ao_vmax); clamps the amplitude.
-  const aoVmaxCap = $derived(deviceCapsFor($bridgeCaps, $settings.deviceId)?.ao_vmax);
-  // Pretrigger arm: only when the bridge advertises pretrigger.
-  const showPretrig = $derived($bridgeCaps?.pretrigger ?? false);
+  // ---- capability gates ----
+  // Output (stimulus) group: the bridge advertises AO for the selected device;
+  // the Web Audio path always supports a browser output stimulus.
+  const showOutput = $derived(isWebAudio ? true : outputCapable($bridgeCaps, $settings.deviceId));
+  // The selected device's output voltage rail (ao_vmax) clamps the amplitude.
+  // Web Audio has no calibrated volts, so there is no rail to clamp against.
+  const aoVmaxCap = $derived(isWebAudio ? undefined : deviceCapsFor($bridgeCaps, $settings.deviceId)?.ao_vmax);
+  // Pretrigger arm: the bridge advertises pretrigger; Web Audio always supports it.
+  const showPretrig = $derived(isWebAudio ? true : ($bridgeCaps?.pretrigger ?? false));
 
   // ---- output group state (backed by bridgeConfig, mockup defaults) ----
   const outputOn = $derived($bridgeConfig.outputEnabled ?? false);
@@ -72,8 +79,9 @@
   const outputDuration = $derived($bridgeConfig.outputDuration);
   const outputDeviceId = $derived($bridgeConfig.outputDeviceId ?? '');
   const outputChannels = $derived($bridgeConfig.outputChannels ?? 1);
-  // AO-capable devices the bridge advertises (empty → the device select hides).
-  const outDevices = $derived(outputDevices($bridgeCaps));
+  // AO-capable devices: the bridge's advertised list, or (Web Audio) the
+  // enumerated browser outputs. Empty → the device select hides (default output).
+  const outDevices = $derived(isWebAudio ? $webOutputDevices : outputDevices($bridgeCaps));
   const outMaxChannels = $derived(
     outDevices.find((d) => d.deviceId === outputDeviceId)?.maxChannels,
   );
@@ -255,10 +263,9 @@
       </div>
 
       <!--
-        Output (stimulus) group — BRIDGE-only, gated on advertised AO.
-        Web-audio output slot: a browser output stimulus (Web Audio
-        OscillatorNode / buffer) is a later item; when added, render an
-        equivalent group here for the Web Audio path instead of hiding it.
+        Output (stimulus) group — renders for a bridge with advertised AO OR
+        the Web Audio path (round-5 #10: the browser plays the stimulus through
+        an AudioBufferSourceNode during the capture).
       -->
       {#if showOutput}
         <div class="grp" data-testid="acquire-output">
@@ -339,7 +346,7 @@
         </div>
       {/if}
 
-      <!-- Pretrigger arm — BRIDGE-only, gated on advertised pretrigger. -->
+      <!-- Pretrigger arm — bridge (advertised pretrigger) or Web Audio (round-5 #10). -->
       {#if showPretrig}
         <div class="grp" data-testid="acquire-pretrigger">
           <span class="grp-lab">pretrigger</span>
