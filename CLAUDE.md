@@ -143,18 +143,41 @@ engine had never booted (base URL resolved against origin, dropping
 /pydvma/app/ — fixed + permanent subpath @engine e2e). Suites:
 pytest 282, vitest 465, svelte-check 0/0, Playwright 47 + bridge 6/6.
 
-**START THE NEXT SESSION HERE:** (1) **Tore hands-on round 5** on the
-round-4 surface (live Pages app now genuinely works — hard reload).
-Queued design questions: fit-as-tray-card (recon lines with normal
-per-line controls), CSV all-kinds confirmed good?, mute icons OK?
-(2) **Design-facing leftovers**: dark theme, narrow-rail mini strip,
-browser-side (Web Audio) output stimulus + pretrigger, M1/M2 minors,
-MkDocs pages for the webui modes (installation.md has [serve] now;
-index/labsheet notes pending — October readiness). (3) Next Windows
-visit: eyeball the 9260 clamp + coerced-fs notes on real hardware.
-(4) Qt teardown ONLY after Tore's explicit confirmation. Roadmap:
+**ROUND 5 FULLY LANDED (2026-07-08, pushed to 2036a99):** all of
+`dev/2026-07-07-round5-feedback.md` — sono 'array is too big' fixed
+at the ROOT (scipy's own spectrogram helper hits the 32-bit WASM
+nominal limit → `_spectrogram_complex_lowmem`, assert_array_equal
+byte-identity); 2019-era legacy pickles load (`DataSet.__setstate__`
+fills pre-list attrs; grid_data.npy → 12 sets); orphan-TF multi-chan
+cluster (chIn=null convention — 11 lines/chips match; line-level
+Solo/step on single sets); CSD pair selector (S_xy = E[X*Y]); osc
+window to 30 s (memory-bounded); Fit-stage view chips; **browser
+parity** (Web Audio output stimulus = faithful signal_generator port
++ armed pretrigger with pydvma windowing semantics); **CWT sonogram**
+(dependency-free Morlet, T&C construction, STFT|CWT switch, CWT
+damping fits — separates close modes STFT smears; latent start_time
+bug fixed); **axis-nav** (Nyquist x/y = real/imag + draggable
+freq-BRUSH strip driving the committed range; Bode phase pane own y
+±180|auto; coherence 0–1|auto; snapshot history); **fit-as-tray-card**
+(role:'fit' pseudo-set, dashed recon lines with normal per-line
+controls; ModalData persists in .dvma, Python-readable, autosave→
+restore); **full docs site** (Web Logger section, 10 pages, strict);
+**dark theme** (data-theme tokens, no-flash boot, theme-aware
+canvases, exports PROVEN theme-invariant) + **narrow-rail monitor
+strip**. Suites at close: pytest 305, vitest 561, svelte-check 0/0,
+Playwright 63 + bridge 6/6.
+
+**START THE NEXT SESSION HERE:** (1) **Tore hands-on round 6** (dark
+theme contrast notes are in commit 2036a99 — Save-green + indigo
+buttons flagged), incl. a PC multi-channel recheck. (2) Flagged
+follow-ups: CSD PHASE needs glue to return complex Pxy; browser
+pretrigger threshold control; log-y heat rendering for CWT; CSD
+pair-on-hidden-channel auto-enable; narrow-band CWT damping memory
+opt. (3) Next Windows visit: eyeball 9260 clamp + coerced-fs notes.
+(4) Qt teardown ONLY after Tore's explicit confirmation; 4C6
+labsheets parked (other repo). Roadmap:
 `dev/plans/2026-07-07-full-gui-replacement-plan.md`; feedback trail:
-`dev/2026-07-07-round4-feedback.md` and earlier.
+`dev/2026-07-07-round5-feedback.md` and earlier.
 
 Auto-loaded by Claude Code at the start of every session. Contributors
 and collaborators: the concrete filesystem paths below are for the
