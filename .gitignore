@@ -1,6 +1,7 @@
 **/__pycache__/
 *.npy
 !tests/data/*.npy
+!data/examples/*.npy
 labs/.ipynb_checkpoints/
 build/
 dist/
