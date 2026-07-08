@@ -66,11 +66,14 @@ device's `device_caps.ao_max_rate` whenever the input fs exceeds it
 the log), and Setup shows "output runs at 5000 Hz (device AO
 limit)" — verified end-to-end on the real Dev3 (bridge-payload
 check + a real UI log through vite + `pydvma-serve --driver
-nidaq`).  NEWER finding from that verification, NOT fixed (task
-chip spawned): with output left as "same as input", MySettings
-defaults the NI `output_device_index` to 0 (options.py ~309-331),
-so a Dev3 input silently drives AO on the cDAQ — mis-routed
-stimulus / a rail error on multi-NI benches.
+nidaq`).  The NEWER finding from that verification is ALSO FIXED
+(its spawned session, merged same day): an unset NI/mock
+`output_device_index` now follows the resolved input device when
+the output driver matches the input driver (options.py), instead of
+silently defaulting to device 0 — previously a Dev3 input drove AO
+on the cDAQ (mis-routed stimulus / rail errors on multi-NI
+benches). Hardware-verified: Dev2-input + unset output routes the
+sweep out of Dev2's own AO.
 
 **NEXT SESSIONS: Tore tests solo over days/weeks — expect
 FEEDBACK-driven work, not new feature waves.** Round-7 hands-on
@@ -80,8 +83,7 @@ analysis-side checks with `data/examples/` (see its README). IEPE
 with a live accelerometer is now verified too (accel on
 cDAQ1Mod1/ai1; `dev/iepe_accel_check.py` — cold-start 4.86 V bias
 transient, per-channel excitation, webui-style scalar broadcast
-through the bridge). Small flagged follow-ups: NI
-"same as input" output-device index default (above), CSD PHASE
+through the bridge). Small flagged follow-ups: CSD PHASE
 (glue must return complex Pxy), browser pretrig threshold control,
 log-y CWT heat rendering, CSD pair auto-enable on hidden channel,
 orphan-fit browser e2e (task_c158292c), PWA manifest
