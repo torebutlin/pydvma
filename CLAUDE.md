@@ -68,9 +68,11 @@ device_caps.ao_max_rate + note, rail-clamp pattern (task_01e8edaf).
 FEEDBACK-driven work, not new feature waves.** Round-7 hands-on
 surface: shared-pole fitting, Best match / x(iω) scaling group,
 /config prefill, sono single-targeting, brush v2, dark mode;
-analysis-side checks with `data/examples/` (see its README). Still
-untested on real hardware: IEPE with a live accelerometer (loopback
-can't exercise a sensor chain). Small flagged follow-ups: webui
+analysis-side checks with `data/examples/` (see its README). IEPE
+with a live accelerometer is now verified too (accel on
+cDAQ1Mod1/ai1; `dev/iepe_accel_check.py` — cold-start 4.86 V bias
+transient, per-channel excitation, webui-style scalar broadcast
+through the bridge). Small flagged follow-ups: webui
 output_fs clamp (above), CSD PHASE (glue must return complex Pxy),
 browser pretrig threshold control, log-y CWT heat rendering, CSD
 pair auto-enable on hidden channel, orphan-fit browser e2e
@@ -148,7 +150,12 @@ Three NI devices are connected on this Windows machine:
 
 **BNC loopback is wired ao0 → ai0 on each device** — that's the
 standard test stimulus. Self-contained: the user does not need to be
-physically present to tap a hammer or similar. Stimulus-dependent
+physically present to tap a hammer or similar. **An IEPE
+accelerometer (~100 mV/g class) is plugged into cDAQ1Mod1/ai1** (as
+of 2026-07-08) — it sits motionless on the bench, so expect only a
+noise floor (~30 µV rms) plus the cold-start bias transient, but it
+lets IEPE excitation be exercised against a real sensor chain
+headlessly (`dev/iepe_accel_check.py`). Stimulus-dependent
 tests (e.g. `test_pretrigger_with_stimulus`) run an AC-stimulus
 preflight (`_has_ao_to_ai_loopback` in
 `tests/test_acquisition_hardware.py`) and auto-skip on any device

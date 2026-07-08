@@ -69,6 +69,42 @@ existing voltage-rail clamp. Flagged as background task
 (task_01e8edaf); until then the error message tells the user what to
 do.
 
+## Addendum (same day): IEPE with a LIVE accelerometer — verified
+
+Tore confirmed an IEPE accel is physically plugged into cDAQ1Mod1/ai1
+(sitting on the bench — no motion, but a real powered sensor chain).
+New harness `dev/iepe_accel_check.py`, all sections pass:
+
+1. **Cold-start bias transient** (raw nidaqmx, no pydvma warmup):
+   enabling 2 mA on ai1 showed the sensor bias settling through the
+   9234's AC-coupling HPF — early mean **4.857 V → 6.6 mV** after
+   ~3 s. That transient is the fingerprint of a live biased sensor
+   (an open input or the loopback shows none). NB it only appears on
+   a genuinely cold sensor: back-to-back runs are warm (the blocking
+   capacitance stays charged for minutes) and the script notes+skips.
+2. **pydvma per-channel path**: `iepe_excit_current_A=[0.0, 0.002]`
+   put excitation on ai1 only (task readback: ch0 0 A, ch1 2 mA, AC
+   coupled), warmup left the bias settled (|mean| 0.2 mV), and the
+   accel shows a live ~33 µV rms noise floor, not railed.
+3. **Mixed lab config**: 9260 sweep on the ai0 loopback while the
+   IEPE accel sits on ai1 — one capture, sweep rms 0.567 V on ch0,
+   accel stays at noise floor.
+4. **Webui-style bridge path**: the browser sends a SCALAR
+   `iepe_excit_current_A` (broadcasts to all channels — including the
+   loopback channel, which is harmless: the 2 mA source just sinks
+   into the 9260's low output impedance); ran exactly that through a
+   real `pydvma-serve --driver nidaq` + sweep + container round-trip.
+
+Also surfaced in passing: `log_data` already prints a loud
+"stimulus plays at 1.067x the intended frequencies" warning when
+`output_fs` is coerced by the DSA ladder — good companion behaviour
+to the output_fs clamp task.
+
+What could still be done with this sensor when someone is present:
+tap the bench / accel for a real transient capture (pretrigger off a
+physical event rather than the electrical loopback) — nice-to-have,
+not blocking; the electrical path is fully verified.
+
 ## What's left (unchanged from the handoff, minus what closed today)
 
 - Tore's solo hands-on over days/weeks — feedback-driven sessions.
@@ -79,6 +115,5 @@ do.
   (Web-Audio-path) pretrig threshold control, log-y CWT heat
   rendering, CSD pair auto-enable on hidden channel, orphan-fit
   browser e2e (task_c158292c), PWA manifest.
-- New: webui output_fs clamp (task_01e8edaf, above).
-- IEPE with a real accelerometer (loopback can't exercise a live IEPE
-  sensor chain; pytest covers task-level IEPE config on the 9234).
+- New: webui output_fs clamp (task_01e8edaf, above — in progress in a
+  separate session).
