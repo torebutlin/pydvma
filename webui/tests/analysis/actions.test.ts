@@ -391,6 +391,50 @@ test('calcSono issues calc_sono with nperseg=nFft (from settings), noverlap=nFft
   expect(sono.payload.noverlap).toBe(32);
 });
 
+test('a throwing calc_sono surfaces on the FIRST press via computeErrors.sono (round-5 bug 1)', async () => {
+  // Round-5: on the 32-bit WASM engine a large-nFFT sonogram overflows scipy's
+  // sliding_window_view ("array is too big"). Pressing Calc Sonogram must land
+  // that failure in computeErrors.sono on the FIRST press (SonoCard + the
+  // under-plot banner both read `$computeErrors.sono`), not stay silent until a
+  // later slider drag. This pins the button path's error surface so a future
+  // change can't re-swallow it.
+  const { engine } = fakeEngine(async (op) => {
+    if (op === 'calc_sono') throw new Error('array is too big; and cannot be safely reshaped');
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+  await actions.calcSono(a, 0);                       // the Calc Sonogram button path
+  expect(get(actions.computeErrors).sono).toContain('too big');
+  expect(get(actions.busy)).toBe(false);             // and it settles (never hangs)
+  // The failure is isolated to the sono slot — no other kind is touched.
+  expect(get(actions.computeErrors).tf).toBe('');
+});
+
+test('a successful calcSono clears a prior sono error (round-5 bug 1)', async () => {
+  // After the pydvma low-memory fix a re-press (or a coarser nFFT) succeeds;
+  // the stale error must clear so the card stops showing it.
+  let fail = true;
+  const { engine } = fakeEngine(async (op) => {
+    if (op === 'calc_sono') {
+      if (fail) throw new Error('array is too big');
+      return { time_axis: real([2], [0, 1]), freq_axis: real([2], [0, 1]),
+               sono_data: real([2, 2], [1, 2, 3, 4]) };
+    }
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+  await actions.calcSono(a, 0);
+  expect(get(actions.computeErrors).sono).toContain('too big');
+  fail = false;
+  await actions.calcSono(a, 0);
+  expect(get(actions.computeErrors).sono).toBe('');
+  expect(get(actions.derived)[a].sono).toBeDefined();
+});
+
 test('calcSono clamps an out-of-range channel to the set range (round-4 bug 1)', async () => {
   // Regression: the sono channel select is card-local state that survives a
   // target switch, so a stale ch (e.g. ch_1 picked on a 2-channel set) can

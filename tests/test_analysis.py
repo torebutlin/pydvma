@@ -692,3 +692,96 @@ class TestSonogramIdLink:
         td = _make_time_data(rng.standard_normal((N, 2)), fs)
         sn = analysis.calculate_sonogram(td, nperseg=256)
         assert sn.id_link == td.unique_id
+
+
+# ---------- calculate_sonogram byte-identical low-memory segmentation ----------
+
+class TestSonogramLowMem:
+    """Pin `_spectrogram_complex_lowmem` (and `calculate_sonogram`) BYTE-FOR-BYTE
+    against `scipy.signal.spectrogram(mode='complex')`.
+
+    The low-memory helper strides directly to the decimated STFT windows
+    instead of building scipy's ``sliding_window_view`` intermediate, whose
+    NOMINAL size overflows the 32-bit WASM engine's ``2**31-1`` byte ceiling
+    for a large nperseg on a long, high-rate record (the round-5 "Sonogram:
+    array is too big" bug). It must match scipy exactly — same Hann window,
+    constant detrend, density scaling with the stft-mode sqrt, one-sided rfft
+    with no psd doubling, and boundary=None/padded=False defaults.
+    """
+
+    # (N_samples, N_chans, nperseg, noverlap): default, webui default, odd
+    # length/overlap, noverlap=0 (the damping path), and nperseg==N.
+    CASES = [
+        (9000, 2, 180, 90),
+        (9000, 2, 512, 256),
+        (4096, 3, 256, 128),
+        (4096, 1, 256, 0),
+        (2000, 4, 137, 61),
+        (1000, 2, 64, 48),
+        (500, 1, 500, 0),
+        (3001, 2, 300, 150),
+    ]
+
+    @pytest.mark.parametrize('N,nch,nperseg,noverlap', CASES)
+    def test_helper_byte_identical_to_scipy(self, N, nch, nperseg, noverlap):
+        rng = np.random.default_rng(hash((N, nch, nperseg)) & 0xFFFF)
+        y = rng.standard_normal((N, nch))
+        fs = 4321.0
+        f_ref, t_ref, S_ref = signal.spectrogram(
+            y, fs=fs, window='hann', nperseg=nperseg, noverlap=noverlap,
+            axis=0, mode='complex')
+        f2, t2, S2 = analysis._spectrogram_complex_lowmem(y, fs, nperseg, noverlap)
+        # Byte-for-byte: identical shape AND identical values (not just close).
+        assert S2.shape == S_ref.shape
+        np.testing.assert_array_equal(S2, S_ref)
+        np.testing.assert_array_equal(f2, f_ref)
+        np.testing.assert_array_equal(t2, t_ref)
+
+    def test_calculate_sonogram_matches_scipy_swapaxes(self):
+        """The public `calculate_sonogram` must equal scipy's spectrogram
+        after the (freq, chan, seg) -> (freq, seg, chan) swapaxes it applies."""
+        fs, N = 2000, 8192
+        rng = np.random.default_rng(21)
+        td = _make_time_data(rng.standard_normal((N, 2)), fs)
+        sn = analysis.calculate_sonogram(td, nperseg=512, noverlap=256)
+        _, _, S_ref = signal.spectrogram(
+            td.time_data, fs=fs, window='hann', nperseg=512, noverlap=256,
+            axis=0, mode='complex')
+        np.testing.assert_array_equal(sn.sono_data, np.swapaxes(S_ref, 1, 2))
+
+    def test_large_nperseg_does_not_build_giant_intermediate(self):
+        """A long record + large nperseg whose scipy ``sliding_window_view``
+        NOMINAL size exceeds the 32-bit WASM ceiling still computes here (on
+        64-bit the ceiling is huge, so this only demonstrates equivalence at
+        a shape that WOULD overflow WASM), and stays byte-identical.
+
+        The nominal ``sliding_window_view`` size is
+        ``(N - nperseg + 1) * nperseg * 8`` bytes; the case below is chosen so
+        that value comfortably exceeds ``2**31-1``."""
+        N, nperseg, noverlap = 88200, 4096, 2048   # ~2 s @ 44.1 kHz, max UI nFFT
+        swv_nominal = (N - nperseg + 1) * nperseg * 8
+        assert swv_nominal > 2**31 - 1             # would overflow 32-bit WASM
+        rng = np.random.default_rng(99)
+        y = rng.standard_normal((N, 1))
+        fs = 44100.0
+        f_ref, t_ref, S_ref = signal.spectrogram(
+            y, fs=fs, window='hann', nperseg=nperseg, noverlap=noverlap,
+            axis=0, mode='complex')
+        f2, t2, S2 = analysis._spectrogram_complex_lowmem(y, fs, nperseg, noverlap)
+        np.testing.assert_array_equal(S2, S_ref)
+        np.testing.assert_array_equal(f2, f_ref)
+        np.testing.assert_array_equal(t2, t_ref)
+
+    def test_nperseg_longer_than_record_clamps_like_scipy(self):
+        """scipy clamps nperseg to the record length (with a warning) rather
+        than erroring; the helper must do the same and stay byte-identical."""
+        fs, N = 1000, 300
+        rng = np.random.default_rng(5)
+        y = rng.standard_normal((N, 2))
+        with pytest.warns(UserWarning):
+            f_ref, t_ref, S_ref = signal.spectrogram(
+                y, fs=fs, window='hann', nperseg=400, noverlap=0,
+                axis=0, mode='complex')
+        with pytest.warns(UserWarning):
+            f2, t2, S2 = analysis._spectrogram_complex_lowmem(y, fs, 400, 0)
+        np.testing.assert_array_equal(S2, S_ref)

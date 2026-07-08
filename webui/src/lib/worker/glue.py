@@ -130,9 +130,35 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap):
     The coupled-resolution control maps to ``nperseg=nFft`` and
     ``noverlap=nFft//2`` on the JS side. sono_data is returned as a real
     magnitude image (Nf, Nt) — ``abs`` of the complex STFT for channel ``ch``.
+
+    Engine guard (mirror of ``calc_psd``): the shipped pyodide wheel
+    (pydvma 1.5.0) segments inside ``scipy.signal.spectrogram`` →
+    ``_fft_helper`` → ``sliding_window_view``, whose NOMINAL size is
+    ``Nc * (N_samples - nperseg + 1) * nperseg``. On the 32-bit WASM engine
+    numpy rejects that view with "array is too big" for a large ``nperseg``
+    on a long, high-rate record (e.g. a 2 s, 44.1 kHz capture at nFFT=4096 —
+    a ~2.75 GB nominal view). That failure surfaced as a raw, opaque scipy
+    error on the sonogram card (and, before, silently on the first press).
+    We catch that specific overflow and re-raise a clear, actionable message
+    so a STALE wheel still explains itself. Repo pydvma now strides directly
+    to the decimated windows and no longer overflows
+    (``analysis._spectrogram_complex_lowmem``), so this branch is inert once
+    a wheel with that fix ships — no fixed size cap is imposed that would
+    over-block the fixed engine.
     """
     td = _time_data(time_axis, time_data, n_channels, fs)
-    sd = analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
+    try:
+        sd = analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
+    except (ValueError, MemoryError) as e:
+        msg = str(e).lower()
+        if isinstance(e, MemoryError) or 'too big' in msg or 'maximum possible size' in msg:
+            n_samples = int(td.time_data.shape[0])
+            raise ValueError(
+                'Sonogram at this window size needs too large an internal buffer '
+                'for the browser engine ({} samples × {}-pt STFT window). '
+                'Use a smaller nFFT.'.format(n_samples, int(nperseg))
+            ) from e
+        raise
     return {'time_axis': _arr(sd.time_axis), 'freq_axis': _arr(sd.freq_axis),
             'sono_data': _arr(np.abs(sd.sono_data[:, :, int(ch)]))}
 
@@ -174,11 +200,46 @@ def legacy_to_dvma(npy_bytes):
     (``create_proxies=False``) boundary as a JS ``Uint8Array`` — exactly what
     the client feeds to ``readDvma``. (``container.save`` takes a FILENAME, not
     a buffer, so the ``/tmp`` hop is required; pyodide's FS is in-memory.)
+
+    STALE-WHEEL GUARD: old pydvma pickles (<= 1.4.0) predate one or more of
+    the per-kind ``*_list`` attributes on ``DataSet`` (e.g. the 2019/4C6-era
+    files lack ``modal_data_list``), and ``container.save`` reads every list,
+    so it would raise ``AttributeError: 'DataSet' object has no attribute
+    'modal_data_list'``. Repo pydvma fixes this in ``DataSet.__setstate__``,
+    but a browser session may still be running an OLD cached engine wheel
+    without that fix. We re-apply the same normalisation here so a legacy
+    ``.npy`` loads even against a stale wheel. Idempotent on a DataSet that
+    ``__setstate__`` (new wheel) already normalised.
     """
     d = np.load(io.BytesIO(bytes(npy_bytes)), allow_pickle=True, fix_imports=True)
-    container.save(d[0], '/tmp/legacy.dvma')
+    ds = _normalise_legacy_dataset(d[0])
+    container.save(ds, '/tmp/legacy.dvma')
     with open('/tmp/legacy.dvma', 'rb') as f:
         return {'dvma': f.read()}
+
+
+def _normalise_legacy_dataset(ds):
+    """Ensure a legacy-unpickled ``DataSet`` carries every ``*_list``.
+
+    Fills in any per-kind list attribute a pre-1.4.0 pickle predates with an
+    empty instance of the right type, so ``container.save`` never trips over
+    a missing list. Mirrors ``DataSet.__setstate__`` in repo pydvma; kept
+    here as well so stale engine wheels (shipped before that fix) still
+    import legacy files. Returns ``ds`` (mutated in place).
+    """
+    list_classes = {
+        'time_data_list': datastructure.TimeDataList,
+        'freq_data_list': datastructure.FreqDataList,
+        'cross_spec_data_list': datastructure.CrossSpecDataList,
+        'tf_data_list': datastructure.TfDataList,
+        'modal_data_list': datastructure.ModalDataList,
+        'sono_data_list': datastructure.SonoDataList,
+        'meta_data_list': datastructure.MetaDataList,
+    }
+    for name, cls in list_classes.items():
+        if not hasattr(ds, name):
+            setattr(ds, name, cls())
+    return ds
 
 
 def mat_to_dvma(mat_bytes):

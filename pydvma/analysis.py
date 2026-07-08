@@ -613,7 +613,110 @@ def clean_impulse(time_data, ch_impulse=0):
 
     
     
-#%% SONOGRAM    
+#%% SONOGRAM
+def _spectrogram_complex_lowmem(y, fs, nperseg, noverlap):
+    '''Byte-identical, low-memory drop-in for::
+
+        scipy.signal.spectrogram(y, fs=fs, window='hann', nperseg=nperseg,
+                                 noverlap=noverlap, axis=0, mode='complex')
+
+    for a 2-D ``y`` of shape ``(N_samples, N_channels)`` (the time axis is
+    axis 0). Returns ``(freqs, time, S)`` with ``S`` of shape
+    ``(N_freq, N_channels, N_seg)`` — exactly what scipy returns before the
+    caller's ``swapaxes``.
+
+    WHY THIS EXISTS (32-bit WASM / pyodide):
+        ``scipy.signal.spectrogram`` segments the signal inside
+        ``_fft_helper`` with ``sliding_window_view(x, nperseg, axis=-1)`` and
+        then decimates it ``[..., 0::step, :]``. That first materialises
+        EVERY one of the ``N_samples - nperseg + 1`` sliding windows; even
+        though the intermediate is only a strided view, numpy validates its
+        NOMINAL size ``N_channels * (N_samples - nperseg + 1) * nperseg``. On
+        a 32-bit build (pyodide/WASM, where ``npy_intp`` is int32 and the
+        nbytes ceiling is ``2**31 - 1``) numpy rejects that view with "array
+        is too big" for a large ``nperseg`` on a long, high-rate record —
+        e.g. a 2 s, 44.1 kHz capture at ``nperseg=4096`` gives a ~2.75 GB
+        nominal view — even though the real work is tiny. This is the SAME
+        limit that broke ``calculate_cross_spectrum_matrix`` (commit
+        dac749c); the difference is that this instance lives in SCIPY's
+        helper, so the fix must re-segment here.
+
+        We stride DIRECTLY to the ``(N_channels, N_seg, nperseg)`` decimated
+        windows with ``as_strided``. Those windows have the IDENTICAL strides
+        and memory layout to scipy's ``sliding_window_view(...)[..., 0::step,
+        :]`` slice, so the detrend + window + rfft that follow are
+        byte-identical (numpy's pairwise-summation block order, which the DC
+        bin is sensitive to, depends on memory layout) — but the nominal size
+        is only ``N_channels * N_seg * nperseg``. Everything else (Hann
+        window, constant detrend, density scaling with the ``sqrt`` for the
+        ``'stft'`` mode, one-sided rfft with NO ``psd`` doubling,
+        ``boundary=None``/``padded=False`` defaults, and the time/frequency
+        axes) matches scipy exactly. Pinned byte-for-byte against
+        ``scipy.signal.spectrogram`` in ``tests/test_analysis.py``.
+
+    ``as_strided`` performs no bounds checking, so this replicates scipy's
+    own validation: ``nperseg`` is clamped to the record length (scipy warns
+    and clamps rather than erroring), and ``noverlap`` must be < ``nperseg``.
+    '''
+    from scipy import fft as sp_fft     # the SAME FFT backend scipy.spectrogram uses
+
+    y = np.asarray(y)
+    N_samples = y.shape[0]
+    nperseg = int(nperseg)
+    if nperseg < 1:
+        raise ValueError('nperseg must be a positive integer')
+    if nperseg > N_samples:
+        # scipy._triage_segments clamps (with a warning) rather than erroring.
+        import warnings
+        warnings.warn('nperseg = {:d} is greater than input length = {:d}, '
+                      'using nperseg = {:d}'.format(nperseg, N_samples, N_samples),
+                      stacklevel=2)
+        nperseg = N_samples
+    noverlap = nperseg // 2 if noverlap is None else int(noverlap)
+    if noverlap >= nperseg:
+        raise ValueError('noverlap must be less than nperseg.')
+
+    nfft = nperseg
+    step = nperseg - noverlap
+    # scipy's _fft_helper takes sliding_window_view(len N_samples-nperseg+1)
+    # then [..., 0::step, :]; that leaves (N_samples - nperseg)//step + 1 segs.
+    N_seg = (N_samples - nperseg) // step + 1
+
+    win = signal.windows.get_window('hann', nperseg)      # float64, as scipy
+
+    # scipy does x = moveaxis(y, axis=0, -1) -> (N_channels, N_samples), a
+    # NON-contiguous view. Keep that exact layout so the strided windows below
+    # match scipy's memory order byte-for-byte.
+    xT = np.moveaxis(y, 0, -1)
+    N_channels = xT.shape[0]
+    row_stride, col_stride = xT.strides
+    sv = np.lib.stride_tricks.as_strided(
+        xT,
+        shape=(N_channels, N_seg, nperseg),
+        strides=(row_stride, step * col_stride, col_stride),
+        writeable=False,
+    )
+    # detrend (constant) -> window -> rfft, in scipy's order.
+    result = signal.detrend(sv, axis=-1, type='constant')
+    result = win * result
+    result = sp_fft.rfft(result.real, n=nfft)             # (N_channels, N_seg, N_freq)
+
+    # Density scaling with the stft-mode sqrt (mode='stft'); NO one-sided
+    # doubling (that is applied only in mode='psd').
+    scale = 1.0 / (fs * (win * win).sum())
+    scale = np.sqrt(scale)
+    result = result * scale
+    result = result.astype(np.result_type(y, np.complex64))   # complex128
+
+    freqs = sp_fft.rfftfreq(nfft, 1.0 / fs)
+    time = np.arange(nperseg / 2, N_samples - nperseg / 2 + 1, step) / float(fs)
+
+    # scipy rolls the freq axis (last) back to the original data axis (0):
+    # (N_channels, N_seg, N_freq) -> (N_freq, N_channels, N_seg).
+    S = np.moveaxis(result, -1, 0)
+    return freqs, time, S
+
+
 def calculate_sonogram(time_data, nperseg=None, noverlap=None):
     '''
     Calculates a complex STFT spectrogram (sonogram) for every channel of
@@ -622,6 +725,14 @@ def calculate_sonogram(time_data, nperseg=None, noverlap=None):
     Channel calibration factors and units are copied from the source, and
     `id_link` is set to the source's `unique_id` (same provenance
     convention as the other `calculate_*` functions).
+
+    The segmentation is done by `_spectrogram_complex_lowmem` rather than
+    `scipy.signal.spectrogram` directly: scipy's internal
+    `sliding_window_view` builds a huge NOMINAL intermediate that the 32-bit
+    WASM/pyodide engine rejects with "array is too big" for a large `nperseg`
+    on a long, high-rate record. The low-memory helper strides directly to
+    the decimated windows and is byte-identical to scipy (pinned in the test
+    suite). See that helper's docstring for the full rationale.
 
     Args:
         time_data (<TimeData> object): time series data
@@ -636,11 +747,11 @@ def calculate_sonogram(time_data, nperseg=None, noverlap=None):
     if noverlap is None:
         noverlap = nperseg//2
 
-    f,t,S = signal.spectrogram(y,fs=time_data.settings.fs,window='hann',nperseg=nperseg,noverlap=noverlap,axis=0,mode='complex')
-    
+    f, t, S = _spectrogram_complex_lowmem(y, time_data.settings.fs, nperseg, noverlap)
+
     # put channel axis at end
     S_all_chans = np.swapaxes(S,1,2)
-    
+
     sono_data = datastructure.SonoData(
         t, f, S_all_chans, time_data.settings,
         channel_cal_factors=np.asarray(time_data.channel_cal_factors, dtype=float).copy(),

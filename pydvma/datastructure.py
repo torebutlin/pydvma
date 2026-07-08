@@ -54,10 +54,62 @@ class DataSet():
         
         if data is not None:
             self.add_to_dataset(data)
-            
+
         self.pydvma_version = VERSION
-            
-        
+
+    # Names of the per-kind list attributes every DataSet must carry, mapped
+    # to the list class that supplies an empty default. Consulted by
+    # __setstate__ to normalise pickles written by older pydvma versions.
+    # The classes are referenced by name (resolved lazily inside the method)
+    # because they are defined AFTER this class in the module.
+    _LIST_ATTRS = (
+        'time_data_list', 'freq_data_list', 'cross_spec_data_list',
+        'tf_data_list', 'modal_data_list', 'sono_data_list', 'meta_data_list',
+    )
+
+    def __setstate__(self, state):
+        '''Restore a pickled DataSet, forward-normalising older layouts.
+
+        Unpickling instantiates the CURRENT class but restores ONLY the
+        attributes that were actually saved, so a DataSet written by an
+        older pydvma is missing any ``*_list`` attribute that postdates it.
+        Historically the lists were added at different times
+        (``cross_spec_data_list`` with multi-channel analysis;
+        ``sono_data_list`` with sonograms; ``modal_data_list`` with modal
+        fitting), so a legacy ``.npy`` pickle can lack one or more of them —
+        e.g. the 2019/4C6-era files lack ``modal_data_list``. The rest of
+        the code (and ``container.save``) assumes every list is present, so
+        loading such a file used to raise ``AttributeError: 'DataSet'
+        object has no attribute 'modal_data_list'``.
+
+        We fill in any absent list with an empty instance of the right type
+        (and stamp a placeholder ``pydvma_version`` when the file predates
+        the version field) so files saved by pydvma <= 1.4.0 load forever —
+        the compatibility contract — on BOTH the Qt load path
+        (``file.load_data`` → ``np.load``) and the browser legacy-import
+        path (``glue.legacy_to_dvma`` → ``np.load`` → ``container.save``).
+        Called only when unpickling; freshly constructed DataSets go through
+        ``__init__`` and never touch this. Newly saved objects already carry
+        every attribute, so this is a no-op for them.
+        '''
+        self.__dict__.update(state)
+        list_classes = {
+            'time_data_list': TimeDataList,
+            'freq_data_list': FreqDataList,
+            'cross_spec_data_list': CrossSpecDataList,
+            'tf_data_list': TfDataList,
+            'modal_data_list': ModalDataList,
+            'sono_data_list': SonoDataList,
+            'meta_data_list': MetaDataList,
+        }
+        for name in self._LIST_ATTRS:
+            if not hasattr(self, name):
+                setattr(self, name, list_classes[name]())
+        if not hasattr(self, 'pydvma_version'):
+            # Old files predate the version stamp; mark it unknown rather
+            # than claiming the current version authored them.
+            self.pydvma_version = 'unknown (pre-1.4.0)'
+
     def add_to_dataset(self,data):
         ## find out what kind of data being added
         ## allow input to be list of single type of data, or unit data class

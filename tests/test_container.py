@@ -31,6 +31,78 @@ def test_legacy_pickle_file_still_loads():
     assert np.isfinite(d.tf_data_list[0].tf_data).all()
 
 
+def _write_prelist_legacy_npy(path, missing):
+    """Write a synthetic pre-1.4.0 legacy .npy whose pickled DataSet is
+    MISSING the ``*_list`` attributes named in ``missing``.
+
+    Old pydvma pickles predate one or more of the per-kind list attributes
+    (``modal_data_list`` arrived with modal fitting; ``sono_data_list`` with
+    sonograms; ``cross_spec_data_list`` with multi-channel), so an unpickled
+    DataSet lacks them. We simulate that by deleting the attributes from a
+    real DataSet's ``__dict__`` before pickling it in the legacy
+    ``np.array([DataSet])`` object-array form — deleting from ``__dict__``
+    means the saved pickle state genuinely omits them, exactly as an old
+    file would.
+    """
+    fs = 200.0
+    n = 64
+    settings = dvma.MySettings(channels=2, fs=fs, device_driver='mock')
+    ta = np.arange(n) / fs
+    tdata = np.column_stack([np.sin(2 * np.pi * 10 * ta), np.cos(2 * np.pi * 10 * ta)])
+    td = datastructure.TimeData(ta, tdata, settings,
+                                units=['N', 'm/s'], test_name='legacy set')
+    ds = datastructure.DataSet(td)
+    # Make it look old: drop the version stamp and the requested lists.
+    del ds.__dict__['pydvma_version']
+    for name in missing:
+        del ds.__dict__[name]
+    np.save(path, np.array([ds]))
+
+
+def test_prelist_legacy_pickle_normalises_missing_modal_list(tmp_path):
+    """A pre-1.4.0 pickle lacking ``modal_data_list`` must LOAD (compat
+    contract) and normalise to an empty list — the round-5 grid_data.npy
+    crash ``AttributeError: 'DataSet' object has no attribute
+    'modal_data_list'`` at ``container.save``."""
+    path = tmp_path / 'legacy_no_modal.npy'
+    _write_prelist_legacy_npy(path, missing=['modal_data_list'])
+
+    d = dvma.load_data(filename=str(path))
+    assert isinstance(d.modal_data_list, datastructure.ModalDataList)
+    assert len(d.modal_data_list) == 0
+    # Real data survives the normalisation.
+    assert len(d.time_data_list) == 1
+    assert d.time_data_list[0].units == ['N', 'm/s']
+    # No version stamp on the old file -> a placeholder, not a false claim.
+    assert d.pydvma_version.startswith('unknown')
+    # And it now saves to a real .dvma without raising (the crashing path).
+    out = tmp_path / 'converted.dvma'
+    container.save(d, str(out))
+    d2 = container.load(str(out))
+    assert len(d2.time_data_list) == 1
+
+
+def test_prelist_legacy_pickle_normalises_all_missing_lists(tmp_path):
+    """Audit: a very old pickle can lack SEVERAL lists at once
+    (cross-spectrum / sonogram / modal all postdate the earliest saves).
+    Every absent list must come back as an empty instance of the right
+    type so the whole codebase's ``len()``/iteration contracts hold."""
+    path = tmp_path / 'legacy_no_lists.npy'
+    missing = ['cross_spec_data_list', 'sono_data_list', 'modal_data_list']
+    _write_prelist_legacy_npy(path, missing=missing)
+
+    d = dvma.load_data(filename=str(path))
+    assert isinstance(d.cross_spec_data_list, datastructure.CrossSpecDataList)
+    assert isinstance(d.sono_data_list, datastructure.SonoDataList)
+    assert isinstance(d.modal_data_list, datastructure.ModalDataList)
+    for name in missing:
+        assert len(getattr(d, name)) == 0
+    # Fresh, fully-current DataSets are unaffected (no double-normalisation).
+    fresh = datastructure.DataSet()
+    assert len(fresh.modal_data_list) == 0
+    container.save(d, str(tmp_path / 'ok.dvma'))
+
+
 def _make_full_dataset():
     # create_test_impulse_data returns a populated DataSet
     data = dvma.create_test_impulse_data(noise_level=0)
