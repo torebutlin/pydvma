@@ -427,7 +427,7 @@
 
 <style>
   .sum-chip {
-    background: #f8f9fb !important;
+    background: var(--surface-2) !important;
     border-radius: 13px !important;
     max-width: 520px;
     overflow: hidden;
@@ -435,7 +435,7 @@
     white-space: nowrap;
   }
   .sum-chip:hover {
-    background: #fff !important;
+    background: var(--control-bg) !important;
   }
   .log-btn {
     background: var(--green) !important;
@@ -444,7 +444,7 @@
     font-weight: 600 !important;
   }
   .log-btn:hover {
-    background: #15803d !important;
+    background: var(--green-hover) !important;
   }
   .out-badge {
     display: inline-block;
@@ -457,13 +457,13 @@
     vertical-align: middle;
   }
   .cancel-btn {
-    background: #fff !important;
-    border-color: #ef4444 !important;
-    color: #ef4444 !important;
+    background: var(--control-bg) !important;
+    border-color: var(--danger-strong) !important;
+    color: var(--danger-strong) !important;
     font-weight: 600 !important;
   }
   .cancel-btn:hover {
-    background: #fef2f2 !important;
+    background: var(--danger-soft) !important;
   }
   /* DSA coerced-fs advisory — visible but not an error. */
   .coerce-note {

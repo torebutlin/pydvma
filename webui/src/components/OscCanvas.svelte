@@ -24,6 +24,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import type { MonitorStore } from '../lib/stores/monitor';
+  import { canvasColors } from '../lib/plot/canvasTheme';
+  import { theme } from '../lib/stores/theme';
 
   // Plot palette — shared with the SVG analysis plots.
   const PALETTE = [
@@ -55,8 +57,13 @@
     raf = requestAnimationFrame(draw);
   });
 
+  // Force a repaint when the theme flips (canvas colours are read at draw
+  // time; the rev-skip guard would otherwise keep the stale-theme frame).
+  const unsubTheme = theme.subscribe(() => { lastRev = -1; });
+
   onDestroy(() => {
     mounted = false;
+    unsubTheme();
     if (raf) cancelAnimationFrame(raf);
   });
 
@@ -117,14 +124,18 @@
     if (!canvasEl) return;
     const ctx = canvasEl.getContext('2d');
     if (!ctx) return;
+    const C = canvasColors();
     const [w, h] = fitCanvas(canvasEl, ctx);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, w, h);
+    // Compact (mini) clears transparent so the container bg shows; full fills.
     if (variant === 'full') {
-      ctx.fillStyle = '#9ca3af';
+      ctx.fillStyle = C.bg;
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = C.muted;
       ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('Start the monitor to see live traces', w / 2, h / 2);
+    } else {
+      ctx.clearRect(0, 0, w, h);
     }
   }
 
@@ -133,6 +144,7 @@
     if (!canvasEl) return;
     const ctx = canvasEl.getContext('2d');
     if (!ctx) return;
+    const C = canvasColors();
     const [w, h] = fitCanvas(canvasEl, ctx);
     ctx.clearRect(0, 0, w, h);
 
@@ -149,7 +161,7 @@
     // Faint mid-line.
     if (lo < 0 && hi > 0) {
       const zeroY = h * (1 - (0 - lo) / (hi - lo));
-      ctx.strokeStyle = '#eef0f4';
+      ctx.strokeStyle = C.grid;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(0, zeroY);
@@ -172,10 +184,11 @@
 
     const ctx2d = canvasEl.getContext('2d');
     if (!ctx2d) return;
+    const C = canvasColors();
     const [w, h] = fitCanvas(canvasEl, ctx2d);
 
     // Clear.
-    ctx2d.fillStyle = '#fff';
+    ctx2d.fillStyle = C.bg;
     ctx2d.fillRect(0, 0, w, h);
 
     const plotW = w - MARGIN.left - MARGIN.right;
@@ -183,13 +196,13 @@
     if (plotW <= 0 || plotH <= 0) return;
 
     // Border around the plot area.
-    ctx2d.strokeStyle = '#d1d5db';
+    ctx2d.strokeStyle = C.frame;
     ctx2d.lineWidth = 1;
     ctx2d.strokeRect(MARGIN.left, MARGIN.top, plotW, plotH);
 
     // X axis: time in ms.
     const duration = nSamples / snap.fs;
-    ctx2d.fillStyle = '#6b7280';
+    ctx2d.fillStyle = C.axis;
     ctx2d.font = '10px system-ui, sans-serif';
     ctx2d.textAlign = 'center';
     const xTicks = 5;
@@ -197,13 +210,13 @@
       const t = (i / xTicks) * duration;
       const x = MARGIN.left + (i / xTicks) * plotW;
       ctx2d.fillText(`${(t * 1000).toFixed(0)}`, x, h - MARGIN.bottom + 14);
-      ctx2d.strokeStyle = '#eef0f4';
+      ctx2d.strokeStyle = C.grid;
       ctx2d.beginPath();
       ctx2d.moveTo(x, MARGIN.top);
       ctx2d.lineTo(x, MARGIN.top + plotH);
       ctx2d.stroke();
     }
-    ctx2d.fillStyle = '#6b7280';
+    ctx2d.fillStyle = C.axis;
     ctx2d.fillText('ms', w - MARGIN.right + 4, h - MARGIN.bottom + 14);
 
     if (stacked) {
@@ -213,7 +226,7 @@
         const samples = snap.channels[ch];
         const [yMin, yMax] = yRange(samples, autoY);
         if (ch > 0) {
-          ctx2d.strokeStyle = '#e5e7eb';
+          ctx2d.strokeStyle = C.grid;
           ctx2d.beginPath();
           ctx2d.moveTo(MARGIN.left, laneTop);
           ctx2d.lineTo(MARGIN.left + plotW, laneTop);
@@ -223,7 +236,7 @@
         ctx2d.font = '10px system-ui, sans-serif';
         ctx2d.textAlign = 'left';
         ctx2d.fillText(`ch${ch}`, MARGIN.left + 4, laneTop + 12);
-        ctx2d.fillStyle = '#9ca3af';
+        ctx2d.fillStyle = C.muted;
         ctx2d.textAlign = 'right';
         ctx2d.fillText(yMax.toFixed(2), MARGIN.left - 4, laneTop + 10);
         ctx2d.fillText(yMin.toFixed(2), MARGIN.left - 4, laneTop + laneH - 2);
@@ -242,7 +255,7 @@
       }
       if (!isFinite(globalMin) || !isFinite(globalMax)) { globalMin = -1; globalMax = 1; }
 
-      ctx2d.fillStyle = '#9ca3af';
+      ctx2d.fillStyle = C.muted;
       ctx2d.font = '10px system-ui, sans-serif';
       ctx2d.textAlign = 'right';
       ctx2d.fillText(globalMax.toFixed(2), MARGIN.left - 4, MARGIN.top + 10);
@@ -252,7 +265,7 @@
 
       if (globalMin < 0 && globalMax > 0) {
         const zeroY = MARGIN.top + plotH * (1 - (0 - globalMin) / (globalMax - globalMin));
-        ctx2d.strokeStyle = '#d1d5db';
+        ctx2d.strokeStyle = C.zero;
         ctx2d.setLineDash([4, 4]);
         ctx2d.beginPath();
         ctx2d.moveTo(MARGIN.left, zeroY);

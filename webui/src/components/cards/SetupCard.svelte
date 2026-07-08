@@ -481,8 +481,8 @@
 <style>
   .perm-btn {
     color: var(--indigo);
-    border-color: #c7d2fe;
-    background: #eef0ff;
+    border-color: var(--accent-soft-border);
+    background: var(--accent-soft);
     white-space: normal;
     text-align: left;
     height: auto;

@@ -26,6 +26,8 @@
   import { get } from 'svelte/store';
   import type { MonitorStore } from '../lib/stores/monitor';
   import { magnitudeSpectrum, welchPsd } from '../lib/audio/fft';
+  import { canvasColors } from '../lib/plot/canvasTheme';
+  import { theme } from '../lib/stores/theme';
 
   const PALETTE = [
     '#6366f1', '#f97316', '#10b981', '#f43f5e', '#8b5cf6',
@@ -64,7 +66,10 @@
   let smoothed: Float64Array[] | null = null;
 
   onMount(() => { mounted = true; raf = requestAnimationFrame(draw); });
-  onDestroy(() => { mounted = false; if (raf) cancelAnimationFrame(raf); });
+  // Repaint on a theme flip (colours are read at draw time; rev-skip would
+  // otherwise hold the stale-theme frame).
+  const unsubTheme = theme.subscribe(() => { lastRev = -1; });
+  onDestroy(() => { mounted = false; unsubTheme(); if (raf) cancelAnimationFrame(raf); });
 
   function fitCanvas(cv: HTMLCanvasElement, ctx: CanvasRenderingContext2D): [number, number] {
     const dpr = window.devicePixelRatio || 1;
@@ -100,8 +105,9 @@
     lastRev = snap.rev;
     lastSig = sig;
 
+    const C = canvasColors();
     const [w, h] = fitCanvas(canvasEl, ctx);
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, w, h);
 
     const plotW = w - MARGIN.left - MARGIN.right;
@@ -114,7 +120,7 @@
     const isPsd = mode === 'psd';
 
     // Border.
-    ctx.strokeStyle = '#d1d5db';
+    ctx.strokeStyle = C.frame;
     ctx.lineWidth = 1;
     ctx.strokeRect(MARGIN.left, MARGIN.top, plotW, plotH);
 
@@ -140,7 +146,7 @@
     const nBins = valsByCh[0]?.length ?? 0;
     if (nCh === 0 || nBins < 2 || !(fs > 0)) {
       smoothed = null;
-      ctx.fillStyle = '#9ca3af';
+      ctx.fillStyle = C.muted;
       ctx.font = '12px system-ui, sans-serif';
       ctx.textAlign = 'center';
       const msg = isPsd ? 'PSD — start the monitor' : 'FFT — start the monitor';
@@ -212,7 +218,7 @@
     };
 
     // Horizontal gridlines.
-    ctx.strokeStyle = '#eef0f4';
+    ctx.strokeStyle = C.grid;
     ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
       const gy = MARGIN.top + (plotH * i) / 4;
@@ -257,7 +263,7 @@
     }
 
     // Axis labels.
-    ctx.fillStyle = '#6b7280';
+    ctx.fillStyle = C.axis;
     ctx.font = '10px system-ui, sans-serif';
     const fmtHz = (v: number): string => v >= 1000
       ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)} kHz`

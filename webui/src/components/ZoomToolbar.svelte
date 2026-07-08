@@ -506,7 +506,7 @@
     display: flex;
     align-items: center;
     gap: 3px;
-    background: rgba(255, 255, 255, 0.94);
+    background: var(--overlay-bg);
     border: 1px solid var(--border, #e3e6eb);
     border-radius: 8px;
     padding: 3px;
@@ -527,12 +527,12 @@
     justify-content: center;
   }
   .zbtn:hover {
-    background: #f2f4f8;
+    background: var(--hover-bg);
     color: var(--text, #1b2437);
   }
   .zbtn.active {
-    background: #eef0ff;
-    border-color: #c7d2fe;
+    background: var(--accent-soft);
+    border-color: var(--accent-soft-border);
     color: var(--indigo, #4f46e5);
   }
   /* Icon buttons: give the glyph room so it reads clearly (feedback: too tiny). */
@@ -571,7 +571,7 @@
     background: var(--surface, #ffffff);
     border: 1px solid var(--border, #e3e6eb);
     border-radius: var(--radius, 10px);
-    box-shadow: 0 8px 28px rgba(16, 24, 40, 0.16);
+    box-shadow: var(--shadow-lg, 0 8px 28px rgba(16, 24, 40, 0.16));
     padding: 11px 12px;
   }
 
@@ -597,7 +597,7 @@
   /* The Nyquist frequency group reads as the "shared window", tinted apart
      from the Real/Imag axis groups it sits beside. */
   .axgrp.freq {
-    background: #f7f8fc;
+    background: var(--surface-2);
   }
   .axgrp.freq .axgrp-lab {
     color: var(--muted, #66708a);
@@ -630,10 +630,12 @@
     padding: 3px 5px;
     border: 1px solid var(--border, #e3e6eb);
     border-radius: 5px;
+    background: var(--control-bg);
+    color: var(--text);
   }
   .err {
     font-size: 11px;
-    color: #b91c1c;
+    color: var(--danger);
     margin: 6px 0 0;
     max-width: 210px;
   }
@@ -674,7 +676,7 @@
   }
   .pbtn {
     border: 1px solid var(--border, #e3e6eb);
-    background: #fff;
+    background: var(--control-bg);
     border-radius: 6px;
     height: 26px;
     padding: 0 8px;
@@ -686,11 +688,11 @@
     justify-content: center;
   }
   .pbtn:hover {
-    background: #f2f4f8;
+    background: var(--hover-bg);
   }
   .pbtn.active {
-    background: #eef0ff;
-    border-color: #c7d2fe;
+    background: var(--accent-soft);
+    border-color: var(--accent-soft-border);
     color: var(--indigo, #4f46e5);
   }
   .pbtn.outside {

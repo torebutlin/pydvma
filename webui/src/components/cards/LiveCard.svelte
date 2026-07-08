@@ -278,22 +278,22 @@
     filter: brightness(0.9);
   }
   .stop-btn {
-    background: #fff !important;
-    border-color: #ef4444 !important;
-    color: #ef4444 !important;
+    background: var(--control-bg) !important;
+    border-color: var(--danger-strong) !important;
+    color: var(--danger-strong) !important;
     font-weight: 600 !important;
   }
   .stop-btn:hover {
-    background: #fef2f2 !important;
+    background: var(--danger-soft) !important;
   }
   .pause-btn {
-    background: #fff !important;
+    background: var(--control-bg) !important;
     border-color: var(--indigo) !important;
     color: var(--indigo) !important;
     font-weight: 600 !important;
   }
   .pause-btn:hover {
-    background: #eef0ff !important;
+    background: var(--accent-soft) !important;
   }
   .toggle {
     display: inline-flex;

@@ -85,25 +85,25 @@
   }
   .stage:hover:not(:disabled) {
     color: var(--text);
-    background: #f6f7fa;
+    background: var(--hover-bg);
   }
   .stage.active {
-    background: #eef0ff;
-    border-color: #c7d2fe;
+    background: var(--accent-soft);
+    border-color: var(--accent-soft-border);
     color: var(--indigo);
     font-weight: 600;
   }
   /* Gated stages read as "available to visit, not yet built" — dimmed but
      still clickable (they show an explanatory placeholder), not dead-grey. */
   .stage.gated:not(.active) {
-    color: #b0b6c4;
+    color: var(--muted-2);
   }
   .stage.gated:not(.active):hover {
     color: var(--text);
-    background: #f6f7fa;
+    background: var(--hover-bg);
   }
   .sep {
-    color: #d3d8e2;
+    color: var(--track);
     font-size: 12px;
     padding: 0 3px;
     user-select: none;

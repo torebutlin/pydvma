@@ -127,3 +127,44 @@ test('DARK_MAP keys are EXACTLY the CHROME values (single-source guard)', () => 
   // instead. Compare as sets so ordering never matters.
   expect(new Set(Object.keys(DARK_MAP))).toEqual(new Set(Object.values(CHROME)));
 });
+
+// --- Export is theme-INDEPENDENT (round-5 item 11, dark theme). ---
+// The app's on-screen dark theme swaps CSS custom properties; PlotSurface's
+// on-screen chrome follows them (so the plot goes dark on screen). But the
+// SERIALISED figure carries FIXED inline CHROME hexes (never CSS variables),
+// and prepareSvg is a pure string transform that reads no DOM. So the exported
+// PNG/PDF/SVG is byte-identical no matter which theme the app is showing — the
+// export background (white/transparent/dark) is chosen in the Export card, not
+// inherited from the app theme. These tests pin that contract.
+
+test('export is byte-identical regardless of the active app theme', () => {
+  // Simulate the app being in dark theme by stamping data-theme on a fake
+  // document root, then in light. prepareSvg must produce the same output for
+  // the same input in both — proving no hidden theme coupling.
+  const g = globalThis as Record<string, unknown>;
+  const doc = { documentElement: { getAttribute: (_n: string) => 'dark', style: {} } };
+  const saved = g.document;
+  try {
+    g.document = doc;
+    const darkThemeWhite = prepareSvg(svg, 'white');
+    const darkThemeDark = prepareSvg(svg, 'dark');
+    (doc.documentElement as { getAttribute: (n: string) => string }).getAttribute = () => 'light';
+    const lightThemeWhite = prepareSvg(svg, 'white');
+    const lightThemeDark = prepareSvg(svg, 'dark');
+    expect(lightThemeWhite).toBe(darkThemeWhite);
+    expect(lightThemeDark).toBe(darkThemeDark);
+  } finally {
+    g.document = saved;
+  }
+});
+
+test('the serialised chrome PlotSurface emits is pinned to the fixed light hexes', () => {
+  // The exporter input carries CHROME.* inline (not app-theme tokens): a white
+  // export returns exactly those light hexes, so a dark app theme can never
+  // leak dark chrome into an exported figure.
+  const white = prepareSvg(svg, 'white');
+  expect(white).toContain(`fill="${CHROME.bg}"`); // #ffffff, not the dark --surface
+  expect(white).toContain(`stroke="${CHROME.grid}"`); // #eef0f4
+  expect(white).toContain(`stroke="${CHROME.frame}"`); // #e3e6eb
+  expect(white).toContain(`fill="${CHROME.axis}"`); // #66708a
+});

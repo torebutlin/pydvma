@@ -50,6 +50,7 @@
   import type { DvmaDataset } from './lib/model/dataset';
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
+  import { initTheme } from './lib/stores/theme';
   import { selectProvider } from './lib/audio/provider';
   import MiniMonitor from './components/MiniMonitor.svelte';
   import LiveScope from './components/LiveScope.svelte';
@@ -161,6 +162,10 @@
   const narrow = $derived(forcedNarrow || mediaNarrow);
 
   onMount(() => {
+    // Reconcile the theme store + wire the live OS-preference listener (the
+    // inline boot script in index.html already stamped data-theme pre-paint).
+    initTheme();
+
     // Fixture hook: fetch the selected checked-in .dvma into the tray.
     if (fixtureRequested) {
       fetch(fixtureUrl)
@@ -724,7 +729,7 @@
 
   <main class="main">
     {#if narrow}
-      <NarrowRail {selection} {modal} {channelSeries} onDeleteFit={actions.clearFit} />
+      <NarrowRail {selection} {modal} {monitor} {channelSeries} onDeleteFit={actions.clearFit} />
     {:else}
       <aside class="tray" data-testid="tray">
         <div class="tray-scroll">
@@ -928,7 +933,7 @@
   .plot-err {
     flex: 0 0 auto;
     font-size: 12px;
-    color: #b91c1c;
+    color: var(--danger);
     padding: 2px 4px;
   }
 </style>

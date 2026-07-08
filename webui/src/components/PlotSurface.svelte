@@ -498,7 +498,9 @@
     stroke: var(--border, #e3e6eb);
   }
   .grid {
-    stroke: #eef0f4;
+    /* On-screen only; the exported SVG carries the fixed CHROME.grid inline
+       attr (theme-independent export). */
+    stroke: var(--grid);
   }
   .tick {
     fill: var(--muted, #66708a);

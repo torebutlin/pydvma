@@ -292,7 +292,7 @@
     margin-left: 4px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: #fff;
+    background: var(--surface-2);
     padding: 3px 7px;
   }
   .damp-table table {
@@ -303,7 +303,7 @@
     font-size: 9.5px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #98a1b5;
+    color: var(--muted-2);
     font-weight: 600;
     text-align: right;
     padding: 1px 8px 2px 0;

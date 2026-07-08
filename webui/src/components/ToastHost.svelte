@@ -55,13 +55,13 @@
     color: var(--text);
   }
   .toast.error {
-    border-left-color: #dc2626;
+    border-left-color: var(--danger);
   }
   .toast.success {
     border-left-color: var(--green);
   }
   .toast.info {
-    border-left-color: #2563eb;
+    border-left-color: var(--blue);
   }
   .msg {
     flex: 1 1 auto;
@@ -75,16 +75,16 @@
     height: 26px;
     padding: 0 10px;
     border-radius: 6px;
-    border: 1px solid #93c5fd;
-    background: #eff6ff;
-    color: #2563eb;
+    border: 1px solid var(--blue-border);
+    background: var(--blue-soft);
+    color: var(--blue);
     font-weight: 600;
     font-size: 12px;
     cursor: pointer;
     font-family: inherit;
   }
   .action:hover {
-    background: #dbeafe;
+    background: var(--blue-soft-hover);
   }
   .close {
     flex: 0 0 auto;

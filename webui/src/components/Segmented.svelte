@@ -87,12 +87,12 @@
     border: 1px solid var(--border, #e3e6eb);
     border-radius: 7px;
     overflow: hidden;
-    background: #fff;
+    background: var(--control-bg);
   }
   .segmented-btn {
     border: none;
     border-right: 1px solid var(--border, #e3e6eb);
-    background: #fff;
+    background: var(--control-bg);
     height: 26px;
     min-width: 30px;
     padding: 0 10px;
@@ -107,11 +107,11 @@
     border-right: none;
   }
   .segmented-btn:hover {
-    background: #f6f7fa;
+    background: var(--hover-bg);
     color: var(--text, #1b2437);
   }
   .segmented-btn.active {
-    background: #eef0ff;
+    background: var(--accent-soft);
     color: var(--indigo, #4f46e5);
   }
 </style>

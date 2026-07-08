@@ -265,7 +265,7 @@
     align-items: center;
     justify-content: center;
     border: 1px solid var(--border);
-    background: #fff;
+    background: var(--control-bg);
     color: var(--text);
     font-weight: 500;
     cursor: pointer;
@@ -273,8 +273,8 @@
     font-family: inherit;
   }
   .btn:hover {
-    border-color: #c6cbd6;
-    background: #fafbfc;
+    border-color: var(--border-strong);
+    background: var(--hover-bg);
   }
   .btn:active {
     transform: translateY(1px);
@@ -300,7 +300,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: #a3aabc;
+    color: var(--muted-2);
     margin-right: 2px;
   }
   .colchip {
@@ -311,21 +311,21 @@
     padding: 0 8px;
     border-radius: 11px;
     border: 1px solid var(--border);
-    background: #f8f9fb;
+    background: var(--surface-2);
     font: 11px var(--font-mono);
     color: var(--text);
     cursor: pointer;
     flex: 0 0 auto;
   }
   .colchip:hover {
-    border-color: #c6cbd6;
-    background: #fff;
+    border-color: var(--border-strong);
+    background: var(--control-bg);
   }
   .tdot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    border: 1.5px solid #c7ccd8;
+    border: 1.5px solid var(--muted-2);
     background: transparent;
     flex: 0 0 auto;
   }
@@ -334,8 +334,8 @@
     border-color: var(--green);
   }
   .agg-fade .tdot {
-    background: #86efac;
-    border-color: #86efac;
+    background: var(--success-border);
+    border-color: var(--success-border);
   }
   .agg-mixed .tdot {
     background: linear-gradient(90deg, var(--green) 50%, transparent 50%);
@@ -343,7 +343,7 @@
   }
   .agg-off .tdot {
     background: transparent;
-    border-color: #c7ccd8;
+    border-color: var(--muted-2);
   }
   .tray-body {
     flex: 1;

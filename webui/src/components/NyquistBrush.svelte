@@ -267,7 +267,7 @@
     cursor: ew-resize;
   }
   .strip-bg {
-    fill: #f6f7fa;
+    fill: var(--surface-2);
   }
   .mag {
     fill: none;

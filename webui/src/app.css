@@ -1,14 +1,63 @@
 :root {
+  color-scheme: light;
+
   --bg: #f4f5f7;
   --surface: #ffffff;
+  --surface-2: #f6f7fa;
   --border: #e3e6eb;
+  --border-strong: #c6cbd6;
   --text: #17203a;
   --muted: #66708a;
+  --muted-2: #98a1b5;
+  --track: #d3d8e2;
   --radius: 10px;
   --shadow: 0 1px 3px rgba(16, 24, 40, 0.07);
+  --shadow-lg: 0 8px 28px rgba(16, 24, 40, 0.16);
 
   --green: #16a34a;
+  --green-hover: #15803d;
   --indigo: #4f46e5;
+  --indigo-hover: #4338ca;
+
+  /* Neutral control/hover surfaces (near-white in light; raised slate in dark) */
+  --control-bg: #ffffff;
+  --hover-bg: #f2f4f8;
+  --hover: #f2f4f8; /* legacy alias used by a few components */
+  --grid: #eef0f4; /* SVG plot gridline (on-screen; export keeps CHROME.grid) */
+  --overlay-bg: rgba(255, 255, 255, 0.94); /* floating translucent panels */
+  --scrim: rgba(23, 32, 58, 0.42); /* modal backdrop */
+
+  /* Indigo accent tints */
+  --accent-soft: #eef0ff;
+  --accent-soft-border: #c7d2fe;
+  --accent-soft-hover: #e0e7ff;
+
+  /* Status colours */
+  --success-soft: #e6f6ec;
+  --success-border: #86efac;
+  --danger: #dc2626;
+  --danger-strong: #ef4444;
+  --danger-soft: #fef2f2;
+  --danger-border: #fecaca;
+  --blue: #2563eb;
+  --blue-border: #93c5fd;
+  --blue-soft: #eff6ff;
+  --blue-soft-hover: #dbeafe;
+  --amber: #b45309;
+  --amber-soft: #fef3c7;
+  --pink: #be185d;
+
+  /* Canvas-renderer chrome — read via getComputedStyle at draw time
+     (OscCanvas / FftCanvas / LevelBars). The exported SVG figure is
+     theme-independent (figure.ts keys off the fixed CHROME constants), so
+     these only affect the live on-screen canvases. */
+  --canvas-bg: #ffffff;
+  --canvas-grid: #eef0f4;
+  --canvas-frame: #d1d5db;
+  --canvas-axis: #6b7280;
+  --canvas-muted: #9ca3af;
+  --canvas-zero: #d1d5db;
+  --level-track: #e8eaf0;
 
   /* 12-colour line palette (ported from dev/mockups/round2-bench.html PALETTE) */
   --line-0: #2563eb;
@@ -26,6 +75,72 @@
 
   --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* ---------- dark theme ----------
+   Applied whenever the root carries data-theme='dark'. The theme is ALWAYS
+   stamped explicitly on <html> — an inline boot script in index.html resolves
+   it (localStorage preference, else prefers-color-scheme) before first paint,
+   and lib/stores/theme.ts keeps it in sync (a Header toggle persists the
+   choice; with no explicit choice it follows the OS and live-updates). So a
+   single [data-theme='dark'] block suffices — no @media duplication.
+
+   Same design language as light: identical indigo/green accent family,
+   tuned brighter for contrast on dark surfaces; the 12-colour line palette
+   and the viridis heat / level-bar gradients are unchanged (they read fine
+   on dark). */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0e131c;
+  --surface: #1b2130; /* matches figure.ts DARK_BG so on-screen plot-bg agrees */
+  --surface-2: #232b3b;
+  --border: #313b4f;
+  --border-strong: #46536b;
+  --text: #e6eaf3;
+  --muted: #9aa4ba;
+  --muted-2: #6f7994;
+  --track: #3a445a;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.55);
+
+  --green: #16a34a;
+  --green-hover: #1cb257;
+  --indigo: #6366f1;
+  --indigo-hover: #7c84f5;
+
+  --control-bg: #242c3c;
+  --hover-bg: #2a3344;
+  --hover: #2a3344;
+  --grid: #272f3e;
+  --overlay-bg: rgba(27, 33, 48, 0.94);
+  --scrim: rgba(3, 6, 12, 0.6);
+
+  --accent-soft: #262c46;
+  --accent-soft-border: #3d4574;
+  --accent-soft-hover: #2f3760;
+
+  --success-soft: #16311f;
+  --success-border: #2f6b45;
+  --danger: #f0787d;
+  --danger-strong: #f0787d;
+  --danger-soft: #3a2226;
+  --danger-border: #6d3a3e;
+  --blue: #7aa5f5;
+  --blue-border: #35507d;
+  --blue-soft: #1b2740;
+  --blue-soft-hover: #24355a;
+  --amber: #d9a441;
+  --amber-soft: #3a2f16;
+  --pink: #ef7bb0;
+
+  --canvas-bg: #1b2130;
+  --canvas-grid: #272f3e;
+  --canvas-frame: #3a445a;
+  --canvas-axis: #9aa4ba;
+  --canvas-muted: #6f7994;
+  --canvas-zero: #3a445a;
+  --level-track: #2a3344;
 }
 
 * {
@@ -60,7 +175,7 @@ body {
   padding: 0 11px;
   border-radius: 7px;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--control-bg);
   color: var(--text);
   font-size: 12.5px;
   font-weight: 500;
@@ -69,8 +184,8 @@ body {
   font-family: inherit;
 }
 .card-controls .btn:hover {
-  border-color: #c6cbd6;
-  background: #fafbfc;
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
 }
 .card-controls .btn:active {
   transform: translateY(1px);
@@ -82,7 +197,7 @@ body {
   font-weight: 600;
 }
 .card-controls .btn.indigo:hover {
-  background: #4338ca;
+  background: var(--indigo-hover);
 }
 .card-controls .btn.sm {
   height: 24px;
@@ -92,21 +207,21 @@ body {
 }
 .card-controls .btn.active,
 .card-controls .btn.on {
-  background: #eef0ff;
-  border-color: #c7d2fe;
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
   color: var(--indigo);
 }
 /* Tinted-indigo action button (mockup `.btn.indigo-t`) — the Fit-card peak
    buttons. Lighter than the solid `.indigo` primary. */
 .card-controls .btn.indigo-t {
-  background: #eef0ff;
-  border-color: #c7d2fe;
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
   color: var(--indigo);
   font-weight: 600;
 }
 .card-controls .btn.indigo-t:hover {
-  background: #e0e7ff;
-  border-color: #c7d2fe;
+  background: var(--accent-soft-hover);
+  border-color: var(--accent-soft-border);
 }
 .card-controls .btn[disabled] {
   opacity: 0.45;
@@ -118,7 +233,7 @@ body {
   height: 28px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: #fff;
+  background: var(--control-bg);
   color: var(--text);
   font: 12.5px inherit;
   font-family: inherit;
@@ -150,11 +265,11 @@ body {
   border-radius: 7px;
   overflow: hidden;
   height: 28px;
-  background: #fff;
+  background: var(--control-bg);
 }
 .card-controls .seg button {
   border: none;
-  background: #fff;
+  background: var(--control-bg);
   padding: 0 11px;
   font: 600 12px inherit;
   font-family: inherit;
@@ -166,10 +281,10 @@ body {
   border-right: none;
 }
 .card-controls .seg button:hover {
-  background: #f6f7fa;
+  background: var(--hover-bg);
 }
 .card-controls .seg button.active {
-  background: #eef0ff;
+  background: var(--accent-soft);
   color: var(--indigo);
 }
 .card-controls .switch {
@@ -185,7 +300,7 @@ body {
   width: 30px;
   height: 17px;
   border-radius: 9px;
-  background: #d3d8e2;
+  background: var(--track);
   position: relative;
   transition: background 0.15s;
   cursor: pointer;
@@ -241,7 +356,7 @@ body {
 }
 .ctx-card .cn-s {
   font-size: 9.5px;
-  color: #98a1b5;
+  color: var(--muted-2);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -274,7 +389,7 @@ body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #98a1b5;
+  color: var(--muted-2);
   white-space: nowrap;
 }
 .ctx-card .grp-ctl {
@@ -295,7 +410,7 @@ body {
 }
 .ctx-card .ctx-err {
   font-size: 11px;
-  color: #b91c1c;
+  color: var(--danger);
   max-width: 340px;
   overflow: hidden;
   text-overflow: ellipsis;

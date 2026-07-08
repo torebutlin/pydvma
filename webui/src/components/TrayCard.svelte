@@ -362,7 +362,7 @@
 
 <style>
   .set-card {
-    background: #fff;
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
@@ -381,7 +381,7 @@
     padding: 1px 2px;
   }
   .set-head:hover {
-    background: #f6f7fa;
+    background: var(--hover-bg);
   }
   .set-head.struck .set-name {
     text-decoration: line-through;
@@ -394,13 +394,13 @@
   }
   /* Keyboard focus ring for the now-focusable title (role=button). */
   .set-name:focus-visible {
-    outline: 2px solid #a5b4fc;
+    outline: 2px solid var(--accent-soft-border);
     outline-offset: 1px;
   }
   .caret {
     border: none;
     background: none;
-    color: #a3aabc;
+    color: var(--muted-2);
     cursor: pointer;
     font-size: 10px;
     width: 16px;
@@ -420,7 +420,7 @@
     height: 9px;
     border-radius: 3px;
     margin-left: -2px;
-    outline: 1.5px solid #fff;
+    outline: 1.5px solid var(--surface);
   }
   .dotstack i:first-child {
     margin-left: 0;
@@ -428,7 +428,7 @@
   .dotstack em {
     font: 600 9px var(--font-mono);
     font-style: normal;
-    color: #8b93a8;
+    color: var(--muted-2);
     margin-left: 2px;
   }
   .set-name {
@@ -445,9 +445,11 @@
     font: 650 13px var(--font-body);
     width: 110px;
     height: 22px;
-    border: 1px solid #a5b4fc;
+    border: 1px solid var(--accent-soft-border);
     border-radius: 5px;
     padding: 0 4px;
+    background: var(--control-bg);
+    color: var(--text);
   }
   .dur-badge {
     margin-left: auto;
@@ -456,7 +458,7 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     padding: 1px 5px;
-    background: #f8f9fb;
+    background: var(--surface-2);
     flex: 0 0 auto;
   }
   /* Modal-fit card: the mode-count badge reads as an indigo accent (matching
@@ -464,12 +466,12 @@
   .fit-badge {
     color: var(--indigo, #4f46e5);
     border-color: color-mix(in srgb, var(--indigo, #4f46e5) 35%, var(--border));
-    background: color-mix(in srgb, var(--indigo, #4f46e5) 8%, #fff);
+    background: color-mix(in srgb, var(--indigo, #4f46e5) 8%, var(--surface));
   }
   .cal-btn {
     border: 1px solid var(--border);
     color: var(--muted);
-    background: #fff;
+    background: var(--control-bg);
     border-radius: 5px;
     height: 18px;
     padding: 0 6px;
@@ -489,12 +491,12 @@
   .cal-btn:hover {
     border-color: var(--indigo);
     color: var(--indigo);
-    background: #f5f6ff;
+    background: var(--accent-soft);
   }
   .xdel {
-    border: 1px solid #fecaca;
-    color: #b91c1c;
-    background: #fff;
+    border: 1px solid var(--danger-border);
+    color: var(--danger);
+    background: var(--control-bg);
     border-radius: 5px;
     width: 18px;
     height: 18px;
@@ -511,7 +513,7 @@
     display: inline-flex;
   }
   .xdel:hover {
-    background: #fef2f2;
+    background: var(--danger-soft);
   }
   .ch-list {
     margin-top: 3px;
@@ -533,7 +535,7 @@
     cursor: pointer;
   }
   .ch-row:hover {
-    background: #f7f8fb;
+    background: var(--hover-bg);
   }
   .ch-row.st-fade {
     opacity: 0.55;
@@ -556,7 +558,7 @@
     height: 14px;
     border-radius: 4px;
     flex: 0 0 auto;
-    outline: 1px solid rgba(16, 24, 40, 0.12);
+    outline: 1px solid var(--border);
     outline-offset: 1px;
   }
   .ch-lab {
@@ -569,10 +571,12 @@
     font: 12px var(--font-mono);
     width: 96px;
     height: 20px;
-    border: 1px solid #a5b4fc;
+    border: 1px solid var(--accent-soft-border);
     border-radius: 5px;
     padding: 0 4px;
     box-sizing: border-box;
+    background: var(--control-bg);
+    color: var(--text);
   }
   /* Keep the row from tinting/underlining the label while editing. */
   .ch-row.editing {
@@ -598,14 +602,14 @@
   }
   .state-on {
     color: var(--green);
-    background: #e6f6ec;
+    background: var(--success-soft);
   }
   .state-fade {
-    color: #b45309;
-    background: #fef3c7;
+    color: var(--amber);
+    background: var(--amber-soft);
   }
   .state-off {
     color: var(--muted);
-    background: #eef0f4;
+    background: var(--surface-2);
   }
 </style>

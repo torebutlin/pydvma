@@ -81,7 +81,7 @@
     left: 64px;
     bottom: 52px;
     z-index: 4;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--overlay-bg);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 7px 11px;
@@ -128,8 +128,8 @@
     color: var(--muted);
   }
   .mrow-btn.del:hover:not(:disabled) {
-    color: #be185d;
-    border-color: #be185d;
+    color: var(--pink);
+    border-color: var(--pink);
   }
   .mrow-btn:disabled {
     opacity: 0.5;

@@ -106,7 +106,7 @@
   .monitor-mini {
     flex: 0 0 auto;
     border-top: 1px solid var(--border);
-    background: #fbfcfe;
+    background: var(--surface-2);
     padding: 7px 12px 10px;
   }
   .mon-head {
@@ -126,7 +126,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #c7ccd8;
+    background: var(--muted-2);
     flex: 0 0 auto;
   }
   .mon-dot.live {
@@ -147,7 +147,7 @@
   }
   .mon-off {
     font: 600 10px var(--font-mono);
-    color: #a3aabc;
+    color: var(--muted-2);
   }
   .spacer {
     flex: 1;
@@ -157,7 +157,7 @@
     height: 22px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: #fff;
+    background: var(--control-bg);
     cursor: pointer;
     color: var(--muted);
     font-size: 11px;
@@ -168,7 +168,7 @@
   }
   .mini-ib:hover {
     color: var(--text);
-    border-color: #c6cbd6;
+    border-color: var(--border-strong);
   }
   .mon-body {
     display: flex;
@@ -180,7 +180,7 @@
     min-width: 0;
     height: 52px;
     padding: 0;
-    background: #fff;
+    background: var(--control-bg);
     border: 1px solid var(--border);
     border-radius: 7px;
     overflow: hidden;
@@ -188,7 +188,7 @@
     display: block;
   }
   .mon-canvas-wrap:hover {
-    border-color: #c6cbd6;
+    border-color: var(--border-strong);
   }
   .mon-idle {
     flex: 1;
@@ -225,18 +225,18 @@
     height: 22px;
     padding: 0 9px;
     border-radius: 6px;
-    border: 1px solid #ef4444;
-    background: #fff;
-    color: #ef4444;
+    border: 1px solid var(--danger-strong);
+    background: var(--control-bg);
+    color: var(--danger-strong);
     font: 600 11px var(--font-body);
     cursor: pointer;
   }
   .mini-stop:hover {
-    background: #fef2f2;
+    background: var(--danger-soft);
   }
   .mon-err {
     margin-top: 6px;
     font-size: 10.5px;
-    color: #b91c1c;
+    color: var(--danger);
   }
 </style>

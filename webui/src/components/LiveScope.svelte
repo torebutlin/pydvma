@@ -118,18 +118,18 @@
     padding: 0 9px;
     border-radius: 7px;
     border: 1px solid var(--border);
-    background: #fff;
+    background: var(--control-bg);
     color: var(--muted);
     font: 600 11.5px var(--font-mono);
     cursor: pointer;
   }
   .chip:hover {
-    border-color: #c6cbd6;
+    border-color: var(--border-strong);
     color: var(--text);
   }
   .chip.on {
-    background: #eef0ff;
-    border-color: #c7d2fe;
+    background: var(--accent-soft);
+    border-color: var(--accent-soft-border);
     color: var(--indigo);
   }
   .chip[disabled] {
@@ -143,7 +143,7 @@
     gap: 10px;
   }
   .mon-cell {
-    background: #fff;
+    background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 9px;
     position: relative;
@@ -157,7 +157,7 @@
     z-index: 2;
     font: 600 10px var(--font-mono);
     letter-spacing: 0.07em;
-    color: #a3aabc;
+    color: var(--muted-2);
     text-transform: uppercase;
     pointer-events: none;
   }

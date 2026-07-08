@@ -19,7 +19,10 @@
    * region (`data-testid="tray"`) is hidden until opened.
    */
   import type { Selection } from '../lib/stores/selection';
+  import type { MonitorStore } from '../lib/stores/monitor';
+  import { activeStage } from '../lib/stores/stages';
   import Tray from './Tray.svelte';
+  import LevelBars from './LevelBars.svelte';
 
   let {
     selection,
@@ -27,16 +30,42 @@
     channelSeries,
     /** Forwarded to the hosted Tray for the modal-fit card (round-5 item 13). */
     modal,
+    /**
+     * Live-input monitor (round-5 item 14). Drives the mini-monitor strip at
+     * the rail foot: two level bars + a clip indicator while streaming, a tiny
+     * muted dot when idle. Clicking the strip opens the Live stage.
+     */
+    monitor,
     onDeleteFit,
   }: {
     selection: Selection;
     channelSeries?: (setId: number, ch: number) => Float64Array | undefined;
     modal?: import('../lib/stores/modal').ModalStore;
+    monitor?: MonitorStore;
     onDeleteFit?: () => void;
   } = $props();
 
   const setsView = $derived(selection.setsView);
   let open = $state(false);
+
+  // Monitor strip state (round-5 item 14). Streaming (or paused, which still
+  // meters) shows the live bars; anything else shows the idle dot. Subscribed
+  // via an effect (the monitor prop is optional, so a bare `$store` would be
+  // unsafe when absent).
+  let monStreaming = $state(false);
+  $effect(() => {
+    const m = monitor;
+    if (!m) {
+      monStreaming = false;
+      return;
+    }
+    return m.status.subscribe((s) => {
+      monStreaming = s === 'streaming' || s === 'paused';
+    });
+  });
+  function openLive() {
+    activeStage.set('live');
+  }
 
   // References for focus management: the drawer to focus on open, and the
   // trigger to restore focus to on close.
@@ -116,6 +145,26 @@
     aria-expanded={open}
     onclick={() => (open = true)}
   >⋯</button>
+
+  {#if monitor}
+    <!-- Mini-monitor strip (round-5 item 14; mockup `.rail-mon`). Live level
+         bars + clip indicator while streaming, a tiny muted dot when idle;
+         clicking opens the Live stage. -->
+    <button
+      class="rail-mon"
+      class:idle={!monStreaming}
+      data-testid="rail-mon"
+      title="Live monitor — open the Live scope"
+      aria-label="Open live monitor"
+      onclick={openLive}
+    >
+      {#if monStreaming}
+        <LevelBars {monitor} variant="rail" />
+      {:else}
+        <span class="rail-mon-dot" aria-hidden="true"></span>
+      {/if}
+    </button>
+  {/if}
 </aside>
 
 {#if open}
@@ -169,7 +218,7 @@
     width: 60px;
     border: 2px solid var(--border);
     border-radius: 10px;
-    background: #fff;
+    background: var(--control-bg);
     padding: 6px 4px 4px;
     cursor: pointer;
     display: flex;
@@ -198,8 +247,8 @@
     color: var(--muted);
   }
   .rail-more {
-    border: 1px dashed #c6cbd6;
-    background: #fff;
+    border: 1px dashed var(--border-strong);
+    background: var(--control-bg);
     border-radius: 8px;
     width: 60px;
     height: 24px;
@@ -210,14 +259,48 @@
   }
   .rail-more:hover {
     color: var(--text);
-    border-color: #98a1b5;
+    border-color: var(--muted-2);
+  }
+
+  /* Mini-monitor strip pinned to the rail foot (mockup `.rail-mon`). */
+  .rail-mon {
+    margin-top: auto;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 5px;
+    padding: 7px 0 9px;
+    border-top: 1px solid var(--border);
+    width: 100%;
+    cursor: pointer;
+    flex: 0 0 auto;
+    background: none;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    font: inherit;
+    color: inherit;
+  }
+  .rail-mon:hover {
+    background: var(--hover-bg);
+  }
+  /* Idle: a single tiny muted dot so the rail stays clean but the monitor is
+     still discoverable. */
+  .rail-mon.idle {
+    padding: 9px 0;
+  }
+  .rail-mon-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--muted-2);
   }
 
   .scrim {
     position: fixed;
     inset: 0;
     z-index: 60;
-    background: rgba(23, 32, 58, 0.35);
+    background: var(--scrim);
   }
   .flyover {
     position: fixed;

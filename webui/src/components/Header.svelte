@@ -41,6 +41,11 @@
     /** Enables Save Figure (a dataset is loaded, so there's a plot). */
     canSaveFigure?: boolean;
   } = $props();
+
+  // Light/dark theme toggle (round-5 item 11). The store is a module
+  // singleton (persists the choice + follows the OS otherwise); the button
+  // shows the theme you'd switch TO.
+  import { theme, toggleTheme } from '../lib/stores/theme';
 </script>
 
 <header class="app-header">
@@ -62,6 +67,14 @@
   <div class="hdr-slot" aria-hidden="true"></div>
 
   <div class="hdr-right">
+    <button
+      class="theme-toggle"
+      data-testid="theme-toggle"
+      title={$theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      aria-label={$theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      aria-pressed={$theme === 'dark'}
+      onclick={toggleTheme}
+    >{$theme === 'dark' ? '☀' : '☾'}</button>
     <button class="btn blue-o" title="Load a dataset (.dvma)" onclick={onload}>Load Data</button>
     <button
       class="btn"
@@ -105,7 +118,7 @@
     padding: 0 10px;
     border-radius: 13px;
     border: 1px solid var(--border);
-    background: #f8f9fb;
+    background: var(--surface-2);
     font: 12px var(--font-mono);
     color: var(--text);
     cursor: pointer;
@@ -114,8 +127,8 @@
     white-space: nowrap;
   }
   .chipbtn:hover {
-    border-color: #c6cbd6;
-    background: #fff;
+    border-color: var(--border-strong);
+    background: var(--control-bg);
   }
   .chipbtn.dir {
     font: 12px var(--font-mono);
@@ -136,6 +149,30 @@
     gap: 10px;
     min-width: 0;
   }
+  /* Compact sun/moon theme toggle (round-5 item 11). */
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--control-bg);
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .theme-toggle:hover {
+    border-color: var(--border-strong);
+    background: var(--hover-bg);
+    color: var(--text);
+  }
+  .theme-toggle:active {
+    transform: translateY(1px);
+  }
   .btn {
     display: inline-flex;
     align-items: center;
@@ -144,7 +181,7 @@
     padding: 0 11px;
     border-radius: 7px;
     border: 1px solid var(--border);
-    background: #fff;
+    background: var(--control-bg);
     color: var(--text);
     font-size: 12.5px;
     font-weight: 500;
@@ -153,8 +190,8 @@
     font-family: inherit;
   }
   .btn:hover {
-    border-color: #c6cbd6;
-    background: #fafbfc;
+    border-color: var(--border-strong);
+    background: var(--hover-bg);
   }
   .btn:active {
     transform: translateY(1px);
@@ -165,15 +202,15 @@
   }
   .btn:disabled:hover {
     border-color: var(--border);
-    background: #fff;
+    background: var(--control-bg);
   }
   .btn.blue-o {
-    color: #2563eb;
-    border-color: #93c5fd;
+    color: var(--blue);
+    border-color: var(--blue-border);
     font-weight: 600;
   }
   .btn.blue-o:hover {
-    background: #eff6ff;
+    background: var(--blue-soft);
   }
   .btn.green {
     background: var(--green);
@@ -184,7 +221,7 @@
     padding: 0 15px;
   }
   .btn.green:hover {
-    background: #15803d;
+    background: var(--green-hover);
   }
 
   @media (max-width: 1000px) {

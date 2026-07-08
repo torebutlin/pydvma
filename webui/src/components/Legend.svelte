@@ -263,7 +263,7 @@
     flex-direction: column;
     gap: 1px;
     padding: 6px 8px;
-    background: rgba(255, 255, 255, 0.94);
+    background: var(--overlay-bg);
     border: 1px solid var(--border, #e3e6eb);
     border-radius: 8px;
     box-shadow: var(--shadow, 0 1px 3px rgba(16, 24, 40, 0.12));
@@ -289,7 +289,7 @@
     font: 500 11.5px var(--font-body, system-ui, sans-serif);
   }
   .row:hover {
-    background: #f2f4f8;
+    background: var(--hover-bg);
   }
   .row.fade {
     opacity: 0.4;

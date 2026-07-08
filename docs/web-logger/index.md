@@ -97,11 +97,13 @@ every stage:
 Per-channel **[calibration and units](calibration.md)** apply throughout,
 and everything saves to the shared **[`.dvma` format](dvma-format.md)**.
 
+Across the top, the **header** carries **Load Data**, **Save Figure**
+and **Save Dataset**, plus a **light/dark theme toggle** (the sun/moon
+button). The theme follows your operating system by default; toggling
+it remembers your choice for next time.
+
 ## Roadmap
 
-A few surfaces are **in flight** and not yet shipped — mentioned here so
-you know they are coming, not so you look for them today:
-
-- a **dark theme**.
-
-This page and the guides describe only what currently ships.
+Nothing major in flight right now — see the repo's `dev/` notes for
+what's next. This page and the guides describe only what currently
+ships.

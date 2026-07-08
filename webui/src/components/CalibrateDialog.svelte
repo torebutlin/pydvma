@@ -129,14 +129,14 @@
     position: fixed;
     inset: 0;
     z-index: 330;
-    background: rgba(23, 32, 58, 0.42);
+    background: var(--scrim);
     display: flex;
     align-items: center;
     justify-content: center;
   }
   .modal {
     width: 380px;
-    background: #fff;
+    background: var(--surface);
     border-radius: 12px;
     padding: 16px 18px 14px;
     box-shadow: 0 24px 70px rgba(16, 24, 40, 0.35);
@@ -181,7 +181,7 @@
     padding: 0 6px;
     font: inherit;
     font-size: 12px;
-    background: #fff;
+    background: var(--control-bg);
     color: var(--text);
   }
   select {
@@ -192,7 +192,7 @@
     align-items: center;
     justify-content: center;
     border: 1px solid var(--border);
-    background: #fff;
+    background: var(--control-bg);
     color: var(--text);
     font-weight: 500;
     cursor: pointer;
@@ -204,8 +204,8 @@
     border-radius: 7px;
   }
   .btn:hover:not(:disabled) {
-    border-color: #c6cbd6;
-    background: #fafbfc;
+    border-color: var(--border-strong);
+    background: var(--hover-bg);
   }
   .btn:disabled {
     opacity: 0.5;
@@ -218,6 +218,6 @@
     font-weight: 600;
   }
   .btn.indigo:hover:not(:disabled) {
-    background: #4338ca;
+    background: var(--indigo-hover);
   }
 </style>

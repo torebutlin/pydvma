@@ -19,7 +19,14 @@
     labels,
   }: {
     monitor: MonitorStore;
-    variant?: 'mini' | 'big';
+    /**
+     * - `mini` — 9 px bars in the docked MiniMonitor.
+     * - `big` — 22 px bars with per-channel labels in the Live scope.
+     * - `rail` — 8 px bars + a compact 'C' clip pill for the narrow-mode
+     *   data rail's mini-monitor strip (round-5 item 14); capped to the
+     *   first two channels so the 72 px rail stays clean.
+     */
+    variant?: 'mini' | 'big' | 'rail';
     /** Optional per-channel labels (shown under each bar in the big variant). */
     labels?: (ch: number) => string;
   } = $props();
@@ -27,15 +34,25 @@
   const levels = $derived(monitor.levels);
   const clipLatched = $derived(monitor.clipLatched);
 
-  /** Bars to show — always at least the channels we have levels for. */
-  const bars = $derived($levels.length > 0 ? $levels : []);
+  /**
+   * Bars to show — always at least the channels we have levels for. The rail
+   * strip caps to the first two so it fits the narrow rail (mockup spirit).
+   */
+  const bars = $derived(
+    $levels.length > 0 ? (variant === 'rail' ? $levels.slice(0, 2) : $levels) : [],
+  );
 
   function label(ch: number): string {
     return labels ? labels(ch) : `ch_${ch}`;
   }
 </script>
 
-<div class="levelbars" class:big={variant === 'big'} class:mini={variant === 'mini'}>
+<div
+  class="levelbars"
+  class:big={variant === 'big'}
+  class:mini={variant === 'mini'}
+  class:rail={variant === 'rail'}
+>
   <div class="bars">
     {#each bars as lv, ch (ch)}
       <div class="col">
@@ -46,13 +63,25 @@
       </div>
     {/each}
   </div>
-  <button
-    class="clip-pill"
-    class:hot={$clipLatched}
-    title="Latching clip flag — click to reset"
-    onclick={() => monitor.resetClip()}
-    data-testid="clip-pill"
-  >CLIP</button>
+  {#if variant === 'rail'}
+    <!-- Rail strip: a non-interactive clip INDICATOR (the whole strip is a
+         single navigate-to-Live button, so no nested button here). Resetting
+         the latch lives in the MiniMonitor / Live scope pills. -->
+    <span
+      class="clip-pill"
+      class:hot={$clipLatched}
+      title="Input clip indicator"
+      data-testid="clip-pill"
+    >C</span>
+  {:else}
+    <button
+      class="clip-pill"
+      class:hot={$clipLatched}
+      title="Latching clip flag — click to reset"
+      onclick={() => monitor.resetClip()}
+      data-testid="clip-pill"
+    >CLIP</button>
+  {/if}
 </div>
 
 <style>
@@ -84,6 +113,10 @@
     width: 9px;
     height: 52px;
   }
+  .rail .vbar {
+    width: 8px;
+    height: 36px;
+  }
   .big .vbar {
     width: 22px;
     height: 100%;
@@ -98,7 +131,7 @@
     right: 0;
     top: 0;
     height: 70%;
-    background: #e8eaf0;
+    background: var(--level-track);
     transition: height 60ms linear;
   }
   .big small {
@@ -109,17 +142,21 @@
     align-self: flex-start;
     font: 600 9.5px var(--font-mono);
     letter-spacing: 0.06em;
-    color: #c7ccd8;
+    color: var(--muted-2);
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 1px 4px;
-    background: #fff;
+    background: var(--control-bg);
     cursor: pointer;
     user-select: none;
   }
+  .rail .clip-pill {
+    font-size: 7.5px;
+    padding: 0 2px;
+  }
   .clip-pill.hot {
     color: #fff;
-    background: #dc2626;
-    border-color: #dc2626;
+    background: var(--danger-strong);
+    border-color: var(--danger-strong);
   }
 </style>
