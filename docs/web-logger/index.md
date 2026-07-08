@@ -102,8 +102,6 @@ and everything saves to the shared **[`.dvma` format](dvma-format.md)**.
 A few surfaces are **in flight** and not yet shipped — mentioned here so
 you know they are coming, not so you look for them today:
 
-- a **dark theme**; and
-- refined axis navigation for special plot contexts (a Nyquist
-  frequency-band brush, split Bode axes).
+- a **dark theme**.
 
 This page and the guides describe only what currently ships.
