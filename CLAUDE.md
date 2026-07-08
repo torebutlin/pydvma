@@ -49,11 +49,26 @@ webui/scripts/build-wheels.sh — version must stay 1.5.0 (ENGINE_WHEELS).
 svelte-check 0/0; Playwright 69 + bridge e2e 7/7 (BRIDGE_E2E=1 vs a
 real spawned server).
 
-**START THE NEXT SESSION HERE:** (1) Tore hands-on round 7 — new
-surface: shared-pole fitting, Best match / x(iω) scaling group,
-/config prefill, sono single-targeting, brush v2, dark mode; **PC
-multi-channel + NI recheck still pending** (also eyeball the 9260
-clamp + coerced-fs notes there). (2) Small flagged follow-ups: CSD
+**START THE NEXT SESSION HERE — it will be on the WINDOWS PC** (Tore
+is switching machines; this Mac session ends after the Qt teardown):
+(1) `git pull`, then `pip install -e .[serve,ni,soundcard]` (NB the
+`[qt]` extra no longer exists — do not install it). (2) **NI recheck
+session**: run the full pytest (hardware tests auto-run there;
+expect the pre-teardown hardware set incl.
+tests/test_streams_ni_callback.py + test_acquisition_hardware.py);
+then `pydvma-serve --driver nidaq --open` and hands-on the webui
+against real devices — MULTI-CHANNEL capture recheck (the standing
+gap: everything since round 5 was verified single-ch on Mac +
+mock/protocol only), pretrigger + output sweep on each device, and
+EYEBALL the two round-D notes on real hardware: the 9260
+`output clamped to device rail ±4.24 V` note in Setup-full's NI
+group, and the DSA coerced-fs note (request 8000 on the 9234 → note
+should read 8533.3). `data/examples/` has real files for the
+analysis-side checks (see its README). (3) After that session, Tore
+tests solo over days/weeks — sessions should expect FEEDBACK-driven
+work, not new feature waves. Round-7 hands-on surface: shared-pole
+fitting, Best match / x(iω) scaling group, /config prefill, sono
+single-targeting, brush v2, dark mode. (4) Small flagged follow-ups: CSD
 PHASE (glue must return complex Pxy), browser pretrig threshold
 control, log-y CWT heat rendering, CSD pair auto-enable on hidden
 channel, orphan-fit browser e2e (task_c158292c), PWA manifest
