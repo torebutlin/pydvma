@@ -137,6 +137,111 @@ test('xScale/yScale round-trip through serialize/restore', () => {
   expect(get(vs2.current).yScale).toBe('lin');
 });
 
+// ---- round-5 axis-nav: Nyquist real/imag, Bode phase, coherence ----
+
+test('aux-range defaults: nyquist auto, phase ±180 lock, coherence fixed', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  const s = get(vs.current);
+  expect(s.nyquistRange).toEqual({ x: null, y: null });
+  expect(s.phaseRange).toEqual({ x: null, y: [-180, 180] });
+  expect(s.coherenceAuto).toBe(false);
+});
+
+test('setNyquistRange records history and does NOT touch the primary range', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  vs.setRange('tf', { x: [100, 300], y: [-40, 10] });   // freq window + mag y
+  vs.setNyquistRange({ x: [-2, 6], y: [-5, 5] });
+  const s = get(vs.current);
+  expect(s.nyquistRange).toEqual({ x: [-2, 6], y: [-5, 5] });
+  expect(s.range).toEqual({ x: [100, 300], y: [-40, 10] });   // untouched
+  expect(get(vs.sharedFreqRange)).toEqual([100, 300]);        // freq window intact
+  // Undo reverses the Nyquist zoom back to auto, leaving the freq window put.
+  vs.back('tf');
+  expect(get(vs.current).nyquistRange).toEqual({ x: null, y: null });
+  expect(get(vs.current).range.x).toEqual([100, 300]);
+  vs.forward('tf');
+  expect(get(vs.current).nyquistRange).toEqual({ x: [-2, 6], y: [-5, 5] });
+});
+
+test('setBodePhaseRange moves shared x + phase y in ONE undo step, keeping magnitude y', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  vs.setRange('tf', { x: [0, 500], y: [-60, 40] });     // mag pane range
+  const h0 = get(vs.current).history.length;
+  vs.setBodePhaseRange([80, 120], [-90, 90]);            // a phase-pane box-zoom
+  const s = get(vs.current);
+  expect(s.range).toEqual({ x: [80, 120], y: [-60, 40] });   // shared x moved, mag y kept
+  expect(s.phaseRange).toEqual({ x: null, y: [-90, 90] });   // phase y set
+  expect(get(vs.current).history.length).toBe(h0 + 1);       // exactly one entry
+  // One undo reverts BOTH the shared x and the phase y together.
+  vs.back('tf');
+  expect(get(vs.current).range.x).toEqual([0, 500]);
+  expect(get(vs.current).phaseRange.y).toEqual([-180, 180]);
+});
+
+test('setPhaseRange toggles the phase lock without disturbing the primary range', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  vs.setRange('tf', { x: [0, 500], y: [-60, 40] });
+  vs.setPhaseRange({ x: null, y: null });               // auto-fit phase
+  expect(get(vs.current).phaseRange).toEqual({ x: null, y: null });
+  expect(get(vs.current).range).toEqual({ x: [0, 500], y: [-60, 40] });
+  vs.setPhaseRange({ x: null, y: [-180, 180] });         // re-lock
+  expect(get(vs.current).phaseRange.y).toEqual([-180, 180]);
+});
+
+test('setCoherenceAuto flips the flag WITHOUT recording history', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  const h0 = get(vs.current).history.length;
+  vs.setCoherenceAuto(true);
+  expect(get(vs.current).coherenceAuto).toBe(true);
+  expect(get(vs.current).history.length).toBe(h0);      // display mode, not navigation
+  vs.setCoherenceAuto(false);
+  expect(get(vs.current).coherenceAuto).toBe(false);
+});
+
+test('aux ranges + coherenceAuto round-trip through serialize/restore', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  vs.setNyquistRange({ x: [-1, 1], y: [-2, 2] });
+  vs.setPhaseRange({ x: null, y: null });
+  vs.setCoherenceAuto(true);
+  const vs2 = createViewState();
+  vs2.restore(JSON.parse(JSON.stringify(vs.serialize())));
+  vs2.activate('tf');
+  const s = get(vs2.current);
+  expect(s.nyquistRange).toEqual({ x: [-1, 1], y: [-2, 2] });
+  expect(s.phaseRange).toEqual({ x: null, y: null });
+  expect(s.coherenceAuto).toBe(true);
+});
+
+test('restore coerces a pre-round-5 Range[] history into snapshots (undo still works)', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  // Hand-craft an OLD-schema snapshot: history entries are bare Range objects.
+  const oldSnap = {
+    active: 'tf',
+    views: {
+      time: { range: { x: null, y: null }, history: [], future: [] },
+      frequency: { range: { x: null, y: null }, history: [], future: [] },
+      tf: {
+        range: { x: [50, 150], y: [-30, 10] },
+        history: [{ x: null, y: null }],   // pre-round-5 shape: a bare Range
+        future: [],
+      },
+      sono: { range: { x: null, y: null }, history: [], future: [] },
+    },
+  };
+  vs.restore(oldSnap);
+  vs.activate('tf');
+  expect(get(vs.current).range.x).toEqual([50, 150]);
+  vs.back('tf');   // the coerced entry must restore its wrapped range
+  expect(get(vs.current).range).toEqual({ x: null, y: null });
+});
+
 test('state is serialisable and restorable (debuggability, spec §11)', () => {
   const vs = createViewState();
   vs.setRange('sono', { x: [0, 2], y: [0, 1500] });

@@ -35,6 +35,17 @@
    * - Legend placement is a 2×2 corner grid (matching the plot corners) plus an
    *   "outside" option and a show toggle.
    *
+   * ── round-5 special TF contexts (items 4-6) ──
+   * Three optional modes adapt the toolbar for the TF plot family without
+   * changing its round-4 shape:
+   * - `nyquist`: the x/y limit groups + Auto buttons mean REAL/IMAG and drive
+   *   `nyquistRange`; a third bordered `freq` group binds the committed
+   *   frequency window (`range.x`) that the brush/Calc/Fit share.
+   * - `phaseControl` (Bode): a `phase y` segmented control (±180° | auto) in the
+   *   expanded panel drives the phase pane's own `phaseRange`.
+   * - `coherenceControl`: a `coherence` segmented control (0–1 | auto) drives the
+   *   overlay's right axis via `coherenceAuto`.
+   *
    * Auto X sets the x-range to the full data extent (y untouched); Auto Y sets
    * the y-range to the extent of the lines CURRENTLY visible in the plot model
    * — off lines are excluded upstream by the selection filter (spec §6 "Auto Y
@@ -58,6 +69,10 @@
     mode = $bindable('box'),
     showXScale = false,
     showYScale = false,
+    nyquist = false,
+    phaseControl = false,
+    coherenceControl = false,
+    freqExtent = undefined,
   }: {
     viewState: ViewState;
     /** X/Y extent of the lines currently visible in the plot model. */
@@ -77,6 +92,33 @@
      * misrepresents a non-magnitude pane.
      */
     showYScale?: boolean;
+    /**
+     * Nyquist mode (round-5 item 4): the x/y controls mean REAL/IMAG and act on
+     * the tf view's `nyquistRange` (NOT `range`, whose `.x` stays the frequency
+     * window). The x/y limit groups relabel real/imag, Auto X/Y auto-fit those
+     * axes, and a third bordered `freq` group appears bound to the committed
+     * frequency range. App passes this only for the tf Nyquist plotType.
+     */
+    nyquist?: boolean;
+    /**
+     * Bode mode (round-5 item 5): show a compact `phase y` control (auto | ±180°
+     * lock) in the expanded panel that drives the phase pane's own y-axis
+     * (`phaseRange`). The toolbar itself lives in the magnitude pane, so its
+     * x/y controls stay the shared frequency + magnitude y.
+     */
+    phaseControl?: boolean;
+    /**
+     * Coherence overlay present (round-5 item 6): show a minimal `coherence`
+     * control (auto | 0–1) in the expanded panel that drives the right axis via
+     * `coherenceAuto`. App passes `!!model.y2Range`.
+     */
+    coherenceControl?: boolean;
+    /**
+     * Full frequency extent `[fmin, fmax]` — the fallback shown in the Nyquist
+     * `freq` group when the committed frequency window is auto (null). Ignored
+     * outside Nyquist mode.
+     */
+    freqExtent?: [number, number];
   } = $props();
 
   // Derived (not destructured) so the toolbar tracks a reassigned viewState prop.
@@ -87,6 +129,11 @@
   // Live axis-scale state for the segmented controls (R3).
   const xScale = $derived($current.xScale);
   const yScale = $derived($current.yScale);
+
+  // On Nyquist the primary axes are the Real/Imag `nyquistRange`; everywhere
+  // else the toolbar's x/y drive the primary `range`. `targetRange` is the one
+  // the limit fields + Auto buttons read/write.
+  const targetRange = $derived(nyquist ? $current.nyquistRange : $current.range);
 
   // ---- expander: hover auto-opens, click pins (touch) ----
   let pinned = $state(false);
@@ -114,11 +161,23 @@
   let dirty = $state(false);
   let commitTimer: ReturnType<typeof setTimeout> | undefined;
 
-  /** What the plot is actually showing: explicit range or auto-fit extent. */
+  // ---- Nyquist frequency-window group (live, debounced; nyquist only) ----
+  let fminS = $state(''), fmaxS = $state('');
+  let freqError = $state('');
+  let freqDirty = $state(false);
+  let freqTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * What the primary (x/y) fields show: the explicit target range (Real/Imag on
+   * Nyquist, else the primary range) or the auto-fit data extent per axis.
+   */
   const shown = $derived({
-    x: $current.range.x ?? dataExtent.x,
-    y: $current.range.y ?? dataExtent.y,
+    x: targetRange.x ?? dataExtent.x,
+    y: targetRange.y ?? dataExtent.y,
   });
+
+  /** The committed frequency window shown in the Nyquist `freq` group. */
+  const freqShown = $derived<[number, number]>($current.range.x ?? freqExtent ?? [0, 0]);
 
   // Store → fields sync: re-seed whenever the underlying range moves, unless
   // the user is mid-edit. Typing sets `dirty`, so this never fights the caret.
@@ -132,17 +191,31 @@
     limitsError = '';
   });
 
+  // Store → freq fields sync (Nyquist), gated by its own dirty flag.
+  $effect(() => {
+    if (!nyquist || freqDirty) return;
+    const [lo, hi] = freqShown;
+    fminS = fmtTick(lo, hi - lo);
+    fmaxS = fmtTick(hi, hi - lo);
+    freqError = '';
+  });
+
   // Closing the panel abandons any half-typed / pending edit so the next open
   // re-seeds cleanly from the store.
   $effect(() => {
     if (!open) {
       if (commitTimer) { clearTimeout(commitTimer); commitTimer = undefined; }
-      dirty = false;
-      limitsError = '';
+      if (freqTimer) { clearTimeout(freqTimer); freqTimer = undefined; }
+      dirty = false; freqDirty = false;
+      limitsError = ''; freqError = '';
     }
   });
 
-  /** Validate the four fields and commit ONE setRange; invalid → show error, no write. */
+  /**
+   * Validate the four x/y fields and commit ONE range change; invalid → show
+   * error, no write. On Nyquist the write targets `nyquistRange` (Real/Imag);
+   * elsewhere the primary `range`.
+   */
   function commitLimits() {
     commitTimer = undefined;
     const x0 = parseFloat(xminS), x1 = parseFloat(xmaxS);
@@ -153,7 +226,8 @@
     }
     limitsError = '';
     dirty = false;
-    viewState.setRange($active, { x: [x0, x1], y: [y0, y1] });
+    if (nyquist) viewState.setNyquistRange({ x: [x0, x1], y: [y0, y1] });
+    else viewState.setRange($active, { x: [x0, x1], y: [y0, y1] });
   }
 
   /** A field changed: mark dirty and debounce a live commit (~300 ms). */
@@ -164,16 +238,49 @@
     commitTimer = setTimeout(commitLimits, 300);
   }
 
+  /** Commit the Nyquist frequency window (`range.x`), keeping the magnitude y. */
+  function commitFreq() {
+    freqTimer = undefined;
+    const lo = parseFloat(fminS), hi = parseFloat(fmaxS);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
+      freqError = 'Frequency limits must be numeric with max > min.';
+      return;
+    }
+    freqError = '';
+    freqDirty = false;
+    viewState.setRange('tf', { x: [lo, hi], y: $current.range.y });
+  }
+
+  function onFreqInput() {
+    freqDirty = true;
+    freqError = '';
+    if (freqTimer) clearTimeout(freqTimer);
+    freqTimer = setTimeout(commitFreq, 300);
+  }
+
+  // Auto X / Auto Y. On Nyquist these auto-fit the Real/Imag axes by resetting
+  // the corresponding `nyquistRange` axis to null (the model then fits the
+  // windowed locus, padded); elsewhere they set the explicit data extent.
   function autoX() {
-    viewState.setRange($active, { x: [dataExtent.x[0], dataExtent.x[1]], y: $current.range.y });
+    if (nyquist) viewState.setNyquistRange({ x: null, y: $current.nyquistRange.y });
+    else viewState.setRange($active, { x: [dataExtent.x[0], dataExtent.x[1]], y: $current.range.y });
   }
   function autoY() {
-    viewState.setRange($active, { x: $current.range.x, y: [dataExtent.y[0], dataExtent.y[1]] });
+    if (nyquist) viewState.setNyquistRange({ x: $current.nyquistRange.x, y: null });
+    else viewState.setRange($active, { x: $current.range.x, y: [dataExtent.y[0], dataExtent.y[1]] });
   }
+
+  // ---- Bode phase-pane y control + coherence right-axis control ----
+  const phaseMode = $derived<'auto' | 'lock'>($current.phaseRange.y === null ? 'auto' : 'lock');
+  function setPhaseMode(m: 'auto' | 'lock') {
+    viewState.setPhaseRange(m === 'auto' ? { x: null, y: null } : { x: null, y: [-180, 180] });
+  }
+  const cohMode = $derived<'fixed' | 'auto'>($current.coherenceAuto ? 'auto' : 'fixed');
 
   $effect(() => () => {
     if (leaveTimer) clearTimeout(leaveTimer);
     if (commitTimer) clearTimeout(commitTimer);
+    if (freqTimer) clearTimeout(freqTimer);
   });
 
   // ---- Legend controls (mirrors into the active view's legend slice) ----
@@ -230,8 +337,10 @@
 
     <span class="zdiv" aria-hidden="true"></span>
 
-    <button class="zbtn" title="Autoscale X to the full data extent" onclick={autoX}>Auto X</button>
-    <button class="zbtn" title="Autoscale Y (fits selected lines only)" onclick={autoY}>Auto Y</button>
+    <button class="zbtn" title={nyquist ? 'Auto-fit the Real axis to the windowed locus' : 'Autoscale X to the full data extent'}
+      onclick={autoX}>{nyquist ? 'Auto Re' : 'Auto X'}</button>
+    <button class="zbtn" title={nyquist ? 'Auto-fit the Imag axis to the windowed locus' : 'Autoscale Y (fits selected lines only)'}
+      onclick={autoY}>{nyquist ? 'Auto Im' : 'Auto Y'}</button>
 
     {#if showXScale || showYScale}
       <span class="zdiv" aria-hidden="true"></span>
@@ -280,29 +389,86 @@
     <div class="ax-pop" data-testid="axis-popover">
       <div class="limits" role="group" aria-label="Manual axis limits">
         <div class="axgrp">
-          <span class="axgrp-lab">x</span>
+          <span class="axgrp-lab">{nyquist ? 'real' : 'x'}</span>
           <div class="axfield">
             <label for="{uid}-xmin">min</label>
-            <input id="{uid}-xmin" bind:value={xminS} oninput={onLimitInput} inputmode="decimal" />
+            <input id="{uid}-xmin" bind:value={xminS} oninput={onLimitInput} inputmode="decimal"
+              aria-label={nyquist ? 'Real min' : 'x min'} />
           </div>
           <div class="axfield">
             <label for="{uid}-xmax">max</label>
-            <input id="{uid}-xmax" bind:value={xmaxS} oninput={onLimitInput} inputmode="decimal" />
+            <input id="{uid}-xmax" bind:value={xmaxS} oninput={onLimitInput} inputmode="decimal"
+              aria-label={nyquist ? 'Real max' : 'x max'} />
           </div>
         </div>
         <div class="axgrp">
-          <span class="axgrp-lab">y</span>
+          <span class="axgrp-lab">{nyquist ? 'imag' : 'y'}</span>
           <div class="axfield">
             <label for="{uid}-ymin">min</label>
-            <input id="{uid}-ymin" bind:value={yminS} oninput={onLimitInput} inputmode="decimal" />
+            <input id="{uid}-ymin" bind:value={yminS} oninput={onLimitInput} inputmode="decimal"
+              aria-label={nyquist ? 'Imag min' : 'y min'} />
           </div>
           <div class="axfield">
             <label for="{uid}-ymax">max</label>
-            <input id="{uid}-ymax" bind:value={ymaxS} oninput={onLimitInput} inputmode="decimal" />
+            <input id="{uid}-ymax" bind:value={ymaxS} oninput={onLimitInput} inputmode="decimal"
+              aria-label={nyquist ? 'Imag max' : 'y max'} />
           </div>
         </div>
+        {#if nyquist}
+          <!-- The frequency window (round-5 item 4): the SAME committed range
+               the brush, Calc and Fit read. Bound to `range.x`, kept apart
+               from the Real/Imag axes above. -->
+          <div class="axgrp freq" data-testid="nyquist-freq-group">
+            <span class="axgrp-lab">freq</span>
+            <div class="axfield">
+              <label for="{uid}-fmin">min</label>
+              <input id="{uid}-fmin" bind:value={fminS} oninput={onFreqInput} inputmode="decimal" aria-label="Frequency min" />
+            </div>
+            <div class="axfield">
+              <label for="{uid}-fmax">max</label>
+              <input id="{uid}-fmax" bind:value={fmaxS} oninput={onFreqInput} inputmode="decimal" aria-label="Frequency max" />
+            </div>
+          </div>
+        {/if}
       </div>
       {#if limitsError}<div class="err" role="alert">{limitsError}</div>{/if}
+      {#if nyquist && freqError}<div class="err" role="alert">{freqError}</div>{/if}
+
+      {#if phaseControl || coherenceControl}
+        <div class="sep"></div>
+        <div class="pane-ctls">
+          {#if phaseControl}
+            <div class="pane-grp" data-testid="phase-y-control">
+              <span class="grp">phase y</span>
+              <Segmented
+                testid="phase-y-toggle"
+                ariaLabel="Phase pane y-axis"
+                value={phaseMode}
+                onchange={(m) => setPhaseMode(m)}
+                options={[
+                  { value: 'lock' as const, label: '±180°', title: 'Lock the phase axis to ±180°' },
+                  { value: 'auto' as const, label: 'auto', title: 'Auto-fit the phase axis to the data' },
+                ]}
+              />
+            </div>
+          {/if}
+          {#if coherenceControl}
+            <div class="pane-grp" data-testid="coherence-control">
+              <span class="grp">coherence</span>
+              <Segmented
+                testid="coherence-toggle"
+                ariaLabel="Coherence right axis"
+                value={cohMode}
+                onchange={(m) => viewState.setCoherenceAuto(m === 'auto')}
+                options={[
+                  { value: 'fixed' as const, label: '0–1', title: 'Fixed coherence axis 0 to 1' },
+                  { value: 'auto' as const, label: 'auto', title: 'Auto-fit the coherence axis to the data' },
+                ]}
+              />
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <div class="sep"></div>
 
@@ -427,6 +593,25 @@
     color: var(--indigo, #4f46e5);
     letter-spacing: 0.04em;
     margin-bottom: 1px;
+  }
+  /* The Nyquist frequency group reads as the "shared window", tinted apart
+     from the Real/Imag axis groups it sits beside. */
+  .axgrp.freq {
+    background: #f7f8fc;
+  }
+  .axgrp.freq .axgrp-lab {
+    color: var(--muted, #66708a);
+  }
+  .pane-ctls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .pane-grp {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
   }
   .axfield {
     display: flex;

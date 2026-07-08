@@ -25,9 +25,10 @@
    * - the guardrail extent is recomputed from the model's lines via
    *   `dataExtent` (cheap: only runs when the model changes), so
    *   zoom/pan clamp to the lines currently shown.
-   * - drag gestures are DISABLED on `squareAspect` (Nyquist) models —
-   *   the aspect-locked view is navigated via its fmin/fmax controls
-   *   (mockup behaviour); double-click auto-fit still works.
+   * - drag gestures are DISABLED on `squareAspect` (Nyquist) models — the
+   *   aspect-locked view is navigated by the frequency-band brush above it
+   *   (windows the locus) and the toolbar's Real/Imag limits + Auto X/Y
+   *   (round-5 item 4), not by dragging on the square itself.
    *
    * The parent must derive `model.xRange`/`model.yRange` from
    * `viewState.current.range` for committed gestures to take effect.
@@ -63,6 +64,8 @@
     mode = 'box',
     viewState = undefined,
     overlay = false,
+    onCommit = undefined,
+    onAutoFit = undefined,
   }: {
     model: PlotModel;
     /** Active drag tool; bind ZoomToolbar's `mode` to this. */
@@ -76,7 +79,33 @@
      * this the opaque `plot-bg` rect hides the canvas entirely.
      */
     overlay?: boolean;
+    /**
+     * Override where a committed box-zoom / pan gesture WRITES its range
+     * (round-5 item 5). Absent ⇒ the default `viewState.setRange(active, …)`.
+     * The Bode PHASE pane supplies this so its gestures route the shared x to
+     * `range.x` and the y to the phase pane's OWN axis (`phaseRange.y`) in one
+     * undo step, instead of clobbering the magnitude pane's y. Receives the
+     * gesture's committed range (x may be null when unconstrained).
+     */
+    onCommit?: (range: { x: [number, number] | null; y: [number, number] | null }) => void;
+    /**
+     * Override the double-click auto-fit target (round-5 item 5). Absent ⇒
+     * `viewState.autoFit(active)`. The Bode phase pane uses it to auto-fit ITS
+     * axis (`phaseRange`) rather than the shared primary range.
+     */
+    onAutoFit?: () => void;
   } = $props();
+
+  /** Commit a gesture range to the override callback, else the default setRange. */
+  function commitRange(range: { x: [number, number] | null; y: [number, number] | null }): void {
+    if (onCommit) onCommit(range);
+    else if (viewState) viewState.setRange(get(viewState.active), range);
+  }
+  /** Auto-fit via the override callback, else the default autoFit. */
+  function autoFitNow(): void {
+    if (onAutoFit) onAutoFit();
+    else if (viewState) viewState.autoFit(get(viewState.active));
+  }
 
   const uid = $props.id();
   const clipId = `plot-clip-${uid}`;
@@ -295,7 +324,7 @@
         if (Math.hypot(delta.dxPx, delta.dyPx) >= MIN_DRAG_PX) {
           const r = panBy(panStartDom, delta, { width: pw, height: ph });
           const c = clampToData(r as { x: [number, number]; y: [number, number] }, gestureExtent);
-          viewState.setRange(get(viewState.active), { x: fromGestureX(c.x!), y: c.y! });
+          commitRange({ x: fromGestureX(c.x!), y: c.y! });
         }
       }
       panPreview = null;
@@ -314,7 +343,7 @@
         );
         if (range) {
           const c = clampToData(range, gestureExtent);
-          viewState.setRange(get(viewState.active), { x: c.x ? fromGestureX(c.x) : null, y: c.y });
+          commitRange({ x: c.x ? fromGestureX(c.x) : null, y: c.y });
         }
       }
     }
@@ -339,7 +368,7 @@
 
   function onDblClick() {
     if (!interactive() || !viewState) return;
-    viewState.autoFit(get(viewState.active));
+    autoFitNow();
   }
 
   // Cancel any pending pan rAF if the component unmounts mid-gesture.

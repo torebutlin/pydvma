@@ -271,11 +271,52 @@ test('tf nyquist: the committed range is a freq band and must NOT reach the Real
     view: 'tf', tfPlotType: 'nyquist', sets, visible: [vis(0, 1, 'on')],
     freqRange: [15, 25], range: { x: [15, 25], y: null },
   });
-  expect(m.xRange).toBeNull();          // freq band [15,25] must NOT become the Real axis
-  expect(m.yRange).toBeNull();
+  // Real/Imag axes auto-fit the WINDOWED locus (round-5 item 4), NOT the freq
+  // band [15,25]. The single windowed point is Re=3/Im=4; a degenerate extent
+  // is first widened ±1 by dataExtent (→ Real [2,4], Imag [3,5]) then padded a
+  // further 5% → Real [1.9,4.1], Imag [2.9,5.1]. Neither carries the freq band.
+  expect(m.xRange![0]).toBeCloseTo(1.9, 6);
+  expect(m.xRange![1]).toBeCloseTo(4.1, 6);
+  expect(m.yRange![0]).toBeCloseTo(2.9, 6);
+  expect(m.yRange![1]).toBeCloseTo(5.1, 6);
+  expect(m.xRange).not.toEqual([15, 25]);
   expect(m.squareAspect).toBe(true);
   expect(Array.from(m.lines[0].x)).toEqual([3]);   // locus still windowed to f=20
   expect(Array.from(m.lines[0].y)).toEqual([4]);
+});
+
+test('tf nyquist: an explicit nyquistRange pins the Real/Imag axes (freq window stays separate)', () => {
+  // The toolbar's x/y controls drive `nyquistRange` on Nyquist (item 4); when
+  // set it is honoured verbatim as the display window, independent of the
+  // frequency window (range.x / freqRange) which only windows the locus.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: { axis: Float64Array.from([10, 20, 30]), data: decodeArray(cplx([3, 1], [1, 2, 3, 4, 5, 6])), chIn: 0, nChannels: 2 },
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'nyquist', sets, visible: [vis(0, 1, 'on')],
+    range: { x: [5, 35], y: null }, nyquistRange: { x: [-2, 6], y: [-1, 9] },
+  });
+  expect(m.xRange).toEqual([-2, 6]);   // Real axis = the pinned nyquistRange.x
+  expect(m.yRange).toEqual([-1, 9]);   // Imag axis = the pinned nyquistRange.y
+  expect(m.squareAspect).toBe(true);   // still equalised to 1:1 by buildPlot
+});
+
+test('tf nyquist: a per-axis null nyquistRange auto-fits just that axis', () => {
+  // Auto X / Auto Y on Nyquist reset the corresponding axis to null; the other
+  // pinned axis is preserved. Here x is pinned, y auto-fits the locus.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: { axis: Float64Array.from([10, 20]), data: decodeArray(cplx([2, 1], [1, 2, 3, 4])), chIn: 0, nChannels: 2 },
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'nyquist', sets, visible: [vis(0, 1, 'on')],
+    nyquistRange: { x: [0, 10], y: null },
+  });
+  expect(m.xRange).toEqual([0, 10]);          // pinned
+  // Imag data is [2,4]; padded 5% → [1.9, 4.1].
+  expect(m.yRange![0]).toBeCloseTo(1.9, 6);
+  expect(m.yRange![1]).toBeCloseTo(4.1, 6);
 });
 
 test('tf coherence: dashed right-axis lines, y2Range [0,1], same colour', () => {
@@ -297,6 +338,26 @@ test('tf coherence: dashed right-axis lines, y2Range [0,1], same colour', () => 
   expect(coh.dashed).toBe(true);
   expect(coh.color).toBe('#dc2626');
   expect(Array.from(coh.y)).toEqual([0.9, 0.8]);
+});
+
+test('tf coherence: coherenceAuto fits the right axis to the visible coherence (clamped to [0,1])', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10, 20, 30]),
+      data: decodeArray(cplx([3, 1], [1, 0, 1, 0, 1, 0])),
+      coherence: decodeArray(real([3, 1], [0.8, 0.9, 1.0])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  // Default (fixed) → [0,1].
+  const fixed = buildPlotModel({ view: 'tf', tfPlotType: 'mag', coherence: true, sets, visible: [vis(0, 1, 'on')] });
+  expect(fixed.y2Range).toEqual([0, 1]);
+  // Auto → padded fit of [0.8, 1.0]; upper clamps at 1, lower pads down.
+  const auto = buildPlotModel({ view: 'tf', tfPlotType: 'mag', coherence: true, coherenceAuto: true, sets, visible: [vis(0, 1, 'on')] });
+  expect(auto.y2Range![0]).toBeGreaterThan(0);
+  expect(auto.y2Range![0]).toBeLessThan(0.8);   // padded below the min
+  expect(auto.y2Range![1]).toBe(1);             // clamped at 1
 });
 
 test('tf coherence NOT shown for nyquist/real/imag', () => {

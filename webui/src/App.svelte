@@ -25,6 +25,7 @@
   import Tray from './components/Tray.svelte';
   import PlotSurface from './components/PlotSurface.svelte';
   import ZoomToolbar from './components/ZoomToolbar.svelte';
+  import NyquistBrush from './components/NyquistBrush.svelte';
   import Legend from './components/Legend.svelte';
   import EngineProbe from './components/EngineProbe.svelte';
   import ToastHost from './components/ToastHost.svelte';
@@ -501,6 +502,12 @@
   const xScale = $derived($currentSlice.xScale);
   const yScale = $derived($currentSlice.yScale);
   const bode = $derived(view === 'tf' && plotType === 'bode');
+  const nyquist = $derived(view === 'tf' && plotType === 'nyquist');
+  // Round-5 axis-nav aux state: Nyquist Real/Imag window, Bode phase-pane y,
+  // coherence right-axis mode. All live on the tf view slice.
+  const nyquistRange = $derived($currentSlice.nyquistRange);
+  const phaseRange = $derived($currentSlice.phaseRange);
+  const coherenceAuto = $derived($currentSlice.coherenceAuto);
 
   // Which axis toggles to surface in the toolbar (R3). x-log applies
   // where x IS frequency: the frequency view, and the tf view except
@@ -541,19 +548,51 @@
   const model = $derived<PlotModel>(
     buildPlotModel({
       view, sets: setArrays, visible, freqMode, tfPlotType: plotType,
-      coherence, freqRange: $sharedFreqRange, range, xScale, yScale,
-      recon: reconArg,
+      coherence, coherenceAuto, freqRange: $sharedFreqRange, range, xScale, yScale,
+      nyquistRange, recon: reconArg,
     }),
   );
 
-  /** Bode's second (phase) pane — only assembled when Bode is active. */
+  /**
+   * Bode's second (phase) pane — only assembled when Bode is active. It shares
+   * the magnitude pane's frequency x (`range.x`) but takes its OWN y from the
+   * phase slice (`phaseRange`, default ±180° lock) so a magnitude-pane zoom
+   * never distorts the phase axis (round-5 item 5).
+   */
   const phaseModel = $derived<PlotModel>(
     bode
       ? buildPlotModel({
           view, sets: setArrays, visible, tfPlotType: 'phase',
-          coherence: false, freqRange: $sharedFreqRange, range, xScale,
+          coherence: false, freqRange: $sharedFreqRange,
+          range: { x: range.x, y: phaseRange.y }, xScale,
         })
       : model,
+  );
+
+  /**
+   * Full-extent magnitude model for the Nyquist frequency brush (round-5 item
+   * 4): the |H|(f) lines over the WHOLE frequency axis (no window, no committed
+   * range), reusing the TF-mag builder so the column remap + cal ratio match
+   * the plot. The brush renders these decimated + a draggable band = the
+   * committed freq window.
+   */
+  const nyquistMagModel = $derived<PlotModel | null>(
+    nyquist
+      ? buildPlotModel({
+          view: 'tf', sets: setArrays, visible, tfPlotType: 'mag',
+          coherence: false, freqRange: null, range: { x: null, y: null }, xScale, yScale: 'log',
+        })
+      : null,
+  );
+  /** Full frequency extent spanned by the Nyquist brush strip. */
+  const freqExtent = $derived<[number, number] | undefined>(
+    nyquistMagModel && nyquistMagModel.lines.length > 0
+      ? dataExtent(nyquistMagModel.lines, 'x', 'any')
+      : undefined,
+  );
+  /** The band the brush highlights: the committed window, or the full extent. */
+  const brushBand = $derived<[number, number] | undefined>(
+    freqExtent ? ($sharedFreqRange ?? freqExtent) : undefined,
   );
 
   /** Extent of the currently visible lines (for the zoom toolbar's Auto X/Y). */
@@ -704,21 +743,49 @@
           <PlotSurface bind:this={plotRef} model={sonoAxisModel} {viewState} overlay />
           <ZoomToolbar {viewState} dataExtent={extent} bind:mode />
         </div>
+      {:else if nyquist}
+        <!-- Nyquist (round-5 item 4): a frequency-band brush over the square
+             Real/Imag locus. The brush scrubs the shared committed freq window;
+             the toolbar's x/y become Real/Imag with a linked freq group. -->
+        <div class="plot-host nyquist">
+          {#if freqExtent && brushBand && nyquistMagModel}
+            <NyquistBrush
+              lines={nyquistMagModel.lines}
+              fullExtent={freqExtent}
+              band={brushBand}
+              {xScale}
+              onchange={(lo, hi) => viewState.setRange('tf', { x: [lo, hi], y: range.y })}
+              onfull={() => { if (freqExtent) viewState.setRange('tf', { x: [freqExtent[0], freqExtent[1]], y: range.y }); }}
+            />
+          {/if}
+          <div class="nyq-plot">
+            <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
+            <ZoomToolbar {viewState} dataExtent={extent} bind:mode nyquist {freqExtent} />
+            <Legend {selection} {viewState} entriesOverride={legendOverride} />
+            {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
+          </div>
+        </div>
       {:else if bode}
         <div class="plot-host bode">
           <div class="bode-pane">
             <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
-            <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
+            <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale}
+              phaseControl coherenceControl={!!model.y2Range} />
             <Legend {selection} {viewState} entriesOverride={legendOverride} />
           </div>
           <div class="bode-pane">
-            <PlotSurface model={phaseModel} {mode} {viewState} />
+            <!-- Phase pane: shares x, owns its y. Route gestures to phaseRange
+                 so a phase box-zoom never distorts the magnitude pane (item 5). -->
+            <PlotSurface model={phaseModel} {mode} {viewState}
+              onCommit={(r) => viewState.setBodePhaseRange(r.x, r.y)}
+              onAutoFit={() => viewState.setPhaseRange({ x: null, y: null })} />
           </div>
         </div>
       {:else}
         <div class="plot-host">
           <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
-          <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale} />
+          <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale}
+            coherenceControl={!!model.y2Range} />
           <Legend {selection} {viewState} entriesOverride={legendOverride} />
           {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
         </div>
@@ -781,6 +848,26 @@
     display: flex;
     flex-direction: column;
     gap: 0;
+  }
+  /* Nyquist: the brush strip + the square plot stack; each carries its own
+     surface/border, so the outer host is a transparent column. */
+  .plot-host.nyquist {
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    overflow: visible;
+  }
+  .nyq-plot {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
   }
   .bode-pane {
     position: relative;

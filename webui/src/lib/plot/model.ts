@@ -13,7 +13,7 @@
  * `{ shape, data (flat Float64Array, row-major), complex }`; complex is
  * INTERLEAVED `[re, im, re, im, …]`. `decodeArray` is the single decoder.
  */
-import type { PlotLine, PlotModel } from './build';
+import { dataExtent, type PlotLine, type PlotModel } from './build';
 import type { TfPlotType } from '../stores/viewstate';
 import { tfColumn } from './tfChannels';
 
@@ -224,8 +224,23 @@ export interface PlotModelArgs {
   tfPlotType?: TfPlotType;
   /** Coherence overlay flag (tf, mag/phase only). */
   coherence?: boolean;
+  /**
+   * Coherence right-axis mode (round-5 item 6). `false`/absent ⇒ the fixed
+   * `[0,1]` axis; `true` ⇒ auto-fit the visible coherence data (padded). Only
+   * consulted when the coherence overlay is shown (tf mag/phase).
+   */
+  coherenceAuto?: boolean;
   /** Shared frequency x-range for Nyquist windowing (`null` = full extent). */
   freqRange?: [number, number] | null;
+  /**
+   * Nyquist Real/Imag display window (round-5 item 4), the axes the toolbar's
+   * x/y controls act on when plotType is `'nyquist'` — kept SEPARATE from the
+   * frequency window (`range.x`). A null axis ⇒ auto-fit the windowed locus
+   * (padded ~5%). `squareAspect` then equalises the two spans for a true 1:1
+   * aspect, so an explicit box gets centred in a square (equal scale per unit).
+   * Ignored outside the Nyquist projection.
+   */
+  nyquistRange?: { x: [number, number] | null; y: [number, number] | null } | null;
   /** Committed axis range for the active view (`null` axis = auto-fit). */
   range?: { x: [number, number] | null; y: [number, number] | null };
   /**
@@ -281,6 +296,12 @@ function column(buf: Float64Array, rows: number, cols: number, c: number): Float
   const out = new Float64Array(rows);
   for (let r = 0; r < rows; r++) out[r] = buf[r * cols + c];
   return out;
+}
+
+/** Pad a `[lo, hi]` extent outward by `frac` (default 5%); degenerate → ±1. */
+function padExtent([lo, hi]: [number, number], frac = 0.05): [number, number] {
+  const p = (hi - lo) * frac || 1;
+  return [lo - p, hi + p];
 }
 
 /** 20·log10|z|, guarding log10(0) → a large-negative floor (−300 dB). */
@@ -366,14 +387,17 @@ function calScaledColumn(data: DecodedArray, nf: number, cols: number, col: numb
  *   Sub-mode via `freqMode`.
  * - tf: apply `tfPlotType` to complex tf_data columns — mag (dB), phase
  *   (degrees, atan2), real, imag; nyquist parametrises x=re/y=im with
- *   `squareAspect` and windows to `freqRange`. Each visible source
- *   channel is remapped to its OUTPUT column (tf_data drops the input
+ *   `squareAspect`, windows the locus to `freqRange` (the shared freq band),
+ *   and takes its Real/Imag display window from `nyquistRange` (round-5 item
+ *   4; null axis ⇒ auto-fit the windowed locus, padded ~5%). Each visible
+ *   source channel is remapped to its OUTPUT column (tf_data drops the input
  *   channel, R4); the input channel draws no line. `bode` is NOT a single
  *   pane: the card builds a 'mag' model and a 'phase' model and stacks
  *   them, so `bode` here degrades to the 'mag' pane.
  * - coherence overlay: for tf mag/phase (never nyquist/real/imag), a
  *   dashed right-axis line per visible line from `coherence`, same
- *   colour, with `y2Range:[0,1]` and a γ² label.
+ *   colour, with a γ² label; the right axis is the fixed `[0,1]` by default
+ *   or auto-fit to the visible coherence when `coherenceAuto` (round-5 item 6).
  * - sono: no lines (the heat layer is a canvas); returns axis labels
  *   and the committed range so PlotSurface draws empty axes beneath it.
  *
@@ -577,16 +601,18 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     }
 
     if (nyquist) {
-      // Nyquist axes are Real(H)/Imag(H), navigated by fmin/fmax (the shared
-      // freq window applied above) — NOT by the committed view range, whose
-      // `.x` is a FREQUENCY band (it doubles as `freqRange`, see
-      // viewstate.sharedFreqRange). Passing that band through as xr/yr would
-      // apply a frequency interval to the Real/Imag axes and squareAspect
-      // would then collapse the locus. Return null so the windowed locus
-      // auto-fits and squares ("fits data, stays square" — design §5).
+      // Nyquist axes are Real(H)/Imag(H). The FREQUENCY window (fmin/fmax, the
+      // brush, Calc/Fit) lives on `range.x` and was applied above to WINDOW the
+      // locus; it must NOT reach the Real/Imag axes (a frequency interval on
+      // Real/Imag would collapse the plot under squareAspect). Instead the
+      // toolbar's x/y controls drive `args.nyquistRange` (round-5 item 4): a
+      // null axis auto-fits the windowed locus (padded ~5%), an explicit axis
+      // pins it; squareAspect then equalises the spans for a true 1:1 aspect.
+      const nx = args.nyquistRange?.x ?? padExtent(dataExtent(lines, 'x', 'any'));
+      const ny = args.nyquistRange?.y ?? padExtent(dataExtent(lines, 'y', 'left'));
       return {
         ...EMPTY, lines, squareAspect: true,
-        xLabel: 'Real', yLabel: 'Imag', xRange: null, yRange: null,
+        xLabel: 'Real', yLabel: 'Imag', xRange: nx, yRange: ny,
       };
     }
 
@@ -602,6 +628,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
 
     // Coherence overlay: mag/phase only (bode → mag), right axis, dashed.
     const cohShown = !!args.coherence && (type === 'mag' || type === 'phase');
+    let cohLo = Infinity, cohHi = -Infinity;                 // for the auto right axis
     if (cohShown) {
       for (const v of args.visible) {
         const t = byId.get(v.setId)?.tf;
@@ -614,6 +641,10 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         if (col === null || col >= nout) continue;
         const nf = t.axis.length;
         const y = column(t.coherence.re, nf, nout, col);
+        for (let i = 0; i < y.length; i++) {
+          const c = y[i];
+          if (Number.isFinite(c)) { if (c < cohLo) cohLo = c; if (c > cohHi) cohHi = c; }
+        }
         lines.push({
           x: t.axis, y, color: v.color, opacity: 0.7,
           width: 1, dashed: true, yAxis: 'right', xMonotonic: true,
@@ -621,9 +652,21 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       }
     }
 
+    // Right-axis range (round-5 item 6): fixed [0,1] by default; auto-fit the
+    // visible coherence data (padded, clamped into [0,1]) when `coherenceAuto`.
+    let y2Range: [number, number] | undefined;
+    if (cohShown) {
+      if (args.coherenceAuto && cohHi >= cohLo) {
+        const pad = (cohHi - cohLo) * 0.05 || 0.02;
+        y2Range = [Math.max(0, cohLo - pad), Math.min(1, cohHi + pad)];
+      } else {
+        y2Range = [0, 1];
+      }
+    }
+
     return {
       ...EMPTY, lines, xLabel: 'Frequency (Hz)', yLabel, xScale: args.xScale, xRange: xr, yRange: yr,
-      ...(cohShown ? { y2Range: [0, 1] as [number, number], y2Label: 'coherence γ²' } : {}),
+      ...(cohShown ? { y2Range, y2Label: 'coherence γ²' } : {}),
     };
   }
 
