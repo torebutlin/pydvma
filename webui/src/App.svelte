@@ -144,8 +144,52 @@
   // only one primary plot is mounted at a time (the branches are mutually
   // exclusive), and it is re-bound as the view switches.
   let plotRef = $state<PlotSurface | undefined>();
-  /** Active plot's root <svg>, or undefined when no plot is mounted. */
-  const getSvg = (): SVGSVGElement | undefined => plotRef?.getSvgElement();
+  /**
+   * Active plot's root <svg>, or undefined when no plot is mounted.
+   *
+   * SONO EXPORT (linked-gap fix): the sonogram's heat map is a sibling
+   * `<canvas>` mounted BEHIND the axis SVG, so it is invisible to the
+   * SVG-string figure exporter (ExportCard serialises this element's
+   * `outerHTML` — a blank axes-only figure otherwise). For the sono view we
+   * return a CLONE of the live SVG with the heat composited in as a data-URL
+   * `<image>` sized to the inner data rect (margins L58/T16/R18/B42, matching
+   * PlotSurface), inserted just after the (transparent) plot-bg so the
+   * frame/ticks still draw on top. The on-screen SVG is untouched — only the
+   * exported serialisation carries the image — and the image has NO data-role,
+   * so figure.ts's dark/transparent recolouring leaves it alone. Non-sono views
+   * return the live SVG unchanged. `toDataURL` is same-origin (the heat is
+   * drawn from computed data, never a cross-origin image), so it never taints.
+   */
+  const getSvg = (): SVGSVGElement | undefined => {
+    const svg = plotRef?.getSvgElement();
+    if (!svg || view !== 'sono' || !sonoCanvas || !sono) return svg;
+    const vb = (svg.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
+    const W = vb[2], H = vb[3];
+    if (!(W > 0) || !(H > 0)) return svg;
+    let href: string;
+    try {
+      href = sonoCanvas.toDataURL('image/png');
+    } catch {
+      return svg; // unexpectedly tainted / empty — export axes only
+    }
+    const ML = 58, MT = 16, MR = 18, MB = 42;
+    const XLINK = 'http://www.w3.org/1999/xlink';
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute('xmlns:xlink', XLINK);
+    const img = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    img.setAttribute('x', String(ML));
+    img.setAttribute('y', String(MT));
+    img.setAttribute('width', String(Math.max(0, W - ML - MR)));
+    img.setAttribute('height', String(Math.max(0, H - MT - MB)));
+    img.setAttribute('preserveAspectRatio', 'none');
+    img.setAttribute('image-rendering', 'pixelated');
+    img.setAttribute('href', href); // SVG2 (browser raster path)
+    img.setAttributeNS(XLINK, 'xlink:href', href); // SVG1.1 (svg2pdf → PDF)
+    const bg = clone.querySelector('[data-role="plot-bg"]');
+    if (bg?.parentNode) bg.parentNode.insertBefore(img, bg.nextSibling);
+    else clone.insertBefore(img, clone.firstChild);
+    return clone;
+  };
 
   // `?narrow=1` forces the narrow layout; `?fixture=1` auto-loads the
   // 2-channel impulse; `?fixture=3ch` auto-loads the 3-channel fixture

@@ -77,6 +77,15 @@
      * background TRANSPARENT and omit gridlines, so a heat layer (the
      * sonogram `<canvas>`) mounted BEHIND this surface shows through. Without
      * this the opaque `plot-bg` rect hides the canvas entirely.
+     *
+     * NB the inline `fill="transparent"` on the plot-bg rect is not sufficient
+     * on its own: the scoped `.plot-bg { fill: var(--surface) }` rule beats a
+     * presentation attribute (CSS > presentation attrs), so on screen the rect
+     * would render OPAQUE and hide the heat. Overlay mode therefore also adds
+     * the `overlay-bg` class, whose higher-specificity `.plot-bg.overlay-bg`
+     * rule forces the on-screen fill transparent. (This was the longstanding
+     * white-sonogram bug: the canvas painted correctly but sat beneath an
+     * opaque surface.)
      */
     overlay?: boolean;
     /**
@@ -406,7 +415,7 @@
       role="img"
       aria-label={model.yLabel + ' vs ' + model.xLabel}
     >
-      <rect data-role="plot-bg" class="plot-bg" x="0" y="0" width={width} height={height}
+      <rect data-role="plot-bg" class="plot-bg" class:overlay-bg={overlay} x="0" y="0" width={width} height={height}
         fill={overlay ? 'transparent' : CHROME.bg} />
       <defs>
         <clipPath id={clipId}><rect x="0" y="0" width={pw} height={ph} /></clipPath>
@@ -518,6 +527,18 @@
   }
   .plot-bg {
     fill: var(--surface, #ffffff);
+  }
+  /* Overlay mode (sonogram): the heat <canvas> is mounted BEHIND this SVG, so
+     the background rect MUST be transparent ON SCREEN for the heat to show
+     through. The inline fill="transparent" alone is NOT enough — a scoped CSS
+     rule beats a presentation attribute (CSS > presentation attrs), so the
+     `.plot-bg` rule above renders the rect opaque `--surface` and hides the heat
+     entirely. This higher-specificity rule (matches only when `overlay`) is what
+     actually makes the overlay transparent — without it the sonogram is a blank
+     white/dark plot (the longstanding white-sonogram bug). The serialised export
+     SVG still carries the inline fill="transparent", so decision A is unaffected. */
+  .plot-bg.overlay-bg {
+    fill: transparent;
   }
   .frame {
     fill: none;
