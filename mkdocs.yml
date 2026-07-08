@@ -113,7 +113,6 @@ nav:
       - Plotting: api/plotting.md
       - Modal Analysis: api/modal.md
       - File Operations: api/file.md
-      - GUI: api/gui.md
   - Examples:
       - Basic Examples: examples/basic.md
       - Advanced Examples: examples/advanced.md

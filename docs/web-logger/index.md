@@ -2,9 +2,9 @@
 
 The **web logger** is pydvma's browser-based interface for acquiring,
 monitoring, analysing and exporting dynamics-and-vibration data. It is
-the recommended way to use pydvma interactively, and is replacing the
-desktop [Qt logger](migration.md) (which stays available, frozen, until
-the replacement is complete).
+the interactive way to use pydvma, and has **replaced** the earlier
+desktop [Qt logger](migration.md), which was removed once the web logger
+reached full parity.
 
 It is **one interface that runs in three modes**, so the same tool
 covers no-install analysis at home, soundcard measurements from any

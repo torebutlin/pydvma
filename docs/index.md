@@ -23,8 +23,8 @@ At present the library has basic functionality for:
 - Basic modal analysis tools (mode-fitting, damping estimation)
 - Saving and plotting data
 - Export to Matlab and CSV
-- Interactive tools for standard acquisition and analysis
-- Oscilloscope view of input signals
+- Interactive browser tools for standard acquisition and analysis
+- Live oscilloscope and FFT monitoring of input signals
 
 ## Two interfaces, one analysis core
 
@@ -37,9 +37,9 @@ pydvma has two front-ends over the same analysis engine:
 - the **Python interface** — `import pydvma as dvma` in a notebook or
   script, for full customisation and scripted workflows.
 
-A desktop **Qt logger** GUI is also still available, but it is now
-**legacy** (bug-fixes only) as the web logger replaces it — see
-[From the Qt logger](web-logger/migration.md).
+The earlier desktop **Qt logger** GUI has been **removed** now that the
+web logger has full parity (its last version is the `qt-final` git tag) —
+see [From the Qt logger](web-logger/migration.md).
 
 ## The web logger — no install for two of the three modes
 
@@ -85,8 +85,9 @@ freq = dvma.calculate_fft(dataset.time_data_list[0])
 ```
 
 Install the Python interface with `pip install pydvma` (analysis-only
-core; add `[qt,soundcard,ni]` for the desktop logger and hardware
-backends). See [Installation](getting-started/installation.md) and the
+core; add `[soundcard,ni]` for the hardware backends, or `[serve]` for
+the browser app's local bridge). See
+[Installation](getting-started/installation.md) and the
 [Python interface guides](user-guide/acquisition.md).
 
 ## Documentation Overview

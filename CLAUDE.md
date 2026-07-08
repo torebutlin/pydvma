@@ -3,7 +3,7 @@
 ## Current focus (update when it changes)
 
 As of 2026-07-08: **the web logger has full functional parity with the
-Qt GUI, plus substantial new capability.** Six orchestrated
+(now-removed) Qt GUI, plus substantial new capability.** Six orchestrated
 feedback/build rounds (2026-07-05..08) delivered the whole
 `dev/plans/2026-07-07-full-gui-replacement-plan.md` roadmap. Master is
 pushed (b54b5a4); CI green; live at torebutlin.github.io/pydvma/app/
@@ -58,8 +58,15 @@ PHASE (glue must return complex Pxy), browser pretrig threshold
 control, log-y CWT heat rendering, CSD pair auto-enable on hidden
 channel, orphan-fit browser e2e (task_c158292c), PWA manifest
 (installability — manifest-first, offline later). (3) October
-readiness: labsheets live in the OTHER repo (parked). (4) **Qt
-teardown ONLY after Tore's explicit confirmation.** Feedback trail:
+readiness: labsheets live in the OTHER repo (parked). (4) **The Qt GUI
+was REMOVED** (2026-07-08, Tore's final confirmation after the round-6
+parity audit closed): `pydvma/gui.py` + the orphan `oscilloscope.py` /
+`logger_tester.py` and the Qt-only tests are deleted, the `[qt]` extra
+is dropped from `pyproject.toml`, and `dvma.Logger` / `dvma.Oscilloscope`
+now raise an actionable tombstone (see `pydvma/__init__.py`
+`_REMOVED_NAMES`) pointing at the web logger. The last version that
+shipped the Qt GUI is the **`qt-final`** git tag — revert there if the
+desktop logger is ever needed. Feedback trail:
 dev/2026-07-08-round6-feedback.md and earlier; full history in git.
 
 

@@ -1,6 +1,5 @@
 from .options import MySettings, Output_Signal_Settings ,set_plot_colours
 from .file import load_data, save_data, save_fig, export_to_matlab_jwlogger, export_to_matlab, export_to_csv, import_from_matlab_jwlogger
-# from .oscilloscope import Oscilloscope
 from .acquisition import log_data, output_signal, signal_generator, stream_snapshot
 from .datastructure import (
     DataSet,
@@ -30,15 +29,12 @@ from .modal import modal_fit_single_channel, modal_fit_all_channels
 # faulthandler.enable()
 
 
-# `pydvma.gui` pulls qtpy + pyqtgraph and `pydvma.plotting` pulls
-# matplotlib.pyplot — together ~0.7 s at import time on a Mac (plotting
-# is Qt-free since the web-UI Stage 1 work). CLI / scripted / test
-# users never touch Logger, Oscilloscope, or PlotData, so defer those
-# names to first attribute access via the Python 3.7+ module-level
-# __getattr__ hook.
+# `pydvma.plotting` pulls matplotlib.pyplot (~0.3 s at import time on a
+# Mac; plotting is Qt-free since the web-UI Stage 1 work). CLI /
+# scripted / test users rarely touch PlotData, so defer that name to
+# first attribute access via the Python 3.7+ module-level __getattr__
+# hook.
 _LAZY_NAMES = {
-    'Logger': '.gui',
-    'Oscilloscope': '.gui',
     'PlotData': '.plotting',
     # `serve` is the whole submodule (the local acquisition bridge),
     # not a class inside one — deferred so `import pydvma` never pulls
@@ -49,12 +45,32 @@ _LAZY_NAMES = {
 # Friendly-error hints for lazy modules whose optional deps may be
 # missing: {module: (human-readable package list, extras name)}.
 _LAZY_EXTRAS = {
-    '.gui': ('qtpy, PyQt5, pyqtgraph', 'qt'),
     '.serve': ('websockets', 'serve'),
 }
 
+# Names retired when the Qt logger was removed after the web logger
+# reached full parity (the last version with Qt is the `qt-final` git
+# tag). They stay in the package namespace only as *tombstones*: an
+# import of `pydvma` is unaffected (clean, Qt-free), but a returning
+# labsheet or notebook doing `dvma.Logger(settings)` gets an
+# actionable error naming the replacement rather than a bare
+# "module 'pydvma' has no attribute 'Logger'". Access raises
+# AttributeError (the natural "this attribute is gone" signal, so
+# `hasattr(dvma, 'Logger')` correctly reports False).
+_REMOVED_NAMES = ('Logger', 'Oscilloscope')
+
+_REMOVED_MESSAGE = (
+    "'pydvma.{name}' was removed. The Qt logger was retired after the "
+    "web logger reached full parity. Use the web logger:\n"
+    "    pip install pydvma[serve] && pydvma-serve --open\n"
+    "(docs: https://torebutlin.github.io/pydvma/web-logger/).\n"
+    "To run the old Qt GUI, check out the 'qt-final' git tag."
+)
+
 
 def __getattr__(name):
+    if name in _REMOVED_NAMES:
+        raise AttributeError(_REMOVED_MESSAGE.format(name=name))
     mod_name = _LAZY_NAMES.get(name)
     if mod_name is not None:
         import importlib

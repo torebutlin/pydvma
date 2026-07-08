@@ -100,10 +100,11 @@ dataset.calculate_tf_averaged(ch_in=0, window='hann')     # -> 1-item tf_data_li
 
 ### 4. Plot
 
-The built-in plotters open one interactive figure per data type and
+The built-in plotters open one matplotlib figure per data type and
 apply `channel_cal_factors` automatically (so they read in engineering
-units when you set `channel_sensitivities`). They need the GUI extras
-(`qtpy` + `PyQt5`) installed:
+units when you set `channel_sensitivities`). They use matplotlib (a core
+dependency), so no extras are required — an interactive backend such as
+`%matplotlib widget` gives you pan/zoom in a notebook:
 
 ```python
 dataset.plot_time_data()
@@ -112,8 +113,8 @@ dataset.plot_tf_data()     # magnitude + phase + coherence; needs calculate_tf_s
 ```
 
 Cross-spectra (PSD/CSD) have **no** built-in plot — read the arrays off
-the `CrossSpecData` and plot them yourself (this also works without the
-GUI extras). The diagonal of `Pxy` is the PSD, the off-diagonal the CSD:
+the `CrossSpecData` and plot them yourself. The diagonal of `Pxy` is the
+PSD, the off-diagonal the CSD:
 
 ```python
 csd  = dataset.cross_spec_data_list[0]

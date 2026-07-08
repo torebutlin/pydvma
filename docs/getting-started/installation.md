@@ -12,7 +12,7 @@ them need **no installation at all**:
 | **Script analysis in a notebook**, no install | Open the **[JupyterLite site](https://torebutlin.github.io/pydvma/lite/)** and `import pydvma` | **None** |
 | **Acquire from real hardware in the browser** (soundcard or **NI-DAQ**) | Run the **local bridge**: `pydvma-serve` | `pip install "pydvma[serve]"` (`[ni]` for NI) |
 | **Work in Python / Jupyter on your own machine** | `import pydvma as dvma` | `pip install pydvma` (add extras below) |
-| **Run the desktop Qt logger** (legacy) | `dvma.Logger(...)` | `pip install "pydvma[qt,soundcard]"` |
+| **Run the old desktop Qt logger** (removed) | See the [`qt-final` git tag](../web-logger/migration.md) | `git checkout qt-final` |
 
 If you only need to analyse data or record from a soundcard, **you can
 stop here** — open the [Pages app](https://torebutlin.github.io/pydvma/app/).
@@ -38,15 +38,15 @@ Follow the installer instructions for your operating system.
 Open the **Anaconda Prompt** (Windows) or terminal (Mac/Linux) and run:
 
 ```bash
-conda install numpy scipy jupyter matplotlib pyqtgraph ipympl ipywidgets jupyterlab
+conda install numpy scipy jupyter matplotlib ipympl ipywidgets jupyterlab
 pip install "pydvma[full]"
 ```
 
-`pydvma[full]` pulls in the GUI (Qt/pyqtgraph) and both acquisition
-backends (`sounddevice` for soundcards, `nidaqmx` for National
-Instruments hardware) — everything you need for lab use. See
-[Installation options](#installation-options) below if you only need
-a subset.
+`pydvma[full]` pulls in both acquisition backends (`sounddevice` for
+soundcards, `nidaqmx` for National Instruments hardware) and the
+`pydvma-serve` bridge for the browser app — everything you need for lab
+use. See [Installation options](#installation-options) below if you only
+need a subset.
 
 ### Option B: Installation in a Dedicated Environment
 
@@ -60,7 +60,7 @@ conda create --name pydvma-env python=3.13
 conda activate pydvma-env
 
 # Install dependencies and pydvma
-conda install numpy scipy jupyter matplotlib pyqtgraph ipympl ipywidgets jupyterlab
+conda install numpy scipy jupyter matplotlib ipympl ipywidgets jupyterlab
 pip install "pydvma[full]"
 ```
 
@@ -70,24 +70,28 @@ pip install "pydvma[full]"
 ## Installation options
 
 pydvma is split into a small analysis-only core plus optional
-"extras" for the GUI and each acquisition backend, so you only pull
-in what you need:
+"extras" for each acquisition backend and the browser-app bridge, so
+you only pull in what you need:
 
 | Extra | Install command | What it adds |
 | ----- | --------------- | ------------ |
 | *(none)* | `pip install pydvma` | Analysis-only core: data structures, FFT/TF/modal analysis, file I/O. No Qt, no hardware drivers — runs anywhere, including in-browser. |
 | `soundcard` | `pip install "pydvma[soundcard]"` | Soundcard acquisition (`sounddevice`). |
 | `ni` | `pip install "pydvma[ni]"` | National Instruments acquisition backend (`nidaqmx`). Windows/Linux only — see below. |
-| `qt` | `pip install "pydvma[qt]"` | The legacy desktop GUI (Logger/Oscilloscope, via `qtpy`/`PyQt5`/`pyqtgraph`/`seaborn`). |
 | `serve` | `pip install "pydvma[serve]"` | The `pydvma-serve` bridge (`websockets` only) — serves the browser app locally and drives real hardware from it. See [Running the browser app locally](#running-the-browser-app-locally-pydvma-serve). |
-| `full` | `pip install "pydvma[full]"` | Everything: `qt` + `soundcard` + `ni` + `serve`. Recommended for a full lab install. |
+| `full` | `pip install "pydvma[full]"` | Everything: `soundcard` + `ni` + `serve`. Recommended for a full lab install. |
+
+!!! note "The `qt` extra was removed"
+    The desktop Qt logger has been retired now that the browser
+    [web logger](../web-logger/index.md) has full parity, so there is no
+    longer a `qt` extra (`pip install "pydvma[qt]"` errors on an unknown
+    extra). The last version that shipped the Qt GUI is the
+    [`qt-final` git tag](../web-logger/migration.md).
 
 Extras combine, so pick what your mode needs — e.g.
 `pip install "pydvma[serve,ni]"` for the browser app driving NI hardware
-through the local bridge, or `pip install "pydvma[qt,soundcard]"` for the
-legacy desktop logger with soundcard capture. The rest of this page uses
-`pydvma[full]` throughout, but swap in whichever extra matches what you
-need.
+through the local bridge. The rest of this page uses `pydvma[full]`
+throughout, but swap in whichever extra matches what you need.
 
 ## Running the browser app locally (`pydvma-serve`)
 
@@ -201,14 +205,6 @@ If no errors occur, you're ready to go!
 **Import Error: No module named 'pydvma'**
 
 Make sure pydvma is installed in the correct Python environment. If using a dedicated environment, ensure you've activated it with `conda activate pydvma-env`.
-
-**Qt Platform Plugin Error**
-
-If you encounter Qt-related errors, make sure the GUI extra is installed:
-
-```bash
-pip install "pydvma[qt]"
-```
 
 **Matplotlib Backend Issues**
 

@@ -4,11 +4,11 @@ This guide will help you get started with the **Python interface** to
 pydvma quickly — scripting acquisition and analysis in a notebook.
 
 !!! tip "Prefer a point-and-click interface?"
-    For interactive work, the **[web logger](../web-logger/index.md)** is
-    now the recommended interface — including a **no-install** browser app
-    at [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/).
-    The desktop **Qt Logger** shown below (`dvma.Logger(...)`) still works
-    but is **legacy** (bug-fixes only) — see
+    For interactive work, use the **[web logger](../web-logger/index.md)** —
+    including a **no-install** browser app at
+    [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/).
+    It replaced the old desktop **Qt Logger**, which has been **removed**
+    (its last version is the `qt-final` git tag) — see
     [From the Qt logger](../web-logger/migration.md).
 
 ## Opening the Template
@@ -45,36 +45,25 @@ settings.stored_time = 2.0  # Duration in seconds
 settings.channels = 2  # Number of channels
 ```
 
-### Launch the Logger
+### Record data
+
+Record straight from Python with `log_data`. For a point-and-click
+interface — live monitoring, view switching, modal fitting — use the
+**[web logger](../web-logger/index.md)** instead; this guide covers the
+scripting path.
 
 ```python
-# Create and launch the logger GUI
-logger = dvma.Logger(settings)
+# Record a dataset using the settings above
+dataset = dvma.log_data(settings, test_name="recording_01")
 ```
 
-This opens an interactive GUI where you can:
-
-- Configure acquisition parameters
-- Preview signals in real-time
-- Record time-series data
-- Perform FFT analysis
-- Calculate transfer functions
-- View sonograms
-- Export data
+`dataset` is a `DataSet` you can analyse, plot, save, and export.
 
 ## Your First Measurement
 
-### Using the GUI
-
-1. **Set up your hardware** - Connect your sensors/microphones
-2. **Configure channels** - Use the channel settings in the GUI
-3. **Preview signals** - Check signal levels before recording
-4. **Record data** - Click the record button
-5. **Analyze** - Switch between Time, FFT, and TF views
-
 ### Programmatic Recording
 
-You can also record data programmatically:
+Record data programmatically:
 
 ```python
 # Record data

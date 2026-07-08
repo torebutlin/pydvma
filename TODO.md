@@ -1,180 +1,117 @@
 # pydvma — TODO / Backlog
 
-Backlog of items to review, fix, add or investigate. Grouped by topic below; see "Recommended sequencing" for the agreed order of work.
+The big pre-web-UI backlog is **done**. Across 2026-06 → 2026-07 the
+package gained a real test suite, a vectorised analysis core, the
+`nidaqmx` NI migration (USB-6003 / USB-6212 / cDAQ-9174, hardware-
+verified), and — the headline — a complete **browser web logger**
+(`webui/` + `pydvma-serve`) that reached full parity with the old Qt
+GUI, which has now been **removed** (last Qt version: the `qt-final`
+git tag). The decision trail and per-round detail live in `dev/` (see
+`dev/plans/2026-07-07-full-gui-replacement-plan.md` and the
+`dev/2026-07-0x-round*-feedback.md` series) and in the git history;
+this file now tracks only what is still open.
 
-## Recommended sequencing
+## Current backlog — web logger follow-ups (round 7)
 
-Ordering is by dependency and hardware availability, not by priority alone. Mac = soundcard only; NI hardware (cDAQ, DAQ) requires a Windows or Linux machine because the NI-DAQmx driver does not run on macOS.
+Flagged during the round-5/6 hands-on rounds; pick up alongside Tore's
+next hands-on pass:
 
-### Phase A — Mac-only, foundation (start here)
+- **CSD phase** — the glue must return the complex `Pxy` so the CSD
+  pair view can show phase (currently magnitude only).
+- **Browser pretrigger threshold control** — expose the trigger
+  threshold in the browser Acquire UI (the bridge already has it).
+- **Log-y heat rendering for the CWT sonogram.**
+- **CSD pair auto-enable on a hidden channel** — selecting a CSD pair
+  should re-enable a channel that is currently hidden.
+- **Orphan-fit browser e2e** — Playwright cover for the round-6
+  orphan-TF fit crash (in progress, task_c158292c).
+- **PWA manifest** — installability (manifest first; offline later).
+- **Narrow-band CWT damping memory optimisation.**
 
-1. **Structural pre-review (light, time-boxed, ~1 day)** — quick pass over the package before deeper work. Looking for: dead code (e.g. is `gui_tk.py` still needed?), glaring bugs, obvious structural issues that would affect test design or the speedup, copy-pasted patterns that should be helpers. Not a deep review. Outcome: a handful of high-value fixes/deletions made directly, plus notes fed into this `TODO.md` for the final pass in Phase D. Stop as soon as you catch yourself wanting to redesign something — that belongs in Phase D.
-   - **First pass complete (branch `pre-review`).** Removed three dead files (`pydvma/gui_tk.py`, `pydvma/gui_tk_old.py`, `pydvma/develop_sonogram_damping function.py`) and an orphan commented import in `__init__.py`. Normalised `== None` / `!= None` to `is None` / `is not None` across 8 files (33 occurrences). Further findings from the pass have been added to the sections below (bare `except:` clauses, `streams.py` singletons, centralised hardware imports, `multiply_by_power_of_iw` initialisation).
-2. **Minimal pytest scaffolding** — done. `tests/test_analysis.py` adds 20 golden tests covering `calculate_fft`, `calculate_cross_spectrum_matrix`, and `calculate_tf` on synthetic signals (pure sines, white noise, known FIR filters). Cross-spectrum tests pin output to byte-equivalence with direct `scipy.signal.csd` / `scipy.signal.welch` / `scipy.signal.coherence` reference calls. Caught and fixed an `UnboundLocalError` in `calculate_fft` when `time_range` was a raw ndarray (the docstring claimed support but the code lacked the `else` branch).
-3. **TF / PSD / CSD speedup** in `calculate_cross_spectrum_matrix` — done. Replaced the `O(N_chan^2)` `scipy.signal.csd` + `scipy.signal.coherence` loop with a single vectorised pass: detrend + window + rfft once across all channels, then form the full cross-spectrum tensor via `einsum('isf,jsf->ijf', X.conj(), X) / N_seg`. Coherence is derived from the same tensor. Output is byte-equivalent to scipy reference to within FFT round-off (the layout had to put the FFT axis last and contiguous, otherwise numpy's pairwise summation block order subtly changed the residual at the DC bin and blew up coherence-at-DC). Benchmarked speedups on `(N_chans × N_samples × N_frames)` shapes: `(2 × 10k × 4)` 2.1→0.3 ms (6.6×), `(4 × 10k × 8)` 7.4→0.8 ms (9.4×), `(8 × 50k × 16)` 161→13 ms (12×), `(16 × 50k × 16)` 640→36 ms (18×). All 20 golden tests + existing 51 hardware/etc tests still pass.
-4. **Rolling code review + rolling docs audit** — during steps 2–3, capture any issues noticed and fix the corresponding `docs/` pages for files you touch. Avoid a big up-front review.
-5. **nidaqmx prep (desk work on Mac)** — read the `nidaqmx-python` API, sketch the shape of a migrated `Recorder_NI`, and build a mocked `streams.py` test harness that doesn't require real hardware. The goal is to arrive at the Windows machine with a ready-to-drop-in plan.
-6. **Bug-fix batch (added 2026-06-10)** — done same day: all 20 High/Medium/Low items in "Confirmed bugs — code review (June 2026)" fixed with regression tests (see that section's header note). ~~Remaining tail: hardware-verify the `AutoRegN` fix in the next Phase C session.~~ **Verified 2026-07-07** on all three devices (`chunk_size=2048` captures cleanly; see `dev/plans/2026-07-07-waveC-windows-checklist.md`).
+## Current backlog — hands-on & hardware
 
-### Phase B — Mac-only, GUI & analysis (after Phase A)
+- **Tore hands-on round 7** — review the newest surface: shared-pole
+  fitting, Best-match / x(iω) scaling group, `/config` prefill,
+  sonogram single-targeting, brush v2, dark mode.
+- **PC multi-channel + NI recheck** (pending since round 6) — on the
+  Windows box, eyeball the 9260 output-rail clamp and the DSA
+  coerced-fs notes on Setup/Acquire, and re-verify multi-channel NI
+  capture end-to-end.
+- **IEPE auto-detect via bias-voltage probe** — enable 2 mA
+  excitation and read the DC bias before AC coupling to classify what
+  is connected (~24 V open / 8–14 V IEPE sensor / ~0 V low-Z) so
+  `iepe_excit_current_A='auto'` can configure each 9234 channel.
+  Sensitivity still has to be entered manually.
 
-Do in this order:
+## Housekeeping (smaller open items)
 
-6. **GUI framework evaluation** — **decided 2026-07-01**: staged migration to a unified web UI (pyodide analysis / Web Audio soundcard / local NI bridge); Qt GUI frozen bugfix-only, no PySide6 migration. Decision record + staged plan: `dev/2026-07-01-web-ui-design.md`. Items 7–10 below fold into that work. Stages 0, 0.5 and 1 landed 2026-07-02 (packaging split, .dvma format, JupyterLite site + CI deploy); see `dev/plans/2026-07-02-web-ui-stages-0-1.md`. **Stage 2 design + Plan 1 (the no-install browser _analysis_ app) landed 2026-07-04** in `webui/` — SVG plot core, pydvma-in-pyodide compute worker, all analysis views (FFT/PSD/CSD + averaging, TF + coherence, sonogram, mag/phase/Bode/real/imag/Nyquist), draggable legend + tri-state lines, zoom/pan, `.dvma`/legacy/`.mat` I/O, working directory, autosave, PNG/PDF figure export, and CI + Pages deploy to `/app/` (inactive until pushed). Design spec `dev/2026-07-03-stage2-gui-design.md`, plan `dev/plans/2026-07-03-stage2-plan1-analysis-app.md`, **handoff `dev/2026-07-04-stage2-plan1-handoff.md`**. **Plan 1 hands-on (2026-07-05):** Tore reviewed the running app — 5 shipped-feature bugs fixed (sonogram render, tray sparklines, whole-row tri-state, legend position + drag), a layout-polish pass (top-bar Save Figure, no-scroll context bar, action-button reflow, navigable Setup/Acquire), and an **analysis-card redesign landed** (`dev/plans/2026-07-05-analysis-card-redesign.md`, tasks R1–R5): per-set analysis settings + a Dataset dropdown that follows the tray ("–mixed–" across sets), the ΔF resolution control as slider+editable-textbox, log/lin axis toggles (x freq lin↔log, y dB↔linear magnitude), TF **out/in** channel labelling (fixes the multi-channel mislabel/drop bug), and per-line (channel) relabel. Triage: `dev/2026-07-05-hands-on-feedback.md`. **Still not pushed.** **Plan 2 backlog (remaining):** acquisition (Setup/Acquire, Log button + OUT badge, pretrigger), monitor/oscilloscope + a "Live" tab (stacked traces, pop-out), header/tab levels, Fit stage (modal fitting + reconstruction), sonogram damping-fit interactivity, calibration dialog + `channel_sensitivities` write-through, Best Match / x(iω) scaling, browser Matlab/CSV export, CSD off-diagonals, app-wide dark theme, a Figures tab / export preview (+ figure-export font fidelity), and ~~persisting per-set settings + channel labels into `.dvma`~~ (done — `DvmaItemUi` additive manifest key, backwards-compatible). Plan 3: `pydvma serve` NI bridge + PWA.
-7. **Plotting robustness & logic** — may fold into a backend migration if (6) recommends one.
-8. **Legend relabelling.**
-9. **GUI calibration flow.**
-10. **Improved import / export.**
+- **Finish the docs accuracy audit** — the Qt pages were corrected
+  when the GUI was removed; the rest of `docs/` still deserves a
+  page-by-page cross-check against real behaviour (several pages were
+  originally Claude-generated).
+- **Test-suite tail** — beyond the bug-pin cases already landed:
+  broader `modal.py` multi-mode synthetic fits, `datastructure.py`
+  save/load and list ops, and `file.py` `.npy` / CSV / MATLAB import
+  round-trips.
+- **Import-time / structure cleanup (remainder)** — cache lazy imports
+  in `pydvma/__init__.py.__getattr__` (`globals()[name] = ...`);
+  silence the `DeprecationWarning: __package__ != __spec__.parent`
+  from `_ni_device_specs.py:227`; fix the copy-paste docstrings on
+  `DataSet.calculate_tf_set` / `calculate_cross_spectrum_matrix_set` /
+  `calculate_tf_averaged` (all three still say "Calls calculate_fft").
+- **`streams.py` singletons** — the module-level recorder globals
+  (`REC` / `REC_SC` / `REC_NI` / `REC_MOCK`) and `start_stream`
+  re-`__init__` are fragile; pass recorder instances explicitly. (The
+  mocked harness now guards the behaviour.)
+- **Centralise optional hardware imports** — a small `_hardware.py`
+  that does the `sounddevice` / `nidaqmx` try-imports once and exposes
+  flags + handles, instead of the scattered try/except in `streams.py`
+  / `options.py`.
+- **Better output-signal control** — offset, ramp, and save/reload of
+  signal definitions (the web logger already covers type / amplitude /
+  band / sweep).
+- **Repo-root cleanup** — the six tracked docs-about-docs files
+  (`DOCS_SETUP_SUMMARY.md`, `MKDOCSTRINGS_INTEGRATION.md`,
+  `DOCUMENTATION.md`, `README_DOCS.md`, `.mkdocs_quickref.md`,
+  `CODE_STRUCTURE.md`) and the personal `logger.yml` conda export —
+  fold anything still true into `docs/` or `CLAUDE.md` and delete the
+  rest.
 
-### Phase C — Windows or Linux with NI hardware (intermittent access)
+## Deferred / low-urgency (no blockers)
 
-**Phase C complete as of 2026-07-07.** Items 11–14 all landed across
-earlier sessions and the 2026-07-07 hardware session verified the
-whole package on the real lab kit (USB-6003, USB-6212, cDAQ-9174 with
-9234+9260; results in `dev/plans/2026-07-07-waveC-windows-checklist.md`).
-That session also fixed five hardware-surfaced defects: pretrigger
-backlog drain under host load, DSA fs-coercion adoption into
-`settings.fs`, device-aware terminal-config fallback, output
-rate/voltage preflights (+ `ai_vmax`/`ao_vmax` capabilities), and a
-stale re-trigger between captures.
+- **Mode-shape plotter, MAC helper, ODS plotter** — teaching-useful,
+  not urgent. Starter recipes in `dev/mode-shape-sketches.md`.
+- **Large-data / streaming acquisition + big-file storage** —
+  `scipy.fft` `workers=-1`, optional `pyfftw`, and a chunked/streaming
+  cross-spectrum path for recordings that don't fit in RAM; the
+  `.dvma` manifest already reserves a `storage` field as the versioned
+  hook for an HDF5/Parquet backend. Pick up when a real "too big"
+  workload appears.
+- **BLAS thread-pinning for small-matrix workloads** — mostly
+  user-side; scope `threadpoolctl.threadpool_limits(1)` around the
+  modal-fitting loops if batch fitting ever shows jitter. Diagnosis in
+  `dev/python_blas_threading_note.md`.
+- **Review `multiply_by_power_of_iw` initialisation** (`analysis.py`
+  ~63–91) — correct today but fragile if `channel_list` semantics
+  change.
+- **ML plugin as a separate repo** — keep the core dependency-light;
+  the natural open-core seam.
+- **Sustainability** — an institutional supporter tier (needs
+  Cambridge Enterprise involvement before any payment route) and a
+  **JOSS paper + citation** request. Decided direction (2026-07-03):
+  the tool stays fully free and ungated.
 
-11. ~~**nidaqmx migration of `Recorder_NI`**~~ — done (nidaqmx is the sole NI backend; PyDAQmx removed).
-12. ~~**NI cDAQ support**~~ — done (chassis-collapsed enumeration, DSA/IEPE, module-spanning channels).
-13. ~~**Trigger & logging audit**~~ — done across soundcard and NI paths; pretrigger positioning now asserted on hardware end-to-end (incl. through the `pydvma serve` bridge).
-14. ~~**Turn off ±1 scaling for the NI path — use `VmaxNI`**~~ — done; NI data is stored in volts, `VmaxNI` sets the AI range only (verified on the ao0→ai0 loopbacks: stored numbers identical at VmaxNI 10 vs 2, saturation at the rail).
+## Parked (other repo)
 
-Because Windows access is intermittent, design each hardware session to be pauseable: small, well-specified tasks with tests runnable on Mac via mocks between sessions.
-
-### Phase D — Deferred / low-urgency (any time, no blockers)
-
-- **Mode-shape plotter, MAC helper, ODS helper** — useful for teaching, not urgent. Starter recipes in `dev/mode-shape-sketches.md`.
-- **CWT time-frequency analysis.**
-- **Full test-suite expansion** beyond `analysis.py` (i.e. `modal.py`, `file.py`, `datastructure.py`, mocked `streams.py`).
-- **Final formal code review pass** — once the big refactors have landed and the dust has settled.
-- **ML plugin as a separate repo** — isolated, can happen any time.
+- **Teaching notebooks / labsheets for the `.dvma` era** — the 4C6
+  labsheets live in a separate repository; update the "you should have
+  a `*.npy` file" wording there before October.
 
 ---
 
-## Confirmed bugs — code review (June 2026)
-
-Found in the structured review on 2026-06-09/10 (parallel per-module reviews, then every High/Medium claim manually verified against master — line numbers checked, the two headline maths claims confirmed empirically). Mac test suite was green (115 passed / 4 hardware-skipped) at review time: none of these were covered by existing tests.
-
-**All 20 items fixed 2026-06-10** (commits `b9fac21`…`27e2608`), each TDD-style with a regression test watched fail first; suite now 157 passed / 4 hardware-skipped. New test files: `test_datastructure.py`, `test_modal.py`, `test_plotting.py` (headless Agg), `test_gui_logic.py` (Qt offscreen), `test_file.py`, plus additions to `test_analysis.py` and `test_acquisition_guards.py`. Line numbers below refer to pre-fix master. One caveat: the `AutoRegN` fix is implemented and unit-tested but its DAQmx-layer behaviour still needs confirming on real NI hardware — see the item note. (**Confirmed 2026-07-07**: non-standard `chunk_size=2048` captures cleanly on all three devices.)
-
-### High
-
-- [x] **`calculate_tf_averaged` returns the complex-conjugate TF (negated phase)** — `analysis.py:490` uses `Pxy_av[ch_out, ch_in, :]`; the stored convention is `Pxy[i, j] = conj(X_i)·X_j`, so this equals `conj(H1)`. `calculate_tf` (line 406) is correct (`Pxy[ch_in, ch_out]`). Confirmed empirically with a known delay system: magnitude right, phase exactly negated. Affects every hammer-test ensemble workflow and anything phase-sensitive downstream (modal fits, Nyquist plots). Fix: swap to `Pxy_av[ch_in, ch_out, :]`.
-- [x] **`TimeDataList.set_calibration_factor` / `FreqDataList.set_calibration_factor` always crash** — `datastructure.py:445` and `:474` guard with `self[n_set].tf_data` (copy-paste from the `TfDataList` version); `TimeData`/`FreqData` have no `tf_data`, so every valid call raises `AttributeError`. Confirmed empirically.
-- [x] **`DataSet.remove_data_item_by_index('ModalData', ...)` deletes from the wrong list** — `datastructure.py:195` does `del self.tf_data_list[i]` in the ModalData branch: silently deletes TF data and leaves the modal list untouched.
-- [x] **GUI still assumes ±1 normalised data after the volts refactor (bites NI users)** — four stragglers in `gui.py`: (1) output amplitude validator `QDoubleValidator(0.0, 1.0, 5)` at `:938` plus the `'Amplitude (0-1):'` label at `:969`; (2) output guard `np.abs(y) > 1` at `:1235` blocks legitimate NI outputs > 1 V; (3) clipping warnings at `:1279`/`:1290` compare against raw `0.95` — `acquisition.py:256` was correctly updated to `0.95 * settings.input_vmax()` but this duplicated GUI check wasn't; (4) `set_ylim([-1, 1])` at `:1313`/`:1349` pushes ±5 V NI data off-screen after every capture. Fix all four against `settings.input_vmax()` / `output_vmax()`.
-- [x] **`reconstruct_transfer_function_global` permanently corrupts the stored modal matrix** — `modal.py:356`: `xn = modal_data.M[n_row,:]` is a view, so `xn[2+2*N_tfs:] = 0` zeroes the residual columns of `M` in place on first call. Related aliasing: `modal.py:342-343`/`:359-360` mutate `modal_data.settings.channels` through a reference (no copy), and `ModalData.__init__` (`datastructure.py:784`) sets `settings.channels = 0` on the caller's settings object. Fix: copy the row (`.copy()`) and `copy.copy` the settings.
-
-### Medium
-
-- [x] **`ModalData.add_mode`/`delete_mode` set `channels` to the number of modes** — `datastructure.py:808` (`len(sort_i)` = number of rows = modes) and `:820`; correct value is `int((M.shape[1]-2)/4)` per `modal.unpack_matrix`. Also `delete_mode` (`:824-827`) rebuilds `fn/zn/an/pn` with raw column slices, which is wrong for multi-channel fits (`an` should be `M[:, 2:2+N]`, `pn` should be `M[:, 2+N:2+2N]`) — use `unpack_matrix` as `add_mode` does.
-- [x] **NI callback cadence vs read size mismatch (`AutoRegN`)** — `streams.py:717-722` picks `AutoRegN` as the largest of {10, 100, 1000} ≤ `chunk_size`, but each callback (`:641-645`) reads a full `chunk_size`. For `chunk_size` ∉ {10, 100, 1000} (e.g. 500, 2048, 10000) events fire faster than reads consume them → unbounded event backlog, blocking reads, broken chunk timing. Separately, `chunk_size < 10` raises bare `IndexError` at `:722`. Fix: register with `AutoRegN = chunk_size` (or validate `chunk_size` on the NI path). **Fixed via `streams._ni_callback_interval` (cadence == read size, validated ≥ 1), but verify on real NI hardware in the next Phase C session** — run `tests/test_acquisition_hardware.py` plus a capture with a non-{10,100,1000} `chunk_size` (e.g. 2048) per device; static analysis + unit tests only so far.
-- [x] **`PlotData.update(channels='all')` locks to the first set's channel count** — `plotting.py:275-276` reassigns the `channels` parameter inside the per-set loop, so set 0's `range(N_chans)` is reused for every later set; sets with more channels get the extras silently dimmed. Evaluate the sentinel per set.
-- [x] **`export_to_matlab_jwlogger` TF branch tests the wrong array** — `file.py:393`: `zero_test = freq_data_all[:,counter] == 0` should be `tf_data_all`; raises `TypeError` when the dataset has TF but no FFT data (`freq_data_all` is the int `0`), and indexes FFT columns by the TF counter otherwise.
-- [x] **`freq_max2` never applies (missing call parens)** — `gui.py:2604` ends with `self.freq_max` (no `()`), so the mode-fit panel's fmax box updates state but never refreshes; `freq_min2` (`:2599`) is correct.
-- [x] **`self.data_typye` typo crashes empty-list delete** — `gui.py:2161` and `:2177`: attribute never assigned anywhere → `AttributeError` (swallowed by Qt) when clicking delete with no data. Use the in-scope `data_type` / current combo text.
-- [x] **Embedded Oscilloscope replaces the Logger's soundcard recorder** — `gui.py:1218` → `Oscilloscope.__init__` (`gui.py:2749`) calls `streams.start_stream` unconditionally; the soundcard path always constructs a fresh `Recorder` (`streams.py:173`), so the Logger's `self.rec` goes stale (the NI path is protected by the task-reuse signature). Share the live recorder when `flag_standalone=False`, or refresh `self.rec = streams.REC` after the osc closes.
-- [x] **`MySettings` output-device fallback can raise `IndexError`** — `options.py:231-232`: inside the `except` handler, `np.where(['output' in names ...])[0][0]` is unguarded; if no enumerated device name contains `'output'` (typical Mac input-only setups when `sd.default` is unavailable), constructing `MySettings` crashes. Guard for empty and fall back to `1`.
-
-### Low
-
-- [x] **Oscilloscope auto-scale divide-by-zero on a constant channel** — `gui.py:2930`/`:2937`: `scale_factor = np.max(np.abs(...))*2` is 0 for an all-zero buffer right after stream start (multi-channel auto-scale) → NaN/inf fed to pyqtgraph. Clamp with a small floor.
-- [x] **Coherence log-plot zero-handling is dead** — `plotting.py:349-352` builds zero-safe dB values, then `:353` unconditionally overwrites with plain `20*log10(|yclin|)`. Delete line 353.
-- [x] **`calculate_sonogram` propagates `id_link` instead of `unique_id`** — `analysis.py:589`: every other `calculate_*` passes `id_link=time_data.unique_id`; the sonogram inherits the source's (usually `None`) `id_link`, breaking provenance.
-- [x] **`DataSet.calculate_cross_spectrum_matrix_set` ignores its `window` argument** — `datastructure.py:244` forwards the literal `'hann'` instead of the parameter.
-- [x] **`modal_fit_all_channels` degenerate inputs crash messily** — `modal.py:202-203` uses the leftover loop variable for the `freq_range` fallback (`NameError` on an empty list), and `N_tfs == 0` (every entry a reconstruction) proceeds into a zero-column fit that fails downstream. Guard both with a clear error message.
-- [x] **Soundcard `end_stream` unguarded** — `streams.py:499-509` accesses `self.audio_stream.active`/`.close()` with no try/except: crashes if the stream is already closed (device disconnect) or never opened. The NI version (`:848-860`) wraps both; match it.
-- [x] **`auto_y` acknowledged dead condition** — `plotting.py:530-534` tests `== 'TfData'` (never true — `data_list` is always a `*List`; the in-code comment admits it should be `'TfDataList'` and `== 'Nyquist'`). Fix or remove per the comment.
-
-### Verified non-issues (so the Phase D review doesn't re-litigate them)
-
-- The pretrigger slice in `acquisition.py:194-197` cannot go negative or overrun: `pretrig_samples <= chunk_size` is enforced at construction and re-checked in `log_data`, and buffer sizing (`stored_num_chunks = 2 + ceil(stored_time*fs/chunk_size)`) covers the worst-case `end_index`.
-- `np.interp` on complex FFT/TF columns in `file.py` is fine — numpy ≥ 1.13 interpolates real and imaginary parts separately (checked on numpy 2.1.3).
-- The trigger/pretrigger state machines in `Recorder.callback` and `Recorder_NI_nidaqmx.stream_audio_callback` were re-verified as logically identical.
-- `acquisition.log_data` calling `streams.REC.__init__(settings)` on a live NI recorder is deliberate and safe: `streams.py:607-616` preserves the live task/reader across re-`__init__`. Concurrent buffer re-zeroing while the callback runs can corrupt at most one in-flight chunk, which the rolling buffer immediately overwrites.
-
----
-
-## Housekeeping & review
-
-- [x] **General code review** — done (2026-06-10): parallel per-module review (acquisition, GUI, data/maths, I/O + plotting + NI helpers) with every High/Medium claim manually verified against master; Mac suite green (115 passed / 4 hardware-skipped) at review time. Findings recorded in "Confirmed bugs — code review (June 2026)" above plus the housekeeping items below. The Phase D "final formal pass" stays for after the big refactors land.
-- [ ] **Audit documentation accuracy** — the current `docs/` were Claude-generated and appear to contain invented/added content. Cross-check every page in `docs/` against the real behaviour in `pydvma/`. Don't assume `docs/` is correct when reading unfamiliar parts of the code.
-- [ ] **Set up a test suite** — partially done. `tests/` exists with hardware-side coverage (`test_acquisition_*`, `test_ni_*`, `test_oscilloscope_smoke`) and analysis-side coverage (`test_analysis.py`, 30 tests covering `calculate_fft`, `calculate_cross_spectrum_matrix`, `calculate_tf`, plus the channel-cal-factors / units propagation). The June 2026 bug-driven cases are done (2026-06-10): `test_datastructure.py` (calibration setters, ModalData deletion/bookkeeping, window forwarding), `test_modal.py` (reconstruction immutability, degenerate-fit guards, and a synthetic SDOF round trip `calculate_tf_averaged` → `modal_fit_all_channels` recovering fn/zn/an/pn), `test_plotting.py` (headless Agg: per-set `channels='all'`, coherence log plot, auto_y smoke), `test_gui_logic.py` (Qt offscreen: volts helpers, autoscale floor, osc stream reuse, freq_max2/delete typo fixes), `test_file.py` (JW-logger TF-only export round trip), plus TF-averaged phase tests in `test_analysis.py` and fallback/end_stream/`_ni_callback_interval` guards in `test_acquisition_guards.py`. Still to do beyond bug pins: broader `modal.py` fits (multi-mode synthetic data), `datastructure.py` save/load and list ops, `file.py` .npy round-trip / CSV / MATLAB import — the mocked `streams.py` harness is done (see "Mocked acquisition harness" below).
-- [x] **Fix bare `except:` clauses** — done. All 18 bare `except:` sites (post-PyDAQmx cleanup) replaced with specific tuples per call site: hardware/driver paths catch `(AttributeError, TypeError, IndexError, OSError, RuntimeError)` as appropriate; matplotlib axis-limit paths catch `(ValueError, IndexError, TypeError)`; matplotlib legend-visibility paths catch `(AttributeError, NameError)` (legend is None before first data). Removed one dead block in `options.py` (`eval('int'+str(nbits))` — the name was never in scope so the try always failed and `settings.format` was never read).
-- [ ] **Further import-time and import-structure cleanup** — `import pydvma` is now down to ~545 ms (median, fresh subprocess) from an original ~2.5 s. Landed:
-    - Deferred `seaborn`, `matplotlib.pyplot`, `streams` in `options.py`, and dropped dead `pyqtgraph`/`gui` imports.
-    - Replaced deprecated `pkg_resources.resource_filename` with `importlib.resources.files` in `gui.py`.
-    - Made `Logger`, `Oscilloscope`, and `PlotData` lazy via a module-level `__getattr__` in `pydvma/__init__.py` (Python 3.7+). Accessing `pydvma.Logger` still works; `gui.py` / `plotting.py` load only on first attribute access (~165 ms each, one-off).
-    - Deferred `from . import plotting` in `datastructure.py` to inside the four `DataSet.plot_*_data` methods.
-    - Removed unused `pyqtgraph` / `QtWidgets` imports from `file.py` and moved `QFileDialog` into the six `if filename is None:` dialog branches.
-    - `plotting.py` no longer imports Qt (dead imports removed 2026-07-02); `set_plot_colours` has a stdlib fallback when `seaborn` is absent.
-    Remaining candidates (lower priority):
-    - Audit each module's top-of-file imports for unused symbols and heavy imports used in only one function. The dependency graph has cycles (`datastructure` ↔ `analysis`, `streams` ↔ `acquisition`) that Python handles but which slow startup and make dependency reasoning harder.
-    - Consider splitting the package so `pydvma.core` (data + analysis + file I/O, no GUI) can be imported without any Qt / matplotlib cost. Natural fit alongside the GUI backend evaluation in Phase B.
-- [x] **Packaging: fix `setup.py` dependencies** — replaced by `pyproject.toml` with `qt`/`soundcard`/`ni` extras; version sync now enforced by `tests/test_packaging.py` (2026-07-02).
-- [ ] **Delete dead code found in the June 2026 review** — `pydvma/oscilloscope.py` (dead duplicate of the `gui.py` Oscilloscope, not imported anywhere — `pydvma.Oscilloscope` lazy-maps to `.gui` — and would `NameError` on `app` at `:47` if anyone imported it directly); `pydvma/logger_tester.py` plus the stray extensionless `pydvma/logger_tester` (scratch scripts with IPython `%matplotlib` magic, currently shipped inside the package — move to `dev/` or delete); in `gui.py`: `accept_mode` (`:2606`, connected to nothing), `input_list_devices` (`:886-894`, written never read), and the dead class-name checks at `:2462-2465` (compare `'FreqData'`/`'TfData'` against a `*List` object, never true — the save-back works only because the list is mutated in place).
-- [ ] **Repo-root cleanup** — six tracked docs-about-docs files (`DOCS_SETUP_SUMMARY.md`, `MKDOCSTRINGS_INTEGRATION.md`, `DOCUMENTATION.md`, `README_DOCS.md`, `.mkdocs_quickref.md`, `CODE_STRUCTURE.md`) are one-off setup notes that duplicate `docs/`; fold anything still true into `docs/README.md` or `CLAUDE.md` and delete the rest. `logger.yml` is a personal 2023 conda env export — move to `dev/` or delete.
-- [x] **`load_data`: document the pickle trust model** — documented in `load_data`'s docstring; legacy pickle is now opt-in only — `.dvma` container (pickle-free) is the default format since 1.5.0.
-- [ ] **Minor follow-ups from the review** — cache lazy imports in `pydvma/__init__.py.__getattr__` (`globals()[name] = ...`) so repeated attribute access skips the import machinery; chase the `DeprecationWarning: __package__ != __spec__.parent` from `_ni_device_specs.py:227` (visible in every pytest run); fix the copy-paste docstrings on `DataSet.calculate_tf_set`, `calculate_cross_spectrum_matrix_set`, and `calculate_tf_averaged` (`datastructure.py:228-253` — all three say "Calls analysis.calculate_fft").
-- [x] **Automated pyodide smoke test in CI** — done (2026-07-04, Stage 2 Plan 1). `webui/e2e/*.spec.ts` `@engine` tests boot real pyodide in Chromium and round-trip compute through the worker; one asserts a successful boot+round-trip with PyPI (pypi.org/pythonhosted.org) network-blocked (offline-install guard). `webui.yml` runs them serially (`--workers=1`) and gates `PYODIDE_VERSION` against the vendored runtime.
-
-## Analysis features
-
-- [x] **Faster TF / PSD / CSD** — done. `calculate_cross_spectrum_matrix` (`pydvma/analysis.py`) now does a single vectorised pass — detrend + window + rfft once across all channels, then `einsum('isf,jsf->ijf', X.conj(), X) / N_seg` forms the full cross-spectrum tensor. Coherence is derived from the same tensor. Output is byte-equivalent to direct `scipy.signal.csd` / `scipy.signal.welch` / `scipy.signal.coherence` reference calls (verified by `tests/test_analysis.py`). Speedups on `(N_chans × N_samples × N_frames)`: `(2 × 10k × 4)` 6.6×, `(4 × 10k × 8)` 9.4×, `(8 × 50k × 16)` 12×, `(16 × 50k × 16)` 18×.
-- [ ] **Large-data / streaming acquisition** — current `calculate_cross_spectrum_matrix` (and friends) materialises the whole `TimeData` in memory and reshapes it into segments via `sliding_window_view`. Fine for current lab workloads (seconds of multi-channel audio-rate data), but for genuinely large recordings (long-duration NI captures, files that don't fit in RAM) we'd want: (1) a `scipy.fft.rfft(..., workers=-1)` switch to parallelise FFTs across cores, (2) optionally `pyfftw` as a transparent faster backend, (3) a streaming/chunked variant that reads from disk in `nperseg`-sized blocks. Not urgent; pick up if/when a real "too big" workload appears. Same family of work would also benefit modal fitting on big ensembles.
-- [ ] **BLAS thread-pinning for small-matrix workloads** (mostly user-side, documented). Multi-threaded OpenBLAS can be slower than single-threaded for small-matrix linalg due to thread-spawn overhead per call. Pydvma's exposure is small — one `np.linalg.lstsq` in `best_match` and `scipy.optimize.least_squares` / `curve_fit` in `modal.py` and `calculate_damping_from_sono`. Benchmarked on a 14-thread OpenBLAS Mac: the actual call sizes (100×1 lstsq, 10×10-ish iterative solves) are too small to show measurable jitter individually; the cross-spectrum `einsum` is unaffected. Could matter for batch modal fitting across many measurements — if so, scope-limit threads via `threadpoolctl.threadpool_limits(limits=1)` around the fitting loops in `modal.py`. The env-var fix (`OPENBLAS_NUM_THREADS=1` before `import numpy`) only works from user entry-point scripts, not from pydvma's `__init__.py` (numpy is loaded first). See `dev/python_blas_threading_note.md` for the full diagnosis. Windows + Anaconda + MKL users are largely unaffected; Mac/Linux + OpenBLAS users are the exposed group.
-- [ ] **CWT / wavelet time-frequency analysis** — currently only `calculate_sonogram` (STFT-based spectrogram) exists. Add continuous wavelet transform for non-stationary signals; decide on library (e.g. `pywt`) and whether to add a `WaveletData`/`WaveletDataList` pair.
-- [ ] **Simple mode-shape plotter** — combine output of `modal_fit_all_channels` (or peak-picking on `TfData`) with per-channel position coordinates to draw mode shapes (1D line of accelerometers, 2D grid, etc.). No mode-shape code exists today. Starter recipe in `dev/mode-shape-sketches.md`.
-- [ ] **MAC (Modal Assurance Criterion) helper** — compare two mode-shape vectors, or two `ModalData` objects, or build a full pairwise MAC matrix. Maths is one line; the work is the API shape (vectors vs ModalData, full matrix output, plot helper). Starter recipe in `dev/mode-shape-sketches.md`.
-- [ ] **ODS (Operating Deflection Shape) plotter** — animate the instantaneous deflected shape at a chosen operating frequency from per-point `TfData`. The shape extraction is shared with the mode-shape plotter; the extra surface is the animation (likely write MP4/GIF rather than relying on `plt.pause`). Starter recipe in `dev/mode-shape-sketches.md`.
-- [ ] **Review `multiply_by_power_of_iw` initialisation** — `analysis.py` lines 63–91. Uses `hasattr(data, 'iw_power_counter')` plus a zero-array initialisation with single-element assignment; correct under current usage but fragile if `channel_list` semantics change. Revisit when writing unit tests for this function in Phase A step 2.
-
-## Acquisition, hardware & signal handling
-
-- [x] **Add NI cDAQ (compactDAQ) support** — nidaqmx-backed path added; chassis is enumerated as a single "device" whose channels span its slotted modules.
-- [x] **Audit trigger & logging logic across hardware paths** — done. Confirmed the trigger/pretrigger state machine is byte-for-byte identical between `Recorder` (soundcard) and `Recorder_NI_nidaqmx` (NI); documented it in the `Recorder` class docstring with a cross-reference from `Recorder_NI_nidaqmx`. Documented the pretrigger positioning invariant (first above-threshold sample lands at exactly index `pretrig_samples` in the returned buffer) on `log_data`, and added `tests/test_acquisition_hardware.py::test_pretrigger_positioning` to enforce it on every device. Tightened the `MySettings` construction guard (`pretrig_samples > chunk_size` now raises `ValueError` with a helpful message, not a bare `Exception`) and added a matching defence-in-depth guard in `log_data` for post-construction mutation. Remaining divergence: data units (soundcard = ±1 normalised float32; NI = raw volts) — folds into the next item.
-- [x] **Evaluate driver choice for NI hardware** — nidaqmx chosen; PyDAQmx removed after one clean hardware session across USB-6003, USB-6212, and cDAQ.
-- [x] **Remove PyDAQmx path** — done. `Recorder_NI_PyDAQmx`, `setup_output_NI_pydaqmx`, the PyDAQmx import, and the `ni_backend` setting are all gone. `Recorder_NI` is kept as an alias for `Recorder_NI_nidaqmx` for one release to soften external imports.
-- [x] **Turn off -1…+1 input scaling** — done. `log_data` now returns voltages on both paths and `log_data(output=...)` / `signal_generator(amplitude=...)` take voltages. Soundcard gains a `VmaxSC` (and `output_VmaxSC`) calibration field, default 1.0 so uncalibrated users see identical numeric behaviour; NI uses existing `VmaxNI` / `output_VmaxNI`. Oscilloscope and level-bar displays still show ±1 normalised (divide by `settings.input_vmax()` at plot time) so stacked multi-channel views are unchanged. Clipping warning now checks against `0.95 * input_vmax()`. Breaking change for NI users: `signal_generator(amplitude=X)` now means X volts, not X × full-scale. **Post-review caveat (2026-06-10):** four ±1 assumptions survived in `gui.py` (output validator/guard/label, duplicated clipping check, hard-coded `set_ylim([-1,1])`) — tracked as the "GUI still assumes ±1" item in the bug list above.
-- [ ] **Easier / GUI-based calibration handling** — calibration factors exist per channel (`set_calibration_factor` etc.) but the GUI workflow for capturing and applying them is awkward. Design a cleaner flow (known-input calibration, sensitivity entry, save/load calibration sets). The settings-level `channel_sensitivities` field is in place and flows through to `TimeData.channel_cal_factors` at acquisition time, but the GUI doesn't expose it yet.
-- [x] **Propagate `channel_cal_factors` through `analysis.py`** — done. `calculate_fft`, `calculate_cross_spectrum_matrix`, `calculate_cross_spectra_averaged`, `calculate_sonogram` now copy the source `TimeData.channel_cal_factors` (and `units`) onto the derived `FreqData` / `CrossSpecData` / `SonoData`. `calculate_tf` and `calculate_tf_averaged` store the *ratio* `cal[ch_out] / cal[ch_in]` per output channel — for a calibrated `x_phys = cal_in * x_raw` and `y_phys = cal_out * y_raw`, the calibrated TF is `(cal_out / cal_in) * (Y_raw / X_raw)`, and plotting/modal already multiply `tf_data * channel_cal_factors` at display time. A manual override (`tf_data.channel_cal_factors = ...`) overwrites this inherited ratio as expected. Units propagate verbatim except for TF, which gets `"<out_unit>/<in_unit>"` per output channel. 10 new tests in `test_analysis.py` cover propagation per function plus the end-to-end equivalence `calibrated TF == raw TF × stored ratio`.
-- [ ] **IEPE auto-detect via bias voltage probe** — the NI 9234 (and other DSA modules with IEPE) can detect what's connected by enabling 2 mA excitation, sampling briefly, and reading the DC bias before AC coupling: ~24 V means open-circuit (no sensor → turn off), 8–14 V means an IEPE sensor is connected (keep on), near 0 V means a low-impedance source is connected (turn off). A preflight pass would let `iepe_excit_current_A='auto'` configure each channel automatically. Sensitivity can't be auto-detected (sensor doesn't broadcast its calibration) — that has to stay manual.
-- [x] **IEPE warmup / settling delay** — done. Two-part solution: (1) `Recorder_NI_nidaqmx._build_and_start_ai_task` blocks for `_IEPE_WARMUP_S = 2 s` (~6 RC time constants on the 9234's ~0.32 s AC-coupling HPF) after `task.start()` when any channel has IEPE > 0, with a one-line "settling" status print so the pause isn't surprising. (2) `start_stream` now reuses an existing live AI task when the new settings' `_ni_settings_signature` matches, so subsequent `log_data` calls don't rebuild the task and don't re-trigger the warmup — IEPE excitation stays continuously on. The signature covers hardware-impacting fields only (device, channels, fs, chunk_size, NI_mode, VmaxNI, stored_time, iepe_excit_current_A); pretrig_*, channel_sensitivities, and output_* are read-side and don't force a rebuild. Net effect: cold-start cost is ~3.4 s, every subsequent capture is ~0.6 s and produces increasingly clean data as the AC-couple cap fully settles.
-- [ ] **Better control of output signals** — review `signal_generator` and the GUI output frame: expose amplitude, offset, timing, ramp, sweep parameters more cleanly; preview; save/reload signal definitions.
-- [ ] **Refactor module-level singletons in `streams.py`** — three (now four) module-level globals (`REC`, `REC_SC`, `REC_NI`, `REC_MOCK`) manage recorder instances; `start_stream` calls `REC_NI.__init__(settings)` directly on an existing object, which is fragile and hard to reason about. Mocked test harness is now in place (see "Mocked acquisition harness" below), so the singletons are testable; the remaining cleanup is to pass recorder instances explicitly instead of through globals. Lower priority now that tests guard the existing behaviour.
-- [x] **Mocked acquisition harness** — done. `pydvma.streams.MockRecorder` is a drop-in for `Recorder` / `Recorder_NI_nidaqmx` (same public attribute surface: `osc_time_data`, `stored_time_data`, `trigger_detected`, `audio_stream`, `init_stream`, `end_stream`). Selected by `MySettings(device_driver='mock')`. Synthesises a deterministic per-channel sine signal at construction; tests can overwrite `stored_time_data` to inject specific signals. No `sd.OutputStream` or NI task is ever opened — tests are silent regardless of OS volume. `tests/test_acquisition_mock.py` adds 18 tests covering `log_data` (no-pretrigger / pretrigger-timeout / with-output paths), `signal_generator`, `output_signal`, `stream_snapshot`, and channel-cal-factor / channel-sensitivity propagation. Includes a `_MockOutputStream` that satisfies both the soundcard (`write`/`stop`/`close`) and NI (`StartTask`/`StopTask`/`WaitUntilTaskDone`) surfaces so `acquisition.output_signal` works unchanged.
-- [ ] **Centralise optional hardware imports** — `sounddevice` and `nidaqmx` are currently imported at the top of `streams.py` (and `sounddevice` is partially duplicated in `options.py`) wrapped in `try`/`except`. Works, but scattered. A small `_hardware.py` helper that does the try-imports once and exposes boolean flags plus module handles would make mocking for tests and graceful degradation on hardware-less machines cleaner.
-
-## GUI & plotting
-
-- [ ] **Allow legend relabelling** — `update_legend` in `plotting.py` reads labels from the data objects; add GUI-level relabelling so plots can be customised without editing data.
-- [ ] **Evaluate migration to a better GUI backend** — current stack is qtpy → PyQt5 + pyqtgraph + matplotlib-Qt5Agg. Review whether PyQt6/PySide6, or an alternative (e.g. web-based) would be a better fit long-term, given lab deployment constraints.
-- [ ] **Plotting robustness & logic** — tighten the wiring between data objects → `PlotData.update()` → user interaction in `plotting.py`. Goals: plots update cleanly when data changes, no stale lines/legends, predictable behaviour when channels are added/removed or calibration changes, sensible handling of empty/NaN data, consistent real-time (pyqtgraph) vs. static (matplotlib) semantics. Partly depends on the outcome of the GUI backend evaluation — if the backend changes, this work may fold into that migration.
-
-- [x] **Lite site plot polish (from first live test, 2026-07-03; fixed 2026-07-03)** — two issues seen in the browser notebook. Root cause of (2), confirmed: `jupyter lite build` bundles federated lab extensions FROM THE BUILD ENVIRONMENT, not from wheels installed at runtime in the browser. The local anaconda env has ipympl → local builds include the `jupyter-matplotlib` and `@jupyter-widgets/jupyterlab-manager` federated extensions; CI (`requirements-docs.txt` + `pydvma[qt,soundcard]`) had no ipympl → the deployed `jupyter-lite.json` `federated_extensions` list had only `@jupyterlite/pyodide-kernel-extension` and `jupyterlab_pygments` (confirmed via `curl .../jupyter-lite.json` and a 404 on `.../extensions/jupyter-matplotlib/package.json`) → `%matplotlib widget` had no widget backend to render against and silently fell back to static figures. Fix: pinned `ipympl==0.9.7` (matching the local env, proven to work with this jupyterlite-core 0.8.0 build) in `requirements-docs.txt`, and pinned the same version in the notebook's `%pip install` cell in `lite/content/pydvma_analysis.ipynb` (edited via nbformat, re-validated). For (1), the blank-figure-first issue: gated `PlotData.__init__`'s `self.fig.show()` in `pydvma/plotting.py` to only fire for desktop/script backends (Qt, Tk, macosx, ...); skipped for notebook-style backends (ipympl, nbagg, `%matplotlib inline`, matplotlib-pyodide's wasm/html5-canvas backends used by JupyterLite) which already display via their own repr/widget machinery, and for non-interactive backends (Agg, svg, pdf, ...) where `show()` is a no-op that only emits a `UserWarning` — this also silenced the 4 `FigureCanvasAgg is non-interactive` warnings that were showing up in `tests/test_plotting.py`. Added `TestFigShowGating` (10 parametrized cases) pinning the gating logic; full suite now 205 passed / 4 skipped / 4 warnings (down from 195/4/8), warnings remaining are pre-existing and unrelated. Remaining: user click-test on the deployed site after the next docs/lite deploy, to confirm the ipympl toolbar actually renders in-browser (can't be verified headlessly).
-
-## I/O
-
-- [ ] **Improved import/export** — review the existing `.npy` / MATLAB / CSV paths in `file.py`. Consider: better-documented CSV layout, MATLAB round-tripping, HDF5 / Parquet option for large datasets, consistent metadata handling. Note: the `.dvma` container format (web UI plan Stage 0.5, `dev/2026-07-01-web-ui-design.md`) reserves a `storage` field in its manifest as the versioned hook for an HDF5/chunked large-file backend — implement it there when a real too-big workload appears.
-- [ ] **Update teaching notebooks/labsheets for the .dvma era before October** — labsheet text still says "you should have a *.npy file"; the logger now saves `.dvma` by default (legacy `.npy` still loads).
-
-## Plugins / separate repos
-
-- [ ] **ML plugin as a separate repo** — keep `pydvma` dependency-light. Move/design any ML-based tooling (mode classification, signal denoising, anomaly detection, etc.) into its own repository that depends on `pydvma` rather than the other way round. Note: also the natural open-core seam if paid extras are ever wanted (see "Sustainability & impact") — the core tool stays free either way.
-
-## Sustainability & impact
-
-Decided direction (2026-07-03 discussion): the tool stays fully free
-and ungated — no feature-limiting, no license keys; that would fight
-the teaching mission and the no-install student access built in the
-web-UI work. Revenue, if any, comes from institutions, not
-individuals, and any payment routes to the department (not personal
-accounts), which needs Cambridge Enterprise involvement before
-anything goes live.
-
-- [ ] **Institutional supporter tier** — tool remains free; other departments/companies adopting pydvma for their own labs can pay a modest annual supporter fee (order £300–500/yr): named recognition, priority on issues, perhaps a setup call. Implementation is deliberately light: a `SUPPORT.md` / docs page with "using pydvma in your department? get in touch" (mailto costs nothing; no payment infrastructure until someone actually bites). **Prerequisite: talk to Cambridge Enterprise / department** about routing payment to departmental overheads and any IP-policy implications. Zero enquiries in a year = drop it, nothing lost.
-- [ ] **JOSS paper + citation request** — submit pydvma to the Journal of Open Source Software (short ~1–2 page paper; open review on GitHub checks install/docs/tests, all already in place). Gives a DOI + citable reference; add a "please cite" section to README/docs. Best timed after Stage 2 lands ("browser-based no-install vibration analysis for teaching" is a strong hook), but could go earlier. Impact/grant currency rather than revenue — likely worth more than any donation route.
+Everything checked off across the June–July 2026 work — the analysis
+speedups, the June bug-fix batch (20 items), the `nidaqmx` migration
+and hardware verification, the whole web-logger build (rounds 1–6), the
+`.dvma` format, the packaging split, the docs site, and the Qt removal
+— is recorded in the git history and in `dev/`. This file deliberately
+no longer duplicates it.

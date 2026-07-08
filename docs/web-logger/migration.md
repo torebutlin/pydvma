@@ -1,18 +1,28 @@
 # From the Qt logger
 
-The desktop **Qt Logger** (`dvma.Logger(...)`) is still available — it
-ships in the `pydvma[qt]` extra and your existing labsheets keep working
-unchanged. It is, however, **frozen** (bug-fixes only) while the
-browser-based **web logger** becomes the recommended interface. This
+The desktop **Qt Logger** (`dvma.Logger(...)`) has been **removed**. The
+browser-based **web logger** reached full parity and is now the single
+interactive interface. `dvma.Logger(...)` and `dvma.Oscilloscope(...)` no
+longer exist — accessing either raises an error that points here. This
 page maps what you did in the Qt logger onto where it lives now.
 
-!!! info "Nothing is being taken away yet"
-    The Python/notebook interface (`MySettings`, `log_data`,
-    `calculate_*`, `save_data`/`load_data`, `Logger`, `Oscilloscope`)
-    is a stable compatibility contract and is unaffected. If you script
-    your acquisition and analysis, keep doing so — see the
-    [Python interface guides](../user-guide/acquisition.md). This page
-    is about the interactive GUI.
+!!! info "The Python/notebook interface is unaffected"
+    Everything you *script* — `MySettings`, `log_data`, `calculate_*`,
+    `save_data`/`load_data`, and plotting via `DataSet.plot_*_data` — is
+    a stable compatibility contract and is unchanged. Only the
+    interactive Qt **windows** (`Logger`, `Oscilloscope`) were removed.
+    If you script your acquisition and analysis, keep doing so — see the
+    [Python interface guides](../user-guide/acquisition.md).
+
+!!! note "Running the old Qt logger"
+    The last version that still shipped the Qt GUI is preserved at the
+    **`qt-final`** git tag. To run it, check out that tag (its `[qt]`
+    extra still exists there):
+
+    ```bash
+    git checkout qt-final
+    pip install -e ".[qt,soundcard]"
+    ```
 
 ## Why switch
 
@@ -65,7 +75,7 @@ A labsheet notebook used to set `MySettings` and pop the Logger window:
 import pydvma as dvma
 settings = dvma.MySettings(device_driver='soundcard', fs=44100,
                            channels=2, stored_time=2.0)
-logger = dvma.Logger(settings)          # Qt window
+logger = dvma.Logger(settings)          # Qt window (removed; see qt-final)
 ```
 
 The web-logger equivalent depends on which mode you need (see
@@ -129,9 +139,16 @@ and both still open legacy `.npy` pickle files from pydvma ≤ 1.4.0. You
 can record on the lab PC, save a `.dvma`, and re-open it later in the
 no-install browser app at home.
 
-## When to stay on the Qt logger
+## If you still need the old Qt logger
 
-Until the web logger is confirmed as a full replacement, keep using the
-Qt logger for anything it does that the web logger has not yet picked
-up, and for established labsheets you would rather not change mid-term.
-Report gaps you hit — the web logger is actively closing them.
+The Qt logger is gone from the current release, but nothing is lost: the
+last version that shipped it is preserved at the **`qt-final`** git tag.
+
+```bash
+git checkout qt-final
+pip install -e ".[qt,soundcard]"   # the [qt] extra exists on that tag
+```
+
+The web logger's round-6 parity audit closed the last gaps, which is why
+the desktop GUI was retired. If you hit something the web logger does not
+yet do, please report it.

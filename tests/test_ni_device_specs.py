@@ -2,7 +2,7 @@
 
 Mac-runnable: uses mocked nidaqmx Device objects, no hardware or
 nidaqmx install required. Loads _ni_device_specs via importlib to
-avoid pulling the full pydvma package (gui, pyqtgraph, etc.).
+avoid pulling the full pydvma package (numpy, scipy, matplotlib, etc.).
 """
 import importlib.util
 from pathlib import Path

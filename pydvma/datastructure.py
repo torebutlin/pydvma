@@ -9,10 +9,9 @@ from . import analysis
 from . import file
 from . import modal
 
-# `plotting` pulls qtpy + pyqtgraph + the matplotlib Qt5Agg backend
-# (~0.7 s on a Mac). Only the four `DataSet.plot_*_data` methods need
-# it; defer the import to each call site so analysis-only / CLI users
-# don't pay the cost.
+# `plotting` pulls matplotlib.pyplot (~0.3 s on a Mac; it is Qt-free).
+# Only the four `DataSet.plot_*_data` methods need it; defer the import
+# to each call site so analysis-only / CLI users don't pay the cost.
 
 import numpy as np
 import datetime

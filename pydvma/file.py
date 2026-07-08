@@ -11,8 +11,13 @@ import numpy as np
 import scipy.io as io
 # `QFileDialog` (and via qtpy, the whole Qt binding) is only needed
 # when a save/load function is called with `filename=None` and has to
-# prompt the user. Deferring the import means analysis-only / CLI
-# callers that always pass `filename=...` never pay the Qt load cost.
+# prompt the user with an interactive file picker. Deferring the import
+# means analysis-only / CLI callers that always pass `filename=...`
+# never pay the Qt load cost. NOTE: since the Qt logger was removed
+# (tag qt-final) there is no `[qt]` extra, so qtpy is no longer
+# installed by any pydvma extra — the no-filename picker fallback now
+# requires a separate `pip install qtpy` (or a PyQt/PySide binding).
+# Always passing an explicit `filename=...` needs no Qt at all.
 from . import container
 from . import datastructure
 from . import options

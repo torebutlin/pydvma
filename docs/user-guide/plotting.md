@@ -2,25 +2,19 @@
 
 Brief guide for plotting with pydvma's built-in tools and matplotlib.
 
-## GUI Plotting
+## Interactive plotting
 
-!!! note "The Qt Logger is legacy"
-    The desktop **Qt Logger** GUI described here still works but is now
-    **legacy** (bug-fixes only). For interactive plotting and view
-    switching, prefer the **[web logger](../web-logger/index.md)** and its
-    [analysis views](../web-logger/analysis.md).
+!!! note "The Qt Logger was removed"
+    The desktop **Qt Logger** GUI that used to provide interactive
+    plotting has been **removed** (its last version is the `qt-final` git
+    tag). For interactive plotting and view switching, use the
+    **[web logger](../web-logger/index.md)** and its
+    [analysis views](../web-logger/analysis.md): switch between Time, FFT,
+    TF, and Sonogram views, zoom and pan, select channels, and export
+    figures — all in the browser.
 
-The Logger GUI provides interactive plotting:
-
-```python
-logger = dvma.Logger(settings, dataset=dataset)
-```
-
-Features:
-- Switch between Time, FFT, TF, and Sonogram views
-- Interactive zoom and pan
-- Channel selection
-- Export plots
+The rest of this page covers scripting static plots directly with
+matplotlib and pydvma's `DataSet.plot_*_data` helpers.
 
 ## Custom Plotting with Matplotlib
 

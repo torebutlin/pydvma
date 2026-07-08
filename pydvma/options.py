@@ -537,8 +537,9 @@ def set_plot_colours(channels):
 
     For a single channel this uses matplotlib's ``tab10`` colormap. For
     multiple channels it uses seaborn's ``hls_palette`` (evenly-spaced
-    hues) when seaborn is installed. seaborn is a ``[qt]`` extra, so on
-    a base install (e.g. pyodide) this falls back to a stdlib
+    hues) when seaborn is installed. seaborn is not a declared
+    dependency (it was only in the retired ``[qt]`` extra), so on a base
+    install (e.g. pyodide) this falls back to a stdlib
     ``colorsys``-based reimplementation of the same palette — see the
     ``except ImportError`` branch below.
     '''

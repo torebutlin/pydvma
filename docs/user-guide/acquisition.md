@@ -38,12 +38,13 @@ settings.device_index = 1  # Use the index from sd.query_devices()
 ### Recording
 
 ```python
-# Using the GUI
-logger = dvma.Logger(settings)
-
-# Programmatically
+# Record programmatically
 dataset = dvma.log_data(settings, test_name="recording_01")
 ```
+
+For a point-and-click interface use the
+[web logger](../web-logger/index.md); the old Qt `dvma.Logger` window was
+removed (its last version is the `qt-final` git tag).
 
 ## National Instruments DAQ
 
@@ -312,12 +313,13 @@ dataset = dvma.log_data(settings, output=output)
     response rather than assumed. The prepended column passes through
     uncalibrated (cal factor 1).
 
-### Output via the Logger GUI
+### Output stimulus settings (`Output_Signal_Settings`)
 
-The desktop Logger drives output from its **"Generate output"** panel
-rather than from a `signal_generator` / `log_data(output=...)` call.
-Pre-fill that panel by passing an `Output_Signal_Settings` when you open
-the Logger:
+`Output_Signal_Settings` bundles an output-stimulus definition (type,
+amplitude, band). It is consumed by the **web logger's Acquire output
+stimulus** — pre-fill it by handing a settings file to the local bridge
+with `pydvma-serve --settings` (see
+[From the Qt logger](../web-logger/migration.md)):
 
 ```python
 oss = dvma.Output_Signal_Settings(
@@ -326,26 +328,18 @@ oss = dvma.Output_Signal_Settings(
     f1=100,            # sweep start / noise lower band corner (Hz)
     f2=300,            # sweep end   / noise upper band corner (Hz)
 )
-logger = dvma.Logger(settings, output_signal_settings=oss)
 ```
 
-The panel's **Type** drop-down, **Amplitude**, **f1** and **f2** fields
-open populated from those values. **Preview** plots the waveform and its
-FFT; **Generate output** plays it (the GUI refuses a maximum frequency
-above Nyquist, `fs/2`). Under the hood it calls the same
-`signal_generator` shown above — `type` becomes `sig` and `[f1, f2]`
-becomes `f`.
+Under the hood the same fields drive `signal_generator` — `type` becomes
+`sig` and `[f1, f2]` becomes `f`.
 
 A few notes:
 
-- **Duration is a separate panel field**, so it is *not* part of
-  `Output_Signal_Settings` — set it in the GUI (it is `T=` when
-  scripting `signal_generator`).
 - The four `type` values are exactly `'None'`, `'sweep'`, `'gaussian'`
-  and `'uniform'`. `'None'` (the default) opens the Logger with output
-  off — equivalent to omitting `output_signal_settings` entirely.
-- `Output_Signal_Settings` is **GUI-only**. For scripted/headless output
-  use the array path above; the two are independent.
+  and `'uniform'`. `'None'` (the default) means output off.
+- For fully scripted / headless output, use the array path shown above
+  (`signal_generator` + `log_data(output=...)`); it is independent of
+  `Output_Signal_Settings`.
 
 ## Voltage-Based I/O
 
@@ -618,19 +612,17 @@ for i, time_data in enumerate(dataset.time_data_list):
 
 ## Monitoring and Visualization
 
-### Oscilloscope view
+### Live monitoring
 
-The Logger GUI provides a live oscilloscope of the incoming signal —
-launch the GUI and use the Oscilloscope view to monitor levels and
-adjust trigger settings before committing to a recording.
+The **[web logger](../web-logger/index.md)** provides a live oscilloscope
+and FFT of the incoming signal — use its
+[Live monitoring](../web-logger/live-monitoring.md) view to check levels
+and trigger settings before committing to a recording. (This replaced the
+old Qt Oscilloscope window, which was removed with the Qt Logger.)
 
-```python
-logger = dvma.Logger(settings)
-```
-
-For a one-shot programmatic peek at the live buffer without going via
-the GUI, use `dvma.stream_snapshot(streams.REC)` while a stream is
-running (e.g. immediately after a `log_data` call).
+For a one-shot programmatic peek at the live buffer, use
+`dvma.stream_snapshot(streams.REC)` while a stream is running (e.g.
+immediately after a `log_data` call).
 
 ## Best Practices
 

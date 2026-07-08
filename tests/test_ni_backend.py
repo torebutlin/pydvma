@@ -5,8 +5,8 @@ exercise the pure-Python device enumeration and channel-string construction
 with fake Device objects.
 
 We load `_ni_backend` directly from its path to avoid executing
-`pydvma/__init__.py`, which would require every runtime dependency
-(peakutils, pyqtgraph, etc.) just to run these tests.
+`pydvma/__init__.py`, which would pull the heavier runtime dependencies
+(numpy, scipy, matplotlib, peakutils) just to run these tests.
 """
 import importlib.util
 from pathlib import Path

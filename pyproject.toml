@@ -25,15 +25,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# GUI (Logger / Oscilloscope / PlotData interactivity)
-qt = ["qtpy", "PyQt5", "pyqtgraph", "seaborn"]
+# NOTE: the `qt` extra (qtpy/PyQt5/pyqtgraph/seaborn) was removed when
+# the Qt desktop logger was retired — the browser web logger reached
+# full parity (last Qt version: the `qt-final` git tag). `pip install
+# pydvma[qt]` now errors on an unknown extra, which is the honest
+# signal that the desktop GUI is gone; use `pydvma[serve]` +
+# `pydvma-serve` instead (docs: web-logger/migration).
 # acquisition backends
 soundcard = ["sounddevice"]
 ni = ["nidaqmx"]
 # `pydvma serve` — the local WebSocket acquisition bridge for the
 # browser UI. `websockets` is pure-Python with no transitive deps.
 serve = ["websockets"]
-full = ["pydvma[qt,soundcard,ni,serve]"]
+full = ["pydvma[soundcard,ni,serve]"]
 
 [project.scripts]
 # `pydvma serve` bridge; also runnable as `python -m pydvma.serve`.
