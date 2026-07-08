@@ -150,8 +150,13 @@ class MySettings(object):
         output_device_driver (str): Backend for the output/AO path;
             defaults to ``device_driver`` (same device as the input).
         output_device_index (int or None): Device index for the output
-            path; ``None`` picks the default output soundcard, or NI
-            device 0.
+            path. ``None`` resolves per backend: for ``soundcard`` it
+            picks the default *output* soundcard (the input device is
+            typically a microphone with no output channels); for
+            ``nidaq``/``mock`` it follows ``device_index`` when the
+            output driver matches the input driver (the stimulus goes
+            out of the same device the input is on), falling back to
+            device 0 for cross-driver output.
         output_channels (int): Number of output (AO) channels
             (default ``1``).
         output_channels_spec (str or None): Raw DAQmx physical-channel
@@ -323,10 +328,18 @@ class MySettings(object):
                     if len(matches) > 0:
                         output_devices = int(matches[0])
                 self.output_device_index = output_devices if output_devices is not None else 1
-        elif (output_device_driver == 'nidaq') and ((output_device_index is None) or (output_device_index == 'None')):
-            self.output_device_index = 0
-        elif (output_device_driver == 'mock') and ((output_device_index is None) or (output_device_index == 'None')):
-            self.output_device_index = 0
+        elif (output_device_driver in ('nidaq', 'mock')) and ((output_device_index is None) or (output_device_index == 'None')):
+            # "Same device as the input": an unset NI/mock output index
+            # follows the resolved input device when the drivers match,
+            # so e.g. an input on NI device 2 drives that device's AO —
+            # not device 0's. Cross-driver output falls back to device 0.
+            # Soundcard is deliberately different (above): its unset
+            # output resolves to the default OUTPUT device, because the
+            # input is typically a microphone with no output channels.
+            if output_device_driver == device_driver:
+                self.output_device_index = self.device_index
+            else:
+                self.output_device_index = 0
         else:
             self.output_device_index = int(output_device_index)
         

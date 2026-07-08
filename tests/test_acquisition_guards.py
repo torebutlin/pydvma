@@ -182,6 +182,55 @@ class TestOutputDeviceFallback:
         assert s.output_device_index == 1
 
 
+class TestNiOutputDeviceFollowsInput:
+    """An unset NI output_device_index must follow the INPUT device when
+    the output driver is unset or matches the input driver ("same device
+    as the input") — not silently route the AO task to NI device 0.
+    Real-hardware bug (2026-07-08): webui input on Dev3 (nidaq index 2)
+    with the output select on "same as input" drove the cDAQ's 9260
+    instead, surfacing as a spurious voltage-rail error at log time."""
+
+    def test_unset_output_driver_follows_input_device(self):
+        s = dvma.MySettings(device_driver='nidaq', device_index=2)
+        assert s.output_device_driver == 'nidaq'
+        assert s.output_device_index == 2
+
+    def test_explicit_same_driver_follows_input_device(self):
+        s = dvma.MySettings(device_driver='nidaq', device_index=1,
+                            output_device_driver='nidaq')
+        assert s.output_device_index == 1
+
+    def test_explicit_output_index_wins(self):
+        s = dvma.MySettings(device_driver='nidaq', device_index=2,
+                            output_device_index=0)
+        assert s.output_device_index == 0
+
+    def test_cross_driver_output_falls_back_to_device_0(self):
+        s = dvma.MySettings(device_driver='soundcard', device_index=1,
+                            output_device_driver='nidaq')
+        assert s.output_device_index == 0
+
+    def test_mock_output_follows_input_device_too(self):
+        s = dvma.MySettings(device_driver='mock', device_index=1)
+        assert s.output_device_index == 1
+
+    def test_soundcard_output_still_uses_default_output(self, monkeypatch):
+        """Soundcard semantics must NOT change: an unset soundcard output
+        resolves to the default OUTPUT device, never the input's index."""
+        from pydvma import options
+
+        class _FakeDefault:
+            device = [3, 7]
+
+        class _FakeSd:
+            default = _FakeDefault()
+
+        monkeypatch.setattr(options, 'sd', _FakeSd())
+        s = dvma.MySettings(device_driver='soundcard')
+        assert s.device_index == 3
+        assert s.output_device_index == 7
+
+
 class TestEndStreamRobustness:
     """Soundcard `Recorder.end_stream` must tolerate a stream that was
     never opened or is already dead, matching the NI recorder."""
