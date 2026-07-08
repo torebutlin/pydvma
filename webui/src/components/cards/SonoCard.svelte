@@ -21,8 +21,9 @@
    */
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
-  import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
+  import type { AnalysisSettings, SonoSettings } from '../../lib/stores/analysisSettings';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
+  import Segmented from '../Segmented.svelte';
 
   let {
     actions,
@@ -42,9 +43,16 @@
 
   let ch = $state(0);
 
+  // Time-frequency transform: 'stft' (fixed window) or 'cwt' (Morlet wavelet,
+  // constant-Q — separates close low-frequency modes an STFT window smears).
+  const method = $derived(sono.method);
+
   // nFft ↔ slider exponent (nFft = 2^resExp). Mixed → the readout shows –mixed–.
   const nFft = $derived(sono.nFft);
   const resExp = $derived(Math.round(Math.log2(nFft)));
+
+  // CWT log-frequency density (voices per octave).
+  const VPO_OPTIONS = [8, 12, 16, 24, 32];
 
   // Channel options come from the target set (first set for 'all').
   const targetView = $derived(
@@ -63,8 +71,27 @@
     if (ch >= chOptions) ch = 0;
   });
 
-  const patch = (partial: Partial<{ nFft: number; dynRangeDb: number }>) =>
+  const patch = (partial: Partial<SonoSettings>) =>
     analysisSettings.patch($target, 'sono', partial);
+
+  // Switching method re-runs live (gated on an existing sonogram) so the heat
+  // map updates immediately when toggling STFT ↔ CWT.
+  function onMethod(m: 'stft' | 'cwt') {
+    patch({ method: m });
+    live.schedule();
+  }
+  function onVoices(v: number) {
+    patch({ voicesPerOctave: v });
+    live.schedule();
+  }
+  // Optional CWT band: blank entry ⇒ null ⇒ auto band. Only apply a range when
+  // BOTH bounds are valid and ordered; otherwise clear to auto.
+  function onBand(which: 'fMin' | 'fMax', raw: string) {
+    const v = raw.trim() === '' ? null : Number(raw);
+    if (v !== null && !Number.isFinite(v)) return;
+    patch({ [which]: v } as Partial<SonoSettings>);
+    live.schedule();
+  }
 
   function calc() {
     if ($setsView.length) actions.calcSono($target, ch);
@@ -152,20 +179,62 @@
         </div>
       </div>
       <div class="grp">
-        <span class="grp-lab">resolution — {mixed('nFft') ? '–mixed–' : `${nFft} pt`}</span>
+        <span class="grp-lab">method</span>
         <div class="grp-ctl">
-          <input type="range" min={RES_MIN_EXP} max={RES_MAX_EXP}
-            value={Math.min(RES_MAX_EXP, Math.max(RES_MIN_EXP, resExp))}
-            oninput={(e) => onRes(+e.currentTarget.value)} style="width:96px" aria-label="resolution" />
-          <span class="ml">nFFT</span>
-          <input type="number" step="1" min="1"
-            value={mixed('nFft') ? '' : nFft}
-            placeholder={mixed('nFft') ? '–mixed–' : ''}
-            onchange={(e) => onNFftText(+e.currentTarget.value)}
-            style="width:64px" aria-label="nFFT" />
-          <span class="note">pt</span>
+          <Segmented
+            ariaLabel="sonogram method"
+            testid="sono-method"
+            value={method}
+            onchange={(m) => onMethod(m as 'stft' | 'cwt')}
+            options={[
+              { value: 'stft' as const, label: 'STFT', title: 'Short-time Fourier transform (fixed window)' },
+              { value: 'cwt' as const, label: 'CWT', title: 'Complex Morlet wavelet transform (constant-Q; separates close low-frequency modes)' },
+            ]}
+          />
         </div>
       </div>
+      {#if method === 'stft'}
+        <div class="grp">
+          <span class="grp-lab">resolution — {mixed('nFft') ? '–mixed–' : `${nFft} pt`}</span>
+          <div class="grp-ctl">
+            <input type="range" min={RES_MIN_EXP} max={RES_MAX_EXP}
+              value={Math.min(RES_MAX_EXP, Math.max(RES_MIN_EXP, resExp))}
+              oninput={(e) => onRes(+e.currentTarget.value)} style="width:96px" aria-label="resolution" />
+            <span class="ml">nFFT</span>
+            <input type="number" step="1" min="1"
+              value={mixed('nFft') ? '' : nFft}
+              placeholder={mixed('nFft') ? '–mixed–' : ''}
+              onchange={(e) => onNFftText(+e.currentTarget.value)}
+              style="width:64px" aria-label="nFFT" />
+            <span class="note">pt</span>
+          </div>
+        </div>
+      {:else}
+        <div class="grp">
+          <span class="grp-lab">voices / octave</span>
+          <div class="grp-ctl">
+            <select value={sono.voicesPerOctave} onchange={(e) => onVoices(+e.currentTarget.value)}
+              style="width:60px" aria-label="voices per octave">
+              {#each VPO_OPTIONS as v (v)}
+                <option value={v}>{v}</option>
+              {/each}
+            </select>
+            <span class="note">log-freq density</span>
+          </div>
+        </div>
+        <div class="grp">
+          <span class="grp-lab">freq range — Hz (blank = auto)</span>
+          <div class="grp-ctl">
+            <input type="number" step="1" min="0" value={sono.fMin ?? ''} placeholder="min"
+              onchange={(e) => onBand('fMin', e.currentTarget.value)}
+              style="width:60px" aria-label="cwt f min" />
+            <span class="ml">–</span>
+            <input type="number" step="1" min="0" value={sono.fMax ?? ''} placeholder="max"
+              onchange={(e) => onBand('fMax', e.currentTarget.value)}
+              style="width:60px" aria-label="cwt f max" />
+          </div>
+        </div>
+      {/if}
       <div class="grp">
         <span class="grp-lab">dynamic range</span>
         <div class="grp-ctl">
@@ -183,7 +252,7 @@
           <button class="btn" disabled={dampBusy || $setsView.length === 0} onclick={fitDamping}
             title="Fit modal damping from the decay of each sonogram band">
             {dampBusy ? 'Fitting…' : 'Fit damping'}</button>
-          <span class="note">log-decrement of sonogram bands</span>
+          <span class="note">log-decrement of {method === 'cwt' ? 'CWT' : 'sonogram'} bands</span>
           {#if dampModes}
             <div class="damp-table mono" role="status" aria-label="fitted damping">
               {#if dampModes.length}

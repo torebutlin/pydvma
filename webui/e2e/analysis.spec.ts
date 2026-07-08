@@ -99,4 +99,31 @@ test.describe('@engine', () => {
     expect(info.paintedFrac).toBeGreaterThan(0.9);
     expect(info.distinctColours).toBeGreaterThan(3);
   });
+
+  test('fixture → Sonogram → CWT method → Calc renders a painted heat canvas (round-5 item 12)', async ({ page }) => {
+    await page.goto('/?fixture=1');
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Sonogram' }).click();
+
+    // Switch the transform to the complex Morlet CWT (constant-Q) via the
+    // shared STFT | CWT segmented control, then compute through the real
+    // engine (needs the rebuilt wheel that ships analysis.calculate_cwt).
+    await page.getByTestId('sono-method').getByRole('button', { name: 'CWT' }).click();
+    // The CWT-only controls appear; the STFT nFFT box is hidden.
+    await expect(page.getByLabel('voices per octave')).toBeVisible();
+    await expect(page.getByLabel('nFFT')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Calc Sonogram' }).click();
+
+    const canvas = page.getByTestId('sono-canvas');
+    await expect(canvas).toBeVisible({ timeout: 200_000 });
+    await expect.poll(async () => page.evaluate(() => {
+      const c = document.querySelector('[data-testid="sono-canvas"]') as HTMLCanvasElement;
+      const img = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+      let painted = 0;
+      for (let i = 3; i < img.length; i += 4) if (img[i]) painted++;
+      return painted / (c.width * c.height);
+    }), { timeout: 200_000 }).toBeGreaterThan(0.9);
+  });
 });

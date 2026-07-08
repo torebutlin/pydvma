@@ -429,6 +429,46 @@ test('calcSono issues calc_sono with nperseg=nFft (from settings), noverlap=nFft
   const sono = calls.find(c => c.op === 'calc_sono')!;
   expect(sono.payload.nperseg).toBe(64);
   expect(sono.payload.noverlap).toBe(32);
+  // Default method is STFT so today's behaviour is preserved.
+  expect(sono.payload.method).toBe('stft');
+});
+
+test('calcSono passes CWT method + voices/octave + band through to the engine (round-5 item 12)', async () => {
+  const { engine, calls } = fakeEngine(async () => ({
+    time_axis: real([2], [0, 1]),
+    freq_axis: real([2], [0, 1]),
+    sono_data: real([2, 2], [1, 2, 3, 4]),
+  }));
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+  settings.patch(a, 'sono', { method: 'cwt', voicesPerOctave: 24, w0: 5, fMin: 20, fMax: 400 });
+  await actions.calcSono(a, 0);
+  const sono = calls.find(c => c.op === 'calc_sono')!;
+  expect(sono.payload.method).toBe('cwt');
+  expect(sono.payload.voices_per_octave).toBe(24);
+  expect(sono.payload.w0).toBe(5);
+  expect(sono.payload.f_min).toBe(20);
+  expect(sono.payload.f_max).toBe(400);
+});
+
+test('calcDamping passes the sono method through (STFT default, CWT when set)', async () => {
+  const { engine, calls } = fakeEngine(async () => ({ fn: real([1], [42]), Qn: real([1], [10]) }));
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+
+  await actions.calcDamping(a, 0, 512);
+  let damp = calls.filter(c => c.op === 'calc_damping').at(-1)!;
+  expect(damp.payload.method).toBe('stft');
+  expect(damp.payload.nperseg).toBe(512);
+
+  settings.patch(a, 'sono', { method: 'cwt', voicesPerOctave: 16, w0: 6 });
+  await actions.calcDamping(a, 0, 512);
+  damp = calls.filter(c => c.op === 'calc_damping').at(-1)!;
+  expect(damp.payload.method).toBe('cwt');
+  expect(damp.payload.voices_per_octave).toBe(16);
+  expect(damp.payload.w0).toBe(6);
 });
 
 test('a throwing calc_sono surfaces on the FIRST press via computeErrors.sono (round-5 bug 1)', async () => {

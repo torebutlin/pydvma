@@ -23,7 +23,11 @@ export interface DvmaItemUi {
   analysis?: {
     freq?: { window?: string; mode?: 'fft' | 'psd' | 'csd'; nFrames?: number };
     tf?: { chIn?: number; window?: string; averaging?: 'none' | 'within' | 'across'; nFrames?: number };
-    sono?: { nFft?: number; dynRangeDb?: number };
+    sono?: {
+      nFft?: number; dynRangeDb?: number;
+      method?: 'stft' | 'cwt'; voicesPerOctave?: number; w0?: number;
+      fMin?: number | null; fMax?: number | null;
+    };
   };
 }
 

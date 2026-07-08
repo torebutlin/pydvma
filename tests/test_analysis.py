@@ -785,3 +785,168 @@ class TestSonogramLowMem:
         with pytest.warns(UserWarning):
             f2, t2, S2 = analysis._spectrogram_complex_lowmem(y, fs, 400, 0)
         np.testing.assert_array_equal(S2, S_ref)
+
+
+# ---------- calculate_cwt (complex Morlet CWT sonogram) ----------
+
+def _decaying_sine(fs, n_samples, fn, Q, amp=1.0, phase=0.0):
+    """A single decaying sinusoid with known fn (Hz) and Q = 1/(2*zeta)."""
+    t = np.arange(n_samples) / fs
+    zeta = 1.0 / (2.0 * Q)
+    w0 = 2.0 * np.pi * fn
+    wd = w0 * np.sqrt(1.0 - zeta ** 2)
+    return amp * np.exp(-zeta * w0 * t) * np.cos(wd * t + phase)
+
+
+class TestCalculateCwt:
+    """Pin the complex Morlet CWT: shape/SonoData parity, amplitude
+    normalisation convention, pure-tone log-bin localisation, chirp ridge
+    tracking, and the uniform-vs-native frequency-axis behaviour."""
+
+    def test_returns_sonodata_shaped_like_sonogram(self):
+        """calculate_cwt returns a SonoData with the same (n_freq, n_frames,
+        n_channels) sono_data layout and matching axis lengths, so the whole
+        SonoData pipeline reuses unchanged."""
+        fs, N = 2000, 8000
+        rng = np.random.default_rng(3)
+        td = _make_time_data(rng.standard_normal((N, 3)), fs)
+        sd = analysis.calculate_cwt(td, max_time_columns=500)
+        assert sd.__class__.__name__ == 'SonoData'
+        n_freq = sd.freq_axis.shape[0]
+        n_frames = sd.time_axis.shape[0]
+        assert sd.sono_data.shape == (n_freq, n_frames, 3)
+        assert np.iscomplexobj(sd.sono_data)
+        assert n_frames <= 500
+        assert sd.id_link == td.unique_id
+
+    def test_time_columns_capped(self):
+        """The output time axis is decimated to <= max_time_columns."""
+        fs, N = 4000, 40000
+        td = _make_time_data(np.zeros((N, 1)) + 1.0, fs)
+        sd = analysis.calculate_cwt(td, max_time_columns=1000)
+        assert sd.time_axis.shape[0] <= 1000
+
+    def test_uniform_freq_axis_is_uniform(self):
+        """Default (uniform_freq=True) returns an evenly-spaced freq axis (the
+        web-UI heat renderer assumes uniform bins); native mode is log-spaced."""
+        fs, N = 2000, 8000
+        td = _make_time_data(_decaying_sine(fs, N, 100.0, 40)[:, None], fs)
+        sd_u = analysis.calculate_cwt(td, uniform_freq=True)
+        d = np.diff(sd_u.freq_axis)
+        assert np.allclose(d, d[0], rtol=1e-6)
+        sd_l = analysis.calculate_cwt(td, uniform_freq=False)
+        dl = np.diff(sd_l.freq_axis)
+        # log-spaced: ratios (not differences) are constant
+        ratios = sd_l.freq_axis[1:] / sd_l.freq_axis[:-1]
+        assert np.allclose(ratios, ratios[0], rtol=1e-6)
+        assert not np.allclose(dl, dl[0], rtol=1e-3)
+
+    def test_voices_per_octave_sets_density(self):
+        """The native log grid has ~voices_per_octave samples per octave."""
+        fs, N = 2000, 8000
+        td = _make_time_data(_decaying_sine(fs, N, 100.0, 40)[:, None], fs)
+        for vpo in (8, 16, 24):
+            f = analysis._cwt_default_frequencies(fs, N, None, vpo)
+            octaves = np.log2(f[-1] / f[0])
+            got = (len(f) - 1) / octaves
+            assert abs(got - vpo) < 1.0
+
+    def test_amplitude_normalisation_is_frequency_independent(self):
+        """CONVENTION (pinned): a real cosine of amplitude A at the wavelet's
+        centre frequency yields a coefficient of peak magnitude ~= A,
+        independent of frequency (L-infinity / amplitude normalisation)."""
+        fs, N = 2000, 16000
+        freqs = np.geomspace(10, 800, 400)
+        mid = slice(N // 4, 3 * N // 4)   # avoid cone-of-influence edges
+        for amp, f0 in [(1.0, 50.0), (1.0, 100.0), (2.0, 200.0), (0.5, 400.0)]:
+            t = np.arange(N) / fs
+            x = amp * np.cos(2 * np.pi * f0 * t)
+            W, _ = analysis._morlet_cwt_1d(x, fs, freqs, w0=6.0)
+            peak = np.abs(W[:, mid]).max()
+            assert abs(peak - amp) < 0.05 * amp + 0.02
+
+    def test_pure_tone_localises_at_right_log_bin(self):
+        """A pure tone puts its CWT energy at the frequency bin nearest the
+        tone; the mean power spectrum peaks within one voice of the true f."""
+        fs, N = 2000, 16000
+        t = np.arange(N) / fs
+        f0 = 137.0
+        x = np.cos(2 * np.pi * f0 * t)
+        freqs = analysis._cwt_default_frequencies(fs, N, None, 16)
+        W, _ = analysis._morlet_cwt_1d(x, fs, freqs, w0=6.0)
+        mid = slice(N // 4, 3 * N // 4)
+        power = (np.abs(W[:, mid]) ** 2).mean(axis=1)
+        f_peak = freqs[np.argmax(power)]
+        # within one voice (2^(1/16)) of the true tone
+        assert abs(np.log2(f_peak / f0)) < 1.0 / 16 + 1e-3
+
+    def test_chirp_ridge_tracks_instantaneous_frequency(self):
+        """For a linear chirp, the ridge (arg-max over frequency at each time)
+        follows the instantaneous frequency f(t) = f0 + k t."""
+        fs, N = 4000, 8000
+        t = np.arange(N) / fs
+        f0, f1 = 100.0, 500.0
+        k = (f1 - f0) / t[-1]
+        inst = f0 + k * t
+        phase = 2 * np.pi * (f0 * t + 0.5 * k * t ** 2)
+        x = np.cos(phase)
+        freqs = np.geomspace(50, 800, 400)
+        W, _ = analysis._morlet_cwt_1d(x, fs, freqs, w0=8.0)
+        ridge = freqs[np.abs(W).argmax(axis=0)]
+        mid = slice(N // 5, 4 * N // 5)   # ignore chirp edges (COI)
+        rel_err = np.abs(ridge[mid] - inst[mid]) / inst[mid]
+        assert np.median(rel_err) < 0.05
+
+
+class TestDampingBothMethods:
+    """Damping recovery via BOTH the STFT and the CWT paths, and the
+    demonstrated CWT advantage: it separates two close low-frequency modes
+    that a single-window STFT smears into one."""
+
+    def test_stft_recovers_single_mode(self):
+        fs, N = 2000, 8000
+        fn, Q = 90.0, 40.0
+        x = _decaying_sine(fs, N, fn, Q)[:, None]
+        td = _make_time_data(x, fs)
+        rfn, rQ, _ = analysis.calculate_damping_from_sono(td, n_chan=0, nperseg=256)
+        assert len(rfn) >= 1
+        j = np.argmin(np.abs(rfn - fn))
+        assert abs(rfn[j] - fn) / fn < 0.05
+        assert abs(rQ[j] - Q) / Q < 0.25
+
+    def test_cwt_recovers_single_mode(self):
+        fs, N = 2000, 8000
+        fn, Q = 90.0, 40.0
+        x = _decaying_sine(fs, N, fn, Q)[:, None]
+        td = _make_time_data(x, fs)
+        rfn, rQ, _ = analysis.calculate_damping_from_cwt(td, n_chan=0)
+        assert len(rfn) >= 1
+        j = np.argmin(np.abs(rfn - fn))
+        assert abs(rfn[j] - fn) / fn < 0.05
+        assert abs(rQ[j] - Q) / Q < 0.25
+
+    def test_cwt_separates_close_low_modes_that_stft_merges(self):
+        """Two close low-frequency modes (18 & 30 Hz): a single-window STFT
+        whose bin spacing is comparable to the separation cannot resolve both,
+        while the constant-Q CWT recovers both frequencies within tolerance.
+        This is the demonstrated added value of the wavelet method."""
+        fs, N = 2000, 8000
+        f1, f2, Q = 18.0, 30.0, 60.0
+        rng = np.random.default_rng(7)
+        x = (_decaying_sine(fs, N, f1, Q) + _decaying_sine(fs, N, f2, Q)
+             + 1e-4 * rng.standard_normal(N))[:, None]
+        td = _make_time_data(x, fs)
+
+        # CWT: both modes recovered.
+        cfn, cQ, _ = analysis.calculate_damping_from_cwt(td, n_chan=0)
+        near1 = np.any(np.abs(cfn - f1) / f1 < 0.10)
+        near2 = np.any(np.abs(cfn - f2) / f2 < 0.10)
+        assert near1 and near2, f'CWT should resolve both modes, got {cfn}'
+
+        # STFT with a coupled-resolution window (~N/50, the UI default) whose
+        # low-frequency bin spacing merges the two modes: it recovers strictly
+        # fewer well-matched modes than the CWT.
+        sfn, sQ, _ = analysis.calculate_damping_from_sono(td, n_chan=0, nperseg=N // 50)
+        s_hits = int(np.any(np.abs(sfn - f1) / f1 < 0.10)) + \
+            int(np.any(np.abs(sfn - f2) / f2 < 0.10)) if len(sfn) else 0
+        assert s_hits < 2, f'STFT should NOT resolve both modes, got {sfn}'

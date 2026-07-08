@@ -124,41 +124,67 @@ def calc_tf(time_axis, time_data, n_channels, fs, ch_in, window, n_frames):
     return {'freq_axis': _arr(tf.freq_axis), 'tf_data': _arr(tf.tf_data), 'coherence': coh}
 
 
-def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap):
-    """Sonogram (STFT magnitude) of a single channel ``ch``.
+def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
+              method='stft', voices_per_octave=16, w0=6.0, f_min=None, f_max=None):
+    """Sonogram of a single channel ``ch`` — STFT (default) or CWT.
 
-    The coupled-resolution control maps to ``nperseg=nFft`` and
-    ``noverlap=nFft//2`` on the JS side. sono_data is returned as a real
-    magnitude image (Nf, Nt) — ``abs`` of the complex STFT for channel ``ch``.
+    ``method='stft'`` (default, unchanged behaviour): a Hann STFT where the
+    coupled-resolution control maps to ``nperseg=nFft`` and
+    ``noverlap=nFft//2`` on the JS side.
 
-    Engine guard (mirror of ``calc_psd``): the shipped pyodide wheel
-    (pydvma 1.5.0) segments inside ``scipy.signal.spectrogram`` →
-    ``_fft_helper`` → ``sliding_window_view``, whose NOMINAL size is
-    ``Nc * (N_samples - nperseg + 1) * nperseg``. On the 32-bit WASM engine
-    numpy rejects that view with "array is too big" for a large ``nperseg``
-    on a long, high-rate record (e.g. a 2 s, 44.1 kHz capture at nFFT=4096 —
-    a ~2.75 GB nominal view). That failure surfaced as a raw, opaque scipy
-    error on the sonogram card (and, before, silently on the first press).
-    We catch that specific overflow and re-raise a clear, actionable message
-    so a STALE wheel still explains itself. Repo pydvma now strides directly
-    to the decimated windows and no longer overflows
-    (``analysis._spectrogram_complex_lowmem``), so this branch is inert once
-    a wheel with that fix ships — no fixed size cap is imposed that would
-    over-block the fixed engine.
+    ``method='cwt'``: a complex Morlet continuous wavelet transform
+    (``analysis.calculate_cwt``) over ``voices_per_octave`` log-spaced
+    frequencies with non-dimensional frequency ``w0``. ``nperseg``/``noverlap``
+    are IGNORED (the wavelet has no fixed window); an optional ``f_min``/``f_max``
+    (Hz) overrides the default ``4/T .. 0.4*fs`` band. The CWT image is returned
+    on a UNIFORM frequency grid (``uniform_freq=True``) so the existing heat
+    renderer — which maps frequency row-index linearly and labels a linear
+    axis — places and labels it correctly with no renderer change.
+
+    Either way ``sono_data`` is returned as a real magnitude image (Nf, Nt) —
+    ``abs`` of the complex transform for channel ``ch`` — plus its two axes.
+
+    Engine guards:
+    - STFT: the shipped pyodide wheel (pydvma 1.5.0) segments inside
+      ``scipy.signal.spectrogram`` → ``sliding_window_view``, whose NOMINAL
+      size ``Nc * (N_samples - nperseg + 1) * nperseg`` overflows the 32-bit
+      WASM ``2**31-1`` byte ceiling for a large ``nperseg`` on a long,
+      high-rate record (e.g. a 2 s, 44.1 kHz capture at nFFT=4096 — a ~2.75 GB
+      nominal view). We catch that specific overflow and re-raise a clear
+      message. Repo pydvma now strides directly to the decimated windows and no
+      longer overflows (``analysis._spectrogram_complex_lowmem``), so this
+      branch is inert once a wheel with that fix ships.
+    - CWT: ``analysis.calculate_cwt`` only exists in a wheel that shipped the
+      CWT feature. Against a STALE wheel (no ``calculate_cwt``) we raise a clear
+      "engine wheel too old" message instead of an opaque ``AttributeError``.
     """
     td = _time_data(time_axis, time_data, n_channels, fs)
-    try:
-        sd = analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
-    except (ValueError, MemoryError) as e:
-        msg = str(e).lower()
-        if isinstance(e, MemoryError) or 'too big' in msg or 'maximum possible size' in msg:
-            n_samples = int(td.time_data.shape[0])
+    if str(method) == 'cwt':
+        if not hasattr(analysis, 'calculate_cwt'):
             raise ValueError(
-                'Sonogram at this window size needs too large an internal buffer '
-                'for the browser engine ({} samples × {}-pt STFT window). '
-                'Use a smaller nFFT.'.format(n_samples, int(nperseg))
-            ) from e
-        raise
+                'CWT sonogram needs a newer engine: the loaded pydvma wheel has '
+                'no calculate_cwt. Reload once builds settle, or fall back to the '
+                'STFT method.'
+            )
+        f_range = None
+        if f_min is not None and f_max is not None:
+            f_range = (float(f_min), float(f_max))
+        sd = analysis.calculate_cwt(
+            td, f_range=f_range, voices_per_octave=int(voices_per_octave),
+            w0=float(w0))
+    else:
+        try:
+            sd = analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
+        except (ValueError, MemoryError) as e:
+            msg = str(e).lower()
+            if isinstance(e, MemoryError) or 'too big' in msg or 'maximum possible size' in msg:
+                n_samples = int(td.time_data.shape[0])
+                raise ValueError(
+                    'Sonogram at this window size needs too large an internal buffer '
+                    'for the browser engine ({} samples × {}-pt STFT window). '
+                    'Use a smaller nFFT.'.format(n_samples, int(nperseg))
+                ) from e
+            raise
     return {'time_axis': _arr(sd.time_axis), 'freq_axis': _arr(sd.freq_axis),
             'sono_data': _arr(np.abs(sd.sono_data[:, :, int(ch)]))}
 
@@ -584,22 +610,43 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
     return out
 
 
-def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=None):
-    """Modal damping from a sonogram's per-band free decay (Sono card).
+def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=None,
+                 method='stft', voices_per_octave=16, w0=6.0):
+    """Modal damping from a time-frequency image's per-band free decay (Sono card).
 
-    Wraps ``analysis.calculate_damping_from_sono``: builds a ``TimeData``, runs
-    the log-decrement fit on channel ``ch``'s STFT bands (``nperseg`` window),
-    and returns per-detected-mode ``fn`` (Hz) and ``Qn = 1/(2 zeta)`` for the
-    chip table. ``start_time`` (seconds) picks the free-decay start; ``None``
-    lets pydvma infer it (pretrigger-based, with a fallback). The full
-    per-fit plotting dict is discarded — only fn/Qn surface in the UI.
+    ``method='stft'`` (default) wraps ``analysis.calculate_damping_from_sono``:
+    the log-decrement fit on channel ``ch``'s STFT bands (``nperseg`` window).
+    ``method='cwt'`` wraps ``analysis.calculate_damping_from_cwt``: the same fit
+    on a complex Morlet CWT image (``voices_per_octave`` / ``w0``), whose
+    constant-Q resolution separates closely-spaced low-frequency modes an STFT
+    window smears together; ``nperseg`` is ignored for CWT.
+
+    Returns per-detected-mode ``fn`` (Hz) and ``Qn = 1/(2 zeta)`` for the chip
+    table. ``start_time`` (seconds) picks the free-decay start; ``None`` lets
+    pydvma infer it (pretrigger-based, with a fallback). The full per-fit
+    plotting dict is discarded — only fn/Qn surface in the UI.
+
+    Stale-wheel guard: ``method='cwt'`` against a wheel without
+    ``calculate_damping_from_cwt`` raises a clear "engine wheel too old"
+    message instead of an opaque ``AttributeError``.
     """
     td = _time_data(time_axis, time_data, n_channels, fs)
     # `not start_time` handles None / a JS-null proxy (an explicit 0.0 start
     # also defers to inference — harmless, the free-decay start is never 0).
     st = float(start_time) if start_time else None
-    fn, Qn, _fit = analysis.calculate_damping_from_sono(
-        td, n_chan=int(ch), nperseg=int(nperseg), start_time=st)
+    if str(method) == 'cwt':
+        if not hasattr(analysis, 'calculate_damping_from_cwt'):
+            raise ValueError(
+                'CWT damping needs a newer engine: the loaded pydvma wheel has no '
+                'calculate_damping_from_cwt. Reload once builds settle, or use the '
+                'STFT method.'
+            )
+        fn, Qn, _fit = analysis.calculate_damping_from_cwt(
+            td, n_chan=int(ch), start_time=st,
+            voices_per_octave=int(voices_per_octave), w0=float(w0))
+    else:
+        fn, Qn, _fit = analysis.calculate_damping_from_sono(
+            td, n_chan=int(ch), nperseg=int(nperseg), start_time=st)
     return {'fn': _arr(np.asarray(fn)), 'Qn': _arr(np.asarray(Qn))}
 
 

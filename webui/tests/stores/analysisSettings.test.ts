@@ -15,7 +15,10 @@ test('defaults() match the cards prior local defaults; fresh object each call', 
   const d = defaults();
   expect(d.freq).toEqual({ window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1 });
   expect(d.tf).toEqual({ chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 });
-  expect(d.sono).toEqual({ nFft: 512, dynRangeDb: 60 });
+  expect(d.sono).toEqual({
+    nFft: 512, dynRangeDb: 60,
+    method: 'stft', voicesPerOctave: 16, w0: 6, fMin: null, fMax: null,
+  });
   expect(defaults()).not.toBe(d);         // not aliased
   expect(defaults().freq).not.toBe(d.freq);
 });

@@ -271,7 +271,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     return settings?.get(setId, 'tf') ?? { chIn: 0, window: 'hann', averaging: 'within' as const, nFrames: 10 };
   }
   function sonoSettings(setId: number) {
-    return settings?.get(setId, 'sono') ?? { nFft: 512, dynRangeDb: 60 };
+    return settings?.get(setId, 'sono')
+      ?? { nFft: 512, dynRangeDb: 60, method: 'stft' as const, voicesPerOctave: 16, w0: 6, fMin: null, fMax: null };
   }
 
   /**
@@ -471,7 +472,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // but always include all if ANY field was customised.
         const freqChanged = freq.window !== d.freq.window || freq.mode !== d.freq.mode || freq.nFrames !== d.freq.nFrames;
         const tfChanged = tf.chIn !== d.tf.chIn || tf.window !== d.tf.window || tf.averaging !== d.tf.averaging || tf.nFrames !== d.tf.nFrames;
-        const sonoChanged = sono.nFft !== d.sono.nFft || sono.dynRangeDb !== d.sono.dynRangeDb;
+        const sonoChanged = sono.nFft !== d.sono.nFft || sono.dynRangeDb !== d.sono.dynRangeDb
+          || sono.method !== d.sono.method || sono.voicesPerOctave !== d.sono.voicesPerOctave
+          || sono.w0 !== d.sono.w0 || sono.fMin !== d.sono.fMin || sono.fMax !== d.sono.fMax;
         if (freqChanged || tfChanged || sonoChanged) {
           ui.analysis = {};
           if (freqChanged) ui.analysis.freq = { ...freq };
@@ -660,7 +663,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   function calcSono(target: AnalysisTarget, ch: number) {
     const ws = target === 'all' ? working[0] : working.find((w) => w.setId === target);
     if (!ws) return Promise.resolve();
-    const { nFft } = sonoSettings(ws.setId);
+    const { nFft, method, voicesPerOctave, w0, fMin, fMax } = sonoSettings(ws.setId);
     const my = bump('sono');
     return guarded('sono', async () => {
       const { axis, data, nCh } = timePayload(ws.time);
@@ -676,6 +679,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const res = await engine.enqueue('calc_sono', {
         time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
         ch: safeCh, nperseg: nFft, noverlap: nFft >> 1,
+        // CWT passthrough (ignored by the engine when method === 'stft').
+        method, voices_per_octave: voicesPerOctave, w0,
+        f_min: fMin ?? undefined, f_max: fMax ?? undefined,
       });
       if (stale('sono', my)) return;                    // a newer sonogram won
       setDerived(ws.setId, {
@@ -935,11 +941,14 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const ws = target === 'all' ? working[0] : working.find((w) => w.setId === target);
     if (!ws) return { fn: new Float64Array(0), Qn: new Float64Array(0) };
     const { axis, data, nCh } = timePayload(ws.time);
+    const { method, voicesPerOctave, w0 } = sonoSettings(ws.setId);
     // `start_time` is omitted (not sent as JS null — see calcFit note) so the
-    // engine infers the free-decay start.
+    // engine infers the free-decay start. `method` selects the STFT or CWT
+    // damping path; the CWT params are ignored by the engine for 'stft'.
     const res = await engine.enqueue('calc_damping', {
       time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
       ch, nperseg: nFft,
+      method, voices_per_octave: voicesPerOctave, w0,
     });
     return { fn: axisData(mval(res, 'fn')), Qn: axisData(mval(res, 'Qn')) };
   }

@@ -761,9 +761,241 @@ def calculate_sonogram(time_data, nperseg=None, noverlap=None):
 
     return sono_data
 
-#%% CWT
-#def calculate_cwt(time_data):
-#    return None
+#%% CWT (continuous wavelet transform)
+
+def _morlet_daughter_fourier(omega, scale, w0):
+    '''Amplitude-normalised complex Morlet daughter wavelet in Fourier space.
+
+    Returns ``Psi_hat(scale * omega)`` for the analytic (one-sided) complex
+    Morlet mother ``psi(t) = exp(i*w0*t) * exp(-t**2/2)``, evaluated on the
+    angular-frequency grid ``omega`` (rad/s) at dilation ``scale`` (seconds):
+
+        Psi_hat(s*w) = 2 * exp(-0.5 * (s*w - w0)**2) * H(w)
+
+    where ``H`` is the Heaviside step (only positive frequencies contribute —
+    this makes the transform analytic, so the coefficient's phase advances at
+    the SIGNAL's instantaneous frequency).
+
+    NORMALISATION (pinned by ``tests/test_analysis.py``): the leading factor
+    ``2`` is an L-infinity / amplitude normalisation. The daughter peaks at
+    ``1`` in the frequency domain (at ``s*w == w0``); the factor ``2``
+    compensates the one-sided (analytic) halving of a REAL signal's energy so
+    that a unit-amplitude real cosine at the wavelet's centre frequency yields
+    a coefficient of peak magnitude ``|W| ~= 1``, independent of frequency.
+    ``|W|`` is therefore directly an amplitude estimate and is comparable
+    across the band and against the STFT magnitude sonogram (unlike the
+    Torrence & Compo L2/energy normalisation, whose peak magnitude scales as
+    ``1/sqrt(f)``). Only the per-scale CONSTANT differs between conventions, so
+    the damping fit (which reads the time-SLOPE of ``log|W|`` at a fixed scale)
+    is unaffected by the choice.
+    '''
+    psi = np.zeros_like(omega)
+    pos = omega > 0.0
+    psi[pos] = 2.0 * np.exp(-0.5 * (scale * omega[pos] - w0) ** 2)
+    return psi
+
+
+def _cwt_default_frequencies(fs, N, f_range, voices_per_octave):
+    '''Log-spaced (constant-Q) analysis frequencies for the Morlet CWT.
+
+    With ``f_range=None`` the band spans ``4/T`` up to ``0.4*fs`` where
+    ``T = N/fs`` is the record length:
+
+    - LOW end ``4/T``: at least four oscillations of the lowest wavelet fit in
+      the record, and its e-folding time (``sqrt(2)*s = sqrt(2)*w0/(2*pi*f)``)
+      stays below ``T/2`` for the default ``w0=6``, so the lowest scale is not
+      dominated by edge (cone-of-influence) effects.
+    - HIGH end ``0.4*fs`` (= ``0.8 * Nyquist``): a safe margin below Nyquist so
+      the highest wavelet is adequately sampled.
+
+    Frequencies are geometrically spaced at ``voices_per_octave`` samples per
+    octave (default 16), the natural constant-Q ladder of a wavelet transform.
+    An explicit ``f_range=(f_min, f_max)`` overrides the default band (clamped
+    to ``(0, ~Nyquist)``).
+    '''
+    if f_range is not None:
+        f_min, f_max = float(f_range[0]), float(f_range[1])
+    else:
+        T = N / float(fs)
+        f_min = 4.0 / T
+        f_max = 0.4 * fs
+    f_min = max(f_min, 1e-9)
+    f_max = min(f_max, 0.5 * fs * 0.999)
+    if f_max <= f_min:
+        f_max = f_min * 2.0
+    n_octaves = np.log2(f_max / f_min)
+    n_freqs = int(np.ceil(voices_per_octave * n_octaves)) + 1
+    return np.geomspace(f_min, f_max, max(2, n_freqs))
+
+
+def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
+    '''FFT-based complex Morlet CWT of a single 1-D real signal.
+
+    Computes the continuous wavelet transform by per-scale convolution in the
+    frequency domain (one forward FFT of the whole signal, then one inverse
+    FFT per scale) — the standard Torrence & Compo (1998) construction. No
+    dependency on the removed ``scipy.signal.cwt`` (gone in scipy >= 1.15);
+    uses only ``numpy`` and ``scipy.fft`` so it behaves identically on the
+    desktop and on the 32-bit WASM/pyodide engine.
+
+    Args:
+        y (np.ndarray): 1-D real signal, length ``N``.
+        fs (float): sample rate (Hz).
+        freqs (np.ndarray): analysis centre frequencies (Hz); the scale for
+            each is ``s = w0 / (2*pi*f)``.
+        w0 (float): non-dimensional Morlet frequency (default 6.0; the usual
+            admissibility-safe value giving ~``w0`` oscillations under the
+            envelope).
+        time_step (int): decimation of the output time axis. ``1`` keeps every
+            sample (full time resolution — needed by the damping fit, whose
+            phase-unwrap must not alias). ``>1`` subsamples the columns to bound
+            the returned image size for display.
+
+    Returns:
+        (W, t_idx): ``W`` of shape ``(len(freqs), ceil(N/time_step))`` complex,
+        and ``t_idx`` the sample indices of the kept time columns.
+
+    MEMORY (32-bit WASM): the transform is done ONE SCALE AT A TIME — the only
+    full-length temporaries are the signal's FFT and a single inverse-FFT row
+    (each ``N`` complex). The returned ``W`` is ``len(freqs) x N_out`` complex;
+    at full time resolution (``time_step=1``) the worst case is a 2 s, 44.1 kHz
+    record over the default ~211-frequency band: ``211 * 88200 * 16 B ~= 0.30
+    GB``, comfortably under the ``2**31-1`` byte (~2.15 GB) ceiling. Callers that
+    only need a display image pass ``time_step`` so ``N_out <= max_time_columns``.
+    '''
+    from scipy import fft as sp_fft
+
+    y = np.asarray(y, dtype=float)
+    N = y.shape[0]
+    dt = 1.0 / fs
+    freqs = np.asarray(freqs, dtype=float)
+    scales = w0 / (2.0 * np.pi * freqs)
+
+    # Angular-frequency grid (rad/s), negative for the upper half (Torrence &
+    # Compo eq. 5). The Morlet daughter is one-sided, so only the positive
+    # half contributes.
+    k = np.arange(N)
+    omega = 2.0 * np.pi * k / (N * dt)
+    omega[k > N // 2] -= 2.0 * np.pi / dt
+
+    yhat = sp_fft.fft(y)
+    t_idx = np.arange(0, N, int(time_step))
+    W = np.empty((freqs.shape[0], t_idx.shape[0]), dtype=complex)
+    for i, s in enumerate(scales):
+        psi_hat = _morlet_daughter_fourier(omega, s, w0)
+        row = sp_fft.ifft(yhat * psi_hat)
+        W[i] = row[t_idx]
+    return W, t_idx
+
+
+def _resample_freq_axis(freqs, W, f_out):
+    '''Linearly resample a complex time-frequency image onto a new freq axis.
+
+    ``W`` is ``(len(freqs), Nt)`` complex on the (increasing) ``freqs`` grid;
+    returns ``(len(f_out), Nt)`` interpolated column-wise along frequency onto
+    ``f_out``. Vectorised (no per-column Python loop). Used to put the CWT's
+    natural LOG-spaced image onto a UNIFORM display grid — see
+    ``calculate_cwt``'s ``uniform_freq`` argument for the rationale.
+    '''
+    freqs = np.asarray(freqs, dtype=float)
+    f_out = np.asarray(f_out, dtype=float)
+    idx = np.clip(np.searchsorted(freqs, f_out), 1, len(freqs) - 1)
+    lo = idx - 1
+    hi = idx
+    denom = freqs[hi] - freqs[lo]
+    frac = np.where(denom > 0, (f_out - freqs[lo]) / denom, 0.0)[:, None]
+    return (1.0 - frac) * W[lo] + frac * W[hi]
+
+
+def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
+                  max_time_columns=2000, uniform_freq=True):
+    '''Continuous wavelet transform (complex Morlet) as a `SonoData`.
+
+    A drop-in ALTERNATIVE to `calculate_sonogram`: produces the SAME
+    `SonoData` shape (``sono_data`` of shape ``(n_freq, n_frames, n_channels)``,
+    complex, with ``time_axis`` and ``freq_axis``) so the whole downstream
+    pipeline — the ``.dvma`` container, the web-UI heat map, and the damping
+    fit — reuses unchanged. Where the STFT sonogram has a FIXED time-frequency
+    resolution, the wavelet transform is constant-Q: long (narrow-band)
+    wavelets at low frequency and short (wide-band) wavelets at high frequency,
+    which is why it separates closely-spaced low-frequency modes that a
+    single-window STFT smears together (demonstrated in the damping tests).
+
+    The transform is computed on LOG-spaced frequencies (``voices_per_octave``
+    per octave; see `_cwt_default_frequencies` for the default band and
+    `_morlet_cwt_1d` for the FFT construction and amplitude normalisation).
+
+    FREQUENCY AXIS (``uniform_freq``): the CWT is naturally sampled on a
+    log-frequency grid, but the web-UI heat renderer maps each frequency
+    ROW-INDEX linearly to a canvas pixel row and labels a LINEAR frequency
+    axis, i.e. it assumes UNIFORM bin spacing. With ``uniform_freq=True``
+    (default, the display path) the complex image is therefore resampled onto a
+    uniform grid spanning the same band (via `_resample_freq_axis`) so the
+    existing renderer places and labels it correctly with no renderer change.
+    TRADE-OFF: a uniform linear axis compresses low frequencies (exactly as the
+    STFT sonogram already does), so the wavelet's finer low-frequency detail is
+    not fully resolved in the heat MAP; it IS retained in the analysis and in
+    the damping fit, which uses ``uniform_freq=False`` to keep the native
+    log grid. (A log-y heat renderer — owned by the plot layer — would let the
+    native log axis display with full low-frequency detail.)
+
+    TIME AXIS / MEMORY: the output time axis is decimated so it has at most
+    ``max_time_columns`` frames (``None`` keeps every sample). This bounds the
+    returned image — it is a display/analysis picture, not raw data — and,
+    together with the per-channel loop, keeps peak memory low on the 32-bit
+    WASM engine. Worst case is ``n_freq x max_time_columns`` complex per
+    returned image (~7 MB at the defaults), with only single-channel,
+    single-scale full-length FFT temporaries alive during the compute; see
+    `_morlet_cwt_1d` for the byte budget against the ``2**31-1`` ceiling.
+
+    Args:
+        time_data (<TimeData> object): time series data (all channels).
+        f_range (tuple or None): ``(f_min, f_max)`` in Hz; ``None`` uses the
+            default ``4/T .. 0.4*fs`` band.
+        voices_per_octave (int): log-frequency density (default 16).
+        w0 (float): non-dimensional Morlet frequency (default 6.0).
+        max_time_columns (int or None): cap on output time frames (default
+            2000); ``None`` disables time decimation.
+        uniform_freq (bool): resample onto a uniform frequency grid for display
+            (default True); ``False`` returns the native log grid (used by the
+            damping fit).
+    '''
+    y = np.asarray(time_data.time_data)
+    if y.ndim == 1:
+        y = y[:, None]
+    N, n_chans = y.shape
+    fs = time_data.settings.fs
+
+    freqs = _cwt_default_frequencies(fs, N, f_range, voices_per_octave)
+    n_freq = len(freqs)
+
+    if max_time_columns is None:
+        time_step = 1
+    else:
+        time_step = max(1, int(np.ceil(N / float(max_time_columns))))
+    t_idx = np.arange(0, N, time_step)
+    t = np.asarray(time_data.time_axis)[t_idx]
+    n_frames = len(t_idx)
+
+    # Uniform display grid (same count as the log grid) or the native log grid.
+    f_out = np.linspace(freqs[0], freqs[-1], n_freq) if uniform_freq else freqs
+
+    # Per-channel to bound peak memory (never hold all channels' full transform
+    # at once on WASM).
+    S = np.empty((len(f_out), n_frames, n_chans), dtype=complex)
+    for c in range(n_chans):
+        Wc, _ = _morlet_cwt_1d(y[:, c], fs, freqs, w0=w0, time_step=time_step)
+        S[:, :, c] = _resample_freq_axis(freqs, Wc, f_out) if uniform_freq else Wc
+
+    sono_data = datastructure.SonoData(
+        t, f_out, S, time_data.settings,
+        channel_cal_factors=np.asarray(time_data.channel_cal_factors, dtype=float).copy(),
+        units=time_data.units,
+        id_link=time_data.unique_id, test_name=time_data.test_name,
+    )
+
+    return sono_data
+
 
 #%% Damping from sonogram
 
@@ -778,48 +1010,63 @@ def func_imag(t, W, C):
     f = W*t + C
     return f
 
-def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None):
+def _resolve_damping_start_slice(t, start_time, settings, default_start_frac=None):
+    '''Pick the free-decay start frame index for a damping fit.
+
+    An explicit ``start_time`` (seconds) snaps to the nearest time frame.
+    Otherwise the start is inferred from the pretrigger: ``2 *
+    pretrig_samples / fs`` places it just after the impact. ``pretrig_samples``
+    is ``None`` on captures without a trigger (and absent on older settings
+    structs), so that path falls back:
+
+    - ``default_start_frac=None`` (STFT default) uses ``t[-1] // 20`` — the
+      exact convention the original `calculate_damping_from_sono` used. Note
+      that floors to frame 0 for any sub-20-second record; that is harmless for
+      the STFT, whose first frame is already centred ``nperseg/2`` samples in.
+    - ``default_start_frac=frac`` (the CWT path passes ``0.05``) starts
+      ``frac`` of the way into the record BY INDEX. The full-resolution CWT's
+      frame 0 IS the raw ``t=0`` edge — inside the cone of influence and
+      corrupted by the FFT's circular wrap — so it must skip a little in.
     '''
-    Calculate damping from sonogram data.
+    if start_time is not None:
+        return int(np.argmin(np.abs(t - start_time)))
+    try:
+        # pretrig_samples is None on captures without a trigger; also guards
+        # against settings being an older struct that predates that attribute.
+        t0 = 2 * settings.pretrig_samples / settings.fs
+        return int(np.argmin(np.abs(t - t0)))
+    except (AttributeError, TypeError):
+        if default_start_frac is not None:
+            return int(min(len(t) - 1, max(0, round(default_start_frac * len(t)))))
+        t0 = t[-1] // 20
+        return int(np.argmin(np.abs(t - t0)))
 
-    Args:
-        time_data (<TimeData> object): time series data
-        n_chan (int, optional): channel index to analyze, default is 1
-        nperseg (int, optional): number of samples per segment for spectrogram
-        start_time (float, optional): start time for analysis
 
-    Returns:
-        fn (np.ndarray): array of natural frequencies (Hz)
-        Qn (np.ndarray): array of Q factors (1/(2*zeta))
-        fit_data (dict): dict containing data needed for plotting the fits:
-            - 't': time axis
-            - 'fits': list of dicts, each with keys:
-                - 't_fit': time values for the fit region
-                - 'real_fit': fitted real part values
-                - 'real_data': actual real part data values
-                - 'f_peak': peak frequency (Hz)
-                - 'Qn': Q factor for this mode
+def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier):
+    '''Shared modal-damping fit core over a complex time-frequency image.
+
+    Works on ANY complex single-channel image ``Sc`` of shape
+    ``(n_freq, n_frames)`` — a Hann STFT sonogram (`calculate_sonogram`) or a
+    complex Morlet CWT (`calculate_cwt`). Peaks in the magnitude at
+    ``time_slice`` mark candidate modes; for each, the log-magnitude decay of
+    ``Sc`` over time gives the damping and the unwrapped phase slope gives the
+    (damped) frequency, from which ``fn`` and ``Qn = 1/(2*zeta)`` follow.
+
+    ``phase_has_carrier`` selects how the phase slope maps to frequency:
+
+    - ``False`` (STFT): scipy's spectrogram references each bin's phase to the
+      bin centre, so the fitted phase slope ``W`` is the beat frequency and the
+      true angular frequency is ``2*pi*f[peak] + W``.
+    - ``True`` (CWT): the analytic Morlet coefficient's phase advances at the
+      signal's OWN instantaneous frequency, so the fitted slope IS the angular
+      frequency directly (``W0 = W``). (Verified against synthetic tones — see
+      the CWT damping tests.)
+
+    Returns ``(fn, Qn, fit_data)`` exactly as `calculate_damping_from_sono`
+    documents.
     '''
-    sono_data = calculate_sonogram(time_data, nperseg=nperseg,noverlap=0)
-
-    t = sono_data.time_axis
-    f = sono_data.freq_axis
-    S = sono_data.sono_data
-
-    # find t index closest to t0
-    if start_time is None:
-        try:
-            # pretrig_samples is None on captures without a trigger;
-            # also guards against settings being an older struct that
-            # predates that attribute.
-            t0 = 2*sono_data.settings.pretrig_samples/sono_data.settings.fs
-            time_slice = np.argmin(np.abs(t - t0))
-        except (AttributeError, TypeError):
-            t0 = t[-1]//20
-            time_slice = np.argmin(np.abs(t - t0))
-
-    time_slice_data = np.abs(S[:, time_slice, n_chan])
-    threshold = 10 * np.median(time_slice_data)/np.max(time_slice_data)
+    time_slice_data = np.abs(Sc[:, time_slice])
+    threshold = 10 * np.median(time_slice_data) / np.max(time_slice_data)
     peaks = pu.indexes(time_slice_data, thres=threshold, min_dist=1)
 
     # Collect results locally
@@ -829,9 +1076,9 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
 
     for peak in peaks:
 
-        # Extract the real and imaginary parts of S at the peak frequency
-        real_part = np.real(np.log(S[peak, :, n_chan]))
-        imag_part = np.unwrap(np.imag(np.log(S[peak, :, n_chan])))
+        # Extract the real and imaginary parts of Sc at the peak frequency
+        real_part = np.real(np.log(Sc[peak, :]))
+        imag_part = np.unwrap(np.imag(np.log(Sc[peak, :])))
 
         # Fit the real part to a custom function
         try:
@@ -866,7 +1113,10 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
             # Skip this peak if the fit fails
             continue
         W = popt_imag[0]
-        W0 = 2*np.pi*f[peak] + W # corrected for the bin frequency
+        # Map the fitted phase slope to the angular frequency. For the STFT the
+        # phase is referenced to the bin, so add the bin carrier; for the
+        # analytic CWT the slope is already the angular frequency.
+        W0 = W if phase_has_carrier else (2*np.pi*f[peak] + W)
 
         # Calculate the damping factor and frequency from the fit coefficients
         zeta = B / np.sqrt(W0**2 + B**2)
@@ -899,3 +1149,96 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
     }
 
     return fn, Qn, fit_data
+
+
+def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None):
+    '''
+    Calculate damping from an STFT sonogram.
+
+    Computes a Hann-window sonogram (``noverlap=0``) and fits the free-decay of
+    each detected band. See `_fit_modes_from_image` for the fit core (this is
+    the ``phase_has_carrier=False`` / STFT case) and `calculate_damping_from_cwt`
+    for the wavelet alternative.
+
+    Args:
+        time_data (<TimeData> object): time series data
+        n_chan (int, optional): channel index to analyze, default is 1
+        nperseg (int, optional): number of samples per segment for spectrogram
+        start_time (float, optional): start time (seconds) for analysis; None
+            infers it from the pretrigger (see `_resolve_damping_start_slice`)
+
+    Returns:
+        fn (np.ndarray): array of natural frequencies (Hz)
+        Qn (np.ndarray): array of Q factors (1/(2*zeta))
+        fit_data (dict): dict containing data needed for plotting the fits:
+            - 't': time axis
+            - 'fits': list of dicts, each with keys:
+                - 't_fit': time values for the fit region
+                - 'real_fit': fitted real part values
+                - 'real_data': actual real part data values
+                - 'f_peak': peak frequency (Hz)
+                - 'Qn': Q factor for this mode
+    '''
+    sono_data = calculate_sonogram(time_data, nperseg=nperseg,noverlap=0)
+
+    t = sono_data.time_axis
+    f = sono_data.freq_axis
+    S = sono_data.sono_data
+
+    time_slice = _resolve_damping_start_slice(t, start_time, sono_data.settings)
+    return _fit_modes_from_image(t, f, S[:, :, n_chan], time_slice,
+                                 phase_has_carrier=False)
+
+
+def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
+                               f_range=None, voices_per_octave=16, w0=6.0):
+    '''
+    Calculate damping from a continuous wavelet transform (complex Morlet).
+
+    The wavelet alternative to `calculate_damping_from_sono`: it fits the same
+    per-mode free-decay, but on the CWT image, whose constant-Q resolution
+    separates closely-spaced low-frequency modes that a fixed-window STFT
+    smears into one band. The transform is built on the NATIVE log-frequency
+    grid at FULL time resolution (no time decimation) so the phase-unwrap that
+    recovers each mode's frequency does not alias, and only channel ``n_chan``
+    is transformed so memory stays bounded (see `_morlet_cwt_1d`).
+
+    The phase-to-frequency mapping differs from the STFT: the analytic Morlet
+    coefficient's phase advances at the signal's own frequency, so the fit core
+    is called with ``phase_has_carrier=True`` (see `_fit_modes_from_image`).
+
+    Args:
+        time_data (<TimeData> object): time series data
+        n_chan (int, optional): channel index to analyze, default is 1
+        start_time (float, optional): start time (seconds); None infers it from
+            the pretrigger (see `_resolve_damping_start_slice`)
+        f_range (tuple or None): ``(f_min, f_max)`` Hz; None uses the default
+            ``4/T .. 0.4*fs`` band (see `_cwt_default_frequencies`)
+        voices_per_octave (int, optional): log-frequency density, default 16
+        w0 (float, optional): non-dimensional Morlet frequency, default 6.0
+
+    Returns:
+        Same ``(fn, Qn, fit_data)`` triple as `calculate_damping_from_sono`.
+    '''
+    fs = time_data.settings.fs
+    y = np.asarray(time_data.time_data)
+    if y.ndim == 1:
+        y = y[:, None]
+    yc = y[:, n_chan]
+    N = yc.shape[0]
+
+    freqs = _cwt_default_frequencies(fs, N, f_range, voices_per_octave)
+    # Full time resolution (time_step=1): the phase-slope fit unwraps the
+    # coefficient phase over time, which aliases if the column rate drops below
+    # 2*f_max. The default band's f_max is 0.4*fs, so no decimation is safe;
+    # keeping every column is also the simplest correct choice. The single
+    # (n_freq x N) transform of ONE channel is the memory cost — ~0.30 GB for a
+    # 2 s, 44.1 kHz record over the default band, within the WASM 2**31-1 byte
+    # ceiling (see `_morlet_cwt_1d`).
+    Wc, t_idx = _morlet_cwt_1d(yc, fs, freqs, w0=w0, time_step=1)
+    t = np.asarray(time_data.time_axis)[t_idx]
+
+    time_slice = _resolve_damping_start_slice(t, start_time, time_data.settings,
+                                              default_start_frac=0.05)
+    return _fit_modes_from_image(t, freqs, Wc, time_slice,
+                                 phase_has_carrier=True)

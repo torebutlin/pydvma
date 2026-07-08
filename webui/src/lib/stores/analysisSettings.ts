@@ -43,8 +43,21 @@ export interface FreqSettings {
 }
 /** TF-card settings: input channel, window, averaging mode, averaging frames. */
 export interface TfSettings { chIn: number; window: string; averaging: 'none' | 'within' | 'across'; nFrames: number; }
-/** Sonogram-card settings: STFT window size and heat-map dynamic range. */
-export interface SonoSettings { nFft: number; dynRangeDb: number; }
+/**
+ * Sonogram-card settings. `method` chooses the time-frequency transform:
+ * `'stft'` (default, unchanged behaviour) uses the STFT window `nFft`;
+ * `'cwt'` uses a complex Morlet continuous wavelet transform whose
+ * `voicesPerOctave` (log-frequency density) and `w0` (non-dimensional Morlet
+ * frequency) replace `nFft` — the CWT has no fixed window, so `nFft` is
+ * ignored in that mode. `fMin`/`fMax` (Hz) optionally override the CWT's
+ * auto band (`null` = auto `4/T .. 0.4*fs`). `dynRangeDb` is the heat-map
+ * dynamic range, shared by both methods.
+ */
+export interface SonoSettings {
+  nFft: number; dynRangeDb: number;
+  method: 'stft' | 'cwt'; voicesPerOctave: number; w0: number;
+  fMin: number | null; fMax: number | null;
+}
 
 /** All per-set settings for one set (one record per selection setId). */
 export interface PerSetSettings { freq: FreqSettings; tf: TfSettings; sono: SonoSettings; }
@@ -56,14 +69,15 @@ export interface ViewSettings { freq: FreqSettings; tf: TfSettings; sono: SonoSe
  * Default per-set settings. Values match each card's prior local
  * defaults (FrequencyCard: window 'hann', mode 'fft', 10 frames;
  * TFCard: chIn 0, window 'hann', averaging 'within', 10 frames;
- * SonoCard: nFft 512 = 2^9, dynRangeDb 60). A fresh object each call so
+ * SonoCard: nFft 512 = 2^9, dynRangeDb 60, method 'stft' — CWT off by
+ * default so today's behaviour is preserved). A fresh object each call so
  * seeded records never alias.
  */
 export function defaults(): PerSetSettings {
   return {
     freq: { window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1 },
     tf: { chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 },
-    sono: { nFft: 512, dynRangeDb: 60 },
+    sono: { nFft: 512, dynRangeDb: 60, method: 'stft', voicesPerOctave: 16, w0: 6, fMin: null, fMax: null },
   };
 }
 
