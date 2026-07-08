@@ -74,24 +74,33 @@ interpretation as in the [Python guide](../user-guide/analysis.md#coherence-func
 
 ## Sonogram
 
-The **Sonogram** stage shows how frequency content evolves over time
-(a short-time Fourier transform).
+The **Sonogram** stage shows how frequency content evolves over time.
+Two methods are available via the **STFT | CWT** switch:
+
+- **STFT** (default) — the classic short-time Fourier transform.
+  **resolution — {nFFT} pt** is a slider (64 to 4096-point window)
+  plus an exact nFFT box: a longer window gives finer frequency
+  resolution and coarser time resolution, and vice versa.
+- **CWT** — a continuous wavelet transform (complex Morlet). Instead
+  of one fixed window it uses log-spaced frequencies whose time/
+  frequency trade-off adapts per band — better at separating close
+  low-frequency modes than any single STFT window. Controls:
+  **voices/octave** (frequency density) and an optional frequency
+  range. The magnitude scale matches the STFT image, so the two
+  methods read comparably.
+
+Common controls:
 
 - **dataset** and **channel** selectors.
-- **resolution — {nFFT} pt** — a slider (64 to 4096-point STFT window)
-  plus an exact nFFT box. A longer window gives finer frequency
-  resolution and coarser time resolution, and vice versa.
 - **dynamic range** — the dB span of the colour map (30–120 dB).
-- **Fit damping** — estimates modal damping from the log-decrement of the
-  sonogram bands, listing `fn (Hz)` and `Qn` per detected mode (or "no
-  decaying modes detected"). This is the browser front-end to
-  [`calculate_damping_from_sono`](../user-guide/modal-analysis.md#damping-from-free-decay-sonogram-method).
+- **Fit damping** — estimates modal damping from the log-decrement of
+  the time-frequency bands, listing `fn (Hz)` and `Qn` per detected
+  mode (or "no decaying modes detected"). It works with whichever
+  method is selected — the CWT variant can resolve close modes the
+  STFT merges. Browser front-end to
+  [`calculate_damping_from_sono`](../user-guide/modal-analysis.md#damping-from-free-decay-sonogram-method)
+  and its CWT counterpart `calculate_damping_from_cwt`.
 - **Calc Sonogram** computes the heat-map.
-
-!!! note "Method: STFT today"
-    The sonogram is currently STFT-only (a power-of-two window). A
-    **continuous-wavelet (CWT)** method — usable by the damping fit too —
-    is **on the roadmap**, not yet shipped.
 
 ## Resolution and averaging
 
