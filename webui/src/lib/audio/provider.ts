@@ -98,6 +98,17 @@ export interface DeviceCapsEntry {
    */
   ao_vmax?: number;
   /**
+   * Maximum analog-OUTPUT sample rate in S/s, from the server's
+   * `device_caps[deviceId].ao_max_rate` (NI only; `_ni_backend.
+   * entry_capabilities`).  A device's AO can top out far below its AI — the
+   * USB-6003 samples input to 100 kS/s but its AO is limited to 5 kS/s — and
+   * MySettings defaults `output_fs = fs`, so an input fs above this cap with
+   * a stimulus enabled fails at log time ("output_fs exceeds the maximum AO
+   * sample rate").  The store clamps `output_fs` to this instead.  Absent on
+   * mock/soundcard (unreported).
+   */
+  ao_max_rate?: number;
+  /**
    * Human-readable device name (server `device_caps[deviceId].name`).  Used
    * as the label of the Acquire output-device select (see {@link outputDevices}).
    */
@@ -221,6 +232,11 @@ export function deviceCapsFor(
   // positive symmetric range so the UI can clamp VmaxNI / output_VmaxNI.
   if (dc && typeof dc.ai_vmax === 'number' && dc.ai_vmax > 0) out.ai_vmax = dc.ai_vmax;
   if (dc && typeof dc.ao_vmax === 'number' && dc.ao_vmax > 0) out.ao_vmax = dc.ao_vmax;
+  // AO rate cap (NI only): lets the UI clamp output_fs when the input fs
+  // exceeds what the device's analog output can run at (USB-6003: 5 kS/s).
+  if (dc && typeof dc.ao_max_rate === 'number' && dc.ao_max_rate > 0) {
+    out.ao_max_rate = dc.ao_max_rate;
+  }
 
   // Fallback: NI enumerate entry's ai_channel_count when the map is absent.
   if (out.max_channels == null) {
@@ -389,6 +405,17 @@ export interface BridgeConfig {
    * the server default (1).  Only sent when `outputEnabled`.
    */
   outputChannels?: number;
+  /**
+   * Output (AO) sample rate → `MySettings.output_fs`.  DERIVED, never
+   * user-typed: the acquire store's `reclampOutputFs` stages the effective
+   * output device's `ao_max_rate` here when the requested input fs exceeds
+   * it, and clears it otherwise.  Unset → the server default
+   * (`output_fs = fs`, options.py), which on a device whose AO tops out
+   * below the input rate (USB-6003: AO 5 kS/s vs AI 100 kS/s) fails the log
+   * with "output_fs exceeds the maximum AO sample rate".  Only sent when
+   * `outputEnabled`.
+   */
+  outputFs?: number;
 }
 
 /**

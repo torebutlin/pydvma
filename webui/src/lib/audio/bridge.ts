@@ -511,6 +511,11 @@ export class BridgeProvider implements SourceProvider {
         if (od.driver !== 'mock') s.output_device_index = od.index;
       }
       if (ec.outputChannels != null) s.output_channels = ec.outputChannels;
+      // Store-derived AO rate clamp (the effective output device's
+      // ao_max_rate sits below the input fs, e.g. USB-6003 AO at 5 kS/s):
+      // without it the server defaults output_fs = fs and rejects the log
+      // with "output_fs exceeds the maximum AO sample rate".
+      if (ec.outputFs != null) s.output_fs = ec.outputFs;
     }
 
     // A pretrigger's context buffer (`chunk_size`, pydvma default 100) must
