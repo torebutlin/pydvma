@@ -1,29 +1,36 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * @engine — the modal-FIT golden path (Wave-A Task A1; round-4 items 9-10).
+ * @engine — the modal-FIT golden path (Wave-A Task A1; round-4 items 9-10;
+ * round-5 item 13 fit-as-tray-card + .dvma round-trip).
+ *
  * Loads the checked-in impulse.dvma via `?fixture=1`, computes the transfer
  * function, switches to the Fit stage (enabled once a TF exists — the
  * `fitEngine` capability), and exercises:
  *   - Fit 2 → two mode rows in the floating chip (the fixture has several
  *     evenly-spaced resonances, so the peak-split finds two);
- *   - the pink local-reconstruction overlay (`stroke=#be185d`) renders, and
- *     toggling "Global" adds the grey dashed global overlay (`#66708a`);
+ *   - the pink local-reconstruction overlay (`stroke=#be185d`) renders;
+ *   - round-5 item 13: the GLOBAL reconstruction becomes a "Modal fit" TRAY
+ *     CARD whose recon lines draw DASHED through the normal visible pipeline;
+ *     the Fit card's "Global" toggle shows/hides that pseudo-set's lines;
  *   - Refine (round-4 item 10): simultaneously refines both modes and either
  *     improves or auto-reverts — either way NO error banner and the model
  *     stays valid (two modes);
  *   - per-mode delete via the chip's × (round-4 item 9) drops to one mode with
  *     no error (this also covers round-4 bug 2 — deleting a mode as the matrix
  *     shrinks must not raise the old `delete_mode` IndexError);
- *   - Undo restores the deleted mode.
+ *   - Undo restores the deleted mode;
+ *   - round-5 item 13: autosave → reload → Restore round-trips the ModalData
+ *     item so the "Modal fit" card is rebuilt from the saved model.
  *
  * SLOW: the first Calc TF pays the full pyodide boot (numpy/scipy + pydvma +
- * peakutils wheels); Refine adds a least_squares solve. Tagged `@engine`.
+ * peakutils wheels); Refine adds a least_squares solve; the reload pays a
+ * SECOND boot for the restore recon. Tagged `@engine`.
  */
 test.describe('@engine', () => {
-  test.setTimeout(240_000);
+  test.setTimeout(320_000);
 
-  test('fixture → TF → Fit 2, Refine, per-mode delete + undo (no errors)', async ({ page }) => {
+  test('fixture → TF → Fit 2 → tray card + dashed recon, Refine, delete + undo, reload restores', async ({ page }) => {
     await page.goto('/?fixture=1');
     await expect(page.getByTestId('tray-card-0')).toBeVisible();
 
@@ -57,10 +64,23 @@ test.describe('@engine', () => {
     await expect(page.locator('path[data-testid="plot-line"][stroke="#be185d"]').first())
       .toBeVisible({ timeout: 20_000 });
 
-    // Toggling "Global" adds the grey dashed global overlay.
-    await page.getByRole('button', { name: 'Global', exact: true }).click();
-    await expect(page.locator('path[data-testid="plot-line"][stroke="#66708a"]').first())
-      .toBeVisible({ timeout: 20_000 });
+    // Round-5 item 13: the GLOBAL reconstruction is now a "Modal fit" TRAY CARD
+    // whose recon lines draw DASHED at the measured line-width (1.5). The card
+    // appears and the dashed recon line renders on the plot. (The coherence
+    // overlay is also dashed but drawn at width 1, so match width 1.5 to isolate
+    // the recon.)
+    await expect(page.getByText(/Modal fit/).first()).toBeVisible({ timeout: 20_000 });
+    const recon = page.locator('path[data-testid="plot-line"][stroke-dasharray="4 3"][stroke-width="1.5"]');
+    await expect(recon.first()).toBeVisible({ timeout: 20_000 });
+
+    // The "Global" toggle maps to the pseudo-set's visibility: hiding it drops
+    // the dashed recon line; showing it brings it back (per-line control still
+    // lives on the tray card + legend).
+    const globalBtn = page.getByRole('button', { name: 'Global', exact: true });
+    await globalBtn.click();
+    await expect(recon).toHaveCount(0, { timeout: 20_000 });
+    await globalBtn.click();
+    await expect(recon.first()).toBeVisible({ timeout: 20_000 });
 
     // Refine both modes simultaneously. Whether it improves or auto-reverts,
     // there must be no error and the model stays valid (two modes).
@@ -83,5 +103,58 @@ test.describe('@engine', () => {
     await chip.getByRole('button', { name: /Undo/ }).click();
     await expect(chip).toContainText('mode 2', { timeout: 60_000 });
     await expect(page.locator('.ctx-err')).toHaveCount(0);
+
+    // ---- Round-5 item 13: .dvma round-trip via autosave → reload → Restore ----
+    // The modal edits re-emit the dataset, so the debounced autosave persists a
+    // ModalData item alongside the TimeData/TF. Wait until the autosaved bytes
+    // actually CONTAIN the ModalData member (`arrays/NNNN_M.npy`) — polling only
+    // `byteLength > 0` could pass on an earlier autosave written before the fit.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              new Promise<boolean>((resolve) => {
+                const open = indexedDB.open('keyval-store');
+                open.onsuccess = () => {
+                  const db = open.result;
+                  if (!db.objectStoreNames.contains('keyval')) return resolve(false);
+                  const req = db.transaction('keyval').objectStore('keyval').get('pydvma:autosave');
+                  req.onsuccess = () => {
+                    const v = req.result as Uint8Array | undefined;
+                    if (!v) return resolve(false);
+                    // Zip stores member names uncompressed in local headers, so a
+                    // raw-bytes scan finds the ModalData M array without unzipping.
+                    const txt = new TextDecoder('latin1').decode(v);
+                    resolve(/arrays\/\d{4}_M\.npy/.test(txt));
+                  };
+                  req.onerror = () => resolve(false);
+                };
+                open.onerror = () => resolve(false);
+              }),
+          ),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+
+    // Reload WITHOUT the fixture flag so the boot-time restore offer is not
+    // skipped; accept it. loadDataset seeds the modal store from the saved
+    // ModalData and refires the recon (the TF is present) to rebuild the card.
+    await page.goto('/');
+    const toast = page.getByTestId('toast').filter({ hasText: 'Restore last session?' });
+    await expect(toast).toBeVisible();
+    await toast.getByRole('button', { name: 'Restore' }).click();
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+
+    // The modes restore IMMEDIATELY from the saved matrix M (no engine): the
+    // Fit stage's chip lists both modes right away — the core persistence proof.
+    await stages.getByRole('button', { name: 'Fit', exact: true }).click();
+    const restoredChip = page.getByLabel('fitted modes');
+    await expect(restoredChip).toContainText('mode 1', { timeout: 30_000 });
+    await expect(restoredChip).toContainText('mode 2');
+
+    // The "Modal fit" tray card is rebuilt once the restore recon completes
+    // (the engine reboots from cached wheels on the reloaded page).
+    await expect(page.getByText(/Modal fit/).first()).toBeVisible({ timeout: 200_000 });
   });
 });

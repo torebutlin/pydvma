@@ -309,3 +309,51 @@ test('solo with an unknown id is a no-op', () => {
   expect(get(sel.state)(2, 0)).toBe('on');
   expect(get(sel.highlight)).toBe(0);
 });
+
+// ---- Modal-fit pseudo-set (role, dataSetsView, colours, trayFocus) — round-5 item 13 ----
+
+test('a fit role set: appears in setsView but NOT in dataSetsView', () => {
+  const fitId = sel.addSet({ name: 'Modal fit (set_0)', nChannels: 2, durationS: 0, timestamp: '', role: 'fit' });
+  const all = get(sel.setsView).map(s => s.id);
+  const data = get(sel.dataSetsView).map(s => s.id);
+  expect(all).toContain(fitId);
+  expect(data).not.toContain(fitId);
+  // Data sets keep their roles + order.
+  expect(get(sel.dataSetsView).every(s => s.role === 'data')).toBe(true);
+  expect(get(sel.setsView).find(s => s.id === fitId)?.role).toBe('fit');
+});
+
+test('a fit set adopts supplied colours verbatim and does NOT shift later data colours', () => {
+  const target0 = sel.lineColor(0, 0);
+  const target1 = sel.lineColor(0, 1);
+  const fitId = sel.addSet({
+    name: 'Modal fit (set_0)', nChannels: 2, durationS: 0, timestamp: '',
+    role: 'fit', colors: [target0!, target1!],
+  });
+  // Fit set mirrors the target colours.
+  expect(sel.lineColor(fitId, 0)).toBe(target0);
+  expect(sel.lineColor(fitId, 1)).toBe(target1);
+  // A data set added AFTER the fit set keeps the palette offset it would have
+  // had WITHOUT the fit set (12 data channels already: 2+2+8) — the fit set's
+  // channels don't advance the palette.
+  const dataId = sel.addSet({ name: 'set_3', nChannels: 1, durationS: 1, timestamp: 't3' });
+  expect(sel.lineColor(dataId, 0)).toBe(LINE_PALETTE[12 % LINE_PALETTE.length]);
+});
+
+test('setSetVisible forces a whole set on/off (the Global toggle mapping)', () => {
+  sel.setSetVisible(2, false);
+  for (let ch = 0; ch < 8; ch++) expect(get(sel.state)(2, ch)).toBe('off');
+  sel.setSetVisible(2, true);
+  for (let ch = 0; ch < 8; ch++) expect(get(sel.state)(2, ch)).toBe('on');
+  sel.setSetVisible(99, true);   // unknown id no-op (no throw)
+});
+
+test('trayFocus ignores a fit set: a data-set solo still reads as that set', () => {
+  sel.addSet({ name: 'Modal fit', nChannels: 2, durationS: 0, timestamp: '', role: 'fit' }); // id 3
+  // Solo data set 1: trayFocus should read 1 even though the fit set is 'on'.
+  sel.solo(1);
+  expect(get(sel.trayFocus)).toBe(1);
+  // Showing every set → 'all' (the fit set being on must not make it read a solo).
+  sel.all();
+  expect(get(sel.trayFocus)).toBe('all');
+});

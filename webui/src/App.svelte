@@ -105,8 +105,15 @@
   const derivedStore = actions.derived;
   const computeErrors = actions.computeErrors;
   const active = viewState.active;
+  const setsViewStore = selection.setsView;
   const legendEntries = selection.legendEntries;
   const legendRows = selection.legendRows;       // off-inclusive (legend display)
+  /**
+   * Ids of the modal-fit pseudo-set(s) (round-5 item 13). Their recon lines
+   * flow through the normal visible-line pipeline but must draw DASHED (the fit
+   * signature) — see `visible`. Kept as a set for O(1) membership.
+   */
+  const fitSetIds = $derived(new Set($setsViewStore.filter((s) => s.role === 'fit').map((s) => s.id)));
   const channelLabel = selection.channelLabel;   // custom per-line labels (R5)
   const sharedFreqRange = viewState.sharedFreqRange;
   const currentSlice = viewState.current;
@@ -490,6 +497,8 @@
   const visible = $derived<VisibleLine[]>(
     viewEntries.map((e) => ({
       setId: e.setId, ch: e.ch, state: e.state === 'off' ? 'fade' : e.state, color: e.color,
+      // A modal-fit pseudo-set's recon lines draw dashed (round-5 item 13).
+      dashed: fitSetIds.has(e.setId),
     })),
   );
 
@@ -523,24 +532,26 @@
   );
 
   /**
-   * Modal-reconstruction overlay (Task A1). Drawn ONLY on the Fit stage
-   * (which reuses view 'tf'), and only once a fit exists for a target set —
-   * so the TF stage itself stays clean. Passes the local (pink) + global
-   * (grey dashed) reconstruction slices and the "Reconstruction" toggle to
-   * the model builder, which overlays them per visible measured line.
+   * Ephemeral LOCAL reconstruction overlay (Task A1; round-5 item 13). Drawn
+   * ONLY on the Fit stage (which reuses view 'tf') — the transient pink
+   * "just-fitted" feedback, not a dataset. The GLOBAL reconstruction is NO
+   * LONGER an App-level overlay: it is now the modal-fit PSEUDO-SET (a tray
+   * card whose dashed lines flow through the normal visible pipeline; see
+   * `syncModal` in actions), so it gets tri-state / solo / legend for free.
+   * We therefore pass ONLY `local` here (global omitted, showGlobal false) so
+   * the model draws just the pink overlay and never double-draws the global.
    */
   const modalState = modal;   // subscribe with $modalState
   const reconArg = $derived.by(() => {
     if ($activeStage !== 'fit') return null;
     const m = $modalState;
-    if (m.setId === null || (!m.local && !m.global)) return null;
+    if (m.setId === null || !m.local) return null;
     return {
       setId: m.setId, chIn: m.chIn, nChannels: m.nChannels,
-      // Local overlay honours its own visibility toggle (round-4 item 9);
-      // the model gates the global overlay on `showGlobal`.
-      local: (m.showLocal && m.local) ? m.local : undefined,
-      global: m.global ?? undefined,
-      showGlobal: m.showGlobal,
+      // Local overlay honours its own visibility toggle (round-4 item 9).
+      local: m.showLocal ? m.local : undefined,
+      global: undefined,        // global recon is the pseudo-set now
+      showGlobal: false,
     };
   });
 
@@ -713,15 +724,16 @@
 
   <main class="main">
     {#if narrow}
-      <NarrowRail {selection} {channelSeries} />
+      <NarrowRail {selection} {modal} {channelSeries} onDeleteFit={actions.clearFit} />
     {:else}
       <aside class="tray" data-testid="tray">
         <div class="tray-scroll">
           <!-- Calibration handlers passed explicitly (they take precedence
                over the calibrationController fallback bridge inside Tray). -->
-          <Tray {selection} channelData={channelSeries}
+          <Tray {selection} {modal} channelData={channelSeries}
             getCalibration={actions.getCalibration}
-            applyCalibration={actions.setCalFactors} />
+            applyCalibration={actions.setCalFactors}
+            onDeleteFit={actions.clearFit} />
         </div>
         <MiniMonitor {monitor} />
       </aside>

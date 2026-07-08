@@ -29,6 +29,7 @@
    */
   import { get } from 'svelte/store';
   import type { Selection } from '../lib/stores/selection';
+  import type { ModalStore } from '../lib/stores/modal';
   import { summariseColumn, type ColumnState } from '../lib/stores/channelSummary';
   import { factorToSensitivity, sensitivityToFactor, type CalRow } from '../lib/model/calibration';
   import { calibrationController } from '../lib/stores/calibrationController';
@@ -37,6 +38,9 @@
 
   let {
     selection,
+    /** Modal-fit store (round-5 item 13) — supplies the fit pseudo-set's mode
+     *  count for its tray-card badge. Absent → no fit card is rendered specially. */
+    modal,
     /** Real time-series for a (setId, ch) so cards can draw sparklines.
      *  Reassigned by the parent when decoded data changes (keeps previews live). */
     channelData,
@@ -45,12 +49,27 @@
     /** Persist a set's calibration (factors + units). Both must be supplied
      *  together to enable the per-card Calibrate button. */
     applyCalibration,
+    /** Delete handler for the modal-fit pseudo-set card (round-5 item 13):
+     *  clears the modal model with one-level undo (see `actions.clearFit`).
+     *  Falls back to `selection.removeSet` if absent. */
+    onDeleteFit,
   }: {
     selection: Selection;
+    modal?: ModalStore;
     channelData?: (setId: number, ch: number) => Float64Array | undefined;
     getCalibration?: (setId: number) => { factors: number[]; units: string[] };
     applyCalibration?: (setId: number, factors: number[], units: string[]) => void;
+    onDeleteFit?: () => void;
   } = $props();
+
+  // Live mode count for the fit pseudo-set's tray-card badge (round-5 item 13).
+  // Subscribed via an effect (not `$store`) so an ABSENT `modal` prop — the
+  // narrow-rail Tray does not pass one — never auto-subscribes `undefined`.
+  let modeCount = $state(0);
+  $effect(() => {
+    if (!modal) { modeCount = 0; return; }
+    return modal.subscribe((s) => { modeCount = s.modes.length; });
+  });
 
   // Prefer explicit props (idiomatic / testable); otherwise use the app-scoped
   // controller the actions layer publishes (avoids a prop thread through App).
@@ -182,13 +201,25 @@
       <p class="tray-empty">No data loaded</p>
     {:else}
       {#each $setsView as set (set.id)}
-        <TrayCard
-          {selection}
-          {set}
-          onDeleteSet={selection.removeSet}
-          onCalibrate={canCalibrate ? openCalibrate : undefined}
-          channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
-        />
+        {#if set.role === 'fit'}
+          <!-- Modal-fit pseudo-set (round-5 item 13): a mode-count badge instead
+               of a duration, no calibrate/sparklines, and delete = clear the
+               modal model (with undo) rather than remove a data set. -->
+          <TrayCard
+            {selection}
+            {set}
+            fit={{ modeCount }}
+            onDeleteSet={onDeleteFit ?? selection.removeSet}
+          />
+        {:else}
+          <TrayCard
+            {selection}
+            {set}
+            onDeleteSet={selection.removeSet}
+            onCalibrate={canCalibrate ? openCalibrate : undefined}
+            channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
+          />
+        {/if}
       {/each}
     {/if}
   </div>

@@ -34,7 +34,9 @@
     analysisSettings,
   }: { viewState: ViewState; selection: Selection; actions: Actions; analysisSettings: AnalysisSettings } = $props();
 
-  const setsView = $derived(selection.setsView);
+  // DATA sets only (round-5 item 13): the modal-fit pseudo-set is not a TF
+  // target, so it must not appear in the "Dataset ▾" dropdown / channel counts.
+  const setsView = $derived(selection.dataSetsView);
   const current = $derived(viewState.current);
   const sharedFreq = $derived(viewState.sharedFreqRange);
   const computeErrors = $derived(actions.computeErrors);

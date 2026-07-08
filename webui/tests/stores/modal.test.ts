@@ -122,6 +122,55 @@ test('undo slot: pushUndo snapshots, undo restores, one level only', () => {
   expect(s.undo).toBeNull();                       // slot cleared after undo
 });
 
+test('seedFromMatrix decodes the mode summary from M rows (fn=col0, zn=col1) without a recon', () => {
+  const m = createModalStore();
+  // Two modes, 1 channel: M row = [fn, zn, an, pn, rk, rm].
+  const M = real([2, 6], [80, 0.02, 1, 0, 0, 0, 220, 0.01, 0.6, 0, 0, 0]);
+  m.seedFromMatrix(M, { setId: 7, chIn: 0, nChannels: 2 }, 'vel');
+  const s = get(m);
+  expect(s.setId).toBe(7);
+  expect(s.chIn).toBe(0);
+  expect(s.nChannels).toBe(2);
+  expect(s.mt).toBe('vel');
+  expect(s.modes.map((x) => x.fn)).toEqual([80, 220]);
+  expect(s.modes.map((x) => x.zn)).toEqual([0.02, 0.01]);
+  expect(s.modes[0].Q).toBeCloseTo(25, 6);
+  expect(s.matrix?.shape).toEqual([2, 6]);
+  // No recon overlays yet — they are recomputed once the TF is available.
+  expect(s.local).toBeNull();
+  expect(s.global).toBeNull();
+  expect(s.muted).toEqual([false, false]);
+});
+
+test('seedFromMatrix with an empty matrix leaves the model empty (setId null)', () => {
+  const m = createModalStore();
+  m.seedFromMatrix(real([0, 6], []), { setId: 7, chIn: 0, nChannels: 2 }, 'acc');
+  const s = get(m);
+  expect(s.setId).toBeNull();
+  expect(s.matrix).toBeNull();
+  expect(s.modes).toEqual([]);
+});
+
+test('clearWithUndo empties the model but a single undo restores it (with cached recon)', () => {
+  const m = createModalStore();
+  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });   // 2 modes + global
+  expect(get(m).global).not.toBeNull();
+
+  m.clearWithUndo();
+  const cleared = get(m);
+  expect(cleared.modes).toEqual([]);
+  expect(cleared.matrix).toBeNull();
+  expect(cleared.global).toBeNull();
+  expect(cleared.undo).not.toBeNull();               // snapshot stashed
+
+  m.undo();                                           // one click brings it back
+  const back = get(m);
+  expect(back.modes.map((x) => x.fn)).toEqual([80, 220]);
+  expect(back.setId).toBe(3);
+  expect(back.global).not.toBeNull();                 // cached recon restored (no engine)
+  expect(back.undo).toBeNull();
+});
+
 test('mute: toggleMute flips flags, mutedIndices reports them, preserved across same-count applyResult', () => {
   const m = createModalStore();
   m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });  // 2 modes

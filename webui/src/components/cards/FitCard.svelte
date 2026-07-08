@@ -13,9 +13,14 @@
    *   - Reject — delete modes whose fn lies in the visible window;
    *   - Refine — simultaneously refine ALL fitted modes (round-4 item 10;
    *     `calc_fit` action 'refine'), auto-reverting if it does not improve;
-   *   - Local / Global — independent visibility toggles for the pink local
-   *     (just-fitted) and grey-dashed global (whole-model) recon overlays
-   *     (round-4 item 9 — the dashed global read as too subtle on its own).
+   *   - Local — visibility toggle for the pink local (just-fitted) recon
+   *     overlay (round-4 item 9), the transient just-fitted feedback.
+   *   - Global — round-5 item 13 MAPPING: the whole-model (global)
+   *     reconstruction is now the modal-fit PSEUDO-SET (a tray card whose
+   *     dashed lines flow through the normal visible pipeline), so this button
+   *     shows/hides that pseudo-set's lines (`actions.setFitVisible`); per-line
+   *     control lives on the tray card + legend. Its lit state reflects
+   *     `actions.fitVisible`.
    *   - Undo — appears after a destructive/refine action; one level.
    *
    * The mockup's "Summary" is realised as the ALWAYS-ON floating mode chip
@@ -47,6 +52,9 @@
 
   const busy = $derived(actions.busy);
   const computeErrors = $derived(actions.computeErrors);
+  // Whether the modal-fit pseudo-set is shown (round-5 item 13) — the Global
+  // toggle's lit state; toggling it drives `actions.setFitVisible`.
+  const fitVisible = $derived(actions.fitVisible);
   const target = $derived(analysisSettings.analysisTarget);
   const sharedFreq = $derived(viewState.sharedFreqRange);
   const modalState = $derived(modal);
@@ -95,7 +103,8 @@
   function refine() { actions.calcFit(modelTarget, null, mt, 'refine'); }
   function undo() { modal.undo(); }
   function toggleLocal() { modal.toggleLocal(); }
-  function toggleGlobal() { modal.toggleGlobal(); }
+  // Global maps to the pseudo-set's all-lines on/off (round-5 item 13).
+  function toggleGlobal() { actions.setFitVisible(!$fitVisible); }
 </script>
 
 <section class="ctx-card card-controls" aria-label="Fit stage controls">
@@ -130,11 +139,11 @@
         <span class="grp-lab">overlays</span>
         <div class="grp-ctl">
           <button class="btn" class:on={$modalState.showLocal}
-            disabled={$modalState.setId === null} onclick={toggleLocal}
+            disabled={!$modalState.local} onclick={toggleLocal}
             title="Toggle the local (just-fitted) reconstruction overlay">Local</button>
-          <button class="btn" class:on={$modalState.showGlobal}
-            disabled={$modalState.setId === null} onclick={toggleGlobal}
-            title="Toggle the global (whole-model) reconstruction overlay">Global</button>
+          <button class="btn" class:on={$fitVisible}
+            disabled={$busy || $modalState.modes.length === 0} onclick={toggleGlobal}
+            title="Show/hide the global reconstruction — the ‘Modal fit’ tray card's lines">Global</button>
         </div>
       </div>
       <div class="grp">

@@ -60,7 +60,16 @@ export type FreqMode = 'fft' | 'psd' | 'csd';
  * store resolved for it. `state === 'off'` lines are dropped BEFORE
  * this list reaches `buildPlotModel`, so only `'on'`/`'fade'` appear.
  */
-export interface VisibleLine { setId: number; ch: number; state: LineState; color: string; }
+export interface VisibleLine {
+  setId: number; ch: number; state: LineState; color: string;
+  /**
+   * Draw this line DASHED (round-5 item 13). Set for the modal-fit pseudo-set's
+   * reconstruction lines so a recon reads as a fit of the measured line it
+   * mirrors (same colour, dashed) even though it flows through the normal
+   * visible-line pipeline. Absent/false ⇒ solid (every measured line).
+   */
+  dashed?: boolean;
+}
 
 /**
  * A set's derived arrays, already decoded from the worker marshalling.
@@ -563,8 +572,11 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       const { re, im } = calScaledColumn(t.data, nf, nout, col, ratio);
       const { x, y, xMonotonic } = tfXY(t.axis, re, im, type, linMag, window);
       lines.push({
+        // A modal-fit pseudo-set line (round-5 item 13) is dashed so it reads
+        // as a reconstruction even though it draws through the measured-line
+        // path; every real measured line is solid.
         x, y, color: v.color, opacity: OPACITY[v.state],
-        width: 1.5, dashed: false, yAxis: 'left', xMonotonic,
+        width: 1.5, dashed: !!v.dashed, yAxis: 'left', xMonotonic,
       });
     }
 

@@ -25,9 +25,14 @@
     selection,
     /** Forwarded to the hosted Tray so narrow-mode sparklines draw real data. */
     channelSeries,
+    /** Forwarded to the hosted Tray for the modal-fit card (round-5 item 13). */
+    modal,
+    onDeleteFit,
   }: {
     selection: Selection;
     channelSeries?: (setId: number, ch: number) => Float64Array | undefined;
+    modal?: import('../lib/stores/modal').ModalStore;
+    onDeleteFit?: () => void;
   } = $props();
 
   const setsView = $derived(selection.setsView);
@@ -127,7 +132,7 @@
     data-testid="tray"
     onkeydown={onDrawerKeydown}
   >
-    <Tray {selection} channelData={channelSeries} />
+    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} />
   </div>
 {/if}
 

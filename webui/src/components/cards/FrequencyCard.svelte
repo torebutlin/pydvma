@@ -40,7 +40,9 @@
     analysisSettings,
   }: { actions: Actions; selection: Selection; analysisSettings: AnalysisSettings } = $props();
 
-  const setsView = $derived(selection.setsView);
+  // DATA sets only (round-5 item 13): the modal-fit pseudo-set is not a
+  // spectral target, so it must not appear in the "Dataset ▾" dropdown.
+  const setsView = $derived(selection.dataSetsView);
   const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
 

@@ -164,6 +164,41 @@ test('readDvma ignores non-object ui gracefully', () => {
   expect(parsed.items[0].ui).toBeUndefined();
 });
 
+// ---- Modal-fit persistence: ModalData item round-trip (round-5 item 13) ----
+
+test('a JS-authored ModalData item write -> read round-trips M + meta', () => {
+  const ds = readDvma(bytes);
+  // Append a ModalData item as `syncModal` would build it (matches pydvma's
+  // container.py ModalData schema: array M + meta units/test_name/timestamp/
+  // timestring/id_link/channels, plus webui-only keys pydvma ignores).
+  const iso = '2026-07-08T00:00:00.000Z';
+  const M = { shape: [2, 6], isComplex: false, data: Float64Array.from([80, 0.02, 1, 0, 0, 0, 220, 0.01, 0.6, 0, 0, 0]) };
+  const meta = {
+    units: ['m/s²', 'N'], test_name: 'modal_set_0', timestamp: iso, timestring: iso,
+    id_link: 'UID1', channels: 1, measurement_type: 'acc', source_ch_in: 0, source_n_channels: 2,
+  };
+  const modalItem: DvmaItem = {
+    kind: 'ModalData', arrays: { M }, meta,
+    metaRaw: { ...meta, timestamp: { __datetime__: iso } }, settings: null,
+  };
+  ds.items.push(modalItem);
+
+  const ds2 = readDvma(writeDvma(ds));
+  const md = ds2.items.find(i => i.kind === 'ModalData')!;
+  expect(md).toBeTruthy();
+  expect(md.arrays.M.shape).toEqual([2, 6]);
+  expect(Array.from(md.arrays.M.data as Float64Array))
+    .toEqual([80, 0.02, 1, 0, 0, 0, 220, 0.01, 0.6, 0, 0, 0]);
+  expect(md.meta.id_link).toBe('UID1');
+  expect(md.meta.channels).toBe(1);
+  expect(md.meta.measurement_type).toBe('acc');       // webui-only key preserved in JS
+  expect(md.meta.source_ch_in).toBe(0);
+  expect(md.meta.source_n_channels).toBe(2);
+  // timestamp decodes back to the ISO string (tagged __datetime__ in metaRaw).
+  expect(md.meta.timestamp).toBe(iso);
+  expect((md.metaRaw!.timestamp as Record<string, unknown>).__datetime__).toBe(iso);
+});
+
 test('ui with both labels and analysis round-trips together', () => {
   const ds = readDvma(bytes);
   const td = ds.items.find(i => i.kind === 'TimeData')!;

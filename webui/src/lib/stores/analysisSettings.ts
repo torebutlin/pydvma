@@ -108,7 +108,10 @@ export function createAnalysisSettings(selection: Selection) {
 
   // Seed defaults for new sets; prune records for removed sets. Keyed by
   // setId so surviving sets keep their exact settings across add/remove.
-  const setsView = selection.setsView as Readable<{ id: number }[]>;
+  // DATA sets only (round-5 item 13): the modal-fit pseudo-set is never an
+  // analysis target, so it must not get a settings record (nor perturb the
+  // `'all'` representative / mixed detection).
+  const setsView = selection.dataSetsView as Readable<{ id: number }[]>;
   setsView.subscribe(($sets) => {
     const present = new Set($sets.map((s) => s.id));
     map.update((m) => {

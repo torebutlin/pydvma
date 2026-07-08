@@ -34,7 +34,7 @@
  * versa). `busy` is REFERENCE-COUNTED so it stays true until the last
  * concurrent action settles.
  */
-import { writable, get } from 'svelte/store';
+import { writable, derived as svelteDerived, get } from 'svelte/store';
 import type { DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 import { itemChannels, setItemMeta } from '../model/dataset';
 import type { NpyArray } from '../codec/npy';
@@ -44,7 +44,7 @@ import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSetting
 import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import type { ViewId } from '../stores/viewstate';
-import type { ModalStore } from '../stores/modal';
+import type { ModalStore, ModalState, ReconArrays } from '../stores/modal';
 import type { Toasts } from '../stores/toast';
 import { normalizeFactors, normalizeUnits } from '../model/calibration';
 import { calibrationController } from '../stores/calibrationController';
@@ -441,6 +441,39 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     });
 
     derived.set(seed);
+
+    // ---- Pass 3: ModalData → restore the modal store + fit tray card ----
+    // (round-5 item 13). A saved `.dvma` may carry the fitted modal model as a
+    // `ModalData` item linked (id_link) to its source TimeData. Seed the modal
+    // store from `M` (the mode chip shows immediately), adopt the item for
+    // in-place persistence, and — when the target's TF is present (typical: the
+    // TF is saved alongside) — recompute the GLOBAL reconstruction so the
+    // pseudo-set's recon lines appear. Otherwise the recon is DEFERRED until a
+    // TF is first computed for the target (see `maybeRestoreModalRecon`).
+    if (modal) {
+      const modalEntry = ds.items.find((it) => it.kind === 'ModalData' && !!it.arrays.M);
+      const link = modalEntry?.meta.id_link;
+      const targetSetId = typeof link === 'string' ? linkToSet.get(link) : undefined;
+      if (modalEntry && targetSetId !== undefined) {
+        modalItem = modalEntry;                          // adopt for in-place upsert
+        const Marr = modalEntry.arrays.M;
+        const matrix: MarshalledArray = {
+          shape: Marr.shape.slice(),
+          data: Marr.data instanceof Float64Array ? Marr.data : Float64Array.from(Marr.data as ArrayLike<number>),
+          complex: false,
+        };
+        lastMatrix = matrix;                             // adopted item already in items
+        const tf = seed[targetSetId]?.tf;
+        // Geometry from the restored TF slice when present (authoritative), else
+        // the webui-only meta keys we wrote (source_ch_in / source_n_channels).
+        const chIn = tf ? (tf.chIn ?? null) : ((modalEntry.meta.source_ch_in as number | null) ?? 0);
+        const nChannels = tf ? (tf.nChannels ?? 1) : ((modalEntry.meta.source_n_channels as number) ?? 1);
+        const mt = (modalEntry.meta.measurement_type as MeasurementType) ?? 'acc';
+        modal.seedFromMatrix(matrix, { setId: targetSetId, chIn, nChannels }, mt);
+        if (tf && (tf.data.shape[1] ?? 0) > 0) void calcFit(targetSetId, null, mt, 'recon');
+      }
+    }
+
     return populatedViews(seed);
   }
 
@@ -623,6 +656,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // so the model remaps out/in against the same input channel (R4).
         const tf = tfFromResult(res, axis, chIn, first.nChannels);
         setDerived(first.setId, { tf });
+        maybeRestoreModalRecon([first.setId]);          // deferred modal recon
         return;
       }
       // Per-set: run only the sets that HAVE an output channel; collect the
@@ -644,6 +678,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         setDerived(ws.setId, { tf: tfFromResult(res, fAxis, chIn, ws.nChannels) });
       }
       if (stale('tf', my)) return;                    // a newer batch superseded us
+      // A newly-computed TF may satisfy a deferred modal restore (round-5 item 13).
+      maybeRestoreModalRecon(runnable.map((ws) => ws.setId));
       // Any valid sets are now drawn; if we skipped single-channel sets,
       // tell the user why (routes to `computeErrors.tf` via `guarded`, shown
       // on the TF card + under the plot). A pure single-channel target
@@ -821,6 +857,228 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   // without a prop thread through App.svelte (see `calibrationController`).
   calibrationController.set({ getCalibration, setCalFactors });
 
+  // --------------------------------------------------------------------- //
+  // Modal-fit pseudo-set + persistence (round-5 item 13)
+  // --------------------------------------------------------------------- //
+  //
+  // The modal model becomes a first-class TRAY CARD: its GLOBAL reconstruction
+  // registers as a `role:'fit'` selection set whose lines flow through the
+  // normal visible-line pipeline (so tri-state / solo / legend "just work"),
+  // and it PERSISTS as a `ModalData` item inside the dataset so Save / autosave
+  // / Load round-trip it. `syncModal` reconciles BOTH from the modal store on
+  // every change (driven by a store subscription).
+  //
+  // GUARD RAILS (one predicate — `role === 'fit'`): the pseudo-set is excluded
+  // from `dataSetsView` (so the analysis "Dataset ▾" dropdowns + calc targets
+  // never see it), NEVER enters `working` (so MAT/CSV export + save-as-TimeData
+  // skip it), and is only ever serialized as `ModalData` (below), never as a
+  // TimeData.
+
+  /** Fallback recon colour when the target set's colour is unavailable. */
+  const FIT_FALLBACK_COLOR = '#66708a';   // mockup grey (round2-bench.html)
+
+  /** The modal-fit pseudo-set's selection id, or `null` when none is shown. */
+  let fitSetId: number | null = null;
+  /** Reactive mirror of `fitSetId` for `fitVisible` + the Fit card's toggle. */
+  const fitSetIdW = writable<number | null>(null);
+  /** The `ModalData` item kept inside `dataset.items` (persistence), or null. */
+  let modalItem: DvmaItem | null = null;
+  /** Last recon / matrix synced (by reference) so `syncModal` skips no-op emits. */
+  let lastGlobal: ReconArrays | null = null;
+  let lastMatrix: MarshalledArray | null = null;
+  /** Target set + channel count the current pseudo-set was built for, so a fit
+   *  that RETARGETS a different set (new name / colours / geometry) rebuilds it. */
+  let fitForSetId: number | null = null;
+  let fitForNChannels = 0;
+
+  /** id_link for the ModalData item = the target set's source unique_id. */
+  function modalIdLink(targetSetId: number): string | null {
+    const ws = working.find((w) => w.setId === targetSetId);
+    const uid = ws?.time.meta.unique_id;
+    if (typeof uid === 'string' && uid) return uid;
+    const link = ws?.time.meta.id_link;
+    return typeof link === 'string' && link ? link : null;
+  }
+
+  /**
+   * Insert or update the persisted `ModalData` item from the current model.
+   *
+   * Mirrors pydvma `container.py`'s ModalData schema so python's
+   * `container.load` reads it back: array `M` (the modal matrix, row-major
+   * `[fn, zn, an*C, pn*C, rk*C, rm*C]`), meta `units / test_name / timestamp /
+   * timestring / id_link / channels`. Extra webui-only meta keys
+   * (`measurement_type`, `source_ch_in`, `source_n_channels`) let the LOADER
+   * rebuild the pseudo-set geometry + recompute the recon; pydvma ignores
+   * manifest keys it does not know, so they are harmless to the python reader.
+   * `timestamp` carries a `{__datetime__}` tag in `metaRaw` so python decodes a
+   * real datetime while the plain `meta` stays JS-friendly.
+   */
+  function upsertModalItem(m: ModalState, targetSetId: number): void {
+    const ds = get(dataset);
+    if (!ds || !m.matrix) return;
+    const matrix = m.matrix;
+    const channels = Math.max(0, Math.round(((matrix.shape[1] ?? 2) - 2) / 4));
+    const units = (working.find((w) => w.setId === targetSetId)?.time.meta.units as unknown) ?? null;
+    const iso = new Date().toISOString();
+    const meta: Record<string, unknown> = {
+      units, test_name: `modal_${nameOf(targetSetId)}`,
+      timestamp: iso, timestring: iso, id_link: modalIdLink(targetSetId), channels,
+      measurement_type: m.mt, source_ch_in: m.chIn, source_n_channels: m.nChannels,
+    };
+    const metaRaw: Record<string, unknown> = { ...meta, timestamp: { __datetime__: iso } };
+    const M: NpyArray = {
+      shape: matrix.shape.slice(),
+      data: matrix.data instanceof Float64Array ? matrix.data : Float64Array.from(matrix.data),
+      isComplex: false,
+    };
+    if (modalItem) {
+      modalItem.arrays = { M }; modalItem.meta = meta; modalItem.metaRaw = metaRaw;
+    } else {
+      modalItem = { kind: 'ModalData', arrays: { M }, meta, metaRaw, settings: null };
+      ds.items.push(modalItem);
+    }
+  }
+
+  /** Remove the fit pseudo-set from selection + its recon slice from derived. */
+  function removeFitSet(): void {
+    if (fitSetId === null) return;
+    const id = fitSetId;
+    fitSetId = null; fitSetIdW.set(null);
+    lastGlobal = null; fitForSetId = null; fitForNChannels = 0;
+    selection.removeSet(id);
+    derived.update((d) => { const n = { ...d }; delete n[id]; return n; });
+  }
+
+  /** Drop the persisted ModalData item from the dataset (model cleared). */
+  function removeModalItem(): void {
+    const ds = get(dataset);
+    if (ds && modalItem) {
+      const i = ds.items.indexOf(modalItem);
+      if (i >= 0) ds.items.splice(i, 1);
+    }
+    modalItem = null;
+  }
+
+  /**
+   * Reconcile the fit pseudo-set + the ModalData item with the modal store.
+   * Called on every modal-store change (subscription below). Reference checks
+   * keep idempotent emits (mt / toggle / pushUndo) cheap — the set/derived/
+   * dataset only change when the recon or matrix reference actually changes.
+   *
+   * - The pseudo-set exists only while there is a model AND a non-empty GLOBAL
+   *   reconstruction to draw (its lines ARE that recon); its `tf` slice is the
+   *   global recon arrays, carrying the target's out/in geometry so the same
+   *   `tfColumn` remap + legend as the measured lines apply.
+   * - The ModalData item persists whenever a model exists (even before the
+   *   recon lands — e.g. a loaded model whose TF is not yet computed).
+   */
+  function syncModal(): void {
+    if (!modal) return;
+    const m = modal.get();
+    const hasModel = !!m.matrix && m.modes.length > 0 && m.setId !== null;
+    const hasRecon = hasModel && !!m.global && ((m.global.data.shape[1] ?? 0) > 0);
+
+    // ---- Pseudo-set (visible recon lines) ----
+    if (hasRecon) {
+      const g = m.global!;
+      // A fit that RETARGETED a different set (or a set whose channel count
+      // changed) needs a fresh card — the name / colours / geometry differ.
+      if (fitSetId !== null && (fitForSetId !== m.setId || fitForNChannels !== m.nChannels)) {
+        removeFitSet();
+      }
+      if (fitSetId === null) {
+        // Mirror the TARGET set's colours so each recon line reads as the fit of
+        // the measured line it overlays; dashing (model.ts) is the fit signature.
+        const colors = Array.from({ length: m.nChannels },
+          (_, c) => selection.lineColor(m.setId!, c) ?? FIT_FALLBACK_COLOR);
+        fitSetId = selection.addSet({
+          name: `Modal fit (${nameOf(m.setId!)})`,
+          nChannels: m.nChannels, durationS: 0, timestamp: '', role: 'fit', colors,
+        });
+        fitSetIdW.set(fitSetId);
+        fitForSetId = m.setId; fitForNChannels = m.nChannels;
+      }
+      if (g !== lastGlobal) {
+        setDerived(fitSetId, { tf: { axis: g.axis, data: g.data, chIn: m.chIn, nChannels: m.nChannels } });
+        lastGlobal = g;
+      }
+    } else if (fitSetId !== null) {
+      removeFitSet();
+    }
+
+    // ---- Persisted ModalData item ----
+    if (hasModel) {
+      if (m.matrix !== lastMatrix) {
+        upsertModalItem(m, m.setId!);
+        lastMatrix = m.matrix;
+        dataset.update((d) => d);       // re-emit → autosave persists the edit
+      }
+    } else if (modalItem) {
+      removeModalItem();
+      lastMatrix = null;
+      dataset.update((d) => d);
+    }
+  }
+
+  // Drive `syncModal` off every modal-store change: fit / reject / delete /
+  // refine / mute-recon / undo / clear / reset all flow through here, so the
+  // tray card + persistence stay consistent with the model with no per-action
+  // wiring. Fires once at construction (empty model → no-op).
+  if (modal) modal.subscribe(() => syncModal());
+
+  /**
+   * Whether the modal-fit pseudo-set is currently shown (ANY line on/fade) —
+   * backs the Fit card's "Global" toggle STATE (round-5 item 13).
+   */
+  const fitVisible = svelteDerived(
+    [fitSetIdW, selection.state, selection.sets],
+    ([$id, $state, $sets]) => {
+      if ($id === null) return false;
+      const rec = $sets.find((s) => s.id === $id);
+      if (!rec) return false;
+      for (let c = 0; c < rec.nChannels; c++) if ($state($id, c) !== 'off') return true;
+      return false;
+    },
+  );
+
+  /**
+   * Show/hide the whole modal-fit pseudo-set — the Fit card's "Global" toggle
+   * MAPPING (round-5 item 13): its recon lines are the global reconstruction, so
+   * "Global on/off" is simply the pseudo-set all-lines on/off (per-line control
+   * still lives on the tray card + legend).
+   */
+  function setFitVisible(visible: boolean): void {
+    const id = get(fitSetIdW);
+    if (id !== null) selection.setSetVisible(id, visible);
+  }
+
+  /**
+   * Clear the modal model from the tray-card delete (round-5 item 13). Empties
+   * the model into the one-level undo slot (so `syncModal` removes the card + the
+   * ModalData item) and offers a toast Undo — one click restores the fit and its
+   * cached recon overlays with no engine call.
+   */
+  function clearFit(): void {
+    if (!modal) return;
+    modal.clearWithUndo();
+    toasts?.push('Modal fit cleared.', { level: 'info', actions: [{ label: 'Undo', run: () => modal.undo() }] });
+  }
+
+  /**
+   * Restore a DEFERRED modal recon (round-5 item 13): after a TF is first
+   * computed for a set, if a loaded model is waiting on that set (matrix seeded,
+   * no pseudo-set built yet), recompute its global reconstruction so the fit
+   * card + recon lines appear. No-op unless exactly that condition holds.
+   */
+  function maybeRestoreModalRecon(setIds: number[]): void {
+    if (!modal) return;
+    const m = modal.get();
+    if (!m.matrix || m.setId === null || m.global || fitSetId !== null) return;
+    if (!setIds.includes(m.setId)) return;
+    const tf = get(derived)[m.setId]?.tf;
+    if (tf && (tf.data.shape[1] ?? 0) > 0) void calcFit(m.setId, null, m.mt, 'recon');
+  }
+
   /**
    * Resolve the working set a fit `target` names AND that has a computed TF.
    * A setId picks that set (if it has a TF); `'all'` picks the FIRST set with
@@ -871,6 +1129,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     if (!modal) return Promise.resolve();
     const ws = fitSet(target);
     if (!ws) return Promise.resolve();                  // no TF to fit
+    // Record the measurement type this fit uses so the persisted ModalData
+    // (round-5 item 13) carries the type the model was fitted with — the app
+    // also mirrors the Fit card into the store, but making calcFit authoritative
+    // keeps the two consistent regardless of caller wiring.
+    modal.setMt(mt);
     const slice = get(derived)[ws.setId]!.tf!;
     const nTf = slice.data.shape[1] ?? 0;
     // Preserve an orphan TF's null chIn (columns are the lines) rather than
@@ -1030,6 +1293,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
     calcFit, calcDamping, exportArrays, exportMat, setCsdPair,
     getCalibration, setCalFactors,
+    /** Modal-fit pseudo-set (round-5 item 13): visibility state + toggle + clear. */
+    fitVisible, setFitVisible, clearFit,
+    /** The modal-fit pseudo-set's selection id store (null when none), for App. */
+    fitSetId: { subscribe: fitSetIdW.subscribe },
     /** Source-set metadata for cards (set index → fs / duration / channels). */
     workingSets: () => working.map(w => ({
       setId: w.setId, fs: w.fs, durationS: w.durationS, nChannels: w.nChannels,

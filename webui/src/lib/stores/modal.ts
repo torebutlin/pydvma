@@ -173,12 +173,50 @@ export function createModalStore() {
     });
   }
 
+  /**
+   * Seed the model DIRECTLY from a marshalled matrix `M`, decoding the per-mode
+   * summary from its rows (`[fn, zn, an*N, pn*N, rk*N, rm*N]`, so `fn` is column
+   * 0 and `zn` column 1) WITHOUT an engine round-trip. Used to restore a loaded
+   * `.dvma` ModalData item (round-5 item 13): the mode chip shows immediately;
+   * the reconstruction overlays (`local`/`global`) stay `null` until a `'recon'`
+   * `calc_fit` recomputes them once the target set's TF is present (the actions
+   * layer fires that after load, or after the TF is first computed). `mt` is the
+   * saved measurement type so that recompute uses the right `(iω)^p` power.
+   */
+  function seedFromMatrix(matrix: MarshalledArray, ctx: FitContext, mt: MeasurementType): void {
+    const rows = matrix.shape[0] ?? 0;
+    const cols = matrix.shape[1] ?? 0;
+    const data = matrix.data instanceof Float64Array ? matrix.data : Float64Array.from(matrix.data);
+    const modes: ModalMode[] = [];
+    for (let r = 0; r < rows; r++) {
+      const fn = data[r * cols + 0];
+      const zn = data[r * cols + 1];
+      modes.push({ fn, zn, Q: zn > 0 ? 1 / (2 * zn) : Infinity });
+    }
+    store.set({
+      ...empty(),
+      setId: rows > 0 ? ctx.setId : null,
+      chIn: ctx.chIn, nChannels: ctx.nChannels,
+      matrix: rows > 0 ? matrix : null,
+      modes, muted: new Array(modes.length).fill(false), mt,
+    });
+  }
+
   return {
     subscribe: store.subscribe,
     /** Read the current state (for actions deciding accumulate vs fresh). */
     get: () => get(store),
     /** Push a decoded `calc_fit` result into the store. */
     applyResult,
+    /** Seed the model from a saved matrix `M` (load-restore; see the fn doc). */
+    seedFromMatrix,
+    /**
+     * Clear the whole model into the ONE-LEVEL undo slot (round-5 item 13):
+     * empties matrix/modes/overlays but stashes the pre-clear state so a single
+     * `undo()` brings the fit (and its cached recon overlays) back with no
+     * engine call. Backs the fit tray card's delete-with-undo.
+     */
+    clearWithUndo: () => store.update((s) => ({ ...empty(), undo: snapshot(s) })),
     /** Show/hide the global reconstruction overlay. */
     setShowGlobal: (b: boolean) => store.update((s) => ({ ...s, showGlobal: b })),
     /** Toggle the global reconstruction overlay. */

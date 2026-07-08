@@ -47,6 +47,7 @@
     onDeleteSet,
     onCalibrate,
     channelData,
+    fit,
   }: {
     selection: Selection;
     set: SetView;
@@ -54,6 +55,14 @@
     /** Open the per-set calibration dialog (Task A2). Absent → no cal button. */
     onCalibrate?: (id: number) => void;
     channelData?: (ch: number) => Float64Array | undefined;
+    /**
+     * Modal-fit pseudo-set descriptor (round-5 item 13). When present the card
+     * is the "Modal fit" card: a mode-count badge replaces the duration badge
+     * and the × (via `onDeleteSet`) clears the modal model rather than removing
+     * a data set. Its per-line controls are otherwise identical to a data set,
+     * so the recon lines get normal tri-state / rename / legend behaviour.
+     */
+    fit?: { modeCount: number };
   } = $props();
 
   const stateStore = $derived(selection.state);
@@ -268,7 +277,12 @@
       >{set.name}</span>
     {/if}
 
-    <span class="dur-badge">{sigFigs(set.durationS)} s</span>
+    {#if fit}
+      <span class="dur-badge fit-badge" title="Fitted modes in this modal model"
+        >{fit.modeCount} mode{fit.modeCount === 1 ? '' : 's'}</span>
+    {:else}
+      <span class="dur-badge">{sigFigs(set.durationS)} s</span>
+    {/if}
     {#if onCalibrate}
       <button
         class="cal-btn"
@@ -280,8 +294,8 @@
     {/if}
     <button
       class="xdel"
-      title="Delete set"
-      aria-label="Delete set"
+      title={fit ? 'Clear modal fit' : 'Delete set'}
+      aria-label={fit ? 'Clear modal fit' : 'Delete set'}
       onclick={() => onDeleteSet(set.id)}
     >×</button>
   </div>
@@ -444,6 +458,13 @@
     padding: 1px 5px;
     background: #f8f9fb;
     flex: 0 0 auto;
+  }
+  /* Modal-fit card: the mode-count badge reads as an indigo accent (matching
+     the Fit stage / chip) so the fit card is distinguishable at a glance. */
+  .fit-badge {
+    color: var(--indigo, #4f46e5);
+    border-color: color-mix(in srgb, var(--indigo, #4f46e5) 35%, var(--border));
+    background: color-mix(in srgb, var(--indigo, #4f46e5) 8%, #fff);
   }
   .cal-btn {
     border: 1px solid var(--border);

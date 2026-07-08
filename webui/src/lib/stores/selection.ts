@@ -17,10 +17,29 @@ export const LINE_PALETTE = [
   '#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2',
   '#be185d', '#4d7c0f', '#9333ea', '#0e7490', '#b91c1c', '#15803d'];
 
+/**
+ * A set's ROLE (round-5 item 13). `'data'` is a normal measured/derived
+ * dataset — a calc/export/save target. `'fit'` is the MODAL-FIT pseudo-set:
+ * its lines are a modal model's reconstruction, so it participates in the
+ * tray/legend/tri-state/solo like any set but is EXCLUDED from every
+ * measured-data consumer (the analysis Dataset dropdown, calc targets,
+ * MAT/CSV export, and save-as-TimeData). The one predicate is `role === 'fit'`
+ * (surfaced as `dataSetsView` for the measured-data consumers); see the
+ * actions layer's `syncModal` for the pseudo-set's lifecycle.
+ */
+export type SetRole = 'data' | 'fit';
 /** Input shape for `addSet` — what the caller knows about a dataset. */
-export interface SetEntry { name: string; nChannels: number; durationS: number; timestamp: string; }
-/** A set as stored: input fields plus stable `id` and owned line `colors`. */
-export interface SetRecord extends SetEntry { id: number; colors: string[]; }
+export interface SetEntry {
+  name: string; nChannels: number; durationS: number; timestamp: string;
+  /** Set role (default `'data'`); `'fit'` marks a modal-fit pseudo-set. */
+  role?: SetRole;
+  /** Explicit line colours (used by a fit pseudo-set to MIRROR its target
+   *  set's colours so a recon line reads as "the fit of that measured line").
+   *  Omitted for data sets, which draw from the rolling palette. */
+  colors?: string[];
+}
+/** A set as stored: input fields plus stable `id`, resolved `role`, and owned line `colors`. */
+export interface SetRecord extends SetEntry { id: number; role: SetRole; colors: string[]; }
 /**
  * Render-ready view: identity (`id`) plus current ordering (`index`) and
  * two whole-set state flags. `allOff` when every line is 'off' (card
@@ -177,17 +196,29 @@ export function createSelection() {
     /**
      * Register a dataset and return its stable id. Line colours are
      * assigned here — `LINE_PALETTE[(start + ch) % 12]` where `start`
-     * is the total channel count of the sets present at add time — and
+     * is the total channel count of the DATA sets present at add time — and
      * stored on the record, so they never change afterwards. New lines
      * default to 'on' (sparse-map default), even after a prior `none()`.
      * Sets with more than 4 channels start collapsed.
+     *
+     * `entry.role` (default `'data'`) marks the modal-fit pseudo-set (round-5
+     * item 13); a fit set does NOT advance the palette offset (so adding /
+     * dropping a fit set never shifts a later data set's colours) and, when
+     * `entry.colors` is supplied, adopts those verbatim — a fit set passes its
+     * TARGET set's colours so a recon line mirrors the measured line's colour.
      */
     addSet(entry: SetEntry): number {
       const id = nextId++;
-      const start = get(sets).reduce((acc, s) => acc + s.nChannels, 0);
-      const colors = Array.from({ length: entry.nChannels },
-        (_, c) => LINE_PALETTE[(start + c) % LINE_PALETTE.length]);
-      sets.update(l => [...l, { ...entry, id, colors }]);
+      const role: SetRole = entry.role ?? 'data';
+      // Only DATA sets consume palette slots, so a fit pseudo-set added later
+      // never shifts existing data colours and a data set added AFTER a fit set
+      // keeps its expected palette position.
+      const start = get(sets).reduce((acc, s) => acc + (s.role === 'data' ? s.nChannels : 0), 0);
+      const colors = entry.colors && entry.colors.length >= entry.nChannels
+        ? entry.colors.slice(0, entry.nChannels)
+        : Array.from({ length: entry.nChannels },
+          (_, c) => LINE_PALETTE[(start + c) % LINE_PALETTE.length]);
+      sets.update(l => [...l, { ...entry, id, role, colors }]);
       if (entry.nChannels > 4) collapsed.update(cs => new Set(cs).add(id));
       return id;
     },
@@ -288,6 +319,17 @@ export function createSelection() {
         list.forEach(set => { if (ch < set.nChannels) m.set(key(set.id, ch), target); });
       });
     },
+    /**
+     * Force every line of set `id` to a single state: `'on'` (visible) or
+     * `'off'` (hidden). The 2-state show/hide the modal-fit card's "Global"
+     * toggle maps to (round-5 item 13) — distinct from `cycleSet`'s 3-state
+     * advance. Unknown id is a no-op.
+     */
+    setSetVisible(id: number, visible: boolean) {
+      const rec = findSet(id); if (!rec) return;
+      const target: TriState = visible ? 'on' : 'off';
+      mutate(m => { for (let c = 0; c < rec.nChannels; c++) m.set(key(id, c), target); });
+    },
     /** Every line 'on' (clears the sparse map back to its default). */
     all() { mutate(m => m.clear()); },
     /** Every line of every CURRENT set 'off'; later-added sets still default 'on'. */
@@ -321,6 +363,27 @@ export function createSelection() {
       })),
 
     /**
+     * DATA-only view (round-5 item 13): `setsView` with the modal-fit
+     * pseudo-set(s) filtered out (`role === 'fit'`). This is the list every
+     * MEASURED-DATA consumer reads — the analysis cards' "Dataset ▾" dropdown,
+     * their channel/duration lookups, and the Calc-enabled gate — so a fit
+     * pseudo-set is never a calc/export target. The full `setsView` (fit sets
+     * included) still drives the tray and the legend. Indices are preserved
+     * from the full list so a `SetView.index` keeps addressing the same card.
+     */
+    dataSetsView: derived([sets, states, collapsed], ([$sets, $states, $collapsed]) =>
+      $sets
+        .map((set, index): SetView => {
+          const st = Array.from({ length: set.nChannels }, (_, c) => stateOf($states, set.id, c));
+          return {
+            ...set, index, collapsed: $collapsed.has(set.id),
+            allOff: st.every(v => v === 'off'),
+            allFade: st.length > 0 && st.every(v => v === 'fade'),
+          };
+        })
+        .filter(set => set.role === 'data')),
+
+    /**
      * Tray-focus signal: `setId` when the tray is showing exactly ONE
      * set (every line of that set 'on', every line of every OTHER set
      * 'off') — i.e. a clean `solo` state — and `'all'` otherwise
@@ -330,7 +393,12 @@ export function createSelection() {
      * displayed state, NOT the persisted `highlight`, so cycling a second
      * set back on (leaving a solo) correctly reads as `'all'`.
      */
-    trayFocus: derived([sets, states], ([$sets, $states]): 'all' | number => {
+    trayFocus: derived([sets, states], ([$allSets, $states]): 'all' | number => {
+      // The modal-fit pseudo-set (round-5 item 13) is not an analysis target,
+      // so it never participates in the solo detection that drives
+      // `analysisTarget` — otherwise a fully-shown fit card would be read as a
+      // soloed set and point the analysis cards at a non-computable set.
+      const $sets = $allSets.filter(s => s.role === 'data');
       // 0 or 1 set: no meaningful solo distinction — read as 'all' so the
       // dataset dropdown shows "All sets" by default on a single-set load.
       if ($sets.length <= 1) return 'all';
