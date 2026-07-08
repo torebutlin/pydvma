@@ -455,19 +455,27 @@ def _modal_summary(md):
             'an': _arr(np.atleast_2d(md.an)), 'pn': _arr(np.atleast_2d(md.pn))}
 
 
-def _global_recon(md, f, measurement_type, mute, n_tf):
-    """Marshal the GLOBAL (residual-free) reconstruction of ``md`` over ``f``,
-    EXCLUDING any muted modes.
+def _global_recon_slice(md, f, measurement_type, mute, off, ncols):
+    """GLOBAL (residual-free) reconstruction of ``md`` over ``f``, EXCLUDING
+    muted modes, sliced to columns ``[off : off+ncols]``.
 
     ``mute`` is the list of mode-row indices the user has muted in the chip
     (round-4 item 9 — a muted mode stays in ``M`` and in the summary, but is
     dropped from the whole-model overlay). Muting is realised statelessly: the
     JS store keeps the full ``M`` and re-sends the mute list, and here we
     reconstruct from a filtered copy so nothing in the stored model changes.
-    Returns ``(freq_axis_arr, tf_data_arr)`` marshalled — empty when the
-    filtered model has no surviving modes.
+
+    ``off``/``ncols`` pick this SET's block of the joint reconstruction: a
+    shared-pole model spanning several sets (item 7) fits one ``M`` whose
+    ``an``/``pn``/… columns concatenate every set's TF columns in list order,
+    so ``reconstruct_transfer_function_global`` yields ``(Nf, total_cols)`` and
+    each set's lines are the contiguous block starting at its cumulative column
+    offset. For the single-set case ``off == 0`` and ``ncols`` is the set's TF
+    column count (identical to the pre-item-7 behaviour). Returns
+    ``(freq_axis_arr, tf_data_arr)`` marshalled — empty when the filtered model
+    has no surviving modes.
     """
-    empty = (_arr(np.zeros(0)), _arr(np.zeros((0, int(n_tf)), dtype=complex)))
+    empty = (_arr(np.zeros(0)), _arr(np.zeros((0, int(ncols)), dtype=complex)))
     if md is None or np.size(md.M) == 0:
         return empty
     rows = np.atleast_2d(md.M)
@@ -479,46 +487,136 @@ def _global_recon(md, f, measurement_type, mute, n_tf):
     for i in keep:
         md_vis.add_mode(rows[i])
     rg = modal.reconstruct_transfer_function_global(md_vis, f, measurement_type)
-    return _arr(rg.freq_axis), _arr(rg.tf_data)
+    return _arr(rg.freq_axis), _arr(rg.tf_data[:, int(off):int(off) + int(ncols)])
 
 
-def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
-             M=None, freq_range=None, measurement_type='acc',
+def _build_fit_specs(freq_axis, tf_data, n_tf, ch_in, n_channels, fs, sets):
+    """Normalise the single-set top-level args OR a multi-set ``sets`` list into
+    a uniform list of per-set fit specs.
+
+    Each returned spec is ``{'tf': TfData, 'n_cols': int}`` — the rebuilt
+    ``TfData`` (on the set's OWN frequency axis) and its TF column count. When
+    ``sets`` is provided (item 7, shared-pole joint fitting) every element is a
+    ``{freq_axis, tf_data, n_tf, ch_in, n_channels, fs}`` payload (``ch_in`` is
+    bookkeeping only — the TF is already computed, and ``modal_fit_all_channels``
+    consumes the columns directly regardless of which channel was the input);
+    an orphan set simply passes ``ch_in=None``. When ``sets`` is falsy the single
+    top-level payload is wrapped into a length-1 list, so the downstream fit /
+    reconstruction path is identical for one set or many.
+
+    ``ch_in`` is accepted purely so the JS side may send it uniformly; it does
+    not affect the fit or the reconstruction geometry here (the browser tracks
+    the out/in remap on its side — see ``tfChannels.ts``).
+    """
+    if sets:
+        raw = list(sets)
+    else:
+        raw = [{'freq_axis': freq_axis, 'tf_data': tf_data, 'n_tf': n_tf,
+                'ch_in': ch_in, 'n_channels': n_channels, 'fs': fs}]
+    specs = []
+    for s in raw:
+        fa = _get(s, 'freq_axis')
+        td = _get(s, 'tf_data')
+        ntf = int(_get(s, 'n_tf'))
+        nch = _get(s, 'n_channels')
+        nch = int(nch) if nch is not None else ntf + 1
+        s_fs = _get(s, 'fs')
+        s_fs = float(s_fs) if s_fs is not None else (float(fs) if fs is not None else 1.0)
+        tf = _tf_from_flat(fa, td, ntf, s_fs, nch)
+        specs.append({'tf': tf, 'n_cols': ntf})
+    return specs
+
+
+def _align_fit_list(tf_list):
+    """Return ``tf_list`` on ONE common frequency axis for the joint fitter.
+
+    ``modal_fit_all_channels`` selects the fit window from ``tf_data_list[0]``'s
+    axis and applies that SAME index mask to every set, so a shared-pole fit
+    across sets with differing axes (e.g. different fs) needs them aligned. If
+    all sets already share an identical axis (the common hammer-test case — one
+    fs, one Δf) the list is returned untouched (byte-identical fit to today).
+    Otherwise each later set's complex columns are ``np.interp``-ed (real/imag
+    separately) onto the first set's axis. Reconstruction still runs on each
+    set's OWN axis (the caller keeps the un-aligned specs), so this alignment
+    only ever touches the fit target ``G0``, never the returned recon.
+    """
+    if len(tf_list) <= 1:
+        return tf_list
+    f0 = tf_list[0].freq_axis
+    if all(t.freq_axis.shape == f0.shape and np.allclose(t.freq_axis, f0)
+           for t in tf_list):
+        return tf_list
+    aligned = [tf_list[0]]
+    for t in tf_list[1:]:
+        G = t.tf_data
+        Gi = np.empty((f0.size, G.shape[1]), dtype=complex)
+        for c in range(G.shape[1]):
+            Gi[:, c] = (np.interp(f0, t.freq_axis, G[:, c].real)
+                        + 1j * np.interp(f0, t.freq_axis, G[:, c].imag))
+        ta = datastructure.TfData(f0, Gi, None, t.settings)
+        ta.flag_modal_TF = False
+        aligned.append(ta)
+    return aligned
+
+
+def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=None,
+             fs=None, sets=None, M=None, freq_range=None, measurement_type='acc',
              action='fit', n_modes=1, index=None, mute=None):
-    """Modal fit / reject / delete-one / refine / reconstruction over one set's TF.
+    """Modal fit / reject / delete-one / refine / reconstruction over one OR
+    several sets' TFs (with SHARED poles across sets — item 7).
 
     STATELESS (spec §11): the JS modal store owns the accumulated modal matrix
     ``M`` and re-sends it every call; this op never keeps state between calls.
     Mirrors the Qt driver (``gui.py:fit_mode`` / ``reject_mode`` /
-    ``view_modal_reconstruction``):
+    ``view_modal_reconstruction``), whose ``fit_mode`` passes the WHOLE
+    ``tf_data_list`` so one ``fn``/``zn`` per mode is fitted jointly across
+    every set's columns with per-column amplitudes (the hammer-test workflow).
 
-    - ``action == 'fit'``  — fit ``n_modes`` mode(s) over ``freq_range``
-      (``modal_fit_all_channels``; Fit 2/3 via ``_fit_subranges``), delete any
-      existing modes whose ``fn`` falls in that window (so re-fitting a peak
-      REPLACES it), then ``add_mode`` the new one(s). Returns the just-fitted
-      modes' LOCAL reconstruction (dense over ``freq_range``, residuals kept)
-      as the pink overlay.
-    - ``action == 'reject'`` — delete modes with ``fn`` in ``freq_range``.
-    - ``action == 'delete_one'`` — delete the single mode at row ``index``
-      (round-4 item 9: the chip's per-mode × button).
-    - ``action == 'refine'`` — simultaneously refine EVERY mode from the current
-      ``M`` (``modal.modal_refine``; seeded from ``M``, over the modes' band).
-      Adds ``{converged, cost_before, cost_after}`` to the result so the store
-      can auto-revert when the refinement did not improve (round-4 item 10).
-    - ``action == 'recon'`` — no fit; just recompute the overlays from ``M``
-      (used when the mute set changes).
+    TARGET SHAPE:
+    - Single set (backward compatible): the top-level ``freq_axis / tf_data /
+      n_tf / ch_in / n_channels / fs`` describe one TF. ``ch_in`` is BOOKKEEPING
+      only (the TF is already computed; the fit and reconstruction never re-drop
+      an input channel) and now defaults to ``None`` so an ORPHAN TF — whose
+      columns ARE the lines and which the JS side sends with no ``ch_in`` (round-5
+      item 3 / round-6 bug 1) — fits without the previous
+      ``TypeError: missing 'ch_in'``.
+    - Multiple sets (``sets`` is a LIST of ``{freq_axis, tf_data, n_tf, ch_in,
+      n_channels, fs}`` payloads): the sets are jointly fitted with SHARED poles;
+      the reconstruction columns concatenate every set's columns in list order
+      and are returned SLICED per set (see ``slices``).
 
-    Every call also returns the GLOBAL reconstruction (residual-free, over the
-    measured freq axis, EXCLUDING muted modes — see ``mute``) so the store's
-    overlay toggles need no extra round-trip. ``measurement_type`` is
-    ``'acc'``/``'vel'``/``'dsp'``. Returns ``{M, fn, zn, an, pn, message,
-    recon_freq_axis, recon_tf_data, global_freq_axis, global_tf_data}`` (plus
-    ``converged``/``cost_before``/``cost_after`` for ``refine``) — all via
-    ``_arr``; recon TFs are complex ``(Nf, n_tf)`` matching the measured
-    columns 1:1 (empty for a reject / a model that ends empty).
+    ACTIONS (identical for one or many sets):
+    - ``'fit'``  — fit ``n_modes`` mode(s) over ``freq_range``
+      (``modal_fit_all_channels``; Fit 2/3 via ``_fit_subranges`` on set 0's
+      magnitude — a shared peak appears in every set), delete any existing modes
+      whose ``fn`` falls in that window (re-fitting a peak REPLACES it), then
+      ``add_mode`` the new one(s).
+    - ``'reject'`` — delete modes with ``fn`` in ``freq_range``.
+    - ``'delete_one'`` — delete the single mode at row ``index`` (chip × button).
+    - ``'refine'`` — simultaneously refine EVERY mode from the current ``M``
+      (``modal.modal_refine`` over the joint list; seeded from ``M``). Adds
+      ``{converged, cost_before, cost_after}`` so the store auto-reverts a
+      non-improving refine (round-4 item 10).
+    - ``'recon'`` — no fit; just recompute the overlays from ``M`` (mute change).
+
+    RETURN: ``{M, fn, zn, an, pn, message}`` (the SHARED model — one ``M``, one
+    ``fn``/``zn`` per mode) plus, for backward compatibility, the FIRST set's
+    ``recon_freq_axis / recon_tf_data`` (local, pink) and ``global_freq_axis /
+    global_tf_data`` (grey dashed) exactly as before, AND a ``slices`` list —
+    one entry PER target set, in column order, each
+    ``{recon_freq_axis, recon_tf_data, global_freq_axis, global_tf_data,
+    n_cols}`` (its own block of the joint reconstruction). The JS side maps each
+    slice back to its set's lines. ``refine`` also carries
+    ``converged``/``cost_before``/``cost_after``. All arrays via ``_arr``; recon
+    TFs are complex ``(Nf, n_cols)`` matching that set's measured columns 1:1
+    (empty for a reject / a model that ends empty).
     """
-    tf = _tf_from_flat(freq_axis, tf_data, n_tf, fs, n_channels)
-    f = tf.freq_axis
+    specs = _build_fit_specs(freq_axis, tf_data, n_tf, ch_in, n_channels, fs, sets)
+    tf_list = [sp['tf'] for sp in specs]
+    fit_list = _align_fit_list(tf_list)          # common axis for the joint fit
+    fit_settings = fit_list[0].settings
+    fit_test_name = fit_list[0].test_name
+    f = fit_list[0].freq_axis
     # `not freq_range` catches None, a JS-null proxy, and an empty range; a
     # real [lo, hi] (Python list or JS array proxy) is truthy.
     if not freq_range:
@@ -526,16 +624,24 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
     else:
         freq_range = [float(freq_range[0]), float(freq_range[1])]
 
-    md = _rebuild_modal(M, tf.settings, tf.test_name)
+    # Cumulative column offsets: set i owns recon columns [off_i : off_i+n_cols].
+    offsets = []
+    off = 0
+    for sp in specs:
+        offsets.append(off)
+        off += int(sp['n_cols'])
+
+    md = _rebuild_modal(M, fit_settings, fit_test_name)
     new_modes = []
     message = ''
     refine_info = None
 
     if action == 'fit':
-        mag = np.abs(tf.tf_data[:, 0]) if tf.tf_data.shape[1] > 0 else np.abs(f) * 0
+        mag = (np.abs(fit_list[0].tf_data[:, 0])
+               if fit_list[0].tf_data.shape[1] > 0 else np.abs(f) * 0)
         for lo, hi in _fit_subranges(f, mag, freq_range, int(n_modes)):
             m = modal.modal_fit_all_channels(
-                datastructure.TfDataList([tf]), freq_range=[lo, hi],
+                datastructure.TfDataList(list(fit_list)), freq_range=[lo, hi],
                 measurement_type=measurement_type)
             new_modes.append(np.asarray(m.M[0, :], dtype=np.float64))
         message = modal.MESSAGE
@@ -547,7 +653,7 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
                 md = _delete_modes(md, in_range)   # None if the window covered them all
         for row in new_modes:
             if md is None or np.size(md.M) == 0:
-                md = datastructure.ModalData(row, settings=tf.settings, test_name=tf.test_name)
+                md = datastructure.ModalData(row, settings=fit_settings, test_name=fit_test_name)
             else:
                 md.add_mode(row)
 
@@ -569,10 +675,11 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
 
     elif action == 'refine':
         # Ignore any visible window: refine the WHOLE model over the modes' band
-        # (modal_refine's own default). Seeded from the current M.
+        # (modal_refine's own default). Seeded from the current M, joint over
+        # every set's columns (shared poles).
         if md is not None and np.atleast_2d(md.M).shape[0] >= 1:
             md_refined, refine_info = modal.modal_refine(
-                md, datastructure.TfDataList([tf]),
+                md, datastructure.TfDataList(list(fit_list)),
                 freq_range=None, measurement_type=measurement_type)
             md = md_refined
             message = ('Refined {} mode(s).'.format(np.atleast_2d(md.M).shape[0])
@@ -588,24 +695,42 @@ def calc_fit(freq_axis, tf_data, n_tf, ch_in, n_channels, fs,
         out['cost_after'] = float(refine_info['cost_after'])
 
     # Local reconstruction (pink) — only the just-fitted modes, dense over the
-    # fit window. Empty for reject / recon (no fresh fit to highlight).
+    # fit window, one (Nf, total_cols) image sliced per set. Empty for reject /
+    # recon (no fresh fit to highlight).
+    rc_full = None
+    f_local = None
     if new_modes:
-        m_local = datastructure.ModalData(settings=tf.settings, test_name=tf.test_name)
+        m_local = datastructure.ModalData(settings=fit_settings, test_name=fit_test_name)
         for row in new_modes:
             m_local.add_mode(row)
         f_local = np.linspace(freq_range[0], freq_range[1], 500)
-        rc = modal.reconstruct_transfer_function(m_local, f_local, measurement_type)
-        out['recon_freq_axis'] = _arr(rc.freq_axis)
-        out['recon_tf_data'] = _arr(rc.tf_data)
-    else:
-        out['recon_freq_axis'] = _arr(np.zeros(0))
-        out['recon_tf_data'] = _arr(np.zeros((0, int(n_tf)), dtype=complex))
+        rc_full = modal.reconstruct_transfer_function(m_local, f_local, measurement_type)
 
-    # Global reconstruction (grey dashed) — residual-free, whole measured axis,
-    # excluding any muted modes (the muted modes stay in the summary above).
-    g_axis, g_data = _global_recon(md, f, measurement_type, mute, n_tf)
-    out['global_freq_axis'] = g_axis
-    out['global_tf_data'] = g_data
+    # Per-set slices: local (shared dense window axis) + global (each set's own
+    # measured axis), each sliced to that set's column block.
+    slices = []
+    for sp, off_i in zip(specs, offsets):
+        ncols = int(sp['n_cols'])
+        if rc_full is not None:
+            loc_axis = _arr(f_local)
+            loc_data = _arr(rc_full.tf_data[:, off_i:off_i + ncols])
+        else:
+            loc_axis = _arr(np.zeros(0))
+            loc_data = _arr(np.zeros((0, ncols), dtype=complex))
+        g_axis, g_data = _global_recon_slice(
+            md, sp['tf'].freq_axis, measurement_type, mute, off_i, ncols)
+        slices.append({'recon_freq_axis': loc_axis, 'recon_tf_data': loc_data,
+                       'global_freq_axis': g_axis, 'global_tf_data': g_data,
+                       'n_cols': ncols})
+    out['slices'] = slices
+
+    # Backward-compatible top-level = FIRST set's overlays (single-set callers
+    # and the existing tests read these; the store reads `slices`).
+    first = slices[0]
+    out['recon_freq_axis'] = first['recon_freq_axis']
+    out['recon_tf_data'] = first['recon_tf_data']
+    out['global_freq_axis'] = first['global_freq_axis']
+    out['global_tf_data'] = first['global_tf_data']
 
     return out
 

@@ -48,6 +48,24 @@ export interface ModalMode { fn: number; zn: number; Q: number; }
 /** A reconstruction overlay: its own frequency axis + decoded complex TF. */
 export interface ReconArrays { axis: Float64Array; data: DecodedArray; }
 
+/**
+ * One SET the shared-pole model spans (item 7). A shared-pole fit couples
+ * several sets' TFs into ONE model (`matrix` / `modes` below): every set shares
+ * the same `fn`/`zn` per mode, and each set contributes its OWN reconstruction
+ * columns. Each `FitTarget` records that set's out/in geometry (`chIn` /
+ * `nChannels` — `null` `chIn` for an orphan TF) plus its slice of the joint
+ * `local` (pink) and `global` (dashed) reconstruction. `nCols` is the set's TF
+ * column count (used to size an empty slice). A single-set fit has ONE target.
+ */
+export interface FitTarget {
+  setId: number;
+  chIn: number | null;
+  nChannels: number;
+  nCols: number;
+  local: ReconArrays | null;
+  global: ReconArrays | null;
+}
+
 /** The full modal-fit state for the current dataset. */
 export interface ModalState {
   /** Set the model targets, or `null` when empty (no fit yet). */
@@ -70,10 +88,21 @@ export interface ModalState {
   mt: MeasurementType;
   /** Engine message from the last fit (poor-fit / phase warnings). */
   message: string;
-  /** Local (pink) reconstruction of the just-fitted modes, or `null`. */
+  /**
+   * Local (pink) reconstruction of the just-fitted modes for the PRIMARY
+   * target (`targets[0]`), or `null`. Mirrors `targets[0].local` so the
+   * App-level pink overlay (drawn on the primary set) needs no target array.
+   */
   local: ReconArrays | null;
-  /** Global (grey dashed) reconstruction of the visible model, or `null`. */
+  /** Global (grey dashed) reconstruction of the PRIMARY target, or `null`. */
   global: ReconArrays | null;
+  /**
+   * The sets this (possibly shared-pole) model spans, in reconstruction-column
+   * order (item 7). A single-set fit has ONE entry; a shared-pole fit over
+   * several sets has one per set, each with its own recon slice + geometry.
+   * `setId`/`chIn`/`nChannels`/`local`/`global` above mirror `targets[0]`.
+   */
+  targets: FitTarget[];
   /** Whether the global reconstruction overlay is shown. */
   showGlobal: boolean;
   /** Whether the local reconstruction overlay is shown (default on). */
@@ -117,7 +146,7 @@ function empty(): ModalState {
   return {
     setId: null, chIn: 0, nChannels: 0, matrix: null,
     modes: [], muted: [], mt: 'acc', message: '',
-    local: null, global: null, showGlobal: false, showLocal: true, undo: null,
+    local: null, global: null, targets: [], showGlobal: false, showLocal: true, undo: null,
   };
 }
 
@@ -135,18 +164,34 @@ function snapshot(s: ModalState): UndoSnapshot {
 export function createModalStore() {
   const store = writable<ModalState>(empty());
 
-  /** Context for a fit: which set's TF was fitted and its channel geometry
-   *  (`chIn === null` for an orphan TF — round-5 item 3). */
-  interface FitContext { setId: number; chIn: number | null; nChannels: number; }
+  /**
+   * Context for one fitted set: which set's TF was fitted, its channel geometry
+   * (`chIn === null` for an orphan TF — round-5 item 3), and how many TF
+   * columns it contributed to the joint fit (`nCols`, for empty-slice sizing).
+   * A shared-pole fit (item 7) passes ONE context per set, in column order.
+   */
+  interface FitContext { setId: number; chIn: number | null; nChannels: number; nCols: number; }
+
+  /** Pull the engine's per-set `slices` list (or `[]`) as a plain array. */
+  function sliceList(result: unknown): unknown[] {
+    const raw = mval(result, 'slices');
+    return raw ? Array.from(raw as ArrayLike<unknown>) : [];
+  }
 
   /**
-   * Decode a `calc_fit` engine result into the store, carrying the fit
-   * context. Preserves the `showGlobal` / `showLocal` toggles and the `undo`
-   * slot across updates. `muted` is preserved when the mode COUNT is
-   * unchanged (a mute-recompute or a refine leaves indices meaningful) and
-   * reset to all-false otherwise (fit / delete shift the rows).
+   * Decode a `calc_fit` engine result into the store, carrying one fit context
+   * PER target set (`contexts`, in reconstruction-column order — a single-set
+   * fit passes a length-1 array, a shared-pole fit one per set). The shared
+   * model (`matrix` / `modes`) comes from the top-level result; each set's
+   * recon slice comes from the matching `slices[i]`. `targets[0]` is mirrored
+   * onto the top-level `setId`/`chIn`/`nChannels`/`local`/`global` fields.
+   *
+   * Preserves the `showGlobal` / `showLocal` toggles and the `undo` slot across
+   * updates. `muted` is preserved when the mode COUNT is unchanged (a
+   * mute-recompute or a refine leaves indices meaningful) and reset to all-false
+   * otherwise (fit / delete shift the rows).
    */
-  function applyResult(result: unknown, ctx: FitContext): void {
+  function applyResult(result: unknown, contexts: FitContext[]): void {
     const fn = axisData(mval(result, 'fn'));
     const zn = axisData(mval(result, 'zn'));
     const modes: ModalMode[] = [];
@@ -156,19 +201,36 @@ export function createModalStore() {
     }
     const matrixRaw = asMarshalled(mval(result, 'M'));
     const matrix = (matrixRaw.shape[0] ?? 0) > 0 ? matrixRaw : null;
+    const slices = sliceList(result);
+    const targets: FitTarget[] = contexts.map((ctx, i) => {
+      const sl = slices[i];
+      // Prefer the per-set slice; fall back (primary only) to the top-level
+      // recon keys the engine also emits (single-set backward compatibility).
+      const local = sl
+        ? reconOf(mval(sl, 'recon_freq_axis'), mval(sl, 'recon_tf_data'))
+        : (i === 0 ? reconOf(mval(result, 'recon_freq_axis'), mval(result, 'recon_tf_data')) : null);
+      const global = sl
+        ? reconOf(mval(sl, 'global_freq_axis'), mval(sl, 'global_tf_data'))
+        : (i === 0 ? reconOf(mval(result, 'global_freq_axis'), mval(result, 'global_tf_data')) : null);
+      return {
+        setId: ctx.setId, chIn: ctx.chIn, nChannels: ctx.nChannels, nCols: ctx.nCols, local, global,
+      };
+    });
+    const primary = targets[0];
     store.update((s) => {
       const keepMute = modes.length === s.modes.length && s.muted.length === modes.length;
       return {
         ...s,
-        setId: matrix ? ctx.setId : null,
-        chIn: ctx.chIn,
-        nChannels: ctx.nChannels,
+        setId: matrix && primary ? primary.setId : null,
+        chIn: primary ? primary.chIn : 0,
+        nChannels: primary ? primary.nChannels : 0,
         matrix,
         modes,
         muted: keepMute ? s.muted : new Array(modes.length).fill(false),
         message: (mval(result, 'message') as string) ?? '',
-        local: reconOf(mval(result, 'recon_freq_axis'), mval(result, 'recon_tf_data')),
-        global: reconOf(mval(result, 'global_freq_axis'), mval(result, 'global_tf_data')),
+        local: matrix && primary ? primary.local : null,
+        global: matrix && primary ? primary.global : null,
+        targets: matrix ? targets : [],
       };
     });
   }
@@ -182,8 +244,13 @@ export function createModalStore() {
    * `calc_fit` recomputes them once the target set's TF is present (the actions
    * layer fires that after load, or after the TF is first computed). `mt` is the
    * saved measurement type so that recompute uses the right `(iω)^p` power.
+   *
+   * `contexts` carries one geometry per target set the model spans (item 7): a
+   * single-set model passes a length-1 array; a restored shared-pole model
+   * passes one per set (in column order) so the deferred recon rebuilds every
+   * set's slice.
    */
-  function seedFromMatrix(matrix: MarshalledArray, ctx: FitContext, mt: MeasurementType): void {
+  function seedFromMatrix(matrix: MarshalledArray, contexts: FitContext[], mt: MeasurementType): void {
     const rows = matrix.shape[0] ?? 0;
     const cols = matrix.shape[1] ?? 0;
     const data = matrix.data instanceof Float64Array ? matrix.data : Float64Array.from(matrix.data);
@@ -193,12 +260,20 @@ export function createModalStore() {
       const zn = data[r * cols + 1];
       modes.push({ fn, zn, Q: zn > 0 ? 1 / (2 * zn) : Infinity });
     }
+    // Recon slices stay null until a 'recon' calc recomputes them (deferred
+    // until each target's TF is present — actions.maybeRestoreModalRecon).
+    const targets: FitTarget[] = contexts.map((ctx) => ({
+      setId: ctx.setId, chIn: ctx.chIn, nChannels: ctx.nChannels, nCols: ctx.nCols,
+      local: null, global: null,
+    }));
+    const primary = targets[0];
     store.set({
       ...empty(),
-      setId: rows > 0 ? ctx.setId : null,
-      chIn: ctx.chIn, nChannels: ctx.nChannels,
+      setId: rows > 0 && primary ? primary.setId : null,
+      chIn: primary ? primary.chIn : 0, nChannels: primary ? primary.nChannels : 0,
       matrix: rows > 0 ? matrix : null,
       modes, muted: new Array(modes.length).fill(false), mt,
+      targets: rows > 0 ? targets : [],
     });
   }
 

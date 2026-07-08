@@ -95,7 +95,7 @@
   {:else if $activeStage === 'sono'}
     <SonoCard {actions} {selection} {analysisSettings} />
   {:else if $activeStage === 'fit'}
-    <FitCard {actions} {analysisSettings} {viewState} {modal} />
+    <FitCard {actions} {analysisSettings} {selection} {viewState} {modal} />
   {:else if $activeStage === 'export'}
     <ExportCard {getSvg} {workdir} {onsave} {toasts} {hasData} exporter={actions} bind:autosaveEnabled />
   {:else}

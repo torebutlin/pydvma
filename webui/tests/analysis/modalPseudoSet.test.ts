@@ -212,6 +212,113 @@ test('retargeting the fit to a different set rebuilds the pseudo-set (name follo
   expect(md.meta.id_link).toBe('B');
 });
 
+/** A 2-set, 2-channel TimeData dataset (both sets get a 1-column TF). */
+function twoSetDataset(): DvmaDataset {
+  return {
+    formatVersion: 1, pydvmaVersion: '1.5.0',
+    items: [
+      { ...makeDataset().items[0], meta: { test_name: 'A', timestring: 't0', unique_id: 'A' } },
+      {
+        kind: 'TimeData',
+        arrays: {
+          time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+          time_data: { shape: [3, 2], isComplex: false, data: Float64Array.from([1, 1, 1, 1, 1, 1]) },
+        },
+        meta: { test_name: 'B', timestring: 't1', unique_id: 'B' }, settings: { fs: 2 },
+      },
+    ],
+  };
+}
+
+/** A shared-pole `calc_fit` result: ONE mode across 2 sets (2 total columns),
+ *  with a per-set `slices` list AND the first-set backward-compat top-level. */
+const fitResultShared = () => ({
+  M: real([1, 10], [80, 0.02, 1, 0.6, 0, 0, 0, 0, 0, 0]),   // 2+4*2 = 10 cols
+  fn: real([1], [80]), zn: real([1], [0.02]),
+  an: real([1, 2], [1, 0.6]), pn: real([1, 2], [0, 0]),
+  message: 'fn=80.00 (Hz)',
+  recon_freq_axis: real([2], [60, 110]), recon_tf_data: cplx([2, 1], [1, 0, 1, 0]),
+  global_freq_axis: real([2], [0, 1]), global_tf_data: cplx([2, 1], [0.5, 0, 0.5, 0]),
+  slices: [
+    { recon_freq_axis: real([2], [60, 110]), recon_tf_data: cplx([2, 1], [1, 0, 1, 0]),
+      global_freq_axis: real([2], [0, 1]), global_tf_data: cplx([2, 1], [0.5, 0, 0.5, 0]), n_cols: 1 },
+    { recon_freq_axis: real([2], [60, 110]), recon_tf_data: cplx([2, 1], [0.6, 0, 0.6, 0]),
+      global_freq_axis: real([2], [0, 1]), global_tf_data: cplx([2, 1], [0.3, 0, 0.3, 0]), n_cols: 1 },
+  ],
+});
+
+test('shared-pole fit (item 7) sends a `sets` LIST and registers ONE pseudo-set per set', async () => {
+  const { actions, modal, sel, calls } = harness((op) =>
+    op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResultShared() : {});
+  actions.loadDataset(twoSetDataset());
+  await actions.calcTf('all');                       // both sets get a TF
+  await actions.calcFit('shared', [60, 110], 'acc', 'fit', 1);
+
+  // Payload carried a per-set `sets` list (not a single top-level tf_data).
+  const fit = calls.find((c) => c.op === 'calc_fit')!;
+  expect(Array.isArray(fit.payload.sets)).toBe(true);
+  expect((fit.payload.sets as unknown[]).length).toBe(2);
+  expect('tf_data' in fit.payload).toBe(false);
+
+  // ONE shared mode, spanning two target sets.
+  expect(get(modal).modes.map((m) => m.fn)).toEqual([80]);
+  expect(get(modal).targets.length).toBe(2);
+
+  // ONE pseudo-set PER source set (each its own recon slice + geometry).
+  const fitSets = get(sel.setsView).filter((s) => s.role === 'fit');
+  expect(fitSets).toHaveLength(2);
+  expect(fitSets.map((s) => s.name).join(' ')).toContain('A');
+  expect(fitSets.map((s) => s.name).join(' ')).toContain('B');
+  // Each pseudo-set draws its OWN set's recon column.
+  for (const fs of fitSets) expect(get(actions.derived)[fs.id]?.tf).toBeTruthy();
+
+  // Persistence records the multi-set mapping: list id_link + source_targets.
+  const md = get(actions.dataset)!.items.find((it) => it.kind === 'ModalData')!;
+  expect(Array.isArray(md.meta.id_link)).toBe(true);
+  expect((md.meta.id_link as string[])).toEqual(['A', 'B']);
+  expect((md.meta.source_targets as unknown[]).length).toBe(2);
+  expect(md.meta.channels).toBe(2);                  // TOTAL columns across sets
+});
+
+test('a shared-pole refine reuses the spanned-set composition (sends the `sets` list)', async () => {
+  const refinedShared = () => ({
+    ...fitResultShared(), fn: real([1], [82]), zn: real([1], [0.018]),
+    M: real([1, 10], [82, 0.018, 1, 0.6, 0, 0, 0, 0, 0, 0]),
+    converged: true, cost_before: 1, cost_after: 0.2,
+  });
+  const { actions, modal, sel, calls } = harness((op, p) =>
+    op === 'calc_tf' ? tfResult() : op === 'calc_fit'
+      ? (p.action === 'refine' ? refinedShared() : fitResultShared()) : {});
+  actions.loadDataset(twoSetDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('shared', [60, 110], 'acc', 'fit', 1);
+  await actions.calcFit('shared', null, 'acc', 'refine');
+
+  const refine = calls.filter((c) => c.op === 'calc_fit').at(-1)!;
+  expect(refine.payload.action).toBe('refine');
+  expect((refine.payload.sets as unknown[]).length).toBe(2);   // reused both sets
+  expect('M' in refine.payload).toBe(true);                    // seeded from the model
+  expect(get(modal).modes.map((m) => m.fn)).toEqual([82]);     // refined value kept
+  // Both pseudo-sets survive the refine (mode count unchanged).
+  expect(get(sel.setsView).filter((s) => s.role === 'fit')).toHaveLength(2);
+});
+
+test('clearFit removes ALL pseudo-sets of a shared-pole model; undo restores them', async () => {
+  const { actions, modal, sel } = harness((op) =>
+    op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResultShared() : {});
+  actions.loadDataset(twoSetDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('shared', [60, 110], 'acc', 'fit', 1);
+  expect(get(sel.setsView).filter((s) => s.role === 'fit')).toHaveLength(2);
+
+  actions.clearFit();
+  expect(get(sel.setsView).some((s) => s.role === 'fit')).toBe(false);
+  expect(get(actions.dataset)!.items.some((it) => it.kind === 'ModalData')).toBe(false);
+
+  modal.undo();
+  expect(get(sel.setsView).filter((s) => s.role === 'fit')).toHaveLength(2);
+});
+
 test('load-restore: a dataset carrying a ModalData item restores the modes + pseudo-set', async () => {
   // TimeData + a linked TfData + a linked ModalData (as a saved .dvma would carry).
   const ds: DvmaDataset = {
@@ -280,4 +387,91 @@ test('load-restore is DEFERRED when the target TF is absent, then fires on Calc 
   await actions.calcTf('all');
   await flush();
   expect(get(sel.setsView).some((s) => s.role === 'fit')).toBe(true);
+});
+
+test('round-trip: the ACTUAL persisted single-set ModalData (with source_targets) restores its pseudo-set', async () => {
+  // Mirrors the e2e reload path: fit ONE set, capture the exact ModalData item
+  // the app persisted (it now carries `source_targets`), then feed that item
+  // into a fresh loadDataset (with the source TimeData + its TF) and confirm the
+  // recon rebuilds the pseudo-set — the single-set source_targets restore path.
+  const src = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  src.actions.loadDataset(makeDataset());
+  await src.actions.calcTf('all');
+  await src.actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  const savedModal = get(src.actions.dataset)!.items.find((it) => it.kind === 'ModalData')!;
+  // Sanity: the persisted item carries the multi-set mapping key.
+  expect(Array.isArray(savedModal.meta.source_targets)).toBe(true);
+
+  // Rebuild a "saved file": TimeData (UID1) + its TF + the captured ModalData.
+  const ds: DvmaDataset = {
+    formatVersion: 1, pydvmaVersion: '1.5.0',
+    items: [
+      makeDataset().items[0],
+      {
+        kind: 'TfData',
+        arrays: {
+          freq_axis: { shape: [2], isComplex: false, data: Float64Array.from([0, 1]) },
+          tf_data: { shape: [2, 1], isComplex: true, data: Float64Array.from([2, 0, 2, 0]) },
+        },
+        meta: { test_name: 'set_0', id_link: 'UID1' }, settings: null,
+      },
+      { kind: 'ModalData', arrays: savedModal.arrays, meta: savedModal.meta, metaRaw: savedModal.metaRaw, settings: null },
+    ],
+  };
+  const { actions, modal, sel } = harness((op) => (op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(ds);
+  expect(get(modal).modes.map((m) => m.fn)).toEqual([80]);
+  await flush();
+  expect(get(sel.setsView).some((s) => s.role === 'fit')).toBe(true);
+});
+
+test('load-restore of a SHARED-POLE model rebuilds one pseudo-set per spanned set (item 7)', async () => {
+  // Two TimeData + two linked TfData + a shared-pole ModalData spanning BOTH
+  // (M has 2 total columns; source_targets maps each set by its own id_link).
+  const tfItem = (link: string): DvmaItem => ({
+    kind: 'TfData',
+    arrays: {
+      freq_axis: { shape: [2], isComplex: false, data: Float64Array.from([0, 1]) },
+      tf_data: { shape: [2, 1], isComplex: true, data: Float64Array.from([2, 0, 2, 0]) },
+    },
+    meta: { test_name: `set_${link}`, id_link: link }, settings: null,
+  });
+  const ds: DvmaDataset = {
+    formatVersion: 1, pydvmaVersion: '1.5.0',
+    items: [
+      { ...makeDataset().items[0], meta: { test_name: 'A', timestring: 't0', unique_id: 'A' } },
+      {
+        kind: 'TimeData',
+        arrays: {
+          time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+          time_data: { shape: [3, 2], isComplex: false, data: Float64Array.from([1, 1, 1, 1, 1, 1]) },
+        },
+        meta: { test_name: 'B', timestring: 't1', unique_id: 'B' }, settings: { fs: 2 },
+      },
+      tfItem('A'), tfItem('B'),
+      {
+        kind: 'ModalData',
+        arrays: { M: { shape: [1, 10], isComplex: false, data: Float64Array.from([80, 0.02, 1, 0.6, 0, 0, 0, 0, 0, 0]) } },
+        meta: {
+          id_link: ['A', 'B'], channels: 2, measurement_type: 'acc', test_name: 'modal_A',
+          source_ch_in: 0, source_n_channels: 2,
+          source_targets: [
+            { id_link: 'A', ch_in: 0, n_channels: 2, n_cols: 1 },
+            { id_link: 'B', ch_in: 0, n_channels: 2, n_cols: 1 },
+          ],
+        },
+        settings: null,
+      },
+    ],
+  };
+  const { actions, modal, sel } = harness((op) => (op === 'calc_fit' ? fitResultShared() : {}));
+  actions.loadDataset(ds);
+
+  // Modes seeded immediately; the model spans BOTH sets.
+  expect(get(modal).modes.map((m) => m.fn)).toEqual([80]);
+  expect(get(modal).targets.length).toBe(2);
+
+  // Both TFs are present → the shared recon fires → TWO pseudo-sets appear.
+  await flush();
+  expect(get(sel.setsView).filter((s) => s.role === 'fit')).toHaveLength(2);
 });

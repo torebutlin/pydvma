@@ -35,17 +35,20 @@
    */
   import type { Actions, MeasurementType } from '../../lib/analysis/actions';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
+  import type { Selection } from '../../lib/stores/selection';
   import type { ViewState, TfPlotType } from '../../lib/stores/viewstate';
   import type { ModalStore } from '../../lib/stores/modal';
 
   let {
     actions,
     analysisSettings,
+    selection,
     viewState,
     modal,
   }: {
     actions: Actions;
     analysisSettings: AnalysisSettings;
+    selection: Selection;
     viewState: ViewState;
     modal: ModalStore;
   } = $props();
@@ -55,7 +58,6 @@
   // Whether the modal-fit pseudo-set is shown (round-5 item 13) — the Global
   // toggle's lit state; toggling it drives `actions.setFitVisible`.
   const fitVisible = $derived(actions.fitVisible);
-  const target = $derived(analysisSettings.analysisTarget);
   const sharedFreq = $derived(viewState.sharedFreqRange);
   const modalState = $derived(modal);
 
@@ -76,7 +78,34 @@
   // are disabled and the card explains what to do — the stage stays
   // navigable per the gated-stage design, but can't issue a doomed fit.
   const derivedMap = $derived(actions.derived);
-  const hasTf = $derived(Object.values($derivedMap).some((s) => s?.tf !== undefined));
+  const setsView = $derived(selection.dataSetsView);
+  // TF-bearing DATA sets (excludes the fit pseudo-set, which dataSetsView drops)
+  // — the pool the fit-target dropdown offers and the `hasTf` gate reads.
+  const tfSets = $derived(
+    $setsView.filter((s) => {
+      const d = $derivedMap[s.id];
+      return d?.tf && ((d.tf.data.shape[1] ?? 0) > 0);
+    }),
+  );
+  const hasTf = $derived(tfSets.length > 0);
+
+  // Fit target (round-6 item 7): 'shared' = a JOINT shared-pole fit over EVERY
+  // TF-bearing set (one fn/zn per mode, per-set amplitudes — Qt's hammer-test
+  // workflow); a setId = fit that ONE set. Defaults to 'shared' when more than
+  // one set has a TF, else the single set. Kept LOCAL to the card (not
+  // analysisSettings.analysisTarget), because 'all' there means "each set
+  // independently" — a different semantic from "all sets jointly".
+  let fitTarget = $state<'shared' | number>('shared');
+  // Reconcile the selection with the live TF-set pool: one set ⇒ that set;
+  // several ⇒ default 'shared'; drop a stale numeric target that lost its TF.
+  $effect(() => {
+    const ids = tfSets.map((s) => s.id);
+    if (ids.length === 1) {
+      if (fitTarget !== ids[0]) fitTarget = ids[0];
+    } else if (ids.length > 1) {
+      if (fitTarget !== 'shared' && !ids.includes(fitTarget as number)) fitTarget = 'shared';
+    }
+  });
 
   // Measurement type drives the modal TF model's (iω)^p power (acc→2, vel→1,
   // dsp→0). Local to the card — a per-view fit control, not a per-set setting.
@@ -94,13 +123,14 @@
   // delete / mute recompute the overlays with the same (iω)^p power.
   $effect(() => { modal.setMt(mt); });
 
-  // Refine / undo operate on the SAME set the model targets.
-  const modelTarget = $derived($modalState.setId ?? $target);
   const nModes = $derived($modalState.modes.length);
 
-  function fit(n: number) { actions.calcFit($target, range, mt, 'fit', n); }
-  function reject() { actions.calcFit($target, range, mt, 'reject'); }
-  function refine() { actions.calcFit(modelTarget, null, mt, 'refine'); }
+  // 'fit' honours the chosen target; reject / refine operate on the EXISTING
+  // model, which calcFit resolves from the stored spanned-set composition (the
+  // target passed is only used when no model exists yet).
+  function fit(n: number) { actions.calcFit(fitTarget, range, mt, 'fit', n); }
+  function reject() { actions.calcFit(fitTarget, range, mt, 'reject'); }
+  function refine() { actions.calcFit(fitTarget, null, mt, 'refine'); }
   function undo() { modal.undo(); }
   function toggleLocal() { modal.toggleLocal(); }
   // Global maps to the pseudo-set's all-lines on/off (round-5 item 13).
@@ -111,6 +141,19 @@
   <div class="ctx-name"><span class="cn-t">Fit</span><span class="cn-s">modal</span></div>
   <div class="ctx-body">
     <div class="ctx-row">
+      {#if tfSets.length > 1}
+        <div class="grp">
+          <span class="grp-lab">sets</span>
+          <div class="grp-ctl">
+            <select bind:value={fitTarget} disabled={$busy}
+              aria-label="Fit target"
+              title="Fit all sets jointly with shared poles (one fn/ζ per mode), or one set alone">
+              <option value="shared">All sets (shared poles)</option>
+              {#each tfSets as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+            </select>
+          </div>
+        </div>
+      {/if}
       <div class="grp">
         <span class="grp-lab">peak fits</span>
         <div class="grp-ctl">

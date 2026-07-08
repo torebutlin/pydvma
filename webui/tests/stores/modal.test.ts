@@ -25,7 +25,7 @@ const fitResult = () => ({
 
 test('applyResult decodes modes, matrix, and both recon slices', () => {
   const m = createModalStore();
-  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });
+  m.applyResult(fitResult(), [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
   const s = get(m);
   expect(s.setId).toBe(3);
   expect(s.chIn).toBe(0);
@@ -43,14 +43,14 @@ test('applyResult decodes modes, matrix, and both recon slices', () => {
 
 test('an empty M (reject to nothing) clears matrix/modes and setId', () => {
   const m = createModalStore();
-  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });
+  m.applyResult(fitResult(), [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
   // A reject that empties the model: zero-row M, empty summaries + recon.
   m.applyResult({
     M: real([0, 0], []), fn: real([0], []), zn: real([0], []),
     an: real([0, 0], []), pn: real([0, 0], []), message: 'Mode fits deleted.',
     recon_freq_axis: real([0], []), recon_tf_data: cplx([0, 1], []),
     global_freq_axis: real([0], []), global_tf_data: cplx([0, 1], []),
-  }, { setId: 3, chIn: 0, nChannels: 2 });
+  }, [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
   const s = get(m);
   expect(s.matrix).toBeNull();
   expect(s.setId).toBeNull();
@@ -64,7 +64,7 @@ test('showGlobal toggles independently and survives a fresh fit', () => {
   expect(get(m).showGlobal).toBe(false);
   m.toggleGlobal();
   expect(get(m).showGlobal).toBe(true);
-  m.applyResult(fitResult(), { setId: 1, chIn: 0, nChannels: 2 });
+  m.applyResult(fitResult(), [{ setId: 1, chIn: 0, nChannels: 2, nCols: 1 }]);
   // A new fit must NOT silently flip the overlay toggle off.
   expect(get(m).showGlobal).toBe(true);
   m.setShowGlobal(false);
@@ -73,7 +73,7 @@ test('showGlobal toggles independently and survives a fresh fit', () => {
 
 test('reset returns to the empty state', () => {
   const m = createModalStore();
-  m.applyResult(fitResult(), { setId: 1, chIn: 0, nChannels: 2 });
+  m.applyResult(fitResult(), [{ setId: 1, chIn: 0, nChannels: 2, nCols: 1 }]);
   m.toggleGlobal();
   m.reset();
   const s = get(m);
@@ -100,7 +100,7 @@ test('showLocal toggles independently (default on) and mt mirrors the card', () 
 
 test('undo slot: pushUndo snapshots, undo restores, one level only', () => {
   const m = createModalStore();
-  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });  // 2 modes
+  m.applyResult(fitResult(), [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);  // 2 modes
   expect(get(m).undo).toBeNull();
 
   m.pushUndo();                                   // snapshot the 2-mode model
@@ -112,7 +112,7 @@ test('undo slot: pushUndo snapshots, undo restores, one level only', () => {
     an: real([0, 0], []), pn: real([0, 0], []), message: 'Mode fits deleted.',
     recon_freq_axis: real([0], []), recon_tf_data: cplx([0, 1], []),
     global_freq_axis: real([0], []), global_tf_data: cplx([0, 1], []),
-  }, { setId: 3, chIn: 0, nChannels: 2 });
+  }, [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
   expect(get(m).modes).toEqual([]);
 
   m.undo();                                        // restore the 2-mode model
@@ -126,7 +126,7 @@ test('seedFromMatrix decodes the mode summary from M rows (fn=col0, zn=col1) wit
   const m = createModalStore();
   // Two modes, 1 channel: M row = [fn, zn, an, pn, rk, rm].
   const M = real([2, 6], [80, 0.02, 1, 0, 0, 0, 220, 0.01, 0.6, 0, 0, 0]);
-  m.seedFromMatrix(M, { setId: 7, chIn: 0, nChannels: 2 }, 'vel');
+  m.seedFromMatrix(M, [{ setId: 7, chIn: 0, nChannels: 2, nCols: 1 }], 'vel');
   const s = get(m);
   expect(s.setId).toBe(7);
   expect(s.chIn).toBe(0);
@@ -144,7 +144,7 @@ test('seedFromMatrix decodes the mode summary from M rows (fn=col0, zn=col1) wit
 
 test('seedFromMatrix with an empty matrix leaves the model empty (setId null)', () => {
   const m = createModalStore();
-  m.seedFromMatrix(real([0, 6], []), { setId: 7, chIn: 0, nChannels: 2 }, 'acc');
+  m.seedFromMatrix(real([0, 6], []), [{ setId: 7, chIn: 0, nChannels: 2, nCols: 1 }], 'acc');
   const s = get(m);
   expect(s.setId).toBeNull();
   expect(s.matrix).toBeNull();
@@ -153,7 +153,7 @@ test('seedFromMatrix with an empty matrix leaves the model empty (setId null)', 
 
 test('clearWithUndo empties the model but a single undo restores it (with cached recon)', () => {
   const m = createModalStore();
-  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });   // 2 modes + global
+  m.applyResult(fitResult(), [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);   // 2 modes + global
   expect(get(m).global).not.toBeNull();
 
   m.clearWithUndo();
@@ -173,7 +173,7 @@ test('clearWithUndo empties the model but a single undo restores it (with cached
 
 test('mute: toggleMute flips flags, mutedIndices reports them, preserved across same-count applyResult', () => {
   const m = createModalStore();
-  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });  // 2 modes
+  m.applyResult(fitResult(), [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);  // 2 modes
   expect(get(m).muted).toEqual([false, false]);
 
   m.toggleMute(1);
@@ -181,7 +181,7 @@ test('mute: toggleMute flips flags, mutedIndices reports them, preserved across 
   expect(m.mutedIndices()).toEqual([1]);
 
   // A recon recompute (same mode count) must PRESERVE the mute flags…
-  m.applyResult(fitResult(), { setId: 3, chIn: 0, nChannels: 2 });
+  m.applyResult(fitResult(), [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
   expect(get(m).muted).toEqual([false, true]);
 
   // …but a structural change (different count) resets them.
@@ -191,6 +191,6 @@ test('mute: toggleMute flips flags, mutedIndices reports them, preserved across 
     an: real([1, 1], [1]), pn: real([1, 1], [0]), message: '',
     recon_freq_axis: real([2], [60, 110]), recon_tf_data: cplx([2, 1], [1, 0, 1, 0]),
     global_freq_axis: real([2], [0, 500]), global_tf_data: cplx([2, 1], [0.5, 0, 0.5, 0]),
-  }, { setId: 3, chIn: 0, nChannels: 2 });
+  }, [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
   expect(get(m).muted).toEqual([false]);
 });

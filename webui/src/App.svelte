@@ -128,8 +128,12 @@
   const freqMode = $derived<FreqMode>(
     (void $settingsMap, analysisSettings.settingFor($analysisTarget, 'freq').mode),
   );
+  // SONO heat-canvas branch (round-6 item 3): the sonogram targets ONE explicit
+  // set via `sonoTarget` (not the shared 'all'-capable `analysisTarget`), so
+  // the heat renderer + its dynamic-range read that dedicated store.
+  const sonoTarget = analysisSettings.sonoTarget;
   const dynRangeDb = $derived(
-    (void $settingsMap, analysisSettings.settingFor($analysisTarget, 'sono').dynRangeDb),
+    (void $settingsMap, analysisSettings.settingFor($sonoTarget ?? 'all', 'sono').dynRangeDb),
   );
   let mode = $state<'box' | 'pan'>('box');
 
@@ -648,15 +652,14 @@
   let sonoCanvas = $state<HTMLCanvasElement | undefined>();
 
   /**
-   * The sonogram image of the SET the analysis target names (its setId;
-   * 'all' shows the first working set), so the heat layer tracks the
-   * dataset dropdown rather than blindly showing whichever set was
-   * computed first.
+   * The sonogram image of the SET the sono target names (round-6 item 3): the
+   * heat layer tracks the Sono card's explicit single-set `sonoTarget`, never a
+   * time-less orphan set. Falls back to any computed sonogram so a transient
+   * null target (before the card defaults it) still shows the last image.
    */
   const sono = $derived.by(() => {
-    const setId = $analysisTarget === 'all' ? actions.workingSets()[0]?.setId : $analysisTarget;
-    const chosen = setId !== undefined ? $derivedStore[setId]?.sono : undefined;
-    // Fall back to any computed sonogram so a stale target still shows something.
+    const setId = $sonoTarget;
+    const chosen = setId !== null && setId !== undefined ? $derivedStore[setId]?.sono : undefined;
     return chosen ?? setArrays.find((s) => s.sono)?.sono;
   });
 
@@ -771,7 +774,10 @@
               fullExtent={freqExtent}
               band={brushBand}
               {xScale}
-              onchange={(lo, hi) => viewState.setRange('tf', { x: [lo, hi], y: range.y })}
+              onstart={() => viewState.beginTransient('tf')}
+              onpreview={(lo, hi) => viewState.setRangeLive('tf', { x: [lo, hi], y: range.y })}
+              onchange={(lo, hi) => viewState.commitTransient('tf', { x: [lo, hi], y: range.y })}
+              oncancel={() => viewState.cancelTransient('tf')}
               onfull={() => { if (freqExtent) viewState.setRange('tf', { x: [freqExtent[0], freqExtent[1]], y: range.y }); }}
             />
           {/if}

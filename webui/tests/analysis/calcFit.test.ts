@@ -180,6 +180,47 @@ test('calcFit no-ops (no engine call) before any TF exists', async () => {
   expect(calls.some((c) => c.op === 'calc_fit')).toBe(false);
 });
 
+/** An ORPHAN TF dataset: a TfData with NO linked TimeData (3 identity columns).
+ *  The loader restores it with chIn = null (columns ARE the lines). */
+function orphanDataset(): DvmaDataset {
+  return {
+    formatVersion: 1, pydvmaVersion: '1.5.0',
+    items: [{
+      kind: 'TfData',
+      arrays: {
+        freq_axis: { shape: [2], isComplex: false, data: Float64Array.from([0, 1]) },
+        // 3 columns, interleaved [re,im,…] row-major (2 rows × 3 cols).
+        tf_data: { shape: [2, 3], isComplex: true, data: Float64Array.from([1, 0, 0.8, 0, 1.3, 0, 1, 0, 0.8, 0, 1.3, 0]) },
+      },
+      meta: { test_name: 'orphan' }, settings: null,
+    }],
+  };
+}
+const fitResult3 = () => ({
+  M: real([1, 14], [80, 0.02, 1, 0.8, 1.3, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+  fn: real([1], [80]), zn: real([1], [0.02]),
+  an: real([1, 3], [1, 0.8, 1.3]), pn: real([1, 3], [0, 0, 0]),
+  message: 'fn=80.00 (Hz)',
+  recon_freq_axis: real([2], [60, 110]), recon_tf_data: cplx([2, 3], [1, 0, 0.8, 0, 1.3, 0, 1, 0, 0.8, 0, 1.3, 0]),
+  global_freq_axis: real([2], [0, 1]), global_tf_data: cplx([2, 3], [1, 0, 0.8, 0, 1.3, 0, 1, 0, 0.8, 0, 1.3, 0]),
+});
+
+test('an ORPHAN TF fit OMITS ch_in from the payload (round-6 bug 1)', async () => {
+  const { actions, modal, calls } = harness((op) => (op === 'calc_fit' ? fitResult3() : {}));
+  actions.loadDataset(orphanDataset());
+  await actions.calcFit('all', [0, 1], 'acc', 'fit', 1);
+  const fit = calls.find((c) => c.op === 'calc_fit');
+  expect(fit).toBeTruthy();
+  // The engine has NO ch_in default that raised before the fix; the JS side
+  // must OMIT the key for an orphan so Python's ch_in=None default applies.
+  expect('ch_in' in fit!.payload).toBe(false);
+  expect(fit!.payload.n_tf).toBe(3);          // three orphan columns are the lines
+  expect(fit!.payload.n_channels).toBe(3);    // identity geometry (nChannels === Nout)
+  // The store keeps chIn null so the recon overlay uses the identity remap.
+  expect(get(modal).chIn).toBeNull();
+  expect(get(modal).modes.map((m) => m.fn)).toEqual([80]);
+});
+
 test('calcDamping returns decoded fn/Qn', async () => {
   const { actions, calls } = harness((op) => (op === 'calc_damping' ? { fn: real([2], [80, 220]), Qn: real([2], [25, 33]) } : {}));
   actions.loadDataset(makeDataset());

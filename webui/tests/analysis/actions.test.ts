@@ -55,6 +55,40 @@ function makeDatasetCh(channels: number[]): DvmaDataset {
   return { formatVersion: 1, pydvmaVersion: '1.5.0', items };
 }
 
+/**
+ * An ORPHAN transfer-function item — a TF-only load (e.g. a JW-logger `.mat`
+ * whose `yspec` is a bare TF matrix) with NO source TimeData and no matching
+ * `id_link`. `loadDataset` gives it its own display set with `Nout` channels
+ * (round-5 item 3) but it carries NO time series (round-6 item 2).
+ */
+function orphanTfItem(nOut = 3): DvmaItem {
+  const nf = 2;
+  return {
+    kind: 'TfData',
+    arrays: {
+      freq_axis: { shape: [nf], isComplex: false, data: Float64Array.from([0, 1]) },
+      tf_data: {
+        shape: [nf, nOut], isComplex: true,
+        data: Float64Array.from(Array.from({ length: nf * nOut * 2 }, (_, i) => i + 1)),
+      },
+    },
+    meta: { test_name: 'orphan_tf', timestring: 'to' },   // no id_link ⇒ orphan
+    settings: null,
+  };
+}
+
+/** Dataset with one orphan TF item and nothing else (a TF-only tray). */
+function makeOrphanOnlyDataset(nOut = 3): DvmaDataset {
+  return { formatVersion: 1, pydvmaVersion: '1.5.0', items: [orphanTfItem(nOut)] };
+}
+
+/** Dataset whose FIRST item is an orphan TF, followed by `nTime` TimeData sets. */
+function makeOrphanFirstDataset(nTime = 1): DvmaDataset {
+  const ds = makeDataset(nTime);
+  ds.items.unshift(orphanTfItem(3));
+  return ds;
+}
+
 interface Recorded { op: string; payload: Record<string, unknown>; }
 
 /**
@@ -534,6 +568,69 @@ test('calcSono clamps an out-of-range channel to the set range (round-4 bug 1)',
   expect(sono.payload.ch).toBe(0);                  // clamped to the only channel
   // The result is committed (not dropped by the clamp), so a sono slice lands.
   expect(get(actions.derived)[a].sono).toBeDefined();
+});
+
+test('workingSets() flags time-bearing vs orphan-TF sets (round-6 items 2/3)', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { actions } = harness(engine);
+  actions.loadDataset(makeOrphanFirstDataset(1));    // [orphan TF, 1 TimeData]
+  const ws = actions.workingSets();
+  expect(ws.length).toBe(2);
+  // The orphan TF set carries NO time data; the TimeData set does. The Sono
+  // card lists only the latter as a sonogram target.
+  const orphan = ws.find((w) => w.hasTime === false);
+  const timeSet = ws.find((w) => w.hasTime === true);
+  expect(orphan).toBeDefined();
+  expect(timeSet).toBeDefined();
+});
+
+test('calcSono on a time-less orphan set fails with a CLEAR message, no deref crash (round-6 item 2)', async () => {
+  // The bug Tore hit: a sonogram on an orphan TF (no time series) dereferenced
+  // a missing `time_axis` → opaque "Cannot read properties of undefined
+  // (reading 'data')" and a WHITE plot. It must instead land a clear,
+  // actionable message in computeErrors.sono and never crash the module.
+  const { engine, calls } = fakeEngine(async () => ({
+    time_axis: real([2], [0, 1]), freq_axis: real([2], [0, 1]),
+    sono_data: real([2, 2], [1, 2, 3, 4]),
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeOrphanOnlyDataset(3));
+  const orphanId = get(sel.sets)[0].id;
+  await actions.calcSono(orphanId, 0);
+  const msg = get(actions.computeErrors).sono;
+  expect(msg).toContain('no time data');
+  expect(msg).not.toContain('undefined');            // not the raw deref TypeError
+  expect(get(actions.busy)).toBe(false);             // settles, never hangs
+  // No calc_sono worker call was issued for a set that can't produce one.
+  expect(calls.some((c) => c.op === 'calc_sono')).toBe(false);
+});
+
+test('calcSono("all") skips a leading orphan set and computes the first TIME-BEARING set (round-6 item 2)', async () => {
+  // 'all' is not a real sonogram target, but if one is passed it must resolve
+  // to a time-bearing set — never the leading orphan (which would blank the
+  // plot). Regression for `working[0]` blindly picking the orphan.
+  const { engine, calls } = fakeEngine(async () => ({
+    time_axis: real([2], [0, 1]), freq_axis: real([2], [0, 1]),
+    sono_data: real([2, 2], [1, 2, 3, 4]),
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeOrphanFirstDataset(1));    // [orphan TF, 1 TimeData]
+  await actions.calcSono('all', 0);
+  expect(get(actions.computeErrors).sono).toBe('');  // computed, no error
+  const sonoCall = calls.find((c) => c.op === 'calc_sono');
+  expect(sonoCall).toBeDefined();
+  // The sono slice landed on the TIME-BEARING set, not the orphan.
+  const timeSetId = actions.workingSets().find((w) => w.hasTime)!.setId;
+  expect(get(actions.derived)[timeSetId].sono).toBeDefined();
+});
+
+test('calcDamping on a time-less orphan set rejects with a CLEAR message (round-6 item 2)', async () => {
+  const { engine, calls } = fakeEngine(async () => ({ fn: real([1], [42]), Qn: real([1], [10]) }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeOrphanOnlyDataset(3));
+  const orphanId = get(sel.sets)[0].id;
+  await expect(actions.calcDamping(orphanId, 0, 512)).rejects.toThrow(/no time data/);
+  expect(calls.some((c) => c.op === 'calc_damping')).toBe(false);
 });
 
 test('two DIFFERENT action kinds racing: neither cross-drops the other', async () => {
