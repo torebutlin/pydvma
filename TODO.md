@@ -11,37 +11,76 @@ git tag). The decision trail and per-round detail live in `dev/` (see
 `dev/2026-07-0x-round*-feedback.md` series) and in the git history;
 this file now tracks only what is still open.
 
-## Current backlog — web logger follow-ups (round 7)
+## Current backlog — web logger follow-ups
 
-Flagged during the round-5/6 hands-on rounds; pick up alongside Tore's
-next hands-on pass:
+Flagged during the round-5/6 hands-on rounds; pick up alongside
+feedback from Tore's lab-testing period:
 
 - **CSD phase** — the glue must return the complex `Pxy` so the CSD
   pair view can show phase (currently magnitude only).
 - **Browser pretrigger threshold control** — expose the trigger
-  threshold in the browser Acquire UI (the bridge already has it).
-- **Log-y heat rendering for the CWT sonogram.**
+  threshold in the browser Acquire UI (the bridge already has it;
+  browser uses a fixed 0.05).
+- **Log-y heat rendering for the CWT sonogram** — the CWT currently
+  resamples its log-spaced axis onto a uniform grid because the heat
+  renderer assumes uniform bins; a log-y renderer would show the
+  low-frequency detail natively.
 - **CSD pair auto-enable on a hidden channel** — selecting a CSD pair
   should re-enable a channel that is currently hidden.
 - **Orphan-fit browser e2e** — Playwright cover for the round-6
-  orphan-TF fit crash (in progress, task_c158292c).
-- **PWA manifest** — installability (manifest first; offline later).
-- **Narrow-band CWT damping memory optimisation.**
+  orphan-TF fit crash (task_c158292c; was running in its own session
+  in the `claude/determined-haslett-6448df` worktree — check whether
+  it finished and merge or redo).
+- **PWA manifest** — installability (manifest first; offline caching
+  later, and only wired to deploy hashes — a stale service worker
+  serving an old build is the failure mode to design against).
+- **Narrow-band CWT damping memory optimisation** — a prototype was
+  reverted because the `10·median/max` peak-detection heuristic
+  misbehaves on narrow bands; both halves need attention together.
+- **Dark-mode contrast verdicts (Tore)** — deliberately shipped as-is
+  and awaiting his call: the green Save Dataset button is white-on-
+  green ≈2.7:1 and solid-indigo buttons ≈3.6:1 in dark. Bump if they
+  bother him in use.
 
 ## Current backlog — hands-on & hardware
 
-- **Tore hands-on round 7** — review the newest surface: shared-pole
-  fitting, Best-match / x(iω) scaling group, `/config` prefill,
-  sonogram single-targeting, brush v2, dark mode.
-- **PC multi-channel + NI recheck** (pending since round 6) — on the
-  Windows box, eyeball the 9260 output-rail clamp and the DSA
-  coerced-fs notes on Setup/Acquire, and re-verify multi-channel NI
-  capture end-to-end.
+- **Lab-testing period (Tore, days/weeks)** — real structures, real
+  measurements; expect feedback-driven fix rounds, not feature waves.
+  Newest surface to exercise: shared-pole fitting, Best-match / x(iω)
+  scaling group, `/config` prefill, sonogram single-targeting, brush
+  v2, dark mode. `data/examples/` has the two real regression files
+  (see its README); `dev/bridge_hw_check.py` is the reusable headless
+  NI harness to run after any acquisition-path change.
 - **IEPE auto-detect via bias-voltage probe** — enable 2 mA
   excitation and read the DC bias before AC coupling to classify what
   is connected (~24 V open / 8–14 V IEPE sensor / ~0 V low-Z) so
   `iepe_excit_current_A='auto'` can configure each 9234 channel.
   Sensitivity still has to be entered manually.
+
+## Release & sustainability admin (Tore's threads)
+
+v2.0.0 is SHIPPED (PyPI + `v2.0.0` tag + GitHub release with
+artifacts, 2026-07-08). Remaining admin, no deadlines:
+
+- **Zenodo DOI** — enable the GitHub–Zenodo integration (archives
+  future releases automatically) or manually upload the v2.0.0 sdist
+  to mint a DOI for this release; then fill the commented `doi:` slot
+  in `CITATION.cff` and update the "DOI on the way" note on
+  `docs/about/support.md`.
+- **Cambridge Enterprise conversation** — required before any payment
+  route for the institutional-supporter tier; until then the support
+  page's contact-email route stands. When a route exists, add it to
+  the support page (and optionally `.github/FUNDING.yml`, which today
+  only links the Sponsor button to that page — no payment links).
+- **JOSS paper** — Tore is authoring it personally; the draft +
+  submission checklist moved OUT of the repo to
+  `~/Library/CloudStorage/OneDrive-UniversityofCambridge/Work
+  Research - onedrive/Work Research/Projects/2026_pydvma_paper/paper`
+  (ORCID already applied). Outstanding: Zenodo DOI, word-count check,
+  submit at joss.theoj.org.
+- **Release artifacts note** — `dist/` (gitignored) holds the two
+  2.0.0 artifacts; pre-2.0 local builds were moved to a temporary
+  scratchpad and are recoverable from PyPI if ever needed.
 
 ## Housekeeping (smaller open items)
 
@@ -96,10 +135,10 @@ next hands-on pass:
   change.
 - **ML plugin as a separate repo** — keep the core dependency-light;
   the natural open-core seam.
-- **Sustainability** — an institutional supporter tier (needs
-  Cambridge Enterprise involvement before any payment route) and a
-  **JOSS paper + citation** request. Decided direction (2026-07-03):
-  the tool stays fully free and ungated.
+- **Sustainability** — decided 2026-07-03 (tool stays fully free and
+  ungated) and EXECUTED 2026-07-08: CITATION.cff, the support page,
+  FUNDING.yml link, JOSS draft. What remains is admin — see "Release
+  & sustainability admin" above.
 
 ## Parked (other repo)
 

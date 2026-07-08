@@ -78,29 +78,29 @@ on the cDAQ (mis-routed stimulus / rail errors on multi-NI
 benches). Hardware-verified: Dev2-input + unset output routes the
 sweep out of Dev2's own AO.
 
-**NEXT SESSIONS: Tore tests solo over days/weeks — expect
-FEEDBACK-driven work, not new feature waves.** Round-7 hands-on
-surface: shared-pole fitting, Best match / x(iω) scaling group,
-/config prefill, sono single-targeting, brush v2, dark mode;
-analysis-side checks with `data/examples/` (see its README). IEPE
-with a live accelerometer is now verified too (accel on
-cDAQ1Mod1/ai1; `dev/iepe_accel_check.py` — cold-start 4.86 V bias
-transient, per-channel excitation, webui-style scalar broadcast
-through the bridge). Small flagged follow-ups: CSD PHASE
-(glue must return complex Pxy), browser pretrig threshold control,
-log-y CWT heat rendering, CSD pair auto-enable on hidden channel,
-orphan-fit browser e2e (task_c158292c), PWA manifest
-(installability — manifest-first, offline later). October readiness: labsheets live in the OTHER repo
-(parked). **The Qt GUI
-was REMOVED** (2026-07-08, Tore's final confirmation after the round-6
-parity audit closed): `pydvma/gui.py` + the orphan `oscilloscope.py` /
-`logger_tester.py` and the Qt-only tests are deleted, the `[qt]` extra
-is dropped from `pyproject.toml`, and `dvma.Logger` / `dvma.Oscilloscope`
-now raise an actionable tombstone (see `pydvma/__init__.py`
-`_REMOVED_NAMES`) pointing at the web logger. The last version that
-shipped the Qt GUI is the **`qt-final`** git tag — revert there if the
-desktop logger is ever needed. Feedback trail:
+**v2.0.0 IS RELEASED** (2026-07-08 evening): PyPI carries the fat
+wheel + sdist (`pip install "pydvma[serve]"` works cold), the
+`v2.0.0` tag is pushed, and the GitHub release (CHANGELOG body +
+artifacts) is published. The sustainability surface is live
+(CITATION.cff with Tore's ORCID, docs/about/support.md, FUNDING.yml
+Sponsor-button link — NO payment routes by design until the Cambridge
+Enterprise conversation). The JOSS paper draft moved OUT of the repo
+to Tore's OneDrive (Work Research/Projects/2026_pydvma_paper/paper) —
+he authors it personally. **The Qt GUI was REMOVED** (Tore's final
+confirmation after the round-6 parity audit): `dvma.Logger` /
+`dvma.Oscilloscope` raise actionable tombstones (`_REMOVED_NAMES` in
+`pydvma/__init__.py`); the last Qt version is the **`qt-final`** git
+tag.
+
+**NEXT SESSIONS: Tore is lab-testing solo over days/weeks — expect
+FEEDBACK-driven work, not feature waves. `TODO.md` is the single
+canonical pickup list** (web-logger follow-ups, hardware ideas,
+housekeeping, deferred items, and Tore's release/sustainability admin
+threads — Zenodo DOI, CE, JOSS). Feedback trail:
 dev/2026-07-08-round6-feedback.md and earlier; full history in git.
+IEPE with a live accelerometer is verified (accel on cDAQ1Mod1/ai1;
+`dev/iepe_accel_check.py`); `dev/bridge_hw_check.py` is the reusable
+headless NI harness for after any acquisition-path change.
 
 
 Auto-loaded by Claude Code at the start of every session. Contributors
