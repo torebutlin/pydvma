@@ -3,7 +3,6 @@
 # citation. It is validated against the Citation File Format v1.2.0.
 #
 # TODO (Tore, before release):
-#   * Add your ORCID — see the commented `orcid:` line under `authors`.
 #   * Once the tagged release is archived on Zenodo, add the DOI here as
 #     a top-level `doi:` field and to `identifiers:` (see the commented
 #     block at the end). The Zenodo DOI is the canonical citable target.
@@ -18,7 +17,7 @@ authors:
     given-names: "Tore"
     email: "tb267@cam.ac.uk"
     affiliation: "Department of Engineering, University of Cambridge"
-    # orcid: "https://orcid.org/0000-0000-0000-0000"  # PLACEHOLDER — replace with Tore's real ORCID before release, then uncomment.
+    orcid: "https://orcid.org/0000-0002-7814-8107"
 repository-code: "https://github.com/torebutlin/pydvma"
 url: "https://torebutlin.github.io/pydvma/"
 license: BSD-3-Clause
