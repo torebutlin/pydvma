@@ -42,6 +42,12 @@ as_strided in calculate_cross_spectrum_matrix AND the sonogram
 memory-bounded by design. Nested FFI payloads are JsProxy/JsNull —
 glue uses .get/getattr/`not x`, JS omits null keys. The deployed
 subpath (/pydvma/app/) is e2e-guarded (engine base-URL bug class).
+SVG: scoped CSS BEATS inline presentation attributes — an opaque
+.plot-bg { fill: var(--surface) } silently covered the sono heat
+canvas for weeks while fill="transparent" sat ignored; canvas-pixel
+and attribute assertions stayed green throughout. Rendering claims
+must be verified on SCREENSHOTS of visible composited pixels (the
+sono e2e now does; keep that standard for any layered-canvas work).
 The engine wheel (public/pypi, gitignored) rebuilds via
 webui/scripts/build-wheels.sh — keep ENGINE_WHEELS
 (webui/src/lib/stores/engine.ts) in sync on version bumps: the
