@@ -181,7 +181,9 @@ async def main(url):
                                  VmaxNI=10, output_VmaxNI=5), 10000),
             # 6003 AO caps at 5000 S/s (software-timed): output_fs must
             # be set explicitly since MySettings defaults it to fs.
-            # NB the webui doesn't do this — flagged as a round-7 gap.
+            # NB the webui now does this too (acquire store
+            # reclampOutputFs stages output_fs = device_caps
+            # ao_max_rate when the input fs exceeds it).
             (2, 'USB-6003', dict(NI_mode='DAQmx_Val_RSE',
                                  VmaxNI=10, output_VmaxNI=5,
                                  output_fs=5000), 8000),

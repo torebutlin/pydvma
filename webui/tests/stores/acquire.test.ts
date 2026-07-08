@@ -367,6 +367,117 @@ test('the arm control and Setup edit the SAME pretrigSamples store value (preced
   expect(get(store.bridgeConfig).pretrigSamples).toBeNull();
 });
 
+// ---- NI-recheck follow-up: output_fs clamp (USB-6003 AO rate limit) ----
+
+/**
+ * A bridge fake modelling the Windows bench: a USB-6003 whose AI runs to
+ * 100 kS/s but whose AO tops out at 5 kS/s (`ao_max_rate: 5000`), plus an
+ * AO-less soundcard so tests can point input and output at different
+ * devices.  Unclamped, MySettings defaults `output_fs = fs` and the server
+ * rejects a stimulus-enabled log at any input fs above the AO cap.
+ */
+function usb6003BridgeProvider() {
+  let lastConfig: BridgeConfig = {};
+  const caps: BridgeCaps = {
+    v: 1,
+    backends: ['soundcard', 'nidaq'],
+    devices: {
+      soundcard: ['USB Mic'],
+      nidaq: [{
+        name: 'Dev3', product_type: 'USB-6003', is_chassis: false,
+        ai_channel_count: 8, ao_channel_count: 2,
+        module_names: [], module_ai_counts: {}, module_ao_counts: {},
+      }],
+    },
+    fs_ladders: {},
+    max_channels: { 'soundcard:0': { input: 1, output: 0 }, 'nidaq:0': { input: 8, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      'soundcard:0': { ao: false },
+      'nidaq:0': {
+        driver: 'nidaq', index: 0, name: 'Dev3', ao: true,
+        ai_vmax: 10, ao_vmax: 10, ao_max_rate: 5000,
+      },
+    },
+  };
+  const provider: SourceProvider = {
+    kind: 'bridge',
+    async capabilities() { return caps; },
+    async enumerateInputDevices() {
+      return [
+        { deviceId: 'soundcard:0', label: 'USB Mic', groupId: 'soundcard', hasLabel: true },
+        { deviceId: 'nidaq:0', label: 'NI: Dev3 (8 ch)', groupId: 'nidaq', hasLabel: true },
+      ];
+    },
+    startRecording() {
+      return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 };
+    },
+    async startMonitor() { return { stop() {}, fs: 8000, nChannels: 1 }; },
+    setConfig(cfg) { lastConfig = { ...cfg }; },
+    onLogStatus() {},
+    onConfigured() {},
+    lastMeta() { return null; },
+  };
+  return { provider, config: () => lastConfig };
+}
+
+test('an input fs above the device AO rate cap stages a clamped output_fs (USB-6003)', async () => {
+  const { provider, config } = usb6003BridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  // Nothing selected yet → no clamp.
+  expect(get(store.bridgeConfig).outputFs).toBeUndefined();
+  // Select the 6003 with the default fs (44100 > the 5 kS/s AO cap): the
+  // store stages output_fs = ao_max_rate AND forwards it to the bridge.
+  store.patch({ deviceId: 'nidaq:0' });
+  expect(get(store.bridgeConfig).outputFs).toBe(5000);
+  expect(config().outputFs).toBe(5000);
+});
+
+test('lowering the fs to (or below) the AO cap clears the staged output_fs clamp', async () => {
+  const { provider, config } = usb6003BridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  store.patch({ deviceId: 'nidaq:0' });
+  expect(get(store.bridgeConfig).outputFs).toBe(5000);
+  // fs == cap is legal as-is → the clamp clears (server default output_fs = fs).
+  store.patch({ sampleRate: 5000 });
+  expect(get(store.bridgeConfig).outputFs).toBeUndefined();
+  expect(config().outputFs).toBeUndefined();
+  // Raising it again re-stages the clamp.
+  store.patch({ sampleRate: 8000 });
+  expect(get(store.bridgeConfig).outputFs).toBe(5000);
+});
+
+test('the clamp follows the OUTPUT device select, and clears with "same as input"', async () => {
+  const { provider, config } = usb6003BridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  // Input is the AO-less soundcard → no cap in play.
+  store.patch({ deviceId: 'soundcard:0', sampleRate: 44100 });
+  expect(get(store.bridgeConfig).outputFs).toBeUndefined();
+  // Pointing the stimulus at the 6003 brings its AO cap with it.
+  store.patchBridge({ outputDeviceId: 'nidaq:0' });
+  expect(get(store.bridgeConfig).outputFs).toBe(5000);
+  expect(config().outputFs).toBe(5000);
+  // "same as input" arrives as an explicit undefined → back to the (capless)
+  // input device, so the clamp clears.
+  store.patchBridge({ outputDeviceId: undefined });
+  expect(get(store.bridgeConfig).outputFs).toBeUndefined();
+});
+
+test('devices without a reported ao_max_rate never stage an output_fs (no needless clamp)', async () => {
+  const { provider, config } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  // The cDAQ fake reports rails but no AO rate cap → outputFs stays unset
+  // at any fs, so the server keeps its output_fs = fs default.
+  store.patch({ deviceId: 'nidaq:0', sampleRate: 51200 });
+  expect(get(store.bridgeConfig).outputFs).toBeUndefined();
+  expect(config().outputFs).toBeUndefined();
+});
+
 test('fuller output kwargs (duration + device/channels) round-trip through patchBridge', async () => {
   const { provider, config } = richBridgeProvider();
   const store = createAcquireStore(provider);

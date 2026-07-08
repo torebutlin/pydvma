@@ -495,6 +495,35 @@ test('output device/channels are omitted from configure when output is disabled'
   void rh.promise.catch(() => {});
 });
 
+test('a staged output_fs clamp rides configure when the stimulus is enabled — not when off', async () => {
+  // Enabled: the store-derived AO rate clamp (USB-6003 AO at 5 kS/s) maps
+  // onto the MySettings output_fs kwarg, so the server never falls back to
+  // its output_fs = fs default (which the device rejects at log time).
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({
+    outputEnabled: true, outputType: 'sweep', outputAmp: 0.4, outputF1: 20, outputF2: 500,
+    outputFs: 5000,
+  });
+  const rh = bp.startRecording({ deviceId: 'nidaq:0', sampleRate: 8000, channelCount: 1, durationS: 1 });
+  fake.open();
+  await tick();
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings).toMatchObject({ fs: 8000, output_fs: 5000 });
+  void rh.promise.catch(() => {});
+
+  // Disabled: no stimulus → no AO task, so the clamp stays out of configure.
+  const fake2 = makeFakeWs();
+  const bp2 = new BridgeProvider('ws://x/ws', () => fake2.ws);
+  bp2.setConfig({ outputEnabled: false, outputFs: 5000 });
+  const rh2 = bp2.startRecording({ deviceId: 'nidaq:0', sampleRate: 8000, channelCount: 1, durationS: 1 });
+  fake2.open();
+  await tick();
+  const cfg2 = fake2.sentJson().find((m) => m.type === 'configure');
+  expect(cfg2!.settings.output_fs).toBeUndefined();
+  void rh2.promise.catch(() => {});
+});
+
 // ---- Wave C: bridged-set metadata join ----
 
 test('recordingMetaFromDvma extracts provenance from a container', () => {

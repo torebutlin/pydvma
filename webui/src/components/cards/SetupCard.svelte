@@ -284,6 +284,19 @@
       </div>
     {/if}
 
+    {#if $bridgeConfig.outputFs != null}
+      <!-- AO rate clamp note: the effective output device's analog output
+           tops out below the requested input fs (USB-6003: AO 5 kS/s vs AI
+           100 kS/s), so the store pins output_fs to the cap — unclamped,
+           MySettings defaults output_fs = fs and a stimulus-enabled log
+           fails server-side. -->
+      <div class="ctx-row">
+        <span class="note coerce-note" data-testid="output-fs-clamp-note">
+          output runs at {fmtHz($bridgeConfig.outputFs)} Hz (device AO limit)
+        </span>
+      </div>
+    {/if}
+
     {#if full}
       <!--
         FULL soundcard option set, grouped by domain (device / processing /

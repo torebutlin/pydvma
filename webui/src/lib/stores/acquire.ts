@@ -222,6 +222,11 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
   function patchBridge(p: Partial<BridgeConfig>): void {
     bridgeConfig.update((c) => ({ ...c, ...p }));
     provider.setConfig?.(get(bridgeConfig));
+    // Choosing (or clearing) the output device changes whose AO rate cap
+    // applies.  `in` (not `!== undefined`) because "same as input" arrives
+    // as an explicit `outputDeviceId: undefined`.  Cannot recurse: the
+    // nested reclamp patch carries only `outputFs`.
+    if ('outputDeviceId' in p) reclampOutputFs();
   }
 
   /**
@@ -253,6 +258,30 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       if (clamped !== (cur.outputVmaxNI ?? PYDVMA_DEFAULT_VMAX)) patch.outputVmaxNI = clamped;
     }
     if (Object.keys(patch).length) patchBridge(patch);
+  }
+
+  /**
+   * Clamp the output (AO) sample rate to the effective output device's
+   * `ao_max_rate` cap.  MySettings defaults `output_fs = fs` (options.py),
+   * but a device's AO can top out below its AI — the USB-6003 samples input
+   * to 100 kS/s while its AO is limited to 5 kS/s — so any input fs above
+   * the cap with a stimulus enabled fails at log time with "output_fs
+   * exceeds the maximum AO sample rate".  When the requested fs exceeds the
+   * cap this stages `outputFs = ao_max_rate` for the next configure (and
+   * Setup renders an "output runs at N Hz (device AO limit)" note);
+   * otherwise any staged clamp is cleared so the server default applies
+   * again.  The effective output device is the Acquire output select when
+   * set, else the input device.  Called whenever the fs, input device,
+   * output device, or caps change; idempotent (no patch when the staged
+   * value is already right), and a no-op when no device with a known cap is
+   * involved (mock/soundcard/Web Audio).
+   */
+  function reclampOutputFs(): void {
+    const cur = get(bridgeConfig);
+    const outDev = cur.outputDeviceId || get(settings).deviceId;
+    const cap = deviceCapsFor(get(bridgeCaps), outDev)?.ao_max_rate;
+    const clamped = cap != null && get(settings).sampleRate > cap ? cap : undefined;
+    if (clamped !== cur.outputFs) patchBridge({ outputFs: clamped });
   }
 
   /**
@@ -333,8 +362,10 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       if (caps) {
         capabilities.update((c) => ({ ...c, liveSource: true }));
         await refreshDevices();
-        // Clamp voltages to the (possibly already-selected) device's rails.
+        // Clamp voltages to the (possibly already-selected) device's rails,
+        // and the output rate to its AO cap.
         reclampVoltages();
+        reclampOutputFs();
       }
       return;
     }
@@ -421,12 +452,16 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
   /**
    * Patch one or more settings fields.  Editing the requested sample rate or
    * the device invalidates any standing DSA coerced-fs note (it referred to
-   * the old request) and re-clamps the NI voltage config to the newly
-   * selected device's rails.
+   * the old request), re-clamps the NI voltage config to the newly selected
+   * device's rails, and re-derives the output_fs clamp (both fs and device
+   * feed it).
    */
   function patch(p: Partial<AcquireSettings>): void {
     settings.update((s) => ({ ...s, ...p }));
-    if (p.sampleRate !== undefined || p.deviceId !== undefined) coercedFs.set(null);
+    if (p.sampleRate !== undefined || p.deviceId !== undefined) {
+      coercedFs.set(null);
+      reclampOutputFs();
+    }
     if (p.deviceId !== undefined) reclampVoltages();
   }
 
@@ -458,6 +493,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     patch,
     patchBridge,
     reclampVoltages,
+    reclampOutputFs,
     setProvider,
     /** The active acquisition backend (Web Audio or the serve bridge). */
     get provider() { return provider; },

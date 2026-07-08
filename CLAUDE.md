@@ -58,11 +58,19 @@ on all three devices (`dev/bridge_hw_check.py`, 38/38 — a reusable
 headless harness, run it against `pydvma-serve --driver nidaq` after
 any acquisition-path change); both round-D notes eyeballed in the
 real UI with real caps ("output clamped to device rail ±4.24 V";
-"device runs at 8533.3 Hz (requested 8000)"). One NEW finding
-flagged, not fixed: the webui never sets `output_fs` (MySettings
-defaults it to fs), so a 6003 with stimulus at fs > 5000 fails at
-log time with a loud, actionable error — the UI should clamp via
-device_caps.ao_max_rate + note, rail-clamp pattern (task_01e8edaf).
+"device runs at 8533.3 Hz (requested 8000)"). The recheck's NEW
+finding is FIXED (task_01e8edaf): the webui acquire store's
+`reclampOutputFs` now stages `output_fs` from the effective output
+device's `device_caps.ao_max_rate` whenever the input fs exceeds it
+(MySettings otherwise defaults output_fs = fs and the 6003 rejects
+the log), and Setup shows "output runs at 5000 Hz (device AO
+limit)" — verified end-to-end on the real Dev3 (bridge-payload
+check + a real UI log through vite + `pydvma-serve --driver
+nidaq`).  NEWER finding from that verification, NOT fixed (task
+chip spawned): with output left as "same as input", MySettings
+defaults the NI `output_device_index` to 0 (options.py ~309-331),
+so a Dev3 input silently drives AO on the cDAQ — mis-routed
+stimulus / a rail error on multi-NI benches.
 
 **NEXT SESSIONS: Tore tests solo over days/weeks — expect
 FEEDBACK-driven work, not new feature waves.** Round-7 hands-on
@@ -72,12 +80,12 @@ analysis-side checks with `data/examples/` (see its README). IEPE
 with a live accelerometer is now verified too (accel on
 cDAQ1Mod1/ai1; `dev/iepe_accel_check.py` — cold-start 4.86 V bias
 transient, per-channel excitation, webui-style scalar broadcast
-through the bridge). Small flagged follow-ups: webui
-output_fs clamp (above), CSD PHASE (glue must return complex Pxy),
-browser pretrig threshold control, log-y CWT heat rendering, CSD
-pair auto-enable on hidden channel, orphan-fit browser e2e
-(task_c158292c), PWA manifest (installability — manifest-first,
-offline later). October readiness: labsheets live in the OTHER repo
+through the bridge). Small flagged follow-ups: NI
+"same as input" output-device index default (above), CSD PHASE
+(glue must return complex Pxy), browser pretrig threshold control,
+log-y CWT heat rendering, CSD pair auto-enable on hidden channel,
+orphan-fit browser e2e (task_c158292c), PWA manifest
+(installability — manifest-first, offline later). October readiness: labsheets live in the OTHER repo
 (parked). **The Qt GUI
 was REMOVED** (2026-07-08, Tore's final confirmation after the round-6
 parity audit closed): `pydvma/gui.py` + the orphan `oscilloscope.py` /
