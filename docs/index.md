@@ -108,6 +108,13 @@ Contributions to this project are welcomed, keeping in mind the project aims abo
 
 See the [Contributing](contributing.md) page for more details.
 
+## Support & citation
+
+pydvma is free and open for everyone — nothing is gated. If it supports
+your teaching or research, please consider
+[citing it](about/support.md) — see the
+[Support & citation](about/support.md) page.
+
 ## License
 
 This project is licensed under the BSD 3-Clause License - see the [License](license.md) page for details.

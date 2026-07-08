@@ -1,0 +1,6 @@
+# GitHub Sponsor button configuration.
+# pydvma has no payment processing (a formal institutional-supporter
+# route via Cambridge Enterprise is still being set up). The Sponsor
+# button therefore points at the project's Support & citation page,
+# which explains the free-and-open model and how to get in touch.
+custom: ["https://torebutlin.github.io/pydvma/about/support/"]

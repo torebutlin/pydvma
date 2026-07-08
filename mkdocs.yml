@@ -119,4 +119,6 @@ nav:
   - Contributing:
       - Guidelines: contributing.md
       - Docstring Style Guide: contributing-docstrings.md
+  - About:
+      - Support & Citation: about/support.md
   - License: license.md
