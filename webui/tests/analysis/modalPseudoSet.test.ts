@@ -518,3 +518,45 @@ test('load-restore of a SHARED-POLE model rebuilds one pseudo-set per spanned se
   await flush();
   expect(get(sel.setsView).filter((s) => s.role === 'fit')).toHaveLength(2);
 });
+
+// ---- Round-7h: a fit spanning a SUBSET of a set's lines (the ones left
+// visible) draws an orphan-style pseudo-set — one line per FITTED channel,
+// with the source line's colour and label. ----
+
+test('a subset fit (hidden line) yields an orphan-style pseudo-set with source labels', async () => {
+  const ds: DvmaDataset = {
+    formatVersion: 1, pydvmaVersion: '1.5.0',
+    items: [{
+      kind: 'TimeData',
+      arrays: {
+        time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+        time_data: { shape: [3, 3], isComplex: false, data: Float64Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9]) },
+      },
+      meta: { test_name: 'set_0', timestring: 't0' },
+      settings: { fs: 2 },
+    }],
+  };
+  const tf2col = () => ({
+    freq_axis: real([2], [0, 1]),
+    tf_data: cplx([2, 2], [1, 0, 2, 0, 1, 0, 2, 0]),
+    coherence: real([2, 2], [0.9, 0.9, 0.8, 0.8]),
+  });
+  const { actions, sel } = harness((op) =>
+    (op === 'calc_tf' ? tf2col() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(ds);
+  const id = get(sel.sets)[0].id;
+  await actions.calcTf('all');                    // chIn 0 → columns = ch 1, ch 2
+  sel.renameChannel(id, 2, 'bridge');             // custom source label
+  sel.cycleLine(id, 1); sel.cycleLine(id, 1);     // hide channel 1 → fit ch 2 only
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  await flush();
+
+  const fit = get(sel.setsView).filter((s) => s.role === 'fit')[0];
+  expect(fit).toBeTruthy();
+  expect(fit.nChannels).toBe(1);                  // one line per FITTED channel
+  const d = get(actions.derived);
+  expect(d[fit.id]!.tf!.chIn).toBeNull();         // orphan-style: columns = lines
+  // The pseudo line carries the SOURCE channel's label and colour.
+  expect(get(sel.channelLabel)(fit.id, 0)).toBe('bridge');
+  expect(sel.lineColor(fit.id, 0)).toBe(sel.lineColor(id, 2));
+});

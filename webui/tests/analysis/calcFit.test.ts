@@ -360,3 +360,80 @@ test('a refine with a small frequency drift stays quiet', async () => {
   expect(pushed.some((t) => /moved/.test(t.message))).toBe(false);
   expect(pushed.some((t) => /residual down/.test(t.message))).toBe(true);
 });
+
+// ---- Round-7h: the fit uses the lines left VISIBLE — the legend/tray
+// tri-state is the fit's line selector (multi-instrument sets fit one line
+// at a time by hiding/soloing). ----
+
+/** A 1-set, 3-channel TimeData dataset (TF → 2 output columns, chIn 0). */
+function makeDataset3ch(): DvmaDataset {
+  const items: DvmaItem[] = [{
+    kind: 'TimeData',
+    arrays: {
+      time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+      time_data: { shape: [3, 3], isComplex: false, data: Float64Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9]) },
+    },
+    meta: { test_name: 'set_0', timestring: 't0' },
+    settings: { fs: 2 },
+  }];
+  return { formatVersion: 1, pydvmaVersion: '1.5.0', items };
+}
+
+const tfResult2col = () => ({
+  freq_axis: real([2], [0, 1]),
+  tf_data: cplx([2, 2], [1, 0, 2, 0, 1, 0, 2, 0]),
+  coherence: real([2, 2], [0.9, 0.9, 0.8, 0.8]),
+});
+
+test('hiding a line excludes its TF column from the fit (chans recorded)', async () => {
+  const { actions, modal, sel, calls } = harness((op) =>
+    (op === 'calc_tf' ? tfResult2col() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset3ch());
+  const id = get(sel.sets)[0].id;
+  await actions.calcTf('all');                    // chIn 0 → columns = ch 1, ch 2
+  sel.cycleLine(id, 1); sel.cycleLine(id, 1);     // channel 1 → off
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  const fit = calls.find((c) => c.op === 'calc_fit')!;
+  expect(fit.payload.n_tf).toBe(1);
+  // 2 freq rows × 1 column × [re,im]
+  expect((fit.payload.tf_data as Float64Array).length).toBe(4);
+  // The remaining column is channel 2's — recorded on the fit target.
+  expect(get(modal).targets[0].chans).toEqual([2]);
+});
+
+test('a visibility change starts a FRESH model on the next fit (no stale M)', async () => {
+  const { actions, sel, calls } = harness((op) =>
+    (op === 'calc_tf' ? tfResult2col() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset3ch());
+  const id = get(sel.sets)[0].id;
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);   // both lines
+  sel.cycleLine(id, 1); sel.cycleLine(id, 1);                 // ch 1 → off
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);   // subset fit
+  const fits = calls.filter((c) => c.op === 'calc_fit');
+  expect(fits).toHaveLength(2);
+  // Mixed column geometries cannot merge: the second fit starts fresh.
+  expect('M' in fits[1].payload).toBe(false);
+});
+
+test('every line hidden → no engine call, explanatory toast', async () => {
+  const { actions, sel, calls, pushed } = harnessWithToasts((op) =>
+    (op === 'calc_tf' ? tfResult2col() : {}));
+  actions.loadDataset(makeDataset3ch());
+  const id = get(sel.sets)[0].id;
+  await actions.calcTf('all');
+  for (const ch of [1, 2]) { sel.cycleLine(id, ch); sel.cycleLine(id, ch); }
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  expect(calls.some((c) => c.op === 'calc_fit')).toBe(false);
+  expect(pushed.some((t) => /every TF line is hidden/i.test(t.message))).toBe(true);
+});
+
+test('fitLineSummary counts visible vs total lines for the Fit-card hint', async () => {
+  const { actions, sel } = harness((op) => (op === 'calc_tf' ? tfResult2col() : {}));
+  actions.loadDataset(makeDataset3ch());
+  const id = get(sel.sets)[0].id;
+  await actions.calcTf('all');
+  expect(actions.fitLineSummary('all')).toEqual({ fitted: 2, total: 2 });
+  sel.cycleLine(id, 2); sel.cycleLine(id, 2);     // channel 2 → off
+  expect(actions.fitLineSummary('all')).toEqual({ fitted: 1, total: 2 });
+});

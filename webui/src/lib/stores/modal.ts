@@ -119,6 +119,13 @@ export interface FitTarget {
   chIn: number | null;
   nChannels: number;
   nCols: number;
+  /**
+   * The source CHANNELS actually fitted, in column order (round-7h: a fit
+   * uses the lines left visible, so this can be a subset of the set's
+   * channels). `null` = the full set — the legacy representation, and what
+   * a model restored from file reports (the subset is not persisted).
+   */
+  chans: number[] | null;
   local: ReconArrays | null;
   global: ReconArrays | null;
 }
@@ -233,7 +240,11 @@ export function createModalStore() {
    * columns it contributed to the joint fit (`nCols`, for empty-slice sizing).
    * A shared-pole fit (item 7) passes ONE context per set, in column order.
    */
-  interface FitContext { setId: number; chIn: number | null; nChannels: number; nCols: number; }
+  interface FitContext {
+    setId: number; chIn: number | null; nChannels: number; nCols: number;
+    /** Fitted source channels (round-7h), null = full set. */
+    chans?: number[] | null;
+  }
 
   /** Pull the engine's per-set `slices` list (or `[]`) as a plain array. */
   function sliceList(result: unknown): unknown[] {
@@ -277,7 +288,7 @@ export function createModalStore() {
         ? reconOf(mval(sl, 'global_freq_axis'), mval(sl, 'global_tf_data'))
         : (i === 0 ? reconOf(mval(result, 'global_freq_axis'), mval(result, 'global_tf_data')) : null);
       return {
-        setId: ctx.setId, chIn: ctx.chIn, nChannels: ctx.nChannels, nCols: ctx.nCols, local, global,
+        setId: ctx.setId, chIn: ctx.chIn, nChannels: ctx.nChannels, nCols: ctx.nCols, chans: ctx.chans ?? null, local, global,
       };
     });
     const primary = targets[0];
@@ -328,7 +339,7 @@ export function createModalStore() {
     // Recon slices stay null until a 'recon' calc recomputes them (deferred
     // until each target's TF is present — actions.maybeRestoreModalRecon).
     const targets: FitTarget[] = contexts.map((ctx) => ({
-      setId: ctx.setId, chIn: ctx.chIn, nChannels: ctx.nChannels, nCols: ctx.nCols,
+      setId: ctx.setId, chIn: ctx.chIn, nChannels: ctx.nChannels, nCols: ctx.nCols, chans: ctx.chans ?? null,
       local: null, global: null,
     }));
     const primary = targets[0];

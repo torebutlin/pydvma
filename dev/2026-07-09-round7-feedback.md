@@ -320,6 +320,26 @@ legend (export pixel-diff on/off/restored round-trip).
   band; "non-convergence" was cost drifting off an exactly-0 seed) —
   fixed to poison in-band, exercising the real never-raise guard.
 
+## Round 7h (same day) — fit follows visible lines
+
+> When fitting I'm not seeing anywhere to select just which line or
+> lines I am fitting?
+
+**Gap confirmed and closed.** What existed was SET-level selection only
+(the Fit card's sets dropdown, hidden with a single set); the fit
+always used every channel of the target set — wrong for composited JW
+files (e.g. Clav = three instruments in one set). Now a Fit uses the
+LINES LEFT VISIBLE (legend/tray tri-state; 'off' excluded) — the legend
+is the fit's line selector, so solo = fit one line. The Fit card shows
+"N of M lines (visible only)"; all-hidden explains itself with a toast.
+Follow-up actions (Reject/Refine/recon) reuse the model's STORED
+channel composition (visibility changes after the fit never reshuffle
+the columns), and a changed selection starts a fresh model on the next
+Fit. Subset fits draw orphan-style pseudo-sets — one dashed line per
+fitted channel with the source line's colour and label. Best match
+deliberately still uses every column. 5 new vitest cases + a pseudo-set
+display case.
+
 ## Incidental findings (not in Tore's list)
 
 - **Exported figures never include the legend.** PNG/PDF export

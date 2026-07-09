@@ -126,6 +126,16 @@
 
   const nModes = $derived($modalState.modes.length);
 
+  // What a Fit would use RIGHT NOW (round-7h): the fit takes the LINES LEFT
+  // VISIBLE in the legend/tray — hide or solo lines there to choose exactly
+  // which line(s) are fitted. Re-derived on tri-state changes via the
+  // legendEntries subscription (the summary itself is a pure actions read).
+  const legendEntriesStore = $derived(selection.legendEntries);
+  const fitLines = $derived.by(() => {
+    void $legendEntriesStore;
+    return actions.fitLineSummary(fitTarget);
+  });
+
   // 'fit' honours the chosen target; reject / refine operate on the EXISTING
   // model, which calcFit resolves from the stored spanned-set composition (the
   // target passed is only used when no model exists yet).
@@ -171,6 +181,14 @@
             title="Fit two modes in the visible window (split at detected peaks)">Fit 2</button>
           <button class="btn indigo-t" disabled={$busy || !hasTf} onclick={() => fit(3)}
             title="Fit three modes in the visible window (split at detected peaks)">Fit 3</button>
+          {#if fitLines.total > 0}
+            <span class="note" data-testid="fit-lines-note"
+              title="A Fit uses the lines left visible — hide or solo lines in the legend/tray to choose exactly which line(s) are fitted">
+              {fitLines.fitted === fitLines.total
+                ? `all ${fitLines.total} line${fitLines.total === 1 ? '' : 's'}`
+                : `${fitLines.fitted} of ${fitLines.total} lines (visible only)`}
+            </span>
+          {/if}
         </div>
       </div>
       <div class="grp">

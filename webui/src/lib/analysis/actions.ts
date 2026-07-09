@@ -1120,7 +1120,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   async function calcBestMatch(
     refSetId: number, refChannel: number, freqRange: [number, number] | null = null,
   ): Promise<void> {
-    const specs = working.map(tfSpecOf).filter((s): s is FitSpec => s !== null);
+    const specs = working.map((w) => tfSpecOf(w)).filter((s): s is FitSpec => s !== null);
     if (specs.length === 0) {
       toasts?.push('Best match needs a transfer function — Calc TF first.', { level: 'info' });
       return;
@@ -1138,7 +1138,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     try {
       const payload: Record<string, unknown> = {
         sets: specs.map((s) => ({
-          freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.nCols), n_tf: s.nCols,
+          freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.cols), n_tf: s.nCols,
         })),
         set_ref: refIdx,
         ch_ref: refCol,
@@ -1219,7 +1219,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * count changes rebuilds its card; `mode` so a reconMode flip renames the
    * card in place (per-line tri-state survives the flip). A single-set fit
    * has ONE entry. */
-  const fitSets = new Map<number, { id: number; nChannels: number; mode: ReconMode }>();
+  const fitSets = new Map<number, { id: number; nChannels: number; mode: ReconMode; chansKey: string }>();
   /** Reactive list of the live pseudo-set selection ids (drives the exposed
    *  `fitSetId` prop). */
   const fitSetIdsW = writable<number[]>([]);
@@ -1367,19 +1367,39 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       if (!wantIds.has(srcId)) removeFitSetFor(srcId);
     }
     for (const t of drawable) {
+      // Round-7h: a fit can span a SUBSET of the set's channels (the lines
+      // left visible at fit time). Subset pseudo-sets carry one line per
+      // FITTED channel (orphan-style 1:1 columns, chIn null) with the source
+      // line's colour and label; full-set fits keep the legacy chIn remap.
+      const subset = t.chans !== null;
+      const lineCount = subset ? t.chans!.length : t.nChannels;
+      const chansKey = subset ? t.chans!.join(',') : 'all';
       let rec = fitSets.get(t.setId);
-      // A set whose channel count changed needs a fresh card (colours/geometry).
-      if (rec && rec.nChannels !== t.nChannels) { removeFitSetFor(t.setId); rec = undefined; }
+      // A changed channel geometry needs a fresh card (colours/labels/remap).
+      if (rec && (rec.nChannels !== lineCount || rec.chansKey !== chansKey)) {
+        removeFitSetFor(t.setId);
+        rec = undefined;
+      }
       if (!rec) {
-        // Mirror the TARGET set's colours so each recon line reads as the fit of
-        // the measured line it overlays; dashing (model.ts) is the fit signature.
-        const colors = Array.from({ length: t.nChannels },
-          (_, c) => selection.lineColor(t.setId, c) ?? FIT_FALLBACK_COLOR);
+        // Mirror the SOURCE lines' colours so each recon line reads as the fit
+        // of the measured line it overlays; dashing (model.ts) is the fit
+        // signature.
+        const srcCh = (c: number) => (subset ? t.chans![c] : c);
+        const colors = Array.from({ length: lineCount },
+          (_, c) => selection.lineColor(t.setId, srcCh(c)) ?? FIT_FALLBACK_COLOR);
         const id = selection.addSet({
           name: fitSetName(t.setId, mode),
-          nChannels: t.nChannels, durationS: 0, timestamp: '', role: 'fit', colors,
+          nChannels: lineCount, durationS: 0, timestamp: '', role: 'fit', colors,
         });
-        rec = { id, nChannels: t.nChannels, mode };
+        if (subset) {
+          // Label each pseudo line with its SOURCE channel's display label so
+          // the legend reads e.g. "Modal fit global (set) · ch_2".
+          const labelOf = get(selection.channelLabel);
+          for (let c = 0; c < lineCount; c++) {
+            selection.renameChannel(id, c, labelOf(t.setId, t.chans![c]));
+          }
+        }
+        rec = { id, nChannels: lineCount, mode, chansKey };
         fitSets.set(t.setId, rec);
       } else if (rec.mode !== mode) {
         // Mode flipped: rename in place (legend reflects the mode) rather than
@@ -1389,7 +1409,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       }
       const s = chosenSlice(t, mode)!;
       if (lastSliceBySet.get(t.setId) !== s) {
-        setDerived(rec.id, { tf: { axis: s.axis, data: s.data, chIn: t.chIn, nChannels: t.nChannels } });
+        setDerived(rec.id, {
+          tf: subset
+            ? { axis: s.axis, data: s.data, chIn: null, nChannels: lineCount }
+            : { axis: s.axis, data: s.data, chIn: t.chIn, nChannels: t.nChannels },
+        });
         lastSliceBySet.set(t.setId, s);
       }
     }
@@ -1466,27 +1490,65 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     slice: NonNullable<SetArrays['tf']>;
     chIn: number | null;
     nChannels: number;
+    /** FITTED column count (a visibility subset when `visibleOnly`). */
     nCols: number;
+    /** Fitted TF column indices within the slice (ascending). */
+    cols: number[];
+    /** Fitted source CHANNEL per column (same length as `cols`). */
+    chans: number[];
+    /** True when every TF column of the slice is fitted. */
+    allCols: boolean;
   }
 
   /** Build a FitSpec from a working set IF it has a non-empty TF, else null.
    *  Preserves an orphan TF's null chIn (columns are the lines — round-5 item 3);
-   *  `chIn === undefined` (no chIn recorded) collapses to 0 as before. */
-  function tfSpecOf(ws: WorkingSet): FitSpec | null {
+   *  `chIn === undefined` (no chIn recorded) collapses to 0 as before.
+   *
+   *  `visibleOnly` (round-7h — the modal fit): keep only the columns whose
+   *  LINE is left visible in the legend/tray (tri-state on/fade; 'off' lines
+   *  are excluded) — the legend is the fit's line selector, so a multi-
+   *  instrument set (e.g. a composited JW file) can fit one line at a time
+   *  by hiding or soloing. A set with every line hidden returns null (it
+   *  drops out of the fit entirely). Best match and other non-fit consumers
+   *  pass false and keep every column. */
+  function tfSpecOf(ws: WorkingSet, visibleOnly = false): FitSpec | null {
     const slice = get(derived)[ws.setId]?.tf;
-    const nCols = slice?.data.shape[1] ?? 0;
-    if (!slice || nCols === 0) return null;
+    const totalCols = slice?.data.shape[1] ?? 0;
+    if (!slice || totalCols === 0) return null;
     const chIn = slice.chIn === undefined ? 0 : slice.chIn;
-    const nChannels = slice.nChannels ?? nCols + 1;
-    return { ws, slice, chIn, nChannels, nCols };
+    const nChannels = slice.nChannels ?? totalCols + 1;
+    const visible = visibleOnly
+      ? new Set(get(selection.legendEntries).filter((e) => e.setId === ws.setId).map((e) => e.ch))
+      : null;
+    const cols: number[] = [];
+    const chans: number[] = [];
+    for (let col = 0; col < totalCols; col++) {
+      // Column -> source channel: orphan TFs (chIn null) map 1:1; otherwise
+      // the input channel is skipped (the tfColumn convention).
+      const ch = chIn === null ? col : (col < chIn ? col : col + 1);
+      if (visible && !visible.has(ch)) continue;
+      cols.push(col);
+      chans.push(ch);
+    }
+    if (cols.length === 0) return null;
+    return { ws, slice, chIn, nChannels, nCols: cols.length, cols, chans,
+             allCols: cols.length === totalCols };
   }
 
-  /** Interleave a TF slice's complex columns to [re,im,…] for the worker. */
-  function interleaveTf(slice: NonNullable<SetArrays['tf']>, nCols: number): Float64Array {
+  /** Interleave a TF slice's chosen complex columns to [re,im,…] row-major. */
+  function interleaveTf(slice: NonNullable<SetArrays['tf']>, cols: number[]): Float64Array {
     const re = slice.data.re, im = slice.data.im;
-    const n = slice.axis.length * nCols;
-    const flat = new Float64Array(n * 2);
-    for (let i = 0; i < n; i++) { flat[2 * i] = re[i]; flat[2 * i + 1] = im ? im[i] : 0; }
+    const rows = slice.axis.length;
+    const total = slice.data.shape[1];
+    const flat = new Float64Array(rows * cols.length * 2);
+    let o = 0;
+    for (let r = 0; r < rows; r++) {
+      for (const c of cols) {
+        const i = r * total + c;
+        flat[o++] = re[i];
+        flat[o++] = im ? im[i] : 0;
+      }
+    }
     return flat;
   }
 
@@ -1551,35 +1613,68 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     modal.setMt(mt);
     const cur = modal.get();
 
+    // Subset an all-columns spec to a target's STORED fitted channels (null =
+    // the full set). Returns null when a stored channel's column is gone.
+    const specForTarget = (ws: WorkingSet, want: number[] | null): FitSpec | null => {
+      const s = tfSpecOf(ws);
+      if (!s || !want) return s;
+      const cols: number[] = [];
+      const chans: number[] = [];
+      for (let k = 0; k < s.chans.length; k++) {
+        if (want.includes(s.chans[k])) { cols.push(s.cols[k]); chans.push(s.chans[k]); }
+      }
+      if (chans.length !== want.length) return null;
+      return { ...s, cols, chans, nCols: cols.length, allCols: cols.length === s.cols.length };
+    };
+
     // Resolve the ordered set list this call operates on.
     let specs: FitSpec[];
     if (action !== 'fit' && cur.targets.length > 0) {
-      // Reuse the model's EXACT composition so the shared-pole model stays
-      // coherent across reject / delete / refine / recon. No-op (rather than a
-      // partial/mismatched model) if any spanned set's TF is missing.
+      // Reuse the model's EXACT composition — sets AND fitted channels — so
+      // the shared-pole model stays coherent across reject / delete / refine
+      // / recon (the model's columns are fixed; visibility changes since the
+      // fit must NOT reshuffle them). No-op (rather than a partial/
+      // mismatched model) if any spanned set's TF or channel is missing.
       specs = [];
       for (const t of cur.targets) {
         const ws = working.find((w) => w.setId === t.setId);
-        const spec = ws ? tfSpecOf(ws) : null;
+        const spec = ws ? specForTarget(ws, t.chans ?? null) : null;
         if (spec) specs.push(spec);
       }
       if (specs.length !== cur.targets.length) return Promise.resolve();
     } else if (target === 'shared') {
-      specs = working.map(tfSpecOf).filter((s): s is FitSpec => s !== null);
+      // Round-7h: a FIT uses the lines left VISIBLE (legend/tray) — the
+      // legend is the fit's line selector. Hidden-line sets drop out.
+      specs = working.map((w) => tfSpecOf(w, true)).filter((s): s is FitSpec => s !== null);
     } else {
       const ws = fitSet(target);
-      const spec = ws ? tfSpecOf(ws) : null;
+      const spec = ws ? tfSpecOf(ws, true) : null;
       specs = spec ? [spec] : [];
     }
-    if (specs.length === 0) return Promise.resolve();    // nothing fittable
+    if (specs.length === 0) {
+      if (action === 'fit') {
+        toasts?.push('Nothing to fit — every TF line is hidden. Re-enable lines in the legend or tray.',
+          { level: 'info' });
+      }
+      return Promise.resolve();
+    }
 
     const contexts = specs.map((s) => ({
       setId: s.ws.setId, chIn: s.chIn, nChannels: s.nChannels, nCols: s.nCols,
+      // null = the full set (the compact legacy representation, and what a
+      // restored-from-file model reports).
+      chans: s.allCols ? null : s.chans,
     }));
     // Accumulate the stored M only when THIS call's composition matches the
-    // stored model's (same sets, same order); else start a fresh model.
+    // stored model's (same sets, same order, same fitted channels); else
+    // start a fresh model — mixed column geometries cannot be merged.
+    const chansMatch = (t: { chans?: number[] | null }, s: FitSpec): boolean => {
+      const stored = t.chans ?? null;
+      if (stored === null) return s.allCols;
+      return stored.length === s.chans.length && stored.every((c, k) => c === s.chans[k]);
+    };
     const sameComposition = cur.targets.length === specs.length
-      && cur.targets.every((t, i) => t.setId === specs[i].ws.setId);
+      && cur.targets.every((t, i) => t.setId === specs[i].ws.setId && chansMatch(t, specs[i]));
 
     const my = bump('fit');
     if (DESTRUCTIVE.has(action)) modal.pushUndo();       // undo / auto-revert snapshot
@@ -1591,7 +1686,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // Single set: top-level payload (backward-compatible shape).
         const s = specs[0];
         payload.freq_axis = s.slice.axis;
-        payload.tf_data = interleaveTf(s.slice, s.nCols);
+        payload.tf_data = interleaveTf(s.slice, s.cols);
         payload.n_tf = s.nCols;
         payload.n_channels = s.nChannels;
         payload.fs = s.ws.fs;
@@ -1604,7 +1699,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // is bookkeeping only (the glue never re-drops an input) so a null is
         // harmless inside the nested object — the glue ignores it.
         payload.sets = specs.map((s) => ({
-          freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.nCols),
+          freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.cols),
           n_tf: s.nCols, ch_in: s.chIn, n_channels: s.nChannels, fs: s.ws.fs,
         }));
       }
@@ -1666,6 +1761,31 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         }
       }
     });
+  }
+
+  /**
+   * What a Fit would use RIGHT NOW for `target` (round-7h): visible
+   * (fittable) TF lines vs total TF lines across the spanned set(s). Pure
+   * read for the Fit card's "N of M lines" hint; recompute on legend/tray
+   * tri-state changes (the caller subscribes to `selection.legendEntries`).
+   */
+  function fitLineSummary(target: FitTargetSel): { fitted: number; total: number } {
+    let pool: WorkingSet[];
+    if (target === 'shared') pool = working;
+    else {
+      const ws = fitSet(target);
+      pool = ws ? [ws] : [];
+    }
+    let fitted = 0;
+    let total = 0;
+    for (const ws of pool) {
+      const all = tfSpecOf(ws);
+      if (!all) continue;
+      total += all.nCols;
+      const vis = tfSpecOf(ws, true);
+      fitted += vis ? vis.nCols : 0;
+    }
+    return { fitted, total };
   }
 
   /** Resolve the damping target set (both damping ops share this). */
@@ -1861,7 +1981,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
-    calcFit, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
+    calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
     getCalibration, setCalFactors,
     /** Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match. */
     getIwPower, setIwPower, calcBestMatch,

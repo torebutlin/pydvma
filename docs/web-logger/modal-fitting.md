@@ -47,6 +47,22 @@ fitted automatically. Two things to know:
 dataset selector, where *All sets* means "each set independently"; here
 it means "all sets jointly".)
 
+### Choosing which lines
+
+Within the chosen set(s), a Fit uses **the lines you have left
+visible**: hide a line in the legend or tray (click it to *off*) and it
+is excluded from the fit; solo one line to fit it alone. The Fit card
+shows what the next fit will use (e.g. *"2 of 3 lines (visible
+only)"*). This matters for multi-line files that are really several
+separate measurements — e.g. a composited JW file holding three
+instruments' admittances — where a joint fit across all lines would be
+physically wrong. Follow-up actions (Reject, Refine, per-mode edits)
+keep the *fitted* line composition regardless of later visibility
+changes, and changing the visible lines starts a fresh model on the
+next Fit rather than mixing incompatible fits. The fit's dashed
+reconstruction lines then cover exactly the fitted lines, with matching
+colours and labels.
+
 ## Fitting modes
 
 Fitting works on the **visible frequency window**, so zoom to the region
