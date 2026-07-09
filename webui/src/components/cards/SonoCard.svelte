@@ -111,12 +111,18 @@
   const nFft = $derived(sono.nFft);
   const resExp = $derived(Math.round(Math.log2(nFft)));
 
-  // CWT log-frequency density (voices per octave).
-  const VPO_OPTIONS = [8, 12, 16, 24, 32];
+  // CWT log-frequency density (voices per octave). The top of the ladder
+  // matches W0_OPTIONS (round-7c): a high-Q wavelet needs a comparably dense
+  // frequency grid or its narrow bands fall between analysis frequencies.
+  const VPO_OPTIONS = [8, 12, 16, 24, 32, 48, 64];
 
   // Morlet wavelet Q (w0): cycles under the Gaussian envelope. Higher = finer
-  // frequency resolution, coarser time resolution. 6 is the classic default.
-  const W0_OPTIONS = [4, 6, 8, 12, 16, 24];
+  // frequency resolution, coarser time resolution. 6 is the classic default;
+  // the high end (round-7c) suits lightly damped structures — NB memory for
+  // the damping fit grows with the grid (rows x full-rate samples), so a very
+  // long record at 64 voices can hit the engine's array ceiling with a clear
+  // "array is too big" error rather than a result.
+  const W0_OPTIONS = [4, 6, 8, 12, 16, 24, 32, 48, 64];
 
   // Channel options come from the target set.
   const targetView = $derived(timeSets.find((s) => s.id === targetId));
