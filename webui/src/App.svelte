@@ -86,6 +86,12 @@
   // `refitDamping` below runs the engine op and pushes decoded results in.
   const damping = createDampingStore();
 
+  // Round-8: one "anything computing?" signal for the header chip — engine
+  // calcs (actions.busy, ref-counted), damping fits, and the pyodide boot
+  // itself (whose first-calc wait used to read as a hang).
+  const actionsBusy = actions.busy;
+  const engineStatus = engine.status;
+
   /** Monotonic guard: only the LATEST in-flight damping fit may land. */
   let dampSeq = 0;
   async function refitDamping(): Promise<void> {
@@ -1034,6 +1040,8 @@
     onsavefigure={() => activeStage.set('export')}
     canSaveFigure={hasData}
     {onpickdir}
+    busy={$actionsBusy || $damping.busy || $engineStatus === 'loading'}
+    busyLabel={$engineStatus === 'loading' ? 'starting engine…' : 'computing…'}
   />
   <Ribbon {viewState} {narrow} />
   <ContextCard

@@ -25,6 +25,8 @@
     onsavefigure = () => {},
     onpickdir = () => {},
     canSaveFigure = false,
+    busy = false,
+    busyLabel = 'computing…',
   }: {
     /** Summary-chip text, e.g. "44.1 kHz · 2 sets"; "no data" when empty. */
     summary?: string;
@@ -40,12 +42,17 @@
     onpickdir?: () => void;
     /** Enables Save Figure (a dataset is loaded, so there's a plot). */
     canSaveFigure?: boolean;
+    /** Any engine work in flight (round-8) — shows the computing chip. */
+    busy?: boolean;
+    /** Computing-chip text, e.g. "computing…" or "starting engine…". */
+    busyLabel?: string;
   } = $props();
 
   // Light/dark theme toggle (round-5 item 11). The store is a module
   // singleton (persists the choice + follows the OS otherwise); the button
   // shows the theme you'd switch TO.
   import { theme, toggleTheme } from '../lib/stores/theme';
+  import BusyChip from './BusyChip.svelte';
 </script>
 
 <header class="app-header">
@@ -63,8 +70,11 @@
     onclick={onpickdir}
   ><span class="dir-ico" aria-hidden="true">▾</span>{workdirName}</button>
 
-  <!-- Reserved: level meters / CLIP indicator (Plan 2). -->
-  <div class="hdr-slot" aria-hidden="true"></div>
+  <!-- Flex filler; hosts the global computing chip (round-8). The level
+       meters / CLIP indicator (Plan 2) will share this slot later. -->
+  <div class="hdr-slot">
+    <BusyChip {busy} label={busyLabel} />
+  </div>
 
   <div class="hdr-right">
     <button
@@ -138,10 +148,14 @@
     font-size: 9px;
     color: var(--muted);
   }
-  /* Reserved flex slot — grows to push actions right until Plan 2/Task 13 fill it. */
+  /* Flex slot — grows to push actions right; the computing chip docks at
+     its right edge, just left of the header actions. */
   .hdr-slot {
     flex: 1 1 auto;
     min-width: 0;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
   }
   .hdr-right {
     display: flex;

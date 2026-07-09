@@ -44,7 +44,11 @@ test.describe('@engine', () => {
     const stages = page.getByRole('navigation', { name: 'stages' });
     await stages.getByRole('button', { name: 'TF' }).click();
     await page.getByRole('button', { name: 'Calc TF' }).click();
+    // Round-8: the header "computing" chip shows while the calc (here
+    // including the first-calc engine boot) is in flight, and clears after.
+    await expect(page.getByTestId('busy-chip')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('plot-line').first()).toBeVisible({ timeout: 200_000 });
+    await expect(page.getByTestId('busy-chip')).toHaveCount(0, { timeout: 15_000 });
 
     // The Fit stage is now enabled (fitEngine flipped on the first TF).
     const fitStage = stages.getByRole('button', { name: 'Fit', exact: true });
@@ -65,6 +69,29 @@ test.describe('@engine', () => {
     const chip = page.getByLabel('fitted modes');
     await expect(chip).toContainText('mode 1', { timeout: 60_000 });
     await expect(chip).toContainText('mode 2');
+
+    // Round-8: the chip is draggable by its header strip and minimisable.
+    // Drag by an explicit delta from the grab point (the header centre).
+    const chipHead = chip.locator('.chip-head');
+    const before = (await chip.boundingBox())!;
+    const head = (await chipHead.boundingBox())!;
+    const grabX = head.x + head.width / 2;
+    const grabY = head.y + head.height / 2;
+    await page.mouse.move(grabX, grabY);
+    await page.mouse.down();
+    await page.mouse.move(grabX + 140, grabY - 90, { steps: 6 });
+    await page.mouse.up();
+    const after = (await chip.boundingBox())!;
+    expect(after.x - before.x).toBeGreaterThan(100);
+    expect(before.y - after.y).toBeGreaterThan(50);
+
+    // Minimise: the mode rows hide, the header keeps a "fit · 2 modes"
+    // summary; expand restores the rows.
+    await page.getByRole('button', { name: 'minimise fit summary' }).click();
+    await expect(chip).not.toContainText('mode 1');
+    await expect(chip).toContainText('2 modes');
+    await page.getByRole('button', { name: 'expand fit summary' }).click();
+    await expect(chip).toContainText('mode 1');
 
     // Round-5 item 13: the reconstruction is a "Modal fit" TRAY CARD whose
     // recon lines draw DASHED at the measured line-width (1.5) — named for the
