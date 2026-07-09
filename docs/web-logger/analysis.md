@@ -115,11 +115,15 @@ Two methods are available via the **STFT | CWT** switch:
   of one fixed window it uses log-spaced frequencies whose time/
   frequency trade-off adapts per band — better at separating close
   low-frequency modes than any single STFT window. Controls:
-  **voices/octave** (frequency density) and an optional frequency
-  range. The magnitude scale matches the STFT image, so the two
-  methods read comparably. The heat map is drawn on the wavelet's
-  **native log-spaced grid**, so switching the frequency axis to **log**
-  (see below) shows its full low-frequency detail.
+  **voices/octave** (how densely the log-frequency ladder is sampled),
+  **wavelet Q (w0)** (the wavelet's own bandwidth: higher w0 = more
+  cycles under the envelope = finer *frequency* resolution at the cost
+  of coarser *time* resolution — this, not voices/octave, is the true
+  resolution knob), and an optional frequency range. The magnitude
+  scale matches the STFT image, so the two methods read comparably.
+  The heat map is drawn on the wavelet's **native log-spaced grid**, so
+  switching the frequency axis to **log** (see below) shows its full
+  low-frequency detail.
 
 Common controls:
 
@@ -141,13 +145,35 @@ Common controls:
   switch maps the heat by magnitude in dB (default, over the dynamic
   range span) or by linear magnitude (0 → peak). Both choices persist
   per view with the rest of the axis state.
-- **Fit damping** — estimates modal damping from the log-decrement of
-  the time-frequency bands, listing `fn (Hz)` and `Qn` per detected
-  mode (or "no decaying modes detected"). It works with whichever
-  method is selected — the CWT variant can resolve close modes the
-  STFT merges. Browser front-end to
-  [`calculate_damping_from_sono`](../user-guide/modal-analysis.md#damping-from-free-decay-sonogram-method)
-  and its CWT counterpart `calculate_damping_from_cwt`.
+- **Fit damping** — opens the **interactive damping panel** below the
+  sonogram, with two methods on a **peaks | bands** toggle:
+
+    - **peaks** — finds spectral peaks at the fit's *start time*, fits
+      each band's free decay (damping from the log-magnitude slope,
+      frequency from the phase slope), and draws the decay-fit chart:
+      measured `Re log(S)` as × markers with the fitted line per mode
+      and an `f Hz, Qn=…` legend. The left chart shows the start-slice
+      spectrum with a **draggable threshold line** (also a number field;
+      blank = automatic) — only peaks above it become candidate modes.
+      It works with whichever sonogram method is selected — the CWT
+      variant can resolve close modes the STFT merges. Browser front-end
+      to
+      [`calculate_damping_from_sono`](../user-guide/modal-analysis.md#damping-from-free-decay-sonogram-method)
+      and its CWT counterpart `calculate_damping_from_cwt`.
+    - **bands** — band-passes the decay into standard bands (**all**
+      broadband, **octave**, **1/3 octave** or **1/10 decade**), forms
+      each band's Schroeder energy-decay curve, and fits the acoustic
+      decay metrics: **EDT**, **T20**, **T30**, **T60** (T30-preferred)
+      and the equivalent band-centred **Qn**. The chart overlays each
+      band's EDC with its dashed T60 fit line; a `—` in the table means
+      that band's decay range was too small to fit (not an error).
+      Front-end to `calculate_damping_by_band`.
+
+    Both methods share the **start (s)** control — a number field
+    (blank = inferred from the pretrigger) *and* a draggable **start
+    line** on the sonogram itself, so you choose where in time the free
+    decay begins. Every control re-fits live.
+
 - **Calc Sonogram** computes the heat-map.
 
 ## Resolution and averaging
@@ -203,9 +229,16 @@ channel stack, name, duration and per-channel sparklines.
 A draggable **legend** floats over the plot. Clicking a legend row cycles
 that line on -> faded -> off (mirroring the tray); switched-off lines stay
 listed, struck-through, so you can bring them back. Drag it anywhere, or
-dock it via the toolbar.
+dock it via the toolbar. With many lines (more than ten) the legend lays
+itself out in two or three balanced columns, and a small corner button
+(appears on hover) switches to a **compact mode**: a grid of colour-coded
+dots — one row per set, one column per channel — where each dot clicks
+exactly like its full row and the full label shows as a tooltip.
 
 ### The zoom toolbar
+
+The toolbar sits in a slim strip **above the plot frame** (it never
+covers the data area).
 
 - **Box zoom** / **Pan** modes; **↶ Undo** / **↷ Redo** step through the
   view history.

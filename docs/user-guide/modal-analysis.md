@@ -119,6 +119,54 @@ fn, Qn, fit_data = dvma.calculate_damping_from_sono(
 )
 ```
 
+**Peak Threshold**
+
+Peak picking scans the magnitude spectrum at the start time. The
+threshold is normalised over that slice's min→max range (peakutils
+semantics); by default it is chosen automatically (`10 * median / max`).
+Pass `peak_threshold` to control it directly:
+
+```python
+# Permissive: keep every peak above 5 % of the slice's range
+fn, Qn, fit_data = dvma.calculate_damping_from_sono(
+    time_data, n_chan=0, peak_threshold=0.05)
+
+# fit_data carries the picking context for plotting/re-fitting:
+# 'start_time', 'threshold' (the value actually used), the start-slice
+# spectrum ('slice_freq'/'slice_mag') and the candidate peaks
+# ('peaks_freq'/'peaks_mag'), plus per-mode decay-fit arrays in 'fits'.
+```
+
+Both damping functions accept it (`calculate_damping_from_cwt` too).
+
+### Damping by band (Schroeder decay)
+
+The band alternative to peak fitting — standard room-acoustics style
+decay metrics from a band-pass filter bank and the Schroeder
+backward-integrated energy-decay curve:
+
+```python
+out = dvma.calculate_damping_by_band(
+    time_data,
+    n_chan=0,
+    bands='octave',        # 'all' | 'octave' | 'third-octave' | 'tenth-decade'
+    start_time=None,       # None = inferred from the pretrigger
+    f_range=None,          # None = 4/T .. 0.4*fs
+)
+
+# Ladder arrays (NaN = that band's decay range was too small to fit):
+out['fc']    # band centres (Hz), anchored at 1000 Hz
+out['EDT']   # early decay time (0 to -10 dB fit, x6)
+out['T20']   # -5 to -25 dB fit, x3
+out['T30']   # -5 to -35 dB fit, x2
+out['T60']   # reverberation time (T30-preferred, T20 fallback)
+out['Qn']    # equivalent band-centred Q = pi*fc*T60 / (3 ln 10)
+
+# out['band_data'][i] carries each band's EDC + T60 fit line for plotting.
+```
+
+Use `bands='all'` for a single broadband decay (one overall RT60).
+
 ## SDOF Modal Fitting
 
 ### Single Channel Modal Fitting

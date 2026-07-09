@@ -13,8 +13,28 @@ this file now tracks only what is still open.
 
 ## Current backlog — web logger follow-ups
 
-Flagged during the round-5/6 hands-on rounds; pick up alongside
-feedback from Tore's lab-testing period:
+Flagged during the round-5/6 hands-on rounds (round-7, 2026-07-09,
+worked through Tore's first lab-testing feedback batch — see
+`dev/2026-07-09-round7-feedback.md` for the nine items + dispositions);
+pick up alongside further feedback:
+
+- **Round-7 leftovers (small):**
+    - Legend default corner is still `nw` (chosen when the toolbar
+      occupied `ne`; the toolbar now docks in a strip above the plot,
+      so `ne` is available again if Tore prefers it).
+    - Sono `y lin|log` + `colour dB|lin` toggles stayed in the toolbar
+      bar for one-click access — fold into the popover if Tore still
+      finds the bar busy.
+    - LOCAL fit lines only exist right after a full Fit (the engine
+      returns empty local slices on recon/refine/mute recomputes — the
+      same lifetime the old pink overlay had). Return local slices from
+      those ops if the toggle should survive a mute.
+    - Damping panel: no export of the fit charts / band table yet
+      (PNG/CSV of EDT/T20/T30/T60/Qn would be natural).
+- **Exported figures never include the legend** — round-7 incidental
+  finding: PNG/PDF export serialises only the plot SVG; the legend is a
+  separate HTML div. Decide: draw a legend into the export SVG, or
+  document the omission.
 
 - **CSD phase** — the glue must return the complex `Pxy` so the CSD
   pair view can show phase (currently magnitude only).
@@ -43,7 +63,10 @@ feedback from Tore's lab-testing period:
   serving an old build is the failure mode to design against).
 - **Narrow-band CWT damping memory optimisation** — a prototype was
   reverted because the `10·median/max` peak-detection heuristic
-  misbehaves on narrow bands; both halves need attention together.
+  misbehaves on narrow bands. Round-7 made the threshold a real
+  user-controllable parameter (interactive panel), which removes the
+  heuristic-dependence blocker — the narrow-band memory optimisation
+  can be revisited on its own now.
 - **Dark-mode contrast verdicts (Tore)** — deliberately shipped as-is
   and awaiting his call: the green Save Dataset button is white-on-
   green ≈2.7:1 and solid-indigo buttons ≈3.6:1 in dark. Bump if they
