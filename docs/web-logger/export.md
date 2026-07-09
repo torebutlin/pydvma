@@ -57,12 +57,20 @@ The current plot can be written as a **figure**:
   preserving the data lines — useful for slides.
 - **filename** — a default like `pydvma_figure_YYYY-MM-DD_HHMM`, editable.
 
+The figure contains what the plot shows: the **legend** is included when
+it is toggled visible (at its on-screen position, listing the drawn
+lines — hidden lines are left out), and the TF **coherence** overlay and
+its right-hand axis export exactly when that toggle is on. A Bode export
+contains **both** stacked panes; a sonogram export includes the heat
+map.
+
 Press **Export** to write the ticked formats.
 
 !!! note "'Dark' here is a figure option, not a theme"
-    The **dark** background applies only to exported figures. An
-    app-wide dark theme for the interface itself is **on the roadmap**,
-    not yet shipped.
+    The **dark** background applies only to exported figures and is
+    independent of the app's own light/dark theme toggle — exports are
+    theme-invariant, so the same figure comes out whichever theme the
+    interface is using.
 
 ## Where files go
 

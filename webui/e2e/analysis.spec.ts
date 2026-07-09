@@ -167,6 +167,51 @@ function activeSlice(page: Page): Promise<{
  * `.dvma` via the fallback input and asserts Calc Sonogram is DISABLED with a
  * clear note — instead of the opaque deref error + white plot Tore hit.
  */
+test('exports follow the legend and coherence toggles (round-7d)', async ({ page }) => {
+  await page.goto('/?fixture=1');
+  await expect(page.getByTestId('tray-card-0')).toBeVisible();
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeVisible();
+
+  const exportPngBuf = async (): Promise<Buffer> => {
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Export' }).click();
+    const region = page.getByRole('region', { name: 'Export stage controls' });
+    const dl = page.waitForEvent('download');
+    await region.getByRole('button', { name: 'Export', exact: true }).click();
+    const buf = readFileSync((await (await dl).path())!);
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+    return buf;
+  };
+
+  // Baseline: legend visible (default) + coherence on (default).
+  const both = await exportPngBuf();
+
+  // Hide the legend via the toolbar popover: the export loses the card.
+  await page.getByTestId('zoom-toolbar').hover();
+  await expect(page.getByTestId('axis-popover')).toBeVisible();
+  await page.getByTestId('axis-popover').getByRole('checkbox').uncheck();
+  await page.mouse.move(6, 560);
+  await expect(page.getByTestId('axis-popover')).toHaveCount(0);
+  const noLegend = await exportPngBuf();
+  // The legend card is SMALL relative to the 3x-scale raster (~0.23%
+  // measured); exports are deterministic, so any stable diff IS the legend.
+  expect(await pngPixelDiffFrac(page, both, noLegend)).toBeGreaterThan(0.0015);
+
+  // Coherence off: the dashed overlay + right axis leave the export too.
+  await page.getByLabel('coherence overlay').uncheck();
+  const noCoherence = await exportPngBuf();
+  expect(await pngPixelDiffFrac(page, noLegend, noCoherence)).toBeGreaterThan(0.005);
+
+  // Both back on: the export returns to the baseline (same size + content).
+  await page.getByLabel('coherence overlay').check();
+  await page.getByTestId('zoom-toolbar').hover();
+  await expect(page.getByTestId('axis-popover')).toBeVisible();
+  await page.getByTestId('axis-popover').getByRole('checkbox').check();
+  await page.mouse.move(6, 560);
+  const restored = await exportPngBuf();
+  expect(await pngPixelDiffFrac(page, both, restored)).toBeLessThan(0.0005);
+});
+
 test('Bode Save Figure exports BOTH panes (round-7c: the phase pane was silently dropped)', async ({ page }) => {
   await page.goto('/?fixture=1');
   await expect(page.getByTestId('tray-card-0')).toBeVisible();

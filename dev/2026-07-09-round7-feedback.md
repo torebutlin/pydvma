@@ -188,6 +188,25 @@ showing the pre-round-7 build.
   every figure (pre-existing TODO); live scopes are real-time-only by
   design.
 
+## Round 7d (same day)
+
+> Legends should be in the exported figs (as per whether it has been
+> turned on or off). Similarly coherence should be in exported figs
+> when it's turned on, but not when toggled off.
+
+**DONE.** Exports now append an SVG legend to the figure clone whenever
+the on-screen legend is visible — same fractional position (SE default
+pins flush; outside-right clamps inside the canvas), listing the DRAWN
+lines only ('off' rows exist on screen purely to be clicked back on),
+faded lines faded, columns wrapping past 10 entries like the card. The
+legend card follows the exporter's white/transparent/dark restyle
+contract (plot-bg card, axis-grey labels, untouched data-colour
+swatches). Bode exports place it in the magnitude pane; sono exports
+carry none (no legend mounts there). Coherence was VERIFIED already
+correct — the overlay + right axis live inside the plot SVG, so they
+export exactly per the toggle — and is now e2e-guarded alongside the
+legend (export pixel-diff on/off/restored round-trip).
+
 ## Incidental findings (not in Tore's list)
 
 - **Exported figures never include the legend.** PNG/PDF export

@@ -47,6 +47,7 @@
   import { readable, get } from 'svelte/store';
   import { dataExtent, type PlotModel } from './lib/plot/build';
   import { readDvma, writeDvma } from './lib/codec/dvma';
+  import { legendOverlaySvg } from './lib/export/legendOverlay';
   import { sniffFormat } from './lib/files/sniff';
   import { fallbackDir, pickWorkDir, restoreWorkDir, type WorkDir } from './lib/files/workdir';
   import { autosave, clearAutosave, restoreOffer } from './lib/files/autosave';
@@ -207,6 +208,30 @@
    * return the live SVG unchanged. `toDataURL` is same-origin (the heat is
    * drawn from computed data, never a cross-origin image), so it never taints.
    */
+  /**
+   * Append the LEGEND to an export SVG (round-7d): the on-screen legend is an
+   * HTML card outside the SVG, so exports never carried it. When the legend
+   * is toggled VISIBLE, the export clone gains an equivalent SVG legend at
+   * the same fractional position, listing the same drawn lines ('off' rows
+   * excluded — on screen they exist only to be clicked back on). `paneH`
+   * confines the placement to the FIRST pane of a composite (Bode: the
+   * on-screen legend lives in the magnitude pane). `el` must already be a
+   * detached clone/composite — it is mutated in place.
+   */
+  const appendExportLegend = (el: SVGSVGElement, paneH?: number): SVGSVGElement => {
+    const leg = get(currentSlice).legend;
+    if (!leg.visible) return el;
+    // `legendOverride` is the store WRAPPER the Legend component takes
+    // (TF out/in or CSD pair transform) — unwrap it for the string builder.
+    const entries = legendOverride ? get(legendOverride) : get(legendRows);
+    const vb = (el.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
+    const W = vb[2], H = paneH ?? vb[3];
+    if (!(W > 0) || !(H > 0)) return el;
+    const overlay = legendOverlaySvg(entries, { x: leg.x, y: leg.y }, { w: W, h: H });
+    if (overlay) el.insertAdjacentHTML('beforeend', overlay);
+    return el;
+  };
+
   const getSvg = (): SVGSVGElement | undefined => {
     const svg = plotRef?.getSvgElement();
     // BODE EXPORT (round-7c audit fix): the view is TWO stacked PlotSurfaces
@@ -237,9 +262,19 @@
         return g;
       };
       combined.append(pane(svg, 0), pane(phase, h1));
-      return combined;
+      // The on-screen Bode legend lives in the magnitude pane: confine its
+      // export placement to the composite's TOP pane.
+      return appendExportLegend(combined, h1);
     }
-    if (!svg || view !== 'sono' || !sonoCanvas || !sono) return svg;
+    if (!svg || view === 'sono') {
+      // Sono keeps its dedicated heat-compositing path below — it mounts no
+      // legend on screen, so its export carries none either.
+      if (!svg || !sonoCanvas || !sono) return svg;
+    } else {
+      // Single-pane views (time / frequency / tf single / nyquist): legend
+      // goes onto a CLONE so the live plot is never touched.
+      return appendExportLegend(svg.cloneNode(true) as SVGSVGElement);
+    }
     const vb = (svg.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
     const W = vb[2], H = vb[3];
     if (!(W > 0) || !(H > 0)) return svg;

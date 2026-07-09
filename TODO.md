@@ -31,14 +31,13 @@ pick up alongside further feedback:
     - ~~Damping panel export~~ — DONE in round 7c: every chart saves as
       its own PNG (same delivery + restyle contract as Save Figure);
       the band table saves CSV.
-- **Exported figures never include the legend** — round-7 incidental
-  finding: PNG/PDF export serialises only the plot SVG; the legend is a
-  separate HTML div. Decide: draw a legend into the export SVG, or
-  document the omission. (The round-7c export audit confirmed this is
-  now the ONLY per-view export gap: Bode's missing phase pane was fixed
-  — both panes composite into one figure — and the sono heat was
-  already composited. Nyquist's brush strip stays out of the export by
-  design: it is a navigation control, not part of the figure.)
+- ~~Exported figures never include the legend~~ — DONE in round 7d:
+  when the legend is toggled visible the export gains an equivalent SVG
+  legend at its on-screen position (off lines excluded; columns wrap
+  like the card; restyled by the same white/transparent/dark contract).
+  Coherence was verified to already follow its toggle; both are
+  e2e-guarded. Remaining by design: Nyquist's brush strip stays out of
+  the export (a navigation control, not part of the figure).
 
 - **CSD phase** — the glue must return the complex `Pxy` so the CSD
   pair view can show phase (currently magnitude only).
