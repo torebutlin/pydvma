@@ -1047,7 +1047,8 @@ def _resolve_damping_start_slice(t, start_time, settings, default_start_frac=Non
         return int(np.argmin(np.abs(t - t0)))
 
 
-def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier):
+def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier,
+                          peak_threshold=None):
     '''Shared modal-damping fit core over a complex time-frequency image.
 
     Works on ANY complex single-channel image ``Sc`` of shape
@@ -1067,11 +1068,21 @@ def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier):
       frequency directly (``W0 = W``). (Verified against synthetic tones — see
       the CWT damping tests.)
 
+    ``peak_threshold`` is the NORMALISED peak-picking threshold handed to
+    ``peakutils.indexes`` (a fraction of the start-slice magnitude's min→max
+    range, clipped to 0..1): only bins whose magnitude at ``time_slice``
+    rises above it become candidate modes. ``None`` keeps the historic
+    automatic choice ``10 * median / max`` of the slice magnitude (which can
+    exceed 1 on a flat spectrum, deliberately yielding no peaks).
+
     Returns ``(fn, Qn, fit_data)`` exactly as `calculate_damping_from_sono`
     documents.
     '''
     time_slice_data = np.abs(Sc[:, time_slice])
-    threshold = 10 * np.median(time_slice_data) / np.max(time_slice_data)
+    if peak_threshold is None:
+        threshold = 10 * np.median(time_slice_data) / np.max(time_slice_data)
+    else:
+        threshold = float(np.clip(peak_threshold, 0.0, 1.0))
     peaks = pu.indexes(time_slice_data, thres=threshold, min_dist=1)
 
     # Collect results locally
@@ -1150,13 +1161,28 @@ def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier):
 
     fit_data = {
         't': t,
-        'fits': fits
+        'fits': fits,
+        # Peak-picking context (round-7 interactive damping UI): the exact
+        # inputs the picker saw, so a front-end can draw the start-time line,
+        # the start-slice spectrum with its threshold line and candidate
+        # peaks, and re-fit with edited values. `threshold` echoes the value
+        # actually used (the automatic choice when `peak_threshold` was
+        # None), normalised to the slice magnitude's min->max range exactly
+        # as `peakutils.indexes` interprets it.
+        'time_slice': int(time_slice),
+        'start_time': float(t[time_slice]),
+        'threshold': float(threshold),
+        'slice_freq': np.asarray(f),
+        'slice_mag': time_slice_data,
+        'peaks_freq': np.asarray(f)[peaks] if len(peaks) else np.array([]),
+        'peaks_mag': time_slice_data[peaks] if len(peaks) else np.array([]),
     }
 
     return fn, Qn, fit_data
 
 
-def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None):
+def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None,
+                                peak_threshold=None):
     '''
     Calculate damping from an STFT sonogram.
 
@@ -1171,6 +1197,10 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
         nperseg (int, optional): number of samples per segment for spectrogram
         start_time (float, optional): start time (seconds) for analysis; None
             infers it from the pretrigger (see `_resolve_damping_start_slice`)
+        peak_threshold (float, optional): normalised peak-picking threshold in
+            0..1 (fraction of the start-slice magnitude's min→max range, as
+            ``peakutils.indexes`` interprets it); None keeps the automatic
+            ``10 * median / max`` choice (see `_fit_modes_from_image`)
 
     Returns:
         fn (np.ndarray): array of natural frequencies (Hz)
@@ -1183,6 +1213,13 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
                 - 'real_data': actual real part data values
                 - 'f_peak': peak frequency (Hz)
                 - 'Qn': Q factor for this mode
+            - 'time_slice' / 'start_time': the fit-start frame index and its
+              time (s) — the resolved free-decay start
+            - 'threshold': the normalised peak threshold actually used
+            - 'slice_freq' / 'slice_mag': the start-slice magnitude spectrum
+              the peak picker scanned
+            - 'peaks_freq' / 'peaks_mag': the candidate peaks it detected
+              (before any per-peak fit failures are dropped)
     '''
     sono_data = calculate_sonogram(time_data, nperseg=nperseg,noverlap=0)
 
@@ -1192,11 +1229,13 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None)
 
     time_slice = _resolve_damping_start_slice(t, start_time, sono_data.settings)
     return _fit_modes_from_image(t, f, S[:, :, n_chan], time_slice,
-                                 phase_has_carrier=False)
+                                 phase_has_carrier=False,
+                                 peak_threshold=peak_threshold)
 
 
 def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
-                               f_range=None, voices_per_octave=16, w0=6.0):
+                               f_range=None, voices_per_octave=16, w0=6.0,
+                               peak_threshold=None):
     '''
     Calculate damping from a continuous wavelet transform (complex Morlet).
 
@@ -1221,6 +1260,9 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
             ``4/T .. 0.4*fs`` band (see `_cwt_default_frequencies`)
         voices_per_octave (int, optional): log-frequency density, default 16
         w0 (float, optional): non-dimensional Morlet frequency, default 6.0
+        peak_threshold (float, optional): normalised peak-picking threshold in
+            0..1; None keeps the automatic choice (see
+            `calculate_damping_from_sono`)
 
     Returns:
         Same ``(fn, Qn, fit_data)`` triple as `calculate_damping_from_sono`.
@@ -1246,4 +1288,200 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
     time_slice = _resolve_damping_start_slice(t, start_time, time_data.settings,
                                               default_start_frac=0.05)
     return _fit_modes_from_image(t, freqs, Wc, time_slice,
-                                 phase_has_carrier=True)
+                                 phase_has_carrier=True,
+                                 peak_threshold=peak_threshold)
+
+
+#%% Damping by band (band-pass filter bank + Schroeder decay integral)
+
+# Band-ladder frequency ratios, anchored at the acoustics-standard 1000 Hz
+# centre. 'tenth-decade' (10^(1/10) ~ 1.2589) is numerically close to a third
+# octave (2^(1/3) ~ 1.2599) but lands on base-10-preferred centres.
+_BAND_RATIOS = {
+    'octave': 2.0,
+    'third-octave': 2.0 ** (1.0 / 3.0),
+    'tenth-decade': 10.0 ** 0.1,
+}
+
+
+def _band_centres(f_lo, f_hi, bands):
+    '''Band-centre ladder covering ``f_lo..f_hi`` (Hz), anchored at 1000 Hz.
+
+    Returns the centres ``fc = 1000 * r**k`` (``r`` from `_BAND_RATIOS`) whose
+    FULL band ``fc/sqrt(r) .. fc*sqrt(r)`` lies inside the range — a band that
+    hangs over either edge would fit a decay its filter never fully captured.
+    '''
+    r = _BAND_RATIOS[bands]
+    sr = np.sqrt(r)
+    k_lo = int(np.ceil(np.log(f_lo * sr / 1000.0) / np.log(r)))
+    k_hi = int(np.floor(np.log(f_hi / sr / 1000.0) / np.log(r)))
+    return 1000.0 * r ** np.arange(k_lo, k_hi + 1)
+
+
+def _schroeder_db(y):
+    '''Schroeder backward-integrated energy-decay curve in dB (max 0 dB).
+
+    ``E(t) = integral of y^2 from t to the end``, normalised to its initial
+    value: the ensemble-average decay of the squared envelope, far smoother
+    than the raw squared signal (Schroeder 1965). Floored at -300 dB so the
+    zero tail sample never hits log10(0).
+    '''
+    e = np.flip(np.cumsum(np.flip(np.asarray(y, dtype=np.float64) ** 2)))
+    e0 = e[0] if e[0] > 0 else 1.0
+    return 10.0 * np.log10(np.maximum(e / e0, 1e-30))
+
+
+def _fit_decay_time(t, L, top_db, bottom_db):
+    '''Straight-line fit of the EDC ``L`` (dB) over the ``top_db..bottom_db``
+    window, extrapolated to the 60 dB decay time.
+
+    Returns ``(T60, i0, i1, slope, intercept)`` — the decay time (s), the
+    fitted window's index bounds, and the fitted line's coefficients (dB/s,
+    dB) — or ``(nan, 0, 0, nan, nan)`` when the curve never reaches
+    ``bottom_db`` (insufficient decay range for this window), the window
+    holds too few samples, or the slope is not a decay.
+    '''
+    bad = (np.nan, 0, 0, np.nan, np.nan)
+    i0 = int(np.argmax(L <= top_db))
+    if L[-1] > bottom_db or L[i0] > top_db + 1e-12:
+        return bad
+    i1 = int(np.argmax(L <= bottom_db))
+    if i1 - i0 < 5:
+        return bad
+    slope, icpt = np.polyfit(t[i0:i1], L[i0:i1], 1)
+    if not (slope < 0):
+        return bad
+    return -60.0 / slope, i0, i1, float(slope), float(icpt)
+
+
+def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
+                              start_time=None, f_range=None, filter_order=4):
+    '''
+    Band-centred decay metrics via a filter bank + the Schroeder integral.
+
+    The room-acoustics alternative to the sonogram peak fits
+    (`calculate_damping_from_sono` / `_from_cwt`): instead of picking modal
+    peaks, the free decay is band-pass filtered into standard bands
+    (zero-phase Butterworth, ``sosfiltfilt``), each band's energy-decay curve
+    is formed with the Schroeder backward integral, and straight-line fits of
+    that curve give the band's decay metrics:
+
+    - ``EDT``  — early decay time, 0 to -10 dB fit x6 (perceived reverberance)
+    - ``T20``  — -5 to -25 dB fit x3
+    - ``T30``  — -5 to -35 dB fit x2
+    - ``T60``  — the reverberation time: T30 when its 35 dB range exists,
+      else T20 (the standard fallback); NaN when neither window fits
+    - ``Qn``   — the equivalent band-centred Q factor, ``Q = pi*fc*T60 /
+      (3*ln 10)`` (~= ``fc*T60/2.20``), from ``T60 = 3*ln10/(zeta*wn)``
+
+    A metric is NaN when the band's EDC never spans that fit window
+    (insufficient decay range above the noise floor) — not an error.
+
+    Args:
+        time_data (<TimeData> object): time series data
+        n_chan (int, optional): channel index to analyze, default is 1
+        bands (str, optional): ``'all'`` (one broadband band over the whole
+            ``f_range``), ``'octave'``, ``'third-octave'`` or
+            ``'tenth-decade'`` (10^(1/10) spacing, ~a third octave on
+            base-10-preferred centres). Ladders anchor at 1000 Hz and keep
+            only bands whose FULL width lies inside ``f_range``.
+        start_time (float, optional): free-decay start (seconds); None infers
+            it from the pretrigger (see `_resolve_damping_start_slice`), with
+            t=0 as the fallback
+        f_range (tuple, optional): ``(f_min, f_max)`` Hz analysis range; None
+            uses ``4/T .. 0.4*fs`` (the CWT default convention)
+        filter_order (int, optional): Butterworth section order, default 4
+            (applied forward-backward, so the effective roll-off doubles)
+
+    Returns:
+        dict with the ladder arrays (``fc``, ``f_lo``, ``f_hi``, ``EDT``,
+        ``T20``, ``T30``, ``T60``, ``Qn`` — NaN where unfittable),
+        ``start_time`` (the resolved decay start, s) and ``band_data``: one
+        dict per band carrying the plotting payload — the (decimated) EDC
+        ``edc_t`` / ``edc_db`` and the T60 fit window ``fit_t`` / ``fit_db``.
+    '''
+    if bands != 'all' and bands not in _BAND_RATIOS:
+        raise ValueError(
+            f"bands must be 'all', 'octave', 'third-octave' or 'tenth-decade', "
+            f"got {bands!r}")
+
+    fs = time_data.settings.fs
+    y = np.asarray(time_data.time_data)
+    if y.ndim == 1:
+        y = y[:, None]
+    yc = y[:, n_chan].astype(np.float64)
+    t = np.asarray(time_data.time_axis, dtype=np.float64)
+
+    # Resolve the decay start on the RAW time axis (default: the very start —
+    # unlike the STFT there is no window-centring to skip past).
+    i_start = _resolve_damping_start_slice(t, start_time, time_data.settings,
+                                           default_start_frac=0.0)
+    y_dec = yc[i_start:]
+    t_dec = t[i_start:] - t[i_start]
+    if y_dec.size < 64:
+        raise ValueError('too few samples after the decay start for a band fit')
+    T = t_dec[-1] if t_dec[-1] > 0 else y_dec.size / fs
+
+    if f_range is None:
+        f_range = (4.0 / T, 0.4 * fs)
+    f_min = max(float(f_range[0]), 1e-3)
+    f_max = min(float(f_range[1]), 0.499 * fs)
+
+    if bands == 'all':
+        centres = np.array([np.sqrt(f_min * f_max)])
+        edges = [(f_min, f_max)]
+    else:
+        centres = _band_centres(f_min, f_max, bands)
+        sr = np.sqrt(_BAND_RATIOS[bands])
+        edges = [(fc / sr, fc * sr) for fc in centres]
+
+    n = len(centres)
+    out = {
+        'bands': bands,
+        'start_time': float(t[i_start]),
+        'fc': centres,
+        'f_lo': np.array([e[0] for e in edges]),
+        'f_hi': np.array([e[1] for e in edges]),
+        'EDT': np.full(n, np.nan), 'T20': np.full(n, np.nan),
+        'T30': np.full(n, np.nan), 'T60': np.full(n, np.nan),
+        'Qn': np.full(n, np.nan),
+        'band_data': [],
+    }
+    # Q = 1/(2 zeta) with T60 = 3 ln10 / (zeta * 2 pi fc).
+    q_per_fct60 = np.pi / (3.0 * np.log(10.0))
+
+    for i, (fc, (lo, hi)) in enumerate(zip(centres, edges)):
+        sos = signal.butter(filter_order, [lo, hi], btype='bandpass',
+                            fs=fs, output='sos')
+        yb = signal.sosfiltfilt(sos, y_dec)
+        L = _schroeder_db(yb)
+
+        # Each _fit_decay_time already extrapolates its window's slope to the
+        # full 60 dB decay time (that IS the standard definition of EDT/T20/
+        # T30 — a 60 dB extrapolation of the 10/20/30 dB fit).
+        edt = _fit_decay_time(t_dec, L, 0.0, -10.0)[0]
+        f20 = _fit_decay_time(t_dec, L, -5.0, -25.0)
+        f30 = _fit_decay_time(t_dec, L, -5.0, -35.0)
+        # T60 preference: T30's wider window when it exists, else T20.
+        best = f30 if np.isfinite(f30[0]) else f20
+        t60, j0, j1, slope, icpt = best
+
+        out['EDT'][i] = edt
+        out['T20'][i] = f20[0]
+        out['T30'][i] = f30[0]
+        out['T60'][i] = t60
+        out['Qn'][i] = q_per_fct60 * fc * t60 if np.isfinite(t60) else np.nan
+
+        # Plotting payload, decimated to keep the FFI transfer small: the EDC
+        # plus the T60 fit LINE over its fitted window.
+        step = max(1, L.size // 1024)
+        band = {
+            'fc': float(fc), 'f_lo': float(lo), 'f_hi': float(hi),
+            'edc_t': t_dec[::step], 'edc_db': L[::step],
+        }
+        if np.isfinite(t60) and j1 > j0:
+            band['fit_t'] = np.array([t_dec[j0], t_dec[j1]])
+            band['fit_db'] = slope * band['fit_t'] + icpt
+        out['band_data'].append(band)
+
+    return out

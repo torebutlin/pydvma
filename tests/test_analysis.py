@@ -950,3 +950,167 @@ class TestDampingBothMethods:
         s_hits = int(np.any(np.abs(sfn - f1) / f1 < 0.10)) + \
             int(np.any(np.abs(sfn - f2) / f2 < 0.10)) if len(sfn) else 0
         assert s_hits < 2, f'STFT should NOT resolve both modes, got {sfn}'
+
+
+class TestDampingPeakThresholdAndFitContext:
+    """Round-7 interactive damping UI surface: the promoted `peak_threshold`
+    parameter and the peak-picking context returned in `fit_data` (start
+    slice/time, threshold used, slice spectrum, candidate peaks)."""
+
+    @staticmethod
+    def _two_mode_td():
+        fs, N = 2000, 8000
+        x = (_decaying_sine(fs, N, 90.0, 40.0)
+             + 0.4 * _decaying_sine(fs, N, 400.0, 60.0))[:, None]
+        return _make_time_data(x, fs)
+
+    def test_default_threshold_unchanged_and_echoed(self):
+        """peak_threshold=None keeps the historic automatic choice, and
+        fit_data echoes exactly the value used plus the resolved start."""
+        td = self._two_mode_td()
+        fn, Qn, fd = analysis.calculate_damping_from_sono(td, n_chan=0, nperseg=256)
+        assert len(fn) >= 1
+        for key in ('time_slice', 'start_time', 'threshold',
+                    'slice_freq', 'slice_mag', 'peaks_freq', 'peaks_mag'):
+            assert key in fd, f'fit_data missing {key}'
+        assert fd['start_time'] == fd['t'][fd['time_slice']]
+        assert fd['slice_freq'].shape == fd['slice_mag'].shape
+        assert fd['peaks_freq'].shape == fd['peaks_mag'].shape
+        # Candidate peaks include (at least) every successfully fitted mode.
+        assert len(fd['peaks_freq']) >= len(fd['fits'])
+        assert 0 <= fd['threshold']
+
+    def test_explicit_threshold_gates_candidate_peaks(self):
+        """A permissive threshold finds at least as many candidates as a
+        strict one, and a maximal threshold finds none."""
+        td = self._two_mode_td()
+        _, _, lo = analysis.calculate_damping_from_sono(
+            td, n_chan=0, nperseg=256, peak_threshold=0.05)
+        _, _, hi = analysis.calculate_damping_from_sono(
+            td, n_chan=0, nperseg=256, peak_threshold=0.9)
+        assert lo['threshold'] == 0.05 and hi['threshold'] == 0.9
+        assert len(lo['peaks_freq']) >= len(hi['peaks_freq'])
+        fn_max, _, top = analysis.calculate_damping_from_sono(
+            td, n_chan=0, nperseg=256, peak_threshold=1.0)
+        assert len(fn_max) == 0 and len(top['fits']) == 0
+
+    def test_threshold_is_clipped_to_unit_range(self):
+        """Out-of-range explicit thresholds clip to 0..1 rather than being
+        passed raw to peakutils."""
+        td = self._two_mode_td()
+        _, _, fd = analysis.calculate_damping_from_sono(
+            td, n_chan=0, nperseg=256, peak_threshold=7.5)
+        assert fd['threshold'] == 1.0
+
+    def test_cwt_accepts_threshold_too(self):
+        td = self._two_mode_td()
+        fn, _, fd = analysis.calculate_damping_from_cwt(
+            td, n_chan=0, peak_threshold=0.1)
+        assert fd['threshold'] == 0.1
+        assert len(fn) >= 1
+        # The 90 Hz mode survives a permissive threshold on the CWT path.
+        assert np.any(np.abs(fd['peaks_freq'] - 90.0) / 90.0 < 0.1)
+
+
+class TestDampingByBand:
+    """Band-pass filter bank + Schroeder integral decay metrics (round-7):
+    EDT / T20 / T30 / T60 and the equivalent band-centred Q."""
+
+    FS = 8000
+    N = 32000   # 4 s
+
+    @classmethod
+    def _noise_decay_td(cls, t60):
+        """Broadband noise with an exact exponential energy decay: the
+        amplitude envelope 10**(-3 t / T60) makes the EDC slope -60/T60 dB/s
+        in EVERY band."""
+        rng = np.random.default_rng(11)
+        t = np.arange(cls.N) / cls.FS
+        y = rng.standard_normal(cls.N) * 10.0 ** (-3.0 * t / t60)
+        return _make_time_data(y[:, None], cls.FS)
+
+    def test_octave_bands_recover_uniform_t60(self):
+        t60 = 0.5
+        td = self._noise_decay_td(t60)
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='octave', f_range=(80.0, 3000.0))
+        assert out['bands'] == 'octave'
+        assert len(out['fc']) >= 4
+        # Octave ladder anchors at 1000 Hz and doubles.
+        assert np.any(np.isclose(out['fc'], 1000.0))
+        np.testing.assert_allclose(out['fc'][1:] / out['fc'][:-1], 2.0)
+        ok = np.isfinite(out['T60'])
+        assert ok.sum() >= 4
+        np.testing.assert_allclose(out['T60'][ok], t60, rtol=0.15)
+        # Q consistency: Q = pi*fc*T60/(3 ln10) at each finite band.
+        expect_q = np.pi * out['fc'][ok] * out['T60'][ok] / (3 * np.log(10))
+        np.testing.assert_allclose(out['Qn'][ok], expect_q, rtol=1e-12)
+        # Plotting payload: EDC + T60 fit line per finite band.
+        band = out['band_data'][int(np.flatnonzero(ok)[0])]
+        assert band['edc_t'].shape == band['edc_db'].shape
+        assert band['edc_db'][0] <= 0.0 + 1e-9
+        assert 'fit_t' in band and band['fit_db'].shape == (2,)
+
+    def test_single_mode_q_in_its_band(self):
+        """A decaying 200 Hz tone of known Q: the octave band containing it
+        recovers T60 = 3 ln10 / (zeta wn) and hence Q within tolerance."""
+        fs, N = 2000, 16000
+        fn, Q = 200.0, 50.0
+        x = _decaying_sine(fs, N, fn, Q)[:, None]
+        td = _make_time_data(x, fs)
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='octave', f_range=(60.0, 800.0))
+        j = int(np.argmin(np.abs(out['fc'] - fn)))
+        # 200 Hz falls in the 250 Hz octave band (177..354 Hz).
+        assert out['f_lo'][j] < fn < out['f_hi'][j]
+        t60_true = 3 * np.log(10) / (1.0 / (2 * Q) * 2 * np.pi * fn)
+        assert np.isfinite(out['T60'][j])
+        assert abs(out['T60'][j] - t60_true) / t60_true < 0.15
+        # Q referred to the BAND CENTRE fc (not fn): scale expectation.
+        q_expect = np.pi * out['fc'][j] * t60_true / (3 * np.log(10))
+        assert abs(out['Qn'][j] - q_expect) / q_expect < 0.15
+
+    def test_all_gives_one_broadband_band(self):
+        td = self._noise_decay_td(0.4)
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='all', f_range=(100.0, 2000.0))
+        assert len(out['fc']) == 1
+        assert out['f_lo'][0] == 100.0 and out['f_hi'][0] == 2000.0
+        assert abs(out['T60'][0] - 0.4) / 0.4 < 0.15
+
+    def test_third_octave_and_tenth_decade_ladders(self):
+        td = self._noise_decay_td(0.5)
+        third = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='third-octave', f_range=(200.0, 2000.0))
+        tenth = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='tenth-decade', f_range=(200.0, 2000.0))
+        np.testing.assert_allclose(
+            third['fc'][1:] / third['fc'][:-1], 2.0 ** (1 / 3))
+        np.testing.assert_allclose(
+            tenth['fc'][1:] / tenth['fc'][:-1], 10.0 ** 0.1)
+        # Whole bands stay inside the requested range.
+        for out in (third, tenth):
+            assert np.all(out['f_lo'] >= 200.0 * 0.999)
+            assert np.all(out['f_hi'] <= 2000.0 * 1.001)
+
+    def test_start_time_skips_leading_silence(self):
+        """Leading silence before the decay: without start_time the EDC's
+        top window spans the silent head and the fit misreads; an explicit
+        start_time recovers the true T60."""
+        t60 = 0.4
+        rng = np.random.default_rng(3)
+        n_head = self.FS // 2   # 0.5 s of (near) silence
+        t = np.arange(self.N) / self.FS
+        y = rng.standard_normal(self.N) * 10.0 ** (-3.0 * t / t60)
+        y = np.concatenate([1e-8 * rng.standard_normal(n_head), y])
+        td = _make_time_data(y[:, None], self.FS)
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='all', f_range=(100.0, 2000.0),
+            start_time=0.5)
+        assert out['start_time'] == pytest.approx(0.5, abs=1.0 / self.FS)
+        assert abs(out['T60'][0] - t60) / t60 < 0.15
+
+    def test_rejects_unknown_ladder(self):
+        td = self._noise_decay_td(0.4)
+        with pytest.raises(ValueError, match='bands'):
+            analysis.calculate_damping_by_band(td, n_chan=0, bands='decade')

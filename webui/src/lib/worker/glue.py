@@ -792,7 +792,7 @@ def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=Non
 
 
 def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=None,
-                 method='stft', voices_per_octave=16, w0=6.0):
+                 method='stft', voices_per_octave=16, w0=6.0, peak_threshold=None):
     """Modal damping from a time-frequency image's per-band free decay (Sono card).
 
     ``method='stft'`` (default) wraps ``analysis.calculate_damping_from_sono``:
@@ -802,10 +802,18 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
     constant-Q resolution separates closely-spaced low-frequency modes an STFT
     window smears together; ``nperseg`` is ignored for CWT.
 
-    Returns per-detected-mode ``fn`` (Hz) and ``Qn = 1/(2 zeta)`` for the chip
-    table. ``start_time`` (seconds) picks the free-decay start; ``None`` lets
-    pydvma infer it (pretrigger-based, with a fallback). The full per-fit
-    plotting dict is discarded — only fn/Qn surface in the UI.
+    ``start_time`` (seconds) picks the free-decay start; ``None`` lets pydvma
+    infer it (pretrigger-based, with a fallback). ``peak_threshold`` is the
+    normalised 0..1 peak-picking threshold; ``None`` keeps pydvma's automatic
+    choice. Both are the knobs of the round-7 interactive damping UI.
+
+    Returns per-detected-mode ``fn`` (Hz) and ``Qn = 1/(2 zeta)`` PLUS the full
+    peak-picking / fit context the interactive panel draws (the round-7
+    rebuild — this used to be discarded): ``start_time`` / ``threshold``
+    actually used, the start-slice spectrum (``slice_freq`` / ``slice_mag``),
+    the candidate peaks (``peaks_freq`` / ``peaks_mag``), and per-fitted-mode
+    decay arrays (``fits[i].t_fit / real_fit / real_data / f_peak / Qn`` — the
+    "Real Part of Log(S) vs fitted curve" lines the Qt DampingFitWindow drew).
 
     Stale-wheel guard: ``method='cwt'`` against a wheel without
     ``calculate_damping_from_cwt`` raises a clear "engine wheel too old"
@@ -815,6 +823,18 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
     # `not start_time` handles None / a JS-null proxy (an explicit 0.0 start
     # also defers to inference — harmless, the free-decay start is never 0).
     st = float(start_time) if start_time else None
+    # 0.0 is a legal explicit threshold, so test against None-ish only. A JS
+    # null arrives as a falsy proxy; a real number survives float().
+    try:
+        thr = float(peak_threshold) if peak_threshold is not None else None
+    except (TypeError, ValueError):
+        thr = None
+    # Only pass the new kwarg when actually set, so a cached pre-round-7 wheel
+    # (no `peak_threshold` in its signature) still serves the default flow; an
+    # EXPLICIT threshold against such a wheel gets the clear stale-wheel error.
+    kw = {} if thr is None else {'peak_threshold': thr}
+    stale = ('Damping needs a newer engine: the loaded pydvma wheel predates '
+             'the interactive damping controls. Reload once builds settle.')
     if str(method) == 'cwt':
         if not hasattr(analysis, 'calculate_damping_from_cwt'):
             raise ValueError(
@@ -822,13 +842,99 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
                 'calculate_damping_from_cwt. Reload once builds settle, or use the '
                 'STFT method.'
             )
-        fn, Qn, _fit = analysis.calculate_damping_from_cwt(
-            td, n_chan=int(ch), start_time=st,
-            voices_per_octave=int(voices_per_octave), w0=float(w0))
+        try:
+            fn, Qn, fit = analysis.calculate_damping_from_cwt(
+                td, n_chan=int(ch), start_time=st,
+                voices_per_octave=int(voices_per_octave), w0=float(w0), **kw)
+        except TypeError:
+            raise ValueError(stale)
     else:
-        fn, Qn, _fit = analysis.calculate_damping_from_sono(
-            td, n_chan=int(ch), nperseg=int(nperseg), start_time=st)
-    return {'fn': _arr(np.asarray(fn)), 'Qn': _arr(np.asarray(Qn))}
+        try:
+            fn, Qn, fit = analysis.calculate_damping_from_sono(
+                td, n_chan=int(ch), nperseg=int(nperseg), start_time=st, **kw)
+        except TypeError:
+            raise ValueError(stale)
+    out = {
+        'fn': _arr(np.asarray(fn)), 'Qn': _arr(np.asarray(Qn)),
+        # Per-fitted-mode decay lines: present on EVERY wheel vintage (the Qt
+        # DampingFitWindow always consumed these).
+        'fits': [
+            {
+                't_fit': _arr(np.asarray(m['t_fit'], dtype=np.float64)),
+                'real_fit': _arr(np.asarray(m['real_fit'], dtype=np.float64)),
+                'real_data': _arr(np.asarray(m['real_data'], dtype=np.float64)),
+                'f_peak': float(m['f_peak']),
+                'Qn': float(m['Qn']),
+            }
+            for m in fit['fits']
+        ],
+    }
+    if 'threshold' in fit:
+        # Round-7+ wheels: the peak-picking context for the interactive panel.
+        out.update({
+            'start_time': float(fit['start_time']),
+            'threshold': float(fit['threshold']),
+            'slice_freq': _arr(np.asarray(fit['slice_freq'], dtype=np.float64)),
+            'slice_mag': _arr(np.asarray(fit['slice_mag'], dtype=np.float64)),
+            'peaks_freq': _arr(np.asarray(fit['peaks_freq'], dtype=np.float64)),
+            'peaks_mag': _arr(np.asarray(fit['peaks_mag'], dtype=np.float64)),
+        })
+    return out
+
+
+def calc_damping_bands(time_axis, time_data, n_channels, fs, ch, bands='octave',
+                       start_time=None, f_min=None, f_max=None):
+    """Band-centred decay metrics via the Schroeder integral (Sono card,
+    round-7 'by band' damping mode).
+
+    Wraps ``analysis.calculate_damping_by_band``: zero-phase band-pass filter
+    bank (``bands``: 'all' | 'octave' | 'third-octave' | 'tenth-decade'),
+    per-band Schroeder EDC, straight-line fits -> EDT / T20 / T30 / T60 and
+    the equivalent band-centred ``Qn``. NaN metrics mean that band's EDC
+    lacked the fit window's decay range — the UI shows those as gaps, not
+    errors.
+
+    ``start_time`` (s) picks the decay start (None infers from pretrigger);
+    ``f_min`` / ``f_max`` bound the ladder (None -> pydvma's ``4/T .. 0.4*fs``
+    default). Returns the ladder arrays plus per-band EDC + T60-fit-line
+    plotting payloads (decimated in pydvma to keep the transfer small).
+
+    Stale-wheel guard: raises a clear "needs a newer engine" error when the
+    loaded wheel predates ``calculate_damping_by_band``.
+    """
+    if not hasattr(analysis, 'calculate_damping_by_band'):
+        raise ValueError(
+            'Band damping needs a newer engine: the loaded pydvma wheel has no '
+            'calculate_damping_by_band. Reload once builds settle, or use the '
+            'peaks method.'
+        )
+    td = _time_data(time_axis, time_data, n_channels, fs)
+    st = float(start_time) if start_time else None
+    fr = None
+    if f_min and f_max:
+        fr = (float(f_min), float(f_max))
+    out = analysis.calculate_damping_by_band(
+        td, n_chan=int(ch), bands=str(bands), start_time=st, f_range=fr)
+    res = {
+        'bands': out['bands'],
+        'start_time': float(out['start_time']),
+        'fc': _arr(out['fc']),
+        'f_lo': _arr(out['f_lo']), 'f_hi': _arr(out['f_hi']),
+        'EDT': _arr(out['EDT']), 'T20': _arr(out['T20']),
+        'T30': _arr(out['T30']), 'T60': _arr(out['T60']),
+        'Qn': _arr(out['Qn']),
+        'band_data': [],
+    }
+    for b in out['band_data']:
+        item = {
+            'fc': b['fc'], 'f_lo': b['f_lo'], 'f_hi': b['f_hi'],
+            'edc_t': _arr(b['edc_t']), 'edc_db': _arr(b['edc_db']),
+        }
+        if 'fit_t' in b:
+            item['fit_t'] = _arr(b['fit_t'])
+            item['fit_db'] = _arr(b['fit_db'])
+        res['band_data'].append(item)
+    return res
 
 
 # --------------------------------------------------------------------------- #
