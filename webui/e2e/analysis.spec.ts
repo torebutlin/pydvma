@@ -398,6 +398,83 @@ test.describe('@engine', () => {
     }, { timeout: 4000 }).toBe(true);
   });
 
+  test('Fit damping opens the interactive panel: decay fits, threshold + start controls, bands mode (round-7 items 3/4)', async ({ page }) => {
+    await page.goto('/?fixture=1');
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Sonogram' }).click();
+
+    // The panel arrives WITHOUT needing Calc Sonogram first — damping can be
+    // the session's first compute (this exact path used to park forever: the
+    // damping op never kicked engine.boot(), a latent pre-panel bug).
+    await page.getByTestId('sono-fit-damping').click();
+    const panel = page.getByTestId('damping-panel');
+    await expect(panel).toBeVisible({ timeout: 200_000 });
+    const legend = page.getByTestId('damping-fit-legend');
+
+    // STFT peaks on this 1 s fixture legitimately fit NO modes (the impulse
+    // decays inside a couple of STFT frames) — the panel must say so rather
+    // than error, and still show the picking context: the spectrum with its
+    // threshold line, and the start line over the sonogram.
+    await expect(legend).toContainText('No modes fitted', { timeout: 200_000 });
+    await expect(page.getByTestId('damping-spectrum')).toBeVisible();
+    // toBeAttached, not toBeVisible: a horizontal SVG <line> has a
+    // zero-HEIGHT bounding box, which Playwright's visibility check calls
+    // hidden even when it renders perfectly.
+    await expect(page.getByTestId('damping-threshold-line')).toBeAttached();
+    const thrAuto = parseFloat(await page.getByTestId('damping-threshold-input').inputValue());
+    expect(thrAuto).toBeGreaterThan(0);   // engine echoed its auto choice
+    expect(Number.isFinite(parseFloat(
+      await page.getByTestId('damping-start-input').inputValue()))).toBe(true);
+
+    // The draggable start-time line maps through the sonogram's axes, so it
+    // appears once the heat is computed (not over the empty pre-Calc plot).
+    await page.getByRole('button', { name: 'Calc Sonogram' }).click();
+    await expect.poll(() => sonoPaintFrac(page), { timeout: 200_000 }).toBeGreaterThan(0.9);
+    await expect(page.getByTestId('damping-start-line')).toBeVisible();
+
+    // Switch the sonogram method to CWT (full time resolution) and Refit —
+    // the fit follows the card's method, and the CWT resolves the fixture's
+    // low mode: the decay chart draws the fitted line + × markers, with an
+    // `f Hz, Qn=…` legend chip (the Qt DampingFitWindow readout).
+    await page.getByTestId('sono-method').getByRole('button', { name: 'CWT' }).click();
+    await page.getByTestId('damping-refit').click();
+    await expect(legend.locator('.dp-chip').first()).toBeVisible({ timeout: 200_000 });
+    await expect(legend.locator('.dp-chip').first()).toContainText('Qn=');
+    await expect(page.getByTestId('damping-decay').locator('polyline.dp-fit').first())
+      .toBeVisible();
+
+    // A maximal threshold suppresses every candidate (the control is LIVE)…
+    await page.getByTestId('damping-threshold-input').fill('1');
+    await page.getByTestId('damping-threshold-input').dispatchEvent('change');
+    await expect(legend).toContainText('No modes fitted', { timeout: 200_000 });
+    // …and a permissive one brings the fit back.
+    await page.getByTestId('damping-threshold-input').fill('0.05');
+    await page.getByTestId('damping-threshold-input').dispatchEvent('change');
+    await expect(legend.locator('.dp-chip').first()).toBeVisible({ timeout: 200_000 });
+
+    // Bands mode: Schroeder EDC chart + the metrics table.
+    await page.getByTestId('damping-mode-toggle').getByRole('button', { name: 'bands' }).click();
+    const table = page.getByTestId('damping-band-table');
+    await expect(table).toBeVisible({ timeout: 200_000 });
+    await expect(table.locator('tbody tr').first()).toBeVisible();
+    await expect(table.locator('thead')).toContainText('T60');
+    // A full octave ladder of EDC polylines, at least one carrying a real
+    // curve. Deliberately NOT `.first().toBeVisible()`: the lowest band's
+    // ultra-narrow normalized bandpass can go non-finite under WASM scipy,
+    // rendering an empty polyline (its metrics legitimately show as `—`).
+    const edcs = page.getByTestId('damping-edc').locator('polyline.dp-edc');
+    await expect.poll(() => edcs.count()).toBeGreaterThan(3);
+    await expect.poll(async () => {
+      const lens = await edcs.evaluateAll(
+        (els) => els.map((e) => (e.getAttribute('points') ?? '').length));
+      return Math.max(0, ...lens);
+    }).toBeGreaterThan(100);
+
+    // Close returns the plot area to full height.
+    await page.getByTestId('damping-close').click();
+    await expect(panel).toHaveCount(0);
+  });
+
   test('multiset + orphan: Sonogram targets a time-bearing set, excludes the orphan, paints in BOTH themes (round-6 items 2/3)', async ({ page }) => {
     // grid_data-like: two time-bearing 2-channel sets PLUS one orphan TF (no
     // time series). The exact tray that blanked Tore's sonogram. Load it, and

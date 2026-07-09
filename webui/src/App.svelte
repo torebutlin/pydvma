@@ -37,6 +37,9 @@
   import { createToasts } from './lib/stores/toast';
   import { createActions } from './lib/analysis/actions';
   import { createModalStore } from './lib/stores/modal';
+  import { createDampingStore } from './lib/stores/damping';
+  import DampingPanel from './components/DampingPanel.svelte';
+  import DampingStartLine from './components/DampingStartLine.svelte';
   import { buildPlotModel, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
   import { tfTransformEntries } from './lib/plot/tfChannels';
   import { csdPairEntries } from './lib/plot/csdChannels';
@@ -77,6 +80,33 @@
   // — there is no App-level recon overlay any more.
   const modal = createModalStore();
   const actions = createActions(engine, selection, analysisSettings, modal, toasts);
+  // Interactive damping-fit state (round-7 items 3+4): the Sono card opens
+  // the panel, the panel + the sono start-time line edit the knobs, and
+  // `refitDamping` below runs the engine op and pushes decoded results in.
+  const damping = createDampingStore();
+
+  /** Monotonic guard: only the LATEST in-flight damping fit may land. */
+  let dampSeq = 0;
+  async function refitDamping(): Promise<void> {
+    const s = get(damping);
+    if (!s.open || s.setId === null) return;
+    const seq = ++dampSeq;
+    damping.setBusy(true);
+    try {
+      if (s.mode === 'peaks') {
+        const nFft = analysisSettings.settingFor(s.setId, 'sono').nFft;
+        const r = await actions.calcDamping(s.setId, s.ch, nFft,
+          { startTime: s.startTime, threshold: s.threshold });
+        if (seq === dampSeq) damping.setPeaks(r);
+      } else {
+        const r = await actions.calcDampingBands(s.setId, s.ch,
+          { ladder: s.ladder, startTime: s.startTime });
+        if (seq === dampSeq && r) damping.setBands(r);
+      }
+    } catch (e) {
+      if (seq === dampSeq) damping.setError(e instanceof Error ? e.message : String(e));
+    }
+  }
   // Acquisition store (Plan 2): manages Web Audio device enumeration +
   // recording lifecycle; the liveSource capability gate flips on init.
   const acquire = createAcquireStore();
@@ -935,6 +965,8 @@
     {acquire}
     {monitor}
     {modal}
+    {damping}
+    onFitDamping={refitDamping}
     {getSvg}
     {workdir}
     {onsave}
@@ -982,7 +1014,16 @@
                  model can't (round-7 item 2). -->
             <PlotSurface bind:this={plotRef} model={sonoAxisModel} {mode} {viewState} overlay
               extentOverride={sonoExtent ?? undefined} />
+            {#if $damping.open && sonoWindow && $damping.startTime !== null}
+              <DampingStartLine window={sonoWindow} value={$damping.startTime}
+                busy={$damping.busy}
+                onlive={(t) => damping.setStartTime(t)}
+                oncommit={refitDamping} />
+            {/if}
           </div>
+          {#if $damping.open}
+            <DampingPanel {damping} onrefit={refitDamping} onclose={() => damping.close()} />
+          {/if}
         </div>
       {:else if nyquist}
         <!-- Nyquist (round-5 item 4): a frequency-band brush over the square

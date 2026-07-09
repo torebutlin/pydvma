@@ -45,6 +45,9 @@ import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import type { ViewId } from '../stores/viewstate';
 import type { ModalStore, ModalState, ReconArrays, ReconMode } from '../stores/modal';
+import type {
+  BandLadder, DampingBand, DampingBandsResult, DampingModeFit, DampingPeaksResult,
+} from '../stores/damping';
 import type { Toasts } from '../stores/toast';
 import { normalizeFactors, normalizeUnits } from '../model/calibration';
 import { calibrationController } from '../stores/calibrationController';
@@ -1574,31 +1577,122 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     });
   }
 
-  /**
-   * Sonogram-derived modal damping for one channel of the target set (Task
-   * A1; Sono card "Fit damping"). Returns the raw `{fn, Qn}` arrays for the
-   * card's chip table — nothing is stored in `derived` (it is a one-shot
-   * readout, not a plotted slice). `'all'` uses the first working set.
-   */
-  async function calcDamping(target: AnalysisTarget, ch: number, nFft: number): Promise<{ fn: Float64Array; Qn: Float64Array }> {
+  /** Resolve the damping target set (both damping ops share this). */
+  function dampingWs(target: AnalysisTarget): WorkingSet | undefined {
     const ws = target === 'all'
       ? working.find((w) => hasTimeData(w.time))
       : working.find((w) => w.setId === target);
-    if (!ws) return { fn: new Float64Array(0), Qn: new Float64Array(0) };
     // Same time-less guard as the sonogram (round-6 item 2): damping is read
-    // from the decay of the time-frequency bands, so it needs a time signal.
-    if (!hasTimeData(ws.time)) throw new Error(sonoNoTimeMessage(nameOf(ws.setId)));
+    // from the decay of the time signal, so a time-less set cannot fit.
+    if (ws && !hasTimeData(ws.time)) throw new Error(sonoNoTimeMessage(nameOf(ws.setId)));
+    return ws;
+  }
+
+  /**
+   * Sonogram-derived modal damping for one channel of the target set (Task
+   * A1; round-7 interactive rebuild). Returns fn/Qn PLUS the decoded
+   * peak-picking context and per-mode decay-fit arrays the DampingPanel
+   * draws (`DampingPeaksResult`) — nothing is stored in `derived` (a
+   * one-shot readout, not a plotted slice). `'all'` uses the first working
+   * set. `opts.startTime` (s) and `opts.threshold` (normalised 0..1) are the
+   * panel's knobs; null/omitted = the engine's automatic choices (which the
+   * result echoes back as `startTime`/`threshold`).
+   */
+  async function calcDamping(
+    target: AnalysisTarget, ch: number, nFft: number,
+    opts: { startTime?: number | null; threshold?: number | null } = {},
+  ): Promise<DampingPeaksResult> {
+    // Idempotent lazy boot (mirrors guarded()): damping can be the FIRST
+    // compute of a session, and enqueue() from 'idle' only QUEUES — without
+    // this kick the op would park forever (EngineProbe's boot is ?engine=1
+    // e2e-gated, so nothing else starts the engine).
+    engine.boot();
+    const empty = new Float64Array(0);
+    const ws = dampingWs(target);
+    if (!ws) {
+      return {
+        fn: empty, Qn: empty, fits: [], startTime: null, threshold: null,
+        sliceFreq: empty, sliceMag: empty, peaksFreq: empty, peaksMag: empty,
+      };
+    }
     const { axis, data, nCh } = timePayload(ws.time);
     const { method, voicesPerOctave, w0 } = sonoSettings(ws.setId);
-    // `start_time` is omitted (not sent as JS null — see calcFit note) so the
-    // engine infers the free-decay start. `method` selects the STFT or CWT
-    // damping path; the CWT params are ignored by the engine for 'stft'.
-    const res = await engine.enqueue('calc_damping', {
+    // Auto knobs are OMITTED (not sent as JS null — see calcFit note) so the
+    // engine infers the free-decay start / uses its automatic threshold.
+    // `method` selects the STFT or CWT damping path; the CWT params are
+    // ignored by the engine for 'stft'.
+    const payload: Record<string, unknown> = {
       time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
       ch, nperseg: nFft,
       method, voices_per_octave: voicesPerOctave, w0,
-    });
-    return { fn: axisData(mval(res, 'fn')), Qn: axisData(mval(res, 'Qn')) };
+    };
+    if (opts.startTime !== null && opts.startTime !== undefined) payload.start_time = opts.startTime;
+    if (opts.threshold !== null && opts.threshold !== undefined) payload.peak_threshold = opts.threshold;
+    const res = await engine.enqueue('calc_damping', payload);
+    const fitsRaw = mval(res, 'fits');
+    const fits: DampingModeFit[] = (fitsRaw ? Array.from(fitsRaw as ArrayLike<unknown>) : [])
+      .map((m) => ({
+        tFit: axisData(mval(m, 't_fit')),
+        realFit: axisData(mval(m, 'real_fit')),
+        realData: axisData(mval(m, 'real_data')),
+        fPeak: Number(mval(m, 'f_peak')),
+        Qn: Number(mval(m, 'Qn')),
+      }));
+    // The picking context is absent only on a pre-round-7 engine wheel (the
+    // panel then shows its stale-engine note instead of the spectrum).
+    const thr = mval(res, 'threshold');
+    return {
+      fn: axisData(mval(res, 'fn')), Qn: axisData(mval(res, 'Qn')), fits,
+      startTime: thr === undefined ? null : Number(mval(res, 'start_time')),
+      threshold: thr === undefined ? null : Number(thr),
+      sliceFreq: thr === undefined ? empty : axisData(mval(res, 'slice_freq')),
+      sliceMag: thr === undefined ? empty : axisData(mval(res, 'slice_mag')),
+      peaksFreq: thr === undefined ? empty : axisData(mval(res, 'peaks_freq')),
+      peaksMag: thr === undefined ? empty : axisData(mval(res, 'peaks_mag')),
+    };
+  }
+
+  /**
+   * Band-centred decay metrics via the Schroeder integral (round-7 'bands'
+   * damping mode): zero-phase band-pass ladder → per-band EDC → EDT / T20 /
+   * T30 / T60 (NaN = insufficient decay range) + band-centred Qn. One-shot
+   * readout like `calcDamping`; nothing lands in `derived`.
+   */
+  async function calcDampingBands(
+    target: AnalysisTarget, ch: number,
+    opts: { ladder: BandLadder; startTime?: number | null } = { ladder: 'octave' },
+  ): Promise<DampingBandsResult | null> {
+    engine.boot();               // idempotent; see calcDamping
+    const ws = dampingWs(target);
+    if (!ws) return null;
+    const { axis, data, nCh } = timePayload(ws.time);
+    const payload: Record<string, unknown> = {
+      time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
+      ch, bands: opts.ladder,
+    };
+    if (opts.startTime !== null && opts.startTime !== undefined) payload.start_time = opts.startTime;
+    const res = await engine.enqueue('calc_damping_bands', payload);
+    const bandsRaw = mval(res, 'band_data');
+    const bandData: DampingBand[] = (bandsRaw ? Array.from(bandsRaw as ArrayLike<unknown>) : [])
+      .map((b) => {
+        const fitT = mval(b, 'fit_t');
+        return {
+          fc: Number(mval(b, 'fc')), fLo: Number(mval(b, 'f_lo')), fHi: Number(mval(b, 'f_hi')),
+          edcT: axisData(mval(b, 'edc_t')), edcDb: axisData(mval(b, 'edc_db')),
+          fitT: fitT === undefined ? null : axisData(fitT),
+          fitDb: fitT === undefined ? null : axisData(mval(b, 'fit_db')),
+        };
+      });
+    return {
+      bands: String(mval(res, 'bands')) as BandLadder,
+      startTime: Number(mval(res, 'start_time')),
+      fc: axisData(mval(res, 'fc')),
+      fLo: axisData(mval(res, 'f_lo')), fHi: axisData(mval(res, 'f_hi')),
+      EDT: axisData(mval(res, 'EDT')), T20: axisData(mval(res, 'T20')),
+      T30: axisData(mval(res, 'T30')), T60: axisData(mval(res, 'T60')),
+      Qn: axisData(mval(res, 'Qn')),
+      bandData,
+    };
   }
 
   /**
@@ -1676,7 +1770,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
-    calcFit, calcDamping, exportArrays, exportMat, setCsdPair,
+    calcFit, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
     getCalibration, setCalFactors,
     /** Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match. */
     getIwPower, setIwPower, calcBestMatch,

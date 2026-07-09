@@ -32,6 +32,7 @@
   import type { Selection } from '../../lib/stores/selection';
   import type { AnalysisSettings, SonoSettings } from '../../lib/stores/analysisSettings';
   import type { ViewState } from '../../lib/stores/viewstate';
+  import type { DampingStore } from '../../lib/stores/damping';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
   import Segmented from '../Segmented.svelte';
 
@@ -40,7 +41,16 @@
     actions,
     selection,
     analysisSettings,
-  }: { viewState: ViewState; actions: Actions; selection: Selection; analysisSettings: AnalysisSettings } = $props();
+    damping,
+    onFitDamping,
+  }: {
+    viewState: ViewState; actions: Actions; selection: Selection;
+    analysisSettings: AnalysisSettings;
+    /** Interactive damping panel state (round-7) — Fit damping opens it. */
+    damping: DampingStore;
+    /** Run the fit with the damping store's current knobs (App wires it). */
+    onFitDamping: () => void;
+  } = $props();
 
   // Heat colour mode lives in the (per-view) sono view-state, driven from the
   // plot toolbar's `colour` control. The dynamic-range dB span only applies to
@@ -189,30 +199,19 @@
     onRes(exp);                             // patch stores 1<<exp; slider clamps
   }
 
-  // --- Damping fit (Task A1) ---------------------------------------------
-  // Log-decrement damping from the decay of each sonogram band, on the same
-  // target set + channel + STFT window. Results (fn / Qn per detected mode)
-  // show in a small popover chip; independent of the sonogram calc so it can
+  // --- Damping fit (Task A1; round-7 interactive rebuild) -----------------
+  // "Fit damping" opens the shared interactive panel below the sonogram
+  // (DampingPanel: decay-fit plot, threshold + start-time controls, the
+  // peaks|bands method toggle) and runs the first fit. Results live in the
+  // damping store — the inline fn/Qn chip this card used to render is gone;
+  // the panel is the readout. Independent of the sonogram calc, so it can
   // run without first computing the heat map.
-  let dampModes = $state<{ fn: number; Qn: number }[] | null>(null);
-  let dampBusy = $state(false);
-  let dampError = $state('');
+  const dampState = $derived($damping);
 
-  async function fitDamping() {
+  function fitDamping() {
     if (targetId === null) return;
-    dampBusy = true;
-    dampError = '';
-    try {
-      const { fn, Qn } = await actions.calcDamping(targetId, ch, nFft);
-      const rows: { fn: number; Qn: number }[] = [];
-      for (let i = 0; i < fn.length; i++) rows.push({ fn: fn[i], Qn: Qn[i] });
-      dampModes = rows;
-    } catch (e) {
-      dampError = e instanceof Error ? e.message : String(e);
-      dampModes = null;
-    } finally {
-      dampBusy = false;
-    }
+    damping.openFor(targetId, ch);
+    onFitDamping();
   }
 </script>
 
@@ -324,26 +323,15 @@
       <div class="grp">
         <span class="grp-lab">damping</span>
         <div class="grp-ctl">
-          <button class="btn" disabled={dampBusy || noTimeSet || targetId === null} onclick={fitDamping}
-            title="Fit modal damping from the decay of each sonogram band">
-            {dampBusy ? 'Fitting…' : 'Fit damping'}</button>
-          <span class="note">log-decrement of {method === 'cwt' ? 'CWT' : 'sonogram'} bands</span>
-          {#if dampModes}
-            <div class="damp-table mono" role="status" aria-label="fitted damping">
-              {#if dampModes.length}
-                <table>
-                  <thead><tr><th>fn (Hz)</th><th>Qn</th></tr></thead>
-                  <tbody>
-                    {#each dampModes as m, i (i)}
-                      <tr><td>{m.fn.toFixed(1)}</td><td>{m.Qn.toFixed(1)}</td></tr>
-                    {/each}
-                  </tbody>
-                </table>
-              {:else}
-                <span class="note">no decaying modes detected</span>
-              {/if}
-            </div>
-          {/if}
+          <button class="btn" disabled={dampState.busy || noTimeSet || targetId === null}
+            onclick={fitDamping} data-testid="sono-fit-damping"
+            title="Open the interactive damping panel: per-band decay fits (peaks) or Schroeder band metrics (bands)">
+            {dampState.busy ? 'Fitting…' : 'Fit damping'}</button>
+          <span class="note">
+            {dampState.open
+              ? 'panel below the sonogram — drag the start line / threshold'
+              : `decay of ${method === 'cwt' ? 'CWT' : 'sonogram'} bands, or Schroeder band metrics`}
+          </span>
         </div>
       </div>
     </div>
@@ -355,9 +343,6 @@
     {/if}
     {#if $computeErrors.sono}
       <div class="ctx-err" role="alert">{$computeErrors.sono}</div>
-    {/if}
-    {#if dampError}
-      <div class="ctx-err" role="alert">{dampError}</div>
     {/if}
   </div>
   <div class="ctx-primary">
@@ -371,30 +356,5 @@
     font-size: 12px;
     color: var(--muted);
     font-style: italic;
-  }
-  .damp-table {
-    display: inline-block;
-    margin-left: 4px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface-2);
-    padding: 3px 7px;
-  }
-  .damp-table table {
-    border-collapse: collapse;
-    font-size: 11.5px;
-  }
-  .damp-table th {
-    font-size: 9.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted-2);
-    font-weight: 600;
-    text-align: right;
-    padding: 1px 8px 2px 0;
-  }
-  .damp-table td {
-    text-align: right;
-    padding: 1px 8px 1px 0;
   }
 </style>

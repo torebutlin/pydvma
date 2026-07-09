@@ -20,6 +20,7 @@
   import type { AcquireStore } from '../lib/stores/acquire';
   import type { MonitorStore } from '../lib/stores/monitor';
   import type { ModalStore } from '../lib/stores/modal';
+  import type { DampingStore } from '../lib/stores/damping';
   import type { WorkDir } from '../lib/files/workdir';
   import type { Toasts } from '../lib/stores/toast';
   import TimeCard from './cards/TimeCard.svelte';
@@ -41,6 +42,8 @@
     acquire,
     monitor,
     modal,
+    damping,
+    onFitDamping,
     getSvg,
     workdir,
     onsave,
@@ -60,6 +63,10 @@
     monitor: MonitorStore;
     /** Modal-fit store (Task A1) — drives the Fit card. */
     modal: ModalStore;
+    /** Interactive damping store (round-7) — the Sono card opens its panel. */
+    damping: DampingStore;
+    /** Run/refresh the damping fit with the damping store's current knobs. */
+    onFitDamping: () => void;
     /** Active plot's <svg> accessor (Export card figure source). */
     getSvg: () => SVGSVGElement | undefined;
     /** Working directory for Save Figure / Save Dataset. */
@@ -93,7 +100,7 @@
   {:else if $activeStage === 'tf'}
     <TFCard {viewState} {selection} {actions} {analysisSettings} />
   {:else if $activeStage === 'sono'}
-    <SonoCard {viewState} {actions} {selection} {analysisSettings} />
+    <SonoCard {viewState} {actions} {selection} {analysisSettings} {damping} {onFitDamping} />
   {:else if $activeStage === 'fit'}
     <FitCard {actions} {analysisSettings} {selection} {viewState} {modal} />
   {:else if $activeStage === 'export'}
