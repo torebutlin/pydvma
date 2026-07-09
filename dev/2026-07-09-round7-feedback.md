@@ -153,6 +153,41 @@ is `se` (history: `nw` was chosen when the toolbar floated over `ne`).
 Master pushed at Tore's request — the deployed site had still been
 showing the pre-round-7 build.
 
+## Round 7c (same day, after using the panel)
+
+> Sono CWT: make the two res options wider range (Q up to something
+> higher, and per-oct to match). Wide mode: arrange the two subplots to
+> the right-hand side, one above the other; narrow mode as-is. The star
+> plot when fitting is the decay plot — make the fit plots expand to
+> fill when clicked (and pop back in), and saveable as their own plots.
+> Might be worth a review that all plots are save/exportable with
+> consistent styles.
+
+**ALL DONE.**
+- CWT ladders: `w0` now 4..64, voices/octave 8..64 (matched top ends —
+  a high-Q wavelet needs a comparably dense grid). At the extremes a
+  very long record can hit the engine's 32-bit array ceiling; that
+  surfaces as the clear "array is too big" error, not a crash.
+- Damping layout: wide screens put the panel in a right-hand column
+  beside the sonogram, controls on top, charts stacked; each chart
+  expands to fill the whole plot region (click the chart or its ⤢; the
+  sonogram tucks away) and pops back. Narrow keeps the round-7
+  below-dock. A mode flip collapses any expansion.
+- Chart saves: every damping chart saves as its own PNG through the
+  same workdir-or-download path as Save Figure, restyled by the same
+  exporter (the charts now follow PlotSurface's self-contained-SVG
+  contract: data-role plot-bg/axis + inline CHROME hexes + tick-class
+  text — theme-invariant like the main figures). The band table saves
+  CSV.
+- Export audit (full table in the session log; agent-audited): the ONE
+  correctness gap was **Bode exporting only its magnitude pane** — the
+  phase pane was a second, unbound PlotSurface. Fixed: `getSvg` now
+  composites both panes into one flattened SVG (raster + PDF safe).
+  Remaining, deliberate or deferred: Nyquist's brush strip is a nav
+  control and stays out of the export; the legend is still absent from
+  every figure (pre-existing TODO); live scopes are real-time-only by
+  design.
+
 ## Incidental findings (not in Tore's list)
 
 - **Exported figures never include the legend.** PNG/PDF export

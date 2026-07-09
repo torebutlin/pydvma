@@ -64,6 +64,20 @@ describe('damping store (round-7 interactive panel state)', () => {
     d.setError('engine says no');
     expect(get(d)).toMatchObject({ busy: false, error: 'engine says no' });
   });
+
+  it('chart expansion collapses on mode flips and on close (round-7c)', () => {
+    const d = createDampingStore();
+    d.openFor(1, 0);
+    d.setExpanded('decay');
+    expect(get(d).expanded).toBe('decay');
+    // A mode flip would otherwise pin a stale full-screen chart from the
+    // OTHER mode's family.
+    d.setMode('bands');
+    expect(get(d).expanded).toBeNull();
+    d.setExpanded('edc');
+    d.close();
+    expect(get(d).expanded).toBeNull();
+  });
 });
 
 describe('miniplot helpers', () => {

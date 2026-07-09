@@ -71,6 +71,8 @@ export interface DampingBandsResult {
 
 export type BandLadder = 'all' | 'octave' | 'third-octave' | 'tenth-decade';
 export type DampingMode = 'peaks' | 'bands';
+/** The panel's chart identities (expand/save targets). */
+export type DampingChart = 'spectrum' | 'decay' | 'edc';
 
 export interface DampingState {
   /** Panel visible (the Sono card's Fit damping opens it). */
@@ -85,6 +87,11 @@ export interface DampingState {
   startTime: number | null;
   threshold: number | null;
   ladder: BandLadder;
+  /**
+   * Wide-mode chart expansion (round-7c): the named chart fills the whole
+   * plot region (App hides the sonogram while set); null = normal layout.
+   */
+  expanded: DampingChart | null;
   peaks: DampingPeaksResult | null;
   bands: DampingBandsResult | null;
 }
@@ -92,6 +99,7 @@ export interface DampingState {
 const FRESH: DampingState = {
   open: false, busy: false, error: null, mode: 'peaks',
   setId: null, ch: 0, startTime: null, threshold: null, ladder: 'octave',
+  expanded: null,
   peaks: null, bands: null,
 };
 
@@ -103,6 +111,7 @@ export interface DampingStore extends Readable<DampingState> {
   setStartTime(s: number | null): void;
   setThreshold(t: number | null): void;
   setLadder(l: BandLadder): void;
+  setExpanded(chart: DampingChart | null): void;
   setBusy(busy: boolean): void;
   setError(message: string | null): void;
   /**
@@ -127,11 +136,14 @@ export function createDampingStore(): DampingStore {
         mode: s.mode, ladder: s.ladder,
       }));
     },
-    close: () => update((s) => ({ ...s, open: false })),
-    setMode: (mode) => update((s) => ({ ...s, mode, error: null })),
+    close: () => update((s) => ({ ...s, open: false, expanded: null })),
+    // A mode flip collapses any expansion — the expanded chart belongs to
+    // the OLD mode's family and would otherwise pin a stale full-screen plot.
+    setMode: (mode) => update((s) => ({ ...s, mode, error: null, expanded: null })),
     setStartTime: (startTime) => update((s) => ({ ...s, startTime })),
     setThreshold: (threshold) => update((s) => ({ ...s, threshold })),
     setLadder: (ladder) => update((s) => ({ ...s, ladder })),
+    setExpanded: (expanded) => update((s) => ({ ...s, expanded })),
     setBusy: (busy) => update((s) => ({ ...s, busy })),
     setError: (error) => update((s) => ({ ...s, error, busy: false })),
     setPeaks: (peaks) => update((s) => ({

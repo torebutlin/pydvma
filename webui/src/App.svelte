@@ -107,6 +107,17 @@
       if (seq === dampSeq) damping.setError(e instanceof Error ? e.message : String(e));
     }
   }
+
+  /**
+   * Damping-chart save delivery (round-7c): the SAME workdir-or-download
+   * path Save Figure uses, so a chart PNG / band CSV lands next to the
+   * figures and datasets.
+   */
+  const saveDampingFile = (name: string, bytes: Uint8Array): Promise<void> =>
+    (workdir ?? fallbackDir()).save(name, bytes);
+  const notifyDamping = (message: string, level: 'success' | 'error'): void => {
+    toasts.push(message, { level });
+  };
   // Acquisition store (Plan 2): manages Web Audio device enumeration +
   // recording lifecycle; the liveSource capability gate flips on init.
   const acquire = createAcquireStore();
@@ -176,6 +187,10 @@
   // only one primary plot is mounted at a time (the branches are mutually
   // exclusive), and it is re-bound as the view switches.
   let plotRef = $state<PlotSurface | undefined>();
+  // Bode's SECOND pane (round-7c export audit): the phase PlotSurface gets
+  // its own ref so `getSvg` can composite BOTH panes — exporting only the
+  // bound magnitude pane silently dropped half the Bode figure.
+  let phaseRef = $state<PlotSurface | undefined>();
   /**
    * Active plot's root <svg>, or undefined when no plot is mounted.
    *
@@ -194,6 +209,36 @@
    */
   const getSvg = (): SVGSVGElement | undefined => {
     const svg = plotRef?.getSvgElement();
+    // BODE EXPORT (round-7c audit fix): the view is TWO stacked PlotSurfaces
+    // but only the magnitude pane is bound to plotRef — a bare serialisation
+    // exported half the figure. Composite the two panes into one SVG by
+    // FLATTENING each pane's children into translated <g>s (both viewBoxes
+    // are plain 0 0 W H pixel spaces, so translation is exact; flattening —
+    // rather than nesting <svg> viewports — keeps svg2pdf's PDF path safe).
+    if (bode) {
+      const phase = phaseRef?.getSvgElement();
+      if (!svg || !phase) return svg;
+      const dims = (el: SVGSVGElement): [number, number] => {
+        const vb = (el.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
+        return [vb[2] ?? 0, vb[3] ?? 0];
+      };
+      const [w1, h1] = dims(svg);
+      const [w2, h2] = dims(phase);
+      if (!(w1 > 0) || !(h1 > 0) || !(w2 > 0) || !(h2 > 0)) return svg;
+      const NS = 'http://www.w3.org/2000/svg';
+      const combined = document.createElementNS(NS, 'svg');
+      combined.setAttribute('xmlns', NS);
+      combined.setAttribute('viewBox', `0 0 ${Math.max(w1, w2)} ${h1 + h2}`);
+      const pane = (el: SVGSVGElement, dy: number): SVGGElement => {
+        const g = document.createElementNS(NS, 'g');
+        if (dy) g.setAttribute('transform', `translate(0 ${dy})`);
+        const clone = el.cloneNode(true) as SVGSVGElement;
+        while (clone.firstChild) g.appendChild(clone.firstChild);
+        return g;
+      };
+      combined.append(pane(svg, 0), pane(phase, h1));
+      return combined;
+    }
     if (!svg || view !== 'sono' || !sonoCanvas || !sono) return svg;
     const vb = (svg.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
     const W = vb[2], H = vb[3];
@@ -1007,22 +1052,35 @@
           <div class="plot-nav">
             <ZoomToolbar {viewState} dataExtent={extent} bind:mode sono />
           </div>
-          <div class="plot-area">
-            <canvas bind:this={sonoCanvas} data-testid="sono-canvas" class="sono-heat"></canvas>
-            <!-- Gestures live on the axis overlay: `mode` routes box/pan and
-                 `extentOverride` supplies the clamp guardrail the empty-lines
-                 model can't (round-7 item 2). -->
-            <PlotSurface bind:this={plotRef} model={sonoAxisModel} {mode} {viewState} overlay
-              extentOverride={sonoExtent ?? undefined} />
-            {#if $damping.open && sonoWindow && $damping.startTime !== null}
-              <DampingStartLine window={sonoWindow} value={$damping.startTime}
-                busy={$damping.busy}
-                onlive={(t) => damping.setStartTime(t)}
-                oncommit={refitDamping} />
+          <!-- Round-7c: wide screens put the damping panel in a RIGHT-hand
+               column beside the sonogram (charts stacked, expandable to fill
+               the whole region — the sono hides while one is expanded);
+               narrow keeps the round-7 full-width dock below. -->
+          <div class="sono-split">
+            <div class="plot-area" class:tucked={!narrow && $damping.open && $damping.expanded !== null}>
+              <canvas bind:this={sonoCanvas} data-testid="sono-canvas" class="sono-heat"></canvas>
+              <!-- Gestures live on the axis overlay: `mode` routes box/pan and
+                   `extentOverride` supplies the clamp guardrail the empty-lines
+                   model can't (round-7 item 2). -->
+              <PlotSurface bind:this={plotRef} model={sonoAxisModel} {mode} {viewState} overlay
+                extentOverride={sonoExtent ?? undefined} />
+              {#if $damping.open && sonoWindow && $damping.startTime !== null}
+                <DampingStartLine window={sonoWindow} value={$damping.startTime}
+                  busy={$damping.busy}
+                  onlive={(t) => damping.setStartTime(t)}
+                  oncommit={refitDamping} />
+              {/if}
+            </div>
+            {#if $damping.open && !narrow}
+              <div class="damp-side" class:grown={$damping.expanded !== null}>
+                <DampingPanel {damping} side onrefit={refitDamping} onclose={() => damping.close()}
+                  onsavefile={saveDampingFile} notify={notifyDamping} />
+              </div>
             {/if}
           </div>
-          {#if $damping.open}
-            <DampingPanel {damping} onrefit={refitDamping} onclose={() => damping.close()} />
+          {#if $damping.open && narrow}
+            <DampingPanel {damping} onrefit={refitDamping} onclose={() => damping.close()}
+              onsavefile={saveDampingFile} notify={notifyDamping} />
           {/if}
         </div>
       {:else if nyquist}
@@ -1069,7 +1127,7 @@
           <div class="bode-pane">
             <!-- Phase pane: shares x, owns its y. Route gestures to phaseRange
                  so a phase box-zoom never distorts the magnitude pane (item 5). -->
-            <PlotSurface model={phaseModel} {mode} {viewState}
+            <PlotSurface bind:this={phaseRef} model={phaseModel} {mode} {viewState}
               onCommit={(r) => viewState.setBodePhaseRange(r.x, r.y)}
               onAutoFit={() => viewState.setPhaseRange({ x: null, y: null })} />
           </div>
@@ -1163,6 +1221,33 @@
     position: relative; /* anchor for heat canvas / legend / fit chip */
     flex: 1;
     min-height: 0;
+  }
+  /* Sono + damping split (round-7c): sonogram left, damping column right.
+     While a chart is expanded the sonogram tucks away and the column grows
+     to fill the whole region. */
+  .sono-split {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+  .sono-split .plot-area.tucked {
+    display: none;
+  }
+  .damp-side {
+    flex: none;
+    width: min(400px, 44%);
+    min-width: 300px;
+    min-height: 0;
+    display: flex;
+  }
+  .damp-side > :global(.damp-panel) {
+    flex: 1;
+    min-width: 0;
+  }
+  .damp-side.grown {
+    flex: 1;
+    width: auto;
   }
   .plot-host.bode {
     display: flex;

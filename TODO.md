@@ -28,12 +28,17 @@ pick up alongside further feedback:
       returns empty local slices on recon/refine/mute recomputes — the
       same lifetime the old pink overlay had). Return local slices from
       those ops if the toggle should survive a mute.
-    - Damping panel: no export of the fit charts / band table yet
-      (PNG/CSV of EDT/T20/T30/T60/Qn would be natural).
+    - ~~Damping panel export~~ — DONE in round 7c: every chart saves as
+      its own PNG (same delivery + restyle contract as Save Figure);
+      the band table saves CSV.
 - **Exported figures never include the legend** — round-7 incidental
   finding: PNG/PDF export serialises only the plot SVG; the legend is a
   separate HTML div. Decide: draw a legend into the export SVG, or
-  document the omission.
+  document the omission. (The round-7c export audit confirmed this is
+  now the ONLY per-view export gap: Bode's missing phase pane was fixed
+  — both panes composite into one figure — and the sono heat was
+  already composited. Nyquist's brush strip stays out of the export by
+  design: it is a navigation control, not part of the figure.)
 
 - **CSD phase** — the glue must return the complex `Pxy` so the CSD
   pair view can show phase (currently magnitude only).

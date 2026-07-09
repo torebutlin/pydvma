@@ -179,6 +179,14 @@ Common controls:
     line** on the sonogram itself, so you choose where in time the free
     decay begins. Every control re-fits live.
 
+    On wide screens the panel sits in a column to the **right** of the
+    sonogram with the charts stacked; click a chart (or its ⤢ button)
+    to **expand it to fill the plot area** and click again to pop it
+    back. On narrow screens the panel docks below the sonogram. Every
+    chart has a **save** button — it exports a PNG styled exactly like
+    the main figures, to the same place (working folder or Downloads) —
+    and the band-metrics table saves as **CSV**.
+
 - **Calc Sonogram** computes the heat-map.
 
 ## Resolution and averaging

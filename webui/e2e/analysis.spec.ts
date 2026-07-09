@@ -167,6 +167,37 @@ function activeSlice(page: Page): Promise<{
  * `.dvma` via the fallback input and asserts Calc Sonogram is DISABLED with a
  * clear note — instead of the opaque deref error + white plot Tore hit.
  */
+test('Bode Save Figure exports BOTH panes (round-7c: the phase pane was silently dropped)', async ({ page }) => {
+  await page.goto('/?fixture=1');
+  await expect(page.getByTestId('tray-card-0')).toBeVisible();
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeVisible();
+
+  /** Drive Save Figure (PNG default) and read the raster's IHDR dimensions. */
+  const exportPngDims = async (): Promise<{ w: number; h: number }> => {
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Export' }).click();
+    const region = page.getByRole('region', { name: 'Export stage controls' });
+    const dl = page.waitForEvent('download');
+    await region.getByRole('button', { name: 'Export', exact: true }).click();
+    const buf = readFileSync((await (await dl).path())!);
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  };
+
+  // Baseline: the single-pane magnitude export fills the whole plot host.
+  const mag = await exportPngDims();
+
+  // Bode: two HALF-height panes stack in the same host, so the composited
+  // export is ~the full host height again. The old bug exported only the
+  // magnitude pane — i.e. ~HALF the baseline height — so full-height at the
+  // same width is the discriminating signal that both panes are present.
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+  await page.getByLabel('plot type').selectOption('bode');
+  await expect(page.locator('.bode-pane')).toHaveCount(2);
+  const bode = await exportPngDims();
+  expect(bode.w).toBe(mag.w);
+  expect(bode.h).toBeGreaterThan(mag.h * 0.85);
+});
+
 test('orphan-only tray disables Calc Sonogram with a clear note', async ({ page }) => {
   await page.goto('/');
   await loadViaFallback(page, fixturePath('orphan_tf_3col.dvma'));
@@ -470,9 +501,44 @@ test.describe('@engine', () => {
       return Math.max(0, ...lens);
     }).toBeGreaterThan(100);
 
+    // ── round-7c: wide layout — a chart EXPANDS to fill the plot region
+    //    (the sonogram tucks away) and pops back in. Bands mode is active,
+    //    so the EDC chart is the expansion target. ──
+    const canvas = page.getByTestId('sono-canvas');
+    await expect(canvas).toBeVisible();
+    const edcBefore = (await page.getByTestId('damping-edc').boundingBox())!;
+    await page.getByTestId('damping-expand-edc').click();
+    await expect(canvas).toBeHidden();
+    await expect.poll(async () => (await page.getByTestId('damping-edc').boundingBox())!.width)
+      .toBeGreaterThan(edcBefore.width * 1.5);
+    await page.getByTestId('damping-expand-edc').click();   // pop back in
+    await expect(canvas).toBeVisible();
+
+    // Charts save as their own figures; the band table saves CSV (download
+    // fallback — e2e has no working folder).
+    const dlPng = page.waitForEvent('download');
+    await page.getByTestId('damping-save-edc').click();
+    expect((await dlPng).suggestedFilename()).toMatch(/^damping-edc_.+\.png$/);
+    const dlCsv = page.waitForEvent('download');
+    await page.getByTestId('damping-save-bands-csv').click();
+    expect((await dlCsv).suggestedFilename()).toMatch(/^damping-bands_.+\.csv$/);
+
     // Close returns the plot area to full height.
     await page.getByTestId('damping-close').click();
     await expect(panel).toHaveCount(0);
+  });
+
+  test('narrow mode keeps the docked damping panel (no expand buttons)', async ({ page }) => {
+    await page.goto('/?fixture=1&narrow=1');
+    // Narrow layout has NO tray cards (the rail replaces them) — the enabled
+    // Fit damping button is the fixture-loaded readiness signal instead.
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Sonogram' }).click();
+    await expect(page.getByTestId('sono-fit-damping')).toBeEnabled({ timeout: 20_000 });
+    await page.getByTestId('sono-fit-damping').click();
+    await expect(page.getByTestId('damping-panel')).toBeVisible({ timeout: 200_000 });
+    // Dock layout: no side-column expansion affordances in narrow mode.
+    await expect(page.getByTestId('damping-expand-spectrum')).toHaveCount(0);
+    await expect(page.getByTestId('damping-expand-decay')).toHaveCount(0);
   });
 
   test('Clean Impulse toggles: on, raw restored off, cached back on (round-7b)', async ({ page }) => {
