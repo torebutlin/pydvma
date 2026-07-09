@@ -2,9 +2,34 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-09: **rounds 7 + 7b + 7c — the first lab-testing feedback
-batches — are fully landed, PUSHED, and DEPLOYED (CI green; the live
-app at torebutlin.github.io/pydvma/app/ carries them).** Round 7b:
+As of 2026-07-09 (late): **rounds 7 through 7h — the whole first
+lab-testing feedback day — are fully landed, PUSHED, and DEPLOYED (CI
+green; the live app carries 4c92545).** The 7d–7h additions on top of
+what's described below: legends + coherence now EXPORT with figures per
+their toggles (SVG legend overlay follows the restyle contract;
+e2e pixel-diff round-trip); the **JW-logger .mat import** was fixed
+twice over — coherence columns attach as `tf_coherence` instead of
+poisoning fits as fake TF channels (guitar file: fit railed at the
+window edge before, fn=182.13 ζ=0.0085 after), then the layout was
+matched to Tore's RECOVERED original MATLAB source (V2.9a: `freq`=fs,
+`dt2`=[n_time, n_spec_cols, n_son], yspec interleaves [H,coh] pairs) —
+survey of that source produced the "Old-logger feature review list" in
+TODO.md; **fit self-awareness**: per-mode phase-significance ⚠ (>30°
+from 0/180° → check TF type) + Refine divergence warning (>10% fn move
+→ toast with Undo); **the modal fit got a structural upgrade** —
+`estimate_global_constants` (linear re-solve of complex constants +
+per-channel global RH/RL·ω⁻² residues at fixed poles) now powers the
+global reconstruction, and `modal_refine` is VARIABLE PROJECTION
+(poles-only nonlinear; rescued a railed seed to a physical 234 Hz mode
+on the real guitar file); and **fits follow visible lines** — the
+legend/tray tri-state selects exactly which line(s) are fitted (solo =
+fit one), with the Fit card showing "N of M lines". Suites at close:
+pytest 328/3, vitest 642/1, `npm run check` 0/0, Playwright 77/7.
+Gotchas that bit: griffe-strict docstrings fail the docs CI (one param
+per Args line, returns in prose; gate with `python -m mkdocs build
+--strict`); Playwright ONLY from webui/.
+
+Earlier that day — round 7b:
 Clean Impulse is an on/off TOGGLE (raw stashed + cleaned cached, never
 re-cleans its own output; save writes the applied copy); legend
 defaults SE. Round 7c: CWT ladders widened (w0 + voices/octave to 64);
