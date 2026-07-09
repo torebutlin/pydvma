@@ -44,7 +44,7 @@ import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSetting
 import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import type { ViewId } from '../stores/viewstate';
-import type { ModalStore, ModalState, ReconArrays } from '../stores/modal';
+import type { ModalStore, ModalState, ReconArrays, ReconMode } from '../stores/modal';
 import type { Toasts } from '../stores/toast';
 import { normalizeFactors, normalizeUnits } from '../model/calibration';
 import { calibrationController } from '../stores/calibrationController';
@@ -1123,12 +1123,20 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   // Modal-fit pseudo-set + persistence (round-5 item 13)
   // --------------------------------------------------------------------- //
   //
-  // The modal model becomes a first-class TRAY CARD: its GLOBAL reconstruction
+  // The modal model becomes a first-class TRAY CARD: its reconstruction
   // registers as a `role:'fit'` selection set whose lines flow through the
   // normal visible-line pipeline (so tri-state / solo / legend "just work"),
   // and it PERSISTS as a `ModalData` item inside the dataset so Save / autosave
   // / Load round-trip it. `syncModal` reconciles BOTH from the modal store on
   // every change (driven by a store subscription).
+  //
+  // WHICH reconstruction the card draws is the store's `reconMode` (round-7
+  // item 6): 'global' (default) = the whole model on each set's measured axis;
+  // 'local' = the just-fitted modes dense over the fit window. Previously the
+  // local recon was an App-level pink overlay on the PRIMARY set only, drawn
+  // alongside the global pseudo-sets — feedback asked for local lines on ALL
+  // sets/channels and an explicit either/or toggle, so both slices now flow
+  // through the same pseudo-set pipeline and the mode names the legend rows.
   //
   // GUARD RAILS (one predicate — `role === 'fit'`): the pseudo-set is excluded
   // from `dataSetsView` (so the analysis "Dataset ▾" dropdowns + calc targets
@@ -1146,16 +1154,19 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * set's recon lines keep the same `tfColumn` remap, legend and per-line
    * tri-state as the measured lines, and the `role === 'fit'` exclusion
    * predicate is unchanged). `nChannels` is cached so a set whose channel
-   * count changes rebuilds its card. A single-set fit has ONE entry. */
-  const fitSets = new Map<number, { id: number; nChannels: number }>();
-  /** Reactive list of the live pseudo-set selection ids (drives `fitVisible`,
-   *  `setFitVisible` and the exposed `fitSetId` prop). */
+   * count changes rebuilds its card; `mode` so a reconMode flip renames the
+   * card in place (per-line tri-state survives the flip). A single-set fit
+   * has ONE entry. */
+  const fitSets = new Map<number, { id: number; nChannels: number; mode: ReconMode }>();
+  /** Reactive list of the live pseudo-set selection ids (drives the exposed
+   *  `fitSetId` prop). */
   const fitSetIdsW = writable<number[]>([]);
   /** The `ModalData` item kept inside `dataset.items` (persistence), or null. */
   let modalItem: DvmaItem | null = null;
-  /** Last global recon synced per source setId (by reference) so `syncModal`
-   *  skips no-op derived emits; and the last matrix synced for persistence. */
-  const lastGlobalBySet = new Map<number, ReconArrays | null>();
+  /** Last CHOSEN recon slice synced per source setId (by reference) so
+   *  `syncModal` skips no-op derived emits — a reconMode flip changes the
+   *  reference, so it refeeds; and the last matrix synced for persistence. */
+  const lastSliceBySet = new Map<number, ReconArrays | null>();
   let lastMatrix: MarshalledArray | null = null;
 
   /** id_link for a source set = its TimeData `unique_id` (or `id_link`). */
@@ -1225,7 +1236,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const rec = fitSets.get(srcId);
     if (!rec) return;
     fitSets.delete(srcId);
-    lastGlobalBySet.delete(srcId);
+    lastSliceBySet.delete(srcId);
     selection.removeSet(rec.id);
     derived.update((d) => { const n = { ...d }; delete n[rec.id]; return n; });
   }
@@ -1246,17 +1257,32 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     modalItem = null;
   }
 
+  /** The recon slice `reconMode` picks from a target (round-7 item 6). */
+  function chosenSlice(t: ModalState['targets'][number], mode: ReconMode): ReconArrays | null {
+    return mode === 'local' ? t.local : t.global;
+  }
+
+  /** Legend/tray name for a target's fit pseudo-set — carries the reconMode
+   *  so the legend says WHICH reconstruction the lines are (round-7 item 6). */
+  function fitSetName(srcId: number, mode: ReconMode): string {
+    return `Modal fit ${mode} (${nameOf(srcId)})`;
+  }
+
   /**
    * Reconcile the fit pseudo-set(s) + the ModalData item with the modal store.
    * Called on every modal-store change (subscription below). Reference checks
-   * keep idempotent emits (mt / toggle / pushUndo) cheap — the set/derived/
-   * dataset only change when the recon or matrix reference actually changes.
+   * keep idempotent emits (mt / pushUndo) cheap — the set/derived/dataset only
+   * change when the chosen recon or matrix reference actually changes.
    *
    * - ONE pseudo-set per target set the shared-pole model spans (item 7), each
-   *   existing only while that set has a non-empty GLOBAL reconstruction slice
-   *   to draw (its lines ARE that slice); the `tf` slice carries the set's own
-   *   out/in geometry so the same `tfColumn` remap + legend as the measured
-   *   lines apply. A single-set fit has ONE pseudo-set — unchanged behaviour.
+   *   existing only while that set has a non-empty slice OF THE KIND `reconMode`
+   *   picks (round-7 item 6: 'local' or 'global' — its lines ARE that slice).
+   *   In 'local' mode that means lines exist only straight after a Fit (the
+   *   engine returns an empty local slice for recon/refine/mute recomputes,
+   *   matching the old transient pink overlay's lifetime). The `tf` slice
+   *   carries the set's own out/in geometry so the same `tfColumn` remap +
+   *   legend as the measured lines apply. A reconMode flip renames each card
+   *   in place and refeeds its slice, so per-line tri-state survives the flip.
    * - The ModalData item persists whenever a model exists (even before the
    *   recon lands — e.g. a loaded model whose TFs are not yet computed).
    */
@@ -1264,10 +1290,14 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     if (!modal) return;
     const m = modal.get();
     const hasModel = !!m.matrix && m.modes.length > 0 && m.setId !== null;
+    const mode = m.reconMode;
 
     // ---- Pseudo-sets (visible recon lines), one per drawable target ----
     const drawable = hasModel
-      ? m.targets.filter((t) => t.global && ((t.global.data.shape[1] ?? 0) > 0))
+      ? m.targets.filter((t) => {
+          const s = chosenSlice(t, mode);
+          return s && ((s.data.shape[1] ?? 0) > 0);
+        })
       : [];
     const wantIds = new Set(drawable.map((t) => t.setId));
     // Drop pseudo-sets whose source set no longer has a drawable slice.
@@ -1284,16 +1314,21 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const colors = Array.from({ length: t.nChannels },
           (_, c) => selection.lineColor(t.setId, c) ?? FIT_FALLBACK_COLOR);
         const id = selection.addSet({
-          name: `Modal fit (${nameOf(t.setId)})`,
+          name: fitSetName(t.setId, mode),
           nChannels: t.nChannels, durationS: 0, timestamp: '', role: 'fit', colors,
         });
-        rec = { id, nChannels: t.nChannels };
+        rec = { id, nChannels: t.nChannels, mode };
         fitSets.set(t.setId, rec);
+      } else if (rec.mode !== mode) {
+        // Mode flipped: rename in place (legend reflects the mode) rather than
+        // rebuilding, so per-line tri-state / custom labels survive.
+        selection.rename(rec.id, fitSetName(t.setId, mode));
+        rec.mode = mode;
       }
-      const g = t.global!;
-      if (lastGlobalBySet.get(t.setId) !== g) {
-        setDerived(rec.id, { tf: { axis: g.axis, data: g.data, chIn: t.chIn, nChannels: t.nChannels } });
-        lastGlobalBySet.set(t.setId, g);
+      const s = chosenSlice(t, mode)!;
+      if (lastSliceBySet.get(t.setId) !== s) {
+        setDerived(rec.id, { tf: { axis: s.axis, data: s.data, chIn: t.chIn, nChannels: t.nChannels } });
+        lastSliceBySet.set(t.setId, s);
       }
     }
     fitSetIdsW.set(Array.from(fitSets.values()).map((r) => r.id));
@@ -1313,41 +1348,14 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   // Drive `syncModal` off every modal-store change: fit / reject / delete /
-  // refine / mute-recon / undo / clear / reset all flow through here, so the
-  // tray card + persistence stay consistent with the model with no per-action
-  // wiring. Fires once at construction (empty model → no-op).
+  // refine / mute-recon / undo / clear / reset / reconMode flip all flow
+  // through here, so the tray card + persistence stay consistent with the
+  // model with no per-action wiring. Fires once at construction (empty model
+  // → no-op).
   if (modal) modal.subscribe(() => syncModal());
 
   /** Primary (first) pseudo-set id, exposed for App as a single-store prop. */
   const fitSetIdW = svelteDerived(fitSetIdsW, ($ids) => ($ids.length ? $ids[0] : null));
-
-  /**
-   * Whether ANY modal-fit pseudo-set is currently shown (ANY line on/fade) —
-   * backs the Fit card's "Global" toggle STATE (round-5 item 13). For a
-   * shared-pole fit spanning several sets (item 7) this is true when any one of
-   * their recon cards has a visible line.
-   */
-  const fitVisible = svelteDerived(
-    [fitSetIdsW, selection.state, selection.sets],
-    ([$ids, $state, $sets]) => {
-      for (const id of $ids) {
-        const rec = $sets.find((s) => s.id === id);
-        if (!rec) continue;
-        for (let c = 0; c < rec.nChannels; c++) if ($state(id, c) !== 'off') return true;
-      }
-      return false;
-    },
-  );
-
-  /**
-   * Show/hide ALL modal-fit pseudo-sets — the Fit card's "Global" toggle
-   * MAPPING (round-5 item 13): their recon lines are the global reconstruction,
-   * so "Global on/off" is simply every pseudo-set's all-lines on/off (per-line
-   * control still lives on each tray card + legend).
-   */
-  function setFitVisible(visible: boolean): void {
-    for (const id of get(fitSetIdsW)) selection.setSetVisible(id, visible);
-  }
 
   /**
    * Clear the modal model from the tray-card delete (round-5 item 13). Empties
@@ -1672,8 +1680,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     getCalibration, setCalFactors,
     /** Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match. */
     getIwPower, setIwPower, calcBestMatch,
-    /** Modal-fit pseudo-set (round-5 item 13): visibility state + toggle + clear. */
-    fitVisible, setFitVisible, clearFit,
+    /** Modal-fit pseudo-set (round-5 item 13): tray-card delete-with-undo.
+     *  (Line visibility is the normal legend/tray tri-state; WHICH recon the
+     *  lines draw is the modal store's `reconMode` — round-7 item 6.) */
+    clearFit,
     /** The modal-fit pseudo-set's selection id store (null when none), for App. */
     fitSetId: { subscribe: fitSetIdW.subscribe },
     /**

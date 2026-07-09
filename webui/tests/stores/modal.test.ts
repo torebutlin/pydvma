@@ -59,40 +59,35 @@ test('an empty M (reject to nothing) clears matrix/modes and setId', () => {
   expect(s.global).toBeNull();
 });
 
-test('showGlobal toggles independently and survives a fresh fit', () => {
+test('reconMode defaults to global, setReconMode flips it, and it survives a fresh fit', () => {
   const m = createModalStore();
-  expect(get(m).showGlobal).toBe(false);
-  m.toggleGlobal();
-  expect(get(m).showGlobal).toBe(true);
+  // 'global' is the default — the durable slice, so today's default look.
+  expect(get(m).reconMode).toBe('global');
+  m.setReconMode('local');
+  expect(get(m).reconMode).toBe('local');
   m.applyResult(fitResult(), [{ setId: 1, chIn: 0, nChannels: 2, nCols: 1 }]);
-  // A new fit must NOT silently flip the overlay toggle off.
-  expect(get(m).showGlobal).toBe(true);
-  m.setShowGlobal(false);
-  expect(get(m).showGlobal).toBe(false);
+  // A new fit must NOT silently flip the chosen mode back.
+  expect(get(m).reconMode).toBe('local');
+  m.setReconMode('global');
+  expect(get(m).reconMode).toBe('global');
 });
 
 test('reset returns to the empty state', () => {
   const m = createModalStore();
   m.applyResult(fitResult(), [{ setId: 1, chIn: 0, nChannels: 2, nCols: 1 }]);
-  m.toggleGlobal();
+  m.setReconMode('local');
   m.reset();
   const s = get(m);
   expect(s.setId).toBeNull();
   expect(s.modes).toEqual([]);
   expect(s.matrix).toBeNull();
-  expect(s.showGlobal).toBe(false);
+  expect(s.reconMode).toBe('global');
   expect(s.muted).toEqual([]);
-  expect(s.showLocal).toBe(true);
   expect(s.undo).toBeNull();
 });
 
-test('showLocal toggles independently (default on) and mt mirrors the card', () => {
+test('mt mirrors the card', () => {
   const m = createModalStore();
-  expect(get(m).showLocal).toBe(true);   // local overlay shown by default
-  m.toggleLocal();
-  expect(get(m).showLocal).toBe(false);
-  m.setShowLocal(true);
-  expect(get(m).showLocal).toBe(true);
   expect(get(m).mt).toBe('acc');
   m.setMt('vel');
   expect(get(m).mt).toBe('vel');

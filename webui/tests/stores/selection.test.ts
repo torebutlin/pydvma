@@ -346,7 +346,7 @@ test('a fit set adopts supplied colours verbatim and does NOT shift later data c
   expect(sel.lineColor(dataId, 0)).toBe(LINE_PALETTE[12 % LINE_PALETTE.length]);
 });
 
-test('setSetVisible forces a whole set on/off (the Global toggle mapping)', () => {
+test('setSetVisible forces a whole set on/off (2-state, unlike cycleSet)', () => {
   sel.setSetVisible(2, false);
   for (let ch = 0; ch < 8; ch++) expect(get(sel.state)(2, ch)).toBe('off');
   sel.setSetVisible(2, true);

@@ -10,10 +10,11 @@
  *   - `matrix`   — the marshalled `M` the store re-sends (opaque to the UI);
  *   - `modes`    — per-mode `{fn, zn, Q}` for the floating mode chip
  *                  (mockup `#fitChip`, round2-bench.html:1602-1606);
- *   - `local`    — the just-fitted modes' LOCAL reconstruction (pink solid
- *                  overlay, dense over the fit window);
- *   - `global`   — the whole-model GLOBAL reconstruction (grey dashed overlay),
- *                  recomputed by the engine EXCLUDING muted modes.
+ *   - `local`    — the just-fitted modes' LOCAL reconstruction (dense over the
+ *                  fit window; empty again after any non-'fit' recompute);
+ *   - `global`   — the whole-model GLOBAL reconstruction (each set's own
+ *                  measured axis), recomputed by the engine EXCLUDING muted
+ *                  modes.
  *
  * Round-4 additions:
  *   - `muted`    — per-mode mute flags. A muted mode stays in `M` and in the
@@ -22,9 +23,15 @@
  *                  `action:'recon'` call carrying the mute indices). Preserved
  *                  across a mute-recompute / refine (mode COUNT unchanged),
  *                  reset whenever the mode set changes (fit / delete).
- *   - `showLocal`/`showGlobal` — independent visibility toggles for the two
- *                  overlays (App gates `local` on `showLocal`; the model gates
- *                  `global` on `showGlobal`).
+ *   - `reconMode` (round-7 item 6, superseding the round-4 `showLocal` /
+ *                  `showGlobal` pair) — WHICH reconstruction the fit
+ *                  pseudo-sets draw: 'local' or 'global'. Both were previously
+ *                  drawable at once (local as an App-level pink overlay on the
+ *                  primary set only), which read as "bold line for one channel
+ *                  + dashed lines for all"; user feedback asked for local
+ *                  lines for ALL sets/channels and an explicit either/or
+ *                  toggle, so the actions layer now feeds the CHOSEN slice to
+ *                  every target's pseudo-set (legend names carry the mode).
  *   - `mt`       — the current measurement type ('acc'|'vel'|'dsp'), mirrored
  *                  from the Fit card so per-mode deletes / mutes recompute the
  *                  overlays with the right `(iω)^p` power even though the chip
@@ -45,6 +52,14 @@ import type { MeasurementType } from '../analysis/actions';
 /** One fitted mode's summary for the chip table (`Q = 1/(2ζ)`). */
 export interface ModalMode { fn: number; zn: number; Q: number; }
 
+/**
+ * Which reconstruction the modal-fit pseudo-sets draw (round-7 item 6):
+ * `'local'` = the just-fitted modes over the fit window (empty until the next
+ * Fit after any other recompute), `'global'` = the whole model over each set's
+ * measured axis. An either/or choice, not two independent overlays.
+ */
+export type ReconMode = 'local' | 'global';
+
 /** A reconstruction overlay: its own frequency axis + decoded complex TF. */
 export interface ReconArrays { axis: Float64Array; data: DecodedArray; }
 
@@ -54,8 +69,9 @@ export interface ReconArrays { axis: Float64Array; data: DecodedArray; }
  * the same `fn`/`zn` per mode, and each set contributes its OWN reconstruction
  * columns. Each `FitTarget` records that set's out/in geometry (`chIn` /
  * `nChannels` — `null` `chIn` for an orphan TF) plus its slice of the joint
- * `local` (pink) and `global` (dashed) reconstruction. `nCols` is the set's TF
- * column count (used to size an empty slice). A single-set fit has ONE target.
+ * `local` and `global` reconstruction (the fit pseudo-set draws whichever one
+ * `reconMode` picks). `nCols` is the set's TF column count (used to size an
+ * empty slice). A single-set fit has ONE target.
  */
 export interface FitTarget {
   setId: number;
@@ -89,12 +105,16 @@ export interface ModalState {
   /** Engine message from the last fit (poor-fit / phase warnings). */
   message: string;
   /**
-   * Local (pink) reconstruction of the just-fitted modes for the PRIMARY
-   * target (`targets[0]`), or `null`. Mirrors `targets[0].local` so the
-   * App-level pink overlay (drawn on the primary set) needs no target array.
+   * LOCAL reconstruction (just-fitted modes, dense over the fit window) of the
+   * PRIMARY target (`targets[0]`), or `null`. A convenience mirror — the
+   * drawable per-set slices live on `targets`.
    */
   local: ReconArrays | null;
-  /** Global (grey dashed) reconstruction of the PRIMARY target, or `null`. */
+  /**
+   * GLOBAL (whole-model) reconstruction of the PRIMARY target, or `null`.
+   * Mirrors `targets[0].global`; also read as the "recon already computed"
+   * flag by the deferred load-restore (`actions.maybeRestoreModalRecon`).
+   */
   global: ReconArrays | null;
   /**
    * The sets this (possibly shared-pole) model spans, in reconstruction-column
@@ -103,10 +123,12 @@ export interface ModalState {
    * `setId`/`chIn`/`nChannels`/`local`/`global` above mirror `targets[0]`.
    */
   targets: FitTarget[];
-  /** Whether the global reconstruction overlay is shown. */
-  showGlobal: boolean;
-  /** Whether the local reconstruction overlay is shown (default on). */
-  showLocal: boolean;
+  /**
+   * Which reconstruction the fit pseudo-sets draw (round-7 item 6). Default
+   * 'global' — the whole-model recon is the durable one (the local slice is
+   * only non-empty straight after a Fit), so it is today's default look.
+   */
+  reconMode: ReconMode;
   /** One-level undo snapshot (state before the last destructive action). */
   undo: UndoSnapshot | null;
 }
@@ -146,7 +168,7 @@ function empty(): ModalState {
   return {
     setId: null, chIn: 0, nChannels: 0, matrix: null,
     modes: [], muted: [], mt: 'acc', message: '',
-    local: null, global: null, targets: [], showGlobal: false, showLocal: true, undo: null,
+    local: null, global: null, targets: [], reconMode: 'global', undo: null,
   };
 }
 
@@ -186,8 +208,8 @@ export function createModalStore() {
    * recon slice comes from the matching `slices[i]`. `targets[0]` is mirrored
    * onto the top-level `setId`/`chIn`/`nChannels`/`local`/`global` fields.
    *
-   * Preserves the `showGlobal` / `showLocal` toggles and the `undo` slot across
-   * updates. `muted` is preserved when the mode COUNT is unchanged (a
+   * Preserves the `reconMode` choice and the `undo` slot across updates.
+   * `muted` is preserved when the mode COUNT is unchanged (a
    * mute-recompute or a refine leaves indices meaningful) and reset to all-false
    * otherwise (fit / delete shift the rows).
    */
@@ -292,14 +314,13 @@ export function createModalStore() {
      * engine call. Backs the fit tray card's delete-with-undo.
      */
     clearWithUndo: () => store.update((s) => ({ ...empty(), undo: snapshot(s) })),
-    /** Show/hide the global reconstruction overlay. */
-    setShowGlobal: (b: boolean) => store.update((s) => ({ ...s, showGlobal: b })),
-    /** Toggle the global reconstruction overlay. */
-    toggleGlobal: () => store.update((s) => ({ ...s, showGlobal: !s.showGlobal })),
-    /** Show/hide the local reconstruction overlay. */
-    setShowLocal: (b: boolean) => store.update((s) => ({ ...s, showLocal: b })),
-    /** Toggle the local reconstruction overlay. */
-    toggleLocal: () => store.update((s) => ({ ...s, showLocal: !s.showLocal })),
+    /**
+     * Pick which reconstruction the fit pseudo-sets draw (round-7 item 6).
+     * A store update, so the actions layer's `syncModal` subscription refeeds
+     * every target's pseudo-set with the newly chosen slice — no extra wiring.
+     */
+    setReconMode: (mode: ReconMode) =>
+      store.update((s) => (s.reconMode === mode ? s : { ...s, reconMode: mode })),
     /** Mirror the Fit card's measurement type (used by recon recompute). */
     setMt: (mt: MeasurementType) => store.update((s) => (s.mt === mt ? s : { ...s, mt })),
     /** Toggle mode `i`'s mute flag (the recompute is driven by the caller). */

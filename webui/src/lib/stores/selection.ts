@@ -334,9 +334,11 @@ export function createSelection() {
     },
     /**
      * Force every line of set `id` to a single state: `'on'` (visible) or
-     * `'off'` (hidden). The 2-state show/hide the modal-fit card's "Global"
-     * toggle maps to (round-5 item 13) — distinct from `cycleSet`'s 3-state
-     * advance. Unknown id is a no-op.
+     * `'off'` (hidden) — a 2-state whole-set show/hide, distinct from
+     * `cycleSet`'s 3-state advance. Unknown id is a no-op. (Formerly backed
+     * the Fit card's "Global" button; that button became the fit-lines
+     * local|global toggle in round-7 item 6, so this currently has no UI
+     * caller — kept as the generic programmatic whole-set show/hide.)
      */
     setSetVisible(id: number, visible: boolean) {
       const rec = findSet(id); if (!rec) return;

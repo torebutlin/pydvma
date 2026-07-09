@@ -2,17 +2,23 @@ import { expect, test } from '@playwright/test';
 
 /**
  * @engine — the modal-FIT golden path (Wave-A Task A1; round-4 items 9-10;
- * round-5 item 13 fit-as-tray-card + .dvma round-trip).
+ * round-5 item 13 fit-as-tray-card + .dvma round-trip; round-7 item 6
+ * fit-lines local|global toggle).
  *
  * Loads the checked-in impulse.dvma via `?fixture=1`, computes the transfer
  * function, switches to the Fit stage (enabled once a TF exists — the
  * `fitEngine` capability), and exercises:
  *   - Fit 2 → two mode rows in the floating chip (the fixture has several
  *     evenly-spaced resonances, so the peak-split finds two);
- *   - the pink local-reconstruction overlay (`stroke=#be185d`) renders;
- *   - round-5 item 13: the GLOBAL reconstruction becomes a "Modal fit" TRAY
- *     CARD whose recon lines draw DASHED through the normal visible pipeline;
- *     the Fit card's "Global" toggle shows/hides that pseudo-set's lines;
+ *   - round-5 item 13: the reconstruction becomes a "Modal fit" TRAY CARD
+ *     whose recon lines draw DASHED through the normal visible pipeline
+ *     (default mode 'global' → the card is named "Modal fit global (…)");
+ *   - round-7 item 6: the Fit card's fit-lines toggle (local | global) swaps
+ *     WHICH reconstruction the pseudo-set carries — the legend/tray name
+ *     follows the mode ("Modal fit local (…)" ↔ "Modal fit global (…)") and
+ *     the dashed lines persist across the flip (the old primary-set-only pink
+ *     local overlay is gone — local lines are ordinary pseudo-set lines for
+ *     all channels now);
  *   - Refine (round-4 item 10): simultaneously refines both modes and either
  *     improves or auto-reverts — either way NO error banner and the model
  *     stays valid (two modes);
@@ -60,26 +66,27 @@ test.describe('@engine', () => {
     await expect(chip).toContainText('mode 1', { timeout: 60_000 });
     await expect(chip).toContainText('mode 2');
 
-    // The pink local reconstruction overlay renders.
-    await expect(page.locator('path[data-testid="plot-line"][stroke="#be185d"]').first())
-      .toBeVisible({ timeout: 20_000 });
-
-    // Round-5 item 13: the GLOBAL reconstruction is now a "Modal fit" TRAY CARD
-    // whose recon lines draw DASHED at the measured line-width (1.5). The card
-    // appears and the dashed recon line renders on the plot. (The coherence
-    // overlay is also dashed but drawn at width 1, so match width 1.5 to isolate
-    // the recon.)
-    await expect(page.getByText(/Modal fit/).first()).toBeVisible({ timeout: 20_000 });
+    // Round-5 item 13: the reconstruction is a "Modal fit" TRAY CARD whose
+    // recon lines draw DASHED at the measured line-width (1.5) — named for the
+    // DEFAULT reconstruction mode, 'global' (round-7 item 6). (The coherence
+    // overlay is also dashed but drawn at width 1, so match width 1.5 to
+    // isolate the recon.)
+    await expect(page.getByText(/Modal fit global/).first()).toBeVisible({ timeout: 20_000 });
     const recon = page.locator('path[data-testid="plot-line"][stroke-dasharray="4 3"][stroke-width="1.5"]');
     await expect(recon.first()).toBeVisible({ timeout: 20_000 });
 
-    // The "Global" toggle maps to the pseudo-set's visibility: hiding it drops
-    // the dashed recon line; showing it brings it back (per-line control still
-    // lives on the tray card + legend).
-    const globalBtn = page.getByRole('button', { name: 'Global', exact: true });
-    await globalBtn.click();
-    await expect(recon).toHaveCount(0, { timeout: 20_000 });
-    await globalBtn.click();
+    // Round-7 item 6: the fit-lines toggle swaps the pseudo-set between the
+    // LOCAL (just-fitted, non-empty right after a Fit) and GLOBAL recon — the
+    // legend/tray names follow the mode, and the lines stay dashed pseudo-set
+    // lines throughout (no separate pink overlay any more).
+    await expect(page.getByTestId('fit-lines-toggle')).toBeVisible();
+    await page.getByTestId('fit-lines-local').click();
+    await expect(page.getByText(/Modal fit local/).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/Modal fit global/)).toHaveCount(0);
+    await expect(recon.first()).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId('fit-lines-global').click();
+    await expect(page.getByText(/Modal fit global/).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/Modal fit local/)).toHaveCount(0);
     await expect(recon.first()).toBeVisible({ timeout: 20_000 });
 
     // Refine both modes simultaneously. Whether it improves or auto-reverts,
@@ -154,7 +161,9 @@ test.describe('@engine', () => {
     await expect(restoredChip).toContainText('mode 2');
 
     // The "Modal fit" tray card is rebuilt once the restore recon completes
-    // (the engine reboots from cached wheels on the reloaded page).
-    await expect(page.getByText(/Modal fit/).first()).toBeVisible({ timeout: 200_000 });
+    // (the engine reboots from cached wheels on the reloaded page). The restore
+    // recon produces only a GLOBAL slice (a 'recon' recompute has no just-fitted
+    // modes) and the mode defaults to 'global', so the card carries that name.
+    await expect(page.getByText(/Modal fit global/).first()).toBeVisible({ timeout: 200_000 });
   });
 });

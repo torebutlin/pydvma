@@ -72,7 +72,9 @@
   const toasts = createToasts();
   // Modal-fit state (Task A1): one model per dataset, owned here and shared
   // with the actions (which run the stateless calc_fit and push results in)
-  // and the Fit card (controls) + the plot recon overlay.
+  // and the Fit card (controls). The recon lines themselves are the fit
+  // PSEUDO-SETS the actions layer registers (round-5 item 13; round-7 item 6)
+  // — there is no App-level recon overlay any more.
   const modal = createModalStore();
   const actions = createActions(engine, selection, analysisSettings, modal, toasts);
   // Acquisition store (Plan 2): manages Web Audio device enumeration +
@@ -620,36 +622,19 @@
     || (view === 'tf' && (plotType === 'mag' || plotType === 'bode')),
   );
 
-  /**
-   * Ephemeral LOCAL reconstruction overlay (Task A1; round-5 item 13). Drawn
-   * ONLY on the Fit stage (which reuses view 'tf') — the transient pink
-   * "just-fitted" feedback, not a dataset. The GLOBAL reconstruction is NO
-   * LONGER an App-level overlay: it is now the modal-fit PSEUDO-SET (a tray
-   * card whose dashed lines flow through the normal visible pipeline; see
-   * `syncModal` in actions), so it gets tri-state / solo / legend for free.
-   * We therefore pass ONLY `local` here (global omitted, showGlobal false) so
-   * the model draws just the pink overlay and never double-draws the global.
-   */
-  const modalState = modal;   // subscribe with $modalState
-  const reconArg = $derived.by(() => {
-    if ($activeStage !== 'fit') return null;
-    const m = $modalState;
-    if (m.setId === null || !m.local) return null;
-    return {
-      setId: m.setId, chIn: m.chIn, nChannels: m.nChannels,
-      // Local overlay honours its own visibility toggle (round-4 item 9).
-      local: m.showLocal ? m.local : undefined,
-      global: undefined,        // global recon is the pseudo-set now
-      showGlobal: false,
-    };
-  });
+  // NOTE (round-7 item 6): there is NO App-level reconstruction overlay any
+  // more. Both the LOCAL (just-fitted) and GLOBAL (whole-model) recon draw as
+  // the modal-fit PSEUDO-SETS' dashed lines (see `syncModal` in actions) — one
+  // per spanned set, all channels, with legend rows + tri-state — and the Fit
+  // card's fit-lines toggle picks WHICH of the two slices they carry. The old
+  // primary-set-only pink `recon` overlay (round-4 item 9) is gone.
 
   /** Single-pane model for the active view (magnitude pane when Bode). */
   const model = $derived<PlotModel>(
     buildPlotModel({
       view, sets: setArrays, visible, freqMode, tfPlotType: plotType,
       coherence, coherenceAuto, freqRange: $sharedFreqRange, range, xScale, yScale,
-      nyquistRange, recon: reconArg,
+      nyquistRange,
     }),
   );
 

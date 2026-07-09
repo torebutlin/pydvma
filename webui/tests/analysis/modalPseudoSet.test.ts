@@ -8,14 +8,17 @@ import type { EngineStore } from '../../src/lib/stores/engine';
 import type { DvmaDataset, DvmaItem } from '../../src/lib/model/dataset';
 
 /**
- * Modal-fit PSEUDO-SET + `.dvma` persistence (round-5 item 13).
+ * Modal-fit PSEUDO-SET + `.dvma` persistence (round-5 item 13; round-7 item 6).
  *
- * The modal model becomes a `role:'fit'` tray set whose global reconstruction
- * flows through the visible-line pipeline, and it persists as a `ModalData`
- * item inside the dataset. These tests exercise that lifecycle at the actions
- * layer with a fake engine (no pyodide): registration on fit, exclusion from
- * every measured-data consumer, the ModalData item, unregistration on clear,
- * the Global-toggle mapping, and load-restore of a saved model.
+ * The modal model becomes a `role:'fit'` tray set whose reconstruction flows
+ * through the visible-line pipeline — the store's `reconMode` picks WHICH
+ * slice ('local' just-fitted vs 'global' whole-model, legend names carry the
+ * mode) — and it persists as a `ModalData` item inside the dataset. These
+ * tests exercise that lifecycle at the actions layer with a fake engine (no
+ * pyodide): registration on fit, exclusion from every measured-data consumer,
+ * the ModalData item, unregistration on clear, the reconMode toggle (slice
+ * swap, in-place rename, empty-slice skipping), and load-restore of a saved
+ * model.
  */
 
 const real = (shape: number[], data: number[]) =>
@@ -87,7 +90,8 @@ test('a fit registers a role:fit pseudo-set with a recon tf slice, excluded from
   const fitSets = get(sel.setsView).filter((s) => s.role === 'fit');
   expect(fitSets).toHaveLength(1);
   const fit = fitSets[0];
-  expect(fit.name).toContain('Modal fit');
+  // Default reconMode is 'global' — the legend name carries the mode (item 6).
+  expect(fit.name).toContain('Modal fit global');
   expect(fit.nChannels).toBe(2);                       // same geometry as the target
   // Colours mirror the target set (data set 0).
   expect(sel.lineColor(fit.id, 1)).toBe(sel.lineColor(0, 1));
@@ -145,19 +149,58 @@ test('rejecting the model to empty removes the pseudo-set and the ModalData item
   expect(get(actions.dataset)!.items.some((it) => it.kind === 'ModalData')).toBe(false);
 });
 
-test('setFitVisible / fitVisible drive the pseudo-set all-lines (the Global toggle mapping)', async () => {
-  const { actions, sel } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+test('reconMode swaps the pseudo-set slice local↔global and renames it IN PLACE (round-7 item 6)', async () => {
+  const { actions, modal, sel } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
   actions.loadDataset(makeDataset());
   await actions.calcTf('all');
   await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
-  expect(get(actions.fitVisible)).toBe(true);            // shown on fit
 
-  actions.setFitVisible(false);
-  expect(get(actions.fitVisible)).toBe(false);
+  // Default 'global': the pseudo-set carries the GLOBAL slice (axis [0, 1]).
   const fit = get(sel.setsView).find((s) => s.role === 'fit')!;
-  expect(get(sel.state)(fit.id, 1)).toBe('off');
-  actions.setFitVisible(true);
-  expect(get(actions.fitVisible)).toBe(true);
+  expect(fit.name).toContain('Modal fit global');
+  expect(get(actions.derived)[fit.id]!.tf!.axis[0]).toBe(0);
+  expect(get(actions.derived)[fit.id]!.tf!.data.re[0]).toBe(0.5);
+
+  // Flip to 'local': SAME set id (per-line tri-state survives), renamed, and
+  // the slice is now the LOCAL recon (dense fit-window axis starting at 60).
+  modal.setReconMode('local');
+  const local = get(sel.setsView).find((s) => s.role === 'fit')!;
+  expect(local.id).toBe(fit.id);
+  expect(local.name).toContain('Modal fit local');
+  expect(get(actions.derived)[fit.id]!.tf!.axis[0]).toBe(60);
+  expect(get(actions.derived)[fit.id]!.tf!.data.re[0]).toBe(1);
+
+  // And back: renamed again, global slice refed.
+  modal.setReconMode('global');
+  expect(get(sel.setsView).find((s) => s.role === 'fit')!.name).toContain('Modal fit global');
+  expect(get(actions.derived)[fit.id]!.tf!.axis[0]).toBe(0);
+});
+
+test('an EMPTY chosen slice drops the pseudo-set: local mode after a mute-recon (which returns no local)', async () => {
+  // The engine returns a LOCAL recon only for a fresh 'fit'; a 'recon'
+  // recompute (mute change) carries an empty local slice + a fresh global.
+  const globalOnly = () => ({
+    ...fitResult(),
+    recon_freq_axis: real([0], []), recon_tf_data: cplx([0, 1], []),
+  });
+  const { actions, modal, sel } = harness((op, p) =>
+    op === 'calc_tf' ? tfResult()
+      : op === 'calc_fit' ? (p.action === 'recon' ? globalOnly() : fitResult()) : {});
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  modal.setReconMode('local');
+  expect(get(sel.setsView).some((s) => s.role === 'fit')).toBe(true);
+
+  // Mute-style recompute: local comes back empty → no local lines to draw.
+  await actions.calcFit('all', null, 'acc', 'recon');
+  expect(get(sel.setsView).some((s) => s.role === 'fit')).toBe(false);
+
+  // The GLOBAL slice is still there — flipping the toggle brings the card back.
+  modal.setReconMode('global');
+  const fit = get(sel.setsView).find((s) => s.role === 'fit')!;
+  expect(fit.name).toContain('Modal fit global');
+  expect(get(actions.derived)[fit.id]?.tf).toBeTruthy();
 });
 
 test('clearFit empties the model (pseudo-set + item gone); undo restores it', async () => {

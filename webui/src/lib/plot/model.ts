@@ -355,31 +355,7 @@ export interface PlotModelArgs {
    * phase/real/imag/Nyquist and the time view.
    */
   yScale?: 'lin' | 'log';
-  /**
-   * Modal-reconstruction overlay (Task A1) — extra TF PlotLines drawn on top
-   * of the measured TF, the coherence-overlay precedent (`plot/model.ts` TF
-   * branch). `null`/absent ⇒ nothing drawn (the non-Fit stages). Present only
-   * on the Fit stage. For each VISIBLE measured line whose set is `setId`, the
-   * matching reconstruction column (same out/in remap via `tfColumn`, so plot
-   * and legend never disagree — Task R4) is overlaid:
-   *   - `local`  → pink solid (`#be185d`), the just-fitted modes over the fit
-   *     window (mockup round2-bench.html:1588);
-   *   - `global` → grey dashed (`#66708a`), the whole-model residual-free
-   *     reconstruction, drawn only when `showGlobal` (the "Reconstruction"
-   *     toggle) is on (mockup:1589).
-   * `chIn`/`nChannels` are the target set's TF geometry (for `tfColumn`).
-   */
-  recon?: {
-    setId: number; chIn: number | null; nChannels: number;
-    local?: { axis: Float64Array; data: DecodedArray };
-    global?: { axis: Float64Array; data: DecodedArray };
-    showGlobal: boolean;
-  } | null;
 }
-
-/** Recon overlay stroke colours (mockup round2-bench.html:1588-1590). */
-const RECON_LOCAL = '#be185d';    // pink solid — the just-fitted modes
-const RECON_GLOBAL = '#66708a';   // grey dashed — the whole-model reconstruction
 
 const EMPTY: PlotModel = {
   lines: [], xLabel: '', yLabel: '', xRange: null, yRange: null,
@@ -682,47 +658,12 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       lines.push({
         // A modal-fit pseudo-set line (round-5 item 13) is dashed so it reads
         // as a reconstruction even though it draws through the measured-line
-        // path; every real measured line is solid.
+        // path; every real measured line is solid. Both the local and global
+        // reconstructions arrive this way (round-7 item 6) — the old dedicated
+        // `recon` overlay option (primary-set-only pink local) is gone.
         x, y, color: v.color, opacity: OPACITY[v.state],
         width: 1.5, dashed: !!v.dashed, yAxis: 'left', xMonotonic,
       });
-    }
-
-    // Modal-reconstruction overlay (Task A1) — extra PlotLines drawn over the
-    // measured TF for the fit's target set. For each VISIBLE measured line of
-    // that set, overlay the matching reconstruction column (same out/in remap
-    // + cal ratio as the measured line, so plot and legend never disagree):
-    // pink solid = local (just-fitted modes), grey dashed = global (shown only
-    // when the "Reconstruction" toggle is on). Off lines are already dropped
-    // from `args.visible`, so they get no overlay either.
-    const recon = args.recon;
-    if (recon) {
-      for (const v of args.visible) {
-        if (v.setId !== recon.setId) continue;
-        const col = tfColumn(v.ch, recon.chIn, recon.nChannels);
-        if (col === null) continue;
-        const ratio = calRatio(byId.get(v.setId), v.ch, recon.chIn);
-        // The recon overlays the MEASURED line, so it inherits that set's x(iω)
-        // display power to stay visually locked to it (the power is display-only
-        // and never fed the fit itself).
-        const iwP = byId.get(v.setId)?.iwPower ?? 0;
-        const draw = (
-          slice: { axis: Float64Array; data: DecodedArray },
-          color: string, dashed: boolean, width: number,
-        ) => {
-          const nout = slice.data.shape[1] ?? 1;
-          if (col >= nout) return;
-          const nf = slice.axis.length;
-          const { re, im } = calScaledColumn(slice.data, nf, nout, col, ratio);
-          applyIwColumn(slice.axis, re, im, iwP);
-          const { x, y, xMonotonic } = tfXY(slice.axis, re, im, type, linMag, window);
-          lines.push({ x, y, color, opacity: 1, width, dashed, yAxis: 'left', xMonotonic });
-        };
-        // Widths bumped for legibility (round-4 item 9 — the dashed global
-        // read as too subtle); mockup colours kept.
-        if (recon.local) draw(recon.local, RECON_LOCAL, false, 2.8);
-        if (recon.global && recon.showGlobal) draw(recon.global, RECON_GLOBAL, true, 2.2);
-      }
     }
 
     if (nyquist) {

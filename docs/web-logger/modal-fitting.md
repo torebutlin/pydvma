@@ -35,17 +35,24 @@ you care about first, then:
 - **↶ Undo** — one level of undo, available after any fit, Reject, or
   Refine.
 
-## Reconstruction overlays
+## Fit lines: local or global reconstruction
 
-Two independent overlays let you check the fit against the data:
+The fitted model draws as a **"Modal fit" tray card** whose dashed lines
+overlay the measured TF — one card per fitted set, with a line for every
+channel, controlled from the legend and tray like any other set. The
+**fit lines** toggle on the Fit card picks *which* reconstruction those
+lines show:
 
-- **Local** — the reconstruction of the mode(s) you just fitted
-  (on by default).
-- **Global** — the reconstruction of the whole accumulated model
-  (off by default).
+- **global** (default) — the whole accumulated model, reconstructed over
+  each set's full frequency axis.
+- **local** — only the mode(s) you just fitted, over the fit window.
+  This is transient feedback: any other recompute (Refine, mute, a
+  reloaded fit) clears it until your next Fit.
 
-Toggle each with the **Local** / **Global** buttons. Turning both on lets
-you compare a single mode against the full multi-mode reconstruction.
+The legend names follow the choice — *Modal fit local (set)* vs
+*Modal fit global (set)* — so the plot always says which reconstruction
+you are looking at. To hide fit lines, use their legend rows or tray
+card, just as for measured data.
 
 ## The mode chip
 
