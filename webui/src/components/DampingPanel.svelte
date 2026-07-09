@@ -43,7 +43,10 @@
     onclose: () => void;
   } = $props();
 
-  const state = $derived($damping);
+  // NB not named `state`: a local called `state` shadows the rune name, so
+  // svelte-check (via the app tsconfig, as CI runs it) then reads every
+  // `$state(...)` in the file as a store subscription of this variable.
+  const dmp = $derived($damping);
 
   // ---- mini-plot geometry (shared) ----
   const H = 170;
@@ -56,7 +59,7 @@
   // ---- peaks mode: spectrum (normalised) + threshold ----
   /** Slice magnitude normalised min→max — the scale the threshold lives on. */
   const specNorm = $derived.by(() => {
-    const p = state.peaks;
+    const p = dmp.peaks;
     if (!p || p.sliceMag.length === 0) return null;
     const [lo, hi] = seriesExtent([p.sliceMag]);
     const span = hi - lo || 1;
@@ -72,7 +75,7 @@
   // Threshold drag: live-preview the line locally; commit (store + refit) on
   // release. The hit target is a fat invisible band around the 1px line.
   let dragThr = $state<number | null>(null);
-  const shownThr = $derived(dragThr ?? state.threshold);
+  const shownThr = $derived(dragThr ?? dmp.threshold);
   let specSvg: SVGSVGElement | undefined = $state();
   function thrFromEvent(e: PointerEvent): number {
     const r = specSvg!.getBoundingClientRect();
@@ -80,7 +83,7 @@
     return Math.min(1, Math.max(0, frac * 1.06));
   }
   function onThrDown(e: PointerEvent) {
-    if (state.busy || !specDom) return;
+    if (dmp.busy || !specDom) return;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     dragThr = thrFromEvent(e);
   }
@@ -103,17 +106,17 @@
   const fmtThr = (v: number) => String(Number(v.toPrecision(3)));
 
   // ---- peaks mode: decay-fit chart ----
-  const decayDom = $derived<MiniDomain | null>(state.peaks && state.peaks.fits.length > 0
+  const decayDom = $derived<MiniDomain | null>(dmp.peaks && dmp.peaks.fits.length > 0
     ? {
-        x: padDomain(seriesExtent(state.peaks.fits.map((f) => f.tFit)), 0.03),
-        y: padDomain(seriesExtent(state.peaks.fits.flatMap((f) => [f.realData, f.realFit])), 0.08),
+        x: padDomain(seriesExtent(dmp.peaks.fits.map((f) => f.tFit)), 0.03),
+        y: padDomain(seriesExtent(dmp.peaks.fits.flatMap((f) => [f.realData, f.realFit])), 0.08),
       }
     : null);
 
   // ---- bands mode: EDC chart ----
-  const edcDom = $derived<MiniDomain | null>(state.bands && state.bands.bandData.length > 0
+  const edcDom = $derived<MiniDomain | null>(dmp.bands && dmp.bands.bandData.length > 0
     ? {
-        x: padDomain(seriesExtent(state.bands.bandData.map((b) => b.edcT)), 0.02),
+        x: padDomain(seriesExtent(dmp.bands.bandData.map((b) => b.edcT)), 0.02),
         // Show the useful top of the decay; the Schroeder tail dives to the
         // -300 dB floor, which would crush every fit window into the frame top.
         y: [-70, 3],
@@ -167,7 +170,7 @@
       testid="damping-mode-toggle"
       ariaLabel="Damping method"
       label="method"
-      value={state.mode}
+      value={dmp.mode}
       onchange={(m: DampingMode) => { damping.setMode(m); onrefit(); }}
       options={[
         { value: 'peaks' as const, label: 'peaks', title: 'Find spectral peaks at the start time, fit each band’s decay (freq from phase)' },
@@ -177,20 +180,20 @@
     <label class="dp-field">
       <span>start (s)</span>
       <input data-testid="damping-start-input" inputmode="decimal" placeholder="auto"
-        value={state.startTime === null ? '' : String(state.startTime)}
-        onchange={commitStart} disabled={state.busy} />
+        value={dmp.startTime === null ? '' : String(dmp.startTime)}
+        onchange={commitStart} disabled={dmp.busy} />
     </label>
-    {#if state.mode === 'peaks'}
+    {#if dmp.mode === 'peaks'}
       <label class="dp-field">
         <span>threshold</span>
         <input data-testid="damping-threshold-input" inputmode="decimal" placeholder="auto"
           value={shownThr === null ? '' : fmtThr(shownThr)}
-          onchange={commitThreshold} disabled={state.busy} />
+          onchange={commitThreshold} disabled={dmp.busy} />
       </label>
     {:else}
       <label class="dp-field">
         <span>bands</span>
-        <select data-testid="damping-ladder-select" value={state.ladder} disabled={state.busy}
+        <select data-testid="damping-ladder-select" value={dmp.ladder} disabled={dmp.busy}
           onchange={(e) => { damping.setLadder(e.currentTarget.value as BandLadder); onrefit(); }}>
           <option value="all">all (broadband)</option>
           <option value="octave">octave</option>
@@ -203,14 +206,14 @@
          the panel (e.g. the Sono card's STFT|CWT method switch, which the
          peaks fit follows). -->
     <button class="dp-refit" data-testid="damping-refit" onclick={onrefit}
-      disabled={state.busy} title="Re-run the fit (picks up the card's STFT|CWT method)">Refit</button>
-    {#if state.busy}<span class="dp-busy" role="status">fitting…</span>{/if}
-    {#if state.error}<span class="dp-err" role="alert">{state.error}</span>{/if}
+      disabled={dmp.busy} title="Re-run the fit (picks up the card's STFT|CWT method)">Refit</button>
+    {#if dmp.busy}<span class="dp-busy" role="status">fitting…</span>{/if}
+    {#if dmp.error}<span class="dp-err" role="alert">{dmp.error}</span>{/if}
     <button class="dp-close" data-testid="damping-close" title="Close damping panel"
       aria-label="Close damping panel" onclick={onclose}>×</button>
   </div>
 
-  {#if state.mode === 'peaks'}
+  {#if dmp.mode === 'peaks'}
     <div class="dp-charts">
       <div class="dp-chart" bind:clientWidth={specW}>
         {#if specNorm && specDom}
@@ -221,10 +224,10 @@
               <polyline class="dp-spec-line"
                 points={polylinePoints(specNorm.freq, specNorm.norm, specDom, iw(specW), ih)}
                 transform="translate({ML},{MT})" />
-              {#each Array.from(state.peaks!.peaksFreq) as pf, i (i)}
+              {#each Array.from(dmp.peaks!.peaksFreq) as pf, i (i)}
                 <circle
                   cx={ML + pxX(pf, specDom, iw(specW))}
-                  cy={MT + pxY((state.peaks!.peaksMag[i] - specNorm.lo) / specNorm.span, specDom, ih)}
+                  cy={MT + pxY((dmp.peaks!.peaksMag[i] - specNorm.lo) / specNorm.span, specDom, ih)}
                   r="3.4" class="dp-peak" />
               {/each}
               {#if shownThr !== null}
@@ -235,6 +238,8 @@
                 <rect x={ML} width={iw(specW)}
                   y={MT + pxY(shownThr, specDom, ih) - 7} height="14"
                   class="dp-thr-hit" style="cursor: ns-resize"
+                  role="slider" aria-label="Peak threshold" aria-orientation="vertical"
+                  aria-valuemin="0" aria-valuemax="1" aria-valuenow={shownThr} tabindex="0"
                   onpointerdown={onThrDown} onpointermove={onThrMove}
                   onpointerup={onThrUp} onpointercancel={() => (dragThr = null)} />
               {/if}
@@ -245,11 +250,11 @@
         {/if}
       </div>
       <div class="dp-chart" bind:clientWidth={decayW}>
-        {#if state.peaks && decayDom}
+        {#if dmp.peaks && decayDom}
           <svg data-testid="damping-decay" viewBox="0 0 {decayW} {H}" role="img"
             aria-label="Per-mode decay fits">
             {@render frame(decayW, decayDom, 'Time (s)', 'Re log(S)')}
-            {#each state.peaks.fits as f, i (i)}
+            {#each dmp.peaks.fits as f, i (i)}
               <g transform="translate({ML},{MT})">
                 {#each markerIndices(f.tFit.length) as k (k)}
                   <path class="dp-x" stroke={colour(i)}
@@ -262,11 +267,11 @@
             {/each}
           </svg>
           <div class="dp-legend" data-testid="damping-fit-legend">
-            {#each state.peaks.fits as f, i (i)}
+            {#each dmp.peaks.fits as f, i (i)}
               <span class="dp-chip"><i style="background:{colour(i)}"></i>{fmt1(f.fPeak)} Hz, Qn={f.Qn.toFixed(0)}</span>
             {/each}
           </div>
-        {:else if state.peaks}
+        {:else if dmp.peaks}
           <!-- A completed fit with ZERO modes is a normal outcome (threshold
                too high / start line past the decay), not an error state. -->
           <div class="dp-legend" data-testid="damping-fit-legend">
@@ -280,11 +285,11 @@
   {:else}
     <div class="dp-charts">
       <div class="dp-chart" bind:clientWidth={specW}>
-        {#if state.bands && edcDom}
+        {#if dmp.bands && edcDom}
           <svg data-testid="damping-edc" viewBox="0 0 {specW} {H}" role="img"
             aria-label="Band energy-decay curves">
             {@render frame(specW, edcDom, 'Time (s)', 'EDC (dB)')}
-            {#each state.bands.bandData as b, i (i)}
+            {#each dmp.bands.bandData as b, i (i)}
               <g transform="translate({ML},{MT})">
                 <polyline class="dp-edc" stroke={colour(i)}
                   points={polylinePoints(b.edcT, b.edcDb, edcDom, iw(specW), ih)} />
@@ -300,20 +305,20 @@
         {/if}
       </div>
       <div class="dp-chart dp-table-host">
-        {#if state.bands}
+        {#if dmp.bands}
           <table class="dp-table" data-testid="damping-band-table">
             <thead>
               <tr><th>fc (Hz)</th><th>EDT (s)</th><th>T20 (s)</th><th>T30 (s)</th><th>T60 (s)</th><th>Qn</th></tr>
             </thead>
             <tbody>
-              {#each Array.from(state.bands.fc) as fc, i (i)}
+              {#each Array.from(dmp.bands.fc) as fc, i (i)}
                 <tr>
                   <td><i class="dp-dot" style="background:{colour(i)}"></i>{fmt1(fc)}</td>
-                  <td>{fmt2(state.bands.EDT[i])}</td>
-                  <td>{fmt2(state.bands.T20[i])}</td>
-                  <td>{fmt2(state.bands.T30[i])}</td>
-                  <td>{fmt2(state.bands.T60[i])}</td>
-                  <td>{fmt1(state.bands.Qn[i])}</td>
+                  <td>{fmt2(dmp.bands.EDT[i])}</td>
+                  <td>{fmt2(dmp.bands.T20[i])}</td>
+                  <td>{fmt2(dmp.bands.T30[i])}</td>
+                  <td>{fmt2(dmp.bands.T60[i])}</td>
+                  <td>{fmt1(dmp.bands.Qn[i])}</td>
                 </tr>
               {/each}
             </tbody>
