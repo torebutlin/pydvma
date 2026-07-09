@@ -11,6 +11,11 @@ Most analysis cards start with a **dataset** selector — **All sets** or a
 single set. When *All sets* is selected and the sets disagree on a
 setting, the control shows a `–mixed–` state.
 
+While a computation is in flight a small pulsing **computing…** chip
+appears in the header (calc buttons also grey out). The very first
+calculation of a browser session shows **starting engine…** instead
+while the in-browser Python engine boots — that one-off wait is normal.
+
 ## Time
 
 The **Time** stage inspects the raw time series.
@@ -100,12 +105,18 @@ of the old Qt logger's Scaling tool.
   Calibrate and resetting the sensitivities. A toast reports the applied
   per-set factors.
 
+    Unlike the [modal fit](modal-fitting.md#choosing-which-lines), Best
+    match always uses **all** channels of each set — it is a calibration
+    operation, not a fit, so hiding a line in the legend or tray does
+    not exclude it.
+
 !!! note "Nyquist and Bode navigation"
     In **Nyquist** view the card exposes **fmin/fmax** fields linked to
-    the shared TF frequency range. A draggable frequency-band *brush*
-    over a Nyquist plot, and fully split axis controls for the stacked
-    Bode panes, are **in flight** — today Nyquist uses number fields and
-    Bode shares the frequency axis.
+    the shared TF frequency range, and the plot carries a draggable
+    frequency-band **brush** — drag either end (or slide the whole band)
+    to scrub the same shared range live, with one undo step per gesture.
+    The stacked **Bode** panes share the frequency axis; each pane has
+    its own y-axis control (the phase pane offers ±180° or auto).
 
 ## Sonogram
 
@@ -227,7 +238,13 @@ The **tray** (left, wide layout) lists every dataset with a colour-coded
 channel stack, name, duration and per-channel sparklines.
 
 - **All / None / Solo** show, hide, or isolate lines; **‹ ›** step which
-  set is highlighted.
+  set is highlighted (or which channel, when only one set is loaded).
+- With a **subset of lines** selected (some on, some off — anything but a
+  clean whole-set solo), **‹ ›** instead shift the *whole selection* one
+  channel, wrapping at the ends. Two hand-picked lines stay a pair as
+  they walk the channels, and a measured channel plus its fit line cycle
+  together — a quick way to compare each channel against its fit in
+  turn.
 - Each set name is a **tri-state** toggle — click cycles the whole set
   **on -> faded -> off**; double-click (or **F2**) renames it.
 - Expand a set to toggle individual channels (each channel line is also

@@ -2,7 +2,25 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-09 (late): **rounds 7 through 7h — the whole first
+As of 2026-07-09 (round 8, committed locally — NOT pushed yet):
+Tore's second feedback batch landed
+(`dev/2026-07-09-round8-feedback.md`): the **fit summary chip is
+draggable + minimisable** (module-scope UI state survives re-mounts;
+re-clamps on expand so an edge-parked chip never clips its buttons;
+z-index above the legend so it can't park ungrabbably under it);
+**‹ › shift a selected line subset** as a group
+(`selection.shiftLines` — per-SET circular rotation so a ch+fit pair
+cycles together and a one-line fit set stays put; all-on and
+clean-set-solo keep the old stepping); a **header computing chip**
+(`BusyChip` — actions.busy OR damping.busy OR engine 'loading' →
+"starting engine…"; 300 ms delay-in so fast calcs never flash it;
+indeterminate by design, the worker has no progress frames); and a
+**docs audit** (stale "Nyquist brush in flight" fixed; all-hidden Fit
+refusal, Best-match-ignores-visibility, multi-set compose rule, and
+the round-8 features documented; mkdocs --strict green). Suites:
+check 0/0, vitest 648/1, Playwright 78/7.
+
+Earlier that day: **rounds 7 through 7h — the whole first
 lab-testing feedback day — are fully landed, PUSHED, and DEPLOYED (CI
 green; the live app carries 4c92545).** The 7d–7h additions on top of
 what's described below: legends + coherence now EXPORT with figures per

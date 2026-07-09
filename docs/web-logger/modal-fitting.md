@@ -52,16 +52,21 @@ it means "all sets jointly".)
 Within the chosen set(s), a Fit uses **the lines you have left
 visible**: hide a line in the legend or tray (click it to *off*) and it
 is excluded from the fit; solo one line to fit it alone. The Fit card
-shows what the next fit will use (e.g. *"2 of 3 lines (visible
-only)"*). This matters for multi-line files that are really several
-separate measurements — e.g. a composited JW file holding three
-instruments' admittances — where a joint fit across all lines would be
-physically wrong. Follow-up actions (Reject, Refine, per-mode edits)
-keep the *fitted* line composition regardless of later visibility
-changes, and changing the visible lines starts a fresh model on the
-next Fit rather than mixing incompatible fits. The fit's dashed
-reconstruction lines then cover exactly the fitted lines, with matching
-colours and labels.
+shows what the next fit will use — *"all N lines"* when nothing is
+hidden, *"2 of 3 lines (visible only)"* for a subset (hover the hint
+for the rule) — and if every line is hidden, pressing Fit refuses with
+a message rather than silently doing nothing. This matters for
+multi-line files that are really several separate measurements — e.g. a
+composited JW file holding three instruments' admittances — where a
+joint fit across all lines would be physically wrong. Follow-up actions
+(Reject, Refine, per-mode edits) keep the *fitted* line composition
+regardless of later visibility changes, and changing the visible lines
+starts a fresh model on the next Fit rather than mixing incompatible
+fits. The fit's dashed reconstruction lines then cover exactly the
+fitted lines, with matching colours and labels.
+
+The two selectors compose: in a multi-set fit the poles are shared
+across the chosen sets, fitted over the **visible lines of each set**.
 
 ## Fitting modes
 
@@ -98,8 +103,10 @@ logger printed each fitted phase for the same reason.)
 ## Fit lines: local or global reconstruction
 
 The fitted model draws as a **"Modal fit" tray card** whose dashed lines
-overlay the measured TF — one card per fitted set, with a line for every
-channel, controlled from the legend and tray like any other set. The
+overlay the measured TF — one card per fitted set, with a line per
+**fitted** channel (every channel for a full-set fit; just the visible
+subset otherwise), controlled from the legend and tray like any other
+set. The
 **fit lines** toggle on the Fit card picks *which* reconstruction those
 lines show:
 
@@ -140,6 +147,12 @@ Each row has:
 
 An **↶ Undo** appears in the chip after a destructive edit, so an
 accidental delete or mute is one click to reverse.
+
+If the chip sits over data you want to see, **drag it by its header
+strip** to park it anywhere over the plot, or **minimise it** with the
+header's ▾ button (double-clicking the header does the same) — the
+collapsed chip keeps a one-line *fit · N modes* summary. Its position
+and collapsed state stick for the rest of the session.
 
 ## Damping from free decay
 
