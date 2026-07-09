@@ -46,6 +46,18 @@ test('patch to one set leaves others untouched; patch-all writes every set', () 
   expect(settings.get(b, 'freq').window).toBe('hann');
 });
 
+test('w0 (Morlet wavelet Q) patches per-set like voices/octave (Sono card selects)', () => {
+  // Both CWT selects in SonoCard drive the same patch path; w0 must land on
+  // the target set only and leave the sibling CWT keys untouched.
+  const a = sel.addSet({ name: 'a', nChannels: 1, durationS: 1, timestamp: 't0' });
+  const b = sel.addSet({ name: 'b', nChannels: 1, durationS: 1, timestamp: 't1' });
+
+  settings.patch(a, 'sono', { w0: 12 });
+  expect(settings.get(a, 'sono').w0).toBe(12);
+  expect(settings.get(b, 'sono').w0).toBe(6);                 // default untouched
+  expect(settings.get(a, 'sono').voicesPerOctave).toBe(16);   // sibling key untouched
+});
+
 test('patch to an unknown set id is a no-op', () => {
   const a = sel.addSet({ name: 'a', nChannels: 1, durationS: 1, timestamp: 't0' });
   settings.patch(999, 'sono', { nFft: 1024 });

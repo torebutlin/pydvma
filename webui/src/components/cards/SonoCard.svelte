@@ -104,6 +104,10 @@
   // CWT log-frequency density (voices per octave).
   const VPO_OPTIONS = [8, 12, 16, 24, 32];
 
+  // Morlet wavelet Q (w0): cycles under the Gaussian envelope. Higher = finer
+  // frequency resolution, coarser time resolution. 6 is the classic default.
+  const W0_OPTIONS = [4, 6, 8, 12, 16, 24];
+
   // Channel options come from the target set.
   const targetView = $derived(timeSets.find((s) => s.id === targetId));
   const chOptions = $derived(targetView?.nChannels ?? 1);
@@ -134,6 +138,10 @@
   }
   function onVoices(v: number) {
     patch({ voicesPerOctave: v });
+    live.schedule();
+  }
+  function onW0(v: number) {
+    patch({ w0: v });
     live.schedule();
   }
   // Optional CWT band: blank entry ⇒ null ⇒ auto band. Only apply a range when
@@ -274,6 +282,18 @@
               {/each}
             </select>
             <span class="note">log-freq density</span>
+          </div>
+        </div>
+        <div class="grp">
+          <span class="grp-lab">wavelet Q (w0)</span>
+          <div class="grp-ctl">
+            <select value={sono.w0} onchange={(e) => onW0(+e.currentTarget.value)}
+              style="width:60px" aria-label="wavelet Q w0"
+              title="Morlet wavelet Q — higher = finer frequency resolution, coarser time resolution">
+              {#each W0_OPTIONS as v (v)}
+                <option value={v}>{v}</option>
+              {/each}
+            </select>
           </div>
         </div>
         <div class="grp">

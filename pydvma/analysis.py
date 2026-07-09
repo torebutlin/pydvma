@@ -845,7 +845,9 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
             each is ``s = w0 / (2*pi*f)``.
         w0 (float): non-dimensional Morlet frequency (default 6.0; the usual
             admissibility-safe value giving ~``w0`` oscillations under the
-            envelope).
+            envelope). Acts as the wavelet Q: HIGHER ``w0`` means more cycles
+            under the Gaussian envelope, i.e. FINER frequency resolution at
+            the cost of COARSER time resolution (and vice versa).
         time_step (int): decimation of the output time axis. ``1`` keeps every
             sample (full time resolution — needed by the damping fit, whose
             phase-unwrap must not alias). ``>1`` subsamples the columns to bound
@@ -953,7 +955,10 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
         f_range (tuple or None): ``(f_min, f_max)`` in Hz; ``None`` uses the
             default ``4/T .. 0.4*fs`` band.
         voices_per_octave (int): log-frequency density (default 16).
-        w0 (float): non-dimensional Morlet frequency (default 6.0).
+        w0 (float): non-dimensional Morlet frequency (default 6.0) — the
+            wavelet Q. Higher = more cycles under the envelope = finer
+            frequency resolution but coarser time resolution; lower sharpens
+            time localisation at the cost of frequency smearing.
         max_time_columns (int or None): cap on output time frames (default
             2000); ``None`` disables time decimation.
         uniform_freq (bool): resample onto a uniform frequency grid for display
