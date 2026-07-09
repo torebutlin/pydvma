@@ -37,6 +37,15 @@ dvma.export_to_csv(dataset.tf_data_list)
 dataset = dvma.import_from_matlab_jwlogger()
 ```
 
+For JW transfer-function files, the frequency axis is built from the
+file's `npts` (FFT length) and `freq` (sample rate): `npts/2 + 1` bins,
+`df = freq/npts`, up to `freq/2`. Coherence traces stored as extra
+`yspec` columns (real-valued, within 0–1) are detected and attached as
+the transfer function's `tf_coherence` rather than imported as data
+channels — so they plot as the coherence overlay and never enter a
+modal fit. JW admittance measurements are velocity/force: pick
+**Velocity** as the TF type when modal fitting them.
+
 ## Save and Load a DataSet (native format)
 
 ```python

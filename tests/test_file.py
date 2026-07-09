@@ -46,3 +46,86 @@ class TestExportToMatlabJwloggerTf:
         assert np.iscomplexobj(yspec)
         assert np.all(np.isfinite(yspec))
         assert np.any(np.abs(yspec) > 0)
+
+
+def _jw_tf_mat(tmp_path, cols, npts=1024, fs=2000, name='jw.mat'):
+    """Write a synthetic JW-logger TF .mat: `yspec` from the given columns."""
+    path = str(tmp_path / name)
+    sio.savemat(path, {
+        'yspec': np.column_stack(cols),
+        'tfun': np.array([[1]], dtype=np.uint8),
+        'npts': np.array([[npts]], dtype=np.uint16),
+        'freq': np.array([[fs]], dtype=np.uint16),
+        'dt2': np.array([[0, len(cols), 0]], dtype=np.uint8),
+    })
+    return path
+
+
+def _frf(n, fn_bin=40, zeta=0.02, seed=1):
+    """A complex SDOF-ish FRF column over n one-sided bins."""
+    rng = np.random.default_rng(seed)
+    w = np.arange(n, dtype=float)
+    h = 1.0 / (fn_bin ** 2 - w ** 2 + 2j * zeta * fn_bin * w)
+    return h + 1e-6 * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+
+
+class TestImportFromMatlabJwloggerTf:
+    """Round-7e: JW TF import — frequency-axis convention and coherence
+    columns (a coherence trace imported as a TF channel poisons modal fits;
+    verified on JW guitar admittance files)."""
+
+    def test_axis_is_rfftfreq_of_npts_at_fs(self, tmp_path):
+        n = 1024 // 2 + 1
+        path = _jw_tf_mat(tmp_path, [_frf(n)], npts=1024, fs=2000)
+        ds = file.import_from_matlab_jwlogger(filename=path)
+        tf = ds.tf_data_list[0]
+        fa = np.asarray(tf.freq_axis)
+        assert fa.shape == (n,)
+        assert fa[0] == 0.0
+        assert fa[-1] == pytest.approx(1000.0)          # fs/2
+        assert fa[1] - fa[0] == pytest.approx(2000 / 1024)  # fs/npts
+
+    def test_coherence_column_attaches_as_tf_coherence(self, tmp_path):
+        n = 1024 // 2 + 1
+        coh = np.clip(0.5 + 0.5 * np.cos(np.linspace(0, 3, n)), 0, 1)
+        path = _jw_tf_mat(tmp_path, [_frf(n), coh.astype(complex)])
+        ds = file.import_from_matlab_jwlogger(filename=path)
+        tf = ds.tf_data_list[0]
+        assert tf.tf_data.shape == (n, 1)               # coherence NOT a channel
+        assert np.iscomplexobj(tf.tf_data)
+        assert tf.tf_coherence is not None
+        assert tf.tf_coherence.shape == (n, 1)
+        assert not np.iscomplexobj(tf.tf_coherence)
+        np.testing.assert_allclose(np.ravel(tf.tf_coherence), coh)
+        assert tf.settings.channels == 1
+
+    def test_column_order_is_preserved_when_coherence_leads(self, tmp_path):
+        n = 1024 // 2 + 1
+        coh = np.clip(np.linspace(0.2, 1.0, n), 0, 1)
+        frf = _frf(n)
+        path = _jw_tf_mat(tmp_path, [coh.astype(complex), frf])
+        ds = file.import_from_matlab_jwlogger(filename=path)
+        tf = ds.tf_data_list[0]
+        np.testing.assert_allclose(np.ravel(tf.tf_data), frf)
+        np.testing.assert_allclose(np.ravel(tf.tf_coherence), coh)
+
+    def test_all_complex_columns_stay_tf_channels(self, tmp_path):
+        n = 1024 // 2 + 1
+        path = _jw_tf_mat(tmp_path, [_frf(n, seed=1), _frf(n, fn_bin=80, seed=2),
+                                     _frf(n, fn_bin=120, seed=3)])
+        ds = file.import_from_matlab_jwlogger(filename=path)
+        tf = ds.tf_data_list[0]
+        assert tf.tf_data.shape == (n, 3)
+        assert tf.tf_coherence is None
+
+    def test_ambiguous_mix_falls_back_to_all_tf(self, tmp_path):
+        """2 FRFs + 1 coherence-like column: no clean pairing, so the historic
+        behaviour (every column a TF channel) is kept — no data dropped."""
+        n = 1024 // 2 + 1
+        coh = np.clip(np.linspace(0.1, 0.9, n), 0, 1)
+        path = _jw_tf_mat(tmp_path, [_frf(n, seed=1), _frf(n, fn_bin=90, seed=2),
+                                     coh.astype(complex)])
+        ds = file.import_from_matlab_jwlogger(filename=path)
+        tf = ds.tf_data_list[0]
+        assert tf.tf_data.shape == (n, 3)
+        assert tf.tf_coherence is None

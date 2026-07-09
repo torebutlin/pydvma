@@ -207,6 +207,39 @@ correct — the overlay + right axis live inside the plot SVG, so they
 export exactly per the toggle — and is now e2e-guarded alongside the
 legend (export pixel-diff on/off/restored round-trip).
 
+## Round 7e (same day) — JW-logger .mat import
+
+> When imported I don't think the lines are quite right… some lines are
+> actually coherence lines that should be marked as such. And when
+> fitting, weird freq shifts making the fits not converge — I suspect
+> the data import, not the fitting algorithm.
+
+**Diagnosed on the four sample files; Tore's suspicion confirmed.**
+- The frequency axis was CORRECT all along: JW's `freq` is the sample
+  rate (the format's own time branch uses it as fs), and the importer's
+  `rfftfreq(npts, 1/freq)` matches the row count exactly. Sanity: the
+  violin file's strongest peak lands at 524 Hz (B1 territory), the
+  flamenco guitar's at 182 Hz (top mode) — physical.
+- The REAL bug: `import_from_matlab_jwlogger` imported EVERY `yspec`
+  column as a TF channel and never set `tf_coherence`. JW admittance
+  files store coherence as an extra column (guitar file: [H, coh]) —
+  imported as a channel it poisons the multi-channel modal fit.
+  Measured on the guitar file, 150–220 Hz window: TF-only fit gives
+  fn=182.13 Hz ζ=0.0085; with the coherence-as-channel the fit RAILS to
+  fn=150 (window edge), ζ=1.0. That is the "weird freq shifts / no
+  convergence".
+- Fix (careful/additive): coherence columns detected (real-valued AND
+  within [0,1] — no measured complex FRF satisfies both) and attached
+  as `tf_coherence` paired in column order, ONLY when the split is
+  clean (equal counts); ambiguous mixes keep the historic all-TF import
+  so nothing is dropped. Verified on all four samples: guitar → 1 TF +
+  coherence; violin/clav/Deering unchanged (all-complex columns).
+- Engine wheel rebuilt; the previously-fixme'd webui mat-import e2e now
+  runs against a checked-in synthetic JW fixture (one TF line in the
+  legend, coherence arriving as the overlay).
+- Usage note for these files: they are admittances (velocity/force) —
+  pick **Velocity** as the TF type when fitting (docs updated).
+
 ## Incidental findings (not in Tore's list)
 
 - **Exported figures never include the legend.** PNG/PDF export

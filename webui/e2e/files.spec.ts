@@ -92,7 +92,25 @@ test('autosave persists and the restore banner repopulates on reload', async ({ 
   await expect(page.getByTestId('tray-card-0')).toBeVisible();
 });
 
-// The .mat (JW-logger) import path is wired in glue.py (mat_to_dvma) + the
-// load pipeline, but there is no real JW-logger .mat fixture checked in to
-// prove it end to end. Defer the e2e until a sample is available.
-test.fixme('mat import — needs a sample .mat fixture', () => {});
+// .mat (JW-logger) import, end to end through the engine's mat_to_dvma
+// (round-7e). The fixture is a synthetic JW TF file — one complex FRF column
+// plus one COHERENCE column (real, in [0,1]), the layout of Jim Woodhouse's
+// admittance measurements. The import must attach the coherence as the TF's
+// coherence overlay, NOT as a second TF channel: imported as a channel it
+// poisons modal fits (fn/zeta rail to the window edge — seen on real JW
+// guitar files).
+test('mat import (JW logger): one TF line, coherence as overlay not a channel', async ({ page }) => {
+  await page.goto('/');
+  await loadViaFallback(page, fixture('jw_tf_coh.mat'));
+  // The conversion runs in the pyodide engine — allow its boot.
+  await expect(page.getByTestId('tray-card-0')).toBeVisible({ timeout: 200_000 });
+
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeVisible();
+  // Exactly ONE legend row: the coherence column did not become a TF line.
+  await expect(page.getByTestId('legend-entry')).toHaveCount(1);
+  // The coherence DID arrive: the toolbar offers the coherence right-axis
+  // control, which App gates on the model's y2 (coherence) axis existing.
+  await page.getByTestId('zoom-toolbar').hover();
+  await expect(page.getByTestId('coherence-control')).toBeVisible();
+});

@@ -560,7 +560,20 @@ def import_from_matlab_jwlogger(filename=None):
     Imports dataset class from file 'filename.mat', or provides dialog if no
     filename provided.
 
-    Saved file is compatible with Jim Woodhouse logger file format.
+    Saved file is compatible with Jim Woodhouse logger file format:
+    ``indata`` (time series), or ``yspec`` with ``tfun`` selecting spectrum
+    (0) / transfer function (1); ``npts`` is the FFT length and ``freq`` the
+    SAMPLE RATE, so a ``yspec`` has ``npts/2 + 1`` rows on the one-sided axis
+    ``rfftfreq(npts, 1/freq)`` (df = freq/npts, top bin = freq/2).
+
+    JW transfer-function files may store COHERENCE traces as extra ``yspec``
+    columns alongside the complex FRFs (e.g. ``[H, coherence]`` for a
+    single-channel admittance measurement). A coherence column is detected
+    unambiguously — real-valued and bounded in [0, 1], which no measured
+    complex FRF is — and, when the file splits cleanly into equal numbers of
+    TF and coherence columns, attached as ``tf_coherence`` (paired with the
+    TF columns in order). Files with no coherence columns, or an ambiguous
+    mix, import exactly as before (every column a TF channel).
 
     Args:
        filename (str, optional): Input filename, dialog shown if not provided
@@ -599,11 +612,37 @@ def import_from_matlab_jwlogger(filename=None):
         tf = d['yspec']
         fa = np.fft.rfftfreq(int(d['npts']),1/d['freq'])
         fa = np.squeeze(fa)
+
+        # Split coherence traces from the TF columns (see docstring). This
+        # matters beyond labelling: a coherence trace imported as a TF
+        # channel POISONS any multi-channel modal fit — the fitter chases a
+        # bounded real curve and rails fn/zeta to the window edge (verified
+        # on JW guitar admittance files). Detection: real-valued AND within
+        # [0, 1]; a measured complex FRF never satisfies both across the
+        # whole axis. Only a CLEAN split (equal TF/coherence counts, paired
+        # in column order) attaches coherence; anything ambiguous falls back
+        # to the historic all-columns-are-TF import so no data is dropped.
+        coherence = None
+        ncols = np.size(tf, 1)
+        col_is_coh = []
+        for c in range(ncols):
+            col = tf[:, c]
+            scale = max(float(np.max(np.abs(col))), 1e-300)
+            real_only = float(np.max(np.abs(np.imag(col)))) <= 1e-9 * scale
+            bounded = (float(np.min(np.real(col))) >= -1e-6
+                       and float(np.max(np.real(col))) <= 1 + 1e-6)
+            col_is_coh.append(real_only and bounded)
+        coh_idx = [c for c in range(ncols) if col_is_coh[c]]
+        tf_idx = [c for c in range(ncols) if not col_is_coh[c]]
+        if coh_idx and tf_idx and len(coh_idx) == len(tf_idx):
+            coherence = np.real(tf[:, coh_idx])
+            tf = tf[:, tf_idx]
+
         settings = options.MySettings(channels=np.size(tf,1),
                                       fs=d['freq'])
-        
-        tf_data = datastructure.TfData(fa,tf,None,settings)
+
+        tf_data = datastructure.TfData(fa,tf,coherence,settings)
         tf_data.timestamp = os.path.getmtime(filename)
         dataset.add_to_dataset(tf_data)
-    
+
     return dataset
