@@ -44,6 +44,7 @@ import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSetting
 import { defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import type { ViewId } from '../stores/viewstate';
+import { PHASE_DEV_WARN_DEG } from '../stores/modal';
 import type { ModalStore, ModalState, ReconArrays, ReconMode } from '../stores/modal';
 import type {
   BandLadder, DampingBand, DampingBandsResult, DampingModeFit, DampingPeaksResult,
@@ -1612,9 +1613,27 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       if (freqRange && action !== 'refine') payload.freq_range = freqRange;
       if (action === 'delete_one' && index !== undefined) payload.index = index;
       if (action === 'recon') payload.mute = modal.mutedIndices();
+      // Pre-refine poles for the divergence flag (round-7f): the auto-revert
+      // below only catches a WORSE residual — a refine can "improve" the
+      // cost while a mode flies far from its fitted peak (seen on the JW
+      // instrument files). Snapshot BEFORE the engine call.
+      const preFn = action === 'refine' ? modal.get().modes.map((m) => m.fn) : [];
       const res = await engine.enqueue('calc_fit', payload);
       if (stale('fit', my)) return;                      // a newer fit won
       modal.applyResult(res, contexts);
+      // Phase-significance flag (round-7f; JW-logger heritage — the original
+      // printed every fitted mode's phase): a fresh fit whose modal phase
+      // lands far from a REAL mode's 0/180° usually means the TF type
+      // (acc/vel/dsp) is wrong for the data. The chip marks the mode ⚠; this
+      // toast explains it once per fit.
+      if (action === 'fit') {
+        const worst = modal.get().modes.reduce((a, m) => Math.max(a, m.phaseDevDeg), 0);
+        if (worst > PHASE_DEV_WARN_DEG) {
+          toasts?.push(
+            `Fitted modal phase is ${Math.round(worst)}° from real (0/180°) — check the TF type (Acceleration / Velocity / Displacement).`,
+            { level: 'info' });
+        }
+      }
       // Refine auto-revert: if the engine reports it did not improve / converge,
       // restore the pre-refine model and explain (round-4 item 10).
       if (action === 'refine') {
@@ -1629,6 +1648,20 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           if (Number.isFinite(before) && Number.isFinite(after) && before > 0) {
             const pct = Math.max(0, Math.round((1 - after / before) * 100));
             toasts?.push(`Refined modes — residual down ${pct}%.`, { level: 'success' });
+          }
+          // Divergence flag (round-7f): a numerically-improved refine that
+          // dragged a mode >10% (and >2 Hz) from its pre-refine frequency is
+          // suspect — warn and offer the one-level Undo, don't silently trust.
+          const moved = modal.get().modes
+            .map((m, i) => ({ from: preFn[i], to: m.fn }))
+            .filter((p) => Number.isFinite(p.from)
+              && Math.abs(p.to - p.from) > Math.max(2, 0.1 * p.from));
+          if (moved.length > 0) {
+            const eg = moved[0];
+            toasts?.push(
+              `Refine moved ${moved.length} mode(s) far from their fitted peaks `
+              + `(e.g. ${eg.from.toFixed(1)} → ${eg.to.toFixed(1)} Hz) — inspect the fit lines before trusting it.`,
+              { level: 'info', actions: [{ label: 'Undo', run: () => modal.undo() }] });
           }
         }
       }

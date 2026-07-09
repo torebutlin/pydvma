@@ -261,3 +261,102 @@ test('exportMat builds a payload of the computed kinds and returns the bytes', a
   expect((call!.payload.tf_sets as unknown[]).length).toBe(1);     // tf computed
   expect((call!.payload.freq_sets as unknown[]).length).toBe(0);   // no FFT
 });
+
+// ---- Round-7f fit self-awareness flags: phase-significance after a fit,
+// divergence after a refine (both surfaced as toasts; JW-logger heritage —
+// the original printed every fitted mode's phase). ----
+
+function toastRecorder() {
+  const pushed: { message: string; level?: string }[] = [];
+  const toasts = {
+    push: (message: string, opts?: { level?: string }) => {
+      pushed.push({ message, level: opts?.level });
+      return pushed.length;
+    },
+    dismiss: () => {},
+  } as unknown as import('../../src/lib/stores/toast').Toasts;
+  return { toasts, pushed };
+}
+
+function harnessWithToasts(responder: (op: string, payload: Record<string, unknown>) => unknown) {
+  const { engine, calls } = fakeEngine(responder);
+  const sel = createSelection();
+  const settings = createAnalysisSettings(sel);
+  const modal = createModalStore();
+  const { toasts, pushed } = toastRecorder();
+  const actions = createActions(engine, sel, settings, modal, toasts);
+  return { actions, modal, sel, calls, pushed };
+}
+
+/** fitResult with a chosen packed-matrix pn (radians) on the single mode. */
+const fitResultWithPhase = (pn: number, fn = 80) => ({
+  ...fitResult(),
+  M: real([1, 6], [fn, 0.02, 1, pn, 0, 0]),
+  fn: real([1], [fn]), zn: real([1], [0.02]),
+});
+
+test('a fit whose modal phase lands far from 0/180° warns about the TF type', async () => {
+  const { actions, modal, pushed } = harnessWithToasts((op) =>
+    (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResultWithPhase(Math.PI / 2) : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  expect(get(modal).modes[0].phaseDevDeg).toBeCloseTo(90, 5);
+  expect(pushed.some((t) => /phase.*TF type/i.test(t.message))).toBe(true);
+});
+
+test('a near-real fitted phase raises no TF-type warning', async () => {
+  const { actions, modal, pushed } = harnessWithToasts((op) =>
+    (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResultWithPhase(0.1) : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  expect(get(modal).modes[0].phaseDevDeg).toBeCloseTo(5.73, 1);
+  expect(pushed.some((t) => /TF type/i.test(t.message))).toBe(false);
+});
+
+test('a phase near 180° counts as REAL (no warning) — sign flips are fine', async () => {
+  const { actions, modal, pushed } = harnessWithToasts((op) =>
+    (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResultWithPhase(Math.PI - 0.05) : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  expect(get(modal).modes[0].phaseDevDeg).toBeLessThan(3);
+  expect(pushed.some((t) => /TF type/i.test(t.message))).toBe(false);
+});
+
+test('a refine that drags a mode far from its peak warns (with the residual toast intact)', async () => {
+  let refined = false;
+  const { actions, pushed } = harnessWithToasts((op, payload) => {
+    if (op === 'calc_tf') return tfResult();
+    if (op === 'calc_fit' && payload.action === 'refine') {
+      refined = true;
+      return { ...fitResultWithPhase(0, 140), converged: true, cost_before: 10, cost_after: 5 };
+    }
+    if (op === 'calc_fit') return fitResultWithPhase(0, 80);
+    return {};
+  });
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);   // fn = 80
+  await actions.calcFit('all', null, 'acc', 'refine');        // fn -> 140
+  expect(refined).toBe(true);
+  expect(pushed.some((t) => /moved 1 mode.*80\.0.*140\.0/i.test(t.message))).toBe(true);
+});
+
+test('a refine with a small frequency drift stays quiet', async () => {
+  const { actions, pushed } = harnessWithToasts((op, payload) => {
+    if (op === 'calc_tf') return tfResult();
+    if (op === 'calc_fit' && payload.action === 'refine') {
+      return { ...fitResultWithPhase(0, 81), converged: true, cost_before: 10, cost_after: 5 };
+    }
+    if (op === 'calc_fit') return fitResultWithPhase(0, 80);
+    return {};
+  });
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  await actions.calcFit('all', null, 'acc', 'refine');
+  expect(pushed.some((t) => /moved/.test(t.message))).toBe(false);
+  expect(pushed.some((t) => /residual down/.test(t.message))).toBe(true);
+});

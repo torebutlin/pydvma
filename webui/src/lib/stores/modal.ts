@@ -49,8 +49,49 @@ import { get, writable } from 'svelte/store';
 import { decodeArray, type DecodedArray, type MarshalledArray } from '../plot/model';
 import type { MeasurementType } from '../analysis/actions';
 
-/** One fitted mode's summary for the chip table (`Q = 1/(2ζ)`). */
-export interface ModalMode { fn: number; zn: number; Q: number; }
+/**
+ * One fitted mode's summary for the chip table (`Q = 1/(2ζ)`).
+ * `phaseDevDeg` (round-7f, JW-logger parity): the WORST deviation, across
+ * every fitted channel, of the mode's fitted modal phase from a REAL mode
+ * (0° or 180°). A large value means the modal constant came out
+ * significantly complex — the classic sign the TF type (acc/vel/dsp) is
+ * wrong for the data, the old logger's "phase too significant" warning.
+ */
+export interface ModalMode { fn: number; zn: number; Q: number; phaseDevDeg: number; }
+
+/**
+ * Threshold (degrees) above which a mode's fitted phase counts as
+ * SIGNIFICANT — i.e. too far from a real mode's 0°/180° to trust the
+ * chosen TF type. 30° passes normal light-damping fits comfortably while
+ * catching the ~90° swing of a mis-typed measurement.
+ */
+export const PHASE_DEV_WARN_DEG = 30;
+
+/**
+ * Per-mode worst phase deviation (degrees) from {0°, 180°}, computed from
+ * the packed modal matrix (rows `[fn, zn, an*N, pn*N, rk*N, rm*N]` —
+ * `modal.py`'s pack/unpack layout). Pure; tolerant of an empty matrix.
+ */
+export function phaseDevDegFromMatrix(matrix: MarshalledArray | null): number[] {
+  if (!matrix || (matrix.shape[0] ?? 0) === 0) return [];
+  const [rows, cols] = matrix.shape;
+  if (!(cols >= 6)) return new Array(rows).fill(0);
+  const nCh = Math.floor((cols - 2) / 4);
+  const data = matrix.data instanceof Float64Array ? matrix.data : Float64Array.from(matrix.data);
+  const out: number[] = [];
+  for (let r = 0; r < rows; r++) {
+    let worst = 0;
+    for (let k = 0; k < nCh; k++) {
+      const pn = data[r * cols + 2 + nCh + k];
+      // Wrap to [0, π], then distance to the NEARER of {0, π}.
+      let d = Math.abs(Math.atan2(Math.sin(pn), Math.cos(pn)));
+      d = Math.min(d, Math.PI - d);
+      if (d > worst) worst = d;
+    }
+    out.push((worst * 180) / Math.PI);
+  }
+  return out;
+}
 
 /**
  * Which reconstruction the modal-fit pseudo-sets draw (round-7 item 6):
@@ -216,13 +257,14 @@ export function createModalStore() {
   function applyResult(result: unknown, contexts: FitContext[]): void {
     const fn = axisData(mval(result, 'fn'));
     const zn = axisData(mval(result, 'zn'));
+    const matrixRaw = asMarshalled(mval(result, 'M'));
+    const matrix = (matrixRaw.shape[0] ?? 0) > 0 ? matrixRaw : null;
+    const pdev = phaseDevDegFromMatrix(matrix);
     const modes: ModalMode[] = [];
     for (let i = 0; i < fn.length; i++) {
       const z = zn[i];
-      modes.push({ fn: fn[i], zn: z, Q: z > 0 ? 1 / (2 * z) : Infinity });
+      modes.push({ fn: fn[i], zn: z, Q: z > 0 ? 1 / (2 * z) : Infinity, phaseDevDeg: pdev[i] ?? 0 });
     }
-    const matrixRaw = asMarshalled(mval(result, 'M'));
-    const matrix = (matrixRaw.shape[0] ?? 0) > 0 ? matrixRaw : null;
     const slices = sliceList(result);
     const targets: FitTarget[] = contexts.map((ctx, i) => {
       const sl = slices[i];
@@ -276,11 +318,12 @@ export function createModalStore() {
     const rows = matrix.shape[0] ?? 0;
     const cols = matrix.shape[1] ?? 0;
     const data = matrix.data instanceof Float64Array ? matrix.data : Float64Array.from(matrix.data);
+    const pdev = phaseDevDegFromMatrix(matrix);
     const modes: ModalMode[] = [];
     for (let r = 0; r < rows; r++) {
       const fn = data[r * cols + 0];
       const zn = data[r * cols + 1];
-      modes.push({ fn, zn, Q: zn > 0 ? 1 / (2 * zn) : Infinity });
+      modes.push({ fn, zn, Q: zn > 0 ? 1 / (2 * zn) : Infinity, phaseDevDeg: pdev[r] ?? 0 });
     }
     // Recon slices stay null until a 'recon' calc recomputes them (deferred
     // until each target's TF is present — actions.maybeRestoreModalRecon).

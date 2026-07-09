@@ -12,7 +12,7 @@
    * through the STATELESS engine (`actions.calcFit`) + the modal store, which
    * owns the accumulated matrix and the one-level undo slot.
    */
-  import type { ModalStore } from '../lib/stores/modal';
+  import { PHASE_DEV_WARN_DEG, type ModalStore } from '../lib/stores/modal';
   import type { Actions } from '../lib/analysis/actions';
 
   let { modal, actions }: { modal: ModalStore; actions: Actions } = $props();
@@ -47,6 +47,12 @@
       <div class="mode-row" class:muted={$modalState.muted[i]}>
         <span class="mode-txt">
           <b>mode {i + 1}</b>&nbsp;&nbsp;fn = {m.fn.toFixed(1)} Hz · ζ = {m.zn.toFixed(4)} · Q = {fmtQ(m.Q)}
+          {#if m.phaseDevDeg > PHASE_DEV_WARN_DEG}
+            <!-- JW-logger parity (round-7f): a significantly COMPLEX fitted
+                 modal constant usually means the wrong TF type is selected. -->
+            <span class="phase-warn" data-testid="mode-phase-warning"
+              title="Fitted modal phase is {m.phaseDevDeg.toFixed(0)}° from real (0/180°) — check the TF type (Acceleration / Velocity / Displacement)">⚠</span>
+          {/if}
         </span>
         <button
           class="mrow-btn"
@@ -104,6 +110,11 @@
   }
   .mode-txt b {
     color: var(--indigo);
+  }
+  .phase-warn {
+    pointer-events: auto; /* hoverable for the explanatory title */
+    cursor: help;
+    color: var(--danger, #dc2626);
   }
   .mrow-btn {
     pointer-events: auto;
