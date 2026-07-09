@@ -31,14 +31,25 @@
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
   import type { AnalysisSettings, SonoSettings } from '../../lib/stores/analysisSettings';
+  import type { ViewState } from '../../lib/stores/viewstate';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
   import Segmented from '../Segmented.svelte';
 
   let {
+    viewState,
     actions,
     selection,
     analysisSettings,
-  }: { actions: Actions; selection: Selection; analysisSettings: AnalysisSettings } = $props();
+  }: { viewState: ViewState; actions: Actions; selection: Selection; analysisSettings: AnalysisSettings } = $props();
+
+  // Heat colour mode lives in the (per-view) sono view-state, driven from the
+  // plot toolbar's `colour` control. The dynamic-range dB span only applies to
+  // the dB colour map; in LINEAR colour mode the heat is normalised 0→peak, so
+  // the dB span is not used — the control is disabled here with a note (the
+  // painter ignores it in lin mode too). The card is only mounted while the sono
+  // view is active, so `viewState.current` is the sono slice.
+  const currentSlice = $derived(viewState.current);
+  const colourLin = $derived($currentSlice.sonoColour === 'lin');
 
   // DATA sets only (round-5 item 13): the modal-fit pseudo-set is not a
   // sonogram target, so it must not appear in the "dataset" dropdown.
@@ -283,7 +294,9 @@
         <div class="grp-ctl">
           <input type="number" value={sono.dynRangeDb}
             onchange={(e) => patch({ dynRangeDb: +e.currentTarget.value })}
-            step="10" min="30" max="120" style="width:56px" aria-label="dynamic range dB" /><span class="ml">dB</span>
+            step="10" min="30" max="120" style="width:56px" aria-label="dynamic range dB"
+            disabled={colourLin} title={colourLin ? 'Not used in linear colour mode' : ''} /><span class="ml">dB</span>
+          {#if colourLin}<span class="note" data-testid="sono-dynrange-lin-note">n/a — linear colour</span>{/if}
         </div>
       </div>
     </div>

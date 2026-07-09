@@ -592,6 +592,13 @@
   // magnitude maths / y-label and buildPlot picks the log-x mapping.
   const xScale = $derived($currentSlice.xScale);
   const yScale = $derived($currentSlice.yScale);
+  // Sono-only display scales (R-sono): frequency y-axis lin↔log and heat colour
+  // dB↔linear. `sonoLogY` gates both the heat painter's row→pixel mapping and
+  // the axis model's log-y ticks (they MUST agree). Read off the active slice —
+  // the sono card/toolbar are only ever mounted while the sono view is active.
+  const sonoFreqScale = $derived($currentSlice.sonoFreqScale);
+  const sonoColour = $derived($currentSlice.sonoColour);
+  const sonoLogY = $derived(view === 'sono' && sonoFreqScale === 'log');
   const bode = $derived(view === 'tf' && plotType === 'bode');
   const nyquist = $derived(view === 'tf' && plotType === 'nyquist');
   // Round-5 axis-nav aux state: Nyquist Real/Imag window, Bode phase-pane y,
@@ -736,40 +743,109 @@
     return chosen ?? setArrays.find((s) => s.sono)?.sono;
   });
 
+  /**
+   * Smallest strictly-positive frequency on an ascending axis — the log-y
+   * DC-row guard. The STFT's bin 0 is DC (f=0, no log), so on a log axis the
+   * bottom decade clamps to the first positive bin; the CWT's first bin is
+   * already positive. Falls back to a tiny epsilon on a degenerate all-zero
+   * axis so the log domain never goes non-positive.
+   */
+  function firstPositiveFreq(f: ArrayLike<number>): number {
+    for (let i = 0; i < f.length; i++) if (f[i] > 0) return f[i];
+    return 1e-6;
+  }
+
+  /** Index of the ascending-axis bin nearest `target` (binary search). */
+  function nearestBin(f: ArrayLike<number>, target: number): number {
+    const hi = f.length - 1;
+    if (target <= f[0]) return 0;
+    if (target >= f[hi]) return hi;
+    let lo = 0, h = hi;
+    while (lo < h) { const mid = (lo + h) >> 1; if (f[mid] < target) lo = mid + 1; else h = mid; }
+    // lo = first index with f[lo] >= target; pick the nearer of lo-1, lo.
+    return lo > 0 && target - f[lo - 1] <= f[lo] - target ? lo - 1 : lo;
+  }
+
+  /**
+   * Paint the viridis heat map. Each OUTPUT pixel ROW is mapped through the
+   * chosen frequency scale (`sonoLogY`) from the top (fHi) down to the bottom
+   * (fLo), then to the NEAREST source frequency bin by binary search. Because
+   * the mapping goes VALUE→PIXEL (not bin-index→pixel), it is correct for BOTH
+   * the STFT's uniform grid AND the CWT's native LOG grid, and for BOTH linear
+   * and log y — closing the standing "log-y heat rendering for the CWT
+   * sonogram" TODO. The buffer's rows are therefore in pixel space (linear top
+   * →bottom), so the CSS/export stretch to the data rect stays a plain linear
+   * scale and lands the heat pixel-for-pixel under the PlotSurface axis (which
+   * reads the SAME fLo/fHi and scale via `sonoAxisModel`).
+   *
+   * Colour: `sonoColour === 'db'` maps 20·log10|.| into the card's dynamic-range
+   * window below the global peak (unchanged default). `'lin'` maps linear
+   * magnitude 0→peak; the dB dynamic-range span does not apply to a linear
+   * scale, so it is ignored here (SonoCard disables that control in lin mode).
+   */
   $effect(() => {
     if (view !== 'sono' || !sonoCanvas || !sono) return;
-    const nf = sono.freqAxis.length;
+    const f = sono.freqAxis;
+    const nf = f.length;
     const nt = sono.timeAxis.length;
     if (nf === 0 || nt === 0) return;
     const cx = sonoCanvas.getContext('2d');
     if (!cx) return;
-    sonoCanvas.width = nt;
-    sonoCanvas.height = nf;
-    // sono.data is (Nf, Nt) magnitude; convert to dB, clamp to dynRangeDb.
     const re = sono.data.re;
+
     let peak = 0;
     for (let i = 0; i < re.length; i++) if (re[i] > peak) peak = re[i];
+    const dbColour = sonoColour === 'db';
     const peakDb = peak > 0 ? 20 * Math.log10(peak) : 0;
-    const img = cx.createImageData(nt, nf);
-    for (let fr = 0; fr < nf; fr++) {
+    const floorDb = peakDb - dynRangeDb;
+    const norm = (v: number): number => {
+      if (dbColour) {
+        const db = v > 0 ? 20 * Math.log10(v) : floorDb;
+        return (db - floorDb) / dynRangeDb;                 // 0..1 over the dB window
+      }
+      return peak > 0 ? v / peak : 0;                       // 0..1 linear magnitude
+    };
+
+    // Frequency domain, matching `sonoAxisModel`: top = highest freq, bottom =
+    // lowest (or the first positive bin on a log axis — the DC-row guard).
+    const fHi = f[nf - 1];
+    const fLo = sonoLogY ? firstPositiveFreq(f) : f[0];
+    const lHi = Math.log10(fHi), lLo = Math.log10(fLo);
+
+    // Output vertical resolution: at least the source-bin count, floored so a
+    // small CWT log grid still remaps smoothly onto the taller data rect (and
+    // capped so a large STFT nFFT stays a sane buffer).
+    const outRows = Math.min(4096, Math.max(nf, 512));
+    sonoCanvas.width = nt;
+    sonoCanvas.height = outRows;
+    const img = cx.createImageData(nt, outRows);
+    for (let oy = 0; oy < outRows; oy++) {
+      const frac = outRows === 1 ? 0 : oy / (outRows - 1);  // 0 at top (fHi) → 1 at bottom (fLo)
+      const freq = sonoLogY ? 10 ** (lHi - frac * (lHi - lLo)) : fHi - frac * (fHi - fLo);
+      const rowBase = nearestBin(f, freq) * nt;
+      const pxRow = oy * nt * 4;
       for (let t = 0; t < nt; t++) {
-        const v = re[fr * nt + t];
-        const db = v > 0 ? 20 * Math.log10(v) : peakDb - dynRangeDb;
-        const norm = (db - (peakDb - dynRangeDb)) / dynRangeDb; // 0..1
-        const [r, g, b] = viridis(norm);
-        // Flip vertically so low freq is at the bottom (canvas y grows down).
-        const px = ((nf - 1 - fr) * nt + t) * 4;
+        const [r, g, b] = viridis(norm(re[rowBase + t]));
+        const px = pxRow + t * 4;
         img.data[px] = r; img.data[px + 1] = g; img.data[px + 2] = b; img.data[px + 3] = 255;
       }
     }
     cx.putImageData(img, 0, 0);
   });
 
-  // Empty-lines model so PlotSurface draws sonogram axes over the canvas.
+  // Empty-lines model so PlotSurface draws sonogram axes over the canvas. The
+  // y-domain lower bound is clamped to the first positive frequency on a log
+  // axis (matching the heat painter's DC-row guard) so the axis ticks and the
+  // heat rows share the same fLo..fHi mapping. `yLogAxis` drives the log-y
+  // decade ticks (see build.ts) — distinct from `yScale`'s dB transform.
   const sonoAxisModel = $derived<PlotModel>({
     lines: [], xLabel: 'Time (s)', yLabel: 'Frequency (Hz)',
     xRange: sono ? [sono.timeAxis[0], sono.timeAxis[sono.timeAxis.length - 1]] : null,
-    yRange: sono ? [sono.freqAxis[0], sono.freqAxis[sono.freqAxis.length - 1]] : null,
+    yRange: sono
+      ? [sonoLogY ? firstPositiveFreq(sono.freqAxis) : sono.freqAxis[0],
+         sono.freqAxis[sono.freqAxis.length - 1]]
+      : null,
+    yLogAxis: sonoLogY,
   });
 
 </script>
@@ -834,7 +910,7 @@
         <div class="plot-host">
           <canvas bind:this={sonoCanvas} data-testid="sono-canvas" class="sono-heat"></canvas>
           <PlotSurface bind:this={plotRef} model={sonoAxisModel} {viewState} overlay />
-          <ZoomToolbar {viewState} dataExtent={extent} bind:mode />
+          <ZoomToolbar {viewState} dataExtent={extent} bind:mode sono />
         </div>
       {:else if nyquist}
         <!-- Nyquist (round-5 item 4): a frequency-band brush over the square

@@ -186,6 +186,59 @@ test('xScale/yScale round-trip through serialize/restore', () => {
   expect(get(vs2.current).yScale).toBe('lin');
 });
 
+test('sono scales default lin freq / dB colour; setters scope to the sono view; no history', () => {
+  const vs = createViewState();
+  // Defaults reproduce today's behaviour: linear frequency y, dB heat colour.
+  expect(get(vs.current).sonoFreqScale).toBe('lin');   // active is 'time' but the field exists on every slice
+  expect(get(vs.current).sonoColour).toBe('db');
+
+  vs.activate('sono');
+  const before = get(vs.current).history.length;
+  vs.setSonoFreqScale('log');
+  vs.setSonoColour('lin');
+  expect(get(vs.current).sonoFreqScale).toBe('log');
+  expect(get(vs.current).sonoColour).toBe('lin');
+  // Display modes, not navigable — they must NOT push zoom-history entries.
+  expect(get(vs.current).history.length).toBe(before);
+
+  // Scoped to 'sono' regardless of which view is active when called.
+  vs.activate('frequency');
+  vs.setSonoFreqScale('lin');
+  vs.setSonoColour('db');
+  vs.activate('sono');
+  expect(get(vs.current).sonoFreqScale).toBe('lin');
+  expect(get(vs.current).sonoColour).toBe('db');
+  // The frequency slice's own sono fields stayed at defaults (never written).
+  vs.activate('frequency');
+  expect(get(vs.current).sonoFreqScale).toBe('lin');
+  expect(get(vs.current).sonoColour).toBe('db');
+});
+
+test('sono scales round-trip through serialize/restore and default over a stale snapshot', () => {
+  const vs = createViewState();
+  vs.activate('sono');
+  vs.setSonoFreqScale('log');
+  vs.setSonoColour('lin');
+  const vs2 = createViewState();
+  vs2.restore(JSON.parse(JSON.stringify(vs.serialize())));
+  vs2.activate('sono');
+  expect(get(vs2.current).sonoFreqScale).toBe('log');
+  expect(get(vs2.current).sonoColour).toBe('lin');
+
+  // An OLD snapshot lacking the fields falls back to the fresh() defaults
+  // (linear freq / dB colour) — never undefined, never log-y on load.
+  const snap = JSON.parse(JSON.stringify(vs.serialize()));
+  for (const id of ['time', 'frequency', 'tf', 'sono']) {
+    delete snap.views[id].sonoFreqScale;
+    delete snap.views[id].sonoColour;
+  }
+  const vs3 = createViewState();
+  vs3.restore(snap);
+  vs3.activate('sono');
+  expect(get(vs3.current).sonoFreqScale).toBe('lin');
+  expect(get(vs3.current).sonoColour).toBe('db');
+});
+
 // ---- round-5 axis-nav: Nyquist real/imag, Bode phase, coherence ----
 
 test('aux-range defaults: nyquist auto, phase ±180 lock, coherence fixed', () => {

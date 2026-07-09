@@ -93,7 +93,7 @@
   {:else if $activeStage === 'tf'}
     <TFCard {viewState} {selection} {actions} {analysisSettings} />
   {:else if $activeStage === 'sono'}
-    <SonoCard {actions} {selection} {analysisSettings} />
+    <SonoCard {viewState} {actions} {selection} {analysisSettings} />
   {:else if $activeStage === 'fit'}
     <FitCard {actions} {analysisSettings} {selection} {viewState} {modal} />
   {:else if $activeStage === 'export'}

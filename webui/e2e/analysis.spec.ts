@@ -88,6 +88,54 @@ function sonoPlotBgComputedFill(page: Page): Promise<string> {
 }
 
 /**
+ * Fraction of pixels that DIFFER between two PNG screenshots (of the SAME
+ * region, same size), scanned in-page. Used to prove a control changed the
+ * VISIBLE composited image — the standard the engineering note demands: a claim
+ * that log-y (or a colour toggle) altered the render is only trusted when the
+ * on-screen pixels actually move. Small per-channel jitter (<12) is ignored so
+ * antialiasing / theme sub-pixel noise doesn't count as a change.
+ */
+function pngPixelDiffFrac(page: Page, a: Buffer, b: Buffer): Promise<number> {
+  const urlA = 'data:image/png;base64,' + a.toString('base64');
+  const urlB = 'data:image/png;base64,' + b.toString('base64');
+  return page.evaluate(async ([ua, ub]) => {
+    const load = (u: string) => new Promise<HTMLImageElement>((res, rej) => {
+      const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = u;
+    });
+    const [ia, ib] = await Promise.all([load(ua), load(ub)]);
+    const w = Math.min(ia.naturalWidth, ib.naturalWidth);
+    const h = Math.min(ia.naturalHeight, ib.naturalHeight);
+    const draw = (im: HTMLImageElement) => {
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const ctx = cv.getContext('2d')!; ctx.drawImage(im, 0, 0);
+      return ctx.getImageData(0, 0, w, h).data;
+    };
+    const da = draw(ia), db = draw(ib);
+    let total = 0, diff = 0;
+    for (let i = 0; i < da.length; i += 4) {
+      total++;
+      if (Math.abs(da[i] - db[i]) > 12 || Math.abs(da[i + 1] - db[i + 1]) > 12
+        || Math.abs(da[i + 2] - db[i + 2]) > 12) diff++;
+    }
+    return diff / total;
+  }, [urlA, urlB]);
+}
+
+/**
+ * The numeric y-axis tick VALUES of the (single) plot on screen. Y ticks are the
+ * `text.tick` elements anchored to the END (right-aligned, left of the data
+ * rect); x ticks are middle-anchored, so this selector picks the y axis only.
+ * Used to assert log-frequency ticks land on DECADES when the sono y-scale is
+ * log (consecutive values in a ~10 ratio).
+ */
+function sonoYTickValues(page: Page): Promise<number[]> {
+  return page.evaluate(() => Array.from(
+    document.querySelectorAll('[data-testid="plot-svg"] text.tick[text-anchor="end"]'))
+    .map((t) => Number((t.textContent ?? '').trim()))
+    .filter((v) => Number.isFinite(v)));
+}
+
+/**
  * Orphan-only tray (round-6 items 2/3): a TF-only load has NO time signal, so
  * the sonogram cannot run. Fast (no engine): loads the checked-in orphan
  * `.dvma` via the fallback input and asserts Calc Sonogram is DISABLED with a
@@ -216,6 +264,46 @@ test.describe('@engine', () => {
     // the canvas backing store. This is the assertion the prior verifications
     // never made; it would have failed RED against every shipped build.
     expect(await sonoVisibleColourFrac(page)).toBeGreaterThan(0.3);
+
+    // ── sono axis controls: y lin|log + colour dB|lin (verified on VISIBLE
+    //    composited pixels, per the layered-canvas engineering note) ──
+    // Diff the HEAT element's composited box (data rect), not `.plot-host`: the
+    // toolbar's active-button highlight moves on toggle, so a `.plot-host` diff
+    // could pass on the highlight alone. The data rect is heat, so a real remap
+    // dominates; a broken (no-op) remap would fall well below the threshold.
+    const heat = page.getByTestId('sono-canvas');
+    const linY = await heat.screenshot();                 // default: linear freq y, dB colour
+    const linYTicks = await sonoYTickValues(page);
+
+    // Toggle the frequency y-axis to log. The heat rows remap through log10 and
+    // the axis ticks move to decades, so the COMPOSITED image must visibly move.
+    await page.getByTestId('sono-yscale-toggle').getByRole('button', { name: 'log' }).click();
+    await expect.poll(async () => pngPixelDiffFrac(page, linY, await heat.screenshot()))
+      .toBeGreaterThan(0.05);
+    // Still a visible heat (didn't blank), and the y ticks are now decades.
+    expect(await sonoVisibleColourFrac(page)).toBeGreaterThan(0.3);
+    const logYTicks = await sonoYTickValues(page);
+    expect(logYTicks.length).toBeGreaterThanOrEqual(2);
+    // Consecutive decade ticks sit in a ~10 ratio (the log-spacing proof), and
+    // the tick set differs from the linear one.
+    for (let i = 1; i < logYTicks.length; i++) {
+      expect(logYTicks[i] / logYTicks[i - 1]).toBeCloseTo(10, 0);
+    }
+    expect(logYTicks).not.toEqual(linYTicks);
+
+    // Toggle the heat COLOUR to linear (over the same 0→peak range): a distinct
+    // visible change from the dB mapping, and the dynamic-range control disables.
+    const logDb = await heat.screenshot();
+    await page.getByTestId('sono-colour-toggle').getByRole('button', { name: 'lin' }).click();
+    await expect(page.getByTestId('sono-dynrange-lin-note')).toBeVisible();
+    await expect(page.getByLabel('dynamic range dB')).toBeDisabled();
+    // dB↔lin is a colour REMAP (same layout), so the visible diff is smaller
+    // than the log-y spatial remap: both fill the rect with viridis, only the
+    // per-cell colour shifts. ~0.023 measured; 0.012 sits safely above the
+    // toolbar-highlight floor (~0.003) yet fails a no-op colour toggle.
+    await expect.poll(async () => pngPixelDiffFrac(page, logDb, await heat.screenshot()))
+      .toBeGreaterThan(0.012);
+    expect(await sonoVisibleColourFrac(page)).toBeGreaterThan(0.3);
   });
 
   test('multiset + orphan: Sonogram targets a time-bearing set, excludes the orphan, paints in BOTH themes (round-6 items 2/3)', async ({ page }) => {
@@ -257,6 +345,16 @@ test.describe('@engine', () => {
     await expect.poll(() => sonoPaintFrac(page), { timeout: 60_000 }).toBeGreaterThan(0.9);
     expect(await sonoVisibleColourFrac(page), 'heat visible on screen (flipped theme)').toBeGreaterThan(0.3);
 
+    // Log-y works in the FLIPPED theme too (both-themes coverage for the axis
+    // controls): toggling y=log visibly moves the composited image and stays a
+    // visible heat under the flipped surface.
+    const heat = page.getByTestId('sono-canvas');
+    const linY = await heat.screenshot();
+    await page.getByTestId('sono-yscale-toggle').getByRole('button', { name: 'log' }).click();
+    await expect.poll(async () => pngPixelDiffFrac(page, linY, await heat.screenshot()))
+      .toBeGreaterThan(0.05);
+    expect(await sonoVisibleColourFrac(page), 'log-y heat visible (flipped theme)').toBeGreaterThan(0.3);
+
     expect(errors, 'no uncaught page errors during the sono flow').toEqual([]);
   });
 
@@ -287,6 +385,22 @@ test.describe('@engine', () => {
     }), { timeout: 200_000 }).toBeGreaterThan(0.9);
     // The CWT heat must be VISIBLE on screen too (same overlay path as STFT).
     expect(await sonoVisibleColourFrac(page)).toBeGreaterThan(0.3);
+
+    // Log-y on the CWT's NATIVE log-spaced grid (the standing TODO): the renderer
+    // maps each source frequency VALUE to a pixel, so a non-uniform grid remaps
+    // correctly. Toggling y=log must visibly move the composited image and land
+    // decade ticks — with the wavelet's full low-frequency detail now shown.
+    const heat = page.getByTestId('sono-canvas');
+    const linY = await heat.screenshot();
+    await page.getByTestId('sono-yscale-toggle').getByRole('button', { name: 'log' }).click();
+    await expect.poll(async () => pngPixelDiffFrac(page, linY, await heat.screenshot()))
+      .toBeGreaterThan(0.05);
+    expect(await sonoVisibleColourFrac(page)).toBeGreaterThan(0.3);
+    const logYTicks = await sonoYTickValues(page);
+    expect(logYTicks.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < logYTicks.length; i++) {
+      expect(logYTicks[i] / logYTicks[i - 1]).toBeCloseTo(10, 0);
+    }
   });
 
   /**

@@ -117,7 +117,9 @@ Two methods are available via the **STFT | CWT** switch:
   low-frequency modes than any single STFT window. Controls:
   **voices/octave** (frequency density) and an optional frequency
   range. The magnitude scale matches the STFT image, so the two
-  methods read comparably.
+  methods read comparably. The heat map is drawn on the wavelet's
+  **native log-spaced grid**, so switching the frequency axis to **log**
+  (see below) shows its full low-frequency detail.
 
 Common controls:
 
@@ -128,7 +130,17 @@ Common controls:
   transfer function on its own has no time signal to transform, so those
   sets are excluded. If nothing time-bearing is loaded, **Calc
   Sonogram** is disabled with a note explaining why.
-- **dynamic range** — the dB span of the colour map (30–120 dB).
+- **dynamic range** — the dB span of the colour map (30–120 dB). It
+  applies to the **dB** colour mode; in **linear** colour mode (below)
+  the heat is normalised 0 → peak instead, so this control is disabled.
+- **frequency axis** and **colour** live on the plot toolbar, not the
+  card. The **y — lin | log** switch draws the frequency axis linearly
+  (default) or on decades; **log** stretches the low-frequency detail
+  and is the natural pairing with the CWT's log grid. (The x axis stays
+  time — a log time axis is not meaningful.) The **colour — dB | lin**
+  switch maps the heat by magnitude in dB (default, over the dynamic
+  range span) or by linear magnitude (0 → peak). Both choices persist
+  per view with the rest of the axis state.
 - **Fit damping** — estimates modal damping from the log-decrement of
   the time-frequency bands, listing `fn (Hz)` and `Qn` per detected
   mode (or "no decaying modes detected"). It works with whichever
@@ -200,7 +212,9 @@ dock it via the toolbar.
 - **Auto X** fits the full data extent; **Auto Y** fits only the lines
   currently visible.
 - Axis-scale toggles appear where they apply: **x lin/log** on frequency
-  and TF views, **y dB/lin** on magnitude/PSD views.
+  and TF views, **y dB/lin** on magnitude/PSD views, and on the
+  **Sonogram** a frequency-axis **y lin/log** plus a heat **colour
+  dB/lin** switch (see the Sonogram section).
 - The expander opens a popover with **manual axis limits** (applied live)
   and **legend placement** (a 2×2 corner grid plus an *Outside* option).
 

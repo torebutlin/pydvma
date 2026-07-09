@@ -142,6 +142,47 @@ test('xScale "log": a DC (x=0) sample is dropped, not thrown, and domain clamps 
   for (const X of xs) { expect(X).toBeGreaterThanOrEqual(-0.5); expect(X).toBeLessThanOrEqual(300.5); }
 });
 
+test('yLogAxis true: y ticks are decades and the y mapping is log10 (sono log-freq axis)', () => {
+  // Empty-lines axis model (as the sonogram uses): the caller supplies an
+  // already-positive yRange, so log-y ticks/mapping come straight from it.
+  const height = 300;
+  const b = buildPlot({
+    lines: [], xLabel: 'Time (s)', yLabel: 'Frequency (Hz)',
+    yLogAxis: true, xRange: [0, 1], yRange: [1, 1000],
+  }, 300, height);
+  // Decade ticks over [1,1000]; each decade is height/3 px (SVG y grows down,
+  // so the top value 1000 is at px 0 and the bottom value 1 is at px=height).
+  expect(b.yTicks.map(t => t.v)).toEqual([1, 10, 100, 1000]);
+  expect(b.yTicks[0].px).toBeCloseTo(300, 6);   // v=1   → bottom
+  expect(b.yTicks[1].px).toBeCloseTo(200, 6);   // v=10
+  expect(b.yTicks[2].px).toBeCloseTo(100, 6);   // v=100
+  expect(b.yTicks[3].px).toBeCloseTo(0, 6);     // v=1000 → top
+});
+
+test('yLogAxis true: a DC (y=0) lower bound clamps to the first positive value', () => {
+  // yRange reaching down to the DC bin (f=0) must clamp positive for log-y,
+  // mirroring the log-x DC guard. With no lines the fallback is the yRange
+  // itself, so pass a positive lower bound — but a stray 0 must still clamp.
+  const b = buildPlot({
+    lines: [{ x: Float64Array.from([0, 1]), y: Float64Array.from([0, 500]),
+              color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left' }],
+    xLabel: 'Time (s)', yLabel: 'Frequency (Hz)',
+    yLogAxis: true, xRange: [0, 1], yRange: [0, 1000],
+  }, 300, 300);
+  // Lower bound clamped to the first positive y datum (500), not 0.
+  expect(b.yDomain[0]).toBeCloseTo(500, 9);
+  expect(b.yDomain[1]).toBeCloseTo(1000, 9);
+});
+
+test('yLogAxis absent/false keeps the linear y path exactly as before', () => {
+  const lin = buildPlot({
+    lines: [], xLabel: 'Time (s)', yLabel: 'Frequency (Hz)', xRange: [0, 1], yRange: [0, 100],
+  }, 300, 300);
+  // Linear "nice" ticks, not decades (0 present, 100 present, evenly spaced).
+  expect(lin.yTicks.map(t => t.v)).toContain(0);
+  expect(lin.yTicks.map(t => t.v)).toContain(100);
+});
+
 test('xScale absent/"lin" keeps the linear path exactly as before', () => {
   const b = buildPlot({
     lines: [line()], xLabel: 't', yLabel: 'V', xRange: [0, 2], yRange: null,

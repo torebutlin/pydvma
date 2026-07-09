@@ -10,6 +10,9 @@ export interface Range { x: [number, number] | null; y: [number, number] | null;
 /** Axis scale: linear or log10. See `ViewSlice.xScale`/`yScale`. */
 export type AxisScale = 'lin' | 'log';
 
+/** Sonogram heat colour mapping: dB (log magnitude) or linear magnitude. */
+export type SonoColour = 'db' | 'lin';
+
 /**
  * A navigable-state snapshot pushed onto the undo/redo stacks. The tf view
  * is special: its Nyquist projection (Real/Imag axes) and its Bode phase
@@ -48,6 +51,19 @@ export interface RangeSnapshot { range: Range; nyquistRange: Range; phaseRange: 
  *   `[-180,180]` (the ±180° lock); null ⇒ auto-fit the phase data.
  * `coherenceAuto` toggles the coherence overlay's right axis between the
  * fixed `[0,1]` (default, `false`) and auto-fit (`true`).
+ *
+ * The sono view carries two DEDICATED display scales (kept apart from
+ * `xScale`/`yScale` on purpose):
+ * - `sonoFreqScale` — the FREQUENCY y-axis mapping: `'lin'` (default) draws a
+ *   linear frequency axis; `'log'` draws decade log10. This is an AXIS scale
+ *   (like `xScale` is for the frequency x), NOT the dB data transform `yScale`
+ *   encodes. It is a SEPARATE field because sono's default must be linear,
+ *   whereas `yScale` defaults to `'log'` (dB) for the magnitude views — reusing
+ *   `yScale` would both flip existing saved sessions to log-y AND overload one
+ *   field with two opposite meanings.
+ * - `sonoColour` — the heat COLOUR mapping: `'db'` (default) colours by
+ *   magnitude in dB over the Sono card's dynamic-range span; `'lin'` colours by
+ *   linear magnitude 0→peak. The dB-ness here is the COLOUR, not the y-axis.
  */
 export interface ViewSlice {
   range: Range;
@@ -60,6 +76,9 @@ export interface ViewSlice {
   nyquistRange: Range;               // tf/Nyquist: Real/Imag display window
   phaseRange: Range;                 // tf/Bode: phase pane y-axis (default ±180)
   coherenceAuto: boolean;            // tf: coherence right axis auto ↔ fixed [0,1]
+  // ── sono-only display scales (own defaults, distinct from xScale/yScale) ──
+  sonoFreqScale: AxisScale;          // sono: FREQUENCY y-axis lin (default) ↔ log10
+  sonoColour: SonoColour;            // sono: heat COLOUR dB (default) ↔ linear magnitude
 }
 
 const fresh = (): ViewSlice => ({
@@ -76,6 +95,9 @@ const fresh = (): ViewSlice => ({
   nyquistRange: { x: null, y: null },
   phaseRange: { x: null, y: [-180, 180] },
   coherenceAuto: false,
+  // Sono defaults reproduce today's behaviour: linear frequency y-axis, dB
+  // heat colour. Independent of yScale's 'log' (dB) magnitude default above.
+  sonoFreqScale: 'lin', sonoColour: 'db',
 });
 
 /** Pull the three navigable ranges of a slice into a history snapshot. */
@@ -273,6 +295,24 @@ export function createViewState() {
   function setYScale(s: AxisScale) { patch(get(active), v => ({ ...v, yScale: s })); }
 
   /**
+   * Set the sono view's FREQUENCY y-axis scale (`'lin'`/`'log'`). Scoped to the
+   * 'sono' slice (the only view that reads it; its toolbar is the only caller).
+   * A display mode — like `xScale`/`yScale`, NOT recorded in history. Distinct
+   * from `yScale`: this is the frequency AXIS mapping, not the dB data
+   * transform (see the `ViewSlice` docstring for why it is its own field).
+   */
+  function setSonoFreqScale(s: AxisScale) { patch('sono', v => ({ ...v, sonoFreqScale: s })); }
+
+  /**
+   * Set the sono view's heat COLOUR mapping (`'db'` = magnitude in dB over the
+   * card's dynamic-range span; `'lin'` = linear magnitude 0→peak). Scoped to
+   * the 'sono' slice. A display mode, NOT recorded in history. The dB-ness here
+   * is the COLOUR, not the y-axis (which is frequency) — kept apart from
+   * `yScale` so the two never get confused.
+   */
+  function setSonoColour(c: SonoColour) { patch('sono', v => ({ ...v, sonoColour: c })); }
+
+  /**
    * Set (not toggle) the tf view's coherence right-axis mode (round-5 item 6):
    * `false` ⇒ the fixed `[0,1]` axis (default), `true` ⇒ auto-fit the coherence
    * data. A display mode like `xScale`/`yScale`, so NOT recorded in history.
@@ -325,7 +365,8 @@ export function createViewState() {
     activate, setRange, back, forward, autoFit,
     beginTransient, setRangeLive, commitTransient, cancelTransient,
     setNyquistRange, setPhaseRange, setBodePhaseRange, setCoherenceAuto,
-    setPlotType, setCoherence, setXScale, setYScale, setLegend,
+    setPlotType, setCoherence, setXScale, setYScale,
+    setSonoFreqScale, setSonoColour, setLegend,
     serialize, restore,
   };
 }

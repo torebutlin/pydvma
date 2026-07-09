@@ -72,6 +72,7 @@
     nyquist = false,
     phaseControl = false,
     coherenceControl = false,
+    sono = false,
     freqExtent = undefined,
   }: {
     viewState: ViewState;
@@ -114,6 +115,17 @@
      */
     coherenceControl?: boolean;
     /**
+     * Sonogram view: surface TWO segmented controls in the toolbar bar — a
+     * frequency y-axis `lin | log` (drives `sonoFreqScale`) and a heat colour
+     * `dB | lin` (drives `sonoColour`). App passes this only on the sono view.
+     * There is deliberately NO x-scale control on sono: x is TIME, and a log
+     * time axis is nonsensical (mirrors why `showXScale` excludes time/sono).
+     * The colour control is tagged `colour` — NOT `y` — because on sono the
+     * dB-ness is the heat COLOUR, not the frequency y-axis, so it must never be
+     * confused with the `y` lin|log axis control beside it.
+     */
+    sono?: boolean;
+    /**
      * Full frequency extent `[fmin, fmax]` — the fallback shown in the Nyquist
      * `freq` group when the committed frequency window is auto (null). Ignored
      * outside Nyquist mode.
@@ -129,6 +141,9 @@
   // Live axis-scale state for the segmented controls (R3).
   const xScale = $derived($current.xScale);
   const yScale = $derived($current.yScale);
+  // Sono-only display scales: frequency y-axis lin↔log, heat colour dB↔lin.
+  const sonoFreqScale = $derived($current.sonoFreqScale);
+  const sonoColour = $derived($current.sonoColour);
 
   // On Nyquist the primary axes are the Real/Imag `nyquistRange`; everywhere
   // else the toolbar's x/y drive the primary `range`. `targetRange` is the one
@@ -370,6 +385,35 @@
           ]}
         />
       {/if}
+    {/if}
+
+    {#if sono}
+      <!-- Sono: frequency y-axis lin|log + heat colour dB|lin. x stays TIME
+           (no x control — log time is nonsensical). The colour tag reads
+           `colour` so it is never mistaken for the `y` frequency-axis control. -->
+      <span class="zdiv" aria-hidden="true"></span>
+      <Segmented
+        testid="sono-yscale-toggle"
+        ariaLabel="Frequency axis scale"
+        label="y"
+        value={sonoFreqScale}
+        onchange={(s) => viewState.setSonoFreqScale(s)}
+        options={[
+          { value: 'lin' as const, label: 'lin', title: 'Linear frequency axis' },
+          { value: 'log' as const, label: 'log', title: 'Log10 frequency axis (decades)' },
+        ]}
+      />
+      <Segmented
+        testid="sono-colour-toggle"
+        ariaLabel="Heat colour mapping"
+        label="colour"
+        value={sonoColour}
+        onchange={(c) => viewState.setSonoColour(c)}
+        options={[
+          { value: 'db' as const, label: 'dB', title: 'Colour by magnitude in dB (over the dynamic-range span)' },
+          { value: 'lin' as const, label: 'lin', title: 'Colour by linear magnitude (0 → peak)' },
+        ]}
+      />
     {/if}
 
     <span class="zdiv" aria-hidden="true"></span>

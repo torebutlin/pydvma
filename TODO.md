@@ -21,10 +21,17 @@ feedback from Tore's lab-testing period:
 - **Browser pretrigger threshold control** — expose the trigger
   threshold in the browser Acquire UI (the bridge already has it;
   browser uses a fixed 0.05).
-- **Log-y heat rendering for the CWT sonogram** — the CWT currently
-  resamples its log-spaced axis onto a uniform grid because the heat
-  renderer assumes uniform bins; a log-y renderer would show the
-  low-frequency detail natively.
+- ~~**Log-y heat rendering for the CWT sonogram**~~ — DONE
+  (2026-07-09). The sono plot now has a toolbar **y — lin | log**
+  frequency-axis switch; the heat painter maps each pixel row through
+  the chosen scale to the nearest source bin (value→pixel, not
+  bin-index→pixel), so it renders both the STFT's uniform grid and the
+  CWT's non-uniform grid, and the CWT display now passes its **native
+  log grid** (`uniform_freq=False` in `calc_sono`) — no more display
+  resample, full low-frequency detail on log-y. Ships alongside a heat
+  **colour — dB | lin** toolbar switch (dB uses the dynamic-range span;
+  lin normalises 0→peak, disabling the dynamic-range box). Both persist
+  per-view in the `.dvma` UI state.
 - **CSD pair auto-enable on a hidden channel** — selecting a CSD pair
   should re-enable a channel that is currently hidden.
 - **Orphan-fit browser e2e** — Playwright cover for the round-6

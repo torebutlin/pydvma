@@ -47,6 +47,17 @@ export interface PlotModel {
    * whose axes are Real/Imag, not frequency.
    */
   xScale?: 'lin' | 'log';
+  /**
+   * Y-axis mapping. `true` maps the y domain through log10 with decade ticks,
+   * clamping a non-positive lower bound to the first positive datum (or the
+   * caller-supplied positive `yRange[0]`) — the mirror of `xScale: 'log'` for
+   * the y axis. Used ONLY by the sonogram's log-frequency axis; the magnitude
+   * views leave it unset (their `yScale: 'log'` is a dB DATA transform on a
+   * LINEAR axis, a different thing entirely). Ignored on `squareAspect`
+   * (Nyquist) models. Absent/`false` → the linear y path, byte for byte as
+   * before.
+   */
+  yLogAxis?: boolean;
   xRange: [number, number] | null; yRange: [number, number] | null;
   y2Range?: [number, number];
 }
@@ -101,6 +112,23 @@ function minPositiveX(lines: PlotLine[]): number | undefined {
   for (const l of lines) {
     for (let i = 0; i < l.x.length; i++) {
       const v = l.x[i];
+      if (Number.isFinite(v) && v > 0 && v < lo) lo = v;
+    }
+  }
+  return lo === Infinity ? undefined : lo;
+}
+
+/**
+ * Smallest finite POSITIVE y value across `lines`, or `undefined` when none
+ * exists (e.g. the sonogram's empty-lines axis model — the caller then supplies
+ * an already-positive `yRange[0]`). The y-axis analogue of `minPositiveX`, used
+ * to clamp a log-y domain's lower bound off a DC (f=0) sample.
+ */
+function minPositiveY(lines: PlotLine[]): number | undefined {
+  let lo = Infinity;
+  for (const l of lines) {
+    for (let i = 0; i < l.y.length; i++) {
+      const v = l.y[i];
       if (Number.isFinite(v) && v > 0 && v < lo) lo = v;
     }
   }
@@ -171,10 +199,19 @@ export function buildPlot(model: PlotModel, width: number, height: number): Buil
   const logX = model.xScale === 'log' && !model.squareAspect;
   if (logX) xDomain = logDomain(xDomain, minPositiveX(model.lines));
 
+  // Log-y (sonogram frequency axis): mirror the log-x path on the y axis —
+  // clamp a non-positive lower bound (DC bin) to the first positive datum, map
+  // through log10, and label at decades. Never applies to Nyquist. The dB
+  // magnitude views leave `yLogAxis` unset, so their y stays linear here.
+  const logY = model.yLogAxis === true && !model.squareAspect;
+  if (logY) yDomain = logDomain(yDomain, minPositiveY(model.lines));
+
   const sx = logX
     ? scaleLog(xDomain[0], xDomain[1], 0, width)
     : scaleLinear(xDomain[0], xDomain[1], 0, width);
-  const sy = scaleLinear(yDomain[0], yDomain[1], height, 0);
+  const sy = logY
+    ? scaleLog(yDomain[0], yDomain[1], height, 0)
+    : scaleLinear(yDomain[0], yDomain[1], height, 0);
   const sy2 = scaleLinear(model.y2Range?.[0] ?? 0, model.y2Range?.[1] ?? 1, height, 0);
   const columns = Math.max(64, Math.floor(width));
 
@@ -217,7 +254,8 @@ export function buildPlot(model: PlotModel, width: number, height: number): Buil
     paths, xDomain, yDomain,
     xTicks: (logX ? decadeTicks(xDomain[0], xDomain[1]) : niceTicks(xDomain[0], xDomain[1]))
       .map(v => ({ v, px: sx(v) })),
-    yTicks: niceTicks(yDomain[0], yDomain[1]).map(v => ({ v, px: sy(v) })),
+    yTicks: (logY ? decadeTicks(yDomain[0], yDomain[1]) : niceTicks(yDomain[0], yDomain[1]))
+      .map(v => ({ v, px: sy(v) })),
     y2Ticks: model.y2Range ? niceTicks(model.y2Range[0], model.y2Range[1], 4).map(v => ({ v, px: sy2(v) })) : [],
   };
 }

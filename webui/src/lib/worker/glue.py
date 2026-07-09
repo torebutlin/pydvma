@@ -137,9 +137,12 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
     frequencies with non-dimensional frequency ``w0``. ``nperseg``/``noverlap``
     are IGNORED (the wavelet has no fixed window); an optional ``f_min``/``f_max``
     (Hz) overrides the default ``4/T .. 0.4*fs`` band. The CWT image is returned
-    on a UNIFORM frequency grid (``uniform_freq=True``) so the existing heat
-    renderer — which maps frequency row-index linearly and labels a linear
-    axis — places and labels it correctly with no renderer change.
+    on its NATIVE LOG-spaced frequency grid (``uniform_freq=False``): the heat
+    renderer now maps each frequency VALUE (not row-index) to a pixel through the
+    chosen axis scale and binary-searches the nearest bin, so it places and
+    labels a non-uniform grid correctly — and a log-y display then shows the
+    wavelet's full low-frequency detail (previously a uniform resample threw
+    that detail away for the display).
 
     Either way ``sono_data`` is returned as a real magnitude image (Nf, Nt) —
     ``abs`` of the complex transform for channel ``ch`` — plus its two axes.
@@ -171,7 +174,7 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
             f_range = (float(f_min), float(f_max))
         sd = analysis.calculate_cwt(
             td, f_range=f_range, voices_per_octave=int(voices_per_octave),
-            w0=float(w0))
+            w0=float(w0), uniform_freq=False)
     else:
         try:
             sd = analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
