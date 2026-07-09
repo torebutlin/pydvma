@@ -353,8 +353,8 @@ test('legend.compact defaults false; setLegend persists it per view without touc
   vs.setLegend('frequency', { ...get(vs.current).legend, compact: true });
   const l = get(vs.current).legend;
   expect(l.compact).toBe(true);
-  // Placement/visibility fields ride along unchanged.
-  expect(l).toMatchObject({ visible: true, x: 0.02, y: 0.02, preset: 'nw' });
+  // Placement/visibility fields ride along unchanged (se default, R7b).
+  expect(l).toMatchObject({ visible: true, x: 0.98, y: 0.98, preset: 'se' });
   // Per-view, not global: another view stays full.
   vs.activate('time');
   expect(get(vs.current).legend.compact).toBe(false);

@@ -86,9 +86,9 @@ async function closePanel(page: Page): Promise<void> {
 }
 
 /**
- * Move the legend to the SW corner (bottom-left) via the toolbar panel, clear
- * of the top-right ZoomToolbar which otherwise intercepts clicks on the
- * default NE-placed legend rows.
+ * Move the legend to the SW corner (bottom-left) via the toolbar panel so the
+ * gesture tests interact with it at a KNOWN position, independent of the
+ * default corner (se as of round-7b) and clear of the toolbar popover.
  */
 async function legendToSW(page: Page): Promise<void> {
   await openPanel(page);

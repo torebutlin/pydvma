@@ -137,6 +137,22 @@ line colour (off = hollow ring, fade = translucent), click cycles the
 line exactly like a legend row, full label as tooltip. Persists per
 view.
 
+## Round 7b (same day, on reviewing the summary)
+
+> Clean impulse should be something that works once; even better, an
+> on/off toggle (doubles storage requirements but not usually
+> significant). Legend: let's default SE and see how that goes.
+
+**BOTH DONE.** Clean Impulse is now a toggle: the first clean stashes
+the raw arrays and caches the cleaned result; toggling swaps by
+reference (the clean never re-runs on its own output — idempotent), a
+different impulse channel re-cleans from the raw stash, and each swap
+re-runs the existing-results recompute. Save/autosave write whichever
+copy is APPLIED; the other copy is session-only. Legend default corner
+is `se` (history: `nw` was chosen when the toolbar floated over `ne`).
+Master pushed at Tore's request — the deployed site had still been
+showing the pre-round-7 build.
+
 ## Incidental findings (not in Tore's list)
 
 - **Exported figures never include the legend.** PNG/PDF export

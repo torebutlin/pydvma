@@ -19,9 +19,8 @@ worked through Tore's first lab-testing feedback batch — see
 pick up alongside further feedback:
 
 - **Round-7 leftovers (small):**
-    - Legend default corner is still `nw` (chosen when the toolbar
-      occupied `ne`; the toolbar now docks in a strip above the plot,
-      so `ne` is available again if Tore prefers it).
+    - ~~Legend default corner~~ — DONE in round 7b: defaults `se` now
+      (Tore's call).
     - Sono `y lin|log` + `colour dB|lin` toggles stayed in the toolbar
       bar for one-click access — fold into the popover if Tore still
       finds the bar busy.
