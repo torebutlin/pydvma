@@ -696,9 +696,18 @@
   );
 
   /** Extent of the currently visible lines (for the zoom toolbar's Auto X/Y). */
-  const extent = $derived({
-    x: dataExtent(model.lines, 'x', 'any'),
-    y: dataExtent(model.lines, 'y', 'left'),
+  const extent = $derived.by(() => {
+    // Sono: the data live in the heat canvas, not `model.lines` (the sono
+    // model is deliberately empty), so the lines-derived extent would be the
+    // [0,1] empty fallback — which is exactly what the toolbar's limit
+    // fields used to show, dead (round-7 item 2). Feed the real time /
+    // frequency extents instead so the fields seed correctly and Auto X/Y
+    // commit real ranges.
+    if (view === 'sono' && sonoExtent) return sonoExtent;
+    return {
+      x: dataExtent(model.lines, 'x', 'any'),
+      y: dataExtent(model.lines, 'y', 'left'),
+    };
   });
 
   const hasData = $derived(setArrays.length > 0);
@@ -767,6 +776,54 @@
   }
 
   /**
+   * Half the larger neighbour gap around bin `i` — the "this value belongs to
+   * bin i" tolerance. A sampled value farther from its nearest bin than this
+   * lies OUTSIDE the data grid (a committed window can extend past the
+   * sonogram), and the painter renders it transparent instead of smearing the
+   * edge bin across a region where there is no data. Works for the STFT's
+   * uniform grid and the CWT's log grid alike; a 1-bin axis is all-tolerant.
+   */
+  function binTolerance(f: ArrayLike<number>, i: number): number {
+    const n = f.length;
+    if (n < 2) return Infinity;
+    const left = i > 0 ? f[i] - f[i - 1] : 0;
+    const right = i < n - 1 ? f[i + 1] - f[i] : 0;
+    return (Math.max(left, right) / 2) * 1.0001;
+  }
+
+  /** Full time/frequency extent of the computed sonogram (toolbar + gesture guardrail). */
+  const sonoExtent = $derived.by(() => {
+    if (!sono) return null;
+    const t = sono.timeAxis, f = sono.freqAxis;
+    if (t.length === 0 || f.length === 0) return null;
+    return {
+      x: [t[0], t[t.length - 1]] as [number, number],
+      y: [f[0], f[f.length - 1]] as [number, number],
+    };
+  });
+
+  /**
+   * The displayed sono window (round-7 item 2): the committed `range`
+   * (toolbar limit fields / box-zoom / pan), else the full extent. On a
+   * log-y axis the lower frequency bound clamps to the first positive bin
+   * (the DC-row guard), and a committed window that would collapse under
+   * that clamp (hi ≤ lo) falls back to the full span rather than a
+   * degenerate axis. BOTH the heat painter and `sonoAxisModel` read THIS,
+   * so the pixels and the ticks can never disagree.
+   */
+  const sonoWindow = $derived.by(() => {
+    if (!sono || !sonoExtent) return null;
+    const x = range.x ?? sonoExtent.x;
+    let y = range.y ?? sonoExtent.y;
+    if (sonoLogY) {
+      const floor = firstPositiveFreq(sono.freqAxis);
+      const lo = Math.max(y[0], floor);
+      y = y[1] > lo ? [lo, y[1]] : [floor, sonoExtent.y[1]];
+    }
+    return { x, y };
+  });
+
+  /**
    * Paint the viridis heat map. Each OUTPUT pixel ROW is mapped through the
    * chosen frequency scale (`sonoLogY`) from the top (fHi) down to the bottom
    * (fLo), then to the NEAREST source frequency bin by binary search. Because
@@ -806,45 +863,67 @@
       return peak > 0 ? v / peak : 0;                       // 0..1 linear magnitude
     };
 
-    // Frequency domain, matching `sonoAxisModel`: top = highest freq, bottom =
-    // lowest (or the first positive bin on a log axis — the DC-row guard).
-    const fHi = f[nf - 1];
-    const fLo = sonoLogY ? firstPositiveFreq(f) : f[0];
+    // Displayed window, matching `sonoAxisModel` (round-7 item 2): the
+    // committed range crops BOTH axes; unset ⇒ the full extent, where this
+    // reduces byte-for-byte to the old full-view painting (the x samples land
+    // exactly on the uniform time-bin centres, the y bounds equal the old
+    // fHi/fLo — including the log DC-row guard, applied inside `sonoWindow`).
+    const win = sonoWindow;
+    if (!win) return;
+    const [tLo, tHi] = win.x;
+    const [fLo, fHi] = win.y;
     const lHi = Math.log10(fHi), lLo = Math.log10(fLo);
+    const tAxis = sono.timeAxis;
 
-    // Output vertical resolution: at least the source-bin count, floored so a
-    // small CWT log grid still remaps smoothly onto the taller data rect (and
-    // capped so a large STFT nFFT stays a sane buffer).
+    // Output resolution: columns = source bins covered by the window (full
+    // window ⇒ nt, unchanged); rows at least the source-bin count, floored so
+    // a small CWT log grid still remaps smoothly onto the taller data rect
+    // (and capped so a large STFT nFFT stays a sane buffer).
+    const outCols = Math.max(1, Math.min(4096,
+      nearestBin(tAxis, tHi) - nearestBin(tAxis, tLo) + 1));
     const outRows = Math.min(4096, Math.max(nf, 512));
-    sonoCanvas.width = nt;
+    sonoCanvas.width = outCols;
     sonoCanvas.height = outRows;
-    const img = cx.createImageData(nt, outRows);
+    const img = cx.createImageData(outCols, outRows);
+
+    // Column map: VALUE→PIXEL like the rows, so the heat registers exactly
+    // under the axis whatever the window. A pixel whose nearest bin is
+    // farther than that bin's tolerance lies outside the data (window wider
+    // than the sonogram) and paints transparent rather than smearing edges.
+    const cols = new Int32Array(outCols);
+    for (let ox = 0; ox < outCols; ox++) {
+      const time = outCols === 1 ? tLo : tLo + (ox / (outCols - 1)) * (tHi - tLo);
+      const i = nearestBin(tAxis, time);
+      cols[ox] = Math.abs(time - tAxis[i]) <= binTolerance(tAxis, i) ? i : -1;
+    }
+
     for (let oy = 0; oy < outRows; oy++) {
       const frac = outRows === 1 ? 0 : oy / (outRows - 1);  // 0 at top (fHi) → 1 at bottom (fLo)
       const freq = sonoLogY ? 10 ** (lHi - frac * (lHi - lLo)) : fHi - frac * (fHi - fLo);
-      const rowBase = nearestBin(f, freq) * nt;
-      const pxRow = oy * nt * 4;
-      for (let t = 0; t < nt; t++) {
-        const [r, g, b] = viridis(norm(re[rowBase + t]));
-        const px = pxRow + t * 4;
+      const fi = nearestBin(f, freq);
+      const rowIn = Math.abs(freq - f[fi]) <= binTolerance(f, fi);
+      const rowBase = fi * nt;
+      const pxRow = oy * outCols * 4;
+      for (let ox = 0; ox < outCols; ox++) {
+        const px = pxRow + ox * 4;
+        if (!rowIn || cols[ox] < 0) { img.data[px + 3] = 0; continue; }
+        const [r, g, b] = viridis(norm(re[rowBase + cols[ox]]));
         img.data[px] = r; img.data[px + 1] = g; img.data[px + 2] = b; img.data[px + 3] = 255;
       }
     }
     cx.putImageData(img, 0, 0);
   });
 
-  // Empty-lines model so PlotSurface draws sonogram axes over the canvas. The
-  // y-domain lower bound is clamped to the first positive frequency on a log
-  // axis (matching the heat painter's DC-row guard) so the axis ticks and the
-  // heat rows share the same fLo..fHi mapping. `yLogAxis` drives the log-y
-  // decade ticks (see build.ts) — distinct from `yScale`'s dB transform.
+  // Empty-lines model so PlotSurface draws sonogram axes over the canvas.
+  // Ranges come from `sonoWindow` — the committed range (or full extent) with
+  // the log DC-row guard applied — the SAME window the heat painter samples,
+  // so axis ticks and heat rows always share one fLo..fHi / tLo..tHi mapping.
+  // `yLogAxis` drives the log-y decade ticks (see build.ts) — distinct from
+  // `yScale`'s dB transform.
   const sonoAxisModel = $derived<PlotModel>({
     lines: [], xLabel: 'Time (s)', yLabel: 'Frequency (Hz)',
-    xRange: sono ? [sono.timeAxis[0], sono.timeAxis[sono.timeAxis.length - 1]] : null,
-    yRange: sono
-      ? [sonoLogY ? firstPositiveFreq(sono.freqAxis) : sono.freqAxis[0],
-         sono.freqAxis[sono.freqAxis.length - 1]]
-      : null,
+    xRange: sonoWindow ? sonoWindow.x : null,
+    yRange: sonoWindow ? sonoWindow.y : null,
     yLogAxis: sonoLogY,
   });
 
@@ -907,10 +986,18 @@
           <p class="es-sub">Load Data to begin</p>
         </div>
       {:else if view === 'sono'}
-        <div class="plot-host">
-          <canvas bind:this={sonoCanvas} data-testid="sono-canvas" class="sono-heat"></canvas>
-          <PlotSurface bind:this={plotRef} model={sonoAxisModel} {viewState} overlay />
-          <ZoomToolbar {viewState} dataExtent={extent} bind:mode sono />
+        <div class="plot-host navved">
+          <div class="plot-nav">
+            <ZoomToolbar {viewState} dataExtent={extent} bind:mode sono />
+          </div>
+          <div class="plot-area">
+            <canvas bind:this={sonoCanvas} data-testid="sono-canvas" class="sono-heat"></canvas>
+            <!-- Gestures live on the axis overlay: `mode` routes box/pan and
+                 `extentOverride` supplies the clamp guardrail the empty-lines
+                 model can't (round-7 item 2). -->
+            <PlotSurface bind:this={plotRef} model={sonoAxisModel} {mode} {viewState} overlay
+              extentOverride={sonoExtent ?? undefined} />
+          </div>
         </div>
       {:else if nyquist}
         <!-- Nyquist (round-5 item 4): a frequency-band brush over the square
@@ -930,19 +1017,27 @@
               onfull={() => { if (freqExtent) viewState.setRange('tf', { x: [freqExtent[0], freqExtent[1]], y: range.y }); }}
             />
           {/if}
-          <div class="nyq-plot">
-            <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
-            <ZoomToolbar {viewState} dataExtent={extent} bind:mode nyquist {freqExtent} />
-            <Legend {selection} {viewState} entriesOverride={legendOverride} />
-            {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
+          <div class="nyq-plot navved">
+            <div class="plot-nav">
+              <ZoomToolbar {viewState} dataExtent={extent} bind:mode nyquist {freqExtent} />
+            </div>
+            <div class="plot-area">
+              <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
+              <Legend {selection} {viewState} entriesOverride={legendOverride} />
+              {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
+            </div>
           </div>
         </div>
       {:else if bode}
         <div class="plot-host bode">
-          <div class="bode-pane">
-            <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
+          <!-- One strip for the whole Bode stack: the toolbar's controls span
+               the shared x, the magnitude y AND the phase/coherence panes. -->
+          <div class="plot-nav">
             <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale}
               phaseControl coherenceControl={!!model.y2Range} />
+          </div>
+          <div class="bode-pane">
+            <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
             <Legend {selection} {viewState} entriesOverride={legendOverride} />
           </div>
           <div class="bode-pane">
@@ -954,12 +1049,16 @@
           </div>
         </div>
       {:else}
-        <div class="plot-host">
-          <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
-          <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale}
-            coherenceControl={!!model.y2Range} />
-          <Legend {selection} {viewState} entriesOverride={legendOverride} />
-          {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
+        <div class="plot-host navved">
+          <div class="plot-nav">
+            <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale}
+              coherenceControl={!!model.y2Range} />
+          </div>
+          <div class="plot-area">
+            <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
+            <Legend {selection} {viewState} entriesOverride={legendOverride} />
+            {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
+          </div>
         </div>
       {/if}
       {#if $computeErrors[activeErrorKind]}
@@ -1015,6 +1114,29 @@
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     overflow: hidden;
+  }
+  /* Docked plot-navigation strip (round-7 item 1): the zoom toolbar used to
+     FLOAT over the plot's top-right data area, permanently covering it. It now
+     sits in this slim header row above the axes — never over data. Kept
+     right-aligned so the expander popover still drops over the plot's
+     top-right corner (transiently, as before). */
+  .plot-nav {
+    flex: none;
+    display: flex;
+    justify-content: flex-end;
+    padding: 5px 6px 0;
+    position: relative;
+    z-index: 7; /* popover must stack over the plot area below */
+  }
+  /* Hosts that carry a nav strip become a column: strip + plot area. */
+  .navved {
+    display: flex;
+    flex-direction: column;
+  }
+  .plot-area {
+    position: relative; /* anchor for heat canvas / legend / fit chip */
+    flex: 1;
+    min-height: 0;
   }
   .plot-host.bode {
     display: flex;

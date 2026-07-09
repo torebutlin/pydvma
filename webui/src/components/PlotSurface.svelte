@@ -66,6 +66,7 @@
     overlay = false,
     onCommit = undefined,
     onAutoFit = undefined,
+    extentOverride = undefined,
   }: {
     model: PlotModel;
     /** Active drag tool; bind ZoomToolbar's `mode` to this. */
@@ -103,6 +104,15 @@
      * axis (`phaseRange`) rather than the shared primary range.
      */
     onAutoFit?: () => void;
+    /**
+     * Full data extent used as the gesture clamp guardrail (round-7 item 2).
+     * Required whenever the model carries NO lines but gestures must still
+     * work — the sono axis-overlay model is empty (the data live in the heat
+     * canvas), so the lines-derived extent would collapse to the [0,1]
+     * fallback and clamp every gesture into nonsense. App passes the sono
+     * time/frequency extents here. Absent ⇒ derived from `model.lines`.
+     */
+    extentOverride?: { x: [number, number]; y: [number, number] };
   } = $props();
 
   /** Commit a gesture range to the override callback, else the default setRange. */
@@ -186,35 +196,45 @@
   /** Rubber-band rect in inner-plot-rect pixels, or null when idle. */
   let band: { x0: number; y0: number; x1: number; y1: number } | null = $state(null);
 
-  // Log-x gesture support (R3): the pixel↔data mapping is log10 on the x
-  // axis when the model's xScale is 'log' (never on Nyquist). The zoom /
-  // pan / clamp maths are pure LINEAR functions, so we run them in
-  // LOG-SPACE for x (pixels are linear in log-space, exactly how the
-  // scale renders) and exponentiate the committed x range back. y is
-  // always linear. `tx`/`itx` are identity for a linear x axis, so the
-  // linear path is byte-for-byte unchanged.
+  // Log-axis gesture support (R3 x; round-7 item 2 y): the pixel↔data
+  // mapping is log10 on the x axis when the model's xScale is 'log', and on
+  // the y axis when the model sets `yLogAxis` (the sono frequency axis) —
+  // never on Nyquist. The zoom / pan / clamp maths are pure LINEAR
+  // functions, so we run them in LOG-SPACE per log axis (pixels are linear
+  // in log-space, exactly how the scale renders) and exponentiate the
+  // committed range back. `tx`/`itx` (and `ty`/`ity`) are identity for a
+  // linear axis, so the linear path is byte-for-byte unchanged.
   const logX = $derived(renderModel.xScale === 'log' && !model.squareAspect);
+  const logYg = $derived(renderModel.yLogAxis === true && !model.squareAspect);
   const tx = (v: number): number => (logX ? Math.log10(v) : v);
   const itx = (v: number): number => (logX ? 10 ** v : v);
+  const ty = (v: number): number => (logYg ? Math.log10(v) : v);
+  const ity = (v: number): number => (logYg ? 10 ** v : v);
   /** Transform a data-space {x,y} window into the gesture math space. */
   const toGesture = (r: { x: [number, number]; y: [number, number] }) =>
-    ({ x: [tx(r.x[0]), tx(r.x[1])] as [number, number], y: r.y });
-  /** Invert a gesture-space x range back to data space (y untouched). */
+    ({ x: [tx(r.x[0]), tx(r.x[1])] as [number, number], y: [ty(r.y[0]), ty(r.y[1])] as [number, number] });
+  /** Invert a gesture-space x range back to data space. */
   const fromGestureX = (x: [number, number]): [number, number] => [itx(x[0]), itx(x[1])];
+  /** Invert a gesture-space y range back to data space. */
+  const fromGestureY = (y: [number, number]): [number, number] => [ity(y[0]), ity(y[1])];
 
-  /** Full data extent (guardrail for clampToData); recomputed per model. */
-  const fullExtent = $derived({
+  /**
+   * Full data extent (guardrail for clampToData); recomputed per model.
+   * `extentOverride` (sono: heat-canvas data, no model lines) wins over the
+   * lines-derived extent, whose empty fallback would be [0,1].
+   */
+  const fullExtent = $derived(extentOverride ?? {
     x: dataExtent(model.lines, 'x', 'any'),
     y: dataExtent(model.lines, 'y', 'left'),
   });
   /**
-   * The clamp guardrail extent in GESTURE space. For log-x the raw data
-   * extent can reach the DC (f=0) bin, which has no log; use the built
+   * The clamp guardrail extent in GESTURE space. For a log axis the raw
+   * data extent can reach the DC (f=0) bin, which has no log; use the built
    * domain's clamped-positive lower bound so the guardrail stays finite.
    */
   const gestureExtent = $derived({
     x: [tx(logX ? (built?.xDomain[0] ?? fullExtent.x[0]) : fullExtent.x[0]), tx(fullExtent.x[1])] as [number, number],
-    y: fullExtent.y,
+    y: [ty(logYg ? (built?.yDomain[0] ?? fullExtent.y[0]) : fullExtent.y[0]), ty(fullExtent.y[1])] as [number, number],
   });
 
   // Pan-gesture bookkeeping (not reactive state — plain closures).
@@ -319,8 +339,8 @@
           if (!pendingPan || !panStartDom) return;
           const r = panBy(panStartDom, pendingPan, { width: pw, height: ph });
           const c = clampToData(r as { x: [number, number]; y: [number, number] }, gestureExtent);
-          // Invert x back to data space for the render preview (y is linear).
-          panPreview = { x: fromGestureX(c.x!), y: c.y! };
+          // Invert back to data space for the render preview.
+          panPreview = { x: fromGestureX(c.x!), y: fromGestureY(c.y!) };
         });
       }
     } else if (band) {
@@ -352,7 +372,7 @@
         if (Math.hypot(delta.dxPx, delta.dyPx) >= MIN_DRAG_PX) {
           const r = panBy(panStartDom, delta, { width: pw, height: ph });
           const c = clampToData(r as { x: [number, number]; y: [number, number] }, gestureExtent);
-          commitRange({ x: fromGestureX(c.x!), y: c.y! });
+          commitRange({ x: fromGestureX(c.x!), y: fromGestureY(c.y!) });
         }
       }
       panPreview = null;
@@ -371,7 +391,7 @@
         );
         if (range) {
           const c = clampToData(range, gestureExtent);
-          commitRange({ x: c.x ? fromGestureX(c.x) : null, y: c.y });
+          commitRange({ x: c.x ? fromGestureX(c.x) : null, y: c.y ? fromGestureY(c.y) : null });
         }
       }
     }

@@ -1,10 +1,11 @@
 <script lang="ts">
   /**
-   * Floating plot-navigation toolbar (design spec §6; round-4 redesign).
-   * Visuals descend from the `.zoom-bar` / `.zbtn` / `#axPop` styles in
-   * `dev/mockups/round2-bench.html`. Positions itself top-right of its
-   * nearest positioned ancestor — mount it inside the plot host next to
-   * `PlotSurface`.
+   * Plot-navigation toolbar (design spec §6; round-4 redesign). Visuals
+   * descend from the `.zoom-bar` / `.zbtn` / `#axPop` styles in
+   * `dev/mockups/round2-bench.html`. Docked in the plot host's `.plot-nav`
+   * header strip ABOVE the plot area (round-7 item 1 — it used to float over
+   * the top-right of the data area, permanently covering it); only the
+   * expander popover still drops over the plot corner, transiently.
    *
    * Wiring contract (documented design choice): the toolbar takes the WHOLE
    * view-state store object rather than narrow callbacks — every button maps
@@ -541,10 +542,11 @@
 
 <style>
   .zoom-wrap {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 6;
+    /* Docked in the parent's `.plot-nav` strip (round-7 item 1) — no longer
+       absolutely positioned over the data area. Stays `relative` as the
+       anchor for the `.ax-pop` popover, which still drops over the plot's
+       top-right corner while open. */
+    position: relative;
   }
   .zoom-bar {
     display: flex;

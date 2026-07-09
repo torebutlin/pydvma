@@ -136,6 +136,32 @@ function sonoYTickValues(page: Page): Promise<number[]> {
 }
 
 /**
+ * The ACTIVE view slice's committed range + history length, read through the
+ * `?fixture=1` `window.__viewState` dev hook (the axis-nav specs' pattern).
+ * On the sono view this is the 'sono' slice — the store the toolbar limit
+ * fields, Auto X/Y and box-zoom all commit into (round-7 item 2 guard).
+ */
+function activeSlice(page: Page): Promise<{
+  range: { x: [number, number] | null; y: [number, number] | null };
+  historyLen: number;
+}> {
+  return page.evaluate(() => {
+    const vs = (window as unknown as { __viewState?: {
+      current: { subscribe: (f: (v: unknown) => void) => () => void };
+    } }).__viewState;
+    if (!vs) throw new Error('window.__viewState hook missing (need ?fixture=1)');
+    let raw: {
+      range: { x: [number, number] | null; y: [number, number] | null };
+      history: unknown[];
+    } | null = null;
+    vs.current.subscribe((v) => { raw = v as typeof raw; })();
+    if (!raw) throw new Error('view slice unavailable');
+    const s = raw as NonNullable<typeof raw>;
+    return { range: s.range, historyLen: s.history.length };
+  });
+}
+
+/**
  * Orphan-only tray (round-6 items 2/3): a TF-only load has NO time signal, so
  * the sonogram cannot run. Fast (no engine): loads the checked-in orphan
  * `.dvma` via the fallback input and asserts Calc Sonogram is DISABLED with a
@@ -304,6 +330,72 @@ test.describe('@engine', () => {
     await expect.poll(async () => pngPixelDiffFrac(page, logDb, await heat.screenshot()))
       .toBeGreaterThan(0.012);
     expect(await sonoVisibleColourFrac(page)).toBeGreaterThan(0.3);
+
+    // ── sono axis RANGES (round-7 item 2 — the regression this file never
+    //    guarded, which is why it shipped): the limit fields used to seed from
+    //    the empty-lines model's [0,1] fallback, and setRange('sono') was
+    //    written but never read by the heat painter / axis model. Assert the
+    //    fields carry REAL extents, a committed edit moves the store + ticks +
+    //    visible pixels, Auto Y restores the full extent, and a box-zoom drag
+    //    commits an undoable window. ──
+    // Back to linear y + dB colour: the dB map paints structure across the
+    // whole window (this fixture's LINEAR-colour heat is near-uniform dark,
+    // which would starve a pixel diff of signal).
+    await page.getByTestId('sono-yscale-toggle').getByRole('button', { name: 'lin' }).click();
+    await page.getByTestId('sono-colour-toggle').getByRole('button', { name: 'dB' }).click();
+    await expect(page.getByLabel('dynamic range dB')).toBeEnabled();
+    await page.getByTestId('zoom-toolbar').hover();
+    await expect(page.getByTestId('axis-popover')).toBeVisible();
+    const xMax0 = parseFloat(await page.getByLabel('x max').inputValue());
+    const yMax0 = parseFloat(await page.getByLabel('y max').inputValue());
+    // Real time/frequency extents, not the dead 0..1 seeds (both maxed at 1).
+    expect(yMax0).toBeGreaterThan(2);
+    expect(xMax0).not.toBe(1);
+
+    // Commit a tenth-height frequency window: store, y ticks and PIXELS all
+    // move. A tenth (not half) because this fixture's spectrum is SPARSE — a
+    // low-frequency ridge over a dB floor — so a gentle crop only shifts the
+    // ridge a few rows and a pixel diff can't see it; zooming to a tenth
+    // relocates the ridge across ~a fifth of the plot height.
+    const cropBase = await heat.screenshot();
+    await page.getByLabel('y max').fill(String(yMax0 / 10));
+    await expect.poll(async () => (await activeSlice(page)).range.y?.[1], { timeout: 4000 })
+      .toBe(yMax0 / 10);
+    // Ticks first (structure-independent proof the axis consumed the range) …
+    await expect.poll(async () => Math.max(...(await sonoYTickValues(page))))
+      .toBeLessThanOrEqual(yMax0 * 0.12);
+    // … then the visible-pixels guard: the heat itself remapped.
+    await expect.poll(async () => pngPixelDiffFrac(page, cropBase, await heat.screenshot()))
+      .toBeGreaterThan(0.02);
+    expect(await sonoVisibleColourFrac(page)).toBeGreaterThan(0.3);
+
+    // Auto Y restores the full frequency extent (an explicit committed range).
+    await page.getByRole('button', { name: 'Auto Y' }).click();
+    await expect.poll(async () => {
+      const y = (await activeSlice(page)).range.y;
+      return y ? y[1] > yMax0 * 0.99 : false;
+    }, { timeout: 4000 }).toBe(true);
+
+    // Box-zoom drag on the sono overlay commits BOTH axes and is undoable.
+    await page.mouse.move(6, 560); // park the pointer so the popover closes
+    await expect(page.getByTestId('axis-popover')).toHaveCount(0);
+    const preDrag = await activeSlice(page);
+    const box = (await page.getByTestId('plot-svg').boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.3);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.65, { steps: 5 });
+    await page.mouse.up();
+    await expect.poll(async () => (await activeSlice(page)).historyLen, { timeout: 4000 })
+      .toBeGreaterThan(preDrag.historyLen);
+    const zoomed = await activeSlice(page);
+    expect(zoomed.range.x).not.toBeNull();
+    expect(zoomed.range.x![1]).toBeLessThanOrEqual(xMax0 * 1.06); // clamp guardrail held
+    // Undo (view history) walks the y range back to the pre-drag full window.
+    await page.getByRole('button', { name: 'Undo view change' }).click();
+    await expect.poll(async () => {
+      const y = (await activeSlice(page)).range.y;
+      return y ? y[1] > yMax0 * 0.99 : false;
+    }, { timeout: 4000 }).toBe(true);
   });
 
   test('multiset + orphan: Sonogram targets a time-bearing set, excludes the orphan, paints in BOTH themes (round-6 items 2/3)', async ({ page }) => {
