@@ -26,6 +26,14 @@
    * the highlighted line (or the first), ‹ › step through the set's channels
    * (`selection.soloLine` / `selection.stepLine`). This keeps the tested
    * multi-set behaviour intact while making the single-set case useful.
+   *
+   * ROUND-8 refinement: when the tray shows a proper SUBSET of lines (some
+   * visible, some off) that is NOT a clean whole-set solo, ‹ › shift the
+   * WHOLE selection one channel (circular, per set — `selection.shiftLines`)
+   * instead of collapsing it to a fresh solo. So a selected channel + its
+   * fit-recon line cycle together through the channels, and any hand-picked
+   * pair of lines walks its sets as a pair. All-on (nothing selected) and a
+   * clean set solo keep the behaviours above.
    */
   import { get } from 'svelte/store';
   import type { Selection } from '../lib/stores/selection';
@@ -125,6 +133,23 @@
   // (round-5 item 3). More than one set keeps the per-set behaviour.
   const singleSet = $derived($setsView.length === 1);
 
+  const trayFocus = $derived(selection.trayFocus);
+
+  // Round-8: a proper SUBSET of lines is showing (some visible, some off).
+  const lineSubset = $derived.by(() => {
+    let anyOff = false, anyVisible = false;
+    for (const s of $setsView) {
+      for (let c = 0; c < s.nChannels; c++) {
+        if ($stateStore(s.id, c) === 'off') anyOff = true;
+        else anyVisible = true;
+      }
+    }
+    return anyOff && anyVisible;
+  });
+  // ‹ › shift the whole selection (per-set circular) when a line subset is
+  // showing — unless it's a clean whole-set solo, which keeps set stepping.
+  const shiftMode = $derived(lineSubset && (singleSet || $trayFocus === 'all'));
+
   // Widest set drives the channel-chip row (union of channel indices).
   const maxChannels = $derived(
     $setsView.reduce((m, s) => Math.max(m, s.nChannels), 0),
@@ -161,10 +186,12 @@
     selection.solo(target);
   }
 
-  // ‹ ›: step the line-solo (single set) or the set-solo (multiple sets).
+  // ‹ ›: shift a selected line-subset as a group (round-8), else step the
+  // line-solo (single set) or the set-solo (multiple sets).
   function onStep(dir: 1 | -1) {
     if ($setsView.length === 0) return;
-    if (singleSet) selection.stepLine(dir);
+    if (shiftMode) selection.shiftLines(dir);
+    else if (singleSet) selection.stepLine(dir);
     else selection.step(dir);
   }
 </script>
@@ -175,8 +202,8 @@
     <button class="btn sm" title="All channels of all sets on" onclick={() => selection.all()}>All</button>
     <button class="btn sm" title="All channels of all sets off" onclick={() => selection.none()}>None</button>
     <button class="btn sm" title={singleSet ? 'Show only the highlighted channel' : 'Show only the highlighted set'} onclick={onSolo}>Solo</button>
-    <button class="btn sm" title={singleSet ? 'Highlight previous channel' : 'Highlight previous set'} aria-label={singleSet ? 'Previous channel' : 'Previous set'} onclick={() => onStep(-1)}>‹</button>
-    <button class="btn sm" title={singleSet ? 'Highlight next channel' : 'Highlight next set'} aria-label={singleSet ? 'Next channel' : 'Next set'} onclick={() => onStep(1)}>›</button>
+    <button class="btn sm" title={shiftMode ? 'Shift the selected lines one channel back (wraps)' : singleSet ? 'Highlight previous channel' : 'Highlight previous set'} aria-label={shiftMode ? 'Shift selected lines back' : singleSet ? 'Previous channel' : 'Previous set'} onclick={() => onStep(-1)}>‹</button>
+    <button class="btn sm" title={shiftMode ? 'Shift the selected lines one channel forward (wraps)' : singleSet ? 'Highlight next channel' : 'Highlight next set'} aria-label={shiftMode ? 'Shift selected lines forward' : singleSet ? 'Next channel' : 'Next set'} onclick={() => onStep(1)}>›</button>
   </div>
 
   {#if maxChannels > 0}

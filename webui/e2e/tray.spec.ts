@@ -79,6 +79,33 @@ test('small sets start expanded; collapsing shows a clear expand affordance (ite
   await expect(card.getByTestId('ch-row-0').locator('.state-badge')).toHaveText('on');
 });
 
+test('‹ › shift a selected line subset by one channel, wrapping (round-8)', async ({ page }) => {
+  await page.goto('/?fixture=1');
+  const card = card0(page);
+  await expect(card).toBeVisible();
+
+  const row1 = card.getByTestId('ch-row-1');
+  const badge0 = card.getByTestId('ch-row-0').locator('.state-badge');
+  const badge1 = card.getByTestId('ch-row-1').locator('.state-badge');
+
+  // Turn ch 1 off (on → fade → off): only ch 0 stays visible — a proper
+  // line subset, so the steppers switch to shift mode (their labels flip).
+  await row1.click();
+  await expect(badge1).toHaveText('fade');
+  await row1.click();
+  await expect(badge1).toHaveText('off');
+
+  // › shifts the whole selection one channel, wrapping: ch 0 → ch 1.
+  await page.getByRole('button', { name: 'Shift selected lines forward' }).click();
+  await expect(badge0).toHaveText('off');
+  await expect(badge1).toHaveText('on');
+
+  // ‹ shifts it back (wraps the other way).
+  await page.getByRole('button', { name: 'Shift selected lines back' }).click();
+  await expect(badge0).toHaveText('on');
+  await expect(badge1).toHaveText('off');
+});
+
 test('double click on the title renames WITHOUT cycling the set', async ({ page }) => {
   await page.goto('/?fixture=1');
   const card = card0(page);

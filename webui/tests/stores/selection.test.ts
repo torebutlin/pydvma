@@ -122,6 +122,70 @@ test('stepLine(-1) from no highlight wraps to the last line', () => {
   expect(get(sel.lineHighlight)).toEqual({ setId: 2, ch: 7 });   // last (set_2, ch 7)
 });
 
+// ── Group shift (round-8): ‹ › move a selected line-subset as one ──────────
+test('shiftLines moves a hand-picked pair one channel together', () => {
+  sel.none();
+  sel.cycleLine(2, 2);                         // off → on
+  sel.cycleLine(2, 5);
+  sel.shiftLines(1);
+  expect(get(sel.state)(2, 3)).toBe('on');
+  expect(get(sel.state)(2, 6)).toBe('on');
+  expect(get(sel.state)(2, 2)).toBe('off');
+  expect(get(sel.state)(2, 5)).toBe('off');
+  expect(get(sel.state)(0, 0)).toBe('off');    // all-off set stays off
+});
+
+test('shiftLines wraps circularly within each set', () => {
+  sel.none();
+  sel.cycleLine(0, 1);                         // set_0 (2ch): only ch 1 on
+  sel.shiftLines(1);                           // wraps to ch 0
+  expect(get(sel.state)(0, 0)).toBe('on');
+  expect(get(sel.state)(0, 1)).toBe('off');
+  sel.shiftLines(-1);                          // and back
+  expect(get(sel.state)(0, 1)).toBe('on');
+  expect(get(sel.state)(0, 0)).toBe('off');
+});
+
+test('shiftLines keeps each line\'s own tri-state (fade shifts as fade)', () => {
+  sel.none();
+  sel.cycleLine(2, 0);                         // ch 0: on
+  sel.cycleLine(2, 1); sel.cycleLine(2, 1);    // ch 1: off → on → fade
+  sel.shiftLines(1);
+  expect(get(sel.state)(2, 1)).toBe('on');
+  expect(get(sel.state)(2, 2)).toBe('fade');
+  expect(get(sel.state)(2, 0)).toBe('off');
+});
+
+test('shiftLines leaves uniform sets untouched while a subset set rotates', () => {
+  sel.cycleLine(2, 0); sel.cycleLine(2, 0);    // set_2 ch 0 → off (others on)
+  sel.shiftLines(1);
+  expect(get(sel.state)(0, 0)).toBe('on');     // all-on sets unchanged
+  expect(get(sel.state)(1, 1)).toBe('on');
+  expect(get(sel.state)(2, 1)).toBe('off');    // the hole moved by one
+  expect(get(sel.state)(2, 0)).toBe('on');
+});
+
+test('shiftLines rotates a live lineHighlight with its set', () => {
+  sel.soloLine(2, 7);
+  sel.shiftLines(1);
+  expect(get(sel.lineHighlight)).toEqual({ setId: 2, ch: 0 });   // wraps
+  expect(get(sel.state)(2, 0)).toBe('on');
+  expect(get(sel.state)(2, 7)).toBe('off');
+});
+
+test('shiftLines: a one-line fit set stays on its line while the data channel steps', () => {
+  const fitId = sel.addSet({
+    name: 'Modal fit', nChannels: 1, durationS: 0, timestamp: 'tf', role: 'fit',
+  });
+  sel.none();
+  sel.cycleLine(2, 4);                         // the fitted data channel
+  sel.cycleLine(fitId, 0);                     // its dashed recon line
+  sel.shiftLines(1);
+  expect(get(sel.state)(2, 5)).toBe('on');     // data channel stepped
+  expect(get(sel.state)(fitId, 0)).toBe('on'); // 1-channel set wraps to itself
+  expect(get(sel.state)(2, 4)).toBe('off');
+});
+
 test('removeSet clears a line-highlight that pointed at the removed set', () => {
   sel.soloLine(1, 0);
   expect(get(sel.lineHighlight)).toEqual({ setId: 1, ch: 0 });

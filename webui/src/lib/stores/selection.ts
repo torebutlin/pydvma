@@ -193,6 +193,39 @@ export function createSelection() {
     soloLine(next.setId, next.ch);
   }
 
+  /**
+   * Shift every set's tri-state pattern one channel forward/back, wrapping
+   * WITHIN each set (round-8 feedback). With a subset of lines selected this
+   * moves the whole selection by one — e.g. a measured channel and its
+   * fit-recon line cycle together (ch1+fit1 → ch2+fit2 → … → ch0+fit0 → …),
+   * and two selected channels of one set stay a pair as they walk it.
+   * Rotation leaves uniform sets (all-on / all-fade / all-off) unchanged, so
+   * a fully-visible fit overlay or a hidden set stays put while the subset
+   * cycles; each line KEEPS its own tri-state ('fade' shifts as 'fade').
+   * The rotation is per set — not the global flat line list — so sets of
+   * unequal width keep their own circular order (a one-line fit set stays
+   * on its line while the data channel steps). A `lineHighlight` pointing
+   * at an existing line rotates with its set.
+   */
+  function shiftLines(dir: 1 | -1) {
+    const list = get(sets);
+    mutate(m => {
+      for (const set of list) {
+        const n = set.nChannels; if (!n) continue;
+        const vals = Array.from({ length: n }, (_, c) => stateOf(m, set.id, c));
+        for (let c = 0; c < n; c++) m.set(key(set.id, c), vals[((c - dir) % n + n) % n]);
+      }
+    });
+    const cur = get(lineHighlight);
+    if (cur) {
+      const rec = list.find(s => s.id === cur.setId);
+      if (rec && cur.ch < rec.nChannels) {
+        const n = rec.nChannels;
+        lineHighlight.set({ setId: cur.setId, ch: ((cur.ch + dir) % n + n) % n });
+      }
+    }
+  }
+
   return {
     sets, collapsed, highlight, lineHighlight,
     /** Lookup function store: `$state(setId, ch)` -> TriState. */
@@ -358,6 +391,7 @@ export function createSelection() {
     step,
     soloLine,
     stepLine,
+    shiftLines,
     /** Toggle the collapsed flag for set `id`. */
     toggleCollapse(id: number) {
       collapsed.update(cs => {
