@@ -75,6 +75,41 @@ pick up alongside further feedback:
   green ≈2.7:1 and solid-indigo buttons ≈3.6:1 in dark. Bump if they
   bother him in use.
 
+## Old-logger (V2.9a) feature review list (round-7f survey)
+
+The recovered MATLAB source of the original JW/Tore logger was surveyed
+on 2026-07-09 (Tore's OneDrive, "…Pen Drive History IV/Data logger
+V2.9a"; full inventory in `dev/2026-07-09-round7-feedback.md`). Worth
+considering, in rough priority:
+
+1. **Grid / roving-hammer TF logging** (`gridlog*.m`) — measurement
+   grids with next-point prompting and per-point re-log; the
+   acquisition side that feeds **mode shapes** (ties into the parked
+   mode-shape plotter thread).
+2. **Legacy modal-parameter file import** — the old logger saved
+   `md_param` (n×4: f, Q, |A|, arg A) `.mat` files; a ~30-line importer
+   maps them onto `ModalData`. Valuable if archived `_param.mat` files
+   still matter.
+3. **"Add/edit a mode by hand" reconstruction authoring** (`reconpar`
+   family) — type f, Q, amplitude-in-dB to add or tweak a mode without
+   refitting; a nice manual authoring loop on top of the fits.
+4. **Compensate time delay** — multiply a channel by `exp(-i·2πf·τ)`
+   (vibrometer / instrumentation phase cleanup). Tiny and useful.
+5. **Digital filtering from fitted modes** — per-mode filter
+   coefficients to isolate one mode's time-domain contribution.
+6. **RFP (rational-fraction-polynomial) fitting** — an alternative
+   fitter family; useful cross-check for overlapping modes.
+7. **Auto-identify TF measurement type** (round-7f wish, not in the old
+   logger either — it used a hand-set `ipower` flag, as pydvma uses
+   the Fit card's TF type): infer disp/vel/acc from the fitted-phase
+   deviation (the new ⚠ flag's data) and suggest the type that
+   minimises it. Natural extension of the phase-significance flag.
+
+Covered already: measurement-type exponent (Fit card's TF type =
+`ipower`), (iω)^p display transform, sweep logging, impulse cleaning
+(`hammerclean`), decay fits. Low value (research-specific): cepstrum
+sonogram, Signal Wizard export, bowed-string/musical-acoustics extras.
+
 ## Current backlog — hands-on & hardware
 
 - **Lab-testing period (Tore, days/weeks)** — real structures, real

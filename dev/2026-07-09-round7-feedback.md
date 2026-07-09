@@ -240,6 +240,52 @@ legend (export pixel-diff on/off/restored round-trip).
 - Usage note for these files: they are admittances (velocity/force) —
   pick **Velocity** as the TF type when fitting (docs updated).
 
+## Round 7f (same day) — original-logger source recovered
+
+> Revamp the JW import per the original MATLAB logger source docs. Also
+> survey it for old features worth porting. The fit struggles with
+> these examples; Refine sometimes goes well off without warning — add
+> a self-awareness flag. Future: auto-identify disp/vel/acc. And: are
+> we fitting phase (my original logger did, and flagged significant
+> phase)?
+
+**All addressed:**
+- **Import revamped from source.** The V2.9a source confirms every
+  convention: saves are `yspec, dt2, npts, freq, tfun` (+`indata`);
+  `freq` IS the sample rate; `dt2` = saved `dtype` = column counts
+  `[n_time, n_spec_cols, n_son]`; the averaged-TF writer interleaves
+  `[H1, coh1, H2, coh2, …]` (avtflogpars.m: `thing(:,2k-1)=cross/
+  autoin; thing(:,2k)=|cross|²/(autoin·autoout)`); the save menu also
+  writes arbitrary column subsets, and the Add-on-load path composites
+  files (hence the 3/4-column all-H instrument collections). The
+  importer now recognises the documented interleaved layout as the
+  primary rule (order-pairing + all-TF fallbacks kept); docstring cites
+  the source. 7 pytest cases.
+- **Feature survey done** → prioritised review list in TODO.md
+  ("Old-logger (V2.9a) feature review list"): grid/roving-hammer
+  logging (→ mode shapes), md_param legacy modal-file import, manual
+  add/edit-mode authoring, time-delay compensation, per-mode digital
+  filters, RFP fitting. The big extras menus are PhD-era bowed-string
+  research code — low porting value.
+- **Phase IS fitted** — pydvma's modal model is `an·e^{jpn}/(…)`, a
+  per-mode per-channel phase, same as the old logger's circle fit
+  (`sdof.m` `exp(i·var(3))`). Historical correction: the old logger
+  PRINTED each fitted phase but had NO automated "too significant"
+  warning (searched the source; reconstruction deliberately dropped
+  phase). The new build adds the flag the original implied: each mode's
+  worst phase deviation from a REAL mode (0/180°) is computed
+  (`phaseDevDegFromMatrix`), the fit chip marks offenders ⚠ (tooltip
+  explains + names the TF type), and a toast fires when a fresh fit
+  exceeds 30°.
+- **Refine divergence flag**: refine already auto-reverts on a WORSE
+  residual; the new check catches the "improved cost, mode flew away"
+  case — any mode moved >10% (and >2 Hz) from its pre-refine frequency
+  warns with an Undo action on the toast. 5 vitest cases cover both
+  flags.
+- **Auto-identify disp/vel/acc** → TODO item 7 (suggest the TF type
+  that minimises the fitted-phase deviation — the flag's data makes
+  this a natural follow-on).
+
 ## Incidental findings (not in Tore's list)
 
 - **Exported figures never include the legend.** PNG/PDF export

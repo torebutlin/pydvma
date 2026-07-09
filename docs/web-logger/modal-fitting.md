@@ -59,9 +59,20 @@ you care about first, then:
 - **Refine** — re-fit **all** modes simultaneously for a better joint
   solution. It needs at least two modes, and it **auto-reverts** if the
   refined fit does not actually improve (or fails to converge) — so
-  Refine can never make your fit worse.
+  Refine can never make your fit worse numerically. As an extra guard,
+  if a refine *does* improve the residual but drags a mode more than
+  10% from its fitted frequency, a warning names the moved mode(s) and
+  offers **Undo** — inspect the fit lines before trusting such a result.
 - **↶ Undo** — one level of undo, available after any fit, Reject, or
   Refine.
+
+Each mode is fitted with a frequency, damping ratio, amplitude **and a
+modal phase** (per channel). For a correctly-typed measurement the
+phase should sit near 0° or 180° (a *real* mode); when a fitted mode's
+phase strays more than 30° from real, the mode chip marks it **⚠** and
+a warning suggests checking the **TF type** — fitting, say, a velocity
+admittance as Acceleration is the classic cause. (The original JW
+logger printed each fitted phase for the same reason.)
 
 ## Fit lines: local or global reconstruction
 
