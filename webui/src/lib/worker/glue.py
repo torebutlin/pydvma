@@ -511,7 +511,7 @@ def _modal_summary(md):
             'an': _arr(np.atleast_2d(md.an)), 'pn': _arr(np.atleast_2d(md.pn))}
 
 
-def _global_recon_slice(md, f, measurement_type, mute, off, ncols):
+def _global_recon_slice(md, f, measurement_type, mute, off, ncols, tf_list=None):
     """GLOBAL (residual-free) reconstruction of ``md`` over ``f``, EXCLUDING
     muted modes, sliced to columns ``[off : off+ncols]``.
 
@@ -542,7 +542,20 @@ def _global_recon_slice(md, f, measurement_type, mute, off, ncols):
     md_vis = datastructure.ModalData(settings=md.settings, test_name=md.test_name)
     for i in keep:
         md_vis.add_mode(rows[i])
-    rg = modal.reconstruct_transfer_function_global(md_vis, f, measurement_type)
+    if tf_list is not None:
+        # Round-7g: with the measured TFs available, the global overlay uses
+        # the RE-ESTIMATED model (constants + per-channel global residues
+        # re-solved linearly at the stored poles) rather than the raw sum of
+        # locally-fitted rows. try/except covers a cached pre-7g wheel whose
+        # reconstruct_transfer_function_global lacks the kwarg.
+        try:
+            rg = modal.reconstruct_transfer_function_global(
+                md_vis, f, measurement_type,
+                tf_data_list=datastructure.TfDataList(list(tf_list)))
+        except TypeError:
+            rg = modal.reconstruct_transfer_function_global(md_vis, f, measurement_type)
+    else:
+        rg = modal.reconstruct_transfer_function_global(md_vis, f, measurement_type)
     return _arr(rg.freq_axis), _arr(rg.tf_data[:, int(off):int(off) + int(ncols)])
 
 
@@ -774,7 +787,8 @@ def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=Non
             loc_axis = _arr(np.zeros(0))
             loc_data = _arr(np.zeros((0, ncols), dtype=complex))
         g_axis, g_data = _global_recon_slice(
-            md, sp['tf'].freq_axis, measurement_type, mute, off_i, ncols)
+            md, sp['tf'].freq_axis, measurement_type, mute, off_i, ncols,
+            tf_list=fit_list)
         slices.append({'recon_freq_axis': loc_axis, 'recon_tf_data': loc_data,
                        'global_freq_axis': g_axis, 'global_tf_data': g_data,
                        'n_cols': ncols})

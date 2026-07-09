@@ -222,12 +222,17 @@ class TestModalRefine:
     def test_refine_reports_non_convergence_without_raising(self):
         """Pathological input (a non-finite sample in the measured TF) must be
         REPORTED (converged=False) — never raised — and still hand back a
-        valid ModalData so the caller can revert."""
+        valid ModalData so the caller can revert.
+
+        The NaN sits INSIDE the modes' fitted band (~140 Hz within [76, 184])
+        so it genuinely reaches the solver. (The original test poisoned f[10]
+        ≈ 26 Hz, OUTSIDE the band — it passed only because the old refine's
+        cost drifted from exactly 0.0 off a perfect seed.)"""
         f = np.linspace(20.0, 260.0, 400)
         true_rows = [_modal_row(100.0, 0.02, 1.0e5),
                      _modal_row(160.0, 0.03, 0.8e5)]
         tf_meas, truth = _measured_tf_from_modes(true_rows, f)
-        tf_meas.tf_data[10, 0] = np.nan     # least_squares can't start here
+        tf_meas.tf_data[200, 0] = np.nan    # ~140 Hz — inside the fit band
 
         refined, info = modal.modal_refine(
             truth, datastructure.TfDataList([tf_meas]))
@@ -243,3 +248,88 @@ class TestModalRefine:
         empty = datastructure.ModalData(settings=options.MySettings(fs=1000, channels=1))
         with pytest.raises(ValueError, match='at least one mode'):
             modal.modal_refine(empty, datastructure.TfDataList([tf_meas]))
+
+
+# ---------- global linear re-estimation (round-7g) ----------
+
+class TestGlobalReestimation:
+    """`estimate_global_constants` (linear solve with fixed poles + per-channel
+    global residues) and the re-estimated global reconstruction built on it."""
+
+    F = np.linspace(5.0, 500.0, 2000)
+    # Truth: two IN-BAND modes plus one below-band and one above-band mode —
+    # the neighbours whose tails the global residues must absorb.
+    IN_BAND = [(100.0, 0.02, 1.0e5), (140.0, 0.03, 0.8e5)]
+    OUT_BAND = [(20.0, 0.05, 2.0e5), (450.0, 0.02, 3.0e5)]
+
+    @classmethod
+    def _measured(cls):
+        rows = [_modal_row(fn, zn, an) for fn, zn, an in cls.IN_BAND + cls.OUT_BAND]
+        tf_meas, _ = _measured_tf_from_modes(rows, cls.F)
+        return tf_meas
+
+    @classmethod
+    def _band_sel(cls):
+        return np.where((cls.F > 60.0) & (cls.F < 250.0))[0]
+
+    def test_recovers_in_band_constants_with_global_residues(self):
+        tf_meas = self._measured()
+        sel = self._band_sel()
+        f = self.F[sel]
+        G0 = tf_meas.tf_data[sel, :]
+        fn = [m[0] for m in self.IN_BAND]
+        zn = [m[1] for m in self.IN_BAND]
+        A, RH, RL, cost = modal.estimate_global_constants(fn, zn, f, G0, 'acc')
+        # The in-band constants come back accurately and essentially REAL —
+        # the out-of-band tails went into the residues, not the phases.
+        assert abs(abs(A[0, 0]) - 1.0e5) / 1.0e5 < 0.05
+        assert abs(abs(A[1, 0]) - 0.8e5) / 0.8e5 < 0.05
+        assert np.max(np.abs(np.angle(A))) < 0.15
+        # And the residues genuinely matter: without them (the naive 2-mode
+        # sum with TRUE constants) the band residual is far larger.
+        naive_rows = [_modal_row(fn_, zn_, an_) for fn_, zn_, an_ in self.IN_BAND]
+        naive = sum(modal.f_TF_all_channels(r, f, 'acc') for r in naive_rows)
+        naive_cost = 0.5 * float(np.sum(np.abs(naive - G0) ** 2))
+        assert cost < 0.2 * naive_cost
+
+    def test_global_reconstruction_reestimates_when_given_measured_tfs(self):
+        tf_meas = self._measured()
+        # A model holding only the two in-band modes, with POLLUTED local
+        # rows: wrong amplitudes, significant local phases (the neighbour-
+        # rotation artefact), junk local residues.
+        md = datastructure.ModalData(
+            _modal_row(100.0, 0.02, 0.7e5, pn=0.5, rk=3.0, rm=1e6),
+            settings=options.MySettings(fs=1000, channels=1))
+        md.add_mode(_modal_row(140.0, 0.03, 1.1e5, pn=-0.4, rk=1.0, rm=5e5))
+
+        sel = self._band_sel()
+        legacy = modal.reconstruct_transfer_function_global(md, self.F, 'acc')
+        reest = modal.reconstruct_transfer_function_global(
+            md, self.F, 'acc', tf_data_list=datastructure.TfDataList([tf_meas]))
+        err_legacy = np.sum(np.abs(legacy.tf_data[sel] - tf_meas.tf_data[sel]) ** 2)
+        err_reest = np.sum(np.abs(reest.tf_data[sel] - tf_meas.tf_data[sel]) ** 2)
+        assert err_reest < 0.05 * err_legacy
+        assert bool(reest.flag_modal_TF) is True
+
+    def test_refine_recovers_poles_despite_polluted_local_rows(self):
+        """The flat-direction scenario the varpro rebuild targets: a seed
+        whose local rows carry junk constants/phases/residues must still
+        refine to the true poles (the linear projection re-solves those
+        parameters instead of letting them tug the poles around)."""
+        tf_meas = self._measured()
+        seed = datastructure.ModalData(
+            _modal_row(97.0, 0.035, 0.5e5, pn=0.6, rk=2.0, rm=8e5),
+            settings=options.MySettings(fs=1000, channels=1))
+        seed.add_mode(_modal_row(144.0, 0.018, 1.4e5, pn=-0.5, rk=4.0, rm=2e5))
+
+        refined, info = modal.modal_refine(
+            seed, datastructure.TfDataList([tf_meas]), measurement_type='acc')
+        assert info['converged'] is True
+        fn_ref = np.sort(refined.fn)
+        assert abs(fn_ref[0] - 100.0) < 0.5
+        assert abs(fn_ref[1] - 140.0) < 0.5
+        # The refined rows carry the GLOBAL constants: near-real phases.
+        _, _, _, pn, rk, rm = modal.unpack_matrix(np.atleast_2d(refined.M))
+        assert np.max(np.abs(np.angle(np.exp(1j * pn)))) < 0.2
+        # Local residues are zeroed by contract (globals live in the recon).
+        assert np.allclose(rk, 0) and np.allclose(rm, 0)

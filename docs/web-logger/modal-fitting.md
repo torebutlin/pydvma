@@ -57,12 +57,17 @@ you care about first, then:
 - **Reject** — delete any fitted modes whose `fn` falls inside the
   visible window (zoom to a bad mode, then Reject it).
 - **Refine** — re-fit **all** modes simultaneously for a better joint
-  solution. It needs at least two modes, and it **auto-reverts** if the
-  refined fit does not actually improve (or fails to converge) — so
-  Refine can never make your fit worse numerically. As an extra guard,
-  if a refine *does* improve the residual but drags a mode more than
-  10% from its fitted frequency, a warning names the moved mode(s) and
-  offers **Undo** — inspect the fit lines before trusting such a result.
+  solution. The search runs over the **poles only** (each mode's fn and
+  ζ); at every step the amplitudes, phases and global residual terms
+  are re-solved linearly against the measured data (variable
+  projection). This keeps the search well-conditioned on overlapping
+  modes — redundant local residuals used to create flat directions the
+  poles could drift along. It **auto-reverts** if the refined fit does
+  not actually improve (or fails to converge) — so Refine can never
+  make your fit worse numerically. As an extra guard, if a refine
+  *does* improve the residual but drags a mode more than 10% from its
+  fitted frequency, a warning names the moved mode(s) and offers
+  **Undo** — inspect the fit lines before trusting such a result.
 - **↶ Undo** — one level of undo, available after any fit, Reject, or
   Refine.
 
@@ -83,10 +88,19 @@ channel, controlled from the legend and tray like any other set. The
 lines show:
 
 - **global** (default) — the whole accumulated model, reconstructed over
-  each set's full frequency axis.
-- **local** — only the mode(s) you just fitted, over the fit window.
-  This is transient feedback: any other recompute (Refine, mute, a
-  reloaded fit) clears it until your next Fit.
+  each set's full frequency axis. This is not just the sum of the local
+  fits: with the poles held fixed, the modal constants (amplitude *and*
+  phase, per channel) plus one pair of **global residual terms** per
+  channel (a stiffness-like constant for above-band modes and a
+  mass-like `1/ω²` term for below-band modes) are **re-solved linearly
+  against the measured data**. That removes the double-counting of
+  neighbour interactions that each local fit's phase absorbs — locally
+  fitted phase partly encodes the Nyquist rotation caused by nearby
+  modes, which the joint model explains explicitly.
+- **local** — only the mode(s) you just fitted, over the fit window,
+  with their own local residual terms. This is transient feedback: any
+  other recompute (Refine, mute, a reloaded fit) clears it until your
+  next Fit.
 
 The legend names follow the choice — *Modal fit local (set)* vs
 *Modal fit global (set)* — so the plot always says which reconstruction

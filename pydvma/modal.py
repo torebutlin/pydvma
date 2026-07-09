@@ -368,19 +368,167 @@ def reconstruct_transfer_function(modal_data,f,measurement_type='acc'):
     tf_data.flag_modal_TF = True
     return tf_data
 
-def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc'):
+#%% GLOBAL LINEAR RE-ESTIMATION (round-7g)
+
+def _measurement_power(measurement_type):
+    '''The `(jw)^p` exponent for 'dsp' (0) / 'vel' (1) / 'acc' (2).'''
+    return {'dsp': 0, 'vel': 1, 'acc': 2}[measurement_type]
+
+
+def _modes_band(M, f_axis):
+    '''Default estimation/refinement band: the modes' fn span padded so each
+    peak's half-power skirts are included (the `modal_refine` convention),
+    clamped to the measured axis. Returns ``[lo, hi]`` in Hz.'''
+    fn_fit = M[:, 0]
+    zn_fit = M[:, 1]
+    lo_fn, hi_fn = float(np.min(fn_fit)), float(np.max(fn_fit))
+    span = hi_fn - lo_fn
+    bw = float(np.max(fn_fit * np.clip(zn_fit, 0.0, None))) if fn_fit.size else 0.0
+    pad = max(0.25 * span, 5.0 * bw, 0.05 * max(hi_fn, 1.0))
+    return [max(float(f_axis[0]), lo_fn - pad),
+            min(float(f_axis[-1]), hi_fn + pad)]
+
+
+def _measured_columns(tf_data_list, sel):
+    '''Stack every measured (non-reconstruction) TF column over the ``sel``
+    frequency indices, cal-scaled — the `modal_fit_all_channels` /
+    `modal_refine` G0 assembly, shared. Returns ``(len(sel), n_cols)``.
+
+    NB the shared-pole machinery assumes every set shares ONE frequency axis
+    (``tf_data_list[0].freq_axis``) — the same assumption the fitters make.'''
+    cols = []
+    for tf_data in tf_data_list:
+        if getattr(tf_data, 'flag_modal_TF', False):
+            continue
+        for n_chan in range(tf_data.tf_data.shape[1]):
+            cols.append(tf_data.tf_data[sel, n_chan] * tf_data.channel_cal_factors[n_chan])
+    if len(cols) == 0:
+        raise ValueError('needs at least one measured (non-reconstruction) TF.')
+    return np.array(cols, dtype=complex).T
+
+
+def estimate_global_constants(fn, zn, f, G0, measurement_type='acc'):
     '''
-    Reconstructs transfer functions from modal_data and returns TfData object.
-    Excludes the per-channel local residual terms (rk, rm) — only the modal
-    contributions are summed, as wanted for global fits. Does not modify
-    modal_data.
+    Re-estimate the COMPLEX modal constants and per-channel GLOBAL residual
+    terms for FIXED poles — the linear half of the global fit (round-7g).
+
+    With the poles ``{fn, zn}`` held fixed, the modal model is LINEAR in the
+    remaining parameters, so they solve in one least-squares with no
+    convergence risk. In receptance space (measured columns divided by
+    ``(jw)^p``):
+
+        ``G0_c/(jw)^p  ~=  sum_n A_nc * phi_n(w)  +  RH_c  -  RL_c/w^2``
+
+    with ``phi_n = 1/(wn^2 + 2j*wn*zn*w - w^2)``. ``RH`` (stiffness-like
+    constant) and ``RL/w^2`` (mass-like) are ONE pair of GLOBAL residues per
+    channel, standing for above-band and below-band modes respectively —
+    unlike the local fits' per-mode ``rk``/``rm``, which are mutually
+    redundant in a joint model (each mode's residues can impersonate a
+    neighbour's tail: flat cost directions that let refinement drag poles
+    without penalty). The constants that emerge are the GLOBALLY consistent
+    ones: neighbour interaction is explained by the neighbours themselves,
+    so any remaining phase in ``A`` is genuine mode complexity, not
+    circle-rotation leakage from nearby modes.
+
+    Args:
+        fn, zn: pole arrays, length N (fixed during the solve)
+        f: frequency axis (Hz); rows with ``f <= 0`` are excluded (the
+            ``1/w^2`` term and the ``(jw)^p`` division are singular at DC)
+        G0: measured complex columns, shape ``(len(f), n_cols)``, cal-scaled
+        measurement_type: 'acc' | 'vel' | 'dsp' (the ``(jw)^p`` convention)
+
+    Returns:
+        ``(A, RH, RL, cost)`` — ``A`` complex ``(N, n_cols)``, ``RH``/``RL``
+        complex ``(n_cols,)``, and ``cost = 0.5*sum(|model - G0|^2)`` over the
+        used rows in MEASURED space (identical to the stacked real/imag
+        least-squares cost convention used by ``modal_refine``).
     '''
+    fn = np.atleast_1d(np.asarray(fn, dtype=np.float64))
+    zn = np.atleast_1d(np.asarray(zn, dtype=np.float64))
+    f = np.asarray(f, dtype=np.float64)
+    G0 = np.atleast_2d(np.asarray(G0, dtype=complex))
+    p = _measurement_power(measurement_type)
+
+    mask = f > 0
+    w = (2.0 * np.pi * f[mask]).reshape(-1, 1)
+    y = G0[mask, :] / ((1j * w) ** p)
+
+    wn = (2.0 * np.pi * fn).reshape(1, -1)
+    phi = 1.0 / (wn ** 2 + 2j * wn * zn.reshape(1, -1) * w - w ** 2)
+    B = np.hstack([phi, np.ones_like(w, dtype=complex), -1.0 / w ** 2])
+
+    x, *_ = np.linalg.lstsq(B, y, rcond=None)
+    A = x[:len(fn), :]
+    RH = x[len(fn), :]
+    RL = x[len(fn) + 1, :]
+
+    model = (B @ x) * ((1j * w) ** p)
+    cost = 0.5 * float(np.sum(np.abs(model - G0[mask, :]) ** 2))
+    return A, RH, RL, cost
+
+
+def _evaluate_global_model(fn, zn, A, RH, RL, f, measurement_type='acc'):
+    '''Evaluate the re-estimated global model on axis ``f`` (any axis — the
+    reconstruction axis need not match the estimation axis). Guards the
+    ``w = 0`` singularity the way ``f_TF_all_channels`` does (first bin
+    borrows the second bin's frequency).'''
+    fn = np.atleast_1d(np.asarray(fn, dtype=np.float64))
+    zn = np.atleast_1d(np.asarray(zn, dtype=np.float64))
+    p = _measurement_power(measurement_type)
+    w = (2.0 * np.pi * np.asarray(f, dtype=np.float64)).reshape(-1, 1).copy()
+    if w.size and w[0] == 0:
+        w[0] = w[1] if w.size > 1 else 1.0
+    wn = (2.0 * np.pi * fn).reshape(1, -1)
+    phi = 1.0 / (wn ** 2 + 2j * wn * zn.reshape(1, -1) * w - w ** 2)
+    G = phi @ np.atleast_2d(A) + RH.reshape(1, -1) - RL.reshape(1, -1) / w ** 2
+    return G * ((1j * w) ** p)
+
+
+def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
+                                         tf_data_list=None):
+    '''
+    Reconstructs the GLOBAL (whole-model) transfer functions from modal_data
+    and returns a TfData object. Does not modify modal_data.
+
+    With ``tf_data_list`` (the measured TFs) the reconstruction uses the
+    round-7g GLOBAL RE-ESTIMATION: the modal constants (amplitude AND phase,
+    per channel) plus one pair of global residues per channel (``RH`` const +
+    ``RL/w^2``) are re-solved linearly against the measured data over the
+    modes' padded band, with the stored poles held fixed (see
+    `estimate_global_constants` — this removes the double-counting of
+    neighbour interactions that each mode's LOCALLY-fitted phase absorbs).
+
+    Without ``tf_data_list`` (e.g. a ModalData loaded on its own) the legacy
+    behaviour is kept: the stored per-mode rows are summed with their local
+    residual terms (rk, rm) zeroed.
+    '''
+    M = np.atleast_2d(modal_data.M)
+    N_tfs = int((M.shape[1]-2)/4)
+
+    if tf_data_list is not None:
+        f_axis = np.asarray(tf_data_list[0].freq_axis, dtype=np.float64)
+        band = _modes_band(M, f_axis)
+        sel = np.where((f_axis > band[0]) & (f_axis < band[1]))[0]
+        if sel.size < max(4, M.shape[0] + 2):
+            sel = np.arange(f_axis.size)
+        G0 = _measured_columns(tf_data_list, sel)
+        if G0.shape[1] == N_tfs:
+            A, RH, RL, _ = estimate_global_constants(
+                M[:, 0], M[:, 1], f_axis[sel], G0, measurement_type)
+            G = _evaluate_global_model(M[:, 0], M[:, 1], A, RH, RL, f,
+                                       measurement_type)
+            settings = copy.copy(modal_data.settings)
+            settings.channels = modal_data.channels
+            tf_data = datastructure.TfData(f,G,None,settings,units=modal_data.units,channel_cal_factors=None,id_link=modal_data.id_link,test_name=modal_data.test_name)
+            tf_data.flag_modal_TF = True
+            return tf_data
+        # channel mismatch (defensive): fall through to the legacy sum
+
     G = 0
-    N_tfs = int((len(modal_data.M[0,:])-2)/4)
-    for n_row in range(len(modal_data.M[:,0])):
+    for n_row in range(M.shape[0]):
         # copy: zeroing through a view would permanently wipe the stored
         # residual columns of modal_data.M
-        xn = modal_data.M[n_row,:].copy()
+        xn = M[n_row,:].copy()
         xn[2+2*N_tfs:] = 0 #don't want local residual fits for global fits - i.e. rk and rm
         G += f_TF_all_channels(xn,f,measurement_type=measurement_type)
 
@@ -392,24 +540,8 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc'):
 
 
 #%% SIMULTANEOUS MULTI-MODE REFINEMENT
-def _f_residual_refine(x_flat, n_modes, row_len, f, G0, measurement_type):
-    '''
-    Least-squares residual for simultaneous multi-mode refinement.
-
-    ``x_flat`` is the ``n_modes`` packed mode rows (each of length
-    ``row_len = 2 + 4*N_tfs``) concatenated row-major (i.e. ``M.ravel()``).
-    The model TF is the SUM over modes of ``f_TF_all_channels`` — each mode's
-    modal contribution PLUS its per-channel local residual terms (rk, rm) —
-    matching ``reconstruct_transfer_function``. Returns the real-then-imag
-    flattened error ``model - G0`` (length ``2*len(f)*N_tfs``).
-    '''
-    rows = x_flat.reshape(n_modes, row_len)
-    G = np.zeros_like(G0)
-    for r in range(n_modes):
-        G = G + f_TF_all_channels(rows[r], f, measurement_type)
-    e = G - G0
-    e = np.concatenate((np.real(e), np.imag(e)))
-    return e.reshape(np.size(e))
+# (The pre-round-7g whole-parameter-set residual `_f_residual_refine` is gone:
+# refinement now projects the linear parameters out — see `modal_refine`.)
 
 
 def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='acc'):
@@ -417,37 +549,38 @@ def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='ac
     Simultaneously refine ALL modes in ``modal_data`` against the measured
     transfer functions, seeded from the current fit.
 
-    Individual modes are typically fitted in isolation or in small peak-split
-    groups (``modal_fit_all_channels`` / the webui Fit 1/2/3 flow), so
-    neighbouring modes' skirts bias each other. This runs a single
-    ``scipy.optimize.least_squares`` over the WHOLE packed parameter set
-    (every mode's ``[fn, zn, an*N, pn*N, rk*N, rm*N]`` row, seeded from
-    ``modal_data.M``), letting all modes move together against the summed
-    reconstruction model (``_f_residual_refine``).
+    Round-7g VARIABLE-PROJECTION rebuild: the nonlinear search runs over the
+    POLES ONLY (``[fn, zn]`` per mode — 2N parameters), and at every candidate
+    pole set the modal constants + per-channel GLOBAL residues are re-solved
+    linearly (`estimate_global_constants`). The previous refine optimised the
+    whole packed parameter set including every mode's LOCAL residual terms
+    (rk, rm) — which are mutually redundant in a joint model (one mode's
+    residues can impersonate a neighbour's tail), creating flat directions in
+    the cost surface along which a pole could drift far while the residues
+    compensated, "improving" the residual as it went. Projecting the linear
+    parameters out removes those flat directions and makes the pole search
+    far stiffer on overlapping-mode data (e.g. instrument bodies).
 
-    Like ``modal_fit_all_channels``, the measured TFs are scaled by their
-    ``channel_cal_factors`` when building the target ``G0``, so the seed
-    ``modal_data.M`` (produced by that fitter) and the refined result live in
-    the SAME cal-scaled parameter space and remain directly comparable.
+    Like ``modal_fit_all_channels``, the measured TFs are cal-scaled when
+    building the target ``G0``, so the seed and the refined result live in
+    the SAME parameter space. ``freq_range`` defaults to the modes' padded
+    band (see `_modes_band`), clamped to the measured axis.
 
-    ``freq_range`` (``[lo, hi]`` Hz) defaults to the span of the fitted natural
-    frequencies padded so each peak's half-power skirts are included
-    (``max(0.25*span, 5*max(fn*zn), 5% of the top fn)``), clamped to the
-    measured axis. Narrowing to the modes' band converges more reliably than
-    the full axis (out-of-band data the N-mode model cannot represent would
-    otherwise dominate the cost).
+    The refined ``M`` rows carry the poles plus the GLOBALLY re-estimated
+    constants (``an = |A|``, ``pn = arg A``) with the per-mode local residues
+    ZEROED — after a joint refine the local-window residues are meaningless,
+    and the global reconstruction re-estimates its own residues from the
+    measured data anyway (`reconstruct_transfer_function_global`).
 
-    Convergence / non-convergence is REPORTED, never enforced here. Returns
-    ``(ModalData, info)`` where ``info`` is
-    ``{'converged': bool, 'cost_before': float, 'cost_after': float}``.
-    ``converged`` is ``least_squares`` success AND the refined cost not worse
-    than the seed cost (both are ``0.5*sum(residual**2)`` of the same
-    residual, so directly comparable). Per the contract, the refined
-    ModalData and info are returned EVEN WHEN the fit did not improve or did
-    not converge — the CALLER decides whether to keep or revert (the webui
-    auto-reverts to the pre-refine model on ``converged == False``). On a
-    pathological ``least_squares`` failure the seed model is returned unchanged
-    with ``converged == False``.
+    Convergence / non-convergence is REPORTED, never enforced. Returns
+    ``(ModalData, info)`` with
+    ``info = {'converged': bool, 'cost_before': float, 'cost_after': float}``;
+    both costs are the SAME projected-model cost (linear solve at the seed
+    poles vs at the refined poles), so directly comparable. The refined model
+    and info are returned even when not converged — the CALLER decides
+    whether to keep or revert (the webui auto-reverts on
+    ``converged == False``). On a pathological failure the seed model is
+    handed back unchanged with ``converged == False``.
 
     Mac-runnable, no hardware. Mirrors ``modal_fit_all_channels`` for
     ``settings`` / ``id_link`` / ``test_name`` provenance.
@@ -463,73 +596,95 @@ def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='ac
 
     # default window: the modes' band, padded by the widest half-power skirt
     if freq_range is None:
-        fn_fit = M[:, 0]
-        zn_fit = M[:, 1]
-        lo_fn, hi_fn = float(np.min(fn_fit)), float(np.max(fn_fit))
-        span = hi_fn - lo_fn
-        bw = float(np.max(fn_fit * np.clip(zn_fit, 0.0, None))) if fn_fit.size else 0.0
-        pad = max(0.25 * span, 5.0 * bw, 0.05 * max(hi_fn, 1.0))
-        freq_range = [lo_fn - pad, hi_fn + pad]
+        freq_range = _modes_band(M, f_axis)
     freq_range = [max(float(f_axis[0]), float(freq_range[0])),
                   min(float(f_axis[-1]), float(freq_range[1]))]
 
     sel = np.where((f_axis > freq_range[0]) & (f_axis < freq_range[1]))[0]
-    if sel.size < max(4, row_len):
+    if sel.size < max(4, 2 * n_modes + 2):
         # too narrow to constrain the parameters — refine over the full axis
         sel = np.arange(f_axis.size)
     f = f_axis[sel]
 
     # compile the measured TFs (cal-scaled) into G0, as modal_fit_all_channels does
-    cols = []
-    for tf_data in tf_data_list:
-        if getattr(tf_data, 'flag_modal_TF', False):
-            continue
-        for n_chan in range(tf_data.tf_data.shape[1]):
-            cols.append(tf_data.tf_data[sel, n_chan] * tf_data.channel_cal_factors[n_chan])
-    if len(cols) == 0:
+    try:
+        G0 = _measured_columns(tf_data_list, sel)
+    except ValueError:
         raise ValueError('modal_refine needs at least one measured (non-reconstruction) TF.')
-    if len(cols) != N_tfs:
+    if G0.shape[1] != N_tfs:
         raise ValueError(
             'modal_refine: measured TF channel count ({}) does not match the '
-            'modal model channel count ({}).'.format(len(cols), N_tfs))
-    G0 = np.array(cols, dtype=complex).T  # (len(f), N_tfs)
+            'modal model channel count ({}).'.format(G0.shape[1], N_tfs))
 
-    # seed + bounds (mirrors modal_fit_all_channels, tiled across modes)
-    x0 = M.ravel().astype(np.float64)
-    lo_row = np.concatenate(([f_axis[0]], [0.0],
-                             np.full(N_tfs, -np.inf), np.full(N_tfs, -np.pi/2),
-                             np.zeros(N_tfs), np.zeros(N_tfs)))
-    hi_row = np.concatenate(([f_axis[-1]], [1.0],
-                             np.full(N_tfs, np.inf), np.full(N_tfs, np.pi/2),
-                             np.full(N_tfs, np.inf), np.full(N_tfs, np.inf)))
-    lower = np.tile(lo_row, n_modes)
-    upper = np.tile(hi_row, n_modes)
+    # ---- variable projection: poles nonlinear, constants/residues linear ----
+    def residual(x):
+        fn = x[0::2]
+        zn = x[1::2]
+        A, RH, RL, _ = estimate_global_constants(fn, zn, f, G0, measurement_type)
+        model = _evaluate_global_model(fn, zn, A, RH, RL, f, measurement_type)
+        e = model - G0
+        return np.concatenate((np.real(e), np.imag(e))).reshape(-1)
+
+    x0 = np.empty(2 * n_modes)
+    x0[0::2] = M[:, 0]
+    x0[1::2] = M[:, 1]
+    lower = np.empty_like(x0)
+    upper = np.empty_like(x0)
+    lower[0::2] = f_axis[0]
+    upper[0::2] = f_axis[-1]
+    lower[1::2] = 0.0
+    upper[1::2] = 1.0
     x0 = np.clip(x0, lower, upper)
 
-    args = (n_modes, row_len, f, G0, measurement_type)
-    cost_before = 0.5 * float(np.sum(_f_residual_refine(x0, *args) ** 2))
-
+    # Pathological measured data (e.g. a NaN sample) makes the inner linear
+    # solve raise rather than merely returning a non-finite residual — treat
+    # both the same way: report non-convergence, never raise.
     try:
-        r = optimize.least_squares(_f_residual_refine, x0, bounds=(lower, upper),
-                                   max_nfev=2000, args=args)
-        x_ref = r.x
-        cost_after = float(r.cost)
-        success = bool(r.success)
+        cost_before = 0.5 * float(np.sum(residual(x0) ** 2))
     except Exception:
-        # pathological input — hand back the seed unchanged, flagged not converged
+        cost_before = float('nan')
+
+    if not np.isfinite(cost_before):
         x_ref = x0
         cost_after = cost_before
         success = False
+    else:
+        try:
+            r = optimize.least_squares(residual, x0, bounds=(lower, upper),
+                                       max_nfev=2000)
+            x_ref = r.x
+            cost_after = float(r.cost)
+            success = bool(r.success)
+        except Exception:
+            # pathological input — hand back the seed unchanged, not converged
+            x_ref = x0
+            cost_after = cost_before
+            success = False
 
     converged = bool(success and np.isfinite(cost_after)
                      and cost_after <= cost_before * (1.0 + 1e-9))
+
+    # Rebuild M rows: refined poles + globally re-estimated constants; local
+    # residues zeroed (see docstring). On failure this reproduces the seed
+    # poles with re-projected constants — still a valid, comparable model,
+    # and the caller reverts anyway when converged is False.
+    fn_ref = x_ref[0::2]
+    zn_ref = x_ref[1::2]
+    try:
+        A, RH, RL, _ = estimate_global_constants(fn_ref, zn_ref, f, G0, measurement_type)
+    except Exception:
+        A = (M[:, 2:2 + N_tfs] * np.exp(1j * M[:, 2 + N_tfs:2 + 2 * N_tfs]))
 
     settings = tf_data_list[0].settings
     test_name = tf_data_list[0].test_name
     id_link = [tf.id_link for tf in tf_data_list
                if not getattr(tf, 'flag_modal_TF', False)]
     m_ref = datastructure.ModalData(settings=settings, id_link=id_link, test_name=test_name)
-    for row in x_ref.reshape(n_modes, row_len):
+    A = np.atleast_2d(A)
+    for i in range(n_modes):
+        row = pack(fn_ref[i], zn_ref[i],
+                   np.abs(A[i, :]), np.angle(A[i, :]),
+                   np.zeros(N_tfs), np.zeros(N_tfs))
         m_ref.add_mode(row)
 
     info = {'converged': converged,

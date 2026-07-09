@@ -286,6 +286,40 @@ legend (export pixel-diff on/off/restored round-trip).
   that minimises the fitted-phase deviation — the flag's data makes
   this a natural follow-on).
 
+## Round 7g (same day) — global re-estimation + varpro Refine
+
+> [Discussion: locally-fitted phase partly encodes nearby-mode Nyquist
+> rotation, so the old logger's phase-free global reconstruction made
+> some sense; and residues play the same "distant modes" role — global
+> fits want overall low/high-frequency residues.] Agreed approach:
+> (a) global linear re-estimation, (b) refine on that parameterisation.
+
+**BOTH IMPLEMENTED (pydvma/modal.py):**
+- `estimate_global_constants(fn, zn, f, G0, mt)` — with poles fixed the
+  model is LINEAR: one least-squares re-solves every channel's complex
+  modal constants plus ONE pair of global residues per channel (RH
+  constant for above-band modes, RL/ω² for below-band), in receptance
+  space over the modes' padded band. Neighbour interaction is then
+  explained by the neighbours; remaining phase in A is genuine
+  complexity.
+- `reconstruct_transfer_function_global` uses it whenever the measured
+  TFs are available (the webui recon path passes them; loaded-alone
+  ModalData falls back to the legacy row sum). Test: polluted local
+  rows (wrong amps, ±0.5 rad phases, junk residues) → re-estimated
+  global recon error < 5% of the legacy sum's.
+- `modal_refine` rebuilt as VARIABLE PROJECTION: nonlinear over poles
+  only (2N params), constants+global residues re-solved linearly at
+  every step. The old whole-parameter-set refine let one mode's local
+  residues impersonate a neighbour's tail — flat cost directions along
+  which poles drifted "while improving" (the round-7f divergence
+  symptom). Same signature/info keys; costs before/after are now the
+  self-consistent projected-model costs. Test: junk-constant seed with
+  ±3% poles refines to truth within 0.5 Hz; refined rows carry the
+  global constants (near-real phases, local residues zeroed).
+- One legacy test was passing by accident (its NaN sat OUTSIDE the fit
+  band; "non-convergence" was cost drifting off an exactly-0 seed) —
+  fixed to poison in-band, exercising the real never-raise guard.
+
 ## Incidental findings (not in Tore's list)
 
 - **Exported figures never include the legend.** PNG/PDF export
