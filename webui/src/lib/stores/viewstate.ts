@@ -70,7 +70,9 @@ export interface ViewSlice {
   history: RangeSnapshot[]; future: RangeSnapshot[];
   plotType: TfPlotType;              // used by tf only; ignored elsewhere
   coherence: boolean;
-  legend: { visible: boolean; x: number; y: number; preset: string | null };
+  // `compact` toggles the legend's dot-grid mode (one dot per line,
+  // set-rows × channel-columns) instead of the full labelled rows.
+  legend: { visible: boolean; x: number; y: number; preset: string | null; compact: boolean };
   xScale: AxisScale;                 // frequency axis lin↔log10 (freq/tf only)
   yScale: AxisScale;                 // magnitude dB (log, default) ↔ linear
   nyquistRange: Range;               // tf/Nyquist: Real/Imag display window
@@ -86,7 +88,7 @@ const fresh = (): ViewSlice => ({
   plotType: 'mag', coherence: true,
   // Default to the TOP-LEFT (nw): the zoom/nav toolbar occupies the
   // top-right, so an 'ne' default legend would sit under its buttons.
-  legend: { visible: true, x: 0.02, y: 0.02, preset: 'nw' },
+  legend: { visible: true, x: 0.02, y: 0.02, preset: 'nw', compact: false },
   // x linear; y log so magnitude renders in dB by default (unchanged
   // from the pre-R3 behaviour).
   xScale: 'lin', yScale: 'log',
@@ -319,7 +321,7 @@ export function createViewState() {
    */
   function setCoherenceAuto(on: boolean) { patch('tf', v => ({ ...v, coherenceAuto: on })); }
 
-  /** Set view `id`'s legend placement/visibility. */
+  /** Set view `id`'s legend placement/visibility/compact-mode. */
   function setLegend(id: ViewId, legend: ViewSlice['legend']) { patch(id, v => ({ ...v, legend })); }
 
   /** Snapshot the whole state as plain JSON-safe data (spec §11). */
@@ -348,6 +350,13 @@ export function createViewState() {
         .map(toSnapshot).filter((s): s is RangeSnapshot => s !== null);
       slice.future = (Array.isArray(slice.future) ? slice.future : [])
         .map(toSnapshot).filter((s): s is RangeSnapshot => s !== null);
+      // `legend` is a NESTED object that gained `compact` (the dot-grid
+      // legend mode) after snapshots were in the wild; the top-level merge
+      // above only defaults a MISSING legend, so merge the nested object
+      // over the fresh legend defaults too — an older legend keeps its
+      // saved placement but restores `compact: false` (never undefined).
+      slice.legend = { ...fresh().legend,
+        ...(slice.legend && typeof slice.legend === 'object' ? slice.legend : {}) };
       merged[id] = slice;
     }
     views.set(merged);

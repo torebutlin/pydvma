@@ -344,6 +344,42 @@ test('restore coerces a pre-round-5 Range[] history into snapshots (undo still w
   expect(get(vs.current).range).toEqual({ x: null, y: null });
 });
 
+// ---- legend slice: compact dot-grid flag (post-release "many lines" legend) ----
+
+test('legend.compact defaults false; setLegend persists it per view without touching placement', () => {
+  const vs = createViewState();
+  expect(get(vs.current).legend.compact).toBe(false);
+  vs.activate('frequency');
+  vs.setLegend('frequency', { ...get(vs.current).legend, compact: true });
+  const l = get(vs.current).legend;
+  expect(l.compact).toBe(true);
+  // Placement/visibility fields ride along unchanged.
+  expect(l).toMatchObject({ visible: true, x: 0.02, y: 0.02, preset: 'nw' });
+  // Per-view, not global: another view stays full.
+  vs.activate('time');
+  expect(get(vs.current).legend.compact).toBe(false);
+});
+
+test('legend.compact round-trips through serialize/restore; stale snapshots default false', () => {
+  const vs = createViewState();
+  vs.setLegend('time', { visible: true, x: 0.7, y: 0.3, preset: null, compact: true });
+  const vs2 = createViewState();
+  vs2.restore(JSON.parse(JSON.stringify(vs.serialize())));
+  expect(get(vs2.current).legend)
+    .toEqual({ visible: true, x: 0.7, y: 0.3, preset: null, compact: true });
+
+  // An OLD snapshot whose legend predates `compact` restores with the
+  // default false while KEEPING its saved placement (nested merge —
+  // the top-level fresh() merge alone would leave compact undefined).
+  const snap = JSON.parse(JSON.stringify(vs.serialize()));
+  for (const id of ['time', 'frequency', 'tf', 'sono']) delete snap.views[id].legend.compact;
+  const vs3 = createViewState();
+  vs3.restore(snap);
+  const l = get(vs3.current).legend;
+  expect(l.compact).toBe(false);
+  expect(l).toMatchObject({ x: 0.7, y: 0.3, preset: null });  // placement preserved
+});
+
 test('state is serialisable and restorable (debuggability, spec §11)', () => {
   const vs = createViewState();
   vs.setRange('sono', { x: [0, 2], y: [0, 1500] });

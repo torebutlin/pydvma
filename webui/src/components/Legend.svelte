@@ -22,11 +22,30 @@
    * of the plot (matplotlib feel). The whole card is hidden when
    * `legend.visible === false`.
    *
-   * Rows mirror the tray: a colour swatch + label per entry; a `fade`
-   * entry renders the whole row at 40% opacity, an `off` entry is dimmed
-   * and struck-through (still listed, so it can be re-enabled). Clicking
-   * a row cycles that line (on → fade → off → on); the store update flows
-   * back through `legendRows` and re-renders in place.
+   * TWO DISPLAY MODES (post-release feedback: "many lines" legends):
+   *
+   * - FULL (default): one labelled row per line, mirroring the tray —
+   *   a colour swatch + label per entry; a `fade` entry renders the
+   *   whole row at 40% opacity, an `off` entry is dimmed and
+   *   struck-through (still listed, so it can be re-enabled). With
+   *   more than 10 entries the rows wrap automatically into 2 (>10)
+   *   or 3 (>20) balanced columns (`legendWrapColumns`), reading
+   *   top-to-bottom then across, so late-listed modal-fit rows flow
+   *   into the later column; the card widens from its single-column
+   *   46% cap to 60%/72% to make room. One column behaves exactly
+   *   like the classic legend.
+   *
+   * - COMPACT: a dot grid — one ~11 px coloured dot per line, one
+   *   grid ROW per set and one COLUMN per channel (`legendGrid`), so
+   *   fit pseudo-sets form their own trailing row(s). Off lines are
+   *   hollow + faded, fade lines 40% opacity; each dot's tooltip is
+   *   the full row label. Toggled by a small corner button (shown on
+   *   card hover, title "Compact legend") and persisted per view via
+   *   `legend.compact` in the viewState legend slice.
+   *
+   * Clicking a row OR a dot cycles that line (on → fade → off → on);
+   * the store update flows back through `legendRows` and re-renders in
+   * place.
    *
    * Free drag: pointer-drag the card → `clampLegend(newFractionalPos)`
    * → `setLegend(active, { …legend, x, y, preset: null })`. Dragging
@@ -37,6 +56,7 @@
   import type { LegendEntry, Selection } from '../lib/stores/selection';
   import type { ViewState } from '../lib/stores/viewstate';
   import { clampLegend } from '../lib/plot/legendPos';
+  import { legendGrid, legendWrapColumns } from '../lib/plot/legendGrid';
   import { get, type Readable } from 'svelte/store';
 
   let {
@@ -64,6 +84,24 @@
   const current = $derived(viewState.current);
 
   const legend = $derived($current.legend);
+
+  // Full mode: automatic column wrapping past 10 entries (see the
+  // header comment). `wrapRows` balances the columns; the card's
+  // max-width widens with the column count (single column keeps the
+  // stylesheet's 46% via `undefined`, i.e. no inline override).
+  const wrapCols = $derived(legendWrapColumns($entries.length));
+  const wrapRows = $derived(Math.max(1, Math.ceil($entries.length / wrapCols)));
+  const cardMaxWidth = $derived(
+    legend.compact || wrapCols === 1 ? undefined : wrapCols === 2 ? '60%' : '72%');
+
+  // Compact mode: the set-rows × channel-columns dot grid.
+  const grid = $derived(legendGrid($entries));
+
+  /** Toggle compact (dot-grid) mode, persisted per view like placement. */
+  function toggleCompact() {
+    if (justDragged) return;   // a drag that ended on the button is not a click
+    viewState.setLegend(get(viewState.active), { ...legend, compact: !legend.compact });
+  }
 
   // The card's own measured box, so anchoring pins the correct edge.
   let card: HTMLDivElement | undefined = $state();
@@ -225,11 +263,13 @@
     bind:this={card}
     class="legend"
     class:dragging
+    class:compact={legend.compact}
     data-testid="legend"
     style:left={placement.left}
     style:right={placement.right}
     style:top={placement.top}
     style:bottom={placement.bottom}
+    style:max-width={cardMaxWidth}
     role="group"
     aria-label="Plot legend — drag to reposition"
     onpointerdown={onPointerDown}
@@ -237,20 +277,77 @@
     onpointerup={onPointerUp}
     onpointercancel={onPointerCancel}
   >
-    {#each $entries as e (`${e.setId}:${e.ch}`)}
-      <button
-        type="button"
-        class="row"
-        class:fade={e.state === 'fade'}
-        class:off={e.state === 'off'}
-        data-testid="legend-entry"
-        title="Click to cycle: on → fade → off → on"
-        onclick={() => { if (!justDragged) selection.cycleLine(e.setId, e.ch); }}
+    <!-- Mode toggle: hover-revealed corner button; absolute, so it sits
+         outside the row/dot flow. `pointer-events` gates with opacity so
+         the invisible button never swallows a click meant for a row. -->
+    <button
+      type="button"
+      class="mode-toggle"
+      data-testid="legend-compact-toggle"
+      title="Compact legend"
+      aria-pressed={legend.compact}
+      onclick={toggleCompact}
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+        <circle cx="3" cy="3" r="1.6" fill="currentColor" />
+        <circle cx="7" cy="3" r="1.6" fill="currentColor" />
+        <circle cx="3" cy="7" r="1.6" fill="currentColor" />
+        <circle cx="7" cy="7" r="1.6" fill="currentColor" />
+      </svg>
+    </button>
+    {#if legend.compact}
+      <!-- Compact: one dot per line; row = set, column = channel. -->
+      <div
+        class="dots"
+        data-testid="legend-dots"
+        style:grid-template-rows={`repeat(${Math.max(1, grid.nRows)}, auto)`}
+        style:grid-template-columns={`repeat(${Math.max(1, grid.nCols)}, auto)`}
       >
-        <span class="swatch" style:background={e.color}></span>
-        <span class="label">{e.label}</span>
-      </button>
-    {/each}
+        {#each grid.cells as c (`${c.setId}:${c.ch}`)}
+          <button
+            type="button"
+            class="dot"
+            class:fade={c.state === 'fade'}
+            class:off={c.state === 'off'}
+            style:grid-row={c.row + 1}
+            style:grid-column={c.col + 1}
+            data-testid="legend-dot"
+            title={c.label}
+            aria-label={c.label}
+            onclick={() => { if (!justDragged) selection.cycleLine(c.setId, c.ch); }}
+          >
+            <span
+              class="dot-fill"
+              style:border-color={c.color}
+              style:background={c.state === 'off' ? 'transparent' : c.color}
+            ></span>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <!-- Full: labelled rows; >10 entries wrap into balanced columns
+           reading top-to-bottom then across (grid-auto-flow: column). -->
+      <div
+        class="rows"
+        class:multi={wrapCols > 1}
+        style:grid-template-rows={wrapCols > 1 ? `repeat(${wrapRows}, auto)` : undefined}
+      >
+        {#each $entries as e (`${e.setId}:${e.ch}`)}
+          <button
+            type="button"
+            class="row"
+            class:fade={e.state === 'fade'}
+            class:off={e.state === 'off'}
+            data-testid="legend-entry"
+            title="Click to cycle: on → fade → off → on"
+            onclick={() => { if (!justDragged) selection.cycleLine(e.setId, e.ch); }}
+          >
+            <span class="swatch" style:background={e.color}></span>
+            <span class="label">{e.label}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -274,6 +371,95 @@
   .legend.dragging {
     cursor: grabbing;
     box-shadow: 0 6px 20px rgba(16, 24, 40, 0.22);
+  }
+  /* Compact cards are small; reserve a right gutter so the corner
+     toggle never covers the first row's last dot. */
+  .legend.compact {
+    padding-right: 24px;
+  }
+  /* Hover-revealed mode toggle pinned to the card's top-right corner.
+     `pointer-events: none` while hidden so it can never intercept a
+     click aimed at the row beneath it. */
+  .mode-toggle {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted, #6b7280);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+  .legend:hover .mode-toggle,
+  .mode-toggle:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .mode-toggle:hover {
+    background: var(--hover-bg);
+    color: var(--text, #1b2437);
+  }
+  .mode-toggle[aria-pressed='true'] {
+    color: var(--text, #1b2437);
+  }
+  /* Full-mode row list. Single column by default — identical to the
+     classic legend. `.multi` (>10 entries) switches to a grid flowing
+     top-to-bottom then across; equal minmax(0,1fr) columns keep the
+     nowrap labels ellipsizing instead of blowing past max-width. */
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .rows.multi {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 1px;
+  }
+  /* Compact mode: the set-rows × channel-columns dot grid. */
+  .dots {
+    display: grid;
+    gap: 3px;
+    padding: 1px;
+  }
+  .dot {
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+  }
+  .dot:hover {
+    background: var(--hover-bg);
+  }
+  .dot-fill {
+    width: 11px;
+    height: 11px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 2px solid;   /* border-color = the line colour (inline) */
+  }
+  .dot.fade .dot-fill {
+    opacity: 0.4;
+  }
+  /* Off dots are hollow (transparent fill set inline) AND faded. */
+  .dot.off .dot-fill {
+    opacity: 0.35;
   }
   .row {
     display: flex;
