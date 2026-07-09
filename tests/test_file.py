@@ -118,6 +118,25 @@ class TestImportFromMatlabJwloggerTf:
         assert tf.tf_data.shape == (n, 3)
         assert tf.tf_coherence is None
 
+    def test_documented_interleaved_layout_pairs_positionally(self, tmp_path):
+        """The averaged-TF writer's layout (avtflogpars.m in the recovered
+        V2.9a source): yspec = [H1, coh1, H2, coh2, ...] — each channel's TF
+        followed by its coherence."""
+        n = 1024 // 2 + 1
+        h1, h2 = _frf(n, fn_bin=40, seed=1), _frf(n, fn_bin=90, seed=2)
+        c1 = np.clip(np.linspace(0.9, 0.5, n), 0, 1)
+        c2 = np.clip(np.linspace(0.3, 1.0, n), 0, 1)
+        path = _jw_tf_mat(tmp_path, [h1, c1.astype(complex), h2, c2.astype(complex)])
+        ds = file.import_from_matlab_jwlogger(filename=path)
+        tf = ds.tf_data_list[0]
+        assert tf.tf_data.shape == (n, 2)
+        assert tf.tf_coherence.shape == (n, 2)
+        np.testing.assert_allclose(tf.tf_data[:, 0], h1)
+        np.testing.assert_allclose(tf.tf_data[:, 1], h2)
+        np.testing.assert_allclose(tf.tf_coherence[:, 0], c1)
+        np.testing.assert_allclose(tf.tf_coherence[:, 1], c2)
+        assert tf.settings.channels == 2
+
     def test_ambiguous_mix_falls_back_to_all_tf(self, tmp_path):
         """2 FRFs + 1 coherence-like column: no clean pairing, so the historic
         behaviour (every column a TF channel) is kept — no data dropped."""

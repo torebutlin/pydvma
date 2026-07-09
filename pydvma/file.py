@@ -560,20 +560,36 @@ def import_from_matlab_jwlogger(filename=None):
     Imports dataset class from file 'filename.mat', or provides dialog if no
     filename provided.
 
-    Saved file is compatible with Jim Woodhouse logger file format:
-    ``indata`` (time series), or ``yspec`` with ``tfun`` selecting spectrum
-    (0) / transfer function (1); ``npts`` is the FFT length and ``freq`` the
-    SAMPLE RATE, so a ``yspec`` has ``npts/2 + 1`` rows on the one-sided axis
-    ``rfftfreq(npts, 1/freq)`` (df = freq/npts, top bin = freq/2).
+    Saved file is compatible with Jim Woodhouse logger file format. The
+    conventions below were confirmed against the recovered MATLAB source
+    ("Data logger V2.9a": ``specmenu.m`` save path, ``avtflogpars.m``
+    averaged-TF computation, ``dospec.m``):
 
-    JW transfer-function files may store COHERENCE traces as extra ``yspec``
-    columns alongside the complex FRFs (e.g. ``[H, coherence]`` for a
-    single-channel admittance measurement). A coherence column is detected
-    unambiguously — real-valued and bounded in [0, 1], which no measured
-    complex FRF is — and, when the file splits cleanly into equal numbers of
-    TF and coherence columns, attached as ``tf_coherence`` (paired with the
-    TF columns in order). Files with no coherence columns, or an ambiguous
-    mix, import exactly as before (every column a TF channel).
+    - Variables saved: ``yspec, dt2, npts, freq, tfun`` (plus ``indata``
+      for time files). ``freq`` is the SAMPLE RATE (the time branch uses it
+      as fs), ``npts`` the FFT length, so ``yspec`` has ``npts/2 + 1`` rows
+      on the one-sided axis ``rfftfreq(npts, 1/freq)`` (df = freq/npts).
+    - ``tfun`` selects spectrum (0) / transfer function (1).
+    - ``dt2`` is the saved ``dtype`` vector ``[n_time_channels,
+      n_yspec_columns, n_sonogram]`` — column COUNTS, not column types.
+    - The averaged-TF logger writes ``yspec`` as INTERLEAVED pairs
+      ``[H1, coh1, H2, coh2, ...]`` — each output channel's H1-estimator TF
+      followed by its coherence (``avtflogpars.m``: ``thing(:,2k-1) =
+      cross/autoin``; ``thing(:,2k) = |cross|^2/(autoin*autoout)``).
+    - The save menu also allows ARBITRARY column subsets ("Channels to
+      save": one / all / displayed / custom) and files can be composited by
+      the Add-on-load path — so real archives also contain bare-H files
+      (coherence stripped) and multi-instrument H collections.
+    - The writer duplicates the first positive bin into the DC row
+      (``yspec(1,:) = yspec(2,:)``), so the DC bin is cosmetic.
+
+    Import behaviour for TF files: coherence columns are detected
+    unambiguously (real-valued AND within [0, 1] — no measured complex FRF
+    is both). The documented interleaved ``[H, coh, ...]`` layout is
+    recognised and split with positional pairing; an equal split in any
+    other order pairs by order of appearance; files with no coherence
+    columns, or an ambiguous mix, import as before (every column a TF
+    channel — nothing is dropped).
 
     Args:
        filename (str, optional): Input filename, dialog shown if not provided
@@ -619,9 +635,12 @@ def import_from_matlab_jwlogger(filename=None):
         # bounded real curve and rails fn/zeta to the window edge (verified
         # on JW guitar admittance files). Detection: real-valued AND within
         # [0, 1]; a measured complex FRF never satisfies both across the
-        # whole axis. Only a CLEAN split (equal TF/coherence counts, paired
-        # in column order) attaches coherence; anything ambiguous falls back
-        # to the historic all-columns-are-TF import so no data is dropped.
+        # whole axis. Layouts, in order of preference:
+        #   1. the DOCUMENTED averaged-TF layout [H1, coh1, H2, coh2, ...]
+        #      (avtflogpars.m) — positional pairs;
+        #   2. any other clean equal split — paired in column order;
+        #   3. no coherence columns, or an ambiguous mix — historic
+        #      all-columns-are-TF import, so no data is dropped.
         coherence = None
         ncols = np.size(tf, 1)
         col_is_coh = []
@@ -634,7 +653,15 @@ def import_from_matlab_jwlogger(filename=None):
             col_is_coh.append(real_only and bounded)
         coh_idx = [c for c in range(ncols) if col_is_coh[c]]
         tf_idx = [c for c in range(ncols) if not col_is_coh[c]]
-        if coh_idx and tf_idx and len(coh_idx) == len(tf_idx):
+        interleaved = (
+            ncols >= 2 and ncols % 2 == 0
+            and all(not col_is_coh[c] for c in range(0, ncols, 2))
+            and all(col_is_coh[c] for c in range(1, ncols, 2))
+        )
+        if interleaved:
+            coherence = np.real(tf[:, 1::2])
+            tf = tf[:, 0::2]
+        elif coh_idx and tf_idx and len(coh_idx) == len(tf_idx):
             coherence = np.real(tf[:, coh_idx])
             tf = tf[:, tf_idx]
 
