@@ -2,12 +2,33 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-08: **the web logger has full functional parity with the
-(now-removed) Qt GUI, plus substantial new capability.** Six orchestrated
-feedback/build rounds (2026-07-05..08) delivered the whole
-`dev/plans/2026-07-07-full-gui-replacement-plan.md` roadmap. Master is
-pushed (b54b5a4); CI green; live at torebutlin.github.io/pydvma/app/
-(+ /lite/, + docs with a full Web Logger section).
+As of 2026-07-09: **round 7 — the first lab-testing feedback batch — is
+fully landed on master (9 commits, b599876..35597ff, NOT yet pushed).**
+All nine of Tore's items are done (dispositions:
+`dev/2026-07-09-round7-feedback.md`): sono axis controls actually work
+now (the toolbar was fed [0,1] extents and setRange('sono') was never
+read — e2e-guarded end-to-end since); the zoom toolbar docks in a
+`.plot-nav` strip above the plot instead of floating over the data;
+**the interactive damping panel** replaces the inline fn/Qn box
+(peaks mode: the restored Qt decay-fit plot + draggable threshold line
++ draggable start-time line over the sonogram, `peak_threshold`
+promoted to a real analysis parameter; bands mode: NEW
+`calculate_damping_by_band` — Butterworth ladder ('all'/oct/1-3rd/
+1-10th-dec) + Schroeder EDC → EDT/T20/T30/T60/band-Qn); CWT wavelet-Q
+(`w0`) exposed in the Sono card; Clean Impulse now auto-recomputes
+existing derived results; modal fit lines got a local|global toggle
+(all sets/chans, first-class pseudo-sets, pink overlay retired);
+legend wraps to columns >10 entries + compact dot-grid mode. Engine
+wheel rebuilt (same 2.0.0 filename). Latent bug fixed on the way:
+damping as a session's FIRST compute parked forever (no engine.boot()
+kick — see the calcDamping comment). Suites on this Mac: pytest 319/3
+skipped, vitest 623/1, svelte-check 0, Playwright 72/8 (hardware +
+capability tests only run on the Windows PC).
+
+Round-1..6 context (2026-07-05..08): six feedback/build rounds
+delivered the whole `dev/plans/2026-07-07-full-gui-replacement-plan.md`
+roadmap; live at torebutlin.github.io/pydvma/app/ (+ /lite/, + docs
+with a full Web Logger section).
 
 **What ships:** the three modes (Pages analysis + Web Audio soundcard,
 no install; `pip install pydvma[serve]` -> `pydvma-serve` local bridge
