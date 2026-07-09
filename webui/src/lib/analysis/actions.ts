@@ -776,6 +776,15 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * A time-less target is refused with a clear `computeErrors.sono` message
    * rather than the opaque deref error it used to throw (round-6 item 2).
    */
+  /**
+   * Sonogram channel each set LAST computed with (post-clamp). The channel
+   * is card-local UI state — not part of the per-set sono settings — so a
+   * recompute of an existing sonogram (e.g. after Clean Impulse, see
+   * `recomputeExisting`) records it here to re-run the SAME channel the
+   * user is looking at rather than resetting to channel 0.
+   */
+  const lastSonoCh = new Map<number, number>();
+
   function calcSono(target: AnalysisTarget, ch: number) {
     const ws = target === 'all'
       ? working.find((w) => hasTimeData(w.time))
@@ -798,6 +807,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // (which process every channel) still work. Clamping keeps a stale
       // select from blanking the plot; SonoCard also resets the select.
       const safeCh = Math.min(Math.max(0, Math.floor(ch)), Math.max(0, nCh - 1));
+      lastSonoCh.set(ws.setId, safeCh);   // remembered for existence-gated recomputes
       const res = await engine.enqueue('calc_sono', {
         time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
         ch: safeCh, nperseg: nFft, noverlap: nFft >> 1,
@@ -817,8 +827,57 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
+   * Recompute every derived result that ALREADY exists and reads `ws`'s
+   * time data — the post-Clean-Impulse refresh. This is the cards' live-
+   * recompute pattern (an existence gate on `hasComputed` followed by a
+   * re-dispatch of the normal calc action with each set's CURRENT
+   * settings): a kind the user never computed is never created, and each
+   * recompute routes any failure to its own `computeErrors` slot.
+   *
+   * Covered kinds: FFT (`freq`), PSD + coherence (`psd`; the CSD pair is
+   * re-stamped exactly as at calc time), the set's own per-set TF, an
+   * 'across'-ensemble TF, and the sonogram (re-run on the channel it last
+   * computed — see `lastSonoCh`). A csd-only slice with no psd (possible
+   * only via a loaded `CrossSpecData`) is left alone: recomputing it would
+   * fabricate a PSD the user never asked for.
+   *
+   * TF ensemble nuance: an 'across' TF is computed from ALL working sets'
+   * time data (so the cleaned set ALWAYS feeds it) and attaches to the
+   * FIRST working set. It is detected the same way `calcTf` resolves the
+   * mode — some set's tf settings say 'across' — combined with the first
+   * set carrying a TF slice; the recompute dispatches via the across-
+   * owning set (whose chIn/window drive the ensemble). The cleaned set's
+   * own TF dispatch is then skipped when it would just re-run that same
+   * ensemble (its slice IS the ensemble result, or its own settings
+   * resolve to the ensemble op).
+   */
+  async function recomputeExisting(ws: WorkingSet): Promise<void> {
+    if (hasComputed(ws.setId, 'freq')) await calcFft(ws.setId);
+    if (hasComputed(ws.setId, 'psd')) await calcPsd(ws.setId);
+
+    const first = working[0];
+    const acrossOwner = working.find((w) => tfSettings(w.setId).averaging === 'across');
+    let ensembleRecomputed = false;
+    if (acrossOwner && first && hasComputed(first.setId, 'tf')) {
+      await calcTf(acrossOwner.setId);
+      ensembleRecomputed = true;
+    }
+    const resolvesToEnsemble = ensembleRecomputed
+      && (ws.setId === first.setId || tfSettings(ws.setId).averaging === 'across');
+    if (hasComputed(ws.setId, 'tf') && !resolvesToEnsemble) await calcTf(ws.setId);
+
+    if (hasComputed(ws.setId, 'sono')) {
+      await calcSono(ws.setId, lastSonoCh.get(ws.setId) ?? 0);
+    }
+  }
+
+  /**
    * Clean the impulse on `chImpulse` of the set named by `target`
    * (setId; 'all' uses the first working set), replacing its TimeData.
+   * On success, every derived result that ALREADY exists for the affected
+   * set — FFT / PSD / TF / sonogram, including a live 'across'-ensemble TF
+   * the set feeds — is recomputed from the cleaned data (see
+   * `recomputeExisting`); kinds the user never computed are not created.
    */
   function cleanImpulse(target: AnalysisTarget, chImpulse: number) {
     const ws = target === 'all' ? working[0] : working.find((w) => w.setId === target);
@@ -830,7 +889,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       });
       const cleaned = asMarshalled(mval(res, 'time_data'));
       const newAxis = axisData(mval(res, 'time_axis'));
-      // Replace the source item's arrays so re-analysis uses the cleaned data.
+      // Replace the source item's arrays — existing results are recomputed
+      // from the cleaned data (recomputeExisting, below), and any future
+      // calc reads the cleaned arrays too.
       ws.time.arrays.time_data = {
         shape: cleaned.shape, isComplex: false,
         data: cleaned.data instanceof Float64Array ? cleaned.data : Float64Array.from(cleaned.data),
@@ -846,6 +907,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // object so the cleaned impulse is autosaved; otherwise a clean followed
       // by a tab-close silently loses the cleanup (explicit Save is unaffected).
       dataset.update((d) => d);
+      // Refresh the already-computed derived results from the cleaned data so
+      // the FFT/PSD/TF/sono views never show stale, pre-clean spectra.
+      await recomputeExisting(ws);
     });
   }
 

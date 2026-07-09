@@ -161,6 +161,167 @@ test('cleanImpulse re-emits the dataset store so autosave captures the cleaned d
   expect(Array.from(ds.items[0].arrays.time_data.data)).toEqual([0, 0, 3, 4, 0, 0]);
 });
 
+// ---- Clean Impulse auto-recompute: derived results that ALREADY exist for
+// the cleaned set must be recomputed from the cleaned arrays (the same
+// existence-gated re-dispatch as the cards' live recompute); kinds the user
+// never computed must NOT be created. ----
+
+/** Canned clean_impulse result: the zeroed-outside-the-impulse arrays. */
+const cleanResult = () => ({
+  time_axis: real([3], [0, 0.5, 1]),
+  time_data: real([3, 2], [0, 0, 3, 4, 0, 0]),
+});
+
+const fftResult = () => ({
+  freq_axis: real([2], [0, 1]), freq_data: cplx([2, 2], [1, 0, 1, 0, 1, 0, 1, 0]),
+});
+
+const psdResult = () => ({
+  freq_axis: real([2], [0, 1]), psd: real([2, 2], [1, 2, 3, 4]), Cxy: real([2, 2], [1, 1, 1, 1]),
+});
+
+const sonoResult = () => ({
+  time_axis: real([2], [0, 1]), freq_axis: real([2], [0, 1]),
+  sono_data: real([2, 2], [1, 2, 3, 4]),
+});
+
+test('cleanImpulse recomputes an EXISTING FFT from the cleaned arrays', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    if (op === 'calc_fft') return fftResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+
+  await actions.calcFft(id);                          // explicit Calc first
+  expect(calls.filter((c) => c.op === 'calc_fft')).toHaveLength(1);
+
+  await actions.cleanImpulse(id, 0);
+  const ffts = calls.filter((c) => c.op === 'calc_fft');
+  expect(ffts, 'clean triggers ONE fft recompute').toHaveLength(2);
+  // The recompute reads the CLEANED time data, not the pre-clean original.
+  expect(Array.from(ffts[1].payload.time_data as Float64Array)).toEqual([0, 0, 3, 4, 0, 0]);
+});
+
+test('cleanImpulse does NOT create results the user never computed', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+
+  await actions.cleanImpulse(id, 0);                  // nothing computed beforehand
+  expect(calls.map((c) => c.op), 'no calc_* of any kind').toEqual(['clean_impulse']);
+  const d = get(actions.derived)[id];
+  expect(d.freq).toBeUndefined();
+  expect(d.psd).toBeUndefined();
+  expect(d.tf).toBeUndefined();
+  expect(d.sono).toBeUndefined();
+});
+
+test("cleanImpulse('all') recomputes ONLY the first set (the one actually cleaned)", async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    if (op === 'calc_fft') return fftResult();
+    return {};
+  });
+  const { actions } = harness(engine);
+  actions.loadDataset(makeDataset(2));
+  await actions.calcFft('all');                       // BOTH sets have an FFT
+  expect(calls.filter((c) => c.op === 'calc_fft')).toHaveLength(2);
+
+  await actions.cleanImpulse('all', 0);               // 'all' → first working set only
+  const ffts = calls.filter((c) => c.op === 'calc_fft');
+  expect(ffts, 'only the cleaned set recomputes').toHaveLength(3);
+  // The recompute carries the cleaned first set's data (the second set's
+  // arrays — and its FFT — were untouched).
+  expect(Array.from(ffts[2].payload.time_data as Float64Array)).toEqual([0, 0, 3, 4, 0, 0]);
+});
+
+test('cleanImpulse recomputes an existing PSD but not an uncomputed FFT', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    if (op === 'calc_psd') return psdResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  await actions.calcPsd(id);
+
+  await actions.cleanImpulse(id, 0);
+  const psds = calls.filter((c) => c.op === 'calc_psd');
+  expect(psds, 'clean triggers ONE psd recompute').toHaveLength(2);
+  expect(Array.from(psds[1].payload.time_data as Float64Array)).toEqual([0, 0, 3, 4, 0, 0]);
+  expect(calls.some((c) => c.op === 'calc_fft'), 'FFT never computed → not created').toBe(false);
+});
+
+test('cleanImpulse recomputes a live across-ensemble TF the cleaned set feeds', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    if (op === 'calc_tf_averaged') return tfResult();
+    return {};
+  });
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(2));
+  const [a, b] = get(sel.sets).map((s) => s.id);
+  settings.patch('all', 'tf', { averaging: 'across', chIn: 0, window: 'hann', nFrames: 5 });
+  await actions.calcTf('all');                        // ensemble attaches to the FIRST set
+  expect(get(actions.derived)[a].tf).toBeDefined();
+  expect(get(actions.derived)[b]?.tf).toBeUndefined();
+
+  await actions.cleanImpulse(b, 0);                   // clean the SECOND set
+  const avg = calls.filter((c) => c.op === 'calc_tf_averaged');
+  expect(avg, 'ensemble recomputed exactly once').toHaveLength(2);
+  // The re-run ensemble reads the cleaned set B data; set A stays original.
+  const sets = avg[1].payload.sets as { time_data: Float64Array }[];
+  expect(Array.from(sets[1].time_data)).toEqual([0, 0, 3, 4, 0, 0]);
+  expect(Array.from(sets[0].time_data)).toEqual([1, 2, 3, 4, 5, 6]);
+  // No per-set calc_tf was issued (set B carries no per-set TF slice).
+  expect(calls.some((c) => c.op === 'calc_tf')).toBe(false);
+});
+
+test('cleanImpulse on the ensemble-carrying FIRST set re-runs the ensemble ONCE (no duplicate)', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    if (op === 'calc_tf_averaged') return tfResult();
+    return {};
+  });
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(2));
+  const a = get(sel.sets)[0].id;
+  settings.patch('all', 'tf', { averaging: 'across', chIn: 0, window: 'hann', nFrames: 5 });
+  await actions.calcTf('all');                        // ensemble slice lands on set A
+
+  await actions.cleanImpulse(a, 0);                   // clean the set CARRYING the ensemble
+  // Its tf slice IS the ensemble result — one ensemble re-run, no extra
+  // per-set dispatch that would just run the same ensemble again.
+  expect(calls.filter((c) => c.op === 'calc_tf_averaged')).toHaveLength(2);
+  expect(calls.some((c) => c.op === 'calc_tf')).toBe(false);
+});
+
+test('cleanImpulse recomputes an existing sonogram on the channel it last ran with', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    if (op === 'calc_sono') return sonoResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));                // 2-channel set
+  const id = get(sel.sets)[0].id;
+  await actions.calcSono(id, 1);                      // user computed CHANNEL 1
+
+  await actions.cleanImpulse(id, 0);
+  const sonos = calls.filter((c) => c.op === 'calc_sono');
+  expect(sonos, 'clean triggers ONE sono recompute').toHaveLength(2);
+  expect(sonos[1].payload.ch, 'recompute keeps the sono channel').toBe(1);
+  expect(Array.from(sonos[1].payload.time_data as Float64Array)).toEqual([0, 0, 3, 4, 0, 0]);
+});
+
 test("calcTf 'within' issues one calc_tf per set with n_frames from settings", async () => {
   const { engine, calls } = fakeEngine(async () => tfResult());
   const { settings, actions } = harness(engine);
