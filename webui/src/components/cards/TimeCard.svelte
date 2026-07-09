@@ -26,6 +26,10 @@
   const highlight = $derived(selection.highlight);
   const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
+  // Clean Impulse is a TOGGLE (round-7b): on = the cleaned arrays are
+  // applied (raw stashed), off = raw restored. Cleaning never re-runs on
+  // its own output; the flag tracks the APPLIED state per set.
+  const cleanedSets = $derived(actions.cleanedSets);
 
   // Widest set drives the impulse-channel options.
   const maxChannels = $derived($setsView.reduce((m, s) => Math.max(m, s.nChannels), 0));
@@ -41,6 +45,7 @@
   function clean() {
     if (targetId >= 0) actions.cleanImpulse(targetId, impulseCh);
   }
+  const isCleaned = $derived(targetId >= 0 && !!$cleanedSets[targetId]);
 </script>
 
 <section class="ctx-card card-controls" aria-label="Time stage controls">
@@ -74,9 +79,24 @@
   <div class="ctx-primary">
     <button
       class="btn indigo"
+      class:on={isCleaned}
+      aria-pressed={isCleaned}
+      data-testid="clean-impulse-toggle"
       disabled={$busy || targetId < 0}
-      title="Zero the pre-impulse noise and window the tail"
-      onclick={clean}>Clean Impulse</button
+      title={isCleaned
+        ? 'Cleaned data applied — click to restore the raw recording (the clean stays cached)'
+        : 'Zero the pre-impulse noise and window the tail (toggles — the raw data is kept)'}
+      onclick={clean}>{isCleaned ? 'Clean Impulse: on' : 'Clean Impulse'}</button
     >
   </div>
 </section>
+
+<style>
+  /* Toggle-on state: the indigo button flips to its soft/active look so the
+     applied clean reads at a glance (mirrors the toolbar's .active idiom). */
+  .btn.indigo.on {
+    background: var(--accent-soft);
+    border-color: var(--accent-soft-border);
+    color: var(--indigo, #4f46e5);
+  }
+</style>

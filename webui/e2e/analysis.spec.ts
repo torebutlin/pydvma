@@ -475,6 +475,38 @@ test.describe('@engine', () => {
     await expect(panel).toHaveCount(0);
   });
 
+  test('Clean Impulse toggles: on, raw restored off, cached back on (round-7b)', async ({ page }) => {
+    // Real-engine smoke over the toggle FLOW (button state + no errors).
+    // The raw/cleaned array identities are pinned at the unit level
+    // (actions.test.ts) — this fixture's impulse is synthetic and nearly
+    // noiseless, so cleaned-vs-raw renders pixel-identically and a plotted-
+    // path fingerprint cannot discriminate the copies.
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto('/?fixture=1');
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Time' }).click();
+    const btn = page.getByTestId('clean-impulse-toggle');
+    await expect(btn).toBeEnabled();
+
+    // ON: engine clean runs (first compute of the session — boots too).
+    await btn.click();
+    await expect(btn).toHaveText('Clean Impulse: on', { timeout: 200_000 });
+    await expect(btn).toHaveAttribute('aria-pressed', 'true');
+
+    // OFF: raw restored (no engine op — near-instant).
+    await btn.click();
+    await expect(btn).toHaveText('Clean Impulse', { timeout: 20_000 });
+    await expect(btn).toHaveAttribute('aria-pressed', 'false');
+
+    // ON again: the cached clean reapplies (no engine re-clean).
+    await btn.click();
+    await expect(btn).toHaveText('Clean Impulse: on', { timeout: 20_000 });
+
+    await expect(page.locator('.ctx-err')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+
   test('multiset + orphan: Sonogram targets a time-bearing set, excludes the orphan, paints in BOTH themes (round-6 items 2/3)', async ({ page }) => {
     // grid_data-like: two time-bearing 2-channel sets PLUS one orphan TF (no
     // time series). The exact tray that blanked Tore's sonogram. Load it, and

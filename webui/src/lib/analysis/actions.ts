@@ -376,6 +376,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     derived.set({});
     computeErrors.set(emptyErrors());   // fresh dataset clears every kind's error
     modal?.reset();                     // drop any prior dataset's modal fit
+    cleanCache.clear();                 // raw/cleaned stashes belong to the old sets
+    cleanedSets.set({});
     working = [];
     // Selection store has no reset; it is created fresh per app load. We
     // simply addSet for each item in this dataset.
@@ -875,43 +877,99 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
-   * Clean the impulse on `chImpulse` of the set named by `target`
-   * (setId; 'all' uses the first working set), replacing its TimeData.
-   * On success, every derived result that ALREADY exists for the affected
+   * Clean Impulse toggle cache (round-7b): per-set raw/cleaned array PAIRS
+   * plus which one is applied. The first clean stashes the raw arrays and
+   * caches the engine's cleaned result, so the toggle then swaps by
+   * reference — the clean NEVER re-runs on its own output (idempotent) —
+   * at the cost of holding both copies (~2x that set's time data; Tore's
+   * explicit call: "doubles storage requirements but not usually
+   * significant"). Session-local: Save/autosave write whichever copy is
+   * APPLIED, and the other copy does not survive a reload.
+   */
+  interface CleanPair { td: NpyArray; ax: NpyArray; }
+  const cleanCache = new Map<number, {
+    raw: CleanPair; cleaned: CleanPair; chImpulse: number; active: boolean;
+  }>();
+  /** Reactive per-set cleaned flags — the Time card's toggle button state. */
+  const cleanedSets = writable<Record<number, boolean>>({});
+
+  /** Swap one raw/cleaned array pair onto the set + refresh its time slice. */
+  function applyTimeArrays(ws: WorkingSet, pair: CleanPair): void {
+    ws.time.arrays.time_data = pair.td;
+    ws.time.arrays.time_axis = pair.ax;
+    // The RAW stash can carry a loaded file's original dtype — normalise to
+    // f64 for the plot slice exactly like the load-time seeding does.
+    const f64 = (d: NpyArray['data']): Float64Array =>
+      d instanceof Float64Array ? d : Float64Array.from(d as ArrayLike<number>);
+    setDerived(ws.setId, {
+      time: {
+        axis: f64(pair.ax.data),
+        data: decodeArray({ shape: pair.td.shape, data: f64(pair.td.data), complex: false }),
+      },
+    });
+  }
+
+  /**
+   * TOGGLE the impulse clean on the set named by `target` (setId; 'all'
+   * uses the first working set):
+   *
+   * - not cleaned → runs the engine clean on `chImpulse` and applies it,
+   *   stashing the raw arrays (first time) or reusing the cached cleaned
+   *   arrays (same channel — no engine op, never re-cleans cleaned data);
+   * - cleaned → restores the stashed RAW arrays (no engine op).
+   *
+   * A different `chImpulse` re-cleans from the raw stash. Either direction
+   * recomputes every derived result that ALREADY exists for the affected
    * set — FFT / PSD / TF / sonogram, including a live 'across'-ensemble TF
-   * the set feeds — is recomputed from the cleaned data (see
-   * `recomputeExisting`); kinds the user never computed are not created.
+   * the set feeds (see `recomputeExisting`); kinds the user never computed
+   * are not created. `cleanedSets` reflects the applied state per set.
    */
   function cleanImpulse(target: AnalysisTarget, chImpulse: number) {
     const ws = target === 'all' ? working[0] : working.find((w) => w.setId === target);
     if (!ws) return Promise.resolve();
     return guarded('clean', async () => {
-      const { axis, data, nCh } = timePayload(ws.time);
-      const res = await engine.enqueue('clean_impulse', {
-        time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs, ch_impulse: chImpulse,
-      });
-      const cleaned = asMarshalled(mval(res, 'time_data'));
-      const newAxis = axisData(mval(res, 'time_axis'));
-      // Replace the source item's arrays — existing results are recomputed
-      // from the cleaned data (recomputeExisting, below), and any future
-      // calc reads the cleaned arrays too.
-      ws.time.arrays.time_data = {
-        shape: cleaned.shape, isComplex: false,
-        data: cleaned.data instanceof Float64Array ? cleaned.data : Float64Array.from(cleaned.data),
-      };
-      ws.time.arrays.time_axis = { shape: [newAxis.length], isComplex: false, data: newAxis };
-      setDerived(ws.setId, {
-        time: { axis: newAxis, data: decodeArray({ ...cleaned }) },
-      });
-      // The cleaned arrays were mutated in place on the item that lives inside
-      // the `dataset` store, so `derived` (the plot) already updated via
+      const entry = cleanCache.get(ws.setId);
+      if (entry?.active) {
+        // Toggle OFF: back to the stashed raw arrays.
+        applyTimeArrays(ws, entry.raw);
+        entry.active = false;
+        cleanedSets.update((m) => ({ ...m, [ws.setId]: false }));
+      } else if (entry && entry.chImpulse === chImpulse) {
+        // Toggle back ON, same impulse channel: reuse the cached clean.
+        applyTimeArrays(ws, entry.cleaned);
+        entry.active = true;
+        cleanedSets.update((m) => ({ ...m, [ws.setId]: true }));
+      } else {
+        // First clean (or a new impulse channel): the CURRENT arrays are the
+        // raw ones (any prior clean is inactive here) — stash them, clean
+        // from them, cache both copies.
+        const raw: CleanPair = { td: ws.time.arrays.time_data, ax: ws.time.arrays.time_axis };
+        const { axis, data, nCh } = timePayload(ws.time);
+        const res = await engine.enqueue('clean_impulse', {
+          time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs, ch_impulse: chImpulse,
+        });
+        const cleaned = asMarshalled(mval(res, 'time_data'));
+        const newAxis = axisData(mval(res, 'time_axis'));
+        const cleanedPair: CleanPair = {
+          td: {
+            shape: cleaned.shape, isComplex: false,
+            data: cleaned.data instanceof Float64Array ? cleaned.data : Float64Array.from(cleaned.data),
+          },
+          ax: { shape: [newAxis.length], isComplex: false, data: newAxis },
+        };
+        cleanCache.set(ws.setId, { raw, cleaned: cleanedPair, chImpulse, active: true });
+        applyTimeArrays(ws, cleanedPair);
+        cleanedSets.update((m) => ({ ...m, [ws.setId]: true }));
+      }
+      // The arrays were swapped in place on the item that lives inside the
+      // `dataset` store, so `derived` (the plot) already updated via
       // setDerived — but the store itself never re-emitted, and autosave is
       // driven by a `dataset` subscription (App.svelte). Re-emit the same
-      // object so the cleaned impulse is autosaved; otherwise a clean followed
-      // by a tab-close silently loses the cleanup (explicit Save is unaffected).
+      // object so the applied state is autosaved; otherwise a toggle followed
+      // by a tab-close silently loses it (explicit Save is unaffected).
       dataset.update((d) => d);
-      // Refresh the already-computed derived results from the cleaned data so
-      // the FFT/PSD/TF/sono views never show stale, pre-clean spectra.
+      // Refresh the already-computed derived results from the applied data so
+      // the FFT/PSD/TF/sono views never show a stale copy's spectra.
       await recomputeExisting(ws);
     });
   }
@@ -1769,7 +1827,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   return {
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, stampUiState,
-    calcFft, calcPsd, calcTf, calcSono, cleanImpulse, hasComputed,
+    calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
     calcFit, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
     getCalibration, setCalFactors,
     /** Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match. */

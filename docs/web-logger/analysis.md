@@ -20,6 +20,11 @@ The **Time** stage inspects the raw time series.
 - **Clean Impulse** — zeroes the pre-impulse noise and windows the tail
   of an impact response (the same operation as
   [`clean_impulse`](../user-guide/analysis.md#impulse-response-cleaning)).
+  It is a **toggle**: the raw recording is kept, so clicking again
+  restores it (and back — the clean is cached, never re-run on its own
+  output). Every result you have already computed (FFT / PSD / TF /
+  sonogram) recomputes to match whichever copy is applied. Saving writes
+  the applied copy; the other copy lives only in the session.
 
 ## Frequency
 

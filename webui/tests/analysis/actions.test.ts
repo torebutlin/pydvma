@@ -223,6 +223,80 @@ test('cleanImpulse does NOT create results the user never computed', async () =>
   expect(d.sono).toBeUndefined();
 });
 
+// ---- Clean Impulse TOGGLE (round-7b): first clean stashes the raw arrays
+// and applies the cleaned copy; toggling off restores raw with NO engine op;
+// toggling back on reuses the cache — the clean NEVER re-runs on its own
+// output. A different impulse channel re-cleans from the raw stash. ----
+
+test('cleanImpulse toggles: off restores raw (no engine op), on again reuses the cache', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    if (op === 'calc_fft') return fftResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  const item = get(actions.dataset)!.items[0];
+  const raw = Array.from(item.arrays.time_data.data);
+  await actions.calcFft(id);
+
+  await actions.cleanImpulse(id, 0);                  // ON
+  expect(get(actions.cleanedSets)[id]).toBe(true);
+  expect(Array.from(item.arrays.time_data.data)).toEqual([0, 0, 3, 4, 0, 0]);
+
+  await actions.cleanImpulse(id, 0);                  // OFF: raw restored
+  expect(get(actions.cleanedSets)[id]).toBe(false);
+  expect(Array.from(item.arrays.time_data.data)).toEqual(raw);
+  expect(calls.filter((c) => c.op === 'clean_impulse'),
+    'restore must not re-run the engine clean').toHaveLength(1);
+  // The recompute after OFF reads the RAW data again.
+  const ffts = calls.filter((c) => c.op === 'calc_fft');
+  expect(Array.from(ffts.at(-1)!.payload.time_data as Float64Array)).toEqual(raw);
+
+  await actions.cleanImpulse(id, 0);                  // ON again: cached
+  expect(get(actions.cleanedSets)[id]).toBe(true);
+  expect(Array.from(item.arrays.time_data.data)).toEqual([0, 0, 3, 4, 0, 0]);
+  expect(calls.filter((c) => c.op === 'clean_impulse'),
+    'the clean never re-runs — cached copy reapplied').toHaveLength(1);
+});
+
+test('a different impulse channel re-cleans from the RAW stash, never from cleaned data', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  const raw = Array.from(get(actions.dataset)!.items[0].arrays.time_data.data);
+
+  await actions.cleanImpulse(id, 0);                  // ON, ch 0
+  await actions.cleanImpulse(id, 0);                  // OFF
+  await actions.cleanImpulse(id, 1);                  // ON, ch 1: fresh clean
+  const cleans = calls.filter((c) => c.op === 'clean_impulse');
+  expect(cleans).toHaveLength(2);
+  expect(cleans[1].payload.ch_impulse).toBe(1);
+  expect(Array.from(cleans[1].payload.time_data as Float64Array)).toEqual(raw);
+});
+
+test('loadDataset resets the clean toggle state (stashes belong to the old sets)', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  await actions.cleanImpulse(get(sel.sets)[0].id, 0);
+  expect(Object.values(get(actions.cleanedSets)).some(Boolean)).toBe(true);
+
+  actions.loadDataset(makeDataset(1));                // fresh dataset
+  expect(get(actions.cleanedSets)).toEqual({});
+  // A clean on the NEW set runs a fresh engine op (no stale cache reuse).
+  await actions.cleanImpulse(get(sel.sets).at(-1)!.id, 0);
+  expect(calls.filter((c) => c.op === 'clean_impulse')).toHaveLength(2);
+});
+
 test("cleanImpulse('all') recomputes ONLY the first set (the one actually cleaned)", async () => {
   const { engine, calls } = fakeEngine(async (op) => {
     if (op === 'clean_impulse') return cleanResult();
