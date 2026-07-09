@@ -2,9 +2,24 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-09: **round 7 — the first lab-testing feedback batch — is
-fully landed on master (9 commits, b599876..35597ff, NOT yet pushed).**
-All nine of Tore's items are done (dispositions:
+As of 2026-07-09: **rounds 7 + 7b + 7c — the first lab-testing feedback
+batches — are fully landed, PUSHED, and DEPLOYED (CI green; the live
+app at torebutlin.github.io/pydvma/app/ carries them).** Round 7b:
+Clean Impulse is an on/off TOGGLE (raw stashed + cleaned cached, never
+re-cleans its own output; save writes the applied copy); legend
+defaults SE. Round 7c: CWT ladders widened (w0 + voices/octave to 64);
+the damping panel sits in a RIGHT-hand column on wide screens (charts
+stacked, click-to-expand fills the plot region and pops back; narrow
+keeps the below-dock); every damping chart saves as its own PNG via the
+Save Figure delivery + restyle contract (charts follow the
+self-contained-SVG rules: xmlns + data-role + CHROME hexes) and the
+band table saves CSV; the export audit's one correctness gap — Bode
+exporting ONLY its magnitude pane — is fixed (getSvg composites both
+panes, flattened; e2e-guarded). CI gotcha learned: gate on `npm run
+check` (app tsconfig, ~172 files), NOT bare svelte-check (~104) — the
+bare form missed a real rune-shadowing error that failed CI.
+
+All nine round-7 items are done (dispositions:
 `dev/2026-07-09-round7-feedback.md`): sono axis controls actually work
 now (the toolbar was fed [0,1] extents and setRange('sono') was never
 read — e2e-guarded end-to-end since); the zoom toolbar docks in a
