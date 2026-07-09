@@ -19,6 +19,34 @@ while you fit. The Fit card adds a **TF type** selector
 used by the model, matching the `measurement_type` argument of the
 Python fitter.
 
+## Choosing what to fit: all sets jointly, or one set
+
+With more than one TF-bearing set loaded, the Fit card shows a **sets**
+dropdown:
+
+- **All sets (shared poles)** — the default with several sets: one
+  JOINT fit across every set's transfer functions. Each mode gets a
+  single shared natural frequency and damping ratio, with independent
+  amplitudes per set and channel — the classic hammer-test workflow,
+  where many measurements of one structure share the same poles and the
+  joint fit uses all the data at once.
+- **a named set** — fit that one set alone.
+
+With a single TF-bearing set the dropdown is hidden and that set is
+fitted automatically. Two things to know:
+
+- The choice applies to **Fit 1/2/3** (building the model). **Reject**,
+  **Refine** and the per-mode chip actions always operate on the
+  *existing* model and keep its exact set composition, so a shared-pole
+  model stays coherent through follow-ups.
+- Switching the dropdown to a different composition (say shared → one
+  set) starts a **fresh model** on the next Fit rather than mixing
+  incompatible fits.
+
+(This dropdown is deliberately separate from the analysis cards'
+dataset selector, where *All sets* means "each set independently"; here
+it means "all sets jointly".)
+
 ## Fitting modes
 
 Fitting works on the **visible frequency window**, so zoom to the region
