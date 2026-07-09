@@ -431,17 +431,21 @@ def estimate_global_constants(fn, zn, f, G0, measurement_type='acc'):
     circle-rotation leakage from nearby modes.
 
     Args:
-        fn, zn: pole arrays, length N (fixed during the solve)
-        f: frequency axis (Hz); rows with ``f <= 0`` are excluded (the
-            ``1/w^2`` term and the ``(jw)^p`` division are singular at DC)
-        G0: measured complex columns, shape ``(len(f), n_cols)``, cal-scaled
-        measurement_type: 'acc' | 'vel' | 'dsp' (the ``(jw)^p`` convention)
+        fn (array_like): pole natural frequencies (Hz), length N — held
+            fixed during the solve
+        zn (array_like): pole damping ratios, length N — held fixed
+        f (np.ndarray): frequency axis (Hz); rows with ``f <= 0`` are
+            excluded (the ``1/w^2`` term and the ``(jw)^p`` division are
+            singular at DC)
+        G0 (np.ndarray): measured complex columns, shape
+            ``(len(f), n_cols)``, cal-scaled
+        measurement_type (str): 'acc' | 'vel' | 'dsp' (the ``(jw)^p``
+            convention)
 
-    Returns:
-        ``(A, RH, RL, cost)`` — ``A`` complex ``(N, n_cols)``, ``RH``/``RL``
-        complex ``(n_cols,)``, and ``cost = 0.5*sum(|model - G0|^2)`` over the
-        used rows in MEASURED space (identical to the stacked real/imag
-        least-squares cost convention used by ``modal_refine``).
+    Returns ``(A, RH, RL, cost)``: ``A`` complex ``(N, n_cols)``, ``RH`` and
+    ``RL`` complex ``(n_cols,)``, and ``cost = 0.5*sum(|model - G0|^2)`` over
+    the used rows in MEASURED space (identical to the stacked real/imag
+    least-squares cost convention used by ``modal_refine``).
     '''
     fn = np.atleast_1d(np.asarray(fn, dtype=np.float64))
     zn = np.atleast_1d(np.asarray(zn, dtype=np.float64))
