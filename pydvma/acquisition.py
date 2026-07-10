@@ -107,8 +107,12 @@ def log_data(settings, test_name=None, rec=None, output=None):
     at ``fs/2``, zero-phase). ``chunk_size`` and ``pretrig_samples`` are
     scaled to the capture rate internally, so their user-facing meaning
     (at ``fs``) is unchanged. The returned TimeData's settings record the
-    capture rate as ``lpf_capture_fs``. With no oversampling headroom
-    (device max < 2*fs) the log proceeds unfiltered with a printed note.
+    capture rate as ``lpf_capture_fs``. The log proceeds unfiltered
+    (with a printed note) when there is no oversampling headroom
+    (device max < 2*fs) or when the device refuses to OPEN a stream at
+    the oversampled rate its capability probe accepted (PortAudio's
+    ``check_input_settings`` can approve rates ``InputStream`` then
+    rejects, e.g. via MME under a remote-desktop session).
     '''
     global MESSAGE
 
@@ -161,7 +165,25 @@ def log_data(settings, test_name=None, rec=None, output=None):
     # Always rebuild the stream. `streams.REC` can be None when a prior
     # `end_stream()` fired (e.g. on device switch) even though the caller
     # still holds a stale `rec` reference; rebuilding keeps them in sync.
-    streams.start_stream(settings)
+    try:
+        streams.start_stream(settings)
+    except Exception:
+        if lpf_factor <= 1:
+            raise
+        # The OVERSAMPLED capture stream failed to open: the capability
+        # probe (`streams.max_input_fs`) accepted a rate the device then
+        # refused at open time — seen with PortAudio's check_input_settings
+        # vs InputStream under MME/RDP. Honour the documented low-pass
+        # fallback (log unfiltered at the target rate) instead of dying;
+        # if the device is genuinely broken, this retry raises the real
+        # error at the rate the caller asked for.
+        settings = target_settings
+        lpf_factor = 1
+        MESSAGE = ('Digital low-pass: device refused the oversampled '
+                   'capture rate — logging unfiltered at fs = {} Hz.\n'
+                   .format(settings.fs))
+        print(MESSAGE)
+        streams.start_stream(settings)
     rec = streams.REC
 
     streams.REC.trigger_detected = False

@@ -233,6 +233,20 @@ def start_stream(settings):
         # `Recorder.__init__` use `settings.channels`, so any clamping
         # has to happen here, not inside `init_stream`.
         _clamp_soundcard_input_channels(settings)
+        # End any previous soundcard stream FIRST. Overwriting REC_SC
+        # leaks the old sd.InputStream — its callback keeps firing into
+        # the orphaned recorder's buffers, and the PortAudio handle stays
+        # open. Invisible on shared-mode hosts (WASAPI/CoreAudio allow a
+        # second open), but a single-handle device — MME under a
+        # remote-desktop session — refuses the new stream outright
+        # (PaErrorCode -9996; the NI branch below has always torn down
+        # its old task for the same reason).
+        if REC_SC is not None:
+            try:
+                REC_SC.end_stream()
+            except Exception:
+                pass
+            REC_SC = None
         REC_SC = Recorder(settings)
         REC_SC.init_stream(settings)
         REC = REC_SC

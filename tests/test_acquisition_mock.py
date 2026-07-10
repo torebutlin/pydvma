@@ -313,3 +313,35 @@ class TestLogDataDigitalLowPass:
         assert td.time_data.shape == (int(0.1 * 10000), 2)
         assert td.settings.fs == pytest.approx(10000)
         assert td.settings.pretrig_samples == 50   # user-facing value kept
+
+    def test_lpf_falls_back_unfiltered_when_oversampled_open_fails(self,
+                                                                   monkeypatch):
+        # The capability probe can accept a rate the device then refuses
+        # at stream-open time (seen live: PortAudio check_input_settings
+        # approved 48 kHz under MME/RDP, InputStream raised -9996). The
+        # documented fallback is an unfiltered log at the target rate —
+        # not a crash.
+        real_start = dvma.streams.start_stream
+
+        def refusing_start(settings):
+            if settings.fs > 10000:      # the oversampled capture attempt
+                raise RuntimeError('device refused oversampled rate')
+            return real_start(settings)
+
+        monkeypatch.setattr(dvma.streams, 'start_stream', refusing_start)
+        s = _mock_settings(lpf_on=True)
+        td = dvma.log_data(s).time_data_list[0]
+        assert td.settings.fs == 10000
+        assert not hasattr(td.settings, 'lpf_capture_fs')  # unfiltered path
+        assert td.time_data.shape == (int(0.1 * 10000), 2)
+
+    def test_lpf_open_failure_without_lpf_still_raises(self, monkeypatch):
+        # The fallback must not swallow genuine stream errors: with the
+        # LPF off (no oversampling), an open failure propagates.
+        def failing_start(settings):
+            raise RuntimeError('device genuinely broken')
+
+        monkeypatch.setattr(dvma.streams, 'start_stream', failing_start)
+        s = _mock_settings()
+        with pytest.raises(RuntimeError, match='genuinely broken'):
+            dvma.log_data(s)
