@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 import { expect, test, beforeEach } from 'vitest';
 import { createSelection } from '../../src/lib/stores/selection';
-import { createAnalysisSettings, defaults } from '../../src/lib/stores/analysisSettings';
+import { autoVoicesForW0, createAnalysisSettings, defaults } from '../../src/lib/stores/analysisSettings';
 
 let sel: ReturnType<typeof createSelection>;
 let settings: ReturnType<typeof createAnalysisSettings>;
@@ -17,10 +17,26 @@ test('defaults() match the cards prior local defaults; fresh object each call', 
   expect(d.tf).toEqual({ chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 });
   expect(d.sono).toEqual({
     nFft: 512, dynRangeDb: 60,
-    method: 'stft', voicesPerOctave: 16, w0: 6, fMin: null, fMax: null,
+    method: 'stft', voicesPerOctave: 16, voicesAuto: true, w0: 6, fMin: null, fMax: null,
   });
   expect(defaults()).not.toBe(d);         // not aliased
   expect(defaults().freq).not.toBe(d.freq);
+});
+
+// --- Auto voices/octave from wavelet Q (round-9) ----------------------------
+
+test('autoVoicesForW0: tiling bound 0.6·w0 snapped up the ladder, floor 16, cap 64', () => {
+  // Floor: today's default density is preserved exactly at the default Q.
+  expect(autoVoicesForW0(4)).toBe(16);
+  expect(autoVoicesForW0(6)).toBe(16);     // default w0 → default voices
+  expect(autoVoicesForW0(24)).toBe(16);    // 0.6·24 = 14.4 still under 16
+  // Rising Q pulls the grid density up the ladder (V ≳ 0.6·w0).
+  expect(autoVoicesForW0(32)).toBe(24);    // 19.2 → 24
+  expect(autoVoicesForW0(48)).toBe(32);    // 28.8 → 32
+  expect(autoVoicesForW0(64)).toBe(48);    // 38.4 → 48
+  expect(autoVoicesForW0(96)).toBe(64);    // 57.6 → 64
+  // Ladder top is the cap (the w0 box clamps at 128 to keep this modest).
+  expect(autoVoicesForW0(128)).toBe(64);
 });
 
 test('a set appearing in the tray is seeded with defaults; removal prunes it', () => {

@@ -19,8 +19,9 @@
  * (`syncing`): a change we push INTO the tray must not bounce back and
  * re-drive the target. See `setTarget` / the `trayFocus` subscription.
  *
- * IN-SESSION ONLY: these settings are NOT persisted to `.dvma` in v1
- * (deferred; see TODO). The store is seeded with `defaults()` whenever a
+ * PERSISTENCE: settings that differ from `defaults()` are stamped into the
+ * `.dvma` per-item `ui.analysis` block by `stampUiState` (actions.ts) and
+ * re-applied on load. The store is seeded with `defaults()` whenever a
  * set appears in `selection.setsView` and pruned when a set is removed,
  * so it never leaks records for gone sets.
  */
@@ -52,11 +53,38 @@ export interface TfSettings { chIn: number; window: string; averaging: 'none' | 
  * ignored in that mode. `fMin`/`fMax` (Hz) optionally override the CWT's
  * auto band (`null` = auto `4/T .. 0.4*fs`). `dynRangeDb` is the heat-map
  * dynamic range, shared by both methods.
+ *
+ * `voicesAuto` (round-9, default true) keeps `voicesPerOctave` FOLLOWING the
+ * wavelet Q: whenever `w0` changes, the card re-resolves the density via
+ * `autoVoicesForW0`. Picking an explicit voices value turns it off; picking
+ * "auto" turns it back on. `voicesPerOctave` always holds the RESOLVED
+ * number (the engine payload never sees the flag).
  */
 export interface SonoSettings {
   nFft: number; dynRangeDb: number;
-  method: 'stft' | 'cwt'; voicesPerOctave: number; w0: number;
+  method: 'stft' | 'cwt'; voicesPerOctave: number; voicesAuto: boolean; w0: number;
   fMin: number | null; fMax: number | null;
+}
+
+/** The voices/octave ladder (shared by the card's select and the auto rule). */
+export const VPO_LADDER = [8, 12, 16, 24, 32, 48, 64];
+
+/**
+ * Voices/octave to match a Morlet wavelet Q (round-9 "auto" rule).
+ *
+ * A Morlet daughter's fractional -3 dB bandwidth is ≈ 2.36/w0, while
+ * adjacent voices are spaced 2^(1/V) apart (fractional gap ≈ 0.69/V), so
+ * the octave is tiled without gaps once V ≳ 0.6·w0 — below that, a high-Q
+ * wavelet's narrow bands fall BETWEEN analysis frequencies and ridges comb.
+ * Auto therefore picks the smallest ladder value ≥ 0.6·w0, floored at 16
+ * (today's display-pleasant default — extra voices are harmless smoothing,
+ * so auto(6)=16 keeps the default CWT exactly as it was) and capped at the
+ * ladder top (64): beyond w0 ≈ 107 the grid undersamples slightly, which
+ * the w0 box's upper clamp keeps modest.
+ */
+export function autoVoicesForW0(w0: number): number {
+  const need = 0.6 * w0;
+  return VPO_LADDER.find((v) => v >= Math.max(16, need)) ?? VPO_LADDER[VPO_LADDER.length - 1];
 }
 
 /** All per-set settings for one set (one record per selection setId). */
@@ -77,7 +105,7 @@ export function defaults(): PerSetSettings {
   return {
     freq: { window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1 },
     tf: { chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 },
-    sono: { nFft: 512, dynRangeDb: 60, method: 'stft', voicesPerOctave: 16, w0: 6, fMin: null, fMax: null },
+    sono: { nFft: 512, dynRangeDb: 60, method: 'stft', voicesPerOctave: 16, voicesAuto: true, w0: 6, fMin: null, fMax: null },
   };
 }
 

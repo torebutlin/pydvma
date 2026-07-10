@@ -30,7 +30,7 @@
    */
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
-  import type { AnalysisSettings, SonoSettings } from '../../lib/stores/analysisSettings';
+  import { autoVoicesForW0, VPO_LADDER, type AnalysisSettings, type SonoSettings } from '../../lib/stores/analysisSettings';
   import type { ViewState } from '../../lib/stores/viewstate';
   import type { DampingStore } from '../../lib/stores/damping';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
@@ -111,18 +111,23 @@
   const nFft = $derived(sono.nFft);
   const resExp = $derived(Math.round(Math.log2(nFft)));
 
-  // CWT log-frequency density (voices per octave). The top of the ladder
-  // matches W0_OPTIONS (round-7c): a high-Q wavelet needs a comparably dense
-  // frequency grid or its narrow bands fall between analysis frequencies.
-  const VPO_OPTIONS = [8, 12, 16, 24, 32, 48, 64];
+  // CWT log-frequency density (voices per octave). Round-9: defaults to AUTO
+  // — `autoVoicesForW0` keeps the density matched to the wavelet Q (a high-Q
+  // wavelet needs a comparably dense frequency grid or its narrow bands fall
+  // between analysis frequencies); an explicit pick from the ladder overrides.
+  const VPO_OPTIONS = VPO_LADDER;
 
   // Morlet wavelet Q (w0): cycles under the Gaussian envelope. Higher = finer
-  // frequency resolution, coarser time resolution. 6 is the classic default;
-  // the high end (round-7c) suits lightly damped structures — NB memory for
-  // the damping fit grows with the grid (rows x full-rate samples), so a very
-  // long record at 64 voices can hit the engine's array ceiling with a clear
-  // "array is too big" error rather than a result.
-  const W0_OPTIONS = [4, 6, 8, 12, 16, 24, 32, 48, 64];
+  // frequency resolution, coarser time resolution. 6 is the classic default.
+  // Round-9: a slider (nFFT feel) spanning 4..64, with an exact box accepting
+  // up to 128 — the engine has no hard w0 limit, but past ~107 the 64-voice
+  // ladder top undersamples the grid slightly, so the box clamps there. NB
+  // memory for the damping fit grows with the grid (rows x full-rate
+  // samples), so a very long record at 64 voices can hit the engine's array
+  // ceiling with a clear "array is too big" error rather than a result.
+  const W0_MIN = 4;
+  const W0_SLIDER_MAX = 64;
+  const W0_BOX_MAX = 128;
 
   // Channel options come from the target set.
   const targetView = $derived(timeSets.find((s) => s.id === targetId));
@@ -152,12 +157,22 @@
     patch({ method: m });
     live.schedule();
   }
-  function onVoices(v: number) {
-    patch({ voicesPerOctave: v });
+  // Voices select: the 'auto' entry re-enables following the wavelet Q; an
+  // explicit number pins the density (voicesAuto off) until 'auto' is chosen
+  // again. `voicesPerOctave` always stores the RESOLVED number.
+  function onVoices(raw: string) {
+    if (raw === 'auto') {
+      patch({ voicesAuto: true, voicesPerOctave: autoVoicesForW0(sono.w0) });
+    } else {
+      patch({ voicesAuto: false, voicesPerOctave: +raw });
+    }
     live.schedule();
   }
+  // w0 changes drag the auto-resolved voices along (round-9).
   function onW0(v: number) {
-    patch({ w0: v });
+    if (!Number.isFinite(v)) return;
+    const w0 = Math.min(W0_BOX_MAX, Math.max(W0_MIN, Math.round(v)));
+    patch(sono.voicesAuto ? { w0, voicesPerOctave: autoVoicesForW0(w0) } : { w0 });
     live.schedule();
   }
   // Optional CWT band: blank entry ⇒ null ⇒ auto band. Only apply a range when
@@ -278,27 +293,33 @@
         </div>
       {:else}
         <div class="grp">
-          <span class="grp-lab">voices / octave</span>
+          <span class="grp-lab">wavelet Q (w0) — {sono.w0}</span>
           <div class="grp-ctl">
-            <select value={sono.voicesPerOctave} onchange={(e) => onVoices(+e.currentTarget.value)}
-              style="width:60px" aria-label="voices per octave">
-              {#each VPO_OPTIONS as v (v)}
-                <option value={v}>{v}</option>
-              {/each}
-            </select>
-            <span class="note">log-freq density</span>
+            <input type="range" min={W0_MIN} max={W0_SLIDER_MAX} step="1"
+              value={Math.min(W0_SLIDER_MAX, Math.max(W0_MIN, sono.w0))}
+              oninput={(e) => onW0(+e.currentTarget.value)}
+              style="width:96px" aria-label="wavelet Q slider"
+              title="Morlet wavelet Q — higher = finer frequency resolution, coarser time resolution" />
+            <input type="number" step="1" min={W0_MIN} max={W0_BOX_MAX}
+              value={sono.w0}
+              onchange={(e) => onW0(+e.currentTarget.value)}
+              style="width:56px" aria-label="wavelet Q w0"
+              title="Exact wavelet Q — accepts values beyond the slider (up to {W0_BOX_MAX})" />
           </div>
         </div>
         <div class="grp">
-          <span class="grp-lab">wavelet Q (w0)</span>
+          <span class="grp-lab">voices / octave</span>
           <div class="grp-ctl">
-            <select value={sono.w0} onchange={(e) => onW0(+e.currentTarget.value)}
-              style="width:60px" aria-label="wavelet Q w0"
-              title="Morlet wavelet Q — higher = finer frequency resolution, coarser time resolution">
-              {#each W0_OPTIONS as v (v)}
-                <option value={v}>{v}</option>
+            <select value={sono.voicesAuto ? 'auto' : String(sono.voicesPerOctave)}
+              onchange={(e) => onVoices(e.currentTarget.value)}
+              style="width:86px" aria-label="voices per octave"
+              title="Log-frequency grid density. Auto keeps it matched to the wavelet Q (≥ 0.6·w0, min 16); pick a number to pin it.">
+              <option value="auto">auto ({autoVoicesForW0(sono.w0)})</option>
+              {#each VPO_OPTIONS as v (v)}
+                <option value={String(v)}>{v}</option>
               {/each}
             </select>
+            <span class="note">log-freq density</span>
           </div>
         </div>
         <div class="grp">

@@ -29,7 +29,7 @@ export interface DvmaItemUi {
     tf?: { chIn?: number; window?: string; averaging?: 'none' | 'within' | 'across'; nFrames?: number };
     sono?: {
       nFft?: number; dynRangeDb?: number;
-      method?: 'stft' | 'cwt'; voicesPerOctave?: number; w0?: number;
+      method?: 'stft' | 'cwt'; voicesPerOctave?: number; voicesAuto?: boolean; w0?: number;
       fMin?: number | null; fMax?: number | null;
     };
   };
