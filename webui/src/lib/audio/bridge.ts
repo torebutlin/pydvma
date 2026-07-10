@@ -567,11 +567,18 @@ export class BridgeProvider implements SourceProvider {
   private buildOutput(): Record<string, unknown> | null {
     const ec = this.extraConfig;
     if (!ec.outputEnabled) return null;
+    // Unset fields fall back to the SAME defaults AcquireCard displays
+    // (and provider.ts's Web Audio path uses). The store only holds a
+    // value once the user edits the field, so `?? 0` here made a fresh
+    // session's untouched output group send a 0 Hz "sweep" at 0 V —
+    // i.e. silence, or (with amp set) a windowed DC pulse — while the
+    // settings chip claimed "sweep 0.3V 10-500Hz" (reproduced on real
+    // NI hardware, 2026-07-10).
     const out: Record<string, unknown> = {
       type: ec.outputType ?? 'sweep',
-      amp: ec.outputAmp ?? 0,
-      f1: ec.outputF1 ?? 0,
-      f2: ec.outputF2 ?? 0,
+      amp: ec.outputAmp ?? 0.3,
+      f1: ec.outputF1 ?? 10,
+      f2: ec.outputF2 ?? 500,
     };
     // Optional stimulus duration (server default = the capture duration).
     if (ec.outputDuration != null && ec.outputDuration > 0) out.duration = ec.outputDuration;

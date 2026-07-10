@@ -361,6 +361,26 @@ test('output kwargs pass through onto the log message when enabled (contract)', 
   void rh.promise.catch(() => {});
 });
 
+test('an untouched output group sends the card defaults, not zeros (regression)', async () => {
+  // The store only holds outputAmp/F1/F2 once the user edits the fields;
+  // AcquireCard *displays* 0.3 V / 10 Hz / 500 Hz for unset values. The
+  // bridge must send those same defaults — `?? 0` fallbacks made a fresh
+  // session's enabled-but-untouched output play a 0 Hz "sweep" (a windowed
+  // DC pulse; silence at the default amp) while the settings chip claimed
+  // "sweep 0.3V 10-500Hz". Reproduced on a real USB-6003, 2026-07-10.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ outputEnabled: true });
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 2, durationS: 0.5 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 2 });
+  await tick();
+  const logMsg = fake.sentJson().find((m) => m.type === 'log');
+  expect(logMsg).toMatchObject({ output: { type: 'sweep', amp: 0.3, f1: 10, f2: 500 } });
+  void rh.promise.catch(() => {});
+});
+
 test('output + pretrigger are null on the log message when disabled (free-run)', async () => {
   const fake = makeFakeWs();
   const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
