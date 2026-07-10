@@ -371,15 +371,34 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * each item's `ui` field — custom channel labels flow to the selection
    * store, per-set analysis settings flow to the analysisSettings store.
    * Missing `ui` (older files) leaves both at their defaults.
+   *
+   * `opts.append` (round-10, JW's feedback — the old logger's
+   * "Add on load"): when data is ALREADY loaded, merge this file's items
+   * into the existing dataset instead of replacing it — the new sets
+   * appear alongside the current ones in the tray/legend, and Save
+   * Dataset writes the composite. Nothing is reset; the current modal
+   * fit survives, and any ModalData carried BY the appended file is
+   * deliberately ignored (one live model per session — an appended
+   * file's fit must not clobber it). With nothing loaded yet, append
+   * degrades to the normal full load.
    */
-  function loadDataset(ds: DvmaDataset): ViewId[] {
-    dataset.set(ds);
-    derived.set({});
-    computeErrors.set(emptyErrors());   // fresh dataset clears every kind's error
-    modal?.reset();                     // drop any prior dataset's modal fit
-    cleanCache.clear();                 // raw/cleaned stashes belong to the old sets
-    cleanedSets.set({});
-    working = [];
+  function loadDataset(ds: DvmaDataset, opts: { append?: boolean } = {}): ViewId[] {
+    const append = !!opts.append && get(dataset) !== null && working.length > 0;
+    if (append) {
+      // Merge into the EXISTING dataset object so autosave/save see one doc.
+      const base = get(dataset)!;
+      base.items.push(...ds.items);
+      dataset.set(base);
+    } else {
+      dataset.set(ds);
+      derived.set({});
+      computeErrors.set(emptyErrors());   // fresh dataset clears every kind's error
+      modal?.reset();                     // drop any prior dataset's modal fit
+      cleanCache.clear();                 // raw/cleaned stashes belong to the old sets
+      cleanedSets.set({});
+      resampleUndo.clear();               // stashes belong to the old sets
+      working = [];
+    }
     // Selection store has no reset; it is created fresh per app load. We
     // simply addSet for each item in this dataset.
     const seed: DerivedMap = {};
@@ -495,7 +514,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       };
     });
 
-    derived.set(seed);
+    if (append) derived.update((d) => ({ ...d, ...seed }));
+    else derived.set(seed);
 
     // ---- Pass 3: ModalData → restore the modal store + fit tray card(s) ----
     // (round-5 item 13; item 7 multi-set). A saved `.dvma` may carry the fitted
@@ -507,7 +527,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     // `maybeRestoreModalRecon`). A shared-pole model spanning several sets is
     // restored from the `source_targets` mapping (each set by its own id_link);
     // a legacy single-set save (no `source_targets`) uses the single id_link.
-    if (modal) {
+    if (modal && !append) {
       const modalEntry = ds.items.find((it) => it.kind === 'ModalData' && !!it.arrays.M);
       if (modalEntry) {
         const Marr = modalEntry.arrays.M;

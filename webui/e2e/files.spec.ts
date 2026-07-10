@@ -15,7 +15,9 @@ import { expect, test, type Page } from '@playwright/test';
  *     readDvma → tray path, proving the bytes marshalling end to end.
  *   - Autosave → restore: load, wait for the debounced autosave, reload,
  *     and assert the "Restore last session?" toast repopulates the tray.
- *   - .mat import is wired in code but has no sample fixture → test.fixme.
+ *   - .mat (JW logger) import: a TF+coherence file and a TIME file
+ *     (synthetic fixtures mirroring the V2.9a layouts), plus the round-10
+ *     append-on-load path (second file adds its sets, replaces nothing).
  */
 
 /** Absolute path to a checked-in fixture under webui/tests/fixtures. */
@@ -113,4 +115,42 @@ test('mat import (JW logger): one TF line, coherence as overlay not a channel', 
   // control, which App gates on the model's y2 (coherence) axis existing.
   await page.getByTestId('zoom-toolbar').hover();
   await expect(page.getByTestId('coherence-control')).toBeVisible();
+});
+
+// Round-10 (JW's own testing). TIME files from the V2.9a logger save
+// `indata, buflen, freq, dt2, tsmax` — NO `npts` — and the importer used to
+// raise KeyError('npts') on them (JW's guitar_string captures). The fixture
+// mirrors that exact variable layout. Loading it must land a time set.
+test('mat import (JW logger): a TIME file (indata/buflen, no npts) loads', async ({ page }) => {
+  await page.goto('/');
+  await loadViaFallback(page, fixture('jw_time.mat'));
+  await expect(page.getByTestId('tray-card-0')).toBeVisible({ timeout: 200_000 });
+  // It is a TIME set: the Time view draws its line.
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Time' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeAttached();
+  // And no import error surfaced.
+  await expect(page.getByTestId('toast').filter({ hasText: /failed/i })).toHaveCount(0);
+});
+
+// Round-10 (JW's own testing): loading a second file must ADD its sets
+// alongside the loaded ones (the old logger's "Add on load"), not replace
+// them — JW "could only ever see the most recent file".
+test('loading a second file APPENDS its sets to the tray', async ({ page }) => {
+  await page.goto('/');
+  await loadViaFallback(page, fixture('impulse.dvma'));
+  await expect(page.getByTestId('tray-card-0')).toBeVisible();
+
+  await loadViaFallback(page, fixture('jw_tf_coh.mat'));
+  // The .mat conversion pays the engine boot; then BOTH sets are present.
+  await expect(page.getByTestId('tray-card-1')).toBeVisible({ timeout: 200_000 });
+  await expect(page.getByTestId('tray-card-0')).toBeVisible();  // survivor
+  const toast = page.getByTestId('toast').filter({ hasText: 'alongside the loaded data' });
+  await expect(toast).toBeVisible();
+
+  // Both are usable: the appended TF set draws on the TF view while the
+  // original time set still draws on Time.
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeVisible();
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Time' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeAttached();
 });

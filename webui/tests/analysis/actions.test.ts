@@ -130,6 +130,42 @@ test('loadDataset registers one selection set per TimeData item and seeds time a
   expect(Array.from(d[0].time!.data.re)).toEqual([1, 2, 3, 4, 5, 6]);
 });
 
+// ---- Append-on-load (round-10, JW's feedback): a second file's sets land
+// ALONGSIDE the loaded ones — nothing reset, nothing replaced. ----
+
+test('loadDataset append merges items and keeps the existing sets', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  expect(get(sel.sets)).toHaveLength(1);
+
+  actions.loadDataset(makeDataset(2), { append: true });
+  expect(get(sel.sets)).toHaveLength(3);                  // 1 kept + 2 added
+  const ds = get(actions.dataset)!;
+  expect(ds.items).toHaveLength(3);                       // one merged doc
+  const d = get(actions.derived);
+  expect(Object.keys(d)).toHaveLength(3);                 // all sets plottable
+});
+
+test('loadDataset append with nothing loaded degrades to a full load', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1), { append: true });
+  expect(get(sel.sets)).toHaveLength(1);
+  expect(get(actions.dataset)!.items).toHaveLength(1);
+});
+
+test('loadDataset append registers an orphan TF as its own set', () => {
+  const { engine } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const views = actions.loadDataset(makeOrphanOnlyDataset(), { append: true });
+  expect(get(sel.sets)).toHaveLength(2);
+  expect(views).toContain('tf');                          // focus follows the new file
+  // The original set's derived seed survived the append.
+  expect(get(actions.derived)[0]?.time).toBeDefined();
+});
+
 test('cleanImpulse re-emits the dataset store so autosave captures the cleaned data', async () => {
   // Regression: cleanImpulse mutates the source item's arrays IN PLACE (the
   // item is shared by reference with the `dataset` store). The plot updates

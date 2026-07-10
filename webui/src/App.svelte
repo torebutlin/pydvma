@@ -478,8 +478,8 @@
    * ribbon stage move together so the context card follows. Shared by every
    * load entry point (Load Data, fixture, session restore).
    */
-  function loadAndFocus(ds: DvmaDataset): void {
-    const views = actions.loadDataset(ds);
+  function loadAndFocus(ds: DvmaDataset, opts: { append?: boolean } = {}): void {
+    const views = actions.loadDataset(ds, opts);
     if (views.length && !views.includes(get(active) as ViewId)) {
       viewState.activate(views[0]);
       activeStage.set(views[0]);
@@ -528,9 +528,19 @@
     }
     if (!picked) return; // user cancelled
     try {
+      // Round-10 (JW's feedback — the old logger's "Add on load"): loading
+      // with data already present APPENDS the file's sets alongside the
+      // current ones instead of replacing them. Delete sets via the tray ×
+      // (or reload the page) to start over.
+      const appending = hasData;
       const ds = await toDataset(picked.bytes, picked.name);
-      loadAndFocus(ds);
-      toasts.push(`Loaded ${picked.name}`, { level: 'success' });
+      loadAndFocus(ds, { append: true });
+      toasts.push(
+        appending
+          ? `Added ${picked.name} alongside the loaded data.`
+          : `Loaded ${picked.name}`,
+        { level: 'success' },
+      );
     } catch (e) {
       toasts.push(`Load failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
     }
