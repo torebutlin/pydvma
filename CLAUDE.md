@@ -2,8 +2,23 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-10 PM (round 9 **hardware-verified on the PC**, commits
-local): bridge_hw_check 44/44 incl. new check E on all three devices;
+As of 2026-07-10 evening (round 10, committed locally — NOT pushed):
+**Jim Woodhouse's first hands-on feedback**
+(`dev/2026-07-10-round10-jw-feedback.md`; his test archives in
+`dev/example_data/`, deliberately untracked). Three fixes: **Load Data
+now APPENDS** when data is already loaded (`loadDataset(ds,
+{append:true})` — merges into the existing dataset doc, keeps the live
+modal fit, ignores an appended file's ModalData; the old logger's
+"Add on load"); **JW time-file .mat import fixed** — V2.9a TIME
+captures save `indata/buflen/freq/dt2/tsmax` with NO `npts`, the
+importer's time branch KeyError'd on `npts` (guitar_string4_5mar_1.mat
+now imports 200000×1 @ 40 kHz; axis from indata's own length; tsmax is
+a scale marker, data already physical — no rescale); **error toasts
+pin open** until × (JW couldn't copy one before it vanished; explicit
+timeout still overrides). Suites: pytest 347/3, check 0/0, vitest
+660/1, Playwright 81/7, mkdocs --strict green; wheel rebuilt.
+
+Earlier that day (round 9 **hardware-verified on the PC**): bridge_hw_check 44/44 incl. new check E on all three devices;
 the multiplexed `max_input_fs` division confirmed live (6003 2ch
 captures at exactly 100k/2 = 50 kHz — DAQmx accepts running AT the
 aggregate limit; 6212 400k/2; DSA 9234 keeps 51.2k per-channel) and

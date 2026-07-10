@@ -86,8 +86,18 @@ Load data from the header's **Load Data** button. The web logger opens:
 - **`.dvma`** — read directly (no engine needed);
 - legacy **`.npy`** pickle files from pydvma ≤ 1.4.0 — decoded by the
   pyodide engine; and
-- **`.mat`** files.
+- **`.mat`** files from the original JW logger — spectral files
+  (spectra / transfer functions, with coherence columns recognised
+  automatically) *and* time captures.
 
 Format is detected from the file's content, not its extension. See
 [The `.dvma` file format](dvma-format.md) and
 [From the Qt logger](migration.md#files-carry-over).
+
+**Loading adds; it does not replace.** With data already present,
+loading another file appends its sets alongside the current ones — the
+tray and legend show everything together (the old logger's
+"Add on load"), and **Save Dataset** writes the composite to one
+`.dvma`. To drop a set, use its tray **×**; to start from scratch,
+reload the page. One caveat: a fitted modal model inside an *appended*
+file is ignored — the session keeps its own live fit.
