@@ -2,7 +2,45 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-10 (round 9, PUSHED): third feedback batch
+As of 2026-07-10 PM (round 9 **hardware-verified on the PC**, commits
+local): bridge_hw_check 44/44 incl. new check E on all three devices;
+the multiplexed `max_input_fs` division confirmed live (6003 2ch
+captures at exactly 100k/2 = 50 kHz — DAQmx accepts running AT the
+aggregate limit; 6212 400k/2; DSA 9234 keeps 51.2k per-channel) and
+regression-guarded (`test_lpf_log_respects_per_channel_max_rate` +
+a 6212 anti-alias proof: an unfiltered 2 kHz log folds a 1300 Hz tone
+in-band at ~0.5 V, lpf_on crushes it >40 dB). The day's testing found
+and FIXED four real bugs: (1) **AO shared-clock mis-rating** — the
+6212 routed the AI sample clock as AO source even when output_fs ≠
+the AI stream rate, so lpf_on + stimulus played the drive 100x fast
+(now rate-gated; hardware-verified); (2) **resample_to_fs missed
+exact ratios for coerced capture rates** — the 6003's 80 MHz timebase
+coerces 48 kHz→48019.2077 Hz, whose 833/5000 back-ratio is past
+limit_denominator(1024), landing "8 kHz" lpf logs at 8003.2 Hz (now a
+Stern–Brocot simplest-in-tolerance fallback with a 2^19-tap FIR cap;
+also un-no-ops resample-to-match between near-identical rates);
+(3) **webui bridge output defaults** — an enabled-but-untouched
+output group sent amp 0 / f1 0 / f2 0 (a windowed DC pulse) while the
+chip claimed "sweep 0.3V 10-500Hz" (bridge.ts now uses the card
+defaults); (4) **soundcard stream leak** — start_stream overwrote
+REC_SC without closing the old InputStream (fatal on single-handle
+MME under RDP, where it blocked every bridge log after configure;
+plus the documented lpf unfiltered fallback now also covers an
+oversampled OPEN being refused — PortAudio check_input_settings
+approves rates InputStream then rejects). Windows-PC infra unlocked:
+Playwright ran here for the FIRST time — 86/86 incl. all 7 bridge
+e2e (needed `npx playwright install`, hand-started webServers — the
+config commands are POSIX-only — and the new PYDVMA_PYTHON override
+in bridge.spec.ts; bare `python3` is the MS-Store stub on Windows);
+webui/public/pyodide vendored (never fetched here — engine boot
+failed from the served dist until `bash scripts/fetch-pyodide.sh`).
+Soundcard under RDP: paths work but capture is digital silence, only
+44.1k opens, no default input — see the rdp-audio-quirks memory.
+Suites at close: pytest 407/19 (hardware live), vitest 653/1, check
+0/0, Playwright 86/86, mkdocs --strict green. Engine wheel + dist
+rebuilt at HEAD.
+
+Earlier that day (round 9 as landed on the Mac): third feedback batch
 (`dev/2026-07-10-round9-feedback.md`): **CWT wavelet Q is a slider**
 (4–64 + exact box to 128, nFFT feel) with **voices/octave AUTO by
 default** (`autoVoicesForW0` = ladder ≥ max(16, 0.6·w0) — Morlet tiling
@@ -17,10 +55,10 @@ on the RAW peak; `lpf_capture_fs` recorded; web-audio path records at
 native rate + engine-resamples); and a **Time-view Resample tool**
 (match-a-set dropdown with fs values + custom fs; down = anti-alias
 decimation, up = band-limited interp — NOT linear, which images; toast
-Undo one level; derived results recompute). **NI hardware verification
-PENDING on the PC** — bridge_hw_check.py check E is ready (TODO.md
-top). Engine wheel rebuilt (same 2.0.0 name). Suites: pytest 340/3,
-check 0/0, vitest 652/1, Playwright 79/7, mkdocs --strict green.
+Undo one level; derived results recompute). NI hardware verification
+was pending — now DONE, see above. Engine wheel rebuilt (same 2.0.0
+name). Suites at the Mac close: pytest 340/3, check 0/0, vitest
+652/1, Playwright 79/7, mkdocs --strict green.
 
 Earlier (2026-07-09, round 8):
 Tore's second feedback batch landed
