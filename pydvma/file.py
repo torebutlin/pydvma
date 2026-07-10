@@ -565,10 +565,17 @@ def import_from_matlab_jwlogger(filename=None):
     ("Data logger V2.9a": ``specmenu.m`` save path, ``avtflogpars.m``
     averaged-TF computation, ``dospec.m``):
 
-    - Variables saved: ``yspec, dt2, npts, freq, tfun`` (plus ``indata``
-      for time files). ``freq`` is the SAMPLE RATE (the time branch uses it
-      as fs), ``npts`` the FFT length, so ``yspec`` has ``npts/2 + 1`` rows
-      on the one-sided axis ``rfftfreq(npts, 1/freq)`` (df = freq/npts).
+    - SPECTRAL files save ``yspec, dt2, npts, freq, tfun``. ``freq`` is
+      the SAMPLE RATE, ``npts`` the FFT length, so ``yspec`` has
+      ``npts/2 + 1`` rows on the one-sided axis ``rfftfreq(npts, 1/freq)``
+      (df = freq/npts).
+    - TIME files save ``indata, buflen, freq, dt2, tsmax`` — there is NO
+      ``npts`` and no ``tfun`` (JW's guitar_string captures confirmed
+      this; the old import assumed ``npts`` and raised KeyError). The
+      time axis comes from ``indata``'s own length at fs = ``freq``;
+      ``buflen`` duplicates that length and ``tsmax`` records the
+      capture's scale (the data is already in physical units — do NOT
+      rescale by it).
     - ``tfun`` selects spectrum (0) / transfer function (1).
     - ``dt2`` is the saved ``dtype`` vector ``[n_time_channels,
       n_yspec_columns, n_sonogram]`` — column COUNTS, not column types.
@@ -597,15 +604,24 @@ def import_from_matlab_jwlogger(filename=None):
     
     d = io.loadmat(filename)
     dataset = datastructure.DataSet()
-    
+
+    # `freq` (the sample rate) is a (1,1) MATLAB scalar array — unwrap once.
+    fs = float(np.ravel(d['freq'])[0]) if 'freq' in d else None
+
     #%% TIME
     if 'indata' in d:
-        td = d['indata']
-        ta = np.arange(0,d['npts']/d['freq'],1/d['freq'])
-        ta = np.squeeze(ta)
-        settings = options.MySettings(channels=np.size(td,1),
-                                      fs=d['freq'])
-        
+        td = np.asarray(d['indata'], dtype=float)
+        if td.ndim == 1:
+            td = td[:, None]
+        elif td.shape[0] == 1 and td.shape[1] > 1:
+            td = td.T                       # row vector -> one column channel
+        # Time files carry NO `npts` (that's the FFT length of the spectral
+        # save path) — the record length is the data's own row count (the
+        # saved `buflen` duplicates it). `tsmax` is the capture's scale
+        # marker; `indata` is already in physical units, so it is not used.
+        ta = np.arange(td.shape[0]) / fs
+        settings = options.MySettings(channels=td.shape[1], fs=fs)
+
         time_data = datastructure.TimeData(ta,td,settings)
         time_data.timestamp = os.path.getmtime(filename)
         dataset.add_to_dataset(time_data)
@@ -613,10 +629,10 @@ def import_from_matlab_jwlogger(filename=None):
     #%% FFT
     if ('yspec' in d) and (d['tfun'] == 0):
         fd = d['yspec']
-        fa = np.fft.rfftfreq(int(d['npts']),1/d['freq'])
+        fa = np.fft.rfftfreq(int(np.ravel(d['npts'])[0]),1/fs)
         fa = np.squeeze(fa)
         settings = options.MySettings(channels=np.size(fd,1),
-                                      fs=d['freq'])
+                                      fs=fs)
         
         freq_data = datastructure.FreqData(fa,fd,settings)
         freq_data.timestamp = os.path.getmtime(filename)
@@ -626,7 +642,7 @@ def import_from_matlab_jwlogger(filename=None):
     #%% TF
     if ('yspec' in d) and (d['tfun'] == 1):
         tf = d['yspec']
-        fa = np.fft.rfftfreq(int(d['npts']),1/d['freq'])
+        fa = np.fft.rfftfreq(int(np.ravel(d['npts'])[0]),1/fs)
         fa = np.squeeze(fa)
 
         # Split coherence traces from the TF columns (see docstring). This
@@ -666,7 +682,7 @@ def import_from_matlab_jwlogger(filename=None):
             tf = tf[:, tf_idx]
 
         settings = options.MySettings(channels=np.size(tf,1),
-                                      fs=d['freq'])
+                                      fs=fs)
 
         tf_data = datastructure.TfData(fa,tf,coherence,settings)
         tf_data.timestamp = os.path.getmtime(filename)

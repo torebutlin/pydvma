@@ -148,3 +148,47 @@ class TestImportFromMatlabJwloggerTf:
         tf = ds.tf_data_list[0]
         assert tf.tf_data.shape == (n, 3)
         assert tf.tf_coherence is None
+
+
+class TestImportFromMatlabJwloggerTime:
+    """Round-10 (JW's own testing): TIME files from the V2.9a logger save
+    `indata, buflen, freq, dt2, tsmax` — NO `npts`, no `tfun`. The old
+    import assumed `npts` and raised KeyError on JW's guitar_string
+    captures. The axis must come from indata's own length at fs=freq, and
+    the data must NOT be rescaled by tsmax (indata is already physical)."""
+
+    @staticmethod
+    def _jw_time_mat(tmp_path, y, fs=40000, name='jw_time.mat'):
+        path = str(tmp_path / name)
+        sio.savemat(path, {
+            'indata': np.asarray(y),
+            'buflen': np.array([[np.asarray(y).shape[0]]], dtype=np.int32),
+            'freq': np.array([[fs]], dtype=np.uint16),
+            'dt2': np.array([[np.atleast_2d(np.asarray(y).T).shape[0], 0, 0]],
+                            dtype=np.uint8),
+            'tsmax': np.array([[1.23]]),
+        })
+        return path
+
+    def test_time_file_without_npts_imports(self, tmp_path):
+        n, fs = 4000, 40000
+        y = 0.5 * np.sin(2 * np.pi * 100 * np.arange(n) / fs)[:, None]
+        path = self._jw_time_mat(tmp_path, y, fs=fs)
+        ds = file.import_from_matlab_jwlogger(filename=path)
+        td = ds.time_data_list[0]
+        assert td.time_data.shape == (n, 1)
+        assert td.settings.fs == fs
+        assert td.time_axis[0] == 0.0
+        assert td.time_axis[-1] == pytest.approx((n - 1) / fs)
+        np.testing.assert_allclose(td.time_data, y)   # no tsmax rescale
+        assert ds.tf_data_list == [] and ds.freq_data_list == []
+
+    def test_multichannel_time_file(self, tmp_path):
+        n, fs = 1000, 8000
+        y = np.column_stack([np.sin(np.arange(n) / 7.0),
+                             np.cos(np.arange(n) / 11.0)])
+        path = self._jw_time_mat(tmp_path, y, fs=fs)
+        ds = file.import_from_matlab_jwlogger(filename=path)
+        td = ds.time_data_list[0]
+        assert td.time_data.shape == (n, 2)
+        assert td.settings.channels == 2
