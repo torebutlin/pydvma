@@ -47,3 +47,7 @@ webui/public/pyodide/
 webui/public/pypi/
 webui/test-results/
 webui/playwright-report/
+
+# Real measurement archives used for local import testing (JW's files,
+# ~40 MB) — see dev/2026-07-10-round10-jw-feedback.md. Not source.
+dev/example_data/
