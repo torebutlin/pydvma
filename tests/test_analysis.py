@@ -1199,3 +1199,40 @@ class TestResampleToFs:
             analysis.resample_to_fs(np.zeros(100), self.FS, 0.0)
         with pytest.raises(ValueError):
             analysis.resample_to_fs(np.zeros(100), -1.0, 100.0)
+
+    def test_coerced_capture_rate_lands_exactly_on_target(self):
+        # Hardware-measured case (USB-6003, 2026-07-10): its 80 MHz
+        # timebase coerces the digital-low-pass capture request of
+        # 48 kHz (6 x 8000) to 80e6/1666 = 48019.2077 Hz. The exact
+        # back-ratio 8000/48019.2077 = 833/5000 needs a denominator
+        # past the coarse limit_denominator(1024) bound (which returns
+        # 1/6 and landed logs at 8003.2 Hz).
+        fs_capture = 80e6 / 1666
+        y_out, fs_out, (up, down) = analysis.resample_to_fs(
+            self._tone(700.0, seconds=1.0, fs=fs_capture), fs_capture, 8000.0)
+        assert (up, down) == (833, 5000)
+        assert fs_out == pytest.approx(8000.0, abs=1e-6)
+        assert abs(self._core_rms_db(y_out)) < 0.1   # passband unity holds
+
+    def test_match_between_near_identical_rates_is_not_a_noop(self):
+        # 'Resample to match' from a coerced-capture set (8003.2 Hz =
+        # 80e6/9996) onto a clean 8000 Hz set: ratio 2499/2500, which
+        # the coarse bound rounds to 1/1 — previously a silent no-op.
+        fs_a = 80e6 / 9996
+        y_out, fs_out, (up, down) = analysis.resample_to_fs(
+            self._tone(700.0, seconds=1.0, fs=fs_a), fs_a, 8000.0)
+        assert (up, down) == (2499, 2500)
+        assert fs_out == pytest.approx(8000.0, abs=1e-6)
+        assert abs(self._core_rms_db(y_out)) < 0.1
+
+    def test_pathological_ratio_degrades_to_coarse_fraction(self):
+        # A ratio whose simplest in-tolerance fraction would need a
+        # monster FIR must fall back to the coarse 1024-bound fraction
+        # (32-bit WASM runs this code — graceful, not exact). pi is as
+        # irrational as it gets; the coarse fraction still lands within
+        # ~1e-6 relative of the target.
+        fs_src = 8000.0 * np.pi / 3.0   # ~8377.58; ratio target/src = 3/pi
+        y_out, fs_out, (up, down) = analysis.resample_to_fs(
+            self._tone(700.0, seconds=1.0, fs=fs_src), fs_src, 8000.0)
+        assert max(up, down) <= 1024
+        assert fs_out == pytest.approx(8000.0, rel=1e-5)

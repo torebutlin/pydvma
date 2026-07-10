@@ -613,6 +613,36 @@ def clean_impulse(time_data, ch_impulse=0):
 
 
 #%% RESAMPLING (band-limited, noise-reducing)
+def _simplest_fraction_between(lo, hi):
+    '''Smallest-denominator ``Fraction`` in the closed interval [lo, hi].
+
+    Stern–Brocot / continued-fraction walk. Unlike
+    ``Fraction.limit_denominator`` (closest fraction under a denominator
+    BOUND), this finds the simplest fraction within a TOLERANCE — which
+    is what rate-matching needs: ``8000/48019.2077`` is 833/5000, a
+    ratio ``limit_denominator(1024)`` can only miss (it returns 1/6).
+
+    Args:
+        lo: lower interval edge (``Fraction`` or number), > 0.
+        hi: upper interval edge, >= lo.
+
+    Returns:
+        The ``Fraction`` with the smallest denominator inside [lo, hi].
+    '''
+    from fractions import Fraction
+
+    lo, hi = Fraction(lo), Fraction(hi)
+    if lo > hi:
+        lo, hi = hi, lo
+    fl = lo.numerator // lo.denominator          # floor(lo)
+    if lo == fl:
+        return Fraction(fl)
+    if fl + 1 <= hi:                             # an integer in (lo, hi]
+        return Fraction(fl + 1)
+    # Both edges inside (fl, fl+1): recurse on the reciprocal remainder.
+    return fl + 1 / _simplest_fraction_between(1 / (hi - fl), 1 / (lo - fl))
+
+
 def resample_to_fs(y, fs, fs_new, stopband_db=96.0):
     '''Band-limited rational resampling to a target sample rate.
 
@@ -620,9 +650,16 @@ def resample_to_fs(y, fs, fs_new, stopband_db=96.0):
     low-pass (oversample at the device maximum, resample DOWN to the
     chosen fs), the Time view's Resample tool, and "resample to match"
     across sets. The rate change is rational — ``fs_new/fs`` is
-    approximated by ``up/down`` (``Fraction.limit_denominator``), so a
-    DSA-coerced capture rate (e.g. the NI 9234's 8533.33 Hz) still lands
-    exactly on a round target (8533.33 -> 2000 is up/down = 15/64) — and
+    approximated by ``up/down`` (``Fraction.limit_denominator``, refined
+    when needed by the simplest fraction within a 1e-9 relative
+    tolerance), so a device-coerced capture rate still lands exactly on
+    a round target: the NI 9234's 8533.33 Hz -> 2000 is up/down = 15/64,
+    and the USB-6003's 80 MHz-timebase 48019.2077 Hz -> 8000 is 833/5000
+    (a ratio the coarse 1024-denominator bound alone would miss). A
+    ratio whose exact form would need an unreasonably large polyphase
+    FIR (> 2^19 taps — this code also runs under 32-bit WASM) degrades
+    gracefully to the coarse fraction, in which case ``fs_out`` may
+    differ slightly from ``fs_new``. The rate change
     is applied as polyphase FIR filtering (``scipy.signal.resample_poly``)
     with a Kaiser-designed linear-phase kernel, group-delay compensated
     (effectively zero-phase; an IIR resampler would distort phase, which
@@ -674,7 +711,39 @@ def resample_to_fs(y, fs, fs_new, stopband_db=96.0):
     if not (fs > 0 and fs_new > 0):
         raise ValueError('fs and fs_new must be positive; got fs={}, fs_new={}'
                          .format(fs, fs_new))
+
+    def _kernel_size(up, down):
+        '''(numtaps, beta) of the Kaiser design for this up/down pair.
+        Transition band around the smaller Nyquist; the filter runs at
+        the upsampled internal rate fs*up.'''
+        fs_out = fs * up / down
+        f_nyq = min(fs, fs_out) / 2
+        f_pass = f_nyq / 1.28 if fs_out < fs else 0.92 * f_nyq
+        fs_up = fs * up
+        numtaps, beta = signal.kaiserord(stopband_db,
+                                         (f_nyq - f_pass) / (fs_up / 2))
+        return numtaps | 1, beta                 # odd -> type I, integer delay
+
     frac = Fraction(fs_new / fs).limit_denominator(1024)
+    if abs(fs * frac.numerator / frac.denominator - fs_new) > 1e-9 * fs_new:
+        # The coarse rational missed the target. This happens when the
+        # source rate is a device-coerced capture rate whose exact ratio
+        # needs a denominator past 1024 — e.g. the USB-6003's 80 MHz
+        # timebase coerces a 48 kHz digital-low-pass capture to
+        # 48019.2077 Hz, and 8000/48019.2077 = 833/5000 (measured on
+        # hardware, 2026-07-10; the coarse 1/6 landed the log at
+        # 8003.2 Hz). It also bites rate-matching between such sets:
+        # 8000/8003.2 = 2499/2500 coarsens to 1/1, a silent no-op.
+        # Take the SIMPLEST fraction within tolerance instead, unless
+        # its FIR would be unreasonably large (this also runs under
+        # 32-bit WASM — a pathological ratio must degrade gracefully to
+        # the coarse fraction, not exhaust memory).
+        tol = Fraction(fs_new) * Fraction(1, 10**9)
+        exact = _simplest_fraction_between((Fraction(fs_new) - tol) / Fraction(fs),
+                                           (Fraction(fs_new) + tol) / Fraction(fs))
+        if exact.numerator > 0 and _kernel_size(exact.numerator,
+                                                exact.denominator)[0] <= (1 << 19):
+            frac = exact
     up, down = frac.numerator, frac.denominator
     if up == 0:
         raise ValueError('fs_new={} is too small relative to fs={}'.format(fs_new, fs))
@@ -682,13 +751,10 @@ def resample_to_fs(y, fs, fs_new, stopband_db=96.0):
     if up == down:
         return y, float(fs), (1, 1)
 
-    # Transition band around the smaller Nyquist; the filter runs at the
-    # upsampled internal rate fs*up.
     f_nyq = min(fs, fs_out) / 2
     f_pass = f_nyq / 1.28 if fs_out < fs else 0.92 * f_nyq
     fs_up = fs * up
-    numtaps, beta = signal.kaiserord(stopband_db, (f_nyq - f_pass) / (fs_up / 2))
-    numtaps |= 1                                   # odd -> type I, integer delay
+    numtaps, beta = _kernel_size(up, down)
     # Unity-gain design: resample_poly itself scales an array window by
     # `up` to compensate the power lost to zero-stuffing (verified — a
     # pre-scaled kernel comes out 20*log10(up) dB hot).
