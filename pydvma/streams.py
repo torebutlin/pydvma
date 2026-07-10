@@ -1253,16 +1253,21 @@ def setup_output_NI_nidaqmx(settings, output):
     Notes on AI/AO hardware sync
     ----------------------------
     When the AI recorder is a `Recorder_NI_nidaqmx` on the **same
-    device or chassis** and that hardware supports hardware-timed AO
-    (see `_ni_backend.supports_hw_ao_sync`), the AO task routes the
-    AI sample clock as its source — the resulting AO samples step on
+    device or chassis**, that hardware supports hardware-timed AO
+    (see `_ni_backend.supports_hw_ao_sync`), **and the AI stream's
+    actual rate equals ``output_fs``**, the AO task routes the AI
+    sample clock as its source — the resulting AO samples step on
     exactly the AI tick. This works on M/X-series USB (e.g.
-    USB-6212). It is **not** used for cDAQ chassis: per-module AI
-    sample clocks are not routable as AO sources there; AI and AO
-    instead share the chassis 80 MHz timebase implicitly, which is
-    phase-coherent but not sample-accurate across tasks. USB-600x
-    low-cost devices have software-timed AO and always run
-    unsynchronised.
+    USB-6212). When the rates differ — an explicit ``output_fs`` ≠
+    ``fs``, or a digital-low-pass capture (``lpf_on``) whose stream
+    runs oversampled at ``lpf_capture_fs`` — the AI clock would step
+    the drive at the wrong rate, so the AO task keeps its own
+    timebase instead (correct rate, no sample-accurate sync). It is
+    also **not** used for cDAQ chassis: per-module AI sample clocks
+    are not routable as AO sources there; AI and AO instead share
+    the chassis 80 MHz timebase implicitly, which is phase-coherent
+    but not sample-accurate across tasks. USB-600x low-cost devices
+    have software-timed AO and always run unsynchronised.
     '''
     # `output` is already in volts; no pre-scaling needed.
     output = np.asarray(output)
@@ -1302,14 +1307,22 @@ def setup_output_NI_nidaqmx(settings, output):
     )
 
     # Share the AI sample clock when possible: both input and output are NI,
-    # the AI recorder is on the same device/chassis, and hardware-timed AO
-    # is supported. Falls back to the device's own timebase otherwise.
+    # the AI recorder is on the same device/chassis, hardware-timed AO
+    # is supported, AND the AI stream actually runs at output_fs. With an
+    # external clock source the `rate` argument below is only advisory —
+    # the AO steps on every source tick — so sharing a mismatched AI clock
+    # plays the drive at the wrong rate (hardware-verified on a USB-6212:
+    # output_fs=2*fs halved every tone; an lpf_on oversampled capture
+    # played the drive x100 fast, destroying the stimulus). Falls back to
+    # the device's own timebase (unsynchronised but correctly rated).
     clock_source = ''
     if (settings.device_driver == 'nidaq'
             and _ni_backend.supports_hw_ao_sync(device_entry)
             and isinstance(REC_NI, Recorder_NI_nidaqmx)
             and REC_NI.device_entry is not None
-            and REC_NI.device_entry['name'] == device_entry['name']):
+            and REC_NI.device_entry['name'] == device_entry['name']
+            and abs(float(REC_NI.settings.fs) - float(settings.output_fs))
+                <= 1e-6 * float(settings.output_fs)):
         clock_source = _ni_backend.ai_sample_clock_source(device_entry) or ''
 
     task.timing.cfg_samp_clk_timing(

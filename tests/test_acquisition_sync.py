@@ -248,3 +248,94 @@ def test_ao_ai_sync_sharp_correlation(device_entry, device_index):
         'correlation found a spurious peak rather than the real stimulus'
         .format(ai_peak, device_entry['product_type'], expected_peak)
     )
+
+
+def _tone(output_fs, f_hz, T, amp_v=0.8):
+    """Ramped sine at ``f_hz``, generated on the output_fs grid."""
+    t = np.arange(0, T, 1.0 / output_fs)
+    n_ramp = max(1, int(0.05 * output_fs))
+    win = np.ones_like(t)
+    win[:n_ramp] = 0.5 * (1 - np.cos(np.pi * np.arange(n_ramp) / n_ramp))
+    win[-n_ramp:] = 0.5 * (1 + np.cos(np.pi * np.arange(n_ramp) / n_ramp))
+    return (amp_v * np.sin(2 * np.pi * f_hz * t) * win)[:, None]
+
+
+def _dominant_freq(y, fs, fmin=50.0):
+    """Frequency of the largest spectral peak above ``fmin`` Hz."""
+    n = len(y)
+    spec = np.abs(np.fft.rfft(y * np.hanning(n)))
+    freqs = np.fft.rfftfreq(n, 1.0 / fs)
+    keep = freqs > fmin
+    return float(freqs[keep][np.argmax(spec[keep])])
+
+
+@pytest.mark.parametrize('case', ['explicit_output_fs', 'lpf_on'])
+def test_ao_own_timebase_when_rates_differ(monkeypatch, device_entry,
+                                           device_index, case):
+    """When the AI stream does NOT run at output_fs, the AO task must
+    keep its own timebase instead of the routed AI sample clock — with
+    an external clock source the AO steps on every source tick, so a
+    mismatched AI clock plays the drive at the wrong rate.
+
+    Regression (2026-07-10, USB-6212): output_fs=2*fs came back at half
+    the commanded tone frequency, and an lpf_on oversampled capture
+    (x100) played the stimulus 100x fast — destroying it. Two cases:
+    an explicit output_fs != fs, and lpf_on (AI stream at the
+    oversampled capture rate while the drive stays at the target fs).
+    """
+    if not _ni_backend.supports_hw_ao_sync(device_entry):
+        pytest.skip('AI-clock routing only happens on hw-ao-sync devices')
+
+    captured = {}
+    real_setup = streams.setup_output_NI_nidaqmx
+
+    def capturing_setup(settings, output):
+        adapter = real_setup(settings, output)
+        captured['source'] = adapter._task.timing.samp_clk_src
+        return adapter
+
+    monkeypatch.setattr(streams, 'setup_output_NI_nidaqmx', capturing_setup)
+
+    cfg = _config_for_device(device_entry)
+    f_tone = 400.0
+    if case == 'explicit_output_fs':
+        s = dvma.MySettings(
+            device_driver='nidaq', device_index=device_index, channels=1,
+            output_device_driver='nidaq', output_device_index=device_index,
+            output_channels=1, fs=5000, output_fs=10000,
+            stored_time=0.5, **cfg,
+        )
+    else:  # lpf_on: AI stream runs oversampled; drive stays at target fs
+        s = dvma.MySettings(
+            device_driver='nidaq', device_index=device_index, channels=2,
+            output_device_driver='nidaq', output_device_index=device_index,
+            output_channels=1, fs=2000, stored_time=1.0, lpf_on=True,
+            **cfg,
+        )
+    ds = dvma.log_data(s, output=_tone(float(s.output_fs), f_tone, T=0.25))
+
+    src = captured['source']
+    assert not src.endswith('/ai/SampleClock'), (
+        'AO task on {} shared the AI sample clock ({!r}) although the AI '
+        'stream rate differs from output_fs — the drive would play at '
+        'the wrong rate'.format(device_entry['product_type'], src)
+    )
+
+    td = ds.time_data_list[0]
+    y = np.asarray(td.time_data)[:, 0]
+    fs_out = float(td.settings.fs)
+    if float(np.max(np.abs(y))) < 0.1:
+        pytest.skip(
+            'No ao0 → ai0 loopback signal on {} — clock-source assertion '
+            'passed but tone-rate verification needs the loopback'
+            .format(device_entry['product_type'])
+        )
+    measured = _dominant_freq(y, fs_out)
+    assert abs(measured - f_tone) < 0.05 * f_tone, (
+        'Loopback tone on {} came back at {:.1f} Hz vs commanded '
+        '{:.0f} Hz — AO is stepping on the wrong clock'
+        .format(device_entry['product_type'], measured, f_tone)
+    )
+    if case == 'lpf_on':
+        assert getattr(td.settings, 'lpf_capture_fs', None) is not None
+        assert abs(fs_out - 2000.0) < 1e-6
