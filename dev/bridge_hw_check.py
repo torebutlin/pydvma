@@ -233,6 +233,35 @@ async def main(url):
                       'best-effort poll (events %s) -- capture itself '
                       'triggered, see onset check' % (label, events))
 
+        # ---- E. digital low-pass (round-9): lpf_on log on every device ----
+        # The server should oversample at the device's ai_max_rate and
+        # resample down to the requested fs (analysis.resample_to_fs). The
+        # logged settings must carry fs == target and the capture rate in
+        # lpf_capture_fs. Target fs low enough that every device has >= 2x
+        # headroom (6003: 100k max / 2k = 50x; 9234 ladder still >= 2x).
+        for idx, label, cfg, _fs in dev_cfgs:
+            print('E. digital low-pass log: ' + label)
+            cfg_lpf = {k: v for k, v in cfg.items() if k != 'output_fs'}
+            await ws.send(json.dumps({'type': 'configure', 'settings': dict(
+                device_driver='nidaq', device_index=idx, channels=2,
+                fs=2000, stored_time=2.0, lpf_on=True, **cfg_lpf)}))
+            st = await recv_json(ws, 'status')
+            check(label + ' lpf: configured', st.get('event') == 'configured',
+                  'fs=%s' % st.get('fs'))
+            events, res, hdr, data = await do_log(
+                ws, 2.0, pretrigger=None, test_name='lpf log ' + label)
+            td = data.time_data_list[0]
+            fs_out = float(td.settings.fs)
+            check(label + ' lpf: TimeData at ~target fs 2000',
+                  abs(fs_out - 2000.0) < 0.05 * 2000.0, fs_out)
+            cap = getattr(td.settings, 'lpf_capture_fs', None)
+            check(label + ' lpf: capture rate recorded and >= 2x target',
+                  cap is not None and cap >= 2 * 2000.0, cap)
+            y = np.asarray(td.time_data)
+            check(label + ' lpf: ~2 s of samples at the target rate',
+                  abs(y.shape[0] - 2.0 * fs_out) < 0.05 * 2.0 * fs_out,
+                  y.shape)
+
     print()
     print('==== %d passed, %d failed ====' % (len(PASS), len(FAIL)))
     for name, detail in FAIL:

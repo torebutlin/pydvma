@@ -95,6 +95,16 @@ class MySettings(object):
             (default ``0``).
         pretrig_timeout (float): Seconds to wait for a trigger before
             recording anyway (default ``20``).
+        lpf_on (bool): Digital low-pass toggle (default ``False``). When
+            on, ``log_data`` captures at the largest integer multiple of
+            ``fs`` the device supports and resamples down to ``fs`` behind
+            a linear-phase anti-alias FIR (``analysis.resample_to_fs`` —
+            passband to ``fs/2.56``, 96 dB stopband at ``fs/2``). ``fs``
+            keeps its normal meaning (the rate you log at); the toggle
+            changes only HOW that rate is achieved — oversample +
+            noise-reducing decimation instead of sampling at ``fs``
+            directly. The logged settings record the capture rate as
+            ``lpf_capture_fs``.
         device_driver (str): Input backend — ``'soundcard'`` (default),
             ``'nidaq'`` or ``'mock'`` (the hardware-free test backend).
         device_index (int or None): Index into the enumerated device list
@@ -225,6 +235,7 @@ class MySettings(object):
                  pretrig_threshold=0.05,
                  pretrig_channel=0,
                  pretrig_timeout=20,
+                 lpf_on=False,
                  device_driver='soundcard',
                  device_index=None,
                  input_channels_spec=None,
@@ -258,6 +269,22 @@ class MySettings(object):
         self.pretrig_threshold=float(pretrig_threshold)
         self.pretrig_channel=int(pretrig_channel)
         self.pretrig_timeout=float(pretrig_timeout)
+
+        # Digital low-pass toggle (round-9): ``fs`` stays the rate you want
+        # to LOG AT; with ``lpf_on`` the capture instead runs at the largest
+        # integer multiple of ``fs`` the device supports and is resampled
+        # down to ``fs`` behind a linear-phase anti-alias FIR
+        # (``analysis.resample_to_fs`` — passband to fs/2.56, >= 96 dB
+        # stopband at fs/2, zero-phase). This gives the filterless
+        # multiplexed-SAR devices (USB-6003/6212, sound cards) a proper
+        # anti-alias chain — content above fs/2 otherwise aliases straight
+        # into band — plus ~10*log10(M) dB of broadband-noise process gain;
+        # delta-sigma hardware (NI 9234) already filters in silicon, where
+        # this buys extra noise reduction. The logged TimeData's settings
+        # carry the ACHIEVED rate in ``fs`` and the capture rate in
+        # ``lpf_capture_fs``. With no oversampling headroom (device max
+        # < 2*fs) the log proceeds unfiltered with a printed note.
+        self.lpf_on = bool(lpf_on) and (lpf_on != 'False')
         
         self.device_driver=device_driver
         self.device_index=device_index

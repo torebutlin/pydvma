@@ -7,10 +7,12 @@ Created on Mon Aug 27 17:08:42 2018
 
 from . import datastructure
 from . import streams
+from . import analysis
 
 import numpy as np
 import scipy.signal as signal
 import scipy.stats as stats
+import copy
 import datetime
 import time
 
@@ -92,8 +94,53 @@ def log_data(settings, test_name=None, rec=None, output=None):
     above threshold), the function does not raise — it returns the
     tail of the buffer (same shape as the no-pretrigger path), leaves
     ``trigger_detected`` False, and prints a "not detected" message.
+
+    Digital low-pass (round-9)
+    --------------------------
+    With ``settings.lpf_on`` the requested ``fs`` keeps its meaning (the
+    rate the returned TimeData is at) but the STREAM captures at the
+    largest integer multiple of ``fs`` under the device's maximum input
+    rate (``streams.max_input_fs``); the capture — pretrigger window
+    included, whose sample-exact alignment survives the rate change — is
+    then resampled down to ``fs`` behind a linear-phase anti-alias FIR
+    (``analysis.resample_to_fs``: passband to ``fs/2.56``, 96 dB stopband
+    at ``fs/2``, zero-phase). ``chunk_size`` and ``pretrig_samples`` are
+    scaled to the capture rate internally, so their user-facing meaning
+    (at ``fs``) is unchanged. The returned TimeData's settings record the
+    capture rate as ``lpf_capture_fs``. With no oversampling headroom
+    (device max < 2*fs) the log proceeds unfiltered with a printed note.
     '''
     global MESSAGE
+
+    # ---- Digital low-pass (round-9): swap in the CAPTURE configuration ----
+    # From here down `settings` is what the stream runs at; the caller's
+    # target stays in `target_settings`. With the LPF off (or no headroom)
+    # they are the same object and nothing changes.
+    target_settings = settings
+    lpf_factor = 1
+    if getattr(settings, 'lpf_on', False):
+        max_fs = streams.max_input_fs(settings)
+        lpf_factor = int(max_fs // settings.fs)
+        if lpf_factor >= 2:
+            settings = copy.copy(target_settings)
+            settings.fs = int(lpf_factor * target_settings.fs)
+            # Scale the chunk geometry with the rate: callback cadence
+            # (chunk_size/fs) and the pretrigger window's DURATION are
+            # preserved, so the pretrig_samples <= chunk_size invariant
+            # and the buffer sizings hold at the capture rate.
+            settings.chunk_size = int(target_settings.chunk_size * lpf_factor)
+            if target_settings.pretrig_samples is not None:
+                settings.pretrig_samples = int(target_settings.pretrig_samples * lpf_factor)
+            MESSAGE = ('Digital low-pass: capturing at {} Hz (x{} oversample), '
+                       'will resample to fs = {} Hz.\n'
+                       .format(settings.fs, lpf_factor, target_settings.fs))
+            print(MESSAGE)
+        else:
+            lpf_factor = 1
+            MESSAGE = ('Digital low-pass: no oversampling headroom (device max '
+                       '{:.6g} Hz at fs = {} Hz) — logging unfiltered.\n'
+                       .format(max_fs, settings.fs))
+            print(MESSAGE)
 
     # Defence-in-depth guard: MySettings.__init__ already rejects this
     # at construction time, but callers routinely mutate settings in
@@ -226,16 +273,37 @@ def log_data(settings, test_name=None, rec=None, output=None):
                 s.WaitUntilTaskDone(settings.stored_time+5)
                 s.StopTask()
 
-    # make into dataset
-    fs = settings.fs
-    n_samp = len(stored_time_data_copy[:,0])
-    dt = 1/fs
-    t_samp = n_samp*dt
-    time_axis = np.linspace(0,(n_samp-1)/n_samp * settings.stored_time,n_samp)
-    
-    if (output is not None) and (settings.use_output_as_ch0 == True):
+    # Clipping is an ADC-domain property — take the raw peak BEFORE any
+    # digital filtering, or the anti-alias FIR below would smear rail hits
+    # under the clip threshold.
+    raw_peak = float(np.max(np.abs(stored_time_data_copy))) if stored_time_data_copy.size else 0.0
+
+    # ---- Digital low-pass (round-9): resample down to the target fs ------
+    # The window (pretrigger alignment included) was assembled at the
+    # capture rate; the stream may have coerced the oversample request (a
+    # DSA rate ladder), so resample from the rate it ACTUALLY ran at
+    # (adopted into settings.fs by the NI recorder) to the caller's target.
+    # The TimeData below carries the TARGET settings (fs, chunk_size,
+    # pretrig_samples all at their user-facing values) plus the capture
+    # rate as ``lpf_capture_fs``.
+    settings_out = settings
+    if lpf_factor > 1:
+        stored_time_data_copy, fs_out, (rs_up, rs_down) = analysis.resample_to_fs(
+            stored_time_data_copy, settings.fs, target_settings.fs)
+        settings_out = copy.copy(target_settings)
+        settings_out.fs = fs_out
+        settings_out.lpf_capture_fs = settings.fs
+        MESSAGE = ('Digital low-pass: captured at {} Hz, resampled x{}/{} to '
+                   'fs = {:.6g} Hz.\n'.format(settings.fs, rs_up, rs_down, fs_out))
+        print(MESSAGE)
+
+    if (output is not None) and (settings_out.use_output_as_ch0 == True):
+        # Injected AFTER any resample: the drive was generated at
+        # output_fs (= the TARGET rate), so it lands on the right grid
+        # without rate juggling — and stays un-filtered.
+        n_samp = len(stored_time_data_copy[:,0])
         stored_output = np.zeros((n_samp,len(output[0,:])))
-        n_start = settings.pretrig_samples
+        n_start = settings_out.pretrig_samples
         if n_start is None:
             n_start = 0
         n_end = np.copy(n_samp)
@@ -243,8 +311,15 @@ def log_data(settings, test_name=None, rec=None, output=None):
             stored_output[n_start:n_end,:] = output[:n_end-n_start,:]
         elif len(output[:,0]) < (n_end-n_start):
             stored_output[n_start:len(output[:,0])+n_start,:] = output[:,:]
-            
+
         stored_time_data_copy = np.concatenate((stored_output,stored_time_data_copy),axis=1)
+
+    # make into dataset
+    fs = settings_out.fs
+    n_samp = len(stored_time_data_copy[:,0])
+    dt = 1/fs
+    t_samp = n_samp*dt
+    time_axis = np.linspace(0,(n_samp-1)/n_samp * settings.stored_time,n_samp)
 
     # Carry per-channel calibration through to the TimeData. With
     # default ``channel_sensitivities = 1.0`` this is just ones (no
@@ -259,20 +334,21 @@ def log_data(settings, test_name=None, rec=None, output=None):
         cal_factors = np.concatenate((np.ones(n_out), cal_factors))
 
     timedata = datastructure.TimeData(
-        time_axis, stored_time_data_copy, settings,
+        time_axis, stored_time_data_copy, settings_out,
         timestamp=t, timestring=timestring, test_name=test_name,
         channel_cal_factors=cal_factors,
     )
-    
-    
+
+
     dataset  = datastructure.DataSet()
     dataset.add_to_dataset(timedata)
-    
+
     # Check for clipping. Data is now in volts, so compare against the
     # effective full-scale (VmaxNI for nidaq, VmaxSC for soundcard). Any
-    # sample within 5 % of the rail gets flagged.
+    # sample within 5 % of the rail gets flagged. Uses the RAW peak taken
+    # before the optional low-pass, so filtering can't hide a rail hit.
     clip_threshold = 0.95 * settings.input_vmax()
-    if np.any(np.abs(stored_time_data_copy) > clip_threshold):
+    if raw_peak > clip_threshold:
         MESSAGE += 'WARNING: Data may be clipped'
         print(MESSAGE)
     

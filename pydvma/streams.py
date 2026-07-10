@@ -156,6 +156,67 @@ def _clamp_soundcard_output_channels(settings):
         settings.output_channels = max_out
 
 
+# Nominal "hardware" ceiling for the synthetic mock backend — it has no real
+# limit, this just gives the digital-low-pass oversampler headroom in tests.
+MOCK_MAX_FS = 1_000_000
+
+
+def max_input_fs(settings):
+    """Best-known maximum INPUT sample rate for the configured device, in Hz.
+
+    Backs the digital low-pass toggle (round-9): ``acquisition.log_data``
+    oversamples at the largest integer multiple of ``settings.fs`` that
+    fits under this cap before resampling back down. Per driver:
+
+    - ``'nidaq'``: the resolved device's ``ai_max_rate`` from
+      ``_ni_backend.entry_capabilities``. On a MULTIPLEXED device (one
+      ADC scanning the channel list — USB-6003/6212, ``simultaneous``
+      False) that figure is the AGGREGATE rate, so it is divided by
+      ``settings.channels`` to get the per-channel ceiling; simultaneous
+      (DSA, per-channel ADC) devices use it directly. DSA modules (NI
+      9234) may still coerce the exact oversample request onto their
+      discrete divider ladder afterwards — ``log_data`` resamples from
+      the rate the stream ACTUALLY ran at, so the target fs is still
+      hit.
+    - ``'soundcard'``: probes the standard rate ladder downward with
+      ``sd.check_input_settings`` and returns the highest accepted rate.
+    - ``'mock'``: ``MOCK_MAX_FS`` (no hardware to limit it).
+
+    Falls back to ``settings.fs`` whenever nothing better can be learned
+    (missing driver package, no devices, probe failures) — the caller then
+    sees no oversampling headroom and logs unfiltered with a note.
+    """
+    if settings.device_driver == 'mock':
+        return float(MOCK_MAX_FS)
+    if settings.device_driver == 'nidaq':
+        try:
+            entries = _ni_backend.enumerate_devices()
+            idx = settings.device_index if settings.device_index is not None else 0
+            caps = _ni_backend.entry_capabilities(entries[idx])
+            rate = caps.get('ai_max_rate')
+            if rate:
+                if not caps.get('simultaneous'):
+                    # Multiplexed: one ADC scans the channel list, so the
+                    # advertised max is AGGREGATE — divide by channel count.
+                    rate = float(rate) / max(1, int(settings.channels))
+                return float(rate)
+        except Exception:
+            pass
+        return float(settings.fs)
+    if settings.device_driver == 'soundcard' and sd is not None:
+        for rate in (192000, 96000, 88200, 48000, 44100):
+            if rate < settings.fs:
+                break
+            try:
+                sd.check_input_settings(device=settings.device_index,
+                                        samplerate=rate,
+                                        channels=settings.channels)
+                return float(rate)
+            except Exception:
+                continue
+    return float(settings.fs)
+
+
 def start_stream(settings):
     global REC_SC, REC_NI, REC, REC_MOCK
     if settings.device_driver == 'mock':

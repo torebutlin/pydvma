@@ -260,3 +260,56 @@ def test_mock_recorder_osc_buffer_longer_than_stored():
                                rec.stored_time_data)
     # and the osc buffer carries signal beyond the stored length
     assert np.abs(rec.osc_time_data[300:, :]).max() > 0
+
+
+class TestLogDataDigitalLowPass:
+    """Round-9 ``lpf_on``: the stream captures at the largest integer
+    multiple of fs under the device max (mock: ``streams.MOCK_MAX_FS``)
+    and `log_data` resamples back down to the requested fs behind the
+    anti-alias FIR. Deterministic on mock: the pre-filled per-channel
+    sines (100·(k+1) Hz, 0.1 V) sit deep inside the passband."""
+
+    def test_lpf_log_returns_target_fs_with_capture_metadata(self):
+        s = _mock_settings(lpf_on=True)
+        d = dvma.log_data(s)
+        td = d.time_data_list[0]
+        assert td.time_data.shape == (int(0.1 * 10000), 2)
+        assert td.settings.fs == pytest.approx(10000)
+        assert td.settings.lpf_capture_fs == pytest.approx(streams.MOCK_MAX_FS)
+        assert td.settings.lpf_on is True
+        np.testing.assert_allclose(np.diff(td.time_axis).mean(), 1 / 10000,
+                                   rtol=1e-6)
+
+    def test_lpf_preserves_in_band_amplitude(self):
+        s = _mock_settings(lpf_on=True)
+        d = dvma.log_data(s)
+        td = d.time_data_list[0]
+        n = td.time_data.shape[0]
+        for ch in (0, 1):                       # 100 Hz and 200 Hz sines
+            core = td.time_data[n // 4: -n // 4, ch]
+            assert np.sqrt(2) * core.std() == pytest.approx(0.1, rel=0.05)
+
+    def test_lpf_off_is_the_default_and_changes_nothing(self):
+        s = _mock_settings()
+        assert s.lpf_on is False
+        td = dvma.log_data(s).time_data_list[0]
+        assert td.settings.fs == 10000
+        assert not hasattr(td.settings, 'lpf_capture_fs')
+
+    def test_lpf_does_not_mutate_caller_settings(self):
+        s = _mock_settings(lpf_on=True)
+        dvma.log_data(s)
+        assert s.fs == 10000
+        assert s.chunk_size == 1000
+        assert not hasattr(s, 'lpf_capture_fs')
+
+    def test_lpf_with_pretrigger_timeout_path(self):
+        # Mock never triggers -> timeout tail; the capture-rate scaling of
+        # chunk_size/pretrig_samples must keep the geometry legal and the
+        # output at the target rate.
+        s = _mock_settings(lpf_on=True, pretrig_samples=50,
+                           pretrig_timeout=0.5)
+        td = dvma.log_data(s).time_data_list[0]
+        assert td.time_data.shape == (int(0.1 * 10000), 2)
+        assert td.settings.fs == pytest.approx(10000)
+        assert td.settings.pretrig_samples == 50   # user-facing value kept
