@@ -611,8 +611,96 @@ def clean_impulse(time_data, ch_impulse=0):
         print(MESSAGE)
         return time_data
 
-    
-    
+
+#%% RESAMPLING (band-limited, noise-reducing)
+def resample_to_fs(y, fs, fs_new, stopband_db=96.0):
+    '''Band-limited rational resampling to a target sample rate.
+
+    One principled engine for three jobs (round-9): the logger's digital
+    low-pass (oversample at the device maximum, resample DOWN to the
+    chosen fs), the Time view's Resample tool, and "resample to match"
+    across sets. The rate change is rational — ``fs_new/fs`` is
+    approximated by ``up/down`` (``Fraction.limit_denominator``), so a
+    DSA-coerced capture rate (e.g. the NI 9234's 8533.33 Hz) still lands
+    exactly on a round target (8533.33 -> 2000 is up/down = 15/64) — and
+    is applied as polyphase FIR filtering (``scipy.signal.resample_poly``)
+    with a Kaiser-designed linear-phase kernel, group-delay compensated
+    (effectively zero-phase; an IIR resampler would distort phase, which
+    matters for transfer-function and modal work).
+
+    Filter placement (``f_Nyq = min(fs, fs_new)/2``):
+
+    - **Downsampling** (``fs_new < fs``): stopband at the NEW Nyquist,
+      passband edge at ``fs_new/2.56`` — the standard DSA guard-band
+      convention (passband to 0.78x Nyquist), the same margin a
+      delta-sigma module's built-in anti-alias filter uses. Everything
+      above the new Nyquist is attenuated by ``stopband_db`` (default
+      96 dB) BEFORE the rate drops, so nothing aliases; rejecting the
+      out-of-band noise also buys ~10*log10(fs/fs_new) dB of
+      broadband-noise process gain. This is what makes it the
+      noise-REDUCING method (multiplexed-SAR hardware — NI USB-6003/6212,
+      sound cards — has no analogue anti-alias filter at all, so this
+      chain is what stands between out-of-band content and your band).
+    - **Upsampling** (``fs_new > fs``): stopband at the ORIGINAL Nyquist
+      (kills the zero-stuffing images, so NO frequency content above the
+      original band is invented — the failure mode of linear
+      interpolation, whose triangular kernel is a sinc^2 filter that both
+      droops the passband and leaks imaging residue), passband to 0.92x
+      the original Nyquist so the recorded band passes essentially
+      untouched.
+
+    The first/last ~``numtaps/(2*down)`` output samples carry the usual
+    FIR edge transient. Sample 0 maps to sample 0 (delay-compensated), so
+    a pretrigger position at input index ``k`` lands at output index
+    ``k * up/down``.
+
+    Args:
+        y: array of shape ``(N,)`` or ``(N, n_channels)`` — time series
+            in columns.
+        fs: current sample rate in Hz.
+        fs_new: target sample rate in Hz (> 0). ``fs_new == fs`` returns
+            the input unchanged.
+        stopband_db: stopband attenuation for the Kaiser design in dB.
+
+    Returns:
+        Tuple ``(y_out, fs_out, (up, down))`` — the resampled array (same
+        dimensionality as ``y``), the exact output rate ``fs * up/down``
+        (equal to ``fs_new`` whenever the ratio is representable), and the
+        rational factors used.
+    '''
+    from fractions import Fraction
+
+    y = np.asarray(y, dtype=float)
+    if not (fs > 0 and fs_new > 0):
+        raise ValueError('fs and fs_new must be positive; got fs={}, fs_new={}'
+                         .format(fs, fs_new))
+    frac = Fraction(fs_new / fs).limit_denominator(1024)
+    up, down = frac.numerator, frac.denominator
+    if up == 0:
+        raise ValueError('fs_new={} is too small relative to fs={}'.format(fs_new, fs))
+    fs_out = fs * up / down
+    if up == down:
+        return y, float(fs), (1, 1)
+
+    # Transition band around the smaller Nyquist; the filter runs at the
+    # upsampled internal rate fs*up.
+    f_nyq = min(fs, fs_out) / 2
+    f_pass = f_nyq / 1.28 if fs_out < fs else 0.92 * f_nyq
+    fs_up = fs * up
+    numtaps, beta = signal.kaiserord(stopband_db, (f_nyq - f_pass) / (fs_up / 2))
+    numtaps |= 1                                   # odd -> type I, integer delay
+    # Unity-gain design: resample_poly itself scales an array window by
+    # `up` to compensate the power lost to zero-stuffing (verified — a
+    # pre-scaled kernel comes out 20*log10(up) dB hot).
+    h = signal.firwin(numtaps, (f_pass + f_nyq) / 2, fs=fs_up,
+                      window=('kaiser', beta))
+
+    one_d = y.ndim == 1
+    y2 = y[:, None] if one_d else y
+    y_out = signal.resample_poly(y2, up, down, axis=0, window=h)
+    return (y_out[:, 0] if one_d else y_out), float(fs_out), (up, down)
+
+
 #%% SONOGRAM
 def _spectrogram_complex_lowmem(y, fs, nperseg, noverlap):
     '''Byte-identical, low-memory drop-in for::

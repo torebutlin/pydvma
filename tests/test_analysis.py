@@ -1114,3 +1114,88 @@ class TestDampingByBand:
         td = self._noise_decay_td(0.4)
         with pytest.raises(ValueError, match='bands'):
             analysis.calculate_damping_by_band(td, n_chan=0, bands='decade')
+
+
+class TestResampleToFs:
+    """`resample_to_fs` — the round-9 band-limited resampler behind the
+    logging digital low-pass, the Time-view Resample tool, and
+    'resample to match'. Pure DSP, Mac-runnable."""
+
+    FS = 51200.0
+
+    def _tone(self, f0, seconds=2.0, fs=None):
+        fs = fs or self.FS
+        t = np.arange(int(fs * seconds)) / fs
+        return np.sin(2 * np.pi * f0 * t)
+
+    @staticmethod
+    def _core_rms_db(y):
+        """dBFS of the middle half (clear of FIR edge transients)."""
+        core = y[len(y) // 4: -len(y) // 4]
+        return 20 * np.log10(np.sqrt(2) * core.std() + 1e-16)
+
+    def test_downsample_passband_unity_stopband_killed(self):
+        # 51200 -> 2000 Hz: passband ends at 2000/2.56 = 781 Hz.
+        for f0, expect_pass in ((200.0, True), (700.0, True),
+                                (1050.0, False), (3000.0, False)):
+            y_out, fs_out, _ = analysis.resample_to_fs(
+                self._tone(f0), self.FS, 2000.0)
+            level = self._core_rms_db(y_out)
+            assert fs_out == pytest.approx(2000.0)
+            if expect_pass:
+                assert abs(level) < 0.1          # unity gain
+            else:
+                assert level < -80.0             # alias-protected
+
+    def test_rational_ratio_hits_target_exactly(self):
+        # The 48k -> 44.1k audio-world ratio is 147/160.
+        y_out, fs_out, (up, down) = analysis.resample_to_fs(
+            self._tone(1000.0, seconds=1.0, fs=48000.0), 48000.0, 44100.0)
+        assert (up, down) == (147, 160)
+        assert fs_out == pytest.approx(44100.0)
+        assert len(y_out) == 44100
+        assert abs(self._core_rms_db(y_out)) < 0.1
+
+    def test_upsample_unity_gain_no_imaging(self):
+        # 2000 -> 8000 Hz: a 300 Hz tone passes at unity, and NOTHING may
+        # appear above the ORIGINAL Nyquist (the linear-interp failure
+        # mode this method exists to avoid).
+        y_out, fs_out, (up, down) = analysis.resample_to_fs(
+            self._tone(300.0, seconds=4.0, fs=2000.0), 2000.0, 8000.0)
+        assert (up, down) == (4, 1)
+        assert fs_out == pytest.approx(8000.0)
+        assert abs(self._core_rms_db(y_out)) < 0.1
+        core = y_out[len(y_out) // 4: -len(y_out) // 4]
+        spec = np.abs(np.fft.rfft(core * np.hanning(len(core))))
+        f = np.fft.rfftfreq(len(core), 1 / fs_out)
+        imaging = spec[f > 1100.0].max() / spec.max()
+        assert 20 * np.log10(imaging) < -90.0
+
+    def test_zero_phase_impulse_position_maps_exactly(self):
+        imp = np.zeros(20000)
+        imp[7000] = 1.0
+        y_out, _, (up, down) = analysis.resample_to_fs(imp, self.FS, 2000.0)
+        assert np.argmax(np.abs(y_out)) == round(7000 * up / down)
+
+    def test_two_d_shape_and_noop(self):
+        y = np.stack([self._tone(200.0), self._tone(700.0)], axis=1)
+        y_out, fs_out, _ = analysis.resample_to_fs(y, self.FS, 2000.0)
+        assert y_out.shape == (int(2000.0 * 2.0), 2)
+        same, fs_same, ratio = analysis.resample_to_fs(y, self.FS, self.FS)
+        assert ratio == (1, 1) and fs_same == self.FS
+        np.testing.assert_array_equal(same, y)
+
+    def test_downsample_reduces_broadband_noise(self):
+        # White noise: rejecting everything above the new band buys
+        # ~10*log10(fs/fs_new) dB of process gain; require most of it.
+        rng = np.random.default_rng(42)
+        y = rng.standard_normal(int(self.FS * 2))
+        y_out, fs_out, _ = analysis.resample_to_fs(y, self.FS, 2000.0)
+        gain_db = 20 * np.log10(y.std() / y_out[500:-500].std())
+        assert gain_db > 10 * np.log10(self.FS / 2000.0) - 2.0
+
+    def test_rejects_nonpositive_rates(self):
+        with pytest.raises(ValueError):
+            analysis.resample_to_fs(np.zeros(100), self.FS, 0.0)
+        with pytest.raises(ValueError):
+            analysis.resample_to_fs(np.zeros(100), -1.0, 100.0)
