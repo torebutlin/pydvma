@@ -27,13 +27,15 @@
    * (`selection.soloLine` / `selection.stepLine`). This keeps the tested
    * multi-set behaviour intact while making the single-set case useful.
    *
-   * ROUND-8 refinement: when the tray shows a proper SUBSET of lines (some
-   * visible, some off) that is NOT a clean whole-set solo, ‹ › shift the
-   * WHOLE selection one channel (circular, per set — `selection.shiftLines`)
-   * instead of collapsing it to a fresh solo. So a selected channel + its
-   * fit-recon line cycle together through the channels, and any hand-picked
-   * pair of lines walks its sets as a pair. All-on (nothing selected) and a
-   * clean set solo keep the behaviours above.
+   * ROUND-8 refinement (round-10b family-aware): when the tray shows a
+   * proper SUBSET of lines (some visible, some off), ‹ › shift the WHOLE
+   * selection one step via `selection.shiftLines` instead of collapsing it
+   * to a fresh solo — a selected channel + its fit-recon line cycle
+   * together, a hand-picked pair walks its set as a pair, and a clean
+   * whole-set solo advances to the next set of its FAMILY (data and fit
+   * pseudo-sets shift independently, so a visible fit line rides along
+   * with a soloed data set instead of being dropped). Only all-on
+   * (nothing selected) keeps the enter-solo behaviours above.
    */
   import { get } from 'svelte/store';
   import type { Selection } from '../lib/stores/selection';
@@ -133,10 +135,14 @@
   // (round-5 item 3). More than one set keeps the per-set behaviour.
   const singleSet = $derived($setsView.length === 1);
 
-  const trayFocus = $derived(selection.trayFocus);
-
   // Round-8: a proper SUBSET of lines is showing (some visible, some off).
-  const lineSubset = $derived.by(() => {
+  // ‹ › then shift the WHOLE selection by one via `selection.shiftLines`,
+  // which is family-aware (round-10b): a clean whole-set solo advances to
+  // the family's next set (so a soloed 1-channel data set cycles across
+  // sets while a visible fit line rides along — it used to be dropped by
+  // the old set-stepping exception, which judged the solo over data sets
+  // only), anything else rotates channels within each set.
+  const shiftMode = $derived.by(() => {
     let anyOff = false, anyVisible = false;
     for (const s of $setsView) {
       for (let c = 0; c < s.nChannels; c++) {
@@ -146,9 +152,6 @@
     }
     return anyOff && anyVisible;
   });
-  // ‹ › shift the whole selection (per-set circular) when a line subset is
-  // showing — unless it's a clean whole-set solo, which keeps set stepping.
-  const shiftMode = $derived(lineSubset && (singleSet || $trayFocus === 'all'));
 
   // Widest set drives the channel-chip row (union of channel indices).
   const maxChannels = $derived(

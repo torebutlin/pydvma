@@ -16,7 +16,14 @@ now imports 200000×1 @ 40 kHz; axis from indata's own length; tsmax is
 a scale marker, data already physical — no rescale); **error toasts
 pin open** until × (JW couldn't copy one before it vanished; explicit
 timeout still overrides). Suites: pytest 347/3, check 0/0, vitest
-660/1, Playwright 81/7, mkdocs --strict green; wheel rebuilt.
+660/1, Playwright 81/7, mkdocs --strict green; wheel rebuilt. Round 10
+is PUSHED + DEPLOYED; **round-10b addendum** (committed locally):
+`selection.shiftLines` is FAMILY-aware — data sets and fit pseudo-sets
+shift independently, a whole-set solo advances to its family's next
+set (lockstep when both families solo) — fixing "‹ › drop the fit line
+when a soloed/1-channel data set is selected" (the old clean-solo
+exception judged via trayFocus, which filters fit sets; the Tray
+exception is deleted, shiftMode = any line subset).
 
 Earlier that day (round 9 **hardware-verified on the PC**): bridge_hw_check 44/44 incl. new check E on all three devices;
 the multiplexed `max_input_fs` division confirmed live (6003 2ch

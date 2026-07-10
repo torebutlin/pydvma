@@ -173,6 +173,55 @@ test('shiftLines rotates a live lineHighlight with its set', () => {
   expect(get(sel.state)(2, 7)).toBe('off');
 });
 
+test('shiftLines: a soloed data set advances to the next set while a fit line RIDES ALONG (round-10b)', () => {
+  // Tore's report: data line + fit line selected, ‹ › dropped the fit and
+  // just moved to the next data line. With single-channel sets a selected
+  // line IS a whole-set solo, and the old dispatch stepped sets (data only).
+  const a = sel.addSet({ name: 'file_a', nChannels: 1, durationS: 1, timestamp: 'a' }); // id 3
+  const fit = sel.addSet({ name: 'Modal fit', nChannels: 1, durationS: 0, timestamp: 'f', role: 'fit' });
+  sel.none();
+  sel.cycleLine(0, 0); sel.cycleLine(0, 1);    // set_0 (2ch): fully on = clean solo
+  sel.cycleLine(fit, 0);                       // + the fit line visible
+  sel.shiftLines(1);
+  // Data family solo advanced set_0 → set_1; the fit line survived.
+  expect(get(sel.state)(0, 0)).toBe('off');
+  expect(get(sel.state)(1, 0)).toBe('on');
+  expect(get(sel.state)(1, 1)).toBe('on');
+  expect(get(sel.state)(fit, 0)).toBe('on');   // NOT dropped
+  expect(get(sel.highlight)).toBe(1);          // highlight follows the solo
+  // Wraps: two more steps go set_2 then back to set_0, fit still riding.
+  sel.shiftLines(1); sel.shiftLines(1);
+  expect(get(sel.state)(a, 0)).toBe('on');
+  expect(get(sel.state)(fit, 0)).toBe('on');
+});
+
+test('shiftLines: data and fit families soloing in parallel cycle in LOCKSTEP', () => {
+  // One fit pseudo-set per fitted data set: soloing a data set + its fit
+  // set and stepping moves BOTH to their family's next set together.
+  const fitA = sel.addSet({ name: 'fit A', nChannels: 1, durationS: 0, timestamp: 'fa', role: 'fit' });
+  const fitB = sel.addSet({ name: 'fit B', nChannels: 1, durationS: 0, timestamp: 'fb', role: 'fit' });
+  sel.none();
+  sel.cycleLine(0, 0); sel.cycleLine(0, 1);    // data solo: set_0
+  sel.cycleLine(fitA, 0);                      // fit solo: fit A
+  sel.shiftLines(1);
+  expect(get(sel.state)(1, 0)).toBe('on');     // data advanced to set_1
+  expect(get(sel.state)(0, 0)).toBe('off');
+  expect(get(sel.state)(fitB, 0)).toBe('on');  // fit advanced to fit B
+  expect(get(sel.state)(fitA, 0)).toBe('off');
+});
+
+test('shiftLines: a clean data solo with NO fit lines advances like the old set stepping', () => {
+  sel.solo(1);
+  sel.shiftLines(1);
+  expect(get(sel.state)(2, 0)).toBe('on');
+  expect(get(sel.state)(2, 7)).toBe('on');     // whole set on
+  expect(get(sel.state)(1, 0)).toBe('off');
+  expect(get(sel.highlight)).toBe(2);
+  sel.shiftLines(-1);                          // and back
+  expect(get(sel.state)(1, 1)).toBe('on');
+  expect(get(sel.state)(2, 0)).toBe('off');
+});
+
 test('shiftLines: a one-line fit set stays on its line while the data channel steps', () => {
   const fitId = sel.addSet({
     name: 'Modal fit', nChannels: 1, durationS: 0, timestamp: 'tf', role: 'fit',

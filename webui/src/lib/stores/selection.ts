@@ -194,28 +194,74 @@ export function createSelection() {
   }
 
   /**
-   * Shift every set's tri-state pattern one channel forward/back, wrapping
-   * WITHIN each set (round-8 feedback). With a subset of lines selected this
-   * moves the whole selection by one — e.g. a measured channel and its
-   * fit-recon line cycle together (ch1+fit1 → ch2+fit2 → … → ch0+fit0 → …),
-   * and two selected channels of one set stay a pair as they walk it.
-   * Rotation leaves uniform sets (all-on / all-fade / all-off) unchanged, so
-   * a fully-visible fit overlay or a hidden set stays put while the subset
-   * cycles; each line KEEPS its own tri-state ('fade' shifts as 'fade').
-   * The rotation is per set — not the global flat line list — so sets of
-   * unequal width keep their own circular order (a one-line fit set stays
-   * on its line while the data channel steps). A `lineHighlight` pointing
-   * at an existing line rotates with its set.
+   * Shift the visible selection one step forward/back (round-8; refined
+   * round-10b). Sets are grouped into FAMILIES by role — measured DATA
+   * sets and modal-FIT pseudo-sets — and each family shifts by one
+   * according to its own structure:
+   *
+   * - A family showing a clean WHOLE-SET solo (every line of exactly one
+   *   of its sets 'on', every line of its other sets 'off'; 2+ sets in
+   *   the family) advances the solo to its next set, wrapping. This is
+   *   what lets a selected data line cycle across SINGLE-CHANNEL sets
+   *   (JW-style composited archives are full of them) while a visible fit
+   *   line RIDES ALONG instead of being dropped — and when both families
+   *   are soloing (a data set and its own fit set), they cycle in
+   *   lockstep. The data family's advanced solo also moves `highlight`.
+   * - Any other pattern rotates each of the family's sets one channel,
+   *   wrapping WITHIN the set (round-8): a ch+fit pair cycles together
+   *   (ch1+fit1 → ch2+fit2 → … → ch0+fit0 → …), two selected channels of
+   *   one set stay a pair, uniform sets (all-on / all-fade / all-off) are
+   *   unchanged (a fully-visible fit overlay or a hidden set stays put),
+   *   a one-line fit set stays on its line, and every line KEEPS its own
+   *   tri-state ('fade' shifts as 'fade').
+   *
+   * A `lineHighlight` pointing at an existing line rotates with its set.
    */
   function shiftLines(dir: 1 | -1) {
     const list = get(sets);
+    let soloedDataId: number | null = null;
     mutate(m => {
-      for (const set of list) {
-        const n = set.nChannels; if (!n) continue;
-        const vals = Array.from({ length: n }, (_, c) => stateOf(m, set.id, c));
-        for (let c = 0; c < n; c++) m.set(key(set.id, c), vals[((c - dir) % n + n) % n]);
+      const families = [
+        list.filter(s => s.role === 'data'),
+        list.filter(s => s.role === 'fit'),
+      ];
+      for (const family of families) {
+        if (!family.length) continue;
+        // Clean whole-set solo within this family? (uniform 'on' set + all
+        // other family sets uniformly 'off'; needs 2+ sets to be a cycle)
+        let soloAt = -1;
+        let clean = family.length >= 2;
+        for (let i = 0; clean && i < family.length; i++) {
+          const st = Array.from({ length: family[i].nChannels },
+            (_, c) => stateOf(m, family[i].id, c));
+          const allOn = st.length > 0 && st.every(v => v === 'on');
+          const allOff = st.every(v => v === 'off');
+          if (allOn) {
+            if (soloAt !== -1) clean = false;
+            else soloAt = i;
+          } else if (!allOff) {
+            clean = false;
+          }
+        }
+        if (clean && soloAt !== -1) {
+          const n = family.length;
+          const next = family[((soloAt + dir) % n + n) % n];
+          for (const set of family) {
+            for (let c = 0; c < set.nChannels; c++) {
+              m.set(key(set.id, c), set.id === next.id ? 'on' : 'off');
+            }
+          }
+          if (next.role === 'data') soloedDataId = next.id;
+        } else {
+          for (const set of family) {
+            const n = set.nChannels; if (!n) continue;
+            const vals = Array.from({ length: n }, (_, c) => stateOf(m, set.id, c));
+            for (let c = 0; c < n; c++) m.set(key(set.id, c), vals[((c - dir) % n + n) % n]);
+          }
+        }
       }
     });
+    if (soloedDataId !== null) highlight.set(soloedDataId);
     const cur = get(lineHighlight);
     if (cur) {
       const rec = list.find(s => s.id === cur.setId);

@@ -256,12 +256,14 @@ channel stack, name, duration and per-channel sparklines.
 
 - **All / None / Solo** show, hide, or isolate lines; **‹ ›** step which
   set is highlighted (or which channel, when only one set is loaded).
-- With a **subset of lines** selected (some on, some off — anything but a
-  clean whole-set solo), **‹ ›** instead shift the *whole selection* one
-  channel, wrapping at the ends. Two hand-picked lines stay a pair as
-  they walk the channels, and a measured channel plus its fit line cycle
-  together — a quick way to compare each channel against its fit in
-  turn.
+- With a **subset of lines** selected (some on, some off), **‹ ›**
+  instead shift the *whole selection* one step, wrapping at the ends.
+  Two hand-picked lines stay a pair as they walk the channels, and a
+  measured channel plus its fit line cycle together — a quick way to
+  compare each channel against its fit in turn. Measured sets and fit
+  overlays shift independently: a selected line that is a whole
+  (single-channel) set steps to the next *set*, and a visible fit line
+  rides along rather than being dropped.
 - Each set name is a **tri-state** toggle — click cycles the whole set
   **on -> faded -> off**; double-click (or **F2**) renames it.
 - Expand a set to toggle individual channels (each channel line is also

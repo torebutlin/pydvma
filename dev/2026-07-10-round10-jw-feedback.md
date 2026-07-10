@@ -51,4 +51,29 @@ pytest 347/3 (+2 time-import tests; base grew on the PC day). vitest
 time-mat import, second-file append; both through the real engine).
 mkdocs --strict green. Engine wheel rebuilt (file.py runs in pyodide).
 
-Committed locally — NOT pushed (no push instruction this round).
+Pushed + deployed same day (CI green), with dev/example_data
+gitignored.
+
+## Round-10b addendum (Tore): ‹ › drop the fit line on set-solo selections
+
+Report: data line + fit line selected → ‹ › dropped the fit and just
+moved to the next data line. Root cause: the round-8 shift-mode
+dispatch kept a "clean whole-set solo → old set stepping" exception,
+judged via trayFocus — which FILTERS fit pseudo-sets. So "one data set
+fully visible + a fit line" read as a clean data solo and `step()`
+soloed the next set, wiping the fit. Single-channel sets (JW-style
+composited archives, appended files) make every selected line a
+whole-set solo, so it bit constantly there.
+
+Fix: `selection.shiftLines` is now FAMILY-aware — data sets and fit
+pseudo-sets shift independently by one according to each family's own
+structure: a family showing a whole-set solo advances the solo to its
+next set (highlight follows for data; two families soloing in parallel
+cycle in LOCKSTEP — data set + its fit set), anything else keeps the
+round-8 per-set channel rotation. The old no-fit set stepping falls
+out as a special case, so the Tray's trayFocus exception is deleted
+(`shiftMode` = "a proper line subset is showing"). Three new selection
+unit tests (ride-along, lockstep, no-fit advance ≡ old stepping); all
+round-8/9 shift tests unchanged. Verified live in the browser: ch+fit
+pair cycles; a fully-visible data set stays put while its fit line
+cycles; nothing dropped.
