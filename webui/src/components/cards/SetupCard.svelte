@@ -345,6 +345,26 @@
             </label>
           </div>
         </div>
+        <!-- domain: digital low-pass (round-9) — fs keeps its meaning; ON
+             means the capture oversamples at the device max and comes down
+             to fs behind a linear-phase anti-alias FIR (noise-reducing
+             decimation). Bridge: MySettings.lpf_on (server-side chain);
+             Web Audio: native-rate capture + engine resample. -->
+        <div class="grp">
+          <span class="grp-lab">digital low-pass</span>
+          <div class="grp-ctl">
+            <label class="switch"
+              title="Sample at the device's maximum rate, then decimate to your fs behind an anti-alias filter (reduces noise and aliasing). Off = sample at fs directly.">
+              <input type="checkbox" checked={$settings.lpfOn}
+                data-testid="setup-lpf"
+                onchange={(e) => acquire.patch({ lpfOn: (e.target as HTMLInputElement).checked })} />
+              oversample&nbsp;+&nbsp;decimate
+            </label>
+            {#if $settings.lpfOn}
+              <span class="note">logs at fs = {($settings.sampleRate / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz via the highest device rate</span>
+            {/if}
+          </div>
+        </div>
         <!-- domain: timing — input latency hint (best-effort). -->
         <div class="grp">
           <span class="grp-lab">timing</span>

@@ -41,7 +41,7 @@ import type { NpyArray } from '../codec/npy';
 import type { EngineStore } from '../stores/engine';
 import type { Selection } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
-import { defaults, type PerSetSettings } from '../stores/analysisSettings';
+import { autoVoicesForW0, defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import type { ViewId } from '../stores/viewstate';
 import { PHASE_DEV_WARN_DEG } from '../stores/modal';
@@ -75,11 +75,11 @@ function sourceOfColumn(col: number, chIn: number | null, nChannels: number): nu
 }
 
 /** Compute-action kind, used as the per-kind stale-guard + error key. */
-type Kind = 'fft' | 'psd' | 'tf' | 'sono' | 'clean' | 'fit';
+type Kind = 'fft' | 'psd' | 'tf' | 'sono' | 'clean' | 'resample' | 'fit';
 
 /** A fresh, all-clear per-kind error record. */
 const emptyErrors = (): Record<Kind, string> =>
-  ({ fft: '', psd: '', tf: '', sono: '', clean: '', fit: '' });
+  ({ fft: '', psd: '', tf: '', sono: '', clean: '', resample: '', fit: '' });
 
 /** Measurement type for the modal fit (Qt's "TF type" combo). */
 export type MeasurementType = 'acc' | 'vel' | 'dsp';
@@ -322,7 +322,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * fix for the cross-kind clobber bug: a debounced sonogram slider must
    * not drop an in-flight TF result, and vice versa.
    */
-  const seqs: Record<Kind, number> = { fft: 0, psd: 0, tf: 0, sono: 0, clean: 0, fit: 0 };
+  const seqs: Record<Kind, number> = { fft: 0, psd: 0, tf: 0, sono: 0, clean: 0, resample: 0, fit: 0 };
   const bump = (k: Kind): number => (seqs[k] = seqs[k] + 1);
   const stale = (k: Kind, token: number): boolean => token !== seqs[k];
 
@@ -437,7 +437,17 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         if (ui.analysis && settings) {
           if (ui.analysis.freq) settings.patch(setId, 'freq', ui.analysis.freq);
           if (ui.analysis.tf) settings.patch(setId, 'tf', ui.analysis.tf);
-          if (ui.analysis.sono) settings.patch(setId, 'sono', ui.analysis.sono);
+          if (ui.analysis.sono) {
+            const s = ui.analysis.sono;
+            // Pre-round-9 files carry voicesPerOctave with no voicesAuto
+            // flag: a saved density that ISN'T what auto would resolve was a
+            // hand-picked value — pin it, so the next w0 tweak can't clobber
+            // it with the auto-follow.
+            const legacyPinned = s.voicesAuto === undefined
+              && s.voicesPerOctave !== undefined
+              && s.voicesPerOctave !== autoVoicesForW0(s.w0 ?? defaults().sono.w0);
+            settings.patch(setId, 'sono', legacyPinned ? { ...s, voicesAuto: false } : s);
+          }
         }
       }
     });
@@ -586,6 +596,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const tfChanged = tf.chIn !== d.tf.chIn || tf.window !== d.tf.window || tf.averaging !== d.tf.averaging || tf.nFrames !== d.tf.nFrames;
         const sonoChanged = sono.nFft !== d.sono.nFft || sono.dynRangeDb !== d.sono.dynRangeDb
           || sono.method !== d.sono.method || sono.voicesPerOctave !== d.sono.voicesPerOctave
+          || sono.voicesAuto !== d.sono.voicesAuto
           || sono.w0 !== d.sono.w0 || sono.fMin !== d.sono.fMin || sono.fMax !== d.sono.fMax;
         if (freqChanged || tfChanged || sonoChanged) {
           ui.analysis = {};
@@ -973,6 +984,97 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // the FFT/PSD/TF/sono views never show a stale copy's spectra.
       await recomputeExisting(ws);
     });
+  }
+
+  /** One-level resample undo stash per set (round-9). */
+  const resampleUndo = new Map<number, { td: NpyArray; ax: NpyArray; fs: number }>();
+
+  /**
+   * Resample the set named by `target` to `fsNew` (round-9): the Time
+   * view's Resample tool, "resample to match", and the web-audio side of
+   * the logging digital low-pass. Band-limited rational polyphase via the
+   * engine's `resample_time` op — noise-reducing anti-alias decimation
+   * when `fsNew < fs` (96 dB stopband at the new Nyquist), band-limited
+   * (sinc) interpolation when `fsNew > fs` (stopband at the ORIGINAL
+   * Nyquist — no invented high-frequency content), zero-phase either way.
+   *
+   * Replaces the set's stored TimeData in place — arrays, time axis, and
+   * `settings.fs` — then recomputes every derived result that already
+   * exists for the set (like Clean Impulse). Stashes the previous arrays
+   * so `undoResample` can revert one step. Returns the ACHIEVED fs
+   * (rational approximation of `fsNew`; equal for representable ratios),
+   * or null when the target is unknown / has no time data / the rate is
+   * already `fsNew`.
+   */
+  async function resampleTime(
+    target: AnalysisTarget,
+    fsNew: number,
+    opts: { notify?: boolean } = {},
+  ): Promise<number | null> {
+    const ws = target === 'all' ? working[0] : working.find((w) => w.setId === target);
+    if (!ws || !ws.time.arrays.time_data || !(fsNew > 0)) return null;
+    if (Math.abs(fsNew - ws.fs) / ws.fs < 1e-9) return null;
+    let achieved: number | null = null;
+    await guarded('resample', async () => {
+      const prev = { td: ws.time.arrays.time_data, ax: ws.time.arrays.time_axis, fs: ws.fs };
+      const { data, nCh } = timePayload(ws.time);
+      const res = await engine.enqueue('resample_time', {
+        time_data: data, n_channels: nCh, fs: ws.fs, fs_new: fsNew,
+      });
+      const out = asMarshalled(mval(res, 'time_data'));
+      const fsOut = Number(mval(res, 'fs_out'));
+      const n = out.shape[0];
+      const axis = Float64Array.from({ length: n }, (_, i) => i / fsOut);
+      applyTimeArrays(ws, {
+        td: {
+          shape: out.shape, isComplex: false,
+          data: out.data instanceof Float64Array ? out.data : Float64Array.from(out.data),
+        },
+        ax: { shape: [n], isComplex: false, data: axis },
+      });
+      resampleUndo.set(ws.setId, prev);
+      // A resample invalidates the clean-impulse stash (raw arrays at the
+      // OLD rate would corrupt a later toggle) — drop it for this set.
+      cleanCache.delete(ws.setId);
+      cleanedSets.update((m) => ({ ...m, [ws.setId]: false }));
+      ws.fs = fsOut;
+      if (ws.time.settings) ws.time.settings.fs = fsOut;
+      else ws.time.settings = { fs: fsOut };
+      dataset.update((d) => d);          // re-emit for autosave (see cleanImpulse)
+      await recomputeExisting(ws);
+      achieved = fsOut;
+      if (opts.notify) {
+        const fromTxt = prev.fs >= 1000 ? `${(prev.fs / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz` : `${prev.fs.toFixed(6).replace(/\.?0+$/, '')} Hz`;
+        const toTxt = fsOut >= 1000 ? `${(fsOut / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz` : `${fsOut.toFixed(6).replace(/\.?0+$/, '')} Hz`;
+        toasts?.push(`Resampled ${fromTxt} → ${toTxt}. Saved data will carry the new rate.`, {
+          level: 'success',
+          actions: [{ label: '↶ Undo', run: () => void undoResample(ws.setId) }],
+        });
+      }
+    });
+    return achieved;
+  }
+
+  /**
+   * Revert the last `resampleTime` on a set (one level). Restores the
+   * stashed arrays + fs and recomputes existing derived results. Returns
+   * true when a stash existed.
+   */
+  async function undoResample(setId: number): Promise<boolean> {
+    const prev = resampleUndo.get(setId);
+    const ws = working.find((w) => w.setId === setId);
+    if (!prev || !ws) return false;
+    await guarded('resample', async () => {
+      resampleUndo.delete(setId);
+      applyTimeArrays(ws, { td: prev.td, ax: prev.ax });
+      ws.fs = prev.fs;
+      if (ws.time.settings) ws.time.settings.fs = prev.fs;
+      cleanCache.delete(ws.setId);
+      cleanedSets.update((m) => ({ ...m, [ws.setId]: false }));
+      dataset.update((d) => d);
+      await recomputeExisting(ws);
+    });
+    return true;
   }
 
   /**
@@ -1981,6 +2083,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
+    resampleTime, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
     getCalibration, setCalFactors,
     /** Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match. */

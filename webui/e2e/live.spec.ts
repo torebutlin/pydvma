@@ -53,11 +53,22 @@ test('Setup full carries the full soundcard option set grouped by domain', async
   await page.getByRole('button', { name: /Full/ }).click();
   const full = page.getByTestId('setup-full');
   await expect(full).toBeVisible();                          // extended settings row appears
-  // Grouped by domain: device capabilities / processing / timing.
+  // Grouped by domain: device capabilities / processing / low-pass / timing.
   await expect(full).toContainText(/device capabilities/i);
   await expect(full).toContainText(/echo/i);                // processing flags unchanged
   await expect(full).toContainText(/timing/i);
   await expect(page.getByTestId('setup-latency')).toBeVisible(); // latency hint input
+
+  // Round-9: the digital low-pass toggle (off by default). Switching it on
+  // reveals the "logs at fs …" note; off hides it again.
+  const lpf = page.getByTestId('setup-lpf');
+  await expect(lpf).toBeVisible();
+  await expect(lpf).not.toBeChecked();
+  await expect(full).not.toContainText(/logs at fs/);
+  await lpf.check();
+  await expect(full).toContainText(/logs at fs/);
+  await lpf.uncheck();
+  await expect(full).not.toContainText(/logs at fs/);
 });
 
 test('Live scope offers a custom view-time, an fmax zoom, and a PSD spectrum mode', async ({ page }) => {

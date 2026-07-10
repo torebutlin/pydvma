@@ -88,6 +88,16 @@ export interface RecordConfig {
    */
   latency?: number;
   /**
+   * Digital low-pass toggle (round-9). Web Audio: record at the context's
+   * NATIVE rate (the `sampleRate` request is not pinned onto the
+   * AudioContext, avoiding the browser's own opaque resampler) so the
+   * engine can come down to `sampleRate` behind a proper anti-alias FIR
+   * afterwards — the CALLER does that post-capture step; this module only
+   * skips the context-rate pin. Bridge: the server handles the whole
+   * chain (`MySettings.lpf_on`).
+   */
+  lpfOn?: boolean;
+  /**
    * Optional OUTPUT stimulus played through the speakers/AO during the capture
    * (round-5 item 10).  Web-Audio-only; the bridge provider ignores it.  See
    * {@link OutputStimulusConfig}.
@@ -491,7 +501,10 @@ export function startRecording(cfg: RecordConfig): RecordingHandle {
     let stimulusNode: AudioBufferSourceNode | undefined;
     let assembler: PretrigAssembler | undefined;
     try {
-      ctx = new AudioContext({ sampleRate: cfg.sampleRate });
+      // Round-9 low-pass: leave the context at its NATIVE rate (usually the
+      // device maximum) — the anti-alias resample to cfg.sampleRate happens
+      // in the engine afterwards. Otherwise pin the requested rate as before.
+      ctx = cfg.lpfOn ? new AudioContext() : new AudioContext({ sampleRate: cfg.sampleRate });
       actualFs = ctx.sampleRate;
       source = ctx.createMediaStreamSource(stream);
       // Actual channel count — the stream may give fewer than requested.

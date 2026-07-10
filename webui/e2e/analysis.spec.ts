@@ -684,6 +684,23 @@ test.describe('@engine', () => {
     await expect(page.getByLabel('voices per octave')).toBeVisible();
     await expect(page.getByLabel('nFFT')).toHaveCount(0);
 
+    // Round-9: w0 is a slider + exact box (nFFT feel), and voices/octave
+    // defaults to AUTO — the resolved density follows the wavelet Q
+    // (auto(6)=16, auto(64)=48) until an explicit value pins it.
+    const w0Box = page.getByLabel('wavelet Q w0');
+    const voices = page.getByLabel('voices per octave');
+    await expect(page.getByLabel('wavelet Q slider')).toBeVisible();
+    await expect(w0Box).toHaveValue('6');
+    await expect(voices.locator('option[value="auto"]')).toHaveText('auto (16)');
+    await w0Box.fill('64');
+    await w0Box.blur();
+    await expect(voices.locator('option[value="auto"]')).toHaveText('auto (48)');
+    await voices.selectOption('16');                 // explicit pick pins it…
+    await w0Box.fill('6');
+    await w0Box.blur();
+    await expect(voices).toHaveValue('16');          // …w0 changes no longer move it
+    await voices.selectOption('auto');               // back to auto for the calc
+
     await page.getByRole('button', { name: 'Calc Sonogram' }).click();
 
     const canvas = page.getByTestId('sono-canvas');
@@ -743,6 +760,34 @@ test.describe('@engine', () => {
     expect(path).toBeTruthy();
     // The exported raster must carry the heat, not blank axes on white.
     expect(await pngColourFrac(page, readFileSync(path!))).toBeGreaterThan(0.3);
+  });
+
+  test('Time → Resample halves the rate through the engine; toast Undo restores it (round-9)', async ({ page }) => {
+    await page.goto('/?fixture=1');
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Time' }).click();
+
+    // Read the fixture's current rate from the group label ("resample — now X kHz").
+    const label = page.locator('.grp-lab', { hasText: 'resample — now' });
+    await expect(label).toBeVisible();
+    const before = (await label.textContent())!;
+
+    // Single set → only the custom choice is offered; halve the rate.
+    await page.getByLabel('resample target').selectOption('custom');
+    await page.getByLabel('new sample rate Hz').fill('5000');
+    await page.getByTestId('resample-apply').click();
+
+    // Engine (first compute boots pyodide) → the rate label updates and the
+    // success toast offers one-level Undo.
+    await expect(label).toHaveText(/now 5 kHz/, { timeout: 200_000 });
+    const toast = page.getByTestId('toast').filter({ hasText: 'Resampled' });
+    await expect(toast).toBeVisible();
+    // The time trace survives the swap (lines still drawn).
+    await expect(page.getByTestId('plot-line').first()).toBeAttached();
+
+    await toast.getByRole('button', { name: /Undo/ }).click();
+    await expect(label).toHaveText(before, { timeout: 60_000 });
+    await expect(page.getByTestId('plot-line').first()).toBeAttached();
   });
 });
 

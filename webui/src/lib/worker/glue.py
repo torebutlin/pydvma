@@ -357,6 +357,26 @@ def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):
     return {'time_axis': _arr(cleaned.time_axis), 'time_data': _arr(cleaned.time_data)}
 
 
+def resample_time(time_data, n_channels, fs, fs_new):
+    """Band-limited resample of a raw capture to a new sample rate.
+
+    One op, two callers (round-9): the browser (Web Audio) side of the
+    logging digital low-pass — the page records at the context's native
+    rate and, with the Setup low-pass on, hands the raw capture here to
+    come down to the requested fs — and the Time view's Resample tool
+    (including "resample to match"). ``analysis.resample_to_fs`` does the
+    work: rational polyphase FIR, ~96 dB anti-alias stopband at the new
+    Nyquist when downsampling (the noise-reducing direction), stopband at
+    the ORIGINAL Nyquist when upsampling (band-limited interpolation — no
+    invented high-frequency content), zero-phase either way. Returns
+    ``{time_data, fs_out, up, down}`` — ``time_data`` flattened row-major;
+    the JS side rebuilds the time axis from ``fs_out``.
+    """
+    y = np.asarray(time_data, dtype=np.float64).reshape(-1, int(n_channels))
+    y_out, fs_out, (up, down) = analysis.resample_to_fs(y, float(fs), float(fs_new))
+    return {'time_data': _arr(y_out), 'fs_out': float(fs_out), 'up': int(up), 'down': int(down)}
+
+
 # --------------------------------------------------------------------------- #
 # Modal fitting (Wave-A Task A1)
 # --------------------------------------------------------------------------- #

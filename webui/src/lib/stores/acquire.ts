@@ -80,6 +80,16 @@ export interface AcquireSettings {
    * getUserMedia as an `ideal` latency constraint.
    */
   latency?: number;
+  /**
+   * Digital low-pass toggle (round-9, Setup "full", default OFF).
+   * `sampleRate` keeps its normal meaning — the rate the logged set ends
+   * up at — but the capture oversamples at the device's maximum rate and
+   * comes down to `sampleRate` through a linear-phase anti-alias FIR
+   * (noise-reducing decimation). On the bridge the server does this
+   * (`MySettings.lpf_on`); on Web Audio the page records at the context's
+   * native rate and the engine resamples post-capture.
+   */
+  lpfOn: boolean;
 }
 
 /** A [min, max] capability range as reported by `getCapabilities`. */
@@ -118,6 +128,7 @@ const DEFAULT_SETTINGS: AcquireSettings = {
   echoCancellation: false,
   noiseSuppression: false,
   autoGainControl: false,
+  lpfOn: false,
 };
 
 // ---- store factory ----
@@ -407,6 +418,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       noiseSuppression: cfg.noiseSuppression,
       autoGainControl: cfg.autoGainControl,
       latency: cfg.latency,
+      lpfOn: cfg.lpfOn,
     };
 
     handle = provider.startRecording(rcfg);

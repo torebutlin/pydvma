@@ -223,6 +223,78 @@ test('cleanImpulse does NOT create results the user never computed', async () =>
   expect(d.sono).toBeUndefined();
 });
 
+// ---- Resample (round-9): in-place rate change + one-level undo -----------
+
+/** Canned resample_time result: 3 samples @ fs 2 → 6 samples @ fs 4. */
+const resampleResult = () => ({
+  time_data: real([6, 2], [1, 2, 1.5, 2.5, 2, 3, 2.5, 3.5, 3, 4, 3.5, 4.5]),
+  fs_out: 4, up: 2, down: 1,
+});
+
+test('resampleTime swaps arrays/fs in place, rebuilds the axis, recomputes an existing FFT', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'resample_time') return resampleResult();
+    if (op === 'calc_fft') return fftResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  await actions.calcFft(id);                          // existing result to refresh
+
+  const achieved = await actions.resampleTime(id, 4);
+  expect(achieved).toBe(4);
+  const rs = calls.filter((c) => c.op === 'resample_time');
+  expect(rs).toHaveLength(1);
+  expect(rs[0].payload.fs).toBe(2);
+  expect(rs[0].payload.fs_new).toBe(4);
+
+  const item = get(actions.dataset)!.items[0];
+  expect(item.settings!.fs).toBe(4);
+  expect(item.arrays.time_data.shape).toEqual([6, 2]);
+  // Time axis rebuilt at the new rate: i / fs_out.
+  expect(Array.from(item.arrays.time_axis.data)).toEqual([0, 0.25, 0.5, 0.75, 1, 1.25]);
+  // The existing FFT recomputed FROM the resampled arrays at the new fs.
+  const ffts = calls.filter((c) => c.op === 'calc_fft');
+  expect(ffts).toHaveLength(2);
+  expect(ffts[1].payload.fs).toBe(4);
+  expect((ffts[1].payload.time_data as Float64Array).length).toBe(12);
+});
+
+test('resampleTime undo restores the previous arrays and fs', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'resample_time') return resampleResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  const raw = Array.from(get(actions.dataset)!.items[0].arrays.time_data.data);
+
+  await actions.resampleTime(id, 4);
+  expect(get(actions.dataset)!.items[0].settings!.fs).toBe(4);
+
+  const undone = await actions.undoResample(id);
+  expect(undone).toBe(true);
+  const item = get(actions.dataset)!.items[0];
+  expect(item.settings!.fs).toBe(2);
+  expect(Array.from(item.arrays.time_data.data)).toEqual(raw);
+  // One level only: a second undo has nothing to restore.
+  expect(await actions.undoResample(id)).toBe(false);
+  // The undo itself never re-runs the engine op.
+  expect(calls.filter((c) => c.op === 'resample_time')).toHaveLength(1);
+});
+
+test('resampleTime is a no-op at the current rate and on unknown sets', async () => {
+  const { engine, calls } = fakeEngine(async () => ({}));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  expect(await actions.resampleTime(id, 2)).toBeNull();     // already at fs 2
+  expect(await actions.resampleTime(999, 4)).toBeNull();    // unknown set
+  expect(calls).toHaveLength(0);
+});
+
 // ---- Clean Impulse TOGGLE (round-7b): first clean stashes the raw arrays
 // and applies the cleaned copy; toggling off restores raw with NO engine op;
 // toggling back on reuses the cache — the clean NEVER re-runs on its own

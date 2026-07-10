@@ -46,6 +46,48 @@
     if (targetId >= 0) actions.cleanImpulse(targetId, impulseCh);
   }
   const isCleaned = $derived(targetId >= 0 && !!$cleanedSets[targetId]);
+
+  // ---- Resample (round-9) -------------------------------------------------
+  // Change the highlighted set's sample rate: pick another set to MATCH
+  // (dropdown shows each set's fs) or a custom fs. Down = noise-reducing
+  // anti-alias decimation; up = band-limited interpolation (no invented
+  // high-frequency content). One-level Undo via the success toast.
+  // `workingSets()` is a plain accessor — re-read it when the set list or
+  // the busy flag changes so the fs labels track resamples/removals.
+  const workingInfo = $derived.by(() => {
+    void $setsView; void $busy;
+    return actions.workingSets();
+  });
+  const currentFs = $derived(workingInfo.find((w) => w.setId === targetId)?.fs ?? null);
+  const fmtFs = (fs: number): string =>
+    fs >= 1000 ? `${(fs / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz` : `${fs.toFixed(6).replace(/\.?0+$/, '')} Hz`;
+  // Other time-bearing sets whose fs differs — the "match" choices.
+  const matchOptions = $derived(workingInfo
+    .filter((w) => w.hasTime && w.setId !== targetId
+      && currentFs !== null && Math.abs(w.fs - currentFs) / currentFs > 1e-9)
+    .map((w) => ({
+      setId: w.setId, fs: w.fs,
+      name: $setsView.find((s) => s.id === w.setId)?.name ?? `set ${w.setId}`,
+    })));
+  let resampleChoice = $state<string>('custom');
+  let customFs = $state<number | null>(null);
+  // A stale match selection (set removed / fs now equal) falls back to custom.
+  $effect(() => {
+    if (resampleChoice !== 'custom'
+        && !matchOptions.some((o) => String(o.setId) === resampleChoice)) {
+      resampleChoice = 'custom';
+    }
+  });
+  const resampleFs = $derived(resampleChoice === 'custom'
+    ? (customFs && customFs > 0 ? customFs : null)
+    : matchOptions.find((o) => String(o.setId) === resampleChoice)?.fs ?? null);
+  const canResample = $derived(!$busy && targetId >= 0 && currentFs !== null
+    && resampleFs !== null && Math.abs(resampleFs - currentFs) / currentFs > 1e-9);
+  function doResample() {
+    if (canResample && resampleFs !== null) {
+      void actions.resampleTime(targetId, resampleFs, { notify: true });
+    }
+  }
 </script>
 
 <section class="ctx-card card-controls" aria-label="Time stage controls">
@@ -72,8 +114,36 @@
         </div>
       </div>
     </div>
+    {#if currentFs !== null}
+      <div class="ctx-row">
+        <div class="grp">
+          <span class="grp-lab">resample — now {fmtFs(currentFs)}</span>
+          <div class="grp-ctl">
+            <select bind:value={resampleChoice} aria-label="resample target"
+              title="Pick a set to match its sample rate, or choose a custom rate">
+              {#each matchOptions as o (o.setId)}
+                <option value={String(o.setId)}>match {o.name} ({fmtFs(o.fs)})</option>
+              {/each}
+              <option value="custom">custom…</option>
+            </select>
+            {#if resampleChoice === 'custom'}
+              <input type="number" min="1" step="1" bind:value={customFs}
+                placeholder="new fs" style="width:76px" aria-label="new sample rate Hz" />
+              <span class="ml">Hz</span>
+            {/if}
+            <button class="btn sm" disabled={!canResample}
+              data-testid="resample-apply"
+              title="Down: noise-reducing anti-alias decimation. Up: band-limited interpolation (no invented high-frequency content). Undo via the toast."
+              onclick={doResample}>Resample</button>
+          </div>
+        </div>
+      </div>
+    {/if}
     {#if $computeErrors.clean}
       <div class="ctx-err" role="alert">{$computeErrors.clean}</div>
+    {/if}
+    {#if $computeErrors.resample}
+      <div class="ctx-err" role="alert">{$computeErrors.resample}</div>
     {/if}
   </div>
   <div class="ctx-primary">

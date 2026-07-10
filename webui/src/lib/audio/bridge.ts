@@ -485,6 +485,9 @@ export class BridgeProvider implements SourceProvider {
       if (dev.driver !== 'mock') s.device_index = dev.index;
     }
     if (durationS != null) s.stored_time = durationS;
+    // Round-9 digital low-pass: the SERVER owns the whole chain (oversample
+    // at the device max, anti-alias FIR, resample to fs) — one flag here.
+    if (cfg.lpfOn) s.lpf_on = true;
 
     const ec = this.extraConfig;
     if (ec.deviceDriver && s.device_driver == null) s.device_driver = ec.deviceDriver;

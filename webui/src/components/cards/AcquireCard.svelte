@@ -16,6 +16,7 @@
    * path (round-5 #10), both are always available — the browser drives the
    * output stimulus + armed pretrigger itself (see `source.ts`).
    */
+  import { get } from 'svelte/store';
   import type { AcquireStore } from '../../lib/stores/acquire';
   import { recordingToItem } from '../../lib/stores/acquire';
   import {
@@ -221,11 +222,20 @@
 
   async function logData() {
     try {
+      const cfg = get(acquire.settings);
       const rec = await acquire.record();
       // Convert to a DvmaItem, preserving bridge container provenance
       // (real device driver / calibration / name) when present.
       const item = recordingToItem(rec, undefined, acquire.lastRecordingMeta);
-      actions.addRecordedSet(item);
+      const setId = actions.addRecordedSet(item);
+      // Round-9 digital low-pass, Web Audio side: the capture ran at the
+      // context's NATIVE rate (source.ts skips the rate pin when lpfOn);
+      // bring it down to the requested fs through the engine's anti-alias
+      // resampler. Bridge captures arrive already at the target rate (the
+      // server did the whole chain), so the fs-equality guard skips them.
+      if (cfg.lpfOn && Math.abs(rec.fs - cfg.sampleRate) / cfg.sampleRate > 1e-9) {
+        await actions.resampleTime(setId, cfg.sampleRate);
+      }
       // Switch to Time view to show the new recording.
       activeStage.set('time');
       toasts.push('Recording captured.', { level: 'success' });
