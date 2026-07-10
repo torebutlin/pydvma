@@ -47,8 +47,39 @@ Defaults are 44.1 kHz, 1 channel, 2 s.
   are browser audio-processing features that silently alter a signal;
   pydvma leaves them off so a measurement is not filtered behind your
   back. Turn them on only if you actually want them.
+- **digital low-pass** — an **oversample + decimate** toggle, off by
+  default (see below).
 - **timing** — an optional latency hint (ms); blank uses the browser
   default.
+
+### Digital low-pass
+
+With the **digital low-pass** on, your **fs** setting keeps its meaning
+— it is still the rate the logged data ends up at — but the capture is
+made differently: the device samples at its **highest available rate**
+and the record is resampled down to fs behind a linear-phase
+anti-alias filter (passband to fs/2.56, ≥ 96 dB stopband at fs/2 —
+the same guard-band convention a delta-sigma module's hardware
+anti-alias filter uses; zero-phase, so transfer functions and modal
+fits are unaffected).
+
+Why you might want it on:
+
+- **Anti-aliasing.** Multiplexed-SAR hardware (NI USB-6003/6212, most
+  sound cards) has **no analogue anti-alias filter**: logging directly
+  at a low fs lets any content above fs/2 fold straight into your
+  band. The oversample+decimate chain removes it before the rate
+  drops — effectively giving those devices the anti-alias behaviour a
+  DSA module (NI 9234) has in silicon.
+- **Noise reduction.** Rejecting the out-of-band noise buys roughly
+  10·log₁₀(oversample factor) dB of broadband-noise process gain.
+
+On the bridge the server runs the whole chain
+(`MySettings(lpf_on=True)` for Python users — the logged settings
+record the capture rate as `lpf_capture_fs`); in the browser the page
+records at the audio context's native rate and the engine resamples.
+If the device has no oversampling headroom (its maximum rate is below
+2·fs), the log proceeds unfiltered with a note.
 
 !!! warning "Measurement audio, not a phone call"
     The default-off echo/noise/auto-gain toggles are the single most

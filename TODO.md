@@ -13,6 +13,14 @@ this file now tracks only what is still open.
 
 ## Current backlog — web logger follow-ups
 
+- **PC (NI hardware): verify the round-9 digital low-pass** — run
+  `dev/bridge_hw_check.py` against `pydvma-serve --driver nidaq`
+  (new check E logs with `lpf_on` on all three devices: oversampled
+  capture, TimeData back at the target fs, `lpf_capture_fs` recorded).
+  Watch the 6003/6212 multiplexed case in particular: `max_input_fs`
+  divides the aggregate `ai_max_rate` by the channel count
+  (Mac-untestable). Also eyeball one `lpf_on` log through the built UI.
+
 Flagged during the round-5/6 hands-on rounds (round-7, 2026-07-09,
 worked through Tore's first lab-testing feedback batch — see
 `dev/2026-07-09-round7-feedback.md` for the nine items + dispositions);

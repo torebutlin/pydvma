@@ -2,7 +2,27 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-09 (round 8, committed locally — NOT pushed yet):
+As of 2026-07-10 (round 9, PUSHED): third feedback batch
+(`dev/2026-07-10-round9-feedback.md`): **CWT wavelet Q is a slider**
+(4–64 + exact box to 128, nFFT feel) with **voices/octave AUTO by
+default** (`autoVoicesForW0` = ladder ≥ max(16, 0.6·w0) — Morlet tiling
+bound, default CWT unchanged; explicit pick pins it, legacy files with
+hand-picked voices load pinned); **logging digital low-pass toggle**
+(Setup full, off by default): fs keeps its meaning, `lpf_on` makes the
+capture oversample at the device max (`streams.max_input_fs` — NB
+multiplexed NI devices: ai_max_rate is AGGREGATE, divided by channels)
+and resample down behind `analysis.resample_to_fs` (rational polyphase
+Kaiser FIR, 96 dB stopband, zero-phase; DSA-coercion-safe; clip check
+on the RAW peak; `lpf_capture_fs` recorded; web-audio path records at
+native rate + engine-resamples); and a **Time-view Resample tool**
+(match-a-set dropdown with fs values + custom fs; down = anti-alias
+decimation, up = band-limited interp — NOT linear, which images; toast
+Undo one level; derived results recompute). **NI hardware verification
+PENDING on the PC** — bridge_hw_check.py check E is ready (TODO.md
+top). Engine wheel rebuilt (same 2.0.0 name). Suites: pytest 340/3,
+check 0/0, vitest 652/1, Playwright 79/7, mkdocs --strict green.
+
+Earlier (2026-07-09, round 8):
 Tore's second feedback batch landed
 (`dev/2026-07-09-round8-feedback.md`): the **fit summary chip is
 draggable + minimisable** (module-scope UI state survives re-mounts;

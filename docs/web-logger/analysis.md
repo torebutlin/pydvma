@@ -30,6 +30,18 @@ The **Time** stage inspects the raw time series.
   output). Every result you have already computed (FFT / PSD / TF /
   sonogram) recomputes to match whichever copy is applied. Saving writes
   the applied copy; the other copy lives only in the session.
+- **Resample** — change the highlighted set's sample rate after the
+  fact. Pick another set to **match** (the dropdown lists each set with
+  its rate — handy when measurements logged at different rates need a
+  common fs) or enter a **custom** rate. Downsampling uses the same
+  noise-reducing anti-alias filter as the logging
+  [digital low-pass](acquisition.md#digital-low-pass) (96 dB stopband
+  at the new Nyquist, zero-phase); upsampling is band-limited (sinc)
+  interpolation, which — unlike linear interpolation — invents no
+  frequency content above the original band and passes the recorded
+  band untouched. Existing results recompute at the new rate; the
+  success message offers a one-step **Undo**, and saving writes the
+  resampled data.
 
 ## Frequency
 
@@ -131,11 +143,16 @@ Two methods are available via the **STFT | CWT** switch:
   of one fixed window it uses log-spaced frequencies whose time/
   frequency trade-off adapts per band — better at separating close
   low-frequency modes than any single STFT window. Controls:
-  **voices/octave** (how densely the log-frequency ladder is sampled),
-  **wavelet Q (w0)** (the wavelet's own bandwidth: higher w0 = more
-  cycles under the envelope = finer *frequency* resolution at the cost
-  of coarser *time* resolution — this, not voices/octave, is the true
-  resolution knob), and an optional frequency range. The magnitude
+  **wavelet Q (w0)** — a slider (4–64, the exact box accepts up to
+  128) for the wavelet's own bandwidth: higher w0 = more cycles under
+  the envelope = finer *frequency* resolution at the cost of coarser
+  *time* resolution — this is the true resolution knob;
+  **voices/octave** (how densely the log-frequency ladder is sampled) —
+  defaults to **auto**, which keeps the density matched to the wavelet
+  Q (a high-Q wavelet's narrow bands need a comparably dense grid, so
+  auto tracks ≥ 0.6·w0 up the ladder, never below 16); pick an explicit
+  number to pin it, or *auto* to resume following; and an optional
+  frequency range. The magnitude
   scale matches the STFT image, so the two methods read comparably.
   The heat map is drawn on the wavelet's **native log-spaced grid**, so
   switching the frequency axis to **log** (see below) shows its full
