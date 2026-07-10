@@ -35,10 +35,14 @@ export interface ToastOptions {
 let nextId = 1;
 
 /**
- * Create a toast store. `push` enqueues a toast (auto-dismissing after
- * `timeout` ms — default 4000 — unless it carries actions, which pin it
- * open) and returns its id; `dismiss` removes a toast by id. Actionable
- * toasts self-dismiss after their action's `run` completes.
+ * Create a toast store. `push` enqueues a toast and returns its id;
+ * `dismiss` removes a toast by id. Info/success toasts auto-dismiss
+ * after `timeout` ms (default 4000); toasts that carry actions pin open
+ * until acted on, and **error toasts pin open until the user closes
+ * them** (round-10, JW's feedback: an error vanished before he could
+ * read or copy it) — pass an explicit `timeout` to make an error
+ * transient. Actionable toasts self-dismiss after their action's `run`
+ * completes.
  */
 export function createToasts() {
   const toasts = writable<Toast[]>([]);
@@ -63,8 +67,10 @@ export function createToasts() {
     }));
     toasts.update((list) => [...list, { id, message, level, actions }]);
     if (!actions) {
-      const timeout = opts.timeout ?? 4000;
-      setTimeout(() => dismiss(id), timeout);
+      // Errors stay until dismissed via × (unless the caller passes an
+      // explicit timeout) so they can be read and copied.
+      const timeout = opts.timeout ?? (level === 'error' ? null : 4000);
+      if (timeout !== null) setTimeout(() => dismiss(id), timeout);
     }
     return id;
   }
