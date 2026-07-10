@@ -708,3 +708,118 @@ def test_dsa_fs_coercion_adopts_actual_rate(device_entry, device_index):
     assert s2.fs == pytest.approx(actual)
 
 
+def test_lpf_log_respects_per_channel_max_rate(device_entry, device_index):
+    """``lpf_on`` log on real hardware: TimeData comes back at the
+    target fs with ``lpf_capture_fs`` recorded, and the oversampled
+    capture never exceeds what the device can actually sustain for the
+    channel count — on a MULTIPLEXED device (one ADC scanning the
+    channel list) the advertised ``ai_max_rate`` is an AGGREGATE
+    figure, so the per-channel ceiling is that divided by the number
+    of channels. Simultaneous (DSA) devices sample per-channel and may
+    use the full rate (their ladder may coerce the capture upward a
+    step, but never past the per-channel max)."""
+    from pydvma import _ni_backend
+    caps = _ni_backend.entry_capabilities(device_entry)
+    target_fs = 2000
+    n_ch = 2
+    s = _settings_for(device_entry, device_index, channels=n_ch,
+                      stored_time=0.5, fs=target_fs)
+    s.lpf_on = True
+    ds = dvma.log_data(s)
+    td = ds.time_data_list[0]
+    fs_out = float(td.settings.fs)
+    assert fs_out == pytest.approx(target_fs), (
+        'lpf_on TimeData fs {} != target {}'.format(fs_out, target_fs))
+    cap_fs = getattr(td.settings, 'lpf_capture_fs', None)
+    assert cap_fs is not None and cap_fs >= 2 * target_fs, cap_fs
+    assert td.time_data.shape == (int(0.5 * fs_out), n_ch)
+    assert np.isfinite(td.time_data).all()
+
+    per_channel_max = float(caps['ai_max_rate'])
+    if not caps.get('simultaneous'):
+        per_channel_max /= n_ch
+    assert cap_fs <= per_channel_max * (1 + 1e-9), (
+        'capture ran at {} Hz but the per-channel ceiling for {} at '
+        '{} channels is {} Hz — aggregate ai_max_rate not divided?'
+        .format(cap_fs, device_entry['product_type'], n_ch,
+                per_channel_max)
+    )
+
+
+def test_lpf_antialiases_out_of_band_stimulus(device_entry, device_index):
+    """The point of the digital low-pass: on a multiplexed device (no
+    analog anti-alias filter) a tone above the target Nyquist folds
+    in-band at full amplitude when logging directly at fs; with
+    ``lpf_on`` the oversampled capture keeps the tone real and the
+    decimation FIR (96 dB stopband at the new Nyquist) removes it,
+    while in-band content passes at unity.
+
+    Drives 400 Hz (in-band) + 1300 Hz (above the 1 kHz target Nyquist)
+    through the ao0 → ai0 loopback at output_fs=20 kHz and logs at
+    fs=2000 with lpf_on off/on. DSA devices are skipped — their
+    hardware anti-aliasing means the 'off' capture never aliases, so
+    there is nothing to compare. Software-timed-AO devices (USB-600x,
+    AO max 5 kS/s) can't play the 20 kHz drive and are skipped too."""
+    from pydvma import _ni_backend
+    caps = _ni_backend.entry_capabilities(device_entry)
+    if caps.get('simultaneous'):
+        pytest.skip('DSA hardware anti-aliases in hardware; the '
+                    'unfiltered comparison capture cannot alias')
+    out_fs = 20000
+    if not caps.get('ao_max_rate') or caps['ao_max_rate'] < out_fs:
+        pytest.skip('device AO cannot play a {} S/s drive'.format(out_fs))
+    if not _has_ao_to_ai_loopback(device_entry, device_index):
+        pytest.skip('No ao0 → ai0 loopback detected on {} ({}).'
+                    .format(device_entry['name'],
+                            device_entry['product_type']))
+
+    target_fs = 2000
+    f_in, f_out = 400.0, 1300.0   # 1300 folds to 700 in a 2 kHz capture
+    t = np.arange(0, 1.4, 1.0 / out_fs)
+    n_ramp = int(0.05 * out_fs)
+    win = np.ones_like(t)
+    win[:n_ramp] = 0.5 * (1 - np.cos(np.pi * np.arange(n_ramp) / n_ramp))
+    win[-n_ramp:] = 0.5 * (1 + np.cos(np.pi * np.arange(n_ramp) / n_ramp))
+    drive = (0.5 * np.sin(2 * np.pi * f_in * t)
+             + 0.5 * np.sin(2 * np.pi * f_out * t)) * win
+
+    def tone_amp(sig, fs, f):
+        n = len(sig)
+        w = np.hanning(n)
+        spec = np.abs(np.fft.rfft(sig * w)) * 2 / np.sum(w)
+        freqs = np.fft.rfftfreq(n, 1.0 / fs)
+        k = int(np.argmin(np.abs(freqs - f)))
+        return float(np.max(spec[max(0, k - 2):k + 3]))
+
+    amps = {}
+    for lpf in (False, True):
+        cfg = _config_for_device(device_entry)
+        s = dvma.MySettings(
+            device_driver='nidaq', device_index=device_index,
+            channels=2, fs=target_fs, stored_time=1.6,
+            output_device_driver='nidaq', output_device_index=device_index,
+            output_channels=1, output_fs=out_fs, lpf_on=lpf, **cfg,
+        )
+        ds = dvma.log_data(s, output=drive[:, None])
+        td = ds.time_data_list[0]
+        fs = float(td.settings.fs)
+        y = np.asarray(td.time_data)[:, 0]
+        seg = y[int(0.3 * fs):int(1.1 * fs)]   # steady mid-tone window
+        amps[lpf] = (tone_amp(seg, fs, f_in), tone_amp(seg, fs, 700.0))
+
+    in_off, alias_off = amps[False]
+    in_on, alias_on = amps[True]
+    # In-band tone preserved either way (passband to fs/2.56 = 781 Hz).
+    assert 0.35 < in_off < 0.65, in_off
+    assert 0.35 < in_on < 0.65, in_on
+    # Without the LPF the out-of-band tone folds in at full strength...
+    assert alias_off > 0.3, (
+        'expected the unfiltered capture to alias (~0.5 V at 700 Hz), '
+        'got {:.3f} V'.format(alias_off))
+    # ...and the LPF must crush it (FIR stopband is 96 dB; allow a
+    # generous 40 dB margin for loopback noise floor).
+    assert alias_on < alias_off / 100, (
+        'alias only dropped from {:.4f} to {:.4f} V with lpf_on — '
+        'anti-alias filtering not effective'.format(alias_off, alias_on))
+
+
