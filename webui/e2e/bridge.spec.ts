@@ -29,6 +29,11 @@ import { fileURLToPath } from 'node:url';
  */
 
 const BRIDGE_E2E = !!process.env.BRIDGE_E2E;
+// Interpreter for the spawned server. On Windows `python3` is typically the
+// Microsoft Store stub (prints an install prompt and exits), so point
+// PYDVMA_PYTHON at a real interpreter there, e.g.
+//   PYDVMA_PYTHON=C:\Users\me\anaconda3\python.exe
+const PYTHON = process.env.PYDVMA_PYTHON ?? 'python3';
 const PORT = Number(process.env.BRIDGE_PORT ?? 8763);
 const WS_URL = `ws://127.0.0.1:${PORT}/ws`;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -54,7 +59,7 @@ function waitForPort(port: number, timeoutMs = 20000): Promise<void> {
 
 test.beforeAll(async () => {
   if (!BRIDGE_E2E) return;
-  server = spawn('python3', ['-m', 'pydvma.serve', '--driver', 'mock', '--port', String(PORT)], {
+  server = spawn(PYTHON, ['-m', 'pydvma.serve', '--driver', 'mock', '--port', String(PORT)], {
     cwd: REPO_ROOT,
     stdio: 'pipe',
   });
@@ -266,7 +271,7 @@ test.describe('pydvma serve --settings launch prefill', () => {
       pretrig_samples: 150, pretrig_timeout: 3,
       output: { type: 'sweep', amp: 0.4, f1: 20, f2: 800 },
     }));
-    settingsServer = spawn('python3', [
+    settingsServer = spawn(PYTHON, [
       '-m', 'pydvma.serve', '--driver', 'mock', '--port', String(SETTINGS_PORT),
       '--settings', settingsFile, '--ui-dir', DIST_DIR,
     ], { cwd: REPO_ROOT, stdio: 'pipe' });

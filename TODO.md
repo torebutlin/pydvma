@@ -13,13 +13,19 @@ this file now tracks only what is still open.
 
 ## Current backlog — web logger follow-ups
 
-- **PC (NI hardware): verify the round-9 digital low-pass** — run
-  `dev/bridge_hw_check.py` against `pydvma-serve --driver nidaq`
-  (new check E logs with `lpf_on` on all three devices: oversampled
-  capture, TimeData back at the target fs, `lpf_capture_fs` recorded).
-  Watch the 6003/6212 multiplexed case in particular: `max_input_fs`
-  divides the aggregate `ai_max_rate` by the channel count
-  (Mac-untestable). Also eyeball one `lpf_on` log through the built UI.
+- ~~**PC (NI hardware): verify the round-9 digital low-pass**~~ — DONE
+  (2026-07-10, this PC): bridge_hw_check 44/44 incl. check E on all
+  three devices; the multiplexed `max_input_fs` division verified live
+  (6003 2ch captures at 50 kHz = 100k aggregate / 2, exactly at the
+  device limit; 6212 at 200 kHz; 9234 keeps 51.2k) and is now
+  regression-guarded by `test_lpf_log_respects_per_channel_max_rate` +
+  an anti-alias proof test on the 6212. The UI eyeball is done too.
+  The day's testing ALSO surfaced and fixed four real bugs (AO
+  clock-sharing vs output_fs incl. lpf_on; resample_to_fs missing
+  exact ratios for coerced capture rates — 6003 logs landed at
+  8003.2 Hz instead of 8000; bridge.ts output defaults sending a DC
+  pulse for an untouched output group; soundcard stream leak on
+  rebuild) — see the 2026-07-10 commits.
 
 Flagged during the round-5/6 hands-on rounds (round-7, 2026-07-09,
 worked through Tore's first lab-testing feedback batch — see
