@@ -64,6 +64,12 @@ export interface RangeSnapshot { range: Range; nyquistRange: Range; phaseRange: 
  * - `sonoColour` — the heat COLOUR mapping: `'db'` (default) colours by
  *   magnitude in dB over the Sono card's dynamic-range span; `'lin'` colours by
  *   linear magnitude 0→peak. The dB-ness here is the COLOUR, not the y-axis.
+ *
+ * `navigator` is the frequency-navigator visibility OVERRIDE for this view:
+ * `null` (default) = auto — App resolves auto to open in the Fit stage and on
+ * the tf Nyquist plotType (where the strip is the primary frequency control),
+ * closed otherwise; an explicit boolean (set by the toolbar toggle) wins. A
+ * display mode like `legend` — serialized, never in undo history.
  */
 export interface ViewSlice {
   range: Range;
@@ -81,6 +87,8 @@ export interface ViewSlice {
   // ── sono-only display scales (own defaults, distinct from xScale/yScale) ──
   sonoFreqScale: AxisScale;          // sono: FREQUENCY y-axis lin (default) ↔ log10
   sonoColour: SonoColour;            // sono: heat COLOUR dB (default) ↔ linear magnitude
+  // ── frequency navigator (2026-07-11 design) ──
+  navigator: boolean | null;         // freq-navigator visibility override; null = auto
 }
 
 const fresh = (): ViewSlice => ({
@@ -101,6 +109,7 @@ const fresh = (): ViewSlice => ({
   // Sono defaults reproduce today's behaviour: linear frequency y-axis, dB
   // heat colour. Independent of yScale's 'log' (dB) magnitude default above.
   sonoFreqScale: 'lin', sonoColour: 'db',
+  navigator: null,
 });
 
 /** Pull the three navigable ranges of a slice into a history snapshot. */
@@ -151,6 +160,16 @@ export function createViewState() {
     time: fresh(), frequency: fresh(), tf: fresh(), sono: fresh(),
   });
   const active = writable<ViewId>('time');
+
+  /**
+   * The shared frequency SCOPE — the navigator's bandwidth-of-interest
+   * (dev/plans/2026-07-11-freq-navigator-design.md). One value across the
+   * frequency-x views (a property of the measurement, like `sharedFreqRange`),
+   * `null` = unscoped (the strip spans the full data extent). Purely
+   * navigational: never moves the committed window or the plot, so scope
+   * changes are NOT recorded in undo history — but the value IS serialized.
+   */
+  const freqScope = writable<[number, number] | null>(null);
 
   const patch = (id: ViewId, fn: (v: ViewSlice) => ViewSlice) =>
     views.update(all => ({ ...all, [id]: fn(all[id]) }));
@@ -325,8 +344,19 @@ export function createViewState() {
   /** Set view `id`'s legend placement/visibility/compact-mode. */
   function setLegend(id: ViewId, legend: ViewSlice['legend']) { patch(id, v => ({ ...v, legend })); }
 
+  /** Set or clear (null) the shared frequency scope. No history entry. */
+  function setFreqScope(s: [number, number] | null) { freqScope.set(s); }
+
+  /**
+   * Set view `id`'s navigator visibility override (`true`/`false`), or `null`
+   * to return it to auto. A display mode — not recorded in history.
+   */
+  function setNavigator(id: ViewId, open: boolean | null) {
+    patch(id, v => ({ ...v, navigator: open }));
+  }
+
   /** Snapshot the whole state as plain JSON-safe data (spec §11). */
-  function serialize() { return { views: get(views), active: get(active) }; }
+  function serialize() { return { views: get(views), active: get(active), freqScope: get(freqScope) }; }
 
   /**
    * Restore a snapshot produced by `serialize` (accepts JSON
@@ -334,10 +364,11 @@ export function createViewState() {
    * slices present as objects — are IGNORED entirely; state is never
    * partially applied. Each slice is merged over `fresh()` defaults so
    * stale-schema snapshots missing newer fields get those defaults; an
-   * unrecognised `active` view is coerced to 'time'.
+   * unrecognised `active` view is coerced to 'time'. `freqScope` restores to
+   * `null` unless the snapshot carries a valid `[lo, hi]` pair.
    */
   function restore(snap: unknown) {
-    const s = snap as { views?: Record<string, unknown>; active?: unknown } | null;
+    const s = snap as { views?: Record<string, unknown>; active?: unknown; freqScope?: unknown } | null;
     const raw = s?.views;
     if (typeof raw !== 'object' || raw === null) return;
     if (!VIEW_IDS.every(id => typeof raw[id] === 'object' && raw[id] !== null)) return;
@@ -363,6 +394,11 @@ export function createViewState() {
     views.set(merged);
     active.set((VIEW_IDS as readonly string[]).includes(s!.active as string)
       ? (s!.active as ViewId) : 'time');
+    const fsRaw = s!.freqScope;
+    const fsOk = Array.isArray(fsRaw) && fsRaw.length === 2
+      && typeof fsRaw[0] === 'number' && typeof fsRaw[1] === 'number'
+      && Number.isFinite(fsRaw[0]) && Number.isFinite(fsRaw[1]) && fsRaw[1] > fsRaw[0];
+    freqScope.set(fsOk ? [fsRaw[0] as number, fsRaw[1] as number] : null);
   }
 
   return {
@@ -371,12 +407,13 @@ export function createViewState() {
     current: derived([views, active], ([$v, $a]) => $v[$a]),
     /** Frequency x-range shared across the TF family (tf wins over frequency). */
     sharedFreqRange: derived(views, $v => $v.tf.range.x ?? $v.frequency.range.x),
+    freqScope,
 
     activate, setRange, back, forward, autoFit,
     beginTransient, setRangeLive, commitTransient, cancelTransient,
     setNyquistRange, setPhaseRange, setBodePhaseRange, setCoherenceAuto,
     setPlotType, setCoherence, setXScale, setYScale,
-    setSonoFreqScale, setSonoColour, setLegend,
+    setSonoFreqScale, setSonoColour, setLegend, setFreqScope, setNavigator,
     serialize, restore,
   };
 }

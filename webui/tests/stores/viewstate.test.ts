@@ -389,3 +389,62 @@ test('state is serialisable and restorable (debuggability, spec §11)', () => {
   vs2.activate('sono');
   expect(get(vs2.current).range.x).toEqual([0, 2]);
 });
+
+// ── Frequency navigator (dev/plans/2026-07-11-freq-navigator-design.md) ────
+test('freqScope: defaults null; set/clear pushes NO history (not undoable)', () => {
+  const vs = createViewState();
+  expect(get(vs.freqScope)).toBeNull();
+  vs.setFreqScope([100, 500]);
+  expect(get(vs.freqScope)).toEqual([100, 500]);
+  vs.activate('tf');
+  expect(get(vs.current).history.length).toBe(0);
+  vs.setFreqScope(null);
+  expect(get(vs.freqScope)).toBeNull();
+});
+
+test('navigator override: per-view, defaults null (auto)', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  expect(get(vs.current).navigator).toBeNull();
+  vs.setNavigator('tf', true);
+  expect(get(vs.current).navigator).toBe(true);
+  vs.activate('frequency');
+  expect(get(vs.current).navigator).toBeNull();   // per-view, tf untouched elsewhere
+});
+
+test('freqScope + navigator survive a serialize/restore JSON round-trip', () => {
+  const vs = createViewState();
+  vs.setFreqScope([50, 2000]);
+  vs.setNavigator('tf', true);
+  const snap = JSON.parse(JSON.stringify(vs.serialize()));
+  const vs2 = createViewState();
+  vs2.restore(snap);
+  expect(get(vs2.freqScope)).toEqual([50, 2000]);
+  vs2.activate('tf');
+  expect(get(vs2.current).navigator).toBe(true);
+});
+
+test('legacy snapshot (no freqScope / navigator fields) restores to defaults', () => {
+  const vs = createViewState();
+  const snap = JSON.parse(JSON.stringify(vs.serialize()));
+  delete snap.freqScope;
+  for (const id of ['time', 'frequency', 'tf', 'sono']) delete snap.views[id].navigator;
+  const vs2 = createViewState();
+  vs2.setFreqScope([1, 2]);          // must be OVERWRITTEN back to null by restore
+  vs2.setNavigator('tf', false);
+  vs2.restore(snap);
+  expect(get(vs2.freqScope)).toBeNull();
+  vs2.activate('tf');
+  expect(get(vs2.current).navigator).toBeNull();
+});
+
+test('restore rejects a malformed freqScope (inverted / wrong shape → null)', () => {
+  for (const bad of [[500, 100], [1, 1], ['a', 'b'], [1], 42, {}]) {
+    const vs = createViewState();
+    const snap = JSON.parse(JSON.stringify(vs.serialize()));
+    snap.freqScope = bad;
+    const vs2 = createViewState();
+    vs2.restore(snap);
+    expect(get(vs2.freqScope)).toBeNull();
+  }
+});
