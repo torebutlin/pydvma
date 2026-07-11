@@ -484,6 +484,7 @@
       onpointermove={rbMove}
       onpointerup={rbUp}
       onpointercancel={rbCancel}
+      onlostpointercapture={rbCancel}
       ondblclick={() => onscope(null)}
     >
       <rect class="strip-bg" x={PAD_L} y={1} width={innerW} height={RH - 2} />
