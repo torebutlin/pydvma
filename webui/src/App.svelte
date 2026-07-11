@@ -25,7 +25,7 @@
   import Tray from './components/Tray.svelte';
   import PlotSurface from './components/PlotSurface.svelte';
   import ZoomToolbar from './components/ZoomToolbar.svelte';
-  import NyquistBrush from './components/NyquistBrush.svelte';
+  import FreqNavigator from './components/FreqNavigator.svelte';
   import Legend from './components/Legend.svelte';
   import EngineProbe from './components/EngineProbe.svelte';
   import ToastHost from './components/ToastHost.svelte';
@@ -780,31 +780,78 @@
       : model,
   );
 
+  // ── Frequency navigator (dev/plans/2026-07-11-freq-navigator-design.md) ──
+  // Which views carry it, and whether it is open: an explicit per-view
+  // override (`slice.navigator`, the toolbar toggle) wins; auto (null) opens
+  // it in the Fit stage and on Nyquist — where the strip is the primary
+  // frequency control (it replaced the round-5 NyquistBrush) — else closed.
+  const navView = $derived(view === 'frequency' || view === 'tf');
+  const navOpen = $derived(
+    navView && ($currentSlice.navigator ?? ($activeStage === 'fit' || nyquist)),
+  );
+
   /**
-   * Full-extent magnitude model for the Nyquist frequency brush (round-5 item
-   * 4): the |H|(f) lines over the WHOLE frequency axis (no window, no committed
-   * range), reusing the TF-mag builder so the column remap + cal ratio match
-   * the plot. The brush renders these decimated + a draggable band = the
-   * committed freq window.
+   * Full-extent magnitude model feeding the navigator strip: the |H|(f) (tf)
+   * or FFT/PSD magnitude (frequency view) lines over the WHOLE frequency
+   * axis (no window, no committed range), reusing the plot builders so the
+   * column remap + cal ratio match the plot. yScale is pinned 'log' (dB) for
+   * shape legibility. Built only while the navigator is open. Deliberately
+   * reads NOTHING that changes during a band drag (no range/freqRange), so
+   * its lines keep a stable identity across live frames — FreqNavigator's
+   * peak detection memoises on that identity and must not re-run 60×/s.
    */
-  const nyquistMagModel = $derived<PlotModel | null>(
-    nyquist
-      ? buildPlotModel({
-          view: 'tf', sets: setArrays, visible, tfPlotType: 'mag',
-          coherence: false, freqRange: null, range: { x: null, y: null }, xScale, yScale: 'log',
-        })
+  const navModel = $derived<PlotModel | null>(
+    navOpen
+      ? buildPlotModel(
+          view === 'tf'
+            ? { view: 'tf', sets: setArrays, visible, tfPlotType: 'mag', coherence: false,
+                freqRange: null, range: { x: null, y: null }, xScale, yScale: 'log' }
+            : { view: 'frequency', sets: setArrays, visible, freqMode, coherence: false,
+                freqRange: null, range: { x: null, y: null }, xScale, yScale: 'log' },
+        )
       : null,
   );
-  /** Full frequency extent spanned by the Nyquist brush strip. */
+  /** Full frequency extent spanned by the navigator strip. */
   const freqExtent = $derived<[number, number] | undefined>(
-    nyquistMagModel && nyquistMagModel.lines.length > 0
-      ? dataExtent(nyquistMagModel.lines, 'x', 'any')
+    navModel && navModel.lines.length > 0
+      ? dataExtent(navModel.lines, 'x', 'any')
       : undefined,
   );
-  /** The band the brush highlights: the committed window, or the full extent. */
+  /** The band the strip highlights: the committed window, or the full extent. */
   const brushBand = $derived<[number, number] | undefined>(
     freqExtent ? ($sharedFreqRange ?? freqExtent) : undefined,
   );
+
+  const freqScopeStore = viewState.freqScope;
+  /**
+   * The effective scope: the stored value clamped to the current data extent
+   * (loads/appends move the extent), degenerate or ≈full-span ⇒ null
+   * (unscoped — a full-width scope must not summon a no-op ribbon).
+   */
+  const scope = $derived.by<[number, number] | null>(() => {
+    const raw = $freqScopeStore;
+    if (!raw || !freqExtent) return null;
+    const lo = Math.max(raw[0], freqExtent[0]);
+    const hi = Math.min(raw[1], freqExtent[1]);
+    if (!(hi > lo)) return null;
+    const span = freqExtent[1] - freqExtent[0];
+    if (lo - freqExtent[0] < 0.001 * span && freqExtent[1] - hi < 0.001 * span) return null;
+    return [lo, hi];
+  });
+
+  /** Commit a scope from the navigator (⤢ / ribbon), normalising ≈full → clear. */
+  function commitScope(s: [number, number] | null) {
+    if (!s || !freqExtent) { viewState.setFreqScope(null); return; }
+    const span = freqExtent[1] - freqExtent[0];
+    if (s[0] - freqExtent[0] < 0.001 * span && freqExtent[1] - s[1] < 0.001 * span) {
+      viewState.setFreqScope(null);
+      return;
+    }
+    viewState.setFreqScope([s[0], s[1]]);
+  }
+
+  /** Fitted-mode markers for the navigator strip (empty until a fit exists). */
+  const modeTicks = $derived($modal.modes.map((m, i) => ({ fn: m.fn, muted: !!$modal.muted[i] })));
 
   /** Extent of the currently visible lines (for the zoom toolbar's Auto X/Y). */
   const extent = $derived.by(() => {
@@ -1091,6 +1138,27 @@
     {/if}
 
     <section class="plot" aria-label="plot">
+      {#snippet freqNav()}
+        {#if navOpen && freqExtent && brushBand && navModel}
+          <FreqNavigator
+            lines={navModel.lines}
+            fullExtent={freqExtent}
+            band={brushBand}
+            {scope}
+            {xScale}
+            {modeTicks}
+            onstart={() => viewState.beginTransient(view)}
+            onpreview={(lo, hi) => viewState.setRangeLive(view, { x: [lo, hi], y: range.y })}
+            onchange={(lo, hi) => viewState.commitTransient(view, { x: [lo, hi], y: range.y })}
+            oncancel={() => viewState.cancelTransient(view)}
+            onhome={() => {
+              const h = scope ?? freqExtent;
+              if (h) viewState.setRange(view, { x: [h[0], h[1]], y: range.y });
+            }}
+            onscope={commitScope}
+          />
+        {/if}
+      {/snippet}
       {#if $activeStage === 'live'}
         <div class="plot-host">
           <LiveScope {monitor} />
@@ -1141,22 +1209,11 @@
              Real/Imag locus. The brush scrubs the shared committed freq window;
              the toolbar's x/y become Real/Imag with a linked freq group. -->
         <div class="plot-host nyquist">
-          {#if freqExtent && brushBand && nyquistMagModel}
-            <NyquistBrush
-              lines={nyquistMagModel.lines}
-              fullExtent={freqExtent}
-              band={brushBand}
-              {xScale}
-              onstart={() => viewState.beginTransient('tf')}
-              onpreview={(lo, hi) => viewState.setRangeLive('tf', { x: [lo, hi], y: range.y })}
-              onchange={(lo, hi) => viewState.commitTransient('tf', { x: [lo, hi], y: range.y })}
-              oncancel={() => viewState.cancelTransient('tf')}
-              onfull={() => { if (freqExtent) viewState.setRange('tf', { x: [freqExtent[0], freqExtent[1]], y: range.y }); }}
-            />
-          {/if}
+          {@render freqNav()}
           <div class="nyq-plot navved">
             <div class="plot-nav">
-              <ZoomToolbar {viewState} dataExtent={extent} bind:mode nyquist {freqExtent} />
+              <ZoomToolbar {viewState} dataExtent={extent} bind:mode nyquist {freqExtent}
+                navControl={navView} navOpen={navOpen} onnavtoggle={() => viewState.setNavigator(view, !navOpen)} />
             </div>
             <div class="plot-area">
               <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
@@ -1171,8 +1228,10 @@
                the shared x, the magnitude y AND the phase/coherence panes. -->
           <div class="plot-nav">
             <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale}
-              phaseControl coherenceControl={!!model.y2Range} />
+              phaseControl coherenceControl={!!model.y2Range}
+              navControl={navView} navOpen={navOpen} onnavtoggle={() => viewState.setNavigator(view, !navOpen)} />
           </div>
+          {@render freqNav()}
           <div class="bode-pane">
             <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
             <Legend {selection} {viewState} entriesOverride={legendOverride} />
@@ -1189,8 +1248,10 @@
         <div class="plot-host navved">
           <div class="plot-nav">
             <ZoomToolbar {viewState} dataExtent={extent} bind:mode {showXScale} {showYScale}
-              coherenceControl={!!model.y2Range} />
+              coherenceControl={!!model.y2Range}
+              navControl={navView} navOpen={navOpen} onnavtoggle={() => viewState.setNavigator(view, !navOpen)} />
           </div>
+          {@render freqNav()}
           <div class="plot-area">
             <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
             <Legend {selection} {viewState} entriesOverride={legendOverride} />

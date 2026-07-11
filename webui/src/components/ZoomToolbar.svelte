@@ -75,6 +75,9 @@
     coherenceControl = false,
     sono = false,
     freqExtent = undefined,
+    navControl = false,
+    navOpen = false,
+    onnavtoggle = undefined,
   }: {
     viewState: ViewState;
     /** X/Y extent of the lines currently visible in the plot model. */
@@ -132,6 +135,17 @@
      * outside Nyquist mode.
      */
     freqExtent?: [number, number];
+    /**
+     * Show the frequency-navigator toggle (freq-navigator design 2026-07-11).
+     * App passes true on the frequency/tf views; the button reports state via
+     * `navOpen` and flips it through `onnavtoggle` (the state itself lives in
+     * the view slice's `navigator` override — resolved in App).
+     */
+    navControl?: boolean;
+    /** Current navigator visibility (drives aria-pressed / the active style). */
+    navOpen?: boolean;
+    /** Toggle callback — App writes `viewState.setNavigator(view, !navOpen)`. */
+    onnavtoggle?: () => void;
   } = $props();
 
   // Derived (not destructured) so the toolbar tracks a reassigned viewState prop.
@@ -325,6 +339,23 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="zoom-wrap" onpointerenter={onEnter} onpointerleave={onLeave}>
   <div class="zoom-bar" data-testid="zoom-toolbar" role="toolbar" aria-label="Plot navigation">
+    {#if navControl}
+      <button
+        class="zbtn"
+        class:active={navOpen}
+        type="button"
+        data-testid="freq-nav-toggle"
+        title={navOpen ? 'Hide frequency navigator' : 'Show frequency navigator'}
+        aria-label={navOpen ? 'Hide frequency navigator' : 'Show frequency navigator'}
+        aria-pressed={navOpen}
+        onclick={() => onnavtoggle?.()}
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <rect x="1.5" y="5" width="13" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.4" />
+          <rect x="6" y="5" width="4" height="6" fill="currentColor" opacity="0.6" />
+        </svg>
+      </button>
+    {/if}
     <button class="zbtn glyph" class:active={mode === 'box'} aria-pressed={mode === 'box'}
       aria-label="Box zoom" title="Box zoom — drag a rectangle on the plot" onclick={() => (mode = 'box')}>
       <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
