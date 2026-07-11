@@ -88,6 +88,11 @@ pick up alongside further feedback:
   and awaiting his call: the green Save Dataset button is white-on-
   green ≈2.7:1 and solid-indigo buttons ≈3.6:1 in dark. Bump if they
   bother him in use.
+- **View-state persistence**: `viewState.serialize()/restore()` exist
+  (round-trip ranges, legend, navigator scope — vitest-covered) but
+  nothing calls them in the app; wire into autosave/restore so axis
+  ranges, legend placement and the navigator scope survive a reload.
+  Surfaced by the 2026-07-11 freq-navigator docs review.
 
 ## Old-logger (V2.9a) feature review list (round-7f survey)
 

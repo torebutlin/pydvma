@@ -147,11 +147,14 @@ span just that region, and a thin ribbon appears above it showing where the
 scope sits in the full bandwidth. Drag the ribbon's band to move or resize
 the scope; double-click the ribbon to clear it. The scope only changes what
 the strip spans — it never moves the window, feeds any calculation, or
-appears in undo history (it is saved with your session).
+appears in undo history (like other view settings, it lasts for the
+current session and resets on reload).
 
 The **‹ ›** buttons jump the window to the previous/next spectral peak,
-keeping the window's width. Peaks are detected on the strip's own curves,
-so what you see is what it steps between.
+keeping the window's width (from a wide-open window, the first press
+narrows to a tenth of the strip so the jump is meaningful). Peaks are
+detected on the strip's own curves, so what you see is what it steps
+between.
 
 The navigator opens automatically in the [Fit stage](modal-fitting.md) and
 on the Nyquist view; the toolbar button shows or hides it anywhere else,
