@@ -113,8 +113,11 @@
   const lfmax = $derived(log ? Math.log10(domain[1]) : 1);
 
   // Peak-step targets (design §peak-stepping): detection runs on the strip's
-  // own lines within the domain; a null target disables that button. Uses the
-  // COMMITTED band (not the live preview) so targets are stable mid-drag.
+  // own lines within the domain; a null target disables that button. `band`
+  // tracks the live window during a drag (the parent re-windows per frame),
+  // but the buttons can't be pressed mid-drag (the pointer is captured on the
+  // strip) — and detection itself reads only lines/domain, so it never re-runs
+  // on a band change.
   // (Declared after `log` so the derived reads a value that's already in scope.)
   const peaks = $derived(detectPeaks(lines, domain, log));
   const prevTarget = $derived(stepWindow(peaks, band, domain, -1, log));

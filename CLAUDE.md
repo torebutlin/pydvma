@@ -2,7 +2,26 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-10 evening (round 10, committed locally — NOT pushed):
+As of 2026-07-11 (freq-navigator arc, committed locally — NOT pushed):
+**The frequency navigator shipped end-to-end** (design
+`dev/plans/2026-07-11-freq-navigator-design.md`, plan
+`…-plan.md`; Tore's ask: kill the zoom-fit-home-zoom loop in modal
+fitting). NyquistBrush is GENERALISED into `FreqNavigator` on all
+freq-x views (frequency + every tf type incl. Bode; toolbar toggle,
+auto-open in the Fit stage + on Nyquist, per-view `navigator`
+override): a **progressive scope ribbon** (⤢ scopes the strip to the
+window; the thin full-extent ribbon appears only when scoped; scope =
+`viewState.freqScope`, NAVIGATIONAL only — never feeds calcs, not in
+undo history, and NOT persisted: `viewState.serialize()/restore()`
+turn out to have no app callers, now a TODO.md item), **client-side
+peak-step ‹ ›** (`lib/plot/peaks.ts` — prominence-gated max-envelope
+detection + keep-width targeting, span/10 first step from wide-open,
+log = ratio semantics) and **fitted-mode ticks** (strip = mode map;
+fit → › → fit). Pure webui — no engine/wheel rebuild. Suites: check
+0/0, vitest 681/1, Playwright 85/7 (fit @engine incl. tick asserts),
+pytest 347/3, mkdocs --strict green.
+
+Earlier (2026-07-10 evening, round 10, committed locally — NOT pushed):
 **Jim Woodhouse's first hands-on feedback**
 (`dev/2026-07-10-round10-jw-feedback.md`; his test archives in
 `dev/example_data/`, deliberately untracked). Three fixes: **Load Data
