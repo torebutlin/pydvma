@@ -341,7 +341,7 @@
   <div class="zoom-bar" data-testid="zoom-toolbar" role="toolbar" aria-label="Plot navigation">
     {#if navControl}
       <button
-        class="zbtn"
+        class="zbtn glyph"
         class:active={navOpen}
         type="button"
         data-testid="freq-nav-toggle"
@@ -350,7 +350,7 @@
         aria-pressed={navOpen}
         onclick={() => onnavtoggle?.()}
       >
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
           <rect x="1.5" y="5" width="13" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.4" />
           <rect x="6" y="5" width="4" height="6" fill="currentColor" opacity="0.6" />
         </svg>

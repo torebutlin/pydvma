@@ -853,6 +853,15 @@
   /** Fitted-mode markers for the navigator strip (empty until a fit exists). */
   const modeTicks = $derived($modal.modes.map((m, i) => ({ fn: m.fn, muted: !!$modal.muted[i] })));
 
+  // A navigator drag must begin and commit on the SAME view slice: `view` is
+  // reactive, and multi-touch can switch views mid-drag while pointer capture
+  // keeps the strip alive — without this, beginTransient('tf') could pair
+  // with commitTransient('frequency'), stranding the tf transient snapshot
+  // (undo would then jump two gestures). Non-drag commits (numeric fields,
+  // peak-step) have no onstart and use the live `view`.
+  let navGestureView: ViewId = 'tf';
+  let navDragging = false;
+
   /** Extent of the currently visible lines (for the zoom toolbar's Auto X/Y). */
   const extent = $derived.by(() => {
     // Sono: the data live in the heat canvas, not `model.lines` (the sono
@@ -1147,10 +1156,14 @@
             {scope}
             {xScale}
             {modeTicks}
-            onstart={() => viewState.beginTransient(view)}
-            onpreview={(lo, hi) => viewState.setRangeLive(view, { x: [lo, hi], y: range.y })}
-            onchange={(lo, hi) => viewState.commitTransient(view, { x: [lo, hi], y: range.y })}
-            oncancel={() => viewState.cancelTransient(view)}
+            onstart={() => { navGestureView = view; navDragging = true; viewState.beginTransient(navGestureView); }}
+            onpreview={(lo, hi) => viewState.setRangeLive(navGestureView, { x: [lo, hi], y: range.y })}
+            onchange={(lo, hi) => {
+              const v = navDragging ? navGestureView : view;
+              navDragging = false;
+              viewState.commitTransient(v, { x: [lo, hi], y: range.y });
+            }}
+            oncancel={() => { navDragging = false; viewState.cancelTransient(navGestureView); }}
             onhome={() => {
               const h = scope ?? freqExtent;
               if (h) viewState.setRange(view, { x: [h[0], h[1]], y: range.y });
