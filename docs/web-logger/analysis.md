@@ -124,11 +124,38 @@ of the old Qt logger's Scaling tool.
 
 !!! note "Nyquist and Bode navigation"
     In **Nyquist** view the card exposes **fmin/fmax** fields linked to
-    the shared TF frequency range, and the plot carries a draggable
-    frequency-band **brush** — drag either end (or slide the whole band)
-    to scrub the same shared range live, with one undo step per gesture.
-    The stacked **Bode** panes share the frequency axis; each pane has
-    its own y-axis control (the phase pane offers ±180° or auto).
+    the shared TF frequency range, and the plot carries the
+    [frequency navigator](#frequency-navigator) strip — drag its band (or
+    either edge) to scrub the same shared range live, with one undo step
+    per gesture. The stacked **Bode** panes share the frequency axis;
+    each pane has its own y-axis control (the phase pane offers ±180° or
+    auto).
+
+## Frequency navigator
+
+On the **Frequency** and **TF** views, the plot toolbar's navigator button
+(the strip icon) opens a slim strip above the plot: the magnitude of the
+visible lines over the whole measured bandwidth, with a highlighted band
+showing the current frequency window. Drag the band to skim along
+frequency (the plot follows live), drag its edges to resize, drag on empty
+strip to draw a fresh window, or type exact limits in the min–max fields.
+Double-click the strip to reset the window. One drag is one undo step.
+
+When the measurement carries more bandwidth than you care about, click
+**⤢** to **scope** the strip to the current window: the strip re-scales to
+span just that region, and a thin ribbon appears above it showing where the
+scope sits in the full bandwidth. Drag the ribbon's band to move or resize
+the scope; double-click the ribbon to clear it. The scope only changes what
+the strip spans — it never moves the window, feeds any calculation, or
+appears in undo history (it is saved with your session).
+
+The **‹ ›** buttons jump the window to the previous/next spectral peak,
+keeping the window's width. Peaks are detected on the strip's own curves,
+so what you see is what it steps between.
+
+The navigator opens automatically in the [Fit stage](modal-fitting.md) and
+on the Nyquist view; the toolbar button shows or hides it anywhere else,
+and remembers your choice per view.
 
 ## Sonogram
 

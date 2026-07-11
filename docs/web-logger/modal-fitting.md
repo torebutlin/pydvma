@@ -70,8 +70,15 @@ across the chosen sets, fitted over the **visible lines of each set**.
 
 ## Fitting modes
 
-Fitting works on the **visible frequency window**, so zoom to the region
-you care about first, then:
+Fitting works on the **visible frequency window**. The
+[frequency navigator](analysis.md#frequency-navigator) strip auto-opens on
+the Fit stage, so the quickest loop is: set the window on a peak (drag the
+navigator's band, or press **›** to jump to the next detected peak), **Fit
+1**, then **›** again to jump to the next peak and **Fit 1** again. Fitted
+modes draw as small triangles on the navigator strip, so unmarked peaks are
+the ones still to fit. Zooming the plot itself (the old approach) still
+works exactly the same way if you prefer it — the two just move the same
+shared window.
 
 - **Fit 1 / Fit 2 / Fit 3** — fit that many modes in the current window.
   Fit 2 and Fit 3 split the window at detected peaks and fit each.
