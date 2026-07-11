@@ -1,25 +1,37 @@
 <script lang="ts">
   /**
-   * Frequency-band brush for the Nyquist view (round-5 item 4, Tore's design;
-   * round-6 item 6 v2).
+   * FREQUENCY NAVIGATOR — the frequency-navigation strip for ALL frequency-x
+   * views (the frequency view + every tf plotType; the Nyquist view mounts it
+   * exactly as before). Design: dev/plans/2026-07-11-freq-navigator-design.md.
+   * Grew out of the round-5 Nyquist brush (item 4, Tore's design; round-6 item
+   * 6 v2), which is why the gesture code below is unchanged.
    *
-   * A narrow magnitude-|H|(f) strip rendered ABOVE the Nyquist plot, spanning
-   * the FULL committed frequency extent, with a highlighted draggable band that
-   * is the CURRENT shared/committed frequency range — the SAME `tf.range.x`
-   * that Calc, Fit and the windowed Nyquist locus all read. Interacting with
-   * the band scrubs that range, so the Nyquist locus (and the fit window) can
-   * be steered directly from here:
+   * A narrow magnitude strip rendered ABOVE the plot, spanning the strip's
+   * DOMAIN (the `scope` bandwidth-of-interest if set, else the full extent),
+   * with a highlighted draggable band that is the CURRENT shared/committed
+   * frequency window — the SAME `tf.range.x` that Calc, Fit and the windowed
+   * Nyquist locus all read. Interacting with the band scrubs that window, so
+   * the locus (and the fit window) can be steered directly from here:
    *   - drag the band BODY → TRANSLATE the range (cursor: grab/grabbing;
    *     the interior is a generous target — the edge grips never swallow it);
    *   - drag either edge handle → RESIZE that end (cursor: ew-resize);
    *   - drag on empty strip → CREATE a fresh band (cursor: crosshair);
-   *   - double-click the strip → reset to the FULL range;
+   *   - double-click the strip → HOME: window → scope (or the full extent
+   *     when unscoped) — the parent's `onhome` decides;
    *   - the two numeric fields in the head → type an exact min/max (Hz),
    *     committed on change / Enter.
    *
+   * SCOPE (bandwidth-of-interest): when a `scope` is set the strip zooms to
+   * span it, and a thin context ribbon appears above — the full extent in
+   * miniature with the scope as its own draggable band (double-click the ribbon
+   * clears the scope). The ⤢ head button scopes the strip to the current
+   * window; when the window lies wholly outside the scoped strip an off-scope
+   * arrow points toward it. Scope changes are NOT undoable, so the ribbon needs
+   * no transient protocol — `onscope` fires once on release.
+   *
    * v2 LIVE re-windowing (round-6 item 6): a drag no longer waits for release.
-   * While the pointer moves the brush emits `onpreview` (throttled to one
-   * animation frame) so the Nyquist plot re-windows CONTINUOUSLY; on release it
+   * While the pointer moves the strip emits `onpreview` (throttled to one
+   * animation frame) so the main plot re-windows CONTINUOUSLY; on release it
    * emits `onchange` once. The parent routes the live frames through
    * `viewState.setRangeLive` (no history) and the release through
    * `commitTransient`, so the whole gesture is a SINGLE undo step — the round-5
@@ -39,33 +51,37 @@
     lines,
     fullExtent,
     band,
+    scope = null,
     xScale = 'lin',
     onchange,
     onpreview,
     onstart,
     oncancel,
-    onfull,
+    onhome,
+    onscope,
   }: {
-    /** |H|(f) magnitude lines (y already in the plot's dB/linear units) over the full extent. */
+    /** Magnitude lines (y in the strip's own units) over the FULL extent. */
     lines: StripLine[];
-    /** Full frequency extent [fmin, fmax] the strip spans. */
+    /** Full frequency extent [fmin, fmax] of the data. */
     fullExtent: [number, number];
-    /** Current committed frequency band [lo, hi] (the highlighted selection). */
+    /** Current committed frequency window [lo, hi] (the highlighted band). */
     band: [number, number];
-    /** Frequency axis scale, matched to the TF plot's x scale. */
+    /** Bandwidth-of-interest the strip spans; null ⇒ full extent (no ribbon). */
+    scope?: [number, number] | null;
+    /** Frequency axis scale, matched to the main plot's x scale. */
     xScale?: 'lin' | 'log';
-    /** Fired once on release (and on numeric-field commit) with the new committed band. */
+    /** Fired once on release (numeric-field commit / peak-step) with the new window. */
     onchange: (lo: number, hi: number) => void;
-    /** Fired per animation frame WHILE dragging with the live band — for live
-     *  re-windowing without a history entry. Absent ⇒ the plot only updates on release. */
+    /** Per-animation-frame live band while dragging (no history entry). */
     onpreview?: (lo: number, hi: number) => void;
     /** Fired at drag start so the parent can open a transient (one-undo) gesture. */
     onstart?: () => void;
-    /** Fired when a drag is abandoned (click / degenerate / cancel) so the parent
-     *  can revert any live preview without recording history. */
+    /** Fired when a drag is abandoned — parent reverts any live preview. */
     oncancel?: () => void;
-    /** Fired on double-click: reset to the full extent. */
-    onfull: () => void;
+    /** Double-click the strip: window → scope (or full extent when unscoped). */
+    onhome: () => void;
+    /** Scope commit: ⤢ button / ribbon drag release; null clears the scope. */
+    onscope: (s: [number, number] | null) => void;
   } = $props();
 
   const H = 58;                 // strip height (px)
@@ -79,17 +95,20 @@
   const innerW = $derived(Math.max(1, width - PAD_L - PAD_R));
   const plotH = $derived(H - TOP - BOT);
 
-  // Log-x mapping (matches the plot) when requested and the extent is positive.
-  const log = $derived(xScale === 'log' && fullExtent[0] > 0 && fullExtent[1] > 0);
-  const lfmin = $derived(log ? Math.log10(fullExtent[0]) : 0);
-  const lfmax = $derived(log ? Math.log10(fullExtent[1]) : 1);
+  /** The interval the strip spans: the scope, else the full extent. */
+  const domain = $derived<[number, number]>(scope ?? fullExtent);
+
+  // Log-x mapping (matches the plot) when requested and the domain is positive.
+  const log = $derived(xScale === 'log' && domain[0] > 0 && domain[1] > 0);
+  const lfmin = $derived(log ? Math.log10(domain[0]) : 0);
+  const lfmax = $derived(log ? Math.log10(domain[1]) : 1);
 
   /** Frequency → strip px (clamped to the plot area). */
   function toPx(f: number): number {
-    const [fmin, fmax] = fullExtent;
+    const [fmin, fmax] = domain;
     let t: number;
     if (log) {
-      const lf = Math.log10(Math.max(f, fullExtent[0]));
+      const lf = Math.log10(Math.max(f, domain[0]));
       t = (lf - lfmin) / (lfmax - lfmin || 1);
     } else {
       t = (f - fmin) / (fmax - fmin || 1);
@@ -97,19 +116,22 @@
     return PAD_L + Math.min(1, Math.max(0, t)) * innerW;
   }
 
-  /** Strip px → frequency (clamped to the full extent). */
+  /** Strip px → frequency (clamped to the strip's domain). */
   function toF(px: number): number {
-    const [fmin, fmax] = fullExtent;
+    const [fmin, fmax] = domain;
     const t = Math.min(1, Math.max(0, (px - PAD_L) / (innerW || 1)));
     const f = log ? 10 ** (lfmin + t * (lfmax - lfmin)) : fmin + t * (fmax - fmin);
     return Math.min(fmax, Math.max(fmin, f));
   }
 
   // ---- magnitude curves (auto-scaled to their dB/linear extent) ----
+  // Only IN-DOMAIN samples set the y-extent, so a scoped strip auto-scales to
+  // the shape it actually shows — not to peaks that lie outside the scope.
   const yExtent = $derived.by<[number, number]>(() => {
     let lo = Infinity, hi = -Infinity;
     for (const l of lines) {
       for (let i = 0; i < l.y.length; i++) {
+        if (l.x[i] < domain[0] || l.x[i] > domain[1]) continue;
         const v = l.y[i];
         if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
       }
@@ -135,6 +157,7 @@
     const step = Math.max(1, Math.floor(n / budget));
     let d = '';
     for (let i = 0; i < n; i += step) {
+      if (l.x[i] < domain[0] || l.x[i] > domain[1]) continue;   // scoped strip: don't pile clamped points at the edges
       const X = toPx(l.x[i]), Y = toPy(l.y[i]);
       if (!Number.isFinite(X) || !Number.isFinite(Y)) continue;
       d += (d ? 'L' : 'M') + X.toFixed(1) + ',' + Y.toFixed(1);
@@ -226,7 +249,7 @@
     if (e.pointerId !== dragPointer) return;
     const px = localX(e);
     const f = toF(px);
-    const [fmin, fmax] = fullExtent;
+    const [fmin, fmax] = domain;   // the window is dragged within the strip's spanned domain (scope, else full)
     let lo = baseLo, hi = baseHi;
     if (dragMode === 'resize-lo') { lo = Math.min(f, baseHi); hi = baseHi; }
     else if (dragMode === 'resize-hi') { lo = baseLo; hi = Math.max(f, baseLo); }
@@ -288,11 +311,11 @@
     return v.toFixed(2);
   }
 
-  /** Clamp + validate a typed [lo, hi] against the full extent, then commit once. */
+  /** Clamp + validate a typed [lo, hi] against the strip's domain, then commit once. */
   function commitFields(rawLo: string, rawHi: string) {
     let lo = parseFloat(rawLo), hi = parseFloat(rawHi);
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;   // ignore garbage input
-    const [fmin, fmax] = fullExtent;
+    const [fmin, fmax] = domain;
     lo = Math.min(Math.max(lo, fmin), fmax);
     hi = Math.min(Math.max(hi, fmin), fmax);
     if (!(hi > lo)) return;                                      // reject a degenerate/inverted band
@@ -305,19 +328,125 @@
     if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();  // blur → change → commit
   }
 
+  // ── scope ribbon (full-extent miniature; only rendered when scoped) ──
+  const RH = 14;                     // ribbon height (px)
+  const rLog = $derived(xScale === 'log' && fullExtent[0] > 0 && fullExtent[1] > 0);
+  const rlMin = $derived(rLog ? Math.log10(fullExtent[0]) : 0);
+  const rlMax = $derived(rLog ? Math.log10(fullExtent[1]) : 1);
+
+  function toPxR(f: number): number {
+    const [fmin, fmax] = fullExtent;
+    const t = rLog
+      ? (Math.log10(Math.max(f, fmin)) - rlMin) / (rlMax - rlMin || 1)
+      : (f - fmin) / (fmax - fmin || 1);
+    return PAD_L + Math.min(1, Math.max(0, t)) * innerW;
+  }
+  function toFR(px: number): number {
+    const [fmin, fmax] = fullExtent;
+    const t = Math.min(1, Math.max(0, (px - PAD_L) / (innerW || 1)));
+    const f = rLog ? 10 ** (rlMin + t * (rlMax - rlMin)) : fmin + t * (fmax - fmin);
+    return Math.min(fmax, Math.max(fmin, f));
+  }
+
+  type RbZone = 'move' | 'resize-lo' | 'resize-hi' | null;
+  let rbMode = $state<RbZone>(null);
+  let rbPointer = 0;
+  let rbGrabOffset = 0;
+  let rbBaseLo = 0, rbBaseHi = 0;
+  let rbPreview = $state<[number, number] | null>(null);
+  let rbHover = $state<RbZone>(null);
+
+  const shownScope = $derived<[number, number]>(rbPreview ?? (scope ?? fullExtent));
+  const rLoPx = $derived(toPxR(shownScope[0]));
+  const rHiPx = $derived(toPxR(shownScope[1]));
+
+  function rbZoneAt(px: number): RbZone {
+    if (!scope) return null;
+    const lo = toPxR(scope[0]), hi = toPxR(scope[1]);
+    const edge = Math.min(HANDLE_PX, (hi - lo) * 0.25);
+    if (hi - lo > 6 && Math.abs(px - lo) <= edge) return 'resize-lo';
+    if (hi - lo > 6 && Math.abs(px - hi) <= edge) return 'resize-hi';
+    if (px >= lo && px <= hi) return 'move';
+    return null;
+  }
+  const ribbonCursor = $derived.by(() => {
+    const z = rbMode ?? rbHover;
+    if (z === 'move') return rbMode ? 'grabbing' : 'grab';
+    if (z === 'resize-lo' || z === 'resize-hi') return 'ew-resize';
+    return 'default';
+  });
+
+  function rbLocalX(e: PointerEvent): number {
+    const el = e.currentTarget as SVGSVGElement;
+    const r = el.getBoundingClientRect();
+    const sx = r.width ? width / r.width : 1;
+    return (e.clientX - r.left) * sx;
+  }
+  function rbDown(e: PointerEvent) {
+    if (e.button !== 0 || !scope) return;
+    const px = rbLocalX(e);
+    const z = rbZoneAt(px);
+    if (!z) return;
+    rbMode = z; rbBaseLo = scope[0]; rbBaseHi = scope[1];
+    rbGrabOffset = px - toPxR(scope[0]);
+    rbPreview = [rbBaseLo, rbBaseHi];
+    rbPointer = e.pointerId;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  }
+  function rbMove(e: PointerEvent) {
+    if (rbMode === null) { rbHover = rbZoneAt(rbLocalX(e)); return; }
+    if (e.pointerId !== rbPointer) return;
+    const px = rbLocalX(e);
+    const f = toFR(px);
+    const [fmin, fmax] = fullExtent;
+    let lo = rbBaseLo, hi = rbBaseHi;
+    if (rbMode === 'resize-lo') lo = Math.min(f, rbBaseHi);
+    else if (rbMode === 'resize-hi') hi = Math.max(f, rbBaseLo);
+    else {
+      const basePxW = toPxR(rbBaseHi) - toPxR(rbBaseLo);
+      const newLoPx = px - rbGrabOffset;
+      lo = toFR(newLoPx); hi = toFR(newLoPx + basePxW);
+      if (hi >= fmax) { hi = fmax; lo = toFR(toPxR(fmax) - basePxW); }
+      if (lo <= fmin) { lo = fmin; hi = toFR(toPxR(fmin) + basePxW); }
+    }
+    rbPreview = [Math.max(fmin, lo), Math.min(fmax, hi)];
+  }
+  function rbUp(e: PointerEvent) {
+    if (rbMode === null || e.pointerId !== rbPointer) return;
+    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* released */ }
+    const p = rbPreview;
+    rbMode = null; rbPointer = 0; rbPreview = null;
+    if (!p || !(p[1] > p[0])) return;
+    if (p[0] === rbBaseLo && p[1] === rbBaseHi) return;   // click / no-move
+    onscope(p);
+  }
+  function rbCancel(e: PointerEvent) {
+    if (e.pointerId !== rbPointer) return;
+    rbMode = null; rbPointer = 0; rbPreview = null;
+  }
+
   $effect(() => () => cancelRaf());   // drop a pending live frame on unmount
 </script>
 
-<div class="brush" data-testid="nyquist-brush" bind:clientWidth={width}>
+<div class="brush" data-testid="freq-nav" bind:clientWidth={width}>
   <div class="brush-head">
     <span class="brush-lab">frequency band</span>
+    <span class="nav-btns">
+      <button
+        class="nbtn"
+        type="button"
+        data-testid="freq-nav-scope-btn"
+        title="Scope the strip to the current window (double-click the ribbon to clear)"
+        onclick={() => onscope([band[0], band[1]])}
+      >⤢</button>
+    </span>
     <span class="brush-fields">
       <input
         class="fld mono"
         type="number"
         step="any"
         inputmode="decimal"
-        data-testid="nyquist-brush-min"
+        data-testid="freq-nav-min"
         aria-label="Frequency band min"
         value={fmtNum(shownBand[0])}
         onchange={(e) => commitLo(e.currentTarget.value)}
@@ -329,7 +458,7 @@
         type="number"
         step="any"
         inputmode="decimal"
-        data-testid="nyquist-brush-max"
+        data-testid="freq-nav-max"
         aria-label="Frequency band max"
         value={fmtNum(shownBand[1])}
         onchange={(e) => commitHi(e.currentTarget.value)}
@@ -338,6 +467,32 @@
       <span class="unit">Hz</span>
     </span>
   </div>
+  {#if scope && width > 0}
+    <!-- Context ribbon: full extent in miniature, the scope highlighted. Body
+         drag translates, edge drag resizes, double-click clears the scope.
+         Local preview only; onscope fires once on release (scope is not
+         undoable, so no transient protocol needed). -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <svg
+      class="ribbon"
+      viewBox="0 0 {width} {RH}"
+      height={RH}
+      data-testid="freq-nav-ribbon"
+      style="cursor: {ribbonCursor}"
+      aria-label="Scope: {shownScope[0].toFixed(1)} to {shownScope[1].toFixed(1)} Hz of {fullExtent[0].toFixed(1)}–{fullExtent[1].toFixed(1)} Hz"
+      onpointerdown={rbDown}
+      onpointermove={rbMove}
+      onpointerup={rbUp}
+      onpointercancel={rbCancel}
+      ondblclick={() => onscope(null)}
+    >
+      <rect class="strip-bg" x={PAD_L} y={1} width={innerW} height={RH - 2} />
+      <rect class="mask" x={PAD_L} y={1} width={Math.max(0, rLoPx - PAD_L)} height={RH - 2} />
+      <rect class="mask" x={rHiPx} y={1} width={Math.max(0, PAD_L + innerW - rHiPx)} height={RH - 2} />
+      <rect class="rband" data-testid="freq-nav-ribbon-band"
+        x={rLoPx} y={1} width={Math.max(1, rHiPx - rLoPx)} height={RH - 2} />
+    </svg>
+  {/if}
   {#if width > 0}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <svg
@@ -353,7 +508,7 @@
       onpointercancel={onCancel}
       onpointerleave={onLeave}
       onlostpointercapture={onCancel}
-      ondblclick={onfull}
+      ondblclick={onhome}
     >
       <rect class="strip-bg" x={PAD_L} y={TOP} width={innerW} height={plotH} />
       {#each lines as l, i (i)}
@@ -365,20 +520,28 @@
       <rect class="mask" x={PAD_L} y={TOP} width={Math.max(0, loPx - PAD_L)} height={plotH} />
       <rect class="mask" x={hiPx} y={TOP} width={Math.max(0, PAD_L + innerW - hiPx)} height={plotH} />
       <!-- Selected band + edge handles. -->
-      <rect class="band" data-testid="nyquist-brush-band"
+      <rect class="band" data-testid="freq-nav-band"
         x={loPx} y={TOP} width={Math.max(1, hiPx - loPx)} height={plotH} />
       <!-- Edge grips: a hairline + a rounded knob so the resizable ends read as distinct. -->
-      <g class="handle" data-testid="nyquist-brush-handle-lo">
+      <g class="handle" data-testid="freq-nav-handle-lo">
         <line x1={loPx} y1={TOP} x2={loPx} y2={TOP + plotH} />
         <rect class="knob" x={loPx - 2} y={TOP + plotH / 2 - 7} width="4" height="14" rx="2" />
       </g>
-      <g class="handle" data-testid="nyquist-brush-handle-hi">
+      <g class="handle" data-testid="freq-nav-handle-hi">
         <line x1={hiPx} y1={TOP} x2={hiPx} y2={TOP + plotH} />
         <rect class="knob" x={hiPx - 2} y={TOP + plotH / 2 - 7} width="4" height="14" rx="2" />
       </g>
+      <!-- The committed window lies (partly) beyond the scoped strip: point at it. -->
+      {#if band[1] < domain[0]}
+        <path class="offscope" data-testid="freq-nav-offscope"
+          d="M{PAD_L + 12},{TOP + plotH / 2 - 5} l-7,5 l7,5 z" />
+      {:else if band[0] > domain[1]}
+        <path class="offscope" data-testid="freq-nav-offscope"
+          d="M{PAD_L + innerW - 12},{TOP + plotH / 2 - 5} l7,5 l-7,5 z" />
+      {/if}
       <!-- End tick labels for orientation. -->
-      <text class="edge" x={PAD_L} y={H - 4} text-anchor="start">{fmtTick(fullExtent[0], fullExtent[1] - fullExtent[0])}</text>
-      <text class="edge" x={PAD_L + innerW} y={H - 4} text-anchor="end">{fmtTick(fullExtent[1], fullExtent[1] - fullExtent[0])}</text>
+      <text class="edge" x={PAD_L} y={H - 4} text-anchor="start">{fmtTick(domain[0], domain[1] - domain[0])}</text>
+      <text class="edge" x={PAD_L + innerW} y={H - 4} text-anchor="end">{fmtTick(domain[1], domain[1] - domain[0])}</text>
     </svg>
   {/if}
 </div>
@@ -485,4 +648,26 @@
     font: 10px var(--font-mono, ui-monospace, Menlo, monospace);
     pointer-events: none;
   }
+  .nav-btns { display: inline-flex; align-items: center; gap: 2px; }
+  .nbtn {
+    width: 22px; height: 20px;
+    border: 1px solid var(--border, #e3e6eb);
+    border-radius: 5px;
+    background: var(--control-bg, #fff);
+    color: var(--muted, #66708a);
+    font: 12px/1 var(--font-body, system-ui, sans-serif);
+    cursor: pointer;
+    padding: 0;
+  }
+  .nbtn:hover:not(:disabled) { color: var(--text, #1b2437); border-color: var(--accent-soft-border, #c7d2fe); }
+  .nbtn:disabled { opacity: 0.35; cursor: default; }
+  .ribbon { display: block; width: 100%; touch-action: none; margin-bottom: 2px; }
+  .rband {
+    fill: var(--indigo, #4f46e5);
+    fill-opacity: 0.22;
+    stroke: var(--indigo, #4f46e5);
+    stroke-opacity: 0.7;
+    stroke-width: 1;
+  }
+  .offscope { fill: var(--indigo, #4f46e5); opacity: 0.8; pointer-events: none; }
 </style>
