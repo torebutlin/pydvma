@@ -18,6 +18,7 @@ async function tfRange(page: Page): Promise<{ x: [number, number] | null; histor
     if (!vs) throw new Error('window.__viewState hook missing (need ?fixture=1)');
     let raw: { range: { x: [number, number] | null }; history: unknown[] } | null = null;
     vs.current.subscribe((v) => { raw = v as typeof raw; })();
+    if (!raw) throw new Error('view slice unavailable');
     const s = raw as NonNullable<typeof raw>;
     return { x: s.range.x, historyLen: s.history.length };
   });
@@ -102,13 +103,19 @@ test('peak-step › keeps the window width and moves it forward', async ({ page 
   await setWindow(page, 50, 250);                        // width 200, low in the band
   const before = await tfRange(page);
   const width = before.x![1] - before.x![0];
+  // The fixture's detected ladder has a mode below the 150 Hz window centre
+  // (≈102 Hz) and one above (≈1001 Hz); if impulse.dvma is ever regenerated
+  // without that shape, fail HERE clearly instead of as an opaque 30 s
+  // click-timeout on a disabled button.
+  await expect(page.getByTestId('freq-nav-next')).toBeEnabled();
   await page.getByTestId('freq-nav-next').click();
   const after = await tfRange(page);
-  expect(after.x![1] - after.x![0]).toBeCloseTo(width, 0);         // keep-width
+  expect(after.x![1] - after.x![0]).toBeCloseTo(width, 3);         // keep-width (structurally exact)
   expect((after.x![0] + after.x![1]) / 2)
     .toBeGreaterThan((before.x![0] + before.x![1]) / 2);           // moved forward
   expect(after.historyLen).toBe(before.historyLen + 1);            // one undo per press
   // And back:
+  await expect(page.getByTestId('freq-nav-prev')).toBeEnabled();
   await page.getByTestId('freq-nav-prev').click();
   const back = await tfRange(page);
   expect((back.x![0] + back.x![1]) / 2).toBeLessThan((after.x![0] + after.x![1]) / 2);
