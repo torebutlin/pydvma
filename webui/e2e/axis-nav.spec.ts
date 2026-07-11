@@ -71,7 +71,7 @@ test.describe('Nyquist axis navigation (item 4)', () => {
   test('x/y controls relabel Real/Imag; a linked freq group + Auto Re/Im appear', async ({ page }) => {
     await openTf(page);
     await page.getByLabel('plot type').selectOption('nyquist');
-    await expect(page.getByTestId('nyquist-brush')).toBeVisible();
+    await expect(page.getByTestId('freq-nav')).toBeVisible();
 
     // Auto buttons relabel for the Real/Imag axes.
     await expect(page.getByRole('button', { name: 'Auto Re' })).toBeVisible();
@@ -131,7 +131,7 @@ test.describe('Nyquist axis navigation (item 4)', () => {
     await closePanel(page);
 
     const before = await tfSlice(page);
-    const band = page.getByTestId('nyquist-brush-band');
+    const band = page.getByTestId('freq-nav-band');
     const bb = await band.boundingBox();
     if (!bb) throw new Error('brush band has no box');
     // Drag the band leftward → lower frequencies.
@@ -149,14 +149,14 @@ test.describe('Nyquist axis navigation (item 4)', () => {
   test('the brush numeric min/max fields commit the shared freq window (item 6b)', async ({ page }) => {
     await openTf(page);
     await page.getByLabel('plot type').selectOption('nyquist');
-    await expect(page.getByTestId('nyquist-brush')).toBeVisible();
+    await expect(page.getByTestId('freq-nav')).toBeVisible();
 
     // Typing a min then a max (each committed on Enter) lands on range.x — the
     // SAME window Calc/Fit read — same as dragging the band, but exact.
-    await page.getByTestId('nyquist-brush-min').fill('250');
-    await page.getByTestId('nyquist-brush-min').press('Enter');
-    await page.getByTestId('nyquist-brush-max').fill('750');
-    await page.getByTestId('nyquist-brush-max').press('Enter');
+    await page.getByTestId('freq-nav-min').fill('250');
+    await page.getByTestId('freq-nav-min').press('Enter');
+    await page.getByTestId('freq-nav-max').fill('750');
+    await page.getByTestId('freq-nav-max').press('Enter');
     await expect.poll(async () => (await tfSlice(page)).range.x, { timeout: 4000 }).toEqual([250, 750]);
   });
 
@@ -171,7 +171,7 @@ test.describe('Nyquist axis navigation (item 4)', () => {
     await closePanel(page);
 
     const before = await tfSlice(page);
-    const band = page.getByTestId('nyquist-brush-band');
+    const band = page.getByTestId('freq-nav-band');
     const bb = await band.boundingBox();
     if (!bb) throw new Error('brush band has no box');
     // Press and move the band leftward WITHOUT releasing yet.
@@ -206,7 +206,7 @@ test.describe('Nyquist axis navigation (item 4)', () => {
     await expect.poll(async () => (await tfSlice(page)).range.x, { timeout: 4000 }).toEqual([400, 600]);
     await closePanel(page);
 
-    await page.locator('[data-testid="nyquist-brush"] svg').dblclick();
+    await page.locator('[data-testid="freq-nav"] svg').dblclick();
     // The committed window widens well past the narrow [400,600] we set.
     await expect.poll(async () => {
       const r = (await tfSlice(page)).range.x;

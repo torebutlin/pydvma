@@ -70,6 +70,11 @@ test.describe('@engine', () => {
     await expect(chip).toContainText('mode 1', { timeout: 60_000 });
     await expect(chip).toContainText('mode 2');
 
+    // Freq-navigator mode ticks (2026-07-11 design): the Fit stage auto-opens
+    // the navigator and each fitted fn marks the strip.
+    await expect(page.getByTestId('freq-nav')).toBeVisible();
+    await expect(page.getByTestId('freq-nav-tick')).toHaveCount(2);
+
     // Round-8: the chip is draggable by its header strip and minimisable.
     // Drag by an explicit delta from the grab point (the header centre).
     const chipHead = chip.locator('.chip-head');
