@@ -19,7 +19,12 @@
    *   - double-click the strip → HOME: window → scope (or the full extent
    *     when unscoped) — the parent's `onhome` decides;
    *   - the two numeric fields in the head → type an exact min/max (Hz),
-   *     committed on change / Enter.
+   *     committed on change / Enter;
+   *   - the ‹ › head buttons → STEP the window to the previous/next detected
+   *     magnitude peak (keeping its width; disabled when there is none that
+   *     way — see lib/plot/peaks).
+   * Fitted-mode fn markers (the `modeTicks` prop) are drawn as small triangles
+   * along the strip so it doubles as a mode map (dimmed for muted modes).
    *
    * SCOPE (bandwidth-of-interest): when a `scope` is set the strip zooms to
    * span it, and a thin context ribbon appears above — the full extent in
@@ -44,6 +49,7 @@
    * decimated to ~2 samples per pixel before the path is built.
    */
   import { fmtTick } from '../lib/plot/scales';
+  import { detectPeaks, stepWindow } from '../lib/plot/peaks';
 
   interface StripLine { x: ArrayLike<number>; y: ArrayLike<number>; color: string; }
 
@@ -53,6 +59,7 @@
     band,
     scope = null,
     xScale = 'lin',
+    modeTicks = [],
     onchange,
     onpreview,
     onstart,
@@ -70,6 +77,8 @@
     scope?: [number, number] | null;
     /** Frequency axis scale, matched to the main plot's x scale. */
     xScale?: 'lin' | 'log';
+    /** Fitted-mode markers (fn in Hz + muted flag); empty ⇒ no ticks. */
+    modeTicks?: { fn: number; muted: boolean }[];
     /** Fired once on release (numeric-field commit / peak-step) with the new window. */
     onchange: (lo: number, hi: number) => void;
     /** Per-animation-frame live band while dragging (no history entry). */
@@ -102,6 +111,14 @@
   const log = $derived(xScale === 'log' && domain[0] > 0 && domain[1] > 0);
   const lfmin = $derived(log ? Math.log10(domain[0]) : 0);
   const lfmax = $derived(log ? Math.log10(domain[1]) : 1);
+
+  // Peak-step targets (design §peak-stepping): detection runs on the strip's
+  // own lines within the domain; a null target disables that button. Uses the
+  // COMMITTED band (not the live preview) so targets are stable mid-drag.
+  // (Declared after `log` so the derived reads a value that's already in scope.)
+  const peaks = $derived(detectPeaks(lines, domain, log));
+  const prevTarget = $derived(stepWindow(peaks, band, domain, -1, log));
+  const nextTarget = $derived(stepWindow(peaks, band, domain, 1, log));
 
   /** Frequency → strip px (clamped to the plot area). */
   function toPx(f: number): number {
@@ -435,6 +452,22 @@
       <button
         class="nbtn"
         type="button"
+        data-testid="freq-nav-prev"
+        title="Previous peak (window keeps its width)"
+        disabled={!prevTarget}
+        onclick={() => prevTarget && onchange(prevTarget[0], prevTarget[1])}
+      >‹</button>
+      <button
+        class="nbtn"
+        type="button"
+        data-testid="freq-nav-next"
+        title="Next peak (window keeps its width)"
+        disabled={!nextTarget}
+        onclick={() => nextTarget && onchange(nextTarget[0], nextTarget[1])}
+      >›</button>
+      <button
+        class="nbtn"
+        type="button"
         data-testid="freq-nav-scope-btn"
         title="Scope the strip to the current window (double-click the ribbon to clear)"
         onclick={() => onscope([band[0], band[1]])}
@@ -543,6 +576,14 @@
       <!-- End tick labels for orientation. -->
       <text class="edge" x={PAD_L} y={H - 4} text-anchor="start">{fmtTick(domain[0], domain[1] - domain[0])}</text>
       <text class="edge" x={PAD_L + innerW} y={H - 4} text-anchor="end">{fmtTick(domain[1], domain[1] - domain[0])}</text>
+      <!-- Fitted-mode markers: one triangle per mode fn inside the domain
+           (dimmed when muted) — the strip doubles as a mode map. -->
+      {#each modeTicks as t, i (i)}
+        {#if t.fn >= domain[0] && t.fn <= domain[1]}
+          <path class="mtick" class:muted={t.muted} data-testid="freq-nav-tick"
+            d="M{toPx(t.fn)},{TOP + 7} l-4,-7 l8,0 z" />
+        {/if}
+      {/each}
     </svg>
   {/if}
 </div>
@@ -671,4 +712,6 @@
     stroke-width: 1;
   }
   .offscope { fill: var(--indigo, #4f46e5); opacity: 0.8; pointer-events: none; }
+  .mtick { fill: var(--indigo, #4f46e5); opacity: 0.85; pointer-events: none; }
+  .mtick.muted { opacity: 0.3; }
 </style>
