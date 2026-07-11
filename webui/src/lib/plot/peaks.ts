@@ -77,9 +77,10 @@ export function detectPeaks(lines: NavLine[], scope: [number, number], log = fal
  * (width kept — as a log10 RATIO when `log`, matching the brush's translate
  * semantics) on the nearest peak beyond the window centre in direction `dir`,
  * clamped inside `scope` (hugging the edge, width preserved). Candidates
- * whose clamped window reproduces the CURRENT window are skipped (an
- * edge-clamped window must not re-target the same peak forever). Returns
- * `null` when no candidate yields a different window ⇒ disable the button.
+ * whose clamped window reproduces the CURRENT window — compared in axis
+ * (log10 when `log`) space — are skipped (an edge-clamped window must not
+ * re-target the same peak forever). Returns `null` when no candidate yields
+ * a different window ⇒ disable the button.
  *
  * Special case (the "home" rule): a window spanning ≥90% of the scope — where
  * keep-width is meaningless — steps at scope-span/10 width instead.
@@ -109,14 +110,18 @@ export function stepWindow(
     .filter((t) => (dir === 1 ? t > centre : t < centre))
     .sort((a, b) => (dir === 1 ? a - b : b - a));
 
-  const tol = (sHi - sLo) * 1e-6;
+  const tolT = span * 1e-6;
+  const wLoT = fwd(window[0]), wHiT = fwd(window[1]);
   for (const t of cands) {
     let lo = t - width / 2, hi = t + width / 2;
-    if (width >= span) { lo = tSLo; hi = tSHi; }
-    else if (lo < tSLo) { lo = tSLo; hi = tSLo + width; }
+    if (lo < tSLo) { lo = tSLo; hi = tSLo + width; }
     else if (hi > tSHi) { hi = tSHi; lo = tSHi - width; }
-    const out: [number, number] = [inv(lo), inv(hi)];
-    if (Math.abs(out[0] - window[0]) > tol || Math.abs(out[1] - window[1]) > tol) return out;
+    // Skip a candidate that reproduces the current window (compared in axis
+    // space so the guard scales correctly on log axes); a non-finite current
+    // window (log axis, non-positive edge) always counts as different.
+    const differs = !Number.isFinite(wLoT) || !Number.isFinite(wHiT)
+      || Math.abs(lo - wLoT) > tolT || Math.abs(hi - wHiT) > tolT;
+    if (differs) return [inv(lo), inv(hi)];
   }
   return null;
 }

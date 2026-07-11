@@ -91,3 +91,36 @@ test('stepWindow log mode preserves width as a RATIO (brush translate semantics)
   expect(next![1] / next![0]).toBeCloseTo(125 / 80, 6);
   expect(Math.sqrt(next![0] * next![1])).toBeCloseTo(400, 4);           // log-centred on the peak
 });
+
+test('detectPeaks log mode: log10 binning recovers peaks on a log axis', () => {
+  // Two modes an octave-ish apart on a 10–1000 Hz log axis.
+  const N = 4000;
+  const x = new Float64Array(N), y = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const f = 10 ** (1 + (i / (N - 1)) * 2);           // 10..1000 Hz, log-spaced
+    let v = 0;
+    for (const m of [{ fn: 100, a: 40 }, { fn: 400, a: 50 }]) {
+      v += m.a / (1 + ((f - m.fn) / (m.fn * 0.05)) ** 2);   // ~5% fractional width
+    }
+    x[i] = f; y[i] = v;
+  }
+  const peaks = detectPeaks([{ x, y }], [10, 1000], true);
+  expect(peaks.length).toBe(2);
+  expect(Math.abs(peaks[0] - 100) / 100).toBeLessThan(0.05);   // within 5% (bin-centre error)
+  expect(Math.abs(peaks[1] - 400) / 400).toBeLessThan(0.05);
+});
+
+test('detectPeaks tolerates NaN gaps in the input lines', () => {
+  const l = threePeakLine();
+  for (let i = 200; i < 260; i++) l.y[i] = NaN;        // punch a hole near 115 Hz... keep away from peaks
+  for (let i = 1200; i < 1240; i++) l.y[i] = NaN;
+  const peaks = detectPeaks([l], [0, 1000]);
+  expect(peaks.some((p) => Math.abs(p - 470) < 5)).toBe(true);
+  expect(peaks.some((p) => Math.abs(p - 810) < 5)).toBe(true);
+});
+
+test('stepWindow keeps width just BELOW the 90% home threshold', () => {
+  const next = stepWindow([470], [0, 899], [0, 1000], 1);   // 89.9% span → keep-width applies
+  expect(next).not.toBeNull();
+  expect(next![1] - next![0]).toBeCloseTo(899, 6);
+});
