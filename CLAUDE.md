@@ -2,7 +2,23 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-07-11 (freq-navigator arc, committed locally — NOT pushed):
+As of 2026-08-03: two Dependabot security bumps merged (PRs #9, #10 —
+both lockfile-only, `webui/package-lock.json`): dompurify 3.4.11→3.4.12
+(transitive via jspdf; GHSA-c2j3-45gr-mqc4) and postcss 8.5.16→8.5.25
++ nanoid 3.3.15→3.3.16 (dev, transitive via vite; GHSA-r28c-9q8g-f849,
+high — source-map path traversal). `npm audit` now 0 vulnerabilities.
+Verified before merge: registry integrity hashes checked independently,
+check 0/0 + vitest 681/1, and the built CSS is BYTE-IDENTICAL across the
+postcss bump; dompurify is bundled but unreachable (nothing calls
+jspdf's `doc.html()` — figure.ts uses jsPDF + svg2pdf.js only). NB
+there is no `.github/dependabot.yml`, and that is DELIBERATE: repo
+setting `dependabot_security_updates` is enabled, which scans the whole
+dependency graph (npm AND pip/pyproject) and raises a PR only for a
+real advisory. A dependabot.yml would additionally opt into ROUTINE
+version-bump PRs — unwanted churn during lab testing. 0 open alerts as
+of 2026-08-03.
+
+As of 2026-07-11 (freq-navigator arc — PUSHED; deployed at HEAD):
 **The frequency navigator shipped end-to-end** (design
 `dev/plans/2026-07-11-freq-navigator-design.md`, plan
 `…-plan.md`; Tore's ask: kill the zoom-fit-home-zoom loop in modal
@@ -21,7 +37,7 @@ fit → › → fit). Pure webui — no engine/wheel rebuild. Suites: check
 0/0, vitest 681/1, Playwright 85/7 (fit @engine incl. tick asserts),
 pytest 347/3, mkdocs --strict green.
 
-Earlier (2026-07-10 evening, round 10, committed locally — NOT pushed):
+Earlier (2026-07-10 evening, round 10 — PUSHED):
 **Jim Woodhouse's first hands-on feedback**
 (`dev/2026-07-10-round10-jw-feedback.md`; his test archives in
 `dev/example_data/`, deliberately untracked). Three fixes: **Load Data
@@ -36,7 +52,7 @@ a scale marker, data already physical — no rescale); **error toasts
 pin open** until × (JW couldn't copy one before it vanished; explicit
 timeout still overrides). Suites: pytest 347/3, check 0/0, vitest
 660/1, Playwright 81/7, mkdocs --strict green; wheel rebuilt. Round 10
-is PUSHED + DEPLOYED; **round-10b addendum** (committed locally):
+is PUSHED + DEPLOYED; **round-10b addendum** (also pushed):
 `selection.shiftLines` is FAMILY-aware — data sets and fit pseudo-sets
 shift independently, a whole-set solo advances to its family's next
 set (lockstep when both families solo) — fixing "‹ › drop the fit line
