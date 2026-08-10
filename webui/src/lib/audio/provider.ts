@@ -145,7 +145,32 @@ export interface DeviceCapsEntry {
    * as the label of the Acquire output-device select (see {@link outputDevices}).
    */
   name?: string;
+  /**
+   * NI product type as DAQmx reports it (`'USB-6212'`, `'NI 9234'`, …), from
+   * the server's `device_caps[deviceId].product_type`.  Absent on
+   * mock/soundcard.  Read by {@link supportsSharedClockAo} to tell a
+   * hardware-timed-AO device from a software-timed USB-600x.
+   */
+  product_type?: string;
+  /**
+   * Whether the NI entry is a cDAQ chassis (server
+   * `device_caps[deviceId].is_chassis`).  Chassis modules share the chassis
+   * timebase, so AI/AO are phase-coherent — see {@link supportsSharedClockAo}.
+   */
+  is_chassis?: boolean;
+  /** Maximum output (AO) channel count (`device_caps[deviceId].ao_channel_count`). */
+  ao_channel_count?: number;
 }
+
+/**
+ * NI product types whose analog output is SOFTWARE-timed (on-demand writes,
+ * no AO sample clock) and therefore can never share a hardware clock with
+ * the AI stream.  Mirrors `pydvma._ni_backend._SW_TIMED_AO_TYPES` — the list
+ * `supports_hw_ao_sync` consults server-side.
+ */
+export const SW_TIMED_AO_PRODUCT_TYPES: readonly string[] = [
+  'USB-6001', 'USB-6002', 'USB-6003', 'USB-6008', 'USB-6009',
+];
 
 /** Per-device input/output channel counts (`max_channels[deviceId]`). */
 export interface DeviceChannelCounts {
@@ -336,6 +361,54 @@ export function outputDevices(caps: BridgeCaps | null): OutputDevice[] {
     out.push({ deviceId, label: entry.name ?? deviceId, maxChannels });
   }
   return out;
+}
+
+/**
+ * Whether AO and AI can share a HARDWARE sample clock for this input/output
+ * device pair — the client-side twin of `pydvma._ni_backend.supports_hw_ao_sync`
+ * combined with `streams.setup_output_NI_nidaqmx`'s same-device requirement.
+ *
+ * The BLA ("Nonlin") stage gates its `commanded` x-mode on this: with an
+ * unsynced AO the per-capture start jitter leaks into the realisation scatter
+ * and corrupts σ²_NL, so commanded-x is only offered when the drive is known
+ * to step on the acquisition clock.  Deliberately CONSERVATIVE — it answers
+ * `false` whenever the capability document cannot PROVE sync:
+ *
+ * - both sides must be the SAME `nidaq:<index>` device (the server routes the
+ *   AI sample clock only when the AO task sits on the recorder's own device or
+ *   chassis; an unset output device follows the input, so the caller passes
+ *   the input id for that case);
+ * - a cDAQ chassis (`is_chassis`) qualifies — its modules share the chassis
+ *   80 MHz timebase (phase-coherent, though not sample-accurate across tasks);
+ * - any other NI device qualifies only when its `product_type` is known AND
+ *   is not one of the software-timed-AO USB-600x family
+ *   ({@link SW_TIMED_AO_PRODUCT_TYPES});
+ * - soundcard / mock / Web Audio (null caps) are always `false`.
+ *
+ * The remaining server-side condition — the AI stream running AT `output_fs` —
+ * is a separate rule the caller enforces (BLA refuses any staged output_fs
+ * clamp, and refuses `lpf_on`, which oversamples the capture).
+ */
+export function supportsSharedClockAo(
+  caps: BridgeCaps | null,
+  inputDeviceId: string | undefined,
+  outputDeviceId?: string,
+): boolean {
+  if (!caps || !inputDeviceId) return false;
+  // An unset output device follows the input device (options.py), so `''`
+  // resolves to the input id; a DIFFERENT device can never share the clock.
+  if (outputDeviceId && outputDeviceId !== inputDeviceId) return false;
+  const sep = inputDeviceId.indexOf(':');
+  const driver = sep >= 0 ? inputDeviceId.slice(0, sep) : inputDeviceId;
+  if (driver !== 'nidaq') return false;
+  const index = sep >= 0 ? Number(inputDeviceId.slice(sep + 1)) : 0;
+  const dc = caps.device_caps?.[inputDeviceId];
+  const ni = Number.isFinite(index) ? caps.devices?.nidaq?.[index] : undefined;
+  const isChassis = dc?.is_chassis ?? ni?.is_chassis;
+  if (isChassis) return true;
+  const productType = dc?.product_type ?? ni?.product_type;
+  if (!productType) return false;              // unknown hardware ⇒ cannot prove sync
+  return !SW_TIMED_AO_PRODUCT_TYPES.includes(productType);
 }
 
 /**

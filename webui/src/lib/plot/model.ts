@@ -108,6 +108,19 @@ export interface SetArrays {
   tf?: {
     axis: Float64Array; data: DecodedArray; coherence?: DecodedArray;
     chIn?: number | null; nChannels?: number;
+    /**
+     * Schoukens BLA uncertainty pair (`calculate_bla`), present only on BLA
+     * sets: `sigmaNl` is the per-realisation NONLINEAR-DISTORTION standard
+     * deviation and `sigmaN` the per-realisation MEASUREMENT-NOISE one, both
+     * REAL arrays of the same `(Nf, Nout)` shape as `data` and both in LINEAR
+     * FRF units (the units of `abs(tf_data)`) — so they map onto the dB axis
+     * as `20*log10(σ)` with NO further square root.  They are the level of
+     * distortion/noise in ONE realisation, not the error bar on the plotted
+     * BLA, which is `sqrt(M)` smaller.  Stored here (rather than beside the
+     * TF slice) so the σ overlay reads them through the same per-set lookup as
+     * the curve they annotate.
+     */
+    sigmaNl?: DecodedArray; sigmaN?: DecodedArray;
   };
   /** Sonogram magnitude image (Nf, Nt) plus its two axes (canvas heat layer). */
   sono?: { timeAxis: Float64Array; freqAxis: Float64Array; data: DecodedArray };
