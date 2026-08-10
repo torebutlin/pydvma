@@ -54,6 +54,7 @@
   import type { DvmaDataset } from './lib/model/dataset';
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
+  import { createBlaStore } from './lib/stores/bla';
   import { initTheme } from './lib/stores/theme';
   import { selectProvider, fetchServeConfig } from './lib/audio/provider';
   import { mapServeConfig } from './lib/audio/serveConfig';
@@ -132,6 +133,12 @@
   // here and passed to both LiveCard (controls) and OscCanvas (render).
   // Reads device config from the acquire store so Setup configures both.
   const monitor = createMonitorStore(acquire);
+  // Schoukens BLA run store (Nonlin stage): orchestrates M × n_exc ordinary
+  // captures through the acquire store, then dispatches the whole ensemble to
+  // the `calc_bla` engine op and lands one TF set per excitation. Created here
+  // because it spans acquire + actions + engine + selection, and jumps the
+  // plot to TF when a run finishes.
+  const bla = createBlaStore({ acquire, actions, engine, selection, viewState });
 
   // Monitor lifecycle (round-2 redesign): the monitor is a PERSISTENT
   // bottom-left mini-oscilloscope that lives across all stages, with its
@@ -1120,6 +1127,7 @@
     {monitor}
     {modal}
     {damping}
+    {bla}
     onFitDamping={refitDamping}
     {getSvg}
     {workdir}

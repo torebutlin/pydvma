@@ -11,7 +11,7 @@ import type { ViewId } from './viewstate';
  * stage is enabled.
  */
 export interface StageDef {
-  id: 'setup' | 'acquire' | 'live' | 'time' | 'frequency' | 'tf' | 'sono' | 'fit' | 'export';
+  id: 'setup' | 'acquire' | 'live' | 'time' | 'frequency' | 'tf' | 'bla' | 'sono' | 'fit' | 'export';
   label: string;
   view: ViewId | null;               // null = keeps current view (export) or own render (live)
   needs: 'none' | 'liveSource' | 'fitEngine';
@@ -23,6 +23,10 @@ export const STAGES: StageDef[] = [
   { id: 'time', label: 'Time', view: 'time', needs: 'none' },
   { id: 'frequency', label: 'Frequency', view: 'frequency', needs: 'none' },
   { id: 'tf', label: 'TF', view: 'tf', needs: 'none' },
+  // Schoukens BLA ("Nonlin"): a measurement stage — it DRIVES the output and
+  // captures, so it gates on a live source exactly like Acquire, and it lands
+  // TF sets, so its view is 'tf'.
+  { id: 'bla', label: 'Nonlin', view: 'tf', needs: 'liveSource' },
   { id: 'sono', label: 'Sonogram', view: 'sono', needs: 'none' },
   { id: 'fit', label: 'Fit', view: 'tf', needs: 'fitEngine' },   // Plan 2
   { id: 'export', label: 'Export', view: null, needs: 'none' },

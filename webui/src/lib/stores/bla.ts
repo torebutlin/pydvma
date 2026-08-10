@@ -251,6 +251,39 @@ export const BLA_CAPTURE_MARGIN_SAMPLES = 256;
 /** Rate agreement tolerance (Hz) — matches the acquire store's coerced-fs test. */
 export const BLA_FS_TOLERANCE_HZ = 0.5;
 
+/**
+ * Why the COMMANDED x-mode is refused when the path cannot prove sync — the
+ * card shows this on the disabled "commanded drive" option, and
+ * {@link preflightBla} reports the same sentence if a run asks for it anyway.
+ */
+export const BLA_COMMANDED_X_REASON =
+  'Commanded drive needs a hardware-synced NI output (AO and AI on the same device, '
+  + 'sharing the sample clock at one rate) — measure the drive on an input channel instead.';
+
+/**
+ * Whether the analysis may read the excitation from the COMMANDED drive
+ * (regenerated from the seed) rather than from a measured input channel.
+ *
+ * True only when the capture path can be PROVEN sample-synced: a bridge NI
+ * device whose AO shares the AI sample clock ({@link supportsSharedClockAo}),
+ * with no staged output-rate clamp and no digital low-pass resampling. On any
+ * other path the per-capture AO start jitter would land in the realisation
+ * scatter and corrupt σ²_NL, so the drive has to be measured.
+ *
+ * @param input The preflight fields describing the capture path.
+ * @returns Whether commanded-x is admissible.
+ */
+export function commandedXSupported(
+  input: Pick<BlaPreflightInput,
+    'providerKind' | 'caps' | 'inputDeviceId' | 'outputDeviceId' | 'stagedOutputFs' | 'requestedFs' | 'lpfOn'>,
+): boolean {
+  return input.providerKind === 'bridge'
+    && supportsSharedClockAo(input.caps, input.inputDeviceId, input.outputDeviceId)
+    && !(input.stagedOutputFs != null
+      && Math.abs(input.stagedOutputFs - input.requestedFs) > BLA_FS_TOLERANCE_HZ)
+    && !input.lpfOn;
+}
+
 /** A fresh design: 20 Hz–2 kHz at 5 Hz resolution, Schoukens' M/P defaults. */
 export function defaultBlaDesign(): BlaDesign {
   return {
@@ -466,17 +499,8 @@ export function preflightBla(
     fail('x-mode', 'Every excitation must use the same x source — mix of measured and commanded '
       + 'drive is not supported in one run.');
   }
-  if (values.xMode === 'commanded') {
-    const synced = input.providerKind === 'bridge'
-      && supportsSharedClockAo(input.caps, input.inputDeviceId, input.outputDeviceId)
-      && !(input.stagedOutputFs != null
-        && Math.abs(input.stagedOutputFs - input.requestedFs) > BLA_FS_TOLERANCE_HZ)
-      && !input.lpfOn;
-    if (!synced) {
-      fail('commanded-sync', 'Commanded drive needs a hardware-synced NI output (AO and AI on the '
-        + 'same device, sharing the sample clock at one rate) — measure the drive on an input '
-        + 'channel instead.');
-    }
+  if (values.xMode === 'commanded' && !commandedXSupported(input)) {
+    fail('commanded-sync', BLA_COMMANDED_X_REASON);
   }
   if (values.nExc > 0 && input.providerKind === 'bridge' && input.caps) {
     const outDev = input.outputDeviceId || input.inputDeviceId;

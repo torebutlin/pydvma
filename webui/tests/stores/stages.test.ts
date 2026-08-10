@@ -39,10 +39,27 @@ test('Live is enabled when liveSource flips true', () => {
   expect(live!.enabled).toBe(true);
 });
 
-test('all nine stages are present', () => {
-  expect(STAGES).toHaveLength(9);
+test('all ten stages are present', () => {
+  expect(STAGES).toHaveLength(10);
   const ids = STAGES.map((s) => s.id);
   expect(ids).toEqual([
-    'setup', 'acquire', 'live', 'time', 'frequency', 'tf', 'sono', 'fit', 'export',
+    'setup', 'acquire', 'live', 'time', 'frequency', 'tf', 'bla', 'sono', 'fit', 'export',
   ]);
+});
+
+test('Nonlin (BLA) sits after TF, shows the TF view and gates on a live source', () => {
+  const bla = STAGES.find((s) => s.id === 'bla');
+  expect(bla).toBeDefined();
+  expect(bla!.label).toBe('Nonlin');
+  expect(bla!.view).toBe('tf');
+  // It DRIVES the output and captures, so it needs a live source like Acquire.
+  expect(bla!.needs).toBe('liveSource');
+  const ids = STAGES.map((s) => s.id);
+  expect(ids.indexOf('bla')).toBe(ids.indexOf('tf') + 1);
+});
+
+test('Nonlin follows the liveSource capability gate', () => {
+  expect(get(enabledStages).find((s) => s.id === 'bla')!.enabled).toBe(false);
+  capabilities.set({ liveSource: true, fitEngine: false });
+  expect(get(enabledStages).find((s) => s.id === 'bla')!.enabled).toBe(true);
 });
