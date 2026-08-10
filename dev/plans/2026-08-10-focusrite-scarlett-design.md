@@ -430,11 +430,9 @@ Two behaviours worth knowing:
    deliberately unchanged for now.
 3. **`max_input_fs` still has no direct unit test** (pre-existing gap;
    the new `select_capture_fs` tests cover the adjacent logic).
-4. **`TODO.md` does not exist.** `CLAUDE.md` calls it "the single
-   canonical pickup list", but the file is absent from the repo and from
-   git history entirely. Either it was never committed or it lives
-   outside the repo; worth resolving, since CLAUDE.md sends every
-   session to it.
+4. All of the above are now tracked in `TODO.md` under "Soundcard /
+   Focusrite Scarlett follow-ups", alongside the loopback labelling and
+   calibrated-volts items from §3 D/E.
 
 ## 7. Artefacts worth keeping
 

@@ -129,6 +129,69 @@ Covered already: measurement-type exponent (Fit card's TF type =
 (`hammerclean`), decay fits. Low value (research-specific): cepstrum
 sonogram, Signal Wizard export, bowed-string/musical-acoustics extras.
 
+## Soundcard / Focusrite Scarlett follow-ups (2026-08-10)
+
+The correctness fix is landed and hardware-verified on the Mac — see
+`dev/plans/2026-08-10-focusrite-scarlett-design.md` for the full
+investigation and measurements. A sound card runs a discrete rate
+ladder and `sd.check_input_settings` accepts every rate anyway, so
+pydvma now asks CoreAudio for the real ladder, pins the hardware clock,
+and captures at a runnable rate before decimating with its own filter.
+Open items:
+
+- **Output stimulus at a non-native fs (bug).** The device has ONE
+  clock, so an output stream running at a different rate while the
+  clock is pinned takes both streams down (PaMacCore -50, then
+  silence). `MySettings` defaults `output_fs = fs`, so a
+  stimulus-enabled log at, say, fs = 3 kHz on a sound card will hit
+  this. Fix: stage `output_fs` onto the CAPTURE rate for soundcard
+  devices, mirroring what `reclampOutputFs` already does for the NI
+  `ao_max_rate` cap.
+- **PC (NI + WASAPI): does `check_input_settings` lie on Windows too?**
+  Shared-mode WASAPI also resamples, so the same class of bug probably
+  exists with a different API for the fix (`IsFormatSupported` /
+  exclusive mode). MUST be measured before any claim — non-macOS
+  behaviour is deliberately unchanged for now. Also re-run
+  `bridge_hw_check.py` to confirm the NI path is untouched by the
+  `select_capture_fs` refactor.
+- **Device-specific oversampling default (Tore's point).** The capture
+  rate rule should follow whether the hardware anti-aliases at its own
+  converter rate. Delta-sigma (sound cards, NI 9234) → lowest native
+  rate that covers fs, which is what soundcard now does. Filterless
+  multiplexed SAR (USB-6003/6212) → highest rate, and there the
+  per-channel division of the AGGREGATE ai_max_rate has to be folded
+  in as well. NI keeps the old max-rate rule today, so the behaviour is
+  already right per driver, but it is implicit — worth making it an
+  explicit device property rather than a side effect of which branch
+  runs. `capture_fs` is the manual override in the meantime.
+- **Label the 2i2's loopback channels.** Inputs 3/4 are a DIGITAL
+  loopback of outputs 1/2, not analogue inputs, and pydvma currently
+  offers a student 4 channels with no hint that two of them are not
+  connected to the outside world. Needs channel roles in `device_caps`
+  and a UI label. (The loopback is also a free cable-free self-test —
+  `dev/scarlett_hw_check.py` uses it.)
+- **Calibrated volts for the Scarlett.** `VmaxSC` can be computed from
+  the manual's max-input table given a gain + input mode the operator
+  states: full-scale peak = `√2·0.7746·10^((L−G)/20)`, L = 22 dBu Line
+  / 12 dBu Inst / 16 dBu Mic, gain range 69 dB. Gain is NOT readable in
+  software (see below), so this needs new `input_gain_db` /
+  `input_mode` settings recorded in the dataset, plus a Setup level
+  check reporting rms/peak in volts and flagging clipping or gross
+  under-range. Note the front-panel Output knob is analogue, so output
+  voltage is only repeatable at a marked position.
+- **Gain control is a dead end — do not re-investigate.** No CoreAudio
+  HAL properties exist on the input scope; Focusrite Control 2's
+  AES70/OCA server gates its object tree behind an authenticated x25519
+  pairing agent needing a human to approve in FC2; the USB interfaces
+  are exclusively owned by `usbaudiod`, so the Linux vendor-protocol
+  route would need a DriverKit extension. Also checked:
+  `Mathieu2301/Focusrite-Control-API` targets Focusrite Control **1**
+  (3rd gen, XML `<set devid=…>` over a discovered port) and exposes
+  Air/Inst/LED colour but **not gain** — it does not apply to FC2.
+- **`streams.max_input_fs` still has no direct unit test** —
+  pre-existing gap; the new `select_capture_fs` tests cover the
+  adjacent logic but not this.
+
 ## Current backlog — hands-on & hardware
 
 - **Lab-testing period (Tore, days/weeks)** — real structures, real
