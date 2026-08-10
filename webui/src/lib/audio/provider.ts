@@ -46,6 +46,15 @@ export type {
   MonitorChunk,
   MonitorCallback,
   MonitorHandle,
+  /** Classic stimulus spec (sweep / uniform / gaussian) — unchanged. */
+  OutputStimulusConfig,
+  /** Schoukens multisine stimulus spec (BLA runs). */
+  MultisineStimulusConfig,
+  /**
+   * The stimulus spec union both backends accept as a per-capture
+   * `RecordConfig.outputOverride` — see {@link SourceProvider.startRecording}.
+   */
+  OutputSpecOverride,
 } from './source';
 
 // ---- bridge capability / config types ----
@@ -460,6 +469,14 @@ export interface SourceProvider {
   /** Bridge feature/device report, or `null` for Web Audio / a dead bridge. */
   capabilities(): Promise<BridgeCaps | null>;
   enumerateInputDevices(): Promise<AudioInputDevice[]>;
+  /**
+   * Run one fixed-duration capture.  `cfg.outputOverride` (the stimulus-spec
+   * union) is the one Web-Audio-shaped `RecordConfig` extension BOTH backends
+   * honour: it replaces the Acquire card's stimulus state for this capture
+   * only, so a BLA run can inject its (realisation, experiment) multisine
+   * without touching persistent UI state.  `cfg.output` / `cfg.pretrig` stay
+   * Web-Audio-only.
+   */
   startRecording(cfg: RecordConfig): RecordingHandle;
   startMonitor(
     cfg: Omit<RecordConfig, 'durationS'>,
@@ -551,6 +568,13 @@ export class WebAudioProvider implements SourceProvider {
     this.statusCb = cb;
   }
 
+  /**
+   * Capture through `source.ts`, merging the Acquire card's stimulus /
+   * pretrigger state ({@link recordExtras}).  A caller-supplied
+   * `cfg.outputOverride` survives the merge untouched and beats the merged
+   * `output` inside `startRecording` — so a BLA capture plays its own
+   * multisine even while the card's stimulus group is on (or off).
+   */
   startRecording(cfg: RecordConfig): RecordingHandle {
     return webStartRecording({ ...cfg, ...this.recordExtras() });
   }

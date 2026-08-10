@@ -37,7 +37,9 @@ import type {
   LogStatusEvent,
   MonitorCallback,
   MonitorHandle,
+  MultisineStimulusConfig,
   NiDeviceEntry,
+  OutputSpecOverride,
   RecordConfig,
   Recording,
   RecordingHandle,
@@ -506,14 +508,24 @@ export class BridgeProvider implements SourceProvider {
     // Output (AO) device + channel selection (Acquire output group), sent as
     // whitelisted MySettings kwargs only when the stimulus is enabled. The
     // driver/index are derived from the selected output deviceId exactly like
-    // the input device; output_channels sizes the generated waveform.
-    if (ec.outputEnabled) {
+    // the input device; output_channels sizes the generated waveform.  A
+    // per-capture `outputOverride` (BLA) counts as "enabled" here too — it
+    // wins over the card's enabled-ness, so the AO device selection must ride
+    // along even when the card's stimulus group is switched off.
+    const override = cfg.outputOverride;
+    if (ec.outputEnabled || override) {
       const od = parseDeviceId(ec.outputDeviceId);
       if (od) {
         s.output_device_driver = od.driver;
         if (od.driver !== 'mock') s.output_device_index = od.index;
       }
       if (ec.outputChannels != null) s.output_channels = ec.outputChannels;
+      // A multisine drives one channel PER EXCITATION, and the server's
+      // `multisine_generator` rejects `n_exc > settings.output_channels`, so
+      // widen the channel count to fit the run (never narrow it).
+      if (override?.type === 'multisine') {
+        s.output_channels = Math.max(ec.outputChannels ?? 1, override.nExc);
+      }
       // Store-derived AO rate clamp (the effective output device's
       // ao_max_rate sits below the input fs, e.g. USB-6003 AO at 5 kS/s):
       // without it the server defaults output_fs = fs and rejects the log
@@ -558,13 +570,27 @@ export class BridgeProvider implements SourceProvider {
 
   /**
    * Build the `log` message's `output` (stimulus) field from the Acquire
-   * output group.  `null` unless `outputEnabled`; when on, `{type, amp,
-   * f1, f2}` (plus an optional `duration`) mapping to pydvma's
-   * `signal_generator` / `Output_Signal_Settings`.  The output device +
-   * channel selection travels separately, as MySettings kwargs in the
-   * configure message (see {@link buildSettings}).
+   * output group, or from a per-capture `override` when one is given.  `null`
+   * with no override unless `outputEnabled`; when on, `{type, amp, f1, f2}`
+   * (plus an optional `duration`) mapping to pydvma's `signal_generator` /
+   * `Output_Signal_Settings`.  The output device + channel selection travels
+   * separately, as MySettings kwargs in the configure message (see
+   * {@link buildSettings}).
+   *
+   * An `override` REPLACES the card's stimulus for this capture (both
+   * enabled-ness and content): a classic spec emits the same four keys from
+   * the override's own fields, a `'multisine'` one emits the separate
+   * snake_case multisine keyset (see {@link multisineOutputWire}).
    */
-  private buildOutput(): Record<string, unknown> | null {
+  private buildOutput(override?: OutputSpecOverride): Record<string, unknown> | null {
+    if (override) {
+      if (override.type === 'multisine') return multisineOutputWire(override);
+      const o: Record<string, unknown> = {
+        type: override.type, amp: override.amp, f1: override.f1, f2: override.f2,
+      };
+      if (override.durationS != null && override.durationS > 0) o.duration = override.durationS;
+      return o;
+    }
     const ec = this.extraConfig;
     if (!ec.outputEnabled) return null;
     // Unset fields fall back to the SAME defaults AcquireCard displays
@@ -637,7 +663,7 @@ export class BridgeProvider implements SourceProvider {
         type: 'log',
         duration: cfg.durationS,
         pretrigger: this.buildPretrigger(),
-        output: this.buildOutput(),
+        output: this.buildOutput(cfg.outputOverride),
       });
       await this.waitFor((m) => m.type === 'log_result');
       const bytes = await new Promise<Uint8Array>((resolve, reject) => {
@@ -682,6 +708,35 @@ export class BridgeProvider implements SourceProvider {
 }
 
 // ---- module helpers ----
+
+/**
+ * Map a camelCase {@link MultisineStimulusConfig} onto the EXACT snake_case
+ * keyset `pydvma serve` whitelists for a multisine `log.output`
+ * (`_OUTPUT_SPEC_KEYS_MULTISINE` in `serve.py`): `type`, `amp` (the wire name
+ * for `amp_rms`), `n_samples`, `k1`, `k2`, `p_periods`, `t_periods`, `seed`,
+ * `m`, `e`, `n_exc`.
+ *
+ * The server rejects the whole log on ANY unknown key, so this builds the
+ * object field-by-field rather than spreading the spec — `limit` and
+ * `deviceId` (browser-only) must not leak, and neither may `duration`, which
+ * multisine explicitly refuses: its length is derived from `n_samples`,
+ * `t_periods`, `p_periods` and `fs`.
+ */
+function multisineOutputWire(spec: MultisineStimulusConfig): Record<string, unknown> {
+  return {
+    type: 'multisine',
+    amp: spec.ampRms,
+    n_samples: spec.nSamples,
+    k1: spec.k1,
+    k2: spec.k2,
+    p_periods: spec.pPeriods,
+    t_periods: spec.tPeriods,
+    seed: spec.seed,
+    m: spec.m,
+    e: spec.e,
+    n_exc: spec.nExc,
+  };
+}
 
 function msgOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);

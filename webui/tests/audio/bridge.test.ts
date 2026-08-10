@@ -29,6 +29,7 @@ import {
   type BridgeCaps,
   type ConfiguredInfo,
   type LogStatusEvent,
+  type MultisineStimulusConfig,
 } from '../../src/lib/audio/provider';
 import type { MonitorChunk } from '../../src/lib/audio/source';
 import type { DvmaDataset } from '../../src/lib/model/dataset';
@@ -392,6 +393,123 @@ test('output + pretrigger are null on the log message when disabled (free-run)',
   const logMsg = fake.sentJson().find((m) => m.type === 'log');
   expect(logMsg!.output).toBeNull();
   expect(logMsg!.pretrigger).toBeNull();
+  void rh.promise.catch(() => {});
+});
+
+// ---- BLA: the per-capture output override (Schoukens multisine) ----
+
+/** One (realisation, experiment) multisine spec — camelCase, as signal.ts uses. */
+function multisineOverride(): MultisineStimulusConfig {
+  return {
+    type: 'multisine',
+    nSamples: 1024, k1: 2, k2: 100,
+    pPeriods: 4, tPeriods: 2,
+    seed: 12345, m: 1, e: 0, nExc: 2,
+    ampRms: 0.1,
+    limit: 1,            // browser-only peak rail — must NOT reach the wire
+    deviceId: 'spk-42',  // browser-only sink id — must NOT reach the wire
+  };
+}
+
+test("a multisine override emits serve's exact snake_case keyset — no duration, no camelCase", async () => {
+  // The server whitelists `_OUTPUT_SPEC_KEYS_MULTISINE` and rejects the whole
+  // log on ANY unknown key, so this is an EXACT-shape contract: amp (not
+  // ampRms), n_samples (not nSamples), …, and emphatically no `duration` —
+  // multisine derives its length from the spec (serve.py raises on it).
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const rh = bp.startRecording({
+    sampleRate: 8000, channelCount: 2, durationS: 0.768,
+    outputOverride: multisineOverride(),
+  });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 2 });
+  await tick();
+
+  const logMsg = fake.sentJson().find((m) => m.type === 'log');
+  expect(logMsg!.output).toEqual({
+    type: 'multisine',
+    amp: 0.1,
+    n_samples: 1024,
+    k1: 2,
+    k2: 100,
+    p_periods: 4,
+    t_periods: 2,
+    seed: 12345,
+    m: 1,
+    e: 0,
+    n_exc: 2,
+  });
+  // Spelt out because they are the two failure modes that break a real run.
+  expect(logMsg!.output).not.toHaveProperty('duration');
+  for (const k of ['ampRms', 'nSamples', 'pPeriods', 'tPeriods', 'nExc', 'limit', 'deviceId']) {
+    expect(logMsg!.output).not.toHaveProperty(k);
+  }
+  // The capture duration is still whatever the record config asked for.
+  expect(logMsg!.duration).toBe(0.768);
+  void rh.promise.catch(() => {});
+});
+
+test('a multisine override opens the AO settings gate and widens output_channels to n_exc', async () => {
+  // `multisine_generator` raises when n_exc > settings.output_channels, and
+  // the card's stimulus group may be OFF entirely during a BLA run — so the
+  // override must both open the gate and size the channel count itself.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ outputEnabled: false, outputDeviceId: 'nidaq:1' });
+  const rh = bp.startRecording({
+    deviceId: 'nidaq:0', sampleRate: 8000, channelCount: 2, durationS: 0.768,
+    outputOverride: multisineOverride(),
+  });
+  fake.open();
+  await tick();
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings).toMatchObject({
+    output_device_driver: 'nidaq', output_device_index: 1, output_channels: 2,
+  });
+  void rh.promise.catch(() => {});
+});
+
+test('an override beats the Acquire card stimulus for that capture (classic override too)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  // Card stimulus is ON with its own sweep — the override replaces it wholly.
+  bp.setConfig({ outputEnabled: true, outputType: 'sweep', outputAmp: 0.5, outputF1: 20, outputF2: 2000 });
+  const rh = bp.startRecording({
+    sampleRate: 8000, channelCount: 1, durationS: 0.5,
+    outputOverride: { type: 'uniform', amp: 0.2, f1: 100, f2: 800, durationS: 0.25 },
+  });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await tick();
+  const logMsg = fake.sentJson().find((m) => m.type === 'log');
+  expect(logMsg!.output).toEqual({ type: 'uniform', amp: 0.2, f1: 100, f2: 800, duration: 0.25 });
+  void rh.promise.catch(() => {});
+});
+
+test('with NO override the classic log message is byte-identical to before (regression)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ outputEnabled: true, outputType: 'sweep', outputAmp: 0.5, outputF1: 20, outputF2: 2000 });
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 2, durationS: 0.5 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 2 });
+  await tick();
+  // Whole-message deep equality: adding the override seam must not have
+  // grown, reordered or dropped a single key on the classic path.
+  expect(fake.sentJson().find((m) => m.type === 'configure')).toEqual({
+    type: 'configure',
+    settings: { fs: 8000, channels: 2, stored_time: 0.5 },
+  });
+  expect(fake.sentJson().find((m) => m.type === 'log')).toEqual({
+    type: 'log',
+    duration: 0.5,
+    pretrigger: null,
+    output: { type: 'sweep', amp: 0.5, f1: 20, f2: 2000 },
+  });
   void rh.promise.catch(() => {});
 });
 
