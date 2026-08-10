@@ -215,6 +215,66 @@ Open items:
   pre-existing gap; the new `select_capture_fs` tests cover the
   adjacent logic but not this.
 
+## BLA / noise–nonlinearity separation — follow-ups (2026-08-10)
+
+The Schoukens random-phase-multisine BLA feature (web logger **Nonlin**
+stage; design `dev/plans/2026-08-10-schoukens-bla-design.md`; user docs
+`docs/web-logger/nonlin.md`) is code-complete. Open items from the
+implementation:
+
+- **Webui exposure of `use_output_as_ch0`** — verified working and
+  multi-channel-correct (prepends ALL commanded AO columns, cal factor
+  1.0; `pydvma/acquisition.py` ~423). Alignment is
+  assumed-not-measured (exact only on an NI shared clock), and there is
+  no UI control for it since the Qt removal.
+- **`calc_tf_averaged` indexes nested payloads directly**
+  (`webui/src/lib/worker/glue.py` ~195-213, `s['time_axis']` etc.) — by
+  the module's own JsProxy convention (documented in `calc_bla`'s own
+  docstring, ~1041) this is a latent bug on the real browser path.
+  Verify the 'across' ensemble TF path from a real browser session and
+  switch it to `_get()`.
+- **Multisine generation runs on the main thread** — an
+  `O(N · lines)` cosine sum per capture (the preflight peak guard and
+  each real capture in `webui/src/lib/stores/bla.ts` `start()`); at a
+  fine Δf (large N) this freezes the UI for seconds per capture.
+  Consider worker offload, or reusing the preflight-generated buffers
+  instead of regenerating them.
+- **Automated amplitude-level sweeps** — V1 is manual re-runs at each
+  level; the overlay (separate sets in the TF view) already works.
+- **Odd multisines / detection lines** for even-vs-odd nonlinearity
+  discrimination — out of scope for V1 (design doc, "Out of scope").
+- **Windows-PC hardware verification** — extend `dev/bridge_hw_check.py`
+  with a BLA check (BNC loopback ⇒ x = y ⇒ G ≈ 1 flat, σ_NL at the
+  noise floor); verify commanded-x live on the 6212 (routed AI sample
+  clock); run on all three NI devices (6003, 6212, cDAQ-9174/9234).
+- **cDAQ commanded-x is refused, conservatively.** A cDAQ chassis'
+  AO/AI share the chassis timebase (phase-coherent) but there is no
+  routed AI sample clock to prove a zero start offset (sample-accurate),
+  so `supportsRoutedAiClockAo` (`webui/src/lib/audio/provider.ts`)
+  excludes chassis devices and BLA always falls back to measured-x
+  there. Lifting this needs the shared-start-trigger work — no existing
+  TODO item tracks the general cDAQ AO/AI sync gap, so this is that
+  tracker.
+- **Coherence overlay ignores line fade state.** The σ_NL/σ_n overlay
+  applies `OPACITY[v.state]` (`webui/src/lib/plot/model.ts` ~830), but
+  the coherence line a little above it (~765) still hardcodes
+  `opacity: 0.7` regardless of the line's tri-state fade. Apply the
+  same multiplier there.
+- **Outputs table caps at `MAX_OUTPUT_ROWS = 8`**
+  (`webui/src/components/cards/BlaCard.svelte` ~96) — fine for the
+  hardware in the lab today; revisit for a larger AO device.
+- **Nonlin card's first impression on a 1-channel setup** blocks with
+  "no response channels" as soon as an excitation is enabled (its one
+  captured channel becomes the measured drive, leaving none for a
+  response). Consider nudging the channel count up automatically on
+  entering the stage.
+- **DSA first-run coercion** — the coerced sample rate is only known
+  after a configure round-trip, so the first BLA run on a coercing
+  device (e.g. the 9234) can abort mid-design with "start the run
+  again" (`webui/src/lib/stores/bla.ts` `start()`). Consider forcing an
+  automatic configure round-trip in preflight so the first run already
+  knows the true rate.
+
 ## Current backlog — hands-on & hardware
 
 - **Lab-testing period (Tore, days/weeks)** — real structures, real

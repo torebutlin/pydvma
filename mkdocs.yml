@@ -94,6 +94,7 @@ nav:
       - Acquisition & Setup: web-logger/acquisition.md
       - Live Monitoring: web-logger/live-monitoring.md
       - Analysis Views: web-logger/analysis.md
+      - Noise & Nonlinearity Separation: web-logger/nonlin.md
       - Modal Fitting: web-logger/modal-fitting.md
       - Calibration & Units: web-logger/calibration.md
       - Saving & Exporting: web-logger/export.md

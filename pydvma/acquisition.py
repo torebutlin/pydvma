@@ -685,8 +685,10 @@ def multisine_generator(settings, spec):
             ``output_channels`` (checked against ``n_exc``) and the
             output voltage rail are consulted.
         spec (dict): MultisineSpec dict with keys n_samples, k1, k2,
-            p_periods, t_periods, seed, m, e, n_exc, amp_rms (see
-            dev/plans/2026-08-10-schoukens-bla-design.md).
+            p_periods, t_periods, seed, m, e, n_exc, amp_rms. See the
+            web logger's Nonlin-stage guide for the design vocabulary
+            (M realisations, P periods, excited bins k1/k2):
+            https://torebutlin.github.io/pydvma/web-logger/nonlin/.
 
     Returns a tuple ``(t, y)`` where ``y`` is a C-contiguous array with
     shape ``((t_periods + p_periods) * n_samples, n_exc)`` in volts,

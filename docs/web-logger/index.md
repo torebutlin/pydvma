@@ -97,9 +97,12 @@ every stage:
 4. **[Time](analysis.md)** / **[Frequency](analysis.md)** /
    **[TF](analysis.md)** / **[Sonogram](analysis.md)** — the analysis
    views, with resolution and averaging controls.
-5. **[Fit](modal-fitting.md)** — SDOF modal fitting with Refine and
+5. **[Nonlin](nonlin.md)** — a Schoukens best-linear-approximation
+   measurement that separates measurement noise from nonlinear
+   distortion.
+6. **[Fit](modal-fitting.md)** — SDOF modal fitting with Refine and
    per-mode editing.
-6. **[Export](export.md)** — save `.dvma`, export `.mat` / CSV / figures.
+7. **[Export](export.md)** — save `.dvma`, export `.mat` / CSV / figures.
 
 Per-channel **[calibration and units](calibration.md)** apply throughout,
 and everything saves to the shared **[`.dvma` format](dvma-format.md)**.
