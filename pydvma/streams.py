@@ -282,29 +282,30 @@ def oversample_strategy(settings):
     ``'lowest'`` takes the first available rate with real headroom over
     the target; ``'highest'`` takes the fastest the device offers.
     ``settings.oversample`` selects explicitly; ``'auto'`` (the default)
-    resolves per driver:
+    follows :func:`hardware_antialiases`, because that is the fact the
+    choice actually turns on:
 
-    - **soundcard → 'lowest'.** Delta-sigma, so alias protection is
-      already in silicon at the capture rate — capturing at 192 kHz for
-      a 3 kHz target multiplies the data by 4.35 and rejects nothing
-      extra.
-    - **nidaq → 'highest'.** Required on the multiplexed SAR devices
-      (USB-6003/6212), which have no anti-alias filter at all, and
-      retained on DSA modules where the extra decimation still buys
-      ~10·log10(M) dB of broadband-noise process gain. This is also the
-      behaviour verified on the NI hardware, so ``'auto'`` deliberately
-      does not change it; a DSA module can be moved to ``'lowest'``
-      explicitly.
-    - **mock / unknown → 'highest'** (unchanged).
+    - **Anti-aliased in silicon → 'lowest'.** Sound cards and NI DSA
+      modules (the 9234) are delta-sigma, so content above the capture
+      Nyquist is already gone before the ADC. Capturing faster rejects
+      nothing extra — for a 3 kHz target on a 2i2, 192 kHz would carry
+      4.35x the data for no alias benefit. It does still buy
+      ~10·log10(M) dB of broadband-noise process gain, so ``'highest'``
+      remains available when noise floor matters more than data volume.
+    - **Not anti-aliased → 'highest'.** Mandatory on the multiplexed SAR
+      devices (USB-6003/6212): anything above Nyquist folds in at
+      sampling time and no later filtering can separate it, so a high
+      capture rate is the only protection there is.
+    - **Unknown (mock, probe failure) → 'highest'** — the safe side.
 
-    Note the NI ceiling itself is per-CHANNEL: on a multiplexed device
+    Note the NI ceiling is per-CHANNEL: on a multiplexed device
     :func:`max_input_fs` divides the aggregate ``ai_max_rate`` by the
     channel count, so 'highest' already accounts for channel sharing.
     """
     explicit = getattr(settings, 'oversample', 'auto')
     if explicit in ('lowest', 'highest'):
         return explicit
-    return 'lowest' if settings.device_driver == 'soundcard' else 'highest'
+    return 'lowest' if hardware_antialiases(settings) is True else 'highest'
 
 
 def select_capture_fs(settings, native=None):

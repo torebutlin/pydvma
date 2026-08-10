@@ -221,10 +221,33 @@ class TestOversampleStrategy:
         assert streams.hardware_antialiases(make_settings(fs=3000)) is True
         assert streams.oversample_strategy(make_settings(fs=3000)) == 'lowest'
 
-    def test_nidaq_defaults_to_highest(self, monkeypatch):
-        """Mandatory on the filterless multiplexed devices, and the
-        behaviour already verified on the NI hardware."""
+    def test_multiplexed_nidaq_must_capture_as_fast_as_possible(self, monkeypatch):
+        """USB-6003/6212 have no anti-alias filter, so a high capture
+        rate is the only protection available."""
+        from pydvma import _ni_backend
+        monkeypatch.setattr(_ni_backend, 'enumerate_devices', lambda: [{'name': 'Dev1'}])
+        monkeypatch.setattr(_ni_backend, 'entry_capabilities',
+                            lambda e: {'simultaneous': False})
         s = make_settings(fs=3000, device_driver='nidaq')
+        assert streams.oversample_strategy(s) == 'highest'
+
+    def test_dsa_nidaq_follows_the_soundcard_rule(self, monkeypatch):
+        """A 9234 is delta-sigma like the 2i2, so the lowest rate with
+        headroom is enough -- capturing faster rejects nothing extra."""
+        from pydvma import _ni_backend
+        monkeypatch.setattr(_ni_backend, 'enumerate_devices', lambda: [{'name': 'cDAQ1Mod1'}])
+        monkeypatch.setattr(_ni_backend, 'entry_capabilities',
+                            lambda e: {'simultaneous': True})
+        s = make_settings(fs=3000, device_driver='nidaq')
+        assert streams.oversample_strategy(s) == 'lowest'
+
+    def test_unknown_hardware_takes_the_safe_side(self, monkeypatch):
+        """A probe failure must not quietly reduce alias protection."""
+        from pydvma import _ni_backend
+        monkeypatch.setattr(_ni_backend, 'enumerate_devices',
+                            lambda: (_ for _ in ()).throw(RuntimeError('no driver')))
+        s = make_settings(fs=3000, device_driver='nidaq')
+        assert streams.hardware_antialiases(s) is None
         assert streams.oversample_strategy(s) == 'highest'
 
     def test_mock_defaults_to_highest(self):

@@ -138,24 +138,41 @@ def log_data(settings, test_name=None, rec=None, output=None):
     tail of the buffer (same shape as the no-pretrigger path), leaves
     ``trigger_detected`` False, and prints a "not detected" message.
 
-    Digital low-pass (round-9)
-    --------------------------
-    With ``settings.lpf_on`` the requested ``fs`` keeps its meaning (the
-    rate the returned TimeData is at) but the STREAM captures at the
-    largest integer multiple of ``fs`` under the device's maximum input
-    rate (``streams.max_input_fs``); the capture — pretrigger window
-    included, whose sample-exact alignment survives the rate change — is
-    then resampled down to ``fs`` behind a linear-phase anti-alias FIR
+    Capture rate vs delivered rate
+    ------------------------------
+    ``fs`` is the rate the returned TimeData is at. The rate the CONVERTER
+    runs at can differ, and ``streams.select_capture_fs`` decides which:
+
+    - **The device cannot run at ``fs``.** Any sound card asked for
+      3 kHz — their ladders start at 44.1 kHz. Captured at the lowest
+      rate it CAN run and resampled down. This happens with ``lpf_on``
+      off, because the alternative is the OS resampling silently at a
+      quality that depends on whatever rate the device was left at
+      (measured as poor as 12 dB of alias rejection).
+    - **``lpf_on``.** Captured above ``fs`` deliberately, for the
+      anti-alias chain and ~10·log10(M) dB of noise process gain. How far
+      above is ``settings.oversample`` — see
+      ``streams.oversample_strategy``.
+    - **``capture_fs``.** Forces a specific capture rate outright.
+
+    In every case the capture — pretrigger window included, whose
+    sample-exact alignment survives the rate change — is resampled to
+    ``fs`` behind a linear-phase anti-alias FIR
     (``analysis.resample_to_fs``: passband to ``fs/2.56``, 96 dB stopband
-    at ``fs/2``, zero-phase). ``chunk_size`` and ``pretrig_samples`` are
-    scaled to the capture rate internally, so their user-facing meaning
-    (at ``fs``) is unchanged. The returned TimeData's settings record the
-    capture rate as ``lpf_capture_fs``. The log proceeds unfiltered
-    (with a printed note) when there is no oversampling headroom
-    (device max < 2*fs) or when the device refuses to OPEN a stream at
-    the oversampled rate its capability probe accepted (PortAudio's
+    at ``fs/2``, zero-phase), ``chunk_size`` and ``pretrig_samples`` are
+    scaled to the capture rate internally so their user-facing meaning
+    (at ``fs``) is unchanged, and the returned settings record the real
+    capture rate as ``lpf_capture_fs``.
+
+    The log proceeds unfiltered (with a printed note) when there is no
+    headroom to oversample into, or when the device refuses to OPEN a
+    stream at a rate its capability probe accepted (PortAudio's
     ``check_input_settings`` can approve rates ``InputStream`` then
     rejects, e.g. via MME under a remote-desktop session).
+
+    On a sound card, playback shares the capture clock, so a stimulus
+    passed as ``output`` is resampled onto the capture rate when input and
+    output are the same device (``streams.output_shares_input_clock``).
     '''
     global MESSAGE
 
