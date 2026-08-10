@@ -148,14 +148,16 @@ export interface DeviceCapsEntry {
   /**
    * NI product type as DAQmx reports it (`'USB-6212'`, `'NI 9234'`, …), from
    * the server's `device_caps[deviceId].product_type`.  Absent on
-   * mock/soundcard.  Read by {@link supportsSharedClockAo} to tell a
+   * mock/soundcard.  Read by {@link supportsRoutedAiClockAo} to tell a
    * hardware-timed-AO device from a software-timed USB-600x.
    */
   product_type?: string;
   /**
    * Whether the NI entry is a cDAQ chassis (server
    * `device_caps[deviceId].is_chassis`).  Chassis modules share the chassis
-   * timebase, so AI/AO are phase-coherent — see {@link supportsSharedClockAo}.
+   * timebase, so AI/AO are phase-coherent but NOT sample-accurate (the
+   * per-module AI sample clock cannot be routed as an AO source) — see
+   * {@link supportsRoutedAiClockAo}, which refuses a chassis for that reason.
    */
   is_chassis?: boolean;
   /** Maximum output (AO) channel count (`device_caps[deviceId].ao_channel_count`). */
@@ -364,24 +366,33 @@ export function outputDevices(caps: BridgeCaps | null): OutputDevice[] {
 }
 
 /**
- * Whether AO and AI can share a HARDWARE sample clock for this input/output
- * device pair — the client-side twin of `pydvma._ni_backend.supports_hw_ao_sync`
- * combined with `streams.setup_output_NI_nidaqmx`'s same-device requirement.
+ * Whether the AO task provably steps on the AI SAMPLE CLOCK for this
+ * input/output device pair — i.e. whether the drive and the capture are
+ * SAMPLE-ACCURATE, not merely phase-coherent.
  *
- * The BLA ("Nonlin") stage gates its `commanded` x-mode on this: with an
- * unsynced AO the per-capture start jitter leaks into the realisation scatter
- * and corrupts σ²_NL, so commanded-x is only offered when the drive is known
- * to step on the acquisition clock.  Deliberately CONSERVATIVE — it answers
- * `false` whenever the capability document cannot PROVE sync:
+ * The client-side twin of `pydvma._ni_backend.ai_sample_clock_source`
+ * returning a routable terminal (plus `streams.setup_output_NI_nidaqmx`'s
+ * same-device requirement) — deliberately STRICTER than
+ * `_ni_backend.supports_hw_ao_sync`, which also answers True for a cDAQ
+ * chassis.  A chassis is excluded here: per-module `ai/SampleClock` is NOT
+ * routable as an AO source (DAQmx rejects it), so the AO runs on its own
+ * timebase and AI/AO are only phase-coherent through the chassis 80 MHz
+ * timebase — good enough for an ordinary stimulus, not good enough to treat
+ * the commanded waveform as the measured input.
  *
- * - both sides must be the SAME `nidaq:<index>` device (the server routes the
- *   AI sample clock only when the AO task sits on the recorder's own device or
- *   chassis; an unset output device follows the input, so the caller passes
- *   the input id for that case);
- * - a cDAQ chassis (`is_chassis`) qualifies — its modules share the chassis
- *   80 MHz timebase (phase-coherent, though not sample-accurate across tasks);
- * - any other NI device qualifies only when its `product_type` is known AND
- *   is not one of the software-timed-AO USB-600x family
+ * The BLA ("Nonlin") stage gates its `commanded` x-mode on exactly this: the
+ * analysis regenerates x from the seed with NO per-capture start offset, so
+ * anything short of sample-accuracy leaks capture-start jitter into the
+ * realisation scatter and inflates σ²_NL.  Measured-x is unaffected — it works
+ * on every path, chassis included, because x and y share the ADC clock.
+ *
+ * It answers `false` whenever the capability document cannot PROVE sync:
+ *
+ * - both sides must be the SAME `nidaq:<index>` device (an unset output device
+ *   follows the input, so the caller passes the input id for that case);
+ * - a cDAQ chassis (`is_chassis`) is refused, as above;
+ * - any other NI device qualifies only when its `product_type` is known AND is
+ *   not one of the software-timed-AO USB-600x family
  *   ({@link SW_TIMED_AO_PRODUCT_TYPES});
  * - soundcard / mock / Web Audio (null caps) are always `false`.
  *
@@ -389,7 +400,7 @@ export function outputDevices(caps: BridgeCaps | null): OutputDevice[] {
  * is a separate rule the caller enforces (BLA refuses any staged output_fs
  * clamp, and refuses `lpf_on`, which oversamples the capture).
  */
-export function supportsSharedClockAo(
+export function supportsRoutedAiClockAo(
   caps: BridgeCaps | null,
   inputDeviceId: string | undefined,
   outputDeviceId?: string,
@@ -404,8 +415,7 @@ export function supportsSharedClockAo(
   const index = sep >= 0 ? Number(inputDeviceId.slice(sep + 1)) : 0;
   const dc = caps.device_caps?.[inputDeviceId];
   const ni = Number.isFinite(index) ? caps.devices?.nidaq?.[index] : undefined;
-  const isChassis = dc?.is_chassis ?? ni?.is_chassis;
-  if (isChassis) return true;
+  if (dc?.is_chassis ?? ni?.is_chassis) return false;   // phase-coherent, not sample-accurate
   const productType = dc?.product_type ?? ni?.product_type;
   if (!productType) return false;              // unknown hardware ⇒ cannot prove sync
   return !SW_TIMED_AO_PRODUCT_TYPES.includes(productType);

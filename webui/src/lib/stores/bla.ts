@@ -34,10 +34,9 @@ import type { DvmaItem } from '../model/dataset';
 import { generateMultisine } from '../audio/signal';
 import type { MultisineStimulusConfig } from '../audio/source';
 import {
-  deviceCapsFor,
   outputCapable,
   outputDevices,
-  supportsSharedClockAo,
+  supportsRoutedAiClockAo,
   PYDVMA_DEFAULT_VMAX,
   type BridgeCaps,
   type BridgeConfig,
@@ -52,7 +51,7 @@ export type BlaPhase = 'idle' | 'running' | 'analysing' | 'done' | 'error' | 'ca
  * Where the analysis reads excitation `q` from: the MEASURED input channel it
  * is wired to (default, and the only valid choice on any path that is not
  * sample-synced), or the COMMANDED drive regenerated analytically from the
- * seed (NI shared-clock only — see {@link supportsSharedClockAo}).
+ * seed (sample-synced NI only — see {@link commandedXSupported}).
  */
 export type XMode = 'measured' | 'commanded';
 
@@ -257,18 +256,23 @@ export const BLA_FS_TOLERANCE_HZ = 0.5;
  * {@link preflightBla} reports the same sentence if a run asks for it anyway.
  */
 export const BLA_COMMANDED_X_REASON =
-  'Commanded drive needs a hardware-synced NI output (AO and AI on the same device, '
-  + 'sharing the sample clock at one rate) — measure the drive on an input channel instead.';
+  'Commanded drive needs a sample-synced NI output — AO and AI on the same non-chassis NI '
+  + 'device, running at one rate with the AI sample clock routed to the AO. (A cDAQ chassis '
+  + 'is phase-coherent but not sample-accurate.) Measure the drive on an input channel instead.';
 
 /**
  * Whether the analysis may read the excitation from the COMMANDED drive
  * (regenerated from the seed) rather than from a measured input channel.
  *
- * True only when the capture path can be PROVEN sample-synced: a bridge NI
- * device whose AO shares the AI sample clock ({@link supportsSharedClockAo}),
- * with no staged output-rate clamp and no digital low-pass resampling. On any
- * other path the per-capture AO start jitter would land in the realisation
- * scatter and corrupt σ²_NL, so the drive has to be measured.
+ * True only when the capture path can be PROVEN SAMPLE-ACCURATE: a bridge NI
+ * device whose AO steps on the routed AI sample clock
+ * ({@link supportsRoutedAiClockAo} — which excludes cDAQ chassis, where AI/AO
+ * are only phase-coherent), with no staged output-rate clamp and no digital
+ * low-pass resampling. The commanded branch regenerates x with NO per-capture
+ * start offset, so on any looser path the AO start jitter lands in the
+ * realisation scatter and inflates σ²_NL. Measured-x has no such requirement
+ * and works everywhere: x and y share the ADC clock, so the common phase
+ * rotation cancels in the solve.
  *
  * @param input The preflight fields describing the capture path.
  * @returns Whether commanded-x is admissible.
@@ -278,7 +282,7 @@ export function commandedXSupported(
     'providerKind' | 'caps' | 'inputDeviceId' | 'outputDeviceId' | 'stagedOutputFs' | 'requestedFs' | 'lpfOn'>,
 ): boolean {
   return input.providerKind === 'bridge'
-    && supportsSharedClockAo(input.caps, input.inputDeviceId, input.outputDeviceId)
+    && supportsRoutedAiClockAo(input.caps, input.inputDeviceId, input.outputDeviceId)
     && !(input.stagedOutputFs != null
       && Math.abs(input.stagedOutputFs - input.requestedFs) > BLA_FS_TOLERANCE_HZ)
     && !input.lpfOn;
@@ -377,15 +381,23 @@ export function deriveBla(design: BlaDesign, fsEff: number, channelCount: number
 }
 
 /**
- * Effective peak rail the generated waveform must stay inside, mirroring
- * `MySettings.output_vmax()`: the NI analog-output rail (the staged
- * `output_VmaxNI`, else the device's `ao_vmax`, else pydvma's 5 V default) on
- * an NI output, and `1` everywhere else — `VmaxSC` defaults to 1.0 on the
- * soundcard path and the browser's `AudioBuffer` rail is ±1.
+ * Effective peak rail the generated waveform must stay inside — an exact
+ * mirror of `MySettings.output_vmax()`, which is what `multisine_generator`
+ * checks the peak against server-side: `output_VmaxNI` on an NI output,
+ * `output_VmaxSC` (default 1.0) on the soundcard, and the browser's
+ * `AudioBuffer` rail is ±1 too, so everything that is not NI is `1`.
+ *
+ * The NI arm is the STAGED `outputVmaxNI` or pydvma's 5 V default — NOT the
+ * device's `ao_vmax`. That distinction is load-bearing: `ao_vmax` is a
+ * hardware CAPABILITY the acquire store clamps *down* to (a 9260's ±4.2426 V
+ * rail), never a value the server adopts. On a device whose AO can swing wider
+ * than the default (the 6212/6003 report 10 V) the store leaves `outputVmaxNI`
+ * unset and the server still runs at 5 V, so checking the peak against 10 V
+ * would pass a level here and hard-fail at capture (0, 0) — precisely the
+ * mid-run failure the preflight sweep exists to prevent.
  */
 export function outputRailFor(
   providerKind: 'webaudio' | 'bridge',
-  caps: BridgeCaps | null,
   cfg: BridgeConfig,
   inputDeviceId: string,
 ): number {
@@ -394,7 +406,7 @@ export function outputRailFor(
   const sep = outDev.indexOf(':');
   const driver = sep >= 0 ? outDev.slice(0, sep) : outDev;
   if (driver !== 'nidaq') return 1;
-  return cfg.outputVmaxNI ?? deviceCapsFor(caps, outDev)?.ao_vmax ?? PYDVMA_DEFAULT_VMAX;
+  return cfg.outputVmaxNI ?? PYDVMA_DEFAULT_VMAX;
 }
 
 /**
@@ -412,9 +424,10 @@ export function outputRailFor(
  * - **`lpf_on` off** — the digital low-pass captures oversampled and RESAMPLES
  *   down, so the recorded period is no longer a whole number of samples and
  *   the leakage it introduces lands in the realisation scatter as fake σ_NL.
- * - **commanded x** — only when the caps PROVE an NI shared clock on the same
- *   device at a matched rate; otherwise per-capture start jitter corrupts
- *   σ²_NL, so the fix is to measure the drive on an input channel.
+ * - **commanded x** — only when the caps PROVE a routed AI sample clock on the
+ *   same non-chassis NI device at a matched rate ({@link commandedXSupported});
+ *   otherwise per-capture start jitter corrupts σ²_NL, so the fix is to
+ *   measure the drive on an input channel.
  * - **pretrigger** — an advisory, not a failure: the run disarms it (a BLA
  *   capture is a fixed-length free-run window, and an armed capture would
  *   start at a threshold crossing somewhere inside the transient).
@@ -502,6 +515,15 @@ export function preflightBla(
   if (values.xMode === 'commanded' && !commandedXSupported(input)) {
     fail('commanded-sync', BLA_COMMANDED_X_REASON);
   }
+  // AO width is preflightable on the BRIDGE only: the server advertises each
+  // device's output channel count in its capability document. The BROWSER's
+  // equivalent (`destination.maxChannelCount`) is only readable from a live
+  // `AudioContext`, which this function — pure, DOM-free, and re-run on every
+  // keystroke by the card's live `checks` store — must not construct. There,
+  // `multisineStimulusBuffer` (source.ts) raises "output device exposes N
+  // channels; run needs M" while building the FIRST capture's stimulus, before
+  // any samples are recorded, so a too-wide browser run fails loudly at capture
+  // (0, 0) rather than silently down-mixing the excitations into each other.
   if (values.nExc > 0 && input.providerKind === 'bridge' && input.caps) {
     const outDev = input.outputDeviceId || input.inputDeviceId;
     if (!outputCapable(input.caps, outDev)) {
@@ -621,7 +643,7 @@ export function createBlaStore(deps: BlaDeps) {
       inputDeviceId: s.deviceId,
       outputDeviceId: cfg.outputDeviceId,
       stagedOutputFs: cfg.outputFs,
-      outputRail: outputRailFor(kind, caps, cfg, s.deviceId),
+      outputRail: outputRailFor(kind, cfg, s.deviceId),
       seed,
     };
   }
@@ -743,11 +765,19 @@ export function createBlaStore(deps: BlaDeps) {
           const rec = await acquire.record({
             outputOverride: stimulusFor(d, v, seed, m, e, rail),
           });
+          // A DSA device coerces an off-ladder rate (8000 → 8533.33 Hz), and the
+          // coerced value only reaches the store on the FIRST configure
+          // round-trip of a session — so the very first run can trip this and
+          // the NEXT one is already designed at the true rate. Hence "start the
+          // run again", NOT "set the sample rate": a coerced 48019.2077 Hz is
+          // not a value the user can type, and the design now follows it
+          // automatically (`fsEff` reads the coerced note).
           if (Math.abs(rec.fs - v.fsEff) > BLA_FS_TOLERANCE_HZ) {
             throw new Error(
               `The device captured at ${rec.fs} Hz but the run was designed for ${v.fsEff} Hz — `
               + `the ${v.periodSamples}-sample period would not be a whole number of periods at `
-              + 'that rate. Set the sample rate to the rate the device actually runs and start again.',
+              + 'that rate. The real rate is known now, so simply start the run again; the design '
+              + 'readouts (period, band, run time) already follow it.',
             );
           }
           const item = recordingToItem(

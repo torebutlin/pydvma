@@ -82,7 +82,7 @@
    */
   const volts = $derived($kind === 'bridge' && outDriver === 'nidaq');
   const ampUnit = $derived(volts ? 'V rms' : '×FS rms');
-  const rail = $derived(outputRailFor($kind, $bridgeCaps, $bridgeConfig, $settings.deviceId));
+  const rail = $derived(outputRailFor($kind, $bridgeConfig, $settings.deviceId));
 
   /** AO channels the effective output device exposes (clamped, ≥ 1). */
   const aoChannels = $derived.by(() => {

@@ -19,7 +19,12 @@ import { createSelection } from '../../src/lib/stores/selection';
 import { capabilities } from '../../src/lib/stores/stages';
 import type { EngineStore } from '../../src/lib/stores/engine';
 import type { RecordConfig, Recording } from '../../src/lib/audio/source';
-import type { BridgeCaps, BridgeConfig, SourceProvider } from '../../src/lib/audio/provider';
+import {
+  PYDVMA_DEFAULT_VMAX,
+  type BridgeCaps,
+  type BridgeConfig,
+  type SourceProvider,
+} from '../../src/lib/audio/provider';
 
 beforeEach(() => {
   capabilities.set({ liveSource: false, fitEngine: false });
@@ -101,14 +106,26 @@ function niCaps(over: Partial<BridgeCaps> = {}): BridgeCaps {
   };
 }
 
+/** Bridge caps for a cDAQ chassis (phase-coherent, NOT sample-accurate). */
+function chassisCaps(): BridgeCaps {
+  const caps = niCaps();
+  caps.devices.nidaq[0] = {
+    ...caps.devices.nidaq[0], name: 'cDAQ1', product_type: 'cDAQ-9174', is_chassis: true,
+  };
+  caps.device_caps!['nidaq:0'] = {
+    ao: true, product_type: 'cDAQ-9174', is_chassis: true, ao_vmax: 4.2426,
+  };
+  return caps;
+}
+
 /** A fake provider that returns a synthetic capture of the requested length. */
-function fakeProvider(opts: { kind?: 'webaudio' | 'bridge'; fs?: number } = {}) {
+function fakeProvider(opts: { kind?: 'webaudio' | 'bridge'; fs?: number; caps?: BridgeCaps } = {}) {
   const configs: RecordConfig[] = [];
   const provider: SourceProvider & { configs: RecordConfig[]; bridgeConfig: BridgeConfig } = {
     kind: opts.kind ?? 'webaudio',
     configs,
     bridgeConfig: {},
-    capabilities: async () => null,
+    capabilities: async () => opts.caps ?? null,
     enumerateInputDevices: async () => [],
     startRecording(cfg: RecordConfig) {
       configs.push({ ...cfg });
@@ -195,6 +212,19 @@ function makeStore(over: {
   return { bla, acquire, actions, selection, provider, boot, enqueue, views };
 }
 
+/**
+ * Same, but on a BRIDGE provider advertising a sample-synced NI device — the
+ * only path where commanded x is admissible. `init()` pulls the caps in, then
+ * the device is selected (which re-runs the store's voltage/rate clamps).
+ */
+async function makeBridgeStore(over: { design?: BlaDesign; channelCount?: number } = {}) {
+  const provider = fakeProvider({ kind: 'bridge', caps: niCaps() });
+  const s = makeStore({ ...over, provider });
+  await s.acquire.init();
+  s.acquire.patch({ deviceId: 'nidaq:0' });
+  return s;
+}
+
 // ---- derived maths ----
 
 test('period length and excited bins follow N = round(fs/df), k = round(f*N/fs)', () => {
@@ -277,28 +307,41 @@ test('an armed pretrigger is an advisory, not a failure', () => {
   expect(firstBlaError(checks)).toBe('');
 });
 
-test('commanded x is refused unless the caps prove an NI shared clock', () => {
+test('commanded x is refused unless the caps prove a ROUTED AI sample clock', () => {
   const design = testDesign({
     outputs: [{ aoChannel: 0, enabled: true, xMode: 'commanded', xChannel: null }],
   });
   const values = deriveBla(design, FS, 2);
   const reason = (over: Partial<BlaPreflightInput>) =>
     preflightBla(baseInput({ design, values, ...over })).find((c) => c.code === 'commanded-sync');
+  const bridged = (over: Partial<BlaPreflightInput>) =>
+    reason({ providerKind: 'bridge', inputDeviceId: 'nidaq:0', ...over });
 
   // Browser / soundcard: no sync possible.
   expect(reason({})?.ok).toBe(false);
-  // Software-timed AO (USB-6003) — cannot share the AI clock.
+  // Software-timed AO (USB-6003) — cannot share the AI clock at all.
   const sw = niCaps();
   sw.devices.nidaq[0].product_type = 'USB-6003';
   sw.device_caps!['nidaq:0'].product_type = 'USB-6003';
-  expect(reason({ providerKind: 'bridge', caps: sw, inputDeviceId: 'nidaq:0' })?.ok).toBe(false);
+  expect(bridged({ caps: sw })?.ok).toBe(false);
+  // cDAQ chassis: AI/AO ride the chassis timebase (phase-coherent) but the
+  // per-module AI sample clock is NOT routable as an AO source, so the drive
+  // is not sample-accurate — commanded x must be refused there too.
+  expect(bridged({ caps: chassisCaps() })?.ok).toBe(false);
+  expect(bridged({ caps: chassisCaps() })?.reason).toMatch(/non-chassis/);
+  // Unknown hardware (no product_type reported) cannot PROVE sync.
+  const bare = niCaps();
+  bare.devices.nidaq[0].product_type = '';
+  delete bare.device_caps!['nidaq:0'].product_type;
+  expect(bridged({ caps: bare })?.ok).toBe(false);
+  // Right hardware, but the AO runs on a different device.
+  expect(bridged({ caps: niCaps(), outputDeviceId: 'nidaq:1' })?.ok).toBe(false);
   // Right hardware, but the AO rate is clamped away from fs.
-  expect(reason({
-    providerKind: 'bridge', caps: niCaps(), inputDeviceId: 'nidaq:0', stagedOutputFs: 5000,
-  })?.ok).toBe(false);
-  // Right hardware, matched rate ⇒ allowed.
-  expect(reason({ providerKind: 'bridge', caps: niCaps(), inputDeviceId: 'nidaq:0' }))
-    .toBeUndefined();
+  expect(bridged({ caps: niCaps(), stagedOutputFs: 5000 })?.ok).toBe(false);
+  // Right hardware, but the capture is resampled by the digital low-pass.
+  expect(bridged({ caps: niCaps(), lpfOn: true })?.ok).toBe(false);
+  // M-series, same device, matched rate ⇒ allowed.
+  expect(bridged({ caps: niCaps() })).toBeUndefined();
 });
 
 test('a mixed measured/commanded table is refused', () => {
@@ -358,12 +401,36 @@ test('the peak guard checks every (m, e), not just the first', () => {
     .toEqual([]);
 });
 
-test('the NI output rail drives the peak limit; other paths use ±1', () => {
-  const caps = niCaps();
-  expect(outputRailFor('webaudio', null, {}, '')).toBe(1);
-  expect(outputRailFor('bridge', caps, {}, 'nidaq:0')).toBe(10);            // device ao_vmax
-  expect(outputRailFor('bridge', caps, { outputVmaxNI: 4.24 }, 'nidaq:0')).toBe(4.24);
-  expect(outputRailFor('bridge', caps, {}, 'soundcard:0')).toBe(1);         // VmaxSC default
+test('the peak limit is the SERVER rail (output_VmaxNI), never the device ao_vmax', () => {
+  expect(outputRailFor('webaudio', {}, '')).toBe(1);
+  // Unset output_VmaxNI ⇒ the server runs at its 5 V default even on a device
+  // whose AO can swing to 10 V (6212/6003 report ao_vmax = 10). Checking the
+  // peak against 10 would pass a level here that hard-fails at capture (0, 0).
+  expect(outputRailFor('bridge', {}, 'nidaq:0')).toBe(PYDVMA_DEFAULT_VMAX);
+  expect(PYDVMA_DEFAULT_VMAX).toBe(5);
+  // A staged rail (the acquire store clamps down to a 9260's ±4.2426 V) wins.
+  expect(outputRailFor('bridge', { outputVmaxNI: 4.2426 }, 'nidaq:0')).toBe(4.2426);
+  expect(outputRailFor('bridge', {}, 'soundcard:0')).toBe(1);         // VmaxSC default
+  // The output-device select repoints the rail at the chosen device's driver.
+  expect(outputRailFor('bridge', { outputDeviceId: 'soundcard:0' }, 'nidaq:0')).toBe(1);
+});
+
+test('a level between the 5 V server rail and a 10 V device rail is REFUSED', () => {
+  // The regression this guards: peak ∈ (5, 10] V passed preflight against
+  // ao_vmax and then hard-failed at the first capture.
+  const design = testDesign({ ampRms: 2 });                   // peak ≈ 6.25 V
+  const values = deriveBla(design, FS, 2);
+  const railed = preflightBla(baseInput({
+    design, values, providerKind: 'bridge', caps: niCaps(), inputDeviceId: 'nidaq:0',
+    outputRail: outputRailFor('bridge', {}, 'nidaq:0'),
+  }));
+  expect(railed.find((c) => c.code === 'peak')?.reason).toMatch(/exceeds the limit ±5/);
+  // Explicitly staging the wider rail (a device that really can swing 10 V)
+  // admits the same level — the check follows the setting, not the capability.
+  expect(preflightBla(baseInput({
+    design, values, providerKind: 'bridge', caps: niCaps(), inputDeviceId: 'nidaq:0',
+    outputRail: outputRailFor('bridge', { outputVmaxNI: 10 }, 'nidaq:0'),
+  }))).toEqual([]);
 });
 
 // ---- run sequencing ----
@@ -505,17 +572,44 @@ test('calc_bla is booted, sent snake_case run_spec, and its sets land', async ()
   expect(opts.channelLabels).toEqual(['ch_2']);
 });
 
-test('commanded runs send x_channels: null and name their sets accordingly', async () => {
+test('a commanded run on the browser path is refused before any capture', async () => {
   const design = testDesign({
     outputs: [{ aoChannel: 0, enabled: true, xMode: 'commanded', xChannel: null }],
   });
-  const { bla, actions, enqueue } = makeStore({ design, channelCount: 2 });
-  // Commanded x is refused on the browser path, so this run must not start.
+  const { bla, actions, enqueue, provider } = makeStore({ design, channelCount: 2 });
   await bla.start({ seed: 2 });
   expect(get(bla.state).phase).toBe('error');
-  expect(get(bla.state).error).toMatch(/hardware-synced NI output/);
+  expect(get(bla.state).error).toMatch(/sample-synced NI output/);
+  expect(provider.configs).toHaveLength(0);
   expect(enqueue).not.toHaveBeenCalled();
   expect(actions.blaCalls).toHaveLength(0);
+});
+
+test('a commanded run sends x_mode commanded, x_channels null, every input a response', async () => {
+  const design = testDesign({
+    outputs: [{ aoChannel: 0, enabled: true, xMode: 'commanded', xChannel: null }],
+  });
+  const { bla, actions, enqueue } = await makeBridgeStore({ design, channelCount: 2 });
+  await bla.start({ seed: 55 });
+
+  expect(get(bla.state).phase).toBe('done');
+  const [op, payload] = enqueue.mock.calls[0] as [string, Record<string, unknown>];
+  expect(op).toBe('calc_bla');
+  expect(payload.run_spec).toEqual({
+    multisine: {
+      n_samples: 480, k1: 10, k2: 50, p_periods: 2, t_periods: 1,
+      seed: 55, amp_rms: 0.05, n_exc: 1, M: 2,
+    },
+    x_mode: 'commanded',
+    // No measured drive, so nothing is subtracted: every captured channel is a
+    // response, and the engine regenerates X analytically from the seed.
+    x_channels: null,
+    resp_channels: [0, 1],
+    fs: FS,
+  });
+  const [, opts] = actions.blaCalls[0] as [unknown[], { names: string[]; channelLabels: string[] }];
+  expect(opts.names).toEqual(['run BLA q1 (commanded)']);
+  expect(opts.channelLabels).toEqual(['ch_0', 'ch_1']);
 });
 
 test('a preflight failure refuses the run without touching the device', async () => {
