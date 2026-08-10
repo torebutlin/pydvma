@@ -765,9 +765,12 @@ export function createBlaStore(deps: BlaDeps) {
       state.update((st) => ({ ...st, phase: 'done', resultSetIds }));
       viewState?.activate('tf');
     } catch (err) {
-      state.update((st) => ({
-        ...st, phase: 'error', error: err instanceof Error ? err.message : String(err),
-      }));
+      const msg = err instanceof Error ? err.message : String(err);
+      // The Acquire card's own Cancel rejects the in-flight capture with
+      // 'cancelled' — that is a cancellation, not a failure.
+      state.update((st) => msg === 'cancelled'
+        ? { ...st, phase: 'cancelled' }
+        : { ...st, phase: 'error', error: msg });
     } finally {
       acquire.patch({ durationS: userDurationS });
       if (wasArmed) acquire.patchBridge({ pretrigArmed: true });

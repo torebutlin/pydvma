@@ -438,6 +438,21 @@ test('cancel stops between captures, keeps what landed, and dispatches no analys
   expect(get(acquire.settings).durationS).toBe(3.5);  // duration restored on cancel too
 });
 
+test('the Acquire card cancelling a capture reads as cancelled, not as an error', async () => {
+  const provider = fakeProvider();
+  const inner = provider.startRecording.bind(provider);
+  provider.startRecording = (cfg) => {
+    const h = inner(cfg);
+    return { ...h, promise: Promise.reject(new Error('cancelled')) };
+  };
+  const { bla, acquire, enqueue } = makeStore({ provider });
+  await bla.start({ seed: 21 });
+  expect(get(bla.state).phase).toBe('cancelled');
+  expect(get(bla.state).error).toBe('');
+  expect(enqueue).not.toHaveBeenCalled();
+  expect(get(acquire.settings).durationS).toBe(3.5);
+});
+
 test('an armed pretrigger is disarmed for the run and restored after', async () => {
   const { bla, acquire } = makeStore();
   acquire.patchBridge({ pretrigArmed: true });
