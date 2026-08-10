@@ -380,6 +380,62 @@ no direct unit test at all, and nothing asserts that `lpfOn` reaches
 - ASIO would side-step it entirely on Windows, but adds a dependency and
   a driver install.
 
+## 6a. Implementation status (2026-08-10)
+
+Scope A+B+C — the correctness fix — is **implemented, tested and
+hardware-verified**. D (device profile, loopback channel labelling,
+calibration model) and E (gain provenance) are **not started**.
+
+Landed:
+
+- `pydvma/_coreaudio.py` — native rate query + clock pin/restore.
+- `streams.native_input_rates` / `select_capture_fs` /
+  `soundcard_device_name`; `max_input_fs` prefers the native ladder.
+- `Recorder._pin_hardware_clock` / `_restore_hardware_clock`.
+- `acquisition._capture_settings` / `_capture_rate_message`, and the
+  capture-vs-deliver split in `log_data`.
+- `MySettings.capture_fs` — the manual override.
+- `serve._soundcard_native_rates`, honest `candidate_rates`, and a new
+  `device_caps[...].native_rates`.
+- webui: `DeviceCapsEntry.native_rates`, and the Setup note
+  "captures at 44100 Hz, resampled to 8000 Hz".
+
+Verified: `dev/scarlett_hw_check.py` 11/11 on the real device; pytest
+393/3 skipped; vitest 683/1 skipped; `npm run check` 0/0; mkdocs
+--strict green. End-to-end through `pydvma-serve --driver soundcard` in
+the built UI: fs = 8 kHz on the Scarlett records real signal whose
+amplitude drops from ~0.139 to ~0.045 FS — the out-of-band noise power
+is REMOVED, where naive decimation would have folded it in and left the
+amplitude unchanged.
+
+Two behaviours worth knowing:
+
+- **Clock lifetime.** The clock is pinned while pydvma holds the stream
+  and restored by `end_stream()`, not at the end of each `log_data` —
+  pydvma owns the device for the session. A hard kill (SIGKILL) leaves
+  it pinned; nothing can be done about that.
+- **Output stimulus shares the clock.** The device has ONE clock, so an
+  output stream running at a different rate while the clock moves takes
+  both streams down (PaMacCore -50, then silence). `MySettings` defaults
+  `output_fs = fs`, so a stimulus-enabled log at a non-native fs will
+  hit this. Not addressed here — see below.
+
+### Follow-ups this created
+
+1. **Output stimulus at a non-native fs** (above). The fix is to stage
+   `output_fs` onto the capture rate for soundcard devices, mirroring
+   what `reclampOutputFs` already does for the NI AO rate cap.
+2. **Windows/WASAPI** — does `check_input_settings` lie there too?
+   Must be measured on the PC before any claim; non-macOS behaviour is
+   deliberately unchanged for now.
+3. **`max_input_fs` still has no direct unit test** (pre-existing gap;
+   the new `select_capture_fs` tests cover the adjacent logic).
+4. **`TODO.md` does not exist.** `CLAUDE.md` calls it "the single
+   canonical pickup list", but the file is absent from the repo and from
+   git history entirely. Either it was never committed or it lives
+   outside the repo; worth resolving, since CLAUDE.md sends every
+   session to it.
+
 ## 7. Artefacts worth keeping
 
 - `coreaudio_rate.py` — the working ctypes prototype, the basis for
