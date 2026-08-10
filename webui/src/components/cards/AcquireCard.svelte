@@ -426,9 +426,9 @@
   </div>
   <div class="ctx-primary">
     {#if recording}
-      <button class="btn cancel-btn" onclick={cancel}>Cancel</button>
+      <button class="btn danger-o" onclick={cancel}>Cancel</button>
     {:else}
-      <button class="btn log-btn" onclick={logData} data-testid="log-btn">
+      <button class="btn green" onclick={logData} data-testid="log-btn">
         Log Data{#if outActive}&nbsp;<span class="out-badge" data-testid="out-badge">OUT</span>{/if}
       </button>
     {/if}
@@ -447,15 +447,6 @@
   .sum-chip:hover {
     background: var(--control-bg) !important;
   }
-  .log-btn {
-    background: var(--green) !important;
-    border-color: var(--green) !important;
-    color: #fff !important;
-    font-weight: 600 !important;
-  }
-  .log-btn:hover {
-    background: var(--green-hover) !important;
-  }
   .out-badge {
     display: inline-block;
     font-size: 9.5px;
@@ -465,15 +456,6 @@
     border-radius: 4px;
     background: rgba(255, 255, 255, 0.25);
     vertical-align: middle;
-  }
-  .cancel-btn {
-    background: var(--control-bg) !important;
-    border-color: var(--danger-strong) !important;
-    color: var(--danger-strong) !important;
-    font-weight: 600 !important;
-  }
-  .cancel-btn:hover {
-    background: var(--danger-soft) !important;
   }
   /* DSA coerced-fs advisory — visible but not an error. */
   .coerce-note {

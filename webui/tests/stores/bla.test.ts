@@ -9,6 +9,7 @@ import {
   preflightBla,
   firstBlaError,
   outputRailFor,
+  excitationLabel,
   BLA_CAPTURE_MARGIN_SAMPLES,
   type BlaActions,
   type BlaDesign,
@@ -570,6 +571,18 @@ test('calc_bla is booted, sent snake_case run_spec, and its sets land', async ()
   const [, opts] = actions.blaCalls[0] as [unknown[], { names: string[]; channelLabels: string[] }];
   expect(opts.names).toEqual(['run BLA q1 (via ch0)']);
   expect(opts.channelLabels).toEqual(['ch_2']);
+});
+
+test('excitationLabel names an excitation the same way everywhere', () => {
+  // The result set's tray name is this label behind the test name, and the
+  // card's verdict line is the label alone — one helper, so they cannot drift.
+  expect(excitationLabel(0, 'measured', [2, 3])).toBe('q1 (via ch2)');
+  expect(excitationLabel(1, 'measured', [2, 3])).toBe('q2 (via ch3)');
+  expect(excitationLabel(0, 'commanded', null)).toBe('q1 (commanded)');
+  // A run spec that never recorded the channel (or a stale index) degrades to
+  // 'ch?' rather than rendering 'chundefined'.
+  expect(excitationLabel(5, 'measured', [0])).toBe('q6 (via ch?)');
+  expect(excitationLabel(0, 'measured')).toBe('q1 (via ch?)');
 });
 
 test('a commanded run on the browser path is refused before any capture', async () => {

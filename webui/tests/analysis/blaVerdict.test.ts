@@ -11,6 +11,7 @@ import {
   fmtVerdictHz,
   BLA_LINEAR_TEXT,
   BLA_NONLINEAR_TEXT,
+  MIN_BAND_LINES,
 } from '../../src/lib/analysis/blaVerdict';
 
 /** Log-spaced excited axis, 20 Hz → 5 kHz, `n` lines. */
@@ -119,8 +120,8 @@ describe('blaVerdicts', () => {
     expect(one[0].f1).toBe(100);
     expect(one[0].f2).toBe(100);
     expect(one[0].nonlinear).toBe(true);
-    // Two lines never yield four empty-ish bands.
-    expect(blaVerdicts([100, 200], [1e-4, 1e-4], [1e-3, 1e-3])).toHaveLength(2);
+    // Two lines cannot fill even one band's minimum, so they collapse to one.
+    expect(blaVerdicts([100, 200], [1e-4, 1e-4], [1e-3, 1e-3])).toHaveLength(1);
     // All lines at one frequency (degenerate log span).
     expect(blaVerdicts([50, 50, 50], [1, 1, 1], [1, 1, 1])).toHaveLength(1);
     // Non-finite / non-positive entries are dropped, not propagated.
@@ -141,10 +142,52 @@ describe('blaVerdicts', () => {
     const axis = logAxis(60);
     const nl = sigmaFrom(axis, () => 1e-4);
     const n = sigmaFrom(axis, () => 1e-3);
+    // 60 log-spaced lines over 6 bands = 10 each, all comfortably above the
+    // MIN_BAND_LINES floor, so nothing folds.
     expect(blaVerdicts(axis, nl, n, 6)).toHaveLength(6);
     expect(blaVerdicts(axis, nl, n, 1)).toHaveLength(1);
-    expect(blaVerdicts([100, 200], [1e-4, 1e-4], [1e-3, 1e-3], 9)).toHaveLength(2);
+    expect(blaVerdicts([100, 200], [1e-4, 1e-4], [1e-3, 1e-3], 9)).toHaveLength(1);
     expect(blaVerdicts(axis, nl, n, 0)).toHaveLength(1);
+  });
+
+  test('undersized bands fold into a neighbour so no median rests on one line', () => {
+    // A REAL BLA axis is uniformly spaced in k, so log-spaced bands leave the
+    // LOW end thin: 20 Hz–200 Hz at Δf = 20 Hz is 10 lines, whose bottom log
+    // band (20–37.6 Hz) holds just 20 and 40.
+    const axis = Float64Array.from({ length: 10 }, (_, i) => 20 * (i + 1));
+    const nl = sigmaFrom(axis, () => 1e-4);
+    const n = sigmaFrom(axis, () => 1e-3);
+    const bands = blaVerdicts(axis, nl, n);
+    expect(bands.every((b) => b.count >= MIN_BAND_LINES)).toBe(true);
+    // Folding conserves lines and leaves the excited range fully covered.
+    expect(bands.reduce((s, b) => s + b.count, 0)).toBe(10);
+    expect(bands[0].f1).toBe(20);
+    expect(bands[bands.length - 1].f2).toBe(200);
+    // Bands stay ascending and disjoint after the merge.
+    for (let i = 1; i < bands.length; i++) expect(bands[i].f1).toBeGreaterThan(bands[i - 1].f2);
+  });
+
+  test('a thin TOP band folds down into its predecessor', () => {
+    // Lines packed low with two stragglers up top: the last log band cannot
+    // absorb a successor, so it merges backwards instead.
+    const axis = [100, 105, 110, 115, 120, 125, 130, 135, 4800, 5000];
+    const nl = axis.map(() => 1e-4);
+    const n = axis.map(() => 1e-3);
+    const bands = blaVerdicts(axis, nl, n);
+    expect(bands.every((b) => b.count >= MIN_BAND_LINES)).toBe(true);
+    expect(bands[bands.length - 1].f2).toBe(5000);
+    expect(bands.reduce((s, b) => s + b.count, 0)).toBe(10);
+  });
+
+  test('band edges come from the first and last line, not a spread', () => {
+    // 200k lines: Math.min(...band) would RangeError on the argument list.
+    const axis = Float64Array.from({ length: 200000 }, (_, i) => 1 + i * 0.05);
+    const nl = new Float64Array(axis.length).fill(1e-4);
+    const n = new Float64Array(axis.length).fill(1e-3);
+    const bands = blaVerdicts(axis, nl, n);
+    expect(bands.length).toBeGreaterThan(0);
+    expect(bands[0].f1).toBeCloseTo(1, 10);
+    expect(bands[bands.length - 1].f2).toBeCloseTo(axis[axis.length - 1], 10);
   });
 });
 

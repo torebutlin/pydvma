@@ -172,6 +172,27 @@ export interface BlaState {
 }
 
 /**
+ * Every identifier {@link preflightBla} can attach to a finding. A CLOSED
+ * union on purpose: the card places each message beside the control its code
+ * names, so adding a code without giving it a home is a compile error there
+ * rather than a message that silently disappears from the UI.
+ */
+export type BlaCheckCode =
+  | 'fs'
+  | 'design'
+  | 'band'
+  | 'lpf'
+  | 'output-fs'
+  | 'pretrigger'
+  | 'n-exc'
+  | 'x-mode'
+  | 'commanded-sync'
+  | 'ao-channels'
+  | 'x-channels'
+  | 'resp-channels'
+  | 'peak';
+
+/**
  * One preflight finding. `ok: false` is a HARD failure (the run refuses to
  * start); `ok: true` is an advisory the run acts on and reports (currently
  * only the pretrigger auto-disarm). A clean design yields an EMPTY list.
@@ -179,7 +200,7 @@ export interface BlaState {
 export interface BlaCheck {
   ok: boolean;
   /** Stable identifier for tests / the card's per-field highlighting. */
-  code: string;
+  code: BlaCheckCode;
   /** User-facing sentence. */
   reason: string;
 }
@@ -286,6 +307,27 @@ export function commandedXSupported(
     && !(input.stagedOutputFs != null
       && Math.abs(input.stagedOutputFs - input.requestedFs) > BLA_FS_TOLERANCE_HZ)
     && !input.lpfOn;
+}
+
+/**
+ * How one excitation is named wherever the UI refers to it: `q1 (via ch0)` for
+ * a measured drive, `q1 (commanded)` for a regenerated one. The result set's
+ * display name and the card's verdict line both build on this, so the two can
+ * never disagree about which channel carried `q`.
+ *
+ * @param q Zero-based excitation index (displayed 1-based).
+ * @param xMode Whether the run reads x measured or commanded.
+ * @param xChannels Measured-x input channels in excitation order (ignored in
+ *   commanded mode; a missing entry renders as `ch?`).
+ * @returns The label, without any test-name prefix.
+ */
+export function excitationLabel(
+  q: number,
+  xMode: XMode,
+  xChannels?: readonly (number | null)[] | null,
+): string {
+  const via = xMode === 'commanded' ? 'commanded' : `via ch${xChannels?.[q] ?? '?'}`;
+  return `q${q + 1} (${via})`;
 }
 
 /** A fresh design: 20 Hz–2 kHz at 5 Hz resolution, Schoukens' M/P defaults. */
@@ -445,7 +487,7 @@ export function preflightBla(
 ): BlaCheck[] {
   const { design, values } = input;
   const out: BlaCheck[] = [];
-  const fail = (code: string, reason: string) => out.push({ ok: false, code, reason });
+  const fail = (code: BlaCheckCode, reason: string) => out.push({ ok: false, code, reason });
 
   // ---- 1. design sanity + effective rate ----
   if (!(values.fsEff > 0)) {
@@ -678,10 +720,13 @@ export function createBlaStore(deps: BlaDeps) {
     };
   }
 
-  /** Display name for excitation `q`'s result set. */
+  /**
+   * Display name for excitation `q`'s result set — the test name in front of
+   * the shared {@link excitationLabel}, so the tray name and the card's
+   * verdict line always describe the same geometry.
+   */
   function resultName(d: BlaDesign, v: BlaDerivedValues, q: number): string {
-    const via = v.xMode === 'commanded' ? 'commanded' : `via ch${v.xChannels[q]}`;
-    return `${d.testName} BLA q${q + 1} (${via})`;
+    return `${d.testName} BLA ${excitationLabel(q, v.xMode, v.xChannels)}`;
   }
 
   /**

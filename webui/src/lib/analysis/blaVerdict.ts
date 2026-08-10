@@ -40,9 +40,21 @@ export interface BlaBandVerdict {
   nonlinear: boolean;
   /** Sentence fragment for this band alone. */
   verdict: string;
-  /** How many excited lines fell in the band (a 1-line band is weak evidence). */
+  /**
+   * Excited lines that fell in the band. At least {@link MIN_BAND_LINES}
+   * unless the whole excited range holds fewer than that — undersized bands
+   * are folded into a neighbour before any verdict is computed.
+   */
   count: number;
 }
+
+/**
+ * Fewest excited lines a band may summarise. A median over one or two lines is
+ * not a median — a single noisy line would decide the band — so a sparse band
+ * is folded into its neighbour rather than reported on its own. Only a whole
+ * excited range shorter than this yields a smaller band.
+ */
+export const MIN_BAND_LINES = 3;
 
 /**
  * Variance ratio above which a band reads as distortion-dominated. σ²_NL is
@@ -91,10 +103,17 @@ export function fmtVerdictHz(f: number): string {
  * whose arrays carry NaNs (an unexcited line that slipped through, a channel
  * with no response) simply contributes fewer points. Fewer usable points than
  * requested bands collapses the split, so a 2-line array yields at most 2
- * bands rather than empty ones. Returns `[]` when nothing is usable, which the
- * caller renders as "no usable σ data" rather than as a verdict.
+ * bands rather than empty ones, and any band left holding fewer than
+ * {@link MIN_BAND_LINES} lines is folded into its neighbour so no verdict ever
+ * rests on a one-line "median" — with a BLA's uniformly spaced excited lines
+ * it is always the LOWEST log band that runs thin. Returns `[]` when nothing
+ * is usable, which the caller renders as "no usable σ data" rather than as a
+ * verdict.
  *
- * @param freqAxis Excited-line frequencies (Hz).
+ * The frequency axis is assumed ASCENDING (`k·fs/N` by construction), so each
+ * band's edges are its first and last line.
+ *
+ * @param freqAxis Excited-line frequencies (Hz), ascending.
  * @param sigmaNl Per-line σ_NL, LINEAR units (squared internally).
  * @param sigmaN Per-line σ_n, LINEAR units (squared internally).
  * @param nBands Requested sub-band count (default 4; clamped to ≥ 1).
@@ -109,7 +128,7 @@ export function blaVerdicts(
   const n = Math.min(freqAxis.length, sigmaNl.length, sigmaN.length);
   const f: number[] = [];
   const nl: number[] = [];
-  const nz: number[] = [];
+  const noise: number[] = [];
   for (let i = 0; i < n; i++) {
     const fi = freqAxis[i];
     const a = sigmaNl[i];
@@ -118,7 +137,7 @@ export function blaVerdicts(
     if (!Number.isFinite(a) || a < 0 || !Number.isFinite(b) || b < 0) continue;
     f.push(fi);
     nl.push(a);
-    nz.push(b);
+    noise.push(b);
   }
   if (!f.length) return [];
 
@@ -132,38 +151,61 @@ export function blaVerdicts(
   // fewer than one — a single-line array still deserves a verdict.
   const nb = Math.max(1, Math.min(Math.trunc(nBands) || 1, f.length));
   const span = Math.log(fMax / fMin);
-  const bins: { f: number[]; nl: number[]; nz: number[] }[] =
-    Array.from({ length: nb }, () => ({ f: [], nl: [], nz: [] }));
+  type Bin = { f: number[]; nl: number[]; noise: number[] };
+  const bins: Bin[] = Array.from({ length: nb }, () => ({ f: [], nl: [], noise: [] }));
   for (let i = 0; i < f.length; i++) {
     // A degenerate span (all lines at one frequency) puts everything in band 0.
     const t = span > 0 ? Math.log(f[i] / fMin) / span : 0;
     const j = Math.min(nb - 1, Math.max(0, Math.floor(t * nb)));
     bins[j].f.push(f[i]);
     bins[j].nl.push(nl[i]);
-    bins[j].nz.push(nz[i]);
+    bins[j].noise.push(noise[i]);
   }
 
-  const out: BlaBandVerdict[] = [];
+  // Drop empties and fold anything too thin to carry a meaningful median into
+  // the band ABOVE it — one forward pass, because a band only ever absorbs its
+  // successor. `push` into the accumulator keeps everything ascending, since
+  // the bands themselves are in frequency order.
+  const absorb = (into: Bin, from: Bin): void => {
+    into.f = into.f.concat(from.f);
+    into.nl = into.nl.concat(from.nl);
+    into.noise = into.noise.concat(from.noise);
+  };
+  const kept: Bin[] = [];
   for (const bin of bins) {
     if (!bin.f.length) continue;
+    const prev = kept[kept.length - 1];
+    if (prev && prev.f.length < MIN_BAND_LINES) absorb(prev, bin);
+    else kept.push(bin);
+  }
+  // The TOP band has no successor to absorb, so an undersized one folds back
+  // into its predecessor instead. A lone band is kept whatever its size —
+  // there is nothing left to merge it with.
+  if (kept.length > 1 && kept[kept.length - 1].f.length < MIN_BAND_LINES) {
+    absorb(kept[kept.length - 2], kept[kept.length - 1]);
+    kept.pop();
+  }
+
+  return kept.map((bin) => {
     const mNl = median(bin.nl);
-    const mN = median(bin.nz);
+    const mN = median(bin.noise);
     const varNl = mNl * mNl;
     const varN = mN * mN;
     const ratio = varN > 0 ? varNl / varN : (varNl > 0 ? Infinity : 0);
     const nonlinear = ratio > BLA_NL_RATIO;
-    out.push({
-      f1: Math.min(...bin.f),
-      f2: Math.max(...bin.f),
+    return {
+      // First/last, not min/max: the axis is ascending, and spreading a
+      // 100k-line band into Math.min would blow the argument limit.
+      f1: bin.f[0],
+      f2: bin.f[bin.f.length - 1],
       sigmaNl: mNl,
       sigmaN: mN,
       ratio,
       nonlinear,
       verdict: nonlinear ? BLA_NONLINEAR_TEXT : BLA_LINEAR_TEXT,
       count: bin.f.length,
-    });
-  }
-  return out;
+    };
+  });
 }
 
 /**

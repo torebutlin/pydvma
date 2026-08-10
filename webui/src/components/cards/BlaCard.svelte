@@ -26,12 +26,13 @@
    * its `code` points at rather than in one lump, so a refusal is legible
    * where the fix is.
    */
-  import type { BlaStore, BlaOutputRow, XMode } from '../../lib/stores/bla';
+  import type { BlaStore, BlaOutputRow, BlaCheckCode, XMode } from '../../lib/stores/bla';
   import {
-    commandedXSupported, firstBlaError, outputRailFor, BLA_COMMANDED_X_REASON,
+    commandedXSupported, excitationLabel, firstBlaError, outputRailFor, BLA_COMMANDED_X_REASON,
   } from '../../lib/stores/bla';
   import type { AcquireStore } from '../../lib/stores/acquire';
   import type { Actions } from '../../lib/analysis/actions';
+  import type { Selection } from '../../lib/stores/selection';
   import { outputDevices } from '../../lib/audio/provider';
   import { blaVerdicts, summariseBlaVerdicts, worstBlaChannel } from '../../lib/analysis/blaVerdict';
 
@@ -39,10 +40,13 @@
     bla,
     acquire,
     actions,
+    selection,
   }: {
     bla: BlaStore;
     acquire: AcquireStore;
     actions: Actions;
+    /** Read-only here: the raw-capture toggle reads its state from the tray. */
+    selection: Selection;
   } = $props();
 
   const design = $derived(bla.design);
@@ -56,6 +60,7 @@
   const kind = $derived(acquire.kind);
   const webOutputDevices = $derived(acquire.webOutputDevices);
   const derivedMap = $derived(actions.derived);
+  const setsView = $derived(selection.setsView);
 
   /**
    * Hard ceiling on excitation-table rows. A soundcard can advertise dozens of
@@ -136,8 +141,14 @@
   /** Why Start is refused right now (`''` ⇒ the run may start). */
   const blockReason = $derived(firstBlaError($checks));
 
-  /** Preflight findings whose `code` belongs beside a given control. */
-  const CODE_PLACEMENT: Record<string, string[]> = {
+  /**
+   * Which control each preflight `code` reports next to. Typed against the
+   * CLOSED {@link BlaCheckCode} union, so a new code added to the preflight is
+   * a compile error here until it is given a home — and anything that slips
+   * through anyway (a code placed nowhere) still surfaces through
+   * {@link unplacedMsgs} rather than vanishing.
+   */
+  const CODE_PLACEMENT: Record<string, BlaCheckCode[]> = {
     band: ['fs', 'band'],
     design: ['design'],
     level: ['peak'],
@@ -145,8 +156,11 @@
     responses: ['resp-channels'],
     path: ['lpf', 'output-fs', 'pretrigger'],
   };
+  const PLACED_CODES = new Set<string>(Object.values(CODE_PLACEMENT).flat());
   const msgsFor = (group: string) =>
     $checks.filter((c) => CODE_PLACEMENT[group].includes(c.code));
+  /** Findings with no home in {@link CODE_PLACEMENT} — shown in the run group. */
+  const unplacedMsgs = $derived($checks.filter((c) => !PLACED_CODES.has(c.code)));
 
   // ---- formatting ----
 
@@ -206,42 +220,56 @@
     const spec = $runState.runSpec;
     return ids.map((setId, q) => {
       const tf = $derivedMap[setId]?.tf;
-      const via = spec?.x_mode === 'commanded'
-        ? 'commanded'
-        : `via ch${spec?.x_channels?.[q] ?? '?'}`;
-      const label = `q${q + 1} (${via})`;
+      // The geometry comes from the RUN SPEC (what the results were computed
+      // with), never from the design's current — possibly edited — table.
+      const label = excitationLabel(q, spec?.x_mode ?? 'measured', spec?.x_channels);
       if (!tf?.sigmaNl || !tf?.sigmaN) return { setId, label, text: 'no σ data' };
       const nCols = tf.sigmaNl.shape[1] ?? 1;
       const pair = worstBlaChannel(tf.sigmaNl.re, tf.sigmaN.re, nCols);
       return { setId, label, text: summariseBlaVerdicts(blaVerdicts(tf.axis, pair.sigmaNl, pair.sigmaN)) };
     });
   });
-  const showResults = $derived(phase === 'done' || $runState.resultSetIds.length > 0);
 
-  /** Whether the last run's raw captures are currently unhidden. */
-  let rawVisible = $state(false);
-  // A new run lands a fresh (hidden) batch of raw sets, so the toggle goes
-  // back to its "hidden" reading rather than lying about the new captures.
-  $effect(() => {
-    if ($runState.phase === 'running') rawVisible = false;
+  /**
+   * Whether the last run's raw captures are showing, read from the TRAY rather
+   * than remembered locally — the user can hide or show those sets from the
+   * legend/tray at any time, and a toggle that tracked its own last click
+   * would then offer to "show" what is already on screen.
+   */
+  const rawVisible = $derived.by(() => {
+    const ids = new Set($runState.rawSetIds);
+    if (!ids.size) return false;
+    return $setsView.some((s) => ids.has(s.id) && !s.allOff);
   });
 
   // ---- handlers ----
 
-  /** Read a number input, ignoring blanks/garbage (the field keeps its value). */
-  function num(e: Event): number | null {
-    const v = Number((e.target as HTMLInputElement).value);
+  /**
+   * Read a number input. A BLANK or unparseable field returns `null` and the
+   * design keeps its current value — `Number('')` is `0`, so reading the raw
+   * value would silently rewrite f1 (or Δf, or the level) to zero the moment a
+   * field is cleared for retyping. Mirrors AcquireCard's trim-then-parse.
+   */
+  function readNum(e: Event): number | null {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    if (raw === '') return null;
+    const v = Number(raw);
     return Number.isFinite(v) ? v : null;
   }
-  const onF1 = (e: Event) => { const v = num(e); if (v != null) bla.patch({ f1Hz: v }); };
-  const onF2 = (e: Event) => { const v = num(e); if (v != null) bla.patch({ f2Hz: v }); };
-  const onDf = (e: Event) => { const v = num(e); if (v != null) bla.patch({ dfHz: v }); };
-  const onAmp = (e: Event) => { const v = num(e); if (v != null) bla.patch({ ampRms: v }); };
-  const onM = (e: Event) => { const v = num(e); if (v != null) bla.patch({ M: Math.max(2, Math.round(v)) }); };
-  const onP = (e: Event) => { const v = num(e); if (v != null) bla.patch({ P: Math.max(2, Math.round(v)) }); };
+  const onF1 = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ f1Hz: v }); };
+  const onF2 = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ f2Hz: v }); };
+  const onDf = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ dfHz: v }); };
+  const onAmp = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ ampRms: v }); };
+  const onM = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ M: Math.max(2, Math.round(v)) }); };
+  const onP = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ P: Math.max(2, Math.round(v)) }); };
   const onTrans = (e: Event) => {
-    const v = num(e);
+    const v = readNum(e);
     if (v != null) bla.patch({ tPeriods: Math.max(0, Math.round(v)) });
+  };
+  /** Test name; a blank field keeps the previous name rather than inventing one. */
+  const onTestName = (e: Event) => {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    if (raw !== '') bla.patch({ testName: raw });
   };
 
   /** Replace one excitation row (enable flag or x-source). */
@@ -271,10 +299,7 @@
     return chs;
   }
 
-  function toggleRaw() {
-    rawVisible = !rawVisible;
-    bla.setRawVisible(rawVisible);
-  }
+  const toggleRaw = () => bla.setRawVisible(!rawVisible);
 </script>
 
 <section class="ctx-card card-controls" aria-label="Nonlin stage controls">
@@ -292,8 +317,7 @@
             type="text" style="width:90px"
             title="Base name for this run's raw captures and BLA sets — level sweeps are separate runs, so name them apart"
             aria-label="test name" data-testid="bla-name"
-            value={$design.testName} disabled={busy}
-            onchange={(e) => bla.patch({ testName: (e.currentTarget as HTMLInputElement).value.trim() || 'bla' })}
+            value={$design.testName} onchange={onTestName} disabled={busy}
           />
         </div>
       </div>
@@ -314,7 +338,7 @@
           />
         </div>
         {#each msgsFor('band') as c (c.code + c.reason)}
-          <span class="msg-err" data-testid="bla-msg">{c.reason}</span>
+          <span class="msg-err" role="alert" data-testid="bla-msg">{c.reason}</span>
         {/each}
       </div>
 
@@ -331,17 +355,24 @@
           <span class="ml mono" data-testid="bla-period">{periodText}</span>
         </div>
         {#each msgsFor('design') as c (c.code + c.reason)}
-          <span class="msg-err" data-testid="bla-msg">{c.reason}</span>
+          <span class="msg-err" role="alert" data-testid="bla-msg">{c.reason}</span>
         {/each}
       </div>
 
       <div class="grp">
         <span class="grp-lab">level</span>
         <div class="grp-ctl">
+          <!--
+            No `max` here: the rail is a PEAK and this field is an RMS level,
+            so the legal maximum depends on the realisation's crest factor
+            (≥ √2, and higher for a random-phase multisine). Preflight's peak
+            guard generates every (m, e) waveform and owns that judgement; a
+            max attribute could only be wrong in one direction or the other.
+          -->
           <input
-            type="number" step="any" min="0" max={rail} style="width:64px"
+            type="number" step="any" min="0" style="width:64px"
             title={volts
-              ? `Per-excitation RMS level in volts (device rail ±${rail.toFixed(2)} V peak)`
+              ? `Per-excitation RMS level in volts (output rail ±${rail.toFixed(2)} V peak)`
               : 'Per-excitation RMS level as a fraction of full scale (peak rail ±1)'}
             aria-label="excitation level" data-testid="bla-amp"
             value={$design.ampRms} onchange={onAmp} disabled={busy}
@@ -349,7 +380,7 @@
           <span class="ml">{ampUnit}</span>
         </div>
         {#each msgsFor('level') as c (c.code + c.reason)}
-          <span class="msg-err" data-testid="bla-msg">{c.reason}</span>
+          <span class="msg-err" role="alert" data-testid="bla-msg">{c.reason}</span>
         {/each}
       </div>
 
@@ -415,13 +446,16 @@
             </div>
           {/each}
         </div>
-        {#if !commandedOk}
+        <!-- Only worth saying on the bridge, where an NI output is reachable
+             at all; a browser user cannot act on it, so it would be permanent
+             noise. The disabled option still carries the full reason. -->
+        {#if !commandedOk && $kind === 'bridge'}
           <span class="msg-note" data-testid="bla-commanded-note" title={BLA_COMMANDED_X_REASON}>
             commanded drive needs a hardware-synced NI output
           </span>
         {/if}
         {#each msgsFor('outputs') as c (c.code + c.reason)}
-          <span class="msg-err" data-testid="bla-msg">{c.reason}</span>
+          <span class="msg-err" role="alert" data-testid="bla-msg">{c.reason}</span>
         {/each}
       </div>
 
@@ -431,7 +465,7 @@
           <span class="ml mono" data-testid="bla-responses">{responsesText}</span>
           <span class="ml mono" data-testid="bla-total">{totalText}</span>
           {#each msgsFor('responses') as c (c.code + c.reason)}
-            <span class="msg-err" data-testid="bla-msg">{c.reason}</span>
+            <span class="msg-err" role="alert" data-testid="bla-msg">{c.reason}</span>
           {/each}
         </div>
       </div>
@@ -442,17 +476,20 @@
       <div class="grp">
         <span class="grp-lab">run</span>
         <div class="grp-ctl">
+          <!-- A disabled .btn has pointer-events: none, so a title on it would
+               never be seen; the refusal reads as visible text below instead. -->
           <button
-            class="btn start-btn" data-testid="bla-start"
+            class="btn green" data-testid="bla-start"
             disabled={busy || !!blockReason}
-            title={blockReason || 'Run the BLA measurement (M × n_exc captures)'}
+            title={busy || blockReason ? undefined : 'Run the BLA measurement (M × n_exc captures)'}
             onclick={() => void bla.start()}
           >Start</button>
-          {#if busy}
-            <button class="btn cancel-btn" data-testid="bla-cancel" onclick={() => bla.cancel()}
-              title="Stop after the capture in flight completes">Cancel</button>
-          {/if}
+          <!-- Only while CAPTURING: `cancel()` is a flag the capture loop
+               reads, so during 'analysing' (one worker call) it would do
+               nothing — the "computing BLA…" readout covers that state. -->
           {#if running}
+            <button class="btn danger-o" data-testid="bla-cancel" onclick={() => bla.cancel()}
+              title="Stop after the capture in flight completes">Cancel</button>
             <span class="ml mono" data-testid="bla-progress">{progressText}</span>
           {:else if analysing}
             <span class="ml mono" data-testid="bla-analysing">computing BLA…</span>
@@ -461,6 +498,11 @@
         {#if blockReason && !busy}
           <span class="msg-err" data-testid="bla-blocked">{blockReason}</span>
         {/if}
+        <!-- Safety net: a finding whose code has no home in CODE_PLACEMENT
+             still reaches the user here rather than disappearing. -->
+        {#each unplacedMsgs as c (c.code + c.reason)}
+          <span class={c.ok ? 'msg-note' : 'msg-err'} role="alert" data-testid="bla-msg">{c.reason}</span>
+        {/each}
       </div>
 
       {#if msgsFor('path').length}
@@ -468,7 +510,7 @@
           <span class="grp-lab">capture path</span>
           <div class="col">
             {#each msgsFor('path') as c (c.code + c.reason)}
-              <span class={c.ok ? 'msg-note' : 'msg-err'} data-testid="bla-msg">{c.reason}</span>
+              <span class={c.ok ? "msg-note" : "msg-err"} role="alert" data-testid="bla-msg">{c.reason}</span>
             {/each}
           </div>
         </div>
@@ -496,25 +538,33 @@
       {/if}
     </div>
 
-    <!-- ---------------- results ---------------- -->
-    {#if showResults}
+    <!-- ---------------- results ----------------
+      Gated on what EXISTS, not on the phase: a cancelled or failed run still
+      left hidden raw captures in the tray, and this is the only control that
+      reveals them. Verdicts and captures gate separately for the same reason.
+    -->
+    {#if $runState.resultSetIds.length || $runState.rawSetIds.length}
       <div class="ctx-row" data-testid="bla-results">
-        <div class="grp">
-          <span class="grp-lab">verdict</span>
-          <div class="col">
-            {#each verdicts as v (v.setId)}
-              <span class="verdict" data-testid="bla-verdict">
-                <strong>{v.label}:</strong> {v.text}
-              </span>
-            {/each}
+        {#if $runState.resultSetIds.length}
+          <div class="grp">
+            <span class="grp-lab">verdict</span>
+            <div class="col">
+              {#each verdicts as v (v.setId)}
+                <span class="verdict" data-testid="bla-verdict">
+                  <strong>{v.label}:</strong> {v.text}
+                </span>
+              {/each}
+            </div>
           </div>
-        </div>
+        {/if}
         <div class="grp">
           <span class="grp-lab">captures</span>
           <div class="grp-ctl">
-            <button class="btn" data-testid="bla-show-raw" onclick={toggleRaw}
-              title="Show or hide this run's raw time captures in the tray and legend"
-            >{rawVisible ? 'hide raw captures' : 'show raw captures'}</button>
+            {#if $runState.rawSetIds.length}
+              <button class="btn" data-testid="bla-show-raw" onclick={toggleRaw}
+                title="Show or hide this run's raw time captures in the tray and legend"
+              >{rawVisible ? 'hide raw captures' : 'show raw captures'}</button>
+            {/if}
             <button class="btn" data-testid="bla-new-run" onclick={() => bla.reset()}
               title="Clear the run state and keep the design for another run">new run</button>
           </div>
@@ -557,7 +607,7 @@
     gap: 6px;
     white-space: nowrap;
   }
-  .out-row :global(select) {
+  .out-row select {
     max-width: 150px;
   }
   /* Preflight messages: the app's error/muted colours, but WRAPPING — a
@@ -582,27 +632,8 @@
     font-size: 11px;
     max-width: 520px;
   }
-  .start-btn {
-    background: var(--green) !important;
-    border-color: var(--green) !important;
-    color: #fff !important;
-    font-weight: 600 !important;
-  }
-  .start-btn:hover:not(:disabled) {
-    background: var(--green-hover) !important;
-  }
-  .start-btn:disabled {
-    opacity: 0.55;
-  }
-  .cancel-btn {
-    background: var(--control-bg) !important;
-    border-color: var(--danger-strong) !important;
-    color: var(--danger-strong) !important;
-    font-weight: 600 !important;
-  }
-  .cancel-btn:hover {
-    background: var(--danger-soft) !important;
-  }
+  /* The green Start and the outlined Cancel are the SHARED `.btn.green` /
+     `.btn.danger-o` variants in app.css (identical to Acquire's pair). */
   .run-count {
     font-size: 12px;
     color: var(--muted);
