@@ -104,6 +104,29 @@ test('the dataset carries a TfData item per excitation that .dvma round-trips', 
   expect(tf.meta.test_name).toBe('q2');
 });
 
+test('a saved-then-reloaded BLA item restores its σ overlay arrays into the derived tf slice (Task 9 reload gap)', () => {
+  // A BLA set IS a plain orphan TfData (`id_link: null`, no source TimeData
+  // in the file) — on reopen it goes through `sliceForLoadedItem`'s ORPHAN
+  // branch. Before the Task 9 fix that branch restored axis/data/coherence/
+  // chIn/nChannels but not sigmaNl/sigmaN, so a saved-then-reopened BLA set
+  // silently lost its σ overlay. Simulate a real reopen: write → read → load
+  // into a FRESH actions/selection pair (a new session opening the file).
+  const { actions } = makeActions();
+  actions.addBlaSets(blaResults(), { names: ['q1', 'q2'], timestring: '2026-08-10 12:00:00' });
+  const reloaded = readDvma(writeDvma(get(actions.dataset)!));
+
+  const { sel: sel2, actions: actions2 } = makeActions();
+  actions2.loadDataset(reloaded);
+
+  const sets = get(sel2.setsView);
+  expect(sets).toHaveLength(2);
+  const d0 = get(actions2.derived)[sets[0].id];
+  expect(d0.tf).toBeDefined();
+  expect(d0.tf!.chIn).toBeNull();                 // orphan geometry preserved too
+  expect(Array.from(d0.tf!.sigmaNl!.re)).toEqual([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+  expect(Array.from(d0.tf!.sigmaN!.re)).toEqual([0.01, 0.02, 0.03, 0.04, 0.05, 0.06]);
+});
+
 test('addBlaSets appends to an existing dataset and keeps earlier sets', () => {
   const { sel, actions } = makeActions();
   actions.loadDataset({

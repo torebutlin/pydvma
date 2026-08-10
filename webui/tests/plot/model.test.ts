@@ -379,6 +379,147 @@ test('tf coherence NOT shown for nyquist/real/imag', () => {
   }
 });
 
+// ── σ_NL/σ_n overlay (Task 9, Schoukens BLA) ────────────────────────────────
+// The overlay draws two extra LEFT-axis dashed lines per visible channel,
+// mag-only, from `SetArrays.tf.sigmaNl`/`sigmaN` when `blaSigma` is on.
+
+test('tf σ overlay: two dashed LEFT-axis lines per visible channel (blaSigma on, mag)', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10, 20]),
+      data: decodeArray(cplx([2, 1], [3, 4, 0, 5])),        // |H| = [5, 5]
+      sigmaNl: decodeArray(real([2, 1], [1, 2])),
+      sigmaN: decodeArray(real([2, 1], [0.1, 0.2])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'on', '#dc2626')],
+  });
+  expect(m.lines).toHaveLength(3);              // 1 measured + σ_NL + σ_n
+  const [main, sigNl, sigN] = m.lines;
+  expect(main.dashed).toBe(false);
+  expect(sigNl.dashed).toBe(true); expect(sigNl.yAxis).toBe('left');
+  expect(sigN.dashed).toBe(true); expect(sigN.yAxis).toBe('left');
+  expect(sigNl.color).toBe('#dc2626');           // σ_NL: the channel's own colour
+  expect(sigN.color).toBe('#6b7280');            // σ_n: neutral grey
+});
+
+test('tf σ overlay: dB mapping matches the main line\'s transform of the SAME numbers', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10]),
+      data: decodeArray(cplx([1, 1], [3, 4])),     // |H| = 5 → 20·log10(5)
+      sigmaNl: decodeArray(real([1, 1], [5])),      // same magnitude as |H|
+      sigmaN: decodeArray(real([1, 1], [5])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'on')],
+  });
+  const expected = 20 * Math.log10(5);
+  expect(m.lines[0].y[0]).toBeCloseTo(expected, 9);   // main line
+  expect(m.lines[1].y[0]).toBeCloseTo(expected, 9);   // σ_NL, same numbers → same dB
+  expect(m.lines[2].y[0]).toBeCloseTo(expected, 9);   // σ_n
+});
+
+test('tf σ overlay: linear yScale carries through the σ lines too (no dB, no extra √)', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10]),
+      data: decodeArray(cplx([1, 1], [3, 4])),     // |H| = 5
+      sigmaNl: decodeArray(real([1, 1], [2])),
+      sigmaN: decodeArray(real([1, 1], [0.5])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', yScale: 'lin', blaSigma: true, sets, visible: [vis(0, 1, 'on')],
+  });
+  expect(m.lines[0].y[0]).toBeCloseTo(5, 9);    // main |H|, linear
+  expect(m.lines[1].y[0]).toBeCloseTo(2, 9);    // σ_NL passes through UNCHANGED (linear, no √)
+  expect(m.lines[2].y[0]).toBeCloseTo(0.5, 9);  // σ_n likewise
+});
+
+test('tf σ overlay: blaSigma off (or absent) ⇒ no σ lines even when arrays are present', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10]),
+      data: decodeArray(cplx([1, 1], [1, 0])),
+      sigmaNl: decodeArray(real([1, 1], [0.1])),
+      sigmaN: decodeArray(real([1, 1], [0.01])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const absent = buildPlotModel({ view: 'tf', tfPlotType: 'mag', sets, visible: [vis(0, 1, 'on')] });
+  expect(absent.lines).toHaveLength(1);
+  const off = buildPlotModel({ view: 'tf', tfPlotType: 'mag', blaSigma: false, sets, visible: [vis(0, 1, 'on')] });
+  expect(off.lines).toHaveLength(1);
+});
+
+test('tf σ overlay NOT shown for phase/real/imag/nyquist (mag-only, bode\'s mag pane included elsewhere)', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10]),
+      data: decodeArray(cplx([1, 1], [1, 0])),
+      sigmaNl: decodeArray(real([1, 1], [0.1])),
+      sigmaN: decodeArray(real([1, 1], [0.01])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  for (const pt of ['phase', 'real', 'imag', 'nyquist'] as const) {
+    const m = buildPlotModel({ view: 'tf', tfPlotType: pt, blaSigma: true, sets, visible: [vis(0, 1, 'on')] });
+    expect(m.lines.filter(l => l.dashed && l.yAxis === 'left')).toHaveLength(0);
+  }
+});
+
+test('tf σ overlay: Bode plotType shows σ lines too (its mag pane already computes as type==="mag")', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10]),
+      data: decodeArray(cplx([1, 1], [1, 0])),
+      sigmaNl: decodeArray(real([1, 1], [0.1])),
+      sigmaN: decodeArray(real([1, 1], [0.01])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const m = buildPlotModel({ view: 'tf', tfPlotType: 'bode', blaSigma: true, sets, visible: [vis(0, 1, 'on')] });
+  expect(m.lines.filter(l => l.dashed && l.yAxis === 'left')).toHaveLength(2);
+});
+
+test('tf σ overlay: hidden channels contribute none; the input channel contributes none even if "visible"', () => {
+  // 3-channel set, chIn=0 → 2 output columns (ch_1→col0, ch_2→col1); the
+  // SAME out/in remap as the measured line and the coherence overlay (R4).
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([50]),
+      data: decodeArray(cplx([1, 2], [1, 0, 0, 2])),
+      sigmaNl: decodeArray(real([1, 2], [0.1, 0.2])),
+      sigmaN: decodeArray(real([1, 2], [0.01, 0.02])),
+      chIn: 0, nChannels: 3,
+    },
+  }];
+  // Only ch_1 visible (ch_2 not in the visible list at all).
+  const onlyCh1 = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'on')],
+  });
+  expect(onlyCh1.lines).toHaveLength(3);          // 1 measured (ch_1) + σ_NL + σ_n
+  // ch_0 (the INPUT) also marked visible → still contributes nothing (no column).
+  const withInput = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', blaSigma: true, sets,
+    visible: [vis(0, 0, 'on'), vis(0, 1, 'on')],
+  });
+  expect(withInput.lines).toHaveLength(3);        // unchanged: ch_0 draws nothing
+});
+
 test('faded line renders at opacity 0.35; on at 1.0', () => {
   const sets: SetArrays[] = [{
     setId: 0,

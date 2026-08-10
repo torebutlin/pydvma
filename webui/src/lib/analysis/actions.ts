@@ -167,7 +167,10 @@ function decodeNpy(a: NpyArray): DecodedArray {
  * kinds we don't restore. `srcChannels` is the source set's channel count.
  *
  * Restored: `FreqData → freq` (Frequency/FFT view); `TfData → tf` (TF view,
- * with the out/in remap fields); `CrossSpecData → csd` (coherence). NOT
+ * with the out/in remap fields, PLUS the Schoukens BLA σ_NL/σ_n pair when the
+ * item carries `bla_sigma_nl`/`bla_sigma_n` — a saved-then-reopened BLA set
+ * is a plain `TfData`, see `addBlaSets`, so its σ overlay must round-trip
+ * the same way `coherence` does); `CrossSpecData → csd` (coherence). NOT
  * restored as a slice: stored `SonoData` is a 3-D complex `(Nf, Nt, Nc)`
  * cube whereas the webui's sono slice is a 2-D per-channel magnitude image,
  * and PSD is derivable from the stored `Pxy` — both are left to an on-demand
@@ -202,6 +205,13 @@ function sliceForLoadedItem(
           data: decodeNpy(A.tf_data),
           coherence: A.tf_coherence ? decodeNpy(A.tf_coherence) : undefined,
           chIn: orphan ? null : 0, nChannels: srcChannels,
+          // Schoukens BLA σ pair (Task 9 reload gap): a BLA set IS a TfData
+          // (see `addBlaSets`), so a saved-then-reopened one carries
+          // `bla_sigma_nl`/`bla_sigma_n` beside `tf_data` — restore them the
+          // same way as every other optional array here (`coherence` above)
+          // so the σ overlay survives a save/reload round-trip.
+          sigmaNl: A.bla_sigma_nl ? decodeNpy(A.bla_sigma_nl) : undefined,
+          sigmaN: A.bla_sigma_n ? decodeNpy(A.bla_sigma_n) : undefined,
         },
       };
     case 'CrossSpecData':

@@ -722,6 +722,11 @@
   const range = $derived($currentSlice.range);
   const plotType = $derived($currentSlice.plotType);
   const coherence = $derived($currentSlice.coherence);
+  // σ_NL/σ_n overlay flag (Task 9, Schoukens BLA) — tf mag-only; see
+  // `buildPlotModel`'s docstring. Only threaded into the MAIN model call
+  // below (never the Bode phase pane or the navigator strip), mirroring how
+  // `coherence` is explicitly suppressed on those two.
+  const blaSigma = $derived($currentSlice.blaSigma);
   // Per-view axis-scale toggles (R3): frequency x lin↔log, magnitude
   // dB↔linear. Threaded into the model so buildPlotModel branches the
   // magnitude maths / y-label and buildPlot picks the log-x mapping.
@@ -766,7 +771,7 @@
   const model = $derived<PlotModel>(
     buildPlotModel({
       view, sets: setArrays, visible, freqMode, tfPlotType: plotType,
-      coherence, coherenceAuto, freqRange: $sharedFreqRange, range, xScale, yScale,
+      coherence, coherenceAuto, blaSigma, freqRange: $sharedFreqRange, range, xScale, yScale,
       nyquistRange,
     }),
   );

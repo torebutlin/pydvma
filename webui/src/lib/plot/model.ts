@@ -337,6 +337,14 @@ export interface PlotModelArgs {
    * consulted when the coherence overlay is shown (tf mag/phase).
    */
   coherenceAuto?: boolean;
+  /**
+   * σ_NL/σ_n overlay flag (Task 9, Schoukens BLA). `true` ⇒ for sets whose
+   * `tf` slice carries `sigmaNl`/`sigmaN`, draw two extra dashed LEFT-axis
+   * lines per visible channel — mag-only (bode's magnitude pane included,
+   * since it already computes as `type==='mag'`; phase/real/imag/nyquist
+   * never show them). See `SetArrays.tf.sigmaNl`/`sigmaN` for units.
+   */
+  blaSigma?: boolean;
   /** Shared frequency x-range for Nyquist windowing (`null` = full extent). */
   freqRange?: [number, number] | null;
   /**
@@ -496,6 +504,14 @@ function applyIwColumn(axis: Float64Array, re: Float64Array, im: Float64Array, p
  *   dashed right-axis line per visible line from `coherence`, same
  *   colour, with a γ² label; the right axis is the fixed `[0,1]` by default
  *   or auto-fit to the visible coherence when `coherenceAuto` (round-5 item 6).
+ * - σ_NL/σ_n overlay (Task 9, Schoukens BLA): for tf mag ONLY (bode's
+ *   magnitude pane included — it already computes as `type==='mag'`; never
+ *   phase/real/imag/nyquist), two extra dashed LEFT-axis lines per visible
+ *   channel from `sigmaNl`/`sigmaN` when `blaSigma` is on — the SAME
+ *   cal-ratio/x(iω)/mag-dB pipeline as the measured line (σ is a real linear
+ *   magnitude, so it is pushed through `calScaledColumn`/`applyIwColumn`/
+ *   `tfXY` as a degenerate im=0 column). σ_NL draws in the channel's own
+ *   colour (dimmer), σ_n in neutral grey. Legend-suppressed, like coherence.
  * - sono: no lines (the heat layer is a canvas); returns axis labels
  *   and the committed range so PlotSurface draws empty axes beneath it.
  *
@@ -740,6 +756,47 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         y2Range = [Math.max(0, cohLo - pad), Math.min(1, cohHi + pad)];
       } else {
         y2Range = [0, 1];
+      }
+    }
+
+    // σ_NL/σ_n overlay (Task 9, Schoukens BLA): two extra LEFT-axis dashed
+    // lines per visible channel — mag ONLY (bode's magnitude pane already IS
+    // `type==='mag'` after the bode→mag degradation above, so it gets the
+    // overlay for free; phase/real/imag/nyquist never reach here). σ is a
+    // REAL per-realisation standard deviation in the SAME linear units as
+    // |tf_data|, so it is run through the EXACT same per-channel pipeline as
+    // the measured line above — cal ratio, x(iω) power, mag/dB mapping —
+    // by treating it as a degenerate complex column (im=0): `calScaledColumn`
+    // / `applyIwColumn` / `tfXY` are reused verbatim, so there is no separate
+    // maths to keep in sync (and no extra √ or squaring — the design's linear-
+    // unit convention holds all the way through). σ_NL draws in the line's own
+    // colour (dimmer); σ_n draws in a neutral grey — both dashed, thin, so
+    // they read as annotation, not data. Legend-suppressed like coherence:
+    // the legend is built from `visible`/`viewEntries`, not from
+    // `PlotModel.lines`, so these extra lines never grow legend rows.
+    if (!!args.blaSigma && type === 'mag') {
+      for (const v of args.visible) {
+        const set = byId.get(v.setId);
+        const t = set?.tf;
+        if (!t) continue;
+        const chIn = t.chIn === undefined ? 0 : t.chIn;
+        const specs: [DecodedArray | undefined, string, number][] = [
+          [t.sigmaNl, v.color, 0.7],   // σ_NL: the channel's own colour, dimmer
+          [t.sigmaN, '#6b7280', 0.55], // σ_n: neutral grey
+        ];
+        for (const [sigma, color, opacity] of specs) {
+          if (!sigma) continue;
+          const sigNout = sigma.shape[1] ?? 1;        // sigma is (Nf, Nout) too
+          const nChannels = t.nChannels ?? sigNout + 1;
+          const col = tfColumn(v.ch, chIn, nChannels);
+          if (col === null || col >= sigNout) continue;
+          const nf = t.axis.length;
+          const ratio = calRatio(set, v.ch, chIn);
+          const { re, im } = calScaledColumn(sigma, nf, sigNout, col, ratio);
+          applyIwColumn(t.axis, re, im, set?.iwPower ?? 0);
+          const { x, y } = tfXY(t.axis, re, im, 'mag', linMag, null);
+          lines.push({ x, y, color, opacity, width: 1, dashed: true, yAxis: 'left', xMonotonic: true });
+        }
       }
     }
 
