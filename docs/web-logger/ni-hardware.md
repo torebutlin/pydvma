@@ -59,25 +59,55 @@ accelerometer on the second module's `ai1` lands at capture **column 5**
 details and the channel-mapping table are in the
 [Python acquisition guide](../user-guide/acquisition.md#cdaq-chassis-with-multiple-modules).
 
-## DSA modules: sample-rate coercion
+## Sample-rate ladders and coercion
 
-Delta-sigma modules (like the NI 9234) only run at rates on their
-internal divider ladder. If you request a rate that is not on the
-ladder, the driver **coerces it to the nearest legal value** — for
-example, requesting 8000 Hz on a 9234 can yield 8533.33 Hz, and 5000 Hz
-can yield 5120 Hz.
+Discrete rate ladders are the norm in measurement hardware, not an NI
+quirk: an audio interface runs 44.1 kHz and up in fixed steps, and
+delta-sigma modules (like the NI 9234) only run at rates on their
+internal divider ladder. The multiplexed USB devices (6212/6003) are the
+exception — their timebase divides finely enough to treat as continuous,
+though it still coerces slightly (the 6003's 80 MHz timebase turns a
+48 kHz request into 48019.2 Hz).
 
-pydvma adopts the *true* hardware rate: the recorder reads back the
-actual sample-clock rate and uses it for every time and frequency axis,
-so your data is correctly scaled even when it differs from what you
-asked for. In the app, **Setup** and **Acquire** show a note when the
-rate has been coerced, and the fs picker constrains to the selected
-device's ladder to reduce surprises.
+What differs is what happens to an off-ladder request. A DSA module
+**coerces it to the nearest legal value** — requesting 8000 Hz on a 9234
+can yield 8533.33 Hz, and 5000 Hz can yield 5120 Hz. pydvma adopts the
+*true* hardware rate: the recorder reads back the actual sample-clock
+rate and uses it for every time and frequency axis, so your data is
+correctly scaled even when it differs from what you asked for. In the
+app, **Setup** and **Acquire** show a note when the rate has been
+coerced, and the fs picker constrains to the selected device's ladder to
+reduce surprises. A sound card, whose ladder is published, is handled
+the other way round: pydvma captures at a rate the hardware really runs
+and resamples to the rate you asked for — see
+[Capture rate and delivered rate](acquisition.md#capture-rate-and-delivered-rate).
 
 !!! tip
     Pick a rate from the device's ladder in the first place and the
-    coercion never happens. If you must hit an exact rate, choose a
-    multiplexed device (USB-6212/6003), whose rates are continuous.
+    coercion never happens. If you must hit an exact arbitrary rate on NI
+    hardware, a multiplexed device (USB-6212/6003) gets closest.
+
+## Oversampling: which rule each device follows
+
+The [digital low-pass](acquisition.md#digital-low-pass) captures above
+your fs and resamples down. How far above depends on whether the
+converter anti-aliases in silicon, which splits the NI devices:
+
+- The **9234 is delta-sigma**, so its anti-alias filter is inherent and
+  locked to the converter rate. Content above the capture Nyquist is
+  gone before the ADC and capturing faster rejects nothing extra, so it
+  follows the same `'lowest'` rule as an audio interface: the lowest
+  available rate at or above 2.56 × fs.
+- The **USB-6003 and 6212 have no anti-alias filter at all**, so a high
+  capture rate is their only alias protection. They default to
+  `'highest'` — as fast as the device will go. On these multiplexed
+  devices the published maximum is the *aggregate* rate across the
+  channel list, so pydvma divides it by the channel count to get the
+  per-channel ceiling.
+
+`MySettings(oversample='lowest'|'highest')` overrides the default either
+way — `'highest'` on a 9234 still buys roughly 10·log₁₀(M) dB of
+broadband-noise process gain, at the cost of the data volume.
 
 ## Terminal configuration
 

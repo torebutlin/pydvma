@@ -147,44 +147,61 @@ Open items:
   this. Fix: stage `output_fs` onto the CAPTURE rate for soundcard
   devices, mirroring what `reclampOutputFs` already does for the NI
   `ao_max_rate` cap.
-- **PC (NI + WASAPI): does `check_input_settings` lie on Windows too?**
-  Shared-mode WASAPI also resamples, so the same class of bug probably
-  exists with a different API for the fix (`IsFormatSupported` /
-  exclusive mode). MUST be measured before any claim — non-macOS
-  behaviour is deliberately unchanged for now. Also re-run
-  `bridge_hw_check.py` to confirm the NI path is untouched by the
-  `select_capture_fs` refactor.
-- **Device-specific oversampling default (Tore's point).** The capture
-  rate rule should follow whether the hardware anti-aliases at its own
-  converter rate. Delta-sigma (sound cards, NI 9234) → lowest native
-  rate that covers fs, which is what soundcard now does. Filterless
-  multiplexed SAR (USB-6003/6212) → highest rate, and there the
-  per-channel division of the AGGREGATE ai_max_rate has to be folded
-  in as well. NI keeps the old max-rate rule today, so the behaviour is
-  already right per driver, but it is implicit — worth making it an
-  explicit device property rather than a side effect of which branch
-  runs. `capture_fs` is the manual override in the meantime.
-- **Label the 2i2's loopback channels.** Inputs 3/4 are a DIGITAL
-  loopback of outputs 1/2, not analogue inputs, and pydvma currently
-  offers a student 4 channels with no hint that two of them are not
-  connected to the outside world. Needs channel roles in `device_caps`
-  and a UI label. (The loopback is also a free cable-free self-test —
-  `dev/scarlett_hw_check.py` uses it.)
-- **Calibrated volts for the Scarlett.** `VmaxSC` can be computed from
-  the manual's max-input table given a gain + input mode the operator
-  states: full-scale peak = `√2·0.7746·10^((L−G)/20)`, L = 22 dBu Line
-  / 12 dBu Inst / 16 dBu Mic, gain range 69 dB. **This model is now
-  confirmed on the real device to 0.10 dB** (2026-08-10): a 5.000 Vpp
-  215 Hz sine at a Focusrite-Control-reported 9 dB Line gain read
-  0.505072 FS peak (crest 1.4166, THD 0.13 %, no clipping), giving
-  `VmaxSC = 4.9498` V pk against a predicted 4.8932 — an implied gain of
-  8.90 dB vs the 9 dB set. So both the table AND the FC2 gain readout
-  are trustworthy. Gain is NOT readable in
-  software (see below), so this needs new `input_gain_db` /
-  `input_mode` settings recorded in the dataset, plus a Setup level
-  check reporting rms/peak in volts and flagging clipping or gross
-  under-range. Note the front-panel Output knob is analogue, so output
-  voltage is only repeatable at a marked position.
+- **PC session: run `dev/2026-08-10-windows-checklist.md`.** The written
+  brief for the next Windows sitting, covering all three of: the NI
+  regression check (`bridge_hw_check.py` + full pytest, because the
+  capture-rate decision was refactored), the 9234 behaviour change
+  below, and the open WASAPI question. Do the regression check first.
+- **~~Device-specific oversampling default~~ — DONE (2026-08-10), needs
+  PC verification.** `streams.hardware_antialiases` states whether the
+  converter filters above its own Nyquist before sampling;
+  `streams.oversample_strategy` turns that into `'lowest'`/`'highest'`,
+  overridable via `MySettings(oversample=...)`. **This CHANGES the
+  9234**: delta-sigma, so it now takes `'lowest'` like the 2i2 rather
+  than capturing at the device max. Expect ~10·log10(M) dB less
+  broadband-noise process gain in exchange for far less data — verify
+  the alias rejection still holds, then decide whether the noise floor
+  matters more (checklist §2). USB-6003/6212 unchanged at `'highest'`,
+  which is mandatory as they have no anti-alias filter at all.
+- **Does `check_input_settings` lie on Windows too?** Shared-mode WASAPI
+  also resamples, so the same class of bug probably exists with a
+  different API for the fix (`IsFormatSupported` / exclusive mode).
+  MUST be measured before any claim — non-macOS behaviour is
+  deliberately unchanged for now. Method in checklist §3, including the
+  trap that sank two measurements first time round: generate the probe
+  tone at the HARDWARE rate, never inside the low-rate stream.
+- **~~Label the 2i2's loopback channels~~ — DONE (2026-08-10).**
+  `pydvma/_soundcard_specs.py` carries per-model channel roles, the
+  bridge publishes them as `device_caps[...].channel_roles`, and Setup
+  shows "channels 3+ are the device's digital loopback, not inputs" once
+  the channel count reaches one — verified in the built UI. Still open:
+  the Python (non-web) path has no equivalent warning, and
+  `_soundcard_specs.PROFILES` has exactly one entry, so add interfaces
+  as they are characterised.
+- **~~Calibrated volts for the Scarlett~~ — DONE (2026-08-10), one part
+  outstanding.** `MySettings(input_gain_db=..., input_mode='line'|
+  'inst'|'mic')` now derives `VmaxSC` from the device's published
+  max-input table: full-scale peak = `√2·0.7746·10^((L−G)/20)`, L =
+  22 dBu Line / 12 dBu Inst / 16 dBu Mic. **Confirmed on the real device
+  to 0.10 dB**: a 5.000 Vpp 215 Hz sine at a Focusrite-Control-reported
+  9 dB Line gain read 0.505072 FS peak (crest 1.4166, THD 0.13 %, no
+  clipping), giving 4.9498 V pk against a predicted 4.8932 — an implied
+  8.90 dB vs the 9 dB set. So both the published table AND the FC2 gain
+  readout are trustworthy, and no per-device calibration run is needed.
+  Gain is NOT readable in software (see below), so the operator states
+  it and it is recorded in the dataset. This DERIVES an existing setting
+  rather than adding a calibration layer — the chain stays raw ±1 →
+  ×VmaxSC → volts → ×cal_factor (= 1/sensitivity) → engineering units.
+  **Still outstanding: the Setup level check** reporting rms/peak in
+  volts and flagging clipping or gross under-range — it would have
+  caught the 24 dB clipped capture instantly. Also note the front-panel
+  Output knob is analogue, so output voltage is only repeatable at a
+  marked position, and `output_VmaxSC` follows `VmaxSC` by default.
+- **No UI control for the new settings yet.** `capture_fs`,
+  `oversample`, `input_gain_db` and `input_mode` are all accepted over
+  the bridge wire (the `configure` whitelist is derived from the
+  `MySettings` signature) but Setup exposes none of them. The Setup
+  "full" panel is where they belong, next to the NI voltage rails.
 - **Gain control is a dead end — do not re-investigate.** No CoreAudio
   HAL properties exist on the input scope; Focusrite Control 2's
   AES70/OCA server gates its object tree behind an authenticated x25519

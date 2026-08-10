@@ -6,7 +6,10 @@ This guide covers data acquisition using different hardware interfaces.
 
 pydvma supports multiple acquisition hardware:
 
-- **Soundcards**: Using the sounddevice library
+- **Soundcards**: Using the sounddevice library (on macOS, capture also
+  goes through `pydvma._coreaudio`, which queries the device's true rate
+  ladder and pins its hardware clock to the capture rate for the
+  duration of the stream, restoring it afterwards)
 - **National Instruments DAQ**: Using NI-DAQmx (Windows only)
 
 ## Soundcard Acquisition
@@ -34,6 +37,33 @@ print(sd.query_devices())
 # Set specific device by index
 settings.device_index = 1  # Use the index from sd.query_devices()
 ```
+
+To see which device that index actually resolves to, and the rates it
+can genuinely run:
+
+```python
+from pydvma import streams
+
+streams.soundcard_device_name(settings)   # 'Scarlett 2i2 4th Gen'
+streams.native_input_rates(settings)      # [44100, 48000, 88200, 96000, ...]
+```
+
+`soundcard_device_name` resolves an unset `device_index` through
+PortAudio's default input the same way the recorder does, so a
+capability query and the stream that follows always describe the same
+device. `native_input_rates` returns an empty list where the platform
+cannot answer (anything but macOS today), meaning "capability unknown".
+
+!!! warning "`check_input_settings` is not a capability probe on macOS"
+    It approves every rate CoreAudio is willing to *resample* to, which
+    is all of them: a Scarlett 2i2 accepts a 3 kHz request while its
+    hardware ladder starts at 44.1 kHz. The conversion is then silent,
+    and its quality depends on the ratio to whatever rate the last
+    application left the device at — measured at as little as 12 dB of
+    alias rejection, with up to 4.3 dB of passband droop. Ask the
+    hardware with `native_input_rates` instead; pydvma does, and captures
+    at a rate the device really runs (see
+    [Sample Rate Selection](#sample-rate-selection)).
 
 ### Recording
 
@@ -257,7 +287,7 @@ strict:
 | ----------- | ------ |
 | **Shape** | 2-D `(N_samples, output_channels)` — one **column per AO channel**, even for a single channel (use `arr[:, None]`). The column count must equal `settings.output_channels`. |
 | **Units** | **Volts** — there is no ±1 normalisation. A value of `2.5` means 2.5 V at the terminal. |
-| **Sample rate** | The array is clocked out at `settings.output_fs` (defaults to `fs`). Build the time base with `1 / settings.output_fs`, and make it ≈ `stored_time` long to span the capture. |
+| **Sample rate** | The array is clocked out at `settings.output_fs` (defaults to `fs`). Build the time base with `1 / settings.output_fs`, and make it ≈ `stored_time` long to span the capture. A sound card has **one clock for input and output**, so when the stimulus plays out of the device you are capturing on, `log_data` resamples the array onto the capture rate and rewrites `output_fs` to match (`streams.output_shares_input_clock`). The physical signal is preserved — a sweep sweeps the frequencies it was generated for — but the sample grid you built is not the one that plays. Separate devices, and NI, keep independent clocks. |
 | **Range** | Every sample must lie within ±`settings.output_vmax()` (`output_VmaxNI` on NI, `output_VmaxSC` on soundcard). On NI, out-of-range samples are rejected by DAQmx (error -200077). |
 | **dtype** | Any float — cast internally (to volts on NI, to ±1 `float32` on the soundcard). |
 
@@ -271,7 +301,9 @@ strict:
 ```python
 import numpy as np
 
-fs   = settings.output_fs       # output clock (defaults to settings.fs)
+fs   = settings.output_fs       # output clock (defaults to settings.fs;
+                                # resampled onto the capture rate on a
+                                # shared-clock soundcard)
 T    = settings.stored_time     # match the capture length
 vmax = settings.output_vmax()   # full-scale output, in volts
 t    = np.arange(0, T, 1 / fs)
@@ -371,12 +403,54 @@ so the downstream code only ever sees voltages:
 * `settings.VmaxSC` (default `1.0`) is the input-side calibration:
   the voltage at the jack corresponding to a normalised reading of
   1.0. Default `1.0` means "treat normalised as volts at unit scale"
-  — identical numeric behaviour to a pre-v1.2 capture. Once you've
-  measured your soundcard's input sensitivity, set this and
-  acquisitions become calibrated.
+  — identical numeric behaviour to a pre-v1.2 capture. Set it to your
+  measured input sensitivity and acquisitions become calibrated.
 * `settings.output_VmaxSC` (default = `VmaxSC`) is the output-side
   calibration: `output_signal` divides the requested voltage waveform
-  by `output_VmaxSC` to recover the ±1 sounddevice expects.
+  by `output_VmaxSC` to recover the ±1 sounddevice expects. Because it
+  follows `VmaxSC`, a derived input full scale (below) moves the output
+  scaling with it — and on interfaces whose output level is set by an
+  analogue knob (the Scarlett's front-panel Output control), output
+  voltage is only repeatable at a marked knob position.
+
+#### Deriving `VmaxSC` from the preamp gain
+
+On a characterised interface you do not have to measure the input
+sensitivity: the full-scale voltage follows in closed form from the
+interface's published maximum input level `L` (in dBu at minimum gain)
+and the preamp gain `G` you have set,
+
+```
+V_fullscale_peak = sqrt(2) * 0.7746 * 10 ** ((L - G) / 20)
+```
+
+pydvma cannot read `G` — it is a front-panel control no audio API
+exposes — so state it, and `VmaxSC` is derived for you:
+
+```python
+settings = dvma.MySettings(
+    device_driver='soundcard',
+    input_gain_db=9,        # what the front panel / Focusrite Control says
+    input_mode='line',      # 'line' | 'inst' | 'mic'
+)
+```
+
+On a Scarlett 2i2 4th Gen `L` is 22 dBu on **line**, 12 on **inst** and
+16 on **mic**; the derivation was confirmed against hardware to 0.10 dB,
+so no per-device calibration run is needed. A stated gain **takes
+precedence over an explicit `VmaxSC`**, and applies only to interfaces
+characterised in `pydvma._soundcard_specs` — any other device keeps the
+`VmaxSC` you gave it. Changing the gain on the hardware invalidates the
+calibration, so re-state it when you do.
+
+!!! note "Not every channel a soundcard reports is an input"
+    A Focusrite Scarlett 2i2 4th Gen advertises four inputs, but only
+    1–2 are the analogue Mic/Line/Inst inputs: **3–4 are a digital
+    loopback of its own output mix**. Recorded unknowingly they look
+    like a plausible pair of channels wired to nothing.
+    `pydvma._soundcard_specs.channel_roles(name, channels)` reports the
+    role of each input for a characterised device, and the web logger
+    warns as soon as the channel count reaches one.
 
 ### IEPE / ICP excitation (NI DSA modules)
 
@@ -487,18 +561,47 @@ sits within 5 % of the rails. The output-side `signal_generator`
 applies the same kind of safety clamp at `output_vmax()` so any
 hand-rolled waveform you pass via `output=...` is implicitly bounded.
 
+On a soundcard the check is only as meaningful as `VmaxSC`: with the
+default `1.0` it compares volts against a nominal unit scale. Derive
+`VmaxSC` from a stated `input_gain_db` (above) and the threshold becomes
+the interface's real full-scale voltage, so the warning fires when the
+converter is genuinely near clipping.
+
 ### Quick reference
 
 | Field                    | Path     | Default | What it means                            |
 | ------------------------ | -------- | ------- | ---------------------------------------- |
 | `VmaxNI`                 | input    | `5`     | NI AI full-scale (volts)                 |
 | `VmaxSC`                 | input    | `1.0`   | Soundcard input cal: V at norm = 1       |
+| `input_gain_db`          | input    | `None`  | Stated preamp gain (dB); derives `VmaxSC` on a characterised interface, and wins over an explicit one |
+| `input_mode`             | input    | `'line'`| Which input the signal is on — `'line'`, `'inst'` or `'mic'`; sets the max input level used with `input_gain_db` |
 | `output_VmaxNI`          | output   | `VmaxNI`| NI AO full-scale (volts)                 |
 | `output_VmaxSC`          | output   | `VmaxSC`| Soundcard output cal: V at norm = 1      |
 | `channel_sensitivities`  | input    | `1.0`   | V/eu per channel — see below             |
 | `iepe_excit_current_A`   | input    | `0.0`   | IEPE excitation per channel (NI 9234 etc.) |
 
+And the rates, which are **two** different things — the rate the data is
+delivered at, and the rate the converter runs at:
+
+| Field             | Default  | What it means                                |
+| ----------------- | -------- | -------------------------------------------- |
+| `fs`              | `44100`  | The rate the logged data ends up at. Not necessarily a rate the hardware runs |
+| `capture_fs`      | `None`   | Force the converter's rate (Hz); must be ≥ `fs`, and is snapped up to a real rate where the ladder is known |
+| `lpf_on`          | `False`  | Digital low-pass: capture above `fs` deliberately, then resample down |
+| `oversample`      | `'auto'` | How far above: `'lowest'` (first rate ≥ 2.56 × `fs`) or `'highest'` (as fast as the device goes). `'auto'` picks `'lowest'` where the converter anti-aliases in silicon, else `'highest'` |
+| `lpf_capture_fs`  | —        | Written onto the returned settings: the rate the converter really ran at, whenever it differed from `fs` |
+
 ## Calibration and Scaling
+
+Two multiplicative stages stand between the converter and a plotted
+engineering value, and they are set in different places at different
+times. `VmaxSC` / `VmaxNI` turns the converter's normalised reading into
+**volts**, and is fixed when you log — on a soundcard it is the input
+full scale (measured, or derived from a stated `input_gain_db`; on NI it
+is the voltage range you configured). `channel_cal_factors` then turns
+volts into **engineering units** at display and fit time, from the
+per-channel `channel_sensitivities` below, and can be changed at any
+time afterwards because the stored samples stay in volts.
 
 ### Sensor sensitivity
 
@@ -636,6 +739,28 @@ Choose appropriate sample rates:
 
 Remember Nyquist: sample at least 2× the highest frequency of interest.
 
+The rate you pick is the rate the **data** comes back at; it is not
+always the rate the **converter** runs at. Hardware only runs the rates
+it has — a sound card's ladder starts at 44.1 kHz — so `fs = 3000` is
+captured at 44.1 kHz and decimated to 3 kHz behind pydvma's own
+anti-alias filter (`analysis.resample_to_fs`: passband to `fs/2.56`,
+96 dB stopband at `fs/2`, zero-phase). `streams.select_capture_fs`
+makes that choice and names the rule it applied; the rate the converter
+really ran at comes back as `lpf_capture_fs` on the returned settings.
+
+Two settings steer it. `lpf_on=True` runs the capture above `fs` on
+purpose (anti-aliasing plus ~10·log₁₀(M) dB of broadband-noise process
+gain), with `oversample` deciding how far above: `'lowest'` takes the
+first rate at or above **2.56 × fs**, `'highest'` takes the fastest the
+device offers, and the default `'auto'` picks between them on the
+physical fact — `'lowest'` where the converter anti-aliases in silicon
+(any audio interface, NI DSA modules like the 9234), because content
+above the capture Nyquist is already gone before the ADC and capturing
+faster rejects nothing extra, and `'highest'` on a filterless
+multiplexed device (USB-6003/6212), where a high capture rate is the
+only alias protection there is. `capture_fs` overrides the lot and
+forces a rate outright.
+
 ### Duration Selection
 
 ```python
@@ -646,7 +771,15 @@ settings.stored_time = 1.0 / df  # Minimum duration needed
 
 ### Anti-aliasing
 
-Ensure hardware anti-aliasing filters are enabled or use appropriate sample rates to avoid aliasing.
+Know which kind of front end you have. A delta-sigma converter (any
+audio interface, NI DSA modules such as the 9234) anti-aliases in
+silicon at its own rate, so content above the capture Nyquist is gone
+before the ADC — `streams.hardware_antialiases(settings)` reports this
+per device. A multiplexed SAR device (NI USB-6003/6212) has no such
+filter, and anything above Nyquist folds into your band at sampling
+time, where no later filtering can separate it. There, set `lpf_on=True`
+so the capture runs fast and pydvma filters before dropping the rate —
+or choose a sample rate high enough that nothing real lives above `fs/2`.
 
 ### Grounding and Shielding
 

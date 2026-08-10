@@ -124,6 +124,17 @@ runs **once at boot** and only fills defaults, so any change you make
 afterwards in Setup is never overwritten; unknown or malformed fields are
 skipped silently.
 
+The wire accepts more than the app draws. The bridge's settings
+whitelist is derived from the `MySettings` signature, so fields with no
+Setup control of their own still reach the recorder — `capture_fs`,
+`oversample` and `lpf_on` (the
+[capture rate](acquisition.md#capture-rate-and-delivered-rate) and its
+oversampling rule), and `input_gain_db` / `input_mode` (the stated
+preamp gain that derives an audio interface's
+[input full scale](calibration.md#soundcard-input-gain-and-full-scale)).
+Put them in the settings file and every capture taken through that
+bridge carries them.
+
 !!! note "Bridge auto-detection"
     You do not normally need to configure anything: opening the app
     *through* `pydvma serve` is detected automatically via `/config`.

@@ -34,10 +34,11 @@ The **Time** stage inspects the raw time series.
   fact. Pick another set to **match** (the dropdown lists each set with
   its rate — handy when measurements logged at different rates need a
   common fs) or enter a **custom** rate. Downsampling uses the same
-  noise-reducing anti-alias filter as the logging
-  [digital low-pass](acquisition.md#digital-low-pass) (96 dB stopband
-  at the new Nyquist, zero-phase); upsampling is band-limited (sinc)
-  interpolation, which — unlike linear interpolation — invents no
+  noise-reducing anti-alias filter the logger uses whenever it
+  [resamples a capture](acquisition.md#capture-rate-and-delivered-rate)
+  (96 dB stopband at the new Nyquist, zero-phase); upsampling is
+  band-limited (sinc) interpolation, which — unlike linear
+  interpolation — invents no
   frequency content above the original band and passes the recorded
   band untouched. Existing results recompute at the new rate; the
   success message offers a one-step **Undo**, and saving writes the

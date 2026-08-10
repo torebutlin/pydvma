@@ -3,7 +3,10 @@
 Captures are always stored in **volts**. To read results in engineering
 units (g, m/s², N, Pa, …) you attach a per-channel **sensitivity** and
 **unit**; the web logger then scales plots, spectra, transfer functions
-and fits at display time. Because the stored samples stay in volts,
+and fits at display time. (What makes the stored samples volts in the
+first place is the input's full-scale voltage, fixed at capture time —
+see [Soundcard input gain](#soundcard-input-gain-and-full-scale) for the
+audio-interface case.) Because the stored samples stay in volts,
 calibration is **non-destructive** — you can set or correct it after
 recording without losing anything, and clip detection still works against
 the true voltage.
@@ -55,6 +58,49 @@ All of this is saved in the [`.dvma` file](dvma-format.md) as the
 calibrated — in the web logger, in Python, or in the JupyterLite
 notebook.
 
+## Soundcard input gain and full scale
+
+Per-channel sensitivity turns **volts** into engineering units. What
+turns the raw ±1 samples an audio interface delivers into volts in the
+first place is `VmaxSC` — the jack voltage that reads full scale — and
+on an interface that depends on the preamp gain. No audio API exposes
+that gain (it is a front-panel knob), so pydvma cannot read it; you
+state it instead, at capture time:
+
+```python
+settings = dvma.MySettings(
+    device_driver='soundcard',
+    input_gain_db=9,        # what the front panel / Focusrite Control says
+    input_mode='line',      # 'line' | 'inst' | 'mic'
+)
+```
+
+`VmaxSC` is then derived from the interface's published maximum input
+level `L` (in dBu at minimum gain) and the stated gain `G`:
+
+    V_fullscale_peak = sqrt(2) * 0.7746 * 10 ** ((L - G) / 20)
+
+On a Scarlett 2i2 4th Gen `L` is 22 dBu on **line**, 12 on **inst** and
+16 on **mic**; the formula was confirmed against hardware to 0.10 dB. A
+stated gain takes precedence over an explicit `VmaxSC`, and only applies
+to interfaces characterised in `pydvma._soundcard_specs` — any other
+device keeps whatever `VmaxSC` you gave it. Note `output_VmaxSC`
+defaults to `VmaxSC`, so a derived value moves the output scaling with
+it (though the Scarlett's front-panel Output knob is an analogue
+control, so output voltage is only repeatable at a marked knob
+position).
+
+This is not a second calibration layer — it *derives* the setting that
+was always there. The chain stays: raw ±1 → ×`VmaxSC` → volts →
+×cal factor (= 1 / sensitivity) → engineering units. The first stage is
+fixed when you record; the second is the per-channel sensitivity above,
+which you can set or correct at any time. Changing the gain on the
+hardware invalidates the first stage, so re-state it when you do.
+
+There is no Setup control for this — set it in `MySettings`, or in the
+JSON you hand to `pydvma-serve --settings` (see
+[From the Qt logger](migration.md#pre-seeding-settings-with-settings)).
+
 ## Best Match scaling writes here too
 
 The TF card's **[Best match](analysis.md#scaling-xi-and-best-match)**
@@ -76,5 +122,8 @@ time). See the worked cDAQ recipe in the
 !!! note "Guided (known-input) calibration"
     A **known-input calibration** helper (calibrate against a reference
     signal of known level) is stubbed in the dialog but **not yet
-    enabled** — it is on the roadmap. For now, enter sensitivities from
-    the sensor's calibration sheet.
+    enabled** — it is on the roadmap. It is not the only route to a
+    calibrated result, though: enter sensitivities from the sensor's
+    calibration sheet, and on a characterised audio interface state the
+    preamp gain rather than measuring the input full scale
+    ([above](#soundcard-input-gain-and-full-scale)).
