@@ -211,3 +211,144 @@ class TestLogDataCaptureRate:
         data, opened = self._run(monkeypatch, [], fs=3000)
         assert opened['fs'] == 3000
         assert data.time_data_list[0].settings.fs == 3000
+
+
+class TestOversampleStrategy:
+    """Which rate to oversample TO is a property of the hardware, not of
+    which code branch happens to run."""
+
+    def test_soundcard_is_delta_sigma_so_lowest_suffices(self):
+        assert streams.hardware_antialiases(make_settings(fs=3000)) is True
+        assert streams.oversample_strategy(make_settings(fs=3000)) == 'lowest'
+
+    def test_nidaq_defaults_to_highest(self, monkeypatch):
+        """Mandatory on the filterless multiplexed devices, and the
+        behaviour already verified on the NI hardware."""
+        s = make_settings(fs=3000, device_driver='nidaq')
+        assert streams.oversample_strategy(s) == 'highest'
+
+    def test_mock_defaults_to_highest(self):
+        assert streams.oversample_strategy(
+            make_settings(fs=3000, device_driver='mock')) == 'highest'
+
+    def test_explicit_setting_overrides_the_device_default(self):
+        s = make_settings(fs=3000, oversample='highest')
+        assert streams.oversample_strategy(s) == 'highest'
+        s = make_settings(fs=3000, device_driver='nidaq', oversample='lowest')
+        assert streams.oversample_strategy(s) == 'lowest'
+
+    def test_rejects_an_unknown_strategy(self):
+        with pytest.raises(ValueError, match="oversample must be"):
+            make_settings(fs=3000, oversample='fastest')
+
+    def test_multiplexed_ni_is_reported_as_unfiltered(self, monkeypatch):
+        """The USB-6003/6212 have no anti-alias filter; a DSA module does."""
+        from pydvma import _ni_backend
+        monkeypatch.setattr(_ni_backend, 'enumerate_devices', lambda: [{'name': 'Dev1'}])
+        monkeypatch.setattr(_ni_backend, 'entry_capabilities',
+                            lambda e: {'simultaneous': False})
+        assert streams.hardware_antialiases(
+            make_settings(fs=3000, device_driver='nidaq')) is False
+        monkeypatch.setattr(_ni_backend, 'entry_capabilities',
+                            lambda e: {'simultaneous': True})
+        assert streams.hardware_antialiases(
+            make_settings(fs=3000, device_driver='nidaq')) is True
+
+    def test_highest_strategy_takes_the_top_native_rate(self, native):
+        s = make_settings(fs=3000, lpf_on=True, oversample='highest')
+        assert streams.select_capture_fs(s) == (192000.0, 'oversample')
+
+    def test_lowest_strategy_takes_the_first_rate_with_headroom(self, native):
+        s = make_settings(fs=3000, lpf_on=True, oversample='lowest')
+        assert streams.select_capture_fs(s) == (44100.0, 'oversample')
+
+
+class TestOversampleStrategyWithoutALadder:
+    """The no-ladder path (NI, mock) must obey the same property."""
+
+    def _opened_fs(self, monkeypatch, **kwargs):
+        monkeypatch.setattr(streams, 'native_input_rates', lambda s: [])
+        monkeypatch.setattr(streams, 'max_input_fs', lambda s: 1_000_000.0)
+        opened = {}
+        real_start = streams.start_stream
+
+        def spy(settings):
+            opened['fs'] = settings.fs
+            return real_start(settings)
+
+        monkeypatch.setattr(streams, 'start_stream', spy)
+        acquisition.log_data(make_settings(
+            device_driver='mock', fs=1000, chunk_size=100,
+            stored_time=0.05, lpf_on=True, **kwargs))
+        return opened['fs']
+
+    def test_highest_uses_the_full_device_headroom(self, monkeypatch):
+        assert self._opened_fs(monkeypatch) == 1_000_000
+
+    def test_lowest_stops_at_the_first_sufficient_multiple(self, monkeypatch):
+        """x3, not x1000: ceil(2.56) clears the resampler passband."""
+        assert self._opened_fs(monkeypatch, oversample='lowest') == 3000
+
+
+class TestOutputSharesInputClock:
+    def test_same_soundcard_device_shares_one_clock(self):
+        s = make_settings(fs=44100, device_index=2, output_device_index=2,
+                          output_device_driver='soundcard')
+        assert streams.output_shares_input_clock(s) is True
+
+    def test_different_soundcard_devices_keep_separate_clocks(self, monkeypatch):
+        monkeypatch.setattr(streams._coreaudio, 'available', lambda: False)
+        s = make_settings(fs=44100, device_index=2, output_device_index=5,
+                          output_device_driver='soundcard')
+        assert streams.output_shares_input_clock(s) is False
+
+    def test_nidaq_output_rate_is_independent(self):
+        s = make_settings(fs=44100, device_driver='nidaq', device_index=0,
+                          output_device_index=0, output_device_driver='nidaq')
+        assert streams.output_shares_input_clock(s) is False
+
+
+class TestStimulusOnSharedClock:
+    """A sound card cannot play at a rate different from its capture, so
+    the stimulus is moved onto the capture rate rather than left for the
+    OS to resample."""
+
+    def _run(self, monkeypatch, ladder, out_fs, target_fs=3000, tone=200.0):
+        monkeypatch.setattr(streams, 'native_input_rates', lambda s: list(ladder))
+        monkeypatch.setattr(streams, 'output_shares_input_clock', lambda s: True)
+        played = {}
+
+        class FakeStream:
+            def WaitUntilTaskDone(self, *a): pass
+            def StopTask(self): pass
+            def ClearTask(self): pass
+            def stop(self): pass
+            def close(self): pass
+
+        def fake_output(settings, out):
+            played.update(fs=settings.output_fs, n=len(out))
+            return FakeStream()
+
+        monkeypatch.setattr(acquisition, 'output_signal', fake_output)
+        t = np.arange(0, 1.0, 1 / out_fs)
+        wave = np.sin(2 * np.pi * tone * t).reshape(-1, 1)
+        s = make_settings(device_driver='mock', fs=target_fs, chunk_size=100,
+                          stored_time=0.2, output_fs=out_fs)
+        acquisition.log_data(s, output=wave)
+        return played
+
+    def test_stimulus_is_moved_onto_the_capture_rate(self, monkeypatch):
+        played = self._run(monkeypatch, SCARLETT_LADDER, out_fs=3000)
+        assert played['fs'] == 44100, 'must play at the rate the device runs'
+
+    def test_stimulus_keeps_its_duration(self, monkeypatch):
+        """Resampling must preserve the physical signal: same seconds of
+        excitation, so a sweep still sweeps what it was generated for."""
+        played = self._run(monkeypatch, SCARLETT_LADDER, out_fs=3000)
+        assert played['n'] / 44100 == pytest.approx(1.0, rel=0.02)
+
+    def test_untouched_when_the_rates_already_agree(self, monkeypatch):
+        played = self._run(monkeypatch, SCARLETT_LADDER, out_fs=48000,
+                           target_fs=48000)
+        assert played['fs'] == 48000
+        assert played['n'] == 48000

@@ -105,6 +105,15 @@ class MySettings(object):
             noise-reducing decimation instead of sampling at ``fs``
             directly. The logged settings record the capture rate as
             ``lpf_capture_fs``.
+        oversample (str): How far above ``fs`` to capture when
+            oversampling — ``'auto'`` (default), ``'lowest'`` or
+            ``'highest'``. ``'auto'`` is device-specific: a sound card
+            (delta-sigma, already anti-aliased at its own rate) takes the
+            lowest rate with headroom, while NI takes the highest, which
+            is mandatory on the filterless multiplexed USB-6003/6212 and
+            buys noise process gain on DSA modules. Override when you
+            know better than the default — see
+            ``streams.oversample_strategy``.
         capture_fs (float): Force the rate the hardware runs at, in Hz,
             overriding the automatic choice (default ``None`` = auto).
             ``fs`` is what you want delivered; this is what the converter
@@ -247,6 +256,7 @@ class MySettings(object):
                  pretrig_timeout=20,
                  lpf_on=False,
                  capture_fs=None,
+                 oversample='auto',
                  device_driver='soundcard',
                  device_index=None,
                  input_channels_spec=None,
@@ -307,6 +317,20 @@ class MySettings(object):
         # force a specific capture rate, which is what you want when the
         # device has NO anti-alias filter of its own and capturing as
         # fast as possible is the only protection available.
+        # How far above fs to capture when oversampling. 'auto' is
+        # device-specific because the right answer depends on whether the
+        # hardware anti-aliases at its own converter rate: delta-sigma
+        # (sound cards, NI DSA) already does, so the lowest rate with
+        # headroom is enough; a filterless multiplexed SAR front end
+        # (USB-6003/6212) has no such filter, and there a high capture
+        # rate is the ONLY alias protection available. See
+        # ``streams.oversample_strategy`` for what 'auto' resolves to.
+        if oversample not in ('auto', 'lowest', 'highest'):
+            raise ValueError(
+                "oversample must be 'auto', 'lowest' or 'highest', not {!r}."
+                .format(oversample))
+        self.oversample = oversample
+
         if (capture_fs is None) or (capture_fs == 'None'):
             self.capture_fs = None
         else:

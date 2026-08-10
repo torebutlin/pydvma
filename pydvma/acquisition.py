@@ -18,6 +18,11 @@ import time
 
 MESSAGE = ''
 
+# Smallest oversample factor that clears the resampler's passband:
+# `analysis.resample_to_fs` passes to fs/2.56 on a downsample, so a x2
+# capture would clip the top of the band. ceil(2.56) = 3.
+MIN_OVERSAMPLE_FACTOR = 3
+
 
 def _capture_settings(target_settings, capture_fs):
     """A copy of ``target_settings`` reconfigured to capture at ``capture_fs``.
@@ -180,12 +185,16 @@ def log_data(settings, test_name=None, rec=None, output=None):
                        .format(capture_fs))
             print(MESSAGE)
     elif getattr(settings, 'lpf_on', False):
-        # No published ladder (NI, mock, non-macOS sound cards): keep the
-        # integer-multiple oversample against the device's max rate. For
-        # a filterless multiplexed device that IS the right rule — a high
-        # capture rate is its only anti-alias protection.
+        # No published ladder (NI, mock, non-macOS sound cards): oversample
+        # by an integer multiple of the target, bounded by the device's max
+        # rate. How far up depends on whether the hardware anti-aliases at
+        # its own converter rate — see `streams.oversample_strategy`.
         max_fs = streams.max_input_fs(settings)
         lpf_factor = int(max_fs // settings.fs)
+        if streams.oversample_strategy(settings) == 'lowest':
+            # Smallest integer multiple that clears the resampler's fs/2.56
+            # passband, rather than the fastest the device allows.
+            lpf_factor = min(lpf_factor, MIN_OVERSAMPLE_FACTOR)
         if lpf_factor >= 2:
             settings = _capture_settings(target_settings,
                                          int(lpf_factor * target_settings.fs))
@@ -198,6 +207,27 @@ def log_data(settings, test_name=None, rec=None, output=None):
             MESSAGE = ('Digital low-pass: no oversampling headroom (device max '
                        '{:.6g} Hz at fs = {} Hz) — logging unfiltered.\n'
                        .format(max_fs, settings.fs))
+            print(MESSAGE)
+
+    # ---- Stimulus onto a shared clock -------------------------------------
+    # A sound card has ONE clock for the whole device, so playback cannot run
+    # at a rate different from the capture. Rather than letting the OS
+    # resample the excitation (or refuse both streams), move the waveform
+    # onto the capture rate. Resampling preserves the PHYSICAL signal — the
+    # same volts against the same wall-clock time — so a sweep still sweeps
+    # the frequencies it was generated for.
+    if output is not None and streams.output_shares_input_clock(settings):
+        out_fs = float(getattr(settings, 'output_fs', settings.fs))
+        if abs(out_fs - float(settings.fs)) > 1e-6:
+            output, out_fs_actual, _ = analysis.resample_to_fs(
+                np.asarray(output, dtype=float), out_fs, float(settings.fs))
+            if settings is target_settings:
+                settings = copy.copy(target_settings)
+            settings.output_fs = int(round(out_fs_actual))
+            MESSAGE = ('Output stimulus: this device has one clock for input '
+                       'and output, so the signal generated at {:g} Hz is '
+                       'resampled to the {:g} Hz capture rate.\n'
+                       .format(out_fs, float(settings.fs)))
             print(MESSAGE)
 
     # Defence-in-depth guard: MySettings.__init__ already rejects this

@@ -208,6 +208,33 @@ def main():
               alias_db < -60,
               '5000 Hz would fold to %g Hz; measured %.1f dB' % (fold, alias_db))
 
+        # --- 5. stimulus survives the shared clock -----------------------
+        # The device has ONE clock, so a stimulus generated at a target fs
+        # the hardware cannot run must be moved onto the capture rate. If
+        # that resampling is wrong the tone comes back scaled by
+        # capture_fs/target_fs (200 Hz -> 2940 Hz here), which is exactly
+        # the failure this guards.
+        tone_hz = 200.0
+        t = np.arange(0, 1.5, 1.0 / target_fs)
+        wave = (TONE_AMPLITUDE * np.sin(2 * np.pi * tone_hz * t)).reshape(-1, 1)
+        settings = options.MySettings(device_driver='soundcard',
+                                      device_index=index, channels=4,
+                                      fs=target_fs, chunk_size=1024,
+                                      stored_time=1.2, output_fs=target_fs,
+                                      output_device_index=index,
+                                      output_channels=1)
+        td = acquisition.log_data(settings, output=wave).time_data_list[0]
+        played = td.time_data[:, LOOPBACK_CHANNEL - 1]
+        got = amplitude_at(played, td.settings.fs, tone_hz)
+        wrong = amplitude_at(played, td.settings.fs,
+                             abs(((tone_hz * ladder[0] / target_fs
+                                   + target_fs / 2) % target_fs) - target_fs / 2))
+        check('stimulus plays at the right frequency on a shared clock',
+              got > 4 * max(wrong, 1e-12),
+              '%.1f dB at %g Hz vs %.1f dB at the mis-scaled frequency'
+              % (20 * np.log10(max(got, 1e-12) / TONE_AMPLITUDE), tone_hz,
+                 20 * np.log10(max(wrong, 1e-12) / TONE_AMPLITUDE)))
+
     finally:
         if original is not None:
             _coreaudio.set_nominal_rate(device_id, original)

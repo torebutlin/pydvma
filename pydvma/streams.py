@@ -207,6 +207,106 @@ def native_input_rates(settings):
     return _coreaudio.native_rates(device_id)
 
 
+def output_shares_input_clock(settings):
+    """True when playback and capture must run at the SAME rate.
+
+    A USB audio interface has one clock for the whole device, so an
+    output stream cannot run at a rate different from the capture. Ask
+    for one and the OS either resamples the stimulus silently or refuses
+    both streams outright (PortAudio ``-50`` on CoreAudio) — neither is
+    acceptable for a swept-sine excitation.
+
+    Separate devices keep separate clocks and may differ freely, so this
+    is False whenever input and output resolve to different hardware, and
+    False for NI (whose AO rate is independently configurable, subject to
+    its own ``ao_max_rate`` cap).
+    """
+    if settings.device_driver != 'soundcard':
+        return False
+    if getattr(settings, 'output_device_driver', None) != 'soundcard':
+        return False
+    in_index = settings.device_index
+    out_index = getattr(settings, 'output_device_index', None)
+    if in_index is None or out_index is None:
+        return False
+    if int(in_index) == int(out_index):
+        return True
+    # Different PortAudio indices can still be one piece of hardware
+    # (CoreAudio exposes a device once, PortAudio may list it per
+    # direction), so compare the underlying devices where we can.
+    if not _coreaudio.available() or sd is None:
+        return False
+    try:
+        names = sd.query_devices()
+        in_dev, _ = _coreaudio.find_device(names[int(in_index)]['name'])
+        out_dev, _ = _coreaudio.find_device(names[int(out_index)]['name'])
+    except Exception:
+        return False
+    return in_dev is not None and in_dev == out_dev
+
+
+def hardware_antialiases(settings):
+    """Does the device filter above its own Nyquist before sampling?
+
+    True for converters that anti-alias in silicon at the converter rate
+    (delta-sigma: every audio interface, and NI DSA modules such as the
+    9234), False for a filterless multiplexed SAR front end
+    (USB-6003/6212), and None when it cannot be determined.
+
+    This is the physical fact behind :func:`oversample_strategy`. Where
+    it is True, content above the capture Nyquist is already gone before
+    the ADC, so capturing faster buys no extra alias rejection for the
+    target band. Where it is False, capturing faster is the ONLY alias
+    protection the hardware offers, because anything above Nyquist folds
+    in at sampling time and no amount of later filtering can separate it.
+    """
+    driver = settings.device_driver
+    if driver == 'soundcard':
+        # Audio-class converters are delta-sigma; the anti-alias filter
+        # is inherent and locked to the sample rate (this is why the
+        # 2i2's rate ladder starts at 44.1 kHz at all).
+        return True
+    if driver == 'nidaq':
+        try:
+            entries = _ni_backend.enumerate_devices()
+            idx = settings.device_index if settings.device_index is not None else 0
+            return bool(_ni_backend.entry_capabilities(entries[idx]).get('simultaneous'))
+        except Exception:
+            return None
+    return None
+
+
+def oversample_strategy(settings):
+    """How far above ``fs`` to capture: ``'lowest'`` or ``'highest'``.
+
+    ``'lowest'`` takes the first available rate with real headroom over
+    the target; ``'highest'`` takes the fastest the device offers.
+    ``settings.oversample`` selects explicitly; ``'auto'`` (the default)
+    resolves per driver:
+
+    - **soundcard → 'lowest'.** Delta-sigma, so alias protection is
+      already in silicon at the capture rate — capturing at 192 kHz for
+      a 3 kHz target multiplies the data by 4.35 and rejects nothing
+      extra.
+    - **nidaq → 'highest'.** Required on the multiplexed SAR devices
+      (USB-6003/6212), which have no anti-alias filter at all, and
+      retained on DSA modules where the extra decimation still buys
+      ~10·log10(M) dB of broadband-noise process gain. This is also the
+      behaviour verified on the NI hardware, so ``'auto'`` deliberately
+      does not change it; a DSA module can be moved to ``'lowest'``
+      explicitly.
+    - **mock / unknown → 'highest'** (unchanged).
+
+    Note the NI ceiling itself is per-CHANNEL: on a multiplexed device
+    :func:`max_input_fs` divides the aggregate ``ai_max_rate`` by the
+    channel count, so 'highest' already accounts for channel sharing.
+    """
+    explicit = getattr(settings, 'oversample', 'auto')
+    if explicit in ('lowest', 'highest'):
+        return explicit
+    return 'lowest' if settings.device_driver == 'soundcard' else 'highest'
+
+
 def select_capture_fs(settings, native=None):
     """Choose the rate the hardware should actually run at, in Hz.
 
@@ -257,6 +357,8 @@ def select_capture_fs(settings, native=None):
         return target, 'unknown'
 
     if getattr(settings, 'lpf_on', False):
+        if oversample_strategy(settings) == 'highest':
+            return native[-1], 'oversample'
         wanted = 2.56 * target
         headroom = [r for r in native if r >= wanted - 1e-6]
         if headroom:

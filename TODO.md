@@ -173,7 +173,13 @@ Open items:
 - **Calibrated volts for the Scarlett.** `VmaxSC` can be computed from
   the manual's max-input table given a gain + input mode the operator
   states: full-scale peak = `√2·0.7746·10^((L−G)/20)`, L = 22 dBu Line
-  / 12 dBu Inst / 16 dBu Mic, gain range 69 dB. Gain is NOT readable in
+  / 12 dBu Inst / 16 dBu Mic, gain range 69 dB. **This model is now
+  confirmed on the real device to 0.10 dB** (2026-08-10): a 5.000 Vpp
+  215 Hz sine at a Focusrite-Control-reported 9 dB Line gain read
+  0.505072 FS peak (crest 1.4166, THD 0.13 %, no clipping), giving
+  `VmaxSC = 4.9498` V pk against a predicted 4.8932 — an implied gain of
+  8.90 dB vs the 9 dB set. So both the table AND the FC2 gain readout
+  are trustworthy. Gain is NOT readable in
   software (see below), so this needs new `input_gain_db` /
   `input_mode` settings recorded in the dataset, plus a Setup level
   check reporting rms/peak in volts and flagging clipping or gross

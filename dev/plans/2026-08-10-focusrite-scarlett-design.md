@@ -175,6 +175,30 @@ Output side: line outputs are 16 dBu max = 6.91 V peak, but the analogue
 Output knob sits in that path, so `output_VmaxSC` is only meaningful at a
 marked knob position.
 
+### 1.7a The calibration model, confirmed on hardware
+
+Measured later the same day with a 5.000 Vpp sine (Rigol CH1, 215 Hz)
+into the Line input at a Focusrite-Control-reported **9 dB** gain:
+
+- fundamental **0.505072 FS peak**, crest factor 1.4166 (theory
+  1.4142), THD 0.13 %, no clipped samples, 5.9 dB headroom — a clean
+  sine, so the reading is trustworthy;
+- implied **`VmaxSC` = 4.9498 V peak** at full scale (3.500 V rms,
+  13.10 dBu);
+- the §1.7 model predicts 4.8932 V pk at 9 dB — agreement to
+  **0.10 dB**, i.e. an implied gain of 8.90 dB against the 9 dB set.
+
+So the manual's max-input table *and* Focusrite Control's gain readout
+are both accurate to ~0.1 dB. Calibrated volts therefore need only the
+gain and input mode the operator states — no per-device calibration
+run.
+
+An earlier attempt at 24 dB gain clipped hard (78 % of samples at the
+rail, THD 30 %, crest 1.10 — a square wave); a 5 Vpp sine needs the gain
+below ~15 dB on the Line input. Worth remembering that the useful
+by-product of a clipped capture is still a bound: back-solving the
+clipped duty cycle gave ~0.845 V pk full scale, within 3 % of the model.
+
 ### 1.8 What is actually on input 1 right now
 
 Captured 5 s at a pinned 44.1 kHz clock:
