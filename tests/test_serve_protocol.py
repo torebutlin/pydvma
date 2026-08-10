@@ -365,12 +365,82 @@ class TestBuildOutputSignalMultisine:
                 s, self._spec(bogus=1))
         msg = str(excinfo.value)
         assert 'unknown output key' in msg
+        # names the BRANCH: 'f1' rejected by a multisine spec reads like
+        # a typo unless the message says which keyset was applied.
+        assert 'multisine' in msg
         assert 'bogus' in msg
         # the allowed-keys list quoted back must be the multisine keyset,
         # not the classic sweep/gaussian/uniform one.
         assert 'n_samples' in msg
         assert 'k1' in msg
         assert 'f1' not in msg
+
+    def test_missing_keys_are_all_listed(self):
+        """A half-built spec is usually missing several keys; naming one
+        at a time costs a round trip per key."""
+        s = self._settings()
+        spec = self._spec()
+        for key in ('k1', 'k2', 'seed'):
+            del spec[key]
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, spec)
+        msg = str(excinfo.value)
+        for key in ('k1', 'k2', 'seed'):
+            assert repr(key) in msg
+
+    def test_int_keys_derived_from_the_keyset(self):
+        """The int-field tuple is derived from the accepted keyset, so
+        the two cannot drift apart when a key is added."""
+        assert set(serve_mod._MULTISINE_INT_KEYS) == (
+            serve_mod._OUTPUT_SPEC_KEYS_MULTISINE - {'type', 'amp'})
+
+    @pytest.mark.parametrize('key', [
+        'n_samples', 'k1', 'k2', 'p_periods', 't_periods', 'seed', 'm', 'e',
+        'n_exc',
+    ])
+    def test_whole_float_int_field_accepted(self, key):
+        """JSON has no integer type, so a wire value of 64.0 is a
+        legitimate spelling of 64 and must be accepted."""
+        s = self._settings()
+        spec = self._spec(**{key: float(self._spec()[key])})
+        y, gen = serve_mod._build_output_signal(s, spec)
+        assert gen is True
+
+    def test_non_integral_float_int_field_rejected(self):
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, self._spec(k2=10.5))
+        msg = str(excinfo.value)
+        assert repr('k2') in msg
+        assert 'integer' in msg
+
+    def test_bool_int_field_rejected(self):
+        """JSON true/false is an int subclass in Python — it must not
+        slip into a numeric spec field."""
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, self._spec(n_exc=True))
+        assert repr('n_exc') in str(excinfo.value)
+
+    def test_bool_amp_rejected(self):
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, self._spec(amp=True))
+        assert repr('amp') in str(excinfo.value)
+
+    @pytest.mark.parametrize('bad', [float('nan'), float('inf'),
+                                      float('-inf')])
+    def test_non_finite_amp_rejected(self, bad):
+        """Bare JSON has no NaN/Infinity, but a permissive encoder can
+        emit them — and the generator's peak guard is a `>` comparison,
+        which is False for NaN, so a NaN amplitude would reach the DAC as
+        an all-NaN buffer with nothing raising."""
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, self._spec(amp=bad))
+        msg = str(excinfo.value)
+        assert repr('amp') in msg
+        assert 'finite' in msg
 
     @pytest.mark.parametrize('missing', [
         'amp', 'n_samples', 'k1', 'k2', 'p_periods', 't_periods',
