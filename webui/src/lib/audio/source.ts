@@ -45,11 +45,13 @@
  * only optional extensions to the shared `RecordConfig`; the bridge provider
  * ignores them (it maps its own `BridgeConfig` to server-side pydvma settings).
  *
- * The stimulus spec is a UNION ({@link OutputSpecOverride}): the classic
- * signal_generator families, or a Schoukens random-phase {@link MultisineSpec}
- * for BLA runs (multi-channel, sample-exact, no fade).  A per-capture
- * `RecordConfig.outputOverride` beats the card's persistent `output` — that one
- * field IS honoured by both backends, since a BLA run must drive the bridge too.
+ * A stimulus spec is either of the classic signal_generator families
+ * ({@link OutputStimulusConfig}) or a Schoukens random-phase
+ * {@link MultisineSpec} for BLA runs (multi-channel, sample-exact, no fade);
+ * {@link OutputSpec} is the union.  The card's persistent `RecordConfig.output`
+ * takes the CLASSIC type only — a per-capture `RecordConfig.outputOverride`
+ * takes the union and beats it, and is the one field BOTH backends honour,
+ * since a BLA run must drive the bridge too.
  */
 import { generateStimulus, generateMultisine, type MultisineSpec } from './signal';
 import { PretrigAssembler, clampPretrigSamples } from './pretrig';
@@ -107,10 +109,16 @@ export interface RecordConfig {
    * Optional OUTPUT stimulus played through the speakers/AO during the capture
    * (round-5 item 10).  Web-Audio-only; the bridge provider ignores it (it maps
    * its own `BridgeConfig` to server-side pydvma settings).  Set by
-   * `WebAudioProvider` from the Acquire card's persistent stimulus state.  See
-   * {@link OutputStimulusConfig} / {@link MultisineStimulusConfig}.
+   * `WebAudioProvider` from the Acquire card's persistent stimulus state.
+   *
+   * DELIBERATELY the CLASSIC spec only, not the {@link OutputSpec} union: a
+   * multisine parked here would play in the browser and be silently IGNORED by
+   * the bridge (which builds its `log.output` from `BridgeConfig` plus
+   * {@link outputOverride}), so the two backends would disagree about what was
+   * driven.  A BLA stimulus goes through {@link outputOverride}, the one field
+   * BOTH backends honour.
    */
-  output?: OutputSpecOverride;
+  output?: OutputStimulusConfig;
   /**
    * Optional PER-CAPTURE output-stimulus override (Schoukens BLA).  When set it
    * WINS over {@link output} — over the Acquire card's stimulus state in both
@@ -120,7 +128,7 @@ export interface RecordConfig {
    * backends (here for Web Audio, and by `BridgeProvider` which maps it onto the
    * `log` message's `output` block).
    */
-  outputOverride?: OutputSpecOverride;
+  outputOverride?: OutputSpec;
   /**
    * Optional ARMED-capture pretrigger (round-5 item 10).  When present, the
    * capture waits for a threshold crossing and returns a window straddling it.
@@ -169,7 +177,7 @@ export interface OutputStimulusConfig {
 
 /**
  * A Schoukens random-phase MULTISINE output stimulus (BLA runs) — the second
- * member of {@link OutputSpecOverride}, discriminated by `type: 'multisine'`.
+ * member of {@link OutputSpec}, discriminated by `type: 'multisine'`.
  * Carries a {@link MultisineSpec} verbatim (camelCase), so one (realisation,
  * experiment) pair is fully described by the spec alone.
  *
@@ -195,11 +203,12 @@ export interface MultisineStimulusConfig extends MultisineSpec {
  * ({@link OutputStimulusConfig} — sweep / uniform / gaussian, unchanged) or a
  * Schoukens {@link MultisineStimulusConfig}.  Discriminate on `type`.
  *
- * Used both as `RecordConfig.output` (the Acquire card's persistent stimulus)
- * and as `RecordConfig.outputOverride` (a per-capture injection that wins over
- * it), so a BLA run can drive either backend without touching card state.
+ * This is the type of `RecordConfig.outputOverride` — the per-capture injection
+ * BOTH backends honour, so a BLA run can drive either without touching card
+ * state.  `RecordConfig.output` (the Acquire card's persistent stimulus) is
+ * deliberately NARROWER: see the note there.
  */
-export type OutputSpecOverride = OutputStimulusConfig | MultisineStimulusConfig;
+export type OutputSpec = OutputStimulusConfig | MultisineStimulusConfig;
 
 /**
  * Armed-capture pretrigger options (Web Audio).  Mirrors pydvma's
@@ -499,7 +508,9 @@ function multisineStimulusBuffer(
   }
   const ys = generateMultisine(output, fs);
   const buffer = ctx.createBuffer(channels, Math.max(1, ys[0]?.length ?? 0), fs);
-  for (let ch = 0; ch < channels; ch++) buffer.getChannelData(ch).set(Float32Array.from(ys[ch]));
+  // TypedArray.set converts float64 → float32 element-wise on the way in, so
+  // no intermediate copy is needed.
+  for (let ch = 0; ch < channels; ch++) buffer.getChannelData(ch).set(ys[ch]);
   try {
     // Discrete, exactly nExc wide: no speaker up/down-mix of the excitations.
     ctx.destination.channelCount = channels;
@@ -523,7 +534,7 @@ async function buildStimulusNode(
   ctx: AudioContext,
   fs: number,
   captureDurationS: number,
-  output: OutputSpecOverride,
+  output: OutputSpec,
 ): Promise<AudioBufferSourceNode> {
   const sink = (ctx as unknown as { setSinkId?: (id: string) => Promise<void> }).setSinkId;
   if (output.deviceId && typeof sink === 'function') {

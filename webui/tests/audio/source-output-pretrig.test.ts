@@ -219,7 +219,8 @@ test('a multisine override builds an n_exc-channel buffer of (t+p)·N samples an
   const FS = 8000, DUR = 0.05, TOTAL = Math.ceil(FS * DUR);
   const { gum } = mockGetUserMedia();
   (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>) = gum;
-  vi.stubGlobal('AudioContext', makeMockCtx({ fs: FS, maxChannelCount: 2 }).MockAudioContext);
+  const { MockAudioContext, created } = makeMockCtx({ fs: FS, maxChannelCount: 2 });
+  vi.stubGlobal('AudioContext', MockAudioContext);
 
   const handle = startRecording({
     sampleRate: FS, channelCount: 1, durationS: DUR,
@@ -228,6 +229,12 @@ test('a multisine override builds an n_exc-channel buffer of (t+p)·N samples an
     outputOverride: multisineOverride(),
   });
   await sleep(10);
+
+  // The destination is pinned to exactly n_exc DISCRETE channels: any speaker
+  // up/down-mix would fold the excitations into each other and destroy the
+  // orthogonality the BLA solve depends on.
+  expect(created[0].destination.channelCount).toBe(2);
+  expect(created[0].destination.channelInterpretation).toBe('discrete');
 
   const buffer = lastBufferSource!.buffer as {
     numberOfChannels: number; length: number; getChannelData: (ch: number) => Float32Array;

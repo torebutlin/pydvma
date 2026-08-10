@@ -12,7 +12,7 @@
 import { writable, get } from 'svelte/store';
 import type {
   AudioInputDevice,
-  OutputSpecOverride,
+  OutputSpec,
   RecordConfig,
   Recording,
   RecordingHandle,
@@ -130,7 +130,7 @@ export interface RecordOptions {
    * `AudioBufferSourceNode` graph, the bridge maps it onto the `log` message's
    * `output` block.  Omit for ordinary captures.
    */
-  outputOverride?: OutputSpecOverride;
+  outputOverride?: OutputSpec;
 }
 
 export type AcquireStore = ReturnType<typeof createAcquireStore>;

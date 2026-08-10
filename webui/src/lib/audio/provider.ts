@@ -54,7 +54,7 @@ export type {
    * The stimulus spec union both backends accept as a per-capture
    * `RecordConfig.outputOverride` — see {@link SourceProvider.startRecording}.
    */
-  OutputSpecOverride,
+  OutputSpec,
 } from './source';
 
 // ---- bridge capability / config types ----
@@ -510,12 +510,18 @@ export interface BridgeConfig {
    * Selected output (AO) device as `<driver>:<index>` (e.g. `'nidaq:1'`),
    * mapped to `MySettings.output_device_driver` / `output_device_index` in the
    * configure message.  Unset → the server uses the input device / its
-   * default output.  Only sent when `outputEnabled`.
+   * default output.  Sent when `outputEnabled` OR when the capture carries a
+   * per-capture `RecordConfig.outputOverride` (a BLA run drives the AO even
+   * while the card's stimulus group is off, so the device selection has to
+   * ride along).
    */
   outputDeviceId?: string;
   /**
    * Number of output (AO) channels → `MySettings.output_channels`.  Unset →
-   * the server default (1).  Only sent when `outputEnabled`.
+   * the server default (1).  Sent when `outputEnabled` OR when a per-capture
+   * `RecordConfig.outputOverride` is present; a multisine override WIDENS it
+   * to its `nExc` (never narrows it), since the server's generator rejects
+   * `n_exc > output_channels`.
    */
   outputChannels?: number;
   /**
@@ -525,8 +531,10 @@ export interface BridgeConfig {
    * it, and clears it otherwise.  Unset → the server default
    * (`output_fs = fs`, options.py), which on a device whose AO tops out
    * below the input rate (USB-6003: AO 5 kS/s vs AI 100 kS/s) fails the log
-   * with "output_fs exceeds the maximum AO sample rate".  Only sent when
-   * `outputEnabled`.
+   * with "output_fs exceeds the maximum AO sample rate".  Sent when
+   * `outputEnabled` OR when a per-capture `RecordConfig.outputOverride` is
+   * present.  (A BLA run REFUSES to start while this is staged — a drive at a
+   * different rate than the capture breaks the multisine periodicity.)
    */
   outputFs?: number;
 }

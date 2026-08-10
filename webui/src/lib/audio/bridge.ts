@@ -39,7 +39,7 @@ import type {
   MonitorHandle,
   MultisineStimulusConfig,
   NiDeviceEntry,
-  OutputSpecOverride,
+  OutputSpec,
   RecordConfig,
   Recording,
   RecordingHandle,
@@ -582,7 +582,7 @@ export class BridgeProvider implements SourceProvider {
    * the override's own fields, a `'multisine'` one emits the separate
    * snake_case multisine keyset (see {@link multisineOutputWire}).
    */
-  private buildOutput(override?: OutputSpecOverride): Record<string, unknown> | null {
+  private buildOutput(override?: OutputSpec): Record<string, unknown> | null {
     if (override) {
       if (override.type === 'multisine') return multisineOutputWire(override);
       const o: Record<string, unknown> = {
