@@ -792,3 +792,44 @@ test('onConfigured is skipped when the configured reply carries no usable fs', a
 
   expect(infos).toEqual([]);
 });
+
+// --- native hardware rate ladder (soundcard) -------------------------------
+// A sound card runs a discrete ladder; the lower rates in fs_ladder are ones
+// pydvma DELIVERS by decimating, not ones the converter runs at. deviceCapsFor
+// must keep the two distinguishable so the UI can say which is which.
+test('deviceCapsFor surfaces the hardware rate ladder separately from fs_ladder', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['Scarlett 2i2 4th Gen'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [8000, 22050, 44100, 48000, 96000] },
+    max_channels: { 'soundcard:0': { input: 4, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Scarlett 2i2 4th Gen', ao: true,
+        native_rates: [44100, 48000, 96000],
+      },
+    },
+  } as never;
+  const entry = deviceCapsFor(caps, 'soundcard:0');
+  expect(entry?.native_rates).toEqual([44100, 48000, 96000]);
+  expect(entry?.fs_ladder).toEqual([8000, 22050, 44100, 48000, 96000]);
+});
+
+test('deviceCapsFor omits native_rates when the hardware ladder is unknown', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['Some card'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [44100] },
+    max_channels: { 'soundcard:0': { input: 2, output: 0 } },
+    pretrigger: true,
+    ao: false,
+    device_caps: {
+      'soundcard:0': { driver: 'soundcard', index: 0, name: 'Some card', ao: false, native_rates: [] },
+    },
+  } as never;
+  expect(deviceCapsFor(caps, 'soundcard:0')?.native_rates).toBeUndefined();
+});

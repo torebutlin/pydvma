@@ -76,6 +76,17 @@ export interface NiDeviceEntry {
 export interface DeviceCapsEntry {
   /** Discrete allowed sample rates in Hz (server `fs_ladders[deviceId]`). */
   fs_ladder?: number[];
+  /**
+   * Sample rates the hardware can GENUINELY run, in Hz, from the server's
+   * `device_caps[deviceId].native_rates`.  Absent or empty means unknown.
+   *
+   * A sound card runs a discrete ladder — a Scarlett 2i2 starts at 44.1 kHz —
+   * so the lower rates in {@link fs_ladder} are ones pydvma DELIVERS by
+   * capturing at a native rate and decimating, not ones the converter runs at.
+   * The UI uses this to say which is which rather than implying the device
+   * samples at 3 kHz.
+   */
+  native_rates?: number[];
   /** Maximum continuous sample rate in Hz (when no discrete ladder is given). */
   max_fs?: number;
   /** Maximum input (AI) channel count (`max_channels[deviceId].input`). */
@@ -228,6 +239,11 @@ export function deviceCapsFor(
 
   const dc = caps.device_caps?.[deviceId];
   if (dc && typeof dc.ao === 'boolean') out.ao = dc.ao;
+  // Hardware rate ladder (soundcard): distinguishes rates the converter
+  // runs from rates pydvma reaches by decimating. Empty means unknown.
+  if (dc && Array.isArray(dc.native_rates) && dc.native_rates.length) {
+    out.native_rates = dc.native_rates;
+  }
   // Voltage rails (NI only): pass through when the server reports a finite,
   // positive symmetric range so the UI can clamp VmaxNI / output_VmaxNI.
   if (dc && typeof dc.ai_vmax === 'number' && dc.ai_vmax > 0) out.ai_vmax = dc.ai_vmax;

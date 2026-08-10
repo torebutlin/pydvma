@@ -93,6 +93,18 @@
     const maxFs = bridgeSelCaps?.max_fs ?? srMax;
     return (srMin == null || fs >= srMin) && (maxFs == null || fs <= maxFs);
   };
+  // The rate the converter will really run at, when the device publishes a
+  // hardware ladder and the chosen fs is not on it. A sound card cannot
+  // sample at 3 kHz; pydvma captures at the lowest native rate above it and
+  // decimates behind its own anti-alias filter. Say so, rather than letting
+  // the fs select imply the hardware runs there.
+  const captureFs = $derived.by(() => {
+    const native = bridgeSelCaps?.native_rates;
+    if (!native || !native.length) return null;
+    const fs = $settings.sampleRate;
+    if (native.includes(fs)) return null;
+    return native.find((r) => r > fs) ?? native[native.length - 1];
+  });
   // Current input latency hint, shown in the timing group (ms in the UI).
   const latencyMs = $derived(
     $settings.latency && $settings.latency > 0 ? Math.round($settings.latency * 1000) : '',
@@ -280,6 +292,18 @@
       <div class="ctx-row">
         <span class="note coerce-note" data-testid="setup-coerced-fs">
           device runs at {fmtHz($coercedFs.configured)} Hz (requested {fmtHz($coercedFs.requested)})
+        </span>
+      </div>
+    {/if}
+
+    {#if captureFs}
+      <!-- Hardware-ladder note: the chosen fs is not a rate this device can
+           run, so the capture happens at a native rate and is resampled down
+           by pydvma (96 dB stopband) rather than by the OS, whose alias
+           rejection was measured as poor as 12 dB on this path. -->
+      <div class="ctx-row">
+        <span class="note coerce-note" data-testid="setup-capture-fs">
+          captures at {fmtHz(captureFs)} Hz, resampled to {fmtHz($settings.sampleRate)} Hz
         </span>
       </div>
     {/if}

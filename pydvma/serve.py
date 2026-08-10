@@ -201,6 +201,7 @@ import os
 import struct
 import sys
 import tempfile
+import types
 import webbrowser
 from pathlib import Path
 from typing import Any
@@ -469,21 +470,63 @@ def _bounded_standard_rates(fs_min, fs_max) -> list[int]:
     return [int(r) for r in _STANDARD_RATES if lo <= r <= hi]
 
 
+def _soundcard_native_rates(index: int) -> list[float]:
+    """Rates the soundcard device can GENUINELY run, ascending; else ``[]``.
+
+    Answered by the hardware itself where the platform allows it
+    (macOS/CoreAudio).  An empty list means "capability unknown", not
+    "no rates".
+
+    This exists because ``check_input_settings`` is not a capability
+    probe on macOS: it approves every rate CoreAudio would resample to,
+    so advertising its verdict puts rates in the UI that the hardware
+    cannot run and that the OS then serves with as little as 12 dB of
+    alias rejection.  See ``pydvma._coreaudio``.
+    """
+    settings = types.SimpleNamespace(device_driver='soundcard',
+                                     device_index=index)
+    try:
+        return streams.native_input_rates(settings)
+    except Exception:
+        return []
+
+
 def _soundcard_candidate_rates(sd, index: int, max_in: int,
                                default_sr: float) -> list[int]:
-    """Standard rates the soundcard input device accepts (best-effort).
+    """Sample rates to offer for this soundcard input device.
 
-    Probes each standard rate with ``sd.check_input_settings`` (cheap —
-    PortAudio answers whether the format is supported without opening a
-    stream).  The device's ``default_samplerate`` is always included.
-    Output-only devices (``max_in <= 0``) just get their default rate.
-    If the probe API is missing or misbehaves, the full standard list is
-    returned unfiltered rather than an empty one.
+    Where the device publishes a real rate ladder that is used directly,
+    plus the standard rates below its floor, which pydvma reaches by
+    capturing at a native rate and decimating behind its own anti-alias
+    filter.  Otherwise falls back to probing each standard rate with
+    ``sd.check_input_settings`` (cheap — PortAudio answers without
+    opening a stream).  The device's ``default_samplerate`` is always
+    included.  Output-only devices (``max_in <= 0``) just get their
+    default rate.  If the probe API is missing or misbehaves, the full
+    standard list is returned unfiltered rather than an empty one.
     """
     rates: set[int] = set()
     if default_sr and default_sr > 0:
         rates.add(int(round(default_sr)))
     if max_in <= 0:
+        return sorted(rates)
+    native = _soundcard_native_rates(index)
+    if native:
+        # Drop the reported default too if the hardware disowns it: the
+        # ladder is the authority, and an unrunnable rate is an
+        # unrunnable rate however it got onto the list.
+        rates = {r for r in rates if float(r) in native}
+        # The device published its real ladder, so trust that over the
+        # probe — see `_soundcard_native_rates`. Standard rates BELOW the
+        # hardware floor stay on offer because pydvma reaches them by
+        # capturing at a native rate and decimating (a 44.1 kHz-floor
+        # card can still deliver the 3 kHz a 1.5 kHz-bandwidth lab wants);
+        # rates ABOVE the ceiling, or between rungs, are dropped because
+        # nothing can produce them.
+        floor, ceiling = native[0], native[-1]
+        rates |= {int(r) for r in native}
+        rates |= {int(r) for r in _STANDARD_RATES
+                  if r < floor or (r <= ceiling and float(r) in native)}
         return sorted(rates)
     checker = getattr(sd, 'check_input_settings', None)
     if checker is None:
@@ -539,6 +582,12 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
             'default_samplerate': default_sr,
             'candidate_rates': _soundcard_candidate_rates(
                 sd, i, max_in, default_sr),
+            # Rates the hardware itself can run, where knowable. Empty
+            # means unknown. Distinct from `candidate_rates`, which also
+            # carries the lower rates pydvma delivers by decimating, so
+            # the UI can say which is which instead of implying the
+            # device runs at 3 kHz.
+            'native_rates': [int(r) for r in _soundcard_native_rates(i)],
             'ao': max_out > 0,
         }
     return names, caps

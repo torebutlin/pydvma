@@ -793,3 +793,54 @@ def test_no_ui_returns_helpful_404():
         finally:
             await _stop_server(task)
     run_async(scenario)
+
+
+class TestSoundcardNativeRates:
+    """The advertised ladder must reflect what the hardware can run.
+
+    ``sd.check_input_settings`` accepts every rate on macOS, so trusting
+    it put rates in the UI that the device cannot produce.
+    """
+
+    def _caps(self, monkeypatch, native, probe_accepts_everything=True):
+        class FakeSd:
+            @staticmethod
+            def query_devices():
+                return [{'name': 'Fake Interface', 'max_input_channels': 2,
+                         'max_output_channels': 2, 'default_samplerate': 48000.0}]
+
+            @staticmethod
+            def check_input_settings(device=None, channels=None, samplerate=None):
+                if not probe_accepts_everything and samplerate > 48000:
+                    raise ValueError('nope')
+
+        monkeypatch.setattr(serve_mod.streams, 'sd', FakeSd)
+        monkeypatch.setattr(serve_mod, '_soundcard_native_rates', lambda i: list(native))
+        return serve_mod._soundcard_device_caps()[1][0]
+
+    def test_native_ladder_is_reported_separately(self, monkeypatch):
+        caps = self._caps(monkeypatch, [44100.0, 48000.0, 96000.0])
+        assert caps['native_rates'] == [44100, 48000, 96000]
+
+    def test_rates_above_the_hardware_ceiling_are_dropped(self, monkeypatch):
+        """The probe accepts 192 kHz on a 96 kHz device; the ladder must not."""
+        caps = self._caps(monkeypatch, [44100.0, 48000.0, 96000.0])
+        assert 192000 not in caps['candidate_rates']
+        assert 176400 not in caps['candidate_rates']
+
+    def test_rates_between_hardware_rungs_are_dropped(self, monkeypatch):
+        caps = self._caps(monkeypatch, [44100.0, 96000.0])
+        assert 48000 not in caps['candidate_rates']
+
+    def test_low_rates_stay_offered_because_pydvma_decimates(self, monkeypatch):
+        """A 44.1 kHz-floor card still delivers the 3 kHz a low-bandwidth
+        lab wants — by capturing natively and resampling down."""
+        caps = self._caps(monkeypatch, [44100.0, 48000.0])
+        assert 8000 in caps['candidate_rates']
+        assert 22050 in caps['candidate_rates']
+
+    def test_falls_back_to_probing_when_the_ladder_is_unknown(self, monkeypatch):
+        caps = self._caps(monkeypatch, [], probe_accepts_everything=False)
+        assert caps['native_rates'] == []
+        assert caps['candidate_rates'] == [8000, 11025, 16000, 22050, 32000,
+                                           44100, 48000]
