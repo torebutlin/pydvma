@@ -35,6 +35,33 @@ except (ImportError, NotImplementedError, OSError):
     # machines); treat it the same as sounddevice being absent.
     sd = None
 
+def _derive_full_scale_volts(settings):
+    """Full-scale volts implied by ``settings.input_gain_db``, or ``None``.
+
+    Resolves the configured soundcard device to a characterised profile
+    in :mod:`pydvma._soundcard_specs` and applies its maximum-input-level
+    table. Returns ``None`` — leaving ``VmaxSC`` alone — for a device
+    that is not characterised, for a non-soundcard driver, or if the
+    device cannot be identified (not plugged in yet, PortAudio absent).
+    A bad ``input_mode`` or an out-of-range gain still raises, because
+    those are mistakes in what the operator asked for rather than
+    missing information.
+    """
+    from . import _soundcard_specs
+    if settings.device_driver != 'soundcard':
+        return None
+    name = None
+    try:
+        from . import streams
+        name = streams.soundcard_device_name(settings)
+    except Exception:
+        name = None
+    if not name:
+        return None
+    return _soundcard_specs.full_scale_volts(
+        name, settings.input_gain_db, settings.input_mode)
+
+
 class MySettings(object):
     '''
     A container for every acquisition setting used by a recording.
@@ -96,15 +123,22 @@ class MySettings(object):
         pretrig_timeout (float): Seconds to wait for a trigger before
             recording anyway (default ``20``).
         lpf_on (bool): Digital low-pass toggle (default ``False``). When
-            on, ``log_data`` captures at the largest integer multiple of
-            ``fs`` the device supports and resamples down to ``fs`` behind
-            a linear-phase anti-alias FIR (``analysis.resample_to_fs`` —
-            passband to ``fs/2.56``, 96 dB stopband at ``fs/2``). ``fs``
-            keeps its normal meaning (the rate you log at); the toggle
-            changes only HOW that rate is achieved — oversample +
-            noise-reducing decimation instead of sampling at ``fs``
-            directly. The logged settings record the capture rate as
-            ``lpf_capture_fs``.
+            on, ``log_data`` captures ABOVE ``fs`` and resamples down
+            behind a linear-phase anti-alias FIR
+            (``analysis.resample_to_fs`` — passband to ``fs/2.56``, 96 dB
+            stopband at ``fs/2``). ``fs`` keeps its normal meaning (the
+            rate you log at); the toggle changes only HOW that rate is
+            achieved — oversample + noise-reducing decimation instead of
+            sampling at ``fs`` directly. How far above ``fs`` the capture
+            runs is set by ``oversample``; on a device with a published
+            rate ladder it is one of that device's real rates, otherwise
+            an integer multiple of ``fs`` under the device maximum. The
+            logged settings record the capture rate as ``lpf_capture_fs``.
+            NOTE the capture rate can differ from ``fs`` with this toggle
+            OFF too: a device that cannot run at ``fs`` at all (any sound
+            card asked for 3 kHz) is captured at a rate it can run and
+            resampled down regardless, because the alternative is letting
+            the OS resample silently.
         oversample (str): How far above ``fs`` to capture when
             oversampling — ``'auto'`` (default), ``'lowest'`` or
             ``'highest'``. ``'auto'`` is device-specific: a sound card
@@ -143,6 +177,20 @@ class MySettings(object):
             ``add_ai_voltage_chan``. Pick the smallest range covering the
             signal for best resolution. Fixed at ±5 V on the 9234 (other
             values are accepted but ignored by the hardware).
+        input_gain_db (float): Preamp gain currently set on the audio
+            interface, in dB (default ``None``). pydvma cannot read this
+            — it is a front-panel control no audio API exposes — so
+            stating it here lets ``VmaxSC`` be derived from the device's
+            published maximum input level, and records in the saved
+            dataset what the front panel was set to. Takes precedence
+            over an explicit ``VmaxSC``. Only applies to interfaces
+            characterised in ``pydvma._soundcard_specs``; ignored
+            otherwise. Changing the gain on the hardware invalidates the
+            calibration, so re-state it.
+        input_mode (str): Which input the signal is on — ``'line'``
+            (default), ``'inst'`` or ``'mic'``. Sets the maximum input
+            level used with ``input_gain_db``; on a Scarlett 2i2 these
+            are 22, 12 and 16 dBu at minimum gain respectively.
         VmaxSC (float): Soundcard input calibration (default ``1.0``) —
             the jack voltage corresponding to a normalised reading of
             1.0. Default ``1.0`` treats normalised samples as volts at
@@ -262,6 +310,8 @@ class MySettings(object):
                  input_channels_spec=None,
                  VmaxNI=5,
                  VmaxSC=1.0,
+                 input_gain_db=None,
+                 input_mode='line',
                  iepe_excit_current_A=0.0,
                  channel_sensitivities=1.0,
                  NI_mode='DAQmx_Val_RSE',
@@ -433,6 +483,25 @@ class MySettings(object):
         # ADVANCED SETTINGS
         self.VmaxNI=float(VmaxNI)
         self.VmaxSC=float(VmaxSC)
+
+        # Preamp gain provenance. pydvma cannot READ the gain on a USB
+        # interface — it is a front-panel control no audio API exposes —
+        # so the operator states it, and full scale in volts follows in
+        # closed form from the device's published maximum input level.
+        # Recording it here also means a saved dataset says what the
+        # front panel was set to, which is the only defence against a
+        # calibration silently going stale when someone turns the knob.
+        self.input_mode = str(input_mode).lower()
+        if (input_gain_db is None) or (input_gain_db == 'None'):
+            self.input_gain_db = None
+        else:
+            self.input_gain_db = float(input_gain_db)
+            derived = _derive_full_scale_volts(self)
+            if derived is not None:
+                # An explicit VmaxSC would be a second, conflicting
+                # answer to the same question, so the stated gain wins
+                # and the derivation is what gets recorded.
+                self.VmaxSC = derived
         self.NI_mode=NI_mode
         self.chunk_size=int(chunk_size)
         self.num_chunks=int(num_chunks)

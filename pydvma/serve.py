@@ -209,6 +209,7 @@ from typing import Any
 import numpy as np
 
 from . import acquisition
+from . import _soundcard_specs
 from . import container
 from . import options
 from . import streams
@@ -588,6 +589,12 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
             # the UI can say which is which instead of implying the
             # device runs at 3 kHz.
             'native_rates': [int(r) for r in _soundcard_native_rates(i)],
+            # Physical role of each input: 'analogue' or 'loopback'.
+            # Absent when the interface is not characterised. A 2i2
+            # reports four inputs but 3/4 are a digital tap of the
+            # output mix, and recording those unknowingly gives you the
+            # playback, not the structure.
+            'channel_roles': _soundcard_specs.channel_roles(name, max_in) or [],
             'ao': max_out > 0,
         }
     return names, caps

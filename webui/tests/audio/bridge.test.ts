@@ -833,3 +833,44 @@ test('deviceCapsFor omits native_rates when the hardware ladder is unknown', () 
   } as never;
   expect(deviceCapsFor(caps, 'soundcard:0')?.native_rates).toBeUndefined();
 });
+
+// --- channel roles: analogue vs digital loopback ---------------------------
+// A Scarlett 2i2 reports FOUR inputs but 3-4 are a digital tap of its own
+// output mix. Recording those unknowingly gives you the playback, not the
+// structure, so the role has to survive normalisation.
+test('deviceCapsFor surfaces per-channel roles', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['Scarlett 2i2 4th Gen'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [44100] },
+    max_channels: { 'soundcard:0': { input: 4, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Scarlett 2i2 4th Gen', ao: true,
+        channel_roles: ['analogue', 'analogue', 'loopback', 'loopback'],
+      },
+    },
+  } as never;
+  expect(deviceCapsFor(caps, 'soundcard:0')?.channel_roles).toEqual([
+    'analogue', 'analogue', 'loopback', 'loopback',
+  ]);
+});
+
+test('deviceCapsFor omits channel_roles for an uncharacterised device', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['Some card'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [44100] },
+    max_channels: { 'soundcard:0': { input: 2, output: 0 } },
+    pretrigger: true,
+    ao: false,
+    device_caps: {
+      'soundcard:0': { driver: 'soundcard', index: 0, name: 'Some card', ao: false, channel_roles: [] },
+    },
+  } as never;
+  expect(deviceCapsFor(caps, 'soundcard:0')?.channel_roles).toBeUndefined();
+});

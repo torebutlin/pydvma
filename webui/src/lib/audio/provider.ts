@@ -87,6 +87,18 @@ export interface DeviceCapsEntry {
    * samples at 3 kHz.
    */
   native_rates?: number[];
+  /**
+   * Physical role of each input channel, from the server's
+   * `device_caps[deviceId].channel_roles` — `'analogue'` for a real input,
+   * `'loopback'` for a digital tap of the interface's own output mix.
+   * Absent when the device is not characterised.
+   *
+   * A Scarlett 2i2 reports FOUR inputs but only 1–2 are wired to the outside
+   * world; 3–4 are loopback. Recording those unknowingly gives you the
+   * playback, not the structure, so the UI warns rather than offering them
+   * as if they were ordinary inputs.
+   */
+  channel_roles?: string[];
   /** Maximum continuous sample rate in Hz (when no discrete ladder is given). */
   max_fs?: number;
   /** Maximum input (AI) channel count (`max_channels[deviceId].input`). */
@@ -243,6 +255,9 @@ export function deviceCapsFor(
   // runs from rates pydvma reaches by decimating. Empty means unknown.
   if (dc && Array.isArray(dc.native_rates) && dc.native_rates.length) {
     out.native_rates = dc.native_rates;
+  }
+  if (dc && Array.isArray(dc.channel_roles) && dc.channel_roles.length) {
+    out.channel_roles = dc.channel_roles;
   }
   // Voltage rails (NI only): pass through when the server reports a finite,
   // positive symmetric range so the UI can clamp VmaxNI / output_VmaxNI.

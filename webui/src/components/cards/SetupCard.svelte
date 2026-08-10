@@ -105,6 +105,17 @@
     if (native.includes(fs)) return null;
     return native.find((r) => r > fs) ?? native[native.length - 1];
   });
+  // Loopback warning: some interfaces present digital loopback channels
+  // alongside their real inputs. A Scarlett 2i2 reports four inputs but
+  // 3-4 are a tap of its own output mix, so a student who raises the
+  // channel count to 4 records the playback, not the structure.
+  const loopbackFrom = $derived.by(() => {
+    const roles = bridgeSelCaps?.channel_roles;
+    if (!roles || !roles.length) return null;
+    const first = roles.findIndex((r) => r === 'loopback');
+    if (first < 0 || $settings.channelCount <= first) return null;
+    return first + 1; // 1-based for display
+  });
   // Current input latency hint, shown in the timing group (ms in the UI).
   const latencyMs = $derived(
     $settings.latency && $settings.latency > 0 ? Math.round($settings.latency * 1000) : '',
@@ -292,6 +303,17 @@
       <div class="ctx-row">
         <span class="note coerce-note" data-testid="setup-coerced-fs">
           device runs at {fmtHz($coercedFs.configured)} Hz (requested {fmtHz($coercedFs.requested)})
+        </span>
+      </div>
+    {/if}
+
+    {#if loopbackFrom}
+      <!-- Loopback channels are a digital tap of the interface's own
+           output, not inputs. Silent unless something is playing, and
+           actively misleading when it is. -->
+      <div class="ctx-row">
+        <span class="note coerce-note" data-testid="setup-loopback-note">
+          channels {loopbackFrom}+ are the device's digital loopback, not inputs
         </span>
       </div>
     {/if}
