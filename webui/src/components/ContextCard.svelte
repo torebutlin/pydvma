@@ -88,7 +88,7 @@
 
 <div class="ctx-zone" class:narrow>
   {#if $activeStage === 'setup'}
-    <SetupCard {acquire} />
+    <SetupCard {acquire} {monitor} />
   {:else if $activeStage === 'acquire'}
     <AcquireCard {acquire} {actions} {toasts} />
   {:else if $activeStage === 'live'}

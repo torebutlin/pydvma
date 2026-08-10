@@ -52,6 +52,25 @@ Defaults are 44.1 kHz, 1 channel, 2 s.
   back. Turn them on only if you actually want them.
 - **digital low-pass** — an **oversample + decimate** toggle, off by
   default (see below).
+- **capture rate** (bridge only) — an oversampling strategy
+  (**auto** / **lowest** / **highest**) and an explicit hardware capture
+  rate, picked from the device's own ladder. **auto** is almost always
+  right; the overrides are there for the cases in "Capture rate and
+  delivered rate" below.
+- **input gain (for calibrated volts)** (bridge only, and only for an
+  interface pydvma has characterised) — the preamp gain you have set on
+  the hardware, in dB, plus the input mode (**line** / **inst** /
+  **mic**). No audio API can read the gain off the interface, so stating
+  it here is what makes calibrated volts possible; the readout shows the
+  full-scale voltage it implies. See
+  [Calibration](calibration.md#soundcard-input-gain-and-full-scale).
+- **input level** — measured peak on each channel while the monitor is
+  running, in volts once a gain has been stated, with one line of advice
+  when it is wrong: *clipping — turn the input gain down*, *very low —
+  turn the input gain up*, or *no signal — check the cable and the
+  source*. Worth a glance before every capture: a clipped record looks
+  plausible in the time trace but its spectrum is fiction, and one that
+  is 40 dB too quiet throws away most of the converter's range.
 - **timing** — an optional latency hint (ms); blank uses the browser
   default.
 

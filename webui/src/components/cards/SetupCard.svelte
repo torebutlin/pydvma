@@ -32,11 +32,15 @@
   import { onMount } from 'svelte';
   import type { AcquireStore } from '../../lib/stores/acquire';
   import { deviceCapsFor, clampVoltage, PYDVMA_DEFAULT_VMAX } from '../../lib/audio/provider';
+  import type { MonitorStore } from '../../lib/stores/monitor';
+  import { reportLevels, worstVerdict, verdictAdvice } from '../../lib/model/levelCheck';
 
   let {
     acquire,
+    monitor,
   }: {
     acquire: AcquireStore;
+    monitor: MonitorStore;
   } = $props();
 
   const devices = $derived(acquire.devices);
@@ -141,6 +145,20 @@
     if (dbu == null) return null;
     return Math.SQRT2 * 0.7746 * Math.pow(10, (dbu - gain) / 20);
   });
+
+  // Level check. The monitor already computes per-channel peak/RMS from the
+  // live stream, so this is a reading of it rather than a second capture
+  // path. Volts appear only once a gain has been stated — that is the only
+  // thing that fixes the normalised-to-volts scale.
+  const monitorLevels = $derived(monitor.levels);
+  const monitorStatus = $derived(monitor.status);
+  const levelReports = $derived(reportLevels($monitorLevels ?? [], fullScaleVolts));
+  const levelVerdict = $derived(worstVerdict(levelReports));
+  const levelsLive = $derived($monitorStatus === 'streaming' || $monitorStatus === 'paused');
+
+  function fmtDbfs(db: number): string {
+    return db === -Infinity ? '−∞' : db.toFixed(1);
+  }
 
   function onOversampleChange(e: Event) {
     const v = (e.target as HTMLSelectElement).value as 'auto' | 'lowest' | 'highest';
@@ -526,6 +544,41 @@
             </div>
           {/if}
         {/if}
+        <!-- domain: input level — read off the live monitor, so no second
+             capture path. Getting the gain wrong is silent in both
+             directions: too high clips, too low buries the signal in
+             converter noise while still drawing a plausible trace. -->
+        <div class="grp" data-testid="setup-levels">
+          <span class="grp-lab">input level</span>
+          <div class="grp-ctl">
+            {#if !levelsLive}
+              <span class="note">start the monitor to check levels</span>
+            {:else if !levelReports.length}
+              <span class="note">waiting for the first block…</span>
+            {:else}
+              <span class="mono note" data-testid="setup-levels-readout">
+                {#each levelReports as r}
+                  ch{r.channel}
+                  {#if r.peakVolts != null}
+                    {r.peakVolts.toFixed(r.peakVolts < 1 ? 4 : 3)} V pk
+                  {:else}
+                    {fmtDbfs(r.peakDbfs)} dBFS pk
+                  {/if}
+                  {#if r.channel < levelReports.length - 1}·{/if}
+                {/each}
+              </span>
+              {#if levelVerdict && levelVerdict !== 'ok'}
+                <span class="note coerce-note" data-testid="setup-levels-verdict">
+                  {verdictAdvice(levelVerdict)}
+                </span>
+              {:else if levelVerdict === 'ok'}
+                <span class="note" data-testid="setup-levels-verdict">
+                  {verdictAdvice('ok')}
+                </span>
+              {/if}
+            {/if}
+          </div>
+        </div>
         <!-- domain: timing — input latency hint (best-effort). -->
         <div class="grp">
           <span class="grp-lab">timing</span>

@@ -195,9 +195,13 @@ Open items:
   it and it is recorded in the dataset. This DERIVES an existing setting
   rather than adding a calibration layer — the chain stays raw ±1 →
   ×VmaxSC → volts → ×cal_factor (= 1/sensitivity) → engineering units.
-  **Still outstanding: the Setup level check** reporting rms/peak in
-  volts and flagging clipping or gross under-range — it would have
-  caught the 24 dB clipped capture instantly. Also note the front-panel
+  The **Setup level check** is now in too: it reads the live monitor's
+  per-channel peak/RMS, reports them in volts once a gain is stated, and
+  says which way to turn the knob (`webui/src/lib/model/levelCheck.ts` —
+  clip at 0.99 FS, hot at 0.95 matching pydvma's own capture-time check,
+  low below 0.01, silent distinguished from quiet). Verified live: it
+  reads "ch0 0.0004 V pk — very low, turn the input gain up". Also note
+  the front-panel
   Output knob is analogue, so output voltage is only repeatable at a
   marked position, and `output_VmaxSC` follows `VmaxSC` by default.
 - **No UI control for the new settings yet.** `capture_fs`,
