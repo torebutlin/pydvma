@@ -105,6 +105,16 @@ class MySettings(object):
             noise-reducing decimation instead of sampling at ``fs``
             directly. The logged settings record the capture rate as
             ``lpf_capture_fs``.
+        capture_fs (float): Force the rate the hardware runs at, in Hz,
+            overriding the automatic choice (default ``None`` = auto).
+            ``fs`` is what you want delivered; this is what the converter
+            actually samples at before pydvma decimates down to ``fs``.
+            Auto picks the lowest rate the device can genuinely run that
+            covers ``fs``, which is right for a sound card (delta-sigma,
+            already anti-aliased at its own rate). Set it explicitly to
+            capture faster — worth doing on hardware with no anti-alias
+            filter, where a high capture rate is the only protection.
+            Must be at least ``fs``.
         device_driver (str): Input backend — ``'soundcard'`` (default),
             ``'nidaq'`` or ``'mock'`` (the hardware-free test backend).
         device_index (int or None): Index into the enumerated device list
@@ -236,6 +246,7 @@ class MySettings(object):
                  pretrig_channel=0,
                  pretrig_timeout=20,
                  lpf_on=False,
+                 capture_fs=None,
                  device_driver='soundcard',
                  device_index=None,
                  input_channels_spec=None,
@@ -285,7 +296,29 @@ class MySettings(object):
         # ``lpf_capture_fs``. With no oversampling headroom (device max
         # < 2*fs) the log proceeds unfiltered with a printed note.
         self.lpf_on = bool(lpf_on) and (lpf_on != 'False')
-        
+
+        # Capture rate override. ``fs`` is the rate you want DELIVERED;
+        # ``capture_fs`` is what the converter actually runs at. They
+        # differ whenever the hardware cannot produce ``fs`` directly —
+        # a sound card running its own discrete rate ladder, typically
+        # 44.1 kHz upwards, cannot log at 3 kHz, so pydvma captures at a
+        # real rate and decimates behind its own anti-alias filter.
+        # ``None`` lets ``streams.select_capture_fs`` choose; set it to
+        # force a specific capture rate, which is what you want when the
+        # device has NO anti-alias filter of its own and capturing as
+        # fast as possible is the only protection available.
+        if (capture_fs is None) or (capture_fs == 'None'):
+            self.capture_fs = None
+        else:
+            self.capture_fs = float(capture_fs)
+            if self.capture_fs < self.fs:
+                raise ValueError(
+                    'capture_fs ({:g} Hz) must be at least fs ({:g} Hz): the '
+                    'capture rate is what the hardware runs at and is '
+                    'decimated DOWN to fs, never up.'
+                    .format(self.capture_fs, self.fs))
+
+
         self.device_driver=device_driver
         self.device_index=device_index
 

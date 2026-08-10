@@ -1,5 +1,6 @@
 from . import acquisition
 from . import _ni_backend
+from . import _coreaudio
 
 import copy
 import numpy as np
@@ -161,6 +162,114 @@ def _clamp_soundcard_output_channels(settings):
 MOCK_MAX_FS = 1_000_000
 
 
+def soundcard_device_name(settings):
+    """Name of the configured soundcard input device, or None.
+
+    Resolves an unset ``device_index`` through PortAudio's default input
+    device the same way :meth:`Recorder.init_stream` does, so capability
+    queries and the stream that follows always describe the same device.
+    """
+    if sd is None or settings.device_driver != 'soundcard':
+        return None
+    try:
+        index = settings.device_index
+        if index is None:
+            index = sd.default.device[0]
+        return sd.query_devices()[int(index)]['name']
+    except Exception:
+        return None
+
+
+def native_input_rates(settings):
+    """Sample rates the configured device can GENUINELY run at, ascending.
+
+    Only macOS soundcard devices can answer this today, via CoreAudio's
+    published rate list. Everywhere else — and whenever the query fails —
+    this returns an empty list, meaning "capability unknown", and callers
+    fall back to the older probe-based behaviour.
+
+    The distinction matters because ``sd.check_input_settings`` is not a
+    capability probe on macOS: it approves any rate CoreAudio is willing
+    to RESAMPLE to, which is all of them. A Scarlett 2i2 accepts a
+    3 kHz request while its hardware ladder starts at 44.1 kHz, and the
+    resulting conversion is silent and of ratio-dependent quality (see
+    ``pydvma._coreaudio``). Asking the hardware directly is the only way
+    to know what a capture will really run at.
+    """
+    if settings.device_driver != 'soundcard' or not _coreaudio.available():
+        return []
+    name = soundcard_device_name(settings)
+    if not name:
+        return []
+    device_id, _ = _coreaudio.find_device(name)
+    if device_id is None:
+        return []
+    return _coreaudio.native_rates(device_id)
+
+
+def select_capture_fs(settings, native=None):
+    """Choose the rate the hardware should actually run at, in Hz.
+
+    Returns ``(capture_fs, reason)`` where ``reason`` is a short tag
+    naming which rule applied — ``'exact'``, ``'explicit'``,
+    ``'oversample'``, ``'lowest-native'`` or ``'unknown'`` — so callers
+    can phrase an accurate message rather than guessing.
+
+    The target rate ``settings.fs`` is what the caller wants DELIVERED;
+    the capture rate is what the converter runs at, and the two differ
+    whenever the hardware cannot produce the target directly. Rules, in
+    order:
+
+    - ``settings.capture_fs`` set explicitly wins, snapped to the nearest
+      native rate when the ladder is known (``'explicit'``).
+    - With the digital low-pass on, capture at the LOWEST native rate at
+      or above ``2.56 * fs`` (``'oversample'``). Audio converters are
+      delta-sigma with an anti-alias filter locked to the converter rate,
+      so everything above the capture Nyquist is already gone in silicon
+      — capturing higher buys no extra alias rejection for the target
+      band, only data volume. This is the opposite of the filterless
+      multiplexed-SAR case (USB-6003/6212), where capturing as fast as
+      possible IS the only alias protection; those devices keep the
+      ``max_input_fs`` rule in ``acquisition.log_data``.
+    - Target rate already native: capture there, no resampling
+      (``'exact'``).
+    - Otherwise capture at the lowest native rate above the target and
+      decimate in software (``'lowest-native'``) — a rate the hardware
+      cannot run is otherwise served by CoreAudio's own converter, whose
+      alias rejection was measured as poor as 12 dB.
+
+    With no ladder available the target is returned unchanged
+    (``'unknown'``) and the device does whatever it was going to do.
+    """
+    target = float(settings.fs)
+    if native is None:
+        native = native_input_rates(settings)
+    explicit = getattr(settings, 'capture_fs', None)
+
+    if explicit is not None:
+        explicit = float(explicit)
+        if native:
+            at_or_above = [r for r in native if r >= explicit - 1e-6]
+            explicit = at_or_above[0] if at_or_above else native[-1]
+        return explicit, 'explicit'
+
+    if not native:
+        return target, 'unknown'
+
+    if getattr(settings, 'lpf_on', False):
+        wanted = 2.56 * target
+        headroom = [r for r in native if r >= wanted - 1e-6]
+        if headroom:
+            return headroom[0], 'oversample'
+        return native[-1], 'oversample'
+
+    if any(abs(target - r) < 1e-6 for r in native):
+        return target, 'exact'
+
+    above = [r for r in native if r > target]
+    return (above[0] if above else native[-1]), 'lowest-native'
+
+
 def max_input_fs(settings):
     """Best-known maximum INPUT sample rate for the configured device, in Hz.
 
@@ -178,8 +287,11 @@ def max_input_fs(settings):
       discrete divider ladder afterwards — ``log_data`` resamples from
       the rate the stream ACTUALLY ran at, so the target fs is still
       hit.
-    - ``'soundcard'``: probes the standard rate ladder downward with
-      ``sd.check_input_settings`` and returns the highest accepted rate.
+    - ``'soundcard'``: the highest rate the device can GENUINELY run
+      (:func:`native_input_rates`) where the platform reports one, else
+      the highest rate ``sd.check_input_settings`` accepts on a probe
+      down the standard ladder. The distinction matters on macOS, where
+      that probe accepts everything — see :func:`native_input_rates`.
     - ``'mock'``: ``MOCK_MAX_FS`` (no hardware to limit it).
 
     Falls back to ``settings.fs`` whenever nothing better can be learned
@@ -204,6 +316,17 @@ def max_input_fs(settings):
             pass
         return float(settings.fs)
     if settings.device_driver == 'soundcard' and sd is not None:
+        # Prefer the device's OWN rate list where the platform can give
+        # it (macOS/CoreAudio). The check_input_settings ladder below is
+        # not a capability probe there: it approves every rate CoreAudio
+        # would resample to, so it reports 192 kHz of headroom on a
+        # device whose clock is parked at 44.1 kHz — and the oversampled
+        # "capture" is then an OS upsample of the very rate we were
+        # trying to improve on.
+        native = native_input_rates(settings)
+        if native:
+            usable = [r for r in native if r >= settings.fs]
+            return float(usable[-1] if usable else native[-1])
         for rate in (192000, 96000, 88200, 48000, 44100):
             if rate < settings.fs:
                 break
@@ -571,7 +694,9 @@ class Recorder(object):
             
         settings.device_name = sd.query_devices()[settings.device_index]['name']
         settings.device_full_info = sd.query_devices()[settings.device_index]
-        
+
+        self._pin_hardware_clock(settings)
+
         dtype = 'float32'
         self.audio_stream = sd.InputStream(samplerate=settings.fs, 
                                       blocksize=settings.chunk_size, 
@@ -590,15 +715,74 @@ class Recorder(object):
         
         
     
+    def _pin_hardware_clock(self, settings):
+        '''Pin the device's hardware clock to ``settings.fs`` before opening.
+
+        Without this the requested rate is only a target: PortAudio never
+        retunes the device, so CoreAudio resamples from whatever rate the
+        device happens to be parked at, silently and at a quality that
+        depends on the ratio (measured between 12 dB and 114 dB of alias
+        rejection on the same device — see ``pydvma._coreaudio``).
+
+        The previous rate is remembered so ``end_stream`` can put it back,
+        because the clock is a system-wide property shared with every
+        other application using the interface. A pin that does not take
+        is reported and then tolerated — a resampled capture still beats
+        no capture — so the operator learns the data is not what it
+        claims to be. No-op off macOS, where the rate list is unknown.
+        '''
+        self._clock_device_id = None
+        self._clock_previous_fs = None
+        if not _coreaudio.available():
+            return
+        device_id, _ = _coreaudio.find_device(settings.device_name)
+        if device_id is None:
+            return
+        native = _coreaudio.native_rates(device_id)
+        target = float(settings.fs)
+        if native and not any(abs(target - r) < 1e-6 for r in native):
+            print('WARNING: %r cannot run at %g Hz (it supports %s). The OS '
+                  'will resample, which is not measurement-grade — set fs to '
+                  'a supported rate, or use lpf_on / capture_fs to capture at '
+                  'one and decimate.'
+                  % (settings.device_name, target,
+                     ', '.join('%g' % r for r in native)))
+            return
+        previous = _coreaudio.get_nominal_rate(device_id)
+        if previous is not None and abs(previous - target) < 1e-6:
+            return  # already correct; a needless change interrupts other audio
+        if _coreaudio.set_nominal_rate(device_id, target):
+            self._clock_device_id = device_id
+            self._clock_previous_fs = previous
+        else:
+            print('WARNING: could not set %r to %g Hz (it is at %s Hz). The '
+                  'capture will be resampled by the OS.'
+                  % (settings.device_name, target, previous))
+
+    def _restore_hardware_clock(self):
+        '''Put the device clock back where the stream found it.'''
+        device_id = getattr(self, '_clock_device_id', None)
+        previous = getattr(self, '_clock_previous_fs', None)
+        self._clock_device_id = None
+        self._clock_previous_fs = None
+        if device_id is None or previous is None:
+            return
+        try:
+            _coreaudio.set_nominal_rate(device_id, previous)
+        except Exception:
+            pass
+
     def end_stream(self):
         '''
         Stops and closes the audio stream, tolerating a stream that was
         never opened or is already dead (e.g. after a device
         disconnect) — matching the NI recorder's behaviour. Clears the
-        module-level ``REC`` reference.
+        module-level ``REC`` reference, and restores any hardware clock
+        rate this recorder pinned.
         '''
         global REC
         REC = None
+        self._restore_hardware_clock()
         stream = getattr(self, 'audio_stream', None)
         if stream is None:
             return

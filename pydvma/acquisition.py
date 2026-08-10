@@ -18,6 +18,44 @@ import time
 
 MESSAGE = ''
 
+
+def _capture_settings(target_settings, capture_fs):
+    """A copy of ``target_settings`` reconfigured to capture at ``capture_fs``.
+
+    Chunk geometry scales with the rate so the callback cadence
+    (``chunk_size/fs``) and the pretrigger window's DURATION are
+    preserved — which keeps the ``pretrig_samples <= chunk_size``
+    invariant and every buffer sizing valid at the capture rate, leaving
+    those settings' user-facing meaning (at the target ``fs``) unchanged.
+    """
+    factor = float(capture_fs) / float(target_settings.fs)
+    settings = copy.copy(target_settings)
+    settings.fs = int(round(capture_fs))
+    settings.chunk_size = int(round(target_settings.chunk_size * factor))
+    if target_settings.pretrig_samples is not None:
+        settings.pretrig_samples = int(round(target_settings.pretrig_samples * factor))
+    return settings
+
+
+def _capture_rate_message(reason, capture_fs, target_fs):
+    """Explain, in the operator's terms, why capture and target rates differ.
+
+    Students meet this the first time they ask a sound card for a rate it
+    cannot run, so the message names both rates and the reason rather
+    than quietly substituting one for the other.
+    """
+    if reason == 'explicit':
+        return ('Capture rate: capturing at {:g} Hz (set by capture_fs) and '
+                'resampling down to fs = {:g} Hz.\n'
+                .format(capture_fs, target_fs))
+    if reason == 'oversample':
+        return ('Digital low-pass: capturing at {:g} Hz (the lowest rate this '
+                'device can run with headroom over fs) and resampling down to '
+                'fs = {:g} Hz.\n'.format(capture_fs, target_fs))
+    return ('Capture rate: this device cannot run at {:g} Hz, so capturing at '
+            '{:g} Hz and resampling down to fs = {:g} Hz behind pydvma\'s '
+            'anti-alias filter.\n'.format(target_fs, capture_fs, target_fs))
+
 #%% Main data acquisition function
 def log_data(settings, test_name=None, rec=None, output=None):
     '''Acquire one block of time-domain data and return it as a DataSet.
@@ -122,19 +160,35 @@ def log_data(settings, test_name=None, rec=None, output=None):
     # they are the same object and nothing changes.
     target_settings = settings
     lpf_factor = 1
-    if getattr(settings, 'lpf_on', False):
+
+    # Where the device publishes a real rate ladder (any sound card via
+    # CoreAudio) the capture rate must be ONE OF THOSE RATES — an integer
+    # multiple of the target fs generally is not one, and asking for a
+    # rate the hardware cannot run hands the job to the OS resampler,
+    # whose alias rejection was measured as poor as 12 dB.
+    capture_fs, reason = streams.select_capture_fs(settings)
+    if reason != 'unknown':
+        if capture_fs > float(settings.fs):
+            settings = _capture_settings(target_settings, capture_fs)
+            lpf_factor = capture_fs / float(target_settings.fs)
+            MESSAGE = _capture_rate_message(reason, capture_fs,
+                                            float(target_settings.fs))
+            print(MESSAGE)
+        elif getattr(settings, 'lpf_on', False):
+            MESSAGE = ('Digital low-pass: {:g} Hz is already the lowest rate '
+                       'this device can run — logging unfiltered.\n'
+                       .format(capture_fs))
+            print(MESSAGE)
+    elif getattr(settings, 'lpf_on', False):
+        # No published ladder (NI, mock, non-macOS sound cards): keep the
+        # integer-multiple oversample against the device's max rate. For
+        # a filterless multiplexed device that IS the right rule — a high
+        # capture rate is its only anti-alias protection.
         max_fs = streams.max_input_fs(settings)
         lpf_factor = int(max_fs // settings.fs)
         if lpf_factor >= 2:
-            settings = copy.copy(target_settings)
-            settings.fs = int(lpf_factor * target_settings.fs)
-            # Scale the chunk geometry with the rate: callback cadence
-            # (chunk_size/fs) and the pretrigger window's DURATION are
-            # preserved, so the pretrig_samples <= chunk_size invariant
-            # and the buffer sizings hold at the capture rate.
-            settings.chunk_size = int(target_settings.chunk_size * lpf_factor)
-            if target_settings.pretrig_samples is not None:
-                settings.pretrig_samples = int(target_settings.pretrig_samples * lpf_factor)
+            settings = _capture_settings(target_settings,
+                                         int(lpf_factor * target_settings.fs))
             MESSAGE = ('Digital low-pass: capturing at {} Hz (x{} oversample), '
                        'will resample to fs = {} Hz.\n'
                        .format(settings.fs, lpf_factor, target_settings.fs))
