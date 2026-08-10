@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import pydvma as dvma
-from pydvma import analysis, container, datastructure, options, testdata
+from pydvma import analysis, container, datastructure, testdata
 
 
 def _rel_error(G_est, G_ref):
@@ -66,6 +66,38 @@ class TestLinearRecovery:
             assert tf.bla_sigma_n.shape == (n_k, 3)
             assert tf.bla['q'] == q
             for r in range(3):
+                rel = _rel_error(tf.tf_data[:, r], G_true[:, r, q])
+                assert rel.max() < 1e-3, (
+                    'q={} r={} worst relative error {:.3g}'.format(
+                        q, r, rel.max()))
+
+    def test_bla_honours_channel_layout(self):
+        """The channel role lists must actually be read.
+
+        With the default layout (x first, then responses) the analysis
+        would pass even if it ignored `x_channels`/`resp_channels`
+        entirely and assumed that order. So scramble the capture columns
+        and describe the scramble in the run spec: recovery must be
+        unchanged, and the response ORDER must follow the list, not the
+        column order.
+        """
+        tds, run_spec, G_true = testdata.create_test_bla_captures(
+            M=6, n_exc=2, n_resp=2, cubic=0.0, noise_rms=1e-5)
+        # captures are [x0, x1, y0, y1]; new column j takes old perm[j],
+        # giving [y1, x1, y0, x0] — no role is left where it started.
+        perm = [3, 1, 2, 0]
+        for td in tds:
+            td.time_data = np.ascontiguousarray(td.time_data[:, perm])
+            td.units = [td.units[old] for old in perm]
+        new_of = {old: new for new, old in enumerate(perm)}
+        run_spec['x_channels'] = [new_of[0], new_of[1]]      # -> [3, 1]
+        run_spec['resp_channels'] = [new_of[2], new_of[3]]   # -> [2, 0]
+
+        tfs = analysis.calculate_bla(tds, run_spec)
+        for q, tf in enumerate(tfs):
+            assert tf.settings.ch_in == run_spec['x_channels'][q]
+            assert tf.units == ['m/s/s/V', 'm/s/s/V']
+            for r in range(2):
                 rel = _rel_error(tf.tf_data[:, r], G_true[:, r, q])
                 assert rel.max() < 1e-3, (
                     'q={} r={} worst relative error {:.3g}'.format(
@@ -140,6 +172,11 @@ class TestCommandedInput:
         `multisine_generator` bit for bit."""
         tds, run_spec, G_true = testdata.create_test_bla_captures(
             M=6, n_exc=1, n_resp=1, cubic=0.0, noise_rms=1e-5)
+        # Distinct cal factors so the two conventions are separable:
+        # measured x divides by the input channel's factor, commanded x
+        # has no input channel and so must not divide at all.
+        for td in tds:
+            td.channel_cal_factors = np.array([2.0, 6.0])
         tf_measured = analysis.calculate_bla(tds, run_spec)[0]
 
         spec_cmd = dict(run_spec)
@@ -154,6 +191,13 @@ class TestCommandedInput:
         # No measured input channel to name.
         assert tf_cmd.settings.ch_in is None
         assert tf_cmd.bla['x_mode'] == 'commanded'
+        # Commanded drive: units are per volt, cal is the raw response
+        # factor (nothing to divide by).
+        assert tf_cmd.units == ['m/s/s/V']
+        np.testing.assert_allclose(tf_cmd.channel_cal_factors, [6.0])
+        # Measured x: the usual out/in ratio.
+        assert tf_measured.units == ['m/s/s/V']
+        np.testing.assert_allclose(tf_measured.channel_cal_factors, [3.0])
 
     def test_bla_commanded_x_miso(self):
         """Same, for THREE excitations — this is where the per-experiment
@@ -208,6 +252,36 @@ class TestValidation:
         with pytest.raises(ValueError, match='out of range'):
             analysis.calculate_bla(tds, run_spec)
 
+    def test_bla_solve_phase_oom_is_actionable(self, monkeypatch):
+        """The 32-bit 'array is too big' guard must span the SOLVE phase,
+        not just the capture loop: the solve allocates as much again
+        while the capture-phase arrays are still live, so it is the
+        likelier place to hit the ceiling."""
+        tds, run_spec, _ = testdata.create_test_bla_captures(
+            M=3, n_exc=1, n_resp=1, N=256, P=2, t_periods=1,
+            fs=2048.0, k1=4, k2=40, noise_rms=0.0)
+
+        def boom(*args, **kwargs):
+            raise MemoryError('Unable to allocate array')
+
+        monkeypatch.setattr(np.linalg, 'inv', boom)
+        with pytest.raises(ValueError, match='too large an internal buffer'):
+            analysis.calculate_bla(tds, run_spec)
+
+    def test_bla_singular_input_matrix_not_swallowed(self, monkeypatch):
+        """A genuine LinAlgError must surface as its own message, not be
+        re-labelled by the memory guard it now sits inside."""
+        tds, run_spec, _ = testdata.create_test_bla_captures(
+            M=3, n_exc=1, n_resp=1, N=256, P=2, t_periods=1,
+            fs=2048.0, k1=4, k2=40, noise_rms=0.0)
+
+        def boom(*args, **kwargs):
+            raise np.linalg.LinAlgError('Singular matrix')
+
+        monkeypatch.setattr(np.linalg, 'inv', boom)
+        with pytest.raises(ValueError, match='singular'):
+            analysis.calculate_bla(tds, run_spec)
+
     def test_bla_short_capture_rejected(self):
         """A capture shorter than (t_periods + p_periods) periods can't
         be sliced and must raise rather than silently analyse garbage."""
@@ -237,11 +311,15 @@ class TestContainerRoundtrip:
         np.testing.assert_allclose(loaded.bla_sigma_nl, tf.bla_sigma_nl)
         np.testing.assert_allclose(loaded.bla_sigma_n, tf.bla_sigma_n)
         assert loaded.tf_coherence is None
+        # `bla` is a nested dict in the manifest — it must come back as an
+        # equal dict, not a string or a type-tagged blob.
+        assert isinstance(loaded.bla, dict)
         assert loaded.bla == tf.bla
 
     def test_ordinary_tfdata_roundtrip_unaffected(self, tmp_path):
         """The new fields must not disturb an ordinary transfer
-        function: they stay unset through a save/load cycle."""
+        function: all three come back as None, present but empty — no
+        absent-attribute asymmetry to guard against downstream."""
         data = dvma.create_test_impulse_data(noise_level=0)
         data.calculate_tf_set(ch_in=0)
         path = tmp_path / 'plain.dvma'
@@ -250,7 +328,7 @@ class TestContainerRoundtrip:
 
         assert loaded.bla_sigma_nl is None
         assert loaded.bla_sigma_n is None
-        assert getattr(loaded, 'bla', None) is None
+        assert loaded.bla is None
         assert loaded.tf_coherence is not None
         np.testing.assert_allclose(loaded.tf_data,
                                    data.tf_data_list[0].tf_data)
@@ -261,8 +339,13 @@ class TestMetadata:
         tds, run_spec, _ = testdata.create_test_bla_captures(
             M=3, n_exc=2, n_resp=2, N=256, P=2, t_periods=1,
             fs=2048.0, k1=4, k2=40, noise_rms=1e-5)
+        # channels are [x0, x1, y0, y1]; all four factors distinct so the
+        # inherited out/in RATIO is checkable per excitation.
+        for td in tds:
+            td.channel_cal_factors = np.array([2.0, 4.0, 3.0, 5.0])
         tfs = analysis.calculate_bla(tds, run_spec)
 
+        expected_cal = {0: [1.5, 2.5], 1: [0.75, 1.25]}   # [3, 5] / cal_in
         for q, tf in enumerate(tfs):
             assert tf.bla['x_mode'] == 'measured'
             assert tf.bla['q'] == q
@@ -271,9 +354,27 @@ class TestMetadata:
             assert tf.settings.ch_in == run_spec['x_channels'][q]
             np.testing.assert_array_equal(tf.settings.ch_out_set,
                                           np.array(run_spec['resp_channels']))
+            # TF units and cal follow the usual out/in convention
+            assert tf.units == ['m/s/s/V', 'm/s/s/V']
+            np.testing.assert_allclose(tf.channel_cal_factors, expected_cal[q])
             # every capture is credited as a source
             assert len(tf.id_link) == 3 * 2
             assert tf.id_link[0] == tds[0].unique_id
+
+    def test_bla_meta_lists_are_not_shared_between_excitations(self):
+        """Each excitation's `bla` dict owns its lists — editing one must
+        not reach through to its siblings."""
+        tds, run_spec, _ = testdata.create_test_bla_captures(
+            M=3, n_exc=2, n_resp=1, N=256, P=2, t_periods=1,
+            fs=2048.0, k1=4, k2=40, noise_rms=0.0)
+        tfs = analysis.calculate_bla(tds, run_spec)
+
+        assert tfs[0].bla is not tfs[1].bla
+        assert tfs[0].bla['excited_bins'] is not tfs[1].bla['excited_bins']
+        assert tfs[0].bla['multisine'] is not tfs[1].bla['multisine']
+        assert tfs[0].bla['resp_channels'] is not run_spec['resp_channels']
+        tfs[0].bla['excited_bins'][0] = -1
+        assert tfs[1].bla['excited_bins'][0] == 4
 
     def test_bla_metadata_is_json_clean(self, tmp_path):
         """The bla dict travels through the .dvma manifest, which is

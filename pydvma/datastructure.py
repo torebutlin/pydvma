@@ -749,10 +749,20 @@ class CrossSpecData():
 class TfData():
     '''Transfer function H(f) from one input channel to one or more outputs.
 
-    Produced by `analysis.calculate_tf` (single TimeData) or
-    `analysis.calculate_tf_averaged` (ensemble TimeDataList). The
-    convention is `Pxy[in, out] / Pxy[in, in]` per output channel;
-    `tf_coherence` carries the corresponding coherence.
+    Produced by `analysis.calculate_tf` (single TimeData),
+    `analysis.calculate_tf_averaged` (ensemble TimeDataList) or
+    `analysis.calculate_bla` (a best-linear-approximation run). For the
+    first two the convention is `Pxy[in, out] / Pxy[in, in]` per output
+    channel and `tf_coherence` carries the corresponding coherence.
+
+    **BLA sets are different**: no cross-spectrum estimator is involved
+    at all — the FRF comes from inverting the excitation matrix at each
+    excited bin — so the `Pxy` convention does not describe them,
+    `tf_coherence` is None (the `bla_sigma_*` pair is the quality
+    measure instead), `settings.ch_in` may be None (commanded-drive
+    mode has no measured input channel), and `freq_axis` holds only the
+    excited bins rather than a full rfft grid. `bla` is non-None exactly
+    on those sets.
 
     Calibration: `channel_cal_factors[k]` holds the **ratio**
     ``cal[out_k] / cal[in]`` — i.e. multiplying `tf_data[:, k] *
@@ -781,26 +791,27 @@ class TfData():
             this TfData (avoids double-fitting); used by `modal.py`.
         bla_sigma_nl (np.ndarray or None): Nonlinear-distortion standard
             deviation, shape ``(n_freq, n_outputs)``, real, in the same
-            linear units as ``abs(tf_data)`` — a std, not a variance.
-            Set by `analysis.calculate_bla`; None on an ordinary transfer
-            function, including after a .dvma round trip (it is a
-            declared array field, so it always restores as None or an
-            array).
+            linear units as ``abs(tf_data)`` — a std, not a variance, so
+            it goes straight onto a dB axis with no further square root.
+            PER-REALISATION: it is the distortion level of one
+            realisation, not the error bar on `tf_data`, which is
+            ``sqrt(M)`` smaller. Set by `analysis.calculate_bla`; None on
+            an ordinary transfer function.
         bla_sigma_n (np.ndarray or None): Measurement-noise standard
-            deviation, same shape, units and round-trip guarantee as
+            deviation, same shape, units and per-realisation reading as
             `bla_sigma_nl`. Set by `analysis.calculate_bla`; None on an
             ordinary transfer function.
         bla (dict or None): The BLA run spec that produced this
             estimate (multisine design, x-mode, channel roles, capture
             fs, excited bins and which excitation ``q`` this TfData
             belongs to). JSON-clean scalars only, so it round-trips
-            through the .dvma manifest. None on a freshly constructed
-            ordinary transfer function — but read it as
-            ``getattr(tf, 'bla', None)``: it is optional metadata, which
-            `container.load` restores only when non-None, so on an
-            ordinary TfData loaded from .dvma the attribute is ABSENT
-            rather than None (the same convention as
-            `iw_power_counter` and `impulse_cleaned`).
+            through the .dvma manifest. None on an ordinary transfer
+            function.
+
+    All three BLA attributes are set in `__init__` and are declared
+    container fields, so they survive a .dvma round trip as None or as
+    their value — no `hasattr` guard needed, unlike the genuinely
+    optional `iw_power_counter`.
     '''
 
     def __init__(self,freq_axis,tf_data,tf_coherence,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
@@ -822,10 +833,9 @@ class TfData():
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         self.flag_modal_TF = False
         # Best-linear-approximation extras (analysis.calculate_bla), None
-        # for every ordinary transfer function. The sigma arrays are
-        # declared container array fields and always restore (None or an
-        # array); `bla` is optional metadata and is ABSENT after a .dvma
-        # round trip when it was None -- read it via getattr.
+        # for every ordinary transfer function. All three are declared
+        # container fields (two arrays + one meta), so they always
+        # restore from .dvma rather than going absent.
         self.bla_sigma_nl = None
         self.bla_sigma_n = None
         self.bla = None

@@ -382,6 +382,8 @@ def create_test_bla_captures(M=6, n_exc=2, n_resp=2, N=2048, P=4, t_periods=2,
             block = np.zeros((n_samples, n_exc + n_resp))
             block[:, :n_exc] = x
             x_sum = x.sum(axis=1)
+            # 9973 is an arbitrary fixed offset that keeps the noise
+            # stream disjoint from the excitation's [seed, m] draw.
             rng = np.random.default_rng([int(seed), 9973, m, e])
             for r in range(n_resp):
                 y = np.zeros(n_samples)

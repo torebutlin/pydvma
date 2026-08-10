@@ -606,6 +606,55 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
     return t,y
 
 
+def _multisine_line_spectrum(N, k_bins, amp_rms, seed, m, e, n_exc):
+    """The one-period rFFT values of a multisine at its excited bins.
+
+    This is the single definition of the multisine's phase and scaling
+    law, shared by the two places that must agree bit for bit:
+    `multisine_generator`, which turns it into a time buffer via
+    ``irfft``, and `analysis.calculate_bla`'s commanded-x branch, which
+    consumes it directly as the input spectrum X. Duplicating the law
+    would let the two drift apart silently — a phase-convention slip
+    between generation and analysis corrupts the BLA rather than
+    failing loudly.
+
+    Base phases are ``uniform(0, 2*pi)`` of shape ``(n_exc, n_lines)``
+    drawn from ``numpy.random.default_rng([seed, m])``: one draw per
+    realisation ``m``, shared by that realisation's ``n_exc``
+    experiments. Experiment ``e`` then subtracts the DFT-matrix rotation
+    ``2*pi*q*e/n_exc`` from excitation ``q``'s phases, which leaves every
+    channel's amplitude spectrum untouched while making the per-bin
+    ``q``-by-``e`` matrix orthogonal — that orthogonality is what lets
+    `analysis.calculate_bla` invert it per frequency bin.
+
+    The line value is ``0.5*N*A`` with ``A = amp_rms*sqrt(2/n_lines)``:
+    ``A`` is the per-line amplitude that puts the requested rms across
+    ``n_lines`` equal-amplitude sinusoids, and the ``0.5*N`` is numpy's
+    unnormalised rFFT scaling for a real cosine.
+
+    Args:
+        N (int): Samples in one period.
+        k_bins (np.ndarray): Excited DFT bin indices; only its length is
+            used here, the caller places the values.
+        amp_rms (float): Per-channel excitation rms in volts.
+        seed (int): Master seed recorded in the run metadata.
+        m (int): Realisation index (selects the phase draw).
+        e (int): Experiment index within the realisation (selects the
+            rotation).
+        n_exc (int): Number of excitation channels.
+
+    Returns a complex array of shape ``(n_exc, len(k_bins))`` holding
+    each excitation's rFFT value at each excited bin.
+    """
+    n_lines = len(k_bins)
+    A = float(amp_rms) * np.sqrt(2.0 / n_lines)
+    rng = np.random.default_rng([int(seed), int(m)])
+    phases = rng.uniform(0, 2 * np.pi, size=(n_exc, n_lines))
+    q_all = np.arange(n_exc)
+    phases = phases - 2 * np.pi * q_all[:, None] * int(e) / n_exc
+    return 0.5 * N * A * np.exp(1j * phases)
+
+
 def multisine_generator(settings, spec):
     """Create a periodic random-phase multisine buffer for a BLA capture.
 
@@ -675,23 +724,13 @@ def multisine_generator(settings, spec):
             .format(n_exc, settings.output_channels))
 
     k_bins = np.arange(k1, k2 + 1)
-    n_lines = len(k_bins)
-    A = float(spec['amp_rms']) * np.sqrt(2.0 / n_lines)
 
-    # Base phases: drawn once per (seed, m) so a saved spec reproduces
-    # the whole realisation (every experiment e) exactly.
-    rng = np.random.default_rng([int(spec['seed']), int(spec['m'])])
-    phases = rng.uniform(0, 2 * np.pi, size=(n_exc, n_lines))
-
-    # DFT-matrix rotation: excitation q's phase shifts by -2*pi*q*e/n_exc
-    # on every line, identically -- this is what keeps the per-channel
-    # amplitude spectrum flat across all n_exc experiments while making
-    # the per-bin q-by-e matrix orthogonal (used to solve for the BLA).
-    q_all = np.arange(n_exc)
-    phases = phases - 2 * np.pi * q_all[:, None] * e / n_exc
-
+    # Phases, rotation and scaling all live in _multisine_line_spectrum,
+    # which analysis.calculate_bla's commanded-x branch calls too -- the
+    # generator and the analysis MUST use one definition of the law.
     S = np.zeros((n_exc, N // 2 + 1), dtype=complex)
-    S[:, k_bins] = 0.5 * N * A * np.exp(1j * phases)
+    S[:, k_bins] = _multisine_line_spectrum(
+        N, k_bins, spec['amp_rms'], spec['seed'], spec['m'], e, n_exc)
     period = np.fft.irfft(S, n=N, axis=1)          # (n_exc, N)
 
     # Peak guard on the single period (identical to the tiled buffer's

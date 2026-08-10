@@ -91,7 +91,8 @@ _META_FIELDS = {
     'CrossSpecData': ['units', 'channel_cal_factors', 'test_name',
                        'timestamp', 'timestring', 'id_link'],
     'TfData':        ['units', 'channel_cal_factors', 'test_name',
-                       'timestamp', 'timestring', 'id_link', 'flag_modal_TF'],
+                       'timestamp', 'timestring', 'id_link', 'flag_modal_TF',
+                       'bla'],
     'SonoData':      ['units', 'channel_cal_factors', 'test_name',
                        'timestamp', 'timestring', 'id_link'],
     'ModalData':     ['units', 'test_name', 'timestamp', 'timestring',
@@ -108,7 +109,7 @@ _META_FIELDS = {
 _OPTIONAL_META = {
     'TimeData': ['impulse_cleaned'],
     'FreqData': ['iw_power_counter'],
-    'TfData':   ['iw_power_counter', 'bla'],
+    'TfData':   ['iw_power_counter'],
 }
 
 # Tag keys reserved by _encode_value; user dicts must not use them.
