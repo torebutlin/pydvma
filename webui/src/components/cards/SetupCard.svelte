@@ -116,6 +116,48 @@
     if (first < 0 || $settings.channelCount <= first) return null;
     return first + 1; // 1-based for display
   });
+  // Rates offerable as an explicit capture rate: the hardware's own ladder,
+  // at or above the delivered rate (capturing below it would mean upsampling,
+  // which the server rejects).
+  const nativeRateOptions = $derived(
+    (bridgeSelCaps?.native_rates ?? []).filter((r) => r >= $settings.sampleRate),
+  );
+  // Input modes this interface offers, or null when it is not characterised
+  // — without a published maximum input level there is no way to turn a
+  // stated gain into volts, so the whole group is hidden rather than shown
+  // inert.
+  const inputModeOptions = $derived(
+    bridgeSelCaps?.input_modes && bridgeSelCaps.input_modes.length
+      ? bridgeSelCaps.input_modes
+      : null,
+  );
+  // Preview of what the stated gain means, so a wrong entry is obvious
+  // before it silently scales a whole dataset.
+  const fullScaleVolts = $derived.by(() => {
+    const gain = $bridgeConfig.inputGainDb;
+    const levels = bridgeSelCaps?.max_input_dbu;
+    if (gain == null || !levels) return null;
+    const dbu = levels[$bridgeConfig.inputMode ?? 'line'];
+    if (dbu == null) return null;
+    return Math.SQRT2 * 0.7746 * Math.pow(10, (dbu - gain) / 20);
+  });
+
+  function onOversampleChange(e: Event) {
+    const v = (e.target as HTMLSelectElement).value as 'auto' | 'lowest' | 'highest';
+    acquire.patchBridge({ oversample: v });
+  }
+  function onCaptureFsChange(e: Event) {
+    const raw = (e.target as HTMLSelectElement).value;
+    acquire.patchBridge({ captureFs: raw === '' ? undefined : Number(raw) });
+  }
+  function onInputGainChange(e: Event) {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    acquire.patchBridge({ inputGainDb: raw === '' ? undefined : Number(raw) });
+  }
+  function onInputModeChange(e: Event) {
+    const v = (e.target as HTMLSelectElement).value as 'line' | 'inst' | 'mic';
+    acquire.patchBridge({ inputMode: v });
+  }
   // Current input latency hint, shown in the timing group (ms in the UI).
   const latencyMs = $derived(
     $settings.latency && $settings.latency > 0 ? Math.round($settings.latency * 1000) : '',
@@ -407,10 +449,83 @@
               oversample&nbsp;+&nbsp;decimate
             </label>
             {#if $settings.lpfOn}
-              <span class="note">logs at fs = {($settings.sampleRate / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz via the highest device rate</span>
+              <span class="note">logs at fs = {($settings.sampleRate / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz via a higher capture rate</span>
             {/if}
           </div>
         </div>
+        <!-- domain: capture rate — fs is the DELIVERED rate; these decide
+             what the converter actually runs at before pydvma decimates.
+             Bridge-only: the Web Audio path has no hardware clock to pin. -->
+        {#if isBridge}
+          <div class="grp" data-testid="setup-capture-rate">
+            <span class="grp-lab">capture rate</span>
+            <div class="grp-ctl">
+              <select
+                aria-label="oversample strategy"
+                title="How far above fs to capture when oversampling. Auto follows the device: the lowest sufficient rate on a delta-sigma converter (already anti-aliased in silicon), the highest available on one with no anti-alias filter."
+                value={$bridgeConfig.oversample ?? 'auto'}
+                onchange={onOversampleChange}
+                style="width:110px"
+              >
+                <option value="auto">auto</option>
+                <option value="lowest">lowest</option>
+                <option value="highest">highest</option>
+              </select>
+              <select
+                aria-label="capture sample rate"
+                title="Force the rate the hardware samples at. Auto picks it from the device's own ladder."
+                value={$bridgeConfig.captureFs == null ? '' : String($bridgeConfig.captureFs)}
+                onchange={onCaptureFsChange}
+                style="width:96px"
+              >
+                <option value="">auto</option>
+                {#each nativeRateOptions as r}
+                  <option value={String(r)}>{fmtHz(r)} Hz</option>
+                {/each}
+              </select>
+              <span class="ml note">hardware rate</span>
+            </div>
+          </div>
+          <!-- domain: soundcard input gain — no audio API can READ the
+               preamp gain, so stating it is the only route to calibrated
+               volts. The server derives VmaxSC from the device's published
+               maximum input level. -->
+          {#if inputModeOptions}
+            <div class="grp" data-testid="setup-input-gain">
+              <span class="grp-lab">input gain (for calibrated volts)</span>
+              <div class="grp-ctl">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={$bridgeConfig.inputGainDb ?? ''}
+                  onchange={onInputGainChange}
+                  placeholder="not set"
+                  title="The preamp gain currently set on the interface, in dB. pydvma cannot read it, so state it here and full scale in volts follows from the device's published maximum input level."
+                  aria-label="input gain in dB"
+                  style="width:72px"
+                />
+                <span class="ml">dB</span>
+                <select
+                  aria-label="input mode"
+                  title="Which input the signal is on — sets the maximum input level used with the gain."
+                  value={$bridgeConfig.inputMode ?? 'line'}
+                  onchange={onInputModeChange}
+                  style="width:84px"
+                >
+                  {#each inputModeOptions as m}
+                    <option value={m}>{m}</option>
+                  {/each}
+                </select>
+                {#if fullScaleVolts != null}
+                  <span class="note" data-testid="setup-full-scale">
+                    full scale ≈ {fullScaleVolts.toFixed(3)} V pk
+                  </span>
+                {/if}
+              </div>
+            </div>
+          {/if}
+        {/if}
         <!-- domain: timing — input latency hint (best-effort). -->
         <div class="grp">
           <span class="grp-lab">timing</span>

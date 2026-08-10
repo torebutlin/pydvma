@@ -114,6 +114,19 @@ def input_modes(name):
     return sorted(profile['max_input_dbu'])
 
 
+def max_input_dbu(name):
+    """Maximum input level at minimum gain, in dBu, keyed by input mode.
+
+    ``None`` when the device is not characterised. Published to the web
+    UI so it can preview the full-scale voltage a stated gain implies,
+    using the same arithmetic as :func:`full_scale_volts`.
+    """
+    profile = device_profile(name)
+    if profile is None:
+        return None
+    return dict(profile['max_input_dbu'])
+
+
 def full_scale_volts(name, gain_db, input_mode='line'):
     """Volts (peak) corresponding to a full-scale reading, or ``None``.
 

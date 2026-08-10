@@ -874,3 +874,57 @@ test('deviceCapsFor omits channel_roles for an uncharacterised device', () => {
   } as never;
   expect(deviceCapsFor(caps, 'soundcard:0')?.channel_roles).toBeUndefined();
 });
+
+// --- input gain model -------------------------------------------------------
+// No audio API can read the preamp gain, so the operator states it and the
+// server derives VmaxSC from the device's published maximum input level. The
+// UI needs those levels to preview the result before a capture.
+test('deviceCapsFor surfaces the input-gain model', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['Scarlett 2i2 4th Gen'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [44100] },
+    max_channels: { 'soundcard:0': { input: 4, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Scarlett 2i2 4th Gen', ao: true,
+        input_modes: ['inst', 'line', 'mic'],
+        max_input_dbu: { line: 22, inst: 12, mic: 16 },
+      },
+    },
+  } as never;
+  const entry = deviceCapsFor(caps, 'soundcard:0');
+  expect(entry?.input_modes).toEqual(['inst', 'line', 'mic']);
+  expect(entry?.max_input_dbu?.line).toBe(22);
+});
+
+test('the previewed full scale matches the server formula', () => {
+  // sqrt(2) * 0.7746 * 10 ** ((22 - 9) / 20) -- confirmed on hardware to
+  // 0.10 dB against a 5.000 Vpp sine at 9 dB Line gain.
+  const volts = Math.SQRT2 * 0.7746 * Math.pow(10, (22 - 9) / 20);
+  expect(volts).toBeCloseTo(4.8932, 3);
+});
+
+test('deviceCapsFor omits the gain model for an uncharacterised device', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['Some card'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [44100] },
+    max_channels: { 'soundcard:0': { input: 2, output: 0 } },
+    pretrigger: true,
+    ao: false,
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Some card', ao: false,
+        input_modes: [], max_input_dbu: {},
+      },
+    },
+  } as never;
+  const entry = deviceCapsFor(caps, 'soundcard:0');
+  expect(entry?.input_modes).toBeUndefined();
+  expect(entry?.max_input_dbu).toBeUndefined();
+});

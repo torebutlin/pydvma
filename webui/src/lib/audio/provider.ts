@@ -99,6 +99,20 @@ export interface DeviceCapsEntry {
    * as if they were ordinary inputs.
    */
   channel_roles?: string[];
+  /**
+   * Input modes this interface offers (`'line'` / `'inst'` / `'mic'`), from
+   * `device_caps[deviceId].input_modes`. Absent when it is not characterised.
+   */
+  input_modes?: string[];
+  /**
+   * Maximum input level at minimum gain, in dBu, keyed by input mode
+   * (`device_caps[deviceId].max_input_dbu`). With a gain the operator states
+   * this gives full scale in volts —
+   * `sqrt(2) * 0.7746 * 10 ** ((dBu - gain) / 20)` — which the UI previews so
+   * a mistyped gain is caught before it scales a whole dataset. The server
+   * does the authoritative conversion.
+   */
+  max_input_dbu?: Record<string, number>;
   /** Maximum continuous sample rate in Hz (when no discrete ladder is given). */
   max_fs?: number;
   /** Maximum input (AI) channel count (`max_channels[deviceId].input`). */
@@ -259,6 +273,12 @@ export function deviceCapsFor(
   if (dc && Array.isArray(dc.channel_roles) && dc.channel_roles.length) {
     out.channel_roles = dc.channel_roles;
   }
+  if (dc && Array.isArray(dc.input_modes) && dc.input_modes.length) {
+    out.input_modes = dc.input_modes;
+  }
+  if (dc && dc.max_input_dbu && Object.keys(dc.max_input_dbu).length) {
+    out.max_input_dbu = dc.max_input_dbu;
+  }
   // Voltage rails (NI only): pass through when the server reports a finite,
   // positive symmetric range so the UI can clamp VmaxNI / output_VmaxNI.
   if (dc && typeof dc.ai_vmax === 'number' && dc.ai_vmax > 0) out.ai_vmax = dc.ai_vmax;
@@ -390,6 +410,29 @@ export interface BridgeConfig {
    * Unset → the server's default (`= VmaxNI`).
    */
   outputVmaxNI?: number;
+  /**
+   * Force the rate the converter runs at, in Hz → `MySettings.capture_fs`.
+   * The delivered rate stays `sampleRate`; this is what the hardware samples
+   * at before pydvma decimates. Unset → chosen automatically. Must be at
+   * least the delivered rate.
+   */
+  captureFs?: number;
+  /**
+   * How far above the delivered rate to capture when oversampling →
+   * `MySettings.oversample`. `'auto'` follows the device (lowest sufficient
+   * rate for a delta-sigma converter, highest available for a filterless
+   * one); the explicit values override that per measurement.
+   */
+  oversample?: 'auto' | 'lowest' | 'highest';
+  /**
+   * Preamp gain currently set on the audio interface, in dB →
+   * `MySettings.input_gain_db`. No audio API can READ this, so stating it is
+   * the only way to get calibrated volts: the server derives `VmaxSC` from
+   * the device's published maximum input level. Recorded in the dataset.
+   */
+  inputGainDb?: number;
+  /** Which input the signal is on → `MySettings.input_mode`. */
+  inputMode?: 'line' | 'inst' | 'mic';
   /** Pretrigger sample count (null = no pretrigger / free-run capture). */
   pretrigSamples?: number | null;
   pretrigThreshold?: number;

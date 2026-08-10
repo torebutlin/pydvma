@@ -844,3 +844,35 @@ class TestSoundcardNativeRates:
         assert caps['native_rates'] == []
         assert caps['candidate_rates'] == [8000, 11025, 16000, 22050, 32000,
                                            44100, 48000]
+
+
+class TestSoundcardGainModelInCaps:
+    """The UI needs the published input levels to preview what a stated
+    gain means before a capture commits to it."""
+
+    def _caps(self, monkeypatch, name):
+        class FakeSd:
+            @staticmethod
+            def query_devices():
+                return [{'name': name, 'max_input_channels': 4,
+                         'max_output_channels': 2, 'default_samplerate': 48000.0}]
+
+            @staticmethod
+            def check_input_settings(**kwargs):
+                pass
+
+        monkeypatch.setattr(serve_mod.streams, 'sd', FakeSd)
+        monkeypatch.setattr(serve_mod, '_soundcard_native_rates', lambda i: [48000.0])
+        return serve_mod._soundcard_device_caps()[1][0]
+
+    def test_characterised_device_publishes_modes_and_levels(self, monkeypatch):
+        caps = self._caps(monkeypatch, 'Scarlett 2i2 4th Gen')
+        assert caps['input_modes'] == ['inst', 'line', 'mic']
+        assert caps['max_input_dbu'] == {'line': 22.0, 'inst': 12.0, 'mic': 16.0}
+        assert caps['channel_roles'] == ['analogue', 'analogue', 'loopback', 'loopback']
+
+    def test_uncharacterised_device_publishes_empties_not_guesses(self, monkeypatch):
+        caps = self._caps(monkeypatch, 'Some Other Interface')
+        assert caps['input_modes'] == []
+        assert caps['max_input_dbu'] == {}
+        assert caps['channel_roles'] == []

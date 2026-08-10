@@ -375,3 +375,72 @@ class TestStimulusOnSharedClock:
                            target_fs=48000)
         assert played['fs'] == 48000
         assert played['n'] == 48000
+
+
+class TestMaxInputFsPerDriver:
+    """`max_input_fs` had no direct test at all (pre-existing gap); it
+    backs the oversample ceiling on every no-ladder device."""
+
+    def test_mock_reports_its_synthetic_ceiling(self):
+        s = make_settings(fs=1000, device_driver='mock')
+        assert streams.max_input_fs(s) == float(streams.MOCK_MAX_FS)
+
+    def test_falls_back_to_fs_when_nothing_can_be_learned(self, monkeypatch):
+        """A missing driver must not invent headroom that isn't there."""
+        monkeypatch.setattr(streams, 'sd', None)
+        monkeypatch.setattr(streams, 'native_input_rates', lambda s: [])
+        assert streams.max_input_fs(make_settings(fs=8000)) == 8000.0
+
+    def test_nidaq_divides_the_aggregate_rate_per_channel(self, monkeypatch):
+        """A multiplexed device scans one ADC across the channel list, so
+        its advertised max is the AGGREGATE rate."""
+        from pydvma import _ni_backend
+        monkeypatch.setattr(_ni_backend, 'enumerate_devices', lambda: [{'name': 'Dev1'}])
+        monkeypatch.setattr(_ni_backend, 'entry_capabilities',
+                            lambda e: {'ai_max_rate': 100000.0, 'simultaneous': False})
+        s = make_settings(fs=1000, device_driver='nidaq', channels=4)
+        assert streams.max_input_fs(s) == 25000.0
+
+    def test_nidaq_simultaneous_keeps_the_full_rate_per_channel(self, monkeypatch):
+        """DSA modules have a converter per channel, so no division."""
+        from pydvma import _ni_backend
+        monkeypatch.setattr(_ni_backend, 'enumerate_devices', lambda: [{'name': 'cDAQ1Mod1'}])
+        monkeypatch.setattr(_ni_backend, 'entry_capabilities',
+                            lambda e: {'ai_max_rate': 51200.0, 'simultaneous': True})
+        s = make_settings(fs=1000, device_driver='nidaq', channels=4)
+        assert streams.max_input_fs(s) == 51200.0
+
+    def test_nidaq_probe_failure_falls_back_to_fs(self, monkeypatch):
+        from pydvma import _ni_backend
+        monkeypatch.setattr(_ni_backend, 'enumerate_devices',
+                            lambda: (_ for _ in ()).throw(RuntimeError('no driver')))
+        s = make_settings(fs=1000, device_driver='nidaq')
+        assert streams.max_input_fs(s) == 1000.0
+
+
+class TestLoopbackWarningOnThePythonPath:
+    """The web UI warns in Setup; a notebook user needs the same."""
+
+    def _clamp(self, capsys, monkeypatch, name, channels):
+        class FakeSd:
+            PortAudioError = RuntimeError
+
+            @staticmethod
+            def query_devices(index=None):
+                return {'name': name, 'max_input_channels': 4}
+
+        monkeypatch.setattr(streams, 'sd', FakeSd)
+        s = make_settings(fs=44100, channels=channels, device_index=0)
+        streams._clamp_soundcard_input_channels(s)
+        return capsys.readouterr().out
+
+    def test_warns_when_a_loopback_channel_is_included(self, capsys, monkeypatch):
+        out = self._clamp(capsys, monkeypatch, 'Scarlett 2i2 4th Gen', 4)
+        assert 'DIGITAL LOOPBACK' in out
+        assert '3, 4' in out
+
+    def test_silent_when_only_analogue_channels_are_requested(self, capsys, monkeypatch):
+        assert self._clamp(capsys, monkeypatch, 'Scarlett 2i2 4th Gen', 2) == ''
+
+    def test_silent_for_an_uncharacterised_device(self, capsys, monkeypatch):
+        assert self._clamp(capsys, monkeypatch, 'Some Other Interface', 4) == ''

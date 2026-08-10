@@ -485,8 +485,8 @@ export class BridgeProvider implements SourceProvider {
       if (dev.driver !== 'mock') s.device_index = dev.index;
     }
     if (durationS != null) s.stored_time = durationS;
-    // Round-9 digital low-pass: the SERVER owns the whole chain (oversample
-    // at the device max, anti-alias FIR, resample to fs) — one flag here.
+    // Digital low-pass: the SERVER owns the whole chain (oversample,
+    // anti-alias FIR, resample to fs) — one flag here.
     if (cfg.lpfOn) s.lpf_on = true;
 
     const ec = this.extraConfig;
@@ -497,6 +497,16 @@ export class BridgeProvider implements SourceProvider {
     if (ec.niMode) s.NI_mode = ec.niMode;
     // Voltage rails (already clamped to the device's ai_vmax/ao_vmax by the
     // store before they reach here) map onto MySettings' VmaxNI / output_VmaxNI.
+    // Capture-rate control. `fs` stays the DELIVERED rate; these decide what
+    // the converter actually runs at before pydvma decimates.
+    if (ec.captureFs != null) s.capture_fs = ec.captureFs;
+    if (ec.oversample && ec.oversample !== 'auto') s.oversample = ec.oversample;
+    // Preamp gain provenance: the server derives VmaxSC from this, because
+    // no audio API can read the gain off the interface.
+    if (ec.inputGainDb != null) {
+      s.input_gain_db = ec.inputGainDb;
+      if (ec.inputMode) s.input_mode = ec.inputMode;
+    }
     if (ec.vmaxNI != null) s.VmaxNI = ec.vmaxNI;
     if (ec.outputVmaxNI != null) s.output_VmaxNI = ec.outputVmaxNI;
     if (ec.pretrigSamples !== undefined) s.pretrig_samples = ec.pretrigSamples;

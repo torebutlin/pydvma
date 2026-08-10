@@ -125,6 +125,31 @@ def _clamp_soundcard_input_channels(settings):
               "requested channels=%d. Clamping to %d."
               % (in_info['name'], max_in, settings.channels, max_in))
         settings.channels = max_in
+    _warn_about_loopback_channels(settings, in_info['name'])
+
+
+def _warn_about_loopback_channels(settings, device_name):
+    '''Warn when the requested channels include a digital loopback.
+
+    Not every input a device advertises is wired to the outside world:
+    a Scarlett 2i2 4th Gen reports four, of which 3-4 are a DIGITAL
+    LOOPBACK of its own output mix. Recorded unknowingly they look like
+    a pair of silent channels — or, if anything is playing, like
+    plausible data that is actually the interface listening to itself.
+
+    The web UI shows this in Setup; this is the equivalent for the
+    notebook / script path. Silent for devices with no profile in
+    ``_soundcard_specs`` and whenever no loopback channel is included.
+    '''
+    from . import _soundcard_specs
+    loopback = _soundcard_specs.loopback_channels(device_name, settings.channels)
+    if not loopback:
+        return
+    print('WARNING: on %r, input channel(s) %s are a DIGITAL LOOPBACK of the '
+          'device output, not analogue inputs — they carry whatever the '
+          'interface is playing. Reduce channels to %d to record only the '
+          'analogue inputs.'
+          % (device_name, ', '.join(str(i + 1) for i in loopback), loopback[0]))
 
 
 def _clamp_soundcard_output_channels(settings):

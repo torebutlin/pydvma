@@ -139,14 +139,17 @@ pydvma now asks CoreAudio for the real ladder, pins the hardware clock,
 and captures at a runnable rate before decimating with its own filter.
 Open items:
 
-- **Output stimulus at a non-native fs (bug).** The device has ONE
-  clock, so an output stream running at a different rate while the
-  clock is pinned takes both streams down (PaMacCore -50, then
-  silence). `MySettings` defaults `output_fs = fs`, so a
-  stimulus-enabled log at, say, fs = 3 kHz on a sound card will hit
-  this. Fix: stage `output_fs` onto the CAPTURE rate for soundcard
-  devices, mirroring what `reclampOutputFs` already does for the NI
-  `ao_max_rate` cap.
+- **~~Output stimulus at a non-native fs~~ — DONE (2026-08-10).** The
+  device has ONE clock, so an output stream at a rate different from
+  the pinned capture took both streams down (PaMacCore -50, then
+  silence). `acquisition.log_data` now resamples the stimulus onto the
+  capture rate when input and output resolve to the same hardware
+  (`streams.output_shares_input_clock`), preserving the physical signal
+  so a sweep still sweeps what it was generated for. Separate devices
+  keep independent clocks and are left alone. Hardware-verified: a
+  200 Hz stimulus generated at an unrunnable 3 kHz returns at 200 Hz,
+  42 dB above the frequency it would land on if the resampling were
+  wrong.
 - **PC session: run `dev/2026-08-10-windows-checklist.md`.** The written
   brief for the next Windows sitting, covering all three of: the NI
   regression check (`bridge_hw_check.py` + full pytest, because the
@@ -202,6 +205,18 @@ Open items:
   the bridge wire (the `configure` whitelist is derived from the
   `MySettings` signature) but Setup exposes none of them. The Setup
   "full" panel is where they belong, next to the NI voltage rails.
+- **PortAudio device indices are NOT stable — a stale index silently
+  records the wrong device.** Observed live on 2026-08-10: the Scarlett
+  was index 2, then index 1 an hour later after another device left the
+  list. The web UI enumerates once at `hello` and then sends
+  `device_index`, so any change to the device list between enumeration
+  and capture points the log at a different device. Pre-existing, but
+  newly consequential: `input_gain_db` derives `VmaxSC` from the device
+  NAME, so a stale index silently drops the calibration (it looked like
+  a code bug for several minutes — `VmaxSC` came back 1.0 because index
+  2 had become "BlackHole 2ch"). Cheap fix: send the device NAME
+  alongside the index in `configure` and have the server reject, or
+  re-resolve, when they disagree. Worth doing before student use.
 - **Gain control is a dead end — do not re-investigate.** No CoreAudio
   HAL properties exist on the input scope; Focusrite Control 2's
   AES70/OCA server gates its object tree behind an authenticated x25519

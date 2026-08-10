@@ -595,6 +595,13 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
             # output mix, and recording those unknowingly gives you the
             # playback, not the structure.
             'channel_roles': _soundcard_specs.channel_roles(name, max_in) or [],
+            # Input modes and their maximum input level in dBu at minimum
+            # gain. Together with a gain the operator states, these turn a
+            # normalised reading into volts — the UI previews the result so a
+            # mistyped gain is obvious before it scales a whole dataset.
+            # Empty when the interface is not characterised.
+            'input_modes': _soundcard_specs.input_modes(name) or [],
+            'max_input_dbu': _soundcard_specs.max_input_dbu(name) or {},
             'ao': max_out > 0,
         }
     return names, caps
