@@ -168,13 +168,24 @@ class TestPeakGuard:
     def test_illegal_level_raises_with_rail_and_peak_in_message(self):
         # A tiny voltage rail against a normal-sized excitation
         # guarantees the peak exceeds it.
-        settings = _settings(output_VmaxSC=0.01)
         spec = _spec(amp_rms=0.1)
+
+        # The waveform itself (and hence its peak) doesn't depend on
+        # the rail, only on the spec -- so generate it once against a
+        # generous rail to learn the actual peak the guard will see,
+        # independent of the implementation's internals.
+        permissive_settings = _settings(output_VmaxSC=1000.0)
+        t, y = multisine_generator(permissive_settings, spec)
+        expected_peak = float(np.max(np.abs(y)))
+        expected_peak_str = '{:.3g}'.format(expected_peak)
+
+        settings = _settings(output_VmaxSC=0.01)
         with pytest.raises(ValueError) as excinfo:
             multisine_generator(settings, spec)
         msg = str(excinfo.value)
         assert 'rail' in msg
         assert '0.01' in msg  # the rail voltage appears in the message
+        assert expected_peak_str in msg  # the peak value appears too
 
     def test_legal_level_is_not_rescaled(self):
         """A legal amp_rms may still peak above amp_rms itself (crest
@@ -203,3 +214,32 @@ class TestPeakGuard:
         for ch in range(y.shape[1]):
             rel_err = np.abs(mags[excited, ch] - expected_mag) / expected_mag
             assert np.all(rel_err < 1e-9)
+
+
+class TestBinBoundsValidation:
+    """Each of the three ways to violate ``1 <= k1 <= k2 < N/2`` must
+    raise ValueError, with the message identifying k1, k2 and N."""
+
+    def _assert_raises_with_k1_k2_N(self, settings, spec):
+        with pytest.raises(ValueError) as excinfo:
+            multisine_generator(settings, spec)
+        msg = str(excinfo.value)
+        assert 'k1' in msg
+        assert 'k2' in msg
+        assert 'N' in msg
+
+    def test_k1_below_one(self):
+        settings = _settings()
+        spec = _spec(k1=0, k2=10)
+        self._assert_raises_with_k1_k2_N(settings, spec)
+
+    def test_k2_at_or_above_nyquist_bin(self):
+        settings = _settings()
+        N = 64
+        spec = _spec(n_samples=N, k1=4, k2=N // 2)  # k2 == N/2 is illegal
+        self._assert_raises_with_k1_k2_N(settings, spec)
+
+    def test_k1_greater_than_k2(self):
+        settings = _settings()
+        spec = _spec(k1=10, k2=4)
+        self._assert_raises_with_k1_k2_N(settings, spec)
