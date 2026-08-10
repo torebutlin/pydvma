@@ -16,6 +16,8 @@ import {
   butterLowpass,
   filtfiltBiquad,
   rms,
+  generateMultisine,
+  type MultisineSpec,
 } from '../../src/lib/audio/signal';
 
 /** Deterministic uniform[0,1) source so the noise paths are reproducible. */
@@ -156,4 +158,191 @@ test('band-limited gaussian noise is renormalised to RMS ≈ amp and clamped to 
 test('final safety clamp keeps |y| ≤ limit even for a large amp request', () => {
   const { y } = generateStimulus({ type: 'sweep', fs: 8000, durationS: 0.5, amp: 5, band: [10, 500], limit: 1 });
   expect(maxAbs(y)).toBeLessThanOrEqual(1 + 1e-9);
+});
+
+// ---- multisine generator (Schoukens BLA excitation) ----------------------
+//
+// TS twin of pydvma's `multisine_generator` (`pydvma/acquisition.py:609`).
+// The PRNG differs deliberately (mulberry32 vs numpy's default_rng) — only
+// the signal LAW must match: flat line amplitudes, uniform-phase draw order,
+// the experiment-rotation sign convention, and exact periodicity.
+
+function baseMultisineSpec(overrides: Partial<MultisineSpec> = {}): MultisineSpec {
+  return {
+    nSamples: 64,
+    k1: 3,
+    k2: 5,
+    pPeriods: 2,
+    tPeriods: 1,
+    seed: 12345,
+    m: 0,
+    e: 0,
+    nExc: 2,
+    ampRms: 0.1,
+    ...overrides,
+  };
+}
+
+/**
+ * Naive DFT of one period: the complex amplitude at bin `k` for a signal
+ * built from `A*cos(2*pi*k0*n/N + phi)` terms at distinct integer bins is
+ * recovered EXACTLY (no leakage) by `(2/N) * sum_n y[n] * exp(-i*2*pi*k*n/N)`
+ * — orthogonality holds exactly over one integer period.
+ */
+function dftBin(y: ArrayLike<number>, k: number, N: number): { re: number; im: number } {
+  let re = 0, im = 0;
+  for (let n = 0; n < N; n++) {
+    const theta = (2 * Math.PI * k * n) / N;
+    re += y[n] * Math.cos(theta);
+    im -= y[n] * Math.sin(theta);
+  }
+  return { re: (2 / N) * re, im: (2 / N) * im };
+}
+
+function complexMul(a: { re: number; im: number }, b: { re: number; im: number }) {
+  return { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re };
+}
+
+test('generateMultisine: every period is an exact repeat of period 0 (nExc=2)', () => {
+  const spec = baseMultisineSpec({ nExc: 2, e: 0, tPeriods: 1, pPeriods: 2 });
+  const channels = generateMultisine(spec, 8000);
+  expect(channels).toHaveLength(2);
+  const N = spec.nSamples;
+  const nPeriodsTotal = spec.tPeriods + spec.pPeriods;
+  for (const y of channels) {
+    expect(y).toHaveLength(nPeriodsTotal * N);
+    for (let p = 1; p < nPeriodsTotal; p++) {
+      for (let n = 0; n < N; n++) {
+        expect(y[p * N + n]).toBe(y[n]); // bit-exact repeat, not just close
+      }
+    }
+  }
+});
+
+test('flat line amplitudes: DFT at the 3 excited bins agree within 1e-9 rel; an out-of-band bin is ~0', () => {
+  const spec = baseMultisineSpec({ nExc: 1, e: 0, tPeriods: 0, pPeriods: 1 });
+  const [y] = generateMultisine(spec, 8000);
+  const N = spec.nSamples;
+  const nLines = spec.k2 - spec.k1 + 1;
+  const A = spec.ampRms * Math.sqrt(2 / nLines);
+
+  const mags: number[] = [];
+  for (let k = spec.k1; k <= spec.k2; k++) {
+    const { re, im } = dftBin(y, k, N);
+    mags.push(Math.hypot(re, im));
+  }
+  expect(mags).toHaveLength(3);
+  for (const mag of mags) {
+    expect(Math.abs(mag - A) / A).toBeLessThan(1e-9);
+  }
+
+  const outOfBand = dftBin(y, spec.k2 + 3, N); // well clear of the excited band
+  expect(Math.hypot(outOfBand.re, outOfBand.im)).toBeLessThan(1e-9);
+});
+
+test('RMS of the full tiled signal equals ampRms exactly (integer-period orthogonality, not statistical)', () => {
+  const spec = baseMultisineSpec({ nExc: 1, e: 0, tPeriods: 1, pPeriods: 3, ampRms: 0.25 });
+  const [y] = generateMultisine(spec, 8000);
+  expect(Math.abs(rms(y) - spec.ampRms) / spec.ampRms).toBeLessThan(1e-9);
+});
+
+test('seed determinism: same spec twice -> identical arrays; a different m -> different arrays', () => {
+  const spec = baseMultisineSpec();
+  const a = generateMultisine(spec, 8000);
+  const aAgain = generateMultisine({ ...spec }, 8000);
+  for (let q = 0; q < spec.nExc; q++) {
+    expect(Array.from(a[q])).toEqual(Array.from(aAgain[q]));
+  }
+
+  const differentM = generateMultisine({ ...spec, m: spec.m + 1 }, 8000);
+  expect(Array.from(a[0])).not.toEqual(Array.from(differentM[0]));
+});
+
+test('rotation law (nExc=3): channel q at experiment e equals e=0 rotated by exp(-2*pi*i*q*e/nExc)', () => {
+  const N = 128;
+  const spec0 = baseMultisineSpec({
+    nSamples: N, k1: 3, k2: 3, nExc: 3, e: 0, tPeriods: 0, pPeriods: 1, seed: 999, m: 2,
+  });
+  const base = generateMultisine(spec0, 8000); // 3 channels, e=0
+  const k = spec0.k1;
+
+  for (const e of [1, 2]) {
+    const rotated = generateMultisine({ ...spec0, e }, 8000);
+    for (let q = 0; q < 3; q++) {
+      const s0 = dftBin(base[q], k, N);
+      const sE = dftBin(rotated[q], k, N);
+      const theta = (2 * Math.PI * q * e) / 3; // rotator = exp(-i*theta)
+      const expected = complexMul(s0, { re: Math.cos(theta), im: -Math.sin(theta) });
+      expect(sE.re).toBeCloseTo(expected.re, 9);
+      expect(sE.im).toBeCloseTo(expected.im, 9);
+    }
+  }
+});
+
+test('SISO (nExc=1) shape and RMS', () => {
+  const spec = baseMultisineSpec({ nExc: 1, e: 0, ampRms: 0.15, tPeriods: 1, pPeriods: 2 });
+  const channels = generateMultisine(spec, 8000);
+  expect(channels).toHaveLength(1);
+  expect(channels[0]).toHaveLength((spec.tPeriods + spec.pPeriods) * spec.nSamples);
+  expect(Math.abs(rms(channels[0]) - spec.ampRms) / spec.ampRms).toBeLessThan(1e-9);
+});
+
+test('peak guard throws for an illegal ampRms, naming the peak and the limit; a legal call is not rescaled', () => {
+  // Single line k=4: A = ampRms*sqrt(2); ampRms=1 -> A ≈ 1.414 > limit=1.
+  const illegal = baseMultisineSpec({ nExc: 1, k1: 4, k2: 4, ampRms: 1, tPeriods: 0, pPeriods: 1 });
+  expect(() => generateMultisine(illegal, 8000)).toThrow(/peak/i);
+  try {
+    generateMultisine(illegal, 8000);
+    throw new Error('expected generateMultisine to throw');
+  } catch (err) {
+    const msg = (err as Error).message;
+    // Peak is close to (not necessarily exactly) A = ampRms*sqrt(2) ≈ 1.414:
+    // discrete N=64 samples at a random phase need not land on the
+    // continuous cosine's exact maximum.
+    const peakMatch = msg.match(/peak\s+([\d.]+)/i);
+    expect(peakMatch).not.toBeNull();
+    expect(Number(peakMatch![1])).toBeGreaterThan(1); // above the limit it violates
+    expect(Number(peakMatch![1])).toBeLessThanOrEqual(Math.SQRT2 + 1e-6);
+    expect(msg).toMatch(/limit/i);
+    expect(msg).toContain('±1'); // the limit value
+  }
+
+  // Legal, low-amplitude call: NOT silently rescaled -- the DFT amplitude
+  // stays exactly analytic (A), never clamped toward `limit`.
+  const legal = baseMultisineSpec({ nExc: 1, k1: 4, k2: 4, ampRms: 0.5, tPeriods: 0, pPeriods: 1 });
+  const [y] = generateMultisine(legal, 8000);
+  const A = legal.ampRms * Math.sqrt(2);
+  const { re, im } = dftBin(y, 4, legal.nSamples);
+  expect(Math.hypot(re, im)).toBeCloseTo(A, 9);
+});
+
+test('validation: k1/k2 must be integers within 1 <= k1 <= k2 <= floor((N-1)/2)', () => {
+  expect(() => generateMultisine(baseMultisineSpec({ k1: 1.5 }), 8000)).toThrow();
+  expect(() => generateMultisine(baseMultisineSpec({ k1: 5, k2: 3 }), 8000)).toThrow(); // k1 > k2
+  expect(() => generateMultisine(baseMultisineSpec({ k1: 0, k2: 3 }), 8000)).toThrow(); // k1 < 1
+  // N=64 -> floor((64-1)/2) = 31; k2=32 is one past the Nyquist-adjacent bound.
+  expect(() => generateMultisine(baseMultisineSpec({ nSamples: 64, k1: 1, k2: 32 }), 8000)).toThrow();
+});
+
+test('validation: nExc must be an integer >= 1', () => {
+  expect(() => generateMultisine(baseMultisineSpec({ nExc: 0 }), 8000)).toThrow();
+  expect(() => generateMultisine(baseMultisineSpec({ nExc: 1.5 }), 8000)).toThrow();
+});
+
+test('validation: e must satisfy 0 <= e < nExc', () => {
+  expect(() => generateMultisine(baseMultisineSpec({ nExc: 2, e: 2 }), 8000)).toThrow();
+  expect(() => generateMultisine(baseMultisineSpec({ nExc: 2, e: -1 }), 8000)).toThrow();
+});
+
+test('validation: tPeriods + pPeriods must be >= 1', () => {
+  expect(() => generateMultisine(baseMultisineSpec({ tPeriods: 0, pPeriods: 0 }), 8000)).toThrow();
+});
+
+test('validation: m must be a non-negative integer', () => {
+  expect(() => generateMultisine(baseMultisineSpec({ m: -1 }), 8000)).toThrow();
+});
+
+test('validation: seed must be a finite number', () => {
+  expect(() => generateMultisine(baseMultisineSpec({ seed: NaN }), 8000)).toThrow();
+  expect(() => generateMultisine(baseMultisineSpec({ seed: Infinity }), 8000)).toThrow();
 });
