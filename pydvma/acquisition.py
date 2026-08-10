@@ -606,6 +606,78 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
     return t,y
 
 
+def multisine_generator(settings, spec):
+    """Create a periodic random-phase multisine buffer for a BLA capture.
+
+    One period is ``N = spec['n_samples']`` samples exciting integer DFT
+    bins ``k1..k2`` with equal amplitudes and uniform random phases drawn
+    from ``numpy.random.default_rng([seed, m])`` — so a saved spec
+    reproduces the waveform exactly. Experiment ``e`` applies the
+    orthogonal DFT-matrix rotation (phase shift ``-2*pi*q*e/n_exc`` on
+    excitation ``q``), which keeps every channel's amplitude spectrum
+    identical across the ``n_exc`` experiments of a realisation.
+
+    Unlike `signal_generator` this applies NO fade window and NO peak
+    rescale — both would break exact periodicity. ``amp_rms`` sets the
+    per-channel RMS (identical across realisations, keeping the
+    excitation class constant); if the resulting peak exceeds
+    ``settings.output_vmax()`` a ValueError is raised — lower the level.
+
+    Args:
+        settings (MySettings): only ``output_fs`` (time axis) and the
+            output voltage rail are consulted.
+        spec (dict): MultisineSpec dict with keys n_samples, k1, k2,
+            p_periods, t_periods, seed, m, e, n_exc, amp_rms (see
+            dev/plans/2026-08-10-schoukens-bla-design.md).
+
+    Returns a tuple ``(t, y)`` where ``y`` has shape
+    ``((t_periods + p_periods) * n_samples, n_exc)`` in volts, ready for
+    ``log_data(..., output=y)``.
+    """
+    N = int(spec['n_samples'])
+    k1 = int(spec['k1'])
+    k2 = int(spec['k2'])
+    P = int(spec['p_periods'])
+    T_per = int(spec['t_periods'])
+    n_exc = int(spec['n_exc'])
+    q_all = np.arange(n_exc)
+
+    if not (1 <= k1 <= k2 < N // 2):
+        raise ValueError('multisine bins must satisfy 1 <= k1 <= k2 < N/2 '
+                          '(got k1={}, k2={}, N={})'.format(k1, k2, N))
+
+    k_bins = np.arange(k1, k2 + 1)
+    n_lines = len(k_bins)
+    A = float(spec['amp_rms']) * np.sqrt(2.0 / n_lines)
+
+    # Base phases: drawn once per (seed, m) so a saved spec reproduces
+    # the whole realisation (every experiment e) exactly.
+    rng = np.random.default_rng([int(spec['seed']), int(spec['m'])])
+    phases = rng.uniform(0, 2 * np.pi, size=(n_exc, n_lines))
+
+    # DFT-matrix rotation: excitation q's phase shifts by -2*pi*q*e/n_exc
+    # on every line, identically -- this is what keeps the per-channel
+    # amplitude spectrum flat across all n_exc experiments while making
+    # the per-bin q-by-e matrix orthogonal (used to solve for the BLA).
+    e = int(spec['e'])
+    phases = phases - 2 * np.pi * np.outer(q_all, np.ones(n_lines)) * e / n_exc
+
+    S = np.zeros((n_exc, N // 2 + 1), dtype=complex)
+    S[:, k_bins] = 0.5 * N * A * np.exp(1j * phases)
+    period = np.fft.irfft(S, n=N, axis=1)          # (n_exc, N)
+    y = np.tile(period, (1, T_per + P)).T          # ((T_per+P)*N, n_exc)
+
+    peak = float(np.max(np.abs(y)))
+    vmax = settings.output_vmax()
+    if peak > vmax:
+        raise ValueError(
+            'multisine peak {:.3g} V exceeds the output rail +/-{:.3g} V '
+            '-- lower the level (amp_rms).'.format(peak, vmax))
+
+    t = np.arange(y.shape[0]) / settings.output_fs
+    return t, y
+
+
 def stream_snapshot(rec):
     '''Capture the live oscilloscope buffer as a `TimeData`.
 
