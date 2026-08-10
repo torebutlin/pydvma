@@ -610,41 +610,69 @@ def multisine_generator(settings, spec):
     """Create a periodic random-phase multisine buffer for a BLA capture.
 
     One period is ``N = spec['n_samples']`` samples exciting integer DFT
-    bins ``k1..k2`` with equal amplitudes and uniform random phases drawn
-    from ``numpy.random.default_rng([seed, m])`` — so a saved spec
-    reproduces the waveform exactly. Experiment ``e`` applies the
-    orthogonal DFT-matrix rotation (phase shift ``-2*pi*q*e/n_exc`` on
-    excitation ``q``), which keeps every channel's amplitude spectrum
-    identical across the ``n_exc`` experiments of a realisation.
+    bins ``k1..k2`` (inclusive, satisfying ``1 <= k1 <= k2 <= (N-1)//2``
+    -- violating this raises ``ValueError`` naming k1, k2 and N) with
+    equal amplitudes and uniform random phases drawn from
+    ``numpy.random.default_rng([seed, m])`` — so a saved spec
+    reproduces the waveform exactly. Both the excitation index ``q``
+    (0..n_exc-1) and the experiment index ``e`` (0..n_exc-1) are
+    zero-based; experiment ``e`` applies the orthogonal DFT-matrix
+    rotation (phase shift ``-2*pi*q*e/n_exc`` on excitation ``q``),
+    which keeps every channel's amplitude spectrum identical across the
+    ``n_exc`` experiments of a realisation.
 
     Unlike `signal_generator` this applies NO fade window and NO peak
     rescale — both would break exact periodicity. ``amp_rms`` sets the
     per-channel RMS (identical across realisations, keeping the
     excitation class constant); if the resulting peak exceeds
-    ``settings.output_vmax()`` a ValueError is raised — lower the level.
+    ``settings.output_vmax()`` a ValueError is raised — lower the
+    level. A ValueError is also raised for a degenerate ``n_exc`` (< 1),
+    a degenerate period count (``t_periods + p_periods < 1``), an ``e``
+    outside ``[0, n_exc)``, or ``n_exc`` exceeding
+    ``settings.output_channels``.
 
     Args:
-        settings (MySettings): only ``output_fs`` (time axis) and the
+        settings (MySettings): ``output_fs`` (the time axis),
+            ``output_channels`` (checked against ``n_exc``) and the
             output voltage rail are consulted.
         spec (dict): MultisineSpec dict with keys n_samples, k1, k2,
             p_periods, t_periods, seed, m, e, n_exc, amp_rms (see
             dev/plans/2026-08-10-schoukens-bla-design.md).
 
-    Returns a tuple ``(t, y)`` where ``y`` has shape
-    ``((t_periods + p_periods) * n_samples, n_exc)`` in volts, ready for
-    ``log_data(..., output=y)``.
+    Returns a tuple ``(t, y)`` where ``y`` is a C-contiguous array with
+    shape ``((t_periods + p_periods) * n_samples, n_exc)`` in volts,
+    ready for ``log_data(..., output=y)`` — C-contiguity matters because
+    sounddevice's ``OutputStream.write`` raises ``TypeError`` on a
+    Fortran-ordered buffer, which a naive tile-then-transpose produces
+    whenever ``n_exc >= 2``.
     """
     N = int(spec['n_samples'])
     k1 = int(spec['k1'])
     k2 = int(spec['k2'])
-    P = int(spec['p_periods'])
-    T_per = int(spec['t_periods'])
+    p_periods = int(spec['p_periods'])
+    n_trans = int(spec['t_periods'])
     n_exc = int(spec['n_exc'])
-    q_all = np.arange(n_exc)
+    e = int(spec['e'])
 
-    if not (1 <= k1 <= k2 < N // 2):
-        raise ValueError('multisine bins must satisfy 1 <= k1 <= k2 < N/2 '
-                          '(got k1={}, k2={}, N={})'.format(k1, k2, N))
+    if not (1 <= k1 <= k2 <= (N - 1) // 2):
+        raise ValueError('multisine bins must satisfy 1 <= k1 <= k2 <= '
+                          '(N-1)//2 (got k1={}, k2={}, N={})'
+                          .format(k1, k2, N))
+    if n_exc < 1:
+        raise ValueError('multisine n_exc must be >= 1 (got {})'
+                          .format(n_exc))
+    if p_periods + n_trans < 1:
+        raise ValueError(
+            'multisine needs at least one period total: t_periods + '
+            'p_periods must be >= 1 (got t_periods={}, p_periods={})'
+            .format(n_trans, p_periods))
+    if not (0 <= e < n_exc):
+        raise ValueError('multisine e must satisfy 0 <= e < n_exc '
+                          '(got e={}, n_exc={})'.format(e, n_exc))
+    if n_exc > settings.output_channels:
+        raise ValueError(
+            'multisine n_exc ({}) exceeds settings.output_channels ({})'
+            .format(n_exc, settings.output_channels))
 
     k_bins = np.arange(k1, k2 + 1)
     n_lines = len(k_bins)
@@ -659,21 +687,27 @@ def multisine_generator(settings, spec):
     # on every line, identically -- this is what keeps the per-channel
     # amplitude spectrum flat across all n_exc experiments while making
     # the per-bin q-by-e matrix orthogonal (used to solve for the BLA).
-    e = int(spec['e'])
-    phases = phases - 2 * np.pi * np.outer(q_all, np.ones(n_lines)) * e / n_exc
+    q_all = np.arange(n_exc)
+    phases = phases - 2 * np.pi * q_all[:, None] * e / n_exc
 
     S = np.zeros((n_exc, N // 2 + 1), dtype=complex)
     S[:, k_bins] = 0.5 * N * A * np.exp(1j * phases)
     period = np.fft.irfft(S, n=N, axis=1)          # (n_exc, N)
-    y = np.tile(period, (1, T_per + P)).T          # ((T_per+P)*N, n_exc)
 
-    peak = float(np.max(np.abs(y)))
+    # Peak guard on the single period (identical to the tiled buffer's
+    # peak, since every period is an exact copy) -- checked before
+    # tiling so an illegal level fails without allocating the full
+    # (t_periods + p_periods)-period buffer.
+    peak = float(np.max(np.abs(period)))
     vmax = settings.output_vmax()
     if peak > vmax:
         raise ValueError(
             'multisine peak {:.3g} V exceeds the output rail +/-{:.3g} V '
             '-- lower the level (amp_rms).'.format(peak, vmax))
 
+    # tile-then-transpose leaves an F-contiguous view for n_exc >= 2;
+    # sounddevice's OutputStream.write requires C-contiguous data.
+    y = np.ascontiguousarray(np.tile(period, (1, n_trans + p_periods)).T)
     t = np.arange(y.shape[0]) / settings.output_fs
     return t, y
 

@@ -58,6 +58,26 @@ class TestShape:
         assert len(t) == y.shape[0]
         assert np.allclose(np.diff(t), 1.0 / settings.output_fs)
 
+    def test_c_contiguous_at_n_exc_2(self):
+        """`np.tile(period, ...).T` is an F-contiguous VIEW whenever
+        n_exc >= 2 -- sounddevice's OutputStream.write raises TypeError
+        on non-C-contiguous data, which would break every MISO
+        soundcard/bridge playback (the real Scarlett 2i2 test case).
+        n_exc=1 happens to pass this check even without the fix, since
+        a single-column array is trivially both C- and F-contiguous --
+        that's an accident of shape, not evidence the bug is absent.
+        """
+        settings = _settings(output_channels=2)
+        spec = _spec(n_exc=2)
+        t, y = multisine_generator(settings, spec)
+        assert y.flags['C_CONTIGUOUS']
+
+    def test_c_contiguous_at_n_exc_1_too(self):
+        settings = _settings(output_channels=1)
+        spec = _spec(n_exc=1)
+        t, y = multisine_generator(settings, spec)
+        assert y.flags['C_CONTIGUOUS']
+
 
 class TestExactPeriodicity:
     def test_exact_periodicity(self):
@@ -117,6 +137,43 @@ class TestRmsLevel:
         assert np.allclose(rms, spec['amp_rms'], rtol=1e-9)
 
 
+class TestSisoCoverage:
+    """SISO (n_exc=1) is the degenerate case of the general MISO
+    generator -- exercise shape, RMS and flatness explicitly rather
+    than relying on the n_exc=2 tests to cover it implicitly."""
+
+    def test_siso_shape(self):
+        settings = _settings(output_channels=1)
+        spec = _spec(n_exc=1, e=0)
+        n_periods = spec['t_periods'] + spec['p_periods']
+        t, y = multisine_generator(settings, spec)
+        assert y.shape == (n_periods * spec['n_samples'], 1)
+
+    def test_siso_rms(self):
+        settings = _settings(output_channels=1)
+        spec = _spec(n_exc=1, e=0, amp_rms=0.25)
+        N = spec['n_samples']
+        t, y = multisine_generator(settings, spec)
+        rms = np.sqrt(np.mean(y[:N] ** 2, axis=0))
+        assert np.allclose(rms, spec['amp_rms'], rtol=1e-9)
+
+    def test_siso_flatness(self):
+        settings = _settings(output_channels=1)
+        spec = _spec(n_exc=1, e=0)
+        N = spec['n_samples']
+        k1, k2 = spec['k1'], spec['k2']
+        n_lines = k2 - k1 + 1
+        A = spec['amp_rms'] * np.sqrt(2.0 / n_lines)
+        expected_mag = 0.5 * N * A
+
+        t, y = multisine_generator(settings, spec)
+        spectrum = np.fft.rfft(y[:N], axis=0)
+        mags = np.abs(spectrum)
+        excited = np.arange(k1, k2 + 1)
+        rel_err = np.abs(mags[excited, 0] - expected_mag) / expected_mag
+        assert np.all(rel_err < 1e-9)
+
+
 class TestSeedReproducibility:
     def test_same_spec_identical_output(self):
         settings = _settings()
@@ -162,6 +219,40 @@ class TestRotationOrthogonality:
         # (row 1) exactly negated (rotation angle -pi at n_exc=2).
         assert np.allclose(one_period_0[:, 0], one_period_1[:, 0])
         assert np.allclose(one_period_0[:, 1], -one_period_1[:, 1])
+
+    def test_full_rotation_law_and_conditioning_n_exc_3(self):
+        """n_exc=2 is a blind spot for the rotation law: at e=1 the
+        per-line phase shift is exactly -pi, and exp(-j*pi) ==
+        exp(+j*pi), so a sign bug in the rotation direction would still
+        pass. n_exc=3 has no such symmetry (shifts of -2*pi/3 and
+        -4*pi/3 are distinguishable from their conjugates), so this
+        checks the full complex law: spec_e[k, q] ~= spec_0[k, q] *
+        exp(-2j*pi*q*e/n_exc), plus the per-bin 3x3 X[q, e] matrix is
+        still well conditioned (condition number ~= 1).
+        """
+        settings = _settings(output_channels=3)
+        N = 64
+        k1, k2 = 4, 10
+        n_exc = 3
+
+        spectra = {}
+        for e in range(n_exc):
+            spec = _spec(n_samples=N, k1=k1, k2=k2, n_exc=n_exc, e=e)
+            _, y = multisine_generator(settings, spec)
+            spectra[e] = np.fft.rfft(y[:N], axis=0)   # (N//2+1, n_exc)
+
+        excited = np.arange(k1, k2 + 1)
+        q_all = np.arange(n_exc)
+
+        for k in excited:
+            for e in (1, 2):
+                expected = spectra[0][k, :] * np.exp(-2j * np.pi * q_all * e / n_exc)
+                assert np.allclose(spectra[e][k, :], expected, atol=1e-6), (k, e)
+
+            # X[q, e]: rows = excitation channel q, columns = experiment e
+            X = np.stack([spectra[e][k, :] for e in range(n_exc)], axis=1)
+            cond = np.linalg.cond(X)
+            assert np.isclose(cond, 1.0, atol=1e-6), (k, cond)
 
 
 class TestPeakGuard:
@@ -217,8 +308,16 @@ class TestPeakGuard:
 
 
 class TestBinBoundsValidation:
-    """Each of the three ways to violate ``1 <= k1 <= k2 < N/2`` must
-    raise ValueError, with the message identifying k1, k2 and N."""
+    """Each of the three ways to violate ``1 <= k1 <= k2 <= (N-1)//2``
+    must raise ValueError, with the message identifying k1, k2 and N.
+
+    ``(N-1)//2`` is identical to the old ``N/2``-exclusive bound for
+    even N, but for ODD N it is one bin higher: an odd-length rFFT has
+    no pure Nyquist bin at all, so its topmost bin, index (N-1)//2, is
+    a perfectly legitimate line to excite. A strict ``k2 < N//2`` check
+    (integer division) wrongly rejected exactly that bin for odd N,
+    since floor(N//2) == (N-1)//2 when N is odd.
+    """
 
     def _assert_raises_with_k1_k2_N(self, settings, spec):
         with pytest.raises(ValueError) as excinfo:
@@ -233,7 +332,7 @@ class TestBinBoundsValidation:
         spec = _spec(k1=0, k2=10)
         self._assert_raises_with_k1_k2_N(settings, spec)
 
-    def test_k2_at_or_above_nyquist_bin(self):
+    def test_k2_at_or_above_nyquist_bin_even_n(self):
         settings = _settings()
         N = 64
         spec = _spec(n_samples=N, k1=4, k2=N // 2)  # k2 == N/2 is illegal
@@ -243,3 +342,63 @@ class TestBinBoundsValidation:
         settings = _settings()
         spec = _spec(k1=10, k2=4)
         self._assert_raises_with_k1_k2_N(settings, spec)
+
+    def test_odd_n_top_bin_is_legal(self):
+        """Regression for the off-by-one: for odd N, k2 == (N-1)//2
+        must be ACCEPTED, not rejected."""
+        settings = _settings()
+        N = 65
+        top_bin = (N - 1) // 2
+        spec = _spec(n_samples=N, k1=4, k2=top_bin)
+        t, y = multisine_generator(settings, spec)   # must not raise
+        assert y.shape[0] == (spec['t_periods'] + spec['p_periods']) * N
+
+    def test_odd_n_one_past_top_bin_still_illegal(self):
+        settings = _settings()
+        N = 65
+        top_bin = (N - 1) // 2
+        spec = _spec(n_samples=N, k1=4, k2=top_bin + 1)
+        self._assert_raises_with_k1_k2_N(settings, spec)
+
+
+class TestDegenerateGuards:
+    """n_exc < 1, a zero total period count, and an out-of-range e all
+    raised opaque numpy errors (or silently aliased) before these
+    guards existed; now they raise a clear ValueError."""
+
+    def test_n_exc_below_one_raises(self):
+        settings = _settings()
+        spec = _spec(n_exc=0, e=0)
+        with pytest.raises(ValueError, match='n_exc'):
+            multisine_generator(settings, spec)
+
+    def test_zero_total_periods_raises(self):
+        settings = _settings()
+        spec = _spec(t_periods=0, p_periods=0)
+        with pytest.raises(ValueError, match='t_periods'):
+            multisine_generator(settings, spec)
+
+    def test_e_out_of_range_raises(self):
+        settings = _settings()
+        spec = _spec(n_exc=2, e=2)   # legal range is 0..n_exc-1
+        with pytest.raises(ValueError, match='e must satisfy'):
+            multisine_generator(settings, spec)
+
+    def test_e_negative_raises(self):
+        settings = _settings()
+        spec = _spec(n_exc=2, e=-1)
+        with pytest.raises(ValueError, match='e must satisfy'):
+            multisine_generator(settings, spec)
+
+
+class TestOutputChannelsGuard:
+    def test_n_exc_exceeds_output_channels_raises(self):
+        settings = _settings(output_channels=1)
+        spec = _spec(n_exc=2, e=0)
+        with pytest.raises(ValueError) as excinfo:
+            multisine_generator(settings, spec)
+        msg = str(excinfo.value)
+        assert 'n_exc' in msg
+        assert 'output_channels' in msg
+        assert '2' in msg  # n_exc
+        assert '1' in msg  # output_channels
