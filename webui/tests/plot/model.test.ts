@@ -3,6 +3,7 @@ import {
   buildPlotModel, decodeArray, differentiateUnit, iwFactor,
   type MarshalledArray, type SetArrays, type VisibleLine,
 } from '../../src/lib/plot/model';
+import { dataExtent } from '../../src/lib/plot/build';
 
 /** A marshalled real array with the given shape and flat row-major data. */
 const real = (shape: number[], data: number[]): MarshalledArray =>
@@ -382,6 +383,9 @@ test('tf coherence NOT shown for nyquist/real/imag', () => {
 // ── σ_NL/σ_n overlay (Task 9, Schoukens BLA) ────────────────────────────────
 // The overlay draws two extra LEFT-axis dashed lines per visible channel,
 // mag-only, from `SetArrays.tf.sigmaNl`/`sigmaN` when `blaSigma` is on.
+// σ lines are PREPENDED (review fix, item 7) so the measured line paints
+// over them — tests use `find`/`filter`, never positional indices, so they
+// don't depend on that ordering either way.
 
 test('tf σ overlay: two dashed LEFT-axis lines per visible channel (blaSigma on, mag)', () => {
   const sets: SetArrays[] = [{
@@ -398,12 +402,12 @@ test('tf σ overlay: two dashed LEFT-axis lines per visible channel (blaSigma on
     view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'on', '#dc2626')],
   });
   expect(m.lines).toHaveLength(3);              // 1 measured + σ_NL + σ_n
-  const [main, sigNl, sigN] = m.lines;
-  expect(main.dashed).toBe(false);
-  expect(sigNl.dashed).toBe(true); expect(sigNl.yAxis).toBe('left');
-  expect(sigN.dashed).toBe(true); expect(sigN.yAxis).toBe('left');
-  expect(sigNl.color).toBe('#dc2626');           // σ_NL: the channel's own colour
-  expect(sigN.color).toBe('#6b7280');            // σ_n: neutral grey
+  const main = m.lines.find((l) => !l.dashed)!;
+  const sigNl = m.lines.find((l) => l.dashed && l.color === '#dc2626')!;
+  const sigN = m.lines.find((l) => l.dashed && l.color === '#6b7280')!;
+  expect(main).toBeDefined();
+  expect(sigNl).toBeDefined(); expect(sigNl.yAxis).toBe('left');
+  expect(sigN).toBeDefined(); expect(sigN.yAxis).toBe('left');
 });
 
 test('tf σ overlay: dB mapping matches the main line\'s transform of the SAME numbers', () => {
@@ -421,9 +425,42 @@ test('tf σ overlay: dB mapping matches the main line\'s transform of the SAME n
     view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'on')],
   });
   const expected = 20 * Math.log10(5);
-  expect(m.lines[0].y[0]).toBeCloseTo(expected, 9);   // main line
-  expect(m.lines[1].y[0]).toBeCloseTo(expected, 9);   // σ_NL, same numbers → same dB
-  expect(m.lines[2].y[0]).toBeCloseTo(expected, 9);   // σ_n
+  const main = m.lines.find((l) => !l.dashed)!;
+  const sigNl = m.lines.find((l) => l.dashed && l.color === '#2563eb')!;
+  const sigN = m.lines.find((l) => l.dashed && l.color === '#6b7280')!;
+  expect(main.y[0]).toBeCloseTo(expected, 9);
+  expect(sigNl.y[0]).toBeCloseTo(expected, 9);   // σ_NL, same numbers → same dB
+  expect(sigN.y[0]).toBeCloseTo(expected, 9);    // σ_n
+});
+
+test('tf σ overlay: dB parity survives cal factors + a non-zero iw power (pins calRatio/applyIwColumn on the σ path)', () => {
+  // Regression pin (review item 3): with no calFactors/iwPower the previous
+  // "matches the main line" test stays green even if calRatio/applyIwColumn
+  // were deleted from the σ path entirely (both sides trivially read the raw
+  // magnitude). Exercise both so a skipped transform actually breaks this.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10]),
+      data: decodeArray(cplx([1, 1], [3, 4])),      // |H| = 5 pre-cal/iw
+      sigmaNl: decodeArray(real([1, 1], [5])),        // same magnitude as |H| pre-cal/iw
+      sigmaN: decodeArray(real([1, 1], [5])),
+      chIn: 0, nChannels: 2,
+    },
+    calFactors: [2, 6],   // ch_0 (in) = 2, ch_1 (out) = 6 → ratio = 3
+    iwPower: 1,
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'on')],
+  });
+  const main = m.lines.find((l) => !l.dashed)!;
+  const sigNl = m.lines.find((l) => l.dashed && l.color === '#2563eb')!;
+  const sigN = m.lines.find((l) => l.dashed && l.color === '#6b7280')!;
+  expect(sigNl.y[0]).toBeCloseTo(main.y[0], 9);
+  expect(sigN.y[0]).toBeCloseTo(main.y[0], 9);
+  // And prove the transforms actually ran: the no-cal/no-iw baseline would
+  // be 20·log10(5) — this must have moved off it.
+  expect(main.y[0]).not.toBeCloseTo(20 * Math.log10(5), 3);
 });
 
 test('tf σ overlay: linear yScale carries through the σ lines too (no dB, no extra √)', () => {
@@ -440,9 +477,12 @@ test('tf σ overlay: linear yScale carries through the σ lines too (no dB, no e
   const m = buildPlotModel({
     view: 'tf', tfPlotType: 'mag', yScale: 'lin', blaSigma: true, sets, visible: [vis(0, 1, 'on')],
   });
-  expect(m.lines[0].y[0]).toBeCloseTo(5, 9);    // main |H|, linear
-  expect(m.lines[1].y[0]).toBeCloseTo(2, 9);    // σ_NL passes through UNCHANGED (linear, no √)
-  expect(m.lines[2].y[0]).toBeCloseTo(0.5, 9);  // σ_n likewise
+  const main = m.lines.find((l) => !l.dashed)!;
+  const sigNl = m.lines.find((l) => l.dashed && l.color === '#2563eb')!;
+  const sigN = m.lines.find((l) => l.dashed && l.color === '#6b7280')!;
+  expect(main.y[0]).toBeCloseTo(5, 9);    // main |H|, linear
+  expect(sigNl.y[0]).toBeCloseTo(2, 9);   // σ_NL passes through UNCHANGED (linear, no √)
+  expect(sigN.y[0]).toBeCloseTo(0.5, 9);  // σ_n likewise
 });
 
 test('tf σ overlay: blaSigma off (or absent) ⇒ no σ lines even when arrays are present', () => {
@@ -494,7 +534,7 @@ test('tf σ overlay: Bode plotType shows σ lines too (its mag pane already comp
   expect(m.lines.filter(l => l.dashed && l.yAxis === 'left')).toHaveLength(2);
 });
 
-test('tf σ overlay: hidden channels contribute none; the input channel contributes none even if "visible"', () => {
+test('tf σ overlay: the input channel contributes none even if marked "visible"; a FADED channel fades its σ lines too', () => {
   // 3-channel set, chIn=0 → 2 output columns (ch_1→col0, ch_2→col1); the
   // SAME out/in remap as the measured line and the coherence overlay (R4).
   const sets: SetArrays[] = [{
@@ -512,12 +552,123 @@ test('tf σ overlay: hidden channels contribute none; the input channel contribu
     view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'on')],
   });
   expect(onlyCh1.lines).toHaveLength(3);          // 1 measured (ch_1) + σ_NL + σ_n
-  // ch_0 (the INPUT) also marked visible → still contributes nothing (no column).
+  // ch_0 (the INPUT) also marked visible → still contributes nothing (no
+  // column) — this exercises the tfColumn/input-exclusion path, not mere
+  // list membership.
   const withInput = buildPlotModel({
     view: 'tf', tfPlotType: 'mag', blaSigma: true, sets,
     visible: [vis(0, 0, 'on'), vis(0, 1, 'on')],
   });
   expect(withInput.lines).toHaveLength(3);        // unchanged: ch_0 draws nothing
+
+  // A FADED channel (review item 6): its σ lines fade by the SAME
+  // OPACITY[v.state] factor as the measured line, not the bare 0.7/0.55 base
+  // opacity — coherence has this flaw (its right-axis lines are pinned at
+  // 0.7 regardless of state) and is left as-is, out of this fix's scope.
+  const faded = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'fade', '#111111')],
+  });
+  const mainF = faded.lines.find((l) => !l.dashed)!;
+  const sigNlF = faded.lines.find((l) => l.dashed && l.color === '#111111')!;
+  const sigNF = faded.lines.find((l) => l.dashed && l.color === '#6b7280')!;
+  expect(mainF.opacity).toBeCloseTo(0.35, 9);            // OPACITY.fade
+  expect(sigNlF.opacity).toBeCloseTo(0.7 * 0.35, 9);
+  expect(sigNF.opacity).toBeCloseTo(0.55 * 0.35, 9);
+});
+
+// ── σ zero-floor honesty (review fix, item 1) ───────────────────────────────
+// `calc_bla` floors σ²_NL at 0 by construction, so near-linear data yields
+// EXACT-ZERO σ bins. `magDb`'s shared −300 dB floor for non-positive
+// magnitudes would misrepresent that as a data point AND corrupt the
+// left-axis autofit (σ lines ride the same left axis as |G|).
+
+test('tf σ overlay: floored (exact-zero) dB bins are gapped as NaN, leaving the left autofit extent unaffected', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10, 20, 30]),
+      // Main |H| = 5 at every bin → dB ≈ 13.98, nowhere near -300.
+      data: decodeArray(cplx([3, 1], [3, 4, 3, 4, 3, 4])),
+      // σ_NL: one legit bin (magnitude 5, same as |H|) + two EXACT-ZERO
+      // (floored) bins. σ_n: every bin floored (all-zero → no line at all).
+      sigmaNl: decodeArray(real([3, 1], [5, 0, 0])),
+      sigmaN: decodeArray(real([3, 1], [0, 0, 0])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const m = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', blaSigma: true, sets, visible: [vis(0, 1, 'on')],
+  });
+  const sigNl = m.lines.find((l) => l.dashed && l.color === '#2563eb');
+  expect(sigNl).toBeDefined();                                // has ONE legit bin
+  expect(sigNl!.y[0]).toBeCloseTo(20 * Math.log10(5), 9);      // the legit bin, untouched
+  expect(Number.isNaN(sigNl!.y[1])).toBe(true);                // floored → gap, NOT -300
+  expect(Number.isNaN(sigNl!.y[2])).toBe(true);
+  // σ_n is floored EVERYWHERE → no line at all (the second half of item 1).
+  expect(m.lines.some((l) => l.dashed && l.color === '#6b7280')).toBe(false);
+  // The left autofit extent (what buildPlot's dataExtent would hand to
+  // scaleLinear) stays near the real data, nowhere close to the old -300 dB
+  // floor that a fully-visible pane would have collapsed toward.
+  const [lo] = dataExtent(m.lines, 'y', 'left');
+  expect(lo).toBeGreaterThan(-50);
+});
+
+test('tf σ overlay: an all-zero σ array emits no line at all, in dB or linear mode', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10, 20]),
+      data: decodeArray(cplx([2, 1], [3, 4, 3, 4])),
+      sigmaNl: decodeArray(real([2, 1], [0, 0])),
+      sigmaN: decodeArray(real([2, 1], [0, 0])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  for (const yScale of ['log', 'lin'] as const) {
+    const m = buildPlotModel({
+      view: 'tf', tfPlotType: 'mag', yScale, blaSigma: true, sets, visible: [vis(0, 1, 'on')],
+    });
+    expect(m.lines).toHaveLength(1);   // main line only; both σ lines suppressed
+  }
+});
+
+// ── coherence axis gating on VISIBLE coherence data (review fix, item 4) ───
+// A BLA set's tf.coherence is always absent by design (the σ pair rides
+// instead), so without this gate an all-BLA plot drew an empty "coherence
+// γ²" right axis every time the (unconditional) `coherence` toggle was on.
+
+test('tf coherence axis is gated on VISIBLE coherence data: a BLA-only plot draws no γ² axis; an ordinary TF is unchanged', () => {
+  const blaSet: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10]),
+      data: decodeArray(cplx([1, 1], [1, 0])),
+      sigmaNl: decodeArray(real([1, 1], [0.1])),
+      sigmaN: decodeArray(real([1, 1], [0.01])),
+      chIn: null, nChannels: 1,          // orphan geometry, like a BLA set
+    },
+  }];
+  const blaM = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', coherence: true, sets: blaSet, visible: [vis(0, 0, 'on')],
+  });
+  expect(blaM.lines.some((l) => l.yAxis === 'right')).toBe(false);
+  expect(blaM.y2Range).toBeUndefined();
+  expect(blaM.y2Label).toBeUndefined();
+
+  const ordinarySet: SetArrays[] = [{
+    setId: 0,
+    tf: {
+      axis: Float64Array.from([10]),
+      data: decodeArray(cplx([1, 1], [1, 0])),
+      coherence: decodeArray(real([1, 1], [0.9])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const ordM = buildPlotModel({
+    view: 'tf', tfPlotType: 'mag', coherence: true, sets: ordinarySet, visible: [vis(0, 1, 'on')],
+  });
+  expect(ordM.y2Range).toEqual([0, 1]);
+  expect(ordM.y2Label).toBe('coherence γ²');
 });
 
 test('faded line renders at opacity 0.35; on at 1.0', () => {

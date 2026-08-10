@@ -114,11 +114,15 @@ export interface SetArrays {
      * deviation and `sigmaN` the per-realisation MEASUREMENT-NOISE one, both
      * REAL arrays of the same `(Nf, Nout)` shape as `data` and both in LINEAR
      * FRF units (the units of `abs(tf_data)`) — so they map onto the dB axis
-     * as `20*log10(σ)` with NO further square root.  They are the level of
-     * distortion/noise in ONE realisation, not the error bar on the plotted
-     * BLA, which is `sqrt(M)` smaller.  Stored here (rather than beside the
-     * TF slice) so the σ overlay reads them through the same per-set lookup as
-     * the curve they annotate.
+     * as `20*log10(σ)` with NO further square root, EXCEPT at a bin the
+     * engine floored to exactly 0 (`calc_bla` floors σ²_NL at 0 by
+     * construction), where `buildPlotModel`'s σ block maps the bin to NaN
+     * (a gap) rather than plotting `log10(0)`'s arbitrary dB floor — see
+     * that block's own comment. They are the level of distortion/noise in
+     * ONE realisation, not the error bar on the plotted BLA, which is
+     * `sqrt(M)` smaller. Stored here (rather than beside the TF slice) so
+     * the σ overlay reads them through the same per-set lookup as the curve
+     * they annotate.
      */
     sigmaNl?: DecodedArray; sigmaN?: DecodedArray;
   };
@@ -504,14 +508,24 @@ function applyIwColumn(axis: Float64Array, re: Float64Array, im: Float64Array, p
  *   dashed right-axis line per visible line from `coherence`, same
  *   colour, with a γ² label; the right axis is the fixed `[0,1]` by default
  *   or auto-fit to the visible coherence when `coherenceAuto` (round-5 item 6).
+ *   Also requires at least one VISIBLE set to actually carry coherence
+ *   samples (review fix) — a BLA set never does (its tf.coherence is always
+ *   absent by design), so an all-BLA plot no longer draws an empty γ² axis;
+ *   a no-op for ordinary TFs, which always carry coherence.
  * - σ_NL/σ_n overlay (Task 9, Schoukens BLA): for tf mag ONLY (bode's
  *   magnitude pane included — it already computes as `type==='mag'`; never
  *   phase/real/imag/nyquist), two extra dashed LEFT-axis lines per visible
  *   channel from `sigmaNl`/`sigmaN` when `blaSigma` is on — the SAME
- *   cal-ratio/x(iω)/mag-dB pipeline as the measured line (σ is a real linear
- *   magnitude, so it is pushed through `calScaledColumn`/`applyIwColumn`/
- *   `tfXY` as a degenerate im=0 column). σ_NL draws in the channel's own
- *   colour (dimmer), σ_n in neutral grey. Legend-suppressed, like coherence.
+ *   cal-ratio/x(iω)-power pipeline as the measured line (`calScaledColumn`/
+ *   `applyIwColumn`, reused verbatim on σ treated as a degenerate im=0
+ *   column). σ_NL draws in the channel's own colour (dimmer) × the tri-state
+ *   fade, σ_n in neutral grey likewise; both PREPENDED to `lines` so the real
+ *   data paints over the annotation. Legend-suppressed, like coherence.
+ *   ZERO-FLOOR HONESTY (review fix): `calc_bla` floors σ²_NL at 0 by
+ *   construction, so near-linear data yields EXACT-ZERO bins; in dB mode a
+ *   non-positive/non-finite magnitude maps to NaN (a gap, not `magDb`'s
+ *   arbitrary −300 dB floor — see the block's own comment for why), and a σ
+ *   array with no finite-positive sample anywhere draws no line at all.
  * - sono: no lines (the heat layer is a canvas); returns axis labels
  *   and the committed range so PlotSurface draws empty axes beneath it.
  *
@@ -722,7 +736,14 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
       : (ratioUnit ? `Im(H) (${ratioUnit})` : 'Im(H)');
 
     // Coherence overlay: mag/phase only (bode → mag), right axis, dashed.
-    const cohShown = !!args.coherence && (type === 'mag' || type === 'phase');
+    // Gated ALSO on at least one visible set actually carrying coherence
+    // samples (review fix): a BLA set's tf.coherence is always absent by
+    // design (the σ pair rides instead — see `SetArrays.tf` docs), so
+    // without this an all-BLA plot drew an empty "coherence γ²" right axis
+    // for no data every time. A no-op for ordinary TFs, which always carry
+    // coherence (`calculate_tf` populates it unconditionally).
+    const hasCoherenceData = args.visible.some((v) => !!byId.get(v.setId)?.tf?.coherence);
+    const cohShown = !!args.coherence && hasCoherenceData && (type === 'mag' || type === 'phase');
     let cohLo = Infinity, cohHi = -Infinity;                 // for the auto right axis
     if (cohShown) {
       for (const v of args.visible) {
@@ -764,40 +785,73 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     // `type==='mag'` after the bode→mag degradation above, so it gets the
     // overlay for free; phase/real/imag/nyquist never reach here). σ is a
     // REAL per-realisation standard deviation in the SAME linear units as
-    // |tf_data|, so it is run through the EXACT same per-channel pipeline as
-    // the measured line above — cal ratio, x(iω) power, mag/dB mapping —
-    // by treating it as a degenerate complex column (im=0): `calScaledColumn`
-    // / `applyIwColumn` / `tfXY` are reused verbatim, so there is no separate
-    // maths to keep in sync (and no extra √ or squaring — the design's linear-
-    // unit convention holds all the way through). σ_NL draws in the line's own
-    // colour (dimmer); σ_n draws in a neutral grey — both dashed, thin, so
-    // they read as annotation, not data. Legend-suppressed like coherence:
-    // the legend is built from `visible`/`viewEntries`, not from
-    // `PlotModel.lines`, so these extra lines never grow legend rows.
+    // |tf_data|, so it is run through the EXACT same cal-ratio + x(iω)-power
+    // pipeline as the measured line above (`calScaledColumn`/`applyIwColumn`,
+    // reused verbatim — no separate maths to keep in sync, and no extra √ or
+    // squaring — the design's linear-unit convention holds all the way
+    // through). σ_NL draws in the line's own colour (dimmer); σ_n draws in a
+    // neutral grey — both dashed, thin, so they read as annotation, not data.
+    // Legend-suppressed like coherence: the legend is built from
+    // `visible`/`viewEntries`, not from `PlotModel.lines`, so these extra
+    // lines never grow legend rows.
+    //
+    // Zero-floor honesty (review fix): `calc_bla` floors σ²_NL at 0 by
+    // construction (`max(var_tot − var_n, 0)`), so near-linear data yields
+    // EXACT-ZERO bins — not near-zero, exactly zero. `magDb`'s shared −300 dB
+    // floor for non-positive magnitudes would (a) corrupt the left-axis
+    // autofit — `dataExtent` would pull the whole FRF pane's range down
+    // toward −300, and (b) misrepresent a gap as a data point: "no
+    // distortion resolvable here" is a GAP, not a plotted value. So this
+    // block does NOT reuse `tfXY`/`magDb` — it maps a non-positive/non-finite
+    // magnitude to NaN in dB mode only (linear mode plots 0 as the legitimate
+    // value it is; there is no log-of-zero artifact to guard against), which
+    // the existing gap machinery already treats as absent (`dataExtent`'s
+    // `Number.isFinite` filter, and `buildPlot`'s decimation/path skip — see
+    // `build.ts`). An array with no finite-positive magnitude ANYWHERE (all
+    // exactly 0, or all non-finite) draws NOTHING resolvable either way, so
+    // the line is skipped entirely rather than pushed as an all-gap path.
     if (!!args.blaSigma && type === 'mag') {
+      const sigmaLines: PlotLine[] = [];
       for (const v of args.visible) {
         const set = byId.get(v.setId);
         const t = set?.tf;
         if (!t) continue;
+        const nout = t.data.shape[1] ?? 1;              // SAME convention as the measured line (item 9)
         const chIn = t.chIn === undefined ? 0 : t.chIn;
+        const nChannels = t.nChannels ?? nout + 1;       // fallback from tf_data, NOT the σ array
+        const col = tfColumn(v.ch, chIn, nChannels);
+        if (col === null || col >= nout) continue;        // input channel or out of range
+        const nf = t.axis.length;
+        const ratio = calRatio(set, v.ch, chIn);
+        // Base opacity × the tri-state fade (coherence shares this gap —
+        // its right-axis lines are pinned at 0.7 regardless of v.state —
+        // left as-is here, out of this fix's scope).
         const specs: [DecodedArray | undefined, string, number][] = [
-          [t.sigmaNl, v.color, 0.7],   // σ_NL: the channel's own colour, dimmer
-          [t.sigmaN, '#6b7280', 0.55], // σ_n: neutral grey
+          [t.sigmaNl, v.color, 0.7 * OPACITY[v.state]],   // σ_NL: the channel's own colour, dimmer
+          [t.sigmaN, '#6b7280', 0.55 * OPACITY[v.state]], // σ_n: neutral grey
         ];
         for (const [sigma, color, opacity] of specs) {
           if (!sigma) continue;
-          const sigNout = sigma.shape[1] ?? 1;        // sigma is (Nf, Nout) too
-          const nChannels = t.nChannels ?? sigNout + 1;
-          const col = tfColumn(v.ch, chIn, nChannels);
-          if (col === null || col >= sigNout) continue;
-          const nf = t.axis.length;
-          const ratio = calRatio(set, v.ch, chIn);
+          const sigNout = sigma.shape[1] ?? 1;          // defensive: bounds-check THIS array
+          if (col >= sigNout) continue;
           const { re, im } = calScaledColumn(sigma, nf, sigNout, col, ratio);
           applyIwColumn(t.axis, re, im, set?.iwPower ?? 0);
-          const { x, y } = tfXY(t.axis, re, im, 'mag', linMag, null);
-          lines.push({ x, y, color, opacity, width: 1, dashed: true, yAxis: 'left', xMonotonic: true });
+          const y = new Float64Array(nf);
+          let anyPositive = false;
+          for (let i = 0; i < nf; i++) {
+            const mag = Math.hypot(re[i], im[i]);
+            const finitePositive = Number.isFinite(mag) && mag > 0;
+            if (finitePositive) anyPositive = true;
+            if (linMag) y[i] = Number.isFinite(mag) ? mag : NaN;
+            else y[i] = finitePositive ? 20 * Math.log10(mag) : NaN;
+          }
+          if (!anyPositive) continue;   // all-floored/all-zero — nothing resolvable, draw nothing
+          sigmaLines.push({ x: t.axis, y, color, opacity, width: 1, dashed: true, yAxis: 'left', xMonotonic: true });
         }
       }
+      // Prepended (not appended): σ is annotation UNDER the measured/coherence
+      // data, so the real data paints over it rather than the reverse.
+      lines.unshift(...sigmaLines);
     }
 
     return {

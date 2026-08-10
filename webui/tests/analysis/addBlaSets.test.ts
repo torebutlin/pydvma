@@ -123,6 +123,12 @@ test('a saved-then-reloaded BLA item restores its σ overlay arrays into the der
   const d0 = get(actions2.derived)[sets[0].id];
   expect(d0.tf).toBeDefined();
   expect(d0.tf!.chIn).toBeNull();                 // orphan geometry preserved too
+  // Shape asserted too (review item 8), not just the flat data — a flatten
+  // regression in decodeNpy/sliceForLoadedItem would leave the `.re` values
+  // below unchanged (same numbers, same order) while silently losing the
+  // (Nf, Nout) geometry the σ overlay's column lookup depends on.
+  expect(d0.tf!.sigmaNl!.shape).toEqual([3, 2]);
+  expect(d0.tf!.sigmaN!.shape).toEqual([3, 2]);
   expect(Array.from(d0.tf!.sigmaNl!.re)).toEqual([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
   expect(Array.from(d0.tf!.sigmaN!.re)).toEqual([0.01, 0.02, 0.03, 0.04, 0.05, 0.06]);
 });

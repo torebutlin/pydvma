@@ -17,8 +17,12 @@
    *    Cancel, and the advisory notes the run acted on (e.g. the pretrigger
    *    auto-disarm).
    *  - **results** (`bla-results`) — one plain-English verdict line per
-   *    excitation (see `lib/analysis/blaVerdict.ts`), a "show raw captures"
-   *    toggle (the M×n raw sets land hidden) and "new run".
+   *    excitation (see `lib/analysis/blaVerdict.ts`), a self-gated "σ lines"
+   *    toggle (review item 5 — the TF card's own toggle is unreachable from
+   *    here, since the results render over the tf VIEW while the active
+   *    STAGE stays 'bla'; this drives the identical `viewState.setBlaSigma`),
+   *    a "show raw captures" toggle (the M×n raw sets land hidden) and
+   *    "new run".
    *
    * The card OWNS no run state: everything reactive comes from the BLA store
    * (`design`, `values`, `checks`, `state`), which in turn reads the live
@@ -33,6 +37,7 @@
   import type { AcquireStore } from '../../lib/stores/acquire';
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
+  import type { ViewState } from '../../lib/stores/viewstate';
   import { outputDevices } from '../../lib/audio/provider';
   import { blaVerdicts, summariseBlaVerdicts, worstBlaChannel } from '../../lib/analysis/blaVerdict';
 
@@ -41,12 +46,22 @@
     acquire,
     actions,
     selection,
+    viewState,
   }: {
     bla: BlaStore;
     acquire: AcquireStore;
     actions: Actions;
     /** Read-only here: the raw-capture toggle reads its state from the tray. */
     selection: Selection;
+    /**
+     * σ_NL/σ_n overlay toggle (review item 5): the TF card's "σ lines"
+     * switch is unreachable from here — the Nonlin stage shows results over
+     * the SAME tf view, but the active STAGE stays 'bla', so a user reading
+     * the verdict has no path to the toggle without first switching stages.
+     * This card offers the same switch, driving the identical
+     * `viewState.setBlaSigma` store write.
+     */
+    viewState: ViewState;
   } = $props();
 
   const design = $derived(bla.design);
@@ -61,6 +76,15 @@
   const webOutputDevices = $derived(acquire.webOutputDevices);
   const derivedMap = $derived(actions.derived);
   const setsView = $derived(selection.setsView);
+
+  // ---- σ overlay toggle (review item 5, mirrors TFCard's control) ----
+  const current = $derived(viewState.current);
+  const blaSigma = $derived($current.blaSigma);
+  /** Self-gated exactly like the TF card's toggle: noise without σ data. */
+  const anySigma = $derived(
+    $setsView.some((s) => !s.allOff
+      && (($derivedMap[s.id]?.tf?.sigmaNl) || ($derivedMap[s.id]?.tf?.sigmaN))),
+  );
 
   /**
    * Hard ceiling on excitation-table rows. A soundcard can advertise dozens of
@@ -554,6 +578,20 @@
                   <strong>{v.label}:</strong> {v.text}
                 </span>
               {/each}
+            </div>
+          </div>
+        {/if}
+        {#if anySigma}
+          <div class="grp">
+            <span class="grp-lab">σ lines</span>
+            <div class="grp-ctl">
+              <!-- Same viewstate write as the TF card's toggle (which keeps
+                   its own `bla-sigma-toggle` testid) — this is just a second
+                   reachable control for the same state, so the two never
+                   drift out of sync. -->
+              <label class="switch"><input type="checkbox" checked={blaSigma}
+                onchange={(e) => viewState.setBlaSigma(e.currentTarget.checked)}
+                aria-label="σ_NL/σ_n overlay" data-testid="bla-sigma-toggle-card" /></label>
             </div>
           </div>
         {/if}

@@ -13,11 +13,22 @@ import { fileURLToPath } from 'node:url';
  *  - **bridge half** (`BRIDGE_E2E=1`, its own spawned `pydvma.serve --driver
  *    mock`) — the FULL pipeline: design → M x n_exc bridge captures with a
  *    multisine stimulus → `calc_bla` in the real pyodide engine → BLA sets in
- *    the tray with the sigma overlay on the TF plot. The mock driver's data is
- *    a deterministic per-channel sine, NOT the multisine that was played, so
- *    every NUMBER the run produces is meaningless; the assertions here are
- *    pipeline and UI truths only (phases, set counts, visibility, overlay
- *    presence), never values.
+ *    the tray, both σ-overlay TOGGLES (TF card + the in-stage BLA card one)
+ *    reachable and functional. The mock driver's data is a deterministic
+ *    per-channel sine, NOT the multisine that was played, so every NUMBER
+ *    the run produces is meaningless — EXCEPT the σ overlay's PRESENCE,
+ *    which turns out to be a genuine (if accidental) exercise of both halves
+ *    of the zero-floor fix: `MockRecorder` regenerates its buffer from
+ *    sample 0 on every capture (`streams.py`), so it is bit-identical across
+ *    the M realisations ⇒ realisation scatter is EXACTLY 0 ⇒ σ_NL floors to
+ *    0 and correctly draws NOTHING. But the mock's fixed per-channel tone
+ *    (`100·(ch+1)` Hz) is not period-locked to the design's N-sample period,
+ *    so the P period-slices WITHIN one capture are genuinely NOT identical
+ *    ⇒ σ_n (period-to-period scatter) is honestly non-zero and DOES draw.
+ *    See the comment at the assertion for the verified count. The
+ *    exhaustive proof that σ data draws (and gaps) correctly under
+ *    controlled numbers lives in `tests/plot/model.test.ts`, which can
+ *    hand-craft arrays a deterministic mock never will.
  *  - **browser half** (default project, fake media device) — the UI truths
  *    that need no real audio. A full run on this path would capture the fake
  *    mic's tone, i.e. silence as far as the excitation is concerned, so the
@@ -248,25 +259,50 @@ test.describe('BLA — bridge run (mock driver)', () => {
     await expect(page.locator('text.axlab').first()).toHaveText('Frequency (Hz)');
     await expect(page.getByTestId('plot-line').first()).toBeAttached();
 
-    // σ overlay: two extra DASHED left-axis lines per visible response channel
-    // (σ_NL in the line's colour, σ_n in grey) — SVG paths with a zero-height
-    // bbox, so attribute/count assertions, not toBeVisible. Their POSITION is
-    // meaningless here: the mock replays one bit-identical noiseless sine for
-    // every capture, so both scatters come out ~0 and the pair sits on the
-    // −300 dB floor (see the screenshot). Presence and the toggle are what is
-    // being proved.
+    // σ overlay: the HONEST zero-floor rendering (review follow-up on Task 9),
+    // verified against the actual mock behaviour rather than assumed —
+    // `streams.MockRecorder.__init__` regenerates its buffer from sample 0
+    // on EVERY capture (bit-identical across the M realisations), so the
+    // realisation scatter is EXACTLY 0 ⇒ σ_NL floors to 0 by construction ⇒
+    // NO line (the honest "nothing resolvable" gap). But the mock's fixed
+    // per-channel tone (`0.1·sin(2π·100·(ch+1)·t)`) is NOT period-locked to
+    // this design's N-sample period, so the P period-slices taken from ONE
+    // capture are genuinely NOT identical to each other ⇒ σ_n (period-to-
+    // period scatter) is honestly non-zero here ⇒ its ONE line legitimately
+    // draws. So this run happens to exercise BOTH halves of the fix at once:
+    // one σ line correctly suppressed, one correctly drawn — confirmed by
+    // inspecting the surviving path's stroke colour (`#6b7280`, σ_n's
+    // neutral grey) during development of this assertion. (SVG paths have a
+    // zero-height bbox and fail `toBeVisible`, so attribute/count
+    // assertions, not visibility, as elsewhere in this file.) The
+    // exhaustive proof of the zero-floor behaviour under CONTROLLED numbers
+    // (both lines present, both absent, one of each) lives in vitest
+    // (`tests/plot/model.test.ts`), which can hand-craft arrays a
+    // deterministic mock never will.
     const dashed = page.locator('[data-testid="plot-line"][stroke-dasharray]');
-    await expect(dashed).toHaveCount(2);
+    await expect(dashed).toHaveCount(1);
     await page.screenshot({ path: test.info().outputPath('bla-tf-sigma.png') });
 
-    // The σ toggle lives on the TF card, so it is reachable from the TF STAGE
-    // (the Nonlin stage shows the BLA card over the same TF view). It renders
-    // at all only because a visible set carries σ data — itself proof the
-    // arrays survived the engine round-trip — and turning it off drops both
-    // overlay lines.
+    // The BLA card's OWN "σ lines" toggle (review item 5: the TF card's
+    // toggle below is unreachable from here in practice — the run parks the
+    // VIEW on tf but the active STAGE stays 'bla', so a user reading the
+    // verdict had no path to a σ toggle without first switching stages) is
+    // reachable right here in the results group, without leaving the Nonlin
+    // stage, and drives the identical store.
+    await expect(page.getByTestId('bla-sigma-toggle-card')).toBeVisible();
+    await expect(page.getByTestId('bla-sigma-toggle-card')).toBeChecked();
+
+    // The σ toggle ALSO lives on the TF card, reachable from the TF STAGE
+    // (the Nonlin stage shows the BLA card over the same TF view). It still
+    // renders — self-gated on the σ ARRAYS EXISTING, not on them having a
+    // resolvable value — and toggling it off/on removes/restores the one
+    // real (σ_n) line without erroring.
     await ribbon(page).getByRole('button', { name: 'TF' }).click();
+    await expect(page.getByTestId('bla-sigma-toggle')).toBeVisible();
     await page.getByTestId('bla-sigma-toggle').uncheck();
     await expect(dashed).toHaveCount(0);
+    await page.getByTestId('bla-sigma-toggle').check();
+    await expect(dashed).toHaveCount(1);
   });
 
   test('cancelling mid-run stops after the capture in flight and keeps the raw captures', async ({ page }) => {
