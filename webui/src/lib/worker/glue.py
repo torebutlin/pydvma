@@ -3,8 +3,10 @@
 
 Loaded inside the pyodide engine worker (``engine.worker.ts``). Every op is
 a plain function taking JSON-marshallable scalars plus flat float64 arrays
-and returning a dict of arrays — no PyProxy state survives between calls, so
-the worker stays stateless (spec §11).
+and returning a dict of arrays — or, where the op is inherently plural, a
+LIST of such dicts (``calc_bla`` returns one entry per excitation) — no
+PyProxy state survives between calls, so the worker stays stateless
+(spec §11).
 
 Array boundary convention (matches the JS ``NpyArray`` convention in
 ``src/lib/codec/npy.ts``): every array crosses as
@@ -972,7 +974,7 @@ def calc_damping_bands(time_axis, time_data, n_channels, fs, ch, bands='octave',
 
 
 # --------------------------------------------------------------------------- #
-# Schoukens BLA — noise/nonlinearity separation ("Nonlin" stage, Task 6)
+# Schoukens BLA — noise/nonlinearity separation (the "Nonlin" stage)
 # --------------------------------------------------------------------------- #
 
 def _bla_run_spec(run_spec):
@@ -1033,7 +1035,7 @@ def calc_bla(time_arrays, run_spec):
     OUTER, experiment INNER). A plain Python/JS list preserves order exactly,
     so no extra (m, e) tagging is needed to carry it; a wrong LENGTH is
     caught by ``analysis.calculate_bla`` (``M*n_exc`` mismatch), a wrong
-    ORDER is not — the caller (the future webui ``bla`` store) must build
+    ORDER is not — the caller (``webui/src/lib/stores/bla.ts``) must build
     the list in run order, same caveat as the engine function's own
     docstring. Each element is a nested payload value, so — unlike
     ``calc_tf_averaged``'s direct ``s['time_axis']`` indexing — its fields
@@ -1061,7 +1063,7 @@ def calc_bla(time_arrays, run_spec):
     'coherence': None}`` (BLA sets carry no coherence; the sigma pair is the
     quality measure instead — always ``None`` here) — so the UI can render a
     BLA set through the exact same TF path as an ordinary TF, PLUS three keys
-    Tasks 7/8 build on:
+    ``stores/bla.ts`` (landing) and the σ overlay (``plot/model.ts``) build on:
       - ``bla_sigma_nl`` (_arr, real, same shape as ``tf_data``): per-
         realisation nonlinear-distortion standard deviation in LINEAR FRF
         units (same units as ``abs(tf_data)``) — ready for
@@ -1072,6 +1074,13 @@ def calc_bla(time_arrays, run_spec):
         attached to this excitation's TfData (run spec fields plus
         ``excited_bins`` and ``q``) — already JSON-clean (numpy scalars
         stripped), safe to store verbatim as the item's ``.dvma`` meta.
+        ONE caveat on "verbatim": in commanded-x mode ``x_channels`` is
+        ``None``, which ``toJs`` renders as ``undefined`` and
+        ``JSON.stringify`` then DROPS from the manifest — so a saved
+        commanded run's meta has no ``x_channels`` key at all. Nothing is
+        lost (``x_mode: 'commanded'`` already says the drive was
+        regenerated, and `calculate_bla` reads ``x_channels`` only in the
+        measured branch), but a reader must not treat the key as mandatory.
     """
     if not hasattr(analysis, 'calculate_bla'):
         raise ValueError(
