@@ -779,6 +779,20 @@ class TfData():
         timestring (str): Filesystem-safe rendering of `timestamp`.
         flag_modal_TF (bool): True after a modal fit has consumed
             this TfData (avoids double-fitting); used by `modal.py`.
+        bla_sigma_nl (np.ndarray or None): Nonlinear-distortion standard
+            deviation, shape ``(n_freq, n_outputs)``, real, in the same
+            units as ``abs(tf_data)``. Set by `analysis.calculate_bla`;
+            None on an ordinary transfer function.
+        bla_sigma_n (np.ndarray or None): Measurement-noise standard
+            deviation, same shape and units as `bla_sigma_nl`. Set by
+            `analysis.calculate_bla`; None on an ordinary transfer
+            function.
+        bla (dict or None): The BLA run spec that produced this
+            estimate (multisine design, x-mode, channel roles, capture
+            fs, excited bins and which excitation ``q`` this TfData
+            belongs to). JSON-clean scalars only, so it round-trips
+            through the .dvma manifest. None on an ordinary transfer
+            function.
     '''
 
     def __init__(self,freq_axis,tf_data,tf_coherence,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
@@ -799,7 +813,13 @@ class TfData():
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         self.flag_modal_TF = False
-        
+        # Best-linear-approximation extras (analysis.calculate_bla).
+        # Always defined so consumers can test them without hasattr;
+        # they stay None for every ordinary transfer function.
+        self.bla_sigma_nl = None
+        self.bla_sigma_n = None
+        self.bla = None
+
     def __repr__(self):
         return "<TfData>"
     
