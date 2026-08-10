@@ -753,26 +753,127 @@ _OUTPUT_TYPE_ALIASES = {
 #: rejected with a clear error.
 _OUTPUT_SPEC_KEYS = frozenset({'type', 'amp', 'f1', 'f2', 'duration'})
 
+#: Keys accepted inside a ``log`` ``output`` object when
+#: ``type == 'multisine'`` -- the wire form of a
+#: :func:`acquisition.multisine_generator` ``MultisineSpec`` (``amp`` is
+#: this whitelist's name for the generator's ``amp_rms``).  Unlike the
+#: classic types this spec carries no ``f1``/``f2``/``duration``: the
+#: excited band is bins ``k1..k2`` of an ``n_samples``-sample period, and
+#: the waveform's duration is derived from
+#: ``(t_periods + p_periods) * n_samples`` -- see
+#: dev/plans/2026-08-10-schoukens-bla-design.md.
+_OUTPUT_SPEC_KEYS_MULTISINE = frozenset({
+    'type', 'amp', 'n_samples', 'k1', 'k2', 'p_periods', 't_periods',
+    'seed', 'm', 'e', 'n_exc',
+})
+#: The multisine int-valued spec fields (everything numeric except
+#: ``amp``, which is a float mapped onto ``amp_rms``).
+_MULTISINE_INT_KEYS = (
+    'n_samples', 'k1', 'k2', 'p_periods', 't_periods', 'seed', 'm', 'e',
+    'n_exc',
+)
+
+
+def _coerce_multisine_int(output_spec, key):
+    """Validate ``output_spec[key]`` as an integer-valued spec field.
+
+    Accepts a Python ``int`` or a whole-numbered ``float`` (JSON has no
+    distinct integer type, so a wire value of ``4.0`` is legitimate);
+    rejects ``bool`` (a JSON ``true``/``false`` slipping into a numeric
+    field), non-integral floats, and anything else that doesn't parse as
+    a number.  Raises ``ValueError`` naming the key and the offending
+    value on failure.
+    """
+    value = output_spec[key]
+    if not isinstance(value, bool):
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+    raise ValueError(
+        'multisine output key %r must be an integer (got %r)'
+        % (key, value))
+
+
+def _coerce_multisine_amp(output_spec):
+    """Validate ``output_spec['amp']`` as a float (the wire name for
+    ``amp_rms``); raises ``ValueError`` naming the value on failure."""
+    value = output_spec['amp']
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            "multisine output key 'amp' must be a number (got %r)"
+            % (value,))
+    return float(value)
+
+
+def _build_multisine_output_signal(settings, output_spec):
+    """The ``type == 'multisine'`` branch of :func:`_build_output_signal`.
+
+    Validates ``output_spec`` against :data:`_OUTPUT_SPEC_KEYS_MULTISINE`
+    (unknown keys, missing required keys, and field types all raise a
+    clear ``ValueError`` naming the offending key) then delegates to
+    :func:`acquisition.multisine_generator` for the waveform itself --
+    bin/period/channel sanity (``k1``/``k2``/``N`` relationships,
+    degenerate ``n_exc``/period counts, the output-rail peak guard) is
+    NOT duplicated here; that function's own ``ValueError`` propagates
+    unchanged.
+    """
+    if 'duration' in output_spec:
+        raise ValueError(
+            "multisine output does not accept 'duration' -- its "
+            "duration is derived from the spec (n_samples, p_periods, "
+            "t_periods and fs), not supplied directly")
+    unknown = set(output_spec) - _OUTPUT_SPEC_KEYS_MULTISINE
+    if unknown:
+        raise ValueError(
+            'unknown output key(s): %s. Allowed: %s'
+            % (', '.join(sorted(map(str, unknown))),
+               ', '.join(sorted(_OUTPUT_SPEC_KEYS_MULTISINE))))
+    missing = (_OUTPUT_SPEC_KEYS_MULTISINE - {'type'}) - set(output_spec)
+    if missing:
+        raise ValueError(
+            'multisine output spec missing required key %r'
+            % (sorted(missing)[0],))
+
+    spec = {key: _coerce_multisine_int(output_spec, key)
+             for key in _MULTISINE_INT_KEYS}
+    spec['amp_rms'] = _coerce_multisine_amp(output_spec)
+
+    _t, y = acquisition.multisine_generator(settings, spec)
+    return y, True
+
 
 def _build_output_signal(settings, output_spec):
     """Turn a ``log`` message ``output`` object into a stimulus waveform.
 
     Returns ``(y, generated)`` where ``y`` is an
     ``(N, output_channels)`` volts array from
-    :func:`acquisition.signal_generator` (or ``None`` when the spec asks
-    for no output) and ``generated`` is True only when a waveform was
-    built.  Mirrors the Qt logger's ``create_output_signal``: the
-    Nyquist guard rejects ``max(f1, f2) > min(fs, output_fs) / 2`` with a
-    clear error, and the type/amp/f1/f2/duration fields map onto
-    ``signal_generator``'s ``sig`` / ``amplitude`` / ``f`` / ``T``.
+    :func:`acquisition.signal_generator` (or, for
+    ``type == 'multisine'``, :func:`acquisition.multisine_generator`) --
+    or ``None`` when the spec asks for no output -- and ``generated`` is
+    True only when a waveform was built.  For the classic types
+    (``sweep``/``gaussian``/``uniform``/``white``/``none``) this mirrors
+    the Qt logger's ``create_output_signal``: the Nyquist guard rejects
+    ``max(f1, f2) > min(fs, output_fs) / 2`` with a clear error, and the
+    type/amp/f1/f2/duration fields map onto ``signal_generator``'s
+    ``sig`` / ``amplitude`` / ``f`` / ``T``. ``type == 'multisine'``
+    (case-insensitive, like the other types) is a completely separate
+    keyset/validation path -- see
+    :func:`_build_multisine_output_signal` -- for Schoukens BLA
+    captures.
 
     Raises ``ValueError`` on a non-object spec, an unknown key, an
-    unknown ``type``, or a Nyquist violation.
+    unknown ``type``, a Nyquist violation, or (multisine) any
+    :func:`acquisition.multisine_generator` validation failure.
     """
     if output_spec is None:
         return None, False
     if not isinstance(output_spec, dict):
         raise ValueError('log.output must be an object or null')
+
+    if str(output_spec.get('type')).lower() == 'multisine':
+        return _build_multisine_output_signal(settings, output_spec)
+
     unknown = set(output_spec) - _OUTPUT_SPEC_KEYS
     if unknown:
         raise ValueError(
