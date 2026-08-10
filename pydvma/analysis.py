@@ -623,9 +623,12 @@ def calculate_bla(time_data_list, run_spec):
     if P < 2:
         raise ValueError('BLA needs at least P = 2 steady-state periods to '
                           'estimate the noise (got {})'.format(P))
-    if not (1 <= int(ms['k1']) <= int(ms['k2']) <= N // 2):
+    # Same bound as acquisition.multisine_generator: for even N that
+    # excludes the Nyquist bin, whose rfft coefficient is real and cannot
+    # carry the random phase the commanded-x regeneration assumes.
+    if not (1 <= int(ms['k1']) <= int(ms['k2']) <= (N - 1) // 2):
         raise ValueError(
-            'excited bins must satisfy 1 <= k1 <= k2 <= N/2 '
+            'excited bins must satisfy 1 <= k1 <= k2 <= (N-1)//2 '
             '(got k1={}, k2={}, N={})'.format(ms['k1'], ms['k2'], N))
     if n_resp < 1:
         raise ValueError('BLA needs at least one response channel')
@@ -656,9 +659,10 @@ def calculate_bla(time_data_list, run_spec):
                 data = td.time_data[T_per * N:(T_per + P) * N, :]
                 if data.shape[0] != P * N:
                     raise ValueError(
-                        'capture too short: need {} samples after {} '
-                        'transient periods, capture {} has {}'.format(
-                            (T_per + P) * N, T_per, m * n_exc + e,
+                        'capture too short: need {} samples in total '
+                        '({} transient + {} steady-state periods of {} '
+                        'samples), capture {} has {}'.format(
+                            (T_per + P) * N, T_per, P, N, m * n_exc + e,
                             td.time_data.shape[0]))
                 per = data.reshape(P, N, -1)
                 # No window and no detrend: each slice is a whole number

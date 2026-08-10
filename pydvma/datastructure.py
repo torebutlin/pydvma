@@ -781,18 +781,26 @@ class TfData():
             this TfData (avoids double-fitting); used by `modal.py`.
         bla_sigma_nl (np.ndarray or None): Nonlinear-distortion standard
             deviation, shape ``(n_freq, n_outputs)``, real, in the same
-            units as ``abs(tf_data)``. Set by `analysis.calculate_bla`;
-            None on an ordinary transfer function.
+            linear units as ``abs(tf_data)`` — a std, not a variance.
+            Set by `analysis.calculate_bla`; None on an ordinary transfer
+            function, including after a .dvma round trip (it is a
+            declared array field, so it always restores as None or an
+            array).
         bla_sigma_n (np.ndarray or None): Measurement-noise standard
-            deviation, same shape and units as `bla_sigma_nl`. Set by
-            `analysis.calculate_bla`; None on an ordinary transfer
-            function.
+            deviation, same shape, units and round-trip guarantee as
+            `bla_sigma_nl`. Set by `analysis.calculate_bla`; None on an
+            ordinary transfer function.
         bla (dict or None): The BLA run spec that produced this
             estimate (multisine design, x-mode, channel roles, capture
             fs, excited bins and which excitation ``q`` this TfData
             belongs to). JSON-clean scalars only, so it round-trips
-            through the .dvma manifest. None on an ordinary transfer
-            function.
+            through the .dvma manifest. None on a freshly constructed
+            ordinary transfer function — but read it as
+            ``getattr(tf, 'bla', None)``: it is optional metadata, which
+            `container.load` restores only when non-None, so on an
+            ordinary TfData loaded from .dvma the attribute is ABSENT
+            rather than None (the same convention as
+            `iw_power_counter` and `impulse_cleaned`).
     '''
 
     def __init__(self,freq_axis,tf_data,tf_coherence,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
@@ -813,9 +821,11 @@ class TfData():
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
         self.flag_modal_TF = False
-        # Best-linear-approximation extras (analysis.calculate_bla).
-        # Always defined so consumers can test them without hasattr;
-        # they stay None for every ordinary transfer function.
+        # Best-linear-approximation extras (analysis.calculate_bla), None
+        # for every ordinary transfer function. The sigma arrays are
+        # declared container array fields and always restore (None or an
+        # array); `bla` is optional metadata and is ABSENT after a .dvma
+        # round trip when it was None -- read it via getattr.
         self.bla_sigma_nl = None
         self.bla_sigma_n = None
         self.bla = None

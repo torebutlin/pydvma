@@ -122,8 +122,9 @@ required** (`npm run vendor:wheels`, ENGINE_WHEELS name check).
 
 One `TfData` per excitation q, with optional additions:
 - `bla_sigma_nl`, `bla_sigma_n` — real arrays, shape = `tf_data` (like
-  `tf_coherence`), stored in **FRF-magnitude² units** (variances); plotted
-  as √ on the dB axis.
+  `tf_coherence`), stored as **standard deviations in linear FRF units**
+  (the same units as `abs(tf_data)`, not variances). They go straight onto
+  the dB axis as `20*log10(sigma)` — **no further √** at plot time.
 - `bla` metadata dict: {M, P, n_trans, n_exc, N, seed, excited_bins,
   amplitude(s), x_mode, x_channels, level_label}.
 
@@ -136,7 +137,12 @@ Nyquist, phase, export, **modal fit**) works immediately.
 ## Results view & interpretation
 
 TF plot: |G_BLA| normal line + two thin dashed lines on the **same dB
-axis** (classic Schoukens presentation): σ_NL and σ_n. Uses existing
+axis** (classic Schoukens presentation): σ_NL and σ_n. Both are
+**per-realisation** standard deviations — the level of distortion/noise
+in one realisation, not the uncertainty of the plotted BLA itself, which
+is √M better (σ_BLA = σ_tot/√M). That is the classic presentation: the
+σ lines answer "how nonlinear is this system at this level", and the
+reader divides by √M to get the error bar on the curve. Uses existing
 dashed/opacity primitives; TF-card toggle to hide σ lines. Verdict chip
 applies the step-10 logic per band: σ²_tot ≈ σ²_n/P → "linear at this
 level (or distortion below noise floor) — averaging helps"; σ²_tot ≫

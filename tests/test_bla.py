@@ -119,7 +119,10 @@ class TestNonlinearDetection:
         # E|Y_noise(k)|^2 = N * sigma^2 per period; the mean of P periods
         # divides that by P; dividing by |X| carries it onto G.
         sigma_n_expected = 1e-3 * np.sqrt(N / P) / X_mag
-        assert 0.8 < np.median(tf.bla_sigma_n) / sigma_n_expected < 1.25
+        # Tight on purpose (measured 0.982, and the run is seeded so this
+        # is deterministic): a 1/P vs 1/(P-1) slip in the period-scatter
+        # denominator lands at 0.850, outside the band.
+        assert 0.9 < np.median(tf.bla_sigma_n) / sigma_n_expected < 1.25
 
         # sigma_NL^2 + sigma_n^2 is the realisation scatter (clamped at
         # the noise floor by the max(., 0) in the difference).
