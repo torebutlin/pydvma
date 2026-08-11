@@ -130,6 +130,21 @@ is still open, as one consolidated list.
   excludes chassis devices and BLA falls back to measured-x there.
   Lifting this needs shared-start-trigger work — this is the tracker
   for the general cDAQ AO/AI sync gap.
+- **Input-scaling verification tool ("calibration against a known
+  source")** — verify the whole input chain (gain knobs included) by
+  measuring a source of KNOWN level and comparing against the volts
+  pydvma predicts. Two source options: (a) an NI AO→AI physical
+  loopback — calibrated AO voltage exercises the full analogue input
+  path, so this works on NI devices with no extra kit (the webui could
+  even drive it today); (b) a Rigol DG1022Z (or similar) commanded
+  over SCPI/pyvisa as the known source for sound cards — required for
+  the 2i2 because its DIGITAL loopback copies the output stream
+  pre-preamp and cannot see the analogue input gain. Python-first
+  helper (e.g. `dvma.verify_input_scaling(...)`), webui exposure later
+  and bridge-gated (the browser cannot reach VISA/USB instruments; the
+  server can). Idea from the 3C6 lab's `check_setup` level meter
+  (divc_labs repo), which checks levels against a target band but
+  cannot verify absolute scaling without a known source.
 - **Device identity on the Python path** — the webui now re-resolves
   devices by NAME when PortAudio indices shift mid-session, but
   `MySettings(device_index=…)` in a notebook is still positional;
