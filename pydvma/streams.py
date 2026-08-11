@@ -843,6 +843,8 @@ class Recorder(object):
         settings.device_full_info = sd.query_devices()[settings.device_index]
 
         self._pin_hardware_clock(settings)
+        self._pin_hardware_format(settings)
+        self._pin_input_volume(settings)
 
         dtype = 'float32'
         self.audio_stream = sd.InputStream(samplerate=settings.fs, 
@@ -919,16 +921,116 @@ class Recorder(object):
         except Exception:
             pass
 
+    def _pin_hardware_format(self, settings):
+        '''Raise a 16-bit capture stream to 24-bit for the duration.
+
+        macOS keeps a per-device physical format (Audio MIDI Setup's
+        Format box) that defaults to 16-bit on some class-compliant
+        interfaces even when they advertise 24 — measured on an ESI
+        U24 XL (2026-08-11), where a rate change also RESETS the format
+        back to 16-bit, which is why this runs after the clock pin on
+        every stream open rather than once. 16 bits cost real dynamic
+        range at low sample rates (the U24 XL's 8 kHz in-band floor is
+        within 4 dB of the 16-bit dither floor). A device that refuses
+        stays at its current depth — that is how it was found, so
+        nothing is lost. The previous depth is restored on
+        ``end_stream``, like the clock.
+        '''
+        self._format_device_id = None
+        self._format_previous_bits = None
+        if not _coreaudio.available():
+            return
+        device_id, _ = _coreaudio.find_device(settings.device_name)
+        if device_id is None:
+            return
+        current = _coreaudio.input_bit_depth(device_id)
+        if current is None or current >= 24:
+            return
+        if _coreaudio.set_input_bit_depth(device_id, 24):
+            self._format_device_id = device_id
+            self._format_previous_bits = current
+            print('note: %r capture format raised from %d-bit to 24-bit '
+                  'for this stream.' % (settings.device_name, current))
+
+    def _restore_hardware_format(self):
+        '''Put the capture bit depth back where the stream found it.'''
+        device_id = getattr(self, '_format_device_id', None)
+        previous = getattr(self, '_format_previous_bits', None)
+        self._format_device_id = None
+        self._format_previous_bits = None
+        if device_id is None or previous is None:
+            return
+        try:
+            _coreaudio.set_input_bit_depth(device_id, previous)
+        except Exception:
+            pass
+
+    def _pin_input_volume(self, settings):
+        '''Pin the device's input volume control at 0 dB (unity).
+
+        Many USB interfaces expose a class-compliant input volume that
+        macOS applies to every capture; on an ESI U24 XL it is a purely
+        DIGITAL -40..+12 dB gain (SNR measured identical at 0 and
+        +12 dB), so any non-zero setting silently rescales the data and
+        breaks the volts calibration that ``VmaxSC`` states. 0 dB is
+        unity on every device measured, which also makes this the right
+        setting for uncharacterised interfaces. The previous per-element
+        values are restored on ``end_stream``; a control that cannot be
+        pinned is loudly warned about, because the capture's scale is
+        then not what the settings claim.
+        '''
+        self._volume_device_id = None
+        self._volume_previous = None
+        if not _coreaudio.available():
+            return
+        device_id, _ = _coreaudio.find_device(settings.device_name)
+        if device_id is None:
+            return
+        volumes = _coreaudio.input_volume_db(device_id)
+        if not volumes or all(abs(v) <= 0.25 for v in volumes.values()):
+            return
+        stated = ', '.join('%+.1f' % v for v in volumes.values())
+        if _coreaudio.set_input_volume_db(device_id, 0.0):
+            self._volume_device_id = device_id
+            self._volume_previous = volumes
+            print('note: %r input volume was at %s dB; pinned to 0 dB so '
+                  'the capture scale matches the device full-scale '
+                  '(restored when the stream closes).'
+                  % (settings.device_name, stated))
+        else:
+            print('WARNING: %r input volume is at %s dB and could not be '
+                  'set to 0 dB — captured amplitudes are scaled by that '
+                  'much relative to the stated full scale.'
+                  % (settings.device_name, stated))
+
+    def _restore_input_volume(self):
+        '''Put the input volume control back where the stream found it.'''
+        device_id = getattr(self, '_volume_device_id', None)
+        previous = getattr(self, '_volume_previous', None)
+        self._volume_device_id = None
+        self._volume_previous = None
+        if device_id is None or not previous:
+            return
+        try:
+            for element, value in previous.items():
+                _coreaudio.set_input_volume_db(device_id, value,
+                                               elements=[element])
+        except Exception:
+            pass
+
     def end_stream(self):
         '''
         Stops and closes the audio stream, tolerating a stream that was
         never opened or is already dead (e.g. after a device
         disconnect) — matching the NI recorder's behaviour. Clears the
-        module-level ``REC`` reference, and restores any hardware clock
-        rate this recorder pinned.
+        module-level ``REC`` reference, and restores anything this
+        recorder pinned on the device: input volume, capture bit depth
+        and hardware clock rate, in that order.
         '''
         global REC
         REC = None
+        self._restore_input_volume()
+        self._restore_hardware_format()
         self._restore_hardware_clock()
         stream = getattr(self, 'audio_stream', None)
         if stream is None:
