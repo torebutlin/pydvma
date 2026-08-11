@@ -40,24 +40,66 @@ def check(name, ok, detail=''):
 
 
 def find_scarlett():
+    """Locate the characterised loopback interface, cross-platform.
+
+    macOS presents the 2i2 as ONE device (4 in / 2 out, model name
+    visible). Windows splits it into per-direction endpoints with
+    generic names ('Analogue 1 + 2 (Focusrite USB Audio)'), so
+    discovery goes through the `_soundcard_specs` profile resolution
+    (neighbour-aware since 2026-08-11) and input/output indices are
+    found separately. Returns ``(in_index, out_index)``.
+    """
     import sounddevice as sd
-    for i, d in enumerate(sd.query_devices()):
-        if 'Scarlett' in d['name'] and d['max_input_channels'] >= 4 \
-                and d['max_output_channels'] >= 2:
-            return i
-    raise SystemExit('No Scarlett with 4 in / 2 out found — is it plugged in?')
+    from pydvma import _soundcard_specs as specs
+    devices = sd.query_devices()
+    names = [d['name'] for d in devices]
+    in_index = out_index = None
+    for i, d in enumerate(devices):
+        profile = specs.device_profile(d['name'], neighbours=names)
+        if profile is None:
+            continue
+        if in_index is None and d['max_input_channels'] >= 4:
+            in_index = i
+        if out_index is None and d['max_output_channels'] >= 2 \
+                and specs.loopback_channels(d['name'],
+                                            d['max_input_channels'],
+                                            neighbours=names) == []:
+            out_index = i
+    if in_index is None:
+        raise SystemExit('No characterised interface with 4 inputs found '
+                         '— is the 2i2 plugged in?')
+    if out_index is None:
+        # macOS: the input device IS the output device.
+        if devices[in_index]['max_output_channels'] >= 2:
+            out_index = in_index
+        else:
+            raise SystemExit('No matching output endpoint found.')
+    return in_index, out_index
 
 
 def main():
-    dev = find_scarlett()
-    print('Scarlett at sounddevice index %d' % dev)
+    dev, out_dev = find_scarlett()
+    print('Interface at sounddevice index %d (output %d)' % (dev, out_dev))
 
     capture_s = (T_TRANS + P) * N / FS
     settings = dvma.MySettings(
         device_driver='soundcard', device_index=dev, channels=4,
         fs=FS, stored_time=capture_s + 0.1,
-        output_device_driver='soundcard', output_device_index=dev,
+        output_device_driver='soundcard', output_device_index=out_dev,
         output_channels=N_EXC, output_fs=FS)
+
+    # The silent rate path a BLA preflight cannot see (TODO 3a): a
+    # capture that lands off the device's real ladder would be
+    # resampled and could corrupt periodicity. 'exact' (macOS, on
+    # ladder) and 'unknown' (no ladder published — Windows) are both
+    # fine AT A NATIVE RATE; the BLA identity result below is the
+    # end-to-end proof either way.
+    from pydvma import streams
+    capture_fs, reason = streams.select_capture_fs(settings)
+    print('select_capture_fs: %g Hz (%r)' % (capture_fs, reason))
+    check("capture-rate reason is 'exact' or 'unknown' at a native rate",
+          reason in ('exact', 'unknown') and capture_fs == FS,
+          '%g Hz, %r' % (capture_fs, reason))
 
     base = dict(n_samples=N, k1=K1, k2=K2, p_periods=P, t_periods=T_TRANS,
                 seed=SEED, n_exc=N_EXC, amp_rms=AMP_RMS)

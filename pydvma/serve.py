@@ -565,6 +565,15 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
         devices = sd.query_devices()
     except Exception:
         return [], {}
+    # Full name list up front: profile matching may need to consult
+    # SIBLING endpoints (on Windows the model is only identifiable from
+    # the WDM-KS twin's name) — see _soundcard_specs.device_profile.
+    all_names: list[str] = []
+    for d in devices:
+        try:
+            all_names.append(d['name'])
+        except Exception:
+            all_names.append('')
     names: list[str] = []
     caps: dict[int, dict] = {}
     for i, d in enumerate(devices):
@@ -595,14 +604,17 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
             # reports four inputs but 3/4 are a digital tap of the
             # output mix, and recording those unknowingly gives you the
             # playback, not the structure.
-            'channel_roles': _soundcard_specs.channel_roles(name, max_in) or [],
+            'channel_roles': _soundcard_specs.channel_roles(
+                name, max_in, neighbours=all_names) or [],
             # Input modes and their maximum input level in dBu at minimum
             # gain. Together with a gain the operator states, these turn a
             # normalised reading into volts — the UI previews the result so a
             # mistyped gain is obvious before it scales a whole dataset.
             # Empty when the interface is not characterised.
-            'input_modes': _soundcard_specs.input_modes(name) or [],
-            'max_input_dbu': _soundcard_specs.max_input_dbu(name) or {},
+            'input_modes': _soundcard_specs.input_modes(
+                name, neighbours=all_names) or [],
+            'max_input_dbu': _soundcard_specs.max_input_dbu(
+                name, neighbours=all_names) or {},
             'ao': max_out > 0,
         }
     return names, caps

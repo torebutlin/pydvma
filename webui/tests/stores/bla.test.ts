@@ -309,7 +309,13 @@ test('an armed pretrigger is an advisory, not a failure', () => {
   expect(firstBlaError(checks)).toBe('');
 });
 
-test('commanded x is refused unless the caps prove a ROUTED AI sample clock', () => {
+test('commanded x is refused on EVERY path until start sync is proven', () => {
+  // A routed AI sample clock locks the RATE but not the START: the
+  // 2026-08-11 hardware run (dev/bridge_hw_check.py check G) measured a
+  // random per-capture AO start offset on the routed-clock 6212 — the BLA
+  // mean collapses by 1/sqrt(M). So even the once-admissible path is
+  // refused (BLA_COMMANDED_X_START_SYNC_PROVEN = false) until the
+  // acquisition path gains an AO/AI shared start trigger.
   const design = testDesign({
     outputs: [{ aoChannel: 0, enabled: true, xMode: 'commanded', xChannel: null }],
   });
@@ -326,24 +332,18 @@ test('commanded x is refused unless the caps prove a ROUTED AI sample clock', ()
   sw.devices.nidaq[0].product_type = 'USB-6003';
   sw.device_caps!['nidaq:0'].product_type = 'USB-6003';
   expect(bridged({ caps: sw })?.ok).toBe(false);
-  // cDAQ chassis: AI/AO ride the chassis timebase (phase-coherent) but the
-  // per-module AI sample clock is NOT routable as an AO source, so the drive
-  // is not sample-accurate — commanded x must be refused there too.
+  // cDAQ chassis: phase-coherent through the chassis timebase, never
+  // sample-accurate.
   expect(bridged({ caps: chassisCaps() })?.ok).toBe(false);
-  expect(bridged({ caps: chassisCaps() })?.reason).toMatch(/non-chassis/);
   // Unknown hardware (no product_type reported) cannot PROVE sync.
   const bare = niCaps();
   bare.devices.nidaq[0].product_type = '';
   delete bare.device_caps!['nidaq:0'].product_type;
   expect(bridged({ caps: bare })?.ok).toBe(false);
-  // Right hardware, but the AO runs on a different device.
-  expect(bridged({ caps: niCaps(), outputDeviceId: 'nidaq:1' })?.ok).toBe(false);
-  // Right hardware, but the AO rate is clamped away from fs.
-  expect(bridged({ caps: niCaps(), stagedOutputFs: 5000 })?.ok).toBe(false);
-  // Right hardware, but the capture is resampled by the digital low-pass.
-  expect(bridged({ caps: niCaps(), lpfOn: true })?.ok).toBe(false);
-  // M-series, same device, matched rate ⇒ allowed.
-  expect(bridged({ caps: niCaps() })).toBeUndefined();
+  // M-series, same device, matched rate — the formerly-allowed path — is
+  // now refused too, with the measured-drive guidance.
+  expect(bridged({ caps: niCaps() })?.ok).toBe(false);
+  expect(bridged({ caps: niCaps() })?.reason).toMatch(/Measure the drive/);
 });
 
 test('a mixed measured/commanded table is refused', () => {
@@ -651,37 +651,28 @@ test('a commanded run on the browser path is refused before any capture', async 
   const { bla, actions, enqueue, provider } = makeStore({ design, channelCount: 2 });
   await bla.start({ seed: 2 });
   expect(get(bla.state).phase).toBe('error');
-  expect(get(bla.state).error).toMatch(/sample-synced NI output/);
+  expect(get(bla.state).error).toMatch(/Commanded drive is disabled/);
   expect(provider.configs).toHaveLength(0);
   expect(enqueue).not.toHaveBeenCalled();
   expect(actions.blaCalls).toHaveLength(0);
 });
 
-test('a commanded run sends x_mode commanded, x_channels null, every input a response', async () => {
+test('a commanded run is refused even on the routed-clock bridge path', async () => {
+  // Before 2026-08-11 this test asserted the full commanded wire format
+  // (x_mode 'commanded', x_channels null, every input a response — see git
+  // history) — reinstate that when BLA_COMMANDED_X_START_SYNC_PROVEN can be
+  // flipped back. Until then the run must refuse before touching the device.
   const design = testDesign({
     outputs: [{ aoChannel: 0, enabled: true, xMode: 'commanded', xChannel: null }],
   });
-  const { bla, actions, enqueue } = await makeBridgeStore({ design, channelCount: 2 });
+  const { bla, actions, enqueue, provider } = await makeBridgeStore({ design, channelCount: 2 });
   await bla.start({ seed: 55 });
 
-  expect(get(bla.state).phase).toBe('done');
-  const [op, payload] = enqueue.mock.calls[0] as [string, Record<string, unknown>];
-  expect(op).toBe('calc_bla');
-  expect(payload.run_spec).toEqual({
-    multisine: {
-      n_samples: 480, k1: 10, k2: 50, p_periods: 2, t_periods: 1,
-      seed: 55, amp_rms: 0.05, n_exc: 1, M: 2,
-    },
-    x_mode: 'commanded',
-    // No measured drive, so nothing is subtracted: every captured channel is a
-    // response, and the engine regenerates X analytically from the seed.
-    x_channels: null,
-    resp_channels: [0, 1],
-    fs: FS,
-  });
-  const [, opts] = actions.blaCalls[0] as [unknown[], { names: string[]; channelLabels: string[] }];
-  expect(opts.names).toEqual(['run BLA q1 (commanded)']);
-  expect(opts.channelLabels).toEqual(['ch_0', 'ch_1']);
+  expect(get(bla.state).phase).toBe('error');
+  expect(get(bla.state).error).toMatch(/Commanded drive is disabled/);
+  expect(enqueue).not.toHaveBeenCalled();
+  expect(actions.blaCalls).toHaveLength(0);
+  expect(provider.configs).toHaveLength(0);            // no capture ever started
 });
 
 test('a preflight failure refuses the run without touching the device', async () => {
