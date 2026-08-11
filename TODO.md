@@ -103,15 +103,15 @@ is still open, as one consolidated list.
      7/7): alias rejection holds under `'lowest'` (FIR −113 dB at
      1500 Hz, 9234 hardware filter −107 dB at 5900 Hz), and the noise
      cost is only **+3.0 dB in-band PSD** (not the naive 9 dB — the
-     delta-sigma floor isn't flat) — awaiting Tore's call on the DSA
-     default; `'lowest'` looks right. Noted: a bridge lpf log delivers
-     the DSA-coerced target (2048) where the direct path delivers the
-     requested 2000 exactly — self-consistent each way, but the paths
-     differ. REMAINING from the checklist: the WASAPI question (does
-     `check_input_settings` lie on Windows too? shared-mode WASAPI
-     also resamples — MUST be measured, method in checklist §3,
-     including the generate-the-probe-at-hardware-rate trap; NB under
-     RDP the 2i2 has no WASAPI endpoint, needs a console session).
+     delta-sigma floor isn't flat). **Tore confirmed `'lowest'` as the
+     DSA default (2026-08-11)** — 3 dB is a small price for 8× less
+     capture/decimation work; override per-log with
+     `oversample='highest'` for an unusually quiet measurement. Noted:
+     a bridge lpf log delivers the DSA-coerced target (2048) where the
+     direct path delivers the requested 2000 exactly — self-consistent
+     each way, but the paths differ. The checklist's **WASAPI question
+     is unresolved and now needs a console session** — see the
+     dedicated brief below.
   2. **BLA on NI hardware** — extend `dev/bridge_hw_check.py` with a
      BLA check (BNC loopback ⇒ x = y ⇒ G ≈ 1 flat, σ_NL at the noise
      floor); verify commanded-x live on the 6212 (routed AI sample
@@ -130,6 +130,62 @@ is still open, as one consolidated list.
      (`streams.setup_output_NI_nidaqmx` ~1636) — the drive then plays
      at shifted frequencies. Check whether a 9260 can coerce at a BLA
      rate; if so route the warning into the bridge status channel.
+
+- **NEXT CONSOLE (non-RDP) SESSION — the soundcard/2i2 items that need
+  real audio.** Everything below is blocked over RDP: Windows Core
+  Audio shows **0 capture endpoints** for the 2i2 (it surfaces only via
+  WDM-KS), and RDP soundcard capture is digital silence
+  ([[rdp-hides-audio-endpoints]], [[rdp-audio-quirks]]). Sit at the PC,
+  start a fresh Claude session there, and confirm the 2i2 is a real
+  endpoint first (`sd.query_hostapis` shows a WASAPI Focusrite input;
+  the Core Audio capture-endpoint count is > 0) before starting. The
+  Rigol is wired to **input 1 with a 1 kHz 5 Vpp** signal and the 2i2
+  **ch1 gain is 9 dB** — a ready-made external known source.
+  1. **WASAPI-lie measurement (checklist §3, the unresolved one).**
+     Does shared-mode WASAPI resample-and-lie like CoreAudio? Two
+     steps: (i) `sd.check_input_settings(device=IDX, samplerate=r)` over
+     `(3000, 8000, 22050, 44100, 48000, 96000, 176400, 192000)` on the
+     WASAPI host-api device — if it accepts rates the hardware can't
+     run, WASAPI lies too; (ii) MEASURE whether it matters — request a
+     capture rate whose Nyquist sits **below** a real out-of-band tone
+     and look for that tone folded in-band. The Rigol makes this clean:
+     set it **above the requested Nyquist** (e.g. request fs=8000 ⇒
+     Nyquist 4000, set the Rigol to 7000 Hz; a bad resample folds it to
+     1000 Hz). **The trap:** never generate the probe inside the
+     low-rate stream — that aliases it before it reaches the device and
+     the test is meaningless (method + this exact mistake in checklist
+     §3 and `dev/scarlett_hw_check.py`). Record the answer in TODO
+     "Soundcard / Focusrite Scarlett follow-ups" and in
+     `dev/plans/2026-08-10-focusrite-scarlett-design.md` §6 (currently
+     says only "unmeasured"). If WASAPI lies, the fix is the WASAPI
+     twin of `pydvma/_coreaudio.py`: `IAudioClient.IsFormatSupported`
+     for the real ladder + exclusive mode to stop the resampler.
+  2. **Soundcard BLA reports `'exact'` (silent rate path 3a, above).**
+     A real 2i2 BLA run must report capture-rate reason `'exact'`. NB
+     `native_input_rates` returns `[]` off macOS today, so the 2i2 takes
+     the `'unknown'` path on Windows — establish what actually happens
+     before assuming the macOS ladder logic applies; if it can land
+     off-ladder, surface the capture-rate reason in the BLA preflight.
+  3. **2i2 calibrated-volts re-confirm (checklist §6) + input-scaling
+     verification tool.** The Rigol 1 kHz 5 Vpp on input 1 at 9 dB gain
+     is exactly the known source for confirming `input_gain_db` +
+     `input_mode` → `VmaxSC` (Mac agreed to 0.10 dB). This is also the
+     first real exercise of the input-scaling verification idea (Rigol
+     over SCPI/pyvisa if it's USB-connected, else the manual known-level
+     check) — a `dvma.verify_input_scaling(...)` helper, bridge-gated.
+  4. **`_soundcard_specs` profile match on Windows.** The 2i2 enumerates
+     as `Analogue 1 + 2 (wc4800_8219)` here — **no "Scarlett" in the
+     name** — so the `PROFILES` match (and the Setup loopback-channel
+     warning + calibrated volts that depend on it) may not fire on
+     Windows. Confirm the profile resolves; if it's name-based, widen
+     the match (productId 33305 / `8219` is a stable key).
+  5. **Windows sanity (checklist §5), pure-Python — can be done WITHOUT
+     the console, any session:** `pydvma/_coreaudio.py` imports with
+     `available() == False`; `MySettings(capture_fs=…, oversample=…,
+     input_gain_db=…, input_mode=…)` constructs on any driver;
+     `serve.build_capabilities()` returns a valid payload. Cheap — knock
+     these out anytime to shrink the console session's load.
+
 - **cDAQ commanded-x is refused, conservatively.** A cDAQ chassis'
   AO/AI share the chassis timebase (phase-coherent) but there is no
   routed AI sample clock to prove a zero start offset, so
