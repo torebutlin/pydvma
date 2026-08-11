@@ -123,6 +123,11 @@ is still open, as one consolidated list.
      (`streams.setup_output_NI_nidaqmx` ~1636) — the drive then plays
      at shifted frequencies. Check whether a 9260 can coerce at a BLA
      rate; if so route the warning into the bridge status channel.
+  4. **Verify `verify_input_scaling` live** — NI BNC loopback on all
+     three devices (6003, 6212, cDAQ-9174/9234); the Rigol DG1022Z
+     source variant; the 2i2 soundcard variant (loopback-consistency
+     warning + a real Rigol-driven analogue-input check). All that
+     hardware is at the PC now.
 - **cDAQ commanded-x is refused, conservatively.** A cDAQ chassis'
   AO/AI share the chassis timebase (phase-coherent) but there is no
   routed AI sample clock to prove a zero start offset, so
@@ -131,20 +136,33 @@ is still open, as one consolidated list.
   Lifting this needs shared-start-trigger work — this is the tracker
   for the general cDAQ AO/AI sync gap.
 - **Input-scaling verification tool ("calibration against a known
-  source")** — verify the whole input chain (gain knobs included) by
-  measuring a source of KNOWN level and comparing against the volts
-  pydvma predicts. Two source options: (a) an NI AO→AI physical
-  loopback — calibrated AO voltage exercises the full analogue input
-  path, so this works on NI devices with no extra kit (the webui could
-  even drive it today); (b) a Rigol DG1022Z (or similar) commanded
-  over SCPI/pyvisa as the known source for sound cards — required for
-  the 2i2 because its DIGITAL loopback copies the output stream
-  pre-preamp and cannot see the analogue input gain. Python-first
-  helper (e.g. `dvma.verify_input_scaling(...)`), webui exposure later
-  and bridge-gated (the browser cannot reach VISA/USB instruments; the
-  server can). Idea from the 3C6 lab's `check_setup` level meter
-  (divc_labs repo), which checks levels against a target band but
-  cannot verify absolute scaling without a known source.
+  source")** — the Python helper is **DONE**: `dvma.verify_input_scaling`
+  (`pydvma/verify.py`) plays/commands a known-RMS tone and compares the
+  measured volts against it, via a robust windowed-periodogram tone
+  estimator (immune to broadband noise / other tones); `source='loopback'`
+  plays the tone itself (absolute on NI's calibrated AO→AI path, chain-
+  consistency-only on a sound card — prints a warning, doesn't refuse);
+  `source=RigolDG1022Z(...)` commands an external SCPI generator instead
+  (`pydvma.verify.RigolDG1022Z`, pyvisa-based, VRMS unit mode) — the only
+  way to verify a sound card whose loopback is DIGITAL (e.g. the 2i2's
+  inputs 3/4, which copy the output stream pre-preamp and so can't see
+  the analogue input gain at all). Idea from the 3C6 lab's `check_setup`
+  level meter (divc_labs repo), which checks levels against a target
+  band but cannot verify absolute scaling without a known source.
+  Remaining, all webui/GUI follow-ups (YAGNI'd this round — no hardware
+  on the Mac to test them against):
+  (a) a Setup "Verify input scaling" button for the NI-loopback path
+  (the webui can already drive AO, so this needs no new bridge op —
+  just wiring the existing capabilities together in the UI);
+  (b) a bridge-gated Rigol variant — the browser cannot reach VISA/USB
+  instruments, so this needs a `pydvma-serve`-side op plus capability
+  gating (only offer it when the server process can import `pyvisa`
+  and finds a DG1xxx);
+  (c) **NEW** — a narrow-layout review pass of the web logger: the 3C6
+  lab's likely workflow is the web logger in a half-width right-hand
+  browser tab beside the notebook, so the recently-added surfaces (the
+  Nonlin card, the Setup additions, and this level-check button once
+  built) need checking at narrow viewport widths, not just full-screen.
 - **Device identity on the Python path** — the webui now re-resolves
   devices by NAME when PortAudio indices shift mid-session, but
   `MySettings(device_index=…)` in a notebook is still positional;

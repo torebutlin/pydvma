@@ -26,6 +26,7 @@ from .analysis import calculate_cwt, calculate_damping_from_cwt, calculate_dampi
 from .streams import Recorder, Recorder_NI, start_stream, REC, setup_output_NI, setup_output_soundcard, list_available_devices, get_devices_NI, get_devices_soundcard
 from ._ni_device_specs import suggest_ni_settings, get_device_info
 from .modal import modal_fit_single_channel, modal_fit_all_channels
+from .verify import verify_input_scaling, RigolDG1022Z
 # import faulthandler
 # faulthandler.enable()
 

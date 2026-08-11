@@ -109,6 +109,7 @@ _PUBLIC_SURFACE = [
     'setup_output_soundcard', 'list_available_devices', 'get_devices_NI',
     'get_devices_soundcard', 'suggest_ni_settings', 'get_device_info',
     'modal_fit_single_channel', 'modal_fit_all_channels', 'PlotData',
+    'verify_input_scaling', 'RigolDG1022Z',
 ]
 
 # Phrases the retired-Qt tombstone must contain (see pydvma/__init__.py
