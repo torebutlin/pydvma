@@ -298,28 +298,48 @@ export const BLA_FS_TOLERANCE_HZ = 0.5;
 export const BLA_BRIDGE_PEAK_MARGIN = 0.97;
 
 /**
- * Why the COMMANDED x-mode is refused when the path cannot prove sync — the
- * card shows this on the disabled "commanded drive" option, and
- * {@link preflightBla} reports the same sentence if a run asks for it anyway.
+ * Whether ANY capture path has been proven to start AO and AI with a fixed
+ * sample offset — the property commanded-x actually needs, over and above a
+ * shared/routed sample CLOCK.
+ *
+ * `false` since the 2026-08-11 hardware measurement (`dev/bridge_hw_check.py`
+ * check G, USB-6212 and cDAQ-9174): the AI stream runs continuously and each
+ * capture is a window of it, so the AO start lands on an arbitrary clock tick
+ * per capture even on the routed-clock 6212. The random per-capture phase
+ * collapses the commanded-x BLA mean by 1/√M (measured |G| ≈ 0.43 at M = 4
+ * through a physical loopback that measured-x resolves to 1 exactly) and
+ * inflates σ_NL to ~2.4·|G|. Flip this back only once the acquisition path
+ * gains an AO/AI shared start trigger AND a hardware run proves a fixed
+ * offset (same tracker as the cDAQ AO/AI sync gap in TODO.md).
+ */
+export const BLA_COMMANDED_X_START_SYNC_PROVEN = false;
+
+/**
+ * Why the COMMANDED x-mode is refused — the card shows this on the disabled
+ * "commanded drive" option, and {@link preflightBla} reports the same
+ * sentence if a run asks for it anyway.
  */
 export const BLA_COMMANDED_X_REASON =
-  'Commanded drive needs a sample-synced NI output — AO and AI on the same non-chassis NI '
-  + 'device, running at one rate with the AI sample clock routed to the AO. (A cDAQ chassis '
-  + 'is phase-coherent but not sample-accurate.) Measure the drive on an input channel instead.';
+  'Commanded drive is disabled: even with a routed AI sample clock the AO start lands on an '
+  + 'arbitrary tick of the free-running capture stream, so each capture carries a random phase '
+  + 'offset (hardware-measured 2026-08-11: the BLA mean collapses by 1/√M). '
+  + 'Measure the drive on an input channel instead.';
 
 /**
  * Whether the analysis may read the excitation from the COMMANDED drive
  * (regenerated from the seed) rather than from a measured input channel.
  *
- * True only when the capture path can be PROVEN SAMPLE-ACCURATE: a bridge NI
- * device whose AO steps on the routed AI sample clock
- * ({@link supportsRoutedAiClockAo} — which excludes cDAQ chassis, where AI/AO
- * are only phase-coherent), with no staged output-rate clamp and no digital
- * low-pass resampling. The commanded branch regenerates x with NO per-capture
- * start offset, so on any looser path the AO start jitter lands in the
- * realisation scatter and inflates σ²_NL. Measured-x has no such requirement
- * and works everywhere: x and y share the ADC clock, so the common phase
- * rotation cancels in the solve.
+ * Currently `false` on EVERY path — see
+ * {@link BLA_COMMANDED_X_START_SYNC_PROVEN}. The original design admitted a
+ * bridge NI device with the AI sample clock routed to the AO
+ * ({@link supportsRoutedAiClockAo}), but the routed clock only locks the
+ * RATE; the 2026-08-11 hardware run showed the AO START still lands on an
+ * arbitrary tick of the free-running capture stream, which is fatal for
+ * commanded-x (the regenerated x assumes a zero per-capture offset). The
+ * full condition is kept in place so proving start sync later reopens the
+ * gate without re-deriving the rest. Measured-x is unaffected and works
+ * everywhere: x and y share the ADC clock, so the common phase rotation
+ * cancels in the solve.
  *
  * @param input The preflight fields describing the capture path.
  * @returns Whether commanded-x is admissible.
@@ -328,7 +348,8 @@ export function commandedXSupported(
   input: Pick<BlaPreflightInput,
     'providerKind' | 'caps' | 'inputDeviceId' | 'outputDeviceId' | 'stagedOutputFs' | 'requestedFs' | 'lpfOn'>,
 ): boolean {
-  return input.providerKind === 'bridge'
+  return BLA_COMMANDED_X_START_SYNC_PROVEN
+    && input.providerKind === 'bridge'
     && supportsRoutedAiClockAo(input.caps, input.inputDeviceId, input.outputDeviceId)
     && !(input.stagedOutputFs != null
       && Math.abs(input.stagedOutputFs - input.requestedFs) > BLA_FS_TOLERANCE_HZ)

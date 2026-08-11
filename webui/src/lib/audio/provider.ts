@@ -407,11 +407,15 @@ export function outputDevices(caps: BridgeCaps | null): OutputDevice[] {
  * timebase — good enough for an ordinary stimulus, not good enough to treat
  * the commanded waveform as the measured input.
  *
- * The BLA ("Nonlin") stage gates its `commanded` x-mode on exactly this: the
- * analysis regenerates x from the seed with NO per-capture start offset, so
- * anything short of sample-accuracy leaks capture-start jitter into the
- * realisation scatter and inflates σ²_NL.  Measured-x is unaffected — it works
- * on every path, chassis included, because x and y share the ADC clock.
+ * The BLA ("Nonlin") stage's `commanded` x-mode needs this AND MORE: a routed
+ * clock locks the RATE, but the 2026-08-11 hardware run
+ * (`dev/bridge_hw_check.py` check G) showed the AO START still lands on an
+ * arbitrary tick of the free-running capture stream, so per-capture start
+ * jitter corrupts the commanded-x solve even on a routed-clock 6212.
+ * Commanded-x is therefore closed everywhere until an AO/AI shared START
+ * trigger is proven — see `BLA_COMMANDED_X_START_SYNC_PROVEN` in
+ * `stores/bla.ts`.  Measured-x is unaffected — it works on every path,
+ * chassis included, because x and y share the ADC clock.
  *
  * It answers `false` whenever the capability document cannot PROVE sync:
  *
