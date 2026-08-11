@@ -157,12 +157,7 @@ is still open, as one consolidated list.
   (b) a bridge-gated Rigol variant — the browser cannot reach VISA/USB
   instruments, so this needs a `pydvma-serve`-side op plus capability
   gating (only offer it when the server process can import `pyvisa`
-  and finds a DG1xxx);
-  (c) **NEW** — a narrow-layout review pass of the web logger: the 3C6
-  lab's likely workflow is the web logger in a half-width right-hand
-  browser tab beside the notebook, so the recently-added surfaces (the
-  Nonlin card, the Setup additions, and this level-check button once
-  built) need checking at narrow viewport widths, not just full-screen.
+  and finds a DG1xxx).
 - **Device identity on the Python path** — the webui now re-resolves
   devices by NAME when PortAudio indices shift mid-session, but
   `MySettings(device_index=…)` in a notebook is still positional;
