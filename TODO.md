@@ -6,69 +6,64 @@ package gained a real test suite, a vectorised analysis core, the
 verified), and — the headline — a complete **browser web logger**
 (`webui/` + `pydvma-serve`) that reached full parity with the old Qt
 GUI, which has now been **removed** (last Qt version: the `qt-final`
-git tag). The decision trail and per-round detail live in `dev/` (see
-`dev/plans/2026-07-07-full-gui-replacement-plan.md` and the
-`dev/2026-07-0x-round*-feedback.md` series) and in the git history;
-this file now tracks only what is still open.
+git tag). 2026-08 added Scarlett/soundcard capture-rate correctness and
+the Schoukens BLA **Nonlin** stage. The decision trail and per-round
+detail live in `dev/` and the git history; this file tracks only what
+is still open, as one consolidated list.
 
-## Current backlog — web logger follow-ups
+## Backlog — web logger & analysis
 
-- ~~**PC (NI hardware): verify the round-9 digital low-pass**~~ — DONE
-  (2026-07-10, this PC): bridge_hw_check 44/44 incl. check E on all
-  three devices; the multiplexed `max_input_fs` division verified live
-  (6003 2ch captures at 50 kHz = 100k aggregate / 2, exactly at the
-  device limit; 6212 at 200 kHz; 9234 keeps 51.2k) and is now
-  regression-guarded by `test_lpf_log_respects_per_channel_max_rate` +
-  an anti-alias proof test on the 6212. The UI eyeball is done too.
-  The day's testing ALSO surfaced and fixed four real bugs (AO
-  clock-sharing vs output_fs incl. lpf_on; resample_to_fs missing
-  exact ratios for coerced capture rates — 6003 logs landed at
-  8003.2 Hz instead of 8000; bridge.ts output defaults sending a DC
-  pulse for an untouched output group; soundcard stream leak on
-  rebuild) — see the 2026-07-10 commits.
-
-Flagged during the round-5/6 hands-on rounds (round-7, 2026-07-09,
-worked through Tore's first lab-testing feedback batch — see
-`dev/2026-07-09-round7-feedback.md` for the nine items + dispositions);
-pick up alongside further feedback:
-
-- **Round-7 leftovers (small):**
-    - ~~Legend default corner~~ — DONE in round 7b: defaults `se` now
-      (Tore's call).
-    - Sono `y lin|log` + `colour dB|lin` toggles stayed in the toolbar
-      bar for one-click access — fold into the popover if Tore still
-      finds the bar busy.
-    - LOCAL fit lines only exist right after a full Fit (the engine
-      returns empty local slices on recon/refine/mute recomputes — the
-      same lifetime the old pink overlay had). Return local slices from
-      those ops if the toggle should survive a mute.
-    - ~~Damping panel export~~ — DONE in round 7c: every chart saves as
-      its own PNG (same delivery + restyle contract as Save Figure);
-      the band table saves CSV.
-- ~~Exported figures never include the legend~~ — DONE in round 7d:
-  when the legend is toggled visible the export gains an equivalent SVG
-  legend at its on-screen position (off lines excluded; columns wrap
-  like the card; restyled by the same white/transparent/dark contract).
-  Coherence was verified to already follow its toggle; both are
-  e2e-guarded. Remaining by design: Nyquist's brush strip stays out of
-  the export (a navigation control, not part of the figure).
-
+- **Webui exposure of `use_output_as_ch0`** — verified working and
+  multi-channel-correct (prepends ALL commanded AO columns, cal factor
+  1.0; `pydvma/acquisition.py` ~423). Alignment is assumed-not-measured
+  (exact only on an NI shared clock), and there is no UI control for it
+  since the Qt removal.
+- **Setup controls for the new capture settings** — `capture_fs`,
+  `oversample`, `input_gain_db` and `input_mode` are all accepted over
+  the bridge wire (the `configure` whitelist is derived from the
+  `MySettings` signature) but Setup exposes none of them. The Setup
+  "full" panel is where they belong, next to the NI voltage rails.
+- **`calc_tf_averaged` indexes nested payloads directly**
+  (`webui/src/lib/worker/glue.py` ~195-213, `s['time_axis']` etc.) — by
+  the module's own JsProxy convention (documented in `calc_bla`'s own
+  docstring) this is a latent bug on the real browser path. Verify the
+  'across' ensemble TF path from a real browser session and switch it
+  to `_get()`.
+- **Multisine generation runs on the main thread** — an `O(N · lines)`
+  cosine sum per capture (the preflight peak guard and each real
+  capture in `webui/src/lib/stores/bla.ts` `start()`); at a fine Δf
+  (large N) this freezes the UI for seconds per capture. Consider
+  worker offload, or reusing the preflight-generated buffers instead of
+  regenerating them.
+- **Automated amplitude-level sweeps (BLA)** — V1 is manual re-runs at
+  each level; the overlay (separate sets in the TF view) already works.
+- **Odd multisines / detection lines** for even-vs-odd nonlinearity
+  discrimination — out of scope for BLA V1 (design doc, "Out of
+  scope").
+- **Coherence overlay ignores line fade state.** The σ_NL/σ_n overlay
+  applies `OPACITY[v.state]` (`webui/src/lib/plot/model.ts` ~830), but
+  the coherence line a little above it (~765) still hardcodes
+  `opacity: 0.7` regardless of the line's tri-state fade. Apply the
+  same multiplier there.
+- **Nonlin card's first impression on a 1-channel setup** blocks with
+  "no response channels" as soon as an excitation is enabled (its one
+  captured channel becomes the measured drive, leaving none for a
+  response). Consider nudging the channel count up automatically on
+  entering the stage.
+- **DSA first-run coercion (BLA)** — the coerced sample rate is only
+  known after a configure round-trip, so the first BLA run on a
+  coercing device (e.g. the 9234) can abort mid-design with "start the
+  run again" (`webui/src/lib/stores/bla.ts` `start()`). Consider
+  forcing an automatic configure round-trip in preflight so the first
+  run already knows the true rate.
+- **Outputs table caps at `MAX_OUTPUT_ROWS = 8`**
+  (`webui/src/components/cards/BlaCard.svelte` ~96) — fine for the
+  hardware in the lab today; revisit for a larger AO device.
 - **CSD phase** — the glue must return the complex `Pxy` so the CSD
   pair view can show phase (currently magnitude only).
 - **Browser pretrigger threshold control** — expose the trigger
   threshold in the browser Acquire UI (the bridge already has it;
   browser uses a fixed 0.05).
-- ~~**Log-y heat rendering for the CWT sonogram**~~ — DONE
-  (2026-07-09). The sono plot now has a toolbar **y — lin | log**
-  frequency-axis switch; the heat painter maps each pixel row through
-  the chosen scale to the nearest source bin (value→pixel, not
-  bin-index→pixel), so it renders both the STFT's uniform grid and the
-  CWT's non-uniform grid, and the CWT display now passes its **native
-  log grid** (`uniform_freq=False` in `calc_sono`) — no more display
-  resample, full low-frequency detail on log-y. Ships alongside a heat
-  **colour — dB | lin** toolbar switch (dB uses the dynamic-range span;
-  lin normalises 0→peak, disabling the dynamic-range box). Both persist
-  per-view in the `.dvma` UI state.
 - **CSD pair auto-enable on a hidden channel** — selecting a CSD pair
   should re-enable a channel that is currently hidden.
 - **Orphan-fit browser e2e** — Playwright cover for the round-6
@@ -82,17 +77,87 @@ pick up alongside further feedback:
   reverted because the `10·median/max` peak-detection heuristic
   misbehaves on narrow bands. Round-7 made the threshold a real
   user-controllable parameter (interactive panel), which removes the
-  heuristic-dependence blocker — the narrow-band memory optimisation
-  can be revisited on its own now.
+  heuristic-dependence blocker — revisit on its own now.
 - **Dark-mode contrast verdicts (Tore)** — deliberately shipped as-is
   and awaiting his call: the green Save Dataset button is white-on-
   green ≈2.7:1 and solid-indigo buttons ≈3.6:1 in dark. Bump if they
   bother him in use.
-- **View-state persistence**: `viewState.serialize()/restore()` exist
+- **View-state persistence** — `viewState.serialize()/restore()` exist
   (round-trip ranges, legend, navigator scope — vitest-covered) but
   nothing calls them in the app; wire into autosave/restore so axis
   ranges, legend placement and the navigator scope survive a reload.
-  Surfaced by the 2026-07-11 freq-navigator docs review.
+- **Round-7 leftovers (small):** sono `y lin|log` + `colour dB|lin`
+  toggles stayed in the toolbar for one-click access — fold into the
+  popover if Tore still finds the bar busy. LOCAL fit lines only exist
+  right after a full Fit (the engine returns empty local slices on
+  recon/refine/mute recomputes); return local slices from those ops if
+  the toggle should survive a mute.
+
+## Backlog — hardware, acquisition & the next PC session
+
+- **Next Windows/PC sitting — one umbrella, three briefs:**
+  1. **Run `dev/2026-08-10-windows-checklist.md`** — the NI regression
+     check (`bridge_hw_check.py` + full pytest; the capture-rate
+     decision was refactored), the 9234 oversample-strategy behaviour
+     change (now `'lowest'` like the 2i2 — verify alias rejection
+     still holds, then decide whether the ~10·log10(M) dB noise-floor
+     cost matters), and the WASAPI question (does
+     `check_input_settings` lie on Windows too? shared-mode WASAPI
+     also resamples — MUST be measured, method in checklist §3,
+     including the generate-the-probe-at-hardware-rate trap).
+  2. **BLA on NI hardware** — extend `dev/bridge_hw_check.py` with a
+     BLA check (BNC loopback ⇒ x = y ⇒ G ≈ 1 flat, σ_NL at the noise
+     floor); verify commanded-x live on the 6212 (routed AI sample
+     clock); run on all three devices (6003, 6212, cDAQ-9174/9234).
+  3. **Two silent rate paths the BLA preflight cannot see** — either
+     would corrupt a run without tripping a check:
+     (a) `streams.select_capture_fs` returns `'lowest-native'` for an
+     off-ladder soundcard rate and pydvma decimates in software — the
+     same periodicity-destroying resample the preflight refuses
+     `lpf_on` for, but with the low-pass OFF. Native-rate advertising
+     normally prevents it (⇒ `'exact'`), but a `--settings` prefill or
+     hand-typed rate can still land off-ladder — confirm a real
+     soundcard BLA run reports `'exact'`, else surface the
+     capture-rate reason in preflight.
+     (b) DSA AO ladder coercion is warned server-console-only
+     (`streams.setup_output_NI_nidaqmx` ~1636) — the drive then plays
+     at shifted frequencies. Check whether a 9260 can coerce at a BLA
+     rate; if so route the warning into the bridge status channel.
+- **cDAQ commanded-x is refused, conservatively.** A cDAQ chassis'
+  AO/AI share the chassis timebase (phase-coherent) but there is no
+  routed AI sample clock to prove a zero start offset, so
+  `supportsRoutedAiClockAo` (`webui/src/lib/audio/provider.ts`)
+  excludes chassis devices and BLA falls back to measured-x there.
+  Lifting this needs shared-start-trigger work — this is the tracker
+  for the general cDAQ AO/AI sync gap.
+- **Device identity on the Python path** — the webui now re-resolves
+  devices by NAME when PortAudio indices shift mid-session, but
+  `MySettings(device_index=…)` in a notebook is still positional;
+  consider accepting a device name there too. Same gap for the 2i2
+  loopback-channel warning (Setup shows it; the Python path has no
+  equivalent).
+- **`_soundcard_specs.PROFILES` has exactly one entry** (Scarlett 2i2
+  4th Gen) — add interfaces as they are characterised.
+- **IEPE auto-detect via bias-voltage probe** — enable 2 mA excitation
+  and read the DC bias before AC coupling to classify what is
+  connected (~24 V open / 8–14 V IEPE / ~0 V low-Z) so
+  `iepe_excit_current_A='auto'` can configure each 9234 channel.
+  Sensitivity still has to be entered manually.
+- **`streams.max_input_fs` still has no direct unit test** — the
+  `select_capture_fs` tests cover the adjacent logic but not this.
+- **Scarlett gain control is a dead end — do not re-investigate.** No
+  CoreAudio HAL properties on the input scope; Focusrite Control 2's
+  AES70/OCA server gates its object tree behind an authenticated
+  x25519 pairing agent needing a human in FC2; the USB interfaces are
+  exclusively owned by `usbaudiod`. `Mathieu2301/Focusrite-Control-API`
+  targets FC1 (3rd gen) and exposes Air/Inst/LED but not gain.
+- **Lab-testing period (Tore, days/weeks)** — real structures, real
+  measurements; expect feedback-driven fix rounds. Newest surfaces to
+  exercise: the Nonlin/BLA stage, Setup level check + gain-derived
+  volts, shared-pole fitting, Best-match / x(iω) scaling,
+  freq-navigator. `data/examples/` has the two real regression files;
+  `dev/bridge_hw_check.py` is the reusable headless NI harness to run
+  after any acquisition-path change.
 
 ## Old-logger (V2.9a) feature review list (round-7f survey)
 
@@ -118,248 +183,36 @@ considering, in rough priority:
    coefficients to isolate one mode's time-domain contribution.
 6. **RFP (rational-fraction-polynomial) fitting** — an alternative
    fitter family; useful cross-check for overlapping modes.
-7. **Auto-identify TF measurement type** (round-7f wish, not in the old
-   logger either — it used a hand-set `ipower` flag, as pydvma uses
-   the Fit card's TF type): infer disp/vel/acc from the fitted-phase
-   deviation (the new ⚠ flag's data) and suggest the type that
-   minimises it. Natural extension of the phase-significance flag.
+7. **Auto-identify TF measurement type** — infer disp/vel/acc from the
+   fitted-phase deviation (the ⚠ flag's data) and suggest the type
+   that minimises it. Natural extension of the phase-significance flag.
 
 Covered already: measurement-type exponent (Fit card's TF type =
 `ipower`), (iω)^p display transform, sweep logging, impulse cleaning
 (`hammerclean`), decay fits. Low value (research-specific): cepstrum
 sonogram, Signal Wizard export, bowed-string/musical-acoustics extras.
 
-## Soundcard / Focusrite Scarlett follow-ups (2026-08-10)
-
-The correctness fix is landed and hardware-verified on the Mac — see
-`dev/plans/2026-08-10-focusrite-scarlett-design.md` for the full
-investigation and measurements. A sound card runs a discrete rate
-ladder and `sd.check_input_settings` accepts every rate anyway, so
-pydvma now asks CoreAudio for the real ladder, pins the hardware clock,
-and captures at a runnable rate before decimating with its own filter.
-Open items:
-
-- **~~Output stimulus at a non-native fs~~ — DONE (2026-08-10).** The
-  device has ONE clock, so an output stream at a rate different from
-  the pinned capture took both streams down (PaMacCore -50, then
-  silence). `acquisition.log_data` now resamples the stimulus onto the
-  capture rate when input and output resolve to the same hardware
-  (`streams.output_shares_input_clock`), preserving the physical signal
-  so a sweep still sweeps what it was generated for. Separate devices
-  keep independent clocks and are left alone. Hardware-verified: a
-  200 Hz stimulus generated at an unrunnable 3 kHz returns at 200 Hz,
-  42 dB above the frequency it would land on if the resampling were
-  wrong.
-- **PC session: run `dev/2026-08-10-windows-checklist.md`.** The written
-  brief for the next Windows sitting, covering all three of: the NI
-  regression check (`bridge_hw_check.py` + full pytest, because the
-  capture-rate decision was refactored), the 9234 behaviour change
-  below, and the open WASAPI question. Do the regression check first.
-- **~~Device-specific oversampling default~~ — DONE (2026-08-10), needs
-  PC verification.** `streams.hardware_antialiases` states whether the
-  converter filters above its own Nyquist before sampling;
-  `streams.oversample_strategy` turns that into `'lowest'`/`'highest'`,
-  overridable via `MySettings(oversample=...)`. **This CHANGES the
-  9234**: delta-sigma, so it now takes `'lowest'` like the 2i2 rather
-  than capturing at the device max. Expect ~10·log10(M) dB less
-  broadband-noise process gain in exchange for far less data — verify
-  the alias rejection still holds, then decide whether the noise floor
-  matters more (checklist §2). USB-6003/6212 unchanged at `'highest'`,
-  which is mandatory as they have no anti-alias filter at all.
-- **Does `check_input_settings` lie on Windows too?** Shared-mode WASAPI
-  also resamples, so the same class of bug probably exists with a
-  different API for the fix (`IsFormatSupported` / exclusive mode).
-  MUST be measured before any claim — non-macOS behaviour is
-  deliberately unchanged for now. Method in checklist §3, including the
-  trap that sank two measurements first time round: generate the probe
-  tone at the HARDWARE rate, never inside the low-rate stream.
-- **~~Label the 2i2's loopback channels~~ — DONE (2026-08-10).**
-  `pydvma/_soundcard_specs.py` carries per-model channel roles, the
-  bridge publishes them as `device_caps[...].channel_roles`, and Setup
-  shows "channels 3+ are the device's digital loopback, not inputs" once
-  the channel count reaches one — verified in the built UI. Still open:
-  the Python (non-web) path has no equivalent warning, and
-  `_soundcard_specs.PROFILES` has exactly one entry, so add interfaces
-  as they are characterised.
-- **~~Calibrated volts for the Scarlett~~ — DONE (2026-08-10), one part
-  outstanding.** `MySettings(input_gain_db=..., input_mode='line'|
-  'inst'|'mic')` now derives `VmaxSC` from the device's published
-  max-input table: full-scale peak = `√2·0.7746·10^((L−G)/20)`, L =
-  22 dBu Line / 12 dBu Inst / 16 dBu Mic. **Confirmed on the real device
-  to 0.10 dB**: a 5.000 Vpp 215 Hz sine at a Focusrite-Control-reported
-  9 dB Line gain read 0.505072 FS peak (crest 1.4166, THD 0.13 %, no
-  clipping), giving 4.9498 V pk against a predicted 4.8932 — an implied
-  8.90 dB vs the 9 dB set. So both the published table AND the FC2 gain
-  readout are trustworthy, and no per-device calibration run is needed.
-  Gain is NOT readable in software (see below), so the operator states
-  it and it is recorded in the dataset. This DERIVES an existing setting
-  rather than adding a calibration layer — the chain stays raw ±1 →
-  ×VmaxSC → volts → ×cal_factor (= 1/sensitivity) → engineering units.
-  The **Setup level check** is now in too: it reads the live monitor's
-  per-channel peak/RMS, reports them in volts once a gain is stated, and
-  says which way to turn the knob (`webui/src/lib/model/levelCheck.ts` —
-  clip at 0.99 FS, hot at 0.95 matching pydvma's own capture-time check,
-  low below 0.01, silent distinguished from quiet). Verified live: it
-  reads "ch0 0.0004 V pk — very low, turn the input gain up". Also note
-  the front-panel
-  Output knob is analogue, so output voltage is only repeatable at a
-  marked position, and `output_VmaxSC` follows `VmaxSC` by default.
-- **No UI control for the new settings yet.** `capture_fs`,
-  `oversample`, `input_gain_db` and `input_mode` are all accepted over
-  the bridge wire (the `configure` whitelist is derived from the
-  `MySettings` signature) but Setup exposes none of them. The Setup
-  "full" panel is where they belong, next to the NI voltage rails.
-- **~~PortAudio device indices are NOT stable~~ — DONE (2026-08-11).**
-  A device index is a POSITION in an enumeration, not an identity, and
-  the list moved TWICE during one session here (a Scarlett at index 2,
-  then 1, then 2 again, as a phone mic came and went). The client now
-  sends `device_name` alongside the index in `configure`, and
-  `_Connection._reresolve_device_index` checks they still agree: same →
-  unchanged; the name is at a different index → use that index and
-  return a note the UI shows in Setup; the name is gone → refuse with
-  "no longer connected", because recording the wrong input under the
-  right name is the worst outcome. Duplicate names are left alone (the
-  index is then the only thing distinguishing them) and an enumeration
-  failure never blocks a capture. Verified against a live server driven
-  with a deliberately stale index. **Still open:** the Python (non-web)
-  path has the same exposure — `MySettings(device_index=…)` in a
-  notebook is equally positional — so consider accepting a device name
-  there too.
-- **Gain control is a dead end — do not re-investigate.** No CoreAudio
-  HAL properties exist on the input scope; Focusrite Control 2's
-  AES70/OCA server gates its object tree behind an authenticated x25519
-  pairing agent needing a human to approve in FC2; the USB interfaces
-  are exclusively owned by `usbaudiod`, so the Linux vendor-protocol
-  route would need a DriverKit extension. Also checked:
-  `Mathieu2301/Focusrite-Control-API` targets Focusrite Control **1**
-  (3rd gen, XML `<set devid=…>` over a discovered port) and exposes
-  Air/Inst/LED colour but **not gain** — it does not apply to FC2.
-- **`streams.max_input_fs` still has no direct unit test** —
-  pre-existing gap; the new `select_capture_fs` tests cover the
-  adjacent logic but not this.
-
-## BLA / noise–nonlinearity separation — follow-ups (2026-08-10)
-
-The Schoukens random-phase-multisine BLA feature (web logger **Nonlin**
-stage; design `dev/plans/2026-08-10-schoukens-bla-design.md`; user docs
-`docs/web-logger/nonlin.md`) is code-complete. Open items from the
-implementation:
-
-- **Webui exposure of `use_output_as_ch0`** — verified working and
-  multi-channel-correct (prepends ALL commanded AO columns, cal factor
-  1.0; `pydvma/acquisition.py` ~423). Alignment is
-  assumed-not-measured (exact only on an NI shared clock), and there is
-  no UI control for it since the Qt removal.
-- **`calc_tf_averaged` indexes nested payloads directly**
-  (`webui/src/lib/worker/glue.py` ~195-213, `s['time_axis']` etc.) — by
-  the module's own JsProxy convention (documented in `calc_bla`'s own
-  docstring, ~1041) this is a latent bug on the real browser path.
-  Verify the 'across' ensemble TF path from a real browser session and
-  switch it to `_get()`.
-- **Multisine generation runs on the main thread** — an
-  `O(N · lines)` cosine sum per capture (the preflight peak guard and
-  each real capture in `webui/src/lib/stores/bla.ts` `start()`); at a
-  fine Δf (large N) this freezes the UI for seconds per capture.
-  Consider worker offload, or reusing the preflight-generated buffers
-  instead of regenerating them.
-- **Automated amplitude-level sweeps** — V1 is manual re-runs at each
-  level; the overlay (separate sets in the TF view) already works.
-- **Odd multisines / detection lines** for even-vs-odd nonlinearity
-  discrimination — out of scope for V1 (design doc, "Out of scope").
-- **Windows-PC hardware verification** — extend `dev/bridge_hw_check.py`
-  with a BLA check (BNC loopback ⇒ x = y ⇒ G ≈ 1 flat, σ_NL at the
-  noise floor); verify commanded-x live on the 6212 (routed AI sample
-  clock); run on all three NI devices (6003, 6212, cDAQ-9174/9234).
-- **Two silent rate paths the BLA preflight cannot see** — both need
-  confirming in that same PC/soundcard pass, since either would corrupt
-  a run without tripping a single check:
-  - **Soundcard capture resampling without `lpf_on`.**
-    `streams.select_capture_fs` (`pydvma/streams.py` ~311) returns
-    `'lowest-native'` whenever the requested `fs` is not a native rate:
-    the converter runs faster and pydvma DECIMATES IN SOFTWARE. That is
-    the same periodicity-destroying resample the BLA preflight refuses
-    `lpf_on` for, but it happens with the low-pass OFF, so the `lpf`
-    check never fires. The recent advertise-only-native-rates work
-    means the UI ladder normally offers native rates only (⇒ `'exact'`,
-    no resampling) — a mitigation, not an enforcement: a `--settings`
-    prefill or a hand-typed rate can still land off-ladder. Confirm a
-    real soundcard BLA run reports `'exact'`; if it can't be
-    guaranteed, the preflight needs the capture-rate reason surfaced
-    (the server knows it) rather than inferring from `lpf_on`.
-  - **AO ladder coercion is warned server-console-side only.**
-    `streams.setup_output_NI_nidaqmx` (~1636) prints a WARNING when a
-    DSA AO module coerces `output_fs` off-ladder — the drive then plays
-    at the wrong frequencies (the excited bins move off the analysed
-    ones) and the webui never sees the message. Check whether a 9260
-    can be driven to coerce at a BLA rate, and if so route the warning
-    into the bridge's status channel.
-- **cDAQ commanded-x is refused, conservatively.** A cDAQ chassis'
-  AO/AI share the chassis timebase (phase-coherent) but there is no
-  routed AI sample clock to prove a zero start offset (sample-accurate),
-  so `supportsRoutedAiClockAo` (`webui/src/lib/audio/provider.ts`)
-  excludes chassis devices and BLA always falls back to measured-x
-  there. Lifting this needs the shared-start-trigger work — no existing
-  TODO item tracks the general cDAQ AO/AI sync gap, so this is that
-  tracker.
-- **Coherence overlay ignores line fade state.** The σ_NL/σ_n overlay
-  applies `OPACITY[v.state]` (`webui/src/lib/plot/model.ts` ~830), but
-  the coherence line a little above it (~765) still hardcodes
-  `opacity: 0.7` regardless of the line's tri-state fade. Apply the
-  same multiplier there.
-- **Outputs table caps at `MAX_OUTPUT_ROWS = 8`**
-  (`webui/src/components/cards/BlaCard.svelte` ~96) — fine for the
-  hardware in the lab today; revisit for a larger AO device.
-- **Nonlin card's first impression on a 1-channel setup** blocks with
-  "no response channels" as soon as an excitation is enabled (its one
-  captured channel becomes the measured drive, leaving none for a
-  response). Consider nudging the channel count up automatically on
-  entering the stage.
-- **DSA first-run coercion** — the coerced sample rate is only known
-  after a configure round-trip, so the first BLA run on a coercing
-  device (e.g. the 9234) can abort mid-design with "start the run
-  again" (`webui/src/lib/stores/bla.ts` `start()`). Consider forcing an
-  automatic configure round-trip in preflight so the first run already
-  knows the true rate.
-
-## Current backlog — hands-on & hardware
-
-- **Lab-testing period (Tore, days/weeks)** — real structures, real
-  measurements; expect feedback-driven fix rounds, not feature waves.
-  Newest surface to exercise: shared-pole fitting, Best-match / x(iω)
-  scaling group, `/config` prefill, sonogram single-targeting, brush
-  v2, dark mode. `data/examples/` has the two real regression files
-  (see its README); `dev/bridge_hw_check.py` is the reusable headless
-  NI harness to run after any acquisition-path change.
-- **IEPE auto-detect via bias-voltage probe** — enable 2 mA
-  excitation and read the DC bias before AC coupling to classify what
-  is connected (~24 V open / 8–14 V IEPE sensor / ~0 V low-Z) so
-  `iepe_excit_current_A='auto'` can configure each 9234 channel.
-  Sensitivity still has to be entered manually.
-
 ## Release & sustainability admin (Tore's threads)
 
-v2.0.0 is SHIPPED (PyPI + `v2.0.0` tag + GitHub release with
-artifacts, 2026-07-08). Remaining admin, no deadlines:
+v2.0.0 shipped 2026-07-08 (PyPI + tag + GitHub release); v2.1.0 is in
+flight (see CHANGELOG.md). Remaining admin, no deadlines:
 
 - **Zenodo DOI** — enable the GitHub–Zenodo integration (archives
-  future releases automatically) or manually upload the v2.0.0 sdist
-  to mint a DOI for this release; then fill the commented `doi:` slot
-  in `CITATION.cff` and update the "DOI on the way" note on
-  `docs/about/support.md`.
+  future releases automatically) or manually upload an sdist to mint a
+  DOI; then fill the commented `doi:` slot in `CITATION.cff` and update
+  the "DOI on the way" note on `docs/about/support.md`.
 - **Cambridge Enterprise conversation** — required before any payment
   route for the institutional-supporter tier; until then the support
   page's contact-email route stands. When a route exists, add it to
   the support page (and optionally `.github/FUNDING.yml`, which today
   only links the Sponsor button to that page — no payment links).
 - **JOSS paper** — Tore is authoring it personally; the draft +
-  submission checklist moved OUT of the repo to
-  `~/Library/CloudStorage/OneDrive-UniversityofCambridge/Work
-  Research - onedrive/Work Research/Projects/2026_pydvma_paper/paper`
-  (ORCID already applied). Outstanding: Zenodo DOI, word-count check,
-  submit at joss.theoj.org.
-- **Release artifacts note** — `dist/` (gitignored) holds the two
-  2.0.0 artifacts; pre-2.0 local builds were moved to a temporary
-  scratchpad and are recoverable from PyPI if ever needed.
+  submission checklist live in his OneDrive
+  (`…/Projects/2026_pydvma_paper/paper`; ORCID already applied).
+  Outstanding: Zenodo DOI, word-count check, submit at joss.theoj.org.
+- **Release artifacts note** — `dist/` (gitignored) holds local build
+  artifacts; pre-2.0 builds were moved to a scratchpad and are
+  recoverable from PyPI if ever needed.
 
 ## Housekeeping (smaller open items)
 
@@ -386,8 +239,8 @@ artifacts, 2026-07-08). Remaining admin, no deadlines:
   flags + handles, instead of the scattered try/except in `streams.py`
   / `options.py`.
 - **Better output-signal control** — offset, ramp, and save/reload of
-  signal definitions (the web logger already covers type / amplitude /
-  band / sweep).
+  signal definitions (the web logger covers type / amplitude / band /
+  sweep; the BLA multisine spec is save/reload-able via `.bla` meta).
 - **Repo-root cleanup** — the six tracked docs-about-docs files
   (`DOCS_SETUP_SUMMARY.md`, `MKDOCSTRINGS_INTEGRATION.md`,
   `DOCUMENTATION.md`, `README_DOCS.md`, `.mkdocs_quickref.md`,
@@ -414,10 +267,6 @@ artifacts, 2026-07-08). Remaining admin, no deadlines:
   change.
 - **ML plugin as a separate repo** — keep the core dependency-light;
   the natural open-core seam.
-- **Sustainability** — decided 2026-07-03 (tool stays fully free and
-  ungated) and EXECUTED 2026-07-08: CITATION.cff, the support page,
-  FUNDING.yml link, JOSS draft. What remains is admin — see "Release
-  & sustainability admin" above.
 
 ## Parked (other repo)
 
@@ -427,9 +276,8 @@ artifacts, 2026-07-08). Remaining admin, no deadlines:
 
 ---
 
-Everything checked off across the June–July 2026 work — the analysis
-speedups, the June bug-fix batch (20 items), the `nidaqmx` migration
-and hardware verification, the whole web-logger build (rounds 1–6), the
-`.dvma` format, the packaging split, the docs site, and the Qt removal
-— is recorded in the git history and in `dev/`. This file deliberately
-no longer duplicates it.
+Everything checked off across the June–August 2026 work — the analysis
+speedups, the `nidaqmx` migration, the whole web-logger build, the
+`.dvma` format, the Qt removal, the Scarlett capture-rate arc, and the
+Schoukens BLA arc — is recorded in the git history and in `dev/`. This
+file deliberately no longer duplicates it.
