@@ -104,6 +104,18 @@ planet 22c practicalities (plain-language, discussed with Tore
   vendor-promised for this box — a two-box cross-spectrum bench is
   the decision gate before any 3C6-scale commitment, alongside a
   noise-floor/absolute-scale session like the U24 XL's.
+- **Two deployment shapes, same hardware** (clarified with Tore
+  2026-08-11): *Shape A, six independent stations* — one box per PC,
+  DIRECT Ethernet cable (no switch anywhere), 12 V supply or £12
+  injector; rigs fully isolated, each PC sees its own 2-ch device.
+  *Shape B, pooled multichannel* — several boxes + ONE PC on one PoE
+  switch when a single measurement needs >2 coherent channels. The
+  same six station boxes can be pooled into a 12-ch coherent rig for
+  the price of one switch — six U24 XLs can never do that. Cost
+  honesty: DVS is licensed per PC, so Shape A costs ~£200/station
+  (£159 + ~£40 licence) vs the U24 XL's £63 all-in; the premium buys
+  balanced inputs, two documented ranges, the better converter path,
+  and the pooling option.
 - PCIe options (Juli@ eX, MAYA44 eX) dropped from consideration —
   the point is escaping the old NI PCI estate, not adding new
   internal cards (Tore, 2026-08-11).
