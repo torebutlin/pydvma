@@ -2,11 +2,33 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-10: **the Schoukens BLA noise/nonlinearity-separation
-feature is COMPLETE on branch `worktree-schoukens-bla`** (worktree
-`.claude/worktrees/schoukens-bla`, ~25 commits, NOT merged — master was
-mid-use by a concurrent session; merge is one fast-forward-able command
-when convenient). Design + plan: `dev/plans/2026-08-10-schoukens-bla-*`.
+As of 2026-08-11 (evening): **v2.2.0 is RELEASED end-to-end** — PyPI
+(2.0.0 → 2.2.0; 2.1.0 was tagged+GH-released but deliberately never
+uploaded: its embedded UI still offered the since-refuted BLA
+commanded-x), GitHub release, Zenodo auto-archive (concept DOI
+10.5281/zenodo.21888383 in CITATION.cff; the GitHub–Zenodo toggle is ON
+so every release self-archives), and Pages app+docs current. The BLA
+branch AND the PC hardware round (`pc-bench-2026-08-11`) are both
+merged: BLA verified live on NI (measured-x exact incl. at coerced
+rates; **commanded-x REFUTED — AO start offset random per capture even
+on a routed-clock 6212 — gate closed everywhere**), 9234 oversample
+'lowest' confirmed (+3.0 dB), WASAPI answered (refuses wrong rates —
+no Windows _coreaudio twin needed), 2i2 Windows profile fixed BUT its
+render path is dead at the driver level (FC2/driver reinstall pending —
+blocks the Windows loopback BLA check). Also landed:
+`verify_input_scaling` + `RigolDG1022Z` (pydvma/verify.py; live
+hardware run still pending — Rigol has no USB cable), the
+audio-as-DAQ device survey with agreed lineup
+(`dev/2026-08-11-audio-daq-device-survey.md`: ESI U24 XL → 2i2 → XR18),
+and TODO.md consolidated into one list. JOSS is now unblocked (DOI
+exists; paper is Tore's, in his OneDrive). Suites: pytest 594/3,
+vitest 802/1, check 0/0, Playwright 87/9 + BRIDGE_E2E 96/96, mkdocs
+--strict green.
+
+Earlier (2026-08-10): the Schoukens BLA noise/nonlinearity-separation
+feature was built COMPLETE on branch `worktree-schoukens-bla` (~25
+commits; since merged, see above).
+Design + plan: `dev/plans/2026-08-10-schoukens-bla-*`.
 What shipped: a **Nonlin stage** (design→run→results card) that runs
 M realisations × n_exc orthogonal experiments × P periods of seeded
 random-phase multisine (defined in SAMPLES — coercion-proof; equal-A
