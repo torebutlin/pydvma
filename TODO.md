@@ -197,10 +197,11 @@ sonogram, Signal Wizard export, bowed-string/musical-acoustics extras.
 v2.0.0 shipped 2026-07-08 (PyPI + tag + GitHub release); v2.1.0 is in
 flight (see CHANGELOG.md). Remaining admin, no deadlines:
 
-- **Zenodo DOI** — enable the GitHub–Zenodo integration (archives
-  future releases automatically) or manually upload an sdist to mint a
-  DOI; then fill the commented `doi:` slot in `CITATION.cff` and update
-  the "DOI on the way" note on `docs/about/support.md`.
+- ~~**Zenodo DOI**~~ — DONE (2026-08-11): the GitHub–Zenodo integration
+  is enabled (future releases archive automatically), v2.1.0 is
+  archived, and the concept DOI **10.5281/zenodo.21888383** is in
+  `CITATION.cff`, `.zenodo.json` metadata, and the support page. This
+  unblocks the JOSS submission.
 - **Cambridge Enterprise conversation** — required before any payment
   route for the institutional-supporter tier; until then the support
   page's contact-email route stands. When a route exists, add it to

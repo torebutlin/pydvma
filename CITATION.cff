@@ -2,10 +2,9 @@
 # button and lets citation managers (Zotero, etc.) import the software
 # citation. It is validated against the Citation File Format v1.2.0.
 #
-# TODO (Tore, before release):
-#   * Once the tagged release is archived on Zenodo, add the DOI here as
-#     a top-level `doi:` field and to `identifiers:` (see the commented
-#     block at the end). The Zenodo DOI is the canonical citable target.
+# The `doi:` below is the Zenodo CONCEPT DOI (resolves to the latest
+# archived version); each release also gets its own version DOI via the
+# GitHub–Zenodo integration (v2.1.0: 10.5281/zenodo.21888384).
 cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata from this file."
 title: "pydvma: a Python package for dynamics and vibration measurement and analysis"
@@ -27,10 +26,11 @@ keywords:
   - modal analysis
   - data acquisition
   - teaching
-# Once a release DOI exists (via Zenodo), record it here and citation
-# managers will prefer it:
-# doi: 10.5281/zenodo.XXXXXXX
-# identifiers:
-#   - type: doi
-#     value: 10.5281/zenodo.XXXXXXX
-#     description: "The concept DOI for all versions (Zenodo)."
+doi: 10.5281/zenodo.21888383
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.21888383
+    description: "The concept DOI for all versions (Zenodo)."
+  - type: doi
+    value: 10.5281/zenodo.21888384
+    description: "The version DOI for v2.1.0 (Zenodo)."

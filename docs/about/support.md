@@ -31,9 +31,10 @@ recognition that keeps it funded and maintained.
       author    = {Butlin, Tore},
       title     = {{pydvma: a Python package for dynamics and
                    vibration measurement and analysis}},
-      version   = {2.0.0},
+      version   = {2.1.0},
       year      = {2026},
       publisher = {University of Cambridge, Department of Engineering},
+      doi       = {10.5281/zenodo.21888383},
       url       = {https://github.com/torebutlin/pydvma}
     }
     ```
@@ -43,11 +44,12 @@ The repository also carries a
 file, so GitHub's **"Cite this repository"** button and most reference
 managers (Zotero, etc.) can import the citation for you.
 
-!!! note "A DOI is on the way"
-    Once a tagged release is archived on
-    [Zenodo](https://zenodo.org/), pydvma will have a permanent DOI.
-    A DOI is the most robust thing to cite, so prefer it once it
-    appears here.
+!!! note "Permanent DOI"
+    Releases are archived on [Zenodo](https://doi.org/10.5281/zenodo.21888383).
+    The concept DOI **10.5281/zenodo.21888383** always resolves to the
+    latest version and is the most robust thing to cite; each release
+    also carries its own version DOI (v2.1.0:
+    [10.5281/zenodo.21888384](https://doi.org/10.5281/zenodo.21888384)).
 
 ## 2. Institutional support
 
