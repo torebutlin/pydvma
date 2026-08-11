@@ -16,8 +16,11 @@ is still open, as one consolidated list.
 - **Webui exposure of `use_output_as_ch0`** — verified working and
   multi-channel-correct (prepends ALL commanded AO columns, cal factor
   1.0; `pydvma/acquisition.py` ~423). Alignment is assumed-not-measured
-  (exact only on an NI shared clock), and there is no UI control for it
-  since the Qt removal.
+  — and NB the 2026-08-11 commanded-x measurement (the "NI commanded-x
+  start-sync gap" tracker below) showed the AO-vs-capture offset is
+  RANDOM per capture even on a routed-clock 6212, so the prepended
+  column's time alignment is decorative on every current path; any UI
+  exposure should say so. No UI control for it since the Qt removal.
 - **Setup controls for the new capture settings** — `capture_fs`,
   `oversample`, `input_gain_db` and `input_mode` are all accepted over
   the bridge wire (the `configure` whitelist is derived from the
@@ -112,87 +115,92 @@ is still open, as one consolidated list.
      each way, but the paths differ. The checklist's **WASAPI question
      is unresolved and now needs a console session** — see the
      dedicated brief below.
-  2. **BLA on NI hardware** — extend `dev/bridge_hw_check.py` with a
-     BLA check (BNC loopback ⇒ x = y ⇒ G ≈ 1 flat, σ_NL at the noise
-     floor); verify commanded-x live on the 6212 (routed AI sample
-     clock); run on all three devices (6003, 6212, cDAQ-9174/9234).
-  3. **Two silent rate paths the BLA preflight cannot see** — either
-     would corrupt a run without tripping a check:
-     (a) `streams.select_capture_fs` returns `'lowest-native'` for an
-     off-ladder soundcard rate and pydvma decimates in software — the
-     same periodicity-destroying resample the preflight refuses
-     `lpf_on` for, but with the low-pass OFF. Native-rate advertising
-     normally prevents it (⇒ `'exact'`), but a `--settings` prefill or
-     hand-typed rate can still land off-ladder — confirm a real
-     soundcard BLA run reports `'exact'`, else surface the
-     capture-rate reason in preflight.
-     (b) DSA AO ladder coercion is warned server-console-only
-     (`streams.setup_output_NI_nidaqmx` ~1636) — the drive then plays
-     at shifted frequencies. Check whether a 9260 can coerce at a BLA
-     rate; if so route the warning into the bridge status channel.
+  2. ~~**BLA on NI hardware**~~ — DONE (2026-08-11, console session):
+     `bridge_hw_check.py` gained checks F/G/H, **58/58** live on the
+     cDAQ-9174 + USB-6212. Measured-x BLA through the bridge is exact
+     (G ≡ 1 to 1.1e-16, σ_NL = 0 on the x channel, at a native rate
+     AND at the DSA-coerced 8533.33 — the samples-based spec is
+     coercion-proof; 9234's second channel at the noise floor).
+     **Commanded-x was REFUTED, not verified** — see the "NI
+     commanded-x start-sync gap" tracker below; the webui gate is now
+     closed everywhere. Optional harness upgrade: wiring 9260 ao1 →
+     9234 ai2 would let check F auto-run a true 2-excitation MISO on
+     analogue NI hardware (today's MISO evidence is the 2i2 digital
+     loopback only).
+  3. ~~**Two silent rate paths**~~ — both answered (2026-08-11):
+     (a) On Windows a real 2i2 run reports `'unknown'` (no ladder
+     published off macOS) at the 48 kHz mix rate — and the measured
+     Windows resampler behaviour (design doc §6) makes even a
+     genuinely off-ladder request safe there; `bla_soundcard_check.py`
+     now prints/checks the `select_capture_fs` reason. macOS keeps
+     `'exact'` via native-rate advertising. No preflight change
+     needed on this evidence.
+     (b) The 9260 coerces AO onto exactly the 9234's own 51200/n
+     ladder (8000 → 8533.33; exact at 8533.33 — `bridge_hw_check`
+     check H pins it), so a BLA run at the AI-coerced rate keeps
+     output_fs == fs physically. STILL OPEN in the general case: an
+     ordinary stimulus log at a coercing fs plays the drive at
+     shifted frequencies with only a server-console warning — routing
+     that into the bridge status channel remains worth doing.
 
-- **NEXT CONSOLE (non-RDP) SESSION — the soundcard/2i2 items that need
-  real audio.** Everything below is blocked over RDP: Windows Core
-  Audio shows **0 capture endpoints** for the 2i2 (it surfaces only via
-  WDM-KS), and RDP soundcard capture is digital silence
-  ([[rdp-hides-audio-endpoints]], [[rdp-audio-quirks]]). Sit at the PC,
-  start a fresh Claude session there, and confirm the 2i2 is a real
-  endpoint first (`sd.query_hostapis` shows a WASAPI Focusrite input;
-  the Core Audio capture-endpoint count is > 0) before starting. The
-  Rigol is wired to **input 1 with a 1 kHz 5 Vpp** signal and the 2i2
-  **ch1 gain is 9 dB** — a ready-made external known source.
-  1. **WASAPI-lie measurement (checklist §3, the unresolved one).**
-     Does shared-mode WASAPI resample-and-lie like CoreAudio? Two
-     steps: (i) `sd.check_input_settings(device=IDX, samplerate=r)` over
-     `(3000, 8000, 22050, 44100, 48000, 96000, 176400, 192000)` on the
-     WASAPI host-api device — if it accepts rates the hardware can't
-     run, WASAPI lies too; (ii) MEASURE whether it matters — request a
-     capture rate whose Nyquist sits **below** a real out-of-band tone
-     and look for that tone folded in-band. The Rigol makes this clean:
-     set it **above the requested Nyquist** (e.g. request fs=8000 ⇒
-     Nyquist 4000, set the Rigol to 7000 Hz; a bad resample folds it to
-     1000 Hz). **The trap:** never generate the probe inside the
-     low-rate stream — that aliases it before it reaches the device and
-     the test is meaningless (method + this exact mistake in checklist
-     §3 and `dev/scarlett_hw_check.py`). Record the answer in TODO
-     "Soundcard / Focusrite Scarlett follow-ups" and in
-     `dev/plans/2026-08-10-focusrite-scarlett-design.md` §6 (currently
-     says only "unmeasured"). If WASAPI lies, the fix is the WASAPI
-     twin of `pydvma/_coreaudio.py`: `IAudioClient.IsFormatSupported`
-     for the real ladder + exclusive mode to stop the resampler.
-  2. **Soundcard BLA reports `'exact'` (silent rate path 3a, above).**
-     A real 2i2 BLA run must report capture-rate reason `'exact'`. NB
-     `native_input_rates` returns `[]` off macOS today, so the 2i2 takes
-     the `'unknown'` path on Windows — establish what actually happens
-     before assuming the macOS ladder logic applies; if it can land
-     off-ladder, surface the capture-rate reason in the BLA preflight.
-  3. **2i2 calibrated-volts re-confirm (checklist §6) + input-scaling
-     verification tool.** The Rigol 1 kHz 5 Vpp on input 1 at 9 dB gain
-     is exactly the known source for confirming `input_gain_db` +
-     `input_mode` → `VmaxSC` (Mac agreed to 0.10 dB). This is also the
-     first real exercise of the input-scaling verification idea (Rigol
-     over SCPI/pyvisa if it's USB-connected, else the manual known-level
-     check) — a `dvma.verify_input_scaling(...)` helper, bridge-gated.
-  4. **`_soundcard_specs` profile match on Windows.** The 2i2 enumerates
-     as `Analogue 1 + 2 (wc4800_8219)` here — **no "Scarlett" in the
-     name** — so the `PROFILES` match (and the Setup loopback-channel
-     warning + calibrated volts that depend on it) may not fire on
-     Windows. Confirm the profile resolves; if it's name-based, widen
-     the match (productId 33305 / `8219` is a stable key).
-  5. **Windows sanity (checklist §5), pure-Python — can be done WITHOUT
-     the console, any session:** `pydvma/_coreaudio.py` imports with
-     `available() == False`; `MySettings(capture_fs=…, oversample=…,
-     input_gain_db=…, input_mode=…)` constructs on any driver;
-     `serve.build_capabilities()` returns a valid payload. Cheap — knock
-     these out anytime to shrink the console session's load.
+- ~~**NEXT CONSOLE (non-RDP) SESSION**~~ — RUN (2026-08-11, console
+  login; the 2i2 surfaced on every host API as predicted). Results:
+  1. ~~**WASAPI-lie measurement**~~ — ANSWERED, and better than
+     feared: **WASAPI/WDM-KS refuse every rate but the 48 kHz mix
+     rate** (no silent resample), while **MME/DirectSound accept
+     everything but resample well** — fold rejection ≈ −100 dB (at
+     the noise floor), droop −0.30 dB at 0.91×Nyquist. No WASAPI twin
+     of `_coreaudio.py` is needed; the Windows `'unknown'` path is
+     safe in practice. Full numbers + method lessons in the design
+     doc §6; reusable harness `dev/windows_resampler_check.py` (9/9).
+  2. ~~**Soundcard BLA capture-rate reason**~~ — reports `'unknown'`
+     at the 48 kHz native mix rate on Windows (checked in
+     `bla_soundcard_check.py`); safe per the resampler measurement.
+     **The 2i2 BLA identity run itself is still PENDING on Windows:**
+     capture channels 3/4 are SILENT here — the digital loopback tap
+     that "just works" on macOS is not wired into the Windows capture
+     endpoint (endpoint volume/mute eliminated as causes; playback
+     runs clean). Likely an FC2 loopback-routing setting (its state
+     is per-OS; the OCA route to set it programmatically is
+     pairing-gated). Check FC2's Loopback source at the bench, then
+     rerun `dev/bla_soundcard_check.py`.
+  3. ~~**2i2 calibrated-volts re-confirm**~~ — CONFIRMED on Windows
+     to **−0.108 dB** (2.4692 V measured vs 2.500 V, Rigol 1 kHz
+     5 Vpp, 9 dB Line), identical on MME and WASAPI — matches the
+     Mac's 0.10 dB. NB the Rigol is NOT USB-connected, so the SCPI
+     route for `verify_input_scaling` stays untested; the manual
+     known-level flow is exactly what this session exercised.
+  4. ~~**`_soundcard_specs` profile match on Windows**~~ — FIXED:
+     `device_profile()` takes a `neighbours` list; the generic
+     Windows endpoint names resolve through the WDM-KS twin
+     (`wc4800_8219` embeds USB productId 0x8219, the stable key),
+     vendor-gated and single-candidate-only. Loopback warning +
+     calibrated volts + serve capabilities all fire on Windows now.
+  5. ~~**Windows sanity (checklist §5)**~~ — all pass.
+  **New Windows finding — mono capture is a downmix:** `channels=1`
+  on any shared-mode endpoint delivers (ch1+ch2)/2, silently −6 dB
+  on a single-input calibrated measurement (pinned in
+  `windows_resampler_check.py`). pydvma defaults channels=2, but a
+  deliberate 1-channel soundcard log on Windows hits it — consider
+  capturing ≥ 2 and slicing, or a warning, on the Windows soundcard
+  path.
 
-- **cDAQ commanded-x is refused, conservatively.** A cDAQ chassis'
-  AO/AI share the chassis timebase (phase-coherent) but there is no
-  routed AI sample clock to prove a zero start offset, so
-  `supportsRoutedAiClockAo` (`webui/src/lib/audio/provider.ts`)
-  excludes chassis devices and BLA falls back to measured-x there.
-  Lifting this needs shared-start-trigger work — this is the tracker
-  for the general cDAQ AO/AI sync gap.
+- **NI commanded-x start-sync gap (was: "cDAQ commanded-x is refused,
+  conservatively" — now measured, and it is not just the cDAQ).**
+  2026-08-11 hardware run (`bridge_hw_check.py` check G): a routed AI
+  sample clock locks the RATE but each capture is a window of the
+  free-running AI stream, so the AO start lands on an arbitrary tick
+  — the per-capture phase is RANDOM on the 6212 exactly as on the
+  cDAQ (commanded-x |G| collapses to ~1/√M ≈ 0.43 at M=4 with
+  σ_NL ≈ 2.4·|G|, through a loop measured-x resolves to 1 to 1e-16).
+  The webui commanded-x gate is now closed on EVERY path
+  (`BLA_COMMANDED_X_START_SYNC_PROVEN` in
+  `webui/src/lib/stores/bla.ts`). Reopening it — and lifting the cDAQ
+  exclusion — is the same piece of work: start AO and AI off one
+  shared start trigger (or restart the AI task armed on the AO start)
+  and prove a fixed offset with check G's measurement, which is
+  purpose-built to flip when this lands. Measured-x is unaffected and
+  remains the (only) NI BLA mode.
 - **Input-scaling verification tool ("calibration against a known
   source")** — verify the whole input chain (gain knobs included) by
   measuring a source of KNOWN level and comparing against the volts

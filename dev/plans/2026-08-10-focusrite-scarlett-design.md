@@ -396,13 +396,35 @@ no direct unit test at all, and nothing asserts that `lpfOn` reaches
 
 ## 6. Deferred / needs the Windows PC
 
-- **Does WASAPI lie the same way?** Windows shared-mode WASAPI also
-  resamples, so the §1.2 problem probably exists there too, with a
-  different API for the fix (`IAudioClient.IsFormatSupported` /
-  exclusive mode). Must be measured on the PC before any claim is made.
-  Until then, non-macOS behaviour is left as-is.
-- ASIO would side-step it entirely on Windows, but adds a dependency and
-  a driver install.
+**ANSWERED (2026-08-11, measured on the PC, 2i2 4th Gen, console
+session, Rigol 1 kHz 5 Vpp on input 1):**
+
+- **WASAPI does NOT lie.** Shared-mode WASAPI (and WDM-KS) accept
+  ONLY the endpoint mix rate (48 kHz here) via
+  `sd.check_input_settings` — every other rate is rejected with
+  `PaErrorCode -9997`. There is no silent WASAPI resample on the
+  default path, so no WASAPI twin of `_coreaudio.py` is needed.
+- **MME and DirectSound accept EVERYTHING (1.6–192 kHz) — but their
+  resampler is measurement-grade**, unlike CoreAudio's. Measured on
+  the 2i2 with the Rigol tone: requesting fs = 1600 (Nyquist 800 Hz
+  below the 1 kHz tone) folds NOTHING measurable — rejection ≈
+  −100 dB (MME), −94 dB (DS), both at the local noise floor — and
+  passband droop at 0.91×Nyquist is −0.30 dB. Compare CoreAudio's
+  measured −11.7 dB rejection / −4.3 dB droop (§1.2). PortAudio's
+  WASAPI `auto_convert` escape hatch (non-default) measures the same
+  ≈ −97 dB. So the Windows `'unknown'` capture-rate path is SAFE in
+  practice: an off-ladder request lands on the Windows mixer
+  resampler, which does not corrupt measurements. Provenance is the
+  only cost (data passed through a resampler pydvma didn't choose).
+- **One real Windows trap found instead: mono capture is a downmix.**
+  `channels=1` on a shared-mode endpoint delivers (ch1+ch2)/2 — a
+  single-input calibrated measurement silently loses 6 dB (measured
+  −6.13 dB, exactly the ½ + the 0.1 dB calibration residual).
+  Capture ≥ 2 channels and select, or document. Tracked in TODO.md.
+- The measurement harness is `dev/windows_resampler_check.py`
+  (method notes inside — including the probe-vs-Rigol frequency
+  separation rule that produced a false reading on the first attempt).
+- ASIO remains unnecessary for correctness on this evidence.
 
 ## 6a. Implementation status (2026-08-10)
 
