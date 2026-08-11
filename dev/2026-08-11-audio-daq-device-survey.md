@@ -34,8 +34,14 @@ Tascam / Zoom / Steinberg sub-£400 (no documented APIs).
   no-settings property).
 - **ESI U24 XL (£63)** — the 24-bit sibling concept, still 48 kHz,
   TRS/RCA line I/O, **no knobs (confirmed first-hand — Tore owns one)**.
-  Best-fit 2-channel fixed-gain station box, pending bench
-  characterisation (no published ADC measurements either).
+  Best-fit 2-channel fixed-gain station box. **Bench-characterised
+  2026-08-11** (`dev/2026-08-11-u24xl-bench.md`): +4.7 dBu fixed full
+  scale confirmed to 0.07 dB, native 8k–48k ladder with the anti-alias
+  filter tracking fs (69–76 dB rejection), ~12.8 effective bits
+  wideband / ~15.3 at 8 kHz, clocks at −0.3 ppm. Its ONE settable
+  hazard (a hidden ±dB *digital* input volume, plus macOS parking it
+  at 16-bit) is now pinned by pydvma per capture; profile +
+  `dev/u24xl_hw_check.py` landed same day, 13/13.
 - **Above 2 channels the fixed-gain category is EMPTY** (≤£300):
   everything multichannel grows adjustable gain, is output-only
   (Gigaport HD+), or needs a £700+ ADAT converter with its own gain

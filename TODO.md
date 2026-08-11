@@ -258,20 +258,47 @@ is still open, as one consolidated list.
   consider accepting a device name there too. Same gap for the 2i2
   loopback-channel warning (Setup shows it; the Python path has no
   equivalent).
-- **`_soundcard_specs.PROFILES` has exactly one entry** (Scarlett 2i2
-  4th Gen) — add interfaces as they are characterised.
+- **`_soundcard_specs.PROFILES` has two entries** (Scarlett 2i2 4th
+  Gen; ESI U24 XL, first FIXED-GAIN profile, 2026-08-11) — add
+  interfaces as they are characterised. XR18 next per the agreed
+  lineup.
+- **U24 XL follow-ups** (bench + landing 2026-08-11,
+  `dev/2026-08-11-u24xl-bench.md`):
+  - **Windows enumeration name unknown** — the profile matches
+    'u24xl'/'u24 xl' + vendor 'esi'; capture the real Windows device
+    names (ESI ships a proprietary driver) and add the WDM-KS
+    product-id token if the model name never surfaces (2i2 precedent).
+    Also check whether the Windows endpoint volume API exposes the
+    same digital input gain — the CoreAudio pin is macOS-only, so a
+    Windows slider could still silently rescale captures there.
+  - **Absolute calibration against an independent source** — the
+    0.00 dB jack-referenced result assumes Apple's line-level output
+    mode is exactly 1.000 Vrms; `verify_input_scaling` + Rigol (once a
+    BNC→RCA/TS cable exists) closes that assumption.
+  - **U24 XL-alone noise floor** — today's −79 dBFS (48 k) / −94 dBFS
+    (8 k) figures include the connected Mac jack amp; a 30 s capture
+    with the input cable unplugged separates the box's own floor.
+  - **Output-side calibration not attempted** — output volume
+    (−55..0 dB digital) is not pinned and `output_VmaxSC` is not
+    derived from `max_output_dbu` (+6.9 dBu); worth doing if the U24
+    is ever the stimulus source, and would make the loopback
+    `verify_input_scaling` an absolute check.
+  - **S/PDIF input source selector** is software-settable — a TOSLINK
+    loop would give the U24 a cable-free digital self-test like the
+    2i2's loopback channels (`'ssrc'` CoreAudio property, not used by
+    pydvma yet).
 - **IEPE auto-detect via bias-voltage probe** — enable 2 mA excitation
   and read the DC bias before AC coupling to classify what is
   connected (~24 V open / 8–14 V IEPE / ~0 V low-Z) so
   `iepe_excit_current_A='auto'` can configure each 9234 channel.
   Sensitivity still has to be entered manually.
-- **TEST THE ESI U24 XL (Tore — action item, 2026-08-11).** Find the
-  unit, then a bench session: `dvma.verify_input_scaling` with the
-  Rigol as known source (needs the Rigol on USB for the SCPI route —
-  or drive it manually and read the PASS/FAIL table) for absolute
-  scaling + clip point, plus a noise-floor capture for effective bits.
-  This is the decision gate for the 3C6 station-box choice (agreed
-  lineup: `dev/2026-08-11-audio-daq-device-survey.md`).
+- ~~**TEST THE ESI U24 XL**~~ — DONE 2026-08-11 (same day), via the
+  Mac-jack loopback instead of the Rigol: +4.7 dBu fixed full scale
+  confirmed to 0.07 dB, profile + fixed-gain VmaxSC auto-derivation +
+  bit-depth/volume pinning landed, `dev/u24xl_hw_check.py` 13/13.
+  Decision: the U24 XL IS the 3C6 station-box candidate — see
+  `dev/2026-08-11-u24xl-bench.md` and the follow-ups item above (the
+  Rigol absolute check remains queued there).
 - **`streams.max_input_fs` still has no direct unit test** — the
   `select_capture_fs` tests cover the adjacent logic but not this.
 - **Scarlett gain control is a dead end — do not re-investigate.** No

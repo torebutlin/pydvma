@@ -443,6 +443,23 @@ characterised in `pydvma._soundcard_specs` — any other device keeps the
 `VmaxSC` you gave it. Changing the gain on the hardware invalidates the
 calibration, so re-state it when you do.
 
+#### Fixed-gain interfaces: nothing to state
+
+A characterised interface with **no analogue gain anywhere in its
+input path** — the ESI U24 XL is the first — has a constant full
+scale, so `VmaxSC` is derived automatically with no stated gain at
+all: the default settings come out calibrated in volts (+4.7 dBu →
+1.88 V peak on the U24 XL, confirmed against hardware to 0.07 dB). An
+explicit `VmaxSC` still wins, since that is your own calibration.
+
+On macOS the capture stream also pins two settings such a device *does*
+have, restoring them when the stream closes: the class-compliant
+**input volume control** is set to 0 dB (on the U24 XL it is a purely
+digital ±dB gain, so any other value silently rescales the data), and
+a capture format parked at 16-bit is raised to **24-bit** (macOS
+defaults some interfaces to 16 and resets the choice on every sample
+rate change).
+
 !!! note "Not every channel a soundcard reports is an input"
     A Focusrite Scarlett 2i2 4th Gen advertises four inputs, but only
     1–2 are the analogue Mic/Line/Inst inputs: **3–4 are a digital
