@@ -55,3 +55,23 @@ Tascam / Zoom / Steinberg sub-£400 (no documented APIs).
 - **No-compromise:** RME (OSC), if budget ever ceases to be the point.
 - All of these are per-channel delta-sigma with inherent anti-alias
   filtering, same mechanism as the 2i2/9234.
+
+## Recommended lineup (agreed with Tore, 2026-08-11)
+
+Ladder: **ESI U24 XL** (owned; fixed-gain 3C6-scale stations, pending
+bench characterisation — likely better than UCA222 on its 24-bit
+dynamic range; both ADCs publicly unmeasured) → **Scarlett 2i2 4th gen**
+(adjustable bench box: best fs/converters of the cheap tier; gain NOT
+software-settable — FC2 pairing-gated, confirmed on macOS AND Windows —
+but pydvma's stated-gain workflow, Setup level check and
+verify_input_scaling manage the knob risk) → **Behringer XR18** (16
+synced channels, £315–349, zero physical controls, gain pinned by
+script via the maintained `xair-api` package). **UCA222** (£17,
+16-bit) as disposable spares where dynamic range doesn't matter.
+**Flow 8** ranked below the 2i2 for labs despite its documented MIDI-CC
+gain: physical faders are exactly the wrong affordance. **RME Babyface
+Pro FS / MOTU 8A** remain the buy-once tier.
+
+Cross-cutting: everything but the 2i2/RME/MOTU is capped at 48 kHz;
+channel counts never stack across USB boxes (unsynchronised clocks) —
+past 2 synced channels the XR18 is the only budget route.
