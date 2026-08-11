@@ -524,8 +524,20 @@ export class BridgeProvider implements SourceProvider {
     if (ec.captureFs != null) s.capture_fs = ec.captureFs;
     if (ec.oversample && ec.oversample !== 'auto') s.oversample = ec.oversample;
     // Preamp gain provenance: the server derives VmaxSC from this, because
-    // no audio API can read the gain off the interface.
-    if (ec.inputGainDb != null) {
+    // no audio API can read the gain off the interface. A FIXED-GAIN
+    // interface (e.g. the ESI U24 XL) has no gain to state at all — full
+    // scale is a hardware constant — so force `null` (not 0, which would
+    // read as "stated") even if `ec.inputGainDb` still holds a stale
+    // number left over from a previously selected variable-gain device
+    // (e.g. the operator had a 2i2 selected, then switched to the U24 XL
+    // without the now-hidden gain field ever clearing the store). The
+    // server auto-derives VmaxSC for a fixed-gain device when
+    // `input_gain_db` is `None`; a stale out-of-range gain would instead
+    // raise on the fixed-gain profile, whose gain range is exactly 0 dB.
+    const selDc = cfg.deviceId ? this.capsCache?.device_caps?.[cfg.deviceId] : undefined;
+    if (selDc?.fixed_gain) {
+      s.input_gain_db = null;
+    } else if (ec.inputGainDb != null) {
       s.input_gain_db = ec.inputGainDb;
       if (ec.inputMode) s.input_mode = ec.inputMode;
     }

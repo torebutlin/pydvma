@@ -136,9 +136,28 @@
       ? bridgeSelCaps.input_modes
       : null,
   );
+  // FIXED-GAIN interface (e.g. the ESI U24 XL): there is no analogue gain
+  // anywhere in the input path, so full scale is a hardware constant —
+  // `sqrt(2) * 0.7746 * 10 ** (dBu / 20)` at gain 0 — rather than something
+  // the operator states. Such a device carries exactly one input mode, so
+  // the sole/first key of `max_input_dbu` is authoritative.
+  const fixedGain = $derived(bridgeSelCaps?.fixed_gain === true);
+  const fixedGainInfo = $derived.by(() => {
+    if (!fixedGain) return null;
+    const levels = bridgeSelCaps?.max_input_dbu;
+    if (!levels) return null;
+    const mode = Object.keys(levels)[0];
+    if (mode === undefined) return null;
+    const dbu = levels[mode];
+    if (dbu == null) return null;
+    const volts = Math.SQRT2 * 0.7746 * Math.pow(10, dbu / 20);
+    return { mode, dbu, volts };
+  });
   // Preview of what the stated gain means, so a wrong entry is obvious
-  // before it silently scales a whole dataset.
+  // before it silently scales a whole dataset. A fixed-gain device has no
+  // gain TO state, so its full scale comes straight from fixedGainInfo.
   const fullScaleVolts = $derived.by(() => {
+    if (fixedGain) return fixedGainInfo?.volts ?? null;
     const gain = $bridgeConfig.inputGainDb;
     const levels = bridgeSelCaps?.max_input_dbu;
     if (gain == null || !levels) return null;
@@ -519,40 +538,57 @@
           <!-- domain: soundcard input gain — no audio API can READ the
                preamp gain, so stating it is the only route to calibrated
                volts. The server derives VmaxSC from the device's published
-               maximum input level. -->
+               maximum input level. A FIXED-GAIN interface (e.g. the ESI
+               U24 XL) has no gain to state at all — full scale is a
+               hardware constant — so it gets a static line instead of the
+               gain input + mode select (mode is single anyway). -->
           {#if inputModeOptions}
             <div class="grp" data-testid="setup-input-gain">
-              <span class="grp-lab">input gain (for calibrated volts)</span>
-              <div class="grp-ctl">
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={$bridgeConfig.inputGainDb ?? ''}
-                  onchange={onInputGainChange}
-                  placeholder="not set"
-                  title="The preamp gain currently set on the interface, in dB. pydvma cannot read it, so state it here and full scale in volts follows from the device's published maximum input level."
-                  aria-label="input gain in dB"
-                  style="width:72px"
-                />
-                <span class="ml">dB</span>
-                <select
-                  aria-label="input mode"
-                  title="Which input the signal is on — sets the maximum input level used with the gain."
-                  value={$bridgeConfig.inputMode ?? 'line'}
-                  onchange={onInputModeChange}
-                  style="width:84px"
-                >
-                  {#each inputModeOptions as m}
-                    <option value={m}>{m}</option>
-                  {/each}
-                </select>
-                {#if fullScaleVolts != null}
-                  <span class="note" data-testid="setup-full-scale">
-                    full scale ≈ {fullScaleVolts.toFixed(3)} V pk
+              {#if fixedGain}
+                <span class="grp-lab">input level (fixed gain)</span>
+                <div class="grp-ctl">
+                  <span
+                    class="note"
+                    data-testid="setup-fixed-gain-note"
+                    title="This interface has no analogue gain anywhere in the input path — full scale is a hardware constant, so calibrated volts need no operator input."
+                  >
+                    full scale ±{fixedGainInfo?.volts.toFixed(2)} V
+                    ({fixedGainInfo && fixedGainInfo.dbu >= 0 ? '+' : ''}{fixedGainInfo?.dbu} dBu {fixedGainInfo?.mode})
                   </span>
-                {/if}
-              </div>
+                </div>
+              {:else}
+                <span class="grp-lab">input gain (for calibrated volts)</span>
+                <div class="grp-ctl">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={$bridgeConfig.inputGainDb ?? ''}
+                    onchange={onInputGainChange}
+                    placeholder="not set"
+                    title="The preamp gain currently set on the interface, in dB. pydvma cannot read it, so state it here and full scale in volts follows from the device's published maximum input level."
+                    aria-label="input gain in dB"
+                    style="width:72px"
+                  />
+                  <span class="ml">dB</span>
+                  <select
+                    aria-label="input mode"
+                    title="Which input the signal is on — sets the maximum input level used with the gain."
+                    value={$bridgeConfig.inputMode ?? 'line'}
+                    onchange={onInputModeChange}
+                    style="width:84px"
+                  >
+                    {#each inputModeOptions as m}
+                      <option value={m}>{m}</option>
+                    {/each}
+                  </select>
+                  {#if fullScaleVolts != null}
+                    <span class="note" data-testid="setup-full-scale">
+                      full scale ≈ {fullScaleVolts.toFixed(3)} V pk
+                    </span>
+                  {/if}
+                </div>
+              {/if}
             </div>
           {/if}
         {/if}

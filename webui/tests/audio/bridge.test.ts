@@ -1067,6 +1067,71 @@ test('deviceCapsFor omits the gain model for an uncharacterised device', () => {
   expect(entry?.max_input_dbu).toBeUndefined();
 });
 
+// A FIXED-GAIN interface (e.g. the ESI U24 XL) has no analogue gain
+// anywhere in the input path, so full scale is a hardware constant — the
+// server publishes `fixed_gain: true` and the UI shows the volts directly
+// instead of asking the operator to state a gain (see SetupCard.svelte).
+test('deviceCapsFor propagates fixed_gain: true for a fixed-gain interface', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['ESI U24 XL'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [44100] },
+    max_channels: { 'soundcard:0': { input: 2, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'ESI U24 XL', ao: true,
+        input_modes: ['line'],
+        max_input_dbu: { line: 4.7 },
+        fixed_gain: true,
+      },
+    },
+  } as never;
+  const entry = deviceCapsFor(caps, 'soundcard:0');
+  expect(entry?.fixed_gain).toBe(true);
+});
+
+test('deviceCapsFor propagates an explicit fixed_gain: false for a variable-gain interface', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['Scarlett 2i2 4th Gen'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [44100] },
+    max_channels: { 'soundcard:0': { input: 4, output: 2 } },
+    pretrigger: true,
+    ao: true,
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Scarlett 2i2 4th Gen', ao: true,
+        input_modes: ['inst', 'line', 'mic'],
+        max_input_dbu: { line: 22, inst: 12, mic: 16 },
+        fixed_gain: false,
+      },
+    },
+  } as never;
+  const entry = deviceCapsFor(caps, 'soundcard:0');
+  expect(entry?.fixed_gain).toBe(false);
+});
+
+test('deviceCapsFor omits fixed_gain for an uncharacterised device', () => {
+  const caps = {
+    v: 1,
+    backends: ['soundcard'],
+    devices: { soundcard: ['Some card'], nidaq: [] },
+    fs_ladders: { 'soundcard:0': [44100] },
+    max_channels: { 'soundcard:0': { input: 2, output: 0 } },
+    pretrigger: true,
+    ao: false,
+    device_caps: {
+      'soundcard:0': { driver: 'soundcard', index: 0, name: 'Some card', ao: false },
+    },
+  } as never;
+  const entry = deviceCapsFor(caps, 'soundcard:0');
+  expect(entry?.fixed_gain).toBeUndefined();
+});
+
 // --- stale device indices ---------------------------------------------------
 // The client enumerates devices once on connect. PortAudio renumbers whenever
 // the device list changes, so it sends the NAME it believed it was selecting
@@ -1118,4 +1183,84 @@ test('no device name is sent for the mock driver', async () => {
 
   const cfg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
   expect(cfg.device_name).toBeUndefined();
+});
+
+// A FIXED-GAIN interface (e.g. the ESI U24 XL) must never carry a stale
+// numeric input_gain_db from a previously selected variable-gain device
+// (e.g. a 2i2) into the configure message — the server's fixed-gain
+// profile has a gain range of exactly 0 dB, so anything else raises. `null`
+// (not omitted, not 0) is what lets MySettings auto-derive VmaxSC — see
+// `_derive_full_scale_volts` / `options.py`.
+test('a fixed-gain device forces input_gain_db to null even with a stale stated gain', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({
+    ...CAPS,
+    devices: { soundcard: ['ESI U24 XL'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'ESI U24 XL', ao: true,
+        input_modes: ['line'], max_input_dbu: { line: 4.7 }, fixed_gain: true,
+      },
+    },
+  });
+  await capsP;
+
+  // Stale gain left in the store from a previously selected variable-gain
+  // device (e.g. a 2i2 at 10 dB) — must not ride along.
+  bp.setConfig({ inputGainDb: 10, inputMode: 'line' });
+
+  const monP = bp.startMonitor(
+    { deviceId: 'soundcard:0', sampleRate: 44100, channelCount: 1 }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 44100, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  const cfg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  const settings = cfg.settings as Record<string, unknown>;
+  expect(settings.input_gain_db).toBeNull();
+  expect(settings.input_mode).toBeUndefined();
+});
+
+// A variable-gain device (e.g. the 2i2) keeps sending the stated gain
+// unchanged — no fixed_gain regression.
+test('a variable-gain device still sends the stated input_gain_db', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({
+    ...CAPS,
+    devices: { soundcard: ['Scarlett 2i2 4th Gen'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Scarlett 2i2 4th Gen', ao: true,
+        input_modes: ['inst', 'line', 'mic'],
+        max_input_dbu: { line: 22, inst: 12, mic: 16 },
+        fixed_gain: false,
+      },
+    },
+  });
+  await capsP;
+
+  bp.setConfig({ inputGainDb: 10, inputMode: 'line' });
+
+  const monP = bp.startMonitor(
+    { deviceId: 'soundcard:0', sampleRate: 44100, channelCount: 1 }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 44100, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  const cfg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  const settings = cfg.settings as Record<string, unknown>;
+  expect(settings.input_gain_db).toBe(10);
+  expect(settings.input_mode).toBe('line');
 });

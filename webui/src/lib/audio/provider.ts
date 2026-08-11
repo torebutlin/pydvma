@@ -122,6 +122,15 @@ export interface DeviceCapsEntry {
    * does the authoritative conversion.
    */
   max_input_dbu?: Record<string, number>;
+  /**
+   * True for a characterised interface with NO analogue gain (e.g. the ESI
+   * U24 XL), from `device_caps[deviceId].fixed_gain`. Full scale is then a
+   * hardware constant derivable from `max_input_dbu` alone, so the UI shows
+   * it directly instead of asking the operator to state a gain. Absent when
+   * the interface is not characterised; `false` for a characterised device
+   * WITH analogue gain (e.g. the 2i2).
+   */
+  fixed_gain?: boolean;
   /** Maximum continuous sample rate in Hz (when no discrete ladder is given). */
   max_fs?: number;
   /** Maximum input (AI) channel count (`max_channels[deviceId].input`). */
@@ -322,6 +331,7 @@ export function deviceCapsFor(
   if (dc && dc.max_input_dbu && Object.keys(dc.max_input_dbu).length) {
     out.max_input_dbu = dc.max_input_dbu;
   }
+  if (dc && typeof dc.fixed_gain === 'boolean') out.fixed_gain = dc.fixed_gain;
   // Voltage rails (NI only): pass through when the server reports a finite,
   // positive symmetric range so the UI can clamp VmaxNI / output_VmaxNI.
   if (dc && typeof dc.ai_vmax === 'number' && dc.ai_vmax > 0) out.ai_vmax = dc.ai_vmax;
