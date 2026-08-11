@@ -3,6 +3,41 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## 2.2.0 — 2026-08-11
+
+Supersedes 2.1.0 on PyPI (2.1.0 was tagged but never uploaded): adds
+the input-scaling verification tool and the Windows/NI hardware-
+verification round's fixes.
+
+### Added
+
+- **`verify_input_scaling`** — absolute input-chain verification
+  against a source of known level: `source='loopback'` plays a known
+  tone through the device's own AO (absolute on NI's calibrated AO→AI
+  path; chain-consistency on a sound card), or pass a
+  **`RigolDG1022Z`** instance (new SCPI wrapper, pyvisa) to command an
+  external calibrated generator — the only way to verify a sound card
+  whose loopback is digital. Robust windowed-periodogram tone
+  estimation; per-channel PASS/FAIL table.
+
+### Changed
+
+- **BLA commanded-drive mode is disabled on all paths.** Hardware
+  measurement (USB-6212, routed AI sample clock) showed the AO start
+  offset is random per capture even on shared-clock devices, so an
+  analytic commanded reference would corrupt the noise/nonlinearity
+  separation. Measured-x — the default, and the method's own
+  recommendation — is the sole mode; the UI explains why.
+- The 9234's oversample default ('lowest') is hardware-confirmed:
+  alias rejection holds and the in-band noise cost is +3.0 dB.
+
+### Fixed
+
+- Scarlett 2i2 device-profile resolution on Windows (WDM-KS sibling
+  naming), so the loopback-channel warning, gain-derived calibrated
+  volts and serve capabilities now work there too (calibration
+  re-confirmed on Windows to −0.108 dB).
+
 ## 2.1.0 — 2026-08-11
 
 A month of lab-testing feedback rounds plus two feature arcs: sound-
