@@ -108,14 +108,29 @@ planet 22c practicalities (plain-language, discussed with Tore
   2026-08-11): *Shape A, six independent stations* — one box per PC,
   DIRECT Ethernet cable (no switch anywhere), 12 V supply or £12
   injector; rigs fully isolated, each PC sees its own 2-ch device.
-  *Shape B, pooled multichannel* — several boxes + ONE PC on one PoE
-  switch when a single measurement needs >2 coherent channels. The
-  same six station boxes can be pooled into a 12-ch coherent rig for
-  the price of one switch — six U24 XLs can never do that. Cost
-  honesty: DVS is licensed per PC, so Shape A costs ~£200/station
-  (£159 + ~£40 licence) vs the U24 XL's £63 all-in; the premium buys
-  balanced inputs, two documented ranges, the better converter path,
-  and the pooling option.
+  Tore: Shape A is the 3C6 shape. *Shape B, pooled multichannel* —
+  several boxes + ONE PC on one PoE switch when a single measurement
+  needs >2 coherent channels; of interest for RESEARCH rigs, not 3C6.
+  The same six station boxes can be pooled into a 12-ch coherent rig
+  for the price of one switch — six U24 XLs can never do that. Cost
+  honesty: DVS is licensed per PC, so Shape A costs ~£210/station
+  (£159 + ~£40 licence + ~£12 adapter) vs the U24 XL's £63 all-in;
+  the premium buys balanced inputs, two documented ranges, the better
+  converter path, and the pooling option.
+- **Campus-network coexistence (Shape A)**: station PCs are already
+  on the university LAN — do NOT put the Dante boxes there. Give each
+  PC a second, dedicated "DAQ port" (a ~£12 USB→gigabit-Ethernet
+  adapter), one cable straight to the box; the built-in port stays on
+  campus. No IP setup — a DHCP-less direct link falls back to
+  link-local addressing, which Dante is designed for. Pin DVS to that
+  interface (it has a picker); route the box's channels once in the
+  free Dante Controller (config persists in the device). Rationale:
+  managed campus networks block/jitter the multicast+PTP Dante needs,
+  and six boxes on one LAN would DISCOVER each other, elect a single
+  shared leader clock and let any station re-patch any other —
+  isolation comes from each box living on its own two-node link.
+  (Same pattern as private point-to-point links for Ethernet NI cDAQ
+  chassis.)
 - PCIe options (Juli@ eX, MAYA44 eX) dropped from consideration —
   the point is escaping the old NI PCI estate, not adding new
   internal cards (Tore, 2026-08-11).
