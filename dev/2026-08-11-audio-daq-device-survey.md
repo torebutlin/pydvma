@@ -42,12 +42,43 @@ Tascam / Zoom / Steinberg sub-£400 (no documented APIs).
   hazard (a hidden ±dB *digital* input volume, plus macOS parking it
   at 16-bit) is now pinned by pydvma per capture; profile +
   `dev/u24xl_hw_check.py` landed same day, 13/13.
-- **Above 2 channels the fixed-gain category is EMPTY** (≤£300):
-  everything multichannel grows adjustable gain, is output-only
-  (Gigaport HD+), or needs a £700+ ADAT converter with its own gain
-  menus. Multiple stereo boxes canNOT be stacked: independent USB
-  clocks drift — stereo per box is a physics ceiling. Multichannel
-  fixed-gain ⇒ the XR18 with gain pinned by script.
+- **Above 2 channels the fixed-gain category is NEARLY empty** (≤£300)
+  — revised by the ESI family sweep below: everything multichannel
+  grows adjustable gain, is output-only (Gigaport HD+/eX), or needs a
+  £700+ ADAT converter with its own gain menus. Multiple stereo boxes
+  canNOT be stacked **over USB**: independent clocks drift — stereo
+  per box is a physics ceiling *for that bus*. Dante/AoIP boxes are
+  the exception (shared PTP leader clock across the network — see
+  planet 22c below). Multichannel fixed-gain ⇒ the XR18 with gain
+  pinned by script, stacked planet 22c units, or (with old-converter
+  caveats) the Maya 44 USB+.
+
+## ESI family sweep (2026-08-11, Thomann UK prices)
+
+Prompted by Thomann's ESI category page; specs from ESI product pages
+and manuals. Vendor DR figures are dB(A) — only the U24 XL numbers are
+our own unweighted measurements.
+
+| Model | £ | Analog in | Gain architecture | DAQ verdict |
+|---|---|---|---|---|
+| **U24 XL** | 63 | 2× TS line | none (digital vol, pinned by pydvma) | characterised incumbent |
+| **planet 22c** | 159 | 2× bal TRS | **no knob** — 2-position range switch (−10 dBV/+4 dBu; max +6 dBV/+20 dBu) | **the sleeper** — Dante+PoE, 110 dB(A) in; ESI's manual: "ideal for audio measurement purposes" |
+| Maya 44 USB+ | 81 | 4× RCA line | **none at all** | single-box 4-ch fixed-gain — but USB 1.1, 48 k, 18-bit-era ADC; bench before trusting |
+| Juli@ eX | 166 | 2× line (−10 dBV RCA / +4 dBu TRS by physical PCB swap) | no pots | 125 dB(A) ADC, measurement-grade — but PCIe + Windows-only |
+| MAYA44 eX | ~103 | 4× fixed line + mic/inst | line fixed, mic preamp adjustable | PCIe, Windows-only |
+| UGM192 | 40 | 1 mic (stepped) + 1 inst (fixed) | inst fixed but FS −8.4 dBu ≈ 0.29 Vrms | oddball; tiny full scale |
+| Neva Uno/Duo/OTG, Amber i1/i2/i4, planet 22x | 47–245 | various | physical gain knobs | out of category |
+| Gigaport eX | 122 | none (8× RCA OUT) | n/a | possible 8-ch stimulus fan-out |
+
+**planet 22c is the notable find**: fixed-gain in each of two
+documented range positions, balanced, PoE-powered, and because it is
+Dante, N boxes share one network clock — 2N phase-coherent channels at
+~£80/channel with nothing to mis-set. Caveats: host capture needs a
+Dante Virtual Soundcard licence (~£40/machine) or Dante PCIe card,
+wired LAN required, 44.1–96 k only, and the cross-box phase coherence
+is inferred from Dante's documented PTP sync rather than an ESI claim
+— a two-box cross-spectrum bench would settle it before any 3C6-scale
+commitment.
 
 ## Conclusions (as discussed with Tore)
 
@@ -78,6 +109,8 @@ script via the maintained `xair-api` package). **UCA222** (£17,
 gain: physical faders are exactly the wrong affordance. **RME Babyface
 Pro FS / MOTU 8A** remain the buy-once tier.
 
-Cross-cutting: everything but the 2i2/RME/MOTU is capped at 48 kHz;
-channel counts never stack across USB boxes (unsynchronised clocks) —
-past 2 synced channels the XR18 is the only budget route.
+Cross-cutting: everything but the 2i2/RME/MOTU is capped at 48 kHz
+(planet 22c reaches 96 k); channel counts never stack across USB boxes
+(unsynchronised clocks) — past 2 synced channels the budget routes are
+the XR18 or stacked Dante boxes (planet 22c, shared PTP clock — see
+the ESI family sweep section).
