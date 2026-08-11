@@ -2,7 +2,29 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-11 (evening): **v2.2.0 is RELEASED end-to-end** — PyPI
+As of 2026-08-11 (late evening, Mac session): **the ESI U24 XL is
+characterised AND landed** — the survey's flagged Tore-action closed
+same-day using the Mac jack as reference source (its line-level output
+mode measured as 1.000 Vrms full-scale; wiring: jack → U24 L+R, still
+connected). Bench (`dev/2026-08-11-u24xl-bench.md`): +4.7 dBu fixed
+full scale confirmed to 0.07 dB, native 8k–48k ladder with fs-tracking
+anti-alias (69–76 dB), ~12.8 ENOB wideband / ~15.3 at 8 kHz (floor
+includes the Mac amp), clocks −0.3 ppm. Two macOS traps found and now
+PINNED per-capture by `streams.Recorder` (restore-on-close, like the
+clock): macOS parks the box at 16-bit AND resets that on every rate
+change; the "input gain" is a hidden ±dB DIGITAL volume (vold write
+silently fails — the setter bisects the volm scalar). Landed:
+`esi_u24xl` PROFILES entry (first FIXED-GAIN profile), VmaxSC
+auto-derivation with NO stated gain (`fixed_gain` flag through serve
+caps to a gainless Setup UI), `dev/u24xl_hw_check.py` (13/13 live,
+incl. ABSOLUTE volts at −0.00 dB with the volume deliberately
+mis-set). Follow-ups queued in TODO.md: Windows enumeration name +
+endpoint-volume equivalent, Rigol absolute check (needs a BNC→RCA/TS
+cable), unplugged-input noise floor, output-side calibration, S/PDIF
+self-test idea. Suites: pytest 619/3, vitest 807/1, check 0/0, mkdocs
+--strict green; engine wheel rebuilt (same 2.2.0 name).
+
+Earlier (2026-08-11 evening): **v2.2.0 is RELEASED end-to-end** — PyPI
 (2.0.0 → 2.2.0; 2.1.0 was tagged+GH-released but deliberately never
 uploaded: its embedded UI still offered the since-refuted BLA
 commanded-x), GitHub release, Zenodo auto-archive (concept DOI
