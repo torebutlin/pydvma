@@ -14,13 +14,19 @@ protocol and verifies, against the physically connected devices:
   D. pretrigger + output sweep via the bridge on EVERY device —
      armed -> triggered -> log_result, 2-channel, container sane.
 
+Discovery-driven: checks run against whatever NI devices are physically
+connected (per-model configs for the cDAQ chassis, USB-6212 and
+USB-6003; unknown models are noted and skipped), so pass/fail counts
+vary with the bench. ao0->ai0 BNC loopback expected on each device.
+
 Run (two shells, on the machine with the NI devices + loopbacks):
 
     pydvma-serve --driver nidaq --port 8766
     python dev/bridge_hw_check.py ws://127.0.0.1:8766/ws
 
 First run on real hardware: 2026-07-08, 38/38 pass (cDAQ-9174 with
-9234+9260, USB-6212, USB-6003; ao0->ai0 loopback on each device).
+9234+9260, USB-6212, USB-6003). 2026-07-10: 44/44 (check E added).
+2026-08-11: 35/35 with the 6003 unplugged (discovery-driven rewrite).
 """
 import asyncio
 import io
@@ -119,75 +125,98 @@ async def main(url):
         await ws.send(json.dumps({'type': 'hello'}))
         caps = await recv_json(ws, 'capabilities')
         check('nidaq backend advertised', 'nidaq' in caps['backends'])
-        ndev = len(caps['devices']['nidaq'])
-        check('3 NI devices enumerated', ndev == 3, ndev)
-        c0 = caps['device_caps'].get('nidaq:0', {})
-        check('cDAQ ao_vmax = 9260 rail 4.2426 (drives the +/-4.24 V clamp note)',
-              c0.get('ao_vmax') is not None and abs(c0['ao_vmax'] - 4.24264068712) < 1e-6,
-              c0.get('ao_vmax'))
-        check('cDAQ ai_vmax = 9234 rail 5.0', c0.get('ai_vmax') == 5.0, c0.get('ai_vmax'))
-        check('cDAQ IEPE supported, 2 mA',
-              c0.get('iepe_supported') is True and c0.get('iepe_currents') == [0.002],
-              c0.get('iepe_currents'))
-        check('cDAQ simultaneous (DSA)', c0.get('simultaneous') is True)
-        check('cDAQ terminal = PseudoDiff',
-              c0.get('terminal_configs') == ['DAQmx_Val_PseudoDiff'],
-              c0.get('terminal_configs'))
-        mc0 = caps['max_channels'].get('nidaq:0', {})
-        check('cDAQ max_channels 4 in / 2 out',
-              mc0 == {'input': 4, 'output': 2}, mc0)
+        entries = caps['devices']['nidaq']
+        products = [e.get('product_type', '?') for e in entries]
+        print('  enumerated: ' + ', '.join(
+            '%d=%s' % (i, p) for i, p in enumerate(products)))
+        check('at least one NI device enumerated', len(entries) >= 1, products)
+        cdaq_idx = next((i for i, e in enumerate(entries)
+                         if e.get('is_chassis')), None)
+        if cdaq_idx is None:
+            print('  SKIP  cDAQ caps checks (no chassis connected)')
+        else:
+            c0 = caps['device_caps'].get('nidaq:%d' % cdaq_idx, {})
+            check('cDAQ ao_vmax = 9260 rail 4.2426 (drives the +/-4.24 V clamp note)',
+                  c0.get('ao_vmax') is not None and abs(c0['ao_vmax'] - 4.24264068712) < 1e-6,
+                  c0.get('ao_vmax'))
+            check('cDAQ ai_vmax = 9234 rail 5.0', c0.get('ai_vmax') == 5.0, c0.get('ai_vmax'))
+            check('cDAQ IEPE supported, 2 mA',
+                  c0.get('iepe_supported') is True and c0.get('iepe_currents') == [0.002],
+                  c0.get('iepe_currents'))
+            check('cDAQ simultaneous (DSA)', c0.get('simultaneous') is True)
+            check('cDAQ terminal = PseudoDiff',
+                  c0.get('terminal_configs') == ['DAQmx_Val_PseudoDiff'],
+                  c0.get('terminal_configs'))
+            mc0 = caps['max_channels'].get('nidaq:%d' % cdaq_idx, {})
+            check('cDAQ max_channels 4 in / 2 out',
+                  mc0 == {'input': 4, 'output': 2}, mc0)
 
-        # ---- B. DSA coerced-fs on the real 9234 ----
-        print('B. DSA coerced-fs (request 8000 -> expect 8533.33)')
-        await ws.send(json.dumps({'type': 'configure', 'settings': {
-            'device_driver': 'nidaq', 'device_index': 0, 'channels': 4,
-            'fs': 8000, 'stored_time': 3.0,
-            'NI_mode': 'DAQmx_Val_PseudoDiff', 'VmaxNI': 5,
-            'output_device_driver': 'nidaq', 'output_device_index': 0,
-            'output_channels': 1, 'output_VmaxNI': 4,
-        }}))
-        st = await recv_json(ws, 'status')
-        check('configured event received', st.get('event') == 'configured', st.get('event'))
-        check('fs coerced to 8533.33 on real 9234',
-              abs(st.get('fs', 0) - 25600.0 / 3.0) < 0.1, st.get('fs'))
-        check('4 channels configured', st.get('channels') == 4, st.get('channels'))
+        if cdaq_idx is not None:
+            # ---- B. DSA coerced-fs on the real 9234 ----
+            print('B. DSA coerced-fs (request 8000 -> expect 8533.33)')
+            await ws.send(json.dumps({'type': 'configure', 'settings': {
+                'device_driver': 'nidaq', 'device_index': cdaq_idx, 'channels': 4,
+                'fs': 8000, 'stored_time': 3.0,
+                'NI_mode': 'DAQmx_Val_PseudoDiff', 'VmaxNI': 5,
+                'output_device_driver': 'nidaq', 'output_device_index': cdaq_idx,
+                'output_channels': 1, 'output_VmaxNI': 4,
+            }}))
+            st = await recv_json(ws, 'status')
+            check('configured event received', st.get('event') == 'configured', st.get('event'))
+            check('fs coerced to 8533.33 on real 9234',
+                  abs(st.get('fs', 0) - 25600.0 / 3.0) < 0.1, st.get('fs'))
+            check('4 channels configured', st.get('channels') == 4, st.get('channels'))
 
-        # ---- C. multi-channel capture w/ sweep (cDAQ, loopback ao0->ai0) ----
-        print('C. 4-channel bridge capture, 9260 sweep -> 9234 ai0')
-        events, res, hdr, data = await do_log(
-            ws, 2.0, pretrigger=None,
-            output={'type': 'sweep', 'amp': 1.0, 'f1': 100, 'f2': 1000,
-                    'duration': 1.5},
-            test_name='multi-ch sweep cDAQ')
-        check('log_result nChannels = 4', res.get('nChannels') == 4, res.get('nChannels'))
-        check('log_result fs = coerced 8533.33',
-              abs(res.get('fs', 0) - 25600.0 / 3.0) < 0.1, res.get('fs'))
-        td = data.time_data_list[0]
-        y = np.asarray(td.time_data)
-        check('container TimeData shape (N, 4)', y.ndim == 2 and y.shape[1] == 4, y.shape)
-        rms = np.sqrt(np.mean(y ** 2, axis=0))
-        check('loopback ch0 carries the sweep (rms > 0.1 V)', rms[0] > 0.1,
-              np.round(rms, 4).tolist())
-        check('open 9234 channels quiet (< ch0/5)',
-              all(r < rms[0] / 5 for r in rms[1:]), np.round(rms, 4).tolist())
-        peak = float(np.max(np.abs(y[:, 0])))
-        check('ch0 peak ~ commanded 1.0 V (0.8..1.2)', 0.8 < peak < 1.2, round(peak, 3))
+            # ---- C. multi-channel capture w/ sweep (cDAQ, loopback ao0->ai0) ----
+            print('C. 4-channel bridge capture, 9260 sweep -> 9234 ai0')
+            events, res, hdr, data = await do_log(
+                ws, 2.0, pretrigger=None,
+                output={'type': 'sweep', 'amp': 1.0, 'f1': 100, 'f2': 1000,
+                        'duration': 1.5},
+                test_name='multi-ch sweep cDAQ')
+            check('log_result nChannels = 4', res.get('nChannels') == 4, res.get('nChannels'))
+            check('log_result fs = coerced 8533.33',
+                  abs(res.get('fs', 0) - 25600.0 / 3.0) < 0.1, res.get('fs'))
+            td = data.time_data_list[0]
+            y = np.asarray(td.time_data)
+            check('container TimeData shape (N, 4)', y.ndim == 2 and y.shape[1] == 4, y.shape)
+            rms = np.sqrt(np.mean(y ** 2, axis=0))
+            check('loopback ch0 carries the sweep (rms > 0.1 V)', rms[0] > 0.1,
+                  np.round(rms, 4).tolist())
+            check('open 9234 channels quiet (< ch0/5)',
+                  all(r < rms[0] / 5 for r in rms[1:]), np.round(rms, 4).tolist())
+            peak = float(np.max(np.abs(y[:, 0])))
+            check('ch0 peak ~ commanded 1.0 V (0.8..1.2)', 0.8 < peak < 1.2, round(peak, 3))
+        else:
+            print('B./C. SKIP (no cDAQ chassis connected)')
 
-        # ---- D. pretrigger + sweep on every device via the bridge ----
-        dev_cfgs = [
-            (0, 'cDAQ-9174 (9234/9260)', dict(NI_mode='DAQmx_Val_PseudoDiff',
-                                              VmaxNI=5, output_VmaxNI=4), 8000),
-            (1, 'USB-6212', dict(NI_mode='DAQmx_Val_RSE',
-                                 VmaxNI=10, output_VmaxNI=5), 10000),
+        # ---- D. pretrigger + sweep on every connected device ----
+        # Per-model config; dev_cfgs is built from the enumerated devices
+        # so the harness runs against whatever is physically plugged in.
+        KNOWN_CFGS = {
+            'cDAQ': (dict(NI_mode='DAQmx_Val_PseudoDiff',
+                          VmaxNI=5, output_VmaxNI=4), 8000),
+            'USB-6212': (dict(NI_mode='DAQmx_Val_RSE',
+                              VmaxNI=10, output_VmaxNI=5), 10000),
             # 6003 AO caps at 5000 S/s (software-timed): output_fs must
             # be set explicitly since MySettings defaults it to fs.
             # NB the webui now does this too (acquire store
             # reclampOutputFs stages output_fs = device_caps
             # ao_max_rate when the input fs exceeds it).
-            (2, 'USB-6003', dict(NI_mode='DAQmx_Val_RSE',
-                                 VmaxNI=10, output_VmaxNI=5,
-                                 output_fs=5000), 8000),
-        ]
+            'USB-6003': (dict(NI_mode='DAQmx_Val_RSE',
+                              VmaxNI=10, output_VmaxNI=5,
+                              output_fs=5000), 8000),
+        }
+        dev_cfgs = []
+        for i, e in enumerate(entries):
+            prod = e.get('product_type', '?')
+            key = 'cDAQ' if e.get('is_chassis') else prod
+            if key in KNOWN_CFGS:
+                cfg, fs = KNOWN_CFGS[key]
+                dev_cfgs.append((i, prod, dict(cfg), fs))
+            else:
+                print('  NOTE  no per-model config for %s (index %d) '
+                      '-- skipping D/E on it' % (prod, i))
         for idx, label, cfg, fs in dev_cfgs:
             print('D. pretrigger + sweep via bridge: ' + label)
             await ws.send(json.dumps({'type': 'configure', 'settings': dict(
