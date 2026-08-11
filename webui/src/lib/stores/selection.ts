@@ -414,10 +414,13 @@ export function createSelection() {
     /**
      * Force every line of set `id` to a single state: `'on'` (visible) or
      * `'off'` (hidden) — a 2-state whole-set show/hide, distinct from
-     * `cycleSet`'s 3-state advance. Unknown id is a no-op. (Formerly backed
-     * the Fit card's "Global" button; that button became the fit-lines
-     * local|global toggle in round-7 item 6, so this currently has no UI
-     * caller — kept as the generic programmatic whole-set show/hide.)
+     * `cycleSet`'s 3-state advance. Unknown id is a no-op.
+     *
+     * Used by the BLA run store (`stores/bla.ts`): every raw capture of a
+     * `M × n_exc` run lands hidden so the tray/legend is not flooded, and the
+     * Nonlin card's "show raw captures" button flips them back through
+     * `setRawVisible`. (It originally backed the Fit card's "Global" button,
+     * which became the fit-lines local|global toggle in round-7 item 6.)
      */
     setSetVisible(id: number, visible: boolean) {
       const rec = findSet(id); if (!rec) return;

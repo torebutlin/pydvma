@@ -451,7 +451,7 @@ test("a multisine override emits serve's exact snake_case keyset — no duration
   void rh.promise.catch(() => {});
 });
 
-test('a multisine override opens the AO settings gate and widens output_channels to n_exc', async () => {
+test('a multisine override opens the AO settings gate and sizes output_channels to n_exc', async () => {
   // `multisine_generator` raises when n_exc > settings.output_channels, and
   // the card's stimulus group may be OFF entirely during a BLA run — so the
   // override must both open the gate and size the channel count itself.
@@ -468,6 +468,26 @@ test('a multisine override opens the AO settings gate and widens output_channels
   expect(cfg!.settings).toMatchObject({
     output_device_driver: 'nidaq', output_device_index: 1, output_channels: 2,
   });
+  void rh.promise.catch(() => {});
+});
+
+test('a multisine override sets output_channels EXACTLY, narrowing a staled-wider value', async () => {
+  // The multisine buffer has exactly n_exc columns (signal_generator instead
+  // fills output_channels with copies of one waveform), so a leftover wider
+  // `outputChannels` — an Acquire-card edit, or a `--settings` prefill — makes
+  // the write fail on the column mismatch (sounddevice rejects it; DAQmx
+  // errors on the wider channel string). Exact, not widened.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ outputEnabled: true, outputChannels: 2, outputDeviceId: 'nidaq:1' });
+  const rh = bp.startRecording({
+    deviceId: 'nidaq:0', sampleRate: 8000, channelCount: 2, durationS: 0.768,
+    outputOverride: { ...multisineOverride(), nExc: 1 },
+  });
+  fake.open();
+  await tick();
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings.output_channels).toBe(1);
   void rh.promise.catch(() => {});
 });
 

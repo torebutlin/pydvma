@@ -247,6 +247,29 @@ implementation:
   with a BLA check (BNC loopback ⇒ x = y ⇒ G ≈ 1 flat, σ_NL at the
   noise floor); verify commanded-x live on the 6212 (routed AI sample
   clock); run on all three NI devices (6003, 6212, cDAQ-9174/9234).
+- **Two silent rate paths the BLA preflight cannot see** — both need
+  confirming in that same PC/soundcard pass, since either would corrupt
+  a run without tripping a single check:
+  - **Soundcard capture resampling without `lpf_on`.**
+    `streams.select_capture_fs` (`pydvma/streams.py` ~311) returns
+    `'lowest-native'` whenever the requested `fs` is not a native rate:
+    the converter runs faster and pydvma DECIMATES IN SOFTWARE. That is
+    the same periodicity-destroying resample the BLA preflight refuses
+    `lpf_on` for, but it happens with the low-pass OFF, so the `lpf`
+    check never fires. The recent advertise-only-native-rates work
+    means the UI ladder normally offers native rates only (⇒ `'exact'`,
+    no resampling) — a mitigation, not an enforcement: a `--settings`
+    prefill or a hand-typed rate can still land off-ladder. Confirm a
+    real soundcard BLA run reports `'exact'`; if it can't be
+    guaranteed, the preflight needs the capture-rate reason surfaced
+    (the server knows it) rather than inferring from `lpf_on`.
+  - **AO ladder coercion is warned server-console-side only.**
+    `streams.setup_output_NI_nidaqmx` (~1636) prints a WARNING when a
+    DSA AO module coerces `output_fs` off-ladder — the drive then plays
+    at the wrong frequencies (the excited bins move off the analysed
+    ones) and the webui never sees the message. Check whether a 9260
+    can be driven to coerce at a BLA rate, and if so route the warning
+    into the bridge's status channel.
 - **cDAQ commanded-x is refused, conservatively.** A cDAQ chassis'
   AO/AI share the chassis timebase (phase-coherent) but there is no
   routed AI sample clock to prove a zero start offset (sample-accurate),

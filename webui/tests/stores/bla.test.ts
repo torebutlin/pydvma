@@ -10,6 +10,7 @@ import {
   firstBlaError,
   outputRailFor,
   excitationLabel,
+  BLA_BRIDGE_PEAK_MARGIN,
   BLA_CAPTURE_MARGIN_SAMPLES,
   type BlaActions,
   type BlaDesign,
@@ -379,6 +380,44 @@ test('measured-x channels must be distinct and in range, leaving a response', ()
     .find((c) => c.code === 'resp-channels')?.ok).toBe(false);
 });
 
+test('the enabled outputs must be the prefix ao0..ao(n-1), in order', () => {
+  // `aoChannel` is decorative in V1: the run reduces the table to a COUNT and
+  // both generators write excitation q to buffer column q, which the server
+  // maps onto the device's FIRST n_exc analog outputs. Enabling ao1 alone
+  // would therefore drive ao0 — refused rather than silently re-routed.
+  const only1 = misoDesign({
+    outputs: [
+      { aoChannel: 0, enabled: false, xMode: 'measured', xChannel: 0 },
+      { aoChannel: 1, enabled: true, xMode: 'measured', xChannel: 1 },
+    ],
+  });
+  const gap = preflightBla(baseInput({
+    design: only1, values: deriveBla(only1, FS, 3), channelCount: 3,
+  })).find((c) => c.code === 'ao-prefix');
+  expect(gap?.ok).toBe(false);
+  expect(gap?.reason).toMatch(/drives ao0…ao0 in order, but the table enables ao1/);
+  expect(gap?.reason).toMatch(/per-channel routing is a follow-up/);
+
+  // A hole in the middle of a wider selection is refused the same way.
+  const holed = misoDesign({
+    outputs: [
+      { aoChannel: 0, enabled: true, xMode: 'measured', xChannel: 0 },
+      { aoChannel: 1, enabled: false, xMode: 'measured', xChannel: 1 },
+      { aoChannel: 2, enabled: true, xMode: 'measured', xChannel: 2 },
+    ],
+  });
+  expect(preflightBla(baseInput({
+    design: holed, values: deriveBla(holed, FS, 4), channelCount: 4,
+  })).find((c) => c.code === 'ao-prefix')?.ok).toBe(false);
+
+  // The prefix selections pass: ao0 alone, and ao0+ao1.
+  expect(preflightBla(baseInput())).toEqual([]);
+  const two = misoDesign();
+  expect(preflightBla(baseInput({
+    design: two, values: deriveBla(two, FS, 3), channelCount: 3,
+  }))).toEqual([]);
+});
+
 test('n_exc cannot exceed the output device AO channel count', () => {
   const caps = niCaps();
   caps.max_channels = { 'nidaq:0': { input: 16, output: 1 } };
@@ -425,13 +464,33 @@ test('a level between the 5 V server rail and a 10 V device rail is REFUSED', ()
     design, values, providerKind: 'bridge', caps: niCaps(), inputDeviceId: 'nidaq:0',
     outputRail: outputRailFor('bridge', {}, 'nidaq:0'),
   }));
-  expect(railed.find((c) => c.code === 'peak')?.reason).toMatch(/exceeds the limit ±5/);
+  // ±4.85 = the 5 V rail less the bridge headroom margin (see below).
+  expect(railed.find((c) => c.code === 'peak')?.reason).toMatch(/exceeds the limit ±4.85/);
   // Explicitly staging the wider rail (a device that really can swing 10 V)
   // admits the same level — the check follows the setting, not the capability.
   expect(preflightBla(baseInput({
     design, values, providerKind: 'bridge', caps: niCaps(), inputDeviceId: 'nidaq:0',
     outputRail: outputRailFor('bridge', { outputVmaxNI: 10 }, 'nidaq:0'),
   }))).toEqual([]);
+});
+
+test('the bridge peak sweep keeps headroom for the server PRNG; the browser does not', () => {
+  // The sweep generates with mulberry32, but the SERVER redraws the phases
+  // with numpy — same amplitude law, different crest factor — so a level just
+  // under the rail can pass here and trip `multisine_generator` mid-run.
+  // peak ≈ 4.91 V: inside the 5 V rail, past 0.97 × 5 = 4.85.
+  expect(BLA_BRIDGE_PEAK_MARGIN).toBe(0.97);
+  const design = testDesign({ ampRms: 1.57 });
+  const values = deriveBla(design, FS, 2);
+  const peakCheck = (providerKind: 'webaudio' | 'bridge') =>
+    preflightBla(baseInput({
+      design, values, providerKind, outputRail: 5,
+      caps: providerKind === 'bridge' ? niCaps() : null,
+      inputDeviceId: providerKind === 'bridge' ? 'nidaq:0' : '',
+    })).find((c) => c.code === 'peak');
+  // Browser: these ARE the waveforms that play, so the full rail is honest.
+  expect(peakCheck('webaudio')).toBeUndefined();
+  expect(peakCheck('bridge')?.ok).toBe(false);
 });
 
 // ---- run sequencing ----
@@ -641,7 +700,65 @@ test('a device running at another rate aborts the run with a clear message', asy
   const st = get(bla.state);
   expect(st.phase).toBe('error');
   expect(st.error).toMatch(/captured at 44100 Hz but the run was designed for 48000 Hz/);
+  // BROWSER path: there is no coerced-fs channel, so `fsEff` will report the
+  // requested rate forever — "start the run again" would loop. The advice has
+  // to be to move the requested rate onto what the browser opened.
+  expect(st.error).toMatch(/set the sample rate to 44100 Hz in Setup/);
+  expect(st.error).not.toMatch(/start the run again/);
   expect(get(acquire.settings).durationS).toBe(3.5);   // restored even on failure
+});
+
+test('on the bridge the same abort says to start again (the coerced rate self-heals)', async () => {
+  const provider = fakeProvider({ kind: 'bridge', caps: niCaps(), fs: 44100 });
+  const s = makeStore({ provider });
+  await s.acquire.init();
+  s.acquire.patch({ deviceId: 'nidaq:0' });
+  await s.bla.start({ seed: 12 });
+  const st = get(s.bla.state);
+  expect(st.phase).toBe('error');
+  expect(st.error).toMatch(/start the run again/);
+  expect(st.error).not.toMatch(/set the sample rate/);
+});
+
+test('a refused preflight keeps the previous run\'s set ids (and its show-raw affordance)', async () => {
+  const { bla, acquire, selection } = makeStore();
+  await bla.start({ seed: 31 });
+  const ids = get(bla.state).rawSetIds;
+  const resultIds = get(bla.state).resultSetIds;
+  expect(ids).toHaveLength(2);
+  expect(resultIds).toHaveLength(1);
+
+  // A NEW run that never starts must not strand the previous captures: they
+  // are still hidden in the tray, and the card gates "show raw captures" on
+  // exactly these ids.
+  acquire.patch({ lpfOn: true });
+  await bla.start({ seed: 32 });
+  const st = get(bla.state);
+  expect(st.phase).toBe('error');
+  expect(st.error).toMatch(/digital low-pass/);
+  expect(st.rawSetIds).toEqual(ids);
+  expect(st.resultSetIds).toEqual(resultIds);
+  // And the toggle still reaches them.
+  bla.setRawVisible(true);
+  const offFor = (id: number) => get(selection.setsView).find((s) => s.id === id)?.allOff;
+  expect(ids.map(offFor)).toEqual([false, false]);
+});
+
+test('reset() unhides the raw captures before forgetting them', async () => {
+  const { bla, selection } = makeStore();
+  await bla.start({ seed: 33 });
+  const ids = get(bla.state).rawSetIds;
+  const offFor = (id: number) => get(selection.setsView).find((s) => s.id === id)?.allOff;
+  expect(ids.map(offFor)).toEqual([true, true]);       // hidden by the run
+
+  bla.reset();
+  // The store no longer tracks them, so the card's toggle is gone — leaving
+  // them hidden would put sets in the tray this card can never reveal again.
+  expect(get(bla.state)).toEqual({
+    phase: 'idle', m: 0, e: 0, error: '', runSpec: null,
+    rawSetIds: [], resultSetIds: [], notes: [],
+  });
+  expect(ids.map(offFor)).toEqual([false, false]);
 });
 
 test('an engine failure surfaces on the store, not as a rejection', async () => {

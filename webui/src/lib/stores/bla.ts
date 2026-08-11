@@ -174,8 +174,10 @@ export interface BlaState {
 /**
  * Every identifier {@link preflightBla} can attach to a finding. A CLOSED
  * union on purpose: the card places each message beside the control its code
- * names, so adding a code without giving it a home is a compile error there
- * rather than a message that silently disappears from the UI.
+ * names, and its `CODE_PLACEMENT` map carries a type-level exhaustiveness
+ * assertion over this union — so a code added here without being given a home
+ * there fails to compile, instead of producing a message that only the card's
+ * catch-all net keeps visible.
  */
 export type BlaCheckCode =
   | 'fs'
@@ -188,6 +190,7 @@ export type BlaCheckCode =
   | 'x-mode'
   | 'commanded-sync'
   | 'ao-channels'
+  | 'ao-prefix'
   | 'x-channels'
   | 'resp-channels'
   | 'peak';
@@ -227,10 +230,15 @@ export interface BlaPreflightInput {
   /** Peak rail the generated waveform is checked against (volts, or ±1). */
   outputRail: number;
   /**
-   * The seed the run will actually use. The peak guard checks the REAL
-   * waveforms, so the seed has to be drawn before validation, not after —
-   * every realisation's crest factor depends on it. Irrelevant (and left at
-   * `0`) when the peak check is skipped.
+   * The seed the run will actually use. The peak guard generates every
+   * realisation's waveform, and the crest factor depends on the seed, so it
+   * has to be drawn before validation rather than after. Irrelevant (and left
+   * at `0`) when the peak check is skipped.
+   *
+   * NB the browser path plays exactly these waveforms; the bridge regenerates
+   * them from the same spec under numpy's PRNG, so there the sweep is a close
+   * approximation guarded by {@link BLA_BRIDGE_PEAK_MARGIN}, not an exact
+   * preview.
    */
   seed: number;
 }
@@ -270,6 +278,24 @@ export const BLA_CAPTURE_MARGIN_SAMPLES = 256;
 
 /** Rate agreement tolerance (Hz) — matches the acquire store's coerced-fs test. */
 export const BLA_FS_TOLERANCE_HZ = 0.5;
+
+/**
+ * Fraction of the output rail the preflight peak sweep allows on the BRIDGE
+ * path — a deliberate safety margin, not a physical limit.
+ *
+ * The sweep generates the waveforms with the TypeScript generator
+ * ({@link generateMultisine}, mulberry32). On the browser path those ARE the
+ * waveforms that will play, so the check is exact. On the bridge the server
+ * regenerates them from the same spec with numpy's `default_rng` — same
+ * amplitude/rotation/periodicity LAW, but a different PRNG, so the phases (and
+ * therefore the crest factor) differ realisation by realisation. A level a few
+ * percent under the rail can pass here and trip
+ * `multisine_generator`'s hard peak error mid-run, throwing away the captures
+ * already taken. Checking against 97% of the rail keeps the client
+ * conservative; the cost is refusing a sliver of levels the server would in
+ * fact have accepted, which is the right way round.
+ */
+export const BLA_BRIDGE_PEAK_MARGIN = 0.97;
 
 /**
  * Why the COMMANDED x-mode is refused when the path cannot prove sync — the
@@ -475,7 +501,11 @@ export function outputRailFor(
  *   start at a threshold crossing somewhere inside the transient).
  * - **peak guard** — the crest factor varies per `(m, e)`, so a level that
  *   passes at (0,0) can clip at (3,1); generating every waveform up front
- *   turns a mid-run failure into a pre-run message. COST: this is
+ *   turns a mid-run failure into a pre-run message. EXACT on the browser path
+ *   (those are the waveforms that play); on the bridge the server redraws the
+ *   phases with numpy's PRNG under the same amplitude/rotation law, so the
+ *   sweep is an approximation and is checked against
+ *   {@link BLA_BRIDGE_PEAK_MARGIN} of the rail instead. COST: this is
  *   `O(M · n_exc² · N · n_lines)` time-domain sums — milliseconds for a normal
  *   design, but SECONDS at a very fine Δf (large `N`) with several excitations,
  *   and it runs synchronously. Pass `opts.peakCheck: false` for the live
@@ -554,6 +584,20 @@ export function preflightBla(
     fail('x-mode', 'Every excitation must use the same x source — mix of measured and commanded '
       + 'drive is not supported in one run.');
   }
+  // The excitation table's `aoChannel` is DECORATIVE in V1: the run reduces the
+  // enabled rows to a COUNT (`n_exc`), and both generators write excitation q
+  // to buffer column q — which the server maps onto the device's first n_exc
+  // analog outputs (`build_ao_channel_string` with no `output_channels_spec`).
+  // So enabling ao1 alone would drive ao0, and the user would see a physically
+  // inexplicable result (a near-singular X, or a response to a channel they
+  // believe is silent). Refuse anything that is not the prefix ao0..ao(n−1),
+  // IN ORDER, rather than quietly re-routing.
+  if (values.nExc > 0 && enabled.some((o, i) => Math.trunc(o.aoChannel) !== i)) {
+    const listed = enabled.map((o) => `ao${o.aoChannel}`).join(', ');
+    fail('ao-prefix', `A BLA run drives ao0…ao${values.nExc - 1} in order, but the table enables `
+      + `${listed}. Enable the FIRST ${values.nExc} output${values.nExc === 1 ? '' : 's'} instead `
+      + '— per-channel routing is a follow-up.');
+  }
   if (values.xMode === 'commanded' && !commandedXSupported(input)) {
     fail('commanded-sync', BLA_COMMANDED_X_REASON);
   }
@@ -606,6 +650,14 @@ export function preflightBla(
   // Only worth running once the design itself is sound; the generator would
   // otherwise just re-report a bad bin range.
   if ((opts.peakCheck ?? true) && out.every((c) => c.ok) && values.nExc > 0 && values.linesCount > 0) {
+    // On the bridge the SERVER regenerates these waveforms with a different
+    // PRNG, so the phases — and the crest factor — are not the ones checked
+    // here; leave headroom so a near-rail level is refused now rather than
+    // mid-run by `multisine_generator`. The browser plays exactly what is
+    // generated here, so it gets the full rail.
+    const limit = input.providerKind === 'bridge'
+      ? input.outputRail * BLA_BRIDGE_PEAK_MARGIN
+      : input.outputRail;
     try {
       for (let m = 0; m < design.M; m++) {
         for (let e = 0; e < values.nExc; e++) {
@@ -623,7 +675,7 @@ export function preflightBla(
               e,
               nExc: values.nExc,
               ampRms: design.ampRms,
-              limit: input.outputRail,
+              limit,
             },
             values.fsEff,
           );
@@ -757,7 +809,15 @@ export function createBlaStore(deps: BlaDeps) {
     const results = preflightBla(input);
     const blocking = firstBlaError(results);
     if (blocking) {
-      state.set({ ...emptyState(), phase: 'error', error: blocking });
+      // A refused preflight captured NOTHING, so the previous run's sets are
+      // still exactly as they were — keep pointing at them. Wiping the ids here
+      // stranded the last run's raw captures: they stay HIDDEN in the tray, and
+      // the card gates its "show raw captures" button on `rawSetIds`, so the
+      // one control that reveals them disappeared because an unrelated new run
+      // failed to start.
+      state.update((st) => ({
+        ...st, phase: 'error', error: blocking, m: 0, e: 0, notes: [],
+      }));
       return;
     }
     const notes = results.filter((c) => c.ok).map((c) => c.reason);
@@ -810,20 +870,26 @@ export function createBlaStore(deps: BlaDeps) {
           const rec = await acquire.record({
             outputOverride: stimulusFor(d, v, seed, m, e, rail),
           });
-          // A DSA device coerces an off-ladder rate (8000 → 8533.33 Hz), and the
-          // coerced value only reaches the store on the FIRST configure
-          // round-trip of a session — so the very first run can trip this and
-          // the NEXT one is already designed at the true rate. Hence "start the
-          // run again", NOT "set the sample rate": a coerced 48019.2077 Hz is
-          // not a value the user can type, and the design now follows it
-          // automatically (`fsEff` reads the coerced note).
+          // The advice differs by path, because only ONE of them self-heals.
+          // BRIDGE: a DSA device coerces an off-ladder rate (8000 → 8533.33 Hz)
+          // and the coerced value reaches the store on the configure
+          // round-trip, so by the time this throws `fsEff` already reads the
+          // true rate and a second Start is designed correctly — "start again"
+          // is real advice, and "set the sample rate" would not even be
+          // possible (48019.2077 Hz is not a typeable ladder value).
+          // WEB AUDIO: there is no coerced-fs channel at all (`onConfigured`
+          // is bridge-only), so `fsEff` will report the same requested rate
+          // forever and retrying loops. The user has to move the requested
+          // rate onto what the browser actually opened.
           if (Math.abs(rec.fs - v.fsEff) > BLA_FS_TOLERANCE_HZ) {
-            throw new Error(
-              `The device captured at ${rec.fs} Hz but the run was designed for ${v.fsEff} Hz — `
-              + `the ${v.periodSamples}-sample period would not be a whole number of periods at `
-              + 'that rate. The real rate is known now, so simply start the run again; the design '
-              + 'readouts (period, band, run time) already follow it.',
-            );
+            const lead = `The device captured at ${rec.fs} Hz but the run was designed for `
+              + `${v.fsEff} Hz — the ${v.periodSamples}-sample period would not be a whole `
+              + 'number of periods at that rate. ';
+            throw new Error(lead + (get(acquire.kind) === 'bridge'
+              ? 'The real rate is known now, so simply start the run again; the design readouts '
+                + '(period, band, run time) already follow it.'
+              : `This browser opened the device at ${rec.fs} Hz: set the sample rate to `
+                + `${rec.fs} Hz in Setup, then start the run.`));
           }
           const item = recordingToItem(
             rec, `${d.testName} r${m + 1}e${e + 1}`, acquire.lastRecordingMeta,
@@ -900,18 +966,29 @@ export function createBlaStore(deps: BlaDeps) {
     design.update((d) => ({ ...d, outputs: rows.map((r) => ({ ...r })) }));
   }
 
-  /** Clear a finished/failed run back to idle (leaves landed sets alone). */
+  /**
+   * Clear a finished/failed run back to idle, keeping the design for another
+   * run. The landed SETS are not deleted — but the raw captures are UNHIDDEN
+   * first: the store is about to forget their ids, and with them the card's
+   * "show raw captures" button, so leaving them hidden would put sets in the
+   * tray that this card can no longer reveal. (They are ordinary time sets, so
+   * unhiding them adds nothing to the TF view the run just jumped to; a tray
+   * card click hides them again.)
+   */
   function reset(): void {
     cancelRequested = false;
+    setRawVisible(true);
     state.set(emptyState());
   }
 
   return {
     design,
     state: { subscribe: state.subscribe } as Readable<BlaState>,
+    // The effective rate is not exposed on its own: it is already `values.fsEff`
+    // (with everything derived from it), and a second copy would be one more
+    // thing for a consumer to read the stale half of.
     values,
     checks,
-    fsEff,
     patch,
     setOutputs,
     start,

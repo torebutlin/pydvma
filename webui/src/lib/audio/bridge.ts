@@ -520,11 +520,18 @@ export class BridgeProvider implements SourceProvider {
         if (od.driver !== 'mock') s.output_device_index = od.index;
       }
       if (ec.outputChannels != null) s.output_channels = ec.outputChannels;
-      // A multisine drives one channel PER EXCITATION, and the server's
-      // `multisine_generator` rejects `n_exc > settings.output_channels`, so
-      // widen the channel count to fit the run (never narrow it).
+      // A multisine drives one channel PER EXCITATION and its buffer has
+      // EXACTLY `n_exc` columns — unlike `signal_generator`, which fills
+      // `output_channels` columns with copies of one waveform. So this
+      // OVERRIDES the card's value in both directions rather than widening it:
+      // a staled-wider `outputChannels` (an Acquire-card edit, or a
+      // `--settings` prefill) would make the write fail on the (n_samples,
+      // n_exc) buffer — sounddevice rejects the column mismatch, DAQmx errors
+      // on a channel string wider than the data. The server's own generator
+      // also rejects `n_exc > settings.output_channels`, so too-narrow fails
+      // too; exactness is the only value that always works.
       if (override?.type === 'multisine') {
-        s.output_channels = Math.max(ec.outputChannels ?? 1, override.nExc);
+        s.output_channels = override.nExc;
       }
       // Store-derived AO rate clamp (the effective output device's
       // ao_max_rate sits below the input fs, e.g. USB-6003 AO at 5 kS/s):

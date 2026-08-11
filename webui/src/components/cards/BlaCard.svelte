@@ -166,23 +166,35 @@
   const blockReason = $derived(firstBlaError($checks));
 
   /**
-   * Which control each preflight `code` reports next to. Typed against the
-   * CLOSED {@link BlaCheckCode} union, so a new code added to the preflight is
-   * a compile error here until it is given a home — and anything that slips
-   * through anyway (a code placed nowhere) still surfaces through
-   * {@link unplacedMsgs} rather than vanishing.
+   * Which control each preflight `code` reports next to. `as const` keeps the
+   * literal members visible to the type system so {@link _EVERY_CODE_PLACED}
+   * below can assert — at COMPILE time — that every member of the closed
+   * {@link BlaCheckCode} union has a home here. Adding a code to the preflight
+   * without listing it therefore fails `npm run check`; {@link unplacedMsgs} is
+   * the belt-and-braces runtime net for anything that still slips through.
    */
-  const CODE_PLACEMENT: Record<string, BlaCheckCode[]> = {
+  const CODE_PLACEMENT = {
     band: ['fs', 'band'],
     design: ['design'],
     level: ['peak'],
-    outputs: ['n-exc', 'x-mode', 'commanded-sync', 'ao-channels', 'x-channels'],
+    outputs: ['n-exc', 'x-mode', 'commanded-sync', 'ao-channels', 'ao-prefix', 'x-channels'],
     responses: ['resp-channels'],
     path: ['lpf', 'output-fs', 'pretrigger'],
-  };
+  } as const satisfies Record<string, readonly BlaCheckCode[]>;
+  type PlacementGroup = keyof typeof CODE_PLACEMENT;
+  /** Every code listed above, as a union of literals. */
+  type PlacedCode = (typeof CODE_PLACEMENT)[PlacementGroup][number];
+  /**
+   * Compile-time exhaustiveness: resolves to `true` only while no
+   * {@link BlaCheckCode} is missing from {@link CODE_PLACEMENT}; an unplaced
+   * code makes the type `false` and the initialiser stops type-checking, naming
+   * the offending code in the error.
+   */
+  const _EVERY_CODE_PLACED: [Exclude<BlaCheckCode, PlacedCode>] extends [never] ? true : false = true;
+  void _EVERY_CODE_PLACED;
   const PLACED_CODES = new Set<string>(Object.values(CODE_PLACEMENT).flat());
-  const msgsFor = (group: string) =>
-    $checks.filter((c) => CODE_PLACEMENT[group].includes(c.code));
+  const msgsFor = (group: PlacementGroup) =>
+    $checks.filter((c) => (CODE_PLACEMENT[group] as readonly BlaCheckCode[]).includes(c.code));
   /** Findings with no home in {@link CODE_PLACEMENT} — shown in the run group. */
   const unplacedMsgs = $derived($checks.filter((c) => !PLACED_CODES.has(c.code)));
 
