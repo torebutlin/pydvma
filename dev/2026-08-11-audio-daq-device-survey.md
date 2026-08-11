@@ -73,12 +73,40 @@ our own unweighted measurements.
 **planet 22c is the notable find**: fixed-gain in each of two
 documented range positions, balanced, PoE-powered, and because it is
 Dante, N boxes share one network clock — 2N phase-coherent channels at
-~£80/channel with nothing to mis-set. Caveats: host capture needs a
-Dante Virtual Soundcard licence (~£40/machine) or Dante PCIe card,
-wired LAN required, 44.1–96 k only, and the cross-box phase coherence
-is inferred from Dante's documented PTP sync rather than an ESI claim
-— a two-box cross-spectrum bench would settle it before any 3C6-scale
-commitment.
+~£80/channel with nothing to mis-set.
+
+planet 22c practicalities (plain-language, discussed with Tore
+2026-08-11):
+
+- **It is NOT a USB device** — Thomann's category lumps it in, but its
+  only data connection is Ethernet. Dante = audio-over-Ethernet with
+  network-distributed clock sync (PTP, same family as IEEE 1588 in
+  distributed NI/PXI systems). The computer joins via Dante Virtual
+  Soundcard (~£40 one-off per machine), which presents an ordinary
+  CoreAudio/WASAPI multichannel device — pydvma would see it as a
+  normal soundcard.
+- **The 2-position switch is a RANGE switch, not a gain knob**: max
+  +6 dBV ≈ ±2.8 Vpk (sensitive) or +20 dBu ≈ ±11 Vpk (high-level).
+  Two discrete documented states map straight onto the profile
+  schema's per-mode `max_input_dbu`, fixed-gain in each — the 2i2
+  line/inst machinery without the unknowable knob.
+- **Power/connectivity**: a USB→Ethernet adapter on a laptop carries
+  DATA only — PoE power comes from a PoE switch or a ~£12 inline
+  injector, or use the box's 12 V DC jack. Single-box bench trial =
+  laptop + USB-C→Ethernet adapter + direct cable + 12 V supply.
+  Multi-box = one small PoE gigabit switch (~£40) powers and connects
+  everything.
+- **The USB stereo-per-box ceiling does not apply**: USB boxes drift
+  on independent crystals (meaningless cross-box phase); Dante boxes
+  slave to one elected leader clock, so channels on different boxes
+  stay sample-locked. Microsecond-class alignment (a fraction of a
+  degree at 1 kHz) is inferred from Dante's sync spec, NOT
+  vendor-promised for this box — a two-box cross-spectrum bench is
+  the decision gate before any 3C6-scale commitment, alongside a
+  noise-floor/absolute-scale session like the U24 XL's.
+- PCIe options (Juli@ eX, MAYA44 eX) dropped from consideration —
+  the point is escaping the old NI PCI estate, not adding new
+  internal cards (Tore, 2026-08-11).
 
 ## Conclusions (as discussed with Tore)
 
