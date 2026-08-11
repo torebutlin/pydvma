@@ -159,11 +159,23 @@ is still open, as one consolidated list.
      **The 2i2 BLA identity run itself is still PENDING on Windows:**
      capture channels 3/4 are SILENT here — the digital loopback tap
      that "just works" on macOS is not wired into the Windows capture
-     endpoint (endpoint volume/mute eliminated as causes; playback
-     runs clean). Likely an FC2 loopback-routing setting (its state
-     is per-OS; the OCA route to set it programmatically is
-     pairing-gated). Check FC2's Loopback source at the bench, then
-     rerun `dev/bla_soundcard_check.py`.
+     endpoint. Eliminated by measurement (2026-08-11): endpoint
+     volume/mute; the FC2 "Send Direct Monitor mix to Loopback"
+     preference (channels 3/4 stay silent ticked or unticked, and
+     carry neither playback nor the DM mix — NB if that tickbox ever
+     does take effect it is the WRONG source for an identity run,
+     since a DM-sourced loopback mixes the analogue inputs into the
+     tap; leave it off); a separate loopback endpoint appearing on
+     enable (none does); the WDM-KS pins directly (they refuse every
+     PortAudio sample format — likely owned by the Focusrite
+     service). Leading hypothesis: the Windows driver feeds the
+     loopback only through its ASIO interface, which this PortAudio
+     build does not expose — check FC2's output meters move during
+     Windows playback, and whether a DAW/ASIO host sees loopback
+     channels; if ASIO-only, the identity check stays a macOS
+     harness (`dev/bla_soundcard_check.py`, 8/8 there) and Windows
+     soundcard BLA verification needs a physical output→input cable
+     instead.
   3. ~~**2i2 calibrated-volts re-confirm**~~ — CONFIRMED on Windows
      to **−0.108 dB** (2.4692 V measured vs 2.500 V, Rigol 1 kHz
      5 Vpp, 9 dB Line), identical on MME and WASAPI — matches the
