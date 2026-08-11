@@ -4,7 +4,7 @@
 
 As of 2026-08-10: **the Schoukens BLA noise/nonlinearity-separation
 feature is COMPLETE on branch `worktree-schoukens-bla`** (worktree
-`.claude/worktrees/schoukens-bla`, ~22 commits, NOT merged — master was
+`.claude/worktrees/schoukens-bla`, ~25 commits, NOT merged — master was
 mid-use by a concurrent session; merge is one fast-forward-able command
 when convenient). Design + plan: `dev/plans/2026-08-10-schoukens-bla-*`.
 What shipped: a **Nonlin stage** (design→run→results card) that runs
@@ -23,8 +23,9 @@ directly — no sqrt) + `.bla` run-spec meta; TF-view dashed σ overlay
 verdict banding, `.dvma` round-trip incl. reload. Hard preflight:
 output_fs==fs, lpf OFF (resample kills periodicity), pretrigger
 auto-disarm, all-waveform peak sweep (crest varies per (m,e)), rail =
-output_VmaxNI default 5 V not ao_vmax. Suites at close: pytest 538/3,
-vitest 771/1, check 0/0, Playwright 87/9 + BRIDGE_E2E 96/96 (full
+output_VmaxNI default 5 V not ao_vmax; enabled AO rows must be
+ao0..ao(n−1) (buffer columns map positionally). Suites at close: pytest
+538/3, vitest 777/1, check 0/0, Playwright 87/9 + BRIDGE_E2E 96/96 (full
 pyodide run vs real mock server; wheel re-vendored — same 2.0.0 name),
 mkdocs --strict green. **Hardware-verified live on the Scarlett 2i2
 digital loopback** (`dev/bla_soundcard_check.py`, 8/8: 2×2 identity to
