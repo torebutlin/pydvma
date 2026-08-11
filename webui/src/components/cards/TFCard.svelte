@@ -42,6 +42,10 @@
   const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
 
+  // Moved up (was declared beside the Scaling-tools block further down) so
+  // the σ-toggle self-gate below can read it without a forward reference.
+  const derivedStore = $derived(actions.derived);
+
   const target = $derived(analysisSettings.analysisTarget);
   const settingsMap = $derived(analysisSettings.map);
   const tf = $derived((void $settingsMap, analysisSettings.settingFor($target, 'tf')));
@@ -64,6 +68,19 @@
 
   const plotType = $derived($current.plotType);
   const coherence = $derived($current.coherence);
+  const blaSigma = $derived($current.blaSigma);
+  /**
+   * σ lines toggle self-gate (Task 9, Schoukens BLA): unlike `coherence`
+   * (which is unconditional — a plain switch that shows regardless of
+   * whether any set carries coherence data), the σ toggle would be pure
+   * noise on a dataset with no BLA sets, so it only appears once at least
+   * one VISIBLE data set (not fully off in the tray) carries a σ_NL/σ_n
+   * pair on its tf slice.
+   */
+  const anySigma = $derived(
+    $setsView.some((s) => !s.allOff
+      && (($derivedStore[s.id]?.tf?.sigmaNl) || ($derivedStore[s.id]?.tf?.sigmaN))),
+  );
 
   const PLOT_TYPES: { id: TfPlotType; label: string }[] = [
     { id: 'mag', label: 'Mag (dB)' }, { id: 'phase', label: 'Phase' },
@@ -120,7 +137,6 @@
   // Both live on the TF card (Qt keeps them in a Scaling tool alongside the TF
   // view). x(iω) is a per-set NON-DESTRUCTIVE display multiplier; Best Match
   // writes relative factors through the existing calibration path.
-  const derivedStore = $derived(actions.derived);
   /** Representative x(iω) power for the current target (rep set for 'all'). */
   const iwPower = $derived(repId != null ? ($derivedStore[repId]?.iwPower ?? 0) : 0);
   /** Any TF-bearing set exists → Best Match + the scaling group are meaningful. */
@@ -206,6 +222,16 @@
             onchange={(e) => viewState.setCoherence(e.currentTarget.checked)} aria-label="coherence overlay" /></label>
         </div>
       </div>
+      {#if anySigma}
+        <div class="grp">
+          <span class="grp-lab">σ lines</span>
+          <div class="grp-ctl">
+            <label class="switch"><input type="checkbox" checked={blaSigma}
+              onchange={(e) => viewState.setBlaSigma(e.currentTarget.checked)}
+              aria-label="σ_NL/σ_n overlay" data-testid="bla-sigma-toggle" /></label>
+          </div>
+        </div>
+      {/if}
     </div>
     <div class="ctx-row">
       <div class="grp">

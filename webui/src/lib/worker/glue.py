@@ -3,8 +3,10 @@
 
 Loaded inside the pyodide engine worker (``engine.worker.ts``). Every op is
 a plain function taking JSON-marshallable scalars plus flat float64 arrays
-and returning a dict of arrays — no PyProxy state survives between calls, so
-the worker stays stateless (spec §11).
+and returning a dict of arrays — or, where the op is inherently plural, a
+LIST of such dicts (``calc_bla`` returns one entry per excitation) — no
+PyProxy state survives between calls, so the worker stays stateless
+(spec §11).
 
 Array boundary convention (matches the JS ``NpyArray`` convention in
 ``src/lib/codec/npy.ts``): every array crosses as
@@ -969,6 +971,140 @@ def calc_damping_bands(time_axis, time_data, n_channels, fs, ch, bands='octave',
             item['fit_db'] = _arr(b['fit_db'])
         res['band_data'].append(item)
     return res
+
+
+# --------------------------------------------------------------------------- #
+# Schoukens BLA — noise/nonlinearity separation (the "Nonlin" stage)
+# --------------------------------------------------------------------------- #
+
+def _bla_run_spec(run_spec):
+    """Normalise a BlaRunSpec payload into plain Python types.
+
+    ``analysis.calculate_bla`` indexes ``run_spec`` directly with
+    ``[...]``/``.get(...)`` (it is core pydvma, oblivious to pyodide). But
+    ``run_spec`` is a payload value NESTED inside the op's top-level kwargs
+    dict, so — per the module docstring / ``_get()`` — it (and its nested
+    ``multisine`` sub-dict) crosses the FFI as a JsProxy tree rather than a
+    real dict: a plain-object JsProxy supports attribute access but not
+    ``[...]``/``.get(...)``, so handing it to ``analysis.calculate_bla``
+    unchanged would raise. BlaRunSpec's schema is small and fixed, so this
+    is written as explicit named-field extraction with ``_get()`` (the same
+    style ``_build_fit_specs``/``calc_best_match`` use for their nested
+    per-set payloads) rather than generic recursive reflection.
+
+    ``x_channels``/``resp_channels`` are themselves JS ARRAYS once pulled out
+    of ``run_spec``/left alone — pyodide's JsProxy for an Array-like JS value
+    DOES support indexing/iteration/``len()`` directly (see
+    ``calc_best_match``'s ``freq_range`` handling), unlike a plain object, so
+    they can be listed/coerced without a further ``_get()`` per element.
+    """
+    ms = _get(run_spec, 'multisine')
+    multisine = {
+        'n_samples': int(_get(ms, 'n_samples')),
+        'k1': int(_get(ms, 'k1')),
+        'k2': int(_get(ms, 'k2')),
+        'p_periods': int(_get(ms, 'p_periods')),
+        't_periods': int(_get(ms, 't_periods')),
+        'seed': int(_get(ms, 'seed')),
+        'amp_rms': float(_get(ms, 'amp_rms')),
+        'n_exc': int(_get(ms, 'n_exc')),
+        'M': int(_get(ms, 'M')),
+    }
+    x_channels = _get(run_spec, 'x_channels')
+    resp_channels = _get(run_spec, 'resp_channels')
+    return {
+        'multisine': multisine,
+        'x_mode': _get(run_spec, 'x_mode'),
+        # `not x_channels` catches Python None, a JS-null proxy, AND a
+        # (JS-array-proxied) empty list — a real non-empty array is truthy,
+        # mirroring `calc_best_match`'s identical `not freq_range` guard.
+        'x_channels': None if not x_channels else [int(c) for c in x_channels],
+        'resp_channels': [int(c) for c in (resp_channels or [])],
+        'fs': float(_get(run_spec, 'fs')),
+    }
+
+
+def calc_bla(time_arrays, run_spec):
+    """Schoukens best-linear-approximation glue op (the "Nonlin" stage).
+
+    ``time_arrays`` mirrors ``calc_tf_averaged``'s ensemble contract
+    EXACTLY: a LIST of ``{time_axis, time_data, n_channels, fs}`` payloads —
+    the same flat-array shape every time-data op takes (see ``_time_data``) —
+    one per capture of the BLA run, in ``analysis.calculate_bla``'s required
+    ``[(m, e) for m in range(M) for e in range(n_exc)]`` order (realisation
+    OUTER, experiment INNER). A plain Python/JS list preserves order exactly,
+    so no extra (m, e) tagging is needed to carry it; a wrong LENGTH is
+    caught by ``analysis.calculate_bla`` (``M*n_exc`` mismatch), a wrong
+    ORDER is not — the caller (``webui/src/lib/stores/bla.ts``) must build
+    the list in run order, same caveat as the engine function's own
+    docstring. Each element is a nested payload value, so — unlike
+    ``calc_tf_averaged``'s direct ``s['time_axis']`` indexing — its fields
+    are pulled with ``_get()`` (the CRITICAL repo gotcha: a nested
+    plain-object payload value is a JsProxy without ``[...]`` support).
+
+    ``run_spec`` is the BlaRunSpec dict described on
+    ``analysis.calculate_bla`` — see ``_bla_run_spec`` for how its nested
+    JsProxy tree is normalised to plain Python before the call.
+
+    Builds one ``TimeData`` per capture (minimal ``MySettings(fs,
+    channels)``, same construction every other op uses) and calls
+    ``analysis.calculate_bla``. Any ``ValueError`` it raises (wrong capture
+    count, too few realisations/periods, a bad excited-bin range, an
+    out-of-range channel, a singular input matrix, an oversized WASM buffer)
+    propagates with its own message unchanged, same as every other op's
+    compute errors. A stale engine wheel predating ``calculate_bla`` raises a
+    clear "needs a newer engine" message instead of an opaque
+    ``AttributeError`` (the ``calc_sono``/``calc_damping_bands`` guard
+    pattern).
+
+    Returns a list of ``n_exc`` dicts, ONE PER EXCITATION, each shaped
+    EXACTLY like ``calc_tf_averaged``'s return —
+    ``{'freq_axis': _arr, 'tf_data': _arr (complex, (n_k, n_resp)),
+    'coherence': None}`` (BLA sets carry no coherence; the sigma pair is the
+    quality measure instead — always ``None`` here) — so the UI can render a
+    BLA set through the exact same TF path as an ordinary TF, PLUS three keys
+    ``stores/bla.ts`` (landing) and the σ overlay (``plot/model.ts``) build on:
+      - ``bla_sigma_nl`` (_arr, real, same shape as ``tf_data``): per-
+        realisation nonlinear-distortion standard deviation in LINEAR FRF
+        units (same units as ``abs(tf_data)``) — ready for
+        ``20*log10(sigma)`` straight onto the dB axis, no further sqrt.
+      - ``bla_sigma_n`` (_arr, real, same shape): per-realisation
+        measurement-noise standard deviation, same units/reading.
+      - ``bla`` (plain JSON dict): the run spec `analysis.calculate_bla`
+        attached to this excitation's TfData (run spec fields plus
+        ``excited_bins`` and ``q``) — already JSON-clean (numpy scalars
+        stripped), safe to store verbatim as the item's ``.dvma`` meta.
+        ONE caveat on "verbatim": in commanded-x mode ``x_channels`` is
+        ``None``, which ``toJs`` renders as ``undefined`` and
+        ``JSON.stringify`` then DROPS from the manifest — so a saved
+        commanded run's meta has no ``x_channels`` key at all. Nothing is
+        lost (``x_mode: 'commanded'`` already says the drive was
+        regenerated, and `calculate_bla` reads ``x_channels`` only in the
+        measured branch), but a reader must not treat the key as mandatory.
+    """
+    if not hasattr(analysis, 'calculate_bla'):
+        raise ValueError(
+            'BLA needs a newer engine: the loaded pydvma wheel has no '
+            'calculate_bla. Reload once builds settle.'
+        )
+    tdl = [
+        _time_data(_get(s, 'time_axis'), _get(s, 'time_data'),
+                   _get(s, 'n_channels'), _get(s, 'fs'))
+        for s in time_arrays
+    ]
+    spec = _bla_run_spec(run_spec)
+    tf_list = analysis.calculate_bla(tdl, spec)
+    return [
+        {
+            'freq_axis': _arr(tf.freq_axis),
+            'tf_data': _arr(tf.tf_data),
+            'coherence': None if tf.tf_coherence is None else _arr(tf.tf_coherence),
+            'bla_sigma_nl': _arr(tf.bla_sigma_nl),
+            'bla_sigma_n': _arr(tf.bla_sigma_n),
+            'bla': tf.bla,
+        }
+        for tf in tf_list
+    ]
 
 
 # --------------------------------------------------------------------------- #

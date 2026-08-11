@@ -606,6 +606,153 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
     return t,y
 
 
+def _multisine_line_spectrum(N, k_bins, amp_rms, seed, m, e, n_exc):
+    """The one-period rFFT values of a multisine at its excited bins.
+
+    This is the single definition of the multisine's phase and scaling
+    law, shared by the two places that must agree bit for bit:
+    `multisine_generator`, which turns it into a time buffer via
+    ``irfft``, and `analysis.calculate_bla`'s commanded-x branch, which
+    consumes it directly as the input spectrum X. Duplicating the law
+    would let the two drift apart silently — a phase-convention slip
+    between generation and analysis corrupts the BLA rather than
+    failing loudly.
+
+    Base phases are ``uniform(0, 2*pi)`` of shape ``(n_exc, n_lines)``
+    drawn from ``numpy.random.default_rng([seed, m])``: one draw per
+    realisation ``m``, shared by that realisation's ``n_exc``
+    experiments. Experiment ``e`` then subtracts the DFT-matrix rotation
+    ``2*pi*q*e/n_exc`` from excitation ``q``'s phases, which leaves every
+    channel's amplitude spectrum untouched while making the per-bin
+    ``q``-by-``e`` matrix orthogonal — that orthogonality is what lets
+    `analysis.calculate_bla` invert it per frequency bin.
+
+    The line value is ``0.5*N*A`` with ``A = amp_rms*sqrt(2/n_lines)``:
+    ``A`` is the per-line amplitude that puts the requested rms across
+    ``n_lines`` equal-amplitude sinusoids, and the ``0.5*N`` is numpy's
+    unnormalised rFFT scaling for a real cosine.
+
+    Args:
+        N (int): Samples in one period.
+        k_bins (np.ndarray): Excited DFT bin indices; only its length is
+            used here, the caller places the values.
+        amp_rms (float): Per-channel excitation rms in volts.
+        seed (int): Master seed recorded in the run metadata.
+        m (int): Realisation index (selects the phase draw).
+        e (int): Experiment index within the realisation (selects the
+            rotation).
+        n_exc (int): Number of excitation channels.
+
+    Returns a complex array of shape ``(n_exc, len(k_bins))`` holding
+    each excitation's rFFT value at each excited bin.
+    """
+    n_lines = len(k_bins)
+    A = float(amp_rms) * np.sqrt(2.0 / n_lines)
+    rng = np.random.default_rng([int(seed), int(m)])
+    phases = rng.uniform(0, 2 * np.pi, size=(n_exc, n_lines))
+    q_all = np.arange(n_exc)
+    phases = phases - 2 * np.pi * q_all[:, None] * int(e) / n_exc
+    return 0.5 * N * A * np.exp(1j * phases)
+
+
+def multisine_generator(settings, spec):
+    """Create a periodic random-phase multisine buffer for a BLA capture.
+
+    One period is ``N = spec['n_samples']`` samples exciting integer DFT
+    bins ``k1..k2`` (inclusive, satisfying ``1 <= k1 <= k2 <= (N-1)//2``
+    -- violating this raises ``ValueError`` naming k1, k2 and N) with
+    equal amplitudes and uniform random phases drawn from
+    ``numpy.random.default_rng([seed, m])`` — so a saved spec
+    reproduces the waveform exactly. Both the excitation index ``q``
+    (0..n_exc-1) and the experiment index ``e`` (0..n_exc-1) are
+    zero-based; experiment ``e`` applies the orthogonal DFT-matrix
+    rotation (phase shift ``-2*pi*q*e/n_exc`` on excitation ``q``),
+    which keeps every channel's amplitude spectrum identical across the
+    ``n_exc`` experiments of a realisation.
+
+    Unlike `signal_generator` this applies NO fade window and NO peak
+    rescale — both would break exact periodicity. ``amp_rms`` sets the
+    per-channel RMS (identical across realisations, keeping the
+    excitation class constant); if the resulting peak exceeds
+    ``settings.output_vmax()`` a ValueError is raised — lower the
+    level. A ValueError is also raised for a degenerate ``n_exc`` (< 1),
+    a degenerate period count (``t_periods + p_periods < 1``), an ``e``
+    outside ``[0, n_exc)``, or ``n_exc`` exceeding
+    ``settings.output_channels``.
+
+    Args:
+        settings (MySettings): ``output_fs`` (the time axis),
+            ``output_channels`` (checked against ``n_exc``) and the
+            output voltage rail are consulted.
+        spec (dict): MultisineSpec dict with keys n_samples, k1, k2,
+            p_periods, t_periods, seed, m, e, n_exc, amp_rms. See the
+            web logger's Nonlin-stage guide for the design vocabulary
+            (M realisations, P periods, excited bins k1/k2):
+            https://torebutlin.github.io/pydvma/web-logger/nonlin/.
+
+    Returns a tuple ``(t, y)`` where ``y`` is a C-contiguous array with
+    shape ``((t_periods + p_periods) * n_samples, n_exc)`` in volts,
+    ready for ``log_data(..., output=y)`` — C-contiguity matters because
+    sounddevice's ``OutputStream.write`` raises ``TypeError`` on a
+    Fortran-ordered buffer, which a naive tile-then-transpose produces
+    whenever ``n_exc >= 2``.
+    """
+    N = int(spec['n_samples'])
+    k1 = int(spec['k1'])
+    k2 = int(spec['k2'])
+    p_periods = int(spec['p_periods'])
+    n_trans = int(spec['t_periods'])
+    n_exc = int(spec['n_exc'])
+    e = int(spec['e'])
+
+    if not (1 <= k1 <= k2 <= (N - 1) // 2):
+        raise ValueError('multisine bins must satisfy 1 <= k1 <= k2 <= '
+                          '(N-1)//2 (got k1={}, k2={}, N={})'
+                          .format(k1, k2, N))
+    if n_exc < 1:
+        raise ValueError('multisine n_exc must be >= 1 (got {})'
+                          .format(n_exc))
+    if p_periods + n_trans < 1:
+        raise ValueError(
+            'multisine needs at least one period total: t_periods + '
+            'p_periods must be >= 1 (got t_periods={}, p_periods={})'
+            .format(n_trans, p_periods))
+    if not (0 <= e < n_exc):
+        raise ValueError('multisine e must satisfy 0 <= e < n_exc '
+                          '(got e={}, n_exc={})'.format(e, n_exc))
+    if n_exc > settings.output_channels:
+        raise ValueError(
+            'multisine n_exc ({}) exceeds settings.output_channels ({})'
+            .format(n_exc, settings.output_channels))
+
+    k_bins = np.arange(k1, k2 + 1)
+
+    # Phases, rotation and scaling all live in _multisine_line_spectrum,
+    # which analysis.calculate_bla's commanded-x branch calls too -- the
+    # generator and the analysis MUST use one definition of the law.
+    S = np.zeros((n_exc, N // 2 + 1), dtype=complex)
+    S[:, k_bins] = _multisine_line_spectrum(
+        N, k_bins, spec['amp_rms'], spec['seed'], spec['m'], e, n_exc)
+    period = np.fft.irfft(S, n=N, axis=1)          # (n_exc, N)
+
+    # Peak guard on the single period (identical to the tiled buffer's
+    # peak, since every period is an exact copy) -- checked before
+    # tiling so an illegal level fails without allocating the full
+    # (t_periods + p_periods)-period buffer.
+    peak = float(np.max(np.abs(period)))
+    vmax = settings.output_vmax()
+    if peak > vmax:
+        raise ValueError(
+            'multisine peak {:.3g} V exceeds the output rail +/-{:.3g} V '
+            '-- lower the level (amp_rms).'.format(peak, vmax))
+
+    # tile-then-transpose leaves an F-contiguous view for n_exc >= 2;
+    # sounddevice's OutputStream.write requires C-contiguous data.
+    y = np.ascontiguousarray(np.tile(period, (1, n_trans + p_periods)).T)
+    t = np.arange(y.shape[0]) / settings.output_fs
+    return t, y
+
+
 def stream_snapshot(rec):
     '''Capture the live oscilloscope buffer as a `TimeData`.
 

@@ -43,6 +43,11 @@ The full per-attribute reference is below; for worked end-to-end recipes
       show_source: false
       heading_level: 3
 
+::: pydvma.acquisition.multisine_generator
+    options:
+      show_source: false
+      heading_level: 3
+
 ## Stream Monitoring
 
 ::: pydvma.acquisition.stream_snapshot

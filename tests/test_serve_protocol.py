@@ -320,6 +320,202 @@ class TestBuildOutputSignal:
                 s, {'type': 'sweep', 'f1': 0, 'f2': 5000})  # > 4000 = fs/2
 
 
+# ---- unit: output-signal builder -- multisine (BLA) ----------------------
+
+class TestBuildOutputSignalMultisine:
+    """`_build_output_signal` gains a `'multisine'` type for Schoukens BLA
+    captures, delegating to `acquisition.multisine_generator`.  See
+    dev/plans/2026-08-10-schoukens-bla-design.md and
+    tests/test_multisine.py (the generator's own contract, not duplicated
+    here)."""
+
+    def _settings(self, **kw):
+        base = dict(device_driver='mock', channels=2, fs=8000, chunk_size=100,
+                    num_chunks=4, viewed_time=None, output_channels=2,
+                    output_fs=8000)
+        base.update(kw)
+        return dvma.MySettings(**base)
+
+    def _spec(self, **overrides):
+        spec = dict(type='multisine', amp=0.05, n_samples=64, k1=4, k2=10,
+                    p_periods=3, t_periods=2, seed=42, m=0, e=0, n_exc=2)
+        spec.update(overrides)
+        return spec
+
+    def test_multisine_builds_waveform(self):
+        s = self._settings()
+        spec = self._spec()
+        y, gen = serve_mod._build_output_signal(s, spec)
+        assert gen is True
+        n_periods = spec['t_periods'] + spec['p_periods']
+        assert y.shape == (n_periods * spec['n_samples'], spec['n_exc'])
+
+    def test_multisine_siso(self):
+        s = self._settings(output_channels=1)
+        spec = self._spec(n_exc=1, e=0)
+        y, gen = serve_mod._build_output_signal(s, spec)
+        assert gen is True
+        n_periods = spec['t_periods'] + spec['p_periods']
+        assert y.shape == (n_periods * spec['n_samples'], 1)
+
+    def test_unknown_key_rejected_lists_multisine_keys(self):
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(
+                s, self._spec(bogus=1))
+        msg = str(excinfo.value)
+        assert 'unknown output key' in msg
+        # names the BRANCH: 'f1' rejected by a multisine spec reads like
+        # a typo unless the message says which keyset was applied.
+        assert 'multisine' in msg
+        assert 'bogus' in msg
+        # the allowed-keys list quoted back must be the multisine keyset,
+        # not the classic sweep/gaussian/uniform one.
+        assert 'n_samples' in msg
+        assert 'k1' in msg
+        assert 'f1' not in msg
+
+    def test_missing_keys_are_all_listed(self):
+        """A half-built spec is usually missing several keys; naming one
+        at a time costs a round trip per key."""
+        s = self._settings()
+        spec = self._spec()
+        for key in ('k1', 'k2', 'seed'):
+            del spec[key]
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, spec)
+        msg = str(excinfo.value)
+        for key in ('k1', 'k2', 'seed'):
+            assert repr(key) in msg
+
+    def test_int_keys_derived_from_the_keyset(self):
+        """The int-field tuple is derived from the accepted keyset, so
+        the two cannot drift apart when a key is added."""
+        assert set(serve_mod._MULTISINE_INT_KEYS) == (
+            serve_mod._OUTPUT_SPEC_KEYS_MULTISINE - {'type', 'amp'})
+
+    @pytest.mark.parametrize('key', [
+        'n_samples', 'k1', 'k2', 'p_periods', 't_periods', 'seed', 'm', 'e',
+        'n_exc',
+    ])
+    def test_whole_float_int_field_accepted(self, key):
+        """JSON has no integer type, so a wire value of 64.0 is a
+        legitimate spelling of 64 and must be accepted."""
+        s = self._settings()
+        spec = self._spec(**{key: float(self._spec()[key])})
+        y, gen = serve_mod._build_output_signal(s, spec)
+        assert gen is True
+
+    def test_non_integral_float_int_field_rejected(self):
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, self._spec(k2=10.5))
+        msg = str(excinfo.value)
+        assert repr('k2') in msg
+        assert 'integer' in msg
+
+    def test_bool_int_field_rejected(self):
+        """JSON true/false is an int subclass in Python — it must not
+        slip into a numeric spec field."""
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, self._spec(n_exc=True))
+        assert repr('n_exc') in str(excinfo.value)
+
+    def test_bool_amp_rejected(self):
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, self._spec(amp=True))
+        assert repr('amp') in str(excinfo.value)
+
+    @pytest.mark.parametrize('bad', [float('nan'), float('inf'),
+                                      float('-inf')])
+    def test_non_finite_amp_rejected(self, bad):
+        """Bare JSON has no NaN/Infinity, but a permissive encoder can
+        emit them — and the generator's peak guard is a `>` comparison,
+        which is False for NaN, so a NaN amplitude would reach the DAC as
+        an all-NaN buffer with nothing raising."""
+        s = self._settings()
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, self._spec(amp=bad))
+        msg = str(excinfo.value)
+        assert repr('amp') in msg
+        assert 'finite' in msg
+
+    @pytest.mark.parametrize('missing', [
+        'amp', 'n_samples', 'k1', 'k2', 'p_periods', 't_periods',
+        'seed', 'm', 'e', 'n_exc',
+    ])
+    def test_missing_required_key_names_it(self, missing):
+        s = self._settings()
+        spec = self._spec()
+        del spec[missing]
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, spec)
+        # quoted form guards against trivial substring hits for short
+        # keys like 'm'/'e' (e.g. "missing" itself contains 'm').
+        assert repr(missing) in str(excinfo.value)
+
+    @pytest.mark.parametrize('key', [
+        'n_samples', 'k1', 'k2', 'p_periods', 't_periods', 'seed', 'm', 'e',
+        'n_exc',
+    ])
+    def test_non_numeric_int_field_rejected(self, key):
+        s = self._settings()
+        spec = self._spec(**{key: 'not-a-number'})
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, spec)
+        msg = str(excinfo.value)
+        # quoted key name -- guards against 'not-a-number' itself
+        # containing letters like 'm'/'e' that would trivially match a
+        # bare substring check.
+        assert repr(key) in msg
+
+    def test_non_numeric_amp_rejected(self):
+        s = self._settings()
+        spec = self._spec(amp='loud')
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, spec)
+        assert repr('amp') in str(excinfo.value)
+
+    def test_duration_key_rejected_with_explanatory_message(self):
+        s = self._settings()
+        spec = self._spec(duration=0.5)
+        with pytest.raises(ValueError) as excinfo:
+            serve_mod._build_output_signal(s, spec)
+        msg = str(excinfo.value)
+        assert 'duration' in msg
+        # explains WHY: duration is derived, not an accepted input.
+        assert 'derived' in msg
+        assert 'n_samples' in msg
+
+    def test_generator_bin_validation_propagates(self):
+        """`_build_output_signal` must not duplicate multisine_generator's
+        own k1/k2/N bin-sanity checks -- it just has to let the ValueError
+        through unmodified."""
+        s = self._settings()
+        spec = self._spec(k1=10, k2=4)   # k1 > k2: illegal
+        with pytest.raises(ValueError, match='k1'):
+            serve_mod._build_output_signal(s, spec)
+
+    def test_generator_peak_guard_propagates(self):
+        s = self._settings(output_VmaxSC=0.001)
+        spec = self._spec(amp=0.5)   # will blow the tiny rail
+        with pytest.raises(ValueError, match='rail'):
+            serve_mod._build_output_signal(s, spec)
+
+    def test_amp_maps_to_amp_rms(self):
+        """`amp` in the wire spec is the generator's `amp_rms` -- confirm
+        the RMS of one period matches, the same way test_multisine.py's
+        TestRmsLevel pins the generator itself."""
+        spec = self._spec(amp=0.2, n_exc=1)
+        s = self._settings(output_VmaxSC=10.0, output_channels=1)
+        y, gen = serve_mod._build_output_signal(s, spec)
+        N = spec['n_samples']
+        rms = np.sqrt(np.mean(y[:N] ** 2, axis=0))
+        assert np.allclose(rms, 0.2, rtol=1e-9)
+
+
 # ---- live: hello / configure --------------------------------------------
 
 def test_hello_returns_capabilities():
@@ -649,6 +845,67 @@ def test_log_rejects_output_above_nyquist():
                 err = await _recv_json(ws)
                 assert err['type'] == 'error'
                 assert 'Nyquist' in err['message']
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_log_with_multisine_output_produces_capture():
+    """A `log` carrying a `multisine` output spec drives
+    acquisition.multisine_generator (via `_build_output_signal`) and the
+    resulting waveform reaches `log_data(..., output=y)` the same as any
+    other output type -- BLA-capture wiring, no analysis here."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                    'output_channels': 1,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            output={'type': 'multisine', 'amp': 0.05,
+                                    'n_samples': 64, 'k1': 4, 'k2': 10,
+                                    'p_periods': 2, 't_periods': 1,
+                                    'seed': 7, 'm': 0, 'e': 0, 'n_exc': 1},
+                            test_name='multisine-capture')
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'
+                assert meta['nChannels'] == 2   # no use_output_as_ch0 prepend
+                assert meta['nSamples'] == int(0.1 * 8000)
+
+                frame = await _recv_binary(ws, timeout=10.0)
+                assert serve_mod.decode_header(frame)['msgType'] == \
+                    serve_mod.MSG_CONTAINER
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_log_rejects_multisine_bin_violation():
+    """`multisine_generator`'s own bin-sanity ValueError (not duplicated
+    in `_build_output_signal`) propagates through the same `error`-frame
+    path as the classic-spec validation errors above."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                    'output_channels': 1,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            output={'type': 'multisine', 'amp': 0.05,
+                                    'n_samples': 64, 'k1': 10, 'k2': 4,
+                                    'p_periods': 2, 't_periods': 1,
+                                    'seed': 7, 'm': 0, 'e': 0, 'n_exc': 1})
+                err = await _recv_json(ws)
+                assert err['type'] == 'error'
+                assert 'k1' in err['message']
         finally:
             await _stop_server(task)
     run_async(scenario)

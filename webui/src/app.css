@@ -238,6 +238,31 @@ body {
   background: var(--accent-soft-hover);
   border-color: var(--accent-soft-border);
 }
+/* The app's green GO button — Acquire's "Log Data" and Nonlin's "Start" are
+   the same control (start a capture), so the style lives here rather than
+   being copied into each card's scoped block. */
+.card-controls .btn.green {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+  font-weight: 600;
+}
+.card-controls .btn.green:hover {
+  background: var(--green-hover);
+}
+/* Outlined danger — the "stop the thing that is running" button (Acquire's
+   and Nonlin's Cancel). Outlined, not solid, so it never competes with the
+   green primary for attention while a capture is in flight. */
+.card-controls .btn.danger-o {
+  background: var(--control-bg);
+  border-color: var(--danger-strong);
+  color: var(--danger-strong);
+  font-weight: 600;
+}
+.card-controls .btn.danger-o:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger-strong);
+}
 .card-controls .btn[disabled] {
   opacity: 0.45;
   pointer-events: none;

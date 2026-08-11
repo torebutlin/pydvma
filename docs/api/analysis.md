@@ -21,6 +21,11 @@ Analysis functions for frequency domain analysis, transfer functions, and modal 
       show_source: false
       heading_level: 3
 
+::: pydvma.analysis.calculate_bla
+    options:
+      show_source: false
+      heading_level: 3
+
 ## Cross-Spectrum Analysis
 
 ::: pydvma.analysis.calculate_cross_spectrum_matrix

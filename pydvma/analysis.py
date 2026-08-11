@@ -555,6 +555,296 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
     return tfdata
 
 
+#%% BEST LINEAR APPROXIMATION
+def calculate_bla(time_data_list, run_spec):
+    '''
+    Best Linear Approximation with noise/nonlinearity separation
+    (Schoukens random-phase multisine method, SISO and MISO unified).
+
+    Consumes the ``M x n_exc`` captures of a BLA run (ordering
+    ``[(m, e) for m in range(M) for e in range(n_exc)]``), slices exact
+    ``N``-sample periods after discarding ``t_periods`` transients, DFTs
+    each period (no window — the data is periodic by construction) and
+    estimates, per response channel: the BLA frequency-response matrix
+    (mean over realisations of the per-realisation ``n_exc x n_exc``
+    solve), the noise standard deviation ``bla_sigma_n`` (period-to-
+    period scatter propagated through the input-matrix inverse, with the
+    ``1/P`` of the period average folded in) and the nonlinear-distortion
+    standard deviation ``bla_sigma_nl`` (realisation scatter minus that
+    noise variance, floored at zero).
+
+    Only the excited bins are analysed, so the returned frequency axis is
+    ``k * fs / N`` over ``k1..k2`` — a sparse, exactly-on-bin axis, not
+    the full rfft grid.
+
+    Start-time offsets between captures are harmless for measured x: x
+    and y share the ADC clock, so the common phase rotation
+    ``exp(-j*w*tau)`` cancels in the solve. For ``x_mode='commanded'``
+    the input spectra are instead regenerated analytically from the
+    seed, using the same phase and scaling law as
+    `acquisition.multisine_generator`; that is only valid when AO and AI
+    are hardware-synced (the caller enforces that), because otherwise
+    per-capture start jitter leaks into the realisation scatter and
+    corrupts sigma_NL.
+
+    Unlike the other ensemble entry points this takes a plain list, not a
+    <DataSet> or a <TimeDataList> method: the captures carry no record of
+    their own ``(m, e)`` indices, so the ORDER of the list is load-bearing
+    input, and a DataSet — an unordered bag the user can add to, reorder
+    or partly delete — cannot express it. The caller assembles the list in
+    run order; a wrong length is caught here, a wrong order is not.
+
+    Args:
+        time_data_list (list): The ``M * n_exc`` <TimeData> captures of
+            the run, in ``(m, e)`` order — realisation outer, experiment
+            inner.
+        run_spec (dict): BlaRunSpec — ``multisine`` (a dict of
+            n_samples, k1, k2, p_periods, t_periods, seed, amp_rms,
+            n_exc, M), ``x_mode`` ('measured' or 'commanded'),
+            ``x_channels`` (per-excitation input channel indices, or
+            None for commanded x), ``resp_channels`` (response channel
+            indices) and ``fs`` (the actual capture rate in Hz).
+
+    Returns a <TfDataList> of ``n_exc`` <TfData> objects, one per
+    excitation, each holding every response channel as a column of
+    `tf_data` and carrying `bla_sigma_nl`, `bla_sigma_n` and the `bla`
+    run-spec dict. `tf_coherence` is None: coherence is not the right
+    quality measure here — the sigma pair is. Both sigmas are
+    PER-REALISATION standard deviations in linear FRF units — the
+    distortion and noise level of a single realisation, not the error bar
+    on the returned BLA, which is ``sqrt(M)`` smaller
+    (``sigma_BLA = sigma_tot / sqrt(M)``).
+    '''
+    # Unpack the WHOLE spec up front, including the fields only one
+    # branch needs: a missing key must fail before the analysis spends
+    # minutes on the capture loop, not after it.
+    ms = run_spec['multisine']
+    N, P, T_per = int(ms['n_samples']), int(ms['p_periods']), int(ms['t_periods'])
+    M, n_exc = int(ms['M']), int(ms['n_exc'])
+    seed, amp_rms = int(ms['seed']), float(ms['amp_rms'])
+    fs = float(run_spec['fs'])
+    k_bins = np.arange(int(ms['k1']), int(ms['k2']) + 1)
+    resp = [int(c) for c in run_spec['resp_channels']]
+    n_resp = len(resp)
+    commanded = (run_spec.get('x_mode') == 'commanded')
+    x_ch = None if commanded else run_spec.get('x_channels')
+
+    if len(time_data_list) != M * n_exc:
+        raise ValueError(
+            'BLA run needs M*n_exc = {} captures, got {}'.format(
+                M * n_exc, len(time_data_list)))
+    if M < 2:
+        raise ValueError('BLA needs at least M = 2 realisations to '
+                          'estimate the realisation scatter (got {})'.format(M))
+    if P < 2:
+        raise ValueError('BLA needs at least P = 2 steady-state periods to '
+                          'estimate the noise (got {})'.format(P))
+    # Same bound as acquisition.multisine_generator: for even N that
+    # excludes the Nyquist bin, whose rfft coefficient is real and cannot
+    # carry the random phase the commanded-x regeneration assumes.
+    if not (1 <= int(ms['k1']) <= int(ms['k2']) <= (N - 1) // 2):
+        raise ValueError(
+            'excited bins must satisfy 1 <= k1 <= k2 <= (N-1)//2 '
+            '(got k1={}, k2={}, N={})'.format(ms['k1'], ms['k2'], N))
+    if n_resp < 1:
+        raise ValueError('BLA needs at least one response channel')
+    if not commanded:
+        if x_ch is None or len(x_ch) != n_exc:
+            raise ValueError(
+                "measured-x mode needs one 'x_channels' entry per "
+                'excitation: n_exc={} but x_channels={}'.format(n_exc, x_ch))
+        x_ch = [int(c) for c in x_ch]
+    n_ch = time_data_list[0].time_data.shape[1]
+    for label, chans in (('x_channels', x_ch or []), ('resp_channels', resp)):
+        bad = [c for c in chans if not (0 <= c < n_ch)]
+        if bad:
+            raise ValueError(
+                '{} {} out of range: the captures have {} channels'.format(
+                    label, bad, n_ch))
+
+    n_k = len(k_bins)
+    # Index letters used throughout: m = realisation, e = experiment
+    # within a realisation, q = excitation channel, r = response channel,
+    # k = excited frequency bin.
+    #
+    # Xbar is [m, q, e, k] and Ybar is [m, e, r, k]: the input's (q, e)
+    # plane is the SQUARE matrix to be inverted at each bin — one column
+    # per experiment, one row per excitation — whereas the output has no
+    # q axis at all, only however many responses were measured (n_resp is
+    # independent of n_exc). Y's e axis is therefore the one that
+    # contracts against X's inverse, and r rides along untouched.
+    #
+    # Memory: phase 1 allocates M*n_exc*(n_exc + 2*n_resp)*n_k values and
+    # phase 2 below allocates a further 2*M*n_exc*n_resp*n_k while those
+    # are still live, so the guard has to span BOTH — the solve is the
+    # more likely place to hit a 32-bit ceiling, not the capture loop.
+    try:
+        Xbar = np.zeros((M, n_exc, n_exc, n_k), dtype=complex)
+        Ybar = np.zeros((M, n_exc, n_resp, n_k), dtype=complex)
+        varY = np.zeros((M, n_exc, n_resp, n_k))
+        for m in range(M):
+            for e in range(n_exc):
+                td = time_data_list[m * n_exc + e]
+                data = td.time_data[T_per * N:(T_per + P) * N, :]
+                if data.shape[0] != P * N:
+                    raise ValueError(
+                        'capture too short: need {} samples in total '
+                        '({} transient + {} steady-state periods of {} '
+                        'samples), capture {} has {}'.format(
+                            (T_per + P) * N, T_per, P, N, m * n_exc + e,
+                            td.time_data.shape[0]))
+                per = data.reshape(P, N, -1)
+                # No window and no detrend: each slice is a whole number
+                # of periods of a periodic signal, so the excited bins are
+                # exact and leakage is identically zero.
+                spec = np.fft.rfft(per, axis=1)[:, k_bins, :]   # (P, n_k, n_ch)
+                if not commanded:
+                    Xbar[m, :, e, :] = spec[:, :, x_ch].mean(axis=0).T
+                Yp = spec[:, :, resp]                  # (P, n_k, n_resp)
+                Ym = Yp.mean(axis=0)                   # (n_k, n_resp)
+                Ybar[m, e] = Ym.T
+                varY[m, e] = (np.abs(Yp - Ym) ** 2).sum(axis=0).T / (P - 1)
+
+        if commanded:
+            # Regenerate the commanded drive spectra from the seed. The
+            # phase and scaling law lives in ONE place — the same helper
+            # acquisition.multisine_generator builds its buffer from — so
+            # generation and analysis cannot drift apart.
+            from . import acquisition   # lazy: acquisition imports us
+            for m in range(M):
+                for e in range(n_exc):
+                    Xbar[m, :, e, :] = acquisition._multisine_line_spectrum(
+                        N, k_bins, amp_rms, seed, m, e, n_exc)
+
+        G = np.zeros((M, n_resp, n_exc, n_k), dtype=complex)
+        var_nG = np.zeros((M, n_resp, n_exc, n_k))
+        for m in range(M):
+            Xk = np.transpose(Xbar[m], (2, 0, 1))          # (n_k, q, e)
+            try:
+                # inv of the (q x e) matrix is indexed (e, q)
+                Xinv = np.linalg.inv(Xk)                   # (n_k, e, q)
+            except np.linalg.LinAlgError as err:
+                raise ValueError(
+                    'BLA input matrix is singular — are two excitations '
+                    'identical, or an x channel silent?') from err
+            Yk = np.transpose(Ybar[m], (2, 1, 0))          # (n_k, r, e)
+            G[m] = np.transpose(Yk @ Xinv, (1, 2, 0))      # (r, q, n_k)
+            # G_rq = sum_e Ybar_re * Xinv_eq, so the (independent) output
+            # noise variances add weighted by |Xinv|^2; /P because Ybar is
+            # the mean of P periods and varY is the single-period variance.
+            w = np.abs(Xinv) ** 2                          # (n_k, e, q)
+            vY = np.transpose(varY[m], (2, 1, 0))          # (n_k, r, e)
+            var_nG[m] = np.transpose(vY @ w, (1, 2, 0)) / P
+    except (ValueError, MemoryError) as err:
+        # 32-bit builds (pyodide/WASM) surface an oversized allocation as
+        # a ValueError saying "array is too big" rather than MemoryError.
+        # Precedent: the same classify-and-rethrow guard in
+        # webui/src/lib/worker/glue.py (calc_psd / calc_sono). Anything
+        # else — our own validation errors, the singular-matrix error —
+        # propagates untouched.
+        msg = str(err).lower()
+        if (isinstance(err, MemoryError) or 'too big' in msg
+                or 'maximum possible size' in msg):
+            raise ValueError(
+                'BLA analysis needs too large an internal buffer for this '
+                'engine ({} realisations x {} experiments x {} responses x {} '
+                'excited bins). Use fewer realisations, a narrower band or a '
+                'coarser frequency resolution.'.format(
+                    M, n_exc, n_resp, n_k)) from err
+        raise
+
+    G_bla = G.mean(axis=0)                             # (r, q, n_k)
+    var_tot = (np.abs(G - G_bla) ** 2).sum(axis=0) / (M - 1)
+    var_n = var_nG.mean(axis=0)
+    # Both variances estimate the same quantity when the system is
+    # linear, so the difference is noisy and can go negative; floor it.
+    sigma_nl = np.sqrt(np.maximum(var_tot - var_n, 0.0))
+    sigma_n = np.sqrt(var_n)
+
+    freq_axis = k_bins * fs / N
+    id_link_list = [getattr(td, 'unique_id', None) for td in time_data_list]
+    src = time_data_list[0]
+    src_cal = np.asarray(src.channel_cal_factors, dtype=float)
+    excited_bins = [int(k) for k in k_bins]
+
+    tf_data_list = datastructure.TfDataList()
+    for q in range(n_exc):
+        ch_in = None if commanded else x_ch[q]
+        settings = copy.copy(src.settings)
+        settings.ch_in = ch_in
+        settings.ch_out_set = np.array(resp)
+
+        if commanded:
+            # The commanded drive is a voltage the analysis knows
+            # exactly, so it carries no calibration and no channel unit.
+            tf_cal = src_cal[resp]
+            tf_units = _tf_units_from_source_volts(src.units, resp)
+        else:
+            tf_cal = src_cal[resp] / src_cal[ch_in]
+            tf_units = _tf_units_from_source(src.units, ch_in, resp)
+
+        # Own copy per excitation, scrubbed of numpy scalars so it
+        # survives the strict-JSON .dvma manifest unchanged. excited_bins
+        # is copied too — sharing one list across the n_exc dicts would
+        # let an edit through one TfData mutate its siblings.
+        bla_meta = _json_clean(run_spec)
+        bla_meta['excited_bins'] = list(excited_bins)
+        bla_meta['q'] = int(q)
+
+        # Contiguous copies, not views into the (r, q, k) stacks: each
+        # TfData is an independent object that can be edited, saved or
+        # dropped without touching its siblings.
+        tfdata = datastructure.TfData(
+            freq_axis.copy(), np.ascontiguousarray(G_bla[:, q, :].T),
+            None, settings,
+            channel_cal_factors=tf_cal,
+            units=tf_units,
+            id_link=list(id_link_list), test_name=src.test_name,
+        )
+        tfdata.bla_sigma_nl = np.ascontiguousarray(sigma_nl[:, q, :].T)
+        tfdata.bla_sigma_n = np.ascontiguousarray(sigma_n[:, q, :].T)
+        tfdata.bla = bla_meta
+        tf_data_list += [tfdata]
+
+    return tf_data_list
+
+
+def _json_clean(value):
+    '''Recursively convert a metadata value to plain JSON types.
+
+    numpy scalars become Python scalars and arrays become nested lists,
+    so a run spec assembled from numpy-typed values can be stored on a
+    data object and written into the strict-JSON ``.dvma`` manifest (and
+    read back in the browser) without type tags. Containers are rebuilt,
+    so the result shares no mutable state with the input.'''
+    if isinstance(value, np.ndarray):
+        return _json_clean(value.tolist())
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, dict):
+        return {str(k): _json_clean(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_clean(v) for v in value]
+    return value
+
+
+def _tf_units_from_source_volts(src_units, ch_out_set):
+    '''Build the TF units list as "<out_unit>/V" per output channel —
+    the commanded-drive case, where the input is a known voltage rather
+    than a measured channel. Like `_tf_units_from_source`, returns None
+    when the source units are unset or on any indexing trouble.'''
+    if src_units is None:
+        return None
+    try:
+        return ['{}/V'.format(src_units[k]) for k in ch_out_set]
+    except (IndexError, TypeError):
+        return None
+
+
 #%% CLEAN IMPULSE
 def clean_impulse(time_data, ch_impulse=0):
     '''

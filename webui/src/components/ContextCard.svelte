@@ -21,6 +21,7 @@
   import type { MonitorStore } from '../lib/stores/monitor';
   import type { ModalStore } from '../lib/stores/modal';
   import type { DampingStore } from '../lib/stores/damping';
+  import type { BlaStore } from '../lib/stores/bla';
   import type { WorkDir } from '../lib/files/workdir';
   import type { Toasts } from '../lib/stores/toast';
   import TimeCard from './cards/TimeCard.svelte';
@@ -32,6 +33,7 @@
   import SetupCard from './cards/SetupCard.svelte';
   import AcquireCard from './cards/AcquireCard.svelte';
   import LiveCard from './cards/LiveCard.svelte';
+  import BlaCard from './cards/BlaCard.svelte';
 
   let {
     narrow = false,
@@ -43,6 +45,7 @@
     monitor,
     modal,
     damping,
+    bla,
     onFitDamping,
     getSvg,
     workdir,
@@ -65,6 +68,8 @@
     modal: ModalStore;
     /** Interactive damping store (round-7) — the Sono card opens its panel. */
     damping: DampingStore;
+    /** Schoukens BLA run store — drives the Nonlin stage's card. */
+    bla: BlaStore;
     /** Run/refresh the damping fit with the damping store's current knobs. */
     onFitDamping: () => void;
     /** Active plot's <svg> accessor (Export card figure source). */
@@ -99,6 +104,8 @@
     <FrequencyCard {actions} {selection} {analysisSettings} />
   {:else if $activeStage === 'tf'}
     <TFCard {viewState} {selection} {actions} {analysisSettings} />
+  {:else if $activeStage === 'bla'}
+    <BlaCard {bla} {acquire} {actions} {selection} {viewState} />
   {:else if $activeStage === 'sono'}
     <SonoCard {viewState} {actions} {selection} {analysisSettings} {damping} {onFitDamping} />
   {:else if $activeStage === 'fit'}

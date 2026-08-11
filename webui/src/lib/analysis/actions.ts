@@ -105,6 +105,11 @@ function asMarshalled(v: unknown): MarshalledArray {
   };
 }
 
+/** A marshalled array's buffer as a Float64Array (copied only when needed). */
+function toF64(d: Float64Array | number[]): Float64Array {
+  return d instanceof Float64Array ? d : Float64Array.from(d);
+}
+
 /** A source set: its TimeData item, stable selection id, and cached time arrays. */
 interface WorkingSet {
   setId: number;
@@ -162,7 +167,10 @@ function decodeNpy(a: NpyArray): DecodedArray {
  * kinds we don't restore. `srcChannels` is the source set's channel count.
  *
  * Restored: `FreqData → freq` (Frequency/FFT view); `TfData → tf` (TF view,
- * with the out/in remap fields); `CrossSpecData → csd` (coherence). NOT
+ * with the out/in remap fields, PLUS the Schoukens BLA σ_NL/σ_n pair when the
+ * item carries `bla_sigma_nl`/`bla_sigma_n` — a saved-then-reopened BLA set
+ * is a plain `TfData`, see `addBlaSets`, so its σ overlay must round-trip
+ * the same way `coherence` does); `CrossSpecData → csd` (coherence). NOT
  * restored as a slice: stored `SonoData` is a 3-D complex `(Nf, Nt, Nc)`
  * cube whereas the webui's sono slice is a 2-D per-channel magnitude image,
  * and PSD is derivable from the stored `Pxy` — both are left to an on-demand
@@ -197,6 +205,13 @@ function sliceForLoadedItem(
           data: decodeNpy(A.tf_data),
           coherence: A.tf_coherence ? decodeNpy(A.tf_coherence) : undefined,
           chIn: orphan ? null : 0, nChannels: srcChannels,
+          // Schoukens BLA σ pair (Task 9 reload gap): a BLA set IS a TfData
+          // (see `addBlaSets`), so a saved-then-reopened one carries
+          // `bla_sigma_nl`/`bla_sigma_n` beside `tf_data` — restore them the
+          // same way as every other optional array here (`coherence` above)
+          // so the σ overlay survives a save/reload round-trip.
+          sigmaNl: A.bla_sigma_nl ? decodeNpy(A.bla_sigma_nl) : undefined,
+          sigmaN: A.bla_sigma_n ? decodeNpy(A.bla_sigma_n) : undefined,
         },
       };
     case 'CrossSpecData':
@@ -1140,6 +1155,101 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     });
 
     return setId;
+  }
+
+  /**
+   * Land the `calc_bla` results (Schoukens BLA, the "Nonlin" stage) as
+   * FIRST-CLASS TF sets — one per excitation `q`, each carrying every
+   * response channel as a column.  Returns the new sets' ids in the same
+   * order as `results`.
+   *
+   * The sets are built exactly like an ORPHAN TF loaded from a file (the
+   * `loadDataset` pass-2 branch): a `TfData` item appended to the dataset, its
+   * own tray set with `chIn = null` (nothing was dropped — the columns ARE the
+   * lines, `tfColumn` identity), and an entry in `working` so the set is
+   * targetable, fittable and exportable like any other. That is what makes a
+   * BLA a normal TF everywhere — Bode / Nyquist / phase / export / modal fit
+   * all work with no special case, which is the whole reason the design
+   * extends `TfData` rather than adding a new data kind. A `'fit'`-style
+   * pseudo-set was the alternative and was rejected: pseudo-sets are excluded
+   * from the analysis-target and export paths by design.
+   *
+   * The σ pair rides the derived `tf` slice (`sigmaNl` / `sigmaN`) beside the
+   * curve it annotates, mirroring `coherence`; the arrays ALSO go onto the
+   * item so `.dvma` round-trips them (`container.py` registers
+   * `bla_sigma_nl` / `bla_sigma_n` on `TfData`), and the engine's `bla` run-spec
+   * dict is stored verbatim as item meta (a registered optional `TfData` meta
+   * field, already JSON-clean).
+   *
+   * `opts.names` supplies one display name per excitation (the caller knows
+   * the x-channel geometry); `opts.channelLabels` optionally names the lines
+   * after their SOURCE response channels so the legend stays readable.
+   */
+  function addBlaSets(
+    results: unknown[],
+    opts: { names?: string[]; channelLabels?: string[]; timestring?: string } = {},
+  ): number[] {
+    let ds = get(dataset);
+    if (!ds) ds = { formatVersion: 2, pydvmaVersion: 'webui', items: [] };
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const timestring = opts.timestring
+      ?? `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
+        + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const iso = now.toISOString();
+    const ids: number[] = [];
+
+    results.forEach((res, q) => {
+      const axis = axisData(mval(res, 'freq_axis'));
+      const tfM = asMarshalled(mval(res, 'tf_data'));
+      const nOut = tfM.shape[1] ?? 1;
+      const sigNl = mval(res, 'bla_sigma_nl');
+      const sigN = mval(res, 'bla_sigma_n');
+      const sigNlM = sigNl == null ? null : asMarshalled(sigNl);
+      const sigNM = sigN == null ? null : asMarshalled(sigN);
+      const name = opts.names?.[q] ?? `BLA q${q + 1}`;
+      // The engine's `bla` dict is already JSON-clean (numpy scalars stripped);
+      // a Map only ever appears in tests, so normalise both shapes.
+      const blaRaw = mval(res, 'bla');
+      const bla = blaRaw instanceof Map ? Object.fromEntries(blaRaw) : blaRaw ?? null;
+
+      const arrays: Record<string, NpyArray> = {
+        freq_axis: { shape: [axis.length], data: axis, isComplex: false },
+        tf_data: { shape: tfM.shape.slice(), data: toF64(tfM.data), isComplex: true },
+      };
+      if (sigNlM) arrays.bla_sigma_nl = { shape: sigNlM.shape.slice(), data: toF64(sigNlM.data), isComplex: false };
+      if (sigNM) arrays.bla_sigma_n = { shape: sigNM.shape.slice(), data: toF64(sigNM.data), isComplex: false };
+
+      const meta: Record<string, unknown> = {
+        units: null, test_name: name, timestamp: iso, timestring,
+        id_link: null, channels: nOut, bla,
+      };
+      const item: DvmaItem = {
+        kind: 'TfData', arrays, meta,
+        // `timestamp` carries the datetime tag so python decodes a real
+        // datetime on load (same convention as `upsertModalItem`).
+        metaRaw: { ...meta, timestamp: { __datetime__: iso } },
+        settings: null,
+      };
+      ds!.items.push(item);
+
+      const setId = selection.addSet({ name, nChannels: nOut, durationS: 0, timestamp: timestring });
+      working.push({ setId, time: item, fs: sampleRate(item), durationS: 0, nChannels: nOut });
+      setDerived(setId, {
+        tf: {
+          axis, data: decodeArray(tfM), chIn: null, nChannels: nOut,
+          sigmaNl: sigNlM ? decodeArray(sigNlM) : undefined,
+          sigmaN: sigNM ? decodeArray(sigNM) : undefined,
+        },
+      });
+      opts.channelLabels?.slice(0, nOut).forEach((label, c) => {
+        if (label) selection.renameChannel(setId, c, label);
+      });
+      ids.push(setId);
+    });
+
+    dataset.set(ds);
+    return ids;
   }
 
   /**
@@ -2101,7 +2211,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   return {
     dataset, derived, computeErrors, busy, modal,
-    loadDataset, addRecordedSet, stampUiState,
+    loadDataset, addRecordedSet, addBlaSets, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
     resampleTime, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,

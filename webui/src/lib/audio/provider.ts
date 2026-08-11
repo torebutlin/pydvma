@@ -46,6 +46,15 @@ export type {
   MonitorChunk,
   MonitorCallback,
   MonitorHandle,
+  /** Classic stimulus spec (sweep / uniform / gaussian) — unchanged. */
+  OutputStimulusConfig,
+  /** Schoukens multisine stimulus spec (BLA runs). */
+  MultisineStimulusConfig,
+  /**
+   * The stimulus spec union both backends accept as a per-capture
+   * `RecordConfig.outputOverride` — see {@link SourceProvider.startRecording}.
+   */
+  OutputSpec,
 } from './source';
 
 // ---- bridge capability / config types ----
@@ -150,7 +159,34 @@ export interface DeviceCapsEntry {
    * as the label of the Acquire output-device select (see {@link outputDevices}).
    */
   name?: string;
+  /**
+   * NI product type as DAQmx reports it (`'USB-6212'`, `'NI 9234'`, …), from
+   * the server's `device_caps[deviceId].product_type`.  Absent on
+   * mock/soundcard.  Read by {@link supportsRoutedAiClockAo} to tell a
+   * hardware-timed-AO device from a software-timed USB-600x.
+   */
+  product_type?: string;
+  /**
+   * Whether the NI entry is a cDAQ chassis (server
+   * `device_caps[deviceId].is_chassis`).  Chassis modules share the chassis
+   * timebase, so AI/AO are phase-coherent but NOT sample-accurate (the
+   * per-module AI sample clock cannot be routed as an AO source) — see
+   * {@link supportsRoutedAiClockAo}, which refuses a chassis for that reason.
+   */
+  is_chassis?: boolean;
+  /** Maximum output (AO) channel count (`device_caps[deviceId].ao_channel_count`). */
+  ao_channel_count?: number;
 }
+
+/**
+ * NI product types whose analog output is SOFTWARE-timed (on-demand writes,
+ * no AO sample clock) and therefore can never share a hardware clock with
+ * the AI stream.  Mirrors `pydvma._ni_backend._SW_TIMED_AO_TYPES` — the list
+ * `supports_hw_ao_sync` consults server-side.
+ */
+export const SW_TIMED_AO_PRODUCT_TYPES: readonly string[] = [
+  'USB-6001', 'USB-6002', 'USB-6003', 'USB-6008', 'USB-6009',
+];
 
 /** Per-device input/output channel counts (`max_channels[deviceId]`). */
 export interface DeviceChannelCounts {
@@ -357,6 +393,62 @@ export function outputDevices(caps: BridgeCaps | null): OutputDevice[] {
 }
 
 /**
+ * Whether the AO task provably steps on the AI SAMPLE CLOCK for this
+ * input/output device pair — i.e. whether the drive and the capture are
+ * SAMPLE-ACCURATE, not merely phase-coherent.
+ *
+ * The client-side twin of `pydvma._ni_backend.ai_sample_clock_source`
+ * returning a routable terminal (plus `streams.setup_output_NI_nidaqmx`'s
+ * same-device requirement) — deliberately STRICTER than
+ * `_ni_backend.supports_hw_ao_sync`, which also answers True for a cDAQ
+ * chassis.  A chassis is excluded here: per-module `ai/SampleClock` is NOT
+ * routable as an AO source (DAQmx rejects it), so the AO runs on its own
+ * timebase and AI/AO are only phase-coherent through the chassis 80 MHz
+ * timebase — good enough for an ordinary stimulus, not good enough to treat
+ * the commanded waveform as the measured input.
+ *
+ * The BLA ("Nonlin") stage gates its `commanded` x-mode on exactly this: the
+ * analysis regenerates x from the seed with NO per-capture start offset, so
+ * anything short of sample-accuracy leaks capture-start jitter into the
+ * realisation scatter and inflates σ²_NL.  Measured-x is unaffected — it works
+ * on every path, chassis included, because x and y share the ADC clock.
+ *
+ * It answers `false` whenever the capability document cannot PROVE sync:
+ *
+ * - both sides must be the SAME `nidaq:<index>` device (an unset output device
+ *   follows the input, so the caller passes the input id for that case);
+ * - a cDAQ chassis (`is_chassis`) is refused, as above;
+ * - any other NI device qualifies only when its `product_type` is known AND is
+ *   not one of the software-timed-AO USB-600x family
+ *   ({@link SW_TIMED_AO_PRODUCT_TYPES});
+ * - soundcard / mock / Web Audio (null caps) are always `false`.
+ *
+ * The remaining server-side condition — the AI stream running AT `output_fs` —
+ * is a separate rule the caller enforces (BLA refuses any staged output_fs
+ * clamp, and refuses `lpf_on`, which oversamples the capture).
+ */
+export function supportsRoutedAiClockAo(
+  caps: BridgeCaps | null,
+  inputDeviceId: string | undefined,
+  outputDeviceId?: string,
+): boolean {
+  if (!caps || !inputDeviceId) return false;
+  // An unset output device follows the input device (options.py), so `''`
+  // resolves to the input id; a DIFFERENT device can never share the clock.
+  if (outputDeviceId && outputDeviceId !== inputDeviceId) return false;
+  const sep = inputDeviceId.indexOf(':');
+  const driver = sep >= 0 ? inputDeviceId.slice(0, sep) : inputDeviceId;
+  if (driver !== 'nidaq') return false;
+  const index = sep >= 0 ? Number(inputDeviceId.slice(sep + 1)) : 0;
+  const dc = caps.device_caps?.[inputDeviceId];
+  const ni = Number.isFinite(index) ? caps.devices?.nidaq?.[index] : undefined;
+  if (dc?.is_chassis ?? ni?.is_chassis) return false;   // phase-coherent, not sample-accurate
+  const productType = dc?.product_type ?? ni?.product_type;
+  if (!productType) return false;              // unknown hardware ⇒ cannot prove sync
+  return !SW_TIMED_AO_PRODUCT_TYPES.includes(productType);
+}
+
+/**
  * pydvma's `MySettings` default full-scale voltage (`options.py`:
  * `VmaxNI = 5`, and `output_VmaxNI` defaults to `VmaxNI`).  When the webui
  * sends no explicit `VmaxNI` / `output_VmaxNI`, the server uses this — so it
@@ -478,12 +570,18 @@ export interface BridgeConfig {
    * Selected output (AO) device as `<driver>:<index>` (e.g. `'nidaq:1'`),
    * mapped to `MySettings.output_device_driver` / `output_device_index` in the
    * configure message.  Unset → the server uses the input device / its
-   * default output.  Only sent when `outputEnabled`.
+   * default output.  Sent when `outputEnabled` OR when the capture carries a
+   * per-capture `RecordConfig.outputOverride` (a BLA run drives the AO even
+   * while the card's stimulus group is off, so the device selection has to
+   * ride along).
    */
   outputDeviceId?: string;
   /**
    * Number of output (AO) channels → `MySettings.output_channels`.  Unset →
-   * the server default (1).  Only sent when `outputEnabled`.
+   * the server default (1).  Sent when `outputEnabled` OR when a per-capture
+   * `RecordConfig.outputOverride` is present; a multisine override WIDENS it
+   * to its `nExc` (never narrows it), since the server's generator rejects
+   * `n_exc > output_channels`.
    */
   outputChannels?: number;
   /**
@@ -493,8 +591,10 @@ export interface BridgeConfig {
    * it, and clears it otherwise.  Unset → the server default
    * (`output_fs = fs`, options.py), which on a device whose AO tops out
    * below the input rate (USB-6003: AO 5 kS/s vs AI 100 kS/s) fails the log
-   * with "output_fs exceeds the maximum AO sample rate".  Only sent when
-   * `outputEnabled`.
+   * with "output_fs exceeds the maximum AO sample rate".  Sent when
+   * `outputEnabled` OR when a per-capture `RecordConfig.outputOverride` is
+   * present.  (A BLA run REFUSES to start while this is staged — a drive at a
+   * different rate than the capture breaks the multisine periodicity.)
    */
   outputFs?: number;
 }
@@ -510,6 +610,14 @@ export interface SourceProvider {
   /** Bridge feature/device report, or `null` for Web Audio / a dead bridge. */
   capabilities(): Promise<BridgeCaps | null>;
   enumerateInputDevices(): Promise<AudioInputDevice[]>;
+  /**
+   * Run one fixed-duration capture.  `cfg.outputOverride` (the stimulus-spec
+   * union) is the one Web-Audio-shaped `RecordConfig` extension BOTH backends
+   * honour: it replaces the Acquire card's stimulus state for this capture
+   * only, so a BLA run can inject its (realisation, experiment) multisine
+   * without touching persistent UI state.  `cfg.output` / `cfg.pretrig` stay
+   * Web-Audio-only.
+   */
   startRecording(cfg: RecordConfig): RecordingHandle;
   startMonitor(
     cfg: Omit<RecordConfig, 'durationS'>,
@@ -601,6 +709,13 @@ export class WebAudioProvider implements SourceProvider {
     this.statusCb = cb;
   }
 
+  /**
+   * Capture through `source.ts`, merging the Acquire card's stimulus /
+   * pretrigger state ({@link recordExtras}).  A caller-supplied
+   * `cfg.outputOverride` survives the merge untouched and beats the merged
+   * `output` inside `startRecording` — so a BLA capture plays its own
+   * multisine even while the card's stimulus group is on (or off).
+   */
   startRecording(cfg: RecordConfig): RecordingHandle {
     return webStartRecording({ ...cfg, ...this.recordExtras() });
   }

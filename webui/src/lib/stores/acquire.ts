@@ -12,6 +12,7 @@
 import { writable, get } from 'svelte/store';
 import type {
   AudioInputDevice,
+  OutputSpec,
   RecordConfig,
   Recording,
   RecordingHandle,
@@ -114,6 +115,22 @@ export interface DeviceCaps {
   latency?: DeviceCapRange;
   /** The track's CURRENT settings once the stream opened. */
   current?: { sampleRate?: number; channelCount?: number; latency?: number };
+}
+
+/**
+ * Per-capture options for {@link createAcquireStore}'s `record()`.  Everything
+ * here applies to ONE capture and leaves the store's persistent settings
+ * (the Setup / Acquire cards' state) untouched.
+ */
+export interface RecordOptions {
+  /**
+   * Output-stimulus override for this capture (Schoukens BLA runs).  Wins over
+   * the Acquire card's stimulus group in both enabled-ness and content, on
+   * BOTH backends — the Web Audio path plays it through the same
+   * `AudioBufferSourceNode` graph, the bridge maps it onto the `log` message's
+   * `output` block.  Omit for ordinary captures.
+   */
+  outputOverride?: OutputSpec;
 }
 
 export type AcquireStore = ReturnType<typeof createAcquireStore>;
@@ -408,8 +425,15 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     }
   }
 
-  /** Start a recording with current settings. */
-  async function record(): Promise<Recording> {
+  /**
+   * Start a recording with current settings.
+   *
+   * `opts.outputOverride` (Schoukens BLA) replaces the Acquire card's stimulus
+   * for THIS capture only — see {@link RecordOptions}.  With no options the
+   * config sent to the provider is exactly what it always was (the key is not
+   * even present), so the classic path is untouched.
+   */
+  async function record(opts: RecordOptions = {}): Promise<Recording> {
     const cfg = get(settings);
     status.set('recording');
     statusText.set(`Logging data for ${cfg.durationS.toFixed(1)} s…`);
@@ -429,6 +453,9 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       latency: cfg.latency,
       lpfOn: cfg.lpfOn,
     };
+    // Only attach the key when an override was actually given — an absent
+    // override must leave the provider's config byte-identical to before.
+    if (opts.outputOverride) rcfg.outputOverride = opts.outputOverride;
 
     handle = provider.startRecording(rcfg);
 

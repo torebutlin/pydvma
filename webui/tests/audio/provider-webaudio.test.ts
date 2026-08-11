@@ -23,7 +23,7 @@ import {
   WEB_AUDIO_DEFAULT_PRETRIG_THRESHOLD,
   BARE_ARM_PRETRIG_SAMPLES,
 } from '../../src/lib/audio/provider';
-import type { RecordConfig } from '../../src/lib/audio/source';
+import type { MultisineStimulusConfig, RecordConfig } from '../../src/lib/audio/source';
 
 function lastRecordConfig(): RecordConfig {
   return startRecordingMock.mock.calls.at(-1)![0] as unknown as RecordConfig;
@@ -80,4 +80,21 @@ test('no output / pretrig extensions when both flags are off', () => {
   const cfg = lastRecordConfig();
   expect(cfg.output).toBeUndefined();
   expect(cfg.pretrig).toBeUndefined();
+});
+
+test('a per-capture outputOverride survives the card-config merge intact', () => {
+  const p = new WebAudioProvider();
+  // The card's classic stimulus is ON — the BLA override must beat it for this
+  // capture WITHOUT erasing it, so the card's own state is untouched.
+  p.setConfig({ outputEnabled: true, outputType: 'sweep', outputAmp: 0.3, outputF1: 10, outputF2: 500 });
+  const override: MultisineStimulusConfig = {
+    type: 'multisine', nSamples: 512, k1: 2, k2: 20, pPeriods: 2, tPeriods: 1,
+    seed: 99, m: 1, e: 0, nExc: 1, ampRms: 0.05,
+  };
+  p.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 1, outputOverride: override });
+
+  const cfg = lastRecordConfig();
+  expect(cfg.outputOverride).toEqual(override);                  // not dropped by the merge
+  expect(cfg.output).toMatchObject({ type: 'sweep', amp: 0.3 }); // card stimulus still merged in
+  // (source.ts resolves `outputOverride ?? output`, so the multisine is what plays.)
 });

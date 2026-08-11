@@ -75,7 +75,8 @@ _ARRAY_FIELDS = {
     'TimeData':      ['time_axis', 'time_data'],
     'FreqData':      ['freq_axis', 'freq_data'],
     'CrossSpecData': ['freq_axis', 'Pxy', 'Cxy'],
-    'TfData':        ['freq_axis', 'tf_data', 'tf_coherence'],
+    'TfData':        ['freq_axis', 'tf_data', 'tf_coherence',
+                       'bla_sigma_nl', 'bla_sigma_n'],
     'SonoData':      ['time_axis', 'freq_axis', 'sono_data'],
     'ModalData':     ['M'],
     'MetaData':      [],
@@ -90,7 +91,8 @@ _META_FIELDS = {
     'CrossSpecData': ['units', 'channel_cal_factors', 'test_name',
                        'timestamp', 'timestring', 'id_link'],
     'TfData':        ['units', 'channel_cal_factors', 'test_name',
-                       'timestamp', 'timestring', 'id_link', 'flag_modal_TF'],
+                       'timestamp', 'timestring', 'id_link', 'flag_modal_TF',
+                       'bla'],
     'SonoData':      ['units', 'channel_cal_factors', 'test_name',
                        'timestamp', 'timestring', 'id_link'],
     'ModalData':     ['units', 'test_name', 'timestamp', 'timestring',
@@ -262,7 +264,11 @@ def save(dataset, filename):
                     kind = item.__class__.__name__
                     entry = {'kind': kind, 'arrays': {}, 'meta': {}}
                     for field in _ARRAY_FIELDS[kind]:
-                        arr = getattr(item, field)
+                        # Default None: an object unpickled from a legacy
+                        # file predates any array field added since it was
+                        # written (e.g. TfData.bla_sigma_n), and must still
+                        # save — absent is written exactly like None.
+                        arr = getattr(item, field, None)
                         if arr is None:      # e.g. TfData.tf_coherence
                             continue
                         if kind == 'ModalData' and len(arr) == 0:

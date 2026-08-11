@@ -76,6 +76,13 @@ export interface ViewSlice {
   history: RangeSnapshot[]; future: RangeSnapshot[];
   plotType: TfPlotType;              // used by tf only; ignored elsewhere
   coherence: boolean;
+  /**
+   * σ_NL/σ_n overlay flag (Task 9, Schoukens BLA) — used by the tf view
+   * only, mag-only (bode's mag pane included); ignored elsewhere, mirroring
+   * `coherence`'s pattern exactly (declaration, default, plain field — no
+   * dedicated undo/serialisation entry, same as `coherence`).
+   */
+  blaSigma: boolean;
   // `compact` toggles the legend's dot-grid mode (one dot per line,
   // set-rows × channel-columns) instead of the full labelled rows.
   legend: { visible: boolean; x: number; y: number; preset: string | null; compact: boolean };
@@ -93,7 +100,7 @@ export interface ViewSlice {
 
 const fresh = (): ViewSlice => ({
   range: { x: null, y: null }, history: [], future: [],
-  plotType: 'mag', coherence: true,
+  plotType: 'mag', coherence: true, blaSigma: true,
   // Default to the BOTTOM-RIGHT (se) — Tore's round-7b call. (History: the
   // old 'nw' default dodged the zoom toolbar, which floated over the
   // top-right data area until round 7 docked it in the strip above the plot.)
@@ -307,6 +314,12 @@ export function createViewState() {
   function setCoherence(on: boolean) { patch(get(active), v => ({ ...v, coherence: on })); }
 
   /**
+   * Set (not toggle) the ACTIVE view's σ_NL/σ_n overlay flag (Task 9,
+   * Schoukens BLA). Mirrors `setCoherence` exactly.
+   */
+  function setBlaSigma(on: boolean) { patch(get(active), v => ({ ...v, blaSigma: on })); }
+
+  /**
    * Set the ACTIVE view's frequency x-axis scale (`'lin'`/`'log'`).
    * Scoped to the active view (like `setPlotType`) because it is only
    * ever driven from the active view's toolbar/card.
@@ -412,7 +425,7 @@ export function createViewState() {
     activate, setRange, back, forward, autoFit,
     beginTransient, setRangeLive, commitTransient, cancelTransient,
     setNyquistRange, setPhaseRange, setBodePhaseRange, setCoherenceAuto,
-    setPlotType, setCoherence, setXScale, setYScale,
+    setPlotType, setCoherence, setBlaSigma, setXScale, setYScale,
     setSonoFreqScale, setSonoColour, setLegend, setFreqScope, setNavigator,
     serialize, restore,
   };

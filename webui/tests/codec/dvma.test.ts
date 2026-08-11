@@ -199,6 +199,62 @@ test('a JS-authored ModalData item write -> read round-trips M + meta', () => {
   expect((md.metaRaw!.timestamp as Record<string, unknown>).__datetime__).toBe(iso);
 });
 
+// ---- Schoukens BLA persistence: bla_sigma_nl/bla_sigma_n arrays + bla meta
+// (Task 6) — the codec has no per-kind field whitelist, so these should
+// round-trip through the generic arrays/meta loops with no dvma.ts changes.
+
+test('a TfData item with BLA sigma arrays + bla meta round-trips intact', () => {
+  const ds = readDvma(bytes);
+  const freq_axis = { shape: [3], isComplex: false, data: Float64Array.from([10, 20, 30]) };
+  const tf_data = {
+    shape: [3, 1], isComplex: true,
+    data: Float64Array.from([1, 0.1, 2, 0.2, 3, 0.3]),   // interleaved re/im
+  };
+  const bla_sigma_nl = { shape: [3, 1], isComplex: false, data: Float64Array.from([0.01, 0.02, 0.03]) };
+  const bla_sigma_n = { shape: [3, 1], isComplex: false, data: Float64Array.from([0.001, 0.002, 0.003]) };
+  const bla = {
+    multisine: { n_samples: 256, k1: 8, k2: 100, p_periods: 2, t_periods: 2, seed: 42, amp_rms: 0.1, n_exc: 2, M: 2 },
+    x_mode: 'measured', x_channels: [0, 1], resp_channels: [2],
+    fs: 8192.0, excited_bins: [8, 9, 10], q: 0,
+  };
+  const blaItem: DvmaItem = {
+    kind: 'TfData',
+    arrays: { freq_axis, tf_data, bla_sigma_nl, bla_sigma_n },
+    meta: { units: ['g/N'], test_name: 'bla q0', bla },
+    settings: null,
+  };
+  ds.items.push(blaItem);
+
+  const ds2 = readDvma(writeDvma(ds));
+  const found = ds2.items.filter(i => i.kind === 'TfData' && i.meta.test_name === 'bla q0');
+  expect(found.length).toBe(1);
+  const tf = found[0];
+  expect(tf.arrays.bla_sigma_nl.shape).toEqual([3, 1]);
+  expect(Array.from(tf.arrays.bla_sigma_nl.data as Float64Array)).toEqual([0.01, 0.02, 0.03]);
+  expect(Array.from(tf.arrays.bla_sigma_n.data as Float64Array)).toEqual([0.001, 0.002, 0.003]);
+  expect(tf.arrays.tf_data.isComplex).toBe(true);
+  expect(Array.from(tf.arrays.tf_data.data as Float64Array)).toEqual([1, 0.1, 2, 0.2, 3, 0.3]);
+  expect(tf.meta.bla).toEqual(bla);
+});
+
+test('an ordinary TfData item with no BLA fields is unaffected by the round trip', () => {
+  const ds = readDvma(bytes);
+  const tf = ds.items.find(i => i.kind === 'TfData')!;
+  expect(tf.arrays.bla_sigma_nl).toBeUndefined();
+  expect(tf.arrays.bla_sigma_n).toBeUndefined();
+  expect(tf.meta.bla).toBeUndefined();
+  const ds2 = readDvma(writeDvma(ds));
+  const tf2 = ds2.items.find(i => i.kind === 'TfData')!;
+  expect(tf2.arrays.bla_sigma_nl).toBeUndefined();
+  expect(tf2.arrays.bla_sigma_n).toBeUndefined();
+  expect(tf2.meta.bla).toBeUndefined();
+  // its ordinary fields still round-trip unchanged
+  expect(tf2.arrays.tf_data.shape).toEqual(tf.arrays.tf_data.shape);
+  expect(Array.from(tf2.arrays.tf_data.data as Float64Array))
+    .toEqual(Array.from(tf.arrays.tf_data.data as Float64Array));
+  expect(tf2.meta.test_name).toBe(tf.meta.test_name);
+});
+
 test('ui with both labels and analysis round-trips together', () => {
   const ds = readDvma(bytes);
   const td = ds.items.find(i => i.kind === 'TimeData')!;

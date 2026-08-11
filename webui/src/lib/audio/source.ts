@@ -44,8 +44,16 @@
  * (`RecordConfig.pretrig`, via {@link PretrigAssembler}).  Both are Web-Audio-
  * only optional extensions to the shared `RecordConfig`; the bridge provider
  * ignores them (it maps its own `BridgeConfig` to server-side pydvma settings).
+ *
+ * A stimulus spec is either of the classic signal_generator families
+ * ({@link OutputStimulusConfig}) or a Schoukens random-phase
+ * {@link MultisineSpec} for BLA runs (multi-channel, sample-exact, no fade);
+ * {@link OutputSpec} is the union.  The card's persistent `RecordConfig.output`
+ * takes the CLASSIC type only — a per-capture `RecordConfig.outputOverride`
+ * takes the union and beats it, and is the one field BOTH backends honour,
+ * since a BLA run must drive the bridge too.
  */
-import { generateStimulus } from './signal';
+import { generateStimulus, generateMultisine, type MultisineSpec } from './signal';
 import { PretrigAssembler, clampPretrigSamples } from './pretrig';
 
 // ---- types ----
@@ -99,10 +107,28 @@ export interface RecordConfig {
   lpfOn?: boolean;
   /**
    * Optional OUTPUT stimulus played through the speakers/AO during the capture
-   * (round-5 item 10).  Web-Audio-only; the bridge provider ignores it.  See
-   * {@link OutputStimulusConfig}.
+   * (round-5 item 10).  Web-Audio-only; the bridge provider ignores it (it maps
+   * its own `BridgeConfig` to server-side pydvma settings).  Set by
+   * `WebAudioProvider` from the Acquire card's persistent stimulus state.
+   *
+   * DELIBERATELY the CLASSIC spec only, not the {@link OutputSpec} union: a
+   * multisine parked here would play in the browser and be silently IGNORED by
+   * the bridge (which builds its `log.output` from `BridgeConfig` plus
+   * {@link outputOverride}), so the two backends would disagree about what was
+   * driven.  A BLA stimulus goes through {@link outputOverride}, the one field
+   * BOTH backends honour.
    */
   output?: OutputStimulusConfig;
+  /**
+   * Optional PER-CAPTURE output-stimulus override (Schoukens BLA).  When set it
+   * WINS over {@link output} — over the Acquire card's stimulus state in both
+   * enabled-ness and content — for this capture only, leaving the card's
+   * persistent settings untouched.  This is the seam a BLA run uses to inject
+   * one (realisation, experiment) multisine per capture; it is honoured by BOTH
+   * backends (here for Web Audio, and by `BridgeProvider` which maps it onto the
+   * `log` message's `output` block).
+   */
+  outputOverride?: OutputSpec;
   /**
    * Optional ARMED-capture pretrigger (round-5 item 10).  When present, the
    * capture waits for a threshold crossing and returns a window straddling it.
@@ -148,6 +174,41 @@ export interface OutputStimulusConfig {
   /** Output channel count (default 1); the same waveform is written to each. */
   channels?: number;
 }
+
+/**
+ * A Schoukens random-phase MULTISINE output stimulus (BLA runs) — the second
+ * member of {@link OutputSpec}, discriminated by `type: 'multisine'`.
+ * Carries a {@link MultisineSpec} verbatim (camelCase), so one (realisation,
+ * experiment) pair is fully described by the spec alone.
+ *
+ * Unlike {@link OutputStimulusConfig} it has NO duration field: the waveform is
+ * defined in SAMPLES — `(tPeriods + pPeriods) * nSamples` of them — and the
+ * capture duration is set by the caller (the BLA orchestrator sizes
+ * `RecordConfig.durationS` to match).  It drives `spec.nExc` output channels,
+ * one per excitation, each a DIFFERENT waveform (the classic spec writes ONE
+ * waveform to every channel).
+ */
+export interface MultisineStimulusConfig extends MultisineSpec {
+  type: 'multisine';
+  /**
+   * Output device id for `AudioContext.setSinkId` (feature-detected), exactly
+   * as on {@link OutputStimulusConfig}.  Ignored on the bridge path, which
+   * takes its AO device from `BridgeConfig.outputDeviceId`.
+   */
+  deviceId?: string;
+}
+
+/**
+ * The output-stimulus spec union: the CLASSIC signal_generator families
+ * ({@link OutputStimulusConfig} — sweep / uniform / gaussian, unchanged) or a
+ * Schoukens {@link MultisineStimulusConfig}.  Discriminate on `type`.
+ *
+ * This is the type of `RecordConfig.outputOverride` — the per-capture injection
+ * BOTH backends honour, so a BLA run can drive either without touching card
+ * state.  `RecordConfig.output` (the Acquire card's persistent stimulus) is
+ * deliberately NARROWER: see the note there.
+ */
+export type OutputSpec = OutputStimulusConfig | MultisineStimulusConfig;
 
 /**
  * Armed-capture pretrigger options (Web Audio).  Mirrors pydvma's
@@ -392,25 +453,17 @@ export async function enumerateOutputDevices(): Promise<AudioOutputDevice[]> {
 // ---- recording ----
 
 /**
- * Build the output-stimulus `AudioBufferSourceNode` for a capture.  Generates
- * the waveform ({@link generateStimulus}, normalised ±1) for
- * `min(output.durationS, captureDurationS)` seconds, writes it to every output
- * channel, connects it to the context destination, and (best-effort, feature-
- * detected) routes the context to `output.deviceId` via `setSinkId` where
- * supported (Chromium; Safari/Firefox fall back to the default device).  The
- * node is returned un-started so the caller can start it in sync with the
- * capture.
+ * Fill the output `AudioBuffer` for a CLASSIC stimulus: one
+ * {@link generateStimulus} waveform (normalised ±1) covering
+ * `min(output.durationS, captureDurationS)` seconds, written to EVERY output
+ * channel.
  */
-async function buildStimulusNode(
+function classicStimulusBuffer(
   ctx: AudioContext,
   fs: number,
   captureDurationS: number,
   output: OutputStimulusConfig,
-): Promise<AudioBufferSourceNode> {
-  const sink = (ctx as unknown as { setSinkId?: (id: string) => Promise<void> }).setSinkId;
-  if (output.deviceId && typeof sink === 'function') {
-    try { await sink.call(ctx, output.deviceId); } catch { /* fall back to default output */ }
-  }
+): AudioBuffer {
   const outDur = output.durationS != null && output.durationS > 0
     ? Math.min(output.durationS, captureDurationS)
     : captureDurationS;
@@ -422,6 +475,74 @@ async function buildStimulusNode(
   const channels = Math.max(1, Math.floor(output.channels ?? 1));
   const buffer = ctx.createBuffer(channels, Math.max(1, y32.length), fs);
   for (let ch = 0; ch < channels; ch++) buffer.getChannelData(ch).set(y32); // same waveform per ch
+  return buffer;
+}
+
+/**
+ * Fill the output `AudioBuffer` for a Schoukens MULTISINE stimulus: ONE
+ * `spec.nExc`-channel buffer whose channels carry DIFFERENT waveforms (the
+ * per-excitation rotations from {@link generateMultisine}), each
+ * `(tPeriods + pPeriods) * nSamples` samples long.  The buffer length follows
+ * the spec alone — the capture duration is the caller's business (a BLA run
+ * sizes `RecordConfig.durationS` to match).
+ *
+ * Throws BEFORE any capture starts when the sink cannot carry `nExc` channels
+ * (`destination.maxChannelCount < nExc`), rather than letting the browser
+ * silently down-mix the excitations into each other — which would destroy the
+ * orthogonality the BLA solve depends on.  A destination that does not report
+ * `maxChannelCount` (older browsers, test stubs) is not second-guessed.  The
+ * destination is then pinned to `nExc` DISCRETE channels for the same reason.
+ * {@link generateMultisine}'s own validation / peak-guard errors propagate.
+ */
+function multisineStimulusBuffer(
+  ctx: AudioContext,
+  fs: number,
+  output: MultisineStimulusConfig,
+): AudioBuffer {
+  const channels = output.nExc;
+  const maxChannels = (ctx.destination as { maxChannelCount?: number }).maxChannelCount;
+  if (typeof maxChannels === 'number' && maxChannels > 0 && maxChannels < channels) {
+    throw new Error(
+      `output device exposes ${maxChannels} channels; run needs ${channels}`,
+    );
+  }
+  const ys = generateMultisine(output, fs);
+  const buffer = ctx.createBuffer(channels, Math.max(1, ys[0]?.length ?? 0), fs);
+  // TypedArray.set converts float64 → float32 element-wise on the way in, so
+  // no intermediate copy is needed.
+  for (let ch = 0; ch < channels; ch++) buffer.getChannelData(ch).set(ys[ch]);
+  try {
+    // Discrete, exactly nExc wide: no speaker up/down-mix of the excitations.
+    ctx.destination.channelCount = channels;
+    ctx.destination.channelInterpretation = 'discrete';
+  } catch { /* destination may refuse (or be a stub) — the guard above stands */ }
+  return buffer;
+}
+
+/**
+ * Build the output-stimulus `AudioBufferSourceNode` for a capture.  Generates
+ * the waveform — {@link generateStimulus} for a classic spec, or
+ * {@link generateMultisine} for a `type: 'multisine'` one (see
+ * {@link classicStimulusBuffer} / {@link multisineStimulusBuffer} for the
+ * per-family buffer rules) — connects it to the context destination, and
+ * (best-effort, feature-detected) routes the context to `output.deviceId` via
+ * `setSinkId` where supported (Chromium; Safari/Firefox fall back to the
+ * default device).  The node is returned un-started so the caller can start it
+ * in sync with the capture.
+ */
+async function buildStimulusNode(
+  ctx: AudioContext,
+  fs: number,
+  captureDurationS: number,
+  output: OutputSpec,
+): Promise<AudioBufferSourceNode> {
+  const sink = (ctx as unknown as { setSinkId?: (id: string) => Promise<void> }).setSinkId;
+  if (output.deviceId && typeof sink === 'function') {
+    try { await sink.call(ctx, output.deviceId); } catch { /* fall back to default output */ }
+  }
+  const buffer = output.type === 'multisine'
+    ? multisineStimulusBuffer(ctx, fs, output)
+    : classicStimulusBuffer(ctx, fs, captureDurationS, output);
   const node = ctx.createBufferSource();
   node.buffer = buffer;
   node.connect(ctx.destination);
@@ -441,6 +562,8 @@ async function buildStimulusNode(
  * - `cfg.output` plays a generated stimulus through the speakers/AO during
  *   the capture (started in sync with it).  The DSP flags are forced OFF while
  *   an output plays (echo cancellation would subtract the measured signal).
+ *   A `cfg.outputOverride` WINS over it for this capture (the BLA seam) — see
+ *   {@link RecordConfig.outputOverride}.
  * - `cfg.pretrig` runs an ARMED capture: the returned promise resolves only
  *   once a threshold crossing has been seen (or `timeoutS` elapses, falling
  *   back to an ordinary capture), with `pretrig.onStatus` surfacing the
@@ -456,7 +579,10 @@ export function startRecording(cfg: RecordConfig): RecordingHandle {
   const BUFFER_SIZE = 4096;
 
   const armed = !!cfg.pretrig;
-  const hasOutput = !!cfg.output;
+  // A per-capture override wins over the card's persistent stimulus, in both
+  // enabled-ness and content (the BLA run injects one multisine per capture).
+  const outputSpec = cfg.outputOverride ?? cfg.output;
+  const hasOutput = !!outputSpec;
   const onStatus = cfg.pretrig?.onStatus;
 
   const promise = (async (): Promise<Recording> => {
@@ -536,7 +662,7 @@ export function startRecording(cfg: RecordConfig): RecordingHandle {
         scriptNode = ctx.createScriptProcessor(BUFFER_SIZE, actualChannels, actualChannels);
       }
       if (hasOutput) {
-        stimulusNode = await buildStimulusNode(ctx, actualFs, cfg.durationS, cfg.output!);
+        stimulusNode = await buildStimulusNode(ctx, actualFs, cfg.durationS, outputSpec!);
       }
     } catch (e) {
       try { stimulusNode?.disconnect(); } catch { /* */ }

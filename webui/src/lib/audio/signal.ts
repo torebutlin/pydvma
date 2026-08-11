@@ -40,6 +40,15 @@
  *
  * The generator is pure and deterministic given an injected `rng` (uniform
  * `[0,1)`), so the noise paths are unit-testable.
+ *
+ * ── Multisine (Schoukens BLA excitation) ──────────────────────────────────
+ * This module also carries {@link generateMultisine}, a SEPARATE signal
+ * family for the Schoukens random-phase-multisine BLA workflow (design:
+ * `dev/plans/2026-08-10-schoukens-bla-design.md`) — the TypeScript twin of
+ * pydvma's `multisine_generator` (`pydvma/acquisition.py:609`). It does not
+ * reuse `generateStimulus`: no fade window, no peak rescale, sample-domain
+ * (not time-domain) spec, and a different, dedicated PRNG. See its own
+ * docstring below for the signal law.
  */
 
 export type StimulusType = 'sweep' | 'uniform' | 'gaussian';
@@ -296,4 +305,212 @@ export function generateStimulus(spec: StimulusSpec): { t: Float64Array; y: Floa
   if (peak > limit) for (let n = 0; n < N; n++) y[n] = (limit * y[n]) / peak;
 
   return { t, y };
+}
+
+// ---- multisine generator (Schoukens BLA excitation) ----------------------
+
+/**
+ * mulberry32 — a small, fast, deterministic 32-bit PRNG returning uniform
+ * `[0,1)` floats from a `[0, 2^32)` integer seed.
+ *
+ * Deliberately NOT numpy-compatible: pydvma's twin (`multisine_generator`)
+ * draws from `numpy.random.default_rng([seed, m])`, a different algorithm
+ * entirely. That is fine by design — one path (this browser generator, or
+ * the Python bridge/soundcard driver) produces every capture of a single
+ * BLA run, and the analysis only ever reads the *measured* excitation `x`,
+ * never the PRNG stream itself. What MUST match between the two twins is
+ * the signal LAW (amplitude, rotation, periodicity — see
+ * {@link generateMultisine}), not the phase values.
+ *
+ * Chosen for being tiny, dependency-free, and — critically — stable
+ * forever: given the same 32-bit seed this returns the identical sequence
+ * on every JS engine, for all time, which is what lets a saved
+ * {@link MultisineSpec} reproduce the exact waveform from metadata alone.
+ * This exact algorithm must never change.
+ */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Mix a `(seed, m)` pair into a single 32-bit stream seed for
+ * {@link mulberry32}. Realisation `m` gets its own independent phase draw
+ * while `seed` stays the one value recorded in — and shared across — a
+ * whole BLA run's metadata. The mixing constant `0x9E3779B9` is the
+ * standard 32-bit golden-ratio "bit-spreading" multiplier; `Math.imul`
+ * performs the multiplication with correct 32-bit wraparound (plain `*`
+ * would lose precision for large `m`). This exact formula must never
+ * change — a saved spec's reproducibility depends on it forever.
+ */
+export function multisineStreamSeed(seed: number, m: number): number {
+  return (seed ^ Math.imul(m, 0x9e3779b9)) >>> 0;
+}
+
+/**
+ * Parameters for {@link generateMultisine} — one (realisation, experiment)
+ * capture's worth of Schoukens random-phase-multisine excitation. camelCase
+ * here; the bridge message layer maps these to the snake_case wire keys
+ * used by `pydvma_serve` (not this module's job).
+ */
+export interface MultisineSpec {
+  /** Period length `N` — samples per period (also fixes Δf = fs/N given `fs`). */
+  nSamples: number;
+  /** Lowest excited DFT bin, inclusive. Integer, `1 <= k1 <= k2 <= floor((N-1)/2)`. */
+  k1: number;
+  /** Highest excited DFT bin, inclusive. Integer, `1 <= k1 <= k2 <= floor((N-1)/2)`. */
+  k2: number;
+  /** Steady-state periods captured per experiment (Schoukens' `P`). */
+  pPeriods: number;
+  /** Discarded transient periods played before the steady-state window (`n_trans`). */
+  tPeriods: number;
+  /** PRNG seed (uint32) recorded in metadata — reproduces the whole run's waveforms exactly. */
+  seed: number;
+  /** Realisation index (0-based) — every realisation draws fresh random phases. */
+  m: number;
+  /** Experiment index within a realisation (0-based), `0 <= e < nExc`. */
+  e: number;
+  /** Number of driven excitation channels in this realisation (Schoukens' `n_exc`). */
+  nExc: number;
+  /** Target per-channel RMS, NORMALISED `0..1` for the browser DAC (no calibrated AO device here). */
+  ampRms: number;
+  /** Peak guard rail, normalised full-scale. Defaults to `1` — the ±1 `AudioBuffer` rail. */
+  limit?: number;
+}
+
+/**
+ * Generate the Schoukens random-phase multisine excitation for one BLA
+ * capture — the TypeScript twin of pydvma's `multisine_generator`
+ * (`pydvma/acquisition.py:609`). Returns one `Float64Array` per excitation
+ * channel (`spec.nExc` of them), each of length
+ * `(spec.tPeriods + spec.pPeriods) * spec.nSamples`: `spec.tPeriods`
+ * discarded transient periods followed by `spec.pPeriods` steady-state
+ * periods, every one an EXACT repeat of a single generated period (exact
+ * periodicity by construction — survives sample-rate coercion downstream,
+ * unlike a time-domain design).
+ *
+ * `fs` is accepted only for API symmetry with {@link generateStimulus} and
+ * so callers can derive a time axis (`t = arange(N_total)/fs`); the
+ * waveform itself depends ONLY on `spec` — this generator is defined in
+ * samples, not seconds (see the design doc rationale).
+ *
+ * ── Signal law (MUST match the Python twin exactly; the PRNG itself need
+ * not — see {@link mulberry32}) ──
+ * - Flat-amplitude lines on integer bins `k1..k2`: `A = ampRms·√(2/nLines)`,
+ *   `nLines = k2 − k1 + 1`, identical for every line.
+ * - Phases: uniform `[0, 2π)` per (channel, line), drawn from
+ *   {@link mulberry32} seeded via {@link multisineStreamSeed}`(seed, m)` —
+ *   channel-major order (all `nLines` phases of channel 0, then channel 1,
+ *   …), mirroring the Python twin's `(n_exc, n_lines)` row-major draw from
+ *   `default_rng([seed, m])`.
+ * - Experiment rotation: channel `q`'s phases (every line) shift by
+ *   `−2π·q·e/nExc` — the orthogonal DFT-matrix column that keeps each
+ *   channel's amplitude spectrum identical across the `nExc` experiments of
+ *   a realisation, and is what lets the BLA solve invert `X` per bin.
+ * - One period: `y[n] = Σ_k A·cos(2π·k·n/N + φ_{q,k})`, summed directly in
+ *   the time domain (`O(N·nLines)`; no FFT needed at these sizes).
+ *
+ * ── Peak guard ──
+ * The peak is checked ONCE, globally across every channel's period (mirrors
+ * the Python twin's `np.max(np.abs(period))` over the full `(n_exc, N)`
+ * array). If it exceeds `spec.limit` (default `1`, the ±1 `AudioBuffer`
+ * rail) this throws — NO silent rescale, NO fade window (either would break
+ * exact periodicity, the entire point of a sample-domain design).
+ *
+ * @throws Error on any spec validation failure (see the {@link MultisineSpec}
+ *   field docs) or a peak-guard violation (message names the peak and the limit).
+ */
+export function generateMultisine(spec: MultisineSpec, fs: number): Float64Array[] {
+  void fs; // accepted for API symmetry / caller time-axis derivation only — see docstring
+  const { nSamples: N, k1, k2, pPeriods, tPeriods, seed, m, e, nExc, ampRms } = spec;
+  const limit = spec.limit ?? 1;
+
+  const nOk = Number.isInteger(N) && N >= 1;
+  const kOk =
+    nOk &&
+    Number.isInteger(k1) &&
+    Number.isInteger(k2) &&
+    1 <= k1 &&
+    k1 <= k2 &&
+    k2 <= Math.floor((N - 1) / 2);
+  if (!kOk) {
+    throw new Error(
+      `multisine bins must satisfy 1 <= k1 <= k2 <= floor((N-1)/2) (got k1=${k1}, k2=${k2}, N=${N})`
+    );
+  }
+  if (!Number.isInteger(nExc) || nExc < 1) {
+    throw new Error(`multisine nExc must be an integer >= 1 (got ${nExc})`);
+  }
+  if (!Number.isInteger(tPeriods) || !Number.isInteger(pPeriods) || tPeriods + pPeriods < 1) {
+    throw new Error(
+      `multisine needs at least one period total: tPeriods + pPeriods must be >= 1 ` +
+        `(got tPeriods=${tPeriods}, pPeriods=${pPeriods})`
+    );
+  }
+  if (!Number.isInteger(e) || !(0 <= e && e < nExc)) {
+    throw new Error(`multisine e must satisfy 0 <= e < nExc (got e=${e}, nExc=${nExc})`);
+  }
+  if (!Number.isInteger(m) || m < 0) {
+    throw new Error(`multisine m must be a non-negative integer (got ${m})`);
+  }
+  if (!Number.isFinite(seed)) {
+    throw new Error(`multisine seed must be a finite number (got ${seed})`);
+  }
+
+  const nLines = k2 - k1 + 1;
+  const A = ampRms * Math.sqrt(2 / nLines);
+
+  // Base phases: drawn once per (seed, m), channel-major, so a saved spec
+  // reproduces the whole realisation (every experiment e) exactly.
+  const rand = mulberry32(multisineStreamSeed(seed, m));
+  const basePhases: number[][] = [];
+  for (let q = 0; q < nExc; q++) {
+    const row = new Array<number>(nLines);
+    for (let i = 0; i < nLines; i++) row[i] = rand() * 2 * Math.PI;
+    basePhases.push(row);
+  }
+
+  // DFT-matrix rotation: excitation q's phase shifts by -2*pi*q*e/n_exc on
+  // every line — keeps the per-channel amplitude spectrum flat across all
+  // nExc experiments of a realisation.
+  const periods: Float64Array[] = [];
+  let peak = 0;
+  for (let q = 0; q < nExc; q++) {
+    const rotation = (-2 * Math.PI * q * e) / nExc;
+    const period = new Float64Array(N);
+    for (let n = 0; n < N; n++) {
+      let s = 0;
+      for (let i = 0; i < nLines; i++) {
+        const k = k1 + i;
+        s += A * Math.cos((2 * Math.PI * k * n) / N + basePhases[q][i] + rotation);
+      }
+      period[n] = s;
+      const a = Math.abs(s);
+      if (a > peak) peak = a;
+    }
+    periods.push(period);
+  }
+
+  if (peak > limit) {
+    throw new Error(
+      `multisine peak ${peak.toPrecision(3)} exceeds the limit ±${limit} ` +
+        `— lower ampRms.`
+    );
+  }
+
+  // Tile each channel's single period (tPeriods + pPeriods) times — exact
+  // repeats, so periodicity is exact by construction.
+  const nPeriodsTotal = tPeriods + pPeriods;
+  const nTotal = nPeriodsTotal * N;
+  return periods.map((period) => {
+    const full = new Float64Array(nTotal);
+    for (let p = 0; p < nPeriodsTotal; p++) full.set(period, p * N);
+    return full;
+  });
 }

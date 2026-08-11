@@ -7,10 +7,18 @@
  *   and returns a full-length window with the crossing at index pretrigSamples;
  * - the timeout fallback surfaces armed→timeout and still returns a full set;
  * - an output stimulus builds, starts in sync, and is stopped on completion,
- *   with the DSP flags forced OFF (echo cancellation would cancel the output).
+ *   with the DSP flags forced OFF (echo cancellation would cancel the output);
+ * - a per-capture `outputOverride` (Schoukens BLA) wins over the card's
+ *   stimulus, and a multisine one builds an n_exc-channel buffer or refuses
+ *   the capture when the sink is too narrow.
  */
 import { expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { startRecording, type RecordConfig, type CaptureStatusEvent } from '../../src/lib/audio/source';
+import {
+  startRecording,
+  type MultisineStimulusConfig,
+  type RecordConfig,
+  type CaptureStatusEvent,
+} from '../../src/lib/audio/source';
 
 // ---- mocks ----
 
@@ -32,7 +40,15 @@ class MockBufferSource {
   constructor() { lastBufferSource = this; }
 }
 
-interface MockCtxOpts { fs: number; withSinkId?: boolean; }
+interface MockCtxOpts {
+  fs: number;
+  withSinkId?: boolean;
+  /**
+   * `destination.maxChannelCount`.  Omitted (the historical stub) means the
+   * sink reports nothing and the multisine channel guard stands down.
+   */
+  maxChannelCount?: number;
+}
 
 function makeMockCtx(opts: MockCtxOpts) {
   const addModule = vi.fn().mockResolvedValue(undefined);
@@ -40,7 +56,9 @@ function makeMockCtx(opts: MockCtxOpts) {
   const created: MockAudioContext[] = [];
   class MockAudioContext {
     sampleRate = opts.fs;
-    destination = {};
+    destination: Record<string, unknown> = opts.maxChannelCount != null
+      ? { maxChannelCount: opts.maxChannelCount }
+      : {};
     audioWorklet = { addModule };
     setSinkId = setSinkId;
     createMediaStreamSource() { return { connect: vi.fn(), disconnect: vi.fn(), channelCount: 1 }; }
@@ -177,6 +195,82 @@ test('an output stimulus builds, starts in sync, forces DSP flags off, and stops
   const rec = await handle.promise;
   expect(rec.nSamples).toBe(TOTAL);
   expect(lastBufferSource!.stop).toHaveBeenCalled();
+});
+
+// ---- BLA: the per-capture multisine output override ----
+
+/**
+ * A small two-excitation multisine.  8 lines at ampRms 0.1 → line amplitude
+ * 0.05 and a worst-case peak of 0.4, comfortably inside the ±1 rail, so the
+ * generator's peak guard never fires in these tests.
+ */
+function multisineOverride(over: Partial<MultisineStimulusConfig> = {}): MultisineStimulusConfig {
+  return {
+    type: 'multisine',
+    nSamples: 64, k1: 1, k2: 8,
+    pPeriods: 2, tPeriods: 1,
+    seed: 7, m: 0, e: 0, nExc: 2,
+    ampRms: 0.1,
+    ...over,
+  };
+}
+
+test('a multisine override builds an n_exc-channel buffer of (t+p)·N samples and beats the card stimulus', async () => {
+  const FS = 8000, DUR = 0.05, TOTAL = Math.ceil(FS * DUR);
+  const { gum } = mockGetUserMedia();
+  (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>) = gum;
+  const { MockAudioContext, created } = makeMockCtx({ fs: FS, maxChannelCount: 2 });
+  vi.stubGlobal('AudioContext', MockAudioContext);
+
+  const handle = startRecording({
+    sampleRate: FS, channelCount: 1, durationS: DUR,
+    echoCancellation: true,                                    // forced off by the output
+    output: { type: 'sweep', amp: 0.3, f1: 10, f2: 500 },      // card stimulus — overridden
+    outputOverride: multisineOverride(),
+  });
+  await sleep(10);
+
+  // The destination is pinned to exactly n_exc DISCRETE channels: any speaker
+  // up/down-mix would fold the excitations into each other and destroy the
+  // orthogonality the BLA solve depends on.
+  expect(created[0].destination.channelCount).toBe(2);
+  expect(created[0].destination.channelInterpretation).toBe('discrete');
+
+  const buffer = lastBufferSource!.buffer as {
+    numberOfChannels: number; length: number; getChannelData: (ch: number) => Float32Array;
+  };
+  // One channel per excitation, (tPeriods + pPeriods) · nSamples long — the
+  // spec's own length, NOT the capture duration (which stays cfg.durationS).
+  expect(buffer.numberOfChannels).toBe(2);
+  expect(buffer.length).toBe(3 * 64);
+  // The two excitations carry DIFFERENT waveforms (independent random phases);
+  // the classic path would have written one waveform to both channels.
+  const ch0 = buffer.getChannelData(0), ch1 = buffer.getChannelData(1);
+  expect(Array.from(ch0.slice(0, 8))).not.toEqual(Array.from(ch1.slice(0, 8)));
+  // Exact periodicity survives the tiling (sample n and n + N agree).
+  expect(ch0[5]).toBeCloseTo(ch0[5 + 64], 6);
+  expect(lastBufferSource!.start).toHaveBeenCalled();
+  expect(lastConstraints?.echoCancellation).toBe(false);
+
+  await deliverMono(TOTAL, 128, (i) => Math.sin(i));
+  const rec = await handle.promise;
+  expect(rec.nSamples).toBe(TOTAL);   // capture duration is untouched by the spec
+});
+
+test('a multisine run refuses to start when the sink exposes fewer channels than n_exc', async () => {
+  // Down-mixing the excitations into each other would destroy the
+  // orthogonality the BLA solve depends on — fail loudly, before capturing.
+  const { track, gum } = mockGetUserMedia();
+  (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>) = gum;
+  vi.stubGlobal('AudioContext', makeMockCtx({ fs: 8000, maxChannelCount: 2 }).MockAudioContext);
+
+  const handle = startRecording({
+    sampleRate: 8000, channelCount: 1, durationS: 0.05,
+    outputOverride: multisineOverride({ nExc: 4 }),
+  });
+  await expect(handle.promise).rejects.toThrow(/output device exposes 2 channels; run needs 4/);
+  expect(lastBufferSource).toBeNull();   // never built
+  expect(track.stop).toHaveBeenCalled(); // mic released on the failure path
 });
 
 test('setSinkId routes to a chosen output device when supported, and is skipped otherwise', async () => {

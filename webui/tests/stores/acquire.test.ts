@@ -2,13 +2,14 @@ import { get } from 'svelte/store';
 import { expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { createAcquireStore, recordingToItem, recordingToDataset, type AcquireSettings } from '../../src/lib/stores/acquire';
 import { capabilities } from '../../src/lib/stores/stages';
-import type { Recording } from '../../src/lib/audio/source';
+import type { RecordConfig, Recording } from '../../src/lib/audio/source';
 import type {
   BridgeCaps,
   BridgeConfig,
   BridgeRecordingMeta,
   ConfiguredInfo,
   LogStatusEvent,
+  MultisineStimulusConfig,
   SourceProvider,
 } from '../../src/lib/audio/provider';
 
@@ -231,6 +232,55 @@ test('bridge record surfaces pretrigger status events and carries container meta
   expect(item.settings!.device_driver).toBe('nidaq');
   expect(item.meta.test_name).toBe('shot1');
   expect(item.meta.channel_cal_factors).toEqual([2, 1]);
+});
+
+// ---- BLA: the per-capture output override reaches the provider ----
+
+/** A fake provider that just records the RecordConfig each capture is given. */
+function configCapturingProvider(rec: Recording) {
+  const configs: RecordConfig[] = [];
+  const provider: SourceProvider = {
+    kind: 'bridge',
+    async capabilities() { return null; },
+    async enumerateInputDevices() { return []; },
+    startRecording(cfg) {
+      configs.push(cfg);
+      return { promise: Promise.resolve(rec), cancel() {}, elapsed: () => 0 };
+    },
+    async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
+  };
+  return { provider, configs };
+}
+
+test('record({outputOverride}) threads the spec to the provider for that capture only', async () => {
+  const { provider, configs } = configCapturingProvider(fakeRecording());
+  const store = createAcquireStore(provider);
+  const override: MultisineStimulusConfig = {
+    type: 'multisine',
+    nSamples: 1024, k1: 2, k2: 100, pPeriods: 4, tPeriods: 2,
+    seed: 99, m: 3, e: 1, nExc: 2, ampRms: 0.1,
+  };
+
+  await store.record({ outputOverride: override });
+  expect(configs[0].outputOverride).toEqual(override);
+  // Per-capture only: the card's persistent stimulus state is untouched.
+  expect(get(store.bridgeConfig).outputEnabled).toBeUndefined();
+
+  // …and a plain record() sends a config with no override key at all (the
+  // classic path must stay byte-identical to what it was before the seam).
+  await store.record();
+  expect('outputOverride' in configs[1]).toBe(false);
+  expect(configs[1]).toEqual({
+    deviceId: undefined,
+    sampleRate: 44100,
+    channelCount: 1,
+    durationS: 2.0,
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    latency: undefined,
+    lpfOn: false,
+  });
 });
 
 test('bridge record resets pretrigStatus and lastRecordingMeta at the start of each capture', async () => {

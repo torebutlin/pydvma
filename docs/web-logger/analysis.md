@@ -87,6 +87,12 @@ The **TF** stage estimates frequency response functions.
 Good coherence (near 1) means low noise and a linear, causal response;
 dips flag noise, non-linearity, or a poor reference — the same
 interpretation as in the [Python guide](../user-guide/analysis.md#coherence-function).
+Coherence tells you *that* something other than a clean linear response
+is going on, but not which of noise or nonlinearity it is. To separate
+the two explicitly — and to get a noise floor and a distortion level as
+actual numbers — run a
+[Schoukens best-linear-approximation measurement](nonlin.md) on the
+**Nonlin** stage instead.
 
 ### Scaling: x(iω) and Best Match
 
@@ -331,5 +337,6 @@ covers the data area).
 - The expander opens a popover with **manual axis limits** (applied live)
   and **legend placement** (a 2×2 corner grid plus an *Outside* option).
 
-Next: [Modal fitting](modal-fitting.md), or
+Next: [Noise & nonlinearity separation](nonlin.md),
+[Modal fitting](modal-fitting.md), or
 [saving and exporting](export.md).
