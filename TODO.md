@@ -171,6 +171,12 @@ is still open, as one consolidated list.
   connected (~24 V open / 8–14 V IEPE / ~0 V low-Z) so
   `iepe_excit_current_A='auto'` can configure each 9234 channel.
   Sensitivity still has to be entered manually.
+- **Characterise the ESI U24 XL** (Tore owns one — knobless 24-bit
+  fixed-gain 2i2o, candidate 3C6 station box) once it surfaces: bench
+  session with `dvma.verify_input_scaling` + Rigol as known source
+  (absolute scaling, clip point) + a noise-floor capture (effective
+  bits). Full device survey incl. XR18/`xair-api` for higher channel
+  counts: `dev/2026-08-11-audio-daq-device-survey.md`.
 - **`streams.max_input_fs` still has no direct unit test** — the
   `select_capture_fs` tests cover the adjacent logic but not this.
 - **Scarlett gain control is a dead end — do not re-investigate.** No
