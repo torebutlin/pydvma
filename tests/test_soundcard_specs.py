@@ -14,6 +14,7 @@ from pydvma import options
 
 
 SCARLETT = 'Scarlett 2i2 4th Gen'
+U24XL = 'U24XL with SPDIF I/O'  # the name CoreAudio reports
 
 
 class TestDeviceProfile:
@@ -160,6 +161,46 @@ class TestFullScaleVolts:
             specs.full_scale_volts(SCARLETT, 65.0, 'inst')
 
 
+class TestU24XLProfile:
+    """The ESI U24 XL is the first FIXED-GAIN profile: no analogue gain
+    exists anywhere in its input path, so full scale is a hardware
+    constant (+4.7 dBu, user's guide §6; bench-confirmed to 0.07 dB on
+    2026-08-11 — see ``dev/2026-08-11-u24xl-bench.md``)."""
+
+    def test_the_coreaudio_name_matches(self):
+        profile = specs.device_profile(U24XL)
+        assert profile is not None
+        assert profile['label'] == 'ESI U24 XL'
+
+    def test_both_channels_are_analogue(self):
+        assert specs.channel_roles(U24XL, 2) == ['analogue', 'analogue']
+        assert specs.loopback_channels(U24XL, 2) == []
+
+    def test_line_is_the_only_input_mode(self):
+        assert specs.input_modes(U24XL) == ['line']
+
+    def test_fixed_gain_is_true_only_for_gainless_profiles(self):
+        assert specs.fixed_gain(U24XL) is True
+        assert specs.fixed_gain(SCARLETT) is False
+        assert specs.fixed_gain('Some Other Interface') is False
+        assert specs.fixed_gain(None) is False
+
+    def test_full_scale_matches_the_published_input_level(self):
+        """+4.7 dBu is 1.33 V rms, so a full-scale reading is 1.88 V
+        peak — with gain pinned at 0 dB there is nothing else to state."""
+        expected = math.sqrt(2) * 0.7746 * 10 ** (4.7 / 20)
+        assert specs.full_scale_volts(U24XL, 0.0) == pytest.approx(expected)
+        assert expected == pytest.approx(1.882, abs=1e-3)
+
+    def test_any_nonzero_gain_is_rejected(self):
+        """The only gain this device has is DIGITAL (data scaling), which
+        pydvma pins to 0 dB — a stated gain would be a mistake."""
+        with pytest.raises(ValueError, match='outside'):
+            specs.full_scale_volts(U24XL, 12.0)
+        with pytest.raises(ValueError, match='outside'):
+            specs.full_scale_volts(U24XL, -6.0)
+
+
 class TestSettingsIntegration:
     """`input_gain_db` derives VmaxSC — it does not add a new layer.
 
@@ -217,3 +258,27 @@ class TestSettingsIntegration:
     def test_a_bad_gain_still_raises_through_settings(self, monkeypatch):
         with pytest.raises(ValueError, match='outside'):
             self._settings(monkeypatch, input_gain_db=80)
+
+    def test_fixed_gain_device_derives_vmaxsc_unasked(self, monkeypatch):
+        """A fixed-gain interface has nothing for the operator to state:
+        the default settings come out calibrated in volts."""
+        s = self._settings(monkeypatch, name=U24XL)
+        assert s.input_gain_db is None
+        assert s.VmaxSC == pytest.approx(1.882, abs=1e-3)
+        assert s.input_vmax() == pytest.approx(1.882, abs=1e-3)
+
+    def test_fixed_gain_explicit_vmaxsc_wins(self, monkeypatch):
+        """An explicit VmaxSC is the operator's own calibration — the
+        auto-derivation only replaces the untouched default."""
+        s = self._settings(monkeypatch, name=U24XL, VmaxSC=2.5)
+        assert s.VmaxSC == 2.5
+
+    def test_fixed_gain_stated_zero_gain_also_derives(self, monkeypatch):
+        s = self._settings(monkeypatch, name=U24XL, input_gain_db=0)
+        assert s.VmaxSC == pytest.approx(1.882, abs=1e-3)
+
+    def test_variable_gain_device_still_needs_a_stated_gain(self, monkeypatch):
+        """The 2i2 keeps its behaviour: no stated gain, no derivation —
+        its knob position is unknowable."""
+        s = self._settings(monkeypatch, name=SCARLETT)
+        assert s.VmaxSC == 1.0

@@ -615,6 +615,11 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
                 name, neighbours=all_names) or [],
             'max_input_dbu': _soundcard_specs.max_input_dbu(
                 name, neighbours=all_names) or {},
+            # True for a characterised interface with NO analogue gain
+            # (e.g. ESI U24 XL): full scale is a hardware constant, so
+            # the UI can show it directly instead of asking for a gain.
+            'fixed_gain': _soundcard_specs.fixed_gain(
+                name, neighbours=all_names),
             'ao': max_out > 0,
         }
     return names, caps

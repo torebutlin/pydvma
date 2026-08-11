@@ -58,6 +58,33 @@ PROFILES = {
         # position — this figure is the ceiling, not a calibration.
         'max_output_dbu': 16.0,
     },
+    'esi_u24xl': {
+        # CoreAudio reports 'U24XL with SPDIF I/O'. The Windows
+        # enumeration has not been captured yet — if it turns out to be
+        # a generic vendor name, add the WDM-KS product-id token here
+        # (see the 2i2 entry above and TODO.md).
+        'match': ('u24xl', 'u24 xl'),
+        'vendor_match': ('esi',),
+        'label': 'ESI U24 XL',
+        # Two line-level TS jack/RCA inputs; no other physical inputs.
+        'channel_roles': ('analogue', 'analogue'),
+        # User's guide §6: "Input Level (0dB): +4.7dBu" — i.e. 1.33 V
+        # rms / 1.88 V peak reads full scale. Bench-confirmed to
+        # 0.07 dB (2026-08-11, dev/2026-08-11-u24xl-bench.md) against a
+        # MacBook Pro jack in its line-level output mode.
+        'max_input_dbu': {'line': 4.7},
+        # FIXED-GAIN interface: there is no analogue gain anywhere in
+        # the input path. (The +12 dB "input gain" its USB descriptor
+        # offers is an I2S DIGITAL gain — measured SNR is identical at
+        # 0 and +12 dB — so it only rescales data; pydvma pins it to
+        # 0 dB at capture time, see streams.Recorder.)
+        'gain_range_db': {'line': 0.0},
+        # User's guide §6: "Output Level (0dB): Max 6.9dBu". NB the
+        # LEFT output jack doubles as a stereo headphone out (right
+        # must be unplugged for headphone use) — as line outs both
+        # jacks are mono L/R.
+        'max_output_dbu': 6.9,
+    },
 }
 
 
@@ -145,6 +172,21 @@ def loopback_channels(name, channels, neighbours=None):
     if roles is None:
         return []
     return [i for i, role in enumerate(roles) if role == 'loopback']
+
+
+def fixed_gain(name, neighbours=None):
+    """True when the device is characterised and has NO analogue gain.
+
+    On a fixed-gain interface (e.g. the ESI U24 XL) the full-scale
+    voltage is a constant of the hardware, so ``MySettings`` can derive
+    ``VmaxSC`` without the operator stating a gain — there is no knob
+    whose position could invalidate it. False both for variable-gain
+    devices and for devices that are not characterised at all.
+    """
+    profile = device_profile(name, neighbours)
+    if profile is None:
+        return False
+    return all(limit == 0.0 for limit in profile['gain_range_db'].values())
 
 
 def input_modes(name, neighbours=None):

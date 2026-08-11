@@ -1127,12 +1127,22 @@ class TestSoundcardGainModelInCaps:
         assert caps['input_modes'] == ['inst', 'line', 'mic']
         assert caps['max_input_dbu'] == {'line': 22.0, 'inst': 12.0, 'mic': 16.0}
         assert caps['channel_roles'] == ['analogue', 'analogue', 'loopback', 'loopback']
+        assert caps['fixed_gain'] is False
+
+    def test_fixed_gain_device_says_so(self, monkeypatch):
+        """A gainless interface's full scale is a hardware constant —
+        the UI shows it directly instead of asking for a gain."""
+        caps = self._caps(monkeypatch, 'U24XL with SPDIF I/O')
+        assert caps['fixed_gain'] is True
+        assert caps['input_modes'] == ['line']
+        assert caps['max_input_dbu'] == {'line': 4.7}
 
     def test_uncharacterised_device_publishes_empties_not_guesses(self, monkeypatch):
         caps = self._caps(monkeypatch, 'Some Other Interface')
         assert caps['input_modes'] == []
         assert caps['max_input_dbu'] == {}
         assert caps['channel_roles'] == []
+        assert caps['fixed_gain'] is False
 
 
 class TestDeviceIndexReresolution:

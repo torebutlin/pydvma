@@ -40,12 +40,15 @@ def _derive_full_scale_volts(settings):
 
     Resolves the configured soundcard device to a characterised profile
     in :mod:`pydvma._soundcard_specs` and applies its maximum-input-level
-    table. Returns ``None`` — leaving ``VmaxSC`` alone — for a device
-    that is not characterised, for a non-soundcard driver, or if the
-    device cannot be identified (not plugged in yet, PortAudio absent).
-    A bad ``input_mode`` or an out-of-range gain still raises, because
-    those are mistakes in what the operator asked for rather than
-    missing information.
+    table. When ``input_gain_db`` is None the derivation still succeeds
+    for a FIXED-GAIN interface (e.g. the ESI U24 XL): full scale is a
+    hardware constant there, so no stated gain is needed. Returns
+    ``None`` — leaving ``VmaxSC`` alone — for a variable-gain device
+    with no stated gain, a device that is not characterised, a
+    non-soundcard driver, or if the device cannot be identified (not
+    plugged in yet, PortAudio absent). A bad ``input_mode`` or an
+    out-of-range gain still raises, because those are mistakes in what
+    the operator asked for rather than missing information.
     """
     from . import _soundcard_specs
     if settings.device_driver != 'soundcard':
@@ -60,9 +63,13 @@ def _derive_full_scale_volts(settings):
         name = None
     if not name:
         return None
+    gain = settings.input_gain_db
+    if gain is None:
+        if not _soundcard_specs.fixed_gain(name, neighbours=neighbours):
+            return None
+        gain = 0.0
     return _soundcard_specs.full_scale_volts(
-        name, settings.input_gain_db, settings.input_mode,
-        neighbours=neighbours)
+        name, gain, settings.input_mode, neighbours=neighbours)
 
 
 class MySettings(object):
@@ -189,7 +196,10 @@ class MySettings(object):
             over an explicit ``VmaxSC``. Only applies to interfaces
             characterised in ``pydvma._soundcard_specs``; ignored
             otherwise. Changing the gain on the hardware invalidates the
-            calibration, so re-state it.
+            calibration, so re-state it. A characterised FIXED-GAIN
+            interface (e.g. the ESI U24 XL) needs no stated gain:
+            ``VmaxSC`` is derived automatically when this is ``None``
+            and ``VmaxSC`` is left at its default.
         input_mode (str): Which input the signal is on — ``'line'``
             (default), ``'inst'`` or ``'mic'``. Sets the maximum input
             level used with ``input_gain_db``; on a Scarlett 2i2 these
@@ -497,6 +507,17 @@ class MySettings(object):
         self.input_mode = str(input_mode).lower()
         if (input_gain_db is None) or (input_gain_db == 'None'):
             self.input_gain_db = None
+            if self.VmaxSC == 1.0:
+                # A fixed-gain interface (no analogue gain anywhere in
+                # its input path) has a constant full-scale voltage, so
+                # calibration needs no stated gain. Only the untouched
+                # default is replaced — an explicit VmaxSC is the
+                # operator's own calibration and wins.
+                derived = _derive_full_scale_volts(self)
+                if derived is not None:
+                    self.VmaxSC = derived
+                    print('note: fixed-gain interface recognised; VmaxSC '
+                          'set to %.3g V (full-scale peak).' % derived)
         else:
             self.input_gain_db = float(input_gain_db)
             derived = _derive_full_scale_volts(self)
