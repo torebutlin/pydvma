@@ -166,16 +166,25 @@ is still open, as one consolidated list.
      does take effect it is the WRONG source for an identity run,
      since a DM-sourced loopback mixes the analogue inputs into the
      tap; leave it off); a separate loopback endpoint appearing on
-     enable (none does); the WDM-KS pins directly (they refuse every
-     PortAudio sample format — likely owned by the Focusrite
-     service). Leading hypothesis: the Windows driver feeds the
-     loopback only through its ASIO interface, which this PortAudio
-     build does not expose — check FC2's output meters move during
-     Windows playback, and whether a DAW/ASIO host sees loopback
-     channels; if ASIO-only, the identity check stays a macOS
-     harness (`dev/bla_soundcard_check.py`, 8/8 there) and Windows
-     soundcard BLA verification needs a physical output→input cable
-     instead.
+     enable (none does); the WDM-KS input pins directly (they refuse
+     every PortAudio sample format). SHARPENED by the physical
+     loopback test (Output R → Input 1 cable, same sitting): **the
+     2i2's Windows RENDER path is dead entirely** — MME and WDM-KS
+     play into silence at the jack, WASAPI shared fails to start
+     (PaErrorCode −9999), WASAPI exclusive refuses to open (−9996) —
+     while every Windows layer above reports healthy (session active
+     at 100%, endpoint unmuted, 48 kHz matched in FC2 and Windows)
+     and the CAPTURE side is calibrated to 0.1 dB. Survives a USB
+     replug and FC2 being closed. So the silent loopback was never a
+     routing question: nothing renders at all. Verdict: broken
+     Focusrite driver install (render half) → reinstall FC2/driver
+     from Focusrite (after one full PC reboot for luck), then run
+     `dev/bla_soundcard_check.py` (identity via the tap, if it
+     appears) and the Output-R→Input-1 knob calibration + analogue
+     SISO BLA (`scratchpad` scripts from 2026-08-11 are the
+     template). NB Output R = Output 2 = playback channel index 1;
+     L = Output 1. The output knob's effect is uncharacterised until
+     playback works (published ceiling: 16 dBu ⇒ 6.91 V pk at max).
   3. ~~**2i2 calibrated-volts re-confirm**~~ — CONFIRMED on Windows
      to **−0.108 dB** (2.4692 V measured vs 2.500 V, Rigol 1 kHz
      5 Vpp, 9 dB Line), identical on MME and WASAPI — matches the
