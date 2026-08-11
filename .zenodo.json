@@ -1,0 +1,21 @@
+{
+  "title": "pydvma: a Python package for dynamics and vibration measurement and analysis",
+  "description": "pydvma is an open-source Python package for dynamics and vibration measurement and analysis, developed at the Cambridge University Engineering Department. It provides a browser-based data logger (with sound-card and National Instruments DAQ acquisition), spectral analysis (FFT, PSD, transfer functions with coherence, sonograms), modal fitting, damping estimation, and noise/nonlinearity separation via the Schoukens multisine Best-Linear-Approximation method. Designed for both teaching and research use.",
+  "creators": [
+    {
+      "name": "Butlin, Tore",
+      "affiliation": "Department of Engineering, University of Cambridge",
+      "orcid": "0000-0002-7814-8107"
+    }
+  ],
+  "license": "BSD-3-Clause",
+  "upload_type": "software",
+  "access_right": "open",
+  "keywords": [
+    "vibration",
+    "dynamics",
+    "modal analysis",
+    "data acquisition",
+    "teaching"
+  ]
+}
