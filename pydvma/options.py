@@ -51,15 +51,18 @@ def _derive_full_scale_volts(settings):
     if settings.device_driver != 'soundcard':
         return None
     name = None
+    neighbours = None
     try:
         from . import streams
         name = streams.soundcard_device_name(settings)
+        neighbours = streams.all_soundcard_device_names()
     except Exception:
         name = None
     if not name:
         return None
     return _soundcard_specs.full_scale_volts(
-        name, settings.input_gain_db, settings.input_mode)
+        name, settings.input_gain_db, settings.input_mode,
+        neighbours=neighbours)
 
 
 class MySettings(object):

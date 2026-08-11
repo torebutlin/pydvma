@@ -34,8 +34,14 @@ _DBU_REF_VRMS = 0.7746
 PROFILES = {
     'scarlett_2i2_gen4': {
         # Matched case-insensitively against the device name reported by
-        # PortAudio / CoreAudio.
-        'match': ('scarlett 2i2 4th gen',),
+        # PortAudio / CoreAudio. On macOS the model name appears
+        # directly; on Windows it never does — the WDM-KS endpoints
+        # ('Analogue 1 + 2 (wc4800_8219)') embed the USB product id
+        # 0x8219 instead, which is the per-model stable key there.
+        'match': ('scarlett 2i2 4th gen', '4800_8219'),
+        # Vendor token for the indirect Windows match — see
+        # :func:`device_profile`.
+        'vendor_match': ('focusrite',),
         'label': 'Focusrite Scarlett 2i2 4th Gen',
         # Physical role of each input channel, in order. 'analogue' is a
         # real input; 'loopback' is a digital tap of the output mix and
@@ -55,12 +61,8 @@ PROFILES = {
 }
 
 
-def device_profile(name):
-    """The profile for a device name, or ``None`` if it is not characterised.
-
-    Matching is a case-insensitive substring test, so the name PortAudio
-    reports can be passed straight through.
-    """
+def _direct_profile(name):
+    """Profile whose ``match`` patterns hit ``name`` directly, or ``None``."""
     if not name:
         return None
     needle = str(name).lower()
@@ -71,7 +73,48 @@ def device_profile(name):
     return None
 
 
-def channel_roles(name, channels):
+def device_profile(name, neighbours=None):
+    """The profile for a device name, or ``None`` if it is not characterised.
+
+    Matching is a case-insensitive substring test against each profile's
+    ``match`` patterns, so the name PortAudio reports can be passed
+    straight through.
+
+    ``neighbours`` — the names of every audio device currently present
+    (see ``streams.all_soundcard_device_names``) — enables a second,
+    indirect route that Windows needs. There the model name never
+    reaches PortAudio: a Scarlett 2i2 4th Gen enumerates as generic
+    ``'Analogue 1 + 2 (Focusrite USB Audio)'`` endpoints (MME truncates
+    that further), and the model is only identifiable from the WDM-KS
+    twin of the same hardware, whose name embeds the USB product id
+    (``'wc4800_8219'``). When ``name`` itself matches nothing but
+    exactly ONE characterised profile is matched among the neighbours
+    AND ``name`` carries that profile's ``vendor_match`` token
+    (``'focusrite'``), the endpoint is attributed to that profile.
+    Two different characterised interfaces present at once would make a
+    generic vendor name genuinely ambiguous, so anything other than a
+    single-candidate resolution returns ``None``.
+    """
+    direct = _direct_profile(name)
+    if direct is not None:
+        return direct
+    if not name or not neighbours:
+        return None
+    needle = str(name).lower()
+    candidates = []
+    for other in neighbours:
+        profile = _direct_profile(other)
+        if profile is not None and profile not in candidates:
+            candidates.append(profile)
+    if len(candidates) != 1:
+        return None
+    profile = candidates[0]
+    if any(token in needle for token in profile.get('vendor_match', ())):
+        return profile
+    return None
+
+
+def channel_roles(name, channels, neighbours=None):
     """Physical role of each of the first ``channels`` inputs, or ``None``.
 
     Returns a list of strings — ``'analogue'`` for a real input,
@@ -79,9 +122,10 @@ def channel_roles(name, channels):
     :data:`PROFILES`, otherwise ``None`` (meaning "unknown, treat every
     channel as ordinary"). Channels beyond the profile's list are
     reported as ``'analogue'`` rather than dropped, so a mis-specified
-    table can never hide a real input.
+    table can never hide a real input. ``neighbours`` feeds the indirect
+    Windows match — see :func:`device_profile`.
     """
-    profile = device_profile(name)
+    profile = device_profile(name, neighbours)
     if profile is None:
         return None
     roles = profile['channel_roles']
@@ -89,7 +133,7 @@ def channel_roles(name, channels):
             for i in range(int(channels))]
 
 
-def loopback_channels(name, channels):
+def loopback_channels(name, channels, neighbours=None):
     """Zero-based indices of the digital-loopback inputs; ``[]`` if none.
 
     These are not wired to the outside world: they carry whatever the
@@ -97,37 +141,37 @@ def loopback_channels(name, channels):
     them gets the output, not the structure) and as a cable-free
     end-to-end self-test — see ``dev/scarlett_hw_check.py``.
     """
-    roles = channel_roles(name, channels)
+    roles = channel_roles(name, channels, neighbours)
     if roles is None:
         return []
     return [i for i, role in enumerate(roles) if role == 'loopback']
 
 
-def input_modes(name):
+def input_modes(name, neighbours=None):
     """Input modes this device supports, e.g. ``['line', 'inst', 'mic']``.
 
     ``None`` when the device is not characterised.
     """
-    profile = device_profile(name)
+    profile = device_profile(name, neighbours)
     if profile is None:
         return None
     return sorted(profile['max_input_dbu'])
 
 
-def max_input_dbu(name):
+def max_input_dbu(name, neighbours=None):
     """Maximum input level at minimum gain, in dBu, keyed by input mode.
 
     ``None`` when the device is not characterised. Published to the web
     UI so it can preview the full-scale voltage a stated gain implies,
     using the same arithmetic as :func:`full_scale_volts`.
     """
-    profile = device_profile(name)
+    profile = device_profile(name, neighbours)
     if profile is None:
         return None
     return dict(profile['max_input_dbu'])
 
 
-def full_scale_volts(name, gain_db, input_mode='line'):
+def full_scale_volts(name, gain_db, input_mode='line', neighbours=None):
     """Volts (peak) corresponding to a full-scale reading, or ``None``.
 
     This is the value ``MySettings.VmaxSC`` wants: the jack voltage that
@@ -148,7 +192,7 @@ def full_scale_volts(name, gain_db, input_mode='line'):
     unknown input mode or a gain outside the device's range, since a
     silently wrong voltage would propagate into every derived result.
     """
-    profile = device_profile(name)
+    profile = device_profile(name, neighbours)
     if profile is None or gain_db is None:
         return None
     mode = str(input_mode).lower()

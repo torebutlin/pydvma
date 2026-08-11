@@ -27,6 +27,65 @@ class TestDeviceProfile:
         assert specs.device_profile(None) is None
 
 
+class TestWindowsProfileResolution:
+    """On Windows the model name never reaches PortAudio.
+
+    A 2i2 4th Gen enumerates as generic 'Focusrite USB Audio' endpoints
+    (MME truncates names to 31 chars); only the WDM-KS twin's name
+    embeds the per-model USB product id ('wc4800_8219'). Measured on
+    the real PC, 2026-08-11.
+    """
+
+    # The real Windows enumeration, abbreviated to the 2i2's entries.
+    WINDOWS_NAMES = [
+        'Analogue 1 + 2 (Focusrite USB A',       # MME, truncated
+        'Analogue 1 + 2 (Focusrite USB Audio)',  # DirectSound / WASAPI
+        'Speakers (Focusrite USB Audio)',
+        'Analogue 1 + 2 (wc4800_8219)',          # WDM-KS capture
+        'Speakers (wr4800_8219)',                # WDM-KS render
+        'Microphone (Realtek HD Audio Mic input)',
+    ]
+
+    def test_ks_name_matches_directly_via_the_product_id(self):
+        assert specs.device_profile('Analogue 1 + 2 (wc4800_8219)') is not None
+        assert specs.device_profile('Speakers (wr4800_8219)') is not None
+
+    def test_generic_endpoint_resolves_through_the_ks_sibling(self):
+        for name in ('Analogue 1 + 2 (Focusrite USB Audio)',
+                     'Analogue 1 + 2 (Focusrite USB A',
+                     'Speakers (Focusrite USB Audio)'):
+            profile = specs.device_profile(name, neighbours=self.WINDOWS_NAMES)
+            assert profile is not None, name
+            assert profile['label'] == 'Focusrite Scarlett 2i2 4th Gen'
+
+    def test_generic_endpoint_alone_stays_uncharacterised(self):
+        """Without the sibling list the generic name proves nothing."""
+        assert specs.device_profile(
+            'Analogue 1 + 2 (Focusrite USB Audio)') is None
+
+    def test_vendor_gate_blocks_unrelated_endpoints(self):
+        """The 2i2 being present must not characterise the Realtek."""
+        assert specs.device_profile(
+            'Microphone (Realtek HD Audio Mic input)',
+            neighbours=self.WINDOWS_NAMES) is None
+
+    def test_no_characterised_sibling_means_no_match(self):
+        """An uncharacterised Focusrite model must not inherit the 2i2
+        profile just by brand."""
+        names = ['Analogue 1 + 2 (Focusrite USB Audio)',
+                 'Analogue 1 + 2 (wc4800_9999)']  # some other model
+        assert specs.device_profile(
+            'Analogue 1 + 2 (Focusrite USB Audio)', neighbours=names) is None
+
+    def test_windows_channel_roles_and_volts_resolve(self):
+        roles = specs.channel_roles('Analogue 1 + 2 (Focusrite USB A', 4,
+                                    neighbours=self.WINDOWS_NAMES)
+        assert roles == ['analogue', 'analogue', 'loopback', 'loopback']
+        v = specs.full_scale_volts('Analogue 1 + 2 (Focusrite USB Audio)',
+                                   9.0, 'line', neighbours=self.WINDOWS_NAMES)
+        assert v == pytest.approx(4.8932, abs=1e-3)
+
+
 class TestChannelRoles:
     def test_scarlett_inputs_3_and_4_are_loopback(self):
         """The 2i2 reports four inputs but only two are wired to the

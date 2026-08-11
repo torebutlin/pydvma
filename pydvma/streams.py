@@ -142,7 +142,9 @@ def _warn_about_loopback_channels(settings, device_name):
     ``_soundcard_specs`` and whenever no loopback channel is included.
     '''
     from . import _soundcard_specs
-    loopback = _soundcard_specs.loopback_channels(device_name, settings.channels)
+    loopback = _soundcard_specs.loopback_channels(
+        device_name, settings.channels,
+        neighbours=all_soundcard_device_names())
     if not loopback:
         return
     print('WARNING: on %r, input channel(s) %s are a DIGITAL LOOPBACK of the '
@@ -185,6 +187,23 @@ def _clamp_soundcard_output_channels(settings):
 # Nominal "hardware" ceiling for the synthetic mock backend — it has no real
 # limit, this just gives the digital-low-pass oversampler headroom in tests.
 MOCK_MAX_FS = 1_000_000
+
+
+def all_soundcard_device_names():
+    """Names of every PortAudio device currently present, or ``[]``.
+
+    Exists for profile resolution on Windows, where an endpoint's own
+    name does not identify the hardware model (a Scarlett 2i2 enumerates
+    as generic ``'Analogue 1 + 2 (Focusrite USB Audio)'``) but the
+    WDM-KS twin of the same hardware embeds the USB product id — see
+    ``_soundcard_specs.device_profile``.
+    """
+    if sd is None:
+        return []
+    try:
+        return [d['name'] for d in sd.query_devices()]
+    except Exception:
+        return []
 
 
 def soundcard_device_name(settings):
