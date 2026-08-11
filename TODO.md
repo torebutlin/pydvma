@@ -96,15 +96,22 @@ is still open, as one consolidated list.
 ## Backlog — hardware, acquisition & the next PC session
 
 - **Next Windows/PC sitting — one umbrella, three briefs:**
-  1. **Run `dev/2026-08-10-windows-checklist.md`** — the NI regression
-     check (`bridge_hw_check.py` + full pytest; the capture-rate
-     decision was refactored), the 9234 oversample-strategy behaviour
-     change (now `'lowest'` like the 2i2 — verify alias rejection
-     still holds, then decide whether the ~10·log10(M) dB noise-floor
-     cost matters), and the WASAPI question (does
+  1. **Run `dev/2026-08-10-windows-checklist.md`** — NI regression
+     DONE 2026-08-11 (PC, 6003 unplugged): `bridge_hw_check.py` 35/35
+     (now discovery-driven) + pytest 599/14/0 with hardware live. The
+     9234 oversample change is verified (`dev/cdaq_oversample_check.py`
+     7/7): alias rejection holds under `'lowest'` (FIR −113 dB at
+     1500 Hz, 9234 hardware filter −107 dB at 5900 Hz), and the noise
+     cost is only **+3.0 dB in-band PSD** (not the naive 9 dB — the
+     delta-sigma floor isn't flat) — awaiting Tore's call on the DSA
+     default; `'lowest'` looks right. Noted: a bridge lpf log delivers
+     the DSA-coerced target (2048) where the direct path delivers the
+     requested 2000 exactly — self-consistent each way, but the paths
+     differ. REMAINING from the checklist: the WASAPI question (does
      `check_input_settings` lie on Windows too? shared-mode WASAPI
      also resamples — MUST be measured, method in checklist §3,
-     including the generate-the-probe-at-hardware-rate trap).
+     including the generate-the-probe-at-hardware-rate trap; NB under
+     RDP the 2i2 has no WASAPI endpoint, needs a console session).
   2. **BLA on NI hardware** — extend `dev/bridge_hw_check.py` with a
      BLA check (BNC loopback ⇒ x = y ⇒ G ≈ 1 flat, σ_NL at the noise
      floor); verify commanded-x live on the 6212 (routed AI sample
