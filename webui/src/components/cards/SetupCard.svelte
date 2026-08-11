@@ -54,6 +54,7 @@
   const bridgeCaps = $derived(acquire.bridgeCaps);
   const bridgeConfig = $derived(acquire.bridgeConfig);
   const coercedFs = $derived(acquire.coercedFs);
+  const deviceNote = $derived(acquire.deviceNote);
   const isBridge = $derived($bridgeCaps != null);
   const hasNidaq = $derived($bridgeCaps?.backends.includes('nidaq') ?? false);
 
@@ -363,6 +364,17 @@
       <div class="ctx-row">
         <span class="note coerce-note" data-testid="setup-coerced-fs">
           device runs at {fmtHz($coercedFs.configured)} Hz (requested {fmtHz($coercedFs.requested)})
+        </span>
+      </div>
+    {/if}
+
+    {#if $deviceNote}
+      <!-- The index the UI held had gone stale and the server re-pointed it
+           at the device we actually named. The capture is right; the user
+           should still know their device list moved. -->
+      <div class="ctx-row">
+        <span class="note coerce-note" data-testid="setup-device-note">
+          {$deviceNote}
         </span>
       </div>
     {/if}

@@ -209,18 +209,22 @@ Open items:
   the bridge wire (the `configure` whitelist is derived from the
   `MySettings` signature) but Setup exposes none of them. The Setup
   "full" panel is where they belong, next to the NI voltage rails.
-- **PortAudio device indices are NOT stable — a stale index silently
-  records the wrong device.** Observed live on 2026-08-10: the Scarlett
-  was index 2, then index 1 an hour later after another device left the
-  list. The web UI enumerates once at `hello` and then sends
-  `device_index`, so any change to the device list between enumeration
-  and capture points the log at a different device. Pre-existing, but
-  newly consequential: `input_gain_db` derives `VmaxSC` from the device
-  NAME, so a stale index silently drops the calibration (it looked like
-  a code bug for several minutes — `VmaxSC` came back 1.0 because index
-  2 had become "BlackHole 2ch"). Cheap fix: send the device NAME
-  alongside the index in `configure` and have the server reject, or
-  re-resolve, when they disagree. Worth doing before student use.
+- **~~PortAudio device indices are NOT stable~~ — DONE (2026-08-11).**
+  A device index is a POSITION in an enumeration, not an identity, and
+  the list moved TWICE during one session here (a Scarlett at index 2,
+  then 1, then 2 again, as a phone mic came and went). The client now
+  sends `device_name` alongside the index in `configure`, and
+  `_Connection._reresolve_device_index` checks they still agree: same →
+  unchanged; the name is at a different index → use that index and
+  return a note the UI shows in Setup; the name is gone → refuse with
+  "no longer connected", because recording the wrong input under the
+  right name is the worst outcome. Duplicate names are left alone (the
+  index is then the only thing distinguishing them) and an enumeration
+  failure never blocks a capture. Verified against a live server driven
+  with a deliberately stale index. **Still open:** the Python (non-web)
+  path has the same exposure — `MySettings(device_index=…)` in a
+  notebook is equally positional — so consider accepting a device name
+  there too.
 - **Gain control is a dead end — do not re-investigate.** No CoreAudio
   HAL properties exist on the input scope; Focusrite Control 2's
   AES70/OCA server gates its object tree behind an authenticated x25519

@@ -169,6 +169,14 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    */
   const coercedFs = writable<CoercedFs | null>(null);
   /**
+   * Note from the server when it had to re-point a stale `device_index` at
+   * the device this client actually named — e.g. a Scarlett that moved from
+   * index 2 to 1 when another interface left the list. The capture is
+   * correct either way; this exists so the correction is visible rather than
+   * silent, since a device list that moved once will move again.
+   */
+  const deviceNote = writable<string | null>(null);
+  /**
    * The active backend kind as a REACTIVE store (constructor + {@link setProvider}).
    * AcquireCard reads it to light up the output-stimulus + pretrigger groups for
    * the Web Audio path (round-5 #10) WITHOUT touching {@link bridgeCaps} — that
@@ -209,6 +217,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       // is a real DSA coercion the user must see. Refresh OR clear the note.
       const differs = Math.abs(info.configuredFs - info.requestedFs) >= 0.5;
       coercedFs.set(differs ? { requested: info.requestedFs, configured: info.configuredFs } : null);
+      deviceNote.set(info.deviceNote ?? null);
     });
   }
   wireProvider(provider);
@@ -472,6 +481,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     settings.update((s) => ({ ...s, ...p }));
     if (p.sampleRate !== undefined || p.deviceId !== undefined) {
       coercedFs.set(null);
+      deviceNote.set(null);
       reclampOutputFs();
     }
     if (p.deviceId !== undefined) reclampVoltages();
@@ -493,6 +503,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     pretrigStatus,
     /** DSA coerced-fs note (null = the device honoured the requested rate). */
     coercedFs,
+    /** Server note when a stale device index was re-pointed (bridge only). */
+    deviceNote,
     /** Active backend kind ('webaudio' | 'bridge') as a reactive store. */
     kind,
     /** Web Audio output-device list for the stimulus sink select (round-5 #10). */

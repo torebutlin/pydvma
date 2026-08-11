@@ -1033,6 +1033,64 @@ class _Connection:
         cap['type'] = 'capabilities'
         await self._send_json(cap)
 
+    @staticmethod
+    def _reresolve_device_index(driver, index, expected_name):
+        """Re-point a stale ``device_index`` at the device the client meant.
+
+        Device indices are POSITIONS in an enumeration, not identities.
+        PortAudio renumbers whenever the device list changes — observed
+        live on 2026-08-10, a Scarlett 2i2 sat at index 2 and then at
+        index 1 an hour later once another interface left the list. The
+        UI enumerates once when it connects, so any change between then
+        and a capture silently points the log at a different device: the
+        wrong signal, recorded under the right name, with no error.
+
+        The client therefore sends the NAME it believed it was selecting
+        alongside the index, and this checks the two still agree. Returns
+        ``(index, note_or_None)``:
+
+        - names agree, or nothing to check → the index unchanged;
+        - the name is now at a different index → THAT index, plus a note
+          (the user picked a device, not a number);
+        - the name is gone entirely → raises ``ValueError``, because
+          continuing would record silence or the wrong instrument.
+
+        A duplicated name is left alone: two identical interfaces make
+        the index the only thing distinguishing them, so second-guessing
+        it would be a downgrade.
+        """
+        if not expected_name or index is None:
+            return index, None
+        try:
+            if driver == 'soundcard':
+                names = [d['name'] for d in streams.sd.query_devices()]
+            elif driver == 'nidaq':
+                names = [e['name'] for e in _ni_backend.enumerate_devices()]
+            else:
+                return index, None
+        except Exception:
+            # Enumeration is best-effort: never block a capture because
+            # the device list could not be re-read.
+            return index, None
+
+        idx = int(index)
+        if 0 <= idx < len(names) and names[idx] == expected_name:
+            return index, None
+
+        matches = [i for i, n in enumerate(names) if n == expected_name]
+        if len(matches) == 1:
+            return matches[0], (
+                '%r moved from device index %d to %d since the device list '
+                'was read; using %d.'
+                % (expected_name, idx, matches[0], matches[0]))
+        if not matches:
+            found = names[idx] if 0 <= idx < len(names) else 'nothing'
+            raise ValueError(
+                '%r is no longer connected — device index %d is now %r. '
+                'Refresh the device list and choose again rather than '
+                'recording the wrong input.' % (expected_name, idx, found))
+        return index, None
+
     async def _on_configure(self, msg: dict, server: BridgeServer) -> None:
         raw_settings = msg.get('settings') or {}
         if not isinstance(raw_settings, dict):
@@ -1062,13 +1120,30 @@ class _Connection:
                 "(pip install pydvma[ni]); nidaqmx is not available.")
             return
 
+        # A device index is a position in an enumeration, not an identity.
+        # If the client told us which device it believed it was picking,
+        # make sure the index still points at it.
+        device_note = None
+        expected_name = msg.get('device_name')
+        if expected_name is not None and not isinstance(expected_name, str):
+            await self._send_error('configure.device_name must be a string')
+            return
+        try:
+            kwargs['device_index'], device_note = self._reresolve_device_index(
+                driver, kwargs.get('device_index'), expected_name)
+        except ValueError as exc:
+            await self._send_error(str(exc))
+            return
+        if device_note:
+            print(device_note)
+
         settings = options.MySettings(**kwargs)
         streams.start_stream(settings)
         self.settings = streams.REC.settings if streams.REC is not None else settings
 
         rec = streams.REC
         osc_samples = int(rec.osc_time_data.shape[0]) if rec is not None else 0
-        await self._send_json({
+        payload = {
             'type': 'status',
             'event': 'configured',
             'streamId': self.stream_id,
@@ -1077,7 +1152,13 @@ class _Connection:
             'channels': int(self.settings.channels),
             'chunkSize': int(self.settings.chunk_size),
             'oscSamples': osc_samples,
-        })
+        }
+        # Additive: present only when the index had to be re-pointed, so
+        # the user learns their device moved rather than just silently
+        # getting the right one.
+        if device_note:
+            payload['deviceNote'] = device_note
+        await self._send_json(payload)
 
     async def _on_start_monitor(self) -> None:
         if streams.REC is None:

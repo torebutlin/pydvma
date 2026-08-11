@@ -235,6 +235,13 @@ export interface ConfiguredInfo {
   configuredFs: number;
   /** The resolved channel count (the `configured` status `channels`). */
   channels: number;
+  /**
+   * Present only when the server had to re-point a stale `device_index` at
+   * the device the client actually named — e.g. a Scarlett that moved from
+   * index 2 to 1 when another interface left the list. Worth surfacing: the
+   * capture is correct, but the user should know their device moved.
+   */
+  deviceNote?: string;
 }
 
 /**

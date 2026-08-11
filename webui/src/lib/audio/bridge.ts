@@ -287,6 +287,7 @@ export class BridgeProvider implements SourceProvider {
       requestedFs,
       configuredFs,
       channels: Number(status.channels) || 0,
+      deviceNote: typeof status.deviceNote === 'string' ? status.deviceNote : undefined,
     });
   }
 
@@ -470,6 +471,25 @@ export class BridgeProvider implements SourceProvider {
 
   // -- configure kwargs --
 
+  /**
+   * The device NAME this client believes `cfg.deviceId`'s index refers to.
+   *
+   * Sent alongside the settings so the server can check the index has not
+   * gone stale. Indices are positions in an enumeration, not identities:
+   * this client enumerates once on connect, and PortAudio renumbers
+   * whenever the device list changes, so an index captured at connect time
+   * can silently point at a different device by the time anything records.
+   * Undefined when the device is not in the caps we were given, in which
+   * case the server has nothing to check against and proceeds on the index.
+   */
+  private expectedDeviceName(cfg: Omit<RecordConfig, 'durationS'>): string | undefined {
+    const caps = this.capsCache;
+    if (!caps || !cfg.deviceId) return undefined;
+    const dev = parseDeviceId(cfg.deviceId);
+    if (!dev || dev.driver === 'mock') return undefined;
+    return caps.device_caps?.[cfg.deviceId]?.name ?? undefined;
+  }
+
   /** Build the whitelisted MySettings kwargs for a configure message. */
   private buildSettings(
     cfg: Omit<RecordConfig, 'durationS'>,
@@ -604,7 +624,8 @@ export class BridgeProvider implements SourceProvider {
     try {
       await this.connect();
       this.onChunk = ondata;
-      this.sendJson({ type: 'configure', settings: this.buildSettings(cfg) });
+      this.sendJson({ type: 'configure', settings: this.buildSettings(cfg),
+        device_name: this.expectedDeviceName(cfg) });
       const status = await this.waitFor((m) => m.type === 'status' && m.event === 'configured');
       this.emitConfigured(cfg.sampleRate, status);
       this.sendJson({ type: 'start_monitor' });
@@ -636,7 +657,8 @@ export class BridgeProvider implements SourceProvider {
 
     const promise = (async (): Promise<Recording> => {
       await this.connect();
-      this.sendJson({ type: 'configure', settings: this.buildSettings(cfg, cfg.durationS) });
+      this.sendJson({ type: 'configure', settings: this.buildSettings(cfg, cfg.durationS),
+        device_name: this.expectedDeviceName(cfg) });
       const configured = await this.waitFor((m) => m.type === 'status' && m.event === 'configured');
       this.emitConfigured(cfg.sampleRate, configured);
       if (cancelled) {

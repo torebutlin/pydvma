@@ -876,3 +876,92 @@ class TestSoundcardGainModelInCaps:
         assert caps['input_modes'] == []
         assert caps['max_input_dbu'] == {}
         assert caps['channel_roles'] == []
+
+
+class TestDeviceIndexReresolution:
+    """A device index is a POSITION in an enumeration, not an identity.
+
+    PortAudio renumbers whenever the device list changes — observed live
+    on 2026-08-10, a Scarlett 2i2 at index 2 became index 1 once another
+    interface left the list. The UI enumerates once on connect, so a
+    stale index silently records the wrong device.
+    """
+
+    def _conn(self):
+        return serve_mod._Connection.__new__(serve_mod._Connection)
+
+    def _names(self, monkeypatch, names):
+        class FakeSd:
+            @staticmethod
+            def query_devices():
+                return [{'name': n} for n in names]
+
+        monkeypatch.setattr(serve_mod.streams, 'sd', FakeSd)
+
+    def test_index_unchanged_when_the_name_still_matches(self, monkeypatch):
+        self._names(monkeypatch, ['Built-in', 'Scarlett 2i2 4th Gen'])
+        idx, note = self._conn()._reresolve_device_index('soundcard', 1,
+                                                         'Scarlett 2i2 4th Gen')
+        assert (idx, note) == (1, None)
+
+    def test_follows_the_device_when_it_moves(self, monkeypatch):
+        """The real failure: the user picked a DEVICE, not a number."""
+        self._names(monkeypatch, ['Built-in', 'Scarlett 2i2 4th Gen', 'BlackHole 2ch'])
+        idx, note = self._conn()._reresolve_device_index('soundcard', 2,
+                                                         'Scarlett 2i2 4th Gen')
+        assert idx == 1
+        assert 'moved from device index 2 to 1' in note
+
+    def test_raises_when_the_device_is_gone(self, monkeypatch):
+        """Recording silence under the right name is the worst outcome."""
+        self._names(monkeypatch, ['Built-in', 'BlackHole 2ch'])
+        with pytest.raises(ValueError, match='no longer connected'):
+            self._conn()._reresolve_device_index('soundcard', 1,
+                                                 'Scarlett 2i2 4th Gen')
+
+    def test_error_names_what_the_index_now_points_at(self, monkeypatch):
+        self._names(monkeypatch, ['Built-in', 'BlackHole 2ch'])
+        with pytest.raises(ValueError, match="now 'BlackHole 2ch'"):
+            self._conn()._reresolve_device_index('soundcard', 1,
+                                                 'Scarlett 2i2 4th Gen')
+
+    def test_raises_when_the_index_is_off_the_end(self, monkeypatch):
+        self._names(monkeypatch, ['Built-in'])
+        with pytest.raises(ValueError, match='no longer connected'):
+            self._conn()._reresolve_device_index('soundcard', 5, 'Scarlett 2i2 4th Gen')
+
+    def test_duplicate_names_leave_the_index_alone(self, monkeypatch):
+        """Two identical interfaces make the index the ONLY thing telling
+        them apart, so second-guessing it would be a downgrade."""
+        self._names(monkeypatch, ['Scarlett 2i2 4th Gen', 'Scarlett 2i2 4th Gen'])
+        idx, note = self._conn()._reresolve_device_index('soundcard', 1,
+                                                         'Scarlett 2i2 4th Gen')
+        assert (idx, note) == (1, None)
+
+    def test_no_expected_name_is_a_no_op(self, monkeypatch):
+        """Older clients send no name; they must keep working."""
+        self._names(monkeypatch, ['Built-in'])
+        assert self._conn()._reresolve_device_index('soundcard', 3, None) == (3, None)
+        assert self._conn()._reresolve_device_index('soundcard', 3, '') == (3, None)
+
+    def test_mock_driver_is_left_alone(self, monkeypatch):
+        assert self._conn()._reresolve_device_index('mock', 0, 'anything') == (0, None)
+
+    def test_enumeration_failure_never_blocks_a_capture(self, monkeypatch):
+        """Best-effort: a device list we cannot re-read is not a reason to
+        refuse to record."""
+        class ExplodingSd:
+            @staticmethod
+            def query_devices():
+                raise RuntimeError('PortAudio unavailable')
+
+        monkeypatch.setattr(serve_mod.streams, 'sd', ExplodingSd)
+        assert self._conn()._reresolve_device_index(
+            'soundcard', 1, 'Scarlett 2i2 4th Gen') == (1, None)
+
+    def test_nidaq_devices_are_checked_too(self, monkeypatch):
+        monkeypatch.setattr(serve_mod._ni_backend, 'enumerate_devices',
+                            lambda: [{'name': 'Dev1'}, {'name': 'cDAQ1Mod1'}])
+        idx, note = self._conn()._reresolve_device_index('nidaq', 0, 'cDAQ1Mod1')
+        assert idx == 1
+        assert 'moved' in note

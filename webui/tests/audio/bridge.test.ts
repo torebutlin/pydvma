@@ -928,3 +928,56 @@ test('deviceCapsFor omits the gain model for an uncharacterised device', () => {
   expect(entry?.input_modes).toBeUndefined();
   expect(entry?.max_input_dbu).toBeUndefined();
 });
+
+// --- stale device indices ---------------------------------------------------
+// The client enumerates devices once on connect. PortAudio renumbers whenever
+// the device list changes, so it sends the NAME it believed it was selecting
+// and lets the server check the index still points there.
+test('configure carries the device name the client believes it picked', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({
+    ...CAPS,
+    device_caps: {
+      'soundcard:0': { driver: 'soundcard', index: 0, name: 'Built-in Mic', ao: false },
+    },
+  });
+  await capsP;
+
+  const monP = bp.startMonitor(
+    { deviceId: 'soundcard:0', sampleRate: 44100, channelCount: 1 }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 44100, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  const cfg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  expect(cfg.device_name).toBe('Built-in Mic');
+  expect((cfg.settings as Record<string, unknown>).device_index).toBe(0);
+});
+
+test('no device name is sent for the mock driver', async () => {
+  // There is no enumeration to go stale, so there is nothing to check.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(CAPS);
+  await capsP;
+
+  const monP = bp.startMonitor(
+    { deviceId: 'mock:0', sampleRate: 44100, channelCount: 1 }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 44100, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  const cfg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  expect(cfg.device_name).toBeUndefined();
+});
