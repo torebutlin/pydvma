@@ -173,6 +173,24 @@ is still open, as one consolidated list.
   x25519 pairing agent needing a human in FC2; the USB interfaces are
   exclusively owned by `usbaudiod`. `Mathieu2301/Focusrite-Control-API`
   targets FC1 (3rd gen) and exposes Air/Inst/LED but not gain.
+  **Windows confirmation (2026-08-11, 2i2 4th Gen on the PC):** FC2's
+  OCA server IS connectable here — OCP.1 binary over a plain WebSocket
+  on `127.0.0.1:58323` (port 58322 is a sibling HTTP server that 404s),
+  no TLS/auth to open the socket. But the tree is gated identically:
+  RootBlock (ONo 0x64) has a single member, an `AuthenticationAgent`
+  block (ONo 0x1000, proprietary Focusrite class 1.2.65535.0.4878.1);
+  `GetMembersRecursive` and the agent's `GetMembers` both return
+  `NotImplemented`, and every standard AES70 manager except
+  SubscriptionManager (ONo 4) answers `BadONo`. So no gain/Air/Inst/48V
+  object is addressable without completing the agent's pairing (human
+  approve-in-FC2), exactly as macOS. The Windows-native audio route is
+  also closed: the 2i2 inputs surface only via WDM-KS, and Core Audio's
+  MMDevice enumerator returns **0 capture endpoints** under RDP, so
+  there is no `IAudioEndpointVolume` hardware slider to read/write — and
+  this is why the §3 WASAPI-lie question cannot be measured from an RDP
+  session (no shared-mode WASAPI endpoint for the 2i2; needs a console
+  login). Only pairing-free readable facts: serial `S2J525A573389F`,
+  productId 33305 (0x8219). Probe script: not kept — one-off.
 - **Lab-testing period (Tore, days/weeks)** — real structures, real
   measurements; expect feedback-driven fix rounds. Newest surfaces to
   exercise: the Nonlin/BLA stage, Setup level check + gain-derived
