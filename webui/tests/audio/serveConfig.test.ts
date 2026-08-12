@@ -96,3 +96,37 @@ test('malformed numeric fields are skipped, valid ones kept', () => {
   expect(p.settings.durationS).toBeUndefined();
   expect(p.bridge.vmaxNI).toBe(5);                 // the one valid field
 });
+
+// ---- round-11: the trigger prefill reaches the fields the new UI reads ----
+
+test('a served pretrigger prefills the SAME store fields Setup and Acquire edit', () => {
+  const p = mapServeConfig({
+    fs: 10000,                    // deliberately OFF-ladder: must pass through
+    channels: 2,
+    stored_time: 5,
+    pretrig_samples: 250,
+    pretrig_threshold: 0.3,
+    pretrig_channel: 1,
+    pretrig_timeout: 8,
+  }, devices)!;
+  // fs is not second-guessed here — the combo can display any rate now, and
+  // the Setup notes say what the hardware will really run at.
+  expect(p.settings.sampleRate).toBe(10000);
+  // Arming is implied by a sample count, and the trigger group reads exactly
+  // these four fields (a served config that armed nothing was a dead config).
+  expect(p.bridge).toMatchObject({
+    pretrigSamples: 250,
+    pretrigArmed: true,
+    pretrigThreshold: 0.3,
+    pretrigChannel: 1,
+    pretrigTimeout: 8,
+  });
+});
+
+test('a negative served threshold is ignored (the recorder compares |x|)', () => {
+  const p = mapServeConfig({ fs: 8000, pretrig_threshold: -0.2 }, devices)!;
+  expect(p.bridge.pretrigThreshold).toBeUndefined();
+  // …while an explicit zero is kept: it is a stated value, not an absent one.
+  const q = mapServeConfig({ fs: 8000, pretrig_threshold: 0 }, devices)!;
+  expect(q.bridge.pretrigThreshold).toBe(0);
+});

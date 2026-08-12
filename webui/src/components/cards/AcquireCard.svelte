@@ -23,8 +23,12 @@
     outputCapable,
     deviceCapsFor,
     clampVoltage,
+    defaultPretrigThreshold,
+    effectiveFullScaleVolts,
+    isCancelled,
     outputDevices,
     BARE_ARM_PRETRIG_SAMPLES,
+    DEFAULT_PRETRIG_TIMEOUT_S,
   } from '../../lib/audio/provider';
   import type { Actions } from '../../lib/analysis/actions';
   import type { Toasts } from '../../lib/stores/toast';
@@ -50,6 +54,7 @@
   const bridgeConfig = $derived(acquire.bridgeConfig);
   const pretrigStatus = $derived(acquire.pretrigStatus);
   const coercedFs = $derived(acquire.coercedFs);
+  const cancelling = $derived(acquire.cancelling);
   // Web Audio (round-5 #10) supports the output stimulus + pretrigger too,
   // surfaced via the store's reactive `kind` + enumerated output devices —
   // kept OUT of bridgeCaps so SetupCard's `bridgeCaps != null` bridge detection
@@ -89,7 +94,10 @@
 
   // ---- pretrigger arm state ----
   const armed = $derived($bridgeConfig.pretrigArmed ?? false);
-  const pretrigTimeout = $derived($bridgeConfig.pretrigTimeout ?? 1.0);
+  // ONE default, shared with Setup and with what the bridge actually sends —
+  // the old 1.0 here was neither the server's default (20 s) nor what the
+  // capture did, so the displayed number was simply wrong.
+  const pretrigTimeout = $derived($bridgeConfig.pretrigTimeout ?? DEFAULT_PRETRIG_TIMEOUT_S);
   // Editable-on-arm sample count (round-4 item 11): the SAME store value Setup
   // shows, defaulting to BARE_ARM_PRETRIG_SAMPLES (100) when unset.
   const pretrigSamples = $derived($bridgeConfig.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES);
@@ -107,13 +115,39 @@
   /** Whether the OUT badge shows on the Log button (output armed). */
   const outActive = $derived(showOutput && outputOn);
 
-  /** Human name of the selected input device ('Default' when unset). */
+  /**
+   * Human name of the selected input device.  With nothing selected the chip
+   * used to say only "Default input", which names no device at all — the
+   * server now reports which one that resolves to, so say it.
+   */
   const deviceName = $derived.by(() => {
     const id = $settings.deviceId;
-    if (!id) return 'Default input';
+    if (!id) {
+      const dflt = $bridgeCaps?.default_input?.name;
+      return dflt ? `Default input — ${dflt}` : 'Default input';
+    }
     const d = $devices.find((x) => x.deviceId === id);
     return d?.label ?? 'Selected device';
   });
+
+  // ---- trigger threshold readout (units matter) ----
+  // The bridge compares the threshold against VmaxSC-scaled data — VOLTS on a
+  // characterised interface — while the browser path compares a normalised
+  // full-scale fraction. The waiting banner states which, because "waiting for
+  // 0.05" is exactly the ambiguity that had a capture triggering on noise.
+  const triggerFullScale = $derived(
+    effectiveFullScaleVolts($bridgeCaps, $settings.deviceId, $bridgeConfig),
+  );
+  const thresholdEffective = $derived(
+    $bridgeConfig.pretrigThreshold ?? defaultPretrigThreshold(triggerFullScale),
+  );
+  const thresholdText = $derived(
+    triggerFullScale != null
+      ? `${thresholdEffective} V (${((thresholdEffective / triggerFullScale) * 100).toFixed(
+          (thresholdEffective / triggerFullScale) * 100 >= 10 ? 0 : 1,
+        )} % FS)`
+      : `${thresholdEffective} ×FS`,
+  );
 
   /**
    * Fuller settings summary (round-2 feedback): fs · channels · duration ·
@@ -143,6 +177,20 @@
   const progress = $derived(
     recording ? `${$elapsed.toFixed(1)} / ${$settings.durationS.toFixed(1)} s` : '',
   );
+  /** Fraction of the capture done, 0–1 (the bar's width). */
+  const progressFrac = $derived.by(() => {
+    const dur = $settings.durationS;
+    if (!recording || !(dur > 0)) return 0;
+    return Math.max(0, Math.min(1, $elapsed / dur));
+  });
+  /**
+   * WAITING means the capture has not started: the recorder is armed and
+   * watching for the crossing, and the elapsed clock is deliberately held at
+   * zero.  This is a different state from "capturing", and showing it as a
+   * stalled progress bar (or a five-word grey note under the card) is why
+   * "it just logged" and "it did nothing" looked identical from the bench.
+   */
+  const waiting = $derived(recording && armed && $pretrigStatus === 'armed');
 
   /**
    * Pretrigger status line during a recording: armed → triggered / timeout.
@@ -240,10 +288,15 @@
       activeStage.set('time');
       toasts.push('Recording captured.', { level: 'success' });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg !== 'cancelled') {
-        toasts.push(`Recording failed: ${msg}`, { level: 'error' });
+      // A cancel is an outcome, not a failure: the store has already unwound
+      // to idle and nothing was written, so say so quietly rather than
+      // raising an error toast for something the user asked for.
+      if (isCancelled(e)) {
+        toasts.push('Log cancelled.', { level: 'info' });
+        return;
       }
+      const msg = e instanceof Error ? e.message : String(e);
+      toasts.push(`Recording failed: ${msg}`, { level: 'error' });
     }
   }
 
@@ -393,10 +446,38 @@
       {/if}
 
       {#if recording}
-        <div class="grp">
-          <span class="grp-lab">progress</span>
+        <!--
+          PROGRESS — a determinate bar, plus the two states that are not
+          progress at all.  While armed the capture has not begun: the bar is
+          replaced by an unmistakable waiting state naming the level being
+          watched for, so an armed log can never be mistaken for a stalled
+          one (or, worse, for a capture that already happened).
+        -->
+        <div class="grp prog-grp" data-testid="acquire-progress">
+          <span class="grp-lab">{waiting ? 'waiting' : 'progress'}</span>
           <div class="grp-ctl">
-            <span class="ml mono">{progress}</span>
+            {#if waiting}
+              <span class="wait-pip" aria-hidden="true"></span>
+              <span class="wait-text" data-testid="acquire-waiting">
+                armed — waiting for trigger…
+              </span>
+              <span class="note mono">threshold {thresholdText}</span>
+            {:else}
+              <div
+                class="bar"
+                role="progressbar"
+                aria-label="capture progress"
+                aria-valuemin={0}
+                aria-valuemax={$settings.durationS}
+                aria-valuenow={Math.min($elapsed, $settings.durationS)}
+              >
+                <div class="bar-fill" style="width:{(progressFrac * 100).toFixed(1)}%"></div>
+              </div>
+              <span class="ml mono">{progress}</span>
+              {#if armed && $pretrigStatus === 'triggered'}
+                <span class="note trig-note" data-testid="acquire-triggered">triggered — capturing</span>
+              {/if}
+            {/if}
           </div>
         </div>
       {/if}
@@ -411,13 +492,23 @@
       </div>
     {/if}
     {#if pretrigLine}
+      <!-- Kept as the machine-readable lifecycle line (e2e reads it); the
+           prominent version of the same information lives in the progress
+           area above. A timeout is the one state with something extra to
+           explain, so it stays worded as advice. -->
       <div class="ctx-row">
-        <span class="note" data-testid="pretrig-status">{pretrigLine}</span>
+        <span
+          class="note {$pretrigStatus === 'timeout' ? 'coerce-note' : ''}"
+          data-testid="pretrig-status"
+        >{pretrigLine}</span>
       </div>
     {/if}
-    {#if $statusText && !recording}
+    {#if $statusText}
+      <!-- Shown DURING a capture too. The old `&& !recording` guard hid the
+           one message that matters while something is happening ("Logging
+           data for 30.0 s…", "Cancelling…") and left the card looking inert. -->
       <div class="ctx-row">
-        <span class="note">{$statusText}</span>
+        <span class="note" data-testid="acquire-status-text">{$statusText}</span>
       </div>
     {/if}
     {#if $errorMsg}
@@ -426,7 +517,15 @@
   </div>
   <div class="ctx-primary">
     {#if recording}
-      <button class="btn danger-o" onclick={cancel}>Cancel</button>
+      <!-- The server finishes the frame it is in before it can answer, so
+           the button acknowledges the press itself rather than looking dead
+           for the round-trip — the exact complaint from the bench. -->
+      <button
+        class="btn danger-o"
+        onclick={cancel}
+        disabled={$cancelling}
+        data-testid="cancel-btn"
+      >{$cancelling ? 'Cancelling…' : 'Cancel'}</button>
     {:else}
       <button class="btn green" onclick={logData} data-testid="log-btn">
         Log Data{#if outActive}&nbsp;<span class="out-badge" data-testid="out-badge">OUT</span>{/if}
@@ -460,6 +559,55 @@
   /* DSA coerced-fs advisory — visible but not an error. */
   .coerce-note {
     color: var(--amber, #b45309);
+    font-weight: 500;
+  }
+  /* Progress group: wide enough for a bar that reads as a bar. */
+  .prog-grp {
+    flex: 1 1 260px;
+    min-width: 190px;
+    max-width: 460px;
+  }
+  .bar {
+    flex: 1;
+    min-width: 90px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--green, #16a34a);
+    transition: width 120ms linear;
+  }
+  /* WAITING is not progress — different colour, and a pulse so a still card
+     still reads as alive. */
+  .wait-text {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--amber, #b45309);
+    white-space: nowrap;
+  }
+  .wait-pip {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--amber, #b45309);
+    flex: 0 0 auto;
+    animation: wait-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes wait-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.72); }
+  }
+  /* Respect a reduced-motion preference: keep the state, drop the movement. */
+  @media (prefers-reduced-motion: reduce) {
+    .wait-pip { animation: none; }
+    .bar-fill { transition: none; }
+  }
+  .trig-note {
+    color: var(--green, #16a34a);
     font-weight: 500;
   }
 </style>

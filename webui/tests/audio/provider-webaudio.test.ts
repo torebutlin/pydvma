@@ -22,6 +22,7 @@ import {
   WEB_AUDIO_DEFAULT_OUTPUT_AMP,
   WEB_AUDIO_DEFAULT_PRETRIG_THRESHOLD,
   BARE_ARM_PRETRIG_SAMPLES,
+  DEFAULT_PRETRIG_TIMEOUT_S,
 } from '../../src/lib/audio/provider';
 import type { MultisineStimulusConfig, RecordConfig } from '../../src/lib/audio/source';
 
@@ -66,9 +67,11 @@ test('unset output/pretrig fields fall back to the displayed Acquire defaults', 
 
   const cfg = lastRecordConfig();
   expect(cfg.output).toMatchObject({ type: 'sweep', amp: WEB_AUDIO_DEFAULT_OUTPUT_AMP, f1: 10, f2: 500 });
+  // The timeout default is the SERVER's (20 s) and the one the Acquire card
+  // displays — round-11 collapsed three different numbers into one constant.
   expect(cfg.pretrig).toMatchObject({
     channel: 0, threshold: WEB_AUDIO_DEFAULT_PRETRIG_THRESHOLD,
-    pretrigSamples: BARE_ARM_PRETRIG_SAMPLES, timeoutS: 1,
+    pretrigSamples: BARE_ARM_PRETRIG_SAMPLES, timeoutS: DEFAULT_PRETRIG_TIMEOUT_S,
   });
 });
 

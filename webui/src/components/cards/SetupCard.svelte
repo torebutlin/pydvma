@@ -31,7 +31,16 @@
    */
   import { onMount } from 'svelte';
   import type { AcquireStore } from '../../lib/stores/acquire';
-  import { deviceCapsFor, clampVoltage, PYDVMA_DEFAULT_VMAX } from '../../lib/audio/provider';
+  import { parseFs, fsOptionsFor } from '../../lib/stores/acquire';
+  import {
+    deviceCapsFor,
+    clampVoltage,
+    defaultPretrigThreshold,
+    effectiveFullScaleVolts,
+    BARE_ARM_PRETRIG_SAMPLES,
+    DEFAULT_PRETRIG_TIMEOUT_S,
+    PYDVMA_DEFAULT_VMAX,
+  } from '../../lib/audio/provider';
   import type { MonitorStore } from '../../lib/stores/monitor';
   import { reportLevels, worstVerdict, verdictAdvice } from '../../lib/model/levelCheck';
 
@@ -88,6 +97,19 @@
     if (!allBackends || (d.backendCount ?? 1) <= 1 || !d.hostapi) return d.label;
     return `${d.label} — ${d.hostapi}`;
   }
+  /**
+   * What "Default" actually resolves to.  Leaving the device unset is the
+   * common case, and until the server started reporting `default_input` the
+   * row was a blank cheque: no way to tell whether the capture would come
+   * from the interface on the bench or the laptop's own microphone.  Host API
+   * is appended under the same condition {@link deviceLabel} uses, since that
+   * is when a host API is a real distinction rather than noise.
+   */
+  const defaultDeviceLabel = $derived.by(() => {
+    const d = $bridgeCaps?.default_input;
+    if (!d?.name) return 'Default';
+    return allBackends && d.hostapi ? `Default — ${d.name} — ${d.hostapi}` : `Default — ${d.name}`;
+  });
   const selectedDevice = $derived(
     $devices.find((d) => d.deviceId === $settings.deviceId),
   );
@@ -133,18 +155,24 @@
   const maxChannels = $derived(
     bridgeSelCaps?.max_channels ?? $deviceCaps?.channelCount?.max ?? 32,
   );
-  const srMin = $derived($deviceCaps?.sampleRate?.min);
   const srMax = $derived($deviceCaps?.sampleRate?.max);
-  // A sample rate the selected device actually supports. On a bridge ladder
-  // every rendered rate IS the ladder, so all are allowed; otherwise honour
-  // the bridge max_fs / the Web Audio min–max range.
-  const rateAllowed = (fs: number): boolean => {
-    if (bridgeSelCaps?.fs_ladder && bridgeSelCaps.fs_ladder.length) {
-      return bridgeSelCaps.fs_ladder.includes(fs);
-    }
+  // Suggestions for the fs combo — the ladder PLUS whatever is currently set,
+  // so an off-ladder rate is always visible (see `fsOptionsFor`).
+  const fsSuggestions = $derived(fsOptionsFor(fsOptions, $settings.sampleRate));
+  // The fs field's text. A plain `value={...}` binding cannot revert itself
+  // after invalid input (the store never changed, so nothing re-renders), so
+  // the text is local state mirrored from the store — commit parses it, and
+  // anything unparseable simply re-shows the stored rate.
+  let fsText = $state('');
+  $effect(() => { fsText = fmtHz($settings.sampleRate); });
+  // A rate ABOVE what the device can run is worth saying — but not worth
+  // blocking: the request is still meaningful (the server coerces, or the
+  // decimating capture path handles it) and blocking it was how an
+  // unreachable rate became an unchangeable one.
+  const fsAboveMax = $derived.by(() => {
     const maxFs = bridgeSelCaps?.max_fs ?? srMax;
-    return (srMin == null || fs >= srMin) && (maxFs == null || fs <= maxFs);
-  };
+    return maxFs != null && $settings.sampleRate > maxFs ? maxFs : null;
+  });
   // The rate the converter will really run at, when the device publishes a
   // hardware ladder and the chosen fs is not on it. A sound card cannot
   // sample at 3 kHz; pydvma captures at the lowest native rate above it and
@@ -213,6 +241,47 @@
     return Math.SQRT2 * 0.7746 * Math.pow(10, (dbu - gain) / 20);
   });
 
+  // ---- trigger (pretrigger) ----
+  // Gated on the CAPABILITY, not on the machine having NI-DAQ installed. The
+  // old `hasNidaq` gate is why the trigger controls rendered beside a
+  // soundcard on the lab PC and did nothing: the machine had NI drivers, the
+  // capture path did not. A bridge advertises `pretrigger`; the Web Audio
+  // recorder implements its own armed capture, so it always has one.
+  const showTrigger = $derived(isBridge ? ($bridgeCaps?.pretrigger ?? false) : true);
+  const armed = $derived($bridgeConfig.pretrigArmed ?? false);
+  /**
+   * Full scale in volts for the selected input, or null when the volt scale
+   * is unknown.  Non-null is exactly the condition under which the threshold
+   * is a VOLTAGE — the server compares it against VmaxSC-scaled data.
+   */
+  const triggerFullScale = $derived(
+    effectiveFullScaleVolts($bridgeCaps, $settings.deviceId, $bridgeConfig),
+  );
+  const thresholdInVolts = $derived(triggerFullScale != null);
+  /** The threshold that will actually be used when the field is left blank. */
+  const thresholdDefault = $derived(defaultPretrigThreshold(triggerFullScale));
+  /** The threshold in force right now (explicit value, else the default). */
+  const thresholdEffective = $derived($bridgeConfig.pretrigThreshold ?? thresholdDefault);
+  /**
+   * The same threshold as a percentage of full scale.  A bare "0.05 V" tells
+   * nobody whether that is a firm tap or the noise floor; on a 2i2 at high
+   * gain it is 0.36 % FS and fires on nothing at all.
+   */
+  const thresholdPctFs = $derived.by(() => {
+    if (triggerFullScale == null || triggerFullScale <= 0) return null;
+    const pct = (thresholdEffective / triggerFullScale) * 100;
+    return pct >= 10 ? pct.toFixed(0) : pct.toFixed(pct >= 1 ? 1 : 2);
+  });
+  const pretrigTimeout = $derived($bridgeConfig.pretrigTimeout ?? DEFAULT_PRETRIG_TIMEOUT_S);
+  const pretrigSamples = $derived($bridgeConfig.pretrigSamples);
+
+  /** Whether any advisory note has something to say (else the strip is skipped). */
+  const hasNotes = $derived(
+    $coercedFs != null || fsAboveMax != null || calibrationNote != null
+    || $deviceNote != null || loopbackFrom != null || captureFs != null
+    || $bridgeConfig.outputFs != null,
+  );
+
   // Level check. The monitor already computes per-channel peak/RMS from the
   // live stream, so this is a reading of it rather than a second capture
   // path. Volts appear only once a gain has been stated — that is the only
@@ -280,8 +349,22 @@
   function onDeviceChange(e: Event) {
     acquire.patch({ deviceId: (e.target as HTMLSelectElement).value });
   }
-  function onFsChange(e: Event) {
-    acquire.patch({ sampleRate: Number((e.target as HTMLSelectElement).value) });
+  /**
+   * Commit the typed sample rate.  Accepts plain hertz or k-notation
+   * (`3k`, `3.2k`); anything unparseable reverts the field to the stored
+   * rate rather than recording at NaN.  Off-ladder values are ACCEPTED — the
+   * notes below say what the hardware will really do with them.
+   */
+  function onFsCommit(e: Event) {
+    const raw = (e.target as HTMLInputElement).value;
+    const fs = parseFs(raw);
+    if (fs == null) { fsText = fmtHz($settings.sampleRate); return; }
+    if (fs !== $settings.sampleRate) acquire.patch({ sampleRate: fs });
+    else fsText = fmtHz(fs);          // normalise "3k" → "3000" with no change
+  }
+  /** Enter commits without waiting for blur. */
+  function onFsKey(e: KeyboardEvent) {
+    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
   }
   function onChannelsChange(e: Event) {
     const v = Math.max(1, Math.min(maxChannels, Number((e.target as HTMLInputElement).value) || 1));
@@ -313,18 +396,44 @@
     const v = (e.target as HTMLSelectElement).value;
     acquire.patchBridge({ niMode: v || undefined });
   }
+
+  // ---- trigger handlers ----
+  /**
+   * Arm / disarm from Setup.  Writes the SAME `bridgeConfig.pretrigArmed` the
+   * Acquire card's switch writes — this used to be the missing link: Setup's
+   * pretrigger fields set samples/threshold/channel but never ARMED anything,
+   * and a log with no pretrigger block actively clears the server's settings,
+   * so a carefully filled-in Setup produced a free-run capture.
+   */
+  function onArmToggle(e: Event) {
+    acquire.patchBridge({ pretrigArmed: (e.target as HTMLInputElement).checked });
+  }
   /** Blank pretrigger-samples clears it (free-run capture); else an integer. */
   function onPretrigSamples(e: Event) {
     const raw = (e.target as HTMLInputElement).value.trim();
     acquire.patchBridge({ pretrigSamples: raw === '' ? null : Math.max(0, Math.round(Number(raw)) || 0) });
   }
+  /**
+   * Trigger level.  Blank CLEARS it back to the effective default rather than
+   * setting zero — `Number('')` is 0, and a zero threshold triggers on the
+   * first sample, which is indistinguishable from no trigger at all.
+   */
   function onPretrigThreshold(e: Event) {
-    const v = Number((e.target as HTMLInputElement).value);
-    if (isFinite(v)) acquire.patchBridge({ pretrigThreshold: v });
+    const raw = (e.target as HTMLInputElement).value.trim();
+    if (raw === '') { acquire.patchBridge({ pretrigThreshold: undefined }); return; }
+    const v = Number(raw);
+    if (isFinite(v) && v >= 0) acquire.patchBridge({ pretrigThreshold: v });
   }
   function onPretrigChannel(e: Event) {
-    const v = Math.max(0, Math.round(Number((e.target as HTMLInputElement).value)) || 0);
-    acquire.patchBridge({ pretrigChannel: v });
+    const raw = (e.target as HTMLInputElement).value.trim();
+    if (raw === '') { acquire.patchBridge({ pretrigChannel: undefined }); return; }
+    const v = Math.max(0, Math.round(Number(raw)) || 0);
+    acquire.patchBridge({ pretrigChannel: Math.min(v, Math.max(0, $settings.channelCount - 1)) });
+  }
+  /** Seconds to wait for a crossing before capturing anyway. */
+  function onPretrigTimeout(e: Event) {
+    const v = Number((e.target as HTMLInputElement).value);
+    if (isFinite(v) && v > 0) acquire.patchBridge({ pretrigTimeout: v });
   }
   /** NI input range (VmaxNI), clamped to the device's ai_vmax rail. */
   function onVmaxNI(e: Event) {
@@ -368,7 +477,7 @@
         <span class="grp-lab">input device</span>
         <div class="grp-ctl">
           <select style="width:200px" aria-label="input device" value={$settings.deviceId} onchange={onDeviceChange}>
-            <option value="">Default</option>
+            <option value="">{defaultDeviceLabel}</option>
             {#each visibleDevices as d (d.deviceId)}
               <option value={d.deviceId}>{deviceLabel(d)}</option>
             {/each}
@@ -389,11 +498,30 @@
       <div class="grp">
         <span class="grp-lab">sample rate</span>
         <div class="grp-ctl">
-          <select style="width:84px" aria-label="sample rate" value={$settings.sampleRate} onchange={onFsChange}>
-            {#each fsOptions as fs (fs)}
-              <option value={fs} disabled={!rateAllowed(fs)}>{fs >= 1000 ? `${fs / 1000}k` : fs}</option>
+          <!-- A typed combo, not a select. A select can only show a value it
+               has an option for: an off-ladder fs (a `--settings` prefill of
+               10000, say) rendered BLANK, so the rate could be neither read
+               nor changed — the root cause of two lab reports. The input
+               always shows the stored value, and the ladder is offered as
+               suggestions rather than as the only permitted answers. -->
+          <input
+            type="text"
+            inputmode="decimal"
+            list="setup-fs-options"
+            aria-label="sample rate"
+            data-testid="setup-fs"
+            title="Sample rate in Hz. Type any rate — 3000, 3k, 48k — or pick one the device runs natively."
+            style="width:84px"
+            bind:value={fsText}
+            onchange={onFsCommit}
+            onblur={onFsCommit}
+            onkeydown={onFsKey}
+          />
+          <datalist id="setup-fs-options">
+            {#each fsSuggestions as fs (fs)}
+              <option value={String(fs)}>{fmtHz(fs)} Hz</option>
             {/each}
-          </select>
+          </datalist>
           <span class="ml">Hz</span>
         </div>
       </div>
@@ -421,6 +549,64 @@
           </select>
         </div>
       </div>
+      <!--
+        TRIGGER — basic tier, capability-gated (bridge `pretrigger` / always
+        on Web Audio), NOT gated on the machine having NI drivers installed.
+        Arming lives here as well as on the Acquire card because this is where
+        the level and channel are set, and setting them without arming did
+        nothing at all.  Both controls write the SAME store fields.
+      -->
+      {#if showTrigger}
+        <div class="grp" data-testid="setup-trigger">
+          <span class="grp-lab">trigger</span>
+          <div class="grp-ctl">
+            <label class="switch" title="Wait for the signal to cross the threshold before capturing (the samples before the crossing are kept).">
+              <input
+                type="checkbox"
+                checked={armed}
+                onchange={onArmToggle}
+                aria-label="arm trigger"
+                data-testid="setup-pretrig-arm"
+              />
+              arm
+            </label>
+            <input
+              type="number"
+              step="any"
+              min="0"
+              style="width:72px"
+              value={$bridgeConfig.pretrigThreshold ?? ''}
+              placeholder={String(thresholdDefault)}
+              onchange={onPretrigThreshold}
+              aria-label="trigger threshold"
+              data-testid="setup-pretrig-threshold"
+              title={thresholdInVolts
+                ? 'Trigger level in VOLTS — the server compares it against calibrated data. Blank uses 5 % of full scale.'
+                : 'Trigger level as a fraction of full scale (this input is not calibrated, so there are no volts to compare against). Blank uses 0.05.'}
+            />
+            <span class="ml">{thresholdInVolts ? 'V' : '×FS'}</span>
+            {#if thresholdPctFs != null}
+              <span class="note" data-testid="setup-threshold-pct">= {thresholdPctFs} % FS</span>
+            {/if}
+            {#if $settings.channelCount > 1}
+              <span class="ml">on ch</span>
+              <input
+                type="number"
+                min="0"
+                max={Math.max(0, $settings.channelCount - 1)}
+                step="1"
+                style="width:52px"
+                value={$bridgeConfig.pretrigChannel ?? ''}
+                placeholder="0"
+                onchange={onPretrigChannel}
+                aria-label="trigger channel"
+                data-testid="setup-pretrig-channel"
+                title="Which channel is watched for the crossing (0-based)."
+              />
+            {/if}
+          </div>
+        </div>
+      {/if}
       {#if !permissionGranted && !isBridge}
         <div class="grp">
           <span class="grp-lab">microphone</span>
@@ -433,192 +619,232 @@
       {/if}
     </div>
 
-    {#if $coercedFs}
-      <!-- DSA coerced-fs note: the device snapped an off-ladder request to a
-           legal step (e.g. 8000 → 8533.3 Hz on the 9234). Axes read at the
-           TRUE rate — never silently at the requested one. -->
-      <div class="ctx-row">
-        <span class="note coerce-note" data-testid="setup-coerced-fs">
-          device runs at {fmtHz($coercedFs.configured)} Hz (requested {fmtHz($coercedFs.requested)})
-        </span>
-      </div>
-    {/if}
-
-    {#if calibrationNote}
-      <!-- Whether "volts" are really volts. For a characterised model the
-           full-scale voltage is known and VmaxSC is derived; for anything
-           else VmaxSC=1.0 is a PLACEHOLDER, so readings are full-scale
-           units wearing a unit they have not earned. Say which. -->
-      <div class="ctx-row">
-        <span
-          class="note {calibrationWarn ? 'warn-note' : 'coerce-note'}"
-          data-testid="setup-calibration-note"
-        >
-          {calibrationNote}
-        </span>
-      </div>
-    {/if}
-
-    {#if $deviceNote}
-      <!-- The index the UI held had gone stale and the server re-pointed it
-           at the device we actually named. The capture is right; the user
-           should still know their device list moved. -->
-      <div class="ctx-row">
-        <span class="note coerce-note" data-testid="setup-device-note">
-          {$deviceNote}
-        </span>
-      </div>
-    {/if}
-
-    {#if loopbackFrom}
-      <!-- Loopback channels are a digital tap of the interface's own
-           output, not inputs. Silent unless something is playing, and
-           actively misleading when it is. -->
-      <div class="ctx-row">
-        <span class="note coerce-note" data-testid="setup-loopback-note">
-          channels {loopbackFrom}+ are the device's digital loopback, not inputs
-        </span>
-      </div>
-    {/if}
-
-    {#if captureFs}
-      <!-- Hardware-ladder note: the chosen fs is not a rate this device can
-           run, so the capture happens at a native rate and is resampled down
-           by pydvma (96 dB stopband) rather than by the OS, whose alias
-           rejection was measured as poor as 12 dB on this path. -->
-      <div class="ctx-row">
-        <span class="note coerce-note" data-testid="setup-capture-fs">
-          captures at {fmtHz(captureFs)} Hz, resampled to {fmtHz($settings.sampleRate)} Hz
-        </span>
-      </div>
-    {/if}
-
-    {#if $bridgeConfig.outputFs != null}
-      <!-- AO rate clamp note: the effective output device's analog output
-           tops out below the requested input fs (USB-6003: AO 5 kS/s vs AI
-           100 kS/s), so the store pins output_fs to the cap — unclamped,
-           MySettings defaults output_fs = fs and a stimulus-enabled log
-           fails server-side. -->
-      <div class="ctx-row">
-        <span class="note coerce-note" data-testid="output-fs-clamp-note">
-          output runs at {fmtHz($bridgeConfig.outputFs)} Hz (device AO limit)
-        </span>
+    <!--
+      ADVISORY NOTES — one wrapping strip rather than six full-width rows
+      stacked above the settings.  Each note is still its own span (and keeps
+      its testid); they simply flow instead of pushing the controls down the
+      card one line at a time.  None of these is an error: every one says what
+      the hardware will really do with a request it could not take literally.
+    -->
+    {#if hasNotes}
+      <div class="ctx-row notes-row" data-testid="setup-notes">
+        {#if $coercedFs}
+          <!-- DSA coerced-fs: the device snapped an off-ladder request to a
+               legal step (e.g. 8000 → 8533.3 Hz on the 9234). Axes read at
+               the TRUE rate — never silently at the requested one. -->
+          <span class="note coerce-note" data-testid="setup-coerced-fs">
+            device runs at {fmtHz($coercedFs.configured)} Hz (requested {fmtHz($coercedFs.requested)})
+          </span>
+        {/if}
+        {#if fsAboveMax != null}
+          <!-- Above the device's own ceiling. Said, not blocked: refusing the
+               value is how an unreachable rate became an unchangeable one. -->
+          <span class="note coerce-note" data-testid="setup-fs-above-max">
+            above this device's maximum {fmtHz(fsAboveMax)} Hz — it will run slower
+          </span>
+        {/if}
+        {#if calibrationNote}
+          <!-- Whether "volts" are really volts. For a characterised model the
+               full-scale voltage is known and VmaxSC is derived; for anything
+               else VmaxSC=1.0 is a PLACEHOLDER, so readings are full-scale
+               units wearing a unit they have not earned. Say which. -->
+          <span
+            class="note {calibrationWarn ? 'warn-note' : 'coerce-note'}"
+            data-testid="setup-calibration-note"
+          >
+            {calibrationNote}
+          </span>
+        {/if}
+        {#if $deviceNote}
+          <!-- The index the UI held had gone stale and the server re-pointed
+               it at the device we actually named. The capture is right; the
+               user should still know their device list moved. -->
+          <span class="note coerce-note" data-testid="setup-device-note">
+            {$deviceNote}
+          </span>
+        {/if}
+        {#if loopbackFrom}
+          <!-- Loopback channels are a digital tap of the interface's own
+               output, not inputs. Silent unless something is playing, and
+               actively misleading when it is. -->
+          <span class="note coerce-note" data-testid="setup-loopback-note">
+            channels {loopbackFrom}+ are the device's digital loopback, not inputs
+          </span>
+        {/if}
+        {#if captureFs}
+          <!-- Hardware-ladder note: the chosen fs is not a rate this device
+               can run, so the capture happens at a native rate and is
+               resampled down by pydvma (96 dB stopband) rather than by the
+               OS, whose alias rejection was measured as poor as 12 dB. -->
+          <span class="note coerce-note" data-testid="setup-capture-fs">
+            captures at {fmtHz(captureFs)} Hz, resampled to {fmtHz($settings.sampleRate)} Hz
+          </span>
+        {/if}
+        {#if $bridgeConfig.outputFs != null}
+          <!-- AO rate clamp: the effective output device's analog output tops
+               out below the requested input fs (USB-6003: AO 5 kS/s vs AI
+               100 kS/s), so the store pins output_fs to the cap — unclamped,
+               MySettings defaults output_fs = fs and a stimulus-enabled log
+               fails server-side. -->
+          <span class="note coerce-note" data-testid="output-fs-clamp-note">
+            output runs at {fmtHz($bridgeConfig.outputFs)} Hz (device AO limit)
+          </span>
+        {/if}
       </div>
     {/if}
 
     {#if full}
       <!--
-        FULL soundcard option set, grouped by domain (device / processing /
-        timing).  Structured so a future NI-DAQ group (IEPE excitation,
-        terminal config, pretrigger) can slot in as another <div class="grp">
-        block right here — see the "nidaq slot" marker below — without
-        redesigning the row.  Basic mode above is untouched.
+        FULL option set, in TITLED SECTIONS rather than one wrapping row of
+        a dozen-plus groups.  The sections are the questions an operator
+        actually asks in order — what is this device / what rate does it
+        really run / are the levels right / how does it trigger / and the
+        NI-only extras — and each is its own sub-row so a wide group cannot
+        drag an unrelated one onto the next line.  Read-only readouts
+        (capabilities, live levels) render as info lines, visibly not
+        controls.  Basic mode above is untouched.
       -->
-      <div class="ctx-row full-row" data-testid="setup-full">
-        <!-- domain: device — reported capability ranges (getCapabilities). -->
-        <div class="grp">
-          <span class="grp-lab">device capabilities</span>
-          <div class="grp-ctl">
-            {#if $deviceCaps}
-              <span class="mono note" data-testid="setup-caps">
-                {fmtRange($deviceCaps.channelCount)} ch ·
-                {fmtRange($deviceCaps.sampleRate, ' kHz', 1000)} ·
-                lat {fmtRange($deviceCaps.latency, ' ms', 0.001)}
-                {#if $deviceCaps.current?.sampleRate}
-                  <br />now {($deviceCaps.current.sampleRate / 1000).toFixed(1)} kHz{#if $deviceCaps.current.channelCount} · {$deviceCaps.current.channelCount} ch{/if}
-                {/if}
-              </span>
-            {:else}
-              <span class="note">allow mic access to read capabilities</span>
-            {/if}
-          </div>
-        </div>
-        <!-- domain: processing — getUserMedia DSP flags (all default OFF). -->
-        <div class="grp">
-          <span class="grp-lab">processing (off = raw measurement)</span>
-          <div class="grp-ctl">
-            <label class="switch" title="Browser echo cancellation — leave OFF for measurement">
-              <input type="checkbox" checked={$settings.echoCancellation}
-                onchange={(e) => acquire.patch({ echoCancellation: (e.target as HTMLInputElement).checked })} />
-              echo&nbsp;cancel
-            </label>
-            <label class="switch" title="Browser noise suppression — leave OFF for measurement">
-              <input type="checkbox" checked={$settings.noiseSuppression}
-                onchange={(e) => acquire.patch({ noiseSuppression: (e.target as HTMLInputElement).checked })} />
-              noise&nbsp;suppress
-            </label>
-            <label class="switch" title="Browser auto gain control — leave OFF for measurement">
-              <input type="checkbox" checked={$settings.autoGainControl}
-                onchange={(e) => acquire.patch({ autoGainControl: (e.target as HTMLInputElement).checked })} />
-              auto&nbsp;gain
-            </label>
-          </div>
-        </div>
-        <!-- domain: digital low-pass (round-9) — fs keeps its meaning; ON
-             means the capture oversamples at the device max and comes down
-             to fs behind a linear-phase anti-alias FIR (noise-reducing
-             decimation). Bridge: MySettings.lpf_on (server-side chain);
-             Web Audio: native-rate capture + engine resample. -->
-        <div class="grp">
-          <span class="grp-lab">digital low-pass</span>
-          <div class="grp-ctl">
-            <label class="switch"
-              title="Sample at the device's maximum rate, then decimate to your fs behind an anti-alias filter (reduces noise and aliasing). Off = sample at fs directly.">
-              <input type="checkbox" checked={$settings.lpfOn}
-                data-testid="setup-lpf"
-                onchange={(e) => acquire.patch({ lpfOn: (e.target as HTMLInputElement).checked })} />
-              oversample&nbsp;+&nbsp;decimate
-            </label>
-            {#if $settings.lpfOn}
-              <span class="note">logs at fs = {($settings.sampleRate / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz via a higher capture rate</span>
-            {/if}
-          </div>
-        </div>
-        <!-- domain: capture rate — fs is the DELIVERED rate; these decide
-             what the converter actually runs at before pydvma decimates.
-             Bridge-only: the Web Audio path has no hardware clock to pin. -->
-        {#if isBridge}
-          <div class="grp" data-testid="setup-capture-rate">
-            <span class="grp-lab">capture rate</span>
-            <div class="grp-ctl">
-              <select
-                aria-label="oversample strategy"
-                title="How far above fs to capture when oversampling. Auto follows the device: the lowest sufficient rate on a delta-sigma converter (already anti-aliased in silicon), the highest available on one with no anti-alias filter."
-                value={$bridgeConfig.oversample ?? 'auto'}
-                onchange={onOversampleChange}
-                style="width:110px"
-              >
-                <option value="auto">auto</option>
-                <option value="lowest">lowest</option>
-                <option value="highest">highest</option>
-              </select>
-              <select
-                aria-label="capture sample rate"
-                title="Force the rate the hardware samples at. Auto picks it from the device's own ladder."
-                value={$bridgeConfig.captureFs == null ? '' : String($bridgeConfig.captureFs)}
-                onchange={onCaptureFsChange}
-                style="width:96px"
-              >
-                <option value="">auto</option>
-                {#each nativeRateOptions as r}
-                  <option value={String(r)}>{fmtHz(r)} Hz</option>
-                {/each}
-              </select>
-              <span class="ml note">hardware rate</span>
+      <div class="full-block" data-testid="setup-full">
+        <!-- ── device ─────────────────────────────────────────────── -->
+        <div class="full-sec">
+          <span class="sec-head">device</span>
+          <div class="ctx-row sec-row">
+            <!-- Reported capability ranges (getCapabilities) — a READING,
+                 not a setting. -->
+            <div class="info">
+              <span class="info-lab">device capabilities</span>
+              {#if $deviceCaps}
+                <span class="mono note" data-testid="setup-caps">
+                  {fmtRange($deviceCaps.channelCount)} ch ·
+                  {fmtRange($deviceCaps.sampleRate, ' kHz', 1000)} ·
+                  lat {fmtRange($deviceCaps.latency, ' ms', 0.001)}
+                  {#if $deviceCaps.current?.sampleRate}
+                    <br />now {($deviceCaps.current.sampleRate / 1000).toFixed(1)} kHz{#if $deviceCaps.current.channelCount} · {$deviceCaps.current.channelCount} ch{/if}
+                  {/if}
+                </span>
+              {:else}
+                <span class="note">allow mic access to read capabilities</span>
+              {/if}
+            </div>
+            <!-- getUserMedia DSP flags (all default OFF). -->
+            <div class="grp">
+              <span class="grp-lab">processing (off = raw measurement)</span>
+              <div class="grp-ctl">
+                <label class="switch" title="Browser echo cancellation — leave OFF for measurement">
+                  <input type="checkbox" checked={$settings.echoCancellation}
+                    onchange={(e) => acquire.patch({ echoCancellation: (e.target as HTMLInputElement).checked })} />
+                  echo&nbsp;cancel
+                </label>
+                <label class="switch" title="Browser noise suppression — leave OFF for measurement">
+                  <input type="checkbox" checked={$settings.noiseSuppression}
+                    onchange={(e) => acquire.patch({ noiseSuppression: (e.target as HTMLInputElement).checked })} />
+                  noise&nbsp;suppress
+                </label>
+                <label class="switch" title="Browser auto gain control — leave OFF for measurement">
+                  <input type="checkbox" checked={$settings.autoGainControl}
+                    onchange={(e) => acquire.patch({ autoGainControl: (e.target as HTMLInputElement).checked })} />
+                  auto&nbsp;gain
+                </label>
+              </div>
+            </div>
+            <!-- Input latency hint (best-effort). -->
+            <div class="grp">
+              <span class="grp-lab">timing</span>
+              <div class="grp-ctl">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={latencyMs}
+                  onchange={onLatencyChange}
+                  placeholder="auto"
+                  title="Preferred input latency hint (ms); blank = browser default"
+                  data-testid="setup-latency"
+                  aria-label="input latency hint in milliseconds"
+                  style="width:64px"
+                />
+                <span class="ml">ms latency</span>
+              </div>
             </div>
           </div>
-          <!-- domain: soundcard input gain — no audio API can READ the
-               preamp gain, so stating it is the only route to calibrated
-               volts. The server derives VmaxSC from the device's published
-               maximum input level. A FIXED-GAIN interface (e.g. the ESI
-               U24 XL) has no gain to state at all — full scale is a
-               hardware constant — so it gets a static line instead of the
-               gain input + mode select (mode is single anyway). -->
-          {#if inputModeOptions}
-            <div class="grp" data-testid="setup-input-gain">
-              {#if fixedGain}
-                <span class="grp-lab">input level (fixed gain)</span>
+        </div>
+
+        <!-- ── rates ──────────────────────────────────────────────── -->
+        <div class="full-sec">
+          <span class="sec-head">rates</span>
+          <div class="ctx-row sec-row">
+            <!-- Digital low-pass (round-9) — fs keeps its meaning; ON means
+                 the capture oversamples at the device max and comes down to
+                 fs behind a linear-phase anti-alias FIR (noise-reducing
+                 decimation). Bridge: MySettings.lpf_on (server-side chain);
+                 Web Audio: native-rate capture + engine resample. -->
+            <div class="grp">
+              <span class="grp-lab">digital low-pass</span>
+              <div class="grp-ctl">
+                <label class="switch"
+                  title="Sample at the device's maximum rate, then decimate to your fs behind an anti-alias filter (reduces noise and aliasing). Off = sample at fs directly.">
+                  <input type="checkbox" checked={$settings.lpfOn}
+                    data-testid="setup-lpf"
+                    onchange={(e) => acquire.patch({ lpfOn: (e.target as HTMLInputElement).checked })} />
+                  oversample&nbsp;+&nbsp;decimate
+                </label>
+                {#if $settings.lpfOn}
+                  <span class="note">logs at fs = {($settings.sampleRate / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz via a higher capture rate</span>
+                {/if}
+              </div>
+            </div>
+            <!-- fs is the DELIVERED rate; these decide what the converter
+                 actually runs at before pydvma decimates. Bridge-only: the
+                 Web Audio path has no hardware clock to pin. -->
+            {#if isBridge}
+              <div class="grp" data-testid="setup-capture-rate">
+                <span class="grp-lab">capture rate</span>
                 <div class="grp-ctl">
+                  <select
+                    aria-label="oversample strategy"
+                    title="How far above fs to capture when oversampling. Auto follows the device: the lowest sufficient rate on a delta-sigma converter (already anti-aliased in silicon), the highest available on one with no anti-alias filter."
+                    value={$bridgeConfig.oversample ?? 'auto'}
+                    onchange={onOversampleChange}
+                    style="width:110px"
+                  >
+                    <option value="auto">auto</option>
+                    <option value="lowest">lowest</option>
+                    <option value="highest">highest</option>
+                  </select>
+                  <select
+                    aria-label="capture sample rate"
+                    title="Force the rate the hardware samples at. Auto picks it from the device's own ladder."
+                    value={$bridgeConfig.captureFs == null ? '' : String($bridgeConfig.captureFs)}
+                    onchange={onCaptureFsChange}
+                    style="width:96px"
+                  >
+                    <option value="">auto</option>
+                    {#each nativeRateOptions as r}
+                      <option value={String(r)}>{fmtHz(r)} Hz</option>
+                    {/each}
+                  </select>
+                  <span class="ml note">hardware rate</span>
+                </div>
+              </div>
+            {/if}
+          </div>
+        </div>
+
+        <!-- ── levels ─────────────────────────────────────────────── -->
+        <div class="full-sec">
+          <span class="sec-head">levels</span>
+          <div class="ctx-row sec-row">
+            <!-- Soundcard input gain — no audio API can READ the preamp
+                 gain, so stating it is the only route to calibrated volts.
+                 The server derives VmaxSC from the device's published
+                 maximum input level. A FIXED-GAIN interface (e.g. the ESI
+                 U24 XL) has no gain to state at all — full scale is a
+                 hardware constant — so it gets a static line instead of the
+                 gain input + mode select (mode is single anyway). -->
+            {#if isBridge && inputModeOptions}
+              {#if fixedGain}
+                <div class="info" data-testid="setup-input-gain">
+                  <span class="info-lab">input level (fixed gain)</span>
                   <span
                     class="note"
                     data-testid="setup-fixed-gain-note"
@@ -629,215 +855,214 @@
                   </span>
                 </div>
               {:else}
-                <span class="grp-lab">input gain (for calibrated volts)</span>
+                <div class="grp" data-testid="setup-input-gain">
+                  <span class="grp-lab">input gain (for calibrated volts)</span>
+                  <div class="grp-ctl">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={$bridgeConfig.inputGainDb ?? ''}
+                      onchange={onInputGainChange}
+                      placeholder="not set"
+                      title="The preamp gain currently set on the interface, in dB. pydvma cannot read it, so state it here and full scale in volts follows from the device's published maximum input level."
+                      aria-label="input gain in dB"
+                      style="width:72px"
+                    />
+                    <span class="ml">dB</span>
+                    <select
+                      aria-label="input mode"
+                      title="Which input the signal is on — sets the maximum input level used with the gain."
+                      value={$bridgeConfig.inputMode ?? 'line'}
+                      onchange={onInputModeChange}
+                      style="width:84px"
+                    >
+                      {#each inputModeOptions as m}
+                        <option value={m}>{m}</option>
+                      {/each}
+                    </select>
+                    {#if fullScaleVolts != null}
+                      <span class="note" data-testid="setup-full-scale">
+                        full scale ≈ {fullScaleVolts.toFixed(3)} V pk
+                      </span>
+                    {/if}
+                  </div>
+                </div>
+              {/if}
+            {/if}
+            <!-- Read off the live monitor, so no second capture path.
+                 Getting the gain wrong is silent in both directions: too
+                 high clips, too low buries the signal in converter noise
+                 while still drawing a plausible trace. -->
+            <div class="info" data-testid="setup-levels">
+              <span class="info-lab">input level</span>
+              {#if !levelsLive}
+                <span class="note">start the monitor to check levels</span>
+              {:else if !levelReports.length}
+                <span class="note">waiting for the first block…</span>
+              {:else}
+                <span class="mono note" data-testid="setup-levels-readout">
+                  {#each levelReports as r}
+                    ch{r.channel}
+                    {#if r.peakVolts != null}
+                      {r.peakVolts.toFixed(r.peakVolts < 1 ? 4 : 3)} V pk
+                    {:else}
+                      {fmtDbfs(r.peakDbfs)} dBFS pk
+                    {/if}
+                    {#if r.channel < levelReports.length - 1}·{/if}
+                  {/each}
+                </span>
+                {#if levelVerdict && levelVerdict !== 'ok'}
+                  <span class="note coerce-note" data-testid="setup-levels-verdict">
+                    {verdictAdvice(levelVerdict)}
+                  </span>
+                {:else if levelVerdict === 'ok'}
+                  <span class="note" data-testid="setup-levels-verdict">
+                    {verdictAdvice('ok')}
+                  </span>
+                {/if}
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        <!-- ── trigger ────────────────────────────────────────────── -->
+        <!-- The advanced half of the trigger group above: how much context
+             to keep before the crossing, and how long to wait for one.
+             Capability-gated like the basic tier — these used to sit behind
+             `hasNidaq`, which is why they rendered next to a soundcard on a
+             machine that merely HAD NI drivers, and never rendered on a
+             machine that did not. -->
+        {#if showTrigger}
+          <div class="full-sec">
+            <span class="sec-head">trigger</span>
+            <div class="ctx-row sec-row">
+              <div class="grp" data-testid="setup-pretrigger">
+                <span class="grp-lab">pretrigger context</span>
                 <div class="grp-ctl">
                   <input
                     type="number"
                     min="0"
                     step="1"
-                    value={$bridgeConfig.inputGainDb ?? ''}
-                    onchange={onInputGainChange}
-                    placeholder="not set"
-                    title="The preamp gain currently set on the interface, in dB. pydvma cannot read it, so state it here and full scale in volts follows from the device's published maximum input level."
-                    aria-label="input gain in dB"
-                    style="width:72px"
+                    placeholder={String(BARE_ARM_PRETRIG_SAMPLES)}
+                    value={pretrigSamples ?? ''}
+                    onchange={onPretrigSamples}
+                    title="How many samples BEFORE the crossing to keep. Blank uses 100, which fits the default context buffer."
+                    aria-label="pretrigger samples"
+                    data-testid="setup-pretrig-samples"
+                    style="width:76px"
                   />
-                  <span class="ml">dB</span>
+                  <span class="ml">samples before trigger</span>
+                </div>
+              </div>
+              <div class="grp">
+                <span class="grp-lab">timeout</span>
+                <div class="grp-ctl">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={pretrigTimeout}
+                    onchange={onPretrigTimeout}
+                    title="Seconds to wait for a crossing. On timeout the capture runs anyway — the set still lands, it is simply not trigger-aligned."
+                    aria-label="pretrigger timeout"
+                    data-testid="setup-pretrig-timeout"
+                    style="width:64px"
+                  />
+                  <span class="ml">s to wait</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- ── NI-DAQ ─────────────────────────────────────────────── -->
+        <!-- Rendered ONLY when the bridge reports the 'nidaq' backend (no
+             dead controls elsewhere). Everything here sends through the
+             acquire store's bridge config → the next `configure` message's
+             MySettings kwargs. -->
+        {#if hasNidaq}
+          <div class="full-sec">
+            <span class="sec-head">NI-DAQ</span>
+            <div class="ctx-row sec-row">
+              <div class="grp" data-testid="setup-nidaq">
+                <span class="grp-lab">NI-DAQ input</span>
+                <div class="grp-ctl">
                   <select
-                    aria-label="input mode"
-                    title="Which input the signal is on — sets the maximum input level used with the gain."
-                    value={$bridgeConfig.inputMode ?? 'line'}
-                    onchange={onInputModeChange}
-                    style="width:84px"
+                    aria-label="IEPE excitation current"
+                    title="IEPE/ICP constant-current excitation (NI 9234 only)"
+                    value={String($bridgeConfig.iepeExcitCurrentA ?? 0)}
+                    onchange={onIepeChange}
+                    style="width:96px"
                   >
-                    {#each inputModeOptions as m}
-                      <option value={m}>{m}</option>
-                    {/each}
+                    <option value="0">IEPE off</option>
+                    <option value="0.002">IEPE 2 mA</option>
                   </select>
-                  {#if fullScaleVolts != null}
-                    <span class="note" data-testid="setup-full-scale">
-                      full scale ≈ {fullScaleVolts.toFixed(3)} V pk
+                  <select
+                    aria-label="terminal configuration"
+                    title="Analog-input terminal configuration"
+                    value={$bridgeConfig.niMode ?? ''}
+                    onchange={onTermChange}
+                    style="width:96px"
+                  >
+                    <option value="">default</option>
+                    <option value="DAQmx_Val_RSE">RSE</option>
+                    <option value="DAQmx_Val_NRSE">NRSE</option>
+                    <option value="DAQmx_Val_Diff">diff</option>
+                  </select>
+                </div>
+              </div>
+              <!-- NI voltage rails: input (VmaxNI) + output (output_VmaxNI),
+                   each clamped to the selected device's reported range so a
+                   requested range never exceeds the hardware. The 9260's
+                   ±4.24 V output rail is BELOW the pydvma 5 V default; the
+                   store clamps the default down and this note says why. -->
+              <div class="grp" data-testid="setup-vmax">
+                <span class="grp-lab">NI voltage range (±V)</span>
+                <div class="grp-ctl">
+                  <span class="ml">in</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    max={aiVmaxCap ?? undefined}
+                    value={vmaxNIValue}
+                    onchange={onVmaxNI}
+                    title={aiVmaxCap != null
+                      ? `Input full-scale (VmaxNI); device rail ±${fmtVolts(aiVmaxCap)} V`
+                      : 'Input full-scale (VmaxNI)'}
+                    aria-label="NI input voltage range"
+                    data-testid="vmax-ni"
+                    style="width:64px"
+                  />
+                  <span class="ml">out</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    max={aoVmaxCap ?? undefined}
+                    value={outputVmaxNIValue}
+                    onchange={onOutputVmaxNI}
+                    title={aoVmaxCap != null
+                      ? `Output full-scale (output_VmaxNI); device rail ±${fmtVolts(aoVmaxCap)} V`
+                      : 'Output full-scale (output_VmaxNI)'}
+                    aria-label="NI output voltage range"
+                    data-testid="output-vmax-ni"
+                    style="width:64px"
+                  />
+                  {#if aiVmaxCap != null || aoVmaxCap != null}
+                    <span class="note" data-testid="vmax-hint">
+                      rail{aiVmaxCap != null ? ` in ±${fmtVolts(aiVmaxCap)}` : ''}{aoVmaxCap != null ? ` out ±${fmtVolts(aoVmaxCap)}` : ''} V
                     </span>
                   {/if}
                 </div>
-              {/if}
+                {#if aoRailBelowDefault}
+                  <span class="note coerce-note" data-testid="vmax-clamp-note">
+                    output clamped to device rail ±{fmtVolts(aoVmaxCap!)} V (default {PYDVMA_DEFAULT_VMAX} V would saturate)
+                  </span>
+                {/if}
+              </div>
             </div>
-          {/if}
-        {/if}
-        <!-- domain: input level — read off the live monitor, so no second
-             capture path. Getting the gain wrong is silent in both
-             directions: too high clips, too low buries the signal in
-             converter noise while still drawing a plausible trace. -->
-        <div class="grp" data-testid="setup-levels">
-          <span class="grp-lab">input level</span>
-          <div class="grp-ctl">
-            {#if !levelsLive}
-              <span class="note">start the monitor to check levels</span>
-            {:else if !levelReports.length}
-              <span class="note">waiting for the first block…</span>
-            {:else}
-              <span class="mono note" data-testid="setup-levels-readout">
-                {#each levelReports as r}
-                  ch{r.channel}
-                  {#if r.peakVolts != null}
-                    {r.peakVolts.toFixed(r.peakVolts < 1 ? 4 : 3)} V pk
-                  {:else}
-                    {fmtDbfs(r.peakDbfs)} dBFS pk
-                  {/if}
-                  {#if r.channel < levelReports.length - 1}·{/if}
-                {/each}
-              </span>
-              {#if levelVerdict && levelVerdict !== 'ok'}
-                <span class="note coerce-note" data-testid="setup-levels-verdict">
-                  {verdictAdvice(levelVerdict)}
-                </span>
-              {:else if levelVerdict === 'ok'}
-                <span class="note" data-testid="setup-levels-verdict">
-                  {verdictAdvice('ok')}
-                </span>
-              {/if}
-            {/if}
-          </div>
-        </div>
-        <!-- domain: timing — input latency hint (best-effort). -->
-        <div class="grp">
-          <span class="grp-lab">timing</span>
-          <div class="grp-ctl">
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={latencyMs}
-              onchange={onLatencyChange}
-              placeholder="auto"
-              title="Preferred input latency hint (ms); blank = browser default"
-              data-testid="setup-latency"
-              aria-label="input latency hint in milliseconds"
-              style="width:64px"
-            />
-            <span class="ml">ms latency</span>
-          </div>
-        </div>
-        <!-- nidaq slot (Wave B): rendered ONLY when the bridge reports the
-             'nidaq' backend (no dead controls on the Web-Audio path).
-             IEPE excitation, terminal configuration, and pretrigger all
-             send through the acquire store's bridge config → the next
-             `configure` message's MySettings kwargs. -->
-        {#if hasNidaq}
-          <div class="grp" data-testid="setup-nidaq">
-            <span class="grp-lab">NI-DAQ input</span>
-            <div class="grp-ctl">
-              <select
-                aria-label="IEPE excitation current"
-                title="IEPE/ICP constant-current excitation (NI 9234 only)"
-                value={String($bridgeConfig.iepeExcitCurrentA ?? 0)}
-                onchange={onIepeChange}
-                style="width:96px"
-              >
-                <option value="0">IEPE off</option>
-                <option value="0.002">IEPE 2 mA</option>
-              </select>
-              <select
-                aria-label="terminal configuration"
-                title="Analog-input terminal configuration"
-                value={$bridgeConfig.niMode ?? ''}
-                onchange={onTermChange}
-                style="width:96px"
-              >
-                <option value="">default</option>
-                <option value="DAQmx_Val_RSE">RSE</option>
-                <option value="DAQmx_Val_NRSE">NRSE</option>
-                <option value="DAQmx_Val_Diff">diff</option>
-              </select>
-            </div>
-          </div>
-          <div class="grp" data-testid="setup-pretrigger">
-            <span class="grp-lab">pretrigger</span>
-            <div class="grp-ctl">
-              <input
-                type="number"
-                min="0"
-                step="1"
-                placeholder="off"
-                value={$bridgeConfig.pretrigSamples ?? ''}
-                onchange={onPretrigSamples}
-                title="Pretrigger samples (blank = free-run, no trigger)"
-                aria-label="pretrigger samples"
-                style="width:76px"
-              />
-              <span class="ml">samples</span>
-              <input
-                type="number"
-                step="0.01"
-                value={$bridgeConfig.pretrigThreshold ?? ''}
-                onchange={onPretrigThreshold}
-                placeholder="thresh"
-                title="Trigger amplitude threshold"
-                aria-label="pretrigger threshold"
-                style="width:64px"
-              />
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={$bridgeConfig.pretrigChannel ?? ''}
-                onchange={onPretrigChannel}
-                placeholder="ch"
-                title="Trigger channel index"
-                aria-label="pretrigger channel"
-                style="width:52px"
-              />
-            </div>
-          </div>
-          <!-- NI voltage rails: input (VmaxNI) + output (output_VmaxNI),
-               each clamped to the selected device's reported range so a
-               requested range never exceeds the hardware. The 9260's ±4.24 V
-               output rail is BELOW the pydvma 5 V default; the store clamps
-               the default down and this note explains why. -->
-          <div class="grp" data-testid="setup-vmax">
-            <span class="grp-lab">NI voltage range (±V)</span>
-            <div class="grp-ctl">
-              <span class="ml">in</span>
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                max={aiVmaxCap ?? undefined}
-                value={vmaxNIValue}
-                onchange={onVmaxNI}
-                title={aiVmaxCap != null
-                  ? `Input full-scale (VmaxNI); device rail ±${fmtVolts(aiVmaxCap)} V`
-                  : 'Input full-scale (VmaxNI)'}
-                aria-label="NI input voltage range"
-                data-testid="vmax-ni"
-                style="width:64px"
-              />
-              <span class="ml">out</span>
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                max={aoVmaxCap ?? undefined}
-                value={outputVmaxNIValue}
-                onchange={onOutputVmaxNI}
-                title={aoVmaxCap != null
-                  ? `Output full-scale (output_VmaxNI); device rail ±${fmtVolts(aoVmaxCap)} V`
-                  : 'Output full-scale (output_VmaxNI)'}
-                aria-label="NI output voltage range"
-                data-testid="output-vmax-ni"
-                style="width:64px"
-              />
-              {#if aiVmaxCap != null || aoVmaxCap != null}
-                <span class="note" data-testid="vmax-hint">
-                  rail{aiVmaxCap != null ? ` in ±${fmtVolts(aiVmaxCap)}` : ''}{aoVmaxCap != null ? ` out ±${fmtVolts(aoVmaxCap)}` : ''} V
-                </span>
-              {/if}
-            </div>
-            {#if aoRailBelowDefault}
-              <span class="note coerce-note" data-testid="vmax-clamp-note">
-                output clamped to device rail ±{fmtVolts(aoVmaxCap!)} V (default {PYDVMA_DEFAULT_VMAX} V would saturate)
-              </span>
-            {/if}
           </div>
         {/if}
       </div>
@@ -855,10 +1080,59 @@
     height: auto;
     padding: 4px 8px;
   }
-  .full-row {
+  /* The advanced panel: titled sections stacked, each its own sub-row, so a
+     wide group can never drag an unrelated one onto the next line. */
+  .full-block {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
     border-top: 1px dashed var(--border);
     padding-top: 7px;
     margin-top: 2px;
+    min-width: 0;
+  }
+  .full-sec {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    min-width: 0;
+  }
+  .sec-head {
+    flex: 0 0 62px;
+    padding-top: 4px;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-2);
+    white-space: nowrap;
+  }
+  .sec-row {
+    flex: 1;
+    min-width: 0;
+  }
+  /* A READ-ONLY line. Deliberately unlike .grp: no control-height row, a
+     lighter label, so a readout is not mistaken for something to edit. */
+  .info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .info-lab {
+    font-size: 9.5px;
+    font-weight: 500;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-2);
+    white-space: nowrap;
+  }
+  /* Advisory strip — the notes flow instead of stacking one row each. */
+  .notes-row {
+    align-items: center;
+    gap: 12px;
+    row-gap: 3px;
   }
   /* Coerced-fs / voltage-clamp advisories — visible but not an error. */
   .coerce-note {

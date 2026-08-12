@@ -99,13 +99,19 @@ export function mapServeConfig(
   if (deviceId !== undefined) settings.deviceId = deviceId;
 
   // ---- pretrigger (arm when a sample count is present) ----
+  // These land in exactly the `BridgeConfig` fields Setup's trigger group and
+  // the Acquire arm switch read and write, so a served config shows up as a
+  // filled-in, ARMED trigger rather than as settings nothing acts on.
   const pretrig = get(c, 'pretrig_samples');
   if (pretrig !== null && pretrig !== undefined && pretrig !== 'None') {
     const n = nonNegInt(pretrig);
     if (n !== undefined) { bridge.pretrigSamples = n; bridge.pretrigArmed = true; }
   }
+  // A prefilled threshold is authoritative — the client only substitutes its
+  // full-scale-derived default when NOBODY has stated one. Negative is not a
+  // level (the recorder compares |x|), so it is ignored rather than sent.
   const pth = finNum(get(c, 'pretrig_threshold'));
-  if (pth !== undefined) bridge.pretrigThreshold = pth;
+  if (pth !== undefined && pth >= 0) bridge.pretrigThreshold = pth;
   const pch = nonNegInt(get(c, 'pretrig_channel'));
   if (pch !== undefined) bridge.pretrigChannel = pch;
   const pto = posNum(get(c, 'pretrig_timeout'));

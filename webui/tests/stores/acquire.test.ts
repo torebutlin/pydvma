@@ -3,6 +3,7 @@ import { expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { createAcquireStore, recordingToItem, recordingToDataset, type AcquireSettings } from '../../src/lib/stores/acquire';
 import { capabilities } from '../../src/lib/stores/stages';
 import type { RecordConfig, Recording } from '../../src/lib/audio/source';
+import { CancelledError, isCancelled } from '../../src/lib/audio/provider';
 import type {
   BridgeCaps,
   BridgeConfig,
@@ -543,4 +544,110 @@ test('fuller output kwargs (duration + device/channels) round-trip through patch
   expect(config()).toMatchObject({
     outputDuration: 0.25, outputDeviceId: 'nidaq:0', outputChannels: 2,
   });
+});
+
+// ---- round-11: cancel unwind + the elapsed clock ----
+
+/**
+ * A bridge fake whose capture never completes on its own: the test settles
+ * it by calling the handle's cancel (which rejects with a CancelledError,
+ * exactly as the real bridge does on a `status/cancelled` frame).
+ */
+function cancellableProvider() {
+  let rejectFn: ((e: unknown) => void) | null = null;
+  let elapsedValue = 0;
+  const provider: SourceProvider = {
+    kind: 'bridge',
+    async capabilities() { return null; },
+    async enumerateInputDevices() { return []; },
+    startRecording() {
+      const promise = new Promise<Recording>((_res, rej) => { rejectFn = rej; });
+      return {
+        promise,
+        cancel() { rejectFn?.(new CancelledError()); },
+        elapsed: () => elapsedValue,
+      };
+    },
+    async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
+    setConfig() {},
+    onLogStatus() {},
+    lastMeta() { return null; },
+  };
+  return { provider, setElapsed: (v: number) => { elapsedValue = v; } };
+}
+
+test('cancelling a log unwinds to idle with no error, no status text, nothing written', async () => {
+  const { provider } = cancellableProvider();
+  const store = createAcquireStore(provider);
+  const p = store.record();
+  expect(get(store.status)).toBe('recording');
+  expect(get(store.cancelling)).toBe(false);
+
+  store.cancel();
+  // Immediate acknowledgement: the server has not answered yet, but the
+  // button must not look dead while it thinks about it.
+  expect(get(store.cancelling)).toBe(true);
+  expect(get(store.statusText)).toBe('Cancelling…');
+
+  await expect(p).rejects.toThrow(/cancelled/);
+  // A cancel is an outcome, not a failure.
+  expect(get(store.status)).toBe('idle');
+  expect(get(store.errorMsg)).toBe('');
+  expect(get(store.statusText)).toBe('');
+  expect(get(store.pretrigStatus)).toBe('');
+  expect(get(store.elapsed)).toBe(0);
+  expect(get(store.cancelling)).toBe(false);
+  // The caller sees a recognisable cancellation, so it can toast quietly
+  // instead of raising "Recording failed: cancelled".
+  await p.catch((e) => expect(isCancelled(e)).toBe(true));
+  // Nothing was recorded.
+  expect(store.lastRecording).toBeNull();
+});
+
+test('cancel() with no capture in flight does nothing', () => {
+  const { provider } = cancellableProvider();
+  const store = createAcquireStore(provider);
+  store.cancel();
+  expect(get(store.cancelling)).toBe(false);
+  expect(get(store.statusText)).toBe('');
+});
+
+test('a real failure still lands as an error, not as a cancel', async () => {
+  const provider: SourceProvider = {
+    kind: 'bridge',
+    async capabilities() { return null; },
+    async enumerateInputDevices() { return []; },
+    startRecording() {
+      return {
+        promise: Promise.reject(new Error('capture failed: device busy')),
+        cancel() {},
+        elapsed: () => 0,
+      };
+    },
+    async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
+  };
+  const store = createAcquireStore(provider);
+  await expect(store.record()).rejects.toThrow(/device busy/);
+  expect(get(store.status)).toBe('error');
+  expect(get(store.errorMsg)).toMatch(/device busy/);
+});
+
+test('the elapsed store mirrors the handle clock, so a held clock reads 0', async () => {
+  // The bridge holds its clock at zero while the recorder is armed and
+  // waiting; the store must not invent progress of its own.
+  vi.useFakeTimers();
+  try {
+    const { provider, setElapsed } = cancellableProvider();
+    const store = createAcquireStore(provider);
+    const p = store.record();
+    vi.advanceTimersByTime(350);
+    expect(get(store.elapsed)).toBe(0);        // handle says 0 → store says 0
+    setElapsed(1.25);
+    vi.advanceTimersByTime(150);
+    expect(get(store.elapsed)).toBe(1.25);
+    store.cancel();
+    await expect(p).rejects.toThrow(/cancelled/);
+  } finally {
+    vi.useRealTimers();
+  }
 });

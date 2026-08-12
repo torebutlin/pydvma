@@ -25,11 +25,17 @@
  * There is no auto-reconnect (lab-local single-user stance).
  */
 import { readDvma } from '../codec/dvma';
-import { BARE_ARM_PRETRIG_SAMPLES } from './provider';
+import {
+  BARE_ARM_PRETRIG_SAMPLES,
+  CancelledError,
+  defaultPretrigThreshold,
+  effectiveFullScaleVolts,
+} from './provider';
 import type {
   AudioInputDevice,
   BridgeCaps,
   BridgeConfig,
+  BridgeDefaultDevice,
   BridgeRecordingMeta,
   ConfiguredInfo,
   DeviceCapsEntry,
@@ -48,6 +54,14 @@ import type {
 
 /** Status-frame events that belong to a log's pretrigger lifecycle. */
 const LOG_STATUS_EVENTS: ReadonlySet<string> = new Set(['armed', 'triggered', 'timeout']);
+
+/**
+ * Status event the server sends INSTEAD of `log_result` + container when a
+ * `cancel` arrives while a log is running.  There is no result to wait for
+ * afterwards, so a client that only awaits `log_result` hangs for ever — the
+ * lab-observed "Cancel does nothing".
+ */
+const CANCELLED_EVENT = 'cancelled';
 
 /** pydvma's `MySettings` default `chunk_size` (the pretrigger context buffer). */
 const PYDVMA_DEFAULT_CHUNK_SIZE = 100;
@@ -243,6 +257,20 @@ export class BridgeProvider implements SourceProvider {
   private logStatusCb: ((event: LogStatusEvent) => void) | null = null;
   /** Persistent sink for configure round-trips (requested vs resolved fs). */
   private configuredCb: ((info: ConfiguredInfo) => void) | null = null;
+  /**
+   * Settles the in-flight log with "the server cancelled it".  Set while a
+   * `log` is outstanding; calling it also un-parks the `log_result` waiter,
+   * which would otherwise sit in the FIFO and swallow the NEXT log's result.
+   */
+  private cancelWaiter: (() => void) | null = null;
+  /**
+   * CAPTURE clock for the in-flight log's `elapsed()`.  `null` start means
+   * "not counting yet" — an armed pretrigger holds the progress bar at 0
+   * while the recorder waits for the crossing, so a 2 s bar cannot sit
+   * saturated through a 20 s wait and imply the capture already happened.
+   * The `triggered` (or `timeout`) event starts it.
+   */
+  private logClock: { start: number | null } | null = null;
   /** Provenance metadata from the most recent logged capture. */
   private lastRecordingMeta: BridgeRecordingMeta | null = null;
 
@@ -414,7 +442,21 @@ export class BridgeProvider implements SourceProvider {
     // any waiter — surface them to the status sink (a `timeout` is NOT an
     // error: the capture still resolves with the buffered set).
     if (msg.type === 'status' && typeof msg.event === 'string' && LOG_STATUS_EVENTS.has(msg.event)) {
+      // The capture clock follows the same events: hold at 0 while armed,
+      // run from the crossing (or from the timeout, when the recorder gives
+      // up waiting and captures anyway).
+      if (this.logClock) {
+        this.logClock.start = msg.event === 'armed' ? null : nowMs();
+      }
       this.logStatusCb?.(msg.event as LogStatusEvent);
+      return;
+    }
+    // Cancel-during-log: the server sends this INSTEAD of log_result + the
+    // container, so the log's waiter has to be released here or it never
+    // settles.  With no log in flight this is the ordinary monitor-stop
+    // acknowledgement and there is nothing to do.
+    if (msg.type === 'status' && msg.event === CANCELLED_EVENT) {
+      this.cancelWaiter?.();
       return;
     }
     for (let i = 0; i < this.pending.length; i++) {
@@ -611,14 +653,17 @@ export class BridgeProvider implements SourceProvider {
     }
 
     // A pretrigger's context buffer (`chunk_size`, pydvma default 100) must
-    // be at least as large as `pretrig_samples`, else the recorder rejects
-    // the config. When arming a LOG capture (durationS given), raise
-    // chunk_size to fit an effective sample count above that default. The
-    // bare-arm default now equals the default chunk_size (100), so a bare arm
-    // fits WITHOUT enlarging the buffer — only a larger explicit count does.
-    if (durationS != null && ec.pretrigArmed) {
-      const samples = ec.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES;
-      if (samples > PYDVMA_DEFAULT_CHUNK_SIZE) s.chunk_size = samples;
+    // be at least as large as `pretrig_samples`, else MySettings REJECTS the
+    // whole configure (options.py: "pretrig_samples must not exceed
+    // chunk_size").  Keyed on the sample count being PRESENT, not on the arm
+    // switch: `pretrig_samples` above rides every configure — monitor as well
+    // as log — the moment Setup holds a value, so gating the raise on `armed`
+    // (or on this being a log) let a merely STAGED 500 break configure with
+    // nothing armed and no capture in sight.  The bare-arm default equals the
+    // default chunk_size (100), so arming alone still needs no bigger buffer.
+    const effSamples = ec.pretrigSamples ?? (ec.pretrigArmed ? BARE_ARM_PRETRIG_SAMPLES : null);
+    if (effSamples != null && effSamples > PYDVMA_DEFAULT_CHUNK_SIZE) {
+      s.chunk_size = effSamples;
     }
     return s;
   }
@@ -628,8 +673,16 @@ export class BridgeProvider implements SourceProvider {
    * switch + Setup's pretrigger params.  `null` (free-run capture) unless
    * `pretrigArmed` is set; when armed, an object the server maps onto
    * `MySettings.pretrig_*` (samples/threshold/channel/timeout).
+   *
+   * UNITS: the threshold is compared against VmaxSC-scaled data server-side,
+   * i.e. VOLTS on a characterised interface.  The server's own default
+   * (`0.05`) predates that scaling and means 0.05 V — 0.36 % of full scale on
+   * a 2i2, which triggers on the noise floor.  So when the operator has
+   * stated no threshold, the client sends `5 % of full scale` EXPLICITLY
+   * rather than letting the stale default stand; the same number Setup shows
+   * as the field's placeholder ({@link defaultPretrigThreshold}).
    */
-  private buildPretrigger(): Record<string, unknown> | null {
+  private buildPretrigger(cfg: Omit<RecordConfig, 'durationS'>): Record<string, unknown> | null {
     const ec = this.extraConfig;
     if (!ec.pretrigArmed) return null;
     // The server arms only when `samples` is non-null; a bare arm (no
@@ -639,7 +692,10 @@ export class BridgeProvider implements SourceProvider {
     const p: Record<string, unknown> = {
       samples: ec.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES,
     };
-    if (ec.pretrigThreshold != null) p.threshold = ec.pretrigThreshold;
+    p.threshold = ec.pretrigThreshold
+      ?? defaultPretrigThreshold(
+        effectiveFullScaleVolts(this.capsCache, cfg.deviceId, ec),
+      );
     if (ec.pretrigChannel != null) p.channel = ec.pretrigChannel;
     if (ec.pretrigTimeout != null) p.timeout = ec.pretrigTimeout;
     return p;
@@ -726,7 +782,13 @@ export class BridgeProvider implements SourceProvider {
 
   startRecording(cfg: RecordConfig): RecordingHandle {
     let cancelled = false;
-    const startT = nowMs();
+    // Capture-relative clock. It deliberately does NOT start at
+    // startRecording(): everything before the `log` frame — connect,
+    // configure, the device opening its stream — is setup, and counting it
+    // against the capture duration made the progress bar arrive already part
+    // spent (and saturated before a single sample on a slow open).
+    const clock: { start: number | null } = { start: null };
+    this.logClock = clock;
 
     const promise = (async (): Promise<Recording> => {
       await this.connect();
@@ -736,15 +798,19 @@ export class BridgeProvider implements SourceProvider {
       this.emitConfigured(cfg.sampleRate, configured);
       if (cancelled) {
         try { this.sendJson({ type: 'cancel' }); } catch { /* */ }
-        throw new Error('cancelled');
+        throw new CancelledError();
       }
+      const pretrigger = this.buildPretrigger(cfg);
       this.sendJson({
         type: 'log',
         duration: cfg.durationS,
-        pretrigger: this.buildPretrigger(),
+        pretrigger,
         output: this.buildOutput(cfg.outputOverride),
       });
-      await this.waitFor((m) => m.type === 'log_result');
+      // An armed capture starts counting at the crossing (handleJson moves
+      // the clock on `triggered`/`timeout`); a free-run one starts now.
+      clock.start = pretrigger ? null : nowMs();
+      await this.awaitLogOutcome();
       const bytes = await new Promise<Uint8Array>((resolve, reject) => {
         // The container frame follows log_result; it may (rarely) have
         // arrived first and been buffered.
@@ -759,6 +825,10 @@ export class BridgeProvider implements SourceProvider {
       this.lastRecordingMeta = recordingMetaFromDvma(bytes);
       return recordingFromDvma(bytes);
     })();
+    // Whatever the outcome, the clock belongs to no capture afterwards.
+    void promise.catch(() => {}).then(() => {
+      if (this.logClock === clock) this.logClock = null;
+    });
 
     return {
       promise,
@@ -768,8 +838,37 @@ export class BridgeProvider implements SourceProvider {
           try { this.sendJson({ type: 'cancel' }); } catch { /* */ }
         }
       },
-      elapsed: () => Math.min(cfg.durationS, (nowMs() - startT) / 1000),
+      elapsed: () => (
+        clock.start == null ? 0 : Math.min(cfg.durationS, (nowMs() - clock.start) / 1000)
+      ),
     };
+  }
+
+  /**
+   * Wait for the log to end, either way: `log_result` (a container follows)
+   * or `status/cancelled` (nothing follows — the server dropped the capture
+   * because the user cancelled), which rejects with {@link CancelledError}.
+   *
+   * Racing matters structurally, not just for tidiness: the `log_result`
+   * waiter lives in a FIFO matched by TYPE, so a waiter left parked after a
+   * cancel would swallow the NEXT capture's result and hang that one instead.
+   * Whichever branch settles removes the other.
+   */
+  private awaitLogOutcome(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const entry: Pending = {
+        match: (m) => m.type === 'log_result',
+        resolve: () => { this.cancelWaiter = null; resolve(); },
+        reject: (e) => { this.cancelWaiter = null; reject(e); },
+      };
+      this.pending.push(entry);
+      this.cancelWaiter = () => {
+        const i = this.pending.indexOf(entry);
+        if (i >= 0) this.pending.splice(i, 1);
+        this.cancelWaiter = null;
+        reject(new CancelledError());
+      };
+    });
   }
 
   // -- teardown --
@@ -844,7 +943,35 @@ function normalizeCaps(m: Record<string, unknown>): BridgeCaps {
   if (m.device_caps && typeof m.device_caps === 'object' && !Array.isArray(m.device_caps)) {
     caps.device_caps = m.device_caps as Record<string, DeviceCapsEntry>;
   }
+  // Which device "Default" actually resolves to (round-11) — additive, and
+  // `null` is a real answer (no device), so only a well-formed object counts.
+  const di = normalizeDefaultDevice(m.default_input);
+  if (di !== undefined) caps.default_input = di;
+  const dout = normalizeDefaultDevice(m.default_output);
+  if (dout !== undefined) caps.default_output = dout;
   return caps;
+}
+
+/**
+ * Coerce a `default_input` / `default_output` capability field into a
+ * {@link BridgeDefaultDevice}.  Returns `null` for an explicit server `null`
+ * (the driver has no default device) and `undefined` when the field is absent
+ * or malformed — an older bridge, whose UI simply keeps saying "Default".
+ */
+function normalizeDefaultDevice(v: unknown): BridgeDefaultDevice | null | undefined {
+  if (v === null) return null;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  const name = typeof o.name === 'string' ? o.name : '';
+  const driver = typeof o.driver === 'string' ? o.driver : '';
+  if (!name || !driver) return undefined;
+  const index = Number(o.index);
+  return {
+    driver,
+    index: Number.isFinite(index) ? index : 0,
+    name,
+    hostapi: typeof o.hostapi === 'string' && o.hostapi ? o.hostapi : undefined,
+  };
 }
 
 /**

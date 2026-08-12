@@ -185,6 +185,32 @@ export interface DeviceCapsEntry {
   is_chassis?: boolean;
   /** Maximum output (AO) channel count (`device_caps[deviceId].ao_channel_count`). */
   ao_channel_count?: number;
+  /**
+   * Full-scale input voltage (peak) for a CHARACTERISED interface, from the
+   * server's `device_caps[deviceId].full_scale_volts` — `null` when the model
+   * is unknown, in which case a reading of 1.0 means full scale, not a volt.
+   * This is the scale the pretrigger threshold is measured against: the
+   * server compares the threshold to VmaxSC-scaled data, i.e. VOLTS.
+   */
+  full_scale_volts?: number | null;
+}
+
+/**
+ * The device a driver would pick when the UI names none, as reported by the
+ * server's `default_input` / `default_output` capability fields.  Without it
+ * the "Default" row in the device dropdown is a blank cheque — the operator
+ * cannot tell whether "Default" means their interface or the laptop's own
+ * microphone.  `null` when the driver has no default (no device present).
+ */
+export interface BridgeDefaultDevice {
+  /** Backend that owns the device: 'soundcard' | 'nidaq' | 'mock'. */
+  driver: string;
+  /** Enumeration index within that backend (the `<driver>:<index>` id). */
+  index: number;
+  /** Human-readable device name. */
+  name: string;
+  /** Host API the endpoint belongs to (PortAudio); absent on NI/mock. */
+  hostapi?: string;
 }
 
 /**
@@ -237,6 +263,14 @@ export interface BridgeCaps {
    * the free/global defaults.
    */
   device_caps?: Record<string, DeviceCapsEntry>;
+  /**
+   * The input device the server would open if the UI named none, or `null`
+   * when the driver has none.  Additive (round-11): an older bridge omits it
+   * and the UI's "Default" row stays unqualified.
+   */
+  default_input?: BridgeDefaultDevice | null;
+  /** The output (AO/playback) device the server would drive by default. */
+  default_output?: BridgeDefaultDevice | null;
 }
 
 /**
@@ -481,6 +515,114 @@ export const PYDVMA_DEFAULT_VMAX = 5;
  * same `BridgeConfig.pretrigSamples`).
  */
 export const BARE_ARM_PRETRIG_SAMPLES = 100;
+
+/**
+ * Default seconds to wait for a trigger crossing before giving up and
+ * capturing anyway — pydvma's `MySettings.pretrig_timeout` default
+ * (`options.py`).  The UI used to display 1.0 here, which was neither the
+ * server's default nor what actually happened: the field showed a number the
+ * bridge then sent, so arming from the Acquire card silently shortened the
+ * wait by 20x.  ONE constant, displayed and sent on both backends.
+ */
+export const DEFAULT_PRETRIG_TIMEOUT_S = 20;
+
+/**
+ * Fraction of full scale used as the pretrigger threshold when the operator
+ * states none.  pydvma's `MySettings.pretrig_threshold` default is `0.05`, a
+ * number from the era when soundcard data was in FULL-SCALE units — but the
+ * server compares the threshold to VmaxSC-scaled data, so on a characterised
+ * interface 0.05 means 0.05 VOLTS: 0.36 % of a 2i2's full scale, i.e. the
+ * noise floor.  The client therefore sends `0.05 x full scale` explicitly
+ * whenever full scale is known (see {@link defaultPretrigThreshold}).
+ */
+export const PRETRIG_THRESHOLD_FS_FRACTION = 0.05;
+
+/**
+ * Convert a maximum input level in dBu to full scale in VOLTS PEAK — the
+ * server's own formula (`sqrt(2) * 0.7746 * 10 ** (dBu / 20)`), confirmed on
+ * hardware to 0.10 dB.  Pass `dBu - gain` for a variable-gain interface.
+ */
+export function dbuToVoltsPeak(dbu: number): number {
+  return Math.SQRT2 * 0.7746 * Math.pow(10, dbu / 20);
+}
+
+/**
+ * Full scale in VOLTS PEAK for the selected device, or `null` when the volt
+ * scale is not known (an uncalibrated interface, whose readings are
+ * full-scale units wearing no unit at all).  This is the scale the pretrigger
+ * threshold is measured against, so both the Setup field's unit label and the
+ * value the bridge sends derive from THIS one function — a UI that displayed
+ * one basis while the wire used another would be worse than no hint.
+ *
+ * Order: a FIXED-GAIN interface (ESI U24 XL) has one hardware constant, taken
+ * from its sole `max_input_dbu` entry; a variable-gain one needs a STATED
+ * gain (no audio API can read the preamp) and derives `dBu - gain`; failing
+ * both, the server's published `full_scale_volts`.
+ */
+export function effectiveFullScaleVolts(
+  caps: BridgeCaps | null,
+  deviceId: string | undefined,
+  cfg: BridgeConfig = {},
+): number | null {
+  const dc = caps && deviceId ? caps.device_caps?.[deviceId] : undefined;
+  if (!dc) return null;
+  const levels = dc.max_input_dbu;
+  if (levels) {
+    if (dc.fixed_gain) {
+      const mode = Object.keys(levels)[0];
+      const dbu = mode === undefined ? undefined : levels[mode];
+      if (dbu != null && Number.isFinite(dbu)) return dbuToVoltsPeak(dbu);
+    } else if (cfg.inputGainDb != null && Number.isFinite(cfg.inputGainDb)) {
+      const dbu = levels[cfg.inputMode ?? 'line'];
+      if (dbu != null && Number.isFinite(dbu)) return dbuToVoltsPeak(dbu - cfg.inputGainDb);
+    }
+  }
+  const published = dc.full_scale_volts;
+  return typeof published === 'number' && Number.isFinite(published) && published > 0
+    ? published
+    : null;
+}
+
+/**
+ * The pretrigger threshold to use when the operator has stated none: 5 % of
+ * full scale in VOLTS when the volt scale is known, else the bare `0.05`
+ * (a full-scale fraction — the Web Audio path's units, and the server's
+ * pre-VmaxSC default).  Rounded to two significant figures so the number the
+ * Setup placeholder shows is exactly the number sent.
+ */
+export function defaultPretrigThreshold(fullScaleVolts?: number | null): number {
+  if (fullScaleVolts == null || !Number.isFinite(fullScaleVolts) || fullScaleVolts <= 0) {
+    return PRETRIG_THRESHOLD_FS_FRACTION;
+  }
+  return Number((PRETRIG_THRESHOLD_FS_FRACTION * fullScaleVolts).toPrecision(2));
+}
+
+/**
+ * Thrown when a capture ends because the USER cancelled it, as distinct from
+ * a capture that failed.  A cancel is not an error: nothing is written, no
+ * toast shouts, the status goes quietly back to idle.  The message stays the
+ * literal `'cancelled'` that both backends have always thrown, so older
+ * string comparisons keep working; new code should use {@link isCancelled}.
+ */
+export class CancelledError extends Error {
+  /** Brand read by {@link isCancelled} (survives cross-realm / bundling). */
+  readonly cancelled = true;
+  constructor(message = 'cancelled') {
+    super(message);
+    this.name = 'CancelledError';
+  }
+}
+
+/**
+ * Whether a thrown value is a user cancellation — either a
+ * {@link CancelledError} or the bare `Error('cancelled')` the Web Audio
+ * recorder throws.
+ */
+export function isCancelled(e: unknown): boolean {
+  if (e instanceof CancelledError) return true;
+  if (e && typeof e === 'object' && (e as { cancelled?: unknown }).cancelled === true) return true;
+  return e instanceof Error && e.message === 'cancelled';
+}
 
 /**
  * Clamp a full-scale voltage to a device rail.  Returns `value` unchanged
@@ -768,7 +910,9 @@ export class WebAudioProvider implements SourceProvider {
         channel: c.pretrigChannel ?? 0,
         threshold: c.pretrigThreshold ?? WEB_AUDIO_DEFAULT_PRETRIG_THRESHOLD,
         pretrigSamples: c.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES,
-        timeoutS: c.pretrigTimeout ?? 1.0,
+        // Same default the Acquire card DISPLAYS and the server uses; the old
+        // 1.0 here disagreed with both.
+        timeoutS: c.pretrigTimeout ?? DEFAULT_PRETRIG_TIMEOUT_S,
         onStatus: this.statusCb ?? undefined,
       };
     }

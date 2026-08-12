@@ -25,6 +25,7 @@ import {
   WebAudioProvider,
   deviceCapsFor,
   clampVoltage,
+  isCancelled,
   PYDVMA_DEFAULT_VMAX,
   type SourceProvider,
   type BridgeCaps,
@@ -148,6 +149,55 @@ const DEFAULT_SETTINGS: AcquireSettings = {
   lpfOn: false,
 };
 
+// ---- sample-rate entry (Setup's fs combo) ----
+
+/**
+ * Largest sample rate the fs field will accept.  Not a device limit — the
+ * device's own ladder is advertised separately and an off-ladder rate is
+ * legitimate (pydvma captures at a native rate and decimates).  This only
+ * rejects a typo that would otherwise allocate an absurd buffer.
+ */
+const MAX_ENTERABLE_FS = 1e6;
+
+/**
+ * Parse a typed sample rate: plain hertz (`"48000"`, `"8533.3"`) or the
+ * k-notation people actually write on a bench (`"3k"`, `"3.2K"`, `"48 kHz"`).
+ * Returns `null` for anything that is not a finite, positive, sanely-bounded
+ * rate, so the caller can revert the field to the stored value instead of
+ * quietly recording at NaN.
+ *
+ * Deliberately permissive about the VALUE: an off-ladder rate is a supported
+ * request (that is what the digital-low-pass decimation path exists for), and
+ * the Setup notes already say what the hardware will really run at.
+ */
+export function parseFs(text: string): number | null {
+  // Digits, an optional k, an optional "Hz" — and nothing else. Internal
+  // spaces are allowed only where a unit would sit ("48 kHz"), never inside
+  // the number, so a fumbled "4 8 0 0 0" is rejected rather than silently
+  // becoming 48 kHz.
+  const m = /^(\d*\.?\d+)\s*(k)?\s*(hz)?$/.exec(text.trim().toLowerCase());
+  if (!m) return null;
+  const n = Number(m[1]) * (m[2] ? 1000 : 1);
+  if (!Number.isFinite(n) || n <= 0 || n > MAX_ENTERABLE_FS) return null;
+  return n;
+}
+
+/**
+ * The suggestion list for the fs combo: the device's ladder (or the standard
+ * soundcard rates) with the CURRENT value always included, sorted ascending.
+ *
+ * Including the current value is the whole point.  The old control was a
+ * `<select>`, and a value that was not among its options — a `--settings`
+ * prefill of 10000, say — rendered as a BLANK box (Svelte leaves
+ * `selectedIndex` at −1), so the rate could be neither seen nor changed. Two
+ * separate lab reports traced back to that one blank.
+ */
+export function fsOptionsFor(ladder: readonly number[], current?: number): number[] {
+  const out = new Set<number>(ladder.filter((f) => Number.isFinite(f) && f > 0));
+  if (current != null && Number.isFinite(current) && current > 0) out.add(current);
+  return [...out].sort((a, b) => a - b);
+}
+
 // ---- store factory ----
 
 export function createAcquireStore(initialProvider?: SourceProvider) {
@@ -157,6 +207,14 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
   const statusText = writable<string>('');
   const errorMsg = writable<string>('');
   const elapsed = writable<number>(0);
+  /**
+   * True from the moment Cancel is pressed until the capture actually
+   * unwinds.  The server finishes the frame it is in and then answers, so
+   * without this the button looks dead for the fraction of a second (or, on a
+   * long chunk, rather more) that the round-trip takes — the exact reason the
+   * lab reported "Cancel does nothing".
+   */
+  const cancelling = writable<boolean>(false);
   /** Capabilities of the granted device (populated after permission). */
   const deviceCaps = writable<DeviceCaps | null>(null);
   /**
@@ -440,6 +498,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     errorMsg.set('');
     elapsed.set(0);
     pretrigStatus.set('');
+    cancelling.set(false);
     lastRecordingMeta = null;
 
     const rcfg: RecordConfig = {
@@ -477,9 +536,14 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       return rec;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg === 'cancelled') {
+      if (isCancelled(e)) {
+        // A cancel is not a failure: unwind to a clean idle with nothing
+        // written and no error banner. The caller (AcquireCard) raises a
+        // quiet toast; the dataset is never touched.
         status.set('idle');
-        statusText.set('Recording cancelled.');
+        statusText.set('');
+        pretrigStatus.set('');
+        elapsed.set(0);
       } else {
         status.set('error');
         statusText.set('');
@@ -488,13 +552,21 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       throw e;
     } finally {
       handle = null;
+      cancelling.set(false);
       if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     }
   }
 
-  /** Cancel a recording in progress. */
+  /**
+   * Cancel a recording in progress.  Flags {@link cancelling} immediately —
+   * the capture only actually unwinds when the server (or the browser
+   * recorder) answers, and a button with no acknowledgement reads as broken.
+   */
   function cancel(): void {
-    handle?.cancel();
+    if (!handle) return;
+    cancelling.set(true);
+    statusText.set('Cancelling…');
+    handle.cancel();
   }
 
   /**
@@ -521,6 +593,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     statusText,
     errorMsg,
     elapsed,
+    /** True between pressing Cancel and the capture actually unwinding. */
+    cancelling,
     deviceCaps,
     /** Bridge capability document (null for Web Audio / a dead bridge). */
     bridgeCaps,

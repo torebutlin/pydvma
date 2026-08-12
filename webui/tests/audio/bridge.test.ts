@@ -24,6 +24,11 @@ import {
   outputCapable,
   outputDevices,
   clampVoltage,
+  dbuToVoltsPeak,
+  defaultPretrigThreshold,
+  effectiveFullScaleVolts,
+  isCancelled,
+  CancelledError,
   PYDVMA_DEFAULT_VMAX,
   BARE_ARM_PRETRIG_SAMPLES,
   type BridgeCaps,
@@ -1375,4 +1380,334 @@ test('a variable-gain device still sends the stated input_gain_db', async () => 
   const settings = cfg.settings as Record<string, unknown>;
   expect(settings.input_gain_db).toBe(10);
   expect(settings.input_mode).toBe('line');
+});
+
+// ---------------------------------------------------------------------------
+// round-11: trigger units, chunk-size safety, default device, cancel unwind
+// ---------------------------------------------------------------------------
+
+/** Capabilities for a CHARACTERISED fixed-gain box (the ESI U24 XL). */
+const CAPS_U24XL = {
+  ...CAPS,
+  devices: { soundcard: ['Line (U24XL with SPDIF I/O)'], nidaq: [] },
+  device_caps: {
+    'soundcard:0': {
+      driver: 'soundcard', index: 0, name: 'Line (U24XL with SPDIF I/O)', ao: true,
+      input_modes: ['line'], max_input_dbu: { line: 4.7 }, fixed_gain: true,
+      full_scale_volts: 1.8818824427893688,
+    },
+  },
+};
+
+async function armedLogAgainst(caps: unknown, cfgPatch: Record<string, unknown> = {}) {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(caps);
+  await capsP;
+  bp.setConfig({ pretrigArmed: true, ...cfgPatch });
+  const rh = bp.startRecording({
+    deviceId: 'soundcard:0', sampleRate: 48000, channelCount: 2, durationS: 0.5,
+  });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 48000, channels: 2 });
+  await tick();
+  void rh.promise.catch(() => {});
+  return { fake, bp, rh, log: () => fake.sentJson().find((m) => m.type === 'log') };
+}
+
+test('an armed log states the threshold in VOLTS derived from full scale', async () => {
+  // The server compares the threshold to VmaxSC-scaled data, so its own 0.05
+  // default means 0.05 V — 2.7 % of this box's 1.88 V full scale, and only
+  // 0.36 % on a 2i2 at high gain, i.e. the noise floor. Leaving the default
+  // to the server is how "the trigger fires immediately" happened, so the
+  // client sends 5 % of full scale explicitly.
+  const { log } = await armedLogAgainst(CAPS_U24XL);
+  expect(log()!.pretrigger).toMatchObject({ samples: 100, threshold: 0.094 });
+});
+
+test('an explicitly stated threshold is never overridden by the derived default', async () => {
+  const { log } = await armedLogAgainst(CAPS_U24XL, { pretrigThreshold: 0.4 });
+  expect((log()!.pretrigger as Record<string, unknown>).threshold).toBe(0.4);
+});
+
+test('an UNCALIBRATED device keeps the bare 0.05 (full-scale units, no volts to derive)', async () => {
+  const capsUncal = {
+    ...CAPS,
+    devices: { soundcard: ['Generic USB Audio'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Generic USB Audio', ao: false,
+        calibration_status: 'uncalibrated', full_scale_volts: null,
+      },
+    },
+  };
+  const { log } = await armedLogAgainst(capsUncal);
+  expect((log()!.pretrigger as Record<string, unknown>).threshold).toBe(0.05);
+});
+
+test('a stated GAIN drives the derived threshold on a variable-gain interface', async () => {
+  // 2i2 line input, 22 dBu at min gain, operator states 9 dB →
+  // sqrt(2)*0.7746*10**((22-9)/20) = 4.893 V full scale → 5 % = 0.24 V.
+  const caps2i2 = {
+    ...CAPS,
+    devices: { soundcard: ['Scarlett 2i2 4th Gen'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Scarlett 2i2 4th Gen', ao: true,
+        input_modes: ['inst', 'line', 'mic'],
+        max_input_dbu: { line: 22, inst: 12, mic: 16 },
+        fixed_gain: false,
+      },
+    },
+  };
+  const { log } = await armedLogAgainst(caps2i2, { inputGainDb: 9, inputMode: 'line' });
+  expect((log()!.pretrigger as Record<string, unknown>).threshold).toBe(0.24);
+});
+
+test('a staged pretrig sample count raises chunk_size even when NOTHING is armed', async () => {
+  // `pretrig_samples` rides EVERY configure the moment Setup holds a value —
+  // monitor as well as log — and MySettings rejects the whole configure when
+  // it exceeds chunk_size. Gating the raise on the arm switch therefore let a
+  // merely staged 500 break configure with no capture in sight.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ pretrigArmed: false, pretrigSamples: 500 });
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 0.5 });
+  fake.open();
+  await tick();
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings).toMatchObject({ pretrig_samples: 500, chunk_size: 500 });
+  // …and the log itself is still free-run: staging a count is not arming.
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await tick();
+  expect(fake.sentJson().find((m) => m.type === 'log')!.pretrigger).toBeNull();
+  void rh.promise.catch(() => {});
+});
+
+test('a staged pretrig sample count raises chunk_size on a MONITOR configure too', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ pretrigSamples: 500 });
+  const monP = bp.startMonitor({ sampleRate: 8000, channelCount: 1 }, () => {});
+  fake.open();
+  await tick();
+  const cfg = fake.sentJson().find((m) => m.type === 'configure');
+  expect(cfg!.settings).toMatchObject({ pretrig_samples: 500, chunk_size: 500 });
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+});
+
+test('capabilities parse default_input / default_output; a missing one stays absent', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({
+    ...CAPS,
+    default_input: {
+      driver: 'soundcard', index: 3, name: 'Line (U24XL with SPDIF I/O)',
+      hostapi: 'Windows WDM-KS',
+    },
+    default_output: null,
+  });
+  const caps = await capsP;
+  expect(caps!.default_input).toEqual({
+    driver: 'soundcard', index: 3, name: 'Line (U24XL with SPDIF I/O)',
+    hostapi: 'Windows WDM-KS',
+  });
+  // An explicit null is a real answer (no default device) — not "unknown".
+  expect(caps!.default_output).toBeNull();
+});
+
+test('an older bridge with no default_input leaves the field undefined (additive)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(CAPS);
+  const caps = await capsP;
+  expect(caps!.default_input).toBeUndefined();
+  // A malformed entry is treated as "not reported", never as a phantom device.
+  const fake2 = makeFakeWs();
+  const bp2 = new BridgeProvider('ws://x/ws', () => fake2.ws);
+  const capsP2 = bp2.capabilities();
+  fake2.open();
+  await tick();
+  fake2.emitJson({ ...CAPS, default_input: { index: 2 } });
+  expect((await capsP2)!.default_input).toBeUndefined();
+});
+
+test('status/cancelled rejects the log with a CancelledError and no container arrives', async () => {
+  // Cancel-during-log: the server drops the capture and sends this INSTEAD of
+  // log_result + the container. A client that only awaits log_result hangs
+  // for ever — the lab's "Cancel does nothing".
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 30 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await tick();
+  expect(fake.sentJson().some((m) => m.type === 'log')).toBe(true);
+
+  rh.cancel();
+  expect(fake.sentJson().some((m) => m.type === 'cancel')).toBe(true);
+  fake.emitJson({ type: 'status', event: 'cancelled' });
+
+  await expect(rh.promise).rejects.toThrow(/cancelled/);
+  await rh.promise.catch((e) => {
+    expect(isCancelled(e)).toBe(true);
+    expect(e).toBeInstanceOf(CancelledError);
+  });
+});
+
+test('a cancelled log leaves no waiter behind to swallow the NEXT capture', async () => {
+  // The log_result waiter is matched by TYPE out of a FIFO, so one left
+  // parked after a cancel would resolve a dead promise with the next
+  // capture's result and hang that capture instead.
+  const nSamples = 4, nChannels = 1, fs = 8000;
+  const timeAxis = Float64Array.from({ length: nSamples }, (_, i) => i / fs);
+  const data = Float64Array.from([1, 2, 3, 4]);
+  const dvma = writeDvma(recordingToDataset({ data, timeAxis, fs, nChannels, nSamples }, 'second'));
+
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const first = bp.startRecording({ sampleRate: fs, channelCount: 1, durationS: 30 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs, channels: 1 });
+  await tick();
+  first.cancel();
+  fake.emitJson({ type: 'status', event: 'cancelled' });
+  await expect(first.promise).rejects.toThrow(/cancelled/);
+
+  const second = bp.startRecording({ sampleRate: fs, channelCount: 1, durationS: 0.5 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'log_result', nChannels, nSamples, fs, byteLength: dvma.length });
+  await tick();
+  fake.emitBinary(containerFrame(dvma, nChannels, nSamples, fs));
+  const rec = await second.promise;
+  expect(Array.from(rec.data)).toEqual([1, 2, 3, 4]);
+});
+
+test('a cancel BEFORE the log is sent still rejects as cancelled', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 5 });
+  fake.open();
+  await tick();
+  rh.cancel();                       // pressed while configure is in flight
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await expect(rh.promise).rejects.toThrow(/cancelled/);
+  // No log was ever sent, so the server has no capture to drop.
+  expect(fake.sentJson().some((m) => m.type === 'log')).toBe(false);
+});
+
+test('elapsed() counts from the LOG, not from startRecording, and holds at 0 while armed', async () => {
+  // A wall clock started before configure saturates a 2 s bar while the
+  // recorder is still waiting for a trigger 20 s later — the progress bar
+  // then says "done" about a capture that has not begun.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ pretrigArmed: true, pretrigSamples: 100 });
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 2 });
+  fake.open();
+  await tick();
+  expect(rh.elapsed()).toBe(0);                 // configure in flight
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await tick();
+  expect(rh.elapsed()).toBe(0);                 // armed capture: not counting
+
+  fake.emitJson({ type: 'status', event: 'armed' });
+  await new Promise((r) => setTimeout(r, 30));
+  expect(rh.elapsed()).toBe(0);                 // still waiting — HELD at zero
+
+  fake.emitJson({ type: 'status', event: 'triggered' });
+  await new Promise((r) => setTimeout(r, 30));
+  expect(rh.elapsed()).toBeGreaterThan(0);      // now the capture is running
+  expect(rh.elapsed()).toBeLessThanOrEqual(2);  // and clamped to the duration
+  void rh.promise.catch(() => {});
+});
+
+test('an UNARMED log starts its clock at log-send', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 2 });
+  fake.open();
+  await tick();
+  expect(rh.elapsed()).toBe(0);
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await tick();
+  await new Promise((r) => setTimeout(r, 30));
+  expect(rh.elapsed()).toBeGreaterThan(0);
+  void rh.promise.catch(() => {});
+});
+
+test('a trigger TIMEOUT starts the clock too (the capture runs regardless)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.setConfig({ pretrigArmed: true });
+  const rh = bp.startRecording({ sampleRate: 8000, channelCount: 1, durationS: 2 });
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 8000, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'armed' });
+  fake.emitJson({ type: 'status', event: 'timeout' });
+  await new Promise((r) => setTimeout(r, 30));
+  expect(rh.elapsed()).toBeGreaterThan(0);
+  void rh.promise.catch(() => {});
+});
+
+// ---- the shared threshold/full-scale model (provider.ts) ----
+
+test('effectiveFullScaleVolts: fixed gain, stated gain, published value, unknown', () => {
+  const caps = {
+    ...CAPS,
+    device_caps: {
+      // Fixed gain: full scale is a hardware constant from the sole dBu entry.
+      'soundcard:0': { fixed_gain: true, max_input_dbu: { line: 4.7 } },
+      // Variable gain: needs a STATED gain (no API can read the preamp).
+      'soundcard:1': { fixed_gain: false, max_input_dbu: { line: 22, inst: 12 } },
+      // Neither, but the server published a measured full scale.
+      'soundcard:2': { full_scale_volts: 2.5 },
+      // Uncharacterised: readings are full-scale units, not volts.
+      'soundcard:3': { full_scale_volts: null },
+    },
+  } as never;
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', {})).toBeCloseTo(1.8819, 4);
+  expect(effectiveFullScaleVolts(caps, 'soundcard:1', {})).toBeNull();   // no gain stated
+  expect(effectiveFullScaleVolts(caps, 'soundcard:1', { inputGainDb: 9, inputMode: 'line' }))
+    .toBeCloseTo(4.8932, 4);
+  expect(effectiveFullScaleVolts(caps, 'soundcard:1', { inputGainDb: 0, inputMode: 'inst' }))
+    .toBeCloseTo(dbuToVoltsPeak(12), 9);
+  expect(effectiveFullScaleVolts(caps, 'soundcard:2', {})).toBe(2.5);
+  expect(effectiveFullScaleVolts(caps, 'soundcard:3', {})).toBeNull();
+  expect(effectiveFullScaleVolts(null, 'soundcard:0', {})).toBeNull();   // Web Audio
+});
+
+test('defaultPretrigThreshold is 5 % of full scale, or the bare 0.05 without one', () => {
+  expect(defaultPretrigThreshold(1.8818824427893688)).toBe(0.094);
+  expect(defaultPretrigThreshold(4.8932)).toBe(0.24);
+  expect(defaultPretrigThreshold(null)).toBe(0.05);
+  expect(defaultPretrigThreshold(undefined)).toBe(0.05);
+  expect(defaultPretrigThreshold(0)).toBe(0.05);
+  expect(defaultPretrigThreshold(Number.NaN)).toBe(0.05);
+});
+
+test('isCancelled recognises both backends cancellations, and nothing else', () => {
+  expect(isCancelled(new CancelledError())).toBe(true);
+  expect(isCancelled(new Error('cancelled'))).toBe(true);   // the Web Audio recorder
+  expect(isCancelled(new Error('capture failed: device busy'))).toBe(false);
+  expect(isCancelled('cancelled')).toBe(false);             // a bare string is not a throw we own
+  expect(isCancelled(null)).toBe(false);
 });
