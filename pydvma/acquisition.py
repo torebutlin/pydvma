@@ -23,6 +23,103 @@ MESSAGE = ''
 # capture would clip the top of the band. ceil(2.56) = 3.
 MIN_OVERSAMPLE_FACTOR = 3
 
+#: How often a cancellable wait looks at its ``cancel_event``, in
+#: seconds. Fine enough that an operator's "stop" feels immediate,
+#: coarse enough to cost nothing over a multi-second capture.
+CANCEL_POLL_INTERVAL = 0.05
+
+#: Extra seconds allowed for the post-trigger half of an armed capture,
+#: on top of ``stored_time`` itself — the same margin the NI path passes
+#: to ``WaitUntilTaskDone``.
+POST_TRIGGER_MARGIN = 5.0
+
+
+class CaptureCancelled(Exception):
+    '''Raised by `log_data` when its ``cancel_event`` is set mid-capture.
+
+    Signals that no data was returned **on purpose** — the caller asked
+    the capture to stop — as opposed to a hardware failure. Any stimulus
+    playing at the time is stopped before this propagates. The ``pydvma
+    serve`` bridge turns it into a ``status/cancelled`` frame, sent
+    instead of the usual ``log_result``.
+    '''
+
+
+def _wait(duration, cancel_event=None, poll=CANCEL_POLL_INTERVAL):
+    '''Sleep for ``duration`` seconds, watching ``cancel_event``.
+
+    Returns True if the wait ended early because the event was set,
+    False if it ran to term. With ``cancel_event=None`` this is a plain
+    ``time.sleep`` — the Python-API path is unchanged, and pays nothing
+    for a feature it isn't using.
+    '''
+    if cancel_event is None:
+        if duration > 0:
+            time.sleep(duration)
+        return False
+    deadline = time.time() + duration
+    while True:
+        if cancel_event.is_set():
+            return True
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return False
+        time.sleep(min(poll, remaining))
+
+
+def _stop_output(settings, s, wait=True):
+    '''Stop and release a stimulus stream started by `output_signal`.
+
+    ``wait=True`` is the normal end-of-capture path: an NI/mock task is
+    given ``stored_time + POST_TRIGGER_MARGIN`` seconds to finish
+    playing out before being stopped. ``wait=False`` is the cancel path
+    — stop it where it stands, so a cancelled capture doesn't leave a
+    sweep running on the AO rails. No-op when ``s`` is None.
+    '''
+    if s is None:
+        return
+    if settings.output_device_driver == 'soundcard':
+        s.stop()
+        s.close()
+    elif settings.output_device_driver in ('nidaq', 'mock'):
+        if wait:
+            s.WaitUntilTaskDone(settings.stored_time + POST_TRIGGER_MARGIN)
+        s.StopTask()
+
+
+def _capture_finished(rec):
+    '''Has ``rec`` finished filling the post-trigger half of its window?
+
+    Duck-typed on purpose. The soundcard `streams.Recorder` runs a
+    two-phase trigger and answers with ``capture_complete``; the NI
+    recorder (`streams.Recorder_NI_nidaqmx`, hardware-verified
+    sample-exact and deliberately left alone) sets ``trigger_detected``
+    only once its buffer already holds the whole post-trigger window,
+    so for it the two questions are the same one.
+    '''
+    return getattr(rec, 'capture_complete', rec.trigger_detected)
+
+
+def _reset_trigger_state(rec):
+    '''Disarm a recorder's trigger flags and unfreeze its stored buffer.
+
+    Both flags of the two-phase state machine have to go back down
+    together: leaving ``capture_complete`` set would keep
+    `streams.Recorder`'s stored buffer frozen after the capture that
+    set it. Recorders without the second phase (NI, mock) just get
+    ``trigger_detected`` cleared, as before.
+
+    The recorder's internal post-trigger countdown is deliberately NOT
+    touched. It is only ever read after a fresh crossing has just
+    written it, so a stale value cannot be used — while writing it from
+    here could land in the middle of a callback that is arming, which
+    runs on the audio thread.
+    '''
+    rec.trigger_detected = False
+    if hasattr(rec, 'capture_complete'):
+        rec.capture_complete = False
+        rec.trigger_overshoot = 0
+
 
 def _capture_settings(target_settings, capture_fs):
     """A copy of ``target_settings`` reconfigured to capture at ``capture_fs``.
@@ -62,20 +159,23 @@ def _capture_rate_message(reason, capture_fs, target_fs):
             'anti-alias filter.\n'.format(target_fs, capture_fs, target_fs))
 
 #%% Main data acquisition function
-def log_data(settings, test_name=None, rec=None, output=None):
+def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None):
     '''Acquire one block of time-domain data and return it as a DataSet.
 
     Two call modes depending on ``settings.pretrig_samples``:
 
     * **No pretrigger** (``pretrig_samples is None``): starts / reuses
-      a stream, sleeps for ``settings.stored_time`` seconds, and
+      a stream, waits for ``settings.stored_time`` seconds, and
       returns the most recent ``stored_time * fs`` samples from the
       circular buffer. If ``output`` is supplied it is played in
       parallel (soundcard play is blocking; NI play is non-blocking
       and synchronized against ``stored_time`` via WaitUntilTaskDone).
     * **Pretrigger armed** (``pretrig_samples`` set): waits up to
       ``settings.pretrig_timeout`` seconds for the monitored channel
-      to cross ``settings.pretrig_threshold``. When an ``output``
+      to cross ``settings.pretrig_threshold``, then a further
+      ``stored_time + 5`` seconds for the post-trigger half of the
+      window to fill. The timeout therefore bounds the WAIT FOR THE
+      EVENT only — a long capture cannot expire it. When an ``output``
       stimulus is supplied the timeout clock starts once the stimulus
       is actually playing (the ~1 s settle sleep and AO task setup are
       not counted against it). On trigger, returns a window of
@@ -103,6 +203,17 @@ def log_data(settings, test_name=None, rec=None, output=None):
         through as-is (must stay within ±``output_VmaxNI``). For
         soundcard it's divided by ``output_VmaxSC`` to recover the ±1
         normalised units sounddevice expects.
+    cancel_event : threading.Event or None
+        Optional cooperative stop. When supplied, every wait in the
+        capture (the free-run dwell, and both phases of the armed wait)
+        polls it every :data:`CANCEL_POLL_INTERVAL` seconds; if it is
+        set, any playing stimulus is stopped and
+        :class:`CaptureCancelled` is raised instead of returning data.
+        ``None`` (the default) is the plain blocking behaviour — the
+        Python API is unchanged. Used by the ``pydvma serve`` bridge,
+        which runs this in a worker thread that cannot be killed from
+        outside. The one wait it cannot interrupt is soundcard playback
+        of a stimulus, which blocks inside ``sd.OutputStream.write``.
 
     Returns
     -------
@@ -110,6 +221,14 @@ def log_data(settings, test_name=None, rec=None, output=None):
         A DataSet containing one TimeData **in volts**. If
         ``settings.use_output_as_ch0`` is True and ``output`` was
         supplied, the output signal is prepended as an extra channel.
+
+    Raises
+    ------
+    CaptureCancelled
+        If ``cancel_event`` is set before the capture finishes.
+    ValueError
+        If ``pretrig_samples`` exceeds ``chunk_size``, or leaves no
+        post-trigger data (``>= stored_time * fs``).
 
     Notes
     -----
@@ -131,7 +250,13 @@ def log_data(settings, test_name=None, rec=None, output=None):
     ``pretrig_samples`` is capped at ``chunk_size`` (validated at
     call-time with a ``ValueError``); the recorder only retains that
     much pre-trigger context. Larger windows require a larger
-    ``chunk_size``.
+    ``chunk_size``. It must also leave room for post-trigger data —
+    ``pretrig_samples >= stored_time * fs`` is rejected the same way.
+
+    The threshold is compared in the units the recorder stores, which
+    for a soundcard means volts once ``VmaxSC`` is set and full-scale
+    units while it is 1.0 (uncalibrated). Calibrating a device
+    therefore changes what a given threshold number means.
 
     On a **trigger timeout** (``pretrig_timeout`` elapses with nothing
     above threshold), the function does not raise — it returns the
@@ -262,6 +387,19 @@ def log_data(settings, test_name=None, rec=None, output=None):
             'reduce pretrig_samples) to fit.'
             .format(settings.pretrig_samples, settings.chunk_size)
         )
+    # Same reason, other end: with no post-trigger samples left there is
+    # nothing to record after the event. `serve` mutates stored_time and
+    # pretrig_samples on a live settings object, so this pairing is only
+    # ever final here.
+    if (settings.pretrig_samples is not None
+            and settings.pretrig_samples >= int(settings.stored_time * settings.fs)):
+        raise ValueError(
+            'pretrig_samples ({}) must be less than the capture length '
+            'stored_time * fs ({} samples), or there is no post-trigger '
+            'data left to record.'
+            .format(settings.pretrig_samples,
+                    int(settings.stored_time * settings.fs))
+        )
 
     # Always rebuild the stream. `streams.REC` can be None when a prior
     # `end_stream()` fired (e.g. on device switch) even though the caller
@@ -287,62 +425,76 @@ def log_data(settings, test_name=None, rec=None, output=None):
         streams.start_stream(settings)
     rec = streams.REC
 
-    streams.REC.trigger_detected = False
-    
+    _reset_trigger_state(streams.REC)
+    s = None  # the stimulus stream, once started — see `_stop_output`
+
     # Stream is slightly longer than settings.stored_time, so need to add delay
     # from initialisation to allow stream to fill up and prevent zeros at start
     # of logged data.
     time.sleep(2*settings.chunk_size/settings.fs)
     t = datetime.datetime.now()
     timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
-    
+
     if settings.pretrig_samples is None:
 
         MESSAGE = 'Logging data for {} seconds.\n'.format(settings.stored_time)
         print(MESSAGE)
-        
-        
+
+
         # basic way to control logging time: won't be precise time from calling function
         # also won't be exactly synced to output signal
         if output is not None:
             s = output_signal(settings,output)
             # rec.write(output.astype('float32'))
-        
+
         if (settings.device_driver != 'soundcard') or (output is None): # soundcard output is blocking via sd.OutputStream.write; nidaq and mock are non-blocking
-            time.sleep(settings.stored_time)
-        
-            
+            # Chunked so a `cancel_event` is seen within
+            # CANCEL_POLL_INTERVAL rather than at the end of the dwell.
+            if _wait(settings.stored_time, cancel_event):
+                _stop_output(settings, s, wait=False)
+                raise CaptureCancelled(
+                    'capture cancelled during the {} s log'
+                    .format(settings.stored_time))
+        elif cancel_event is not None and cancel_event.is_set():
+            # Soundcard playback blocked in sd.OutputStream.write for the
+            # whole capture; honour a cancel that arrived meanwhile.
+            _stop_output(settings, s, wait=False)
+            raise CaptureCancelled('capture cancelled during soundcard playback')
+
+
         # make copy of data
         stored_time_data_copy = np.copy(streams.REC.stored_time_data)
         number_samples = int(streams.REC.settings.stored_time * streams.REC.settings.fs)
-        
+
         stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
         MESSAGE += 'Logging complete.\n'
         print(MESSAGE)
 
-        if output is not None:
-            if settings.output_device_driver == 'soundcard':
-                s.stop()
-                s.close()
-            if settings.output_device_driver in ('nidaq', 'mock'):
-                s.WaitUntilTaskDone(settings.stored_time+5)
-                s.StopTask()
+        _stop_output(settings, s)
 
 
 
     else:
         streams.REC.__init__(settings) # zeros buffers so looks for trigger in fresh data
-        streams.REC.trigger_detected = False # somehow this can be true even after previous call
+        _reset_trigger_state(streams.REC) # somehow this can be true even after previous call
         streams.REC.trigger_first_detected_message = True
-        
+
         MESSAGE = 'Waiting for trigger on channel {}.\n'.format(settings.pretrig_channel)
         print(MESSAGE)
-        
+
+        # ---- Phase 1: wait for the threshold crossing ----------------
+        # `pretrig_timeout` bounds THIS wait only. It used to bound the
+        # whole capture, which meant every capture longer than the
+        # timeout "timed out" and silently returned the buffer tail —
+        # free-run data wearing a trigger's label.
         start_output_flag = True
+        cancelled = False
         t0 = time.time()
         while (time.time()-t0 < settings.pretrig_timeout) and not streams.REC.trigger_detected:
             if (output is not None) and (start_output_flag == True): # start output within loop, but only once!
-                time.sleep(1)
+                if _wait(1, cancel_event):
+                    cancelled = True
+                    break
                 MESSAGE = 'Starting output signal.\n'
                 print(MESSAGE)
                 s = output_signal(settings,output)
@@ -355,46 +507,87 @@ def log_data(settings, test_name=None, rec=None, output=None):
                 # before the trigger had a fair chance to fire.
                 t0 = time.time()
 
-            time.sleep(0.2)
-        if (time.time()-t0 > settings.pretrig_timeout):
+            if _wait(0.2, cancel_event):
+                cancelled = True
+                break
+
+        triggered = streams.REC.trigger_detected
+        if cancelled:
+            _stop_output(settings, s, wait=False)
+            raise CaptureCancelled('capture cancelled while waiting for trigger')
+        if not triggered:
             MESSAGE = 'Trigger not detected within timeout of {} seconds.\n'.format(settings.pretrig_timeout)
             print(MESSAGE)
-        
+
+        # ---- Phase 2: let the post-trigger half of the window fill ---
+        # Bounded by the capture length plus the same margin the NI AO
+        # path uses. A recorder with no second phase (NI, mock) reports
+        # finished immediately — see `_capture_finished`.
+        if triggered:
+            t1 = time.time()
+            while not _capture_finished(streams.REC):
+                if (time.time() - t1) > (settings.stored_time + POST_TRIGGER_MARGIN):
+                    MESSAGE = ('Trigger detected, but the capture did not '
+                               'complete within {} seconds — returning the '
+                               'buffer tail.\n'
+                               .format(settings.stored_time + POST_TRIGGER_MARGIN))
+                    print(MESSAGE)
+                    break
+                if _wait(CANCEL_POLL_INTERVAL, cancel_event):
+                    _stop_output(settings, s, wait=False)
+                    raise CaptureCancelled(
+                        'capture cancelled while recording post-trigger data')
+
         # make copy of data
         stored_time_data_copy = np.copy(streams.REC.stored_time_data)
-        trigger_check = stored_time_data_copy[(settings.chunk_size):(2*settings.chunk_size),settings.pretrig_channel]
-        hits = np.where(np.abs(trigger_check) > settings.pretrig_threshold)[0]
         number_samples = int(settings.stored_time * settings.fs)
-        if len(hits) == 0:
-            # Timeout expired with no trigger detected — return the tail of
-            # the buffer rather than crashing with IndexError.
-            stored_time_data_copy = stored_time_data_copy[-number_samples:, :]
+        if hasattr(streams.REC, 'capture_complete'):
+            # Two-phase recorder (`streams.Recorder`): the buffer is
+            # frozen with the window's end `trigger_overshoot` samples
+            # short of the tail, which puts the first above-threshold
+            # sample at index `pretrig_samples` of the slice.
+            if streams.REC.capture_complete:
+                end_index = (stored_time_data_copy.shape[0]
+                             - int(streams.REC.trigger_overshoot))
+                start_index = end_index - number_samples
+                stored_time_data_copy = stored_time_data_copy[start_index:end_index, :]
+            else:
+                # No trigger (timeout), or the post-trigger wait was cut
+                # short: the buffer never froze, so its tail is simply
+                # the most recent data — the free-run fallback.
+                stored_time_data_copy = stored_time_data_copy[-number_samples:, :]
         else:
-            detected_sample = settings.chunk_size + hits[0]
-            start_index = detected_sample - settings.pretrig_samples
-            end_index   = start_index + number_samples
-            stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
+            # Single-phase recorder (`streams.Recorder_NI_nidaqmx`, and
+            # `MockRecorder`): `trigger_detected` is only set once the
+            # post-trigger data is already in the buffer, and the
+            # crossing sits in the second-oldest chunk. Untouched —
+            # hardware-verified sample-exact on NI.
+            trigger_check = stored_time_data_copy[(settings.chunk_size):(2*settings.chunk_size),settings.pretrig_channel]
+            hits = np.where(np.abs(trigger_check) > settings.pretrig_threshold)[0]
+            if len(hits) == 0:
+                # Timeout expired with no trigger detected — return the tail of
+                # the buffer rather than crashing with IndexError.
+                stored_time_data_copy = stored_time_data_copy[-number_samples:, :]
+            else:
+                detected_sample = settings.chunk_size + hits[0]
+                start_index = detected_sample - settings.pretrig_samples
+                end_index   = start_index + number_samples
+                stored_time_data_copy = stored_time_data_copy[start_index:end_index,:]
         # Zero the stored buffer BEFORE unfreezing: the captured signal
         # is still sitting in it, and once appends resume it re-rolls
         # through the trigger-check window and spuriously re-arms
         # `trigger_detected` between captures (observed live: the serve
         # bridge's trigger poller then reports "triggered" on the next
         # armed capture before log_data has re-zeroed anything). While
-        # `trigger_detected` is still True the callback is frozen, so
-        # this zeroing cannot race an append.
+        # the capture is still marked complete the callback is frozen,
+        # so this zeroing cannot race an append.
         streams.REC.stored_time_data[:] = 0.0
-        streams.REC.trigger_detected = False
+        _reset_trigger_state(streams.REC)
 
         MESSAGE = 'Logging complete.\n'
         print(MESSAGE)
 
-        if output is not None:
-            if settings.output_device_driver == 'soundcard':
-                s.stop()
-                s.close()
-            if settings.output_device_driver in ('nidaq', 'mock'):
-                s.WaitUntilTaskDone(settings.stored_time+5)
-                s.StopTask()
+        _stop_output(settings, s)
 
     # Clipping is an ADC-domain property — take the raw peak BEFORE any
     # digital filtering, or the anti-alias FIR below would smear rail hits

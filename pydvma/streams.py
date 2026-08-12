@@ -1024,31 +1024,64 @@ class Recorder(object):
 
     Trigger / pretrigger state machine
     ----------------------------------
+    Two flags, two distinct moments — the distinction matters, because
+    a trigger that is only reported once the capture has finished is
+    indistinguishable from free-running:
+
+    * ``trigger_detected`` — a threshold crossing **has been seen**.
+      Set in the callback that carried the crossing, i.e. within one
+      chunk (``chunk_size/fs`` seconds) of the event itself. This is
+      what the ``pydvma serve`` bridge reports as ``status/triggered``,
+      and what ``pretrig_timeout`` is timing.
+    * ``capture_complete`` — the buffer now holds the whole window:
+      ``pretrig_samples`` before the crossing plus
+      ``stored_time*fs - pretrig_samples`` from the crossing onwards.
+      `stored_time_data` **freezes** at that point (only
+      `osc_time_data` keeps scrolling) so the window can be copied out
+      unhurried.
+
     Each incoming chunk (``chunk_size`` samples, ``channels`` wide)
     runs through `callback`:
 
     1. Shift both buffers left by ``chunk_size`` and append the new
-       chunk at the end. When ``pretrig_samples is not None`` and
-       ``trigger_detected`` is already True, `stored_time_data` is
-       **frozen** — only `osc_time_data` keeps scrolling.
-    2. "First-detect" message: if any sample in the just-read chunk
-       exceeds ``pretrig_threshold`` on the monitored
-       ``pretrig_channel``, print a one-shot notice. Independent of
-       whether the trigger has actually been committed yet.
-    3. Trigger check: look at ``stored_time_data[chunk_size :
-       2*chunk_size, pretrig_channel]`` (the *second-oldest* chunk in
-       the buffer — see below). If any sample exceeds
-       ``pretrig_threshold``, set ``trigger_detected = True`` and
-       freeze the buffer on subsequent callbacks.
+       chunk at the end, unless the capture is complete (armed
+       captures only), in which case `stored_time_data` is left frozen.
+    2. Before the trigger: scan the **newest** chunk for a sample whose
+       magnitude exceeds ``pretrig_threshold`` on ``pretrig_channel``.
+       The scan only arms once ``pretrig_samples`` of real history have
+       been shifted in since ``__init__`` (``chunks_seen``), so the
+       pre-trigger context can never be the zeros the buffer starts
+       life with.
+    3. On a crossing: set ``trigger_detected``, print the one-shot
+       notice, and work out how many post-trigger samples are still
+       missing (the crossing generally lands mid-chunk). Subsequent
+       chunks count that down; when it reaches zero ``capture_complete``
+       is set and the buffer freezes.
+    4. ``trigger_overshoot`` records how many samples past the end of
+       the wanted window were appended by that last chunk (0 to
+       ``chunk_size - 1``, because freezing can only happen on a chunk
+       boundary). `log_data` slices
+       ``stored_time_data[end - N : end]`` with
+       ``end = len(buffer) - trigger_overshoot``, which puts the first
+       sample above threshold at exactly index ``pretrig_samples`` —
+       the sample-exact invariant the pretrigger promises.
 
-    The "check the second-oldest chunk" design means that by the
-    time a trigger is detected, the buffer already holds ~``stored_time
-    * fs`` samples of *post*-trigger data and up to ``chunk_size``
-    samples of *pre*-trigger data. `log_data` uses this to return a
-    window straddling the trigger with ``pretrig_samples`` samples of
-    context before it — see `pydvma.acquisition.log_data`. The
-    ``chunk_size`` ceiling on the pre-trigger context is why
-    ``pretrig_samples > chunk_size`` is rejected.
+    The buffer is ``2 + ceil(stored_time*fs/chunk_size)`` chunks long,
+    which leaves at least one whole chunk of slack in front of the
+    window — so the pre-trigger context is always available even when
+    the crossing lands on the first sample of a chunk. The
+    ``chunk_size`` ceiling on ``pretrig_samples`` (validated in
+    `pydvma.options.MySettings`) keeps that guarantee cheap;
+    ``pretrig_samples`` must also stay below ``stored_time*fs``, or
+    there would be no post-trigger data left to record.
+
+    ``pretrig_threshold`` is compared against the data **as stored**,
+    i.e. after the ``VmaxSC`` scaling described below: volts on a
+    calibrated interface, full-scale units on an uncalibrated one
+    (``VmaxSC = 1``).
+
+    Both flags stay False when ``pretrig_samples is None`` (free-run
+    logging): there is no trigger to detect and nothing ever freezes.
 
     Data convention
     ---------------
@@ -1076,6 +1109,22 @@ class Recorder(object):
     def __init__(self,settings):
         self.settings = settings
         self.trigger_detected = False
+        # Second phase of the trigger state machine (see the class
+        # docstring): the wanted window is complete and the stored
+        # buffer has stopped moving. `log_data` re-runs __init__ to zero
+        # the buffers before arming, so every counter below has to be
+        # (re)initialised HERE, not lazily in the callback.
+        self.capture_complete = False
+        #: Samples appended past the end of the wanted window by the
+        #: chunk that completed it (0 .. chunk_size-1).
+        self.trigger_overshoot = 0
+        #: Chunks shifted into `stored_time_data` since __init__ — used
+        #: to refuse a trigger until there is real (non-zero) history to
+        #: serve as pre-trigger context.
+        self.chunks_seen = 0
+        #: Post-trigger samples still outstanding once a crossing has
+        #: been seen; None while waiting for the crossing.
+        self._post_trigger_pending = None
         self.trigger_first_detected_message = False
         self.osc_time_axis=np.arange(0,(self.settings.num_chunks*self.settings.chunk_size)/self.settings.fs,1/self.settings.fs)
         self.osc_freq_axis=np.fft.rfftfreq(len(self.osc_time_axis),1/self.settings.fs)
@@ -1096,7 +1145,8 @@ class Recorder(object):
     
     def callback(self, in_data, frame_count, time_info, status):
         '''
-        Obtains data from the audio stream.
+        Obtains data from the audio stream, and runs the trigger state
+        machine (see the class docstring).
 
         The sounddevice callback delivers float32 samples in ±1
         normalised units; we scale by ``settings.VmaxSC`` on the way
@@ -1105,34 +1155,89 @@ class Recorder(object):
         normalised sample). VmaxSC defaults to 1.0 so uncalibrated
         soundcards keep identical numeric behaviour to the old ±1
         convention.
+
+        ``pretrig_threshold`` is compared in those same units — volts
+        on a calibrated interface, full-scale units on an uncalibrated
+        one. The default 0.05 therefore means "5% of full scale" only
+        while ``VmaxSC`` is 1.0; on a device with a measured voltage
+        scale it means 50 mV, which may sit in the noise.
         '''
         t0 = time.time()
         # self.osc_data_chunk = (np.frombuffer(in_data, dtype='int'+str(self.settings.nbits))/2**(self.settings.nbits-1))
         self.osc_data_chunk = np.copy(in_data) * self.settings.VmaxSC
         self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
+        armed = self.settings.pretrig_samples is not None
+        frozen = armed and self.capture_complete
         for i in range(self.settings.channels):
             self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
             self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-            if (not self.trigger_detected)  or (self.settings.pretrig_samples is None):
+            if not frozen:
                 self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
                 self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-        
-        trigger_first_detected = np.any(np.abs(self.osc_data_chunk[:,self.settings.pretrig_channel])>self.settings.pretrig_threshold)
-        if trigger_first_detected and self.trigger_first_detected_message:
-            acquisition.MESSAGE += 'Trigger detected. Logging data for {} seconds.\n'.format(self.settings.stored_time)
-            print('')
-            print(acquisition.MESSAGE)
-            self.trigger_first_detected_message=False
-            
-            
-        trigger_check = self.stored_time_data[(self.settings.chunk_size):(2*self.settings.chunk_size),self.settings.pretrig_channel]
-        if np.any(np.abs(trigger_check)>self.settings.pretrig_threshold):
-            # freeze updating stored_time_data
-            self.trigger_detected = True
+
+        if not frozen:
+            self.chunks_seen += 1
+
+        if armed and not self.capture_complete:
+            self._run_trigger_state_machine()
 
         # self.list_dt += [time.time()-t0]
 
         # return in_data
+
+    def _run_trigger_state_machine(self):
+        '''Advance the two-phase trigger for the chunk just appended.
+
+        Phase 1 (no crossing yet): scan the NEWEST chunk — the samples
+        that just arrived — so ``trigger_detected`` is set within one
+        callback of the physical event rather than one capture later.
+        The scan is held off until ``pretrig_samples`` of real samples
+        have been shifted in, so the returned window's pre-trigger
+        context is never the buffer's initial zeros.
+
+        Phase 2 (crossing seen): count down the post-trigger samples
+        still owed. The crossing generally lands mid-chunk, so the
+        first instalment is ``chunk_size - j`` samples; when the debt
+        is cleared, ``capture_complete`` freezes the buffer and
+        ``trigger_overshoot`` records how far past the window's end the
+        final chunk ran.
+
+        Called only while armed and incomplete.
+        '''
+        chunk_size = self.settings.chunk_size
+        pretrig_samples = self.settings.pretrig_samples
+
+        if not self.trigger_detected:
+            # Real history available BEFORE this chunk. Anything less
+            # and the pre-trigger context would include startup zeros.
+            history = (self.chunks_seen - 1) * chunk_size
+            if history < pretrig_samples:
+                return
+            hits = np.nonzero(
+                np.abs(self.osc_data_chunk[:, self.settings.pretrig_channel])
+                > self.settings.pretrig_threshold)[0]
+            if len(hits) == 0:
+                return
+            self.trigger_detected = True
+            if self.trigger_first_detected_message:
+                acquisition.MESSAGE += 'Trigger detected. Logging data for {} seconds.\n'.format(self.settings.stored_time)
+                print('')
+                print(acquisition.MESSAGE)
+                self.trigger_first_detected_message = False
+            number_samples = int(self.settings.stored_time * self.settings.fs)
+            # Samples from the crossing (inclusive) to the window's end,
+            # minus those this chunk already carries after the crossing.
+            self._post_trigger_pending = (
+                (number_samples - pretrig_samples) - (chunk_size - int(hits[0])))
+        else:
+            self._post_trigger_pending -= chunk_size
+
+        if self._post_trigger_pending <= 0:
+            self.trigger_overshoot = -self._post_trigger_pending
+            self._post_trigger_pending = 0
+            # Freeze: from the next callback on, `stored_time_data`
+            # holds the finished window and stops moving.
+            self.capture_complete = True
     
     
     def init_stream(self,settings,_input_=True,_output_=False):

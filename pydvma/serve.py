@@ -48,15 +48,20 @@ Client → server (``{"type": ...}``):
 ``log``          ``{duration, pretrigger|null, output?, test_name?}`` —
                  runs ``acquisition.log_data`` in a worker thread;
                  replies ``log_result`` then a binary ``.dvma``
-                 container frame. See "Output / stimulus" and
-                 "Pretrigger status events" below.
-``cancel``       best-effort stop of the monitor / in-flight log
+                 container frame. Dispatched as a background task so
+                 the connection keeps reading during the capture; a
+                 second concurrent ``log`` is refused with ``error``.
+                 See "Output / stimulus", "Pretrigger status events"
+                 and "Cancelling" below.
+``cancel``       stop the in-flight log, or (if none) the monitor —
+                 see "Cancelling" below
 ===============  ==================================================
 
 Server → client:
 
 * ``capabilities`` — ``{v, backends, devices:{soundcard, nidaq},
-  fs_ladders, max_channels, device_caps, pretrigger, ao}``.  All keys
+  fs_ladders, max_channels, device_caps, default_input, default_output,
+  pretrigger, ao}``.  All keys
   are stable across the additive Wave-C growth; ``v`` stays ``1``.
   ``fs_ladders`` and ``max_channels`` are now **per-device maps** keyed
   by ``"<driver>:<index>"`` (e.g. ``"soundcard:0"``, ``"nidaq:0"``):
@@ -69,6 +74,11 @@ Server → client:
   device entry also carries its cap object inline under ``caps`` (an
   additive key — the pre-existing enumerate fields are unchanged).
   ``ao`` (top-level) is ``True`` when any backend can output.
+  ``default_input`` / ``default_output`` name the device the OS treats
+  as default — ``{driver, index, name, hostapi}``, or ``null`` when
+  there is none to report (no ``sounddevice``, no PortAudio host, or a
+  default index outside the current enumeration).  Only the soundcard
+  backend has such a notion; NI does not.
 * ``status`` — acknowledgement of ``configure`` / monitor lifecycle,
   carries the resolved stream geometry; also the pretrigger arming
   events ``armed`` / ``triggered`` / ``timeout`` (see below).
@@ -116,13 +126,37 @@ UI can show an "armed / waiting for trigger" state:
   ``trigger_detected`` flag is observed to flip ``True`` while the
   capture runs.  A companion asyncio task polls that flag at
   :data:`PRETRIG_POLL_HZ` (~10 Hz) from the event loop while the capture
-  blocks in the executor thread.  Best-effort: on a fast trigger the
-  flag may be reset by ``log_data`` before a poll sees it — the
-  authoritative outcome is always the ``log_result`` that follows.
+  blocks in the executor thread.  On the soundcard path that flag now
+  flips within one chunk of the physical crossing (``streams.Recorder``
+  runs a two-phase trigger — ``trigger_detected`` at the crossing,
+  ``capture_complete`` when the window is full), so this event marks
+  the event rather than the end of the capture.  Best-effort: on a
+  fast trigger the flag may be reset by ``log_data`` before a poll sees
+  it — the authoritative outcome is always the ``log_result``.
 * ``{event: "timeout"}`` — emitted if the arming window closed without
-  ``trigger_detected`` ever being seen (the ``pretrig_timeout`` fallback
-  in ``log_data``).  ``MockRecorder`` never triggers, so the mock
-  backend always exercises this path — armed → timeout → log_result.
+  ``trigger_detected`` ever being seen (the ``pretrig_timeout``
+  fallback in ``log_data``, which bounds the wait for the CROSSING
+  only — a capture longer than the timeout is not cut short).
+  ``MockRecorder`` never triggers, so the mock backend always
+  exercises this path — armed → timeout → log_result.
+
+Cancelling
+==========
+
+``cancel`` means "stop the capture" while a ``log`` is in flight, and
+"stop the monitor" otherwise:
+
+* **With a log running.**  The capture is stopped cooperatively — the
+  worker thread cannot be killed, so a ``threading.Event`` is set and
+  ``acquisition.log_data`` unwinds (stopping any stimulus it started)
+  at its next poll.  The client receives ``{event: "cancelled"}``
+  **instead of** ``log_result``; no container frame follows.  The
+  monitor keeps running: the operator cancelled a capture, not the
+  oscilloscope.  This works only because ``log`` is dispatched as a
+  background task — awaiting it inline meant the ``cancel`` frame was
+  not even read until the capture it was meant to stop had finished.
+* **With no log running.**  Unchanged from v1: the monitor feed stops
+  and ``{event: "cancelled"}`` acknowledges it.
 
 Binary frame header (little-endian, 20 bytes)::
 
@@ -202,6 +236,7 @@ import os
 import struct
 import sys
 import tempfile
+import threading
 import types
 import webbrowser
 from pathlib import Path
@@ -245,6 +280,11 @@ MONITOR_HZ = 30.0
 #: Poll cadence (Hz) for the pretrigger ``trigger_detected`` flag while a
 #: pretriggered ``log`` capture blocks in the executor thread.
 PRETRIG_POLL_HZ = 10.0
+#: Seconds a ``cancel`` waits for the capture worker to unwind before
+#: acknowledging anyway.  Cooperative cancellation normally returns in
+#: well under a tenth of this; the bound exists for the paths that
+#: cannot poll (soundcard playback blocked inside a write).
+CANCEL_JOIN_TIMEOUT = 5.0
 
 #: Standard capture sample rates advertised as fs-ladder candidates.  The
 #: soundcard backend filters these with ``sd.check_input_settings``; the
@@ -685,6 +725,55 @@ def _nidaq_device_caps() -> tuple[list[dict], dict[int, dict]]:
     return entries, caps_by_index
 
 
+def _default_soundcard_devices() -> tuple[dict | None, dict | None]:
+    """The OS's default input and output soundcard, or ``(None, None)``.
+
+    Which device the operating system considers default is the one thing
+    a raw enumeration cannot tell the UI, and it is what a first-time
+    user almost always wants preselected. Read from PortAudio's
+    ``sd.default.device`` pair, and reported as
+    ``{driver, index, name, hostapi}`` so the client can match it
+    against the enumerated list by index AND name (an index alone is a
+    position that reorders — see `streams.resolve_device_index`).
+
+    Either half is ``None`` when there is no default to report: no
+    ``sounddevice``, no PortAudio host, the sentinel ``-1``, or an index
+    that has fallen outside the current enumeration. Only the soundcard
+    backend has a notion of a system default at all; NI does not.
+    """
+    if streams.sd is None:
+        return None, None
+    try:
+        default_pair = streams.sd.default.device
+        indices = (default_pair[0], default_pair[1])
+    except (AttributeError, TypeError, IndexError):
+        return None, None
+
+    try:
+        names = streams.enumerated_device_names('soundcard') or []
+        hostapis = streams.enumerated_device_hostapis('soundcard') or []
+    except Exception:
+        return None, None
+
+    def entry(index):
+        if index is None:
+            return None
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            return None
+        if index < 0 or index >= len(names):
+            return None
+        return {
+            'driver': 'soundcard',
+            'index': index,
+            'name': names[index],
+            'hostapi': hostapis[index] if index < len(hostapis) else None,
+        }
+
+    return entry(indices[0]), entry(indices[1])
+
+
 def build_capabilities() -> dict[str, Any]:
     """Build the ``capabilities`` payload advertised on ``hello``.
 
@@ -744,6 +833,7 @@ def build_capabilities() -> dict[str, Any]:
                                  'output': int(e.get('ao_channel_count') or 0)}
 
     ao = any(bool(c.get('ao')) for c in device_caps.values())
+    default_input, default_output = _default_soundcard_devices()
 
     return {
         'v': PROTOCOL_VERSION,
@@ -754,6 +844,11 @@ def build_capabilities() -> dict[str, Any]:
         'fs_ladders': fs_ladders,
         'max_channels': max_channels,
         'device_caps': device_caps,
+        # Which device the OS considers default — the enumeration alone
+        # cannot say, and it is the sensible initial selection. Either
+        # may be null.
+        'default_input': default_input,
+        'default_output': default_output,
         'pretrigger': True,
         'ao': ao,
     }
@@ -761,7 +856,7 @@ def build_capabilities() -> dict[str, Any]:
 
 # ---- capture helper (runs in a worker thread) ----
 
-def _capture_to_dvma(settings, test_name, output=None):
+def _capture_to_dvma(settings, test_name, output=None, cancel_event=None):
     """Run a blocking capture and serialise it to ``.dvma`` bytes.
 
     Executed in a thread-pool worker because ``acquisition.log_data``
@@ -777,8 +872,16 @@ def _capture_to_dvma(settings, test_name, output=None):
     forwarded verbatim to ``log_data(..., output=...)`` so the AO path
     (and ``settings.use_output_as_ch0``) behaves exactly as it does for
     the Qt logger.
+
+    ``cancel_event`` is a :class:`threading.Event` the capture polls as
+    it waits.  A worker thread cannot be killed from the event loop, so
+    this is the only way a ``cancel`` frame can actually stop a log in
+    progress: setting it makes ``log_data`` stop any stimulus and raise
+    :class:`acquisition.CaptureCancelled`, which propagates out of here
+    to the awaiting task.
     """
-    dataset = acquisition.log_data(settings, test_name=test_name, output=output)
+    dataset = acquisition.log_data(settings, test_name=test_name, output=output,
+                                   cancel_event=cancel_event)
     td = dataset.time_data_list[0]
     n_samples, n_channels = td.time_data.shape
 
@@ -1164,7 +1267,12 @@ class _Connection:
         self.settings = None  # last configured MySettings
         self._monitor_task: asyncio.Task | None = None
         self._monitor_stop = asyncio.Event()
+        # The in-flight `log`, dispatched as its own task so the receive
+        # loop keeps reading (a `cancel` sent during a capture has to be
+        # READ during the capture to be worth anything), plus the
+        # threading.Event the worker polls to stop cooperatively.
         self._log_task: asyncio.Task | None = None
+        self._log_cancel: threading.Event | None = None
 
     # -- helpers --
 
@@ -1182,7 +1290,14 @@ class _Connection:
     # -- dispatch --
 
     async def dispatch(self, raw: str, server: BridgeServer) -> None:
-        """Parse and route one JSON control message."""
+        """Parse and route one JSON control message.
+
+        Every type is handled inline (so replies keep their request
+        order) except ``log``, which is spawned as a background task:
+        a capture blocks for ``stored_time`` seconds or longer, and
+        awaiting it here would stop the connection reading the very
+        ``cancel`` frame meant to interrupt it.
+        """
         try:
             msg = json.loads(raw)
         except (ValueError, TypeError):
@@ -1202,7 +1317,7 @@ class _Connection:
             elif mtype == 'stop_monitor':
                 await self._on_stop_monitor()
             elif mtype == 'log':
-                await self._on_log(msg)
+                await self._start_log(msg)
             elif mtype == 'cancel':
                 await self._on_cancel()
             else:
@@ -1390,6 +1505,41 @@ class _Connection:
             except Exception:
                 pass
 
+    async def _start_log(self, msg: dict) -> None:
+        """Spawn :meth:`_on_log` as a background task and return at once.
+
+        Refuses a second concurrent ``log`` with an ``error`` frame —
+        there is one process-global recorder, so two overlapping
+        captures would fight over it.  Errors raised inside the task
+        produce the same ``error`` frames the inline path did.
+        """
+        if self._log_task is not None and not self._log_task.done():
+            await self._send_error(
+                'a log is already in flight on this connection; '
+                'send cancel first')
+            return
+        self._log_cancel = threading.Event()
+        self._log_task = asyncio.create_task(self._run_log(msg))
+
+    async def _run_log(self, msg: dict) -> None:
+        """Task body: run one ``log``, reporting failures as ``error``.
+
+        Mirrors :meth:`dispatch`'s catch-all so a rejected or broken
+        capture still answers the client rather than dying silently in
+        a background task.  A cancelled capture
+        (:class:`acquisition.CaptureCancelled`) is NOT an error — the
+        ``status/cancelled`` frame is :meth:`_on_cancel`'s to send.
+        """
+        try:
+            await self._on_log(msg)
+        except acquisition.CaptureCancelled:
+            pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await self._send_error('%s: %s' % (type(exc).__name__, exc))
+
     async def _on_log(self, msg: dict) -> None:
         if streams.REC is None or self.settings is None:
             await self._send_error('log requires configure first')
@@ -1433,26 +1583,30 @@ class _Connection:
                                    'streamId': self.stream_id})
 
         loop = asyncio.get_running_loop()
-        self._log_task = asyncio.ensure_future(
+        cancel_event = self._log_cancel
+        capture = asyncio.ensure_future(
             loop.run_in_executor(
-                None, _capture_to_dvma, settings, test_name, output_array)
+                None, _capture_to_dvma, settings, test_name, output_array,
+                cancel_event)
         )
         triggered = {'seen': False}
         poll_task = (asyncio.create_task(self._poll_trigger(triggered))
                      if armed else None)
         try:
-            dvma_bytes, n_samples, n_channels = await self._log_task
-        except asyncio.CancelledError:
-            await self._send_error('log cancelled')
-            return
+            dvma_bytes, n_samples, n_channels = await capture
         finally:
-            self._log_task = None
             if poll_task is not None:
                 poll_task.cancel()
                 try:
                     await poll_task
                 except asyncio.CancelledError:
                     pass
+
+        # A cancel that landed while the capture was finishing still
+        # wins: the client contract is that `status/cancelled` arrives
+        # INSTEAD of `log_result`, never as well as it.
+        if cancel_event is not None and cancel_event.is_set():
+            return
 
         if armed and not triggered['seen']:
             await self._send_json({'type': 'status', 'event': 'timeout',
@@ -1499,21 +1653,60 @@ class _Connection:
             await asyncio.sleep(tick)
 
     async def _on_cancel(self) -> None:
-        """Best-effort cancel: stop the monitor and any in-flight log.
+        """Cancel the in-flight log, or (if there is none) the monitor.
 
-        The log runs a blocking capture in a worker thread that cannot be
-        force-killed; cancelling only stops us awaiting its result (the
-        thread finishes on its own).  Documented as best-effort.
+        **During a log** the capture is stopped cooperatively: the
+        worker thread cannot be killed from here, so the
+        ``threading.Event`` it polls is set and ``log_data`` unwinds —
+        stopping any stimulus on the way — within
+        :data:`acquisition.CANCEL_POLL_INTERVAL`.  The client then gets
+        ``status/cancelled`` **instead of** ``log_result``; no container
+        frame follows.  The monitor is deliberately left running: the
+        operator cancelled a capture, not the oscilloscope.
+
+        **With no log in flight** this is the original behaviour — stop
+        the monitor feed, then acknowledge.
+
+        Still best-effort at the edges: a capture blocked inside
+        soundcard playback (``sd.OutputStream.write``) cannot be
+        interrupted mid-write, and if the worker has not unwound within
+        :data:`CANCEL_JOIN_TIMEOUT` seconds the acknowledgement is sent
+        anyway.  Either way the log task suppresses its own result once
+        the event is set, so a late finisher cannot leak a
+        ``log_result`` after the cancel.
         """
-        await self._stop_monitor()
-        if self._log_task is not None and not self._log_task.done():
-            self._log_task.cancel()
+        task = self._log_task
+        if task is not None and not task.done():
+            if self._log_cancel is not None:
+                self._log_cancel.set()
+            with contextlib.suppress(asyncio.TimeoutError, Exception):
+                await asyncio.wait_for(asyncio.shield(task),
+                                       timeout=CANCEL_JOIN_TIMEOUT)
+        else:
+            await self._stop_monitor()
         await self._send_json({'type': 'status', 'event': 'cancelled',
                                'streamId': self.stream_id})
 
     async def close(self) -> None:
-        """Tear down on disconnect: stop the monitor loop."""
+        """Tear down on disconnect: stop the monitor loop and any log.
+
+        The log now runs as a background task, so a tab closing
+        mid-capture would otherwise leave it holding the process-global
+        recorder and writing to a dead socket.  Cancel it the same
+        cooperative way ``cancel`` does, bounded by
+        :data:`CANCEL_JOIN_TIMEOUT`.
+        """
         await self._stop_monitor()
+        task = self._log_task
+        if task is not None and not task.done():
+            if self._log_cancel is not None:
+                self._log_cancel.set()
+            with contextlib.suppress(asyncio.TimeoutError, Exception):
+                await asyncio.wait_for(asyncio.shield(task),
+                                       timeout=CANCEL_JOIN_TIMEOUT)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 # ---- CLI ----

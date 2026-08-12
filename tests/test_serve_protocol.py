@@ -1232,3 +1232,247 @@ class TestDeviceIndexReresolution:
         idx, note = self._conn()._reresolve_device_index('nidaq', 0, 'cDAQ1Mod1')
         assert idx == 1
         assert 'moved' in note
+
+
+# ---- live: cancel during a log (round 11) --------------------------------
+
+def test_cancel_during_log_aborts():
+    """A `cancel` sent mid-capture stops it, and `status/cancelled`
+    arrives INSTEAD of `log_result` — no container frame either.
+
+    Root cause this covers: the receive loop used to await the log
+    inline, so the cancel frame was not even READ until the capture it
+    was meant to interrupt had finished; and the capture itself had no
+    cancellation point (one `time.sleep(stored_time)`).
+    """
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 5.0, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+
+                t0 = asyncio.get_running_loop().time()
+                await _send(ws, type='log', duration=5.0, pretrigger=None,
+                            test_name='cancel-me')
+                await asyncio.sleep(0.5)
+                await _send(ws, type='cancel')
+
+                msg = await _recv_json(ws, timeout=5.0)
+                elapsed = asyncio.get_running_loop().time() - t0
+                assert msg['type'] == 'status', msg
+                assert msg['event'] == 'cancelled', msg
+                # Stopped early rather than running the 5 s out.
+                assert elapsed < 3.0, elapsed
+
+                # Nothing else follows: no log_result, no binary container.
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(ws.recv(), timeout=1.0)
+
+                # The connection is still healthy: a fresh log completes.
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            test_name='after-cancel')
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'
+                assert meta['testName'] == 'after-cancel'
+                frame = await _recv_binary(ws, timeout=10.0)
+                assert serve_mod.decode_header(frame)['msgType'] == \
+                    serve_mod.MSG_CONTAINER
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_cancel_during_log_leaves_the_monitor_running():
+    """Decision (round 11): cancelling a capture does not stop the
+    oscilloscope — the operator cancelled a log, not the scope."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 5.0, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='start_monitor')
+                await _recv_json(ws)                      # monitoring
+                await _recv_binary(ws, timeout=5.0)       # a live frame
+
+                await _send(ws, type='log', duration=5.0, pretrigger=None)
+                await asyncio.sleep(0.3)
+                await _send(ws, type='cancel')
+
+                saw_cancelled = False
+                for _ in range(200):
+                    raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                    if isinstance(raw, str):
+                        msg = json.loads(raw)
+                        assert msg.get('type') != 'log_result', msg
+                        if msg.get('event') == 'cancelled':
+                            saw_cancelled = True
+                            break
+                assert saw_cancelled
+                # Monitor frames keep coming after the cancel.
+                await _recv_binary(ws, timeout=5.0)
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_second_log_while_one_is_in_flight_is_refused():
+    """One process-global recorder ⇒ one capture at a time."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 2.0, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=2.0, pretrigger=None)
+                await asyncio.sleep(0.2)
+                await _send(ws, type='log', duration=2.0, pretrigger=None)
+                err = await _recv_json(ws, timeout=5.0)
+                assert err['type'] == 'error'
+                assert 'already in flight' in err['message']
+                await _send(ws, type='cancel')
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_control_messages_are_answered_during_a_log():
+    """The receive loop keeps reading while a capture runs — the
+    property that makes cancel possible at all."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 3.0, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=3.0, pretrigger=None)
+                await asyncio.sleep(0.2)
+                await _send(ws, type='hello')
+                cap = await _recv_json(ws, timeout=2.0)   # answered mid-log
+                assert cap['type'] == 'capabilities'
+                await _send(ws, type='cancel')
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_log_error_still_reported_from_the_background_task():
+    """Errors raised inside the spawned log task must still produce the
+    `error` frame the inline dispatch used to send."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                # pretrig_samples > chunk_size is rejected by log_data.
+                await _send(ws, type='log', duration=0.1,
+                            pretrigger={'samples': 5000})
+                msg = await _recv_json(ws, timeout=10.0)
+                if msg.get('event') == 'armed':
+                    msg = await _recv_json(ws, timeout=10.0)
+                assert msg['type'] == 'error'
+                assert 'pretrig_samples' in msg['message']
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+# ---- capabilities: OS default devices (round 11) -------------------------
+
+def test_capabilities_report_the_default_devices():
+    """`default_input` / `default_output` name the OS default, or are
+    null when there is none to report."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='hello')
+                cap = await _recv_json(ws)
+                assert 'default_input' in cap
+                assert 'default_output' in cap
+                sc = cap['devices']['soundcard']
+                for key in ('default_input', 'default_output'):
+                    entry = cap[key]
+                    if entry is None:
+                        continue      # legitimate: no PortAudio default
+                    assert entry['driver'] == 'soundcard'
+                    assert 0 <= entry['index'] < len(sc)
+                    # Matches the enumeration it indexes into.
+                    assert entry['name'] == sc[entry['index']]
+                    assert 'hostapi' in entry
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+class TestDefaultDeviceResolution:
+    """Unit-level guards for `_default_soundcard_devices`, whose whole
+    job is to answer "null" rather than guess when PortAudio is absent,
+    reports the -1 sentinel, or names an index off the end of the list."""
+
+    def test_none_when_sounddevice_is_absent(self, monkeypatch):
+        monkeypatch.setattr(serve_mod.streams, 'sd', None)
+        assert serve_mod._default_soundcard_devices() == (None, None)
+
+    def test_none_for_the_minus_one_sentinel(self, monkeypatch):
+        monkeypatch.setattr(serve_mod.streams, 'sd',
+                            type('SD', (), {'default': type('D', (), {'device': [-1, -1]})})())
+        monkeypatch.setattr(serve_mod.streams, 'enumerated_device_names',
+                            lambda driver: ['Built-in', 'BlackHole 2ch'])
+        monkeypatch.setattr(serve_mod.streams, 'enumerated_device_hostapis',
+                            lambda driver: ['Core Audio', 'Core Audio'])
+        assert serve_mod._default_soundcard_devices() == (None, None)
+
+    def test_none_when_the_index_is_off_the_end(self, monkeypatch):
+        monkeypatch.setattr(serve_mod.streams, 'sd',
+                            type('SD', (), {'default': type('D', (), {'device': [7, 0]})})())
+        monkeypatch.setattr(serve_mod.streams, 'enumerated_device_names',
+                            lambda driver: ['Built-in'])
+        monkeypatch.setattr(serve_mod.streams, 'enumerated_device_hostapis',
+                            lambda driver: ['Core Audio'])
+        din, dout = serve_mod._default_soundcard_devices()
+        assert din is None
+        assert dout == {'driver': 'soundcard', 'index': 0,
+                        'name': 'Built-in', 'hostapi': 'Core Audio'}
+
+    def test_reports_name_and_hostapi(self, monkeypatch):
+        monkeypatch.setattr(serve_mod.streams, 'sd',
+                            type('SD', (), {'default': type('D', (), {'device': [1, 0]})})())
+        monkeypatch.setattr(serve_mod.streams, 'enumerated_device_names',
+                            lambda driver: ['Speakers', 'U24XL with SPDIF I/O'])
+        monkeypatch.setattr(serve_mod.streams, 'enumerated_device_hostapis',
+                            lambda driver: ['Windows WASAPI', 'Windows WDM-KS'])
+        din, _ = serve_mod._default_soundcard_devices()
+        assert din == {'driver': 'soundcard', 'index': 1,
+                       'name': 'U24XL with SPDIF I/O',
+                       'hostapi': 'Windows WDM-KS'}
+
+    def test_enumeration_failure_is_not_fatal(self, monkeypatch):
+        def boom(driver):
+            raise RuntimeError('PortAudio unavailable')
+        monkeypatch.setattr(serve_mod.streams, 'sd',
+                            type('SD', (), {'default': type('D', (), {'device': [0, 0]})})())
+        monkeypatch.setattr(serve_mod.streams, 'enumerated_device_names', boom)
+        assert serve_mod._default_soundcard_devices() == (None, None)

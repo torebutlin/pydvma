@@ -307,12 +307,18 @@ Useful for capturing transient events like impacts:
 settings.pretrig_samples = 2000  # Samples to keep before trigger
 
 # Set trigger parameters
-settings.pretrig_threshold = 0.5  # Voltage threshold
+settings.pretrig_threshold = 0.5  # Trigger level (see units below)
 settings.pretrig_channel = 0      # Channel to monitor
-settings.pretrig_timeout = 20     # Timeout in seconds
+settings.pretrig_timeout = 20     # Seconds to wait FOR THE TRIGGER
 ```
 
-When recording starts, the system continuously buffers data. When the trigger condition is met (signal exceeds threshold), it saves the pre-trigger samples plus the post-trigger duration.
+When recording starts, the system continuously buffers data. When the trigger condition is met (signal exceeds threshold), it saves the pre-trigger samples plus the post-trigger duration. The first sample above the threshold lands at exactly index `pretrig_samples` of the returned capture.
+
+`pretrig_timeout` bounds the wait for the trigger **event** only. Once the signal crosses, the post-trigger data is given `stored_time + 5` seconds of its own to arrive, so a capture longer than the timeout is never cut short. If nothing crosses in time, `log_data` does not raise — it returns the most recent `stored_time * fs` samples, exactly as an untriggered log would.
+
+Two constraints on `pretrig_samples`: it must not exceed `chunk_size` (that is all the pre-trigger context the buffer retains), and it must be less than `stored_time * fs` (or there is no post-trigger data left to record). Both raise a `ValueError` naming the offending pair.
+
+`pretrig_threshold` is a magnitude in the units the recorder stores. On NI that is volts. On a soundcard it is volts **once `VmaxSC` is set**, and full-scale units while it is left at its default of 1.0 — so the default threshold of 0.05 means "5% of full scale" on an uncalibrated device but 50 mV on a calibrated one, which may sit close to the noise floor. Raise it to a sensible fraction of the signal you expect.
 
 ## Output Generation
 

@@ -124,14 +124,27 @@ class MySettings(object):
         pretrig_samples (int or None): Samples retained before the
             trigger, or ``None`` (default) for untriggered recording.
             Must not exceed ``chunk_size`` (the pretrigger buffer holds
-            only one chunk of pre-trigger context).
-        pretrig_threshold (float): Trigger level, in the units the chosen
-            device delivers — volts on NI, ±1-normalised on the soundcard
-            (default ``0.05``).
+            only one chunk of pre-trigger context), and must be less
+            than ``stored_time * fs`` — otherwise there would be no
+            post-trigger data left to record.
+        pretrig_threshold (float): Trigger level, as a magnitude, in the
+            units the recorder stores (default ``0.05``). On NI that is
+            volts. On a soundcard it is volts **once ``VmaxSC`` is set**
+            and full-scale units while it is left at 1.0 (uncalibrated)
+            — the samples are scaled by ``VmaxSC`` on the way in, and
+            the threshold is compared after that scaling. The 0.05
+            default was chosen as "5% of full scale" for an
+            uncalibrated device; on a characterised interface it means
+            50 mV, which can sit close to the noise floor, so raise it
+            to a sensible fraction of the expected signal.
         pretrig_channel (int): Channel index monitored for the trigger
             (default ``0``).
-        pretrig_timeout (float): Seconds to wait for a trigger before
-            recording anyway (default ``20``).
+        pretrig_timeout (float): Seconds to wait **for the trigger
+            event** before recording anyway (default ``20``). It bounds
+            only the wait for the threshold crossing: once the crossing
+            happens, the post-trigger data is given
+            ``stored_time + 5`` seconds of its own to arrive, so a
+            capture longer than the timeout is not cut short.
         lpf_on (bool): Digital low-pass toggle (default ``False``). When
             on, ``log_data`` captures ABOVE ``fs`` and resamples down
             behind a linear-phase anti-alias FIR
@@ -676,6 +689,22 @@ class MySettings(object):
                     'of context before the trigger; increase chunk_size '
                     '(or reduce pretrig_samples) to fit.'
                     .format(self.pretrig_samples, self.chunk_size)
+                )
+            # The other end of the window: the capture is
+            # `stored_time * fs` samples long and `pretrig_samples` of
+            # them are spent BEFORE the trigger, so asking for all of
+            # them (or more) leaves nothing to record after the event.
+            # Re-checked in `acquisition.log_data`, because both halves
+            # of this pairing are routinely mutated after construction
+            # (the serve bridge sets stored_time per log message).
+            capture_samples = int(self.stored_time * self.fs)
+            if self.pretrig_samples >= capture_samples:
+                raise ValueError(
+                    'pretrig_samples ({}) must be less than the capture '
+                    'length stored_time * fs ({} samples), or there is no '
+                    'post-trigger data left to record; increase stored_time '
+                    '(or reduce pretrig_samples).'
+                    .format(self.pretrig_samples, capture_samples)
                 )
 
 
