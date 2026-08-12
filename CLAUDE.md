@@ -24,6 +24,20 @@ cable), unplugged-input noise floor, output-side calibration, S/PDIF
 self-test idea. Suites: pytest 619/3, vitest 807/1, check 0/0, mkdocs
 --strict green; engine wheel rebuilt (same 2.2.0 name).
 
+Next morning (2026-08-12): the survey doc grew four researched
+sections (ESI family sweep → **planet 22c** found: £159 Dante
+fixed-range 2i2o, "a real option of interest" per Tore — bench trial
+= decision gate, incl. two-box cross-spectrum sync check; AoIP class
+sweep — 22c is the class's value outlier, DVS £45/PC, Dante Via is
+48k-locked, unverified free Linux route via AES67+PipeWire;
+multichannel tier — Dante NEVER wins co-located, XR18/X32 stay the
+answer, stacked 22c only for distributed/poolable; input-range
+options — inline attenuator pads solve the U24's ±1.9 Vpk ceiling,
+buy −20 dB PSG02973 not the −10 dB whose 312/422 network realises
+only −5 dB into 10 kΩ). Survey conclusions + lineup rewritten current
+(U24 characterised; 22c inserted second in the ladder). All pushed;
+CI green.
+
 Earlier (2026-08-11 evening): **v2.2.0 is RELEASED end-to-end** — PyPI
 (2.0.0 → 2.2.0; 2.1.0 was tagged+GH-released but deliberately never
 uploaded: its embedded UI still offered the since-refuted BLA

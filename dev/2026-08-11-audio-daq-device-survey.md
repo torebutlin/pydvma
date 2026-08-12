@@ -5,8 +5,12 @@ software (FC2's AES70 API is pairing-gated; macOS `usbaudiod` owns the
 USB interface — see `dev/plans/2026-08-10-focusrite-scarlett-design.md`
 and TODO's "gain control is a dead end"). Survey of alternatives with
 software-settable gain, then of the inverse concept: fixed-gain
-line-level capture ("nothing to mis-set"). Three web-research rounds,
-2026-08-11; prices are that day's UK retail, verify before purchase.
+line-level capture ("nothing to mis-set"). Running log: three
+web-research rounds 2026-08-11, then the ESI family sweep and planet
+22c discussion (late 2026-08-11), then the AoIP class sweep,
+input-range/attenuator work and multichannel tier (2026-08-12).
+Prices are the stated day's UK retail, verify before purchase.
+Current conclusions + lineup at the END of the file.
 
 ## Software-settable gain — verified options
 
@@ -257,37 +261,54 @@ realised ⇒ FS ≈ ±8–11 Vpk; measure the actual ratio in situ →
 `cal_factor`. Per channel: pad + XLR-male source cable +
 XLR-female→TS adapter, <£15, no fabrication.
 
-## Conclusions (as discussed with Tore)
+## Conclusions (current as of 2026-08-12)
 
-- **3C6-scale (2-in/2-out stations):** the owned ESI U24 XL is the
-  candidate; UCA222 the £17 fallback. Characterise on the bench first —
-  `dvma.verify_input_scaling` with the Rigol DG1022Z as known source
-  (absolute scaling + clip), plus a noise-floor capture for effective
-  bits. Both tools exist as of v2.1.0+.
-- **Higher channel counts:** XR18 (or MR18) — software-settable
-  (`xair-api`), no physical controls, instrumentation-looking.
+- **3C6-scale (2-in/2-out stations):** the owned ESI U24 XL is
+  **characterised and landed in pydvma** (2026-08-11 bench: +4.7 dBu
+  fixed FS to 0.07 dB, native 8k–48k with tracking anti-alias, digital
+  volume + 16-bit parking auto-pinned; `dev/u24xl_hw_check.py` 13/13).
+  Its ±1.9 Vpk range is the potential dealbreaker; resolved cheaply by
+  inline attenuator pads (−20 dB Pro Signal PSG02973 for ±5 V-class
+  sources; characterise realised ratio in situ → `cal_factor`).
+  Rigol absolute check still queued (needs a cable). UCA222 stays the
+  £17 fallback. The **planet 22c** (£159 + £45 DVS + £12 adapter
+  ≈ £210/station) is the balanced/±11 V/pooling-capable alternative —
+  a REAL option of interest per Tore, pending its own bench session
+  (noise/absolute + two-box cross-spectrum for the sync claim).
+- **Higher channel counts, co-located:** XR18 (or MR18) — £20/ch,
+  software-settable (`xair-api`); at 32 ch the full-size X32 console
+  (£1,299, 32 XLR in, 32×32 USB standard, software gain). Dante NEVER
+  wins co-located on £/channel.
+- **Higher channel counts, distributed or poolable:** stacked planet
+  22c (~£85–89/ch) is the only budget Dante route; purpose-built
+  multichannel Dante starts at £1,181 for 8 ch. Dante earns its keep
+  ONLY here: sensor-local digitisation over Cat5/PoE, and 2-ch-at-a-
+  time growth (Shape A stations ↔ Shape B research array).
 - **No-compromise:** RME (OSC), if budget ever ceases to be the point.
 - All of these are per-channel delta-sigma with inherent anti-alias
   filtering, same mechanism as the 2i2/9234.
 
-## Recommended lineup (agreed with Tore, 2026-08-11)
+## Recommended lineup (updated 2026-08-12)
 
-Ladder: **ESI U24 XL** (owned; fixed-gain 3C6-scale stations, pending
-bench characterisation — likely better than UCA222 on its 24-bit
-dynamic range; both ADCs publicly unmeasured) → **Scarlett 2i2 4th gen**
-(adjustable bench box: best fs/converters of the cheap tier; gain NOT
-software-settable — FC2 pairing-gated, confirmed on macOS AND Windows —
-but pydvma's stated-gain workflow, Setup level check and
-verify_input_scaling manage the knob risk) → **Behringer XR18** (16
-synced channels, £315–349, zero physical controls, gain pinned by
-script via the maintained `xair-api` package). **UCA222** (£17,
-16-bit) as disposable spares where dynamic range doesn't matter.
-**Flow 8** ranked below the 2i2 for labs despite its documented MIDI-CC
-gain: physical faders are exactly the wrong affordance. **RME Babyface
-Pro FS / MOTU 8A** remain the buy-once tier.
+Ladder: **ESI U24 XL** (owned; characterised; fixed-gain 3C6 station
+box, ±1.9 Vpk — add a −20 dB inline pad per channel for ±5 V-class
+sources) → **planet 22c** (option of interest: balanced, ±2.8/±11 V
+range switch, Dante-poolable; ~£210/station; bench trial is the
+decision gate) → **Scarlett 2i2 4th gen** (adjustable bench box: best
+fs/converters of the cheap tier; gain NOT software-settable — FC2
+pairing-gated on macOS AND Windows — but min-gain END STOP is a
+repeatable ±13.8 V setting, and the stated-gain workflow + Setup level
+check + verify_input_scaling manage the knob risk) → **Behringer
+XR18** (16 synced channels, £315, zero physical controls, gain pinned
+by script via `xair-api`; full-size X32 £1,299 for 32) . **UCA222**
+(£17, 16-bit) as disposable spares where dynamic range doesn't
+matter. **Flow 8** ranked below the 2i2 for labs despite its
+documented MIDI-CC gain: physical faders are exactly the wrong
+affordance. **RME Babyface Pro FS / MOTU 8A** remain the buy-once
+tier.
 
 Cross-cutting: everything but the 2i2/RME/MOTU is capped at 48 kHz
 (planet 22c reaches 96 k); channel counts never stack across USB boxes
 (unsynchronised clocks) — past 2 synced channels the budget routes are
-the XR18 or stacked Dante boxes (planet 22c, shared PTP clock — see
-the ESI family sweep section).
+the XR18/X32 (one box) or stacked planet 22c (Dante, shared PTP
+clock — see the multichannel tier section for the full comparison).
