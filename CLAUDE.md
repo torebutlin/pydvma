@@ -2,7 +2,51 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-12 (late, Mac session): **v2.3.0 is cut and pushed for
+As of 2026-08-12/13 (overnight Mac session): **ROUND 11 — the first
+3c6 lab round's feedback — is fully fixed and committed LOCALLY (NOT
+pushed; Tore hasn't asked).** Sixteen items, five real bugs, all
+root-caused before any fix (`dev/2026-08-12-round11-3c6-lab-feedback.md`
++ `dev/plans/2026-08-12-round11-design.md`): the soundcard trigger was
+broken THREE ways at once (Setup never armed + the group was gated on
+machine-has-NI; threshold in volts vs a full-scale-era 0.05 default —
+noise-fires on a 13.8 V-FS 2i2, armed by v2.3.0's own VmaxSC
+auto-derivation; `trigger_detected` actually meant capture-COMPLETE,
+so detection lagged stored_time and timeouts silently free-ran — the
+recorder is now a two-phase state machine, sample-exact, NI untouched);
+bridge cancel was dead four ways (now: background log task + cancel
+event, `status/cancelled` INSTEAD of `log_result`); "CWT not working" =
+CWT DAMPING blowing the fixed ~2 GB wasm32 ceiling (now: 768 MiB
+preflight naming remedies, band→fit plumbing, w0-aware f_min, log-axis
+default for CWT); and **"fs unsettable" + "TF axis ×10" were ONE bug** —
+fs really was 10000 (docs-canonical prefill) and an off-ladder fs
+rendered the Setup select BLANK (now a typed combo accepting "3k";
+sub-native targets 500–5000 incl. 3c6's 3 kHz offered; stream restored
+to configured rate after decimating logs; configure fs truthful). UX:
+trigger essentials in Setup basic (unit-aware threshold defaulting to
+5 % FS), Default device names itself (`default_input` capability), full
+tier in titled sections, determinate progress bar + capture-relative
+clock + unmissable armed-waiting banner, **sticky-auto axes** (Auto X/Y
+restore null — they used to FREEZE the extent; new lines re-fit y;
+unit switches drop y; auto-y fits the visible x-window), the **Nonlin
+redesign** (linked Δf↔T, total-time headline, M×n_exc progress grid,
+replace-vs-keep-both with Undo, `resp ch N` labels, σ key), and
+**in-engine progress + Stop** for long CWT calcs (worker posts frames;
+Stop = terminate + reboot — SharedArrayBuffer needs COOP/COEP that
+Pages won't send). **3c6 envelope pinned as regression floor**: 3 kHz /
+30 s / 2 ch (+ 6 s damping) — Tore's stated lab usage; NB auto
+oversample captures 3 kHz lpf logs at 8 k on real delta-sigma cards
+('lowest'), 48 k needs `oversample='highest'`, delivered rate 3000
+either way. Suites: pytest 857/7, vitest 939/1, check 0/0, Playwright
+83/9 + bridge e2e green (see round doc), mkdocs --strict green; engine
+wheel rebuilt (same 2.3.0 name). **Next lab visit checklist** (live
+re-verification of trigger/cancel/3 kHz/scope-restore/CWT) is in the
+round doc. Ran as 7 parallel read-only investigations → 7 review-gated
+implementation packages; NB two agents ran `git stash` in the shared
+tree mid-session (recovered; prompts must forbid it — see auto-memory).
+2i2 is Tore's TENTATIVE 3c6 pick (survey + TODO updated). v2.3.0 PyPI
+upload + GitHub release remain Tore's (unchanged below).
+
+Previous session (2026-08-12 late, Mac): **v2.3.0 is cut and pushed for
 Tore's 3c6 lab round — PyPI upload is his (twine), and the GitHub
 release is deliberately held until after it** so the Zenodo auto-archive
 does not mint a DOI for a version that is not yet installable. Minor,

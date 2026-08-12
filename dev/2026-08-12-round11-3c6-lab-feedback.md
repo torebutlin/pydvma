@@ -31,46 +31,84 @@ CWT DAMPING blows the 32-bit WASM allocation ceiling at lab sizes.
 
 ## Bugs
 
-1. ◐ **Trigger never waits (soundcard).** Fix in flight (P1 python +
-   P3 UI).
-2. ◐ **Cancel mid-logging does nothing.** Fix in flight (P1 server +
-   P3 client).
-3. ◐ **CWT damping over the WASM ceiling** (+ lin-axis default,
-   w0-unaware band, unmasked errors). Fix in flight (P2).
-4. ◐ **TF frequency axis ×10** = item 5 (fs was 10000 and
-   undisplayable). Fix in flight (P3 fs combo); live re-verify next
-   lab visit. Related fixes queued (P4): sub-8 kHz decimation
-   targets, stream restored after decimating logs, truthful fs
-   readback.
-5. ◐ **fs not settable under full settings.** Same fix as 4 —
-   typed fs combo (P3).
+1. ☑ **Trigger never waits (soundcard).** Fixed in `2ce3770` (two-phase
+   recorder, sample-exact alignment, timeout = wait only) + `404b1b0`
+   (arming/threshold UX, volts default at 5 % FS). LIVE RE-TEST NEEDED
+   (checklist below).
+2. ☑ **Cancel mid-logging.** Fixed in `2ce3770` (background log task +
+   cancel event) + `404b1b0` (client unwind).
+3. ☑ **CWT damping over the WASM ceiling** (+ lin-axis default,
+   w0-unaware band, masked errors, band boxes not reaching the fit).
+   Fixed in `dc7e826`; progress + Stop added in `01a1f0b`.
+4. ☑ **TF frequency axis ×10** = item 5 (fs was 10000 and
+   undisplayable). Fixed by the typed fs combo (`404b1b0`) + the rates
+   package (`e67348f`: sub-native targets incl. 3 kHz, stream restored
+   after decimating logs, truthful configure fs).
+5. ☑ **fs not settable under full settings.** Same root cause as 4 —
+   the off-ladder value rendered the select blank. Typed combo.
 
 ## UX
 
-6. ◐ Basic trigger settings into Setup *basic* (P3; the old group was
-   also machine-gated on NI presence, so on the lab PC it rendered
-   beside a soundcard and silently did nothing).
-7. ◐ "Default" device resolves to its physical name (P1 protocol +
-   P3 UI). U24 S/PDIF endpoints receiving no signal is expected —
-   they're digital inputs.
-8. ◐ fs typed combo, "3k" accepted, feedback notes kept (P3).
-9. ◐ Full settings tidy: titled sections instead of one 12–15-group
-   wrapping row (P3).
-10. ◐ Determinate progress bar; bridge clock made capture-relative
-    (P3). Live time-domain preview DEFERRED to TODO.
-11. ◐ Prominent "armed — waiting for trigger" state (P3) — it
-    existed as one small grey note, and never showed because of
-    bug 1.
-12. ◐ Axes: Auto buttons currently FREEZE the extent instead of
-    restoring the auto state — that plus unit-changing view switches
-    keeping stale y-ranges is the root cause. Sticky-auto design in
-    P5.
-13. ◐ Nonlin redesign designed (P6): linked Δf ↔ period inputs,
-    total-time headline, M × n_exc progress grid + ETA,
-    replace-vs-keep-both run semantics (current behaviour appends
-    silently and orphans the previous run's hidden raw sets), σ key +
-    in-card explanation.
+6. ☑ Trigger essentials in Setup *basic* (`404b1b0`; the old group was
+   machine-gated on NI presence, so on the lab PC it rendered beside a
+   soundcard and silently did nothing).
+7. ☑ "Default" device resolves to its physical name (`2ce3770`
+   protocol + `404b1b0` UI). U24 S/PDIF endpoints receiving no signal
+   is expected — they're digital inputs.
+8. ☑ fs typed combo — "3000", "3k", "48 kHz" all accepted; feedback
+   notes kept (`404b1b0`).
+9. ☑ Full settings tidy: titled sections device/rates/levels/trigger/
+   NI-DAQ (`404b1b0`).
+10. ☑ Determinate progress bar; bridge clock capture-relative,
+    holds while armed (`404b1b0`). Live time-domain preview DEFERRED
+    (TODO). Long CWT calcs additionally got in-engine progress + a
+    Stop (terminate + reboot) once past ~3 s (`01a1f0b`) — Tore's
+    mid-round ask.
+11. ☑ Prominent amber "armed — waiting for trigger" state naming the
+    effective threshold (`404b1b0`) — the old one was a small grey
+    note that never showed because of bug 1.
+12. ☑ Sticky-auto axes (`22fecd3`): Auto X/Y restore the AUTO state
+    (they used to freeze the extent — the click itself pinned the
+    axis); new lines re-fit y (x too on an empty view); unit switches
+    drop stale y; auto-y fits the visible x-window; x-only zooms keep
+    y auto.
+13. ☑ Nonlin redesign (`f7fc294`): linked Δf ↔ T inputs, total-time
+    headline, M × n_exc progress grid + ETA, replace-vs-keep-both
+    (replace undoes; kept runs suffixed #2), raw captures registered
+    hidden atomically, `resp ch N` channel labels, σ key + explainer +
+    docs link. Verified live against a mock bridge + real engine.
+
+## For the next lab visit (live re-verification)
+
+Code-checked this round, needs hardware truth:
+
+- **Trigger end-to-end on the 2i2/U24**: arm in Setup basic, tap →
+  the waiting banner should hold, the bar should start at the hit,
+  and `record[pretrig_samples]` should be the hit. Try threshold up =
+  no fire on ambient.
+- **Cancel a 30 s log** mid-capture (should unwind in <1 s, no data).
+- **fs = 3 kHz** (typed or picked): TF axis 0–1500, tray fs 3000,
+  `captures at 8000/48000 Hz, resampled to 3000 Hz` note present
+  (auto captures at 8 k on a real delta-sigma card; force
+  `oversample='highest'` for a 48 k capture — delivered rate is 3000
+  either way).
+- **Scope after a decimating log** — axis must stay truthful (stream
+  restore is new).
+- **CWT damping on a real 6 s impulse** at 3 kHz — default band, no
+  remedies needed; try the Q slider high + Stop mid-calc.
+- **P4's live harness** (`scratchpad p4_hw_check.py` — copy into
+  dev/ if useful): the full configure → decimating log → restored
+  monitor run couldn't complete on the Mac (CoreAudio wedged by
+  BlackHole's HAL proxy, unrelated pre-existing condition).
+- 2i2 stated-gain workflow as the standard 3c6 ritual (survey/TODO).
 
 ## Suites at close
 
-TBD.
+pytest **857 / 7 skipped**; vitest **939 / 1 skipped**; `npm run
+check` **0/0**; mkdocs --strict green; Playwright **83 / 9 skipped**
+plus the bridge specs under BRIDGE_E2E **12/12 against a real spawned
+`pydvma-serve`** (incl. the new cancel-mid-BLA-run test). Engine wheel rebuilt (same 2.3.0 name — remember the
+release traps in CLAUDE.md if this becomes 2.4.0). ~200 new tests
+across the round. Session ran as 7 parallel read-only investigations
+→ 7 implementation packages (P1–P7), each committed after coordinator
+review.
