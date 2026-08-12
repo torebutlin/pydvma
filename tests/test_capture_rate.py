@@ -14,6 +14,10 @@ from pydvma import acquisition, options, streams
 
 SCARLETT_LADDER = [44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0]
 
+#: The lab's ESI U24 XL — its floor IS the bottom of the standard audio
+#: ladder, which is what made the round-11 rate defects visible.
+U24XL_LADDER = [8000.0, 16000.0, 32000.0, 44100.0, 48000.0]
+
 
 def make_settings(**kwargs):
     kwargs.setdefault('device_driver', 'soundcard')
@@ -211,6 +215,84 @@ class TestLogDataCaptureRate:
         data, opened = self._run(monkeypatch, [], fs=3000)
         assert opened['fs'] == 3000
         assert data.time_data_list[0].settings.fs == 3000
+
+
+class TestDeliveredRateOnAnEightKilohertzFloorDevice:
+    """Whatever rate is asked for, that is the rate the record carries.
+
+    Round 11's lab session ran at fs = 10000 on a U24 XL — a rate the
+    device cannot run — and the wrong-by-10x frequency axis that
+    followed was blamed on the analysis. It was not: the delivered rate
+    and the rate stamped on the record have to agree by construction,
+    for every target, filtered or not. Both are asserted here, the
+    second one straight off the time axis, so no future capture-rate
+    change can put a factor between them again.
+    """
+
+    def _log(self, monkeypatch, target, lpf_on, ladder=None, channels=1,
+             **kwargs):
+        monkeypatch.setattr(streams, 'native_input_rates',
+                            lambda s: list(ladder or U24XL_LADDER))
+        data = acquisition.log_data(make_settings(
+            device_driver='mock', fs=target, chunk_size=100, channels=channels,
+            stored_time=0.2, lpf_on=lpf_on, **kwargs))
+        return data.time_data_list[0]
+
+    @pytest.mark.parametrize('target', [500, 1000, 3000, 8000, 10000])
+    @pytest.mark.parametrize('lpf_on', [False, True])
+    def test_record_is_stamped_with_the_requested_rate(self, monkeypatch,
+                                                       target, lpf_on):
+        td = self._log(monkeypatch, target, lpf_on)
+        assert float(td.settings.fs) == pytest.approx(float(target), rel=1e-9)
+
+    @pytest.mark.parametrize('target', [500, 1000, 3000, 8000, 10000])
+    @pytest.mark.parametrize('lpf_on', [False, True])
+    def test_time_axis_ticks_at_the_requested_rate(self, monkeypatch,
+                                                   target, lpf_on):
+        """The stamp is only half of it — the SAMPLES have to arrive on
+        that grid too, or every spectrum drawn from them is scaled."""
+        td = self._log(monkeypatch, target, lpf_on)
+        t = td.time_axis
+        assert 1.0 / (t[1] - t[0]) == pytest.approx(float(target), rel=1e-6)
+
+    def test_the_3c6_lab_envelope(self, monkeypatch):
+        """The real teaching-lab capture: 3 kHz, 2 channels, digital
+        low-pass on, logged natively at 48 kHz and decimated 16:1
+        (0.2 s here for speed; the lab runs 30 s)."""
+        td = self._log(monkeypatch, 3000, True, channels=2,
+                       oversample='highest')
+        assert float(td.settings.fs) == pytest.approx(3000.0, rel=1e-9)
+        assert float(td.settings.lpf_capture_fs) == 48000.0
+        assert td.time_data.shape == (600, 2)          # 0.2 s x 3000 Hz
+        t = td.time_axis
+        assert 1.0 / (t[1] - t[0]) == pytest.approx(3000.0, rel=1e-6)
+
+    def test_the_3c6_envelope_on_a_real_delta_sigma_interface(self, monkeypatch):
+        """What the lab actually gets by DEFAULT on a sound card: 8 kHz,
+        not 48 kHz. 'auto' resolves to 'lowest' on a delta-sigma
+        converter, whose anti-alias filter tracks the converter rate —
+        8 kHz already rejects everything above 4 kHz, so 6x the data
+        buys nothing. Delivered rate is identical either way."""
+        td = self._log(monkeypatch, 3000, True, channels=2,
+                       oversample='lowest')
+        assert float(td.settings.lpf_capture_fs) == 8000.0
+        assert float(td.settings.fs) == pytest.approx(3000.0, rel=1e-9)
+        t = td.time_axis
+        assert 1.0 / (t[1] - t[0]) == pytest.approx(3000.0, rel=1e-6)
+
+    @pytest.mark.parametrize('target,expected_capture', [
+        (500, 8000), (1000, 8000), (3000, 8000), (8000, 8000),
+        (10000, 16000)])
+    def test_capture_steps_up_to_a_rate_the_device_runs(self, monkeypatch,
+                                                        target,
+                                                        expected_capture):
+        """Below the 8 kHz floor there is nowhere else to go; 10 kHz sits
+        between rungs and must step UP, never down."""
+        monkeypatch.setattr(streams, 'native_input_rates',
+                            lambda s: list(U24XL_LADDER))
+        capture_fs, _reason = streams.select_capture_fs(
+            make_settings(fs=target))
+        assert capture_fs == float(expected_capture)
 
 
 class TestOversampleStrategy:
@@ -416,6 +498,74 @@ class TestMaxInputFsPerDriver:
                             lambda: (_ for _ in ()).throw(RuntimeError('no driver')))
         s = make_settings(fs=1000, device_driver='nidaq')
         assert streams.max_input_fs(s) == 1000.0
+
+
+class TestClockNote:
+    """A mis-parked device clock has to reach the operator.
+
+    ``_pin_hardware_clock`` has always printed its warning; a warning
+    printed into a terminal behind the browser window is a warning
+    nobody reads, so it is also recorded on the recorder for
+    ``pydvma.serve`` to forward into the UI.
+    """
+
+    def _pin(self, monkeypatch, target, ladder, set_ok=True, parked=44100.0):
+        ca = streams._coreaudio
+        monkeypatch.setattr(ca, 'available', lambda: True)
+        monkeypatch.setattr(ca, 'find_device', lambda name: (7, name))
+        monkeypatch.setattr(ca, 'native_rates', lambda dev: list(ladder))
+        monkeypatch.setattr(ca, 'get_nominal_rate', lambda dev: parked)
+        monkeypatch.setattr(ca, 'set_nominal_rate', lambda dev, r: set_ok)
+        s = make_settings(fs=target, chunk_size=100, stored_time=0.1)
+        s.device_name = 'U24XL with SPDIF I/O'
+        rec = streams.Recorder(s)
+        rec._pin_hardware_clock(s)
+        return rec
+
+    def test_silent_when_the_clock_lands_where_it_was_asked(self, monkeypatch):
+        rec = self._pin(monkeypatch, 48000, U24XL_LADDER)
+        assert rec.clock_note is None
+
+    def test_off_ladder_target_says_only_the_live_stream_suffers(self, monkeypatch):
+        """A 10 kHz target on an 8/16/32 kHz device: the monitor is
+        OS-resampled, but the LOG steps up to 16 kHz and decimates, so
+        the note must not send the operator hunting a data problem they
+        do not have."""
+        rec = self._pin(monkeypatch, 10000, U24XL_LADDER)
+        assert 'cannot run at 10000 Hz' in rec.clock_note
+        assert 'LIVE' in rec.clock_note
+        assert 'Logged captures are unaffected' in rec.clock_note
+
+    def test_target_above_the_ceiling_admits_every_capture_is_resampled(self, monkeypatch):
+        """Nothing to decimate from above 48 kHz, so the honest answer
+        is different — and must not claim the log is fine."""
+        rec = self._pin(monkeypatch, 96000, U24XL_LADDER)
+        assert 'no higher rate to decimate from' in rec.clock_note
+        assert 'Logged captures are unaffected' not in rec.clock_note
+
+    def test_refused_clock_change_is_recorded(self, monkeypatch):
+        rec = self._pin(monkeypatch, 48000, U24XL_LADDER, set_ok=False)
+        assert 'could not set' in rec.clock_note
+
+    def test_note_survives_the_pretrigger_buffer_reset(self, monkeypatch):
+        """`log_data` re-runs ``__init__`` on the LIVE recorder to zero
+        the buffers before arming. That does not reopen the stream, so
+        what the stream is doing must not be forgotten."""
+        rec = self._pin(monkeypatch, 10000, U24XL_LADDER)
+        rec.stream_fs = 10000.0
+        rec.__init__(rec.settings)
+        assert rec.clock_note is not None
+        assert rec.stream_fs == 10000.0
+
+    def test_note_is_cleared_on_a_later_clean_pin(self, monkeypatch):
+        """Stale warnings are worse than none: the attribute is reset at
+        the top of every pin, not only written when there is bad news."""
+        rec = self._pin(monkeypatch, 10000, U24XL_LADDER)
+        assert rec.clock_note is not None
+        s = make_settings(fs=48000, chunk_size=100, stored_time=0.1)
+        s.device_name = 'U24XL with SPDIF I/O'
+        rec._pin_hardware_clock(s)
+        assert rec.clock_note is None
 
 
 class TestLoopbackWarningOnThePythonPath:

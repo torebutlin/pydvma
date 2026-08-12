@@ -1102,6 +1102,48 @@ class TestSoundcardNativeRates:
         assert caps['candidate_rates'] == [8000, 11025, 16000, 22050, 32000,
                                            44100, 48000]
 
+    def test_an_eight_kilohertz_floor_still_gets_decimation_targets(self, monkeypatch):
+        """The ESI U24 XL's floor IS the bottom of the audio ladder, so
+        every 'standard rate below the floor' is the empty set and the
+        digital low-pass had nothing at all to deliver on the lab's main
+        interface. The sub-audio targets are what it delivers."""
+        caps = self._caps(monkeypatch, [8000.0, 16000.0, 32000.0, 44100.0,
+                                        48000.0])
+        assert caps['native_rates'] == [8000, 16000, 32000, 44100, 48000]
+        for rate in (500, 1000, 2000, 3000, 4000, 5000):
+            assert rate in caps['candidate_rates'], rate
+
+    def test_the_3c6_lab_rate_is_on_the_list(self, monkeypatch):
+        """3000 Hz is the teaching lab's standard rate — the one people
+        type — and no sound card runs it."""
+        caps = self._caps(monkeypatch, [8000.0, 16000.0, 32000.0, 44100.0,
+                                        48000.0])
+        assert 3000 in caps['candidate_rates']
+
+    def test_low_targets_do_not_displace_the_standard_ones(self, monkeypatch):
+        """Regression pin: a 44.1 kHz-floor card keeps the 8 k–32 k it
+        has always offered, and gains the lower targets on top."""
+        caps = self._caps(monkeypatch, [44100.0, 48000.0])
+        assert caps['candidate_rates'] == [500, 1000, 2000, 3000, 4000, 5000,
+                                           8000, 11025, 16000, 22050, 32000,
+                                           44100, 48000]
+
+    def test_no_low_targets_below_a_rate_the_device_already_runs(self, monkeypatch):
+        """They are DECIMATION targets. A device that runs 4 kHz itself
+        needs no help reaching it, and offering 5000 above an 8000 floor
+        would offer a rate nothing can produce."""
+        caps = self._caps(monkeypatch, [4000.0, 8000.0, 48000.0])
+        assert 4000 in caps['candidate_rates']    # native, not a target
+        assert 5000 not in caps['candidate_rates']
+        assert [r for r in (500, 1000, 2000) if r not in caps['candidate_rates']] == []
+
+    def test_sub_audio_targets_need_a_known_ladder(self, monkeypatch):
+        """With no ladder, `select_capture_fs` opens the stream AT the
+        target — and a host API that does not do 500 Hz refuses. Offer
+        only what the probe accepted."""
+        caps = self._caps(monkeypatch, [], probe_accepts_everything=False)
+        assert not [r for r in caps['candidate_rates'] if r < 8000]
+
 
 class TestSoundcardGainModelInCaps:
     """The UI needs the published input levels to preview what a stated
@@ -1476,3 +1518,420 @@ class TestDefaultDeviceResolution:
                             type('SD', (), {'default': type('D', (), {'device': [0, 0]})})())
         monkeypatch.setattr(serve_mod.streams, 'enumerated_device_names', boom)
         assert serve_mod._default_soundcard_devices() == (None, None)
+
+
+# ---- rates: the live stream after a decimating log (round 11) ------------
+
+#: Settings for a capture that must be decimated: the mock publishes no
+#: rate ladder, so the digital low-pass oversamples by an integer factor
+#: (x3 under the 'lowest' strategy) and resamples back down — the same
+#: rate swap a real interface makes when it steps a 10 kHz target up to
+#: 16 kHz.
+_DECIMATING_SETTINGS = {
+    'channels': 1, 'fs': 1000, 'chunk_size': 100, 'num_chunks': 4,
+    'viewed_time': None, 'lpf_on': True, 'oversample': 'lowest',
+}
+
+
+def _decimating_settings(**overrides):
+    s = dict(_DECIMATING_SETTINGS)
+    s.update(overrides)
+    return s
+
+
+def test_decimating_log_restores_the_configured_stream_rate():
+    """`log_data` opens the stream at the CAPTURE rate and never puts it
+    back, so the live scope was left reading an axis 3x out (4-12x with
+    real hardware) until the next configure.
+
+    Both halves are checked: the recorder's own rate, and the rate
+    stamped on the monitor frames the client actually draws.
+    """
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure',
+                            settings=_decimating_settings(stored_time=0.2))
+                status = await _recv_json(ws)
+                assert status['fs'] == 1000
+
+                await _send(ws, type='log', duration=0.2, pretrigger=None)
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result', meta
+                await _recv_binary(ws, timeout=10.0)      # the container
+
+                # (that the capture really did swap rates is pinned by
+                # test_decimating_log_really_did_capture_at_another_rate)
+                assert streams.REC is not None
+                assert float(streams.REC.settings.fs) == 1000.0, (
+                    'the live stream must be back on the configured rate')
+
+                await _send(ws, type='start_monitor')
+                await _recv_json(ws)                      # monitoring
+                frame = await _recv_binary(ws, timeout=5.0)
+                hdr = serve_mod.decode_header(frame)
+                assert hdr['msgType'] == serve_mod.MSG_CHUNK
+                assert hdr['fs'] == pytest.approx(1000.0)
+                await _send(ws, type='stop_monitor')
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def _log_and_record_opened_rates(monkeypatch, configure_settings, duration):
+    """Log once and return the fs of every `start_stream` the log made.
+
+    The spy is installed AFTER configure, so the list holds only what the
+    capture itself opened: the capture rate, plus the restore when one
+    was needed.
+    """
+    async def scenario():
+        opened = []
+        real_start = streams.start_stream
+
+        def spy(settings):
+            opened.append(float(settings.fs))
+            return real_start(settings)
+
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings=configure_settings)
+                await _recv_json(ws)
+                monkeypatch.setattr(streams, 'start_stream', spy)
+                await _send(ws, type='log', duration=duration, pretrigger=None)
+                await _recv_json(ws, timeout=10.0)
+                await _recv_binary(ws, timeout=10.0)
+                monkeypatch.setattr(streams, 'start_stream', real_start)
+                return opened
+        finally:
+            await _stop_server(task)
+    return run_async(scenario)
+
+
+def test_decimating_log_really_did_capture_at_another_rate(monkeypatch):
+    """Guard for the test above: if the capture stopped swapping rates,
+    the restore assertion would pass vacuously."""
+    opened = _log_and_record_opened_rates(
+        monkeypatch, _decimating_settings(stored_time=0.2), 0.2)
+    assert opened == [3000.0, 1000.0], (
+        'expected an oversampled capture then a restore')
+
+
+def test_plain_log_does_not_reopen_the_stream(monkeypatch):
+    """The restore is conditional: no rate swap, no teardown. A log that
+    captures at the configured rate must cost exactly the one
+    `start_stream` it always did."""
+    opened = _log_and_record_opened_rates(monkeypatch, {
+        'channels': 1, 'fs': 8000, 'chunk_size': 1000, 'stored_time': 0.1,
+        'num_chunks': 4, 'viewed_time': None,
+    }, 0.1)
+    assert opened == [8000.0]
+
+
+def test_cancelled_decimating_log_still_restores_the_stream_rate():
+    """Cancel is the path that most needs it: the monitor deliberately
+    keeps running afterwards, so a stream left at the capture rate goes
+    on drawing a wrong axis with no capture to explain it."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure',
+                            settings=_decimating_settings(stored_time=5.0))
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=5.0, pretrigger=None)
+                await asyncio.sleep(0.5)
+                await _send(ws, type='cancel')
+                msg = await _recv_json(ws, timeout=10.0)
+                assert msg['event'] == 'cancelled', msg
+                assert streams.REC is not None
+                assert float(streams.REC.settings.fs) == 1000.0
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_failed_log_still_restores_the_stream_rate(monkeypatch):
+    """An error after the capture must not leave the rate swapped in
+    either — the finally covers all three exits."""
+    real_capture = serve_mod._capture_to_dvma
+
+    def boom(settings, *a, **kw):
+        # A real capture first (so the stream really is swapped onto the
+        # oversampled rate), then fail the way a serialisation error
+        # would.
+        real_capture(settings, *a, **kw)
+        raise RuntimeError('capture exploded')
+
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure',
+                            settings=_decimating_settings(stored_time=0.2))
+                await _recv_json(ws)
+                monkeypatch.setattr(serve_mod, '_capture_to_dvma', boom)
+                await _send(ws, type='log', duration=0.2, pretrigger=None)
+                err = await _recv_json(ws, timeout=10.0)
+                assert err['type'] == 'error', err
+                assert 'capture exploded' in err['message']
+                assert float(streams.REC.settings.fs) == 1000.0
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+# ---- rates: what `configure` claims the stream is doing (round 11) -------
+
+def _configure_with_recorder_attrs(monkeypatch, **attrs):
+    """Configure once against a recorder stamped with ``attrs``.
+
+    The mock recorder carries neither `stream_fs` nor `clock_note` (only
+    `streams.Recorder` sets them, and that needs a real device), so they
+    are stamped on after `start_stream` returns — which is exactly when
+    the real ones are written.
+    """
+    async def scenario():
+        real_start = streams.start_stream
+
+        def spy(settings):
+            real_start(settings)
+            for key, value in attrs.items():
+                setattr(streams.REC, key, value)
+
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                monkeypatch.setattr(streams, 'start_stream', spy)
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                status = await _recv_json(ws)
+                monkeypatch.setattr(streams, 'start_stream', real_start)
+                return status
+        finally:
+            await _stop_server(task)
+    return run_async(scenario)
+
+
+def test_configure_reports_the_stream_rate_not_the_request(monkeypatch):
+    """`status/configured.fs` is what the client pins its monitor ring
+    and its frequency axes to. On the soundcard path nothing mutates
+    `settings.fs`, so the reply was a pure echo of the request; report
+    what PortAudio actually opened instead."""
+    status = _configure_with_recorder_attrs(monkeypatch, stream_fs=8533.333333)
+    assert status['fs'] == pytest.approx(8533.333333)
+
+
+def test_configure_echoes_the_request_when_the_stream_agrees(monkeypatch):
+    status = _configure_with_recorder_attrs(monkeypatch, stream_fs=8000.0)
+    assert status['fs'] == 8000
+    assert 'deviceNote' not in status
+
+
+def test_configure_forwards_the_clock_note(monkeypatch):
+    """A device whose CLOCK could not be moved still DELIVERS the
+    requested rate — the OS resamples into it — so this travels as a
+    note, not as a different fs."""
+    status = _configure_with_recorder_attrs(
+        monkeypatch, clock_note='U24XL cannot run at 8000 Hz.')
+    assert status['fs'] == 8000
+    assert 'cannot run at 8000 Hz' in status['deviceNote']
+
+
+class TestStreamFsReporting:
+    """Unit-level rules for `_Connection._stream_fs`."""
+
+    def _conn(self, fs):
+        conn = serve_mod._Connection.__new__(serve_mod._Connection)
+        conn.settings = type('S', (), {'fs': fs})()
+        return conn
+
+    def _rec(self, **attrs):
+        return type('R', (), attrs)()
+
+    def test_settings_stand_when_the_recorder_says_nothing(self):
+        assert self._conn(8000)._stream_fs(self._rec()) == 8000.0
+
+    def test_settings_stand_when_there_is_no_recorder(self):
+        assert self._conn(8000)._stream_fs(None) == 8000.0
+
+    def test_the_open_stream_wins_when_it_disagrees(self):
+        assert self._conn(8000)._stream_fs(
+            self._rec(stream_fs=8533.3)) == pytest.approx(8533.3)
+
+    def test_the_rate_the_recorder_was_opened_with_is_the_fallback(self):
+        """A stepped-up monitor (or an NI-coerced task) shows up here as
+        a recorder whose own settings disagree with the request."""
+        rec = self._rec(settings=type('S', (), {'fs': 8000})())
+        assert self._conn(500)._stream_fs(rec) == 8000.0
+
+    def test_portaudio_beats_the_rate_the_stream_was_asked_for(self):
+        rec = self._rec(stream_fs=44100.0,
+                        settings=type('S', (), {'fs': 48000})())
+        assert self._conn(48000)._stream_fs(rec) == 44100.0
+
+    def test_a_junk_value_never_replaces_the_request(self):
+        for junk in (None, 0.0, 'forty-eight thousand'):
+            assert self._conn(8000)._stream_fs(
+                self._rec(stream_fs=junk)) == 8000.0
+
+
+# ---- rates: a monitor stream the host API refuses to open ----------------
+
+class _RateRefusingStart:
+    """Stand-in for `streams.start_stream` on a device that will not run
+    the requested rate.
+
+    PortAudio raises ``Invalid sample rate [PaErrorCode -9997]`` at open
+    time — measured live on BlackHole 2ch at 500 Hz, whose ladder floors
+    at 8000 like the lab's ESI U24 XL. macOS resamples for some devices
+    and refuses for others, so the refusal has to be survivable.
+    """
+
+    def __init__(self, real, runnable):
+        self.real = real
+        self.runnable = set(runnable)
+        self.attempts = []
+
+    def __call__(self, settings):
+        self.attempts.append(float(settings.fs))
+        if float(settings.fs) not in self.runnable:
+            raise RuntimeError(
+                'Error opening InputStream: Invalid sample rate '
+                '[PaErrorCode -9997]')
+        return self.real(settings)
+
+
+def _refusing_server(monkeypatch, runnable=(8000.0, 16000.0, 48000.0)):
+    fake = _RateRefusingStart(streams.start_stream, runnable)
+    monkeypatch.setattr(streams, 'start_stream', fake)
+    monkeypatch.setattr(streams, 'native_input_rates',
+                        lambda s: [8000.0, 16000.0, 48000.0])
+    return fake
+
+
+def test_refused_monitor_rate_steps_up_instead_of_failing(monkeypatch):
+    """500 Hz is a rate pydvma OFFERS (it decimates to reach it). If the
+    refusal killed configure, the target would be unusable for logging
+    too — configure is the gate."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            fake = _refusing_server(monkeypatch)
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 500, 'chunk_size': 50,
+                    'stored_time': 0.2, 'num_chunks': 4, 'viewed_time': None,
+                })
+                status = await _recv_json(ws)
+                assert status['type'] == 'status', status
+                assert fake.attempts == [500.0, 8000.0]
+                # The reply is honest about what the scope is doing...
+                assert status['fs'] == 8000
+                # ...and says why, in the operator's terms.
+                note = status['deviceNote']
+                assert '500 Hz is not a rate this device can run' in note
+                assert 'live monitor runs at 8000 Hz' in note
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_a_stepped_up_monitor_still_logs_at_the_target_rate(monkeypatch):
+    """The whole point: the scope runs at 8 kHz, the RECORD comes back
+    at 500 Hz."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            _refusing_server(monkeypatch)
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 500, 'chunk_size': 50,
+                    'stored_time': 0.2, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.2, pretrigger=None)
+                meta = await _recv_json(ws, timeout=15.0)
+                assert meta['type'] == 'log_result', meta
+                assert meta['fs'] == 500
+                frame = await _recv_binary(ws, timeout=15.0)
+                ds = container.load(io.BytesIO(frame[serve_mod.HEADER_SIZE:]))
+                td = ds.time_data_list[0]
+                assert float(td.settings.fs) == 500.0
+                assert float(td.settings.lpf_capture_fs) == 8000.0
+                t = td.time_axis
+                assert 1.0 / (t[1] - t[0]) == pytest.approx(500.0, rel=1e-6)
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_a_real_open_failure_is_still_an_error(monkeypatch):
+    """The step-up is narrow. A device that is simply broken must say
+    so, not get silently reopened at some other rate."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            def boom(settings):
+                raise RuntimeError('Error opening InputStream: Device '
+                                   'unavailable [PaErrorCode -9985]')
+            monkeypatch.setattr(streams, 'start_stream', boom)
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 500, 'chunk_size': 50,
+                    'stored_time': 0.2, 'num_chunks': 4, 'viewed_time': None,
+                })
+                err = await _recv_json(ws)
+                assert err['type'] == 'error'
+                assert 'Device unavailable' in err['message']
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_a_refusal_with_no_higher_rate_is_still_an_error(monkeypatch):
+    """Nothing to step up TO — the honest answer is the refusal."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            fake = _RateRefusingStart(streams.start_stream, runnable=())
+            monkeypatch.setattr(streams, 'start_stream', fake)
+            monkeypatch.setattr(streams, 'native_input_rates', lambda s: [])
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 500, 'chunk_size': 50,
+                    'stored_time': 0.2, 'num_chunks': 4, 'viewed_time': None,
+                })
+                err = await _recv_json(ws)
+                assert err['type'] == 'error'
+                assert 'Invalid sample rate' in err['message']
+                assert fake.attempts == [500.0]
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+class TestUnsupportedRateError:
+    """`_is_unsupported_rate_error` decides whether a failed open gets a
+    second chance, so it has to stay narrow."""
+
+    @pytest.mark.parametrize('text', [
+        'Error opening InputStream: Invalid sample rate [PaErrorCode -9997]',
+        'invalid sample rate',
+        'PaErrorCode -9997',
+    ])
+    def test_recognises_a_rate_refusal(self, text):
+        assert serve_mod._is_unsupported_rate_error(RuntimeError(text))
+
+    @pytest.mark.parametrize('text', [
+        'Error opening InputStream: Device unavailable [PaErrorCode -9985]',
+        'Invalid number of channels [PaErrorCode -9998]',
+        'nidaqmx: resource reserved',
+        '',
+    ])
+    def test_leaves_every_other_failure_alone(self, text):
+        assert not serve_mod._is_unsupported_rate_error(RuntimeError(text))

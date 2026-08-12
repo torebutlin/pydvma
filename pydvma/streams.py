@@ -1108,6 +1108,25 @@ class Recorder(object):
     '''
     def __init__(self,settings):
         self.settings = settings
+        #: Rate the OPEN stream actually delivers samples at, in Hz, or
+        #: ``None`` before `init_stream` has run. PortAudio reports back
+        #: what it negotiated, which is the honest axis rate for
+        #: everything read out of this recorder; ``settings.fs`` is only
+        #: the request. See `init_stream`.
+        #:
+        #: Carried across a re-``__init__`` — `log_data` zeroes the
+        #: buffers that way before arming a pretrigger, and that call
+        #: does not touch the open stream this describes (the same
+        #: reason ``audio_stream`` survives it).
+        self.stream_fs = getattr(self, 'stream_fs', None)
+        #: Human-readable warning about the device CLOCK, or ``None``
+        #: when it is exactly where it should be. Set by
+        #: `_pin_hardware_clock`; distinct from `stream_fs`, because a
+        #: mis-parked clock does not change the delivered rate — the OS
+        #: resamples to it, silently and at variable quality. Read by
+        #: `pydvma.serve` so the browser UI can say so rather than
+        #: leaving the news in a terminal nobody is watching.
+        self.clock_note = getattr(self, 'clock_note', None)
         self.trigger_detected = False
         # Second phase of the trigger state machine (see the class
         # docstring): the wanted window is complete and the stored
@@ -1249,6 +1268,18 @@ class Recorder(object):
         via `_clamp_soundcard_input_channels` before this method runs,
         so the value passed to ``sd.InputStream`` will not exceed the
         device's ``max_input_channels`` even if the caller asked for more.
+
+        Two rate facts are recorded once the stream is open, because
+        ``settings.fs`` is a REQUEST and neither of them is guaranteed to
+        match it:
+
+        * `stream_fs` — the rate PortAudio says the open stream runs at.
+          This is the rate the samples arrive at, so it is the one an
+          axis should be drawn against.
+        * `clock_note` — set by `_pin_hardware_clock` when the device's
+          own clock could not be put on that rate, i.e. the OS is
+          resampling into it. The delivered rate is unaffected; the
+          measurement quality is not.
         '''
         
         if settings.device_index is None:
@@ -1285,9 +1316,19 @@ class Recorder(object):
                                       clip_off=None, 
                                       dither_off=None, 
                                       never_drop_input=None, 
-                                      prime_output_buffers_using_stream_callback=None) 
+                                      prime_output_buffers_using_stream_callback=None)
         self.audio_stream.start()
-        
+        # What the stream ACTUALLY runs at, straight from PortAudio.
+        # Normally identical to the request (a host API that cannot make
+        # the rate raises on open rather than quietly substituting one),
+        # but where it does differ this is the only honest number, so
+        # report it rather than the request. Falls back to the request
+        # when the attribute is missing or unreadable.
+        try:
+            self.stream_fs = float(self.audio_stream.samplerate)
+        except Exception:
+            self.stream_fs = float(settings.fs)
+
         
     
     def _pin_hardware_clock(self, settings):
@@ -1305,9 +1346,15 @@ class Recorder(object):
         is reported and then tolerated — a resampled capture still beats
         no capture — so the operator learns the data is not what it
         claims to be. No-op off macOS, where the rate list is unknown.
+
+        The report goes to two places: stdout, for the notebook user, and
+        `clock_note`, which `pydvma.serve` forwards to the browser UI —
+        a warning printed into a terminal behind the browser window is a
+        warning nobody reads.
         '''
         self._clock_device_id = None
         self._clock_previous_fs = None
+        self.clock_note = None
         if not _coreaudio.available():
             return
         device_id, _ = _coreaudio.find_device(settings.device_name)
@@ -1316,12 +1363,26 @@ class Recorder(object):
         native = _coreaudio.native_rates(device_id)
         target = float(settings.fs)
         if native and not any(abs(target - r) < 1e-6 for r in native):
-            print('WARNING: %r cannot run at %g Hz (it supports %s). The OS '
-                  'will resample, which is not measurement-grade — set fs to '
-                  'a supported rate, or use lpf_on / capture_fs to capture at '
-                  'one and decimate.'
-                  % (settings.device_name, target,
-                     ', '.join('%g' % r for r in native)))
+            ladder = ', '.join('%g' % r for r in native)
+            if any(r > target for r in native):
+                # A rate above the target exists, so `select_capture_fs`
+                # will capture there and decimate: only the LIVE stream
+                # (monitor / oscilloscope) is at the OS resampler's
+                # mercy, and saying otherwise would send the operator
+                # hunting a problem their logged data does not have.
+                self.clock_note = (
+                    '%s cannot run at %g Hz (it supports %s), so the LIVE '
+                    'stream is resampled by the OS — not measurement-grade. '
+                    'Logged captures are unaffected: pydvma captures at the '
+                    'next rate up and decimates behind its own anti-alias '
+                    'filter.' % (settings.device_name, target, ladder))
+            else:
+                self.clock_note = (
+                    '%s cannot run at %g Hz (it supports %s) and has no '
+                    'higher rate to decimate from, so the OS will resample '
+                    'every capture — set fs to a supported rate.'
+                    % (settings.device_name, target, ladder))
+            print('WARNING: ' + self.clock_note)
             return
         previous = _coreaudio.get_nominal_rate(device_id)
         if previous is not None and abs(previous - target) < 1e-6:
@@ -1330,9 +1391,11 @@ class Recorder(object):
             self._clock_device_id = device_id
             self._clock_previous_fs = previous
         else:
-            print('WARNING: could not set %r to %g Hz (it is at %s Hz). The '
-                  'capture will be resampled by the OS.'
-                  % (settings.device_name, target, previous))
+            self.clock_note = (
+                'could not set %s to %g Hz (it is at %s Hz); the capture '
+                'will be resampled by the OS.'
+                % (settings.device_name, target, previous))
+            print('WARNING: ' + self.clock_note)
 
     def _restore_hardware_clock(self):
         '''Put the device clock back where the stream found it.'''

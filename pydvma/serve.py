@@ -294,6 +294,34 @@ CANCEL_JOIN_TIMEOUT = 5.0
 _STANDARD_RATES = (8000, 11025, 16000, 22050, 32000, 44100, 48000,
                    88200, 96000, 176400, 192000)
 
+#: Low target rates offered BELOW a sound card's own rate floor, on top
+#: of :data:`_STANDARD_RATES`.  Nothing here is a rate audio hardware
+#: runs — they are DELIVERED rates, reached by capturing at the lowest
+#: rate the device can run and decimating behind pydvma's own anti-alias
+#: filter (``streams.select_capture_fs`` → ``'lowest-native'`` →
+#: ``analysis.resample_to_fs``).
+#:
+#: They exist because the audio ladder bottoms out at 8 kHz while
+#: structural-dynamics work routinely wants a 250 Hz–2.5 kHz span, and a
+#: device whose own floor IS 8000 (ESI U24 XL: 8000/16000/32000/44100/
+#: 48000) was therefore offered NO decimation target at all — the
+#: digital low-pass had nothing it could deliver on the lab's main
+#: interface.  **3000 is the 3c6 teaching lab's standard rate** (3 kHz,
+#: 30 s, 2 channels), which is why it is on the list despite not being a
+#: round number in the audio world: it is the one people actually type.
+#:
+#: Deliberately NOT merged into :data:`_STANDARD_RATES`, whose other
+#: consumer is :func:`_bounded_standard_rates` — the NI fs ladder, where
+#: every entry means "the converter clocks there" and is bounded by the
+#: device's reported ``ai_min_rate``/``ai_max_rate``.  NI hardware can
+#: clock at 500 Hz directly and needs no decimation to reach it, so
+#: adding these would only change what the NI list MEANS.  They are also
+#: only offered where the device's native ladder is KNOWN: with no
+#: ladder, ``select_capture_fs`` returns ``'unknown'`` and the stream is
+#: opened at the target itself, which a host API that does not do
+#: 500 Hz simply refuses.
+_DECIMATED_TARGET_RATES = (500, 1000, 2000, 3000, 4000, 5000)
+
 #: MySettings constructor kwargs the ``configure`` message accepts.
 #: Derived from the signature so it stays in sync automatically; any key
 #: outside this set is rejected with a clear error.
@@ -512,6 +540,21 @@ def _bounded_standard_rates(fs_min, fs_max) -> list[int]:
     return [int(r) for r in _STANDARD_RATES if lo <= r <= hi]
 
 
+def _is_unsupported_rate_error(exc: BaseException) -> bool:
+    """True when an exception means "this device will not run that rate".
+
+    PortAudio reports it as ``Invalid sample rate`` / ``PaErrorCode
+    -9997`` on stream open, wrapped in a ``PortAudioError``; matching on
+    the text keeps this working without importing ``sounddevice`` (which
+    is an optional extra) and covers the NI/driver wrappers that quote
+    the same phrase.  Deliberately narrow: everything else — device
+    busy, wrong channel count, missing driver — must keep failing
+    loudly.  See :meth:`_Connection._open_live_stream`.
+    """
+    text = str(exc).lower()
+    return 'invalid sample rate' in text or '-9997' in text
+
+
 def _soundcard_native_rates(index: int) -> list[float]:
     """Rates the soundcard device can GENUINELY run, ascending; else ``[]``.
 
@@ -538,9 +581,13 @@ def _soundcard_candidate_rates(sd, index: int, max_in: int,
     """Sample rates to offer for this soundcard input device.
 
     Where the device publishes a real rate ladder that is used directly,
-    plus the standard rates below its floor, which pydvma reaches by
-    capturing at a native rate and decimating behind its own anti-alias
-    filter.  Otherwise falls back to probing each standard rate with
+    plus the standard rates below its floor AND the low targets in
+    :data:`_DECIMATED_TARGET_RATES`, which pydvma reaches by capturing at
+    a native rate and decimating behind its own anti-alias filter.  (The
+    low targets matter on a device whose floor is already 8 kHz — the
+    bottom of the audio ladder — which would otherwise be offered no
+    decimation target whatsoever.)  Otherwise falls back to probing each
+    standard rate with
     ``sd.check_input_settings`` (cheap — PortAudio answers without
     opening a stream).  The device's ``default_samplerate`` is always
     included.  Output-only devices (``max_in <= 0``) just get their
@@ -569,6 +616,11 @@ def _soundcard_candidate_rates(sd, index: int, max_in: int,
         rates |= {int(r) for r in native}
         rates |= {int(r) for r in _STANDARD_RATES
                   if r < floor or (r <= ceiling and float(r) in native)}
+        # ...and the sub-audio targets, for the same reason: an 8 kHz
+        # floor is still 8 kHz above a 500 Hz modal survey, and only the
+        # known-ladder branch can promise the capture-and-decimate path
+        # that delivers them. See `_DECIMATED_TARGET_RATES`.
+        rates |= {int(r) for r in _DECIMATED_TARGET_RATES if r < floor}
         return sorted(rates)
     checker = getattr(sd, 'check_input_settings', None)
     if checker is None:
@@ -1265,6 +1317,12 @@ class _Connection:
         self.stream_id = _Connection._next_stream_id or 1
         self.seq = 0
         self.settings = None  # last configured MySettings
+        # What the LIVE stream was actually opened with. Usually
+        # `self.settings` itself; a separate object when the host API
+        # refused the requested rate and the monitor had to step up to a
+        # runnable one (see `_open_live_stream`). Captures still target
+        # `self.settings`.
+        self._stream_settings = None
         self._monitor_task: asyncio.Task | None = None
         self._monitor_stop = asyncio.Event()
         # The in-flight `log`, dispatched as its own task so the receive
@@ -1410,8 +1468,13 @@ class _Connection:
             print(device_note)
 
         settings = options.MySettings(**kwargs)
-        streams.start_stream(settings)
-        self.settings = streams.REC.settings if streams.REC is not None else settings
+        self._stream_settings, rate_note = self._open_live_stream(settings)
+        if self._stream_settings is settings and streams.REC is not None:
+            self.settings = streams.REC.settings
+        else:
+            # The monitor had to step up; captures still target what the
+            # user asked for.
+            self.settings = settings
 
         rec = streams.REC
         osc_samples = int(rec.osc_time_data.shape[0]) if rec is not None else 0
@@ -1420,17 +1483,103 @@ class _Connection:
             'event': 'configured',
             'streamId': self.stream_id,
             'driver': self.settings.device_driver,
-            'fs': float(self.settings.fs),
+            'fs': self._stream_fs(rec),
             'channels': int(self.settings.channels),
             'chunkSize': int(self.settings.chunk_size),
             'oscSamples': osc_samples,
         }
-        # Additive: present only when the index had to be re-pointed, so
-        # the user learns their device moved rather than just silently
-        # getting the right one.
-        if device_note:
-            payload['deviceNote'] = device_note
+        # Additive: present only when there is something the user could
+        # not otherwise know — the index had to be re-pointed, the
+        # monitor had to step up to a runnable rate, or the device clock
+        # could not be put where it was asked to go.
+        notes = [n for n in (device_note, rate_note,
+                             getattr(rec, 'clock_note', None)) if n]
+        if notes:
+            payload['deviceNote'] = ' '.join(notes)
         await self._send_json(payload)
+
+    def _open_live_stream(self, settings):
+        """Open the monitor stream, stepping the rate up if it is refused.
+
+        Returns ``(opened_settings, note)`` — the settings object the
+        stream is actually running on (``settings`` itself in the normal
+        case) and a message for the operator, or ``None``.
+
+        pydvma offers target rates the hardware cannot run (3 kHz on a
+        44.1 kHz-floor card, 500 Hz on the ESI U24 XL's 8 kHz floor):
+        ``log_data`` delivers them by capturing at a native rate and
+        decimating.  The LIVE stream has no such escape, and whether it
+        opens at all is a host-API lottery — CoreAudio resamples for
+        some devices and PortAudio refuses outright for others
+        (``Invalid sample rate``, PaErrorCode -9997, measured on
+        BlackHole 2ch at 500 Hz).  Letting that refusal fail the whole
+        ``configure`` would take the target off the table entirely,
+        including for the logs that CAN deliver it.
+
+        So on a rate refusal the monitor is reopened at the rate
+        ``streams.select_capture_fs`` would capture at, with chunk
+        geometry scaled to keep the same time window
+        (``acquisition._capture_settings``).  The oscilloscope then runs
+        honestly at a rate the device supports — reported as such in
+        ``status/configured.fs`` — while captures continue to target
+        ``settings.fs``.  Any other failure is left to propagate.
+        """
+        try:
+            streams.start_stream(settings)
+            return settings, None
+        except Exception as exc:
+            if not _is_unsupported_rate_error(exc):
+                raise
+            step, reason = streams.select_capture_fs(settings)
+            if reason == 'unknown' or float(step) <= float(settings.fs):
+                raise
+            monitor = acquisition._capture_settings(settings, float(step))
+            streams.start_stream(monitor)
+            note = ('%g Hz is not a rate this device can run, so the live '
+                    'monitor runs at %g Hz; logged captures are still '
+                    'delivered at %g Hz (captured high and decimated).'
+                    % (float(settings.fs), float(step), float(settings.fs)))
+            print(note)
+            return monitor, note
+
+    def _stream_fs(self, rec) -> float:
+        """The rate the live stream really delivers, in Hz.
+
+        ``settings.fs`` is what was ASKED for.  The two can differ, and
+        the client draws frequency axes from this number, so report the
+        truth where the backend knows it:
+
+        - ``streams.Recorder.stream_fs`` is PortAudio's own answer for
+          the open stream, and wins whenever it is known;
+        - otherwise the recorder's ``settings.fs`` — the rate the stream
+          was opened WITH, which differs from the request when the NI
+          recorder adopted a DAQmx-coerced rate (a 9234 snaps 5000 →
+          5120) or when :meth:`_open_live_stream` had to step the
+          monitor up to a runnable rate;
+        - failing both, the request stands.
+
+        A device whose CLOCK is parked elsewhere is a different fault and
+        is not reported here: the OS resamples into the requested rate,
+        so the delivered rate — and the axis — stay correct while the
+        quality does not.  That one travels as ``deviceNote``
+        (``streams.Recorder.clock_note``).
+        """
+        fs = float(self.settings.fs)
+        if rec is None:
+            return fs
+        live = None
+        for candidate in (getattr(rec, 'stream_fs', None),
+                          getattr(getattr(rec, 'settings', None), 'fs', None)):
+            try:
+                candidate = float(candidate) if candidate else None
+            except (TypeError, ValueError):
+                candidate = None
+            if candidate:
+                live = candidate
+                break
+        if live and abs(live - fs) > 1e-6:
+            return live
+        return fs
 
     async def _on_start_monitor(self) -> None:
         if streams.REC is None:
@@ -1592,38 +1741,99 @@ class _Connection:
         triggered = {'seen': False}
         poll_task = (asyncio.create_task(self._poll_trigger(triggered))
                      if armed else None)
+        # The capture may have swapped the live stream onto a different
+        # rate (see `_restore_stream_rate`); put it back on EVERY exit —
+        # result, cancel or error — but only after the client has its
+        # data, so reopening a device never delays the delivery.
         try:
-            dvma_bytes, n_samples, n_channels = await capture
+            try:
+                dvma_bytes, n_samples, n_channels = await capture
+            finally:
+                if poll_task is not None:
+                    poll_task.cancel()
+                    try:
+                        await poll_task
+                    except asyncio.CancelledError:
+                        pass
+
+            # A cancel that landed while the capture was finishing still
+            # wins: the client contract is that `status/cancelled` arrives
+            # INSTEAD of `log_result`, never as well as it.
+            if cancel_event is not None and cancel_event.is_set():
+                return
+
+            if armed and not triggered['seen']:
+                await self._send_json({'type': 'status', 'event': 'timeout',
+                                       'streamId': self.stream_id})
+
+            await self._send_json({
+                'type': 'log_result',
+                'streamId': self.stream_id,
+                'nChannels': n_channels,
+                'nSamples': n_samples,
+                'fs': float(settings.fs),
+                'testName': test_name,
+                'byteLength': len(dvma_bytes),
+            })
+            frame = encode_container(self.stream_id, self._next_seq(),
+                                     dvma_bytes, n_channels, n_samples,
+                                     float(settings.fs))
+            await self.ws.send(frame)
         finally:
-            if poll_task is not None:
-                poll_task.cancel()
-                try:
-                    await poll_task
-                except asyncio.CancelledError:
-                    pass
+            await self._restore_stream_rate()
 
-        # A cancel that landed while the capture was finishing still
-        # wins: the client contract is that `status/cancelled` arrives
-        # INSTEAD of `log_result`, never as well as it.
-        if cancel_event is not None and cancel_event.is_set():
+    async def _restore_stream_rate(self) -> None:
+        """Put the live stream back on the configured rate after a capture.
+
+        ``acquisition.log_data`` does not capture at ``settings.fs`` when
+        the device cannot run it: it swaps in a COPY of the settings at a
+        rate the hardware does run (``streams.select_capture_fs`` —
+        oversampled for the digital low-pass, or stepped up to the lowest
+        native rate for an off-ladder target), calls
+        ``streams.start_stream`` with that copy, and decimates the result
+        back down.  Nothing put the stream back, so the process-global
+        recorder was left running at the CAPTURE rate while the client
+        had been told the configured one.
+
+        That is not cosmetic: :meth:`_monitor_loop` stamps every chunk
+        with ``streams.REC.settings.fs``, so after one 10 kHz log on an
+        8 kHz-floor interface the live scope and its FFT were reading a
+        frequency axis 1.6x out — and stayed that way until the next
+        ``configure``.
+
+        Re-opens the stream with whatever the monitor was last opened on
+        (``_stream_settings`` — not necessarily ``self.settings``; see
+        :meth:`_open_live_stream`), and only when the RATES differ, so
+        an ordinary log costs no teardown at all.  Rate is the whole
+        test: it is what the client was told and what its axis is drawn
+        against, so a capture that happened to run at the monitor's rate
+        may keep its stream, buffer geometry and all.  Runs in the
+        executor because opening a device blocks.  A failure to reopen
+        is reported and swallowed: the capture that just succeeded still
+        gets delivered.
+        """
+        rec = streams.REC
+        settings = self._stream_settings or self.settings
+        if rec is None or settings is None:
             return
-
-        if armed and not triggered['seen']:
-            await self._send_json({'type': 'status', 'event': 'timeout',
-                                   'streamId': self.stream_id})
-
-        await self._send_json({
-            'type': 'log_result',
-            'streamId': self.stream_id,
-            'nChannels': n_channels,
-            'nSamples': n_samples,
-            'fs': float(settings.fs),
-            'testName': test_name,
-            'byteLength': len(dvma_bytes),
-        })
-        frame = encode_container(self.stream_id, self._next_seq(), dvma_bytes,
-                                 n_channels, n_samples, float(settings.fs))
-        await self.ws.send(frame)
+        try:
+            live = float(rec.settings.fs)
+            target = float(settings.fs)
+        except (AttributeError, TypeError, ValueError):
+            return
+        if abs(live - target) < 1e-6:
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, streams.start_stream, settings)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await self._send_error(
+                    'capture ran at %g Hz; could not reopen the %g Hz '
+                    'monitor stream afterwards (%s) — reconfigure to restore '
+                    'the live view.' % (live, target, exc))
 
     async def _poll_trigger(self, triggered: dict) -> None:
         """Emit a one-shot ``triggered`` status when the recorder arms.
