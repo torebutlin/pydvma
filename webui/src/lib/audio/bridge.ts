@@ -463,6 +463,15 @@ export class BridgeProvider implements SourceProvider {
       // see AudioInputDevice. Older servers omit these keys entirely and
       // the UI falls back to the flat list.
       const dc: any = caps.device_caps?.[`soundcard:${i}`] ?? {};
+      // Playback-only endpoints are not inputs. PortAudio enumerates
+      // both directions in one list, so without this the INPUT dropdown
+      // offers Speakers and Headphones — selectable, and guaranteed to
+      // fail at capture. Skipped only when the server actually told us
+      // the channel counts; an older bridge that sends no device_caps
+      // keeps the flat list rather than losing entries.
+      if (typeof dc.max_input_channels === 'number' && dc.max_input_channels < 1) {
+        return;
+      }
       out.push({
         deviceId: `soundcard:${i}`,
         label: name,

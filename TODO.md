@@ -360,21 +360,19 @@ is still open, as one consolidated list.
     endpoints (S/PDIF, Stereo Mix) losing to the analogue input. Setup
     shows one row per device with an "all backends" escape hatch, plus
     the calibration line. Docs in `docs/user-guide/acquisition.md`.
-    STILL OPEN from that item: (b) the same box has a DIFFERENT name on
-    each OS (U24 XL is `U24XL with SPDIF I/O` on macOS vs `Line (U24XL
-    with SPDIF I/O)` on Windows; the 2i2 is generic `Analogue 1 + 2
-    (Focusrite USB Audio)` on Windows), so a `--settings` file written
-    on the Mac still will not name-match on the PC. The
-    `_soundcard_specs` profile layer already bridges the models —
-    `devices.resolve` could fall back to matching a PROFILE LABEL
-    (`device='ESI U24 XL'`) when the raw name misses, which would make
-    settings files portable across machines.
-  - **Input dropdown still lists output-only devices** (new,
-    2026-08-12) — Setup's input selector shows Speakers/Headphones
-    entries because the bridge sends one flat soundcard list for both
-    directions. Pre-existing, cosmetic, and now more visible with the
-    list shortened; `devices.backend_map(kind=...)` already computes
-    the per-direction split the fix needs.
+    Cross-OS name portability landed too: the same box has a DIFFERENT
+    name on each OS (U24 XL is `U24XL with SPDIF I/O` on macOS vs `Line
+    (U24XL with SPDIF I/O)` on Windows; the 2i2 is generic `Analogue 1 +
+    2 (Focusrite USB Audio)` on Windows, which does not contain the
+    model at all), so `devices.resolve` now falls back to matching the
+    `_soundcard_specs` PROFILE LABEL — `device='ESI U24 XL'` resolves on
+    either machine, ignoring case and punctuation, reported in the note,
+    and only tried when the raw name misses.
+  - ~~**Input dropdown lists output-only devices**~~ — DONE
+    2026-08-12. `enumerateInputDevices` now skips endpoints whose
+    `max_input_channels` is 0 (and only when the server actually sent
+    the counts, so an older bridge keeps the flat list). Setup's input
+    selector went 38 rows -> 11 on this bench.
   - **Output-side calibration not attempted** — output volume
     (−55..0 dB digital) is not pinned and `output_VmaxSC` is not
     derived from `max_output_dbu` (+6.9 dBu); worth doing if the U24

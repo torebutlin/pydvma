@@ -232,6 +232,30 @@ test('enumerateInputDevices carries backend + calibration metadata', async () =>
   expect(sc[2].calibrationAdvice).toMatch(/FS units/);
 });
 
+test('enumerateInputDevices leaves playback-only endpoints out', async () => {
+  // PortAudio enumerates both directions in one list, so without this
+  // the INPUT dropdown offers Speakers — selectable, and certain to fail
+  // at capture.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({
+    ...CAPS,
+    devices: { soundcard: ['Line (U24XL)', 'Speakers (Realtek)'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': { name: 'Line (U24XL)', max_input_channels: 2, max_output_channels: 0 },
+      'soundcard:1': { name: 'Speakers (Realtek)', max_input_channels: 0, max_output_channels: 2 },
+    },
+  });
+  await capsP;
+
+  const ids = (await bp.enumerateInputDevices()).map((d) => d.deviceId);
+  expect(ids).toContain('soundcard:0');
+  expect(ids).not.toContain('soundcard:1');
+});
+
 test('enumerateInputDevices tolerates a server that sends no device_caps', async () => {
   // Older bridge, or a driver that failed to answer: the fields are
   // simply absent and the dropdown falls back to the flat list.

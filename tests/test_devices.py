@@ -298,6 +298,96 @@ class TestResolve:
         assert devices.resolve(str(target))[0] == target
 
 
+class TestModelMatchingIsPortable:
+    """The name an OS gives a device is not portable, so a settings file
+    that names the raw device works only on the machine it was written
+    on. Matching the MODEL closes that.
+
+    macOS calls this box 'U24XL with SPDIF I/O'; Windows calls it 'Line
+    (U24XL with SPDIF I/O)'. A Scarlett 2i2 is worse — Windows names it
+    'Analogue 1 + 2 (Focusrite USB Audio)', which does not contain the
+    model at all.
+    """
+
+    MAC = [('U24XL with SPDIF I/O', 'Core Audio', 2, 2, 48000)]
+    WIN = [(U24, 'Windows WDM-KS', 2, 0, 48000)]
+
+    @staticmethod
+    def _enumeration(monkeypatch, table):
+        class FakeSd:
+            @staticmethod
+            def query_devices():
+                return [{'name': n, 'hostapi': 0, 'max_input_channels': i,
+                         'max_output_channels': o, 'default_samplerate': sr}
+                        for n, _a, i, o, sr in table]
+
+            @staticmethod
+            def query_hostapis(index=None):
+                entries = [{'name': table[0][1]}]
+                return entries[index] if index is not None else entries
+
+            @staticmethod
+            def check_input_settings(**kwargs):
+                return None
+
+            class WasapiSettings:
+                def __init__(self, exclusive=False):
+                    self.exclusive = exclusive
+
+        monkeypatch.setattr(devices, 'sd', FakeSd)
+        monkeypatch.setattr(streams, 'sd', FakeSd)
+        monkeypatch.setattr(streams, 'all_soundcard_device_names',
+                            lambda: [n for n, _a, _i, _o, _s in table])
+        monkeypatch.setattr(streams, 'native_input_rates',
+                            lambda settings: [48000.0])
+
+    def test_the_same_model_spec_resolves_on_both_platforms(self, monkeypatch):
+        """The whole point: one settings file, either machine."""
+        for table in (self.MAC, self.WIN):
+            self._enumeration(monkeypatch, table)
+            _i, entry, note = devices.resolve('ESI U24 XL')
+            assert entry['profile'] == 'ESI U24 XL'
+            assert 'by model' in note
+
+    def test_the_raw_windows_name_does_NOT_resolve_on_the_mac(self, monkeypatch):
+        """Which is exactly why model matching had to be added."""
+        self._enumeration(monkeypatch, self.MAC)
+        with pytest.raises(ValueError):
+            devices.resolve(U24)
+
+    def test_model_matching_ignores_case_and_punctuation(self, monkeypatch):
+        self._enumeration(monkeypatch, self.WIN)
+        for spec in ('ESI U24 XL', 'esi u24 xl', 'esi-u24-xl', 'ESIU24XL'):
+            assert devices.resolve(spec)[1]['profile'] == 'ESI U24 XL'
+
+    def test_a_device_name_match_still_wins_and_is_not_flagged(self, monkeypatch):
+        self._enumeration(monkeypatch, self.WIN)
+        _i, _e, note = devices.resolve('U24XL')
+        assert 'by model' not in note
+
+    def test_the_error_lists_the_models_it_could_have_matched(self, monkeypatch):
+        self._enumeration(monkeypatch, self.WIN)
+        with pytest.raises(ValueError, match="Recognised models: 'ESI U24 XL'"):
+            devices.resolve('Behringer XR18')
+
+    def test_an_uncharacterised_device_cannot_be_model_matched(self, monkeypatch):
+        self._enumeration(monkeypatch, [('Generic USB Audio', 'Core Audio',
+                                         2, 0, 48000)])
+        with pytest.raises(ValueError, match='by name or model'):
+            devices.resolve('ESI U24 XL')
+
+
+class TestSquash:
+
+    def test_strips_punctuation_and_case(self):
+        assert devices._squash('ESI U24-XL!') == 'esiu24xl'
+
+    def test_empty_needle_never_matches(self):
+        """Otherwise '' would match every model."""
+        assert devices._loose_match('', 'ESI U24 XL') is False
+        assert devices._loose_match('-', 'ESI U24 XL') is False
+
+
 class TestFormatInventory:
 
     def test_report_marks_the_recommended_backend(self, fake_portaudio):

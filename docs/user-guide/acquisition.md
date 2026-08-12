@@ -96,6 +96,27 @@ It refuses rather than guess if the name matches two different devices.
 An index still works if you want one (`device_index=27`), and
 `raw=True` gives the old flat listing.
 
+!!! tip "Name the MODEL to make settings portable between machines"
+    The name an OS gives a device is not portable. The same ESI U24 XL
+    is `U24XL with SPDIF I/O` to macOS and `Line (U24XL with SPDIF I/O)`
+    to Windows; a Scarlett 2i2 is `Scarlett 2i2 4th Gen` on macOS but
+    generic `Analogue 1 + 2 (Focusrite USB Audio)` on Windows, which
+    does not contain the model at all. So a settings file naming the raw
+    device only works on the machine it was written on.
+
+    Name the model instead and it resolves on either:
+
+    ```python
+    dvma.MySettings(device='ESI U24 XL', fs=48000)
+    # note: using 'Line (U24XL with SPDIF I/O)' (matched by model, not
+    #       device name) via Windows WDM-KS ...
+    ```
+
+    Model matching ignores case and punctuation (`'esi-u24-xl'` works),
+    is tried only when the raw name matches nothing, and is reported in
+    the note so you can see which route resolved. It works for any model
+    in `pydvma._soundcard_specs`; the error lists the recognised ones.
+
 To query a configured device directly:
 
 ```python

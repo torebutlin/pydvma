@@ -109,6 +109,25 @@ _AUXILIARY_TOKENS = ('spdif', 's/pdif', 'stereo mix', 'what u hear',
                      'loopback', 'wave out')
 
 
+def _squash(text):
+    """Lowercase and strip everything but letters and digits.
+
+    Model names are written inconsistently by humans and by vendors
+    alike — ``'ESI U24 XL'``, ``'U24XL'``, ``'esi-u24-xl'`` all mean the
+    same box — so model matching compares the squashed forms.
+    """
+    return ''.join(ch for ch in str(text or '').lower() if ch.isalnum())
+
+
+def _loose_match(needle, haystack):
+    """Is ``needle`` a substring of ``haystack`` ignoring case and
+    punctuation? Used for MODEL matching only; device-name matching stays
+    literal, because a raw device name is what the user copied from a
+    listing and should match exactly as shown."""
+    a, b = _squash(needle), _squash(haystack)
+    return bool(a) and a in b
+
+
 def endpoint_role(name):
     """The ROLE part of a Windows endpoint name, lowercased.
 
@@ -575,14 +594,34 @@ def resolve(spec, driver='soundcard', kind='input', fs=None):
     needle = str(spec).strip().lower()
     groups = inventory(driver=driver, kind=kind)
     hits = [g for g in groups if needle in g['name'].lower()]
-    if not hits:
-        raise ValueError(
-            '%r matches no %s %s device. Present: %s'
-            % (spec, driver, kind,
-               ', '.join(repr(display_name(g['name'])) for g in groups)
-               or 'none'))
 
-    also = ''
+    via_model = False
+    if not hits:
+        # Fall back to the MODEL name. The name an OS gives a device is
+        # not portable: an ESI U24 XL is 'U24XL with SPDIF I/O' to
+        # CoreAudio and 'Line (U24XL with SPDIF I/O)' to Windows, and a
+        # Scarlett 2i2 is 'Scarlett 2i2 4th Gen' on macOS but generic
+        # 'Analogue 1 + 2 (Focusrite USB Audio)' on Windows — nothing in
+        # that string says which model it is. So a settings file that
+        # names the raw device works only on the machine it was written
+        # on. Matching `_soundcard_specs`' profile label instead makes
+        # `device='ESI U24 XL'` resolve on every platform.
+        hits = [g for g in groups
+                if g.get('profile') and _loose_match(needle, g['profile'])]
+        via_model = bool(hits)
+
+    if not hits:
+        known = sorted({g['profile'] for g in groups if g.get('profile')})
+        message = ('%r matches no %s %s device by name or model. Present: %s'
+                   % (spec, driver, kind,
+                      ', '.join(repr(display_name(g['name'])) for g in groups)
+                      or 'none'))
+        if known:
+            message += '. Recognised models: %s' % ', '.join(
+                repr(k) for k in known)
+        raise ValueError(message)
+
+    also = ' (matched by model, not device name)' if via_model else ''
     if len(hits) > 1:
         # An exact name always wins over a partial one.
         exact = [g for g in hits if g['name'].strip().lower() == needle]
@@ -595,9 +634,9 @@ def resolve(spec, driver='soundcard', kind='input', fs=None):
         # ONLY to separate otherwise-equal matches, and always reported.
         primary = [g for g in hits if not is_auxiliary(g['name'])]
         if len(primary) == 1:
-            also = ' (%r also matched, but it is an auxiliary/digital input)' \
-                % display_name(
-                    [g for g in hits if g is not primary[0]][0]['name'])
+            also += (' (%r also matched, but it is an auxiliary/digital input)'
+                     % display_name(
+                         [g for g in hits if g is not primary[0]][0]['name']))
             hits = primary
     if len(hits) > 1:
         raise ValueError(
