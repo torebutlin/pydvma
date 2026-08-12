@@ -271,7 +271,11 @@ XLR-female→TS adapter, <£15, no fabrication.
   inline attenuator pads (−20 dB Pro Signal PSG02973 for ±5 V-class
   sources; characterise realised ratio in situ → `cal_factor`).
   Rigol absolute check still queued (needs a cable). UCA222 stays the
-  £17 fallback. The **planet 22c** (£159 + £45 DVS + £12 adapter
+  £17 fallback. **First 3c6 lab round (2026-08-12, round 11): the 2i2
+  worked better than the U24 XL in practice — wider input range plus
+  the gain knob — and is Tore's TENTATIVE pick for 3c6 stations**; the
+  U24's fixed ±1.9 Vpk was the limiter exactly as predicted above (pads
+  not yet in hand). The **planet 22c** (£159 + £45 DVS + £12 adapter
   ≈ £210/station) is the balanced/±11 V/pooling-capable alternative —
   a REAL option of interest per Tore, pending its own bench session
   (noise/absolute + two-box cross-spectrum for the sync claim).
@@ -290,9 +294,10 @@ XLR-female→TS adapter, <£15, no fabrication.
 
 ## Recommended lineup (updated 2026-08-12)
 
-Ladder: **ESI U24 XL** (owned; characterised; fixed-gain 3C6 station
-box, ±1.9 Vpk — add a −20 dB inline pad per channel for ±5 V-class
-sources) → **planet 22c** (option of interest: balanced, ±2.8/±11 V
+Ladder (NB round-11 lab experience now favours the 2i2 for 3c6 —
+see Conclusions): **ESI U24 XL** (owned; characterised; fixed-gain 3C6
+station box, ±1.9 Vpk — add a −20 dB inline pad per channel for
+±5 V-class sources) → **planet 22c** (option of interest: balanced, ±2.8/±11 V
 range switch, Dante-poolable; ~£210/station; bench trial is the
 decision gate) → **Scarlett 2i2 4th gen** (adjustable bench box: best
 fs/converters of the cheap tier; gain NOT software-settable — FC2

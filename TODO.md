@@ -98,6 +98,16 @@ is still open, as one consolidated list.
 
 ## Backlog — hardware, acquisition & the next PC session
 
+- **3c6 station device: 2i2 is the TENTATIVE pick (round 11,
+  2026-08-12)** — first lab round found it worked better than the
+  U24 XL (wider input range + gain knob; the U24's ±1.9 Vpk ceiling bit
+  exactly as the survey predicted, pads not in hand). Firm up after
+  the round-11 fixes are re-tested in the lab; if it sticks, the
+  stated-gain workflow (NEEDS GAIN calibration status) becomes the
+  standard 3c6 flow — consider making `verify_input_scaling` +
+  level-check the documented first-day-of-term ritual. Feedback doc:
+  `dev/2026-08-12-round11-3c6-lab-feedback.md`.
+
 - **Next Windows/PC sitting — one umbrella, three briefs:**
   1. **Run `dev/2026-08-10-windows-checklist.md`** — NI regression
      DONE 2026-08-11 (PC, 6003 unplugged): `bridge_hw_check.py` 35/35
