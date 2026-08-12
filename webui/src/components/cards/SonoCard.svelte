@@ -31,6 +31,7 @@
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
   import { autoVoicesForW0, VPO_LADDER, type AnalysisSettings, type SonoSettings } from '../../lib/stores/analysisSettings';
+  import { editSonoBand, sonoFreqScaleFor } from '../../lib/analysis/sonoBand';
   import type { ViewState } from '../../lib/stores/viewstate';
   import type { DampingStore } from '../../lib/stores/damping';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
@@ -122,9 +123,11 @@
   // Round-9: a slider (nFFT feel) spanning 4..64, with an exact box accepting
   // up to 128 — the engine has no hard w0 limit, but past ~107 the 64-voice
   // ladder top undersamples the grid slightly, so the box clamps there. NB
-  // memory for the damping fit grows with the grid (rows x full-rate
-  // samples), so a very long record at 64 voices can hit the engine's array
-  // ceiling with a clear "array is too big" error rather than a result.
+  // memory for the damping fit grows with the grid (rows x time columns), so a
+  // long record at a high Q can exceed the engine's image ceiling — pydvma
+  // then refuses with a sizing error naming the remedies (shorter record,
+  // narrower freq range, fewer voices), which is what the freq-range boxes
+  // below are for.
   const W0_MIN = 4;
   const W0_SLIDER_MAX = 64;
   const W0_BOX_MAX = 128;
@@ -153,8 +156,18 @@
 
   // Switching method re-runs live (gated on an existing sonogram) so the heat
   // map updates immediately when toggling STFT ↔ CWT.
+  //
+  // The toggle also sets the frequency axis each transform wants
+  // (`sonoFreqScaleFor`: CWT → log, STFT → lin). RULE, deliberately simple:
+  // every method toggle sets that default, and a manual choice from the plot
+  // toolbar afterwards stands until the NEXT toggle. Without it the CWT's
+  // native log ladder was drawn on a linear axis by default, which crushes its
+  // low-frequency rows into a blocky band — the detail the wavelet was chosen
+  // for — and every user had to find the toolbar's lin/log control to see it.
   function onMethod(m: 'stft' | 'cwt') {
     patch({ method: m });
+    viewState.setSonoFreqScale(sonoFreqScaleFor(m));
+    bandError = '';                 // the band boxes only exist for the CWT
     live.schedule();
   }
   // Voices select: the 'auto' entry re-enables following the wavelet Q; an
@@ -175,12 +188,18 @@
     patch(sono.voicesAuto ? { w0, voicesPerOctave: autoVoicesForW0(w0) } : { w0 });
     live.schedule();
   }
-  // Optional CWT band: blank entry ⇒ null ⇒ auto band. Only apply a range when
-  // BOTH bounds are valid and ordered; otherwise clear to auto.
+  // Optional CWT band. The two boxes are INDEPENDENT: a blank clears that side
+  // back to auto, and a lone bound is honoured (the engine fills the other side
+  // with its automatic value). A reversed pair is refused with a note rather
+  // than swapped or dropped — see `editSonoBand` for the full rule. The band
+  // matters beyond the picture: it is also what keeps a long record's CWT
+  // damping fit inside the engine's memory ceiling.
+  let bandError = $state('');
   function onBand(which: 'fMin' | 'fMax', raw: string) {
-    const v = raw.trim() === '' ? null : Number(raw);
-    if (v !== null && !Number.isFinite(v)) return;
-    patch({ [which]: v } as Partial<SonoSettings>);
+    const { patch: p, error } = editSonoBand(which, raw, { fMin: sono.fMin, fMax: sono.fMax });
+    bandError = error;
+    if (!p) return;
+    patch(p as Partial<SonoSettings>);
     live.schedule();
   }
 
@@ -332,6 +351,9 @@
             <input type="number" step="1" min="0" value={sono.fMax ?? ''} placeholder="max"
               onchange={(e) => onBand('fMax', e.currentTarget.value)}
               style="width:60px" aria-label="cwt f max" />
+            {#if bandError}
+              <span class="ctx-err" role="alert" data-testid="sono-band-error">{bandError}</span>
+            {/if}
           </div>
         </div>
       {/if}

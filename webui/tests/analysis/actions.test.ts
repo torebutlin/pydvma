@@ -848,6 +848,38 @@ test('calcDamping passes the sono method through (STFT default, CWT when set)', 
   expect(damp.payload.w0).toBe(6);
 });
 
+test('calcDamping sends the CWT frequency band (the fit, not just the picture)', async () => {
+  // The card's freq-range boxes used to narrow the sonogram only. The wavelet
+  // FIT allocates n_freqs × n_columns complex, so on a lab-length record the
+  // whole-band fit exceeds the engine's memory ceiling and errors out —
+  // narrowing the band is the remedy, and it has to reach `calc_damping`.
+  const { engine, calls } = fakeEngine(async () => ({ fn: real([1], [42]), Qn: real([1], [10]) }));
+  const { sel, settings, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+
+  settings.patch(a, 'sono', { method: 'cwt', fMin: 20, fMax: 400 });
+  await actions.calcDamping(a, 0, 512);
+  let damp = calls.filter(c => c.op === 'calc_damping').at(-1)!;
+  expect(damp.payload.f_min).toBe(20);
+  expect(damp.payload.f_max).toBe(400);
+
+  // A LONE bound still travels; the unset side is omitted (never a JS null),
+  // so the engine keeps its automatic value for that side.
+  settings.patch(a, 'sono', { fMin: 20, fMax: null });
+  await actions.calcDamping(a, 0, 512);
+  damp = calls.filter(c => c.op === 'calc_damping').at(-1)!;
+  expect(damp.payload.f_min).toBe(20);
+  expect(damp.payload.f_max).toBeUndefined();
+
+  // Auto band: neither bound is sent.
+  settings.patch(a, 'sono', { fMin: null, fMax: null });
+  await actions.calcDamping(a, 0, 512);
+  damp = calls.filter(c => c.op === 'calc_damping').at(-1)!;
+  expect(damp.payload.f_min).toBeUndefined();
+  expect(damp.payload.f_max).toBeUndefined();
+});
+
 test('a throwing calc_sono surfaces on the FIRST press via computeErrors.sono (round-5 bug 1)', async () => {
   // Round-5: on the 32-bit WASM engine a large-nFFT sonogram overflows scipy's
   // sliding_window_view ("array is too big"). Pressing Calc Sonogram must land

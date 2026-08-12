@@ -898,6 +898,184 @@ class TestCalculateCwt:
         assert np.median(rel_err) < 0.05
 
 
+class TestCwtBandResolution:
+    """The analysis band `_cwt_default_frequencies` resolves: its w0-aware low
+    end, partial (one-sided) ranges, and the refusal to invent a band."""
+
+    def test_low_end_keeps_the_lowest_wavelet_inside_the_record(self):
+        """The lowest wavelet's e-folding time (sqrt(2)*w0/(2 pi f)) must stay
+        below T/2 for EVERY analysis frequency, at every wavelet Q — otherwise
+        the bottom rows are pure cone-of-influence / circular-wrap artefact.
+        The old fixed 4/T low end was calibrated for w0=6 only: at w0=64 it put
+        137 of 700 default rows past that bound."""
+        fs, N = 2000, 8000
+        T = N / fs
+        for w0 in (6.0, 32.0, 64.0, 128.0):
+            f = analysis._cwt_default_frequencies(fs, N, None, 16, w0=w0)
+            e_fold = np.sqrt(2.0) * w0 / (2.0 * np.pi * f)
+            assert e_fold.max() <= T / 2, f'w0={w0}: {int((e_fold > T / 2).sum())} rows past T/2'
+
+    def test_w0_6_band_is_bit_for_bit_the_historic_one(self):
+        """The w0-aware scaling must not move the DEFAULT band."""
+        fs, N = 2000, 8000
+        f = analysis._cwt_default_frequencies(fs, N, None, 16, w0=6.0)
+        assert f[0] == pytest.approx(4.0 / (N / fs))
+        assert f[-1] == pytest.approx(0.4 * fs)
+        # ... and the parameter defaults to the historic behaviour when omitted.
+        np.testing.assert_allclose(
+            f, analysis._cwt_default_frequencies(fs, N, None, 16))
+
+    def test_one_sided_f_range_keeps_the_other_side_automatic(self):
+        """A LONE bound is meaningful (the web UI's freq-range boxes are
+        independent): the missing side keeps its automatic value."""
+        fs, N = 2000, 8000
+        auto = analysis._cwt_default_frequencies(fs, N, None, 16)
+        lo_only = analysis._cwt_default_frequencies(fs, N, (100.0, None), 16)
+        hi_only = analysis._cwt_default_frequencies(fs, N, (None, 300.0), 16)
+        assert lo_only[0] == pytest.approx(100.0)
+        assert lo_only[-1] == pytest.approx(auto[-1])
+        assert hi_only[0] == pytest.approx(auto[0])
+        assert hi_only[-1] == pytest.approx(300.0)
+
+    def test_reversed_or_degenerate_f_range_raises(self):
+        """A reversed band used to be silently replaced by (f_min, 2*f_min) —
+        a plausible-looking analysis of a band nobody asked for."""
+        fs, N = 2000, 8000
+        for bad in [(400.0, 100.0), (100.0, 100.0), (-5.0, 100.0), (0.0, 100.0)]:
+            with pytest.raises(ValueError, match='increasing'):
+                analysis._cwt_default_frequencies(fs, N, bad, 16)
+
+    def test_band_entirely_above_nyquist_raises(self):
+        fs, N = 2000, 8000
+        with pytest.raises(ValueError, match='Nyquist'):
+            analysis._cwt_default_frequencies(fs, N, (1500.0, 3000.0), 16)
+
+    def test_reversed_f_range_raises_through_the_public_entry_points(self):
+        fs, N = 2000, 4000
+        td = _make_time_data(_decaying_sine(fs, N, 90.0, 40)[:, None], fs)
+        with pytest.raises(ValueError, match='increasing'):
+            analysis.calculate_damping_from_cwt(td, n_chan=0, f_range=(400.0, 100.0))
+        with pytest.raises(ValueError, match='increasing'):
+            analysis.calculate_cwt(td, f_range=(400.0, 100.0))
+
+
+class TestCwtMemoryGuard:
+    """The CWT damping fit at LAB record sizes (the "CWT sonogram not working"
+    report): the transform is bounded, and an impossible request fails with a
+    pydvma message naming the remedy — never numpy's bare "array is too big",
+    which is what reached the user through the 32-bit WASM engine."""
+
+    @staticmethod
+    def _implied_bytes(fs, N, f_range, vpo, w0=6.0):
+        """Bytes `calculate_damping_from_cwt` would allocate for this request."""
+        freqs = analysis._cwt_default_frequencies(fs, N, f_range, vpo, w0=w0)
+        step = analysis._cwt_damping_time_step(fs, freqs[-1])
+        n_out = len(range(0, N, step))
+        return len(freqs) * n_out * 16
+
+    def test_guard_fires_before_allocating_anything(self):
+        """The check is a pre-flight: a 1.6e11-byte image is refused without
+        the transform ever running (a tiny signal, an enormous grid)."""
+        fs, N = 2000, 100000
+        freqs = np.geomspace(1.0, 800.0, 100000)
+        with pytest.raises(ValueError) as exc:
+            analysis._morlet_cwt_1d(np.zeros(N), fs, freqs)
+        msg = str(exc.value)
+        assert 'too big' not in msg.lower()          # not numpy's opaque phrase
+        assert 'CWT image too large' in msg
+        for remedy in ('SHORTER', 'NARROW', 'voices', 'time_step'):
+            assert remedy in msg
+        assert 'w0=6' in msg and '100000 samples' in msg
+
+    @pytest.mark.parametrize('secs,vpo', [(30, 16), (5, 48)])
+    def test_lab_size_default_band_is_bounded_or_named(self, secs, vpo):
+        """30 s @ 48 kHz (default band) and 5 s @ 48 kHz at 48 voices: either
+        the request fits the ceiling, or it raises the actionable pydvma error.
+        Never numpy's "array is too big", and never a silent 16 GB attempt."""
+        fs = 48000
+        N = fs * secs
+        implied = self._implied_bytes(fs, N, None, vpo)
+        td = _make_time_data(np.zeros((N, 1)), fs)
+        if implied <= analysis.CWT_MAX_IMAGE_BYTES:
+            analysis.calculate_damping_from_cwt(td, n_chan=0, voices_per_octave=vpo)
+            assert implied <= 2 ** 31 - 1
+        else:
+            with pytest.raises(ValueError) as exc:
+                analysis.calculate_damping_from_cwt(td, n_chan=0, voices_per_octave=vpo)
+            msg = str(exc.value)
+            assert 'array is too big' not in msg
+            assert 'NARROW the frequency range' in msg
+            assert '{:g} Hz'.format(fs) in msg
+
+    def test_narrowing_the_band_makes_a_lab_record_fittable(self):
+        """The remedy the message names actually works: the SAME 5 s, 48 kHz
+        record fits inside the ceiling once a band is given (fewer rows AND a
+        decimated time axis), and still recovers the modes."""
+        fs, secs = 48000, 5
+        N = fs * secs
+        # Equal decay times (Q ~ f) so both modes are still alive at the fit
+        # start, 5% into the record.
+        modes = [(37.0, 50.0), (210.0, 280.0)]
+        x = sum(_decaying_sine(fs, N, f, q) for f, q in modes)[:, None]
+        td = _make_time_data(x, fs)
+        implied = self._implied_bytes(fs, N, (20.0, 500.0), 16)
+        assert implied <= analysis.CWT_MAX_IMAGE_BYTES
+        assert implied <= 2 ** 31 - 1
+        # An order of magnitude smaller than the same band at full time
+        # resolution (step 12 for a 500 Hz top at 48 kHz).
+        n_rows = len(analysis._cwt_default_frequencies(fs, N, (20.0, 500.0), 16))
+        assert implied * 10 <= n_rows * N * 16
+
+        fn, Qn, fd = analysis.calculate_damping_from_cwt(
+            td, n_chan=0, f_range=(20.0, 500.0))
+        assert len(fn) >= 2
+        assert np.all((fn > 20.0) & (fn < 500.0))       # nothing outside the band
+        for f_true, q_true in modes:
+            j = np.argmin(np.abs(fn - f_true))
+            assert abs(fn[j] - f_true) / f_true < 0.05
+            assert abs(Qn[j] - q_true) / q_true < 0.3
+        assert fd['t'].size == len(range(0, N, analysis._cwt_damping_time_step(fs, 500.0)))
+
+    def test_default_band_fit_is_still_undecimated(self):
+        """The decimation must not change any case that already worked: a
+        default-band fit tops out at 0.4*fs, whose phase unwrap tolerates no
+        decimation at all, so time_step stays 1."""
+        for fs in (2000, 8000, 48000):
+            assert analysis._cwt_damping_time_step(fs, 0.4 * fs) == 1
+        # 4x oversampling of the band top, floored.
+        assert analysis._cwt_damping_time_step(48000, 500.0) == 12
+        assert analysis._cwt_damping_time_step(48000, 50.0) == 120
+
+    def test_decimated_fit_matches_the_full_rate_fit(self):
+        """The decimation is a size bound, not a change of answer: over a band
+        it is allowed to decimate, the fitted fn / zeta match the full-rate fit
+        of the same image to well inside the fit's own accuracy."""
+        fs, N = 8000, 16000                     # 2 s
+        fn_true, Q = 60.0, 45.0
+        x = (_decaying_sine(fs, N, fn_true, Q)
+             + 0.5 * _decaying_sine(fs, N, 180.0, 70.0))
+        td = _make_time_data(x[:, None], fs)
+        freqs = analysis._cwt_default_frequencies(fs, N, (20.0, 300.0), 16)
+        step = analysis._cwt_damping_time_step(fs, freqs[-1])
+        assert step > 1
+
+        out = {}
+        for ts in (1, step):
+            W, t_idx = analysis._morlet_cwt_1d(x, fs, freqs, w0=6.0, time_step=ts)
+            t = np.asarray(td.time_axis)[t_idx]
+            sl = analysis._resolve_damping_start_slice(
+                t, None, td.settings, default_start_frac=0.05)
+            out[ts] = analysis._fit_modes_from_image(
+                t, freqs, W, sl, phase_has_carrier=True)
+
+        fn_full, Q_full, _ = out[1]
+        fn_dec, Q_dec, _ = out[step]
+        assert len(fn_dec) == len(fn_full) >= 1
+        np.testing.assert_allclose(fn_dec, fn_full, rtol=1e-3)
+        zeta_full, zeta_dec = 1.0 / (2 * Q_full), 1.0 / (2 * Q_dec)
+        np.testing.assert_allclose(zeta_dec, zeta_full, rtol=0.02)
+
+
 class TestDampingBothMethods:
     """Damping recovery via BOTH the STFT and the CWT paths, and the
     demonstrated CWT advantage: it separates two close low-frequency modes

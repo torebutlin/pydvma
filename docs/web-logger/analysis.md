@@ -189,11 +189,20 @@ Two methods are available via the **STFT | CWT** switch:
   Q (a high-Q wavelet's narrow bands need a comparably dense grid, so
   auto tracks ≥ 0.6·w0 up the ladder, never below 16); pick an explicit
   number to pin it, or *auto* to resume following; and an optional
-  frequency range. The magnitude
+  **frequency range** (min / max in Hz). Either box works on its own —
+  the side you leave blank keeps its automatic value. The range applies
+  to the **damping fit** as well as the picture, and on a long record
+  that matters: the wavelet fit holds one complex number per frequency
+  per time sample, so a multi-second capture at full rate over the whole
+  band asks for more memory than the browser engine has and the fit
+  stops with a sizing error naming the remedy. Narrowing the range is
+  that remedy — it drops frequency rows *and* lets the fit thin its time
+  axis. (It is also the honest analysis: a 30-second record has little
+  to say about a 19 kHz mode's decay.) The magnitude
   scale matches the STFT image, so the two methods read comparably.
   The heat map is drawn on the wavelet's **native log-spaced grid**, so
-  switching the frequency axis to **log** (see below) shows its full
-  low-frequency detail.
+  the frequency axis switches to **log** with the method (see below) to
+  show its full low-frequency detail.
 
 Common controls:
 
@@ -209,8 +218,10 @@ Common controls:
   the heat is normalised 0 → peak instead, so this control is disabled.
 - **frequency axis** and **colour** live on the plot toolbar, not the
   card. The **y — lin | log** switch draws the frequency axis linearly
-  (default) or on decades; **log** stretches the low-frequency detail
-  and is the natural pairing with the CWT's log grid. (The x axis stays
+  or on decades; **log** stretches the low-frequency detail and is the
+  natural pairing with the CWT's log grid, so switching **method** sets
+  the matching default (STFT → lin, CWT → log) and your own choice from
+  the toolbar then stands until the next method switch. (The x axis stays
   time — a log time axis is not meaningful.) The **colour — dB | lin**
   switch maps the heat by magnitude in dB (default, over the dynamic
   range span) or by linear magnitude (0 → peak). Both choices persist

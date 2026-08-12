@@ -48,6 +48,38 @@ def _arr(a):
             'complex': False}
 
 
+def _opt_float(v):
+    """Optional float from a JS scalar: ``None`` for absent / null / non-numeric.
+
+    JS sends an unset control as ``undefined`` (pyodide -> ``None``), but a
+    nested payload can also deliver a ``JsNull`` proxy, which is NOT ``None``
+    and raises on ``float()``. Both must read as "not set", and so must a NaN
+    (an empty number input coerced with ``+``).
+    """
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if np.isfinite(f) else None
+
+
+def _f_range(f_min, f_max):
+    """Optional CWT ``(f_min, f_max)`` band from two independent JS controls.
+
+    Returns ``None`` when NEITHER bound is set (the engine's automatic band),
+    otherwise a pair in which the unset side stays ``None`` — pydvma fills that
+    side with its own automatic value, so a LONE lower bound is meaningful
+    instead of being dropped (which is what used to happen: both boxes had to
+    be filled before either took effect).
+    """
+    lo, hi = _opt_float(f_min), _opt_float(f_max)
+    if lo is None and hi is None:
+        return None
+    return (lo, hi)
+
+
 def _settings(fs, channels):
     """Minimal MySettings for reconstructing a TimeData (mock driver)."""
     return dvma.MySettings(channels=int(channels), fs=float(fs), device_driver='mock')
@@ -137,8 +169,10 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
     ``method='cwt'``: a complex Morlet continuous wavelet transform
     (``analysis.calculate_cwt``) over ``voices_per_octave`` log-spaced
     frequencies with non-dimensional frequency ``w0``. ``nperseg``/``noverlap``
-    are IGNORED (the wavelet has no fixed window); an optional ``f_min``/``f_max``
-    (Hz) overrides the default ``4/T .. 0.4*fs`` band. The CWT image is returned
+    are IGNORED (the wavelet has no fixed window); ``f_min`` / ``f_max`` (Hz)
+    override the default band and are INDEPENDENT — either one alone narrows
+    its own side while the other keeps pydvma's automatic value (``_f_range``;
+    a lone bound used to be dropped). The CWT image is returned
     on its NATIVE LOG-spaced frequency grid (``uniform_freq=False``): the heat
     renderer now maps each frequency VALUE (not row-index) to a pixel through the
     chosen axis scale and binary-searches the nearest bin, so it places and
@@ -171,9 +205,7 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
                 'no calculate_cwt. Reload once builds settle, or fall back to the '
                 'STFT method.'
             )
-        f_range = None
-        if f_min is not None and f_max is not None:
-            f_range = (float(f_min), float(f_max))
+        f_range = _f_range(f_min, f_max)
         sd = analysis.calculate_cwt(
             td, f_range=f_range, voices_per_octave=int(voices_per_octave),
             w0=float(w0), uniform_freq=False)
@@ -828,7 +860,8 @@ def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=Non
 
 
 def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=None,
-                 method='stft', voices_per_octave=16, w0=6.0, peak_threshold=None):
+                 method='stft', voices_per_octave=16, w0=6.0, peak_threshold=None,
+                 f_min=None, f_max=None):
     """Modal damping from a time-frequency image's per-band free decay (Sono card).
 
     ``method='stft'`` (default) wraps ``analysis.calculate_damping_from_sono``:
@@ -837,6 +870,14 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
     on a complex Morlet CWT image (``voices_per_octave`` / ``w0``), whose
     constant-Q resolution separates closely-spaced low-frequency modes an STFT
     window smears together; ``nperseg`` is ignored for CWT.
+
+    ``f_min`` / ``f_max`` (Hz, CWT ONLY — the STFT fit has no band control)
+    restrict the FITTED band exactly as they restrict the sonogram, and they
+    are what makes the CWT fit possible on a lab-length record: the wavelet
+    image is ``n_freqs x n_columns`` complex, so 30 s at 48 kHz over the whole
+    default band asks for ~16 GB and pydvma refuses it with a sizing error.
+    Narrowing the band drops rows AND lets the fit decimate its time axis. The
+    card's two boxes are independent (``_f_range``).
 
     ``start_time`` (seconds) picks the free-decay start; ``None`` lets pydvma
     infer it (pretrigger-based, with a fallback). ``peak_threshold`` is the
@@ -853,7 +894,11 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
 
     Stale-wheel guard: ``method='cwt'`` against a wheel without
     ``calculate_damping_from_cwt`` raises a clear "engine wheel too old"
-    message instead of an opaque ``AttributeError``.
+    message instead of an opaque ``AttributeError``, and a wheel that predates
+    a keyword we pass reports the same. That guard is matched on the
+    "unexpected keyword argument" text ONLY — a genuine ``TypeError`` from
+    inside the fit must propagate as itself, not be relabelled as a stale
+    wheel (which sent the user to reload the app for a bug in the maths).
     """
     td = _time_data(time_axis, time_data, n_channels, fs)
     # `not start_time` handles None / a JS-null proxy (an explicit 0.0 start
@@ -871,6 +916,13 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
     kw = {} if thr is None else {'peak_threshold': thr}
     stale = ('Damping needs a newer engine: the loaded pydvma wheel predates '
              'the interactive damping controls. Reload once builds settle.')
+
+    def _stale_only(e):
+        """Re-raise as the stale-wheel note ONLY for a signature mismatch."""
+        if 'unexpected keyword argument' in str(e):
+            raise ValueError(stale) from e
+        raise
+
     if str(method) == 'cwt':
         if not hasattr(analysis, 'calculate_damping_from_cwt'):
             raise ValueError(
@@ -878,18 +930,21 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
                 'calculate_damping_from_cwt. Reload once builds settle, or use the '
                 'STFT method.'
             )
+        fr = _f_range(f_min, f_max)
+        if fr is not None:
+            kw['f_range'] = fr
         try:
             fn, Qn, fit = analysis.calculate_damping_from_cwt(
                 td, n_chan=int(ch), start_time=st,
                 voices_per_octave=int(voices_per_octave), w0=float(w0), **kw)
-        except TypeError:
-            raise ValueError(stale)
+        except TypeError as e:
+            _stale_only(e)
     else:
         try:
             fn, Qn, fit = analysis.calculate_damping_from_sono(
                 td, n_chan=int(ch), nperseg=int(nperseg), start_time=st, **kw)
-        except TypeError:
-            raise ValueError(stale)
+        except TypeError as e:
+            _stale_only(e)
     out = {
         'fn': _arr(np.asarray(fn)), 'Qn': _arr(np.asarray(Qn)),
         # Per-fitted-mode decay lines: present on EVERY wheel vintage (the Qt

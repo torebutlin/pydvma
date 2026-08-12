@@ -98,6 +98,97 @@ class TestCalcDampingContext:
         assert np.any(np.abs(_vals(out['peaks_freq']) - 90.0) / 90.0 < 0.1)
 
 
+class TestCalcDampingBand:
+    """The CWT fit's frequency-range plumbing. Without it the card's band
+    boxes narrowed only the sonogram picture, so a user whose long record
+    blew the engine's CWT memory ceiling had no way to duck under it."""
+
+    def test_band_narrows_the_fitted_spectrum(self):
+        """f_min/f_max reach the engine: the 400 Hz mode is outside a
+        60..150 Hz band, so nothing is picked there.
+
+        NB the explicit threshold: over a band only ~1.3 octaves wide the
+        historic automatic choice (``10 * median / max`` of the slice, clipped
+        to 1) saturates and picks nothing — a pre-existing property of the
+        picker, which is why the panel exposes the threshold slider."""
+        p = _payload()
+        out = glue.calc_damping(p['time_axis'], p['time_data'], p['n_channels'],
+                                p['fs'], ch=0, nperseg=256, method='cwt',
+                                f_min=60.0, f_max=150.0, peak_threshold=0.1)
+        sf = _vals(out['slice_freq'])
+        assert sf.min() >= 60.0 - 1e-9 and sf.max() <= 150.0 + 1e-9
+        assert np.any(np.abs(_vals(out['fn']) - 90.0) / 90.0 < 0.1)
+        assert not np.any(np.abs(_vals(out['peaks_freq']) - 400.0) / 400.0 < 0.1)
+
+    def test_a_lone_bound_is_honoured_not_dropped(self):
+        """Only f_min set: the low end moves, the top keeps the automatic
+        0.4*fs. (Both boxes used to be required before EITHER took effect.)"""
+        p = _payload()
+        auto = glue.calc_damping(p['time_axis'], p['time_data'], p['n_channels'],
+                                 p['fs'], ch=0, nperseg=256, method='cwt')
+        lo = glue.calc_damping(p['time_axis'], p['time_data'], p['n_channels'],
+                               p['fs'], ch=0, nperseg=256, method='cwt', f_min=200.0)
+        hi = glue.calc_damping(p['time_axis'], p['time_data'], p['n_channels'],
+                               p['fs'], ch=0, nperseg=256, method='cwt', f_max=200.0)
+        assert _vals(lo['slice_freq']).min() == pytest.approx(200.0)
+        assert _vals(lo['slice_freq']).max() == pytest.approx(_vals(auto['slice_freq']).max())
+        assert _vals(hi['slice_freq']).max() == pytest.approx(200.0)
+        assert _vals(hi['slice_freq']).min() == pytest.approx(_vals(auto['slice_freq']).min())
+
+    def test_reversed_band_raises_rather_than_inventing_one(self):
+        p = _payload()
+        with pytest.raises(ValueError, match='increasing'):
+            glue.calc_damping(p['time_axis'], p['time_data'], p['n_channels'],
+                              p['fs'], ch=0, nperseg=256, method='cwt',
+                              f_min=400.0, f_max=100.0)
+
+    def test_stft_path_ignores_the_band(self):
+        """The STFT fit has no band control; sending one must not break it."""
+        out = glue.calc_damping(*[_payload()[k] for k in
+                                  ('time_axis', 'time_data', 'n_channels', 'fs')],
+                                ch=0, nperseg=256, f_min=60.0, f_max=150.0)
+        assert len(_vals(out['fn'])) >= 1
+
+    def test_genuine_type_error_is_not_relabelled_as_a_stale_wheel(self, monkeypatch):
+        """A TypeError from INSIDE the fit is a bug, not an old wheel: it must
+        propagate, not become "reload the app"."""
+        def boom(*a, **k):
+            raise TypeError('unsupported operand type(s) for +: int and str')
+        monkeypatch.setattr(glue.analysis, 'calculate_damping_from_sono', boom)
+        monkeypatch.setattr(glue.analysis, 'calculate_damping_from_cwt', boom)
+        p = _payload()
+        for method in ('stft', 'cwt'):
+            with pytest.raises(TypeError, match='unsupported operand'):
+                glue.calc_damping(p['time_axis'], p['time_data'], p['n_channels'],
+                                  p['fs'], ch=0, nperseg=256, method=method)
+
+    def test_signature_mismatch_still_reports_a_stale_wheel(self, monkeypatch):
+        def old_wheel(td, n_chan=1, nperseg=None, start_time=None):
+            raise TypeError("calculate_damping_from_sono() got an unexpected "
+                            "keyword argument 'peak_threshold'")
+        monkeypatch.setattr(glue.analysis, 'calculate_damping_from_sono', old_wheel)
+        p = _payload()
+        with pytest.raises(ValueError, match='newer engine'):
+            glue.calc_damping(p['time_axis'], p['time_data'], p['n_channels'],
+                              p['fs'], ch=0, nperseg=256, peak_threshold=0.2)
+
+
+class TestCalcSonoBand:
+    """`calc_sono` shares the card's freq-range boxes with the damping fit, so
+    it honours a lone bound the same way (it used to drop one silently)."""
+
+    def test_lone_f_max_narrows_the_cwt_sonogram(self):
+        p = _payload()
+        auto = glue.calc_sono(p['time_axis'], p['time_data'], p['n_channels'],
+                              p['fs'], ch=0, nperseg=256, noverlap=128, method='cwt')
+        hi = glue.calc_sono(p['time_axis'], p['time_data'], p['n_channels'],
+                            p['fs'], ch=0, nperseg=256, noverlap=128, method='cwt',
+                            f_max=200.0)
+        assert _vals(hi['freq_axis']).max() == pytest.approx(200.0)
+        assert _vals(hi['freq_axis']).max() < _vals(auto['freq_axis']).max()
+        assert _vals(hi['freq_axis']).min() == pytest.approx(_vals(auto['freq_axis']).min())
+
+
 class TestCalcDampingBands:
     """The round-7 'by band' damping op: Schroeder decay metrics per band."""
 

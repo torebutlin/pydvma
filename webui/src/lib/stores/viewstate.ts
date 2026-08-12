@@ -115,6 +115,10 @@ const fresh = (): ViewSlice => ({
   coherenceAuto: false,
   // Sono defaults reproduce today's behaviour: linear frequency y-axis, dB
   // heat colour. Independent of yScale's 'log' (dB) magnitude default above.
+  // 'lin' is the STFT's axis, which is the default sonogram method; SonoCard's
+  // method toggle moves this to 'log' for the CWT's native log-frequency
+  // ladder (see `sonoFreqScaleFor`), and a manual toolbar choice then stands
+  // until the next toggle.
   sonoFreqScale: 'lin', sonoColour: 'db',
   navigator: null,
 });

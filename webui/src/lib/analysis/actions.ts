@@ -2059,15 +2059,21 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       };
     }
     const { axis, data, nCh } = timePayload(ws.time);
-    const { method, voicesPerOctave, w0 } = sonoSettings(ws.setId);
+    const { method, voicesPerOctave, w0, fMin, fMax } = sonoSettings(ws.setId);
     // Auto knobs are OMITTED (not sent as JS null — see calcFit note) so the
     // engine infers the free-decay start / uses its automatic threshold.
     // `method` selects the STFT or CWT damping path; the CWT params are
     // ignored by the engine for 'stft'.
+    // The CWT band goes with them (the same boxes `calcSono` sends): it is not
+    // cosmetic here — the wavelet fit's image is n_freqs × n_columns complex,
+    // so a lab-length record over the whole default band exceeds the engine's
+    // memory ceiling and the fit fails outright. Narrowing the band is the
+    // remedy, and it only works if the band reaches the fit.
     const payload: Record<string, unknown> = {
       time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
       ch, nperseg: nFft,
       method, voices_per_octave: voicesPerOctave, w0,
+      f_min: fMin ?? undefined, f_max: fMax ?? undefined,
     };
     if (opts.startTime !== null && opts.startTime !== undefined) payload.start_time = opts.startTime;
     if (opts.threshold !== null && opts.threshold !== undefined) payload.peak_threshold = opts.threshold;

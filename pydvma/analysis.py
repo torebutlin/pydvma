@@ -1239,37 +1239,74 @@ def _morlet_daughter_fourier(omega, scale, w0):
     return psi
 
 
-def _cwt_default_frequencies(fs, N, f_range, voices_per_octave):
+def _cwt_default_frequencies(fs, N, f_range, voices_per_octave, w0=6.0):
     '''Log-spaced (constant-Q) analysis frequencies for the Morlet CWT.
 
-    With ``f_range=None`` the band spans ``4/T`` up to ``0.4*fs`` where
-    ``T = N/fs`` is the record length:
+    With ``f_range=None`` the band spans ``4*max(1, w0/6)/T`` up to ``0.4*fs``
+    where ``T = N/fs`` is the record length:
 
-    - LOW end ``4/T``: at least four oscillations of the lowest wavelet fit in
-      the record, and its e-folding time (``sqrt(2)*s = sqrt(2)*w0/(2*pi*f)``)
-      stays below ``T/2`` for the default ``w0=6``, so the lowest scale is not
-      dominated by edge (cone-of-influence) effects.
+    - LOW end ``4*max(1, w0/6)/T``: the binding constraint is the lowest
+      wavelet's e-folding time ``sqrt(2)*s = sqrt(2)*w0/(2*pi*f)``, which must
+      stay below ``T/2`` or the row is dominated by edge (cone-of-influence)
+      effects and by the FFT convolution's circular wrap. That time grows
+      LINEARLY with the wavelet Q, so the low end must track ``w0``: the plain
+      ``4/T`` of the ``w0=6`` default (also "at least four oscillations of the
+      lowest wavelet fit in the record") leaves the e-folding time at
+      ``0.34*T`` — but at ``w0=64`` the same bound would put it at ``3.6*T``.
+      Scaling by ``w0/6`` pins the ratio at ``0.34*T`` for every ``w0 >= 6``
+      and leaves the ``w0=6`` band bit-for-bit unchanged.
     - HIGH end ``0.4*fs`` (= ``0.8 * Nyquist``): a safe margin below Nyquist so
       the highest wavelet is adequately sampled.
 
     Frequencies are geometrically spaced at ``voices_per_octave`` samples per
     octave (default 16), the natural constant-Q ladder of a wavelet transform.
-    An explicit ``f_range=(f_min, f_max)`` overrides the default band (clamped
-    to ``(0, ~Nyquist)``).
+
+    An explicit ``f_range=(f_min, f_max)`` in Hz overrides the default band
+    (clamped to ``(0, ~Nyquist)``). EITHER side may be ``None`` to keep that
+    side's automatic value, so a lone lower bound is meaningful. A reversed,
+    zero-width, non-positive or entirely super-Nyquist band raises
+    ``ValueError`` rather than being silently substituted — the old
+    ``f_max = 2*f_min`` fallback turned a typo into a plausible-looking
+    analysis over a band nobody asked for. (The AUTOMATIC band keeps that
+    fallback: it can only collapse on a pathologically short record.)
     '''
-    if f_range is not None:
-        f_min, f_max = float(f_range[0]), float(f_range[1])
+    T = N / float(fs)
+    auto_min = 4.0 * max(1.0, float(w0) / 6.0) / T
+    auto_max = 0.4 * fs
+    if f_range is None:
+        f_min, f_max = auto_min, auto_max
     else:
-        T = N / float(fs)
-        f_min = 4.0 / T
-        f_max = 0.4 * fs
+        lo, hi = f_range[0], f_range[1]
+        f_min = auto_min if lo is None else float(lo)
+        f_max = auto_max if hi is None else float(hi)
+        if not (f_max > f_min > 0.0):
+            raise ValueError(
+                'f_range must be an increasing, positive (f_min, f_max) band '
+                'in Hz — got ({:g}, {:g}). Pass None for either side to keep '
+                'its automatic bound.'.format(f_min, f_max))
     f_min = max(f_min, 1e-9)
     f_max = min(f_max, 0.5 * fs * 0.999)
     if f_max <= f_min:
+        if f_range is not None:
+            raise ValueError(
+                'f_range leaves no analysable band below Nyquist: f_min '
+                '{:g} Hz is at or above the {:g} Hz Nyquist limit of a {:g} Hz '
+                'capture.'.format(f_min, 0.5 * fs, fs))
         f_max = f_min * 2.0
     n_octaves = np.log2(f_max / f_min)
     n_freqs = int(np.ceil(voices_per_octave * n_octaves)) + 1
     return np.geomspace(f_min, f_max, max(2, n_freqs))
+
+
+# Largest complex time-frequency image ONE `_morlet_cwt_1d` call may allocate,
+# in bytes (768 MiB). The hard wall is numpy's 32-bit ``2**31-1`` (~2.15 GB) on
+# the WASM/pyodide engine, where an over-size allocation raises a bare "array is
+# too big" the user cannot act on; this ceiling sits well below it so the
+# single-scale FFT temporaries and the caller's own arrays still fit, and above
+# the largest image the shipped defaults produce (~0.30 GB for the 2 s, 44.1 kHz
+# worst case documented in `_morlet_cwt_1d`). Module-level so a desktop user
+# with plenty of RAM can raise it deliberately.
+CWT_MAX_IMAGE_BYTES = 768 * 1024 ** 2
 
 
 def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
@@ -1293,9 +1330,12 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
             under the Gaussian envelope, i.e. FINER frequency resolution at
             the cost of COARSER time resolution (and vice versa).
         time_step (int): decimation of the output time axis. ``1`` keeps every
-            sample (full time resolution — needed by the damping fit, whose
-            phase-unwrap must not alias). ``>1`` subsamples the columns to bound
-            the returned image size for display.
+            sample (full time resolution). ``>1`` subsamples the columns to
+            bound the returned image size. A damping fit reads the coefficient's
+            unwrapped PHASE, which aliases once the column rate falls below
+            ``2*f`` for the highest analysed frequency, so a fitting caller must
+            keep ``time_step <= fs/(2*f_max)`` — see
+            `_cwt_damping_time_step`, which applies that bound with margin.
 
     Returns:
         (W, t_idx): ``W`` of shape ``(len(freqs), ceil(N/time_step))`` complex,
@@ -1304,10 +1344,14 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
     MEMORY (32-bit WASM): the transform is done ONE SCALE AT A TIME — the only
     full-length temporaries are the signal's FFT and a single inverse-FFT row
     (each ``N`` complex). The returned ``W`` is ``len(freqs) x N_out`` complex;
-    at full time resolution (``time_step=1``) the worst case is a 2 s, 44.1 kHz
-    record over the default ~211-frequency band: ``211 * 88200 * 16 B ~= 0.30
-    GB``, comfortably under the ``2**31-1`` byte (~2.15 GB) ceiling. Callers that
-    only need a display image pass ``time_step`` so ``N_out <= max_time_columns``.
+    at full time resolution (``time_step=1``) a 2 s, 44.1 kHz record over the
+    default ~211-frequency band costs ``211 * 88200 * 16 B ~= 0.30 GB``, but a
+    LAB-length record blows straight past the 32-bit ``2**31-1`` byte ceiling
+    (30 s at 48 kHz over the default band is ~16 GB). The image size is
+    therefore CHECKED against `CWT_MAX_IMAGE_BYTES` before allocating and an
+    over-size request raises a ``ValueError`` naming the record, the grid and
+    the remedies — numpy's own bare "array is too big" must never reach the
+    user.
     '''
     from scipy import fft as sp_fft
 
@@ -1316,6 +1360,21 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
     dt = 1.0 / fs
     freqs = np.asarray(freqs, dtype=float)
     scales = w0 / (2.0 * np.pi * freqs)
+    t_idx = np.arange(0, N, int(time_step))
+
+    # Pre-flight the image allocation (before the FFT, so an over-size request
+    # costs nothing) and refuse with an actionable message.
+    n_bytes = int(freqs.shape[0]) * int(t_idx.shape[0]) * 16
+    if n_bytes > CWT_MAX_IMAGE_BYTES:
+        raise ValueError(
+            'CWT image too large for the analysis engine: {} frequencies x {} '
+            'time columns x 16 B = {:.2f} GB, over the {:.2f} GB limit. The '
+            'record is {} samples ({:.3g} s at {:g} Hz) and the wavelet Q is '
+            'w0={:g}. Remedies: analyse a SHORTER record, NARROW the frequency '
+            'range (its top also sets how far the time axis can be decimated), '
+            'use FEWER voices/octave, or pass a larger time_step.'.format(
+                freqs.shape[0], t_idx.shape[0], n_bytes / 1024 ** 3,
+                CWT_MAX_IMAGE_BYTES / 1024 ** 3, N, N / float(fs), fs, w0))
 
     # Angular-frequency grid (rad/s), negative for the upper half (Torrence &
     # Compo eq. 5). The Morlet daughter is one-sided, so only the positive
@@ -1325,7 +1384,6 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
     omega[k > N // 2] -= 2.0 * np.pi / dt
 
     yhat = sp_fft.fft(y)
-    t_idx = np.arange(0, N, int(time_step))
     W = np.empty((freqs.shape[0], t_idx.shape[0]), dtype=complex)
     for i, s in enumerate(scales):
         psi_hat = _morlet_daughter_fourier(omega, s, w0)
@@ -1391,13 +1449,16 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
     together with the per-channel loop, keeps peak memory low on the 32-bit
     WASM engine. Worst case is ``n_freq x max_time_columns`` complex per
     returned image (~7 MB at the defaults), with only single-channel,
-    single-scale full-length FFT temporaries alive during the compute; see
-    `_morlet_cwt_1d` for the byte budget against the ``2**31-1`` ceiling.
+    single-scale full-length FFT temporaries alive during the compute. The
+    default cap keeps the image far below `CWT_MAX_IMAGE_BYTES`;
+    ``max_time_columns=None`` on a long record can exceed it, and then
+    `_morlet_cwt_1d` refuses with a sizing error rather than allocating.
 
     Args:
         time_data (<TimeData> object): time series data (all channels).
         f_range (tuple or None): ``(f_min, f_max)`` in Hz; ``None`` uses the
-            default ``4/T .. 0.4*fs`` band.
+            default band (see `_cwt_default_frequencies`). Either side may be
+            ``None`` to keep that side automatic; a reversed band raises.
         voices_per_octave (int): log-frequency density (default 16).
         w0 (float): non-dimensional Morlet frequency (default 6.0) — the
             wavelet Q. Higher = more cycles under the envelope = finer
@@ -1415,7 +1476,7 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
     N, n_chans = y.shape
     fs = time_data.settings.fs
 
-    freqs = _cwt_default_frequencies(fs, N, f_range, voices_per_octave)
+    freqs = _cwt_default_frequencies(fs, N, f_range, voices_per_octave, w0=w0)
     n_freq = len(freqs)
 
     if max_time_columns is None:
@@ -1677,6 +1738,32 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None,
                                  peak_threshold=peak_threshold)
 
 
+# Columns per cycle of the highest analysed frequency kept by the CWT damping
+# fit. The hard bound is 2 (Nyquist for the phase unwrap); 4x that leaves the
+# envelope and the phase slope generously sampled while still shrinking a
+# narrow-band fit's image by the same factor.
+_CWT_DAMPING_OVERSAMPLE = 4
+
+
+def _cwt_damping_time_step(fs, f_max, oversample=_CWT_DAMPING_OVERSAMPLE):
+    '''Time decimation for a CWT damping fit over a band topping out at ``f_max``.
+
+    The fit reads the log-magnitude decay and the UNWRAPPED phase of one CWT
+    row over time. The unwrap aliases once the phase advances by more than
+    ``pi`` between kept columns, i.e. once the column rate drops below
+    ``2*f_max``; sampling ``oversample`` times faster than that leaves the
+    phase step at ``pi/oversample`` and the decay envelope well resolved.
+    Returns ``max(1, floor(fs / (2*f_max) / oversample))``, so a full-band fit
+    (``f_max = 0.4*fs``) is undecimated exactly as before and a narrow low-
+    frequency band — the case that used to blow the engine's memory ceiling —
+    shrinks by the full factor.
+    '''
+    f_max = float(f_max)
+    if not (f_max > 0.0):
+        return 1
+    return max(1, int(np.floor(float(fs) / (2.0 * f_max) / float(oversample))))
+
+
 def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
                                f_range=None, voices_per_octave=16, w0=6.0,
                                peak_threshold=None):
@@ -1686,22 +1773,37 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
     The wavelet alternative to `calculate_damping_from_sono`: it fits the same
     per-mode free-decay, but on the CWT image, whose constant-Q resolution
     separates closely-spaced low-frequency modes that a fixed-window STFT
-    smears into one band. The transform is built on the NATIVE log-frequency
-    grid at FULL time resolution (no time decimation) so the phase-unwrap that
-    recovers each mode's frequency does not alias, and only channel ``n_chan``
-    is transformed so memory stays bounded (see `_morlet_cwt_1d`).
+    smears into one band. Only channel ``n_chan`` is transformed, on the NATIVE
+    log-frequency grid (`_cwt_default_frequencies`).
 
     The phase-to-frequency mapping differs from the STFT: the analytic Morlet
     coefficient's phase advances at the signal's own frequency, so the fit core
     is called with ``phase_has_carrier=True`` (see `_fit_modes_from_image`).
+
+    SIZE / MEMORY. The fit image is ``n_freqs x n_columns`` complex, and at full
+    rate that is ruinous on a lab-length record: 30 s at 48 kHz over the default
+    band is ~16 GB, which on the 32-bit WASM engine surfaced as numpy's bare
+    "array is too big". Two bounds now apply. (1) The time axis is decimated to
+    `_cwt_damping_time_step` — the coarsest step the phase unwrap tolerates for
+    the band's top frequency, with margin. A DEFAULT-band fit tops out at
+    ``0.4*fs`` so its step stays 1 and its numbers are unchanged; ``f_range``
+    is what buys the decimation, and it shrinks ``n_freqs`` at the same time.
+    (2) Whatever remains is checked against `CWT_MAX_IMAGE_BYTES` before
+    allocation, so an impossible request raises a ``ValueError`` that names the
+    record, the grid and the remedies instead of failing opaquely. A long
+    record therefore needs an explicit ``f_range`` — which is also the honest
+    analysis, since a 30 s record has nothing to say about a 19 kHz mode's
+    decay.
 
     Args:
         time_data (<TimeData> object): time series data
         n_chan (int, optional): channel index to analyze, default is 1
         start_time (float, optional): start time (seconds); None infers it from
             the pretrigger (see `_resolve_damping_start_slice`)
-        f_range (tuple or None): ``(f_min, f_max)`` Hz; None uses the default
-            ``4/T .. 0.4*fs`` band (see `_cwt_default_frequencies`)
+        f_range (tuple or None): ``(f_min, f_max)`` Hz restricting the fitted
+            band; None uses the default band (see `_cwt_default_frequencies`).
+            Either side may be None to keep that side automatic; a reversed
+            band raises ``ValueError``
         voices_per_octave (int, optional): log-frequency density, default 16
         w0 (float, optional): non-dimensional Morlet frequency, default 6.0
         peak_threshold (float, optional): normalised peak-picking threshold in
@@ -1718,15 +1820,9 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
     yc = y[:, n_chan]
     N = yc.shape[0]
 
-    freqs = _cwt_default_frequencies(fs, N, f_range, voices_per_octave)
-    # Full time resolution (time_step=1): the phase-slope fit unwraps the
-    # coefficient phase over time, which aliases if the column rate drops below
-    # 2*f_max. The default band's f_max is 0.4*fs, so no decimation is safe;
-    # keeping every column is also the simplest correct choice. The single
-    # (n_freq x N) transform of ONE channel is the memory cost — ~0.30 GB for a
-    # 2 s, 44.1 kHz record over the default band, within the WASM 2**31-1 byte
-    # ceiling (see `_morlet_cwt_1d`).
-    Wc, t_idx = _morlet_cwt_1d(yc, fs, freqs, w0=w0, time_step=1)
+    freqs = _cwt_default_frequencies(fs, N, f_range, voices_per_octave, w0=w0)
+    time_step = _cwt_damping_time_step(fs, freqs[-1])
+    Wc, t_idx = _morlet_cwt_1d(yc, fs, freqs, w0=w0, time_step=time_step)
     t = np.asarray(time_data.time_axis)[t_idx]
 
     time_slice = _resolve_damping_start_slice(t, start_time, time_data.settings,
@@ -1833,7 +1929,7 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
             it from the pretrigger (see `_resolve_damping_start_slice`), with
             t=0 as the fallback
         f_range (tuple, optional): ``(f_min, f_max)`` Hz analysis range; None
-            uses ``4/T .. 0.4*fs`` (the CWT default convention)
+            uses ``4/T .. 0.4*fs`` (the CWT's ``w0=6`` default convention)
         filter_order (int, optional): Butterworth section order, default 4
             (applied forward-backward, so the effective roll-off doubles)
 
