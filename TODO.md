@@ -286,29 +286,35 @@ is still open, as one consolidated list.
   - **PIN THE WINDOWS ENDPOINT VOLUME** (new, 2026-08-12 — the one real
     gap this round found). Windows exposes the SAME digital gain via
     `IAudioEndpointVolume` on the Line endpoint: **−40..+12 dB**,
-    0.5 dB step, and it lies about being hardware
-    (`QueryHardwareSupport = 0x3`). Measured digital beyond doubt —
-    SNR flat to 0.03 dB over 20 dB of attenuation, and the UNCONNECTED
-    channel's floor tracks the setting in both directions. But
-    `Recorder.init_stream`'s three pins are all `_coreaudio`, so on
-    Windows nothing forces it to 0 dB and a stray slider silently
-    rescales every capture while `VmaxSC` keeps asserting 1.8819 V.
-    Needs a `_win_endpoint_volume` twin of `_coreaudio`'s pin (ctypes
-    COM, or add `pycaw`/`comtypes` as an optional extra). Slider trap
-    worth surfacing in the UI too: scalar 1.0 = +12 dB, 0 dB is at 63%
-    of travel.
-  - **`max_input_fs` lies on Windows MME/DirectSound** (new,
-    2026-08-12) — reports **192000** for the U24 XL's MME and
-    DirectSound endpoints (48000 correctly for WASAPI/WDM-KS). Same
-    trap `native_input_rates` closes on macOS, but it returns `[]` on
-    Windows so nothing catches it — and the MME endpoint is
-    `sd.default.device[0]` here, so the digital-LPF oversample path
-    would request 192 kHz. PROVEN fake: above 22 kHz (the 44.1 kHz
-    endpoint Nyquist) every 2 kHz band reads an identical −110.1 dBFS
-    at 96 k / −113.1 at 192 k — exactly −3 dB for 2× the rate, i.e. a
-    fixed dither power, not converter noise. Even plain `fs=48000` on
-    MME is resampled from 44.1 k. Fix: probe WDM-KS / WASAPI-exclusive
-    for the real ladder, or read the endpoint's `DeviceFormat`.
+    0.5 dB step. Measured digital beyond doubt — SNR flat to 0.03 dB
+    over 20 dB of attenuation, and the UNCONNECTED channel's floor
+    tracks the setting in both directions. (`QueryHardwareSupport =
+    0x3` is not a contradiction: it means the endpoint owns the
+    register rather than the Windows engine scaling in software, and
+    says nothing about which side of the converter it sits on.)
+    ~~DONE 2026-08-12~~ — new `pydvma/_win_audio.py` (raw ctypes COM,
+    no pycaw/comtypes, mirroring `_coreaudio`'s interface) plus
+    `streams._volume_backend()`, so `Recorder._pin_input_volume` takes
+    either platform module. Hardware-verified: −12 dB, +6 dB and a
+    mismatched {−3.0, +7.5} each pinned to 0 dB for the capture and
+    restored exactly on `end_stream`.
+    STILL OPEN: surface the slider trap in the UI — scalar 1.0 is
+    **+12 dB** and 0 dB sits at 63% of travel, so "turned up" is the
+    resting state; and because the gain is post-ADC, attenuating a
+    clipped capture HIDES the clipping from the level meter (10% FS
+    peak, still 45% flat-topped).
+  - ~~**`max_input_fs` lies on Windows MME/DirectSound**~~ — DONE
+    2026-08-12. Reported **192000** for the U24 XL's MME and
+    DirectSound endpoints; the MME endpoint is `sd.default.device[0]`
+    here, so the digital-LPF oversample path would have requested
+    192 kHz. PROVEN fake: above 22 kHz (the 44.1 kHz endpoint Nyquist)
+    every 2 kHz band reads an identical −110.1 dBFS at 96 k / −113.1 at
+    192 k — exactly −3 dB for 2× the rate, i.e. one fixed dither power
+    spread wider, not converter noise. Even plain `fs=48000` on MME is
+    resampled from 44.1 k. Fixed by giving `native_input_rates` a
+    Windows answer (`_windows_native_rates` probes a WASAPI-exclusive
+    or WDM-KS twin — host APIs that refuse rather than convert);
+    `max_input_fs` now reports 48000 on all four.
   - **No Windows host API is best at everything** (new, 2026-08-12) —
     **WASAPI exclusive** reproduces the Mac's full CoreAudio ladder
     (8/16/32/44.1/48 k — exclusive mode cannot resample, so the low
@@ -324,13 +330,43 @@ is still open, as one consolidated list.
     exclusive-mode path is 16-bit, and a 1 kHz tone at fs = 8000 is
     degenerate for the test (every harmonic aliases onto another
     harmonic). Needs an out-of-band source, e.g. 5 kHz at fs = 8000.
-  - **`device_index` is not stable on Windows** (new, 2026-08-12) —
-    the WDM-KS block reordered between two enumerations minutes apart
-    with no hardware change and the same device count (U24 XL Line
-    36 → 27; an index-23 lookup returned a Realtek endpoint). Stored
-    indices (`MySettings`, saved `.dvma`, `--settings`) can point at
-    the wrong hardware, and with profile-derived `VmaxSC` that means
-    the wrong voltage scale. Consider persisting/resolving by name.
+  - ~~**`device_index` is not stable on Windows**~~ — DONE
+    2026-08-12. The WDM-KS block reordered between two enumerations
+    minutes apart with no hardware change and the same device count
+    (U24 XL Line 36 → 27; an index-23 lookup returned a Realtek
+    endpoint). The bridge had re-resolved by name since 2026-08-10 but
+    the Python/CLI paths had nothing. Lifted to
+    `streams.resolve_device_index`, applied in `start_stream`, with
+    `serve.py` delegating. Name alone is NOT enough on Windows —
+    PortAudio lists one box once per host API with the SAME name, so a
+    name-only match found four candidates and gave up — hence the
+    identity is (name, host API); `MySettings` gained `device_name` and
+    `device_hostapi`, both self-populating after the first capture.
+    STILL OPEN: a user-facing SELECTOR by partial name
+    (`MySettings(device='U24XL')`) plus a documented host-API
+    preference order, so nobody has to know that index 27 is the
+    24-bit one. See the cross-platform device/fs UX item below.
+  - **Cross-platform device + fs UX** (new, 2026-08-12) — the naming
+    and rate problems are not one problem but three, and only the
+    first is now fixed. (a) index ≠ identity — DONE. (b) the same box
+    has a DIFFERENT name on each OS (U24 XL: `U24XL with SPDIF I/O` on
+    macOS vs `Line (U24XL with SPDIF I/O)` on Windows; the 2i2 is
+    generic `Analogue 1 + 2 (Focusrite USB Audio)` on Windows), so a
+    settings file written on the Mac will not name-match on the PC —
+    the `_soundcard_specs` profile layer already bridges this but
+    device SELECTION does not use it. (c) Windows lists one box many
+    times and the entries are NOT equivalent (`list_available_devices()`
+    prints 38 rows here, 7 of them this one U24 XL, with no host API,
+    no in/out marking and no hint that one is 16-bit-with-fake-rates
+    and another 24-bit-and-honest). Proposal: name the hardware, state
+    the rate, let pydvma choose the backend and REPORT what it did —
+    `MySettings(device='U24XL')`, capability-ordered host-API choice
+    (WDM-KS → WASAPI-exclusive → WASAPI shared → DirectSound → MME)
+    with the choice printed, refuse-and-list on genuine ambiguity,
+    `native_input_rates` everywhere (DONE) so a non-native fs is either
+    pinned or reported as resampled, and a grouped
+    `list_available_devices()` showing ladder + word length per
+    backend.
   - **Output-side calibration not attempted** — output volume
     (−55..0 dB digital) is not pinned and `output_VmaxSC` is not
     derived from `max_output_dbu` (+6.9 dBu); worth doing if the U24
