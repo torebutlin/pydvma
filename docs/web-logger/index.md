@@ -22,7 +22,7 @@ laptop, and full NI acquisition on a lab PC.
 | Mode | Where it runs | Data source | Install |
 | ---- | ------------- | ----------- | ------- |
 | **Pages app** | [`torebutlin.github.io/pydvma/app/`](https://torebutlin.github.io/pydvma/app/) | Analysis of saved files + **soundcard** capture via the browser's Web Audio API | **None** |
-| **Local bridge** | your machine, via `pydvma-serve` | Real hardware — **soundcard or NI-DAQ** — driven by a local Python process | `pip install "pydvma[serve]"` (`[ni]` for NI) |
+| **Local bridge** | your machine, via `pydvma-serve` | Real hardware — **soundcard or NI-DAQ** — driven by a local Python process | `pip install "pydvma[serve,soundcard]"` (`[ni]` for NI) |
 | **JupyterLite** | [`torebutlin.github.io/pydvma/lite/`](https://torebutlin.github.io/pydvma/lite/) | `import pydvma` in a notebook, running under pyodide | **None** |
 
 All three share **one maths engine**: pydvma's analysis core (FFT, TF,
@@ -62,10 +62,15 @@ drives your real hardware from it over a WebSocket. It is how you reach
 uncompromised **soundcard** capture on the lab PC.
 
 ```bash
-pip install "pydvma[serve]"       # add [ni] for National Instruments
-pydvma-serve --open               # serves the UI + bridge, opens a browser
+pip install "pydvma[serve,soundcard]"   # add [ni] for National Instruments
+pydvma-serve --open                     # serves the UI + bridge, opens a browser
 pydvma-serve --driver nidaq --open
 ```
+
+`[serve]` alone installs the bridge but no acquisition backend, and a
+missing backend is quiet — `pydvma-serve --list-devices` simply omits
+that driver's section rather than reporting an error. Name the backends
+you need, or install `pydvma[full]`.
 
 The bundled UI is embedded in the installed wheel — no Node.js, no repo
 checkout, no build step. The app auto-detects it was opened through the

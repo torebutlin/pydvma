@@ -10,7 +10,7 @@ them need **no installation at all**:
 | ------------ | ----------- | ------- |
 | **Analyse saved data** (or capture from a soundcard) with nothing to install | Open the **Pages app** at [`torebutlin.github.io/pydvma/app/`](https://torebutlin.github.io/pydvma/app/) | **None** |
 | **Script analysis in a notebook**, no install | Open the **[JupyterLite site](https://torebutlin.github.io/pydvma/lite/)** and `import pydvma` | **None** |
-| **Acquire from real hardware in the browser** (soundcard or **NI-DAQ**) | Run the **local bridge**: `pydvma-serve` | `pip install "pydvma[serve]"` (`[ni]` for NI) |
+| **Acquire from real hardware in the browser** (soundcard or **NI-DAQ**) | Run the **local bridge**: `pydvma-serve` | `pip install "pydvma[serve,soundcard]"` (`[ni]` for NI) |
 | **Work in Python / Jupyter on your own machine** | `import pydvma as dvma` | `pip install pydvma` (add extras below) |
 | **Run the old desktop Qt logger** (removed) | See the [`qt-final` git tag](../web-logger/migration.md) | `git checkout qt-final` |
 
@@ -101,9 +101,14 @@ no build step. The built UI is bundled inside the wheel and served by a
 tiny local bridge that also drives your real hardware.
 
 ```bash
-pip install "pydvma[serve]"      # or pydvma[full]
-pydvma-serve --open              # serves the app and opens your browser
+pip install "pydvma[serve,soundcard]"   # or pydvma[full]
+pydvma-serve --open                     # serves the app and opens your browser
 ```
+
+The `serve` extra is the bridge alone. Pair it with the acquisition
+backend you actually use — `soundcard` for an audio interface, `ni` for
+National Instruments — because a backend that is not installed is
+skipped silently rather than reported.
 
 `pydvma-serve` listens on `http://127.0.0.1:8760` (loopback only). Pick a
 data source with `--driver`:

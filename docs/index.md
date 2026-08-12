@@ -46,7 +46,7 @@ see [From the Qt logger](web-logger/migration.md).
 | Mode | Open it | What you get |
 | ---- | ------- | ------------ |
 | **Pages app** | [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/) | Full analysis of saved files **plus soundcard capture** — nothing to install |
-| **Local bridge** | `pip install "pydvma[serve]"`, then `pydvma-serve --open` | The same app driving **real hardware** (soundcard or **NI-DAQ**) on your machine |
+| **Local bridge** | `pip install "pydvma[serve,soundcard]"`, then `pydvma-serve --open` | The same app driving **real hardware** (soundcard or **NI-DAQ**) on your machine |
 | **JupyterLite** | [torebutlin.github.io/pydvma/lite/](https://torebutlin.github.io/pydvma/lite/) | `import pydvma` in a browser notebook — no install |
 
 Saved a dataset in the lab? Open the
@@ -67,8 +67,8 @@ and either load a saved file or capture from a soundcard. Full walkthrough:
 ### Drive real hardware locally
 
 ```bash
-pip install "pydvma[serve]"     # add [ni] for National Instruments
-pydvma-serve --open             # serves the app + bridge, opens a browser
+pip install "pydvma[serve,soundcard]"   # add [ni] for National Instruments
+pydvma-serve --open                     # serves the app + bridge, opens a browser
 pydvma-serve --driver nidaq --open
 ```
 

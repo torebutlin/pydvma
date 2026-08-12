@@ -57,6 +57,12 @@ Windows.
   every rate change, and its "input gain" is a hidden digital volume.
   Both are now pinned per capture and restored on close, as the clock
   already was.
+- **Install docs named the wrong extra for sound cards.** The bridge is
+  advertised as driving "soundcard or NI-DAQ", but `pydvma[serve]`
+  installs only `websockets` — an acquisition backend that is absent is
+  skipped *silently*, so a soundcard user following the headline command
+  got a bridge that listed no audio devices and said nothing about why.
+  The documented command is now `pydvma[serve,soundcard]`.
 
 ## 2.2.0 — 2026-08-11
 

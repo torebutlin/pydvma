@@ -25,7 +25,7 @@ The interactive interface is now the **[web logger](https://torebutlin.github.io
 | Mode | Open it | Install |
 | ---- | ------- | ------- |
 | **Pages app** — analysis of saved files + soundcard capture | [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/) | none |
-| **Local bridge** — the same app driving real hardware (soundcard or NI-DAQ) | `pydvma-serve --open` | `pip install "pydvma[serve]"` |
+| **Local bridge** — the same app driving real hardware (soundcard or NI-DAQ) | `pydvma-serve --open` | `pip install "pydvma[serve,soundcard]"` |
 | **JupyterLite** — `import pydvma` in a browser notebook | [torebutlin.github.io/pydvma/lite/](https://torebutlin.github.io/pydvma/lite/) | none |
 
 > The earlier desktop **Qt logger** GUI has been **removed** now that the web logger has full parity (its last version is the `qt-final` git tag).
@@ -40,9 +40,13 @@ To drive real hardware (soundcard or NI-DAQ) from the same app on your
 own machine:
 
 ```bash
-pip install "pydvma[serve]"     # add [ni] for National Instruments
-pydvma-serve --open             # serves the app + bridge, opens a browser
+pip install "pydvma[serve,soundcard]"   # add [ni] for National Instruments
+pydvma-serve --open                     # serves the app + bridge, opens a browser
 ```
+
+`[serve]` on its own installs only the bridge itself — name the
+backends you need alongside it (`soundcard`, `ni`), or use
+`pydvma[full]` for both.
 
 To script analysis and acquisition in Python:
 
