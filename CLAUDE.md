@@ -2,7 +2,30 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-12 (Windows PC session): **the U24 XL is characterised on
+As of 2026-08-12 (late, Mac session): **v2.3.0 is cut and pushed for
+Tore's 3c6 lab round — PyPI upload is his (twine), and the GitHub
+release is deliberately held until after it** so the Zenodo auto-archive
+does not mint a DOI for a version that is not yet installable. Minor,
+not patch: `pydvma.devices`, `list_available_devices()`,
+`MySettings(device=...)` and `pydvma-serve --list-devices` are all new
+public API. **The lab install is
+`pip install "pydvma[serve,soundcard]"`** — the audio DAQ needs the
+BRIDGE, because everything that turns the U24 XL into volts (profile →
+`VmaxSC`, the macOS bit-depth/volume pins, the Windows endpoint-volume
+pin, honest rate ladders) is Python-side; the browser-only Pages app
+captures in FS units with a rate CoreAudio may lie about.
+
+Cutting it surfaced two silent-failure traps, now written up under
+"Releasing" below and worth reading before any future release: the fat
+wheel had embedded a **v2.0.0-era UI** (staging step skipped — and it
+boots fine, so nothing complains), and the documented `pydvma[serve]`
+never installed `sounddevice`, with a missing backend vanishing from
+`--list-devices` without a word. Docs corrected repo-wide. Verified by
+installing the built wheel into a clean venv and driving the bundled UI
+end-to-end, not from the editable checkout. Suites: pytest 705/7, check
+0/0, vitest 810/1, mkdocs --strict green.
+
+Earlier that day (Windows PC session): **the U24 XL is characterised on
 Windows too, and the three platform gaps that round exposed are FIXED.**
 Bench: `dev/2026-08-12-u24xl-windows-bench.md`; harness
 `dev/u24xl_win_check.py` (18/18, source-free by design so it runs with
@@ -594,6 +617,40 @@ hardware-surfaced bugs at write time, not at notebook time.
   limits, sample-rate ladders on DSA modules) in the docstring of
   the function that enforces or depends on them. Don't bury them in
   `# comments` — the rendered docs won't pick those up.
+
+## Releasing — the two silent traps
+
+Both of these produce a *working* artifact that is quietly wrong, so
+neither shows up as an error. Check them explicitly.
+
+**1. Stage the UI before building the wheel.** `pydvma/_webui` is a
+gitignored staged copy that the build backend simply zips — it does
+**not** read `webui/dist`. Skip the staging step and the fat wheel
+ships whatever UI was staged last time, *together with its matching
+engine wheel*, so it is internally consistent and boots happily while
+serving a months-old app. Order:
+
+```bash
+python scripts/stage_webui.py          # runs npm run build, mirrors dist -> pydvma/_webui
+python -m build --sdist --wheel        # both flags: the bare form yields a LEAN wheel
+```
+
+Verify by listing the wheel: `pydvma/_webui/pypi/` must contain the
+engine wheel for *this* version, and the embedded `assets/index-*.js`
+must reference that same filename.
+
+**2. Version bump touches five places, not one.** `pyproject.toml`,
+`pydvma/datastructure.py`, `CITATION.cff`, `CHANGELOG.md`, and
+`ENGINE_WHEELS` in `webui/src/lib/stores/engine.ts`. Only the first two
+are test-enforced. A stale `ENGINE_WHEELS` does **not** 404 under vite —
+the SPA fallback hands micropip `index.html` and it fails deep in the
+install. Prove it by booting the app, not by checking a status code.
+
+Extras are separable: `[serve]` is the bridge alone (`websockets`), and
+an absent acquisition backend is skipped **silently** — no error, the
+driver's whole section just vanishes from `--list-devices`. Test a
+release by installing the built wheel into a clean venv, never from the
+editable checkout, which already has the backends present.
 
 ## Scope discipline
 
