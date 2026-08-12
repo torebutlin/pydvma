@@ -9,8 +9,8 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata from this file."
 title: "pydvma: a Python package for dynamics and vibration measurement and analysis"
 type: software
-version: 2.2.0
-date-released: 2026-08-11
+version: 2.3.0
+date-released: 2026-08-12
 authors:
   - family-names: "Butlin"
     given-names: "Tore"

@@ -15,7 +15,7 @@ import { createEngineClient, type EngineClient } from '../worker/client';
 export type EngineStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 /** Wheel filenames the worker micropip-installs (served from /pypi/). */
-export const ENGINE_WHEELS = ['pydvma-2.2.0-py3-none-any.whl', 'PeakUtils-1.3.5-py3-none-any.whl'];
+export const ENGINE_WHEELS = ['pydvma-2.3.0-py3-none-any.whl', 'PeakUtils-1.3.5-py3-none-any.whl'];
 
 /**
  * Vendored pyodide version. Must match the `pyodide` devDependency (and thus

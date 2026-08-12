@@ -3,6 +3,61 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## 2.3.0 — 2026-08-12
+
+Makes the sound card a device you can *name* rather than index, and
+says plainly whether its readings are volts. Adds the first fixed-gain
+interface profile (ESI U24 XL), characterised on both macOS and
+Windows.
+
+### Added
+
+- **Device discovery** — `dvma.list_available_devices()` and
+  `pydvma-serve --list-devices`. One block per *physical* device rather
+  than one line per enumeration slot: backends ranked with the
+  recommended one marked, the hardware's rate ladder shown separately
+  from what each backend actually **delivers**, and an explicit
+  calibration status — **CHARACTERISED** (full scale known, `VmaxSC`
+  derived, readings are volts), **NEEDS GAIN** (model known, analogue
+  gain must be stated), or **uncalibrated** (`VmaxSC=1.0` is a
+  placeholder and readings are full-scale units). An assumed voltage
+  scale can no longer pass for a measured one.
+- **Select a device by name** — `MySettings(device='U24XL')` resolves a
+  name substring and picks the backend that can deliver the requested
+  sample rate, reporting the reason. It refuses to guess between two
+  real devices. Resolution falls back to the device table's profile
+  label when the raw driver name misses, so `device='ESI U24 XL'`
+  works on macOS *and* Windows even though the same box enumerates as
+  `U24XL with SPDIF I/O` on one and `Line (U24XL with SPDIF I/O)` on
+  the other.
+- **ESI U24 XL profile** — the first *fixed-gain* interface in the
+  device table. Full scale is constant, so `VmaxSC` is derived with no
+  gain to state and Setup drops the gain field. Characterised against a
+  calibrated generator: measured full scale agrees with the published
+  +4.7 dBu to 0.1 dB.
+- **Windows endpoint-volume pinning** (`_win_audio.py`) — the
+  counterpart to `_coreaudio.py`, so a stray OS-level input volume
+  cannot silently rescale a capture.
+
+### Changed
+
+- **Device identity is (name, host API), not an enumeration index.**
+  Indices reorder on Windows as backends appear and disappear — the
+  same U24 XL moved from 36 to 27 with no hardware change. The Python
+  and CLI paths now get the same protection the bridge had.
+- `native_input_rates` answers on Windows as well as macOS, and the
+  device's true maximum rate propagates to the Setup sample-rate list.
+- Setup shows one row per device with an "all backends" control and the
+  calibration line; the input dropdown lists only capture endpoints
+  (38 rows → 11 on the Windows test bench).
+
+### Fixed
+
+- **macOS silently parked the U24 XL at 16 bits** and reset that on
+  every rate change, and its "input gain" is a hidden digital volume.
+  Both are now pinned per capture and restored on close, as the clock
+  already was.
+
 ## 2.2.0 — 2026-08-11
 
 Supersedes 2.1.0 on PyPI (2.1.0 was tagged but never uploaded): adds
