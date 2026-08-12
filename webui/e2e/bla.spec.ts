@@ -141,7 +141,7 @@ test.describe('BLA — browser path (no bridge)', () => {
     // Read the rate the design resolves against rather than assuming it — the
     // browser path adopts whatever the granted device reports.
     await ribbon(page).getByRole('button', { name: 'Setup' }).click();
-    const fs = Number(await page.getByRole('combobox', { name: 'sample rate' }).inputValue());
+    const fs = Number(await page.getByTestId('setup-fs').inputValue());
     expect(fs).toBeGreaterThan(0);
     await ribbon(page).getByRole('button', { name: 'Nonlin' }).click();
 
@@ -228,7 +228,9 @@ test.describe('BLA — bridge run (mock driver)', () => {
     const deviceSelect = page.getByRole('combobox', { name: 'input device' });
     await expect(deviceSelect).toContainText('Mock signal generator');
     await deviceSelect.selectOption({ label: 'Mock signal generator' });
-    await page.getByRole('combobox', { name: 'sample rate' }).selectOption('8000');
+    // The fs control is a typed combo (round 11) — fill + Enter, not selectOption.
+    await page.getByTestId('setup-fs').fill('8000');
+    await page.getByTestId('setup-fs').press('Enter');
     await page.getByRole('spinbutton', { name: 'channel count' }).fill('2');
 
     await ribbon(page).getByRole('button', { name: 'Nonlin' }).click();

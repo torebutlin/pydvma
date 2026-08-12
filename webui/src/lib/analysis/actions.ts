@@ -39,6 +39,7 @@ import type { DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 import { itemChannels, setItemMeta } from '../model/dataset';
 import type { NpyArray } from '../codec/npy';
 import type { EngineStore } from '../stores/engine';
+import { isEngineStopped, ENGINE_STOPPED_MESSAGE, consumeEngineStopNotice } from '../stores/engine';
 import type { Selection, SetRecord, TriState } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
 import { autoVoicesForW0, defaults, type PerSetSettings } from '../stores/analysisSettings';
@@ -416,7 +417,19 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       await fn();
       setError(kind, '');          // our run succeeded — clear this kind
     } catch (e) {
-      setError(kind, e instanceof Error ? e.message : String(e));
+      if (isEngineStopped(e)) {
+        // The user pressed Stop: every queued calc rejects with this, so the
+        // cards' quiet notes (keyed on the exact message) do the talking and
+        // the notice gate keeps it to ONE info toast, not one per calc.
+        setError(kind, ENGINE_STOPPED_MESSAGE);
+        if (consumeEngineStopNotice()) {
+          toasts?.push('Calculation stopped — restarting the engine.', {
+            level: 'info', timeout: 4000,
+          });
+        }
+      } else {
+        setError(kind, e instanceof Error ? e.message : String(e));
+      }
     } finally {
       busyN -= 1;
       busy.set(busyN > 0);

@@ -293,7 +293,7 @@ test.describe('pydvma serve --settings launch prefill', () => {
     await ribbon.getByRole('button', { name: 'Setup' }).click();
 
     // Core input fields reflect the served fs / channels / duration.
-    await expect(page.getByRole('combobox', { name: 'sample rate' })).toHaveValue('8000');
+    await expect(page.getByTestId('setup-fs')).toHaveValue('8000');
     await expect(page.getByRole('spinbutton', { name: 'channel count' })).toHaveValue('3');
     await expect(page.getByRole('combobox', { name: 'duration' })).toHaveValue('5');
 
