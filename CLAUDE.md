@@ -27,12 +27,36 @@ and this propagates to the Setup fs dropdown); device identity is
 `serve.py` so the Python/CLI paths get the bridge's protection —
 `device_index` really does reorder on Windows (WDM-KS block moved, U24
 XL 36 → 27, no hardware change). Suites: pytest 698/17, mkdocs --strict
-green. **NEXT: the device/fs UX item in TODO.md** — no host-API
-preference exists, `list_available_devices()` still dumps 38 raw rows
-(7 of them this one box), and there is no `MySettings(device='U24XL')`
-selector. Recommended default backend on Windows is **WDM-KS** (24-bit +
-honest rates), NOT WASAPI (exclusive = full rate ladder but 16-bit;
-shared = 24-bit but locked to the control-panel rate).
+green.
+
+**The device/fs UX work then landed in the same session** —
+`pydvma/devices.py`. `dvma.list_available_devices()` and
+`pydvma-serve --list-devices` are the pre-choice step: one block per
+PHYSICAL device (not one line per enumeration slot), backends ranked
+with the recommended one marked, the hardware's rate ladder shown
+separately from what each backend actually **delivers**, and an explicit
+calibration status so an assumed voltage scale can never pass for a
+known one — **CHARACTERISED** (in `_soundcard_specs`, `VmaxSC` derived,
+readings are volts) / **NEEDS GAIN** (model known, analogue knob must be
+stated) / **uncalibrated** (`VmaxSC=1.0` is a PLACEHOLDER, readings are
+FS units, fix with `verify_input_scaling`). `MySettings(device='U24XL')`
+selects by name and picks the backend for the requested fs — 48 kHz →
+WDM-KS index 27, 8 kHz → WASAPI index 23 with the reason printed —
+refusing to guess between two real devices, with one reported tie-break
+(auxiliary S/PDIF and Stereo Mix endpoints lose to the analogue input,
+judged on the endpoint ROLE before the bracket, never the model name:
+the U24 XL's own name contains "SPDIF I/O"). Setup shows one row per
+device (38 → 22) with an "all backends" tick and the calibration line;
+verified live. Suites at close: pytest 739/17, vitest 809/1, check 0/0,
+mkdocs --strict green.
+
+Recommended default backend on Windows is **WDM-KS** (24-bit + honest
+rates), NOT WASAPI (exclusive = full rate ladder but PortAudio
+negotiates 16-bit; shared = 24-bit but locked to the control-panel
+rate). **NEXT** (TODO.md): a settings file written on the Mac still
+will not name-match on the PC — the same box enumerates differently per
+OS — so `devices.resolve` should fall back to matching a PROFILE LABEL;
+plus the input dropdown still lists output-only devices.
 
 
 As of 2026-08-11 (late evening, Mac session): **the ESI U24 XL is
