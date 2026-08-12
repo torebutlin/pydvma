@@ -47,6 +47,8 @@
     type MiniDomain,
   } from '../lib/plot/miniplot';
   import Segmented from './Segmented.svelte';
+  import CalcProgress from './CalcProgress.svelte';
+  import { ENGINE_STOPPED_MESSAGE } from '../lib/stores/engine';
 
   let {
     damping,
@@ -72,6 +74,8 @@
   // svelte-check (via the app tsconfig, as CI runs it) then reads every
   // `$state(...)` in the file as a store subscription of this variable.
   const dmp = $derived($damping);
+  /** A user Stop is not a fit failure — say so quietly, not in danger red. */
+  const dampStopped = $derived(dmp.error === ENGINE_STOPPED_MESSAGE);
 
   // ---- mini-plot geometry ----
   // Margins follow PlotSurface's proportions scaled down; per-chart width AND
@@ -328,10 +332,18 @@
     <button class="dp-refit" data-testid="damping-refit" onclick={onrefit}
       disabled={dmp.busy} title="Re-run the fit (picks up the card's STFT|CWT method)">Refit</button>
     {#if dmp.busy}<span class="dp-busy" role="status">fitting…</span>{/if}
-    {#if dmp.error}<span class="dp-err" role="alert">{dmp.error}</span>{/if}
+    {#if dmp.error}
+      <span class:dp-busy={dampStopped} class:dp-err={!dampStopped}
+        role={dampStopped ? 'note' : 'alert'}
+        data-testid={dampStopped ? 'damping-stopped' : undefined}>
+        {dampStopped ? 'stopped — engine restarting' : dmp.error}</span>
+    {/if}
     <button class="dp-close" data-testid="damping-close" title="Close damping panel"
       aria-label="Close damping panel" onclick={onclose}>×</button>
   </div>
+  <!-- Long-calc progress + Stop (P7): silent until the fit passes ~3 s. The
+       CWT fit is the slow one — it reports a frame per wavelet scale. -->
+  <div class="dp-prog"><CalcProgress ops={['calc_damping']} testid="damping-progress" /></div>
 
   {#if dmp.mode === 'peaks'}
     <div class="dp-charts">
@@ -606,6 +618,9 @@
   .dp-refit:hover:not(:disabled) { background: var(--hover-bg); }
   .dp-refit:disabled { opacity: 0.5; cursor: default; }
   .dp-busy { font: italic 11px var(--font-body); color: var(--muted); }
+  /* Progress strip sits under the control row; collapses when idle. */
+  .dp-prog { margin: 4px 0 0; }
+  .dp-prog:empty { display: none; }
   .dp-err { font: 11px var(--font-body); color: var(--danger); }
   .dp-close {
     margin-left: auto;

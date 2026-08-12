@@ -4,14 +4,18 @@
    * header that appears whenever engine work is in flight — any calc
    * (`actions.busy`, ref-counted), a damping fit, or the pyodide boot
    * itself (`engine.status === 'loading'`, shown as "starting engine…").
-   * The worker protocol is strict request/response — there is no mid-calc
-   * progress — so the chip is deliberately indeterminate: a soft pulse and
-   * a word, no fake percentage.
+   * Most work is still indeterminate — a soft pulse and a word, no fake
+   * percentage. Round-11 (P7) added the exception: the CWT paths report
+   * genuine per-scale progress from inside the worker, and when a frame is
+   * live (`engineProgress`, read DIRECTLY from the engine store module — no
+   * App wiring) the pulse becomes a determinate FILL behind the chip's text
+   * and the label names the op. No frames ⇒ the old behaviour, unchanged.
    *
    * Unobtrusive by design: it appears only after a short delay, so quick
    * calcs never flash it, and fades in/out rather than popping.
    */
   import { fade } from 'svelte/transition';
+  import { engineProgress } from '../lib/stores/engine';
 
   let { busy, label = 'computing…' }: {
     /** Whether any tracked work is currently in flight. */
@@ -32,11 +36,29 @@
     const t = setTimeout(() => (shown = true), SHOW_DELAY_MS);
     return () => clearTimeout(t);
   });
+
+  // Determinate only while a tracked calc is actually reporting (total > 0).
+  const prog = $derived($engineProgress);
+  const determinate = $derived(!!prog && prog.total > 0);
+  const pct = $derived(
+    determinate ? Math.round(100 * Math.min(1, Math.max(0, prog!.done / prog!.total))) : 0,
+  );
+  // The op's own name beats the generic word once we know what is running —
+  // but "starting engine…" (a caller-set label with no frames) always wins.
+  const text = $derived(determinate ? `${prog!.label} ${pct}%` : label);
 </script>
 
 {#if shown}
-  <span class="busy-chip" role="status" data-testid="busy-chip" transition:fade={{ duration: 160 }}>
-    <span class="busy-dot" aria-hidden="true"></span>{label}
+  <!-- role="status" (a live region) is right for the chip: the percentage is
+       announced as part of the TEXT, so no aria-value* here — those belong to
+       role="progressbar", which this is not (the real bar is CalcProgress). -->
+  <span class="busy-chip" class:determinate role="status" data-testid="busy-chip"
+    transition:fade={{ duration: 160 }}
+    data-progress={determinate ? pct : undefined}>
+    {#if determinate}
+      <span class="busy-fill" aria-hidden="true" style="width:{pct}%"></span>
+    {/if}
+    <span class="busy-dot" aria-hidden="true"></span><span class="busy-text">{text}</span>
   </span>
 {/if}
 
@@ -54,6 +76,18 @@
     color: var(--muted);
     white-space: nowrap;
   }
+  /* Determinate: the fill sits BEHIND the dot + text (both lifted by
+     position/z-index), so the chip keeps its size and the text stays legible
+     as the bar sweeps under it. */
+  .busy-chip.determinate { position: relative; overflow: hidden; }
+  .busy-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: color-mix(in srgb, var(--blue, #2563eb) 18%, transparent);
+    transition: width 120ms linear;
+  }
+  .busy-text { position: relative; }
+  .determinate .busy-dot { position: relative; animation: none; opacity: 0.9; }
   .busy-dot {
     width: 7px;
     height: 7px;

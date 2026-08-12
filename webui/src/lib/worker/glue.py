@@ -17,6 +17,7 @@ Real arrays ravel; complex arrays interleave ``[re, im, re, im, ...]``. The
 JS side has one uniform decoder for both. Maths always runs here in pydvma —
 never reimplemented in JS.
 """
+import inspect
 import io
 
 import numpy as np
@@ -27,6 +28,68 @@ try:
     import peakutils as _pu
 except Exception:                       # pragma: no cover - peakutils ships in the wheel
     _pu = None
+
+
+# --- mid-compute progress (round-11 P7) -------------------------------------
+#
+# The worker request/response protocol is strict — a busy worker cannot RECEIVE
+# a message — but it can still POST one. So the long CWT paths report progress
+# by calling out through a hook the worker installs once at boot
+# (`set_progress_hook`), which posts a `{type:'progress', callId, done, total}`
+# frame to the main thread. Nothing pyodide-specific is imported here: the hook
+# is just a callable handed in from JS (a `JsProxy` in the browser, a plain
+# function under native pytest), so this module still imports and runs
+# unchanged under CPython — where the hook is simply never installed.
+_progress_hook = None
+
+
+def set_progress_hook(fn=None):
+    """Install (or clear, with ``None``) the mid-compute progress callback.
+
+    Called by ``engine.worker.ts`` ONCE after ``import glue``, with a JS
+    function of ``(done, total)``. The worker arms/disarms it per request (it
+    stamps the frames with the active call id and throttles them to ~10 Hz), so
+    glue itself neither knows nor cares which call is running — it just passes
+    the hook to whichever pydvma function accepts a ``progress_callback``.
+
+    The hook runs on the transform's hot loop (once per wavelet scale), so it
+    must be cheap and must not raise.
+
+    Anything NOT CALLABLE clears the hook. That is not defensive padding: JS
+    ``null`` crosses the FFI as a ``JsNull`` proxy, which is **not** ``None``
+    (the same trap `_opt_float` guards), so a plain ``fn is None`` test would
+    store it and the transform would then die mid-run with "'JsNull' object is
+    not callable" — after the user had already waited for it.
+    """
+    global _progress_hook
+    _progress_hook = fn if callable(fn) else None
+    return None
+
+
+def _accepts_kw(fn, name):
+    """True when ``fn``'s signature takes a keyword named ``name``.
+
+    The old-wheel probe: the browser can be running a CACHED engine wheel that
+    predates a keyword this glue would like to pass, and passing it blind would
+    raise ``TypeError`` for a purely optional extra. Unknown signatures (C
+    functions, exotic wrappers) report False — the conservative answer.
+    """
+    try:
+        return name in inspect.signature(fn).parameters
+    except (TypeError, ValueError):     # pragma: no cover - builtin/C callables
+        return False
+
+
+def _progress_kw(fn):
+    """``{'progress_callback': hook}`` when one is installed AND ``fn`` takes it.
+
+    Empty dict otherwise, so the call is byte-for-byte the pre-P7 call under
+    native pytest (no hook) and against an engine wheel too old to know the
+    keyword (no ``progress_callback`` parameter).
+    """
+    if _progress_hook is None or not _accepts_kw(fn, 'progress_callback'):
+        return {}
+    return {'progress_callback': _progress_hook}
 
 
 def _arr(a):
@@ -196,6 +259,11 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
     - CWT: ``analysis.calculate_cwt`` only exists in a wheel that shipped the
       CWT feature. Against a STALE wheel (no ``calculate_cwt``) we raise a clear
       "engine wheel too old" message instead of an opaque ``AttributeError``.
+
+    The CWT branch also reports PROGRESS while it runs (one frame per wavelet
+    scale, channels included in the total) when the worker has installed a hook
+    — see `set_progress_hook`. The STFT branch has no such loop and stays
+    silent. Both are unaffected numerically.
     """
     td = _time_data(time_axis, time_data, n_channels, fs)
     if str(method) == 'cwt':
@@ -208,7 +276,8 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
         f_range = _f_range(f_min, f_max)
         sd = analysis.calculate_cwt(
             td, f_range=f_range, voices_per_octave=int(voices_per_octave),
-            w0=float(w0), uniform_freq=False)
+            w0=float(w0), uniform_freq=False,
+            **_progress_kw(analysis.calculate_cwt))
     else:
         try:
             sd = analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
@@ -933,6 +1002,10 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
         fr = _f_range(f_min, f_max)
         if fr is not None:
             kw['f_range'] = fr
+        # Mid-compute progress frames (the wavelet transform is the slow half;
+        # see `set_progress_hook`). Probed, not assumed — a cached older wheel
+        # has no `progress_callback` parameter and must still run.
+        kw.update(_progress_kw(analysis.calculate_damping_from_cwt))
         try:
             fn, Qn, fit = analysis.calculate_damping_from_cwt(
                 td, n_chan=int(ch), start_time=st,

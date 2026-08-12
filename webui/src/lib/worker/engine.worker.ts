@@ -18,12 +18,18 @@
 //        { id, op: <glue op>, payload: {...kwargs} }
 //   out: { id, ok: true, result }
 //        { id, ok: false, error }   — boot failure or op error
+//        { type: 'progress', callId, done, total }  — mid-compute, unsolicited
+//
+// The progress frames are the one break from strict request/response (P7): a
+// busy worker cannot RECEIVE, but it can post, so a long CWT reports itself
+// scale by scale through the hook installed below. See `progress.ts`.
 //
 // `?raw` imports glue.py as a string at build time (Vite feature) so it is
 // bundled with the worker and written to the in-memory FS at boot.
 import { loadPyodide, type PyodideInterface } from 'pyodide';
 // Vite `?raw` suffix yields the file contents as a string (typed via vite/client).
 import glueSource from './glue.py?raw';
+import { createProgressPoster, type ProgressMessage } from './progress';
 
 interface InitPayload {
   baseUrl: string;
@@ -34,6 +40,14 @@ interface InitPayload {
 
 let pyodide: PyodideInterface | null = null;
 let glue: any = null;
+
+/**
+ * Mid-compute progress reporter. Armed with the active request id around each
+ * op (below) and handed to glue.py once at boot, so pydvma's per-scale
+ * `progress_callback` lands here and goes out as a `{type:'progress'}` frame.
+ */
+const progress = createProgressPoster((m: ProgressMessage) =>
+  (self as unknown as Worker).postMessage(m));
 
 /**
  * Boot pyodide, load the numeric stack + micropip, install the pydvma and
@@ -78,6 +92,19 @@ async function boot({ baseUrl, wheels, pyodideVersion }: InitPayload): Promise<v
   const sys = pyodide.pyimport('sys');
   sys.path.append('/engine');
   glue = pyodide.pyimport('glue');
+  // Install the progress hook ONCE (not per call): glue keeps it in a module
+  // global and passes it to any pydvma function that accepts a
+  // `progress_callback`, while the per-call ARMING below is what scopes the
+  // frames to a request id. Guarded so an older bundled glue (no such
+  // function) still boots — it simply never reports progress.
+  const install = glue.set_progress_hook;
+  if (install) {
+    try {
+      install(progress.postProgress);
+    } finally {
+      if (typeof install.destroy === 'function') install.destroy();
+    }
+  }
 }
 
 /**
@@ -117,7 +144,16 @@ self.onmessage = async (e: MessageEvent) => {
       (self as unknown as Worker).postMessage({ id, ok: true, result: null });
       return;
     }
-    const result = run(op, (payload ?? {}) as Record<string, unknown>);
+    // Arm progress for THIS id: the Python hook reports only (done, total), so
+    // the id it belongs to is worker state. Disarmed in the finally so a frame
+    // can never be attributed to the wrong (or a settled) call.
+    progress.arm(id);
+    let result: unknown;
+    try {
+      result = run(op, (payload ?? {}) as Record<string, unknown>);
+    } finally {
+      progress.disarm();
+    }
     (self as unknown as Worker).postMessage({ id, ok: true, result });
   } catch (err) {
     (self as unknown as Worker).postMessage({

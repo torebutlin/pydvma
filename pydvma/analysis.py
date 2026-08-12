@@ -1309,7 +1309,7 @@ def _cwt_default_frequencies(fs, N, f_range, voices_per_octave, w0=6.0):
 CWT_MAX_IMAGE_BYTES = 768 * 1024 ** 2
 
 
-def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
+def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1, progress_callback=None):
     '''FFT-based complex Morlet CWT of a single 1-D real signal.
 
     Computes the continuous wavelet transform by per-scale convolution in the
@@ -1336,6 +1336,15 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
             ``2*f`` for the highest analysed frequency, so a fitting caller must
             keep ``time_step <= fs/(2*f_max)`` — see
             `_cwt_damping_time_step`, which applies that bound with margin.
+        progress_callback (callable or None): optional ``f(done, total)``
+            invoked after EVERY scale, with ``total = len(freqs)`` and ``done``
+            counting from 1 — the transform's only natural progress unit (one
+            inverse FFT per scale, all the same cost). ``None`` (default) is a
+            true no-op: nothing is called and the numerical result is
+            bit-identical either way. Intended for a long-running UI (the web
+            engine's worker posts a frame from it, so a lab-length CWT shows a
+            determinate bar); it is called on the hot loop, so it must be cheap
+            and must not raise — an exception propagates out of the transform.
 
     Returns:
         (W, t_idx): ``W`` of shape ``(len(freqs), ceil(N/time_step))`` complex,
@@ -1385,10 +1394,13 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1):
 
     yhat = sp_fft.fft(y)
     W = np.empty((freqs.shape[0], t_idx.shape[0]), dtype=complex)
+    n_scales = freqs.shape[0]
     for i, s in enumerate(scales):
         psi_hat = _morlet_daughter_fourier(omega, s, w0)
         row = sp_fft.ifft(yhat * psi_hat)
         W[i] = row[t_idx]
+        if progress_callback is not None:
+            progress_callback(i + 1, n_scales)
     return W, t_idx
 
 
@@ -1412,7 +1424,8 @@ def _resample_freq_axis(freqs, W, f_out):
 
 
 def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
-                  max_time_columns=2000, uniform_freq=True):
+                  max_time_columns=2000, uniform_freq=True,
+                  progress_callback=None):
     '''Continuous wavelet transform (complex Morlet) as a `SonoData`.
 
     A drop-in ALTERNATIVE to `calculate_sonogram`: produces the SAME
@@ -1469,6 +1482,13 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
         uniform_freq (bool): resample onto a uniform frequency grid for display
             (default True); ``False`` returns the native log grid (used by the
             damping fit).
+        progress_callback (callable or None): optional ``f(done, total)`` for a
+            long-running caller. It covers the WHOLE call — ``total =
+            n_channels * n_freqs`` and ``done`` counts scales across every
+            channel, so a 2-channel transform reads 50 % when the first
+            channel finishes. ``None`` (default) is a no-op and the result is
+            bit-identical either way; see `_morlet_cwt_1d` for the per-scale
+            contract and the cheap-and-never-raises requirement.
     '''
     y = np.asarray(time_data.time_data)
     if y.ndim == 1:
@@ -1493,8 +1513,19 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
     # Per-channel to bound peak memory (never hold all channels' full transform
     # at once on WASM).
     S = np.empty((len(f_out), n_frames, n_chans), dtype=complex)
+    # Progress spans the whole call: `_morlet_cwt_1d` counts scales within ONE
+    # channel, so each channel's frames are re-based onto the channels x scales
+    # total. `cb` stays None when the caller passed none — no per-scale call.
+    total = n_chans * n_freq
     for c in range(n_chans):
-        Wc, _ = _morlet_cwt_1d(y[:, c], fs, freqs, w0=w0, time_step=time_step)
+        if progress_callback is None:
+            cb = None
+        else:
+            base = c * n_freq
+            def cb(done, _total, base=base, total=total):
+                progress_callback(base + done, total)
+        Wc, _ = _morlet_cwt_1d(y[:, c], fs, freqs, w0=w0, time_step=time_step,
+                               progress_callback=cb)
         S[:, :, c] = _resample_freq_axis(freqs, Wc, f_out) if uniform_freq else Wc
 
     sono_data = datastructure.SonoData(
@@ -1766,7 +1797,7 @@ def _cwt_damping_time_step(fs, f_max, oversample=_CWT_DAMPING_OVERSAMPLE):
 
 def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
                                f_range=None, voices_per_octave=16, w0=6.0,
-                               peak_threshold=None):
+                               peak_threshold=None, progress_callback=None):
     '''
     Calculate damping from a continuous wavelet transform (complex Morlet).
 
@@ -1809,6 +1840,15 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
         peak_threshold (float, optional): normalised peak-picking threshold in
             0..1; None keeps the automatic choice (see
             `calculate_damping_from_sono`)
+        progress_callback (callable or None): optional ``f(done, total)``
+            reporting the TRANSFORM only — ``total`` is the number of analysis
+            frequencies and ``done`` counts scales (see `_morlet_cwt_1d`). The
+            per-mode curve fits that follow are deliberately NOT counted: the
+            mode count is unknown until the transform has finished and the
+            peaks have been picked, so including them would grow ``total``
+            mid-call and make a progress bar jump backwards. They are also the
+            cheap half — a handful of `scipy.optimize.curve_fit` calls against
+            one inverse FFT per scale. None (default) is a no-op.
 
     Returns:
         Same ``(fn, Qn, fit_data)`` triple as `calculate_damping_from_sono`.
@@ -1822,7 +1862,8 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
 
     freqs = _cwt_default_frequencies(fs, N, f_range, voices_per_octave, w0=w0)
     time_step = _cwt_damping_time_step(fs, freqs[-1])
-    Wc, t_idx = _morlet_cwt_1d(yc, fs, freqs, w0=w0, time_step=time_step)
+    Wc, t_idx = _morlet_cwt_1d(yc, fs, freqs, w0=w0, time_step=time_step,
+                               progress_callback=progress_callback)
     t = np.asarray(time_data.time_axis)[t_idx]
 
     time_slice = _resolve_damping_start_slice(t, start_time, time_data.settings,

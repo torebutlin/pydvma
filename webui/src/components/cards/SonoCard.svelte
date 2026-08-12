@@ -35,7 +35,9 @@
   import type { ViewState } from '../../lib/stores/viewstate';
   import type { DampingStore } from '../../lib/stores/damping';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
+  import { ENGINE_STOPPED_MESSAGE } from '../../lib/stores/engine';
   import Segmented from '../Segmented.svelte';
+  import CalcProgress from '../CalcProgress.svelte';
 
   let {
     viewState,
@@ -253,6 +255,15 @@
     damping.openFor(targetId, ch);
     onFitDamping();
   }
+
+  // --- Stop (round-11 P7) --------------------------------------------------
+  // A stopped calc is not a failure: `actions.guarded` still routes the
+  // rejection into `computeErrors.sono`, but it lands there as the known stop
+  // MESSAGE, and this card shows it as a quiet note rather than a red alert.
+  // (Whether it also raises one toast is the actions layer's call — see the
+  // integration note; the card is honest either way.)
+  const sonoError = $derived($computeErrors.sono);
+  const sonoStopped = $derived(sonoError === ENGINE_STOPPED_MESSAGE);
 </script>
 
 <section class="ctx-card card-controls" aria-label="Sonogram stage controls">
@@ -390,8 +401,15 @@
         data — a loaded spectrum or transfer function alone cannot be transformed.
       </div>
     {/if}
-    {#if $computeErrors.sono}
-      <div class="ctx-err" role="alert">{$computeErrors.sono}</div>
+    <!-- Long-calc progress + Stop: silent until the calc passes ~3 s, then a
+         determinate bar (the CWT reports one frame per wavelet scale). -->
+    <div class="ctx-row cp-row"><CalcProgress ops={['calc_sono']} testid="sono-progress" /></div>
+    {#if sonoStopped}
+      <div class="ctx-note" role="note" data-testid="sono-stopped">
+        Calculation stopped — the engine is restarting. Press Calc Sonogram again when it is ready.
+      </div>
+    {:else if sonoError}
+      <div class="ctx-err" role="alert">{sonoError}</div>
     {/if}
   </div>
   <div class="ctx-primary">
@@ -406,4 +424,7 @@
     color: var(--muted);
     font-style: italic;
   }
+  /* The progress strip collapses to nothing when no calc is long-running —
+     `CalcProgress` renders nothing at all, so the row must not reserve gap. */
+  .cp-row:empty { display: none; }
 </style>

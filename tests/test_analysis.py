@@ -1076,6 +1076,94 @@ class TestCwtMemoryGuard:
         np.testing.assert_allclose(zeta_dec, zeta_full, rtol=0.02)
 
 
+class TestCwtProgressCallback:
+    """The optional `progress_callback` (round-11 P7): a lab-length CWT can run
+    for tens of seconds in the browser engine, and the ONLY thing a busy
+    worker can do is post frames out. The callback is what produces them —
+    counted exactly, monotone, covering the whole call, and with NO effect on
+    the numbers."""
+
+    @staticmethod
+    def _record(fs=2000, n=6000, n_chans=1):
+        x = np.column_stack([
+            _decaying_sine(fs, n, 90.0 + 30.0 * c, 40.0) for c in range(n_chans)
+        ])
+        return _make_time_data(x, fs)
+
+    def test_morlet_reports_one_frame_per_scale(self):
+        """`_morlet_cwt_1d` calls back once per scale, counting 1..len(freqs)
+        with a constant total — the transform's only natural progress unit."""
+        fs, N = 2000, 4000
+        freqs = np.geomspace(20.0, 500.0, 37)
+        calls = []
+        analysis._morlet_cwt_1d(np.zeros(N), fs, freqs,
+                                progress_callback=lambda d, t: calls.append((d, t)))
+        assert calls == [(i + 1, 37) for i in range(37)]
+
+    @pytest.mark.parametrize('n_chans', [1, 3])
+    def test_calculate_cwt_counts_channels_times_scales(self, n_chans):
+        """`calculate_cwt` re-bases the per-channel frames onto the WHOLE call:
+        total = n_chans * n_freqs, done strictly increasing 1..total, ending
+        exactly at total (a bar that reaches its end)."""
+        fs, N = 2000, 6000
+        td = self._record(fs, N, n_chans)
+        calls = []
+        sd = analysis.calculate_cwt(td, max_time_columns=200,
+                                    progress_callback=lambda d, t: calls.append((d, t)))
+        n_freqs = sd.freq_axis.shape[0]
+        total = n_chans * n_freqs
+        assert len(calls) == total
+        assert {t for _, t in calls} == {total}                  # one constant total
+        done = [d for d, _ in calls]
+        assert done == sorted(done) and done == list(range(1, total + 1))
+
+    def test_result_is_bit_identical_with_and_without_the_callback(self):
+        """The callback is observation only: same image, same axes, to the
+        bit — so no caller ever pays for progress in accuracy."""
+        td = self._record(n_chans=2)
+        quiet = analysis.calculate_cwt(td, max_time_columns=200)
+        noisy = analysis.calculate_cwt(td, max_time_columns=200,
+                                       progress_callback=lambda d, t: None)
+        np.testing.assert_array_equal(quiet.sono_data, noisy.sono_data)
+        np.testing.assert_array_equal(quiet.freq_axis, noisy.freq_axis)
+        np.testing.assert_array_equal(quiet.time_axis, noisy.time_axis)
+
+    def test_damping_fit_reports_its_transform(self):
+        """The CWT damping fit — the slow path that started this — reports the
+        transform: one frame per analysis frequency, ending at the total. The
+        per-mode curve fits are deliberately uncounted (the mode count is
+        unknown until the peaks are picked, so counting them would grow
+        `total` mid-call), and the result is unchanged."""
+        fs, N = 2000, 8000
+        td = _make_time_data(_decaying_sine(fs, N, 90.0, 40.0)[:, None], fs)
+        calls = []
+        fn, Qn, _ = analysis.calculate_damping_from_cwt(
+            td, n_chan=0, f_range=(30.0, 400.0),
+            progress_callback=lambda d, t: calls.append((d, t)))
+        n_freqs = len(analysis._cwt_default_frequencies(fs, N, (30.0, 400.0), 16))
+        assert len(calls) == n_freqs
+        assert calls[0] == (1, n_freqs) and calls[-1] == (n_freqs, n_freqs)
+
+        fn_q, Qn_q, _ = analysis.calculate_damping_from_cwt(
+            td, n_chan=0, f_range=(30.0, 400.0))
+        np.testing.assert_array_equal(fn, fn_q)
+        np.testing.assert_array_equal(Qn, Qn_q)
+
+    def test_no_callback_means_no_calls(self):
+        """Default None is a true no-op — nothing is invoked per scale, so the
+        desktop/native path pays nothing for a browser-only feature."""
+        sentinel = []
+
+        class Boom:
+            def __call__(self, *a):        # pragma: no cover - must never run
+                sentinel.append(a)
+                raise AssertionError('progress_callback called when none was given')
+
+        td = self._record()
+        analysis.calculate_cwt(td, max_time_columns=100)
+        assert sentinel == []
+
+
 class TestDampingBothMethods:
     """Damping recovery via BOTH the STFT and the CWT paths, and the
     demonstrated CWT advantage: it separates two close low-frequency modes

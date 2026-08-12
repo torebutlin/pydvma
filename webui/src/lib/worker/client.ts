@@ -27,13 +27,48 @@ interface Reply {
   error?: string;
 }
 
+/** A mid-call progress frame, with the op name resolved from the pending map. */
+export interface ProgressFrame {
+  callId: number;
+  /** Glue op the frame belongs to (e.g. 'calc_sono') — the label's source. */
+  op: string;
+  done: number;
+  total: number;
+}
+
+/**
+ * Optional observers for call lifecycle events (P7). `onProgress` fires for
+ * every frame the worker posts mid-compute (already throttled worker-side);
+ * `onSettled` fires exactly once per call when it resolves, rejects, or is
+ * torn down — the signal to clear any progress it was reporting.
+ */
+export interface EngineCallEvents {
+  onProgress?: (frame: ProgressFrame) => void;
+  onSettled?: (info: { callId: number; op: string }) => void;
+}
+
 export interface EngineClient {
   /** Boot the engine: vendored pyodide at `<baseUrl>pyodide/`, wheels under `<baseUrl>pypi/`. */
   init(baseUrl: string, wheels: string[], pyodideVersion: string): Promise<void>;
   /** Invoke a glue op with keyword-style payload; resolves with the marshalled result. */
   call<T = unknown>(op: string, payload?: Record<string, unknown>): Promise<T>;
+  /**
+   * Register lifecycle observers (replaces any previous registration).
+   * OPTIONAL on purpose: progress reporting is an extra, so a minimal
+   * hand-rolled client (a test stub, a future non-worker transport) stays a
+   * valid `EngineClient` without it — the store calls it defensively and
+   * simply gets no progress frames.
+   */
+  observe?(events: EngineCallEvents): void;
+  /**
+   * Hard stop: terminate the worker, reject every in-flight call with
+   * `reason`, and spawn a FRESH worker in its place (the client stays usable —
+   * the caller must `init` again). This is the only way to interrupt a
+   * synchronous pyodide compute: a busy worker never reads a cancel message.
+   */
+  restart(reason: Error): void;
   /** Tear down the worker and reject all in-flight calls. */
-  dispose(): void;
+  dispose(reason?: Error): void;
 }
 
 /** Default factory: the real ES-module worker. Overridable for tests. */
@@ -52,36 +87,64 @@ function defaultWorkerFactory(): WorkerLike {
 export function createEngineClient(
   workerFactory: () => WorkerLike = defaultWorkerFactory,
 ): EngineClient {
-  const worker = workerFactory();
-  const pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+  interface Pending { op: string; resolve: (v: any) => void; reject: (e: any) => void }
+  const pending = new Map<number, Pending>();
   let nextId = 1;
   let disposed = false;
+  let events: EngineCallEvents = {};
+  // Mutable so `restart` can swap in a fresh worker without the store (or
+  // anything else holding this client) needing a new object.
+  let worker = workerFactory();
+  attach(worker);
 
-  worker.onmessage = (e: { data: Reply }) => {
-    const { id, ok, result, error } = e.data;
+  /** Settle one pending call and announce it, so progress state can clear. */
+  function finish(id: number): Pending | undefined {
     const entry = pending.get(id);
-    if (!entry) return; // unknown / already-settled id — ignore
+    if (!entry) return undefined;
     pending.delete(id);
-    if (ok) entry.resolve(result);
-    else entry.reject(new Error(error ?? 'engine error'));
-  };
+    events.onSettled?.({ callId: id, op: entry.op });
+    return entry;
+  }
 
-  /** Reject every in-flight call with `err` and clear the map. */
+  /** Reject every in-flight call with `err`, announcing each as settled. */
   function rejectAll(err: Error) {
-    for (const { reject } of pending.values()) reject(err);
+    for (const id of [...pending.keys()]) finish(id)?.reject(err);
     pending.clear();
   }
 
-  worker.onerror = (e: any) => rejectAll(new Error(e?.message ?? 'engine worker crashed'));
-  // A reply that fails structured-clone deserialization fires onmessageerror
-  // instead of onmessage — without this the matching pending call would leak.
-  worker.onmessageerror = () => rejectAll(new Error('engine message deserialization failed'));
+  /** Wire the message/error handlers onto a (new) worker. */
+  function attach(w: WorkerLike) {
+    w.onmessage = (e: { data: Reply | { type?: string; callId?: number; done?: number; total?: number } }) => {
+      const data: any = e.data;
+      // Unsolicited mid-compute frame (P7) — not a reply, so it must never
+      // touch the pending map beyond reading the op it belongs to. A frame for
+      // an already-settled id is dropped.
+      if (data?.type === 'progress') {
+        const entry = pending.get(data.callId);
+        if (entry) {
+          events.onProgress?.({
+            callId: data.callId, op: entry.op, done: data.done, total: data.total,
+          });
+        }
+        return;
+      }
+      const { id, ok, result, error } = data as Reply;
+      const entry = finish(id);
+      if (!entry) return; // unknown / already-settled id — ignore
+      if (ok) entry.resolve(result);
+      else entry.reject(new Error(error ?? 'engine error'));
+    };
+    w.onerror = (e: any) => rejectAll(new Error(e?.message ?? 'engine worker crashed'));
+    // A reply that fails structured-clone deserialization fires onmessageerror
+    // instead of onmessage — without this the matching pending call would leak.
+    w.onmessageerror = () => rejectAll(new Error('engine message deserialization failed'));
+  }
 
   function send<T>(op: string, payload: Record<string, unknown>): Promise<T> {
     if (disposed) return Promise.reject(new Error('engine client disposed'));
     const id = nextId++;
     return new Promise<T>((resolve, reject) => {
-      pending.set(id, { resolve, reject });
+      pending.set(id, { op, resolve, reject });
       worker.postMessage({ id, op, payload });
     });
   }
@@ -93,11 +156,22 @@ export function createEngineClient(
     call<T = unknown>(op: string, payload: Record<string, unknown> = {}): Promise<T> {
       return send<T>(op, payload);
     },
-    dispose(): void {
+    observe(next: EngineCallEvents): void {
+      events = next ?? {};
+    },
+    restart(reason: Error): void {
+      if (disposed) return;
+      const old = worker;
+      rejectAll(reason);
+      old.terminate();
+      // Ids keep counting up across the restart, so a late frame from the dead
+      // worker can never collide with a call made on the new one.
+      worker = workerFactory();
+      attach(worker);
+    },
+    dispose(reason?: Error): void {
       disposed = true;
-      const err = new Error('engine client disposed');
-      for (const { reject } of pending.values()) reject(err);
-      pending.clear();
+      rejectAll(reason ?? new Error('engine client disposed'));
       worker.terminate();
     },
   };
