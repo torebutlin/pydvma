@@ -46,17 +46,23 @@ refusing to guess between two real devices, with one reported tie-break
 (auxiliary S/PDIF and Stereo Mix endpoints lose to the analogue input,
 judged on the endpoint ROLE before the bracket, never the model name:
 the U24 XL's own name contains "SPDIF I/O"). Setup shows one row per
-device (38 → 22) with an "all backends" tick and the calibration line;
-verified live. Suites at close: pytest 739/17, vitest 809/1, check 0/0,
-mkdocs --strict green.
+device with an "all backends" tick and the calibration line; verified
+live. **Cross-OS portability**: `devices.resolve` falls back to the
+`_soundcard_specs` PROFILE LABEL when the raw name misses, so
+`device='ESI U24 XL'` resolves on Mac AND PC (the same box is `U24XL
+with SPDIF I/O` to CoreAudio, `Line (U24XL with SPDIF I/O)` to
+Windows, and a 2i2 is generic `Analogue 1 + 2 (Focusrite USB Audio)`
+on Windows) — case/punctuation-insensitive, reported in the note,
+tried only after a name miss. The input dropdown also stopped listing
+playback-only endpoints: **38 rows → 11**.
 
 Recommended default backend on Windows is **WDM-KS** (24-bit + honest
 rates), NOT WASAPI (exclusive = full rate ladder but PortAudio
 negotiates 16-bit; shared = 24-bit but locked to the control-panel
-rate). **NEXT** (TODO.md): a settings file written on the Mac still
-will not name-match on the PC — the same box enumerates differently per
-OS — so `devices.resolve` should fall back to matching a PROFILE LABEL;
-plus the input dropdown still lists output-only devices.
+rate).
+
+Suites at close: pytest 747/17, vitest 810/1, check 0/0, mkdocs
+--strict green. Everything above is PUSHED to master.
 
 
 As of 2026-08-11 (late evening, Mac session): **the ESI U24 XL is
