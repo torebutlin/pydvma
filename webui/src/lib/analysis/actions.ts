@@ -39,7 +39,7 @@ import type { DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 import { itemChannels, setItemMeta } from '../model/dataset';
 import type { NpyArray } from '../codec/npy';
 import type { EngineStore } from '../stores/engine';
-import type { Selection } from '../stores/selection';
+import type { Selection, SetRecord, TriState } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
 import { autoVoicesForW0, defaults, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
@@ -1201,8 +1201,15 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *
    * Plan 2 acquisition: called by the AcquireCard after a successful
    * recording — the item comes from `recordingToItem` in acquire.ts.
+   *
+   * `opts.hidden` (round-11 P6) registers the set with every line already
+   * 'off' and SKIPS the `linesAdded` notification. Both halves matter for the
+   * BLA run's `M × n_exc` raw captures: the set must never be emitted visible
+   * (see `selection.addSet`'s `hidden` option), and a hidden capture is not a
+   * new line in the time view, so announcing it would re-autoscale that view
+   * once per capture for data nobody can see.
    */
-  function addRecordedSet(item: DvmaItem): number {
+  function addRecordedSet(item: DvmaItem, opts: { hidden?: boolean } = {}): number {
     // P5: a capture is always a NEW line in the time view. Judged before the
     // seeding below (an empty time view also releases the x window — the
     // first capture of a session must not inherit a leftover zoom).
@@ -1220,7 +1227,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const dur = axis && axis.length ? axis[axis.length - 1] - axis[0] : 0;
     const name = (item.meta.test_name as string) || 'set';
     const timestamp = (item.meta.timestring as string) || '';
-    const setId = selection.addSet({ name, nChannels: nCh, durationS: dur, timestamp });
+    const setId = selection.addSet(
+      { name, nChannels: nCh, durationS: dur, timestamp },
+      { hidden: !!opts.hidden },
+    );
     const ws: WorkingSet = { setId, time: item, fs: sampleRate(item), durationS: dur, nChannels: nCh };
     working.push(ws);
 
@@ -1239,7 +1249,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       units: normalizeUnits(item.meta.units, nCh),
     });
 
-    notify?.linesAdded('time', { viewWasEmpty: wasEmpty });
+    if (!opts.hidden) notify?.linesAdded('time', { viewWasEmpty: wasEmpty });
     return setId;
   }
 
@@ -1340,6 +1350,142 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset.set(ds);
     if (ids.length) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
     return ids;
+  }
+
+  /**
+   * One-level undo slot for {@link removeBlaRun} — everything needed to put a
+   * removed set back exactly as it was: its dataset item (and the index it sat
+   * at, so the file's item order survives), its selection record minus the id
+   * (ids are never reused, so the restored set gets a fresh one), its per-line
+   * tri-states and custom labels, its `working` entry and its derived slice.
+   */
+  interface RemovedSet {
+    item: DvmaItem | null;
+    index: number;
+    record: SetRecord;
+    states: TriState[];
+    labels: Record<string, string> | undefined;
+    ws: WorkingSet | null;
+    slice: SetArrays | undefined;
+  }
+  let blaRunUndo: RemovedSet[] = [];
+
+  /**
+   * Remove a previous BLA run's sets — raw captures AND result sets — from the
+   * dataset, the tray and the derived map, and offer a one-level Undo toast
+   * (round-11 P6, the "replace previous run" half of the Nonlin run
+   * semantics).
+   *
+   * Why this lives here rather than in the BLA store: a set spans four places
+   * (dataset items, `working`, `derived`, the selection tray) and only this
+   * module holds three of them. `stores/bla.ts` calls it with the ids it
+   * tracked and stays thin.
+   *
+   * Undo re-registers each set in its original dataset position with its
+   * visibility, labels and derived slice intact — so a replaced run's raw
+   * captures come back HIDDEN (which is how they landed) and its BLA lines
+   * come back drawn. The restored sets carry NEW selection ids (ids are
+   * monotonic and never reused), so the BLA store no longer tracks them; they
+   * are ordinary tray cards from then on, which is exactly what a
+   * previous-run set is.
+   *
+   * @param ids Selection ids to remove; unknown ids are skipped.
+   * @param opts.label Noun for the toast ("previous BLA run" by default).
+   * @returns How many sets were actually removed (`0` ⇒ no toast was raised).
+   */
+  function removeBlaRun(ids: readonly number[], opts: { label?: string } = {}): number {
+    const ds = get(dataset);
+    const stateOf = get(selection.state);
+    const removed: RemovedSet[] = [];
+    // Indices are read against the PRISTINE item list and the items dropped in
+    // one pass at the end. Splicing per set would renumber the list under the
+    // remaining lookups, and every subsequent set would stash index 0 — which
+    // restores the run backwards.
+    const drop = new Set<DvmaItem>();
+    for (const id of ids) {
+      const record = get(selection.sets).find((s) => s.id === id);
+      if (!record) continue;
+      const ws = working.find((w) => w.setId === id) ?? null;
+      const item = ws?.time ?? null;
+      removed.push({
+        item,
+        index: ds && item ? ds.items.indexOf(item) : -1,
+        record: { ...record, colors: record.colors.slice() },
+        states: Array.from({ length: record.nChannels }, (_, c) => stateOf(id, c)),
+        labels: selection.getLabelsForSet(id),
+        ws,
+        slice: get(derived)[id],
+      });
+      if (item) drop.add(item);
+      working = working.filter((w) => w.setId !== id);
+      derived.update((d) => { const n = { ...d }; delete n[id]; return n; });
+      // Per-set caches are keyed by the id that is going away.
+      cleanCache.delete(id);
+      cleanedSets.update((m) => { const n = { ...m }; delete n[id]; return n; });
+      resampleUndo.delete(id);
+      // `analysisSettings` prunes itself off `selection.setsView`, so removing
+      // the tray set is enough to drop its per-set settings record.
+      selection.removeSet(id);
+    }
+    if (!removed.length) return 0;
+    if (ds) {
+      if (drop.size) ds.items = ds.items.filter((i) => !drop.has(i));
+      dataset.set(ds);
+    }
+    blaRunUndo = removed;
+    const n = removed.length;
+    const what = opts.label ?? 'previous BLA run';
+    toasts?.push(`Replaced the ${what} — ${n} set${n === 1 ? '' : 's'} removed.`, {
+      level: 'info',
+      actions: [{ label: '↶ Undo', run: () => void undoRemoveBlaRun() }],
+    });
+    return n;
+  }
+
+  /**
+   * Restore the sets {@link removeBlaRun} last removed (the toast's Undo).
+   * Sets go back in their original dataset order, so the restored `.dvma`
+   * matches what a save before the replace would have written. Returns false
+   * when the slot is empty (already undone, or nothing was removed).
+   *
+   * ONE deliberate departure from a literal undo: by the time the user takes
+   * it, the replacement run has usually already landed under the SAME names
+   * (that is why the old ones were removed), so restoring verbatim would hand
+   * them two indistinguishable groups of tray cards — precisely the confusion
+   * the run-suffix scheme exists to prevent. On a name collision the whole
+   * restored batch is marked `… (restored)`, on the tray card AND on the
+   * item's `test_name`, so the distinction survives a save.
+   */
+  function undoRemoveBlaRun(): boolean {
+    if (!blaRunUndo.length) return false;
+    const batch = blaRunUndo;
+    blaRunUndo = [];
+    let ds = get(dataset);
+    if (!ds) ds = { formatVersion: 2, pydvmaVersion: 'webui', items: [] };
+    const taken = new Set(get(selection.sets).map((s) => s.name));
+    // Marked as a BATCH, not per set: half a run renamed would read as two
+    // different runs.
+    const mark = batch.some((r) => taken.has(r.record.name)) ? ' (restored)' : '';
+    // Ascending original index, so each splice lands where the item was.
+    const ordered = [...batch].sort((a, b) => a.index - b.index);
+    for (const r of ordered) {
+      const name = r.record.name + mark;
+      if (r.item) {
+        if (mark) setItemMeta(r.item, 'test_name', name);
+        const at = r.index >= 0 && r.index <= ds.items.length ? r.index : ds.items.length;
+        ds.items.splice(at, 0, r.item);
+      }
+      const { nChannels, durationS, timestamp, role, colors } = r.record;
+      const id = selection.addSet({ name, nChannels, durationS, timestamp, role, colors });
+      selection.setLineStates(id, r.states);
+      if (r.labels) {
+        for (const [c, label] of Object.entries(r.labels)) selection.renameChannel(id, Number(c), label);
+      }
+      if (r.ws) working.push({ ...r.ws, setId: id });
+      if (r.slice) setDerived(id, { ...r.slice, setId: id });
+    }
+    dataset.set(ds);
+    return true;
   }
 
   /**
@@ -2313,7 +2459,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   return {
     dataset, derived, computeErrors, busy, modal,
-    loadDataset, addRecordedSet, addBlaSets, stampUiState,
+    loadDataset, addRecordedSet, addBlaSets, removeBlaRun, undoRemoveBlaRun, stampUiState,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
     resampleTime, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,

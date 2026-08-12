@@ -152,6 +152,23 @@ export interface BlaRunSpec {
   fs: number;
 }
 
+/** Per-capture lifecycle in the progress grid. */
+export type BlaCaptureStatus = 'pending' | 'running' | 'done';
+
+/**
+ * One cell of the `M × n_exc` progress grid (round-11 P6). A scalar
+ * "realisation 2/6 · experiment 1/2" told the user where the run was but not
+ * how much of it was behind them; the grid is the whole run at a glance, one
+ * row per realisation.
+ */
+export interface BlaCapture {
+  /** Realisation index (0-based). */
+  m: number;
+  /** Experiment index (0-based). */
+  e: number;
+  status: BlaCaptureStatus;
+}
+
 /** Live run state (the card's progress + results surface). */
 export interface BlaState {
   phase: BlaPhase;
@@ -159,6 +176,13 @@ export interface BlaState {
   m: number;
   /** Experiment index of the capture in flight (0-based). */
   e: number;
+  /**
+   * Every capture the run will take, in `(m, e)` order, each with its own
+   * status — the progress grid's model. Empty until a run starts.
+   */
+  captures: BlaCapture[];
+  /** `Date.now()` when the run began (`0` while idle) — for the ETA readout. */
+  runStartedAt: number;
   /** Hard-failure message (`''` when none). */
   error: string;
   /** The spec the current/last run was launched with. */
@@ -170,6 +194,18 @@ export interface BlaState {
   /** Advisory notes raised by preflight (e.g. "pretrigger disarmed"). */
   notes: string[];
 }
+
+/**
+ * What Start does when a previous run's sets are still present (round-11 P6 —
+ * Tore: "what happens if you run it, change settings, and go again — will it
+ * add a huge new dataset or replace? That all needs options and clarity").
+ *
+ * - `replace` (default) removes the previous run's raw + result sets, with a
+ *   one-level Undo toast.
+ * - `keep` leaves them and SUFFIXES the new run's names (`bla#2 …`) so the two
+ *   runs stay distinguishable in the tray and the legend.
+ */
+export type BlaRunMode = 'replace' | 'keep';
 
 /**
  * Every identifier {@link preflightBla} can attach to a finding. A CLOSED
@@ -245,11 +281,17 @@ export interface BlaPreflightInput {
 
 /** The actions surface a BLA run needs (structural, so tests stay light). */
 export interface BlaActions {
-  addRecordedSet(item: DvmaItem): number;
+  addRecordedSet(item: DvmaItem, opts?: { hidden?: boolean }): number;
   addBlaSets(
     results: unknown[],
     opts?: { names?: string[]; channelLabels?: string[]; timestring?: string },
   ): number[];
+  /**
+   * Drop a previous run's sets (dataset + tray + derived) and offer an Undo
+   * toast. Optional so a test double can stay minimal; a store built without
+   * it simply never replaces (see {@link BlaRunMode}).
+   */
+  removeBlaRun?(ids: readonly number[], opts?: { label?: string }): number;
 }
 
 /** Constructor dependencies. */
@@ -394,7 +436,19 @@ export function defaultBlaDesign(): BlaDesign {
 
 /** Fresh run state (idle, nothing landed). */
 function emptyState(): BlaState {
-  return { phase: 'idle', m: 0, e: 0, error: '', runSpec: null, rawSetIds: [], resultSetIds: [], notes: [] };
+  return {
+    phase: 'idle', m: 0, e: 0, captures: [], runStartedAt: 0, error: '',
+    runSpec: null, rawSetIds: [], resultSetIds: [], notes: [],
+  };
+}
+
+/** The `M × n_exc` grid a run starts from — every cell pending, in `(m, e)` order. */
+export function plannedCaptures(M: number, nExc: number): BlaCapture[] {
+  const rows = Math.max(0, Math.trunc(M));
+  const cols = Math.max(0, Math.trunc(nExc));
+  const out: BlaCapture[] = [];
+  for (let m = 0; m < rows; m++) for (let e = 0; e < cols; e++) out.push({ m, e, status: 'pending' });
+  return out;
 }
 
 /**
@@ -405,6 +459,159 @@ function emptyState(): BlaState {
 export function periodSamplesFor(fs: number, dfHz: number): number {
   if (!(fs > 0) || !(dfHz > 0) || !Number.isFinite(fs) || !Number.isFinite(dfHz)) return 0;
   return Math.round(fs / dfHz);
+}
+
+/**
+ * Which of the two linked period fields the user just edited.
+ * @see resolveBlaPeriod
+ */
+export type BlaPeriodQuantity = 'df' | 'period';
+
+/** A resolved period: the sample count `N` and both of its user-facing faces. */
+export interface BlaPeriodResolution {
+  /** Period length in samples — the primitive the excitation is defined in. */
+  periodSamples: number;
+  /** Frequency resolution (Hz). */
+  dfHz: number;
+  /** Period length (s). */
+  periodS: number;
+}
+
+/**
+ * Resolve the LINKED period pair from whichever field was edited (round-11
+ * P6). Tore's report: "took a while to spot that changing delta f was
+ * actually setting the period, which was quite a critical number to notice" —
+ * so the card offers Δf AND T as two equal inputs, and this is the single
+ * coupling entry point they and their tests share (the `resolveFrom` pattern
+ * from `analysis/resolutionControl.ts`).
+ *
+ * `N` is the primitive either way, because the excitation is defined in
+ * SAMPLES so its periodicity survives a coerced clock:
+ *
+ * - editing **Δf** ⇒ `N = round(fs/Δf)`, `T = N/fs`, and Δf is echoed back
+ *   verbatim (the user's typed intent stays in its own box);
+ * - editing **T** ⇒ `N = round(T·fs)`, and BOTH readouts come from that `N`
+ *   (`Δf = fs/N`, `T = N/fs`), because a typed T is a request for a period
+ *   length and the achievable one is the rounded sample count.
+ *
+ * A nonsensical request (non-positive or non-finite fs / value, or a period
+ * under one sample) resolves to `N = 0` rather than NaN or Infinity;
+ * {@link preflightBla} then reports it against the field.
+ *
+ * @param quantity Which field was edited.
+ * @param value Its new value (Hz for `'df'`, seconds for `'period'`).
+ * @param fs Effective sample rate the design resolves against.
+ * @returns The resolved `{periodSamples, dfHz, periodS}` triple.
+ */
+export function resolveBlaPeriod(
+  quantity: BlaPeriodQuantity,
+  value: number,
+  fs: number,
+): BlaPeriodResolution {
+  const okFs = Number.isFinite(fs) && fs > 0;
+  if (quantity === 'df') {
+    const N = periodSamplesFor(fs, value);
+    return { periodSamples: N, dfHz: value, periodS: N > 0 && okFs ? N / fs : 0 };
+  }
+  const N = okFs && Number.isFinite(value) && value > 0 ? Math.round(value * fs) : 0;
+  return {
+    periodSamples: N,
+    dfHz: N > 0 ? fs / N : 0,
+    periodS: N > 0 ? N / fs : 0,
+  };
+}
+
+/**
+ * Significant figures the card's period boxes display. Enough that reading a
+ * displayed value back resolves to the SAME `N` (the round-trip needs a
+ * relative error under `0.5/N`, so 7 figures covers every `N` below 10⁷ — a
+ * period of two minutes at 96 kHz), while staying short enough to read.
+ */
+export const BLA_PERIOD_DISPLAY_SIGFIGS = 7;
+
+/** Round to {@link BLA_PERIOD_DISPLAY_SIGFIGS} without trailing-zero padding. */
+export function roundForPeriodBox(v: number): number {
+  if (!Number.isFinite(v) || v === 0) return 0;
+  return Number(v.toPrecision(BLA_PERIOD_DISPLAY_SIGFIGS));
+}
+
+/**
+ * The base name this run's sets should carry, given the names already in the
+ * tray (round-11 P6, the "keep both" arm of {@link BlaRunMode}).
+ *
+ * A run's sets are all named `<base> …` — raw captures `<base> r1e1`, results
+ * `<base> BLA q1 (via ch0)`. Landing a second run under the SAME test name
+ * would produce byte-identical names, leaving the user with two
+ * indistinguishable groups of tray cards. So: if any existing name already
+ * belongs to a run of this test name, the new run takes the next free
+ * `#n` suffix. A test name the user CHANGED between runs collides with
+ * nothing and is used verbatim — renaming is the explicit way to say "these
+ * are different runs".
+ *
+ * @param testName The design's test name.
+ * @param existingNames Every set name currently in the tray.
+ * @returns The base name to build this run's set names from
+ *   (`'bla'` → `'bla#2'` → `'bla#3'`).
+ */
+export function blaRunBaseName(testName: string, existingNames: readonly string[]): string {
+  const base = testName.trim();
+  if (!base) return testName;
+  // `bla` matches "bla r1e1" and "bla#3 BLA q1 (…)", but NOT "blast r1e1":
+  // the base must be followed by an optional #n and then a space.
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^${escaped}(?:#(\\d+))?\\s`);
+  let highest = 0;
+  for (const name of existingNames) {
+    const m = re.exec(name);
+    if (!m) continue;
+    highest = Math.max(highest, m[1] ? Number(m[1]) : 1);
+  }
+  return highest === 0 ? base : `${base}#${highest + 1}`;
+}
+
+/**
+ * Mark one cell of the progress grid, returning a NEW array (the state is
+ * replaced wholesale so Svelte sees the change).
+ *
+ * @param cells The current grid.
+ * @param m Realisation index of the capture whose status changed.
+ * @param e Experiment index of that capture.
+ * @param status Its new status.
+ * @returns The updated grid.
+ */
+export function markBlaCapture(
+  cells: readonly BlaCapture[],
+  m: number,
+  e: number,
+  status: BlaCaptureStatus,
+): BlaCapture[] {
+  return cells.map((c) => (c.m === m && c.e === e ? { ...c, status } : c));
+}
+
+/**
+ * Seconds of capture still to come: the untouched captures in full, plus
+ * whatever is left of the one in flight. Deliberately counts CAPTURE time
+ * only — the analysis call that follows has no progress model at all (one
+ * opaque worker call), so folding a guess for it into the number the user
+ * reads as "time left" would make the estimate dishonest rather than
+ * complete; the card shows `computing BLA…` for that phase instead.
+ *
+ * @param cells The progress grid.
+ * @param captureS Seconds per capture.
+ * @param elapsedS Seconds elapsed in the capture currently in flight.
+ * @returns Estimated seconds remaining (never negative).
+ */
+export function blaRemainingS(
+  cells: readonly BlaCapture[],
+  captureS: number,
+  elapsedS: number,
+): number {
+  if (!(captureS > 0)) return 0;
+  const left = cells.filter((c) => c.status !== 'done').length;
+  const inFlight = cells.some((c) => c.status === 'running')
+    ? Math.min(Math.max(elapsedS, 0), captureS)
+    : 0;
+  return Math.max(0, left * captureS - inFlight);
 }
 
 /**
@@ -725,6 +932,12 @@ export function createBlaStore(deps: BlaDeps) {
   const { acquire, actions, engine, selection, viewState } = deps;
   const design = writable<BlaDesign>(defaultBlaDesign());
   const state = writable<BlaState>(emptyState());
+  /**
+   * What the next Start does with a previous run's sets. Deliberately NOT part
+   * of {@link BlaDesign}: it describes the act of running, not the excitation,
+   * so it must not travel into the run spec a saved result carries.
+   */
+  const runMode = writable<BlaRunMode>('replace');
   /** Set by {@link cancel}; checked between captures. */
   let cancelRequested = false;
 
@@ -794,13 +1007,27 @@ export function createBlaStore(deps: BlaDeps) {
   }
 
   /**
-   * Display name for excitation `q`'s result set — the test name in front of
-   * the shared {@link excitationLabel}, so the tray name and the card's
-   * verdict line always describe the same geometry.
+   * Display name for excitation `q`'s result set — the run's base name in
+   * front of the shared {@link excitationLabel}, so the tray name and the
+   * card's verdict line always describe the same geometry.
    */
-  function resultName(d: BlaDesign, v: BlaDerivedValues, q: number): string {
-    return `${d.testName} BLA ${excitationLabel(q, v.xMode, v.xChannels)}`;
+  function resultName(base: string, v: BlaDerivedValues, q: number): string {
+    return `${base} BLA ${excitationLabel(q, v.xMode, v.xChannels)}`;
   }
+
+  /**
+   * Whether a previous run's sets are still in the tray — the gate on the
+   * replace/keep choice, and the reason it appears at all. Checked against the
+   * LIVE tray rather than the id list alone, so a run whose sets the user
+   * deleted by hand stops offering to replace them.
+   */
+  const hasPreviousRun: Readable<boolean> = svelteDerived(
+    [state, selection.sets],
+    ([$st, $sets]) => {
+      const live = new Set($sets.map((s) => s.id));
+      return [...$st.rawSetIds, ...$st.resultSetIds].some((id) => live.has(id));
+    },
+  );
 
   /**
    * Run the whole thing: preflight → `M × n_exc` captures → `calc_bla` →
@@ -865,9 +1092,31 @@ export function createBlaStore(deps: BlaDeps) {
     };
 
     cancelRequested = false;
+
+    // ---- run semantics: replace the previous run, or keep both ----
+    // REPLACE first, so the name scan below sees a tray with the old run
+    // already gone and the new run keeps the plain test name. That ordering
+    // also closes the silent-orphan path the old code had: resetting the
+    // state dropped the previous run's rawSetIds while leaving those sets
+    // HIDDEN, and the card's "show raw captures" button — the only control
+    // that revealed them — moved to the new run.
+    const previous = [...get(state).rawSetIds, ...get(state).resultSetIds];
+    if (get(runMode) === 'replace' && previous.length && actions.removeBlaRun) {
+      actions.removeBlaRun(previous);
+    }
+    // KEEP BOTH (or a stale run this store no longer tracks) ⇒ suffix the
+    // names so the two runs are told apart in the tray and the legend.
+    const baseName = blaRunBaseName(d.testName, get(selection.sets).map((s) => s.name));
+
     // Clear any previous run's results up front (still 'idle'), so a failure
     // during staging can't report itself on top of stale ids.
-    state.set({ ...emptyState(), runSpec, notes });
+    state.set({
+      ...emptyState(),
+      runSpec,
+      notes,
+      captures: plannedCaptures(runSpec.multisine.M, v.nExc),
+      runStartedAt: Date.now(),
+    });
     const userDurationS = get(acquire.settings).durationS;
     const wasArmed = !!get(acquire.bridgeConfig).pretrigArmed;
     const rawSetIds: number[] = [];
@@ -887,7 +1136,9 @@ export function createBlaStore(deps: BlaDeps) {
       for (let m = 0; m < runSpec.multisine.M; m++) {
         for (let e = 0; e < v.nExc; e++) {
           if (cancelRequested) break;
-          state.update((st) => ({ ...st, m, e }));
+          // The grid's single write point for 'running' — one cell in flight
+          // at a time, by construction of this loop.
+          state.update((st) => ({ ...st, m, e, captures: markBlaCapture(st.captures, m, e, 'running') }));
           const rec = await acquire.record({
             outputOverride: stimulusFor(d, v, seed, m, e, rail),
           });
@@ -913,14 +1164,21 @@ export function createBlaStore(deps: BlaDeps) {
                 + `${rec.fs} Hz in Setup, then start the run.`));
           }
           const item = recordingToItem(
-            rec, `${d.testName} r${m + 1}e${e + 1}`, acquire.lastRecordingMeta,
+            rec, `${baseName} r${m + 1}e${e + 1}`, acquire.lastRecordingMeta,
           );
-          const setId = actions.addRecordedSet(item);
           // M × n_exc raw sets would flood the tray/legend, so they land
-          // hidden; the card offers a "show raw captures" toggle.
-          selection.setSetVisible(setId, false);
+          // hidden — ATOMICALLY (`hidden: true`), not by hiding them after the
+          // fact: a post-hoc hide leaves one frame in which the capture is a
+          // visible new time line, which the axis notifier acts on (a pointless
+          // time-view rescale per capture). The card offers a "show raw
+          // captures" toggle.
+          const setId = actions.addRecordedSet(item, { hidden: true });
           rawSetIds.push(setId);
-          state.update((st) => ({ ...st, rawSetIds: rawSetIds.slice() }));
+          state.update((st) => ({
+            ...st,
+            rawSetIds: rawSetIds.slice(),
+            captures: markBlaCapture(st.captures, m, e, 'done'),
+          }));
           captures.push({
             time_axis: rec.timeAxis, time_data: rec.data, n_channels: rec.nChannels, fs: rec.fs,
           });
@@ -945,8 +1203,13 @@ export function createBlaStore(deps: BlaDeps) {
       });
       const list = Array.isArray(res) ? res : [];
       const resultSetIds = actions.addBlaSets(list, {
-        names: list.map((_, q) => resultName(d, v, q)),
-        channelLabels: v.respChannels.map((c) => `ch_${c}`),
+        names: list.map((_, q) => resultName(baseName, v, q)),
+        // Name each line after the RESPONSE CHANNEL it came from. `resp ch N`,
+        // not the default `ch_N`: a BLA set's columns are a SUBSET of the
+        // capture's channels (the measured drives are not responses), so a
+        // bare `ch_1` on the second column would read as input channel 1 when
+        // it is in fact channel 2. The prefix says which role the number has.
+        channelLabels: v.respChannels.map((c) => `resp ch ${c}`),
       });
       state.update((st) => ({ ...st, phase: 'done', resultSetIds }));
       viewState?.activate('tf');
@@ -954,9 +1217,15 @@ export function createBlaStore(deps: BlaDeps) {
       const msg = err instanceof Error ? err.message : String(err);
       // The Acquire card's own Cancel rejects the in-flight capture with
       // 'cancelled' — that is a cancellation, not a failure.
-      state.update((st) => msg === 'cancelled'
-        ? { ...st, phase: 'cancelled' }
-        : { ...st, phase: 'error', error: msg });
+      state.update((st) => {
+        // The capture that threw never landed, so its cell goes back to
+        // pending rather than staying 'running' — a cell left mid-fill after
+        // the run stopped reads as "still going" forever.
+        const captures = st.captures.map((c) => (c.status === 'running' ? { ...c, status: 'pending' as const } : c));
+        return msg === 'cancelled'
+          ? { ...st, phase: 'cancelled', captures }
+          : { ...st, phase: 'error', error: msg, captures };
+      });
     } finally {
       acquire.patch({ durationS: userDurationS });
       if (wasArmed) acquire.patchBridge({ pretrigArmed: true });
@@ -1002,6 +1271,28 @@ export function createBlaStore(deps: BlaDeps) {
     state.set(emptyState());
   }
 
+  /**
+   * Set the frequency resolution from EITHER of the card's two linked boxes
+   * (round-11 P6). Both write the same design field — `dfHz` is the stored
+   * primitive — but a typed PERIOD is first quantised to a whole number of
+   * samples and converted back, so the pair the card shows is always a
+   * consistent, achievable `(Δf, T)`.
+   *
+   * @param quantity Which box was edited.
+   * @param value Hz for `'df'`, seconds for `'period'`.
+   */
+  function setPeriod(quantity: BlaPeriodQuantity, value: number): void {
+    if (quantity === 'df') {
+      patch({ dfHz: value });
+      return;
+    }
+    const r = resolveBlaPeriod('period', value, get(fsEff));
+    // A sub-sample period resolves to N = 0 and no meaningful Δf; keep the
+    // request visible as a zero so preflight reports it against the field
+    // rather than silently restoring the old value.
+    patch({ dfHz: r.periodSamples > 0 ? roundForPeriodBox(r.dfHz) : 0 });
+  }
+
   return {
     design,
     state: { subscribe: state.subscribe } as Readable<BlaState>,
@@ -1010,7 +1301,12 @@ export function createBlaStore(deps: BlaDeps) {
     // thing for a consumer to read the stale half of.
     values,
     checks,
+    /** Replace-vs-keep for the NEXT run (the card's Segmented control). */
+    runMode,
+    /** Whether a previous run's sets are still present (gates that control). */
+    hasPreviousRun: { subscribe: hasPreviousRun.subscribe } as Readable<boolean>,
     patch,
+    setPeriod,
     setOutputs,
     start,
     cancel,

@@ -60,15 +60,23 @@ here also drives the excitation itself.
 ### Band and resolution
 
 - **band (Hz)** — the frequency range to excite, `f1` to `f2`.
-- **Δf** — the frequency resolution. This fixes the multisine's period
-  length: `N = round(fs / Δf)` samples, `T = N / fs` seconds. Both
-  numbers are always shown together — `period: N = 4096 samples =
-  0.500 s · 993 lines` — because they trade off directly: a **finer
-  Δf** (better frequency resolution, closer-spaced excited lines) means
-  a **longer period**, and every realisation/experiment captures
-  several whole periods of it, so a fine Δf multiplies the run's total
-  time. Pick the coarsest Δf that still resolves the features you care
-  about.
+- **resolution / period** — **Δf** (Hz) and **T** (s) are two boxes for
+  **one** quantity, and you can type into either. They are linked
+  through the multisine's period length in samples, which is what the
+  excitation is really defined in: typing a resolution gives
+  `N = round(fs / Δf)` samples, typing a period gives
+  `N = round(T · fs)`, and the resolved `N` and excited-line count are
+  shown underneath (`N = 4096 samples · 993 lines`). A typed period is
+  quantised to whole samples first, so the Δf box comes back with the
+  resolution you can actually have rather than the one you asked for.
+
+    The reason both are on the card: they trade off directly, and the
+    period is the one that costs you time. A **finer Δf** (better
+    frequency resolution, closer-spaced excited lines) means a
+    **longer period**, and every realisation/experiment captures
+    several whole periods of it, so halving Δf doubles the whole run.
+    Pick the coarsest Δf that still resolves the features you care
+    about, and watch the [total time](#total-time) as you do.
 
 ### Level
 
@@ -105,9 +113,25 @@ lower the level.
   note](#browser-path-output-latency) below for another reason to raise
   it there.
 
-A live **total run time** readout (`total: M × n_exc × (transient + P)
-periods ≈ …`) shows the whole run's wall-clock cost as you adjust any of
-these.
+### Total time {#total-time}
+
+The card's headline number — top left, beside the stage title — is the
+run's **whole wall-clock cost**, live as you edit anything:
+
+```
+≈ 12.4 s
+12 captures × 1.03 s
+```
+
+The design row spells out where it comes from (`6 realisations × 2
+excitations × 6 periods (2 transient + 4 steady)`), so if a run is
+going to take longer than you want, you can see which factor to cut.
+
+Note that **the run sets its own capture length** — one whole
+`(transient + P)`-period window per capture — and says so under the
+responses readout. Your standing **duration** in the Acquire card is
+overridden for the run and restored afterwards; you do not need to set
+it, and you should not be surprised to see it move.
 
 ### Excitations and responses
 
@@ -199,12 +223,24 @@ periods.
 ## Running the measurement
 
 **Start** runs the whole thing: `M × n_exc` ordinary one-shot captures,
-in sequence, each with progress shown as `realisation m/M · experiment
-e/n`. **Cancel** stops the run after the capture currently in flight
-completes — whatever landed already is kept as ordinary time sets, not
-discarded. When Start is disabled, the reason is shown next to whichever
-control it applies to (an out-of-range band, a duplicated measured-x
-channel, no response channels left, and so on).
+in sequence. When Start is disabled, the reason is shown next to
+whichever control it applies to (an out-of-range band, a duplicated
+measured-x channel, no response channels left, and so on).
+
+### Watching it run
+
+Progress is a **grid**: one row per realisation, one cell per
+excitation, so the shape of the grid is the shape of the run. Cells are
+outlines until they run, fill left-to-right while their capture is in
+flight, and go solid when it lands. Beside it, `capture 3/12 · ~9 s
+left` counts captures rather than asking you to multiply realisation
+and experiment indices together.
+
+**stop after this capture** does exactly that: the capture in flight
+completes (a half-played multisine is a useless set) and the run stops
+before the next one. Whatever landed is kept as ordinary time sets, and
+the grid stays on screen so you can see which captures you came away
+with.
 
 The individual captures land as ordinary `TimeData` sets, named
 `<test name> r<m>e<e>` — but **hidden by default** in the tray and
@@ -213,8 +249,32 @@ both. A **show raw captures** button in the results group reveals them
 (and hides them again); they are perfectly normal time sets you can
 inspect, plot or delete like any other.
 
-Once the run finishes, the analysis runs once (`computing BLA…`) and the
-view jumps to **TF**, now showing one BLA line per excitation.
+Once the run finishes, the analysis runs once (`computing BLA…` — there
+is no progress for this phase, it is a single call) and the view jumps
+to **TF**, now showing one BLA line per excitation. Each result line is
+named after the **response channel** it came from (`resp ch 1`), not a
+bare `ch_1`: a BLA set's columns are only the response channels, so
+their numbering is not the capture's.
+
+### Running again: replace, or keep both {#replace-or-keep}
+
+Once a run has landed, Start grows a **previous run** choice:
+
+- **replace previous** (the default) removes the last run's raw
+  captures and BLA sets before the new one begins, so iterating on a
+  design does not silently pile up sets you will never look at again.
+  A toast offers a one-click **Undo** that puts them all back —
+  visibility, channel labels and all — if you did not mean it.
+- **keep both** leaves the last run alone and names the new one apart:
+  `bla#2 r1e1`, `bla#2 BLA q1 (via ch0)`, then `bla#3`, and so on. This
+  is what you want for a [level sweep](#level-sweeps), where the whole
+  point is comparing runs. Renaming the **test** field between runs
+  does the same job and needs no suffix.
+
+**new run** clears the run state without deleting anything: the landed
+sets stay in the tray and the raw captures are un-hidden as the card
+lets go of them, so nothing is ever left hidden with no control to
+reveal it.
 
 ## Reading the results
 
@@ -236,7 +296,11 @@ axis**:
 
 A **σ lines** toggle (on the TF card, and mirrored on the Nonlin card
 itself, since results appear over the TF view while the Nonlin stage
-stays active) hides both.
+stays active) hides both. The σ lines carry no entry in the plot legend
+— they annotate a channel rather than being channels of their own — so
+the Nonlin card shows a small **key** beside that toggle with the two
+dash swatches in their real colours, plus a one-line reminder of what
+they are and the `√M` step to the BLA's own error bar.
 
 A **gap** in the σ_NL line at some frequency does not mean "no
 distortion was measured there" — it means the estimator's floor
@@ -270,10 +334,11 @@ that shows on any one response channel is a real distortion.
 
 Nonlinearity is level-dependent, so one run at one amplitude only tells
 you about that amplitude. Repeat the run at **2–3 different levels**
-(the verdict text says so whenever a band reads nonlinear) — each run
-lands as its own set, so the results **coexist** rather than replacing
-each other, and you can overlay them in the TF view via the ordinary
-tray/legend controls to see where the distortion grows with level.
+(the verdict text says so whenever a band reads nonlinear), switching
+the previous-run choice to **keep both** (or renaming the test field)
+so the runs [coexist](#replace-or-keep) instead of replacing each
+other. Their sets then overlay in the TF view through the ordinary
+tray/legend controls, showing where the distortion grows with level.
 Automated level sweeps are not built yet — see `TODO.md`.
 
 ## Saving and re-analysing in Python

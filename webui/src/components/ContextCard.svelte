@@ -105,7 +105,7 @@
   {:else if $activeStage === 'tf'}
     <TFCard {viewState} {selection} {actions} {analysisSettings} />
   {:else if $activeStage === 'bla'}
-    <BlaCard {bla} {acquire} {actions} {selection} {viewState} />
+    <BlaCard {bla} {acquire} {actions} {selection} {viewState} {toasts} />
   {:else if $activeStage === 'sono'}
     <SonoCard {viewState} {actions} {selection} {analysisSettings} {damping} {onFitDamping} />
   {:else if $activeStage === 'fit'}

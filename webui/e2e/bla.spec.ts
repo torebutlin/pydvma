@@ -135,7 +135,7 @@ test.describe('BLA — browser path (no bridge)', () => {
     await expect(page.getByTestId('bla-start')).toBeEnabled();
   });
 
-  test('the period readout tracks Δf in BOTH units', async ({ page }) => {
+  test('Δf and the period are LINKED — editing either resolves the other', async ({ page }) => {
     await gotoNonlin(page);
 
     // Read the rate the design resolves against rather than assuming it — the
@@ -146,13 +146,42 @@ test.describe('BLA — browser path (no bridge)', () => {
     await ribbon(page).getByRole('button', { name: 'Nonlin' }).click();
 
     const period = page.getByTestId('bla-period');
+    const periodS = page.getByTestId('bla-period-s');
+
+    // Δf → period (round-11 P6: the coupling the user could not see before).
     for (const dfHz of [10, 25]) {
       await setField(page, 'bla-df', String(dfHz));
       const n = Math.round(fs / dfHz);
-      const secs = n / fs;
       await expect(period).toContainText(`N = ${n} samples`);
-      await expect(period).toContainText(`${secs >= 10 ? secs.toFixed(2) : secs.toFixed(3)} s`);
+      expect(Number(await periodS.inputValue())).toBeCloseTo(n / fs, 6);
     }
+
+    // …and back the other way: a typed PERIOD quantises to whole samples and
+    // rewrites Δf, which is the half that did not exist at all before.
+    const targetN = Math.round(fs / 20);
+    await setField(page, 'bla-period-s', String(targetN / fs));
+    await expect(period).toContainText(`N = ${targetN} samples`);
+    expect(Number(await page.getByTestId('bla-df').inputValue())).toBeCloseTo(fs / targetN, 3);
+  });
+
+  test('the total run time is the card headline, live from the design', async ({ page }) => {
+    await gotoNonlin(page);
+    await ribbon(page).getByRole('button', { name: 'Setup' }).click();
+    await page.getByRole('spinbutton', { name: 'channel count' }).fill('2');
+    await ribbon(page).getByRole('button', { name: 'Nonlin' }).click();
+
+    // The primary slot leads with the wall-clock total and backs it with the
+    // count it is the product of.
+    const status = page.getByTestId('bla-status');
+    await expect(page.getByTestId('bla-total-time')).toContainText('≈');
+    await setField(page, 'bla-m', '4');
+    await expect(status).toContainText('4 captures ×');
+    // Doubling the realisations doubles the run: the headline follows the
+    // design, it is not a one-off readout.
+    await setField(page, 'bla-m', '8');
+    await expect(status).toContainText('8 captures ×');
+    // And the design row says the capture length is the RUN's to set.
+    await expect(page.getByTestId('bla-duration-note')).toContainText('overrides the Acquire duration');
   });
 });
 
@@ -221,14 +250,20 @@ test.describe('BLA — bridge run (mock driver)', () => {
 
   test('a full run captures, analyses, lands hidden raw sets + a BLA set, and draws the σ overlay', async ({ page }) => {
     await gotoNonlinWithMock(page);
-    await expect(page.getByTestId('bla-status')).toContainText('2 captures planned');
+    // The headline is the run's wall-clock cost, backed by the capture count
+    // (round-11 P6) — 2 captures of (2 transient + 2 steady) × 1600 samples
+    // at 8 kHz, so ~0.83 s each.
+    await expect(page.getByTestId('bla-status')).toContainText('2 captures ×');
 
     await page.getByTestId('bla-start').click();
 
-    // Progress cycles through the realisations while the captures run.
+    // Progress counts CAPTURES (not realisation/experiment indices the user
+    // has to multiply out) and carries a remaining estimate, beside a grid
+    // with one cell per capture.
     const progress = page.getByTestId('bla-progress');
-    await expect(progress).toContainText('realisation 1/2');
-    await expect(progress).toContainText('realisation 2/2');
+    await expect(progress).toContainText('capture 1/2');
+    await expect(page.getByTestId('bla-grid')).toBeVisible();
+    await expect(progress).toContainText('capture 2/2');
 
     // Then the single analysis call (first compute of the session, so this
     // also boots pyodide + micropip-installs the vendored pydvma wheel).
@@ -253,9 +288,14 @@ test.describe('BLA — bridge run (mock driver)', () => {
       .toHaveAttribute('aria-label', /set shown/);
     await page.getByTestId('bla-show-raw').click();
 
-    // A verdict line per excitation, and the run left the app on the TF view
-    // (the BLA set's own line is drawn there).
+    // A verdict line per excitation, with the σ explainer + docs link beside
+    // it (round-11 P6: the results used to arrive with no text at all saying
+    // what the new lines and channels were).
     await expect(page.getByTestId('bla-verdict')).toHaveCount(1);
+    await expect(page.getByTestId('bla-explain')).toContainText('σ_NL');
+    await expect(page.getByTestId('bla-docs-link')).toHaveAttribute('target', '_blank');
+    // The run is now a "previous run", so Start offers replace-vs-keep.
+    await expect(page.getByTestId('bla-run-mode')).toBeVisible();
     await expect(page.locator('text.axlab').first()).toHaveText('Frequency (Hz)');
     await expect(page.getByTestId('plot-line').first()).toBeAttached();
 
@@ -283,6 +323,10 @@ test.describe('BLA — bridge run (mock driver)', () => {
     await expect(dashed).toHaveCount(1);
     await page.screenshot({ path: test.info().outputPath('bla-tf-sigma.png') });
 
+    // The in-card σ KEY (round-11 P6) — the overlay lines carry no legend
+    // entry of their own, so the card names which dash is which.
+    await expect(page.getByTestId('bla-sigma-key')).toContainText('σ_n');
+
     // The BLA card's OWN "σ lines" toggle (review item 5: the TF card's
     // toggle below is unreachable from here in practice — the run parks the
     // VIEW on tf but the active STAGE stays 'bla', so a user reading the
@@ -309,12 +353,17 @@ test.describe('BLA — bridge run (mock driver)', () => {
     await gotoNonlinWithMock(page, { M: 3 });
 
     await page.getByTestId('bla-start').click();
-    await expect(page.getByTestId('bla-progress')).toContainText('realisation 1/3');
+    await expect(page.getByTestId('bla-progress')).toContainText('capture 1/3');
+    // The button says what it does — the capture in flight always finishes.
+    await expect(page.getByTestId('bla-cancel')).toHaveText('stop after this capture');
     await page.getByTestId('bla-cancel').click();
 
     // The capture in flight completes, then the loop stops: phase 'cancelled',
     // no analysis, and what landed is kept and reachable.
     await expect(page.getByTestId('bla-cancelled')).toBeVisible({ timeout: 60_000 });
+    // The grid stays up after a cancel, so the user can see exactly which
+    // captures they came away with.
+    await expect(page.getByTestId('bla-grid')).toBeVisible();
     await expect(page.getByTestId('bla-analysing')).toHaveCount(0);
     await expect(page.getByTestId('bla-verdict')).toHaveCount(0);
     const cards = page.locator('[data-testid^="tray-card-"]');

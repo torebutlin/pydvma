@@ -299,7 +299,7 @@ export function createSelection() {
      * `entry.colors` is supplied, adopts those verbatim — a fit set passes its
      * TARGET set's colours so a recon line mirrors the measured line's colour.
      */
-    addSet(entry: SetEntry): number {
+    addSet(entry: SetEntry, opts: { hidden?: boolean } = {}): number {
       const id = nextId++;
       const role: SetRole = entry.role ?? 'data';
       // Only DATA sets consume palette slots, so a fit pseudo-set added later
@@ -310,6 +310,16 @@ export function createSelection() {
         ? entry.colors.slice(0, entry.nChannels)
         : Array.from({ length: entry.nChannels },
           (_, c) => LINE_PALETTE[(start + c) % LINE_PALETTE.length]);
+      // HIDDEN AT BIRTH (round-11 P6). The states go in BEFORE the set record
+      // is published, so the set is never once emitted fully visible. A
+      // post-hoc `setSetVisible(id, false)` leaves one frame in which every
+      // line reads 'on' — enough for a subscriber that reacts to new lines
+      // (the axis auto-fit notifier, the legend) to see and act on them. Used
+      // by the BLA run, whose `M × n_exc` raw captures must never flash into
+      // the legend one at a time.
+      if (opts.hidden) {
+        mutate(m => { for (let c = 0; c < entry.nChannels; c++) m.set(key(id, c), 'off'); });
+      }
       sets.update(l => [...l, { ...entry, id, role, colors }]);
       if (entry.nChannels > AUTO_COLLAPSE_CHANNELS) collapsed.update(cs => new Set(cs).add(id));
       return id;
@@ -426,6 +436,21 @@ export function createSelection() {
       const rec = findSet(id); if (!rec) return;
       const target: TriState = visible ? 'on' : 'off';
       mutate(m => { for (let c = 0; c < rec.nChannels; c++) m.set(key(id, c), target); });
+    },
+    /**
+     * Overwrite set `id`'s line states verbatim from an array (round-11 P6).
+     * Unlike {@link setSetVisible} this restores a MIXED selection, which is
+     * what an undo needs: `actions.removeBlaRun` stashes each removed set's
+     * exact per-line tri-state and replays it here when the user takes the
+     * Undo, so a partly-faded set comes back partly faded rather than
+     * flattened to all-on. A short array leaves the remaining lines 'on';
+     * an unknown id is a no-op.
+     */
+    setLineStates(id: number, lineStates: readonly TriState[]) {
+      const rec = findSet(id); if (!rec) return;
+      mutate(m => {
+        for (let c = 0; c < rec.nChannels; c++) m.set(key(id, c), lineStates[c] ?? 'on');
+      });
     },
     /** Every line 'on' (clears the sparse map back to its default). */
     all() { mutate(m => m.clear()); },

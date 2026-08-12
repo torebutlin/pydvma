@@ -10,9 +10,16 @@ import {
   firstBlaError,
   outputRailFor,
   excitationLabel,
+  resolveBlaPeriod,
+  roundForPeriodBox,
+  blaRunBaseName,
+  markBlaCapture,
+  plannedCaptures,
+  blaRemainingS,
   BLA_BRIDGE_PEAK_MARGIN,
   BLA_CAPTURE_MARGIN_SAMPLES,
   type BlaActions,
+  type BlaCapture,
   type BlaDesign,
   type BlaPreflightInput,
 } from '../../src/lib/stores/bla';
@@ -151,21 +158,39 @@ function fakeProvider(opts: { kind?: 'webaudio' | 'bridge'; fs?: number; caps?: 
 /**
  * Actions double: registers each landed item with the REAL selection store
  * (so tray visibility is testable) and records what it was asked to land.
+ * `removeBlaRun` is a spy over the real `selection.removeSet`, which is all
+ * the store's replace path can observe of it.
  */
 function fakeActions(selection: ReturnType<typeof createSelection>, nChannels: number) {
   const landed: string[] = [];
-  const actions: BlaActions & { landed: string[]; blaCalls: unknown[][] } = {
+  const actions: BlaActions & {
+    landed: string[];
+    blaCalls: unknown[][];
+    removed: number[][];
+  } = {
     landed,
     blaCalls: [],
-    addRecordedSet: (item) => {
+    removed: [],
+    addRecordedSet: (item, o) => {
       const name = String(item.meta.test_name);
       landed.push(name);
-      return selection.addSet({ name, nChannels, durationS: 0, timestamp: '' });
+      return selection.addSet(
+        { name, nChannels, durationS: 0, timestamp: '' },
+        { hidden: !!o?.hidden },
+      );
     },
     addBlaSets: (results, o) => {
       actions.blaCalls.push([results, o]);
+      const names = o?.names ?? [];
       return results.map((_, q) =>
-        selection.addSet({ name: `bla${q}`, nChannels: 1, durationS: 0, timestamp: '' }));
+        selection.addSet({
+          name: names[q] ?? `bla${q}`, nChannels: 1, durationS: 0, timestamp: '',
+        }));
+    },
+    removeBlaRun: (ids) => {
+      actions.removed.push([...ids]);
+      for (const id of ids) selection.removeSet(id);
+      return ids.length;
     },
   };
   return actions;
@@ -278,6 +303,121 @@ test('responses are every channel that is not a measured drive', () => {
       { aoChannel: 1, enabled: false, xMode: 'measured', xChannel: 1 },
     ],
   }), FS, 3).nExc).toBe(1);
+});
+
+// ---- the linked Δf <-> period pair (round-11 P6) ----
+
+test('editing Δf resolves the period; editing the period resolves Δf', () => {
+  // Δf is echoed back verbatim (the user's typed intent stays in its box),
+  // and the period follows from the rounded sample count.
+  expect(resolveBlaPeriod('df', 100, FS)).toEqual({ periodSamples: 480, dfHz: 100, periodS: 0.01 });
+  // The other direction: a typed period is quantised to whole samples FIRST,
+  // and BOTH readouts then come from that N.
+  const t = resolveBlaPeriod('period', 0.01, FS);
+  expect(t.periodSamples).toBe(480);
+  expect(t.dfHz).toBeCloseTo(100, 12);
+  expect(t.periodS).toBeCloseTo(0.01, 12);
+});
+
+test('a period that is not a whole number of samples rounds, and reports what it got', () => {
+  // 0.0101 s at 48 kHz is 484.8 samples -> 485, so the achievable Δf is
+  // fs/485, NOT 1/0.0101. The card shows both resolved numbers, so the user
+  // sees the quantisation instead of discovering it in the result.
+  const r = resolveBlaPeriod('period', 0.0101, FS);
+  expect(r.periodSamples).toBe(485);
+  expect(r.dfHz).toBeCloseTo(FS / 485, 12);
+  expect(r.periodS).toBeCloseTo(485 / FS, 12);
+});
+
+test('the linked pair round-trips through the values the card DISPLAYS', () => {
+  // The real risk in a two-box control: the displayed period is rounded for
+  // legibility, so committing the box without editing it must not move N.
+  for (const [fs, dfHz] of [[48000, 100], [44100, 7], [8000, 5], [96000, 0.5]] as const) {
+    const forward = resolveBlaPeriod('df', dfHz, fs);
+    const shown = roundForPeriodBox(forward.periodS);
+    expect(resolveBlaPeriod('period', shown, fs).periodSamples).toBe(forward.periodSamples);
+    // …and back again: the Δf the period box produces re-reads the same N.
+    const back = roundForPeriodBox(resolveBlaPeriod('period', shown, fs).dfHz);
+    expect(resolveBlaPeriod('df', back, fs).periodSamples).toBe(forward.periodSamples);
+  }
+});
+
+test('a nonsensical period or Δf resolves to N = 0, never NaN or Infinity', () => {
+  for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    expect(resolveBlaPeriod('df', bad, FS).periodSamples).toBe(0);
+    const p = resolveBlaPeriod('period', bad, FS);
+    expect(p).toEqual({ periodSamples: 0, dfHz: 0, periodS: 0 });
+  }
+  // No rate yet (nothing chosen in Setup) — same answer from either box.
+  expect(resolveBlaPeriod('df', 5, 0).periodSamples).toBe(0);
+  expect(resolveBlaPeriod('period', 0.2, 0).periodSamples).toBe(0);
+  // A sub-sample period is not a period at all.
+  expect(resolveBlaPeriod('period', 1e-9, FS).periodSamples).toBe(0);
+});
+
+test('setPeriod writes ONE design field from either box', () => {
+  const { bla } = makeStore();
+  bla.setPeriod('df', 200);
+  expect(get(bla.design).dfHz).toBe(200);
+  expect(get(bla.values).periodSamples).toBe(240);
+
+  bla.setPeriod('period', 0.02);                      // 960 samples at 48 kHz
+  expect(get(bla.values).periodSamples).toBe(960);
+  expect(get(bla.design).dfHz).toBeCloseTo(50, 6);
+  expect(get(bla.values).periodS).toBeCloseTo(0.02, 12);
+});
+
+// ---- run naming (keep-both) ----
+
+test('a run takes the next free #n only when its name is already in the tray', () => {
+  expect(blaRunBaseName('bla', [])).toBe('bla');
+  expect(blaRunBaseName('bla', ['bla r1e1', 'bla BLA q1 (via ch0)'])).toBe('bla#2');
+  expect(blaRunBaseName('bla', ['bla r1e1', 'bla#2 r1e1'])).toBe('bla#3');
+  // Gaps do not get reused — the next run is always above the highest.
+  expect(blaRunBaseName('bla', ['bla#5 r1e1'])).toBe('bla#6');
+  // A CHANGED test name collides with nothing, so it is used verbatim: a
+  // rename is the explicit way to say "this is a different run".
+  expect(blaRunBaseName('sweep', ['bla r1e1', 'bla#2 r1e1'])).toBe('sweep');
+  // Prefix, not substring: `bla` must not claim `blast`'s sets, and the base
+  // has to be followed by a separator.
+  expect(blaRunBaseName('bla', ['blast r1e1', 'blade BLA q1'])).toBe('bla');
+  // Unrelated sets in the tray (a loaded file, a manual capture) are ignored.
+  expect(blaRunBaseName('bla', ['guitar_string4', 'capture_1'])).toBe('bla');
+});
+
+// ---- the progress grid ----
+
+test('plannedCaptures lays the run out in (m, e) order, all pending', () => {
+  const cells = plannedCaptures(3, 2);
+  expect(cells).toHaveLength(6);
+  expect(cells.map((c) => [c.m, c.e])).toEqual([[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]]);
+  expect(cells.every((c) => c.status === 'pending')).toBe(true);
+  expect(plannedCaptures(0, 2)).toEqual([]);
+});
+
+test('markBlaCapture touches exactly one cell and returns a new array', () => {
+  const cells = plannedCaptures(2, 2);
+  const next = markBlaCapture(cells, 1, 0, 'running');
+  expect(next).not.toBe(cells);
+  expect(cells.every((c) => c.status === 'pending')).toBe(true);      // input untouched
+  expect(next.filter((c) => c.status === 'running')).toEqual([{ m: 1, e: 0, status: 'running' }]);
+});
+
+test('the remaining-time estimate counts whole captures plus the one in flight', () => {
+  const cells: BlaCapture[] = [
+    { m: 0, e: 0, status: 'done' },
+    { m: 1, e: 0, status: 'running' },
+    { m: 2, e: 0, status: 'pending' },
+  ];
+  // 2 captures left of 1 s each, 0.4 s already spent on the running one.
+  expect(blaRemainingS(cells, 1, 0.4)).toBeCloseTo(1.6, 12);
+  // An overrunning capture floors at the two remaining, never goes negative.
+  expect(blaRemainingS(cells, 1, 5)).toBeCloseTo(1, 12);
+  // Nothing in flight (between captures) ⇒ no partial credit.
+  expect(blaRemainingS(cells.map((c) => (c.status === 'running' ? { ...c, status: 'pending' as const } : c)), 1, 9))
+    .toBeCloseTo(2, 12);
+  expect(blaRemainingS([], 1, 0)).toBe(0);
+  expect(blaRemainingS(cells, 0, 0)).toBe(0);          // no design yet
 });
 
 // ---- preflight ----
@@ -529,6 +669,158 @@ test('raw capture sets land hidden so M x n sets do not flood the tray', async (
   expect(ids.map(offFor)).toEqual([true, true]);
 });
 
+test('the capture grid fills pending → running → done, one cell in flight', async () => {
+  const { bla } = makeStore({ design: misoDesign({ M: 2 }), channelCount: 3 });
+  /** Grid snapshots, one per emit, as compact status strings. */
+  const seen: string[] = [];
+  const unsub = bla.state.subscribe((s) => {
+    if (!s.captures.length) return;
+    const txt = s.captures.map((c) => c.status[0]).join('');
+    if (seen[seen.length - 1] !== txt) seen.push(txt);
+    // INVARIANT, checked on every single emit: the loop is sequential, so at
+    // most one capture can ever be in flight.
+    expect(s.captures.filter((c) => c.status === 'running').length).toBeLessThanOrEqual(1);
+  });
+  await bla.start({ seed: 41 });
+  unsub();
+
+  // p = pending, r = running, d = done — the grid marches through (m, e).
+  expect(seen).toEqual([
+    'pppp', 'rppp', 'dppp', 'drpp', 'ddpp', 'ddrp', 'dddp', 'dddr', 'dddd',
+  ]);
+  expect(get(bla.state).captures).toHaveLength(4);
+});
+
+test('the grid is planned in full at Start, so the run length is known up front', async () => {
+  const { bla } = makeStore({ design: misoDesign({ M: 3 }), channelCount: 3 });
+  let firstGrid: string | null = null;
+  const unsub = bla.state.subscribe((s) => {
+    if (firstGrid === null && s.captures.length) firstGrid = s.captures.map((c) => c.status[0]).join('');
+  });
+  await bla.start({ seed: 42 });
+  unsub();
+  expect(firstGrid).toBe('pppppp');               // 3 × 2, every cell pending
+  expect(get(bla.state).runStartedAt).toBeGreaterThan(0);
+});
+
+test('cancelling keeps the done cells and leaves nothing stuck mid-fill', async () => {
+  const { bla } = makeStore({ design: misoDesign({ M: 3 }), channelCount: 3 });
+  const unsub = bla.state.subscribe((s) => {
+    if (s.phase === 'running' && s.rawSetIds.length === 2) bla.cancel();
+  });
+  await bla.start({ seed: 43 });
+  unsub();
+  const st = get(bla.state);
+  expect(st.phase).toBe('cancelled');
+  expect(st.captures.map((c) => c.status))
+    .toEqual(['done', 'done', 'pending', 'pending', 'pending', 'pending']);
+  expect(st.captures.some((c) => c.status === 'running')).toBe(false);
+});
+
+test('a failed capture releases its cell rather than leaving it running forever', async () => {
+  const provider = fakeProvider();
+  const inner = provider.startRecording.bind(provider);
+  provider.startRecording = (cfg) => ({
+    ...inner(cfg),
+    promise: Promise.reject(new Error('device went away')),
+  });
+  const { bla } = makeStore({ provider });
+  await bla.start({ seed: 44 });
+  const st = get(bla.state);
+  expect(st.phase).toBe('error');
+  expect(st.captures.every((c) => c.status === 'pending')).toBe(true);
+});
+
+// ---- run semantics: replace vs keep both (round-11 P6) ----
+
+test('a second run REPLACES the first by default, naming itself the same', async () => {
+  const { bla, actions, selection } = makeStore();
+  await bla.start({ seed: 51 });
+  const first = [...get(bla.state).rawSetIds, ...get(bla.state).resultSetIds];
+  expect(first).toHaveLength(3);                   // 2 captures + 1 BLA set
+  expect(get(bla.hasPreviousRun)).toBe(true);
+
+  await bla.start({ seed: 52 });
+  // Exactly the previous run's ids went to removeBlaRun — nothing else in the
+  // tray is the BLA stage's to delete.
+  expect(actions.removed).toEqual([first]);
+  expect(get(selection.sets).map((s) => s.id)).not.toEqual(expect.arrayContaining(first));
+  // …and with the old sets gone, the new run keeps the plain test name.
+  expect(actions.landed.slice(2)).toEqual(['run r1e1', 'run r2e1']);
+});
+
+test('keep-both leaves the first run alone and suffixes the second', async () => {
+  const { bla, actions, selection } = makeStore();
+  await bla.start({ seed: 53 });
+  const first = [...get(bla.state).rawSetIds, ...get(bla.state).resultSetIds];
+
+  bla.runMode.set('keep');
+  await bla.start({ seed: 54 });
+  expect(actions.removed).toEqual([]);                       // nothing removed
+  const ids = get(selection.sets).map((s) => s.id);
+  expect(ids).toEqual(expect.arrayContaining(first));        // the first run survives
+  // The second run's sets are named apart, raw captures AND results, so the
+  // two runs are distinguishable in the tray and the legend.
+  expect(actions.landed).toEqual(['run r1e1', 'run r2e1', 'run#2 r1e1', 'run#2 r2e1']);
+  const [, opts] = actions.blaCalls[1] as [unknown[], { names: string[] }];
+  expect(opts.names).toEqual(['run#2 BLA q1 (via ch0)']);
+  // A THIRD run climbs again rather than colliding with either.
+  await bla.start({ seed: 55 });
+  expect(actions.landed.slice(4)).toEqual(['run#3 r1e1', 'run#3 r2e1']);
+});
+
+test('hasPreviousRun follows the TRAY, so hand-deleted sets stop offering a replace', async () => {
+  const { bla, selection } = makeStore();
+  expect(get(bla.hasPreviousRun)).toBe(false);          // nothing run yet
+  await bla.start({ seed: 56 });
+  expect(get(bla.hasPreviousRun)).toBe(true);
+  for (const id of [...get(bla.state).rawSetIds, ...get(bla.state).resultSetIds]) {
+    selection.removeSet(id);
+  }
+  expect(get(bla.hasPreviousRun)).toBe(false);
+});
+
+test('a re-run after a CANCEL replaces the partial run it is retrying', async () => {
+  const { bla, actions } = makeStore({ design: misoDesign({ M: 3 }), channelCount: 3 });
+  const unsub = bla.state.subscribe((s) => {
+    if (s.phase === 'running' && s.rawSetIds.length === 2) bla.cancel();
+  });
+  await bla.start({ seed: 57 });
+  unsub();
+  const partial = get(bla.state).rawSetIds;
+  expect(partial).toHaveLength(2);
+  expect(get(bla.state).phase).toBe('cancelled');
+
+  // Retrying the same design is the common case after a cancel, and the two
+  // partial captures are of no use — replace is exactly right here.
+  await bla.start({ seed: 58 });
+  expect(actions.removed).toEqual([partial]);
+  expect(get(bla.state).phase).toBe('done');
+  expect(get(bla.state).captures.every((c) => c.status === 'done')).toBe(true);
+  expect(actions.landed.slice(2)).toEqual([
+    'run r1e1', 'run r1e2', 'run r2e1', 'run r2e2', 'run r3e1', 'run r3e2',
+  ]);
+});
+
+test('a store built without removeBlaRun never replaces (it keeps both instead)', async () => {
+  // The dependency is optional so a caller can wire the store without the
+  // actions helper; the fallback has to be the SAFE one — keep the data.
+  const provider = fakeProvider();
+  const acquire = createAcquireStore(provider);
+  acquire.patch({ sampleRate: FS, channelCount: 2, durationS: 3.5 });
+  const selection = createSelection();
+  const full = fakeActions(selection, 2);
+  const { removeBlaRun: _drop, ...thin } = full;
+  const { engine } = fakeEngine(blaResult());
+  const bla = createBlaStore({ acquire, actions: thin as BlaActions, engine, selection });
+  bla.design.set(testDesign());
+
+  await bla.start({ seed: 59 });
+  await bla.start({ seed: 60 });
+  expect(full.landed).toEqual(['run r1e1', 'run r2e1', 'run#2 r1e1', 'run#2 r2e1']);
+  expect(get(selection.sets)).toHaveLength(6);       // nothing was deleted
+});
+
 test('capture duration is staged per run and the user value restored afterwards', async () => {
   const { bla, acquire, provider } = makeStore();
   expect(get(acquire.settings).durationS).toBe(3.5);
@@ -629,7 +921,11 @@ test('calc_bla is booted, sent snake_case run_spec, and its sets land', async ()
   expect(views).toEqual(['tf']);                   // the plot jumps to TF
   const [, opts] = actions.blaCalls[0] as [unknown[], { names: string[]; channelLabels: string[] }];
   expect(opts.names).toEqual(['run BLA q1 (via ch0)']);
-  expect(opts.channelLabels).toEqual(['ch_2']);
+  // Round-11 P6: a BLA set's columns are the RESPONSE channels, a subset of
+  // the capture's — a bare `ch_1` on the second column would read as input
+  // channel 1 when it is channel 2, so the label names the role AND the
+  // source channel.
+  expect(opts.channelLabels).toEqual(['resp ch 2']);
 });
 
 test('excitationLabel names an excitation the same way everywhere', () => {
@@ -746,7 +1042,7 @@ test('reset() unhides the raw captures before forgetting them', async () => {
   // The store no longer tracks them, so the card's toggle is gone — leaving
   // them hidden would put sets in the tray this card can never reveal again.
   expect(get(bla.state)).toEqual({
-    phase: 'idle', m: 0, e: 0, error: '', runSpec: null,
+    phase: 'idle', m: 0, e: 0, captures: [], runStartedAt: 0, error: '', runSpec: null,
     rawSetIds: [], resultSetIds: [], notes: [],
   });
   expect(ids.map(offFor)).toEqual([false, false]);

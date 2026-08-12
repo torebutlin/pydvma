@@ -7,22 +7,32 @@
    * Three groups, top to bottom:
    *
    *  - **design** (`bla-design`) — band f1–f2, frequency resolution Δf with the
-   *    period shown in BOTH samples and seconds (N is the primitive: the
-   *    excitation is defined in samples so periodicity survives clock
-   *    coercion, but seconds is what the user feels), excitation level, the
-   *    M / P / transient counts, the per-AO-channel excitation table with its
-   *    x-source choice, the response-channel readout and the total run time.
-   *  - **run** (`bla-run`) — Start (disabled, with the reason, whenever
-   *    preflight refuses), live `realisation m/M · experiment e/n` progress,
-   *    Cancel, and the advisory notes the run acted on (e.g. the pretrigger
-   *    auto-disarm).
+   *    period as a SECOND, equal-weight input (round-11 P6: editing either
+   *    resolves the other through the sample count N, which is the primitive
+   *    — the excitation is defined in samples so periodicity survives clock
+   *    coercion — while seconds is what the run actually costs), excitation
+   *    level, the M / P / transient counts, the per-AO-channel excitation
+   *    table with its x-source choice, the response-channel readout, the
+   *    run-length breakdown, and the note that the run drives the capture
+   *    length itself.
+   *  - **run** (`bla-run`) — the replace/keep choice for a previous run's
+   *    sets, Start (disabled, with the reason, whenever preflight refuses),
+   *    an `M × n_exc` progress GRID with a `capture 3/12 · ~9 s left`
+   *    readout, "stop after this capture", and the advisory notes the run
+   *    acted on (e.g. the pretrigger auto-disarm).
    *  - **results** (`bla-results`) — one plain-English verdict line per
    *    excitation (see `lib/analysis/blaVerdict.ts`), a self-gated "σ lines"
    *    toggle (review item 5 — the TF card's own toggle is unreachable from
    *    here, since the results render over the tf VIEW while the active
    *    STAGE stays 'bla'; this drives the identical `viewState.setBlaSigma`),
-   *    a "show raw captures" toggle (the M×n raw sets land hidden) and
-   *    "new run".
+   *    WITH an inline dashed-line key and a one-line explainer of what σ_NL /
+   *    σ_n are, a "show raw captures" toggle (the M×n raw sets land hidden)
+   *    and "new run".
+   *
+   * The `.ctx-primary` slot carries the run's TOTAL WALL-CLOCK COST as the
+   * card's headline number (round-11 P6 — Tore: "there should be a clear
+   * number showing the total time that the experiment will take"); during a
+   * run it becomes the live remaining estimate.
    *
    * The card OWNS no run state: everything reactive comes from the BLA store
    * (`design`, `values`, `checks`, `state`), which in turn reads the live
@@ -30,16 +40,22 @@
    * its `code` points at rather than in one lump, so a refusal is legible
    * where the fix is.
    */
-  import type { BlaStore, BlaOutputRow, BlaCheckCode, XMode } from '../../lib/stores/bla';
+  import type {
+    BlaStore, BlaOutputRow, BlaCheckCode, XMode, BlaCapture, BlaRunMode,
+  } from '../../lib/stores/bla';
   import {
-    commandedXSupported, excitationLabel, firstBlaError, outputRailFor, BLA_COMMANDED_X_REASON,
+    commandedXSupported, excitationLabel, firstBlaError, outputRailFor,
+    blaRemainingS, roundForPeriodBox, BLA_COMMANDED_X_REASON,
   } from '../../lib/stores/bla';
   import type { AcquireStore } from '../../lib/stores/acquire';
   import type { Actions } from '../../lib/analysis/actions';
   import type { Selection } from '../../lib/stores/selection';
+  import { LINE_PALETTE } from '../../lib/stores/selection';
   import type { ViewState } from '../../lib/stores/viewstate';
+  import type { Toasts } from '../../lib/stores/toast';
   import { outputDevices } from '../../lib/audio/provider';
   import { blaVerdicts, summariseBlaVerdicts, worstBlaChannel } from '../../lib/analysis/blaVerdict';
+  import Segmented from '../Segmented.svelte';
 
   let {
     bla,
@@ -47,6 +63,7 @@
     actions,
     selection,
     viewState,
+    toasts,
   }: {
     bla: BlaStore;
     acquire: AcquireStore;
@@ -62,14 +79,24 @@
      * `viewState.setBlaSigma` store write.
      */
     viewState: ViewState;
+    /**
+     * Shared toast queue. "new run" hands the previous run's raw captures
+     * back to the tray and then forgets them, which is invisible unless it is
+     * said out loud — so it is said out loud here.
+     */
+    toasts: Toasts;
   } = $props();
 
   const design = $derived(bla.design);
   const values = $derived(bla.values);
   const checks = $derived(bla.checks);
   const runState = $derived(bla.state);
+  const runMode = $derived(bla.runMode);
+  const hasPreviousRun = $derived(bla.hasPreviousRun);
 
   const settings = $derived(acquire.settings);
+  /** Live seconds into the capture in flight — drives the running cell's fill. */
+  const elapsed = $derived(acquire.elapsed);
   const bridgeCaps = $derived(acquire.bridgeCaps);
   const bridgeConfig = $derived(acquire.bridgeConfig);
   const kind = $derived(acquire.kind);
@@ -200,11 +227,6 @@
 
   // ---- formatting ----
 
-  /** Period seconds: enough decimals to distinguish neighbouring Δf choices. */
-  function fmtPeriod(s: number): string {
-    if (!(s > 0)) return '—';
-    return s >= 10 ? s.toFixed(2) : s.toFixed(3);
-  }
   /** Wall-clock estimate: seconds under a minute, else `m min s s`. */
   function fmtDuration(s: number): string {
     if (!(s > 0)) return '—';
@@ -213,23 +235,43 @@
     return `${m} min ${Math.round(s - 60 * m)} s`;
   }
 
+  /** Per-capture length: short enough to read, precise enough to add up. */
+  function fmtCaptureS(s: number): string {
+    if (!(s > 0)) return '—';
+    return s >= 10 ? `${s.toFixed(1)} s` : `${s.toFixed(2)} s`;
+  }
+
   /**
-   * The period readout, always in BOTH units plus the excited-line count —
-   * "period: N = 4096 samples = 0.500 s · 993 lines". The sample count is the
-   * quantity the excitation is actually defined in; the seconds are what the
-   * run costs.
+   * The value shown in the period BOX. Derived from `N` (never from the raw
+   * seconds) and rounded to a length that reads the same `N` back, so
+   * committing the field without editing it can never move the design — see
+   * `roundForPeriodBox`.
+   */
+  const periodBoxS = $derived(
+    $values.periodSamples > 0 ? roundForPeriodBox($values.periodS) : '',
+  );
+
+  /**
+   * What the linked pair RESOLVED to, in the primitive the excitation is
+   * actually defined in — "N = 4096 samples · 993 lines". The two boxes above
+   * carry the units the user thinks in; this is the sample count that makes
+   * the periodicity exact.
    */
   const periodText = $derived(
     $values.periodSamples > 0
-      ? `period: N = ${$values.periodSamples} samples = ${fmtPeriod($values.periodS)} s`
-        + ` · ${$values.linesCount} line${$values.linesCount === 1 ? '' : 's'}`
-      : 'period: —',
+      ? `N = ${$values.periodSamples} samples · ${$values.linesCount} line${$values.linesCount === 1 ? '' : 's'}`
+      : 'N = —',
   );
 
-  /** "total: 6 × 2 × 6 periods ≈ 12.4 s" — the run's whole wall-clock cost. */
+  /** Captures the design plans (`M × n_exc`). */
+  const plannedCount = $derived(Math.max(0, Math.trunc($design.M)) * Math.max(1, $values.nExc));
+
+  /** "6 × 2 captures × (2 + 4) periods" — where the total time comes from. */
   const totalText = $derived(
-    `total: ${Math.trunc($design.M)} × ${$values.nExc} × `
-    + `${Math.trunc($design.tPeriods) + Math.trunc($design.P)} periods ≈ ${fmtDuration($values.totalRunS)}`,
+    `${Math.trunc($design.M)} realisation${Math.trunc($design.M) === 1 ? '' : 's'} × `
+    + `${$values.nExc} excitation${$values.nExc === 1 ? '' : 's'} × `
+    + `${Math.trunc($design.tPeriods) + Math.trunc($design.P)} periods `
+    + `(${Math.trunc($design.tPeriods)} transient + ${Math.trunc($design.P)} steady)`,
   );
 
   const responsesText = $derived(
@@ -238,10 +280,56 @@
       : 'responses: none',
   );
 
-  const progressText = $derived(
-    `realisation ${$runState.m + 1}/${Math.trunc($design.M)} · `
-    + `experiment ${$runState.e + 1}/${Math.max(1, $values.nExc)}`,
+  // ---- progress grid ----
+
+  /**
+   * The grid as rows of cells, one row per realisation — EXCEPT for the
+   * common SISO case (`n_exc === 1`), where one cell per row would be a tall
+   * one-wide column taking a card's full height to say what a single strip
+   * says better. There the whole run is one row and the grid reads as a
+   * segmented progress bar.
+   */
+  const gridRows = $derived.by(() => {
+    const cells = $runState.captures;
+    if (cells.every((c) => c.e === 0)) return cells.length ? [cells] : [];
+    const rows: BlaCapture[][] = [];
+    for (const c of cells) (rows[c.m] ??= []).push(c);
+    return rows.filter((r) => r && r.length);
+  });
+  const doneCount = $derived($runState.captures.filter((c) => c.status === 'done').length);
+  const inFlight = $derived($runState.captures.some((c) => c.status === 'running'));
+  /** 1-based index of the capture in flight (or of the last one that ran). */
+  const captureIndex = $derived(
+    Math.min($runState.captures.length, doneCount + (inFlight ? 1 : 0)),
   );
+  /** How full the running cell is drawn — the live capture's own clock. */
+  const fillFrac = $derived(
+    $values.captureS > 0 ? Math.max(0, Math.min(1, $elapsed / $values.captureS)) : 0,
+  );
+  const remainingS = $derived(blaRemainingS($runState.captures, $values.captureS, $elapsed));
+  /** "capture 3/12 · ~9 s left" — position AND cost of what is left. */
+  const progressText = $derived(
+    `capture ${captureIndex}/${$runState.captures.length} · ~${fmtDuration(remainingS)} left`,
+  );
+
+  // ---- run semantics (replace vs keep both) ----
+
+  const RUN_MODES: { value: BlaRunMode; label: string; title: string; testid: string }[] = [
+    {
+      value: 'replace',
+      label: 'replace previous',
+      title: 'Remove the last run\'s raw captures and BLA sets before this run starts '
+        + '(one-click Undo offered afterwards)',
+      testid: 'bla-run-mode-replace',
+    },
+    {
+      value: 'keep',
+      label: 'keep both',
+      title: 'Keep the last run and name this one apart (bla#2 …) so the two can be '
+        + 'compared — the usual choice for a level sweep',
+      testid: 'bla-run-mode-keep',
+    },
+  ];
 
   // ---- results ----
 
@@ -294,7 +382,11 @@
   }
   const onF1 = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ f1Hz: v }); };
   const onF2 = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ f2Hz: v }); };
-  const onDf = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ dfHz: v }); };
+  // The two LINKED period fields (round-11 P6). Both route through the store's
+  // single resolver, so whichever one the user edits, the other follows and
+  // both describe the same whole-sample period.
+  const onDf = (e: Event) => { const v = readNum(e); if (v != null) bla.setPeriod('df', v); };
+  const onPeriod = (e: Event) => { const v = readNum(e); if (v != null) bla.setPeriod('period', v); };
   const onAmp = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ ampRms: v }); };
   const onM = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ M: Math.max(2, Math.round(v)) }); };
   const onP = (e: Event) => { const v = readNum(e); if (v != null) bla.patch({ P: Math.max(2, Math.round(v)) }); };
@@ -336,6 +428,41 @@
   }
 
   const toggleRaw = () => bla.setRawVisible(!rawVisible);
+
+  /**
+   * "new run" hands the raw captures back (unhidden) and forgets the run. That
+   * is deliberate — see `bla.reset()` — but from the card it looks like
+   * nothing happened except the results group vanishing, so say what moved.
+   */
+  function onNewRun(): void {
+    const n = $runState.rawSetIds.length;
+    bla.reset();
+    toasts.push(
+      n
+        ? `Run cleared. Its ${n} raw capture${n === 1 ? '' : 's'} and any BLA sets stay in the tray `
+          + `(the captures are now shown) — start again to add another run.`
+        : 'Run cleared — the design is kept.',
+      { level: 'info' },
+    );
+  }
+
+  // ---- σ key ----
+
+  /**
+   * The σ_NL swatch's colour. σ_NL draws in ITS OWN line's colour (model.ts),
+   * so the key shows the colour of the first BLA line actually on screen
+   * rather than a generic accent — a key that matched nothing would be worse
+   * than none. Falls back to the palette head before any result lands.
+   */
+  const sigmaNlColor = $derived(
+    (($runState.resultSetIds.length
+      ? selection.lineColor($runState.resultSetIds[0], 0)
+      : undefined) ?? LINE_PALETTE[0]),
+  );
+  /** σ_n's neutral grey — the literal `model.ts` uses for the noise line. */
+  const SIGMA_N_COLOR = '#6b7280';
+  /** Where the full explanation lives (offline: the link simply won't load). */
+  const NONLIN_DOCS_URL = 'https://torebutlin.github.io/pydvma/web-logger/nonlin/';
 </script>
 
 <section class="ctx-card card-controls" aria-label="Nonlin stage controls">
@@ -378,18 +505,35 @@
         {/each}
       </div>
 
+      <!--
+        RESOLUTION / PERIOD — two boxes of equal weight for ONE quantity
+        (round-11 P6). Δf alone hid the fact that it was setting the
+        multisine's period, which is the number that decides how long the run
+        takes; both are editable and both carry their unit in the markup, not
+        only in a tooltip.
+      -->
       <div class="grp">
-        <span class="grp-lab">resolution</span>
+        <span class="grp-lab">resolution / period</span>
         <div class="grp-ctl">
           <span class="ml">Δf</span>
           <input
             type="number" step="any" min="0" style="width:64px"
-            title="Frequency resolution; fixes the period length N = round(fs/Δf)"
+            title="Frequency resolution. Linked to the period: N = round(fs/Δf) samples, T = N/fs"
             aria-label="frequency resolution" data-testid="bla-df"
             value={$design.dfHz} onchange={onDf} disabled={busy}
           />
-          <span class="ml mono" data-testid="bla-period">{periodText}</span>
+          <span class="ml unit">Hz</span>
+          <span class="ml link-eq" aria-hidden="true">=</span>
+          <span class="ml">T</span>
+          <input
+            type="number" step="any" min="0" style="width:72px"
+            title="Period length in seconds. Linked to Δf: N = round(T·fs) samples, Δf = fs/N"
+            aria-label="period seconds" data-testid="bla-period-s"
+            value={periodBoxS} onchange={onPeriod} disabled={busy}
+          />
+          <span class="ml unit">s</span>
         </div>
+        <span class="ml mono sub" data-testid="bla-period">{periodText}</span>
         {#each msgsFor('design') as c (c.code + c.reason)}
           <span class="msg-err" role="alert" data-testid="bla-msg">{c.reason}</span>
         {/each}
@@ -496,10 +640,21 @@
       </div>
 
       <div class="grp">
-        <span class="grp-lab">responses · run time</span>
+        <span class="grp-lab">responses · run length</span>
         <div class="col">
           <span class="ml mono" data-testid="bla-responses">{responsesText}</span>
+          <!-- The headline total lives in the primary slot; this is where the
+               number COMES FROM, so a user who wants a shorter run can see
+               which factor to cut. -->
           <span class="ml mono" data-testid="bla-total">{totalText}</span>
+          <!-- The run overrides the Acquire card's capture length for its own
+               captures and puts the user's value back afterwards. It used to
+               do that silently, which is a surprising thing to discover by
+               watching a duration field change on its own. -->
+          <span class="msg-note" data-testid="bla-duration-note">
+            Each capture runs for {fmtCaptureS($values.captureS)}, set by the design — the run
+            overrides the Acquire duration while it runs and restores it afterwards.
+          </span>
           {#each msgsFor('responses') as c (c.code + c.reason)}
             <span class="msg-err" role="alert" data-testid="bla-msg">{c.reason}</span>
           {/each}
@@ -509,6 +664,39 @@
 
     <!-- ---------------- run ---------------- -->
     <div class="ctx-row" data-testid="bla-run">
+      <!--
+        PREVIOUS RUN (round-11 P6) — shown only when there is one to act on,
+        and read at Start. Default 'replace' because the common case is
+        iterating on a design; 'keep both' is the level-sweep case, and it
+        renames the new run rather than letting two runs share byte-identical
+        set names.
+
+        Hidden while BUSY: the run in flight lands its sets as it goes, so
+        `hasPreviousRun` goes true a second into the very first run — and a
+        control captioned "the last run's captures are removed when this one
+        starts" is at best noise, at worst alarming, while that run is the
+        one filling the grid.
+      -->
+      {#if $hasPreviousRun && !busy}
+        <div class="grp" data-testid="bla-prev-run">
+          <span class="grp-lab">previous run</span>
+          <div class="grp-ctl">
+            <Segmented
+              options={RUN_MODES}
+              value={$runMode}
+              onchange={(v) => runMode.set(v)}
+              ariaLabel="what to do with the previous run"
+              testid="bla-run-mode"
+            />
+          </div>
+          <span class="msg-note">
+            {$runMode === 'replace'
+              ? 'The last run\'s captures and BLA sets are removed when this one starts (Undo offered).'
+              : 'The last run stays; this one is named apart so both can be compared.'}
+          </span>
+        </div>
+      {/if}
+
       <div class="grp">
         <span class="grp-lab">run</span>
         <div class="grp-ctl">
@@ -522,15 +710,47 @@
           >Start</button>
           <!-- Only while CAPTURING: `cancel()` is a flag the capture loop
                reads, so during 'analysing' (one worker call) it would do
-               nothing — the "computing BLA…" readout covers that state. -->
+               nothing — the "computing BLA…" readout covers that state. The
+               label says what the button DOES: the capture in flight always
+               completes (a half-played multisine is a useless set). -->
           {#if running}
             <button class="btn danger-o" data-testid="bla-cancel" onclick={() => bla.cancel()}
-              title="Stop after the capture in flight completes">Cancel</button>
+              title="The capture in flight completes; the run stops before the next one"
+            >stop after this capture</button>
             <span class="ml mono" data-testid="bla-progress">{progressText}</span>
           {:else if analysing}
             <span class="ml mono" data-testid="bla-analysing">computing BLA…</span>
           {/if}
         </div>
+        <!--
+          PROGRESS GRID — one row per realisation, one cell per excitation.
+          Pending cells are outlines, the cell in flight fills from the live
+          capture clock, done cells are solid, so "how far in am I" is one
+          glance rather than an arithmetic problem. Kept up after a cancel so
+          the user can see exactly which captures they have.
+        -->
+        {#if $runState.captures.length && (busy || phase === 'cancelled')}
+          <div
+            class="cap-grid" data-testid="bla-grid"
+            role="img"
+            aria-label={`capture progress: ${doneCount} of ${$runState.captures.length} done`}
+          >
+            {#each gridRows as row, m (m)}
+              <div class="cap-row">
+                {#each row as cell (`${cell.m}:${cell.e}`)}
+                  <span
+                    class="cap-cell {cell.status}"
+                    title={`realisation ${cell.m + 1}, excitation ${cell.e + 1} — ${cell.status}`}
+                  >
+                    {#if cell.status === 'running'}
+                      <span class="cap-fill" style="width:{(fillFrac * 100).toFixed(1)}%"></span>
+                    {/if}
+                  </span>
+                {/each}
+              </div>
+            {/each}
+          </div>
+        {/if}
         {#if blockReason && !busy}
           <span class="msg-err" data-testid="bla-blocked">{blockReason}</span>
         {/if}
@@ -590,6 +810,20 @@
                   <strong>{v.label}:</strong> {v.text}
                 </span>
               {/each}
+              <!--
+                What the reader is actually looking at, in one line (round-11
+                P6: "no idea… what plots were showing, or what all the new data
+                chans were"). Every clause here is load-bearing: which line is
+                which, that the σ values are per-realisation, and the √M step
+                to the BLA's own error bar.
+              -->
+              <span class="explain" data-testid="bla-explain">
+                Each BLA set is the best linear fit for one excitation; the dashed σ_NL is
+                nonlinear distortion and σ_n is noise, in the TF's own units, per realisation
+                — divide by √M for the error on the mean.
+                <a href={NONLIN_DOCS_URL} target="_blank" rel="noopener noreferrer"
+                  data-testid="bla-docs-link">read more</a>
+              </span>
             </div>
           </div>
         {/if}
@@ -604,6 +838,26 @@
               <label class="switch"><input type="checkbox" checked={blaSigma}
                 onchange={(e) => viewState.setBlaSigma(e.currentTarget.checked)}
                 aria-label="σ_NL/σ_n overlay" data-testid="bla-sigma-toggle-card" /></label>
+              <!--
+                A KEY, because the σ lines carry no legend entry: the legend is
+                built from the view's set/channel entries and the σ overlays
+                are extra lines attached to a channel, not channels of their
+                own. Rather than reshape the legend model for two annotation
+                lines, the card says which dash is which — and draws the σ_NL
+                swatch in the colour it actually has on screen.
+              -->
+              <span class="sig-key" data-testid="bla-sigma-key">
+                <svg width="20" height="7" viewBox="0 0 20 7" aria-hidden="true">
+                  <line x1="0" y1="3.5" x2="20" y2="3.5" stroke={sigmaNlColor}
+                    stroke-width="1.4" stroke-dasharray="4 3" opacity="0.7" />
+                </svg>
+                σ_NL (line colour)
+                <svg width="20" height="7" viewBox="0 0 20 7" aria-hidden="true">
+                  <line x1="0" y1="3.5" x2="20" y2="3.5" stroke={SIGMA_N_COLOR}
+                    stroke-width="1.4" stroke-dasharray="4 3" />
+                </svg>
+                σ_n (grey)
+              </span>
             </div>
           </div>
         {/if}
@@ -615,23 +869,38 @@
                 title="Show or hide this run's raw time captures in the tray and legend"
               >{rawVisible ? 'hide raw captures' : 'show raw captures'}</button>
             {/if}
-            <button class="btn" data-testid="bla-new-run" onclick={() => bla.reset()}
-              title="Clear the run state and keep the design for another run">new run</button>
+            <button class="btn" data-testid="bla-new-run" onclick={onNewRun}
+              title="Clear the run state and keep the design for another run — the landed sets stay in the tray"
+            >new run</button>
           </div>
         </div>
       </div>
     {/if}
   </div>
   <div class="ctx-primary">
-    <div class="run-count" data-testid="bla-status">
+    <!--
+      THE HEADLINE. Before P6 this slot showed a capture COUNT while the total
+      wall-clock time — the number that decides whether a design is worth
+      pressing Start on — sat as the second mono line of a readout at the
+      bottom of the design row. The count is still here; it is now the
+      supporting half of the sentence rather than the whole of it.
+    -->
+    <div class="run-headline" data-testid="bla-status">
       {#if running}
-        {$runState.rawSetIds.length}/{Math.trunc($design.M) * Math.max(1, $values.nExc)} captures
+        <span class="hl-big">~{fmtDuration(remainingS)} left</span>
+        <span class="hl-sub">{doneCount}/{$runState.captures.length} captures done</span>
       {:else if analysing}
-        analysing…
+        <span class="hl-big">analysing…</span>
+        <span class="hl-sub">computing BLA from {$runState.rawSetIds.length} captures</span>
       {:else if phase === 'done'}
-        {$runState.resultSetIds.length} BLA set{$runState.resultSetIds.length === 1 ? '' : 's'}
+        <span class="hl-big">{$runState.resultSetIds.length} BLA
+          set{$runState.resultSetIds.length === 1 ? '' : 's'}</span>
+        <span class="hl-sub">from {$runState.rawSetIds.length} captures</span>
       {:else}
-        {Math.trunc($design.M) * Math.max(1, $values.nExc)} captures planned
+        <span class="hl-big" data-testid="bla-total-time">≈ {fmtDuration($values.totalRunS)}</span>
+        <span class="hl-sub">
+          {plannedCount} capture{plannedCount === 1 ? '' : 's'} × {fmtCaptureS($values.captureS)}
+        </span>
       {/if}
     </div>
   </div>
@@ -682,11 +951,95 @@
     font-size: 11px;
     max-width: 520px;
   }
-  /* The green Start and the outlined Cancel are the SHARED `.btn.green` /
-     `.btn.danger-o` variants in app.css (identical to Acquire's pair). */
-  .run-count {
-    font-size: 12px;
+  /* The one-line σ explainer + docs link: readable prose, not a status note. */
+  .explain {
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--muted);
+    max-width: 520px;
+    white-space: normal;
+  }
+  .explain a {
+    color: var(--blue);
+  }
+  /* Unit suffixes on the linked Δf / T boxes. Visible at all times: the units
+     were previously only in a tooltip, and a period in seconds sitting next to
+     a resolution in hertz is exactly where a missing unit costs an hour. */
+  .unit {
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+  /* The `=` between the two linked boxes — they are one quantity in two
+     currencies, not two independent settings. */
+  .link-eq {
+    color: var(--muted-2);
+  }
+  /* The resolved sample count, under its two input boxes. */
+  .sub {
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+  /* σ key: two dashed swatches drawn with the SAME dash pattern the plot uses,
+     so the key reads as a sample of the line rather than a decoration. */
+  .sig-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
     color: var(--muted);
     white-space: nowrap;
+  }
+  .sig-key svg {
+    flex: 0 0 auto;
+  }
+  /* ---- progress grid ---- */
+  .cap-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 3px;
+  }
+  .cap-row {
+    display: flex;
+    gap: 2px;
+  }
+  .cap-cell {
+    position: relative;
+    width: 14px;
+    height: 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 2px;
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  .cap-cell.done {
+    background: var(--green);
+    border-color: var(--green);
+  }
+  /* The in-flight cell fills left-to-right from the live capture clock; the
+     transition keeps the ~4 Hz elapsed poll from looking like a stutter. */
+  .cap-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: var(--green);
+    transition: width 120ms linear;
+  }
+  /* The green Start and the outlined stop button are the SHARED `.btn.green` /
+     `.btn.danger-o` variants in app.css (identical to Acquire's pair). */
+  .run-headline {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .hl-big {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .hl-sub {
+    font-size: 10.5px;
+    color: var(--muted);
   }
 </style>

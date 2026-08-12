@@ -131,6 +131,24 @@ test('addRecordedSet announces new time lines; the FIRST capture also releases x
   expect(added[1]).toEqual({ view: 'time', viewWasEmpty: false });
 });
 
+test('a HIDDEN capture lands hidden and announces nothing (round-11 P6)', () => {
+  const { sel, actions, added } = harness();
+  // The BLA run's M × n_exc raw captures land this way. Two things must hold
+  // together: the set is never once emitted visible (so the legend does not
+  // flicker), and a hidden line is not "data added to a view", so the time
+  // view must NOT re-autoscale to a curve nobody can see — once per capture,
+  // for a whole run.
+  const setId = actions.addRecordedSet(recordedItem('bla r1e1'), { hidden: true });
+  expect(added).toEqual([]);
+  expect(get(sel.setsView).find((s) => s.id === setId)?.allOff).toBe(true);
+
+  // A visible capture afterwards still announces, and correctly reports the
+  // view as non-empty: the hidden set IS in the derived map, so the FIRST
+  // capture's x-release has already been spent.
+  actions.addRecordedSet(recordedItem('manual'));
+  expect(added).toEqual([{ view: 'time', viewWasEmpty: false }]);
+});
+
 test('loadDataset announces every view the file populates (fresh load ⇒ all empty)', () => {
   const { actions, added } = harness();
   actions.loadDataset(makeDataset(1));
