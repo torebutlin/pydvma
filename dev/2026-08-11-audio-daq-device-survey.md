@@ -172,6 +172,29 @@ gain (Shure/RedNet tier, £500+/box). Below it, only grey-market boxes
 with physical switches and unverified certification (~£60 saved).
 The 22c + £45 DVS stands as the deal in the certified class.
 
+## Input-range comparison (2026-08-12)
+
+Tore: if the U24 XL's dealbreaker is its input voltage range (fixed
+±1.9 Vpk), what are the options? By maximum line input:
+
+| Option | Max line input | Range mechanism | Cost |
+|---|---|---|---|
+| U24 XL as-is | ±1.9 Vpk | none | owned |
+| U24 XL + 10:1 passive divider | ±19 Vpk | fixed, in-cable, absorbed as `cal_factor` | pennies + a bench session |
+| 2i2 4th gen @ min gain | ±13.8 Vpk (+22 dBu) | knob END STOP — the one repeatable dial position; stated-gain workflow for other ranges (9 dB ≈ ±4.9 V, NI-like, hw-confirmed 0.10 dB) | owned |
+| planet 22c | ±2.8 / ±11 Vpk | 2-position physical switch | £159 + £45 DVS |
+| XR18 | ±6.9 Vpk line (±15.5 combo) | software gain, 1 dB steps, script-pinnable | £315, 16 ch |
+
+Notes: (a) the 2i2 has NO attenuation — gain is 0..+69 dB, but its
+minimum-gain baseline is already ±13.8 V; (b) **no budget USB
+interface with a pot-free physical range switch appears to exist** —
+the market splits into knobless consumer boxes (small fixed ranges)
+and continuous-pot music interfaces (pads only ever accompany pots);
+the discrete-range pattern lives in AoIP/install gear and
+instrumentation; (c) the divider trick (already noted for the UCA222)
+applies to any fixed-range box: trades switchability and input
+impedance for zero settings.
+
 ## Conclusions (as discussed with Tore)
 
 - **3C6-scale (2-in/2-out stations):** the owned ESI U24 XL is the
