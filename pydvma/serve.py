@@ -1529,6 +1529,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "that omit one (default: mock)")
     parser.add_argument('--open', action='store_true',
                         help='open the served UI in a web browser on start')
+    parser.add_argument('--list-devices', action='store_true',
+                        help='print what is plugged in — grouped by physical '
+                             'device, with the recommended backend marked and '
+                             'each one\'s calibration status — then exit '
+                             'without starting the server')
+    parser.add_argument('--list-kind', default='input',
+                        choices=['input', 'output', 'all'],
+                        help='which direction --list-devices reports '
+                             '(default: input)')
     return parser
 
 
@@ -1539,6 +1548,13 @@ def main(argv=None) -> int:
     browser, and runs until interrupted (Ctrl-C exits cleanly).
     """
     args = build_arg_parser().parse_args(argv)
+
+    if args.list_devices:
+        # The pre-choice step: see what is present, and what pydvma
+        # knows about it, BEFORE committing an index to a settings file.
+        from . import devices as _devices
+        print(_devices.format_inventory(kind=args.list_kind))
+        return 0
 
     ui_dir = _resolve_ui_dir(args.ui_dir)
 

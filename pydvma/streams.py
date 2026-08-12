@@ -853,7 +853,50 @@ def start_stream(settings):
         raise ValueError('Unknown driver: %r' % settings.device_driver)
         
 #%% Find information on available devices
-def list_available_devices(io=''):
+def list_available_devices(io='', kind='input', rates=True, raw=False):
+    """Print what is plugged in, and what pydvma knows about it.
+
+    The pre-choice step: run this before writing a `MySettings`, and it
+    tells you which devices are present, which backend to drive each one
+    through, and — the part no raw enumeration can tell you — whether a
+    device's readings will be in VOLTS or merely in full-scale units.
+
+    Grouped by physical device rather than by enumeration slot, because
+    on Windows one interface is listed once per host API (an ESI U24 XL
+    fills seven of the 38 rows here) and those entries differ in word
+    length and in whether they will resample silently. See
+    :func:`pydvma.devices.format_inventory`.
+
+    Args:
+        io (str): Legacy substring filter on device names, kept so
+            existing calls behave as before. Empty shows everything.
+        kind (str): ``'input'`` (default), ``'output'`` or ``'all'``.
+        rates (bool): Probe each device's genuine sample-rate ladder.
+            A few driver round-trips per device; pass False to skip.
+        raw (bool): Print the old flat index-ordered enumeration instead
+            of the grouped report — useful when you need to see exactly
+            what PortAudio returned.
+
+    Returns the printed report as a string.
+    """
+    if not raw:
+        from . import devices as _devices
+        message = _devices.format_inventory(kind=kind, rates=rates)
+        if io:
+            message = ('(name filter %r applies to the raw listing only; '
+                       'pass raw=True)\n' % io) + message
+        print(message)
+        return message
+    return _list_available_devices_raw(io)
+
+
+def _list_available_devices_raw(io=''):
+    """The original flat enumeration, one line per PortAudio index.
+
+    Retained because it is occasionally the thing you want: a literal
+    view of what the driver returned, in the order it returned it, with
+    no grouping or interpretation applied.
+    """
     # soundcard devices list
     message = '__________________________________________________________\n'
     message += '\n'

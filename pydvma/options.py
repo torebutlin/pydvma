@@ -176,6 +176,21 @@ class MySettings(object):
             this indexes the **chassis as a whole**, not a module — list
             candidates with ``dvma.list_available_devices()`` (its nidaq
             section is indexed the same way ``device_index`` is).
+        device (str or int or None): Name the hardware instead of
+            numbering it (default ``None``). A case-insensitive
+            substring of the device name — ``device='U24XL'`` — is
+            resolved to whichever index that interface currently
+            occupies, choosing the best backend available for it and
+            filling in ``device_index``, ``device_name`` and
+            ``device_hostapi`` together. On Windows that choice is
+            material: one interface is listed once per host API and they
+            differ in word length and in whether they will silently
+            resample, so the resolved backend also depends on ``fs``.
+            The choice and its reason are printed. Raises ``ValueError``
+            listing the candidates if the name matches no device, or
+            more than one. An int is taken as an index. Run
+            `streams.list_available_devices` to see what is present and
+            what pydvma knows about each device's voltage scale.
         device_name (str or None): Exact enumerated name that
             ``device_index`` is expected to refer to (default ``None``).
             Device indices are positions in an enumeration, not
@@ -338,6 +353,7 @@ class MySettings(object):
                  oversample='auto',
                  device_driver='soundcard',
                  device_index=None,
+                 device=None,
                  device_name=None,
                  device_hostapi=None,
                  input_channels_spec=None,
@@ -455,6 +471,23 @@ class MySettings(object):
             self.output_channels_spec = None
         else:
             self.output_channels_spec = str(output_channels_spec)
+
+        # A named device beats an index: `device='U24XL'` resolves to
+        # whichever index that hardware currently occupies, on the best
+        # backend available for it, and records the name + host API so
+        # `streams.start_stream` can follow the device if the
+        # enumeration reorders later. See `pydvma.devices.resolve`, and
+        # run `dvma.list_available_devices()` to see the choices.
+        if (device is not None) and (device != 'None'):
+            from . import devices as _devices
+            resolved, entry, note = _devices.resolve(
+                device, driver=device_driver, kind='input', fs=self.fs)
+            print('note: %s' % note)
+            device_index = resolved
+            if device_name is None:
+                device_name = entry.get('name')
+            if device_hostapi is None:
+                device_hostapi = entry.get('hostapi')
 
         if (device_driver == 'soundcard') and ((device_index is None) or (device_index == 'None')):
             try:
