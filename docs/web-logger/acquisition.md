@@ -23,10 +23,11 @@ settings.
 
 | Control | What it does |
 | ------- | ------------ |
-| **input device** | Pick the acquisition device. Defaults to the system default; **↻** refreshes the list. In the browser, device *names* only appear once you grant microphone access. Through the bridge the app also remembers which device you *named*, not just its position in the list: audio devices are renumbered whenever one is plugged in or removed, so if yours has moved the server follows it and says so (`'Scarlett 2i2 4th Gen' moved from device index 2 to 1…`), and if it has been unplugged the capture is refused rather than silently recording a different input. |
-| **sample rate** | Choose from the rates the device can *deliver*. In the browser this is the standard ladder (8k / 16k / 22.05k / 44.1k / 48k / 96k) constrained by the device; through the bridge it is the device's own ladder — the rates the hardware genuinely runs, plus the standard rates *below* its floor, which pydvma delivers by capturing natively and decimating. Rates above the ceiling, or between rungs, are not offered, because nothing can produce them. Unsupported rates are shown disabled, and a note reads `captures at 44100 Hz, resampled to 8000 Hz` when the rate you pick is not one the converter itself runs. |
+| **input device** | Pick the acquisition device. The **Default** entry names the device it actually resolves to (`Default — ESI U24 XL`), so you always know which hardware a capture will use; **↻** refreshes the list. In the browser, device *names* only appear once you grant microphone access. Through the bridge the app also remembers which device you *named*, not just its position in the list: audio devices are renumbered whenever one is plugged in or removed, so if yours has moved the server follows it and says so (`'Scarlett 2i2 4th Gen' moved from device index 2 to 1…`), and if it has been unplugged the capture is refused rather than silently recording a different input. |
+| **sample rate** | **Type it or pick it** — the field accepts any rate (`3000`, `3k`, `48 kHz`) and offers the device's deliverable rates as suggestions. Through the bridge the suggestions are the device's own ladder — the rates the hardware genuinely runs, plus standard rates *below* its floor (500 / 1k / 2k / 3k / 4k / 5k upward), which pydvma delivers by capturing natively and decimating; in the browser they are the standard ladder constrained by the device. A typed rate the converter itself does not run is fine: a note reads `captures at 48000 Hz, resampled to 3000 Hz`, and a rate above the device ceiling gets a warning rather than silence. |
 | **channels** | Number of input channels (1 up to the device maximum). Not every input a device reports is an analogue one: a Focusrite Scarlett 2i2 4th Gen advertises four, but 3–4 are a digital loopback of its own output mix. Setup says so — `channels 3+ are the device's digital loopback, not inputs` — as soon as the count reaches them. |
 | **duration** | Capture length: 0.5, 1, 2, 5, 10, 30 or 60 s. |
+| **trigger** | The essentials live here in basic settings (they used to hide under Full): **arm**, the **threshold**, and the trigger **channel** (shown once you have more than one). The threshold field knows its units — on a calibrated interface it reads in volts with a live `= N % FS` hint, otherwise in full-scale units — and its default is 5 % of the device's full scale, so it does not sit in the noise floor of a wide-range interface. The group appears whenever the source supports triggering (any soundcard or NI device through the bridge, and the browser path). Advanced fields (pretrigger samples, timeout) stay under Full; arming is mirrored on the Acquire card. |
 
 Defaults are 44.1 kHz, 1 channel, 2 s.
 
@@ -38,7 +39,9 @@ Defaults are 44.1 kHz, 1 channel, 2 s.
 
 ### Full (advanced) controls
 
-**Full ▾** adds:
+**Full ▾** adds the advanced groups, organised into titled sections —
+**device / rates / levels / trigger / NI-DAQ** — so related controls sit
+together and read-only readouts are visibly distinct from editable ones:
 
 - **device capabilities** — a read-only readout of the selected device's
   channel count, sample-rate range and latency. The rates the hardware
@@ -87,14 +90,19 @@ unaffected).
 
 Three things put the two rates apart:
 
-- **The device cannot run at your fs.** Sound-card rate ladders start at
-  44.1 kHz, so a 3 kHz log is captured at 44.1 kHz and decimated. This
-  happens with the digital low-pass **off** — pydvma does the conversion
-  itself rather than leave it to the operating system, whose own
-  resampler is silent, is only as good as the ratio between the rate you
-  asked for and whatever rate the last application left the device at,
-  and was measured at as little as 12 dB of alias rejection with up to
-  4.3 dB of passband droop.
+- **The device cannot run at your fs.** Sound-card ladders bottom out
+  at 8 kHz (some at 44.1 kHz), so a 3 kHz log is captured at the
+  device's lowest suitable rate and decimated — the sample-rate
+  suggestions include these sub-floor targets (500 Hz to 5 kHz)
+  precisely because pydvma delivers them this way. This happens with
+  the digital low-pass **off** — pydvma does the conversion itself
+  rather than leave it to the operating system, whose own resampler is
+  silent, is only as good as the ratio between the rate you asked for
+  and whatever rate the last application left the device at, and was
+  measured at as little as 12 dB of alias rejection with up to 4.3 dB
+  of passband droop. (A few devices refuse even to *open* a stream at
+  a sub-native rate; the live scope then runs at the capture rate,
+  says so in a note, and captures still deliver your fs.)
 - **The digital low-pass is on**, which runs the capture above fs
   deliberately (below).
 - **A capture rate was set explicitly** — `MySettings(capture_fs=…)` for
@@ -162,7 +170,6 @@ reports NI hardware, Setup's **Full** view gains an **NI-DAQ** group:
 - **IEPE excitation** — off or 2 mA, for powering ICP/IEPE
   accelerometers (DSA modules only).
 - **terminal configuration** — default / RSE / NRSE / differential.
-- **pretrigger** — samples (blank = free-run), threshold, and channel.
 - **NI voltage range (±V)** — input and output full-scale, each clamped
   to the device's real rails (so you cannot request a voltage the
   hardware will refuse). A note appears when the output must be clamped
@@ -191,8 +198,13 @@ The Acquire stage records a capture.
 - A **summary chip** shows the pending capture at a glance —
   `fs · channels · duration · device · pretrigger` (and the output
   stimulus when armed). Click it, or **Edit**, to jump back to Setup.
-- **Log Data** records. While recording it shows progress and becomes a
-  **Cancel** button.
+- **Log Data** records. While recording, a **progress bar** fills
+  against the capture duration alongside the `12.4 / 30.0 s` readout —
+  the clock starts when the capture actually starts, so an armed log
+  waiting for its trigger shows the **waiting state**, not a full bar.
+- **Cancel** stops a capture mid-log — on every path, including through
+  the bridge — showing *Cancelling…* until the server confirms; nothing
+  is added to the dataset and a quiet toast says so.
 - On success the recording is added to your dataset tray and the app
   switches to the **Time** stage.
 
@@ -230,17 +242,23 @@ stream, subject to the device's own AO rate limit.
 
 ### Pretrigger
 
-To catch a transient (an impact, say), enable **arm** in the pretrigger
-group. When armed you set the number of **samples** to keep *before* the
-trigger and a **timeout**. During the capture the app shows the trigger
-lifecycle — *armed — waiting for trigger* → *triggered — capturing* (or
-*trigger timeout — capturing buffered data* if nothing crosses in time).
+To catch a transient (an impact, say), enable **arm** — in Setup's
+trigger group or on the Acquire card, they are the same switch — and
+set the **threshold** (see Setup's basic controls for its units). Under
+Full you can also set the number of **samples** to keep *before* the
+trigger and a **timeout**; the timeout bounds only the *wait for the
+trigger* — once the signal crosses, the capture always runs to its full
+length. While armed, the capture area shows an unmissable *armed —
+waiting for trigger* state, then *triggered — capturing* with the
+progress bar running (or *trigger timeout — capturing buffered data* if
+nothing crosses in time).
 
 The pretrigger crossing lands at exactly the requested pre-trigger
-sample count — on the bridge this is hardware-verified; in the browser
-the same windowing runs on the Web Audio stream (fixed 0.05 threshold
-for now; a threshold control is a noted follow-up). See the scripting
-equivalent in the
+sample count — verified sample-exact on NI hardware and pinned by tests
+on the soundcard path; in the browser the same windowing runs on the
+Web Audio stream (fixed 0.05 full-scale threshold for now; a browser
+threshold control is a noted follow-up). See the scripting equivalent
+in the
 [Python acquisition guide](../user-guide/acquisition.md#triggered-acquisition).
 
 ## Calibration

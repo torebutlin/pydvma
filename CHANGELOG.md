@@ -3,6 +3,76 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+The first 3c6 lab round's fixes (round 11): every bug found in the
+field, plus the acquisition UX it showed was missing.
+
+### Fixed
+
+- **The soundcard trigger now actually triggers.** Three stacked
+  defects fixed: Setup's trigger fields never armed anything (and the
+  group only rendered when NI was installed); the threshold compared
+  volts against a full-scale-era default — 0.05 V is noise on a
+  13.8 V-full-scale 2i2, so armed captures fired instantly; and
+  `trigger_detected` in the soundcard recorder really meant "capture
+  finished", so detection lagged by the whole record and timeouts
+  silently fell through to free-run. Triggering is now two-phase
+  (detection at the crossing, sample-exact pretrigger alignment), the
+  threshold field knows its units (volts with a live % FS hint on a
+  calibrated interface) and defaults to 5 % of full scale, and the
+  timeout bounds only the wait.
+- **Cancel works mid-log** on the bridge: the server answers control
+  messages during a capture, the capture polls a cancel event
+  everywhere it waits (stimulus stopped cleanly), and the client
+  unwinds without touching the dataset.
+- **CWT damping no longer dies on lab-length records.** The transform
+  pre-flights its allocation against a 768 MiB ceiling and refuses
+  with the numbers and remedies instead of numpy's bare "array is too
+  big"; the fitted band's top now sets a time decimation; the band
+  boxes reach the fit; the default band's low end tracks the wavelet
+  Q; CWT sonograms default to the log frequency axis their native
+  grid needs.
+- **fs can no longer be invisible.** An off-ladder sample rate
+  rendered the Setup dropdown blank while staying in force — the root
+  cause of both "couldn't set fs anywhere" and a transfer function
+  whose axis read 0–5000 where 0–500 was expected. The control is now
+  a typed combo (accepts `3000`, `3k`, `48 kHz`) with the device
+  ladder as suggestions, and it always shows the value in force.
+- **The live scope stays truthful**: after a decimating log the stream
+  is restored to the configured rate (it used to stay at the capture
+  rate, scaling the scope's axis by up to 12×), and the configure
+  reply reports the genuinely delivered rate.
+- **Axes re-fit when they should.** Auto X/Y now *restore automatic
+  fitting* instead of freezing the current extent; new data landing in
+  a view re-fits y (and x if the view was empty); unit-changing view
+  switches drop the stale range; an automatic y fits what is inside
+  the current x window; an x-only zoom no longer silently pins y.
+
+### Added
+
+- **Acquisition progress**: a determinate bar against the capture
+  duration, a capture-relative clock that holds while armed, and an
+  unmissable "armed — waiting for trigger" state.
+- **Long-calculation progress + Stop**: CWT computations report
+  determinate progress from inside the engine; past ~3 s the Sono card
+  shows a bar with a **Stop** that terminates and reboots the engine
+  (the only reliable interrupt on the WASM worker).
+- **Trigger essentials in Setup basic** (arm, threshold, channel),
+  capability-gated per device; advanced fields under Full, which is
+  now organised into titled sections instead of one wrapping row.
+- **Sub-native rate targets** (500 Hz–5 kHz, including 3c6's 3 kHz) in
+  the soundcard ladder — delivered by native capture + decimation,
+  which the U24 XL's 8 kHz-floor ladder previously made unreachable.
+- **The Default device names itself** — `Default — ESI U24 XL` — via a
+  new `default_input` capability.
+- **Nonlin stage redesign**: Δf and period are linked inputs with
+  visible units, total experiment time is the card's headline, an
+  M × n_exc progress grid with ETA runs during capture, re-runs ask
+  replace-or-keep (replace undoes; kept runs get `#2` suffixes), BLA
+  result channels read `resp ch N`, and the σ overlay finally has a
+  key and a one-line explanation.
+
 ## 2.3.0 — 2026-08-12
 
 Makes the sound card a device you can *name* rather than index, and
