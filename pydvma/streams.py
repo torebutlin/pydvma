@@ -1,6 +1,7 @@
 from . import acquisition
 from . import _ni_backend
 from . import _coreaudio
+from . import _win_audio
 
 import copy
 import numpy as np
@@ -311,6 +312,28 @@ def _windows_native_rates(name, channels):
             if rates:
                 return rates
     return []
+
+
+def _volume_backend():
+    """The platform module that can read/write a device's input volume.
+
+    :mod:`pydvma._coreaudio` on macOS, :mod:`pydvma._win_audio` on
+    Windows, ``None`` where neither answers. Both expose the same
+    ``find_device`` / ``input_volume_db`` / ``set_input_volume_db``
+    trio, so `Recorder._pin_input_volume` treats them interchangeably.
+
+    The control matters on both platforms for the same reason: on a
+    class-compliant interface it is a DIGITAL gain applied to captured
+    data, so a non-zero setting rescales every reading while ``VmaxSC``
+    goes on asserting the device's published full scale. Measured on an
+    ESI U24 XL under macOS (2026-08-11) and Windows (2026-08-12): the
+    same −40..+12 dB control, SNR identical at every setting.
+    """
+    if _coreaudio.available():
+        return _coreaudio
+    if _win_audio.available():
+        return _win_audio
+    return None
 
 
 def enumerated_device_names(driver):
@@ -1236,18 +1259,21 @@ class Recorder(object):
         '''
         self._volume_device_id = None
         self._volume_previous = None
-        if not _coreaudio.available():
+        self._volume_backend = None
+        backend = _volume_backend()
+        if backend is None:
             return
-        device_id, _ = _coreaudio.find_device(settings.device_name)
+        device_id, _ = backend.find_device(settings.device_name)
         if device_id is None:
             return
-        volumes = _coreaudio.input_volume_db(device_id)
+        volumes = backend.input_volume_db(device_id)
         if not volumes or all(abs(v) <= 0.25 for v in volumes.values()):
             return
         stated = ', '.join('%+.1f' % v for v in volumes.values())
-        if _coreaudio.set_input_volume_db(device_id, 0.0):
+        if backend.set_input_volume_db(device_id, 0.0):
             self._volume_device_id = device_id
             self._volume_previous = volumes
+            self._volume_backend = backend
             print('note: %r input volume was at %s dB; pinned to 0 dB so '
                   'the capture scale matches the device full-scale '
                   '(restored when the stream closes).'
@@ -1262,14 +1288,22 @@ class Recorder(object):
         '''Put the input volume control back where the stream found it.'''
         device_id = getattr(self, '_volume_device_id', None)
         previous = getattr(self, '_volume_previous', None)
+        backend = getattr(self, '_volume_backend', None) or _coreaudio
         self._volume_device_id = None
         self._volume_previous = None
+        self._volume_backend = None
         if device_id is None or not previous:
             return
         try:
-            for element, value in previous.items():
-                _coreaudio.set_input_volume_db(device_id, value,
-                                               elements=[element])
+            if backend is _win_audio:
+                # Windows takes the whole per-channel mapping at once.
+                backend.set_input_volume_db(device_id, 0.0, channels=previous)
+            else:
+                # CoreAudio writes one element at a time, and the values
+                # can legitimately differ between them.
+                for element, value in previous.items():
+                    backend.set_input_volume_db(device_id, value,
+                                                elements=[element])
         except Exception:
             pass
 
