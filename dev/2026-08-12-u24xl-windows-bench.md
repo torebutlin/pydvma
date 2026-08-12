@@ -48,8 +48,18 @@ Both are the same fact from the other end: pydvma scales by ESI's spec
 Windows exposes the same control CoreAudio does, via
 `IAudioEndpointVolume` on the *Line (U24XL with SPDIF I/O)* capture
 endpoint: **−40 .. +12 dB, 0.5 dB step**, and it reports
-`QueryHardwareSupport = 0x3` — i.e. it *claims* hardware volume. That
-claim is false, and the claim is exactly why this needed measuring.
+`QueryHardwareSupport = 0x3` (volume + mute).
+
+That flag is not a lie, but it is not the answer either, which is
+exactly why this needed measuring: it means the *endpoint device* has a
+volume register rather than the Windows engine doing the scaling — it
+says nothing about whether that register sits before or after the
+converter. Here it is in the codec (ESI's manual calls it the "I2S
+input gain"), operating on samples that have already been digitised.
+It is a hardware control and a digital one at the same time. The
+consequence is what matters: it cannot buy SNR. The pin applies to
+every host API including WDM-KS, confirming it lives in the driver
+below the audio engine.
 
 Fixed analogue tone, endpoint volume swept, WDM-KS 48 kHz:
 
@@ -84,6 +94,39 @@ headroom. Two practical consequences:
 
 The 1 dB SNR dip at −40 dB is the 24-bit floor appearing, not the gain
 misbehaving (noise at −113 dBFS is closing on the LSB).
+
+### The over-range test: it cannot pull a hot signal back into range
+
+The sharpest form of the question — Tore's, mid-session: raise the
+source above full scale and see whether the "gain" can rescue it. Rigol
+to **5.000 Vpp** (2.5 Vpk = 1.31× full scale, 2.35 dB over):
+
+| gain | peak FS | crest factor | THD | samples at peak |
+|---|---|---|---|---|
+| 0 dB | 1.00011 | **1.238** | **−19.4** | **45.1 %** |
+| −3 dB | 0.70710 | **1.238** | **−19.4** | **45.1 %** |
+| −6 dB | 0.50103 | **1.238** | **−19.4** | **45.2 %** |
+| −12 dB | 0.25100 | **1.238** | **−19.3** | **45.4 %** |
+| −20 dB | 0.09962 | **1.238** | **−19.3** | **45.4 %** |
+| *(clean 3 Vpp)* | *0.788* | *1.414* | *−73.7* | *4.5 %* |
+
+The level obeys the setting exactly; the **shape never changes**. Crest
+factor is pinned at 1.238 against a sine's 1.414, 45 % of samples are
+flat-topped, THD sits at −19.4 dB throughout. The waveform was
+destroyed at the converter and the gain only shrinks the wreckage.
+
+**The lab hazard:** at −20 dB it peaks at 10 % of full scale — which
+reads as comfortably safe on any level meter — while still being 45 %
+flat-topped. *Digital attenuation hides clipping from exactly the
+indicator an operator would use to check for it.* Another reason to pin
+the control at 0 dB rather than leave it to a slider.
+
+The one silver lining: because the shape survives, the clipping is
+quantifiable. Inverting the crest factor of a symmetrically clipped
+sine gives clip-level/amplitude = 0.7628, hence a source peak of
+**2.496 Vpk = 4.99 Vpp** against the 5.00 Vpp commanded — 0.2 %. A
+possible future "how over-range were you?" diagnostic, and here a
+fourth independent confirmation of the 1.9036 Vpk full scale.
 
 **Gap: pydvma does not pin this on Windows.** `Recorder.init_stream`
 calls `_pin_hardware_clock` / `_pin_hardware_format` /
