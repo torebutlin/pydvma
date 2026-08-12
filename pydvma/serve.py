@@ -1209,38 +1209,13 @@ class _Connection:
         A duplicated name is left alone: two identical interfaces make
         the index the only thing distinguishing them, so second-guessing
         it would be a downgrade.
+
+        Thin delegation to :func:`streams.resolve_device_index`, which
+        is where the logic now lives so that the Python API and
+        ``--settings`` paths get the same protection this bridge has
+        had since 2026-08-10.
         """
-        if not expected_name or index is None:
-            return index, None
-        try:
-            if driver == 'soundcard':
-                names = [d['name'] for d in streams.sd.query_devices()]
-            elif driver == 'nidaq':
-                names = [e['name'] for e in _ni_backend.enumerate_devices()]
-            else:
-                return index, None
-        except Exception:
-            # Enumeration is best-effort: never block a capture because
-            # the device list could not be re-read.
-            return index, None
-
-        idx = int(index)
-        if 0 <= idx < len(names) and names[idx] == expected_name:
-            return index, None
-
-        matches = [i for i, n in enumerate(names) if n == expected_name]
-        if len(matches) == 1:
-            return matches[0], (
-                '%r moved from device index %d to %d since the device list '
-                'was read; using %d.'
-                % (expected_name, idx, matches[0], matches[0]))
-        if not matches:
-            found = names[idx] if 0 <= idx < len(names) else 'nothing'
-            raise ValueError(
-                '%r is no longer connected — device index %d is now %r. '
-                'Refresh the device list and choose again rather than '
-                'recording the wrong input.' % (expected_name, idx, found))
-        return index, None
+        return streams.resolve_device_index(driver, index, expected_name)
 
     async def _on_configure(self, msg: dict, server: BridgeServer) -> None:
         raw_settings = msg.get('settings') or {}

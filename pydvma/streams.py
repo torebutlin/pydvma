@@ -313,6 +313,145 @@ def _windows_native_rates(name, channels):
     return []
 
 
+def enumerated_device_names(driver):
+    """Names of every device a driver can currently see, by index.
+
+    The list is positional: element ``i`` is the name of device index
+    ``i`` for that driver, which is what makes it usable for checking a
+    stored index still points where it did.
+
+    Args:
+        driver (str): ``'soundcard'`` or ``'nidaq'``. Anything else
+            (including ``'mock'``) returns ``[]``.
+
+    Returns the names as a list of strings, or ``[]`` when the driver is
+    unrecognised or its enumeration raises — enumeration is best-effort
+    and must never be the reason a capture cannot start.
+    """
+    try:
+        if driver == 'soundcard':
+            if sd is None:
+                return []
+            return [d['name'] for d in sd.query_devices()]
+        if driver == 'nidaq':
+            return [e['name'] for e in _ni_backend.enumerate_devices()]
+    except Exception:
+        return []
+    return []
+
+
+def enumerated_device_hostapis(driver):
+    """Host-API name of every device a driver can see, by index.
+
+    Positional, matching :func:`enumerated_device_names`. Only
+    meaningful for ``'soundcard'``: PortAudio lists ONE piece of
+    hardware once per host API, and on Windows those entries routinely
+    share an identical name (an ESI U24 XL's line input appears as
+    ``'Line (U24XL with SPDIF I/O)'`` under all four of MME,
+    DirectSound, WASAPI and WDM-KS). The host API is then the only thing
+    telling them apart, which makes it half of the device's identity —
+    see :func:`resolve_device_index`.
+
+    Args:
+        driver (str): ``'soundcard'`` or ``'nidaq'``.
+
+    Returns a list of host-API name strings (``None`` for any entry
+    whose host API cannot be read), or ``[]`` for a driver with no host
+    API concept or when enumeration raises.
+    """
+    if driver != 'soundcard' or sd is None:
+        return []
+    try:
+        hostapis = sd.query_hostapis()
+        out = []
+        for dev in sd.query_devices():
+            try:
+                out.append(hostapis[dev['hostapi']]['name'])
+            except (IndexError, KeyError, TypeError):
+                out.append(None)
+        return out
+    except Exception:
+        return []
+
+
+def resolve_device_index(driver, index, expected_name, expected_hostapi=None):
+    """Re-point a stale ``device_index`` at the device it was chosen for.
+
+    Device indices are POSITIONS in an enumeration, not identities, and
+    the enumeration is not stable. Observed live twice: a Scarlett 2i2
+    moved from index 2 to index 1 once another interface left the list
+    (2026-08-10), and on Windows the whole WDM-KS block reordered
+    between two enumerations minutes apart with no hardware change at
+    all and the same device count — an ESI U24 XL's input moved from
+    index 36 to 27 (2026-08-12). Either way the next capture records a
+    different device: the wrong signal, under the right name, with no
+    error. With a profile-derived ``VmaxSC`` it would also carry the
+    wrong voltage scale.
+
+    The defence is to remember the NAME the index was chosen for and
+    check the two still agree.
+
+    On Windows the name alone is NOT an identity: PortAudio lists one
+    piece of hardware once per host API, all four entries sharing a
+    name, so a name-only match finds four candidates and has to give up
+    exactly where the protection is most needed. Passing
+    ``expected_hostapi`` narrows the search to the backend the index was
+    chosen on, which is what makes following a reordered WDM-KS block
+    possible.
+
+    Args:
+        driver (str): ``'soundcard'`` or ``'nidaq'``.
+        index (int or None): The stored device index to check.
+        expected_name (str or None): Name the caller believes ``index``
+            refers to.
+        expected_hostapi (str or None): Host-API name the index was
+            chosen on, e.g. ``'Windows WDM-KS'`` (default ``None`` =
+            match on name alone, the right behaviour on platforms that
+            list each device once).
+
+    Returns ``(index, note_or_None)``: the index unchanged when the
+    names agree or there is nothing to check; the NEW index plus an
+    explanatory note when the name has moved; and raises ``ValueError``
+    when the name is gone entirely, because continuing would record
+    silence or the wrong instrument. A name still AMBIGUOUS after the
+    host API has been applied is left alone — two identical interfaces
+    on one backend make the index the only thing telling them apart, so
+    second-guessing it would be a downgrade.
+    """
+    if not expected_name or index is None:
+        return index, None
+    names = enumerated_device_names(driver)
+    if not names:
+        return index, None
+    hostapis = enumerated_device_hostapis(driver)
+
+    def same_device(i):
+        if names[i] != expected_name:
+            return False
+        if expected_hostapi and i < len(hostapis) and hostapis[i] is not None:
+            return hostapis[i] == expected_hostapi
+        return True
+
+    idx = int(index)
+    if 0 <= idx < len(names) and same_device(idx):
+        return index, None
+
+    matches = [i for i in range(len(names)) if same_device(i)]
+    if len(matches) == 1:
+        return matches[0], (
+            '%r moved from device index %d to %d since the device list '
+            'was read; using %d.'
+            % (expected_name, idx, matches[0], matches[0]))
+    if not matches:
+        found = names[idx] if 0 <= idx < len(names) else 'nothing'
+        where = ' on %s' % expected_hostapi if expected_hostapi else ''
+        raise ValueError(
+            '%r%s is no longer connected — device index %d is now %r. '
+            'Refresh the device list and choose again rather than '
+            'recording the wrong input.' % (expected_name, where, idx, found))
+    return index, None
+
+
 def native_input_rates(settings):
     """Sample rates the configured device can GENUINELY run at, ascending.
 
@@ -584,6 +723,21 @@ def max_input_fs(settings):
 
 def start_stream(settings):
     global REC_SC, REC_NI, REC, REC_MOCK
+    # Guard the stored index against an enumeration that has reordered
+    # since it was chosen (see `resolve_device_index`). The bridge has
+    # done this since 2026-08-10 using the name the browser sent; doing
+    # it here extends the same protection to the Python API, notebooks
+    # and `pydvma-serve --settings`, which had none. `settings.device_name`
+    # is the expectation: set it explicitly to opt in from the first
+    # capture, or let `Recorder.init_stream` record the resolved name and
+    # every capture after the first is checked automatically.
+    expected_name = getattr(settings, 'device_name', None)
+    if expected_name and settings.device_index is not None:
+        settings.device_index, _note = resolve_device_index(
+            settings.device_driver, settings.device_index, expected_name,
+            getattr(settings, 'device_hostapi', None))
+        if _note:
+            print(_note)
     if settings.device_driver == 'mock':
         # Hardware-free test backend — no real audio / NI device opened.
         # Used by tests/test_acquisition_mock.py to exercise the
@@ -936,6 +1090,12 @@ class Recorder(object):
             
         settings.device_name = sd.query_devices()[settings.device_index]['name']
         settings.device_full_info = sd.query_devices()[settings.device_index]
+        # Record the backend too: on Windows the name is shared by every
+        # host API exposing this hardware, so name+host API is the
+        # identity `start_stream` re-resolves against next time.
+        hostapis = enumerated_device_hostapis('soundcard')
+        if settings.device_index < len(hostapis):
+            settings.device_hostapi = hostapis[settings.device_index]
 
         self._pin_hardware_clock(settings)
         self._pin_hardware_format(settings)

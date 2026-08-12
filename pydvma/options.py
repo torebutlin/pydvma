@@ -176,6 +176,24 @@ class MySettings(object):
             this indexes the **chassis as a whole**, not a module — list
             candidates with ``dvma.list_available_devices()`` (its nidaq
             section is indexed the same way ``device_index`` is).
+        device_name (str or None): Exact enumerated name that
+            ``device_index`` is expected to refer to (default ``None``).
+            Device indices are positions in an enumeration, not
+            identities, and the enumeration reorders — so when this is
+            set, `streams.start_stream` verifies the two still agree
+            before opening, follows the name to its new index if it
+            moved, and refuses rather than record the wrong instrument
+            if it has gone. Left unset, `streams.Recorder.init_stream`
+            records the resolved name after the first capture, which
+            arms the same check for every capture after that.
+        device_hostapi (str or None): Host-API name that
+            ``device_index`` was chosen on, e.g. ``'Windows WDM-KS'``
+            (default ``None``, also filled in after the first capture).
+            The other half of the identity, and the half that matters
+            on Windows: PortAudio lists one interface once per host API
+            with the SAME name each time, so ``device_name`` alone
+            cannot tell four candidates apart and the check would give
+            up. Ignored on platforms that list each device once.
         input_channels_spec (str or None): Optional raw DAQmx
             physical-channel string for the AI task, e.g.
             ``'cDAQ1Mod1/ai0:3,cDAQ1Mod3/ai0'``. Overrides the auto-built
@@ -320,6 +338,8 @@ class MySettings(object):
                  oversample='auto',
                  device_driver='soundcard',
                  device_index=None,
+                 device_name=None,
+                 device_hostapi=None,
                  input_channels_spec=None,
                  VmaxNI=5,
                  VmaxSC=1.0,
@@ -587,7 +607,24 @@ class MySettings(object):
         # `int16` isn't imported at module scope — and `settings.format`
         # is never read anywhere in the package. Removed as dead code.)
 
-        self.device_name = None # until initialise stream
+        # Both an INPUT and an OUTPUT. Set it (to the exact enumerated
+        # name) and `streams.start_stream` checks `device_index` still
+        # points at that device before opening, re-pointing it if the
+        # enumeration has reordered and refusing if the device is gone —
+        # see `streams.resolve_device_index`. Leave it None and
+        # `Recorder.init_stream` fills in the resolved name after the
+        # first capture, so every capture after that is checked anyway.
+        if (device_name is None) or (device_name == 'None'):
+            self.device_name = None
+        else:
+            self.device_name = str(device_name)
+
+        # Second half of the identity, and the half that matters on
+        # Windows — see `streams.enumerated_device_hostapis`.
+        if (device_hostapi is None) or (device_hostapi == 'None'):
+            self.device_hostapi = None
+        else:
+            self.device_hostapi = str(device_hostapi)
         
         if (pretrig_samples is None) or (pretrig_samples == 'None'):
             self.pretrig_samples = None
