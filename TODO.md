@@ -13,9 +13,36 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+- **Round-11 deferred (2026-08-12,
+  `dev/2026-08-12-round11-3c6-lab-feedback.md`):**
+  - Live incoming time-domain preview during a log — the monitor
+    stream already flows during a capture on both paths, so the data
+    exists; round 11 shipped the determinate progress bar + waiting
+    banner instead. Revisit if Tore still wants to *see* the signal
+    mid-log.
+  - σ_NL/σ_n overlay entries in the REAL plot legend (round 11 added
+    an in-card key beside the σ toggle; the legend model builds from
+    viewEntries only, `plot/model.ts` ~794).
+  - Web Audio pretrigger THRESHOLD control — the bridge path got the
+    unit-aware field; the browser path keeps its 0.05 FS default
+    (`provider.ts` documented follow-up).
+  - Manual axis-limits popover commits BOTH axes on a single field
+    edit — typing an x limit pins y at the shown extent (same family
+    as the round-11 sticky-auto fixes; `ZoomToolbar.svelte` fields).
+  - CWT damping over a NARROW band (< ~1.5 octaves): the historic
+    auto peak threshold (`10·median/max`) picks nothing — a user who
+    narrows hard must also drop the threshold slider. Changing the
+    auto rule would move existing numbers; decide deliberately.
+
 - **Webui exposure of `use_output_as_ch0`** — verified working and
   multi-channel-correct (prepends ALL commanded AO columns, cal factor
-  1.0; `pydvma/acquisition.py` ~423). Alignment is assumed-not-measured
+  1.0; `pydvma/acquisition.py` ~423). **Round-11 investigation found a
+  REAL rate bug on this path**: on an lpf (decimating) log the output
+  is resampled UP to the capture rate (`acquisition.py` ~236-248) but
+  prepended to data already decimated to the target with no matching
+  down-resample (~423-438) — the prepended column is wrong by exactly
+  capture/target. Python-API-only (unreachable from the webui). Fix
+  before any UI exposure. Alignment is assumed-not-measured
   — and NB the 2026-08-11 commanded-x measurement (the "NI commanded-x
   start-sync gap" tracker below) showed the AO-vs-capture offset is
   RANDOM per capture even on a routed-clock 6212, so the prepended

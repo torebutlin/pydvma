@@ -1076,6 +1076,41 @@ class TestCwtMemoryGuard:
         np.testing.assert_allclose(zeta_dec, zeta_full, rtol=0.02)
 
 
+class Test3c6Envelope:
+    """The 3c6 teaching-lab operating envelope, pinned as a regression floor
+    (round 11): fs = 3 kHz (typically decimated from a 48 kHz native
+    capture), 30 s logs, 2 channels; damping fits come from ~6 s impulse
+    records at the same rate. These must run over the DEFAULT band with no
+    band-narrowing or other remedy — the CWT size bounds exist for the
+    demanding research cases, and must never constrain routine lab use."""
+
+    def test_damping_fit_6s_at_3k_runs_over_the_default_band(self):
+        fs, secs = 3000, 6
+        N = fs * secs
+        # Q ~ f so both modes are still alive at the fit start.
+        modes = [(45.0, 60.0), (320.0, 400.0)]
+        x = sum(_decaying_sine(fs, N, f, q) for f, q in modes)[:, None]
+        td = _make_time_data(x, fs)
+        fn, Qn, _fd = analysis.calculate_damping_from_cwt(td, n_chan=0)
+        assert len(fn) >= 2
+        for f_true, q_true in modes:
+            j = np.argmin(np.abs(fn - f_true))
+            assert abs(fn[j] - f_true) / f_true < 0.05
+            assert abs(Qn[j] - q_true) / q_true < 0.3
+
+    @pytest.mark.parametrize('secs', [6, 30])
+    def test_3k_default_band_stays_inside_the_ceiling(self, secs):
+        """Even the 30 s log's default-band fit is comfortably under the
+        allocation ceiling at 3 kHz — no remedy required, at any length the
+        lab uses."""
+        fs = 3000
+        N = fs * secs
+        freqs = analysis._cwt_default_frequencies(fs, N, None, 16)
+        step = analysis._cwt_damping_time_step(fs, freqs[-1])
+        n_out = len(range(0, N, step))
+        assert len(freqs) * n_out * 16 <= analysis.CWT_MAX_IMAGE_BYTES
+
+
 class TestCwtProgressCallback:
     """The optional `progress_callback` (round-11 P7): a lab-length CWT can run
     for tens of seconds in the browser engine, and the ONLY thing a busy

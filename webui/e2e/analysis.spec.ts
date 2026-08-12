@@ -412,8 +412,8 @@ test.describe('@engine', () => {
     //    the empty-lines model's [0,1] fallback, and setRange('sono') was
     //    written but never read by the heat painter / axis model. Assert the
     //    fields carry REAL extents, a committed edit moves the store + ticks +
-    //    visible pixels, Auto Y restores the full extent, and a box-zoom drag
-    //    commits an undoable window. ──
+    //    visible pixels, Auto Y restores the AUTO state (null range — round-11
+    //    sticky auto), and a box-zoom drag commits an undoable window. ──
     // Back to linear y + dB colour: the dB map paints structure across the
     // whole window (this fixture's LINEAR-colour heat is near-uniform dark,
     // which would starve a pixel diff of signal).
@@ -445,12 +445,15 @@ test.describe('@engine', () => {
       .toBeGreaterThan(0.02);
     expect(await sonoVisibleColourFrac(page)).toBeGreaterThan(0.3);
 
-    // Auto Y restores the full frequency extent (an explicit committed range).
+    // Auto Y restores the AUTO state (round-11 sticky auto): the committed
+    // range goes back to null and the ticks re-fit to the full extent — so
+    // later data additions keep re-fitting instead of inheriting a frozen
+    // window.
     await page.getByRole('button', { name: 'Auto Y' }).click();
-    await expect.poll(async () => {
-      const y = (await activeSlice(page)).range.y;
-      return y ? y[1] > yMax0 * 0.99 : false;
-    }, { timeout: 4000 }).toBe(true);
+    await expect.poll(async () => (await activeSlice(page)).range.y, { timeout: 4000 })
+      .toBeNull();
+    await expect.poll(async () => Math.max(...(await sonoYTickValues(page))), { timeout: 4000 })
+      .toBeGreaterThan(yMax0 * 0.99);
 
     // Box-zoom drag on the sono overlay commits BOTH axes and is undoable.
     await page.mouse.move(6, 560); // park the pointer so the popover closes
@@ -466,12 +469,14 @@ test.describe('@engine', () => {
     const zoomed = await activeSlice(page);
     expect(zoomed.range.x).not.toBeNull();
     expect(zoomed.range.x![1]).toBeLessThanOrEqual(xMax0 * 1.06); // clamp guardrail held
-    // Undo (view history) walks the y range back to the pre-drag full window.
+    // Undo (view history) walks back to the pre-drag snapshot — whose y was
+    // the AUTO state (null) after the Auto Y click above; ticks re-fit to the
+    // full window.
     await page.getByRole('button', { name: 'Undo view change' }).click();
-    await expect.poll(async () => {
-      const y = (await activeSlice(page)).range.y;
-      return y ? y[1] > yMax0 * 0.99 : false;
-    }, { timeout: 4000 }).toBe(true);
+    await expect.poll(async () => (await activeSlice(page)).range.y, { timeout: 4000 })
+      .toBeNull();
+    await expect.poll(async () => Math.max(...(await sonoYTickValues(page))), { timeout: 4000 })
+      .toBeGreaterThan(yMax0 * 0.99);
   });
 
   test('Fit damping opens the interactive panel: decay fits, threshold + start controls, bands mode (round-7 items 3/4)', async ({ page }) => {

@@ -339,8 +339,18 @@ covers the data area).
 
 - **Box zoom** / **Pan** modes; **↶ Undo** / **↷ Redo** step through the
   view history.
-- **Auto X** fits the full data extent; **Auto Y** fits only the lines
-  currently visible.
+- **Auto X** / **Auto Y** return that axis to *automatic* fitting — not
+  a one-shot fit: the axis keeps re-fitting as data arrives or lines
+  are toggled, until the next explicit zoom pins it. An automatic y
+  fits only the samples inside the current x window (so a zoomed
+  stretch fills the plot), and only the lines currently visible.
+- Axes re-fit themselves when it makes sense without being asked: new
+  data landing in a view (a capture, a loaded file, a first-time
+  calculation) re-fits y — and x too if the view was empty — and
+  switching a view's units (dB ↔ linear, magnitude ↔ phase,
+  FFT ↔ PSD) drops the stale y range. A zoom you made deliberately is
+  respected otherwise: recomputing an existing result keeps your
+  window, and an x-only box zoom no longer quietly freezes y.
 - Axis-scale toggles appear where they apply: **x lin/log** on frequency
   and TF views, **y dB/lin** on magnitude/PSD views, and on the
   **Sonogram** a frequency-axis **y lin/log** plus a heat **colour
