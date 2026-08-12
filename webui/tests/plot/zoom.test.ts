@@ -1,5 +1,7 @@
 import { expect, test } from 'vitest';
-import { rubberBandToRange, clampToData, panBy } from '../../src/lib/plot/zoom';
+import {
+  rubberBandToRange, clampToData, panBy, boxTouchesAxis, panTouchesAxis,
+} from '../../src/lib/plot/zoom';
 
 const px = { width: 800, height: 400 };
 const dom = { x: [0, 500] as [number, number], y: [-60, 40] as [number, number] };
@@ -53,4 +55,53 @@ test('pan y-inversion: dragging down (positive dyPx) moves the window up in data
   expect(p.y![1]).toBeCloseTo(65);
   expect(p.x![0]).toBeCloseTo(0);                          // x untouched
   expect(p.x![1]).toBeCloseTo(500);
+});
+
+// ── Round-11 P5: a gesture commits only the axes it MEANT ───────────────────
+// The rules PlotSurface applies per axis on release. An axis judged untouched
+// keeps its previous stored value — `null` (auto) included — so an x-only box
+// zoom no longer freezes a y axis that was following the data.
+
+test('boxTouchesAxis: a band narrowing the axis targets it; a full-span band does not', () => {
+  const d: [number, number] = [0, 100];
+  expect(boxTouchesAxis([20, 60], d)).toBe(true);          // 40% — a real zoom
+  expect(boxTouchesAxis([0, 94], d)).toBe(true);           // 94% — just under the keep line
+  expect(boxTouchesAxis([0, 95], d)).toBe(false);          // 95% — edge-to-edge drag
+  expect(boxTouchesAxis([-20, 130], d)).toBe(false);       // overspilled past both edges
+  expect(boxTouchesAxis(null, d)).toBe(false);             // unconstrained axis
+});
+
+test('boxTouchesAxis: an x-only drag preserves y while still zooming x', () => {
+  // Full plot height, a fifth of its width — the classic "select a frequency
+  // band" gesture that used to pin the y axis.
+  const xDom: [number, number] = [0, 500];
+  const yDom: [number, number] = [-60, 40];
+  expect(boxTouchesAxis([100, 200], xDom)).toBe(true);
+  expect(boxTouchesAxis([-62, 42], yDom)).toBe(false);
+});
+
+test('boxTouchesAxis: a degenerate domain cannot be judged and counts as targeted', () => {
+  expect(boxTouchesAxis([1, 1], [5, 5])).toBe(true);
+  expect(boxTouchesAxis([0, 1], [10, 0])).toBe(true);      // inverted → not judgeable
+});
+
+test('panTouchesAxis: sub-1% displacement leaves the axis alone', () => {
+  const from: [number, number] = [0, 100];
+  expect(panTouchesAxis([0.5, 100.5], from)).toBe(false);  // 0.5% — pointer wobble
+  expect(panTouchesAxis([1, 101], from)).toBe(true);       // 1% — a real move
+  expect(panTouchesAxis([-30, 70], from)).toBe(true);
+  expect(panTouchesAxis(from, from)).toBe(false);          // clamped: never moved
+  expect(panTouchesAxis(null, from)).toBe(false);
+});
+
+test('panTouchesAxis: a horizontal drag moves x only', () => {
+  const xFrom: [number, number] = [0, 500];
+  const yFrom: [number, number] = [-60, 40];
+  const p = panBy({ x: xFrom, y: yFrom }, { dxPx: -80, dyPx: 0 }, px);
+  expect(panTouchesAxis(p.x, xFrom)).toBe(true);
+  expect(panTouchesAxis(p.y, yFrom)).toBe(false);          // y keeps its previous value
+});
+
+test('panTouchesAxis: a degenerate domain counts as moved', () => {
+  expect(panTouchesAxis([1, 2], [5, 5])).toBe(true);
 });

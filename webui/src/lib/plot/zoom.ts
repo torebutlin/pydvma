@@ -64,6 +64,49 @@ export function clampToData(want: Dom, data: { x: [number, number]; y: [number, 
   };
 }
 
+// ── Untouched-axis preservation (round-11 P5) ───────────────────────────────
+// A gesture commits BOTH axes, which is how an x-only box zoom used to destroy
+// a null (auto) y: the drag spanned the whole plot height, so the "y range" it
+// committed was just the current auto-fit frozen into an explicit one, and the
+// y axis silently stopped following the data. These two predicates let the
+// caller ask, per axis, whether the gesture MEANT that axis; when it did not,
+// the axis keeps its previous stored value — `null` included.
+
+/** A box covering at least this fraction of an axis' domain leaves it alone. */
+export const BOX_KEEP_COVERAGE = 0.95;
+/** A pan moving an axis less than this fraction of its domain leaves it alone. */
+export const PAN_KEEP_SHIFT = 0.01;
+
+/**
+ * Did a rubber-band zoom actually target this axis? True when the band covers
+ * LESS than 95% of the axis' currently displayed `domain` — i.e. the drag
+ * genuinely narrowed it. A band spanning (or overspilling) the full domain is
+ * the user dragging edge to edge to select a band on the OTHER axis, so it
+ * reads as untouched. `null` (an axis the band maths left unconstrained) is
+ * untouched by definition; a degenerate domain can't be judged, so it counts
+ * as touched and the old commit-both behaviour stands.
+ */
+export function boxTouchesAxis(band: [number, number] | null, domain: [number, number]): boolean {
+  if (!band) return false;
+  const span = domain[1] - domain[0];
+  if (!(span > 0)) return true;
+  return (band[1] - band[0]) / span < BOX_KEEP_COVERAGE;
+}
+
+/**
+ * Did a pan actually move this axis? True when the committed window's origin
+ * has shifted at least 1% of the axis' span from where the gesture started —
+ * so a horizontal drag no longer freezes y, and a pan held against the clamp
+ * guardrail (which cannot move) commits nothing on that axis. Compare the
+ * POST-clamp range against the pre-gesture domain, both in gesture space.
+ */
+export function panTouchesAxis(next: [number, number] | null, from: [number, number]): boolean {
+  if (!next) return false;
+  const span = from[1] - from[0];
+  if (!(span > 0)) return true;
+  return Math.abs(next[0] - from[0]) / span >= PAN_KEEP_SHIFT;
+}
+
 /**
  * Shift the displayed domains by a pointer delta in plot-area pixels,
  * keeping both spans constant. Sign convention matches "drag the

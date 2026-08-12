@@ -257,6 +257,49 @@ function populatedViews(seed: DerivedMap): ViewId[] {
 }
 
 /**
+ * Whether `view` currently has anything plottable in `map` — the "was this
+ * view empty before?" test behind the P5 auto-scaling rules. Shares
+ * `populatedViews`' definition of populated (frequency counts FFT / PSD /
+ * coherence alike) so the two can never drift apart.
+ */
+function viewPopulated(map: DerivedMap, view: ViewId): boolean {
+  return populatedViews(map).includes(view);
+}
+
+/**
+ * How the actions layer tells the VIEW layer that a plot's contents changed
+ * underneath it, so the axes can re-fit (round-11 P5: "when data is added to a
+ * view then the view — at least the y-range — should be auto-ed").
+ *
+ * Injected rather than imported: actions has no view-state dependency by
+ * design (it is unit-tested with a bare selection + engine), and App owns the
+ * single `viewState` instance. Both callbacks are advisory — an actions
+ * instance created without a notifier behaves exactly as before.
+ */
+export interface ViewNotifier {
+  /**
+   * New LINES landed in `view`. `viewWasEmpty` is true when the view held
+   * nothing plottable before the operation, which is what licenses resetting
+   * the x window too (any x range on an empty view is a leftover); otherwise
+   * only y should relax, so the user's navigation survives.
+   *
+   * Fired for genuinely NEW lines only — a capture, a load/append, a set's
+   * FIRST result for that view, a BLA run. A recompute in place (Clean
+   * Impulse, a settings change, a resample) deliberately does NOT fire: the
+   * user is looking at a window they chose, and the numbers only moved a
+   * little.
+   */
+  linesAdded(view: ViewId, info: { viewWasEmpty: boolean }): void;
+  /**
+   * The UNITS (or the quantity) plotted on these views changed — a
+   * calibration, an x(iω) display power, an FFT↔PSD↔CSD switch. The data are
+   * the same lines at a different scale, so only y should relax; the x window
+   * still means what it did.
+   */
+  unitsChanged(views: ViewId[]): void;
+}
+
+/**
  * Create the analysis actions bound to an engine + selection store, plus
  * the per-set `analysisSettings` store. Exposes the working `dataset`
  * store, the decoded `derived` store the plot model consumes, and a
@@ -270,8 +313,12 @@ function populatedViews(seed: DerivedMap): ViewId[] {
  * every working set; a setId runs just that one. `settings` is optional
  * so the actions stay unit-testable in isolation; when omitted the calc
  * functions fall back to per-set `defaults()`.
+ *
+ * `notify` (round-11 P5, optional) receives the axis-relevant events — new
+ * lines in a view, a units change — so App can relax those views' axes back
+ * to auto. See `ViewNotifier`.
  */
-export function createActions(engine: EngineStore, selection: Selection, settings?: AnalysisSettings, modal?: ModalStore, toasts?: Toasts) {
+export function createActions(engine: EngineStore, selection: Selection, settings?: AnalysisSettings, modal?: ModalStore, toasts?: Toasts, notify?: ViewNotifier) {
   const dataset = writable<DvmaDataset | null>(null);
   const derived = writable<DerivedMap>({});
   /**
@@ -399,6 +446,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    */
   function loadDataset(ds: DvmaDataset, opts: { append?: boolean } = {}): ViewId[] {
     const append = !!opts.append && get(dataset) !== null && working.length > 0;
+    // Which views already held something, BEFORE the merge — a fresh (non-
+    // append) load clears everything, so every view it fills counts as
+    // previously empty and gets both axes back to auto (P5).
+    const before = append ? get(derived) : {};
     if (append) {
       // Merge into the EXISTING dataset object so autosave/save see one doc.
       const base = get(dataset)!;
@@ -594,7 +645,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       }
     }
 
-    return populatedViews(seed);
+    // The incoming file's lines are now in these views: re-fit each one's y
+    // (and x where the view was empty until now) — P5's data-add rule.
+    const filled = populatedViews(seed);
+    for (const v of filled) notify?.linesAdded(v, { viewWasEmpty: !viewPopulated(before, v) });
+    return filled;
   }
 
   /**
@@ -655,6 +710,12 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   function calcFft(target: AnalysisTarget = 'all') {
     const my = bump('fft');
     return guarded('fft', async () => {
+      // P5 data-add rule: a set's FIRST spectrum is a NEW line in the
+      // frequency view (re-fit y); a recompute of one that already exists
+      // keeps the range the user is looking at. Emptiness is judged for the
+      // whole batch, before any of it lands.
+      const wasEmpty = !viewPopulated(get(derived), 'frequency');
+      let added = false;
       for (const ws of targeted(target)) {
         const { window } = freqSettings(ws.setId);
         const { axis, data, nCh } = timePayload(ws.time);
@@ -663,6 +724,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           window: window === 'none' ? null : window,
         });
         if (stale('fft', my)) return;                 // a newer FFT batch won
+        if (get(derived)[ws.setId]?.freq === undefined) added = true;
         setDerived(ws.setId, {
           freq: {
             axis: axisData(mval(res, 'freq_axis')),
@@ -670,6 +732,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           },
         });
       }
+      if (added) notify?.linesAdded('frequency', { viewWasEmpty: wasEmpty });
     });
   }
 
@@ -687,6 +750,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const my = bump('psd');
     return guarded('psd', async () => {
       const failed: string[] = [];
+      // P5 data-add rule — see `calcFft` (PSD and CSD both land in the
+      // frequency view, and one op fills both slices).
+      const wasEmpty = !viewPopulated(get(derived), 'frequency');
+      let added = false;
       for (const ws of targeted(target)) {
         const s = freqSettings(ws.setId);
         const window = s.window === 'none' ? null : s.window;
@@ -698,6 +765,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           });
           if (stale('psd', my)) return;               // a newer PSD batch won
           const freqAxis = axisData(mval(res, 'freq_axis'));
+          if (get(derived)[ws.setId]?.psd === undefined) added = true;
           // Stamp the CSD pair (round-5 item 7) from the set's freq settings so
           // the cross-spectrum plots the chosen (X, Y) pair immediately.
           setDerived(ws.setId, {
@@ -714,6 +782,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         }
       }
       if (stale('psd', my)) return;                   // a newer batch superseded us
+      if (added) notify?.linesAdded('frequency', { viewWasEmpty: wasEmpty });
       if (failed.length) throw new Error(psdFailedMessage(failed));
     });
   }
@@ -750,6 +819,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const my = bump('tf');
     return guarded('tf', async () => {
       const sets = targeted(target);
+      // P5 data-add rule — see `calcFft`.
+      const wasEmpty = !viewPopulated(get(derived), 'tf');
+      let added = false;
       // A transfer function maps ONE input channel to the remaining OUTPUT
       // channels, so `calculate_tf` returns tf_data of shape (Nf, N−1). A
       // single-channel set therefore has ZERO output columns (tf_data is
@@ -780,8 +852,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // Carry the chIn it was computed with (and that set's channel count)
         // so the model remaps out/in against the same input channel (R4).
         const tf = tfFromResult(res, axis, chIn, first.nChannels);
+        if (get(derived)[first.setId]?.tf === undefined) added = true;
         setDerived(first.setId, { tf });
         maybeRestoreModalRecon([first.setId]);          // deferred modal recon
+        if (added) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
         return;
       }
       // Per-set: run only the sets that HAVE an output channel; collect the
@@ -798,11 +872,13 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         });
         if (stale('tf', my)) return;                  // stale-drop the whole batch
         const fAxis = axisData(mval(res, 'freq_axis'));
+        if (get(derived)[ws.setId]?.tf === undefined) added = true;
         // Carry this set's chIn + channel count onto the slice so the plot
         // model remaps its out/in columns/labels correctly (R4).
         setDerived(ws.setId, { tf: tfFromResult(res, fAxis, chIn, ws.nChannels) });
       }
       if (stale('tf', my)) return;                    // a newer batch superseded us
+      if (added) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
       // A newly-computed TF may satisfy a deferred modal restore (round-5 item 13).
       maybeRestoreModalRecon(runnable.map((ws) => ws.setId));
       // Any valid sets are now drawn; if we skipped single-channel sets,
@@ -868,6 +944,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         f_min: fMin ?? undefined, f_max: fMax ?? undefined,
       });
       if (stale('sono', my)) return;                    // a newer sonogram won
+      // P5 data-add rule — see `calcFft`. A re-run at a new nFft / channel /
+      // wavelet Q keeps the user's window; the FIRST sonogram re-fits.
+      const wasEmpty = !viewPopulated(get(derived), 'sono');
+      const added = get(derived)[ws.setId]?.sono === undefined;
       setDerived(ws.setId, {
         sono: {
           timeAxis: axisData(mval(res, 'time_axis')),
@@ -875,6 +955,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           data: decodeArray(asMarshalled(mval(res, 'sono_data'))),
         },
       });
+      if (added) notify?.linesAdded('sono', { viewWasEmpty: wasEmpty });
     });
   }
 
@@ -1122,6 +1203,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * recording — the item comes from `recordingToItem` in acquire.ts.
    */
   function addRecordedSet(item: DvmaItem): number {
+    // P5: a capture is always a NEW line in the time view. Judged before the
+    // seeding below (an empty time view also releases the x window — the
+    // first capture of a session must not inherit a leftover zoom).
+    const wasEmpty = !viewPopulated(get(derived), 'time');
     // Ensure a dataset exists.
     let ds = get(dataset);
     if (!ds) {
@@ -1154,6 +1239,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       units: normalizeUnits(item.meta.units, nCh),
     });
 
+    notify?.linesAdded('time', { viewWasEmpty: wasEmpty });
     return setId;
   }
 
@@ -1198,6 +1284,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
     const iso = now.toISOString();
     const ids: number[] = [];
+    // P5: BLA results are new TF lines (see `linesAdded`), judged before any
+    // of them land.
+    const wasEmpty = !viewPopulated(get(derived), 'tf');
 
     results.forEach((res, q) => {
       const axis = axisData(mval(res, 'freq_axis'));
@@ -1249,6 +1338,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     });
 
     dataset.set(ds);
+    if (ids.length) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
     return ids;
   }
 
@@ -1294,6 +1384,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       calFactors: norm,
       units: normalizeUnits(units !== undefined ? units : ws.time.meta.units, ws.nChannels),
     });
+    // P5: a calibration rescales every derived view of this set (a 100 mV/g
+    // sensitivity moves the y decades), so relax their y axes back to auto.
+    notify?.unitsChanged(['time', 'frequency', 'tf']);
     dataset.update((d) => d);            // re-emit so autosave persists the edit
   }
 
@@ -1330,6 +1423,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     // Keep an overlaying fit pseudo-set locked to the same display power.
     const fit = fitSets.get(setId);
     if (fit && get(derived)[fit.id]) setDerived(fit.id, { iwPower: p });
+    // P5: (iω)^p changes the plotted QUANTITY (and its decades) on the
+    // spectral views — relax their y axes back to auto.
+    notify?.unitsChanged(['frequency', 'tf']);
     dataset.update((d) => d);            // re-emit so autosave persists the change
   }
 
@@ -2222,6 +2318,15 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     resampleTime, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
     getCalibration, setCalFactors,
+    /**
+     * Report a UNITS/quantity change on `views` to the injected
+     * `ViewNotifier` (round-11 P5) — for the cards that change what a view
+     * PLOTS without going through an action here, i.e. the Frequency card's
+     * FFT↔PSD↔CSD switch. Threading the view store into those cards instead
+     * would mean a prop through every intervening component; they already
+     * hold `actions`. No-op when no notifier was injected.
+     */
+    notifyUnitsChanged: (views: ViewId[]) => notify?.unitsChanged(views),
     /** Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match. */
     getIwPower, setIwPower, calcBestMatch,
     /** Modal-fit pseudo-set (round-5 item 13): tray-card delete-with-undo.

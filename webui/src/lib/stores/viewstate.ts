@@ -307,8 +307,45 @@ export function createViewState() {
   /** Reset view `id`'s primary range to auto-fit (`null` = fit data); recorded in history. */
   function autoFit(id: ViewId) { setRange(id, { x: null, y: null }); }
 
-  /** Set the ACTIVE view's TF plot type. */
-  function setPlotType(t: TfPlotType) { patch(get(active), v => ({ ...v, plotType: t })); }
+  /**
+   * Return view `id`'s y axis (and, with `opts.x`, its x axis) to AUTO —
+   * `null`, the state the builder re-fits on every rebuild — WITHOUT recording
+   * a history entry (round-11 P5).
+   *
+   * This is the "the plot's meaning just changed under the user" path, not a
+   * user gesture: new lines landing in a view, a calibration rescale, a
+   * quantity switch. A stale EXPLICIT range is what makes those cases render
+   * off-screen or flat, so the axis is relaxed back to auto; a range the user
+   * has NOT pinned is already null and this is then a no-op (it does not even
+   * emit). Deliberately history-FREE: nothing the user did is being undone, so
+   * an undo entry here would only make `↶` step through invisible states.
+   *
+   * `opts.x` is for the "view was EMPTY before" case (a first capture, a load
+   * into a blank view): with no lines there, an explicit x can only be a
+   * leftover from data that has since gone, so both axes relax. When the view
+   * already held lines the x window is the user's navigation state and is
+   * preserved — only y re-fits, which is the general principle behind P5.
+   */
+  function relaxToAuto(id: ViewId, opts: { x?: boolean } = {}) {
+    const cur = get(views)[id].range;
+    const x = opts.x ? null : cur.x;
+    if (cur.y === null && x === cur.x) return;      // already auto — no write, no emit
+    patch(id, v => ({ ...v, range: { x, y: null } }));
+  }
+
+  /**
+   * Set the ACTIVE view's TF plot type — and relax its y axis to auto.
+   *
+   * mag / phase / real / imag SHARE one `range.y` (only Bode's phase pane has
+   * its own `phaseRange`), so a y window pinned in dB is meaningless in
+   * degrees and would render the new quantity off-screen. Switching the
+   * quantity therefore drops the stale y, exactly as `relaxToAuto` does for a
+   * calibration change — and like it, records NO history entry (the plot-type
+   * change itself is not a navigable state).
+   */
+  function setPlotType(t: TfPlotType) {
+    patch(get(active), v => ({ ...v, plotType: t, range: { x: v.range.x, y: null } }));
+  }
 
   /**
    * Set (not toggle) the ACTIVE view's coherence overlay flag. Scoping
@@ -330,8 +367,15 @@ export function createViewState() {
    */
   function setXScale(s: AxisScale) { patch(get(active), v => ({ ...v, xScale: s })); }
 
-  /** Set the ACTIVE view's magnitude scale (`'log'` = dB, `'lin'` = |H|). */
-  function setYScale(s: AxisScale) { patch(get(active), v => ({ ...v, yScale: s })); }
+  /**
+   * Set the ACTIVE view's magnitude scale (`'log'` = dB, `'lin'` = |H|) — and
+   * relax its y axis to auto. dB↔linear is a UNIT change on the y data (a
+   * `[-60, 0]` dB window is nonsense on a linear |H| axis and vice versa), so
+   * a pinned y is dropped. No history entry (see `relaxToAuto`).
+   */
+  function setYScale(s: AxisScale) {
+    patch(get(active), v => ({ ...v, yScale: s, range: { x: v.range.x, y: null } }));
+  }
 
   /**
    * Set the sono view's FREQUENCY y-axis scale (`'lin'`/`'log'`). Scoped to the
@@ -339,8 +383,15 @@ export function createViewState() {
    * A display mode — like `xScale`/`yScale`, NOT recorded in history. Distinct
    * from `yScale`: this is the frequency AXIS mapping, not the dB data
    * transform (see the `ViewSlice` docstring for why it is its own field).
+   *
+   * Also relaxes the sono view's y (the FREQUENCY axis) back to auto: a window
+   * pinned on a linear frequency axis maps badly onto a decade log axis (a
+   * `[0, …]` lower bound has no log at all), so the stale range is dropped.
+   * No history entry (see `relaxToAuto`).
    */
-  function setSonoFreqScale(s: AxisScale) { patch('sono', v => ({ ...v, sonoFreqScale: s })); }
+  function setSonoFreqScale(s: AxisScale) {
+    patch('sono', v => ({ ...v, sonoFreqScale: s, range: { x: v.range.x, y: null } }));
+  }
 
   /**
    * Set the sono view's heat COLOUR mapping (`'db'` = magnitude in dB over the
@@ -426,7 +477,7 @@ export function createViewState() {
     sharedFreqRange: derived(views, $v => $v.tf.range.x ?? $v.frequency.range.x),
     freqScope,
 
-    activate, setRange, back, forward, autoFit,
+    activate, setRange, back, forward, autoFit, relaxToAuto,
     beginTransient, setRangeLive, commitTransient, cancelTransient,
     setNyquistRange, setPhaseRange, setBodePhaseRange, setCoherenceAuto,
     setPlotType, setCoherence, setBlaSigma, setXScale, setYScale,

@@ -114,6 +114,13 @@
     calc,
   );
   const patchLive = (partial: Partial<{ window: string; mode: FreqMode; nFrames: number }>) => {
+    // FFT ↔ PSD ↔ CSD is a UNITS change on the frequency view — a spectrum in
+    // V, a density in V²/Hz, a cross-spectrum in V² do not share a y decade —
+    // so tell the view layer to relax that view's y back to auto (round-11
+    // P5). A window/nFrames tweak keeps the same quantity and is left alone.
+    if (partial.mode !== undefined && partial.mode !== freqMode) {
+      actions.notifyUnitsChanged(['frequency']);
+    }
     patch(partial);
     live.schedule();
   };

@@ -448,3 +448,98 @@ test('restore rejects a malformed freqScope (inverted / wrong shape → null)', 
     expect(get(vs2.freqScope)).toBeNull();
   }
 });
+
+// ── Round-11 P5: axes return to AUTO when the plot's meaning changes ────────
+// `null` is the auto sentinel (the builder re-fits it on every rebuild), so
+// the whole bug class here is a STALE EXPLICIT range surviving a change that
+// invalidated it. None of these resets is a user gesture, so none may push a
+// history entry — undo must keep stepping through the user's own zooms.
+
+test('setPlotType drops the stale y (shared range) without a history entry', () => {
+  const vs = createViewState();
+  vs.activate('tf');
+  vs.setRange('tf', { x: [10, 200], y: [-60, 0] });     // a dB magnitude window
+  const h = get(vs.current).history.length;
+  vs.setPlotType('phase');                              // …now degrees
+  expect(get(vs.current).range.y).toBeNull();           // re-fits to the phase data
+  expect(get(vs.current).range.x).toEqual([10, 200]);   // the frequency window stands
+  expect(get(vs.current).history.length).toBe(h);
+});
+
+test('setYScale (dB ↔ linear) drops the stale y without a history entry', () => {
+  const vs = createViewState();
+  vs.activate('frequency');
+  vs.setRange('frequency', { x: [0, 500], y: [-80, 20] });
+  const h = get(vs.current).history.length;
+  vs.setYScale('lin');
+  expect(get(vs.current).range.y).toBeNull();
+  expect(get(vs.current).range.x).toEqual([0, 500]);
+  expect(get(vs.current).history.length).toBe(h);
+});
+
+test('setSonoFreqScale (lin ↔ log frequency axis) drops the stale y, no history', () => {
+  const vs = createViewState();
+  vs.activate('sono');
+  vs.setRange('sono', { x: [0, 2], y: [0, 5000] });     // a linear-axis window
+  const h = get(vs.current).history.length;
+  vs.setSonoFreqScale('log');                           // y[0] = 0 has no log
+  expect(get(vs.current).range.y).toBeNull();
+  expect(get(vs.current).range.x).toEqual([0, 2]);
+  expect(get(vs.current).history.length).toBe(h);
+});
+
+test('the toolbar Auto buttons RESTORE auto (null) and stay undoable', () => {
+  const vs = createViewState();
+  vs.activate('frequency');
+  vs.setRange('frequency', { x: [10, 90], y: [-40, 10] });
+  const h = get(vs.current).history.length;
+  // Auto Y: null y, x untouched — one history entry (a deliberate click).
+  vs.setRange('frequency', { x: get(vs.current).range.x, y: null });
+  expect(get(vs.current).range).toEqual({ x: [10, 90], y: null });
+  expect(get(vs.current).history.length).toBe(h + 1);
+  // Auto X: null x, the (auto) y untouched.
+  vs.setRange('frequency', { x: null, y: get(vs.current).range.y });
+  expect(get(vs.current).range).toEqual({ x: null, y: null });
+  expect(get(vs.current).history.length).toBe(h + 2);
+  vs.back('frequency');
+  expect(get(vs.current).range).toEqual({ x: [10, 90], y: null });
+});
+
+test('relaxToAuto nulls y only, or both axes with {x:true}, and never records history', () => {
+  const vs = createViewState();
+  vs.activate('time');
+  vs.setRange('time', { x: [0, 1], y: [-2, 2] });
+  const h = get(vs.current).history.length;
+  vs.relaxToAuto('time');
+  expect(get(vs.current).range).toEqual({ x: [0, 1], y: null });   // y re-fits, x stands
+  expect(get(vs.current).history.length).toBe(h);
+
+  vs.setRange('time', { x: [0, 1], y: [-2, 2] });
+  vs.relaxToAuto('time', { x: true });                             // the view was EMPTY
+  expect(get(vs.current).range).toEqual({ x: null, y: null });
+});
+
+test('relaxToAuto is idempotent: an already-auto axis emits nothing', () => {
+  const vs = createViewState();
+  let emits = 0;
+  const stop = vs.current.subscribe(() => { emits += 1; });
+  emits = 0;                                        // ignore the subscribe-time emit
+  vs.relaxToAuto('time');                           // both axes already null
+  expect(emits).toBe(0);
+  vs.setRange('time', { x: [0, 1], y: null });      // an x window, y already auto
+  const after = emits;
+  vs.relaxToAuto('time');                           // y-only reset: nothing to do
+  expect(emits).toBe(after);
+  stop();
+});
+
+test('relaxToAuto targets one view; the others keep their ranges', () => {
+  const vs = createViewState();
+  vs.setRange('time', { x: [0, 1], y: [-1, 1] });
+  vs.setRange('tf', { x: [10, 20], y: [-30, 0] });
+  vs.relaxToAuto('tf');
+  vs.activate('time');
+  expect(get(vs.current).range).toEqual({ x: [0, 1], y: [-1, 1] });
+  vs.activate('tf');
+  expect(get(vs.current).range).toEqual({ x: [10, 20], y: null });
+});

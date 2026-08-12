@@ -47,12 +47,18 @@
    * - `coherenceControl`: a `coherence` segmented control (0–1 | auto) drives the
    *   overlay's right axis via `coherenceAuto`.
    *
-   * Auto X sets the x-range to the full data extent (y untouched); Auto Y sets
-   * the y-range to the extent of the lines CURRENTLY visible in the plot model
-   * — off lines are excluded upstream by the selection filter (spec §6 "Auto Y
-   * fits selected lines only"). Both are single history entries. The parent
-   * passes that extent via `dataExtent` (compute it with `dataExtent()` from
-   * `lib/plot/build`).
+   * Auto X / Auto Y RESTORE the auto state on that axis (they write `null`,
+   * the store's "fit the data" sentinel) and leave the other axis alone, so
+   * the axis keeps re-fitting as data lands — see `autoX`/`autoY` below for
+   * why writing the extent instead was the bug. Both are single history
+   * entries. Auto Y still fits only the lines CURRENTLY visible in the plot
+   * model (off lines are excluded upstream by the selection filter, spec §6
+   * "Auto Y fits selected lines only"), and, when an x window is committed,
+   * only the data INSIDE it (`buildPlot`'s windowed y auto-fit).
+   *
+   * `dataExtent` (from the parent, computed with `dataExtent()` in
+   * `lib/plot/build`) is what the manual limit FIELDS display while an axis is
+   * auto — the buttons no longer write it.
    *
    * The manual-limits panel two-way syncs with the store: its min/max fields
    * re-seed whenever the view's range changes (falling back to the data extent
@@ -288,16 +294,24 @@
     freqTimer = setTimeout(commitFreq, 300);
   }
 
-  // Auto X / Auto Y. On Nyquist these auto-fit the Real/Imag axes by resetting
-  // the corresponding `nyquistRange` axis to null (the model then fits the
-  // windowed locus, padded); elsewhere they set the explicit data extent.
+  // Auto X / Auto Y RESTORE THE AUTO STATE: they null that axis, leaving the
+  // other one exactly as it was. `null` is the store's auto sentinel — while
+  // an axis is null every rebuild re-fits it to the data, so "Auto" now stays
+  // auto as data arrives or changes (round-11 P5). Writing the CURRENT data
+  // extent instead (what these used to do) froze the axis at the moment of the
+  // click: the very act of asking for auto pinned it, and the next capture,
+  // load or recompute then rendered against a stale window. The Nyquist branch
+  // already worked this way and is the model. Both remain single history
+  // entries — a deliberate click is undoable — and the limit fields keep
+  // showing numbers because `shown` falls back to the live data extent while
+  // an axis is null.
   function autoX() {
     if (nyquist) viewState.setNyquistRange({ x: null, y: $current.nyquistRange.y });
-    else viewState.setRange($active, { x: [dataExtent.x[0], dataExtent.x[1]], y: $current.range.y });
+    else viewState.setRange($active, { x: null, y: $current.range.y });
   }
   function autoY() {
     if (nyquist) viewState.setNyquistRange({ x: $current.nyquistRange.x, y: null });
-    else viewState.setRange($active, { x: $current.range.x, y: [dataExtent.y[0], dataExtent.y[1]] });
+    else viewState.setRange($active, { x: $current.range.x, y: null });
   }
 
   // ---- Bode phase-pane y control + coherence right-axis control ----
@@ -384,9 +398,9 @@
 
     <span class="zdiv" aria-hidden="true"></span>
 
-    <button class="zbtn" title={nyquist ? 'Auto-fit the Real axis to the windowed locus' : 'Autoscale X to the full data extent'}
+    <button class="zbtn" title={nyquist ? 'Auto-fit the Real axis to the windowed locus' : 'Auto-fit X to the data (and keep re-fitting)'}
       onclick={autoX}>{nyquist ? 'Auto Re' : 'Auto X'}</button>
-    <button class="zbtn" title={nyquist ? 'Auto-fit the Imag axis to the windowed locus' : 'Autoscale Y (fits selected lines only)'}
+    <button class="zbtn" title={nyquist ? 'Auto-fit the Imag axis to the windowed locus' : 'Auto-fit Y to the visible lines (and keep re-fitting)'}
       onclick={autoY}>{nyquist ? 'Auto Im' : 'Auto Y'}</button>
 
     {#if showXScale || showYScale}

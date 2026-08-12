@@ -204,3 +204,81 @@ test('short Nyquist lines skip decimation entirely', () => {
   }, 200, 200);                                      // 200 columns → decimation would drop points
   expect(pathXs(b.paths[0].d).length).toBe(m);
 });
+
+// ── Round-11 P5: an AUTO y fits the data inside the committed x window ──────
+// Zooming into a quiet stretch used to leave a flat line pinned to the middle
+// of the plot, because the y autoscale still measured a peak 200 samples
+// off-screen.
+
+/** A monotonic line with a tall spike at x = 0 and small values after it. */
+const spikeLine = () => ({
+  x: Float64Array.from({ length: 101 }, (_, i) => i),
+  y: Float64Array.from({ length: 101 }, (_, i) => (i === 0 ? 1000 : i * 0.01)),
+  color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left' as const,
+  xMonotonic: true,
+});
+
+test('auto y fits only the samples inside an explicit x window', () => {
+  const model = { lines: [spikeLine()], xLabel: '', yLabel: '', yRange: null };
+  // No window: the x=0 spike sets the top of the axis.
+  expect(buildPlot({ ...model, xRange: null }, 800, 400).yDomain[1]).toBe(1000);
+  // Windowed past the spike: the axis fits 0.5 … 0.8, not 1000.
+  const zoomed = buildPlot({ ...model, xRange: [50, 80] }, 800, 400);
+  expect(zoomed.yDomain[1]).toBeCloseTo(0.8, 9);
+  expect(zoomed.yDomain[0]).toBeCloseTo(0.5, 9);
+});
+
+test('an EXPLICIT y range still wins over the windowed auto-fit', () => {
+  const b = buildPlot({
+    lines: [spikeLine()], xLabel: '', yLabel: '', xRange: [50, 80], yRange: [-5, 5],
+  }, 800, 400);
+  expect(b.yDomain).toEqual([-5, 5]);
+});
+
+test('an x window containing no samples falls back to the full y extent', () => {
+  // The window sits entirely beyond the data — an empty y domain would
+  // collapse the axis, so the whole line's extent stands in.
+  const b = buildPlot({
+    lines: [spikeLine()], xLabel: '', yLabel: '', xRange: [500, 600], yRange: null,
+  }, 800, 400);
+  expect(b.yDomain).toEqual([0.01, 1000]);
+});
+
+test('windowed auto y skips non-monotonic lines rather than binary-searching them', () => {
+  // x doubles back (parametric), so index bounds are meaningless; the scan
+  // tests each sample's x against the window instead.
+  const x = Float64Array.from([0, 5, 10, 5, 0]);
+  const y = Float64Array.from([100, 1, 2, 3, 200]);
+  const b = buildPlot({
+    lines: [{ x, y, color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left' }],
+    xLabel: '', yLabel: '', xRange: [4, 11], yRange: null,
+  }, 800, 400);
+  expect(b.yDomain).toEqual([1, 3]);            // both x=5 samples + x=10, not the x=0 ends
+});
+
+test('Nyquist (squareAspect) auto y is NOT windowed by the Real-axis range', () => {
+  // On Nyquist "x" is Real(H), not an ordering, so windowing y by it would be
+  // meaningless — the full locus extent must still drive the square.
+  const x = Float64Array.from([0, 1, 0, -1]);
+  const y = Float64Array.from([1, 0, -1, 0]);
+  const b = buildPlot({
+    lines: [{ x, y, color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left' }],
+    xLabel: 'Re', yLabel: 'Im', squareAspect: true, xRange: [0.5, 1], yRange: null,
+  }, 400, 400);
+  expect(b.yDomain[1] - b.yDomain[0]).toBeCloseTo(b.xDomain[1] - b.xDomain[0], 9);
+  expect(b.yDomain[0]).toBeLessThanOrEqual(-1);   // the whole locus, not a window slice
+});
+
+test('right-axis (coherence) lines never leak into the windowed left-axis y fit', () => {
+  const left = spikeLine();
+  const right = {
+    x: Float64Array.from({ length: 101 }, (_, i) => i),
+    y: Float64Array.from({ length: 101 }, () => 50),
+    color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'right' as const,
+    xMonotonic: true,
+  };
+  const b = buildPlot({
+    lines: [left, right], xLabel: '', yLabel: '', xRange: [50, 80], yRange: null, y2Range: [0, 1],
+  }, 800, 400);
+  expect(b.yDomain[1]).toBeCloseTo(0.8, 9);
+});

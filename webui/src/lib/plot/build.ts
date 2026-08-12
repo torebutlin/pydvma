@@ -84,19 +84,45 @@ const NYQUIST_DECIMATE_THRESHOLD = 8000;
  * for the interaction layer: the zoom guardrail (`clampToData`) and
  * the toolbar's Auto X / Auto Y need the extent of the lines
  * currently in the model.
+ *
+ * `xWindow` (round-11 P5) restricts the scan to the samples whose **x** falls
+ * inside `[lo, hi]` — what a y auto-fit must measure once an x window is
+ * committed, so zooming into a quiet stretch of a decaying record fills the
+ * plot with that stretch instead of leaving it a flat line squashed against a
+ * global peak 200 samples off-screen. Monotonic lines (`xMonotonic`, or a scan
+ * when the flag is absent) binary-search their slice; a non-monotonic line
+ * (parametric x) is scanned per sample against the window, never sliced. A
+ * window containing NO finite sample of any line falls back to the FULL
+ * extent — an empty y domain would otherwise collapse the axis. Pass it only
+ * for the y axis of a monotonic-x view; the caller (`buildPlot`) skips it on
+ * `squareAspect` (Nyquist), whose x is Real(H), not an ordering.
  */
-export function dataExtent(lines: PlotLine[], axis: 'x' | 'y', which: 'left' | 'right' | 'any')
-  : [number, number] {
+export function dataExtent(
+  lines: PlotLine[], axis: 'x' | 'y', which: 'left' | 'right' | 'any',
+  xWindow?: [number, number] | null,
+): [number, number] {
+  const w = xWindow && Number.isFinite(xWindow[0]) && Number.isFinite(xWindow[1])
+    && xWindow[1] >= xWindow[0] ? xWindow : null;
   let lo = Infinity, hi = -Infinity;
+  const take = (v: number) => {
+    if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  };
   for (const l of lines) {
     if (which !== 'any' && l.yAxis !== which) continue;
     const arr = axis === 'x' ? l.x : l.y;
-    for (let i = 0; i < arr.length; i++) {
-      const v = arr[i];
-      if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (!w) {
+      for (let i = 0; i < arr.length; i++) take(arr[i]);
+    } else if (l.xMonotonic ?? isMonotonicNonDecreasing(l.x)) {
+      const i1 = Math.min(upperBound(l.x, w[1]), arr.length - 1);
+      for (let i = lowerBound(l.x, w[0]); i <= i1; i++) take(arr[i]);
+    } else {
+      const n = Math.min(l.x.length, arr.length);
+      for (let i = 0; i < n; i++) if (l.x[i] >= w[0] && l.x[i] <= w[1]) take(arr[i]);
     }
   }
-  if (lo === Infinity) return [0, 1];
+  // Nothing finite inside the window (a gap, or a window between two samples):
+  // fall back to the whole line rather than hand back an empty domain.
+  if (lo === Infinity) return w ? dataExtent(lines, axis, which) : [0, 1];
   if (lo === hi) return [lo - 1, hi + 1];
   return [lo, hi];
 }
@@ -159,8 +185,11 @@ function upperBound(x: ArrayLike<number>, v: number): number {
  * Build the renderable plot for a `width` x `height` px drawing area.
  *
  * Domains: explicit ranges win; otherwise autoscale to finite data
- * (left-axis lines only for y). `squareAspect` then equalises both
- * domain spans around their centres (spec §5: Nyquist square).
+ * (left-axis lines only for y). An auto y with an EXPLICIT x window fits only
+ * the samples inside that window (round-11 P5; `dataExtent`'s `xWindow`), so
+ * a zoomed-in stretch fills the plot instead of being flattened by an
+ * off-screen global peak. `squareAspect` then equalises both domain spans
+ * around their centres (spec §5: Nyquist square).
  *
  * Decimation strategy per line:
  * - Nyquist (`squareAspect`): x is parametric, so min-max decimation
@@ -183,7 +212,11 @@ function upperBound(x: ArrayLike<number>, v: number): number {
  */
 export function buildPlot(model: PlotModel, width: number, height: number): BuiltPlot {
   let xDomain = model.xRange ?? dataExtent(model.lines, 'x', 'any');
-  let yDomain = model.yRange ?? dataExtent(model.lines, 'y', 'left');
+  // Auto-fit y to what is ACTUALLY VISIBLE: with an x window committed, only
+  // the samples inside it (round-11 P5). Nyquist is excluded — its x is
+  // Real(H), so an "x window" there windows nothing meaningful.
+  let yDomain = model.yRange
+    ?? dataExtent(model.lines, 'y', 'left', model.squareAspect ? null : model.xRange);
 
   if (model.squareAspect) {                        // spec §5: Nyquist square, fit data
     const xs = xDomain[1] - xDomain[0], ys = yDomain[1] - yDomain[0];

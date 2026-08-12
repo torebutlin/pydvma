@@ -81,7 +81,20 @@
   // PSEUDO-SETS the actions layer registers (round-5 item 13; round-7 item 6)
   // — there is no App-level recon overlay any more.
   const modal = createModalStore();
-  const actions = createActions(engine, selection, analysisSettings, modal, toasts);
+  // The axis-auto contract (round-11 P5, from Tore's lab feedback: "when data
+  // is added to a view then the view — at least the y-range — should be
+  // auto-ed"). The actions layer knows WHEN a view's contents changed; the
+  // view store knows what auto MEANS (a null axis, re-fitted on every
+  // rebuild). This notifier is the seam between them — history-free, because
+  // nothing the user did is being undone.
+  const actions = createActions(engine, selection, analysisSettings, modal, toasts, {
+    // New lines: re-fit y. Also x when the view had nothing in it before —
+    // any x window there is a leftover from data that has since gone.
+    linesAdded: (view, { viewWasEmpty }) => viewState.relaxToAuto(view, { x: viewWasEmpty }),
+    // Same lines, different units/quantity: y only — the x window still means
+    // what it did.
+    unitsChanged: (views) => { for (const v of views) viewState.relaxToAuto(v); },
+  });
   // Interactive damping-fit state (round-7 items 3+4): the Sono card opens
   // the panel, the panel + the sono start-time line edit the knobs, and
   // `refitDamping` below runs the engine op and pushes decoded results in.
@@ -885,7 +898,10 @@
     if (view === 'sono' && sonoExtent) return sonoExtent;
     return {
       x: dataExtent(model.lines, 'x', 'any'),
-      y: dataExtent(model.lines, 'y', 'left'),
+      // Windowed exactly as `buildPlot` auto-fits y (round-11 P5), so the
+      // toolbar's y fields show the range the plot is ACTUALLY drawing while
+      // the axis is auto — not a global extent the zoomed view never reaches.
+      y: dataExtent(model.lines, 'y', 'left', model.squareAspect ? null : model.xRange),
     };
   });
 
@@ -1208,9 +1224,13 @@
               <canvas bind:this={sonoCanvas} data-testid="sono-canvas" class="sono-heat"></canvas>
               <!-- Gestures live on the axis overlay: `mode` routes box/pan and
                    `extentOverride` supplies the clamp guardrail the empty-lines
-                   model can't (round-7 item 2). -->
+                   model can't (round-7 item 2). `priorRangeOverride` hands over
+                   the RAW slice range, because `sonoAxisModel` resolves an auto
+                   axis to the full extent before rendering — without it the
+                   first gesture would pin the other axis (round-11 P5). -->
               <PlotSurface bind:this={plotRef} model={sonoAxisModel} {mode} {viewState} overlay
-                extentOverride={sonoExtent ?? undefined} />
+                extentOverride={sonoExtent ?? undefined}
+                priorRangeOverride={{ x: range.x, y: range.y }} />
               {#if $damping.open && sonoWindow && $damping.startTime !== null}
                 <DampingStartLine window={sonoWindow} value={$damping.startTime}
                   busy={$damping.busy}

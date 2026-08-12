@@ -11,6 +11,11 @@
    * - box-zoom mode: drag draws a dashed rubber band; releasing
    *   commits `rubberBandToRange` → `clampToData` → `setRange`.
    *   Sub-6-px drags are clicks (no-op).
+   * - a gesture commits ONLY the axes it targeted (round-11 P5): a band
+   *   covering ≥95% of an axis, or a pan moving it <1% of its span, leaves
+   *   that axis at its PREVIOUS stored value — `null` (auto) included, so an
+   *   x-only box zoom no longer freezes the y axis at today's extent. A
+   *   gesture that targets neither axis commits nothing at all (no history).
    * - pan mode: dragging pans a LOCAL preview range (rAF-throttled,
    *   no store writes); releasing commits EXACTLY ONE `setRange` —
    *   gesture coalescing that the store's 50-entry history cap
@@ -54,7 +59,7 @@
    */
   import { buildPlot, dataExtent, type PlotModel } from '../lib/plot/build';
   import { fmtTick } from '../lib/plot/scales';
-  import { rubberBandToRange, clampToData, panBy } from '../lib/plot/zoom';
+  import { rubberBandToRange, clampToData, panBy, boxTouchesAxis, panTouchesAxis } from '../lib/plot/zoom';
   import { CHROME } from '../lib/plot/chrome';
   import type { ViewState } from '../lib/stores/viewstate';
   import { get } from 'svelte/store';
@@ -67,6 +72,7 @@
     onCommit = undefined,
     onAutoFit = undefined,
     extentOverride = undefined,
+    priorRangeOverride = undefined,
   }: {
     model: PlotModel;
     /** Active drag tool; bind ZoomToolbar's `mode` to this. */
@@ -113,12 +119,33 @@
      * time/frequency extents here. Absent ⇒ derived from `model.lines`.
      */
     extentOverride?: { x: [number, number]; y: [number, number] };
+    /**
+     * The COMMITTED ranges to fall back on for an axis a gesture did not
+     * target (round-11 P5). Needed only when the model's own `xRange`/`yRange`
+     * are RESOLVED rather than raw — the sono axis model substitutes the full
+     * extent for an auto axis before handing it over, so reading them back
+     * would turn "auto" into an explicit range on the first gesture. App
+     * passes the raw view-slice range there. Absent ⇒ the model's own ranges,
+     * which everywhere else ARE the committed ones.
+     */
+    priorRangeOverride?: { x: [number, number] | null; y: [number, number] | null };
   } = $props();
 
   /** Commit a gesture range to the override callback, else the default setRange. */
   function commitRange(range: { x: [number, number] | null; y: [number, number] | null }): void {
     if (onCommit) onCommit(range);
     else if (viewState) viewState.setRange(get(viewState.active), range);
+  }
+
+  /**
+   * The ranges as COMMITTED before this gesture — `model.xRange`/`model.yRange`
+   * are exactly what the parent derived from the store (the live pan preview
+   * rides on `renderModel`, never on `model`), so `null` here means "that axis
+   * is auto". An axis the gesture did not target is committed back at this
+   * value, auto included (round-11 P5).
+   */
+  function priorRange(): { x: [number, number] | null; y: [number, number] | null } {
+    return priorRangeOverride ?? { x: model.xRange, y: model.yRange };
   }
   /** Auto-fit via the override callback, else the default autoFit. */
   function autoFitNow(): void {
@@ -372,7 +399,18 @@
         if (Math.hypot(delta.dxPx, delta.dyPx) >= MIN_DRAG_PX) {
           const r = panBy(panStartDom, delta, { width: pw, height: ph });
           const c = clampToData(r as { x: [number, number]; y: [number, number] }, gestureExtent);
-          commitRange({ x: fromGestureX(c.x!), y: fromGestureY(c.y!) });
+          // Only the axes that actually MOVED are committed (round-11 P5): a
+          // near-horizontal drag leaves y exactly as it was, so an auto y
+          // stays auto instead of being frozen at today's extent.
+          const movedX = panTouchesAxis(c.x, panStartDom.x);
+          const movedY = panTouchesAxis(c.y, panStartDom.y);
+          const prev = priorRange();
+          if (movedX || movedY) {
+            commitRange({
+              x: movedX ? fromGestureX(c.x!) : prev.x,
+              y: movedY ? fromGestureY(c.y!) : prev.y,
+            });
+          }
         }
       }
       panPreview = null;
@@ -384,14 +422,22 @@
       if (viewState && built) {
         // Run the band→range maths in GESTURE space (log-x → log10) so a
         // box on a log axis maps correctly, then invert x back to data.
-        const range = rubberBandToRange(
-          rect,
-          toGesture({ x: built.xDomain, y: built.yDomain }),
-          { width: pw, height: ph }
-        );
+        const gdom = toGesture({ x: built.xDomain, y: built.yDomain });
+        const range = rubberBandToRange(rect, gdom, { width: pw, height: ph });
         if (range) {
           const c = clampToData(range, gestureExtent);
-          commitRange({ x: c.x ? fromGestureX(c.x) : null, y: c.y ? fromGestureY(c.y) : null });
+          // Judge INTENT on the raw band (pre-clamp) against the displayed
+          // domain: a band spanning the full height is an x-only zoom, and it
+          // must leave y untouched — auto y included (round-11 P5).
+          const gotX = boxTouchesAxis(range.x, gdom.x);
+          const gotY = boxTouchesAxis(range.y, gdom.y);
+          const prev = priorRange();
+          if (gotX || gotY) {
+            commitRange({
+              x: gotX ? (c.x ? fromGestureX(c.x) : null) : prev.x,
+              y: gotY ? (c.y ? fromGestureY(c.y) : null) : prev.y,
+            });
+          }
         }
       }
     }
