@@ -28,18 +28,75 @@ settings.channels = 2
 
 ### Listing Available Devices
 
+Start here, before writing any settings:
+
 ```python
-import sounddevice as sd
-
-# List all available devices
-print(sd.query_devices())
-
-# Set specific device by index
-settings.device_index = 1  # Use the index from sd.query_devices()
+dvma.list_available_devices()
 ```
 
-To see which device that index actually resolves to, and the rates it
-can genuinely run:
+It reports one block per *physical* device rather than one line per
+enumeration slot, and for each one it says what pydvma actually knows:
+
+```text
+  Line (U24XL with SPDIF I/O)   [ESI U24 XL]
+    calibration : CHARACTERISED  full scale 1.8819 V peak, fixed gain
+    hardware    : clocks 8000/16000/32000/44100/48000 Hz
+    >> index 27  Windows WDM-KS       delivers 44100/48000     24-bit, refuses rates it cannot clock
+       index 23  Windows WASAPI       delivers 8000/16000/32000/44100/48000
+       index 10  Windows DirectSound  delivers 44100
+       index 1   MME                  delivers 44100
+```
+
+From the command line, the same report without starting a server:
+
+```bash
+pydvma-serve --list-devices
+```
+
+Three things in there are worth reading carefully.
+
+**`calibration` — are the readings volts, or not?** Channel counts and
+sample rates come from the driver and are equally reliable for any
+interface. The voltage scale does not. `CHARACTERISED` means the model
+is in pydvma's device table, so `VmaxSC` is derived and readings are
+real volts. `NEEDS GAIN` means the model is known but has an analogue
+knob no audio API can read — state it with `input_gain_db`.
+`uncalibrated` means the default `VmaxSC = 1.0` is a *placeholder*, so
+readings are full-scale units; fix it from the maker's spec, or measure
+it with [`verify_input_scaling`](../api/verify.md) against a source of
+known level.
+
+**`hardware` vs `delivers` — one interface, several backends.** On
+Windows a single device is published once per host API, and they are
+not equivalent. The `>>` marks the one pydvma recommends.
+
+**The index moves.** It is a position in an enumeration, not an
+identity, so prefer to name the device:
+
+```python
+settings = dvma.MySettings(device='U24XL', fs=48000, channels=2)
+# note: using 'Line (U24XL with SPDIF I/O)' via Windows WDM-KS
+#       (24-bit, refuses rates it cannot clock); 4 backends available
+#       - device index 27
+```
+
+`device=` takes a case-insensitive substring, picks the best backend for
+the rate you asked for, and records the name and host API so a later
+capture follows the hardware if the list reorders. Ask for a rate the
+recommended backend cannot clock and it moves to one that can, and says
+so:
+
+```python
+dvma.MySettings(device='U24XL', fs=8000)
+# note: ... via Windows WASAPI ... [not the default backend:
+#       Windows WDM-KS cannot clock 8000 Hz] - device index 23
+```
+
+It refuses rather than guess if the name matches two different devices.
+An index still works if you want one (`device_index=27`), and
+`raw=True` gives the old flat listing.
+
+To query a configured device directly:
 
 ```python
 from pydvma import streams

@@ -345,31 +345,36 @@ is still open, as one consolidated list.
     name-only match found four candidates and gave up — hence the
     identity is (name, host API); `MySettings` gained `device_name` and
     `device_hostapi`, both self-populating after the first capture.
-    STILL OPEN: a user-facing SELECTOR by partial name
-    (`MySettings(device='U24XL')`) plus a documented host-API
-    preference order, so nobody has to know that index 27 is the
-    24-bit one. See the cross-platform device/fs UX item below.
-  - **Cross-platform device + fs UX** (new, 2026-08-12) — the naming
-    and rate problems are not one problem but three, and only the
-    first is now fixed. (a) index ≠ identity — DONE. (b) the same box
-    has a DIFFERENT name on each OS (U24 XL: `U24XL with SPDIF I/O` on
-    macOS vs `Line (U24XL with SPDIF I/O)` on Windows; the 2i2 is
-    generic `Analogue 1 + 2 (Focusrite USB Audio)` on Windows), so a
-    settings file written on the Mac will not name-match on the PC —
-    the `_soundcard_specs` profile layer already bridges this but
-    device SELECTION does not use it. (c) Windows lists one box many
-    times and the entries are NOT equivalent (`list_available_devices()`
-    prints 38 rows here, 7 of them this one U24 XL, with no host API,
-    no in/out marking and no hint that one is 16-bit-with-fake-rates
-    and another 24-bit-and-honest). Proposal: name the hardware, state
-    the rate, let pydvma choose the backend and REPORT what it did —
-    `MySettings(device='U24XL')`, capability-ordered host-API choice
-    (WDM-KS → WASAPI-exclusive → WASAPI shared → DirectSound → MME)
-    with the choice printed, refuse-and-list on genuine ambiguity,
-    `native_input_rates` everywhere (DONE) so a non-native fs is either
-    pinned or reported as resampled, and a grouped
-    `list_available_devices()` showing ladder + word length per
-    backend.
+    The user-facing SELECTOR landed too — see the item below.
+  - ~~**Cross-platform device + fs UX**~~ — DONE 2026-08-12, in
+    `pydvma/devices.py`. `list_available_devices()` and
+    `pydvma-serve --list-devices` are the pre-choice step: one block per
+    PHYSICAL device, backends ranked with the recommended one marked,
+    the hardware's rate ladder shown separately from what each backend
+    actually delivers, and an explicit calibration status
+    (CHARACTERISED / NEEDS GAIN / uncalibrated) so an assumed voltage
+    scale can never pass for a known one. `MySettings(device='U24XL')`
+    selects by name, picks the backend for the requested fs (fs=8000
+    moves off WDM-KS onto WASAPI and says why), and refuses to guess
+    between two real devices — with one reported tie-break, auxiliary
+    endpoints (S/PDIF, Stereo Mix) losing to the analogue input. Setup
+    shows one row per device with an "all backends" escape hatch, plus
+    the calibration line. Docs in `docs/user-guide/acquisition.md`.
+    STILL OPEN from that item: (b) the same box has a DIFFERENT name on
+    each OS (U24 XL is `U24XL with SPDIF I/O` on macOS vs `Line (U24XL
+    with SPDIF I/O)` on Windows; the 2i2 is generic `Analogue 1 + 2
+    (Focusrite USB Audio)` on Windows), so a `--settings` file written
+    on the Mac still will not name-match on the PC. The
+    `_soundcard_specs` profile layer already bridges the models —
+    `devices.resolve` could fall back to matching a PROFILE LABEL
+    (`device='ESI U24 XL'`) when the raw name misses, which would make
+    settings files portable across machines.
+  - **Input dropdown still lists output-only devices** (new,
+    2026-08-12) — Setup's input selector shows Speakers/Headphones
+    entries because the bridge sends one flat soundcard list for both
+    directions. Pre-existing, cosmetic, and now more visible with the
+    list shortened; `devices.backend_map(kind=...)` already computes
+    the per-direction split the fix needs.
   - **Output-side calibration not attempted** — output volume
     (−55..0 dB digital) is not pinned and `output_VmaxSC` is not
     derived from `max_output_dbu` (+6.9 dBu); worth doing if the U24
