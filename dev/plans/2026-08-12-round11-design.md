@@ -145,6 +145,30 @@ freq-scale default on method toggle, unmask TypeErrors.
   in-card dashed-line key beside the σ toggle — legend model stays
   untouched) + docs link.
 
+## Package P7 — long-calc progress + stop (Tore mid-round: "progress bar
+when it's taking longer than ~3 s, with a stop")
+
+Two distinct resource problems, two answers:
+- MEMORY is already solved deterministically (P2): wasm32 gives a
+  FIXED ~2 GB ceiling regardless of host RAM, so a settings-computed
+  preflight (n_freqs × n_cols × 16 B vs 768 MiB) beats any
+  device-memory query. No navigator.deviceMemory sniffing.
+- TIME gets progress + stop: the CWT loops one scale at a time with
+  the count known upfront → the engine worker posts determinate
+  progress frames mid-compute (postMessage works while busy; only
+  receiving is blocked). An optional per-scale callback threads from
+  the worker glue into `_morlet_cwt_1d` (no-op default keeps the
+  native API unchanged), covering BOTH the CWT sonogram and the CWT
+  damping fit. UI: determinate bar + Stop in the Sono card once a
+  tracked calc runs past ~3 s (BusyChip gains the determinate fill
+  when frames exist).
+- STOP semantics: a busy worker cannot receive a cancel message and
+  SharedArrayBuffer needs COOP/COEP headers GitHub Pages does not
+  send — so Stop = TERMINATE the worker + auto-reboot the engine
+  (existing 'starting engine…' state; a few seconds), with every
+  pending queued calc rejected cleanly so cards unwind. Works
+  identically on Pages / bridge / JupyterLite.
+
 ## Sequencing
 
 P1, P2, P3 in parallel (disjoint files) → P4 after P1 → P5 after P2
