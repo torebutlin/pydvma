@@ -125,8 +125,57 @@ flat-topped. *Digital attenuation hides clipping from exactly the
 indicator an operator would use to check for it.* Another reason to pin
 the control at 0 dB rather than leave it to a slider.
 
-The one silver lining: because the shape survives, the clipping is
-quantifiable. Inverting the crest factor of a symmetrically clipped
+### So what IS the input range? Two clip points, only one of them moves
+
+Tore's follow-up, and the question that ties the section together:
+does the gain change the acceptable input voltage? Rigol at 3.000 Vpp
+(1.500 Vpk), endpoint gain swept across its whole range, WDM-KS 24-bit:
+
+| gain | peak FS | predicted FS | crest | THD | |
+|---|---|---|---|---|---|
+| −20 dB | 0.07842 | 0.07880 | 1.416 | −74.0 | clean |
+| −12 dB | 0.19768 | 0.19793 | 1.416 | −74.0 | clean |
+| −6 dB | 0.39450 | 0.39493 | 1.416 | −74.0 | clean |
+| 0 dB | 0.78771 | 0.78798 | 1.416 | −74.0 | clean |
+| +2 dB | 0.99119 | 0.99201 | 1.416 | −74.0 | clean |
+| +2.5 dB | 0.99159 | — | 1.416 | −74.0 | clean |
+| **+3 dB** | 1.00000 | 1.11305 | **1.321** | **−29.7** | **CLIPPED** |
+| +6 dB | 1.00002 | 1.57223 | 1.181 | −15.7 | CLIPPED |
+| +12 dB | 1.00003 | 3.13701 | 1.077 | −10.8 | CLIPPED |
+
+Level tracks the prediction to better than 0.05 % everywhere it is
+clean, crest factor sits on √2 = 1.414 throughout, and clipping starts
+between +2.5 and +3 dB against a predicted +2.07 dB from the measured
+full scale. So:
+
+- **The ANALOGUE clip point is FIXED at 3.81 Vpp (±1.9036 Vpk) and no
+  software setting moves it.** That is the device's input range, full
+  stop.
+- **The DIGITAL clip point moves with the gain**: 3.81 Vpp × 10^(−G/20).
+- **At 0 dB the two coincide** — the unique setting where digital full
+  scale equals analogue full scale, which is exactly why pinning there
+  is right. Above 0 dB the digital limit bites first and you LOSE usable
+  range (at +12 dB you clip at ~0.96 Vpp, a quarter of the device's
+  capability). Below 0 dB the range is unchanged but the meter
+  under-reads, so hitting the analogue limit becomes invisible.
+
+The gain therefore never *increases* the input range: at best it leaves
+it alone, at worst it shrinks it, and below unity it hides the fact that
+you have hit it. Which also settles the 5 Vpp case above from the other
+direction — 2.5 Vpk is past the fixed analogue limit, so it is clipped
+at EVERY setting, and the sweep that could not un-clip it was not going
+to succeed at any gain.
+
+Two footnotes. The claimed 0.5 dB step is not exactly honoured: +2.0 and
++2.5 dB both produced ~+2.00 dB of actual gain (0.99119 and 0.99159 FS).
+And band-limited interpolation of the captured samples overshoots the
+true peak by ~6 % here (5 kHz at 48 kHz is only 9.6 samples/cycle), so
+the plain sample peak — which over ~5000 cycles of drifting sample phase
+lands on the real peak anyway — is the trustworthy figure. The
+interpolated column was dropped for that reason.
+
+The one silver lining of the over-range case: because the shape
+survives, the clipping is quantifiable. Inverting the crest factor of a symmetrically clipped
 sine gives clip-level/amplitude = 0.7628, hence a source peak of
 **2.496 Vpk = 4.99 Vpp** against the 5.00 Vpp commanded — 0.2 %. A
 possible future "how over-range were you?" diagnostic, and here a
