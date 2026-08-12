@@ -139,26 +139,40 @@ TODO.
 
 ## 3. Sample rate — what is actually adjustable here
 
-The honest host APIs agree the converter ladder is **44.1 and 48 kHz,
-full stop**:
+The four host APIs disagree, and each one disagrees usefully:
 
 | host API | rates accepted | word delivered (float32 path) |
 |---|---|---|
-| WDM-KS | 44100, 48000 | **24 bit** |
-| WASAPI exclusive | 44100, 48000 | 16 bit (PortAudio negotiation) |
+| **WASAPI exclusive** | **8000, 16000, 32000, 44100, 48000** | 16 bit (PortAudio negotiation) |
+| WDM-KS | 44100, 48000 only | **24 bit** |
 | WASAPI shared | 44100 only (the endpoint's Default Format) | 24 bit |
 | MME / DirectSound | 8000 … 192000 — **all accepted, most fake** | **16 bit** |
 
-Two differences from the Mac worth knowing:
+**WASAPI exclusive reproduces the Mac's CoreAudio ladder exactly** —
+8/16/32/44.1/48 kHz, the same five rates, including the low ones the
+manual does not admit to. Exclusive mode does not resample (a format
+the device cannot clock fails at `IAudioClient::Initialize`), so those
+low rates are real here too. **WDM-KS refuses them outright**, which is
+what an earlier probe in this session saw before WASAPI was tried —
+hence a wrong note in the first draft of this document claiming the low
+rates were macOS-only. They are not; they are *host-API*-only.
 
-- **The 8/16/32 kHz native rates CoreAudio exposes are not available
-  here.** The Windows driver offers only 44.1/48 k. The Mac round's
-  "8 kHz native with fs-tracking anti-alias, ~15.3 ENOB" bonus is a
-  macOS-only property of this box.
-- **Windows shared mode fixes the converter rate**, not pydvma. The
-  endpoint's Default Format is currently 44100 Hz / 24-bit (registry
-  `PKEY_AudioEngine_DeviceFormat`). Change it in Sound → Recording →
-  Line (U24XL) → Advanced, or bypass it with WDM-KS.
+Not yet demonstrated on Windows: that the anti-alias filter TRACKS the
+rate the way the Mac round showed (out-of-band tone rejected, not
+folded). The exclusive-mode path is 16-bit through PortAudio here, and
+a 1 kHz tone at fs = 8000 is useless for the test anyway — every
+harmonic aliases exactly onto another harmonic. Needs an out-of-band
+tone (e.g. 5 kHz at fs = 8000); see TODO.
+
+The awkward consequence: **no single Windows host API is best at
+everything.** WASAPI exclusive has the rate ladder, WDM-KS has the
+24-bit word. Both refuse to lie, which is the property that matters
+most.
+
+Also: **Windows shared mode fixes the converter rate**, not pydvma. The
+endpoint's Default Format is currently 44100 Hz / 24-bit (registry
+`PKEY_AudioEngine_DeviceFormat`). Change it in Sound → Recording →
+Line (U24XL) → Advanced, or bypass it with an exclusive host API.
 
 ### The MME/DirectSound rates are fiction, and here is the proof
 

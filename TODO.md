@@ -309,13 +309,21 @@ is still open, as one consolidated list.
     fixed dither power, not converter noise. Even plain `fs=48000` on
     MME is resampled from 44.1 k. Fix: probe WDM-KS / WASAPI-exclusive
     for the real ladder, or read the endpoint's `DeviceFormat`.
-  - **Windows default path is 16-bit** (new, 2026-08-12) — on the
-    float32 path pydvma actually uses: MME **16 bit**, WDM-KS 24 bit,
-    WASAPI shared 24 bit, WASAPI exclusive 16 bit (PortAudio
-    negotiation). pydvma defaults to the MME endpoint, so it throws
-    away 8 bits by default on Windows. Also: the 8/16/32 kHz native
-    rates CoreAudio exposes are NOT available on Windows (44.1/48 k
-    only), so the Mac round's low-fs advantage is macOS-only.
+  - **No Windows host API is best at everything** (new, 2026-08-12) —
+    **WASAPI exclusive** reproduces the Mac's full CoreAudio ladder
+    (8/16/32/44.1/48 k — exclusive mode cannot resample, so the low
+    rates are real) but PortAudio negotiates it to **16 bit**;
+    **WDM-KS** delivers a **24-bit** word but refuses everything below
+    44.1 k; WASAPI shared is 24-bit locked to the control-panel rate;
+    MME/DirectSound are 16-bit AND fabricate rates — and MME is what
+    pydvma defaults to. Worth deciding a documented preference order,
+    and whether to expose the host API in Setup at all.
+  - **Anti-alias tracking unverified on Windows** (new, 2026-08-12) —
+    the Mac round proved the filter follows fs (out-of-band tone
+    rejected, not folded) at 8 kHz. Not reproduced here: the
+    exclusive-mode path is 16-bit, and a 1 kHz tone at fs = 8000 is
+    degenerate for the test (every harmonic aliases onto another
+    harmonic). Needs an out-of-band source, e.g. 5 kHz at fs = 8000.
   - **`device_index` is not stable on Windows** (new, 2026-08-12) —
     the WDM-KS block reordered between two enumerations minutes apart
     with no hardware change and the same device count (U24 XL Line

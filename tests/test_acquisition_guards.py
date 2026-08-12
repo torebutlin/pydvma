@@ -115,7 +115,16 @@ class TestVmaxHelpers:
     signal_generator) reads through these helpers.
     """
 
-    def test_input_soundcard_defaults_to_1(self):
+    def test_input_soundcard_defaults_to_1(self, monkeypatch):
+        # Isolate from whatever is plugged into the machine running the
+        # tests: if the DEFAULT input happens to be a characterised
+        # fixed-gain interface (an ESI U24 XL was, on the Windows PC,
+        # 2026-08-12), MySettings correctly derives VmaxSC from its
+        # profile and this default is no longer 1.0. Returning None from
+        # the name lookup is the documented "device cannot be
+        # identified" path, which leaves VmaxSC alone.
+        from pydvma import streams
+        monkeypatch.setattr(streams, 'soundcard_device_name', lambda s: None)
         s = dvma.MySettings(device_driver='soundcard')
         assert s.input_vmax() == 1.0
 

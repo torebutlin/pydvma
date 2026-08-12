@@ -224,31 +224,126 @@ def soundcard_device_name(settings):
         return None
 
 
+# Standard audio rate ladder, ascending — probed against a host API that
+# refuses rather than resamples, this yields a device's real capability.
+_RATE_LADDER = (8000, 11025, 16000, 22050, 32000, 44100, 48000,
+                64000, 88200, 96000, 176400, 192000)
+
+# Windows host APIs that report a device's OWN capability. Both bypass
+# the shared-mode audio engine, so `check_input_settings` against them
+# refuses a rate the hardware cannot clock. WASAPI is tried first
+# because its device names come from the same endpoint as the MME /
+# DirectSound entries and therefore match exactly; WDM-KS names come
+# from the kernel-streaming filter and can differ (on a Scarlett 2i2 the
+# WDM-KS twin embeds the USB product id where the endpoint name does
+# not — see `_soundcard_specs.device_profile`).
+_WINDOWS_HONEST_HOSTAPIS = ('Windows WASAPI', 'Windows WDM-KS')
+
+
+def _windows_native_rates(name, channels):
+    """Rate ladder a Windows device can GENUINELY clock, ascending.
+
+    Windows exposes one piece of hardware once per host API, and only
+    some of those entries tell the truth about rate. MME and DirectSound
+    run through the shared-mode audio engine, which accepts ANY rate and
+    sample-rate-converts to the endpoint's Default Format — measured on
+    an ESI U24 XL (2026-08-12): a "192 kHz" MME capture of a 44.1 kHz
+    endpoint carries a dead-flat dither floor above 22 kHz and no
+    information at all, and even a plain 48 kHz request is converted.
+    WASAPI exclusive mode and WDM-KS bypass the engine and refuse, so
+    probing one of THOSE twins of the same hardware gives the real
+    ladder.
+
+    Args:
+        name (str): PortAudio device name to find a twin of, as reported
+            for the endpoint the caller actually configured.
+        channels (int): Channel count to probe with — a rate can be
+            available at one channel count and not another.
+
+    Returns the accepted rates in ascending order, or ``[]`` when the
+    platform is not Windows, no twin is found, or every probe fails
+    (meaning "capability unknown", exactly as on an unsupported
+    platform). Matching is by exact name first, then by prefix, which
+    covers MME truncating names to 31 characters.
+    """
+    if sd is None or not name:
+        return []
+    try:
+        extra = sd.WasapiSettings(exclusive=True)
+    except Exception:
+        # Not Windows, or a sounddevice too old to offer the setting.
+        return []
+
+    try:
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+    except Exception:
+        return []
+
+    def twins(api_name):
+        out = []
+        for i, dev in enumerate(devices):
+            if not dev['max_input_channels']:
+                continue
+            try:
+                if hostapis[dev['hostapi']]['name'] != api_name:
+                    continue
+            except (IndexError, KeyError):
+                continue
+            other = dev['name']
+            if other == name or other.startswith(name) or name.startswith(other):
+                out.append(i)
+        return out
+
+    for api_name in _WINDOWS_HONEST_HOSTAPIS:
+        exclusive = extra if api_name == 'Windows WASAPI' else None
+        for index in twins(api_name):
+            rates = []
+            for rate in _RATE_LADDER:
+                try:
+                    sd.check_input_settings(device=index,
+                                            channels=int(channels),
+                                            samplerate=rate,
+                                            extra_settings=exclusive)
+                    rates.append(float(rate))
+                except Exception:
+                    continue
+            if rates:
+                return rates
+    return []
+
+
 def native_input_rates(settings):
     """Sample rates the configured device can GENUINELY run at, ascending.
 
-    Only macOS soundcard devices can answer this today, via CoreAudio's
-    published rate list. Everywhere else — and whenever the query fails —
-    this returns an empty list, meaning "capability unknown", and callers
-    fall back to the older probe-based behaviour.
+    Answered on macOS via CoreAudio's published rate list, and on
+    Windows by probing a WASAPI-exclusive or WDM-KS twin of the same
+    hardware (see :func:`_windows_native_rates`). Anywhere else — and
+    whenever the query fails — this returns an empty list, meaning
+    "capability unknown", and callers fall back to the older probe-based
+    behaviour.
 
     The distinction matters because ``sd.check_input_settings`` is not a
-    capability probe on macOS: it approves any rate CoreAudio is willing
-    to RESAMPLE to, which is all of them. A Scarlett 2i2 accepts a
-    3 kHz request while its hardware ladder starts at 44.1 kHz, and the
-    resulting conversion is silent and of ratio-dependent quality (see
-    ``pydvma._coreaudio``). Asking the hardware directly is the only way
-    to know what a capture will really run at.
+    capability probe against a resampling host API. On macOS it approves
+    any rate CoreAudio is willing to RESAMPLE to, which is all of them:
+    a Scarlett 2i2 accepts a 3 kHz request while its hardware ladder
+    starts at 44.1 kHz, and the resulting conversion is silent and of
+    ratio-dependent quality (see ``pydvma._coreaudio``). Windows MME and
+    DirectSound behave the same way through the shared-mode audio
+    engine. Asking hardware that refuses is the only way to know what a
+    capture will really run at.
     """
-    if settings.device_driver != 'soundcard' or not _coreaudio.available():
+    if settings.device_driver != 'soundcard':
         return []
     name = soundcard_device_name(settings)
     if not name:
         return []
-    device_id, _ = _coreaudio.find_device(name)
-    if device_id is None:
-        return []
-    return _coreaudio.native_rates(device_id)
+    if _coreaudio.available():
+        device_id, _ = _coreaudio.find_device(name)
+        if device_id is None:
+            return []
+        return _coreaudio.native_rates(device_id)
+    return _windows_native_rates(name, getattr(settings, 'channels', 1) or 1)
 
 
 def output_shares_input_clock(settings):
