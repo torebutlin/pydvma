@@ -135,6 +135,43 @@ planet 22c practicalities (plain-language, discussed with Tore
   the point is escaping the old NI PCI estate, not adding new
   internal cards (Tore, 2026-08-11).
 
+## AoIP endpoint class sweep (2026-08-12)
+
+Question from Tore: does Dante open another device class worth
+looking at? Answer: the class exists ("AoIP endpoints") but **the
+planet 22c is its value outlier** — nothing certified comes close at
+lab prices. The class is priced for the commercial-install/broadcast
+market. Web-researched 2026-08-12; prices are that day's snapshot.
+
+| Tier | Examples | 2i2o cost | Gain architecture |
+|---|---|---|---|
+| Value outlier | **ESI planet 22c** | **£159 single box** | fixed 2-position range switch |
+| Audinate own-brand | AVIO analog in + out adapter pair | ~£430/pair | **software-stepped ranges** via Dante Controller (+24/+4/0 dBu, 0 dBV, −10 dBV) — DAQ-like, but 2.7× the 22c |
+| Certified pro | Neutrik NA-2I2O-DLINE (~£310–370), Shure ANI22 (~£540), Radial DAN-TX2/RX2 (~£920/pair), Attero unDIO2x2 (POA, est. £450+) | £310–920 | software (browser/Dante Controller) |
+| Grey-market OEM | ToVi/OREI DXA-A2 pair (~£220), J-Tech DA2EX/DX pair (~£260), MAXSQUARE (~£377) | £220–380 | physical DIP/level switches; claim Dante Ultimo silicon but NOT in Audinate's certified device catalogue |
+
+Cross-ecosystem: **AES67-only budget hardware is a dead end** (one
+€99 hobbyist unit with reported dropout bugs); **AVB never grew a
+budget tier** (MOTU AVB line from ~$850). At lab prices it is Dante
+or nothing.
+
+Host-side precision (corrects the ~£40 estimates above): **DVS is
+£45**/machine perpetual non-transferable (£85 transferable), rates
+44.1–192 k with channel count dropping at high rates. TRAP: the
+cheaper "Dante Via" product is locked to 48 kHz — avoid. Sample rate
+is genuinely software-settable per device (Dante Controller); devices
+must share a rate to route to the same capture. Potentially
+interesting FREE host route: Dante devices have an AES67 mode and
+PipeWire ≥ 1.1 claims verified Dante interop on Linux — UNVERIFIED by
+us, but would delete the per-PC licence if stations were ever Linux
+boxes; one bench afternoon would settle it.
+
+Sweep verdict: the only things money buys above the 22c are
+software range-switching (AVIO pair, +£270) or preamp-grade remote
+gain (Shure/RedNet tier, £500+/box). Below it, only grey-market boxes
+with physical switches and unverified certification (~£60 saved).
+The 22c + £45 DVS stands as the deal in the certified class.
+
 ## Conclusions (as discussed with Tore)
 
 - **3C6-scale (2-in/2-out stations):** the owned ESI U24 XL is the
