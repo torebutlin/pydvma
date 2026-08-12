@@ -195,6 +195,22 @@ instrumentation; (c) the divider trick (already noted for the UCA222)
 applies to any fixed-range box: trades switchability and input
 impedance for zero settings.
 
+**Off-the-shelf divider = the inline attenuator pad** (2026-08-12, to
+save technician time): passive resistive XLR-barrel pads, many with a
+discrete −10/−20/−30 dB switch — Hosa ATT-448 (~£17, −20/−30/−40),
+Audio-Technica AT8202 (~£30, −10/−20/−30), Shure A15AS (~£50,
+−15/−20/−25), fixed Sescom/Whirlwind barrels (~£15–25). Plus an
+XLR→TS adapter per channel for the U24 XL. Caveats: the labelled dB
+assumes pro-audio impedances — the realised ratio into a ~10 kΩ
+unbalanced input differs, so characterise in situ once (fixed
+resistors: it then never moves) and store as `cal_factor`; stay
+RESISTIVE — transformer DI/iso boxes roll off and distort at low
+frequency, exactly where vibration lives; size the step to the signal
+(±5 V conditioner → U24 wants −10 dB ⇒ ≈±6 V full scale; −20 dB
+donates ~2 bits of range). U24 XL + −10 dB pad ≈ a ±6 V fixed-gain
+station for ~£80 all-in with nothing continuously adjustable in the
+chain.
+
 ## Conclusions (as discussed with Tore)
 
 - **3C6-scale (2-in/2-out stations):** the owned ESI U24 XL is the
