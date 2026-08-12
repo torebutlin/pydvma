@@ -18,39 +18,58 @@ Status legend: ☐ open · ◐ in progress · ☑ fixed · ✎ recorded/no code.
 - ✎ **2i2 tentatively chosen for 3c6** over the U24 XL (wider input
   range + gain control) — recorded in the device-survey doc + TODO.
 
+Root causes for ALL bugs are established (evidence + decisions:
+`dev/plans/2026-08-12-round11-design.md`). Highlights: the trigger
+failure is THREE stacked defects (arming never set by Setup; threshold
+volts-vs-FS mismatch armed by v2.3.0's VmaxSC auto-derivation;
+soundcard trigger_detected actually meaning "capture complete" so
+detection lags by stored_time and timeouts silently free-run); items
+4+5 are ONE bug (fs really was 10000 — off-ladder fs renders the
+select BLANK, so it was invisible and unchangeable; 10 kHz ⇒ TF axis
+0–5000; engine metadata verified exact); CWT the sonogram works —
+CWT DAMPING blows the 32-bit WASM allocation ceiling at lab sizes.
+
 ## Bugs
 
-1. ☐ **Trigger never waits (soundcard).** Trigger on → Log → starts
-   immediately, at any threshold. Root cause TBD.
-2. ☐ **Cancel mid-logging does nothing.** Root cause TBD.
-3. ☐ **CWT sonogram "not working".** Root cause TBD.
-4. ☐ **TF frequency axis ×10 too large** (0–5000 shown where 0–500
-   expected; U24, possibly 2i2 too). Code check this round — root
-   cause TBD, live re-verify next lab visit.
-5. ☐ **Full settings: decimation (lpf) offered but fs not settable
-   anywhere.** Root cause TBD.
+1. ◐ **Trigger never waits (soundcard).** Fix in flight (P1 python +
+   P3 UI).
+2. ◐ **Cancel mid-logging does nothing.** Fix in flight (P1 server +
+   P3 client).
+3. ◐ **CWT damping over the WASM ceiling** (+ lin-axis default,
+   w0-unaware band, unmasked errors). Fix in flight (P2).
+4. ◐ **TF frequency axis ×10** = item 5 (fs was 10000 and
+   undisplayable). Fix in flight (P3 fs combo); live re-verify next
+   lab visit. Related fixes queued (P4): sub-8 kHz decimation
+   targets, stream restored after decimating logs, truthful fs
+   readback.
+5. ◐ **fs not settable under full settings.** Same fix as 4 —
+   typed fs combo (P3).
 
 ## UX
 
-6. ☐ Basic trigger settings belong in Setup *basic*, not only full.
-7. ☐ "Default" device should say which physical device it resolves
-   to (U24 S/PDIF endpoints receiving no signal is expected — they're
-   digital inputs — but the default's identity was invisible).
-8. ☐ fs should accept a typed value as well as the dropdown ("fs=3k"
-   feel), keeping the actual-fs / lpf-decimation feedback.
-9. ☐ Full settings cluttered — tidy + clarity pass.
-10. ☐ Acquisition progress indication (30 s logs show nothing —
-    progress bar and/or live incoming time preview).
-11. ☐ Obvious "waiting for trigger" state (may partially exist;
-    unverifiable by Tore because of bug 1).
-12. ☐ Axes not re-autoscaled when data added/processed/view changed —
-    principle: data added to a view ⇒ re-auto (at least y), with care
-    not to fight deliberate zooms.
-13. ☐ **Nonlin tab needs a redesign for legibility**: what's
-    happening during a run (progress grid), what the plots/new
-    channels are, Δf ↔ period coupling made explicit (time-variable
-    slider?), a clear total-experiment-time readout, and defined
-    append-vs-replace semantics on re-run.
+6. ◐ Basic trigger settings into Setup *basic* (P3; the old group was
+   also machine-gated on NI presence, so on the lab PC it rendered
+   beside a soundcard and silently did nothing).
+7. ◐ "Default" device resolves to its physical name (P1 protocol +
+   P3 UI). U24 S/PDIF endpoints receiving no signal is expected —
+   they're digital inputs.
+8. ◐ fs typed combo, "3k" accepted, feedback notes kept (P3).
+9. ◐ Full settings tidy: titled sections instead of one 12–15-group
+   wrapping row (P3).
+10. ◐ Determinate progress bar; bridge clock made capture-relative
+    (P3). Live time-domain preview DEFERRED to TODO.
+11. ◐ Prominent "armed — waiting for trigger" state (P3) — it
+    existed as one small grey note, and never showed because of
+    bug 1.
+12. ◐ Axes: Auto buttons currently FREEZE the extent instead of
+    restoring the auto state — that plus unit-changing view switches
+    keeping stale y-ranges is the root cause. Sticky-auto design in
+    P5.
+13. ◐ Nonlin redesign designed (P6): linked Δf ↔ period inputs,
+    total-time headline, M × n_exc progress grid + ETA,
+    replace-vs-keep-both run semantics (current behaviour appends
+    silently and orphans the previous run's hidden raw sets), σ key +
+    in-card explanation.
 
 ## Suites at close
 
