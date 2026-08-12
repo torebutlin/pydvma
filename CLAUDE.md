@@ -2,6 +2,39 @@
 
 ## Current focus (update when it changes)
 
+As of 2026-08-12 (Windows PC session): **the U24 XL is characterised on
+Windows too, and the three platform gaps that round exposed are FIXED.**
+Bench: `dev/2026-08-12-u24xl-windows-bench.md`; harness
+`dev/u24xl_win_check.py` (18/18, source-free by design so it runs with
+nothing plugged in; `--source-vpp` adds the absolute check). Measured
+against a Rigol DG1022Z (3.000 Vpp, high-Z, confirmed on the
+instrument): true full scale **1.9036 Vpk = +0.10 dB vs ESI's +4.7 dBu
+spec**, implied clip 3.81 Vpp (bracketed by Tore's LED observation);
+pydvma reads −0.114 dB at 1 kHz and −0.12 dB at 5 kHz. The Mac round's
+Apple-1.000-Vrms assumption is now corroborated, not load-bearing. The
+box is also **~16 dB quieter than the Mac could see** (open-channel
+floor −96.1 dBFS, 20 Hz–20 kHz at 48 k — that −79 dBFS / 12.8 ENOB was
+the Mac's headphone amp). Anti-alias tracks fs here too (5 kHz rejected
+75 dB at fs = 8000). Windows exposes the SAME −40..+12 dB gain and it is
+digital — SNR flat to 0.03 dB over 20 dB, the UNCONNECTED channel's
+floor tracks the setting, and at 5 Vpp in, attenuating cannot un-clip
+(crest 1.238 and THD −19.4 dB at every setting) but DOES hide the
+clipping from the level meter. Landed: `pydvma/_win_audio.py` (raw
+ctypes COM endpoint-volume pin, `_coreaudio`'s twin);
+`native_input_rates` answers on Windows (`max_input_fs` 192000 → 48000,
+and this propagates to the Setup fs dropdown); device identity is
+**(name, host API)** via `streams.resolve_device_index`, lifted out of
+`serve.py` so the Python/CLI paths get the bridge's protection —
+`device_index` really does reorder on Windows (WDM-KS block moved, U24
+XL 36 → 27, no hardware change). Suites: pytest 698/17, mkdocs --strict
+green. **NEXT: the device/fs UX item in TODO.md** — no host-API
+preference exists, `list_available_devices()` still dumps 38 raw rows
+(7 of them this one box), and there is no `MySettings(device='U24XL')`
+selector. Recommended default backend on Windows is **WDM-KS** (24-bit +
+honest rates), NOT WASAPI (exclusive = full rate ladder but 16-bit;
+shared = 24-bit but locked to the control-panel rate).
+
+
 As of 2026-08-11 (late evening, Mac session): **the ESI U24 XL is
 characterised AND landed** — the survey's flagged Tore-action closed
 same-day using the Mac jack as reference source (its line-level output
