@@ -211,6 +211,18 @@ donates ~2 bits of range). U24 XL + −10 dB pad ≈ a ±6 V fixed-gain
 station for ~£80 all-in with nothing continuously adjustable in the
 chain.
 
+Worked example of the impedance caveat (2026-08-12, Tore's find —
+CPC Pro Signal PSG02971 "−10 dB" XLR barrel, ~£6): its datasheet
+publishes the network (312 Ω per leg, 422 Ω shunt; −10 dB assumes
+BALANCED 600 Ω both ends). In the real chain — unbalanced adapters
+short one leg, U24 XL load ≈10 kΩ — it realises 312 Ω into
+(422∥10k) ≈ 0.56 = **−5 dB only**: FS ≈ ±3.4 Vpk, still clipped by
+±5 V conditioners. Verdict: right category, wrong step — buy the
+−20 dB sibling **PSG02973 (CPC AV17579)**, expected ≈ −13..−15 dB
+realised ⇒ FS ≈ ±8–11 Vpk; measure the actual ratio in situ →
+`cal_factor`. Per channel: pad + XLR-male source cable +
+XLR-female→TS adapter, <£15, no fabrication.
+
 ## Conclusions (as discussed with Tore)
 
 - **3C6-scale (2-in/2-out stations):** the owned ESI U24 XL is the
