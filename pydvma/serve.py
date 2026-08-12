@@ -622,6 +622,37 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
                 name, neighbours=all_names),
             'ao': max_out > 0,
         }
+
+    # Backend grouping (Windows lists one interface once per host API,
+    # and the entries are NOT equivalent) plus the calibration status —
+    # is this device's voltage scale KNOWN, or is VmaxSC=1.0 standing in
+    # for a measurement nobody has made? Both are additive; a client
+    # that ignores them behaves exactly as before. Probe-free, so the
+    # handshake does not get slower.
+    from . import devices as _devices
+    # Rank INPUTS against inputs and OUTPUTS against outputs. Grouping
+    # both directions at once lets a device's output entry out-rank its
+    # input entry and take the recommendation, which on this bench left
+    # the U24 XL's S/PDIF INPUT unrecommended in favour of a playback
+    # endpoint that cannot record at all.
+    by_input = _devices.backend_map(kind='input')
+    by_output = _devices.backend_map(kind='output')
+    for i, c in caps.items():
+        inbound = c['max_input_channels'] > 0
+        g = (by_input if inbound else by_output).get(i) or {}
+        status, volts, advice = _devices.calibration_status(
+            c['name'], neighbours=all_names)
+        c['hostapi'] = g.get('hostapi')
+        c['device_group'] = g.get('group')
+        c['recommended'] = bool(g.get('recommended'))
+        c['recommended_output'] = bool((by_output.get(i) or {}).get('recommended'))
+        c['backend_count'] = int(g.get('siblings') or 1)
+        c['is_alias'] = bool(g.get('is_alias'))
+        c['is_auxiliary'] = bool(g.get('is_auxiliary'))
+        c['calibration_status'] = status
+        c['calibration_advice'] = advice
+        c['full_scale_volts'] = volts
+        c['hostapi_note'] = _devices.HOSTAPI_NOTE.get(g.get('hostapi'))
     return names, caps
 
 

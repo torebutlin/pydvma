@@ -61,6 +61,53 @@
   // Permission is granted once ANY device reports a real label.
   const permissionGranted = $derived($devices.some((d) => d.hasLabel));
 
+  // ---- one interface, several backends ------------------------------
+  // Windows publishes a single piece of hardware once per host API, so
+  // an ESI U24 XL fills seven rows of a 38-row dropdown and nothing
+  // says which to pick — though they differ in word length (24-bit on
+  // WDM-KS, 16 on MME) and in whether an unsupported sample rate is
+  // refused or silently resampled to. The server marks the backend it
+  // recommends; by default show only that one, with an escape hatch for
+  // anyone who needs a specific host API. The CURRENT selection is
+  // always kept, so switching to "all" and back cannot strand it.
+  let allBackends = $state(false);
+  const hasHiddenBackends = $derived(
+    $devices.some((d) => (d.backendCount ?? 1) > 1),
+  );
+  const visibleDevices = $derived(
+    allBackends
+      ? $devices
+      : $devices.filter(
+          (d) =>
+            d.recommended !== false ||
+            d.deviceId === $settings.deviceId,
+        ),
+  );
+  /** Device label, qualified by host API only when that is a real choice. */
+  function deviceLabel(d: (typeof $devices)[number]): string {
+    if (!allBackends || (d.backendCount ?? 1) <= 1 || !d.hostapi) return d.label;
+    return `${d.label} — ${d.hostapi}`;
+  }
+  const selectedDevice = $derived(
+    $devices.find((d) => d.deviceId === $settings.deviceId),
+  );
+  /** Is the selected device's VOLTAGE scale known, or standing in for a
+   *  measurement nobody made? Sample rates and channel counts come from
+   *  the driver and are equally reliable either way; volts do not. */
+  const calibrationNote = $derived.by(() => {
+    const d = selectedDevice;
+    if (!d?.calibration) return null;
+    if (d.calibration === 'characterised') {
+      return d.fullScaleVolts
+        ? `calibrated: full scale ${d.fullScaleVolts.toFixed(3)} V peak`
+        : null;
+    }
+    return d.calibrationAdvice ?? null;
+  });
+  const calibrationWarn = $derived(
+    !!selectedDevice?.calibration && selectedDevice.calibration !== 'characterised',
+  );
+
   // Basic (default) vs full settings view. Local UI state.
   let full = $state(false);
 
@@ -322,11 +369,21 @@
         <div class="grp-ctl">
           <select style="width:200px" aria-label="input device" value={$settings.deviceId} onchange={onDeviceChange}>
             <option value="">Default</option>
-            {#each $devices as d (d.deviceId)}
-              <option value={d.deviceId}>{d.label}</option>
+            {#each visibleDevices as d (d.deviceId)}
+              <option value={d.deviceId}>{deviceLabel(d)}</option>
             {/each}
           </select>
           <button class="btn sm" onclick={refreshDevices} title="Refresh device list">↻</button>
+          {#if hasHiddenBackends}
+            <label class="chk" title="This machine exposes some interfaces through several host APIs. They are the same hardware but not equivalent: WDM-KS gives a 24-bit word and refuses sample rates the device cannot clock, while MME and DirectSound truncate to 16 bits and resample silently. Only the recommended backend is shown unless you tick this.">
+              <input
+                type="checkbox"
+                bind:checked={allBackends}
+                data-testid="setup-all-backends"
+              />
+              <span>all backends</span>
+            </label>
+          {/if}
         </div>
       </div>
       <div class="grp">
@@ -383,6 +440,21 @@
       <div class="ctx-row">
         <span class="note coerce-note" data-testid="setup-coerced-fs">
           device runs at {fmtHz($coercedFs.configured)} Hz (requested {fmtHz($coercedFs.requested)})
+        </span>
+      </div>
+    {/if}
+
+    {#if calibrationNote}
+      <!-- Whether "volts" are really volts. For a characterised model the
+           full-scale voltage is known and VmaxSC is derived; for anything
+           else VmaxSC=1.0 is a PLACEHOLDER, so readings are full-scale
+           units wearing a unit they have not earned. Say which. -->
+      <div class="ctx-row">
+        <span
+          class="note {calibrationWarn ? 'warn-note' : 'coerce-note'}"
+          data-testid="setup-calibration-note"
+        >
+          {calibrationNote}
         </span>
       </div>
     {/if}
@@ -792,5 +864,25 @@
   .coerce-note {
     color: var(--amber, #b45309);
     font-weight: 500;
+  }
+  /* An UNCALIBRATED device is not an error either — it just means the
+     numbers are full-scale units, not volts. Same weight as the other
+     advisories, muted so a characterised bench does not look alarming. */
+  .warn-note {
+    color: var(--muted, #6b7280);
+    font-weight: 500;
+  }
+  /* Inline "all backends" toggle beside the device dropdown. */
+  .chk {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85em;
+    color: var(--muted, #6b7280);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .chk input {
+    margin: 0;
   }
 </style>

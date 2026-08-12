@@ -468,6 +468,70 @@ def inventory(driver='soundcard', kind='input', rates=True, channels=2):
     return out
 
 
+def backend_map(kind='input'):
+    """Which enumerated entries are the same box, and which one to use.
+
+    The cheap half of :func:`inventory`: name grouping and backend
+    ranking with NO capability probing, so it is safe to call on every
+    bridge handshake. The UI needs exactly this much to stop showing one
+    interface seven times.
+
+    Args:
+        kind (str): ``'input'``, ``'output'`` or ``'all'``.
+
+    Returns ``{index: {'group', 'hostapi', 'recommended', 'is_alias',
+    'is_auxiliary', 'siblings'}}`` for every soundcard entry of that
+    kind, where ``group`` is a stable key shared by one device's
+    backends and ``recommended`` marks the best-ranked one. Empty if
+    PortAudio is unavailable.
+    """
+    if sd is None:
+        return {}
+    try:
+        devs = sd.query_devices()
+        hostapis = sd.query_hostapis()
+    except Exception:
+        return {}
+
+    members = {}
+    order = []
+    for i, dev in enumerate(devs):
+        max_in = int(dev.get('max_input_channels', 0) or 0)
+        max_out = int(dev.get('max_output_channels', 0) or 0)
+        if kind == 'input' and not max_in:
+            continue
+        if kind == 'output' and not max_out:
+            continue
+        try:
+            api = hostapis[dev['hostapi']]['name']
+        except Exception:
+            api = None
+        key = _group_key(dev['name'])
+        for seen in list(members):
+            if key.startswith(seen) or seen.startswith(key):
+                key = seen
+                break
+        if key not in members:
+            members[key] = []
+            order.append(key)
+        members[key].append((i, api, dev['name']))
+
+    out = {}
+    for key in order:
+        entries = sorted(members[key], key=lambda t: (_rank(t[1]), t[0]))
+        best = entries[0][0]
+        for index, api, name in entries:
+            out[index] = {
+                'group': key,
+                'hostapi': api,
+                'recommended': index == best and not is_alias(name),
+                'is_alias': is_alias(name),
+                'is_auxiliary': is_auxiliary(name),
+                'siblings': len(entries),
+            }
+    return out
+
+
 def preferred_backend(group):
     """The entry of a device group that should be driven, or ``None``.
 

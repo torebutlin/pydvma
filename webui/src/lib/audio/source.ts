@@ -65,6 +65,32 @@ export interface AudioInputDevice {
   groupId: string;
   /** True when the browser gave a REAL label (i.e. mic permission granted). */
   hasLabel: boolean;
+  // ---- bridge only: one interface, several backends -----------------
+  // Windows lists a single piece of hardware once per host API and the
+  // entries are NOT equivalent (MME and DirectSound truncate the word to
+  // 16 bits and resample silently to reach a rate the hardware cannot
+  // clock; WDM-KS delivers 24 bits and refuses). Without these the
+  // dropdown shows one ESI U24 XL seven times with no way to tell which
+  // row is the good one.  All optional: the browser provider sets none.
+  /** Host API this entry is driven through, e.g. 'Windows WDM-KS'. */
+  hostapi?: string;
+  /** Stable key shared by every backend of one physical device. */
+  deviceGroup?: string;
+  /** True for the backend pydvma recommends for this device. */
+  recommended?: boolean;
+  /** How many backends expose this same device. */
+  backendCount?: number;
+  /** One-line reason this backend is ranked where it is. */
+  hostapiNote?: string;
+  /** A routing alias for the OS default rather than named hardware. */
+  isAlias?: boolean;
+  /** 'characterised' | 'needs_gain' | 'uncalibrated' — is the VOLTAGE
+   *  scale known, or is VmaxSC=1.0 standing in for a measurement? */
+  calibration?: string;
+  /** What to do about a calibration status short of 'characterised'. */
+  calibrationAdvice?: string;
+  /** Volts (peak) reading full scale, when known. */
+  fullScaleVolts?: number;
 }
 
 /** Configuration for a recording session. */

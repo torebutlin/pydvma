@@ -162,6 +162,94 @@ test('capabilities resolves the hello reply and enumerateInputDevices flattens b
   expect(devs[2].label).toBe('NI: cDAQ1Mod1 (4 ch)');
 });
 
+// One interface published once per host API — the Windows shape. The
+// entries are the SAME hardware but not equivalent, so the dropdown
+// needs enough metadata to collapse them to one choice and say which.
+const CAPS_MULTI_BACKEND = {
+  ...CAPS,
+  devices: {
+    soundcard: [
+      'Line (U24XL with SPDIF I/O)',      // 0  MME
+      'Line (U24XL with SPDIF I/O)',      // 1  WDM-KS (recommended)
+      'Generic USB Audio',                // 2  uncharacterised
+    ],
+    nidaq: [],
+  },
+  device_caps: {
+    'soundcard:0': {
+      name: 'Line (U24XL with SPDIF I/O)', hostapi: 'MME',
+      device_group: 'line (u24xl with spdif i/o)', recommended: false,
+      backend_count: 2, hostapi_note: '16-bit, resamples silently',
+      is_alias: false, calibration_status: 'characterised',
+      calibration_advice: 'fixed gain - nothing to mis-set',
+      full_scale_volts: 1.8818824427893688,
+    },
+    'soundcard:1': {
+      name: 'Line (U24XL with SPDIF I/O)', hostapi: 'Windows WDM-KS',
+      device_group: 'line (u24xl with spdif i/o)', recommended: true,
+      backend_count: 2,
+      hostapi_note: '24-bit, refuses rates it cannot clock',
+      is_alias: false, calibration_status: 'characterised',
+      calibration_advice: 'fixed gain - nothing to mis-set',
+      full_scale_volts: 1.8818824427893688,
+    },
+    'soundcard:2': {
+      name: 'Generic USB Audio', hostapi: 'Windows WASAPI',
+      device_group: 'generic usb audio', recommended: true,
+      backend_count: 1, is_alias: false,
+      calibration_status: 'uncalibrated',
+      calibration_advice: 'full scale unknown - readings are in FS units.',
+      full_scale_volts: null,
+    },
+  },
+};
+
+test('enumerateInputDevices carries backend + calibration metadata', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(CAPS_MULTI_BACKEND);
+  await capsP;
+
+  const devs = await bp.enumerateInputDevices();
+  const sc = devs.filter((d) => d.deviceId.startsWith('soundcard:'));
+
+  // Both U24 XL rows share a group; exactly one is recommended, and it
+  // is the 24-bit one -- picking the wrong twin silently changes the data.
+  expect(sc[0].deviceGroup).toBe(sc[1].deviceGroup);
+  expect(sc[0].recommended).toBe(false);
+  expect(sc[1].recommended).toBe(true);
+  expect(sc[1].hostapi).toBe('Windows WDM-KS');
+  expect(sc[1].backendCount).toBe(2);
+
+  // Volts known vs merely assumed must not look the same.
+  expect(sc[1].calibration).toBe('characterised');
+  expect(sc[1].fullScaleVolts).toBeCloseTo(1.8819, 3);
+  expect(sc[2].calibration).toBe('uncalibrated');
+  expect(sc[2].fullScaleVolts).toBeUndefined();
+  expect(sc[2].calibrationAdvice).toMatch(/FS units/);
+});
+
+test('enumerateInputDevices tolerates a server that sends no device_caps', async () => {
+  // Older bridge, or a driver that failed to answer: the fields are
+  // simply absent and the dropdown falls back to the flat list.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(CAPS);
+  await capsP;
+
+  const devs = await bp.enumerateInputDevices();
+  const sc = devs.find((d) => d.deviceId === 'soundcard:0')!;
+  expect(sc.label).toBe('Built-in Mic');
+  expect(sc.recommended).toBeUndefined();
+  expect(sc.calibration).toBeUndefined();
+});
+
 test('capabilities() returns null when the socket errors before open (fail-soft)', async () => {
   const fake = makeFakeWs();
   const bp = new BridgeProvider('ws://x/ws', () => fake.ws);

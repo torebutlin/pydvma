@@ -458,7 +458,26 @@ export class BridgeProvider implements SourceProvider {
       out.push({ deviceId: 'mock:0', label: 'Mock signal generator', groupId: 'mock', hasLabel: true });
     }
     caps.devices.soundcard.forEach((name, i) => {
-      out.push({ deviceId: `soundcard:${i}`, label: name, groupId: 'soundcard', hasLabel: true });
+      // Carry the backend metadata through so the dropdown can collapse
+      // one interface's several host-API entries into a single choice —
+      // see AudioInputDevice. Older servers omit these keys entirely and
+      // the UI falls back to the flat list.
+      const dc: any = caps.device_caps?.[`soundcard:${i}`] ?? {};
+      out.push({
+        deviceId: `soundcard:${i}`,
+        label: name,
+        groupId: 'soundcard',
+        hasLabel: true,
+        hostapi: dc.hostapi ?? undefined,
+        deviceGroup: dc.device_group ?? undefined,
+        recommended: dc.recommended ?? undefined,
+        backendCount: dc.backend_count ?? undefined,
+        hostapiNote: dc.hostapi_note ?? undefined,
+        isAlias: dc.is_alias ?? undefined,
+        calibration: dc.calibration_status ?? undefined,
+        calibrationAdvice: dc.calibration_advice ?? undefined,
+        fullScaleVolts: dc.full_scale_volts ?? undefined,
+      });
     });
     caps.devices.nidaq.forEach((d, i) => {
       out.push({
