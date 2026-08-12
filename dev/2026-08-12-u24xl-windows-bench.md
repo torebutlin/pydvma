@@ -35,9 +35,13 @@ Through the **whole pydvma path** with `VmaxSC` auto-derived from the
 fixed-gain profile (1.8819 V, no stated gain):
 
 ```
-pydvma capture      1.04679 Vrms  vs  1.06066 commanded   -0.114 dB
-verify_input_scaling 1.0428 Vrms  vs  1.0607  expected    -0.15 dB  PASS
+pydvma capture       1.04679 Vrms vs 1.06066 commanded  -0.114 dB   @1 kHz
+verify_input_scaling 1.0428 Vrms  vs 1.0607  expected   -0.15 dB    @1 kHz  PASS
+verify_input_scaling 1.0459 Vrms  vs 1.0607  expected   -0.12 dB    @5 kHz  PASS
 ```
+
+The 1 kHz and 5 kHz results agree to 0.01 dB, so the response is flat
+across that span as well as correctly scaled.
 
 Both are the same fact from the other end: pydvma scales by ESI's spec
 (1.8819 V) while the box's true full scale is 1.9036 V, so it reads
@@ -157,12 +161,19 @@ what an earlier probe in this session saw before WASAPI was tried —
 hence a wrong note in the first draft of this document claiming the low
 rates were macOS-only. They are not; they are *host-API*-only.
 
-Not yet demonstrated on Windows: that the anti-alias filter TRACKS the
-rate the way the Mac round showed (out-of-band tone rejected, not
-folded). The exclusive-mode path is 16-bit through PortAudio here, and
-a 1 kHz tone at fs = 8000 is useless for the test anyway — every
-harmonic aliases exactly onto another harmonic. Needs an out-of-band
-tone (e.g. 5 kHz at fs = 8000); see TODO.
+**The anti-alias filter tracks the rate here too** — confirmed with the
+Rigol moved to 5 kHz, which is the test a 1 kHz tone cannot do (at
+fs = 8000 every harmonic of 1 kHz aliases exactly onto another
+harmonic, so folding is invisible):
+
+| capture | 5 kHz vs Nyquist | content at the fold frequency |
+|---|---|---|
+| fs = 8000 (Nyquist 4 k) | out of band | 3 kHz is **75 dB down** — rejected |
+| fs = 16000 (Nyquist 8 k) | in band | 5 kHz present at −0.1 dB |
+
+75 dB is a floor, not a ceiling: the chain already carries −82.6 dB of
+3 kHz distortion residue at full bandwidth, so the measurement is
+limited by the source, not the filter. Either way nothing folded.
 
 The awkward consequence: **no single Windows host API is best at
 everything.** WASAPI exclusive has the rate ladder, WDM-KS has the

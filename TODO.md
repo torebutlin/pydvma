@@ -324,12 +324,15 @@ is still open, as one consolidated list.
     MME/DirectSound are 16-bit AND fabricate rates — and MME is what
     pydvma defaults to. Worth deciding a documented preference order,
     and whether to expose the host API in Setup at all.
-  - **Anti-alias tracking unverified on Windows** (new, 2026-08-12) —
-    the Mac round proved the filter follows fs (out-of-band tone
-    rejected, not folded) at 8 kHz. Not reproduced here: the
-    exclusive-mode path is 16-bit, and a 1 kHz tone at fs = 8000 is
-    degenerate for the test (every harmonic aliases onto another
-    harmonic). Needs an out-of-band source, e.g. 5 kHz at fs = 8000.
+  - ~~**Anti-alias tracking unverified on Windows**~~ — DONE
+    2026-08-12 with the Rigol at 5 kHz (a 1 kHz tone is degenerate for
+    this test at fs = 8000: every harmonic aliases onto another
+    harmonic). At fs = 8000 the out-of-band 5 kHz is **75 dB down** at
+    the 3 kHz fold frequency — rejected, not folded — and at
+    fs = 16000 it is present in band at −0.1 dB. The 75 dB is
+    source-limited (−82.6 dB of 3 kHz distortion residue exists at full
+    bandwidth), so it is a lower bound. Absolute scaling at 5 kHz also
+    came out at −0.12 dB, matching the 1 kHz result to 0.01 dB.
   - ~~**`device_index` is not stable on Windows**~~ — DONE
     2026-08-12. The WDM-KS block reordered between two enumerations
     minutes apart with no hardware change and the same device count
