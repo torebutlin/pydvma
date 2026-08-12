@@ -172,6 +172,40 @@ gain (Shure/RedNet tier, £500+/box). Below it, only grey-market boxes
 with physical switches and unverified certification (~£60 saved).
 The 22c + £45 DVS stands as the deal in the certified class.
 
+## Multichannel tier: Dante vs USB at 8/16/32 ch (2026-08-12)
+
+Tore's question: does Dante earn its keep at research channel counts
+(8/16/32), hundreds-not-thousands budget? **Verdict: never on
+£/channel — only when the GEOMETRY earns it** (distributed sensors, or
+multi-box/multi-PC phase-coherent scaling). Researched Thomann UK
+prices, snapshot 2026-08-12:
+
+| ch | Best USB (co-located) | Best Dante route |
+|---|---|---|
+| 8 | XR18 £315 | 4× planet 22c ≈ £710 all-in (£89/ch) |
+| 16 | **XR18 £315 (£20/ch)** | 8× 22c ≈ £1,360; cheapest certified single box = Yamaha Tio1608-D2 £1,525 (£95/ch) |
+| 32 | **full-size X32 £1,299 (£41/ch)** — 32 XLR in, software gain, 32×32 USB standard | X32 + X-Dante card £1,567, or 16× 22c £2,640 |
+
+Findings: (a) purpose-built multichannel Dante is absurd vs stacking —
+cheapest certified 8-in box is £1,181 (Sonifex AVN-AIO8, gain arch
+unverified); grey-market OEM Dante caps at 4 ch, uncertified; one £45
+DVS licence covers 64×64 so stacking never needs the Pro tier.
+(b) CORRECTIONS: X32 Rack (£666) / Producer (£799) have only 16
+physical XLR ins — the 32-in unit is the full-size X32 console; X32
+Core is discontinued; XR18/MR18 have NO Dante or AES50 path (Dante Via
+over USB is not a network node); KT DN9630 is AES50→USB not Dante
+("DN9632" doesn't exist; the real bridge, DN9650 + KT-DANTE64, is
+quote-only broadcast kit). Behringer SD/DL stageboxes are AES50-only.
+(c) Midas variants cost ~£440 more for the same channel counts (M32R
+Live £1,739 + DN32-Dante £295). WING Rack £1,169 + WING-DANTE £439 —
+input count unverified.
+(d) When Dante DOES earn it: sensors spread over a large structure
+(digitise at the sensor, one Cat5/PoE run each, 100 m/hop, no long
+analogue cables) and incremental growth/pooling (2 ch at a time,
+Shape A stations ↔ Shape B array). At 8 ch that costs ~£710 (within
+"hundreds"); at 16 ch the distribution argument must be real to
+justify £1,360 vs £315.
+
 ## Input-range comparison (2026-08-12)
 
 Tore: if the U24 XL's dealbreaker is its input voltage range (fixed
