@@ -263,21 +263,66 @@ is still open, as one consolidated list.
   interfaces as they are characterised. XR18 next per the agreed
   lineup.
 - **U24 XL follow-ups** (bench + landing 2026-08-11,
-  `dev/2026-08-11-u24xl-bench.md`):
-  - **Windows enumeration name unknown** — the profile matches
-    'u24xl'/'u24 xl' + vendor 'esi'; capture the real Windows device
-    names (ESI ships a proprietary driver) and add the WDM-KS
-    product-id token if the model name never surfaces (2i2 precedent).
-    Also check whether the Windows endpoint volume API exposes the
-    same digital input gain — the CoreAudio pin is macOS-only, so a
-    Windows slider could still silently rescale captures there.
-  - **Absolute calibration against an independent source** — the
-    0.00 dB jack-referenced result assumes Apple's line-level output
-    mode is exactly 1.000 Vrms; `verify_input_scaling` + Rigol (once a
-    BNC→RCA/TS cable exists) closes that assumption.
-  - **U24 XL-alone noise floor** — today's −79 dBFS (48 k) / −94 dBFS
-    (8 k) figures include the connected Mac jack amp; a 30 s capture
-    with the input cable unplugged separates the box's own floor.
+  `dev/2026-08-11-u24xl-bench.md`; Windows round 2026-08-12,
+  `dev/2026-08-12-u24xl-windows-bench.md`):
+  - ~~**Windows enumeration name unknown**~~ — DONE 2026-08-12. It
+    carries the model: `Line (U24XL with SPDIF I/O)`, matching the
+    existing profile DIRECTLY on all four host APIs (no product-id
+    token needed, unlike the 2i2). `fixed_gain` True, `VmaxSC` 1.8819 V.
+  - ~~**Absolute calibration against an independent source**~~ — DONE
+    2026-08-12 against the Rigol DG1022Z (1 kHz, 3.000 Vpp, high-Z):
+    true full scale 1.9036 Vpk, i.e. **+0.10 dB vs ESI's +4.7 dBu
+    spec**; implied clip 3.81 Vpp, bracketed by Tore's LED observation
+    (3 V clean, 4 V clipped). Through pydvma: −0.114 dB;
+    `verify_input_scaling` PASS at −0.15 dB. Apple's 1.000 Vrms
+    assumption is now corroborated, not load-bearing.
+  - ~~**U24 XL-alone noise floor**~~ — DONE 2026-08-12 via the
+    unconnected right channel (WDM-KS, 24-bit, gain 0): **−96.1 dBFS**
+    (20 Hz–20 kHz, 48 k) / −92.4 dBFS (44.1 k) — the box is ~16 dB
+    quieter than the Mac round could see, so its ~12.8 ENOB figure was
+    the Mac's headphone amp, not the ADC (≈15.5–16 bits really). NB
+    48 k is 3.7 dB quieter in-band than 44.1 k; and the Rigol at 3 Vpp
+    floors at −73.8 dBFS, dominating the converter by 23 dB.
+  - **PIN THE WINDOWS ENDPOINT VOLUME** (new, 2026-08-12 — the one real
+    gap this round found). Windows exposes the SAME digital gain via
+    `IAudioEndpointVolume` on the Line endpoint: **−40..+12 dB**,
+    0.5 dB step, and it lies about being hardware
+    (`QueryHardwareSupport = 0x3`). Measured digital beyond doubt —
+    SNR flat to 0.03 dB over 20 dB of attenuation, and the UNCONNECTED
+    channel's floor tracks the setting in both directions. But
+    `Recorder.init_stream`'s three pins are all `_coreaudio`, so on
+    Windows nothing forces it to 0 dB and a stray slider silently
+    rescales every capture while `VmaxSC` keeps asserting 1.8819 V.
+    Needs a `_win_endpoint_volume` twin of `_coreaudio`'s pin (ctypes
+    COM, or add `pycaw`/`comtypes` as an optional extra). Slider trap
+    worth surfacing in the UI too: scalar 1.0 = +12 dB, 0 dB is at 63%
+    of travel.
+  - **`max_input_fs` lies on Windows MME/DirectSound** (new,
+    2026-08-12) — reports **192000** for the U24 XL's MME and
+    DirectSound endpoints (48000 correctly for WASAPI/WDM-KS). Same
+    trap `native_input_rates` closes on macOS, but it returns `[]` on
+    Windows so nothing catches it — and the MME endpoint is
+    `sd.default.device[0]` here, so the digital-LPF oversample path
+    would request 192 kHz. PROVEN fake: above 22 kHz (the 44.1 kHz
+    endpoint Nyquist) every 2 kHz band reads an identical −110.1 dBFS
+    at 96 k / −113.1 at 192 k — exactly −3 dB for 2× the rate, i.e. a
+    fixed dither power, not converter noise. Even plain `fs=48000` on
+    MME is resampled from 44.1 k. Fix: probe WDM-KS / WASAPI-exclusive
+    for the real ladder, or read the endpoint's `DeviceFormat`.
+  - **Windows default path is 16-bit** (new, 2026-08-12) — on the
+    float32 path pydvma actually uses: MME **16 bit**, WDM-KS 24 bit,
+    WASAPI shared 24 bit, WASAPI exclusive 16 bit (PortAudio
+    negotiation). pydvma defaults to the MME endpoint, so it throws
+    away 8 bits by default on Windows. Also: the 8/16/32 kHz native
+    rates CoreAudio exposes are NOT available on Windows (44.1/48 k
+    only), so the Mac round's low-fs advantage is macOS-only.
+  - **`device_index` is not stable on Windows** (new, 2026-08-12) —
+    the WDM-KS block reordered between two enumerations minutes apart
+    with no hardware change and the same device count (U24 XL Line
+    36 → 27; an index-23 lookup returned a Realtek endpoint). Stored
+    indices (`MySettings`, saved `.dvma`, `--settings`) can point at
+    the wrong hardware, and with profile-derived `VmaxSC` that means
+    the wrong voltage scale. Consider persisting/resolving by name.
   - **Output-side calibration not attempted** — output volume
     (−55..0 dB digital) is not pinned and `output_VmaxSC` is not
     derived from `max_output_dbu` (+6.9 dBu); worth doing if the U24
