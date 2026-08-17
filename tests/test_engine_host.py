@@ -144,3 +144,61 @@ def test_frame_roundtrip_empty_blobs_both_kinds():
     assert out['a'].size == 0
     assert out['a'].dtype == np.dtype('<f8')
     assert out['b'] == b''
+
+
+# --- worker subprocess -------------------------------------------------------
+
+def _mk_time(n=256, fs=1000.0, ch=2):
+    t = np.arange(n) / fs
+    d = np.sin(2 * np.pi * 50 * t)
+    return {'time_axis': t, 'time_data': np.column_stack([d] * ch).ravel(),
+            'n_channels': ch, 'fs': fs, 'window': None}
+
+
+def test_worker_answers_calc_fft():
+    w = engine_host.EngineWorker()
+    try:
+        kind, rid, ok, result = w.request(7, 'calc_fft', _mk_time())
+        assert (kind, rid, ok) == ('done', 7, True)
+        assert result['freq_data']['complex'] is True
+        assert isinstance(result['freq_data']['data'], np.ndarray)
+    finally:
+        w.close()
+
+
+def test_worker_reports_error_not_crash():
+    w = engine_host.EngineWorker()
+    try:
+        kind, rid, ok, err = w.request(1, 'no_such_op', {})
+        assert (kind, ok) == ('done', False)
+        assert 'no_such_op' in err
+        # Worker survives a bad op:
+        kind, rid, ok, _ = w.request(2, 'calc_fft', _mk_time())
+        assert ok is True
+    finally:
+        w.close()
+
+
+def test_worker_streams_progress_for_cwt_sono():
+    w = engine_host.EngineWorker()
+    frames = []
+    try:
+        payload = _mk_time(n=4096)
+        payload.pop('window')
+        payload.update(ch=0, nperseg=256, noverlap=128, method='cwt')
+        kind, rid, ok, _ = w.request(3, 'calc_sono', payload,
+                                     on_progress=lambda d, t: frames.append((d, t)))
+        assert ok is True
+        assert frames and frames[-1][0] == frames[-1][1]  # terminal frame
+    finally:
+        w.close()
+
+
+def test_worker_kill_and_respawn():
+    w = engine_host.EngineWorker()
+    try:
+        w.kill()
+        kind, rid, ok, _ = w.request(4, 'calc_fft', _mk_time())
+        assert ok is True  # respawned transparently
+    finally:
+        w.close()

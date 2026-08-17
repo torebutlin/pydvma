@@ -60,6 +60,8 @@ this text alone:
 """
 import json
 import math
+import multiprocessing as _mp
+import queue as _queue
 import struct
 
 import numpy as np
@@ -194,3 +196,127 @@ def decode_frame(data):
         return v
 
     return restore(header)
+
+
+# --- worker subprocess ------------------------------------------------------
+#
+# One persistent spawn-context subprocess executes ops SERIALLY — the same
+# semantics as the single-threaded pyodide worker. Spawn (not fork): it is
+# the only context on Windows and the safe one under macOS CoreAudio. The
+# child imports numpy/scipy/pydvma once and stays warm; a hard stop
+# terminates just the child and the next request respawns it.
+
+#: Seconds to wait for a cancelled op to unwind before terminating the child.
+CANCEL_GRACE_S = 0.5
+
+
+class EngineCancelled(Exception):
+    """Raised inside the child when the cancel event is set mid-op."""
+
+
+def _worker_main(req_q, res_q, cancel_ev):
+    """Child entry: answer ``(id, op, kwargs)`` until ``None`` arrives.
+
+    Emits ``('progress', id, done, total)`` frames via the installed
+    engine progress hook (which doubles as the cooperative cancel
+    checkpoint) and exactly one ``('done', id, ok, result_or_msg)`` per
+    request.
+    """
+    from pydvma import engine
+    current = {'id': None}
+
+    def hook(done, total):
+        if cancel_ev.is_set():
+            raise EngineCancelled()
+        res_q.put(('progress', current['id'], int(done), int(total)))
+
+    engine.set_progress_hook(hook)
+    while True:
+        item = req_q.get()
+        if item is None:
+            return
+        rid, op, kwargs = item
+        current['id'] = rid
+        cancel_ev.clear()
+        try:
+            fn = getattr(engine, op, None)
+            if fn is None or op.startswith('_') or not callable(fn):
+                raise ValueError('unknown op: %s' % op)
+            res_q.put(('done', rid, True, fn(**kwargs)))
+        except EngineCancelled:
+            res_q.put(('done', rid, False, 'cancelled'))
+        except Exception as e:
+            res_q.put(('done', rid, False, '%s: %s' % (type(e).__name__, e)))
+
+
+class EngineWorker:
+    """Owner of one engine subprocess; blocking request/response API.
+
+    Thread-safety: one request at a time (the /engine connection task
+    serialises calls). ``request`` blocks until the op's ``done`` arrives,
+    invoking ``on_progress(done, total)`` for each progress frame.
+    """
+
+    def __init__(self):
+        self._ctx = _mp.get_context('spawn')
+        self._proc = None
+        self._spawn()
+
+    def _spawn(self):
+        # Fresh queues/event every spawn: any ('progress', old_id, ...) or
+        # ('done', old_id, ...) items still sitting in a PRIOR worker's
+        # result queue die with that queue object rather than leaking into
+        # the new worker's request/response cycle -- self._res always
+        # refers to the queue the CURRENTLY-live child was handed.
+        self._req = self._ctx.Queue()
+        self._res = self._ctx.Queue()
+        self._cancel = self._ctx.Event()
+        self._proc = self._ctx.Process(
+            target=_worker_main, args=(self._req, self._res, self._cancel),
+            daemon=True)
+        self._proc.start()
+
+    def request(self, rid, op, kwargs, on_progress=None):
+        """Run one op; returns ``('done', rid, ok, result_or_errmsg)``."""
+        if self._proc is None or not self._proc.is_alive():
+            self._spawn()
+        self._req.put((rid, op, kwargs))
+        while True:
+            try:
+                item = self._res.get(timeout=1.0)
+            except _queue.Empty:
+                if not self._proc.is_alive():
+                    # The child may have managed to put its result before
+                    # dying (e.g. it returned normally and was then reaped) --
+                    # drain once more before declaring it lost.
+                    try:
+                        item = self._res.get_nowait()
+                    except _queue.Empty:
+                        return ('done', rid, False, 'engine worker died')
+                else:
+                    continue
+            if item[0] == 'progress':
+                if on_progress is not None and item[1] == rid:
+                    on_progress(item[2], item[3])
+                continue
+            return item
+
+    def cancel(self):
+        """Cooperative cancel; escalate to terminate after CANCEL_GRACE_S."""
+        self._cancel.set()
+
+    def kill(self):
+        """Hard stop: terminate the child (next request respawns)."""
+        if self._proc is not None and self._proc.is_alive():
+            self._proc.terminate()
+            self._proc.join(timeout=2.0)
+        self._proc = None
+
+    def close(self):
+        """Graceful shutdown for tests/teardown."""
+        try:
+            if self._proc is not None and self._proc.is_alive():
+                self._req.put(None)
+                self._proc.join(timeout=2.0)
+        finally:
+            self.kill()
