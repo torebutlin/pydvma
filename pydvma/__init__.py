@@ -44,6 +44,10 @@ _LAZY_NAMES = {
     # not a class inside one — deferred so `import pydvma` never pulls
     # the optional `websockets` dependency.
     'serve': '.serve',
+    # `engine` is the compute-ops module shared by the pyodide worker
+    # and the coming native engine host — deferred like `serve` so a
+    # bare `import pydvma` stays cheap.
+    'engine': '.engine',
 }
 
 # Friendly-error hints for lazy modules whose optional deps may be

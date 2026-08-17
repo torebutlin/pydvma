@@ -14,20 +14,10 @@ peaks) that the interactive panel draws, and accepts the ``peak_threshold``
 and ``start_time`` knobs.
 """
 
-import os
-import sys
-
 import numpy as np
 import pytest
 
-# Import the webui glue module directly (it lives outside the pydvma package).
-_WORKER_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), 'webui', 'src', 'lib', 'worker'
-)
-if _WORKER_DIR not in sys.path:
-    sys.path.insert(0, _WORKER_DIR)
-
-glue = pytest.importorskip('glue', reason='webui glue.py requires pydvma importable')
+from pydvma import engine as glue
 
 FS = 2000
 N = 8000

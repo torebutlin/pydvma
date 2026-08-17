@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Worker-side glue: stateless compute wrappers around pydvma.
+"""Engine ops: stateless compute wrappers around pydvma, host-agnostic.
 
-Loaded inside the pyodide engine worker (``engine.worker.ts``). Every op is
-a plain function taking JSON-marshallable scalars plus flat float64 arrays
-and returning a dict of arrays — or, where the op is inherently plural, a
-LIST of such dicts (``calc_bla`` returns one entry per excitation) — no
-PyProxy state survives between calls, so the worker stays stateless
-(spec §11).
+One module, two hosts. In the browser the pyodide engine worker
+(``webui/src/lib/worker/engine.worker.ts``) imports this from the
+installed pydvma wheel and answers the app's ``{id, op, payload}``
+requests; locally ``pydvma.engine_host`` answers the same ops over the
+``/engine`` websocket in ordinary CPython. Every op is a plain function
+taking JSON-marshallable scalars plus flat float64 arrays and returning
+a dict of arrays — or, where the op is inherently plural, a LIST of
+such dicts (``calc_bla`` returns one entry per excitation) — no state
+survives between calls, so both hosts stay stateless.
 
 Array boundary convention (matches the JS ``NpyArray`` convention in
 ``src/lib/codec/npy.ts``): every array crosses as
