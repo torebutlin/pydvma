@@ -1173,6 +1173,16 @@ git commit -m "feat(webui): SocketEngineClient — EngineClient over the /engine
 
 ### Task 8: Transport resolution + store wiring, opt-in (stage 1)
 
+> **Carry-over from Task 3's review (host-parity at the decode boundary):**
+> the native codec sanitises non-finite scalar floats to `null` (JSON can't
+> carry NaN/Infinity), but the app decodes damping scalars with
+> `Number(mval(...))` (`actions.ts:2342-2343`) and `Number(null) === 0` —
+> so a degenerate mode would render as a plausible-looking `Qn=0` on the
+> native host where pyodide shows `Infinity`/`NaN`. When wiring the socket
+> transport into the store, change those decode sites to `Number(v ?? NaN)`
+> (grep actions.ts for `Number(mval` and audit each) so null decodes as NaN
+> on both hosts. Add a vitest asserting it.
+
 **Files:**
 - Create: `webui/src/lib/worker/selectEngine.ts`
 - Modify: `webui/src/lib/stores/engine.ts:184-187` (factory default), plus a `host` readable
