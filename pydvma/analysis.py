@@ -739,7 +739,7 @@ def calculate_bla(time_data_list, run_spec):
         # 32-bit builds (pyodide/WASM) surface an oversized allocation as
         # a ValueError saying "array is too big" rather than MemoryError.
         # Precedent: the same classify-and-rethrow guard in
-        # webui/src/lib/worker/glue.py (calc_psd / calc_sono). Anything
+        # pydvma/engine.py (calc_psd / calc_sono). Anything
         # else — our own validation errors, the singular-matrix error —
         # propagates untouched.
         msg = str(err).lower()

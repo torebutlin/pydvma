@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Regression tests for the webui pyodide glue's BLA op (``calc_bla``).
 
-The browser engine loads ``webui/src/lib/worker/glue.py`` inside pyodide and
-drives ``calc_bla`` from ``webui/src/lib/stores/bla.ts`` with the
+The browser engine imports ``pydvma.engine`` from the installed wheel inside
+pyodide and drives ``calc_bla`` from ``webui/src/lib/stores/bla.ts`` with the
 ``{time_axis, time_data, n_channels, fs}`` ensemble contract
 ``calc_tf_averaged`` uses (see ``calc_bla``'s docstring). These tests import
 that module directly under CPython and exercise it the same way, so a
@@ -22,15 +22,14 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from pydvma import analysis, testdata
 from pydvma import engine as glue
-
-from pydvma import analysis, testdata  # noqa: E402  (after sys.path insert)
 
 
 def _payload(td):
     """Flat ``{time_axis, time_data, n_channels, fs}`` payload for one
     capture, matching ``calc_tf_averaged``'s ensemble contract (the shape
-    ``_time_data`` expects everywhere in glue.py)."""
+    ``_time_data`` expects everywhere in pydvma/engine.py)."""
     return {
         'time_axis': td.time_axis.astype(np.float64),
         'time_data': td.time_data.astype(np.float64).ravel(),

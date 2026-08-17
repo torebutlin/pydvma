@@ -605,11 +605,12 @@ def _delete_modes(md, indices):
     ``modal.unpack_matrix(self.M)`` on the POST-delete matrix, and
     ``unpack_matrix`` indexes ``X[0, :]`` — so deleting the LAST remaining
     mode leaves a ``(0, 6)`` matrix and raises ``IndexError: index 0 is out
-    of bounds for axis 0 with size 0`` (the round-4 "Fit → Reject" crash at
-    ``glue.py`` line ~410, and the same latent crash when a re-fit replaces
-    every existing mode in its window). We detect the "no survivors" case up
-    front and return an empty model (``None``) instead of invoking the
-    crashing path; when at least one mode survives, ``delete_mode`` is safe
+    of bounds for axis 0 with size 0`` (the round-4 "Fit → Reject" crash,
+    triggered from ``calc_fit`` below, and the same latent crash when a
+    re-fit replaces every existing mode in its window). We detect the "no
+    survivors" case up front and return an empty model (``None``) instead of
+    invoking the crashing path; when at least one mode survives,
+    ``delete_mode`` is safe
     and is used directly. Stateless: the caller re-marshals whatever we
     return, so ``None`` cleanly clears the JS store's mode chip.
     """

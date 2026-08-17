@@ -1,8 +1,8 @@
 """Regression tests for the webui pyodide glue's damping op (round-7 rebuild).
 
-The browser engine loads ``webui/src/lib/worker/glue.py`` inside pyodide and
-drives it with plain dicts / flat float64 arrays. These tests import that same
-module directly under CPython and exercise ``calc_damping`` the way the JS
+The browser engine imports ``pydvma.engine`` from the installed wheel inside
+pyodide and drives it with plain dicts / flat float64 arrays. These tests import
+that same module directly under CPython and exercise ``calc_damping`` the way the JS
 ``actions.calcDamping`` does — so a glue-level regression is caught fast (no
 pyodide, no browser).
 

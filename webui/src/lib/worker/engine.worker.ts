@@ -9,7 +9,8 @@
 //   2. loadPackage(['numpy','scipy','micropip'])         — prebuilt in the lock
 //   3. micropip.install([pydvma, peakutils] under <baseUrl>/pypi/, deps:false)
 //      — deps:false keeps install fully offline (no PyPI index lookups)
-//   4. write glue.py to the pyodide FS, pyimport('glue')
+//   4. pyimport('pydvma.engine') — the ops module ships INSIDE the pydvma
+//      wheel installed above, so no separate fetch/write is needed
 // Thereafter every `{op, payload}` calls `glue[op](**payload)` and marshals
 // the returned dict (arrays -> {shape, data, complex}) back across postMessage.
 //
@@ -24,11 +25,7 @@
 // busy worker cannot RECEIVE, but it can post, so a long CWT reports itself
 // scale by scale through the hook installed below. See `progress.ts`.
 //
-// `?raw` imports glue.py as a string at build time (Vite feature) so it is
-// bundled with the worker and written to the in-memory FS at boot.
 import { loadPyodide, type PyodideInterface } from 'pyodide';
-// Vite `?raw` suffix yields the file contents as a string (typed via vite/client).
-import glueSource from './glue.py?raw';
 import { createProgressPoster, type ProgressMessage } from './progress';
 
 interface InitPayload {
@@ -51,7 +48,8 @@ const progress = createProgressPoster((m: ProgressMessage) =>
 
 /**
  * Boot pyodide, load the numeric stack + micropip, install the pydvma and
- * peakutils wheels, and import glue.py. `baseUrl` is the served origin+base
+ * peakutils wheels, and import `pydvma.engine` (the ops module, riding
+ * inside the pydvma wheel). `baseUrl` is the served origin+base
  * from the main thread (the worker has no reliable `import.meta.env.BASE_URL`
  * for absolute asset URLs), so all fetches are absolute: `<baseUrl>pyodide/`
  * and `<baseUrl>pypi/<wheel>`.
@@ -84,14 +82,10 @@ async function boot({ baseUrl, wheels, pyodideVersion }: InitPayload): Promise<v
   // pyodide CDN, never PyPI.
   const wheelUrls = wheels.map((w) => base + 'pypi/' + w);
   await micropip.install.callKwargs(wheelUrls, { deps: false });
-  // Write glue.py into a dedicated dir and put it on sys.path so `import glue`
-  // resolves it. (The FS root `/` is NOT on sys.path; writing to `/glue.py`
-  // and importing would fail with ModuleNotFoundError.)
-  pyodide.FS.mkdirTree('/engine');
-  pyodide.FS.writeFile('/engine/glue.py', glueSource);
-  const sys = pyodide.pyimport('sys');
-  sys.path.append('/engine');
-  glue = pyodide.pyimport('glue');
+  // Engine ops ship INSIDE the pydvma wheel installed above (stage 0 of the
+  // native-engine design) — no more ?raw bundling, no FS write, and the ops
+  // can never be newer or older than the pydvma they call.
+  glue = pyodide.pyimport('pydvma.engine');
   // Install the progress hook ONCE (not per call): glue keeps it in a module
   // global and passes it to any pydvma function that accepts a
   // `progress_callback`, while the per-call ARMING below is what scopes the

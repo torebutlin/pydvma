@@ -1,7 +1,7 @@
 """Regression tests for the webui glue's mid-compute progress hook (round-11 P7).
 
-The browser engine loads ``webui/src/lib/worker/glue.py`` inside pyodide. A
-long CWT cannot be interrupted (a busy worker reads no messages) but it CAN
+The browser engine imports ``pydvma.engine`` from the installed wheel inside
+pyodide. A long CWT cannot be interrupted (a busy worker reads no messages) but it CAN
 report itself: ``engine.worker.ts`` installs a JS callback via
 ``set_progress_hook`` at boot, glue passes it to any pydvma function that
 accepts ``progress_callback``, and each frame is posted to the main thread.

@@ -1,8 +1,8 @@
 """Regression tests for the webui pyodide glue's Best-Match scaling op.
 
-The browser engine loads ``webui/src/lib/worker/glue.py`` inside pyodide and
-drives ``calc_best_match`` with plain dicts / flat interleaved-complex float64
-arrays (the same marshalling ``actions.calcBestMatch`` uses).  These tests
+The browser engine imports ``pydvma.engine`` from the installed wheel inside
+pyodide and drives ``calc_best_match`` with plain dicts / flat interleaved-complex
+float64 arrays (the same marshalling ``actions.calcBestMatch`` uses).  These tests
 import that module directly under CPython so a glue-level regression in the
 relative TF scaling tool (Qt parity: ``analysis.best_match``) is caught fast
 (no pyodide, no browser).

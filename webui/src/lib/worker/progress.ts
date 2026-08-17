@@ -9,8 +9,9 @@
 // frame with the ACTIVE call id and ships it to the main thread.
 //
 // Two jobs, both of which is why this lives in its own module rather than
-// inline in engine.worker.ts (which imports pyodide and glue.py?raw and so
-// cannot be loaded by the node test runner):
+// inline in engine.worker.ts (which imports pyodide and pyimports
+// pydvma.engine from the installed wheel, and so cannot be loaded by the
+// node test runner):
 //   1. ARMING — the callback knows only (done, total); the id it belongs to is
 //      worker state, set around each op. A frame that arrives while nothing is
 //      armed is dropped, never mis-attributed to the previous call.

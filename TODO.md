@@ -54,7 +54,7 @@ is still open, as one consolidated list.
   `MySettings` signature) but Setup exposes none of them. The Setup
   "full" panel is where they belong, next to the NI voltage rails.
 - **`calc_tf_averaged` indexes nested payloads directly**
-  (`webui/src/lib/worker/glue.py` ~195-213, `s['time_axis']` etc.) — by
+  (`pydvma/engine.py` ~301-319, `s['time_axis']` etc.) — by
   the module's own JsProxy convention (documented in `calc_bla`'s own
   docstring) this is a latent bug on the real browser path. Verify the
   'across' ensemble TF path from a real browser session and switch it
