@@ -26,9 +26,12 @@ laptop, and full NI acquisition on a lab PC.
 | **JupyterLite** | [`torebutlin.github.io/pydvma/lite/`](https://torebutlin.github.io/pydvma/lite/) | `import pydvma` in a notebook, running under pyodide | **None** |
 
 All three share **one maths engine**: pydvma's analysis core (FFT, TF,
-windowing, modal fitting) runs unchanged — in a pyodide web worker in
-the browser, or in the `pydvma serve` process for the bridge — so
-results are identical everywhere and never reimplemented in JavaScript.
+windowing, modal fitting) runs unchanged everywhere — in a pyodide web
+worker in the browser (Pages, JupyterLite), or natively in the
+`pydvma serve` process itself when the app is served locally, which is
+the default there. Either way results are identical and never
+reimplemented in JavaScript; see the [local bridge](#2-local-bridge-real-hardware-from-the-same-ui)
+section below for what the native engine changes in practice.
 
 ### 1. Pages app — no install
 
@@ -77,6 +80,23 @@ checkout, no build step. The app auto-detects it was opened through the
 bridge and switches live acquisition on. See
 [Installation](../getting-started/installation.md#running-the-browser-app-locally-pydvma-serve)
 and [NI hardware over the bridge](ni-hardware.md).
+
+The bridge also changes *where the maths runs*. Opened through
+`pydvma-serve`, the app runs analysis in a **native engine** — ordinary
+CPython on your machine, reached over a second local WebSocket — instead
+of the in-browser pyodide worker. This is a performance and reach
+upgrade, not a behaviour change: it removes the browser worker's ~2 GB
+wasm32 memory ceiling (the CWT/sonogram budget alone rises from
+0.75 GiB to 8 GiB), runs at full BLAS speed, and makes **Stop** on a
+long calculation kill a subprocess in milliseconds instead of rebooting
+the whole engine. It is on by default whenever the app is served
+locally; the **BusyChip** tooltip (top of the app, next to the busy
+spinner) names the active engine so you can always tell which one you
+are on. If the native host is unreachable or running a mismatched
+`pydvma` version, the app falls back to the browser engine automatically
+and raises a one-shot toast explaining why. To force a specific engine —
+for testing, or if you hit a native-only quirk — append `?enginehost=`
+to the URL with `native`, `pyodide`, or an explicit `ws://` URL.
 
 ### 3. JupyterLite — `import pydvma` in the browser
 

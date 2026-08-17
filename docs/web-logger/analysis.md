@@ -194,11 +194,16 @@ Two methods are available via the **STFT | CWT** switch:
   to the **damping fit** as well as the picture, and on a long record
   that matters: the wavelet fit holds one complex number per frequency
   per time sample, so a multi-second capture at full rate over the whole
-  band asks for more memory than the browser engine has and the fit
-  stops with a sizing error naming the remedy. Narrowing the range is
-  that remedy — it drops frequency rows *and* lets the fit thin its time
-  axis. (It is also the honest analysis: a 30-second record has little
-  to say about a 19 kHz mode's decay.) The magnitude
+  band can ask for more memory than the engine allows, and the fit stops
+  with a sizing error naming the remedy. The ceiling depends on which
+  engine answered the calculation — 0.75 GiB on the in-browser (pyodide)
+  engine, which is what Pages and JupyterLite always use; 8 GiB when the
+  app is served by `pydvma-serve` and running the native engine (see
+  [The web logger](index.md#2-local-bridge-real-hardware-from-the-same-ui)).
+  Narrowing the range is that remedy either way — it drops frequency
+  rows *and* lets the fit thin its time axis. (It is also the honest
+  analysis: a 30-second record has little to say about a 19 kHz mode's
+  decay.) The magnitude
   scale matches the STFT image, so the two methods read comparably.
   The heat map is drawn on the wavelet's **native log-spaced grid**, so
   the frequency axis switches to **log** with the method (see below) to

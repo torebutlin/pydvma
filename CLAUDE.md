@@ -2,6 +2,48 @@
 
 ## Current focus (update when it changes)
 
+As of 2026-08-17 evening (Mac session): **the native compute engine —
+stages 0–2 of `dev/plans/2026-08-17-native-engine-design.md` — is
+landed, committed LOCALLY (NOT pushed), and live-verified on real
+hardware.** When the app is opened through `pydvma-serve`, analysis now
+runs in ordinary CPython on the serving machine over a new `/engine`
+websocket (`pydvma.engine_host`: per-connection worker subprocess,
+binary frame protocol) instead of the in-browser pyodide worker —
+lifting the wasm32 CWT/sonogram memory ceiling from 0.75 GiB to 8 GiB,
+running at full BLAS speed, and making Stop kill a subprocess in
+milliseconds instead of rebooting the whole engine; the compute glue
+itself moved into the package as `pydvma.engine`, shipped in the wheel
+and shared verbatim by both hosts. It is the default whenever serve
+detects itself served locally (`?enginehost=` overrides; the browser
+engine is the automatic, silently-toasted fallback on any absence or
+version mismatch) — Pages and JupyterLite are untouched, still pyodide,
+still zero-install. Review passes across the arc caught and fixed real
+bugs before anything shipped: non-finite scalars breaking the wire
+JSON, a too-permissive frame-truncation guard, Stop not actually
+observing a client-side close, a stranded `init()` orphaning worker
+subprocesses on retry, and a genuine Playwright port collision (this
+arc's own port pick for `engine-native.spec.ts` landed on 8765, already
+owned by `bla.spec.ts`'s `BLA_BRIDGE_PORT` — moved to 8766, every
+claimant now named in one comment). Live-verified this evening on this
+Mac + a Scarlett 2i2 4th Gen (48 kHz, 4-ch bridge captures): served
+with no `?enginehost=` param, the app resolved the native engine by
+default (console-confirmed), and FFT/CWT-sonogram/TF-with-coherence all
+ran correctly through the `/engine` socket end-to-end. That session also
+found (and logged to TODO, NOT fixed — pre-existing, not from this arc)
+a two-part bridge **soundcard OUTPUT** bug: an unset output device plays
+the stimulus on the system default output instead of the capture
+device, and an explicitly-matched output device zeroes the capture on
+macOS (a second CoreAudio stream breaking the running input stream) —
+likely fix is one duplex `sd.playrec`-style stream. Round doc:
+`dev/2026-08-17-native-engine-round.md`. Suites at close: pytest 886/7,
+vitest 1030/1, check 0/0, Playwright 69/15skip + @engine 19/19 +
+BRIDGE_E2E 18/18, mkdocs --strict green; engine wheel rebuilt (still
+2.3.0) and verified byte-identical to the tree. **Stages 3–4 — the
+session journal (serve owns the session doc; tab-close/reopen restores
+it) and `dvma.launch` (the notebook front door replacing the removed
+`dvma.Logger`)** are the next arc and need their own fresh plan before
+implementation starts (design §4.4–4.5 already sketches the shape).
+
 As of 2026-08-12/13 (overnight Mac session): **ROUND 11 — the first
 3c6 lab round's feedback — is fully fixed and committed LOCALLY (NOT
 pushed; Tore hasn't asked).** Sixteen items, five real bugs, all

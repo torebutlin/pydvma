@@ -72,6 +72,32 @@ field, plus the acquisition UX it showed was missing.
   replace-or-keep (replace undoes; kept runs get `#2` suffixes), BLA
   result channels read `resp ch N`, and the σ overlay finally has a
   key and a one-line explanation.
+- **Native compute engine.** When the app is served by `pydvma-serve`,
+  analysis ops now run in ordinary CPython on the serving machine (a
+  new `/engine` websocket + `pydvma.engine_host`: per-connection worker
+  subprocess, binary frame protocol) instead of the in-browser pyodide
+  engine — no wasm32 2 GB address-space ceiling (the CWT image budget
+  rises from 0.75 GiB to 8 GiB on 64-bit hosts), full-speed BLAS,
+  engine-ready in about a second instead of a pyodide boot, and Stop
+  terminates just the worker subprocess (measured: the in-flight calc
+  settles in under a millisecond client-side and the compute child is
+  dead within tens of milliseconds). The Pages app is unchanged: the
+  browser engine remains the zero-install path and the automatic
+  fallback whenever the native host is absent, version-mismatched, or
+  unreachable (a toast reports the fallback when serve was detected).
+  Force a host with `?enginehost=` (`native`, `pyodide`, or an explicit
+  `ws://` URL). The BusyChip tooltip names the active engine.
+
+### Changed
+
+- **Engine ops live in the package.** The compute glue the browser
+  worker used to bundle privately is now `pydvma.engine`, shipped in
+  the wheel and shared verbatim by both engine hosts (dev note:
+  engine-op edits need `npm run vendor:wheels` before the browser sees
+  them).
+- **`legacy_to_dvma` / `mat_to_dvma` use real temp dirs** instead of
+  fixed `/tmp` paths (Windows-safe, collision-safe under the native
+  host).
 
 ## 2.3.0 — 2026-08-12
 

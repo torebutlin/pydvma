@@ -63,9 +63,12 @@ page maps what you did in the Qt logger onto where it lives now.
     per-source-channel `channel_cal_factors`.
 
 The data model is identical underneath: the web logger's analysis runs
-the very same pydvma core (in a pyodide worker in the browser, or in the
-`pydvma serve` process), so FFT/TF/windowing/modal maths are never
-reimplemented — results match the desktop tool exactly.
+the very same pydvma core in every mode — a pyodide worker in the
+browser (Pages, JupyterLite), or natively in the `pydvma serve` process
+when the app is served locally (the default there; `?enginehost=`
+overrides, and the browser engine is the automatic fallback) — so
+FFT/TF/windowing/modal maths are never reimplemented — results match
+the desktop tool exactly.
 
 ## The labsheet launch path
 

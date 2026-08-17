@@ -13,6 +13,45 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+- **Native engine, stages 3–4 (2026-08-17 design, §4.4–4.5 of
+  `dev/plans/2026-08-17-native-engine-design.md`)** — stages 0–2 (glue
+  into the package, `/engine` host, default flip when served) are
+  landed and live-verified; see
+  `dev/2026-08-17-native-engine-round.md`. Next arc: the **session
+  journal** (serve owns the session doc server-side; capture → close
+  tab → reopen restores it) and **`dvma.launch(settings)`** (the
+  notebook front door that replaces the removed `dvma.Logger`, with
+  `session.data`/`session.push` pull/push access). Needs its own fresh
+  plan before implementation starts.
+- **Serve HTTP HEAD requests log noisy websockets tracebacks** — an
+  external health probe (or a browser's favicon/preflight-style
+  request) sending `HEAD` instead of `GET` produces an "unsupported
+  HTTP method; expected GET; got HEAD" traceback on stderr for every
+  hit. Consider answering `HEAD` explicitly in
+  `BridgeServer._process_request` instead of letting it fall through to
+  the websocket handshake rejection.
+- **DampingPanel doesn't format NaN consistently** (pre-existing on
+  pyodide; now equally reachable through the native engine) — the
+  per-mode chip's `Qn={f.Qn.toFixed(0)}` renders the literal text "NaN"
+  when a fit produces one (`webui/src/components/DampingPanel.svelte`
+  ~429), and the start-time/threshold inputs render `NaN` as their
+  value text too (`String(dmp.startTime)` etc, ~306–313) — both should
+  get the same `fmt1`-style em-dash treatment the metrics table already
+  uses.
+- **`pydvma/engine.py` MemoryError remedy messages are stale** — the
+  PSD/STFT sizing-error text ("too large an internal buffer for the
+  browser engine…", ~205 and ~295) predates the native engine and is
+  now wrong when a native-hosted calc hits its own (much higher) 8 GiB
+  ceiling. Reword to be host-aware, or drop the "browser engine" phrase
+  and just name the ceiling that was actually hit.
+- **Vestigial `_accepts_kw` old-wheel probes in `pydvma/engine.py`**
+  (~74–97) — these existed to guard against the browser running a
+  cached engine wheel older than the glue calling it. Now that glue
+  ships *inside* the wheel it rides in (Task 1 of the native-engine
+  arc), glue can no longer be newer than its own wheel, so the probe is
+  dead weight. Safe to simplify once confirmed there's no equivalent
+  skew risk on the native path (a stale installed `pydvma` vs. a newer
+  one only in `webui`'s vendored copy) — check before deleting.
 - **Round-11 deferred (2026-08-12,
   `dev/2026-08-12-round11-3c6-lab-feedback.md`):**
   - Live incoming time-domain preview during a log — the monitor
@@ -457,6 +496,28 @@ is still open, as one consolidated list.
   session (no shared-mode WASAPI endpoint for the 2i2; needs a console
   login). Only pairing-free readable facts: serial `S2J525A573389F`,
   productId 33305 (0x8219). Probe script: not kept — one-off.
+- **Bridge soundcard OUTPUT path is broken two ways** (found live,
+  2026-08-17, native-engine verification session on the Mac + 2i2 4th
+  Gen — pre-existing, not from that arc). (a) With
+  `output_device_index` unset, `sd.OutputStream(device=None)` plays the
+  stimulus on the **system default output** (Mac speakers, audibly
+  confirmed) instead of the capture device — the round-9 "unset output
+  follows input" fix (`options.py`) covers NI/mock only, not soundcard.
+  (b) With `output_device_index` set explicitly to the *same* device as
+  the input, the capture comes back **all-zero** — opening a second
+  CoreAudio stream on a device that already has a running input stream
+  appears to break the input stream on macOS. Repro'd headlessly via
+  the `/ws` protocol both ways (configure the 2i2, log with an output
+  sweep enabled). Direct `sd.playrec` duplex on the same device works
+  fine, which is likely the fix shape — one duplex stream instead of
+  separate input+output streams — or at minimum default the output
+  device to the input device the way the NI/mock path already does.
+- **2i2 4th Gen physical loopback cable is ~-27 dB down** (found in the
+  same session: RMS 0.009 on the Out L → In 1 cable vs 0.204 on the
+  digital loopback for the same tone) — cable or gain-staging suspect,
+  not chased further. The **digital loopback (channels 3/4) remains the
+  reliable cable-free self-test path** on this interface; prefer it
+  over the physical cable for any future 2i2 bench check.
 - **Lab-testing period (Tore, days/weeks)** — real structures, real
   measurements; expect feedback-driven fix rounds. Newest surfaces to
   exercise: the Nonlin/BLA stage, Setup level check + gain-derived
