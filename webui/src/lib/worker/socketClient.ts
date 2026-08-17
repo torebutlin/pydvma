@@ -52,6 +52,12 @@ export function createSocketEngineClient(
   let connected = false;
   let disposed = false;
   let events: EngineCallEvents = {};
+  // The in-flight init()'s reject, live only while a connect is awaiting its
+  // greeting. init() is NOT in `pending` (it has no request id yet), so
+  // rejectAll() can't reach it -- restart()/dispose() must settle it
+  // separately, and BEFORE detaching the socket's onclose/onerror handlers
+  // that would otherwise be its only path to ever settling.
+  let initReject: ((e: Error) => void) | null = null;
 
   /** Settle one pending call and announce it, so progress state can clear. */
   function finish(id: number): Pending | undefined {
@@ -147,16 +153,20 @@ export function createSocketEngineClient(
         ws = sock;
         let settled = false;
 
-        sock.onerror = () => {
+        const settleReject = (err: Error) => {
           if (settled) return;
           settled = true;
-          reject(new Error('native engine connect failed'));
+          initReject = null;
+          reject(err);
         };
-        sock.onclose = () => {
-          if (settled) return;
-          settled = true;
-          reject(new Error('native engine connection closed before greeting'));
-        };
+        // Live for the duration of this connect attempt only -- cleared on
+        // any settle path below (including the greeting arriving), so a
+        // restart()/dispose() after that point falls through to the normal
+        // `pending`-map rejection instead of double-settling this promise.
+        initReject = settleReject;
+
+        sock.onerror = () => settleReject(new Error('native engine connect failed'));
+        sock.onclose = () => settleReject(new Error('native engine connection closed before greeting'));
         sock.onmessage = (e: { data: unknown }) => {
           if (typeof e.data !== 'string') return; // the greeting is always text
           let msg: any;
@@ -166,9 +176,11 @@ export function createSocketEngineClient(
             return;
           }
           if (msg?.type !== 'engine_ready') return;
+          if (settled) return;
           // Task 10: version gate lands here (compare msg.v against the
           // client's expected ENGINE_PROTOCOL_VERSION and reject on mismatch).
           settled = true;
+          initReject = null;
           connected = true;
           // Steady-state handlers take over only now that init is done.
           sock.onmessage = (ev: { data: unknown }) => handleMessage(ev.data);
@@ -197,6 +209,12 @@ export function createSocketEngineClient(
     restart(reason: Error): void {
       if (disposed) return;
       connected = false;
+      // Settle a still-pending init() FIRST: its only settlement paths are
+      // the socket's own onclose/onerror/onmessage closures, which we are
+      // about to detach/close below -- without this, restarting mid-boot
+      // (the store's Stop button while the greeting hasn't arrived yet)
+      // would leave that init() promise permanently unsettled.
+      initReject?.(reason);
       rejectAll(reason);
       const old = ws;
       ws = null;
@@ -214,7 +232,9 @@ export function createSocketEngineClient(
     dispose(reason?: Error): void {
       disposed = true;
       connected = false;
-      rejectAll(reason ?? new Error('engine client disposed'));
+      const err = reason ?? new Error('engine client disposed');
+      initReject?.(err); // see restart() -- same reasoning, terminal instead
+      rejectAll(err);
       const old = ws;
       ws = null;
       if (old) {

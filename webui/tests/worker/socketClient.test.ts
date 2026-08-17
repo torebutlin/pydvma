@@ -176,4 +176,32 @@ describe('createSocketEngineClient', () => {
     f.serverError();
     await expect(initP).rejects.toThrow();
   });
+
+  test('restart() while init is pending rejects the init promise; a second init() then succeeds', async () => {
+    const factories: ReturnType<typeof makeFakeWs>[] = [];
+    const client = createSocketEngineClient('ws://x/engine', () => {
+      const f = makeFakeWs();
+      factories.push(f);
+      return f.ws;
+    });
+    const initP = client.init('http://x/', [], '0'); // no open/greet -- still awaiting the greeting
+    client.restart(new Error('stopped mid-boot'));
+    await expect(initP).rejects.toThrow('stopped mid-boot');
+
+    // Recovery: a second init() reconnects via a FRESH factory socket.
+    const init2 = client.init('http://x/', [], '0');
+    expect(factories.length).toBe(2);
+    factories[1].open();
+    factories[1].greet();
+    await expect(init2).resolves.toBeUndefined();
+  });
+
+  test('dispose() while init is pending rejects the init promise; later init() rejects (terminal)', async () => {
+    const f = makeFakeWs();
+    const client = createSocketEngineClient('ws://x/engine', () => f.ws);
+    const initP = client.init('http://x/', [], '0'); // still awaiting the greeting
+    client.dispose(new Error('shutting down'));
+    await expect(initP).rejects.toThrow('shutting down');
+    await expect(client.init('http://x/', [], '0')).rejects.toThrow(/disposed/);
+  });
 });
