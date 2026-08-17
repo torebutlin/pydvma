@@ -40,7 +40,7 @@ let glue: any = null;
 
 /**
  * Mid-compute progress reporter. Armed with the active request id around each
- * op (below) and handed to glue.py once at boot, so pydvma's per-scale
+ * op (below) and handed to pydvma.engine once at boot, so pydvma's per-scale
  * `progress_callback` lands here and goes out as a `{type:'progress'}` frame.
  */
 const progress = createProgressPoster((m: ProgressMessage) =>
@@ -84,13 +84,27 @@ async function boot({ baseUrl, wheels, pyodideVersion }: InitPayload): Promise<v
   await micropip.install.callKwargs(wheelUrls, { deps: false });
   // Engine ops ship INSIDE the pydvma wheel installed above (stage 0 of the
   // native-engine design) — no more ?raw bundling, no FS write, and the ops
-  // can never be newer or older than the pydvma they call.
-  glue = pyodide.pyimport('pydvma.engine');
+  // can never be newer or older than the pydvma they call. Dev-loop note:
+  // editing pydvma/engine.py needs `cd webui && npm run vendor:wheels` before
+  // the browser sees it — vite no longer re-reads the source, since it's not
+  // bundled anymore. When testing the BUILT app, hard-reload after a
+  // rebuild: the wheel keeps the same filename, so an HTTP-cached copy can
+  // silently keep serving stale ops.
+  try {
+    glue = pyodide.pyimport('pydvma.engine');
+  } catch (e) {
+    throw new Error('pydvma.engine is missing from the installed wheel — rebuild the vendored '
+      + 'engine wheel: cd webui && npm run vendor:wheels. Original: '
+      + (e instanceof Error ? e.message : String(e)));
+  }
   // Install the progress hook ONCE (not per call): glue keeps it in a module
   // global and passes it to any pydvma function that accepts a
   // `progress_callback`, while the per-call ARMING below is what scopes the
-  // frames to a request id. Guarded so an older bundled glue (no such
-  // function) still boots — it simply never reports progress.
+  // frames to a request id. Guarded not because an older bundled glue could
+  // lack it (there is no bundled glue any more — the wheel and the ops
+  // module are always the same version) but as cheap insurance against a
+  // hypothetical wheel/ops mismatch, e.g. a stale cached wheel with an
+  // older pydvma.engine that predates this hook.
   const install = glue.set_progress_hook;
   if (install) {
     try {

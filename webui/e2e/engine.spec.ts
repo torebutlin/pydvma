@@ -8,7 +8,7 @@ import { expect, test, type Page } from '@playwright/test';
  * (`playwright test --grep @engine`).
  *
  * Booting to ready alone is NOT sufficient proof — the round-trip validates
- * glue.py, the complex-array marshalling, and the worker protocol together.
+ * pydvma.engine, the complex-array marshalling, and the worker protocol together.
  */
 
 /**

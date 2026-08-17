@@ -5,8 +5,8 @@
 // anything (no cancel message, and SharedArrayBuffer is out — GitHub Pages
 // sends no COOP/COEP headers). It can, however, still POST. So a long CWT
 // reports itself: pydvma calls a `progress_callback` once per wavelet scale,
-// glue.py forwards it to the hook installed here, and this poster stamps the
-// frame with the ACTIVE call id and ships it to the main thread.
+// pydvma.engine forwards it to the hook installed here, and this poster
+// stamps the frame with the ACTIVE call id and ships it to the main thread.
 //
 // Two jobs, both of which is why this lives in its own module rather than
 // inline in engine.worker.ts (which imports pyodide and pyimports
@@ -38,7 +38,7 @@ export interface ProgressPoster {
   arm(callId: number): void;
   /** Stop reporting (call settled) — later frames are dropped. */
   disarm(): void;
-  /** The hook handed to glue.py; safe to call from the compute hot loop. */
+  /** The hook handed to pydvma.engine; safe to call from the compute hot loop. */
   postProgress(done: number, total: number): void;
 }
 

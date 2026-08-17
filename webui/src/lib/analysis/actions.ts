@@ -6,8 +6,8 @@
  * worker and decoding the result into per-set `SetArrays` for
  * `buildPlotModel`.
  *
- * MATHS NEVER RUNS HERE — every numeric op is a worker call into glue.py
- * (spec §11); this module only reshapes flat JS buffers in and
+ * MATHS NEVER RUNS HERE — every numeric op is a worker call into
+ * pydvma.engine (spec §11); this module only reshapes flat JS buffers in and
  * `decodeArray`s the marshalled result out. Every action awaits the
  * engine (`enqueue` / `whenReady`) and, on REJECTION (boot failure),
  * records the failure in `computeErrors` rather than hanging (engine
@@ -755,7 +755,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *
    * PARTIAL FAILURE (Round-3 item 1): each set is computed independently in
    * its own try/catch, so a set the engine CAN'T handle (e.g. a resolution
-   * too fine for the 32-bit browser engine → glue.py raises a clear message)
+   * too fine for the 32-bit browser engine → pydvma.engine raises a clear message)
    * does not stop the others. Sets that succeed render; the failing sets are
    * collected into ONE named `psd` error naming each set and its reason.
    */

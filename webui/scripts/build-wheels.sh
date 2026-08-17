@@ -9,6 +9,10 @@
 # CPython 3.13. Output goes to public/pypi/ (gitignored build artefact); the
 # worker fetches them from `<base>/pypi/<name>.whl` and micropip-installs each.
 #
+# The pydvma wheel also carries the compute-ops module pydvma/engine.py, so
+# this script must be re-run after ANY edit to pydvma/engine.py for the
+# browser engine to pick up the change.
+#
 # Requires: python with `pip wheel` (the maintainer machine has pydvma editable
 # installed, so `.` builds cleanly). Run from anywhere.
 set -euo pipefail

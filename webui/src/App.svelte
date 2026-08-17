@@ -509,7 +509,7 @@
   /**
    * Convert loaded file bytes to a DvmaDataset by format. `.dvma` reads
    * directly; legacy `.npy` and JW-logger `.mat` go through the engine
-   * (glue.py converts them to a .dvma container which `readDvma` then
+   * (pydvma.engine converts them to a .dvma container which `readDvma` then
    * parses). The engine call boots pyodide lazily on first use.
    */
   async function toDataset(bytes: Uint8Array, name: string): Promise<DvmaDataset> {

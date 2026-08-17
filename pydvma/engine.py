@@ -49,7 +49,7 @@ _progress_hook = None
 def set_progress_hook(fn=None):
     """Install (or clear, with ``None``) the mid-compute progress callback.
 
-    Called by ``engine.worker.ts`` ONCE after ``import glue``, with a JS
+    Called by ``engine.worker.ts`` ONCE after ``pyimport('pydvma.engine')``, with a JS
     function of ``(done, total)``. The worker arms/disarms it per request (it
     stamps the frames with the active call id and throttles them to ~10 Hz), so
     glue itself neither knows nor cares which call is running — it just passes

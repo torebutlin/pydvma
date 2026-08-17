@@ -467,7 +467,11 @@ The engine wheel (public/pypi, gitignored) rebuilds via
 webui/scripts/build-wheels.sh — keep ENGINE_WHEELS
 (webui/src/lib/stores/engine.ts) in sync on version bumps: the
 hard-coded `pydvma-<version>-py3-none-any.whl` filename must match the
-rebuilt engine wheel or the app breaks at boot (as of v2.0.0).
+rebuilt engine wheel or the app breaks at boot (as of v2.0.0). As of the
+native-engine work (2026-08-17), this same wheel also carries the
+compute-ops module `pydvma/engine.py` — so an engine-op edit is invisible
+to the browser (vite no longer bundles it) until `npm run vendor:wheels`
+rebuilds the wheel.
 
 **Suites at close:** pytest 352 / 15 capability-skipped (Windows PC,
 all NI hardware live); vitest 592; svelte-check 0/0; Playwright 69 +
