@@ -41,7 +41,9 @@ _lite_build/
 lite/content/*.dvma
 
 # webui (Svelte + Vite web GUI)
-webui/node_modules/
+# node_modules at any level — a stray root-level one appears if npm or
+# vitest is accidentally run from the repo root instead of webui/.
+node_modules/
 webui/dist/
 webui/public/pyodide/
 webui/public/pypi/
