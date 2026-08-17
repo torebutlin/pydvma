@@ -227,10 +227,18 @@ session.close()
   lock); `push` is the only write path. The notebook never holds live
   references that the engine is concurrently computing on — this is the
   thread-safety answer to "editing the class while the GUI is live".
-- `dvma.attach(url)` (same API against an externally started
-  `pydvma-serve`, pull/push over `/engine`) is a natural follow-on and
-  the API is designed not to preclude it, but it is **out of scope**
-  for this project.
+- **The notebook is optional.** `launch` and the CLI are two front
+  doors onto the same `BridgeServer`: `pydvma-serve --driver nidaq
+  --open` keeps working as a standalone-app launch with no notebook
+  anywhere, and gets the native engine and session journal identically
+  (they live in the serve process, not the launch path). The only
+  difference is that the CLI route has no kernel holding a `session`
+  handle.
+- `dvma.attach(url)` (same session API against an externally started
+  `pydvma-serve`, pull/push over `/engine` — the way to get notebook
+  access to a CLI-launched session) is a natural follow-on and the API
+  is designed not to preclude it, but it is **out of scope** for this
+  project.
 - The `Logger`/`Oscilloscope` tombstone messages update to name
   `dvma.launch`.
 
