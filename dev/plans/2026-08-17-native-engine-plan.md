@@ -1351,7 +1351,7 @@ import { expect, test } from '@playwright/test';
 
 const BRIDGE_E2E = !!process.env.BRIDGE_E2E;
 const PYTHON = process.env.PYDVMA_PYTHON ?? 'python3';
-const PORT = Number(process.env.ENGINE_PORT ?? 8764);
+const PORT = Number(process.env.ENGINE_PORT ?? 8766); // 8763/8764/8765 are bridge/bridge-settings/bla's own defaults
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 function waitForPort(port: number, timeoutMs = 15000): Promise<void> {

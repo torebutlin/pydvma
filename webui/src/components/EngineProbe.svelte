@@ -30,10 +30,14 @@
    *    the store's `engine.stop()` shortly after it has genuinely started
    *    computing server-side, and reports how promptly the in-flight call
    *    settles plus whether a follow-up calc succeeds afterward (fresh
-   *    socket + greeting). This is the real-socket counterpart of the
-   *    unit-level teardown tests in `tests/worker/socketClient.test.ts` —
-   *    it exercises `engine_host.handle_connection`'s
-   *    close-interrupts-the-op race end to end, not a fake transport.
+   *    socket + greeting). This drives the close-mid-op race end to end
+   *    from the CLIENT's side, over a real socket rather than the fake
+   *    transport `tests/worker/socketClient.test.ts` uses — but the
+   *    SERVER-side half (close actually kills the worker's child process
+   *    promptly, not after the op's full duration) is asserted separately
+   *    at the unit level in
+   *    `tests/test_engine_host.py::test_engine_endpoint_close_mid_op_kills_worker_promptly`,
+   *    not re-measured here.
    */
   import { onMount } from 'svelte';
   import { createEngineStore, isEngineStopped, type EngineStore } from '../lib/stores/engine';
@@ -94,6 +98,17 @@
     // `websockets` default 1 MiB cap would sever this mid-frame).
     (window as any).__engineLargeTest = async () => {
       await engine.whenReady();
+      // Warm the worker subprocess (its one-time numpy/scipy/pydvma import)
+      // with a cheap calc first, same as __engineStopTest below, so a slow
+      // cold spawn (Windows especially) isn't racing the timed transfer.
+      await engine.enqueue('calc_fft', {
+        time_axis: Float64Array.from({ length: 64 }, (_, i) => i / 1000),
+        time_data: Float64Array.from({ length: 64 }, (_, i) => Math.sin((2 * Math.PI * 50 * i) / 1000)),
+        n_channels: 1,
+        fs: 1000,
+        window: null,
+      });
+
       const fs = 8000;
       const N = 2_097_152; // ~2M samples; Float64Array(N).byteLength = 16 MiB
       const timeAxis = new Float64Array(N);
@@ -132,8 +147,11 @@
     //    next to the calc's multi-second solo duration, since restart()
     //    rejects the pending call synchronously rather than waiting on the
     //    server's kill+respawn);
-    //  - how long the full stop() (server-side cancel/kill + fresh socket +
-    //    greeting) took to resolve;
+    //  - how long the client-visible stop() call itself took to resolve
+    //    (close the old socket, open a fresh one, wait for its greeting) —
+    //    this does NOT measure the server's own cancel/kill of the OLD
+    //    connection's worker, which proceeds independently; that latency is
+    //    asserted separately at the unit level (see the module docstring);
     //  - whether a follow-up calc over the reconnected socket succeeds.
     (window as any).__engineStopTest = async () => {
       await engine.whenReady();

@@ -24,22 +24,53 @@ import { fileURLToPath } from 'node:url';
  *    whose request frame is ≳10 MB (`__engineLargeTest`);
  *  - Stop must interrupt a call that is genuinely mid-compute on the SERVER
  *    (not just queued client-side) and the socket must then reconnect
- *    cleanly — the real-socket version of the unit-level teardown tests,
- *    exercising `engine_host.handle_connection`'s close-interrupts-the-op
- *    race end to end (`__engineStopTest`).
+ *    cleanly. This drives the close-mid-op race end to end from the
+ *    CLIENT's side (prompt settle, then a working reconnect); the
+ *    server-side half — close actually kills the worker's child process
+ *    promptly, not after the op's full duration — is asserted at the unit
+ *    level in `tests/test_engine_host.py::
+ *    test_engine_endpoint_close_mid_op_kills_worker_promptly`, not
+ *    re-measured here (`__engineStopTest`).
  */
 
 const BRIDGE_E2E = !!process.env.BRIDGE_E2E;
 // See bridge.spec.ts: `python3` is the MS-Store stub on Windows.
 const PYTHON = process.env.PYDVMA_PYTHON ?? 'python3';
-// 8765, NOT 8764: bridge.spec.ts's SETTINGS_PORT defaults to 8764, and a
-// combined run without --workers=1 races both beforeAlls onto one port —
-// surfacing as a misleading settings-prefill value mismatch, not a bind error.
-const PORT = Number(process.env.ENGINE_PORT ?? 8765);
+// Port claimants across every BRIDGE_E2E-gated spec that spawns its own
+// `pydvma serve` (each needs a DISJOINT default — a combined run without
+// --workers=1 starts every file's beforeAll concurrently):
+//   8763  bridge.spec.ts        (main describe, BRIDGE_PORT)
+//   8764  bridge.spec.ts        (--settings describe, BRIDGE_SETTINGS_PORT)
+//   8765  bla.spec.ts           (bridge-run describe, BLA_BRIDGE_PORT)
+//   8766  engine-native.spec.ts (this file, ENGINE_PORT)
+// A collision is NASTIER than a bind error here: a mock `pydvma serve`
+// answers both /ws and /engine, so the loser's tests can silently run
+// against the winner's server instead of failing to start.
+const PORT = Number(process.env.ENGINE_PORT ?? 8766);
 const ENGINE_URL = `ws://127.0.0.1:${PORT}/engine`;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 let server: ChildProcessWithoutNullStreams | undefined;
+
+// Buffered (not drained-to-nothing) spawned-server output: the last
+// MAX_OUTPUT_LINES lines of stdout+stderr combined, so a failure to start
+// (wrong PYDVMA_PYTHON, no `websockets` installed, EADDRINUSE from a port
+// collision — see the PORT comment above) is SELF-REPORTING in the
+// waitForPort rejection instead of a bare "never opened" with the actual
+// cause sitting silently in a stream nobody read. This is also what a
+// Windows run needs: the MS-Store `python3` stub and a missing `websockets`
+// extra both fail silently today, printing their reason only to a stream
+// bridge.spec.ts (and, until now, this file) discarded.
+const MAX_OUTPUT_LINES = 50;
+const serverOutputLines: string[] = [];
+
+function ingestServerOutput(chunk: Buffer | string): void {
+  for (const line of chunk.toString().split('\n')) {
+    if (!line) continue;
+    serverOutputLines.push(line);
+    if (serverOutputLines.length > MAX_OUTPUT_LINES) serverOutputLines.shift();
+  }
+}
 
 /** Poll the loopback TCP port until the server accepts a connection. */
 function waitForPort(port: number, timeoutMs = 20000): Promise<void> {
@@ -50,8 +81,14 @@ function waitForPort(port: number, timeoutMs = 20000): Promise<void> {
       sock.once('connect', () => { sock.destroy(); resolve(); });
       sock.once('error', () => {
         sock.destroy();
-        if (Date.now() > deadline) reject(new Error(`engine port ${port} never opened`));
-        else setTimeout(attempt, 200);
+        if (Date.now() > deadline) {
+          const tail = serverOutputLines.length
+            ? serverOutputLines.join('\n')
+            : '(no server output captured)';
+          reject(new Error(`engine port ${port} never opened. serve output:\n${tail}`));
+        } else {
+          setTimeout(attempt, 200);
+        }
       });
     };
     attempt();
@@ -64,8 +101,8 @@ test.beforeAll(async () => {
     cwd: REPO_ROOT,
     stdio: 'pipe',
   });
-  server.stdout.on('data', () => { /* drain */ });
-  server.stderr.on('data', () => { /* drain */ });
+  server.stdout.on('data', ingestServerOutput);
+  server.stderr.on('data', ingestServerOutput);
   await waitForPort(PORT);
 });
 
@@ -100,9 +137,13 @@ test.describe('native engine', () => {
     // whole test, not just the status wait, matching headroom.
     test.setTimeout(240_000);
 
-    // Port 1 refuses the connection immediately (no listener, and it's a
-    // privileged port besides) — a fast, deterministic native-probe failure
-    // rather than relying on the 5 s greeting-timeout path.
+    // Port 1 is on Chromium's restricted-ports list (net::ERR_UNSAFE_PORT):
+    // the browser's network stack refuses the connection attempt outright,
+    // so it never even reaches TCP (this is NOT an OS "privileged port"
+    // thing — connecting out to a low port needs no special privilege;
+    // only binding/listening on one does). That makes this a fast,
+    // deterministic native-probe failure rather than relying on the 5 s
+    // greeting-timeout path a real closed/filtered port would hit instead.
     await page.goto('/?engine=1&enginehost=ws://127.0.0.1:1/engine');
 
     // Falls through to a real pyodide boot — the long ceiling from
@@ -117,16 +158,21 @@ test.describe('native engine', () => {
   });
 
   test('a ~30 MB request frame round-trips through the native engine', async ({ page }) => {
-    test.setTimeout(60_000);
+    // Generous: this waits on a cold worker-subprocess spawn + numpy/scipy/
+    // pydvma import (the hook now warms it first, but a slow machine — esp.
+    // Windows — still wants headroom) plus the ~30 MB transfer itself.
+    test.setTimeout(120_000);
     await page.goto(`/?engine=1&enginehost=${encodeURIComponent(ENGINE_URL)}`);
     await expect(page.getByTestId('engine-status')).toHaveText('ready', { timeout: 30000 });
     await expect(page.getByTestId('engine-status')).toHaveAttribute('data-engine-host', 'native');
 
     const result = await page.evaluate(() => (window as any).__engineLargeTest());
     expect(result.ok).toBe(true);
-    // time_axis + time_data together, well past the old 1 MiB websockets
-    // default and comfortably past the "≳10 MB" carry-over bar — this is
-    // what the serve.py max_size=256*1024*1024 raise exists for.
+    // nBytes is the FIXTURE's raw array size (time_axis + time_data), not a
+    // measurement of anything on the wire — it just pins that this fixture
+    // is actually big enough to exercise the "≳10 MB" carry-over bar (well
+    // past the old 1 MiB websockets default, safely inside the serve.py
+    // max_size=256*1024*1024 raise the round-trip depends on).
     expect(result.nBytes).toBeGreaterThan(10 * 1024 * 1024);
     expect(result.freqAxisLen).toBeGreaterThan(0);
     expect(result.nOut).toBeGreaterThan(0);
@@ -152,8 +198,11 @@ test.describe('native engine', () => {
     // proc.join has a 2 s cap).
     expect(result.calcSettledMs).toBeLessThan(1000);
 
-    // Phase 2: the full stop() (server-side cancel+kill, fresh socket,
-    // fresh greeting) completed at all, in a sane bound.
+    // Phase 2: stop() itself (closing the old socket, opening a fresh one,
+    // waiting for its greeting) completed at all, in a sane bound. This is
+    // the CLIENT's reconnect timing, not a measurement of the server's own
+    // cancel/kill of the old connection's worker — that proceeds
+    // independently and is asserted separately (see the comment above).
     expect(result.rebootMs).toBeLessThan(30_000);
 
     // Phase 3: a normal calc over the reconnected socket succeeds, and the
@@ -163,5 +212,23 @@ test.describe('native engine', () => {
     expect(result.reconnectOk).toBe(true);
     await expect(page.getByTestId('engine-status')).toHaveText('ready');
     await expect(page.getByTestId('engine-status')).toHaveAttribute('data-engine-host', 'native');
+
+    // Cheap server-side corroboration, now that stderr is buffered instead
+    // of drained to nothing: a clean close-mid-op must not log a
+    // `websockets` "connection handler failed" traceback — the phrase it
+    // emits specifically when our OWN `handle_connection` coroutine leaks an
+    // unhandled exception (asyncio/server.py's `connection.logger.error
+    // ("connection handler failed", ...)`; see engine_host.py's docstring,
+    // which already names this exact string). Deliberately NOT a bare
+    // "Traceback" match: `waitForPort`'s raw TCP probe above (connect, then
+    // destroy() before any HTTP bytes go out — the same idiom bridge.spec.ts
+    // and bla.spec.ts use) reliably makes `websockets` log an UNRELATED,
+    // harmless "opening handshake failed" traceback of its own once per
+    // spawned server; a bare "Traceback" match flags that every time and
+    // says nothing about the close-mid-op path this test actually cares
+    // about. This check does NOT re-prove the kill itself completes
+    // promptly — that bound is the unit test's job (see the comment above).
+    const serverIssues = serverOutputLines.filter((l) => l.includes('connection handler failed'));
+    expect(serverIssues, `unexpected serve-side error output:\n${serverIssues.join('\n')}`).toEqual([]);
   });
 });
