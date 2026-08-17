@@ -16,18 +16,51 @@
 // JSON.stringify already turns a bare scalar into `null` -- exactly the wire
 // behaviour engine_host.py's sanitiser produces, so no extra code is needed
 // here. Array VALUES are unaffected: an "f8" blob is raw IEEE-754 bytes that
-// never passes through JSON.stringify, so it carries NaN/Inf natively.
+// never passes through JSON.stringify, so it carries NaN/Inf natively. Blob
+// bytes are copied verbatim (memcpy), never reinterpreted -- this assumes a
+// little-endian host, true of every target runtime here (browsers, Node,
+// and wasm32).
 
-/** A lifted-binary-value marker in the decoded (or about-to-be-encoded) header tree. */
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+
+/** A lifted-binary-value placeholder in the decoded (or about-to-be-encoded) header tree. */
 interface BinPlaceholder {
   __bin__: number;
   kind: 'f8' | 'bytes';
   len: number;
 }
 
-/** `__bin__` is reserved: any dict/object carrying it (with a numeric value) is a placeholder. */
-function isPlaceholder(v: unknown): v is BinPlaceholder {
-  return v !== null && typeof v === 'object' && typeof (v as { __bin__?: unknown }).__bin__ === 'number';
+/** Anything carrying the reserved `__bin__` key, before its value has been validated. */
+interface RawBinCandidate {
+  __bin__: unknown;
+  kind?: unknown;
+  len?: unknown;
+}
+
+/**
+ * `__bin__` is a RESERVED key: `engine_host.py` treats ANY dict carrying it
+ * as a placeholder purely by key PRESENCE (`if '__bin__' in v`), not by
+ * checking the value's type -- no legitimate op payload ever contains this
+ * key. Mirrored here the same way: presence alone routes into
+ * {@link asPlaceholder}, which validates the value and throws on a
+ * malformed one rather than letting it silently fall through to the
+ * generic-object walk below (which would otherwise let a corrupt frame's
+ * `__bin__: "not a number"` masquerade as ordinary payload data instead of
+ * failing loudly).
+ */
+function hasBinKey(v: unknown): v is RawBinCandidate {
+  return v !== null && typeof v === 'object' && '__bin__' in v;
+}
+
+/** Validate + narrow a `__bin__`-bearing object into a real placeholder. */
+function asPlaceholder(v: RawBinCandidate): BinPlaceholder {
+  if (typeof v.__bin__ !== 'number') {
+    throw new TypeError(
+      `__bin__ must be a number, got ${typeof v.__bin__} (${JSON.stringify(v.__bin__)})`,
+    );
+  }
+  return v as BinPlaceholder;
 }
 
 /**
@@ -48,26 +81,27 @@ function isPlaceholder(v: unknown): v is BinPlaceholder {
  * non-`<f8>` ndarray dtype instead of silently converting.
  *
  * Builds one `Uint8Array` sized from the summed header + blob lengths (no
- * incremental resizing) and blits each blob straight into it, mirroring
- * `engine_host.encode_frame`'s single-allocation guarantee.
+ * incremental resizing). `blobs` holds the ORIGINAL views handed in, not
+ * copies -- `encodeFrame` is fully synchronous end to end, so nothing can
+ * mutate a view's backing buffer between `lift` and the blit loop below,
+ * which copies each blob's own byte range into the frame exactly once.
+ * That is the single copy each blob's bytes take on their way into the
+ * frame, mirroring `engine_host.encode_frame`'s single-allocation,
+ * single-copy guarantee (a raw memoryview blit in Python, a typed-array
+ * blit here). A caller mutating a view's buffer AFTER `encodeFrame`
+ * returns is fine -- the frame's bytes are already committed by then.
  */
 export function encodeFrame(header: unknown): ArrayBuffer {
-  const blobs: Uint8Array[] = [];
+  const blobs: ArrayBufferView[] = [];
 
   function lift(v: unknown): unknown {
     if (v instanceof Float64Array) {
-      // Copy out only this view's own bytes -- a typed array can be a
-      // window onto a larger/shared buffer (byteOffset != 0, or a buffer
-      // that outlives this call), and the wire blob must contain exactly
-      // its own elements, nothing else from the underlying buffer.
-      const b = new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
-      blobs.push(b);
-      return { __bin__: blobs.length - 1, kind: 'f8', len: b.byteLength };
+      blobs.push(v);
+      return { __bin__: blobs.length - 1, kind: 'f8', len: v.byteLength };
     }
     if (v instanceof Uint8Array) {
-      const b = new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
-      blobs.push(b);
-      return { __bin__: blobs.length - 1, kind: 'bytes', len: b.byteLength };
+      blobs.push(v);
+      return { __bin__: blobs.length - 1, kind: 'bytes', len: v.byteLength };
     }
     if (ArrayBuffer.isView(v)) {
       // Any other typed-array view (Int32Array, Float32Array, DataView, ...)
@@ -87,14 +121,21 @@ export function encodeFrame(header: unknown): ArrayBuffer {
     return v;
   }
 
-  const head = new TextEncoder().encode(JSON.stringify(lift(header)));
+  const head = TEXT_ENCODER.encode(JSON.stringify(lift(header)));
   const blobTotal = blobs.reduce((n, b) => n + b.byteLength, 0);
   const out = new Uint8Array(4 + head.byteLength + blobTotal);
   new DataView(out.buffer).setUint32(0, head.byteLength, true);
   out.set(head, 4);
   let pos = 4 + head.byteLength;
   for (const b of blobs) {
-    out.set(b, pos);
+    // Wrap each view's own byte range as a fresh Uint8Array (zero-copy --
+    // same buffer, just a Uint8-typed window onto it) so `set` performs a
+    // raw byte-for-byte blit. Passing a Float64Array to Uint8Array#set
+    // directly would NOT copy bytes: TypedArray#set between differing
+    // element kinds runs a VALUE conversion per element (ToUint8 on each
+    // float), silently corrupting the blob -- this wrap is what makes the
+    // single `set` below a real memcpy instead of that trap.
+    out.set(new Uint8Array(b.buffer, b.byteOffset, b.byteLength), pos);
     pos += b.byteLength;
   }
   return out.buffer;
@@ -104,8 +145,9 @@ export function encodeFrame(header: unknown): ArrayBuffer {
  * Decode one binary frame back into the header tree; the inverse of {@link encodeFrame}.
  *
  * Accepts an `ArrayBuffer` (what `WebSocket` with `binaryType = 'arraybuffer'`
- * delivers) or a `Uint8Array` (normalised the same way, in case one has
- * already been unwrapped by the caller).
+ * delivers) or a `Uint8Array` (normalised the same way, including one with a
+ * non-zero `byteOffset` -- e.g. a view into a pooled Node `Buffer` -- since
+ * every offset below is computed relative to `bytes.byteOffset`, never 0).
  *
  * Placeholders are replaced by `Float64Array` / `Uint8Array` values
  * reconstructed from the frame's blob tail. Every blob's start offset is
@@ -117,14 +159,15 @@ export function encodeFrame(header: unknown): ArrayBuffer {
  * Throws if the blob region's declared total size disagrees with the bytes
  * actually present (truncated OR corrupt with trailing bytes -- the format
  * has no padding, so this must be an exact fit both directions), if an
- * `"f8"` placeholder's `len` isn't a whole number of float64 elements, or if
- * a placeholder names an unrecognised `kind`.
+ * `"f8"` placeholder's `len` isn't a whole number of float64 elements, if a
+ * placeholder names an unrecognised `kind`, or if a `__bin__`-bearing object
+ * has a non-numeric `__bin__` (see {@link asPlaceholder}).
  */
 export function decodeFrame(data: ArrayBuffer | Uint8Array): unknown {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const n = view.getUint32(0, true);
-  const header = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + n)));
+  const header = JSON.parse(TEXT_DECODER.decode(bytes.subarray(4, 4 + n)));
   const blobBase = 4 + n;
 
   // Blob k starts after the lengths of blobs 0..k-1; collect lengths by
@@ -134,8 +177,9 @@ export function decodeFrame(data: ArrayBuffer | Uint8Array): unknown {
   (function index(v: unknown): void {
     if (Array.isArray(v)) {
       v.forEach(index);
-    } else if (isPlaceholder(v)) {
-      lens.set(v.__bin__, v.len);
+    } else if (hasBinKey(v)) {
+      const p = asPlaceholder(v);
+      lens.set(p.__bin__, p.len);
     } else if (v !== null && typeof v === 'object') {
       Object.values(v as Record<string, unknown>).forEach(index);
     }
@@ -157,22 +201,29 @@ export function decodeFrame(data: ArrayBuffer | Uint8Array): unknown {
 
   function restore(v: unknown): unknown {
     if (Array.isArray(v)) return v.map(restore);
-    if (isPlaceholder(v)) {
-      const start = starts.get(v.__bin__)!;
-      if (v.kind === 'f8') {
-        if (v.len % 8 !== 0) {
-          throw new Error(`f8 blob len must be a multiple of 8, got ${v.len}`);
+    if (hasBinKey(v)) {
+      const p = asPlaceholder(v);
+      const start = starts.get(p.__bin__)!;
+      if (p.kind === 'f8') {
+        if (p.len % 8 !== 0) {
+          throw new Error(`f8 blob len must be a multiple of 8, got ${p.len}`);
         }
+        // slice() copies -- blob starts are JSON-header-length-dependent,
+        // so 8-byte alignment (Float64Array requires it) is luck, not
+        // guaranteed; a raw view would also pin the WHOLE frame buffer
+        // alive for as long as this one decoded array survives. Same two
+        // reasons npy.ts's parseNpy copies its data region instead of
+        // viewing it in place.
         return new Float64Array(
-          bytes.buffer.slice(bytes.byteOffset + start, bytes.byteOffset + start + v.len),
+          bytes.buffer.slice(bytes.byteOffset + start, bytes.byteOffset + start + p.len),
         );
       }
-      if (v.kind === 'bytes') {
+      if (p.kind === 'bytes') {
         return new Uint8Array(
-          bytes.buffer.slice(bytes.byteOffset + start, bytes.byteOffset + start + v.len),
+          bytes.buffer.slice(bytes.byteOffset + start, bytes.byteOffset + start + p.len),
         );
       }
-      throw new Error(`unknown blob kind ${JSON.stringify(v.kind)}`);
+      throw new Error(`unknown blob kind ${JSON.stringify(p.kind)}`);
     }
     if (v !== null && typeof v === 'object') {
       const out: Record<string, unknown> = {};

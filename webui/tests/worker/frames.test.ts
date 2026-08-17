@@ -88,11 +88,14 @@ describe('engine frame codec: cross-language golden encode pins', () => {
     expect(header).toEqual({ x: { __bin__: 0, kind: 'f8', len: 16 } });
 
     const tail = new Uint8Array(frame, 4 + n);
-    // IEEE-754 little-endian float64 bytes are platform-independent, so a
-    // JS-side Float64Array's own bytes are bit-identical to numpy's
-    // arr.astype('<f8').tobytes() -- this is a real cross-language pin, not
-    // a JS-encodes-itself tautology.
-    const expectedBlob = new Uint8Array(Float64Array.from([1.0, 2.0]).buffer);
+    // Literal bytes, not a JS-side Float64Array's own buffer -- a
+    // Float64Array-built "expected" value would be self-referential on a
+    // hypothetical big-endian host. These are the exact bytes of
+    // np.array([1.0, 2.0], dtype='<f8').tobytes().
+    const expectedBlob = new Uint8Array([
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, // 1.0
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // 2.0
+    ]);
     expect(tail).toEqual(expectedBlob);
   });
 
@@ -254,7 +257,7 @@ describe('engine frame codec: rejects non-f8/bytes typed array views', () => {
 });
 
 describe('engine frame codec: byteOffset view handling', () => {
-  test('a subarray view (non-zero byteOffset) round-trips only its own elements, isolated from later buffer mutation', () => {
+  test('an f8 subarray view (non-zero byteOffset) round-trips only its own elements, isolated from later buffer mutation', () => {
     const backing = Float64Array.from([10, 20, 30, 40]);
     const view = backing.subarray(1, 3); // [20, 30] -- byteOffset = 8, not 0
     expect(view.byteOffset).toBe(8);
@@ -262,14 +265,98 @@ describe('engine frame codec: byteOffset view handling', () => {
 
     const frame = encodeFrame({ x: view });
 
-    // Mutate the backing buffer AFTER encoding -- pins that encodeFrame
-    // copied out the view's own bytes (buffer.slice) rather than keeping a
-    // reference into the live, mutable backing buffer.
+    // Mutate the backing buffer AFTER encoding -- pins that the frame's
+    // bytes are already fully committed by the time encodeFrame returns
+    // (the blit loop copies each blob's own byte range into the output
+    // buffer synchronously, before this call can return), not that lift()
+    // eagerly copied the view out on its own.
     backing[1] = 999;
     backing[2] = 999;
 
     const out = decodeFrame(frame) as any;
     expect(out.x).toBeInstanceOf(Float64Array);
     expect([...out.x]).toEqual([20, 30]);
+  });
+
+  test('a bytes-kind subarray view (non-zero byteOffset) round-trips only its own bytes, isolated from later buffer mutation', () => {
+    // Mirrors the f8 test above for the 'bytes' branch -- this is the exact
+    // shape the plan's original encodeFrame sketch got wrong: pushing a raw
+    // view straight into `blobs` without the byte-range-aware blit
+    // (`new Uint8Array(b.buffer, b.byteOffset, b.byteLength)`) would alias
+    // the wrong bytes, or the whole backing buffer, for a non-zero-offset
+    // subarray.
+    const backing = Uint8Array.from([10, 20, 30, 40, 50]);
+    const view = backing.subarray(1, 4); // [20, 30, 40] -- byteOffset = 1
+    expect(view.byteOffset).toBe(1);
+    expect(view.length).toBe(3);
+
+    const frame = encodeFrame({ b: view });
+
+    backing[1] = 255;
+    backing[2] = 255;
+    backing[3] = 255;
+
+    const out = decodeFrame(frame) as any;
+    expect(out.b).toBeInstanceOf(Uint8Array);
+    expect([...out.b]).toEqual([20, 30, 40]);
+  });
+});
+
+describe('engine frame codec: decodeFrame input normalisation', () => {
+  test('accepts a Uint8Array view with non-zero byteOffset (e.g. a pooled Node Buffer)', () => {
+    const h = { id: 9, op: 'calc_fft', payload: { fs: 8000, arr: Float64Array.from([1, 2, 3]) } };
+    const frame = new Uint8Array(encodeFrame(h));
+
+    // Embed the encoded frame at offset 8 of a larger backing buffer, then
+    // hand decodeFrame a VIEW onto it -- the branch a real Node ws client
+    // hits when a message arrives as a slice of a pooled Buffer.
+    const padded = new Uint8Array(8 + frame.byteLength);
+    padded.set(frame, 8);
+    const view = padded.subarray(8);
+    expect(view.byteOffset).toBe(8);
+
+    const out = decodeFrame(view) as any;
+    expect(out.id).toBe(9);
+    expect(out.payload.fs).toBe(8000);
+    expect(out.payload.arr).toBeInstanceOf(Float64Array);
+    expect([...out.payload.arr]).toEqual([1, 2, 3]);
+  });
+});
+
+describe('engine frame codec: __bin__ is reserved by key presence, not value type', () => {
+  test('a placeholder-shaped object with a non-numeric __bin__ throws instead of silently passing through', () => {
+    // A typeof-based predicate would treat this as ordinary payload data
+    // (falling through to the generic-object walk) instead of recognising
+    // it as a malformed placeholder -- __bin__ is reserved by PRESENCE
+    // (mirrors engine_host.py's `if '__bin__' in v`), so this must fail
+    // loudly, not echo the malformed object back untouched.
+    const head = new TextEncoder().encode(
+      JSON.stringify({ x: { __bin__: 'nope', kind: 'f8', len: 8 } }),
+    );
+    const buf = new Uint8Array(4 + head.length + 8);
+    new DataView(buf.buffer).setUint32(0, head.length, true);
+    buf.set(head, 4);
+    expect(() => decodeFrame(buf.buffer)).toThrow(/__bin__/);
+  });
+});
+
+describe('engine frame codec: blob offsets follow index order, not tree order', () => {
+  test('placeholders declared in REVERSE index order in the JSON still decode to the right blobs', () => {
+    // Hand-built header: 'b' (__bin__: 1) appears BEFORE 'a' (__bin__: 0) in
+    // both the object's own key order and the resulting JSON text. If a
+    // decoder computed blob starts by walking the tree instead of sorting
+    // by __bin__ index, 'a' and 'b' would read each other's values.
+    const header = { b: { __bin__: 1, kind: 'f8', len: 8 }, a: { __bin__: 0, kind: 'f8', len: 8 } };
+    const head = new TextEncoder().encode(JSON.stringify(header));
+    const buf = new Uint8Array(4 + head.length + 16);
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(0, head.length, true);
+    buf.set(head, 4);
+    dv.setFloat64(4 + head.length, 100.5, true); // blob 0 -> belongs to 'a'
+    dv.setFloat64(4 + head.length + 8, 200.5, true); // blob 1 -> belongs to 'b'
+
+    const out = decodeFrame(buf.buffer) as any;
+    expect(out.a[0]).toBe(100.5);
+    expect(out.b[0]).toBe(200.5);
   });
 });
