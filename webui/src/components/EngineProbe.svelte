@@ -11,11 +11,17 @@
    * on-first-compute trigger; until then this probe is the boot entry point.
    *
    * The status text is `idle|loading|ready|error` — the e2e waits for `ready`.
+   * `data-engine-host` on the same element reports which transport answered
+   * (`pyodide` | `native` | `unresolved`): this probe builds its OWN store
+   * with `createEngineStore()` and no arguments, so it picks up the default
+   * client factory — and therefore `?enginehost=` — for free, which is what
+   * makes the native-engine e2e (Task 9) able to drive it.
    */
   import { onMount } from 'svelte';
   import { createEngineStore, type EngineStore } from '../lib/stores/engine';
 
   let statusText = $state('idle');
+  let hostText = $state('unresolved');
 
   const engineRequested =
     typeof window !== 'undefined' &&
@@ -25,6 +31,7 @@
     if (!engineRequested) return;
     const engine: EngineStore = createEngineStore();
     const unsub = engine.status.subscribe((s) => (statusText = s));
+    const unsubHost = engine.host.subscribe((h) => (hostText = h ?? 'unresolved'));
 
     // e2e self-test hook: 2-channel sine, calc_fft, return shape metadata.
     (window as any).__engineSelfTest = async () => {
@@ -65,14 +72,18 @@
     engine.boot();
     return () => {
       unsub();
-      engine.client.dispose();
+      unsubHost();
+      // `?.` — on the factory path the client does not exist until boot()
+      // resolves one, so an unmount mid-boot has nothing to dispose.
+      engine.client?.dispose();
       delete (window as any).__engineSelfTest;
     };
   });
 </script>
 
-<!-- Visually hidden status line; present so e2e can read the boot state. -->
-<span data-testid="engine-status" class="sr-only">{statusText}</span>
+<!-- Visually hidden status line; present so e2e can read the boot state (text)
+     and which transport answered (data-engine-host). -->
+<span data-testid="engine-status" class="sr-only" data-engine-host={hostText}>{statusText}</span>
 
 <style>
   .sr-only {

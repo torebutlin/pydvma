@@ -97,6 +97,21 @@ function mval(v: unknown, k: string): unknown {
   return v instanceof Map ? v.get(k) : (v as Record<string, unknown>)[k];
 }
 
+/**
+ * A marshalled SCALAR as a number — `null`/`undefined` decode to NaN, never 0.
+ *
+ * The native `/engine` host's codec cannot put NaN/±Infinity in JSON, so a
+ * non-finite scalar crosses the wire as `null` (`pydvma/engine_host.py`
+ * `encode_frame`; array VALUES are unaffected, being raw IEEE-754 blobs).
+ * `Number(null)` is 0, so a bare `Number(mval(…))` would render a degenerate
+ * mode as a plausible-looking `Qn = 0` on the native host where pyodide shows
+ * NaN — a wrong NUMBER rather than a visible failure. Use this at EVERY
+ * scalar decode site so both hosts agree.
+ */
+function num(v: unknown): number {
+  return v == null ? NaN : Number(v);
+}
+
 /** Coerce a worker return value (object or Map) into a MarshalledArray. */
 function asMarshalled(v: unknown): MarshalledArray {
   return {
@@ -1151,7 +1166,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         time_data: data, n_channels: nCh, fs: ws.fs, fs_new: fsNew,
       });
       const out = asMarshalled(mval(res, 'time_data'));
-      const fsOut = Number(mval(res, 'fs_out'));
+      const fsOut = num(mval(res, 'fs_out'));
       const n = out.shape[0];
       const axis = Float64Array.from({ length: n }, (_, i) => i / fsOut);
       applyTimeArrays(ws, {
@@ -2225,8 +2240,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           toasts?.push('Refine did not improve the fit — reverted to the previous modes.',
             { level: 'info' });
         } else {
-          const before = Number(mval(res, 'cost_before'));
-          const after = Number(mval(res, 'cost_after'));
+          const before = num(mval(res, 'cost_before'));
+          const after = num(mval(res, 'cost_after'));
           if (Number.isFinite(before) && Number.isFinite(after) && before > 0) {
             const pct = Math.max(0, Math.round((1 - after / before) * 100));
             toasts?.push(`Refined modes — residual down ${pct}%.`, { level: 'success' });
@@ -2339,16 +2354,19 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         tFit: axisData(mval(m, 't_fit')),
         realFit: axisData(mval(m, 'real_fit')),
         realData: axisData(mval(m, 'real_data')),
-        fPeak: Number(mval(m, 'f_peak')),
-        Qn: Number(mval(m, 'Qn')),
+        fPeak: num(mval(m, 'f_peak')),
+        Qn: num(mval(m, 'Qn')),
       }));
     // The picking context is absent only on a pre-round-7 engine wheel (the
     // panel then shows its stale-engine note instead of the spectrum).
     const thr = mval(res, 'threshold');
     return {
       fn: axisData(mval(res, 'fn')), Qn: axisData(mval(res, 'Qn')), fits,
-      startTime: thr === undefined ? null : Number(mval(res, 'start_time')),
-      threshold: thr === undefined ? null : Number(thr),
+      // `thr === undefined` is the STALE-ENGINE sentinel (a pre-round-7 wheel
+      // omits the picking context entirely); a present-but-non-finite value
+      // arrives as null on the native host and decodes to NaN, not 0.
+      startTime: thr === undefined ? null : num(mval(res, 'start_time')),
+      threshold: thr === undefined ? null : num(thr),
       sliceFreq: thr === undefined ? empty : axisData(mval(res, 'slice_freq')),
       sliceMag: thr === undefined ? empty : axisData(mval(res, 'slice_mag')),
       peaksFreq: thr === undefined ? empty : axisData(mval(res, 'peaks_freq')),
@@ -2381,7 +2399,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       .map((b) => {
         const fitT = mval(b, 'fit_t');
         return {
-          fc: Number(mval(b, 'fc')), fLo: Number(mval(b, 'f_lo')), fHi: Number(mval(b, 'f_hi')),
+          fc: num(mval(b, 'fc')), fLo: num(mval(b, 'f_lo')), fHi: num(mval(b, 'f_hi')),
           edcT: axisData(mval(b, 'edc_t')), edcDb: axisData(mval(b, 'edc_db')),
           fitT: fitT === undefined ? null : axisData(fitT),
           fitDb: fitT === undefined ? null : axisData(mval(b, 'fit_db')),
@@ -2389,7 +2407,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       });
     return {
       bands: String(mval(res, 'bands')) as BandLadder,
-      startTime: Number(mval(res, 'start_time')),
+      startTime: num(mval(res, 'start_time')),
       fc: axisData(mval(res, 'fc')),
       fLo: axisData(mval(res, 'f_lo')), fHi: axisData(mval(res, 'f_hi')),
       EDT: axisData(mval(res, 'EDT')), T20: axisData(mval(res, 'T20')),

@@ -27,6 +27,7 @@
     canSaveFigure = false,
     busy = false,
     busyLabel = 'computing…',
+    engineHost = null,
   }: {
     /** Summary-chip text, e.g. "44.1 kHz · 2 sets"; "no data" when empty. */
     summary?: string;
@@ -46,6 +47,8 @@
     busy?: boolean;
     /** Computing-chip text, e.g. "computing…" or "starting engine…". */
     busyLabel?: string;
+    /** Engine transport answering compute; null until it has been resolved. */
+    engineHost?: EngineHostKind | null;
   } = $props();
 
   // Light/dark theme toggle (round-5 item 11). The store is a module
@@ -53,6 +56,7 @@
   // shows the theme you'd switch TO.
   import { theme, toggleTheme } from '../lib/stores/theme';
   import BusyChip from './BusyChip.svelte';
+  import type { EngineHostKind } from '../lib/worker/selectEngine';
 </script>
 
 <header class="app-header">
@@ -73,7 +77,7 @@
   <!-- Flex filler; hosts the global computing chip (round-8). The level
        meters / CLIP indicator (Plan 2) will share this slot later. -->
   <div class="hdr-slot">
-    <BusyChip {busy} label={busyLabel} />
+    <BusyChip {busy} label={busyLabel} {engineHost} />
   </div>
 
   <div class="hdr-right">

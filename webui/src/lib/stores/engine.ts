@@ -11,9 +11,13 @@
 //     below for why nothing gentler works.
 //
 // The underlying EngineClient is injectable so tests can drive the store with
-// a fake worker; the default lazily spawns the real client.
-import { get, writable } from 'svelte/store';
-import { createEngineClient, type EngineClient } from '../worker/client';
+// a fake worker; the default RESOLVES one at boot (`worker/selectEngine.ts`),
+// which is where the pyodide-vs-native-host decision lives.
+import { get, writable, type Readable } from 'svelte/store';
+import { type EngineClient } from '../worker/client';
+import {
+  resolveEngineClient, type EngineHostKind, type ResolvedEngine,
+} from '../worker/selectEngine';
 
 export type EngineStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -176,15 +180,37 @@ function defaultBaseUrl(): string {
 }
 
 /**
- * Create the engine store. `client` is injectable for tests; omit it to spawn
- * the real worker client. `boot()` transitions idle -> loading -> ready|error
+ * Create the engine store. `boot()` transitions idle -> loading -> ready|error
  * and, on ready, drains every queued thunk in FIFO order. Calling `boot()`
- * more than once is a no-op after the first.
+ * more than once is a no-op while a boot has succeeded or is in flight.
+ *
+ * `clientSource` is either:
+ *
+ *  - an `EngineClient` OBJECT — bound immediately, `host` reads 'pyodide'
+ *    from the start. Every test and every pre-Task-8 caller takes this path
+ *    and its semantics are unchanged; or
+ *  - an async FACTORY (the default, `resolveEngineClient`) — nothing is
+ *    constructed until `boot()`, which resolves it ONCE and reports the
+ *    transport that answered through `host`. A session that never computes
+ *    therefore never spawns a worker and never opens a socket.
+ *
+ * `host` is null until a factory resolves; `client` is likewise null until
+ * then (a getter, not a captured value — see the returned object).
  */
 export function createEngineStore(
-  client: EngineClient = createEngineClient(),
+  clientSource: EngineClient | (() => Promise<ResolvedEngine>) = resolveEngineClient,
   baseUrl: string = defaultBaseUrl(),
 ) {
+  /** Late-bound when `clientSource` is a factory; resolved once in boot(). */
+  let client: EngineClient | null =
+    typeof clientSource === 'function' ? null : clientSource;
+  /**
+   * Which transport is answering: 'pyodide' | 'native', or null while a
+   * factory has not resolved yet. A directly-injected client is always the
+   * browser worker as far as this store is concerned.
+   */
+  const host = writable<EngineHostKind | null>(
+    typeof clientSource === 'function' ? null : 'pyodide');
   const status = writable<EngineStatus>('idle');
   // Each queued item carries its own `reject` so a boot FAILURE can settle it
   // (not just a boot success draining it). Without this, a compute call
@@ -198,26 +224,81 @@ export function createEngineStore(
   let bootError: Error | null = null;
   /** In-flight `stop()`, so concurrent Stop clicks share one terminate+reboot. */
   let stopping: Promise<void> | null = null;
+  /**
+   * Identity of the CURRENT boot attempt. `boot()` captures it before its
+   * awaits and re-checks it after, so an attempt that has been superseded
+   * mid-flight — by `stop()`, or by a transport loss landing between the
+   * client resolving and its init settling — can never resurrect 'ready'
+   * over state the newer path has already moved past. Nulled (not just
+   * replaced) by a transport loss, which supersedes without starting a
+   * replacement.
+   */
+  let bootToken: object | null = null;
 
-  // Mid-compute frames -> the shared `engineProgress` store. Only ops in
-  // PROGRESS_LABELS are tracked; an unlabelled op's frames are ignored (it has
-  // opted out, or is a future calc whose label has not been added yet).
-  // (`observe` is optional on EngineClient — a stub client just gets no bar.)
-  client.observe?.({
-    onProgress: ({ callId, op, done, total }) => {
-      const label = PROGRESS_LABELS[op];
-      if (!label) return;
-      engineProgress.update((cur) =>
-        cur && cur.callId === callId
-          // Same call: keep startedAt so the elapsed clock (and the 3 s gate)
-          // measures from the FIRST frame, not the latest.
-          ? { ...cur, done, total }
-          : { callId, op, label, done, total, startedAt: Date.now() });
-    },
-    onSettled: ({ callId }) => {
-      engineProgress.update((cur) => (cur && cur.callId === callId ? null : cur));
-    },
-  });
+  /**
+   * Wire client lifecycle observers -> the shared `engineProgress` store and
+   * the store's own transport-lost handling. Called once per client: at
+   * construction for a directly-injected one, and right after a factory
+   * resolves one in `boot()`. (`observe` is optional on EngineClient — a stub
+   * client just gets no bar and no transport-lost handling.)
+   */
+  function wireObserve() {
+    // Mid-compute frames -> `engineProgress`. Only ops in PROGRESS_LABELS are
+    // tracked; an unlabelled op's frames are ignored (it has opted out, or is
+    // a future calc whose label has not been added yet).
+    client?.observe?.({
+      onProgress: ({ callId, op, done, total }) => {
+        const label = PROGRESS_LABELS[op];
+        if (!label) return;
+        engineProgress.update((cur) =>
+          cur && cur.callId === callId
+            // Same call: keep startedAt so the elapsed clock (and the 3 s gate)
+            // measures from the FIRST frame, not the latest.
+            ? { ...cur, done, total }
+            : { callId, op, label, done, total, startedAt: Date.now() });
+      },
+      onSettled: ({ callId }) => {
+        engineProgress.update((cur) => (cur && cur.callId === callId ? null : cur));
+      },
+      onTransportLost: handleTransportLost,
+    });
+  }
+
+  /**
+   * The transport died unasked (a socket only — see `EngineCallEvents`).
+   *
+   * Left alone, the store would sit at 'ready' over a dead connection: the
+   * app looks healthy, the Stop button is the only re-boot path anyone can
+   * reach, and every calc rejects with a bare "engine not connected" until
+   * the user reloads. Instead this mirrors `stop()`'s reset — 'error' with a
+   * message that names the cause, and `booted` cleared so a subsequent
+   * `boot()` genuinely runs again. Recovery is therefore free on the normal
+   * path: every compute entry point already calls the idempotent
+   * `engine.boot()` first, which now re-runs and (for the socket client)
+   * reconnects, since its own `connectPromise` was cleared by the same close.
+   *
+   * The resolved `client` is KEPT — the factory is not re-run, so a session
+   * that chose the native host stays on it across a serve restart rather
+   * than silently sliding onto the browser engine mid-session.
+   */
+  function handleTransportLost() {
+    const s = get(status);
+    // Only meaningful while we believe we have an engine. From 'idle' there
+    // is nothing to lose, and from 'error' the story is already told.
+    if (s !== 'ready' && s !== 'loading') return;
+    bootToken = null;            // supersede any boot still in flight
+    booted = false;              // ...and let the next boot() actually run
+    bootError = new Error('engine connection lost — pydvma-serve stopped or restarted');
+    console.error('[engine] transport lost:', bootError.message);
+    status.set('error');
+    // Anything parked (only possible from 'loading') would otherwise hang:
+    // drain() never runs for a boot that has been superseded.
+    failAll(bootError);
+  }
+
+  // A directly-injected client is observable from the start, exactly as
+  // before Task 8; a factory-resolved one is wired inside boot() instead.
+  if (client) wireObserve();
 
   function drain() {
     while (queue.length) queue.shift()!.run();
@@ -233,9 +314,27 @@ export function createEngineStore(
   async function boot(): Promise<void> {
     if (booted) return;
     booted = true;
+    bootError = null;              // a re-boot after a failure starts clean
+    const token = {};
+    bootToken = token;
     status.set('loading');
     try {
+      if (client === null) {
+        // First boot on the factory path: pick a transport (which for the
+        // native host means connecting and getting its greeting) and keep
+        // whatever answered for the rest of the session.
+        const resolved = await (clientSource as () => Promise<ResolvedEngine>)();
+        if (bootToken !== token) { resolved.client.dispose(); return; }
+        client = resolved.client;
+        host.set(resolved.host);
+        wireObserve();
+      }
+      // Idempotent on the socket client (it hands back the connection the
+      // factory just opened); the real work on the pyodide worker.
       await client.init(baseUrl, ENGINE_WHEELS, PYODIDE_VERSION);
+      // A boot superseded mid-flight (stop(), or a transport loss) must not
+      // report ready over state the newer path has already moved past.
+      if (bootToken !== token) return;
       status.set('ready');
       drain();
     } catch (err) {
@@ -244,6 +343,7 @@ export function createEngineStore(
       // replacement. Claiming 'error' here would fight that reboot (and reject
       // everything queued behind it with a bogus "failed to boot").
       if (isEngineStopped(err)) return;
+      if (bootToken !== token) return;   // superseded — see above
       const msg = err instanceof Error ? err.message : String(err);
       bootError = new Error('engine failed to boot: ' + msg);
       console.error('[engine] boot failed:', err);
@@ -273,10 +373,13 @@ export function createEngineStore(
   function enqueue<T = unknown>(op: string, payload?: Record<string, unknown>): Promise<T> {
     activeEngine = store;          // this store owns the Stop button from now on
     const s = get(status);
-    if (s === 'ready') return client.call<T>(op, payload);
+    // `client!` throughout: both paths run only in states boot() can reach
+    // ONLY after it has bound a client ('ready' here; drain() for the queued
+    // thunk). TS cannot narrow a closed-over `let` across the call boundary.
+    if (s === 'ready') return client!.call<T>(op, payload);
     if (s === 'error') return Promise.reject(bootError ?? new Error('engine failed to boot'));
     return new Promise<T>((resolve, reject) => {
-      queue.push({ run: () => client.call<T>(op, payload).then(resolve, reject), reject });
+      queue.push({ run: () => client!.call<T>(op, payload).then(resolve, reject), reject });
     });
   }
 
@@ -314,17 +417,38 @@ export function createEngineStore(
     // rejects the in-flight one).
     while (queue.length) queue.shift()!.reject(err);
     while (readyWaiters.length) readyWaiters.shift()!.reject(err);
-    client.restart(err);
+    // `?.` for the factory path before its first boot: there is nothing to
+    // restart yet, and the boot() below will resolve a client normally.
+    // For the SOCKET client, restart() closes the socket (the server reads
+    // that as cancel-and-kill of the in-flight op) and clears its
+    // `connectPromise`, so the boot() below genuinely RECONNECTS rather than
+    // replaying a dead promise — the socket twin of terminating the worker.
+    client?.restart(err);
     // Back through the normal lifecycle: 'idle' -> boot() -> 'loading' ->
     // 'ready', so the BusyChip's "starting engine…" state covers the reboot
     // and anything enqueued meanwhile queues and drains as usual.
     booted = false;
     bootError = null;
+    bootToken = null;              // supersede any boot still in flight
     status.set('idle');
     await boot();
   }
 
-  const store = { status, boot, whenReady, enqueue, stop, client };
+  const store = {
+    status,
+    /** 'pyodide' | 'native', or null until a client factory has resolved. */
+    host: { subscribe: host.subscribe } as Readable<EngineHostKind | null>,
+    boot,
+    whenReady,
+    enqueue,
+    stop,
+    /**
+     * The bound client, or null before `boot()` resolves a factory. A GETTER,
+     * not a captured value: on the factory path the client does not exist at
+     * construction time.
+     */
+    get client(): EngineClient | null { return client; },
+  };
   return store;
 }
 

@@ -148,6 +148,39 @@ describe('createSocketEngineClient', () => {
     await expect(client.call('b')).rejects.toThrow(/not connected/);
   });
 
+  test('unsolicited close announces onTransportLost, AFTER settling in-flight calls', async () => {
+    // The store maps this to a clear 'engine connection lost' error; without
+    // it the app sits at 'ready' over a dead socket and every calc rejects
+    // with a bare "engine not connected" until a reload. Order matters: the
+    // observer must see a settled world (each rejection's onSettled has
+    // already cleared any progress the call was reporting).
+    const { f, client } = await connected();
+    const order: string[] = [];
+    client.observe?.({
+      onSettled: () => order.push('settled'),
+      onTransportLost: () => order.push('lost'),
+    });
+    const p = client.call('a');
+    f.serverClose();
+    await expect(p).rejects.toThrow(/closed/);
+    expect(order).toEqual(['settled', 'lost']);
+  });
+
+  test('a DELIBERATE restart/dispose does NOT announce onTransportLost', async () => {
+    // It is the caller's own doing -- the store is already driving that path
+    // (Stop -> restart -> re-boot) and must not also see a transport-lost.
+    const a = await connected();
+    const lost: string[] = [];
+    a.client.observe?.({ onTransportLost: () => lost.push('restart') });
+    a.client.restart(new Error('stop'));
+    expect(lost).toEqual([]);
+
+    const b = await connected();
+    b.client.observe?.({ onTransportLost: () => lost.push('dispose') });
+    b.client.dispose();
+    expect(lost).toEqual([]);
+  });
+
   test('dispose is terminal: in-flight rejected, socket closed, later init/call reject', async () => {
     const { f, client } = await connected();
     const p = client.call('a');

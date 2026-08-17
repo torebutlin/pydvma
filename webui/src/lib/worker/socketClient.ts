@@ -103,6 +103,12 @@ export function createSocketEngineClient(
     connectPromise = null; // let a subsequent init() actually reconnect
     ws = null;
     rejectAll(new Error('native engine connection closed'));
+    // AFTER rejectAll, so the observer sees a settled world (and any progress
+    // entry has already been cleared by the onSettled each rejection fires).
+    // A Worker cannot do this to you; a socket can, so the store needs telling
+    // or it stays 'ready' over a dead transport. Deliberately NOT fired by
+    // restart()/dispose(): those are the caller's own doing.
+    events.onTransportLost?.();
   }
 
   /** A binary frame is always a reply: `{id, ok, result | error}`. */

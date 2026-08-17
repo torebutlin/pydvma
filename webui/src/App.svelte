@@ -105,6 +105,10 @@
   // itself (whose first-calc wait used to read as a hang).
   const actionsBusy = actions.busy;
   const engineStatus = engine.status;
+  // Which engine host answered ('pyodide' | 'native', null until resolved) —
+  // surfaced on the computing chip so "is this running locally?" is answerable
+  // without the console. See lib/worker/selectEngine.ts.
+  const engineHost = engine.host;
 
   /** Monotonic guard: only the LATEST in-flight damping fit may land. */
   let dampSeq = 0;
@@ -1136,6 +1140,7 @@
     {onpickdir}
     busy={$actionsBusy || $damping.busy || $engineStatus === 'loading'}
     busyLabel={$engineStatus === 'loading' ? 'starting engine…' : 'computing…'}
+    engineHost={$engineHost}
   />
   <Ribbon {viewState} {narrow} />
   <ContextCard

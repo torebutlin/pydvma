@@ -1333,3 +1333,48 @@ test('codec round-trip: setCalFactors → writeDvma → readDvma → loadDataset
   expect(get(a2.derived)[id2].calFactors).toEqual([10, 1]);     // seeded on load
   expect(a2.getCalibration(id2)).toEqual({ factors: [10, 1], units: ['g', 'V'] });
 });
+
+// ---- native-host decode boundary: null-vs-NaN (Task 8 carry-over) ----------
+// The native /engine codec cannot put NaN/±Infinity in JSON, so a non-finite
+// SCALAR crosses the wire as `null` (pydvma/engine_host.py `encode_frame`).
+// `Number(null) === 0`, so a degenerate mode would render as a plausible
+// Qn = 0 on the native host where pyodide shows NaN — a wrong NUMBER, not a
+// visible failure. Every `Number(mval(...))` decode site is null-safe.
+
+test('a null damping scalar decodes as NaN, not 0 (native codec null-vs-NaN)', async () => {
+  const { engine } = fakeEngine(async () => ({
+    fn: real([1], [42]), Qn: real([1], [0]),
+    fits: [{
+      t_fit: real([1], [0]), real_fit: real([1], [0]), real_data: real([1], [0]),
+      f_peak: 42, Qn: null,             // non-finite Qn, sanitised to null
+    }],
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+
+  const res = await actions.calcDamping(a, 0, 512);
+  expect(res.fits[0].fPeak).toBe(42);
+  expect(res.fits[0].Qn).toBeNaN();     // NOT 0
+});
+
+test('null band scalars decode as NaN, not 0 (calcDampingBands)', async () => {
+  const { engine } = fakeEngine(async () => ({
+    bands: 'octave', start_time: null,
+    fc: real([1], [100]), f_lo: real([1], [70]), f_hi: real([1], [140]),
+    EDT: real([1], [0.1]), T20: real([1], [0.2]),
+    T30: real([1], [0.3]), T60: real([1], [0.6]), Qn: real([1], [5]),
+    band_data: [{
+      fc: null, f_lo: 70, f_hi: 140,
+      edc_t: real([1], [0]), edc_db: real([1], [0]),
+    }],
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+
+  const res = await actions.calcDampingBands(a, 0, { ladder: 'octave' });
+  expect(res!.startTime).toBeNaN();
+  expect(res!.bandData[0].fc).toBeNaN();
+  expect(res!.bandData[0].fLo).toBe(70);
+});

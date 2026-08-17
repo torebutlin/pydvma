@@ -45,6 +45,19 @@ export interface ProgressFrame {
 export interface EngineCallEvents {
   onProgress?: (frame: ProgressFrame) => void;
   onSettled?: (info: { callId: number; op: string }) => void;
+  /**
+   * The transport went away WITHOUT anyone asking — the peer died, not
+   * `restart`/`dispose`. Fired after the in-flight calls have been rejected,
+   * so an observer sees a settled world.
+   *
+   * Only a socket transport can do this (a stopped or restarted
+   * `pydvma-serve`); THIS worker client never fires it, because a Worker
+   * that dies takes the page's own process context with it and surfaces as
+   * `onerror` instead. The store maps it to a clear 'engine connection lost'
+   * error — without it the store stays 'ready', the app looks healthy, and
+   * every calc rejects with a bare "engine not connected" until a reload.
+   */
+  onTransportLost?: () => void;
 }
 
 export interface EngineClient {

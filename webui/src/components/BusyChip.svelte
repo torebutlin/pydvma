@@ -16,12 +16,21 @@
    */
   import { fade } from 'svelte/transition';
   import { engineProgress } from '../lib/stores/engine';
+  import type { EngineHostKind } from '../lib/worker/selectEngine';
 
-  let { busy, label = 'computing…' }: {
+  let { busy, label = 'computing…', engineHost = null }: {
     /** Whether any tracked work is currently in flight. */
     busy: boolean;
     /** Chip text — e.g. "computing…" or "starting engine…". */
     label?: string;
+    /**
+     * Which engine host is answering compute (`engine.host`): the pyodide
+     * worker in the browser, or a native CPython `pydvma-serve` over the
+     * `/engine` socket. `null` until the transport has been resolved. Shown
+     * in the tooltip only — the two hosts compute the same answers, so this
+     * is provenance, not a mode the user has to act on.
+     */
+    engineHost?: EngineHostKind | null;
   } = $props();
 
   /** Delay before showing (ms) — sub-perceptual calcs never flash the chip. */
@@ -46,6 +55,12 @@
   // The op's own name beats the generic word once we know what is running —
   // but "starting engine…" (a caller-set label with no frames) always wins.
   const text = $derived(determinate ? `${prog!.label} ${pct}%` : label);
+  // Tooltip-only host provenance. `null` says "resolving…" rather than
+  // guessing "browser": on the factory path the chip can already be up
+  // ("starting engine…") while the transport is still being decided.
+  const hostLabel = $derived(
+    engineHost === 'native' ? 'local Python'
+      : engineHost === 'pyodide' ? 'browser' : 'resolving…');
 </script>
 
 {#if shown}
@@ -54,7 +69,9 @@
        role="progressbar", which this is not (the real bar is CalcProgress). -->
   <span class="busy-chip" class:determinate role="status" data-testid="busy-chip"
     transition:fade={{ duration: 160 }}
-    data-progress={determinate ? pct : undefined}>
+    data-progress={determinate ? pct : undefined}
+    data-engine-host={engineHost ?? 'unresolved'}
+    title={`${text} — engine: ${hostLabel}`}>
     {#if determinate}
       <span class="busy-fill" aria-hidden="true" style="width:{pct}%"></span>
     {/if}

@@ -3,7 +3,9 @@
 // correlation, error propagation, and the queue-until-ready behaviour that the
 // real @engine e2e cannot cheaply exercise per-branch.
 import { expect, test, vi } from 'vitest';
-import { createEngineClient, type WorkerLike } from '../../src/lib/worker/client';
+import {
+  createEngineClient, type EngineCallEvents, type WorkerLike,
+} from '../../src/lib/worker/client';
 import { createEngineStore } from '../../src/lib/stores/engine';
 import { get } from 'svelte/store';
 
@@ -100,15 +102,20 @@ function makeFakeClient() {
   let resolveInit!: () => void;
   const initPromise = new Promise<void>((r) => { resolveInit = r; });
   const calls: Array<{ op: string; payload?: any }> = [];
+  // The store's observer registration, captured so a test can fire lifecycle
+  // events (onTransportLost) the way a real transport would.
+  let events: EngineCallEvents = {};
   const client = {
     init: vi.fn(() => initPromise),
     call: vi.fn((op: string, payload?: any) => {
       calls.push({ op, payload });
       return Promise.resolve({ op });
     }),
+    observe: vi.fn((next: EngineCallEvents) => { events = next ?? {}; }),
+    restart: vi.fn(),
     dispose: vi.fn(),
   };
-  return { client, calls, finishInit: resolveInit };
+  return { client, calls, finishInit: resolveInit, events: () => events };
 }
 
 test('store: calls before ready are queued and drained in FIFO order on ready', async () => {
@@ -223,4 +230,109 @@ test('store: a call enqueued AFTER boot error rejects immediately', async () => 
   // booted===true, so drain never re-runs — these must reject on their own.
   await expect(store.enqueue('calc_fft')).rejects.toThrow(/engine failed to boot: boot exploded/);
   await expect(store.whenReady()).rejects.toThrow(/engine failed to boot/);
+});
+
+// ---- store: transport resolution (Task 8) ----------------------------------
+// The store's client is LATE-BOUND when a factory is passed: nothing is
+// constructed until boot(), and `host` reports which transport answered.
+// Passing a client OBJECT keeps the pre-Task-8 semantics exactly.
+
+test('store: a directly-injected client is the browser worker (host pyodide, bound at once)', () => {
+  const { client } = makeFakeClient();
+  const store = createEngineStore(client as any, 'http://x/');
+  expect(get(store.host)).toBe('pyodide');
+  expect(store.client).toBe(client);      // bound before boot, as it always was
+  expect(client.observe).toHaveBeenCalled();  // observers wired at construction
+});
+
+test('store: an async client factory resolves at boot and host reports the transport', async () => {
+  const { client, finishInit } = makeFakeClient();
+  const store = createEngineStore(
+    async () => ({ client: client as any, host: 'native' as const }), 'http://x/');
+
+  // Nothing is constructed until boot(): no client, no host, no init.
+  expect(get(store.host)).toBeNull();
+  expect(store.client).toBeNull();
+  expect(client.init).not.toHaveBeenCalled();
+
+  store.boot();
+  finishInit();
+  await store.whenReady();
+
+  expect(get(store.status)).toBe('ready');
+  expect(get(store.host)).toBe('native');
+  expect(store.client).toBe(client);
+  // The store still runs its own init on the resolved client (idempotent on
+  // the socket client — it hands back the connection the factory opened).
+  expect(client.init).toHaveBeenCalledWith('http://x/', expect.any(Array), expect.any(String));
+  // Progress observers are wired to the LATE-BOUND client too.
+  expect(client.observe).toHaveBeenCalled();
+});
+
+test('store: a factory that throws fails boot exactly like a failed init', async () => {
+  const store = createEngineStore(
+    async () => { throw new Error('no transport'); }, 'http://x/');
+  const enqueued = store.enqueue('calc_fft');   // parked in the queue
+  const waiting = store.whenReady();            // parked ready-waiter
+
+  await store.boot();
+
+  expect(get(store.status)).toBe('error');
+  expect(get(store.host)).toBeNull();           // never resolved
+  await expect(enqueued).rejects.toThrow(/engine failed to boot: no transport/);
+  await expect(waiting).rejects.toThrow(/engine failed to boot/);
+});
+
+// ---- store: transport-lost recovery (Task 8 carry-over 2) ------------------
+// A socket can die on its own (pydvma-serve stopped/restarted) — a worker
+// cannot. Without this the store stayed 'ready', the app looked healthy, and
+// every calc rejected with a bare "engine not connected" until a reload.
+
+test('store: an unsolicited transport loss errors the store with a clear message', async () => {
+  const { client, finishInit, events } = makeFakeClient();
+  const store = createEngineStore(client as any, 'http://x/');
+  store.boot();
+  finishInit();
+  await store.whenReady();
+  expect(get(store.status)).toBe('ready');
+
+  events().onTransportLost!();
+
+  expect(get(store.status)).toBe('error');
+  await expect(store.enqueue('calc_fft')).rejects.toThrow(/engine connection lost/);
+  await expect(store.whenReady()).rejects.toThrow(/engine connection lost/);
+});
+
+test('store: a transport loss DURING boot settles the queue and does not later go ready', async () => {
+  const { client, finishInit, events } = makeFakeClient();
+  const store = createEngineStore(client as any, 'http://x/');
+  store.boot();                                   // 'loading', init in flight
+  const queued = store.enqueue('calc_fft');
+
+  events().onTransportLost!();                    // socket dies mid-boot
+  expect(get(store.status)).toBe('error');
+  await expect(queued).rejects.toThrow(/engine connection lost/);
+
+  // The superseded boot must NOT resurrect 'ready' when its init resolves.
+  finishInit();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(get(store.status)).toBe('error');
+});
+
+test('store: after a transport loss an explicit re-boot recovers', async () => {
+  const { client, finishInit, events } = makeFakeClient();
+  const store = createEngineStore(client as any, 'http://x/');
+  store.boot();
+  finishInit();
+  await store.whenReady();
+  events().onTransportLost!();
+  expect(get(store.status)).toBe('error');
+
+  // `booted` was reset, so boot() genuinely runs again (the socket client's
+  // init reconnects — its connectPromise was cleared by the same close).
+  await store.boot();
+  expect(get(store.status)).toBe('ready');
+  expect(client.init).toHaveBeenCalledTimes(2);
+  await expect(store.enqueue('calc_fft')).resolves.toEqual({ op: 'calc_fft' });
 });
