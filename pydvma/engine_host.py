@@ -29,7 +29,10 @@ this text alone:
   tree — so key/array reordering in a payload can never desync the
   offsets.
 - ``len`` is always the blob's size in BYTES, not elements. For
-  ``"f8"`` it is therefore always a multiple of 8.
+  ``"f8"`` it is therefore always a multiple of 8. The blob region is
+  EXACTLY the sum of every placeholder's declared ``len`` — no padding,
+  no trailing bytes; a frame where that sum disagrees with the bytes
+  actually present is rejected, whichever direction the mismatch runs.
 - ``"f8"`` reconstructs as flat little-endian float64 (JS
   ``Float64Array`` / numpy ``<f8``). Arrays cross FLAT: shape lives in
   the engine ops' own ``{shape, data, complex}`` envelope (see
@@ -49,6 +52,11 @@ this text alone:
   never passes through ``json.dumps``, so it carries NaN/Inf natively.
 - Progress frames and the connect greeting are small TEXT frames, not
   this binary format.
+- The header JSON's TEXT need not match byte-for-byte between the
+  Python and JS implementations (e.g. Python's ``json.dumps`` escapes
+  non-ASCII, JS's ``JSON.stringify`` doesn't) — only the FRAMING and
+  PLACEHOLDER SEMANTICS above are normative. ``header_len`` is always
+  the byte length of whatever UTF-8 text ``header`` actually encodes to.
 """
 import json
 import math
@@ -74,6 +82,14 @@ def encode_frame(header):
     encoding, and ``json.dumps`` itself runs with ``allow_nan=False`` so
     any path this walk misses fails loudly instead of emitting invalid
     JSON tokens a JS ``JSON.parse`` would reject.
+
+    Returns a ``bytearray`` (bytes-like: ``websockets`` accepts it
+    directly, and it compares equal to ``bytes`` by value) rather than
+    ``bytes`` — the frame is assembled with exactly one allocation and
+    each blob is blitted straight in via a raw memoryview, so an array
+    payload is never materialised as an intermediate ``bytes`` copy on
+    its way into the frame (this host exists to keep big captures off
+    the wasm32 memory ceiling, so per-frame copies matter).
     """
     blobs = []
 
@@ -82,9 +98,9 @@ def encode_frame(header):
             if v.dtype != np.dtype('<f8'):
                 raise TypeError('engine frames carry float64 arrays only, '
                                 'got dtype %s' % v.dtype)
-            b = np.ascontiguousarray(v).tobytes()
-            blobs.append(b)
-            return {'__bin__': len(blobs) - 1, 'kind': 'f8', 'len': len(b)}
+            a = np.ascontiguousarray(v)
+            blobs.append(a)
+            return {'__bin__': len(blobs) - 1, 'kind': 'f8', 'len': a.nbytes}
         if isinstance(v, (bytes, bytearray, memoryview)):
             b = bytes(v)
             blobs.append(b)
@@ -99,18 +115,19 @@ def encode_frame(header):
 
     head = json.dumps(lift(header), allow_nan=False).encode('utf-8')
 
-    # One allocation, blit header + blobs directly into it -- avoids the
-    # pack + head + b''.join(blobs) triple-copy (this host exists to keep
-    # captures off the wasm32 memory ceiling, so per-frame copies matter).
-    blob_total = sum(len(b) for b in blobs)
+    def _nbytes(b):
+        return b.nbytes if isinstance(b, np.ndarray) else len(b)
+
+    blob_total = sum(_nbytes(b) for b in blobs)
     out = bytearray(4 + len(head) + blob_total)
     _HDR.pack_into(out, 0, len(head))
     out[4:4 + len(head)] = head
     pos = 4 + len(head)
     for b in blobs:
-        out[pos:pos + len(b)] = b
-        pos += len(b)
-    return bytes(out)
+        n = _nbytes(b)
+        out[pos:pos + n] = memoryview(b).cast('B') if isinstance(b, np.ndarray) else b
+        pos += n
+    return out
 
 
 def decode_frame(data):
@@ -119,9 +136,11 @@ def decode_frame(data):
     Placeholders are replaced by float64 ndarrays / bytes reconstructed
     from the frame's blob tail (one copy per f8 array via
     ``np.frombuffer(...).copy()``, not a slice-then-frombuffer double
-    copy). Raises ``ValueError`` if the header declares more blob bytes
-    than the frame actually carries (a truncated frame), or if a
-    placeholder names an unrecognised ``kind``.
+    copy). Raises ``ValueError`` if the blob region's declared total size
+    disagrees with the bytes actually present (truncated OR corrupt with
+    trailing bytes — the format has no padding, so this must be an exact
+    fit), if an ``"f8"`` placeholder's ``len`` isn't a whole number of
+    float64 elements, or if a placeholder names an unrecognised ``kind``.
     """
     data = bytes(data)
     (n,) = _HDR.unpack_from(data, 0)
@@ -151,15 +170,19 @@ def decode_frame(data):
         starts[k] = pos
         pos += offsets[k]
 
-    if pos > len(data):
-        raise ValueError('engine frame truncated: header declares %d blob bytes, '
-                         'frame carries %d' % (pos - blob_base, len(data) - blob_base))
+    if pos != len(data):
+        raise ValueError('engine frame truncated or corrupt: blob region is '
+                         '%d bytes, header declares %d' %
+                         (len(data) - blob_base, pos - blob_base))
 
     def restore(v):
         if isinstance(v, dict):
             if '__bin__' in v:
                 k, ln, kind = v['__bin__'], v['len'], v['kind']
                 if kind == 'f8':
+                    if ln % 8:
+                        raise ValueError(
+                            'f8 blob len must be a multiple of 8, got %d' % ln)
                     return np.frombuffer(data, dtype='<f8', count=ln // 8,
                                          offset=starts[k]).copy()
                 if kind == 'bytes':

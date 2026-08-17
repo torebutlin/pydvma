@@ -42,7 +42,8 @@ def test_encode_frame_sanitises_non_finite_scalars_but_not_array_values():
     # token -- so scalar floats must cross as null, while an f8 blob (raw
     # IEEE-754 bytes, never touched by json.dumps) carries NaN/Inf as-is.
     header = {'x': float('nan'), 'y': float('inf'), 'z': float('-inf'),
-              'a': np.array([np.nan, 1.0], dtype='<f8')}
+              'a': np.array([np.nan, 1.0], dtype='<f8'),
+              'fits': [{'Qn': float('inf')}], 'w': np.float64('inf')}
     frame = engine_host.encode_frame(header)
     out = engine_host.decode_frame(frame)
     assert out['x'] is None
@@ -51,6 +52,8 @@ def test_encode_frame_sanitises_non_finite_scalars_but_not_array_values():
     assert isinstance(out['a'], np.ndarray)
     assert np.isnan(out['a'][0])
     assert out['a'][1] == 1.0
+    assert out['fits'][0]['Qn'] is None      # nested non-finite
+    assert out['w'] is None                  # numpy scalar, not bare Python float
 
 
 def test_decode_frame_raises_on_truncated_frame():
@@ -61,7 +64,7 @@ def test_decode_frame_raises_on_truncated_frame():
     # 8-aligned, so a naive slice-and-frombuffer decode would silently
     # hand back a short array instead of raising.
     truncated = frame[:-8]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='truncated'):
         engine_host.decode_frame(truncated)
 
 
@@ -69,7 +72,33 @@ def test_decode_frame_raises_on_unknown_blob_kind():
     header = {'x': {'__bin__': 0, 'kind': 'weird', 'len': 3}}
     head = json.dumps(header).encode('utf-8')
     frame = struct.pack('<I', len(head)) + head + b'abc'
+    with pytest.raises(ValueError, match='unknown blob kind'):
+        engine_host.decode_frame(frame)
+
+
+def test_decode_frame_raises_when_f8_len_given_in_elements_not_bytes():
+    # Canonical mirror bug: a 6-element (48-byte) f8 array whose
+    # placeholder declares len=6 (element count) instead of len=48 (byte
+    # count). The blob region present (48 bytes) then disagrees with what
+    # the header declares (6 bytes) -- caught by the exact-fit check
+    # before any per-blob kind handling runs.
+    arr = np.arange(6, dtype='<f8')
+    blob = arr.tobytes()
+    header = {'x': {'__bin__': 0, 'kind': 'f8', 'len': 6}}
+    head = json.dumps(header).encode('utf-8')
+    frame = struct.pack('<I', len(head)) + head + blob
     with pytest.raises(ValueError):
+        engine_host.decode_frame(frame)
+
+
+def test_decode_frame_raises_when_f8_blob_len_not_multiple_of_8():
+    # The blob region itself fits exactly (so the exact-fit check is
+    # satisfied), but the declared len isn't a whole number of float64
+    # elements -- must be rejected before frombuffer, not truncate silently.
+    header = {'x': {'__bin__': 0, 'kind': 'f8', 'len': 7}}
+    head = json.dumps(header).encode('utf-8')
+    frame = struct.pack('<I', len(head)) + head + b'1234567'
+    with pytest.raises(ValueError, match='multiple of 8'):
         engine_host.decode_frame(frame)
 
 
@@ -84,6 +113,16 @@ def test_encode_frame_exact_bytes_single_array():
     expected_head = json.dumps(
         {'x': {'__bin__': 0, 'kind': 'f8', 'len': len(blob)}}).encode('utf-8')
     expected = struct.pack('<I', len(expected_head)) + expected_head + blob
+    assert frame == expected
+
+
+def test_encode_frame_exact_bytes_bytes_kind():
+    # Pins the 'bytes' kind literal -- renaming it in the codec breaks
+    # this test even though the f8-only test above wouldn't notice.
+    frame = engine_host.encode_frame({'b': b'ab'})
+    expected_head = json.dumps(
+        {'b': {'__bin__': 0, 'kind': 'bytes', 'len': 2}}).encode('utf-8')
+    expected = struct.pack('<I', len(expected_head)) + expected_head + b'ab'
     assert frame == expected
 
 
