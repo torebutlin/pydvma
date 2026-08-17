@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 """Native engine host: frame codec, worker subprocess, /engine endpoint."""
+import json
+import struct
+
 import numpy as np
 import pytest
 
@@ -30,3 +33,75 @@ def test_frame_roundtrip_lifts_arrays_recursively():
 def test_frame_rejects_non_f8_ndarray():
     with pytest.raises(TypeError):
         engine_host.encode_frame({'x': np.arange(3, dtype='int32')})
+
+
+def test_encode_frame_sanitises_non_finite_scalars_but_not_array_values():
+    # Realistic producers: calc_damping's Qn -> inf when zeta clips to 0;
+    # calc_fit's cost_before on a divergent seed. NaN/Infinity are not
+    # valid JSON -- JS JSON.parse on the other end would reject a bare
+    # token -- so scalar floats must cross as null, while an f8 blob (raw
+    # IEEE-754 bytes, never touched by json.dumps) carries NaN/Inf as-is.
+    header = {'x': float('nan'), 'y': float('inf'), 'z': float('-inf'),
+              'a': np.array([np.nan, 1.0], dtype='<f8')}
+    frame = engine_host.encode_frame(header)
+    out = engine_host.decode_frame(frame)
+    assert out['x'] is None
+    assert out['y'] is None
+    assert out['z'] is None
+    assert isinstance(out['a'], np.ndarray)
+    assert np.isnan(out['a'][0])
+    assert out['a'][1] == 1.0
+
+
+def test_decode_frame_raises_on_truncated_frame():
+    header = {'sets': [{'a': np.arange(4, dtype='<f8'),
+                         'b': np.arange(4, dtype='<f8')}]}
+    frame = engine_host.encode_frame(header)
+    # Chop exactly one f8 element's worth of bytes off the tail -- still
+    # 8-aligned, so a naive slice-and-frombuffer decode would silently
+    # hand back a short array instead of raising.
+    truncated = frame[:-8]
+    with pytest.raises(ValueError):
+        engine_host.decode_frame(truncated)
+
+
+def test_decode_frame_raises_on_unknown_blob_kind():
+    header = {'x': {'__bin__': 0, 'kind': 'weird', 'len': 3}}
+    head = json.dumps(header).encode('utf-8')
+    frame = struct.pack('<I', len(head)) + head + b'abc'
+    with pytest.raises(ValueError):
+        engine_host.decode_frame(frame)
+
+
+def test_encode_frame_exact_bytes_single_array():
+    # Pins the byte-for-byte wire format so the JS mirror (Task 6) can be
+    # written and checked against this test's expectation directly. A
+    # single-key header keeps JSON key order (and therefore the exact
+    # bytes) deterministic.
+    arr = np.array([1.0, 2.0], dtype='<f8')
+    frame = engine_host.encode_frame({'x': arr})
+    blob = arr.tobytes()
+    expected_head = json.dumps(
+        {'x': {'__bin__': 0, 'kind': 'f8', 'len': len(blob)}}).encode('utf-8')
+    expected = struct.pack('<I', len(expected_head)) + expected_head + blob
+    assert frame == expected
+
+
+def test_encode_frame_lays_blobs_in_ascending_index_order():
+    a = np.array([1.0], dtype='<f8')
+    b = np.array([2.0, 2.0], dtype='<f8')
+    c = np.array([3.0, 3.0, 3.0], dtype='<f8')
+    frame = engine_host.encode_frame({'a': a, 'b': b, 'c': c})
+    (n,) = struct.unpack_from('<I', frame, 0)
+    tail = frame[4 + n:]
+    assert tail == a.tobytes() + b.tobytes() + c.tobytes()
+
+
+def test_frame_roundtrip_empty_blobs_both_kinds():
+    header = {'a': np.array([], dtype='<f8'), 'b': b''}
+    frame = engine_host.encode_frame(header)
+    out = engine_host.decode_frame(frame)
+    assert isinstance(out['a'], np.ndarray)
+    assert out['a'].size == 0
+    assert out['a'].dtype == np.dtype('<f8')
+    assert out['b'] == b''

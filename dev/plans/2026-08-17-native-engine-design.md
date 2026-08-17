@@ -156,12 +156,18 @@ New module `pydvma/engine_host.py`, wired into `BridgeServer`:
   protocol (`/ws`) is byte-for-byte untouched and monitor frames never
   interleave with engine traffic.
 - **Wire format:** same `{id, op, payload}` / `{id, ok, result|error}`
-  JSON as the worker protocol. Arrays cross as binary: the JSON carries
-  `{__bin: n, shape, complex}` placeholders referencing the n-th
-  following binary ws frame (the same JSON-then-binary pattern the
-  bridge already uses for `log_result` → `.dvma` frame). Localhost
+  JSON as the worker protocol, but request and reply are each **one
+  binary websocket frame** — `[u32 LE header_len][header JSON
+  utf-8][blob bytes...]` — not JSON-then-a-following-binary-frame.
+  Array/bytes values anywhere in the JSON tree are lifted into that
+  single frame's trailing blobs and replaced by `{"__bin__": k, "kind":
+  "f8"|"bytes", "len": n}` placeholders (recursive through dicts and
+  lists; blobs laid end-to-end in ascending index order). Localhost
   bandwidth makes per-call array shipping a non-issue at lab scale
   (a 30 s × 2 ch × 48 kHz record ≈ 23 MB, well under a second).
+  (Normative definition: the protocol block in
+  `dev/plans/2026-08-17-native-engine-plan.md` + the module docstring
+  of `pydvma/engine_host.py`, which implements this exact codec.)
 - **Execution:** ops run in a **worker process pool** (spawned once,
   kept warm — Windows has no fork), not threads. Rationale: Python
   threads cannot be killed, but Stop must be reliable. Cooperative
