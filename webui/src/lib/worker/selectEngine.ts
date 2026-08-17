@@ -7,16 +7,18 @@
 // decision of which one a session gets, so `stores/engine.ts` stays a queue
 // and a status and knows nothing about transports.
 //
-// Stage-1 policy (opt-in): the native engine is used ONLY when the page
-// carries `?enginehost=native` (same-origin /engine) or `?enginehost=ws://…`
-// (an explicit URL — the cross-origin form the e2e uses to point a vite-served
-// page at a spawned pydvma-serve). `?enginehost=pyodide` forces the worker.
-// Anything else — and any native connect/greeting failure — falls back to the
-// pyodide worker, which is today's behaviour on every deployment.
-//
-// Stage 2 (Task 10) adds served-by-pydvma-serve auto-detection: the same
-// `/config` probe `audio/provider.ts` already uses, consulted only when
-// `parseEngineParam` returns null (i.e. the user stated no preference).
+// Stage-2 policy (default flip, Task 10): an explicit `?enginehost=` always
+// wins — `native` (same-origin /engine), `ws://…`/`wss://…` (an explicit
+// URL — the cross-origin form the e2e uses to point a vite-served page at a
+// spawned pydvma-serve), or `pyodide` (forces the browser worker). With NO
+// param stated, the page auto-detects: served by a `pydvma serve` process
+// (the same same-origin `/config` probe `audio/provider.ts` already uses)
+// means native by default; anything else (GitHub Pages, plain `vite dev`,
+// JupyterLite) stays on the pyodide worker, today's behaviour unchanged.
+// Any native connect/greeting failure (including a protocol version
+// mismatch — see `socketClient.ts`) falls back to the pyodide worker too, so
+// the flip never turns into a hard failure mode.
+import { probeServeConfig } from '../audio/provider';
 import { createEngineClient, type EngineClient } from './client';
 import { createSocketEngineClient } from './socketClient';
 
@@ -58,6 +60,30 @@ export function parseEngineParam(p: string | null): EngineParamChoice | null {
   if (p === 'pyodide') return { kind: 'pyodide' };
   if (p === 'native') return { kind: 'native', url: 'same-origin' };
   return { kind: 'native', url: p };
+}
+
+/**
+ * The resolved engine-host decision — `EngineParamChoice` minus the `null`
+ * ("no preference") case, since {@link decideEnginePolicy} always resolves
+ * one by folding in `served`. `'same-origin'` is still the unresolved
+ * sentinel (see {@link EngineParamChoice}).
+ */
+export type EnginePolicy = { kind: 'pyodide' } | { kind: 'native'; url: string };
+
+/**
+ * Stage-2 policy, pure and unit-testable without `window`: an explicit
+ * `?enginehost=` (as parsed by {@link parseEngineParam}) always wins, in
+ * EITHER direction — `pyodide` forces the browser worker even when the page
+ * is served by `pydvma serve`, and an explicit native URL is honoured even
+ * when detection says not-served (the e2e's cross-origin form). Only when
+ * `param` states no preference does `served` decide: served-by-`pydvma
+ * serve` defaults to the native host at the same origin, anything else
+ * (Pages, plain `vite dev`, JupyterLite) stays on pyodide.
+ */
+export function decideEnginePolicy(param: string | null, served: boolean): EnginePolicy {
+  const choice = parseEngineParam(param);
+  if (choice) return choice.kind === 'native' ? { kind: 'native', url: choice.url } : choice;
+  return served ? { kind: 'native', url: 'same-origin' } : { kind: 'pyodide' };
 }
 
 /**
@@ -114,15 +140,38 @@ async function tryNative(url: string): Promise<ResolvedEngine | null> {
  * `createEngineStore`. Called ONCE, from `boot()`, so a session that never
  * computes never opens a socket and never spawns a worker.
  *
+ * The `/config` served-ness probe ({@link probeServeConfig} — the SAME
+ * function `audio/provider.ts`'s `selectProvider` uses to detect the bridge)
+ * runs ONLY when the page states no `?enginehost=` preference — an explicit
+ * param short-circuits {@link decideEnginePolicy} before `served` is ever
+ * consulted, so a page with an explicit param (the e2e's cross-origin form,
+ * a forced `?enginehost=pyodide`) pays no probe at all. A no-param served
+ * deployment pays exactly the one EXTRA probe beyond what `selectProvider`
+ * already makes for the acquisition backend (both target the same
+ * same-origin `/config`, so the two requests are cheap and independent); a
+ * no-param vite dev server gets a fast `false` (no `/config` route) and
+ * stays on pyodide.
+ *
+ * Deliberately `probeServeConfig`, NOT `fetchServeConfig`: a `pydvma serve`
+ * session started without `--settings` (the ordinary case) publishes an
+ * EMPTY `/config` document, which `fetchServeConfig` collapses to `null` for
+ * its own (unrelated) "anything worth prefilling Setup from" purpose. Using
+ * that as the served-ness signal here would silently keep every
+ * unset-settings bridge session on pyodide — caught by the served-mode e2e
+ * below, which spawns the mock driver with no `--settings` (as real users
+ * commonly do).
+ *
  * Falls back to the pyodide worker on any native failure, loudly enough to
  * diagnose from the console but without an error the user has to dismiss:
  * the fallback engine computes the same answers, just slower and with the
  * wasm32 memory ceiling back in play.
  */
 export async function resolveEngineClient(): Promise<ResolvedEngine> {
-  const choice = parseEngineParam(engineHostParam());
-  if (choice && choice.kind === 'native') {
-    const url = choice.url === 'same-origin' ? defaultEngineWsUrl() : choice.url;
+  const param = engineHostParam();
+  const served = param ? false : await probeServeConfig();
+  const policy = decideEnginePolicy(param, served);
+  if (policy.kind === 'native') {
+    const url = policy.url === 'same-origin' ? defaultEngineWsUrl() : policy.url;
     const native = await tryNative(url);
     if (native) return native;
     console.warn('[engine-socket] native engine unavailable, using browser engine');

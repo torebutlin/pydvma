@@ -934,12 +934,23 @@ function defaultBridgeWsUrl(): string {
  * Returns true only when the fetch returns a JSON object promptly — the
  * "served by pydvma serve" signature.  A short abort timeout keeps a
  * static host (404 / index.html fallback) from stalling app boot.
+ *
+ * Deliberately answers `true` for an EMPTY `{}` (`pydvma serve` started
+ * without `--settings` — the ordinary case, not an edge case): this is a
+ * pure "is anything answering `/config` at all" signature check, unlike
+ * {@link fetchServeConfig} below, whose job is "is there a settings
+ * document worth prefilling Setup from" and so collapses `{}` to `null`.
+ * `worker/selectEngine.ts`'s served-by-serve default-engine detection reuses
+ * THIS function for exactly that reason — an unset-settings bridge session
+ * (the common case) must still default to the native engine.
  */
-async function probeServeConfig(fetchImpl: typeof fetch): Promise<boolean> {
+export async function probeServeConfig(fetchImpl?: typeof fetch): Promise<boolean> {
+  const f = fetchImpl ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : undefined);
+  if (!f) return false;
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = ctrl ? setTimeout(() => ctrl.abort(), 1000) : null;
   try {
-    const res = await fetchImpl('/config', ctrl ? { signal: ctrl.signal } : undefined);
+    const res = await f('/config', ctrl ? { signal: ctrl.signal } : undefined);
     if (!res.ok) return false;
     const ctype = res.headers.get('content-type') ?? '';
     if (!ctype.includes('application/json')) return false;

@@ -231,4 +231,39 @@ test.describe('native engine', () => {
     const serverIssues = serverOutputLines.filter((l) => l.includes('connection handler failed'));
     expect(serverIssues, `unexpected serve-side error output:\n${serverIssues.join('\n')}`).toEqual([]);
   });
+
+  // ---- Task 10: the default flip -- served by pydvma-serve means native,
+  // with no `?enginehost=` param at all ----
+
+  test('served by pydvma-serve → native engine by default (no param)', async ({ page }) => {
+    // Deliberately an ABSOLUTE goto to the spawned serve's own origin, NOT
+    // `page.goto('/?engine=1')` (which would hit Playwright's `baseURL` --
+    // the vite dev/preview server). `resolveEngineClient`'s served-detection
+    // is a same-origin `/config` probe: the page has to actually be SERVED
+    // BY `pydvma serve` (this spawned mock-driver instance, serving its own
+    // vendored `webui/dist`) for that probe to see the serve signature and
+    // default to native. A vite-served page pointed at this same backend
+    // would probe vite's own (nonexistent) `/config` and get null -> pyodide,
+    // which is exactly the "not served" case Task 10 must NOT trip here.
+    await page.goto(`http://127.0.0.1:${PORT}/?engine=1`);
+    await expect(page.getByTestId('engine-status')).toHaveText('ready', { timeout: 30000 });
+    await expect(page.getByTestId('engine-status')).toHaveAttribute('data-engine-host', 'native');
+
+    const result = await page.evaluate(() => (window as any).__engineSelfTest());
+    expect(result.freqDataComplex).toBe(true);
+  });
+
+  test('?enginehost=pyodide forces the browser engine even when served', async ({ page }) => {
+    // Same served origin as the default-flip test above, but the explicit
+    // param must still win over auto-detection (decideEnginePolicy's first
+    // branch) -- pins the "opt-out always available" half of the policy
+    // against a REAL serve, not just the unit-level decideEnginePolicy matrix.
+    test.setTimeout(240_000); // real pyodide boot dominates, as elsewhere in this file
+    await page.goto(`http://127.0.0.1:${PORT}/?engine=1&enginehost=pyodide`);
+    await expect(page.getByTestId('engine-status')).toHaveText('ready', { timeout: 200_000 });
+    await expect(page.getByTestId('engine-status')).toHaveAttribute('data-engine-host', 'pyodide');
+
+    const result = await page.evaluate(() => (window as any).__engineSelfTest());
+    expect(result.freqDataComplex).toBe(true);
+  });
 });

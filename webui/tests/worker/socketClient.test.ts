@@ -298,6 +298,27 @@ describe('createSocketEngineClient', () => {
 
   // ---- greeting deadline ----
 
+  // ---- protocol version gate (Task 10) ----
+
+  test('greeting with an unsupported protocol version rejects init() and closes the socket', async () => {
+    const f = makeFakeWs();
+    const client = createSocketEngineClient('ws://x/engine', () => f.ws);
+    const initP = client.init('http://x/', [], '0');
+    f.open();
+    f.ws.onmessage?.({ data: JSON.stringify({ type: 'engine_ready', v: 2, pydvma: '2.3.0' }) });
+    await expect(initP).rejects.toThrow(/unsupported/);
+    expect(f.ws.readyState).toBe(3); // client gave up and closed it
+  });
+
+  test('greeting with the supported protocol version (v:1) still resolves init()', async () => {
+    // Not a new behaviour -- `connected()`'s helper already greets with v:1
+    // and every other test in this file relies on it resolving. This pins
+    // it explicitly so the version gate above can never silently start
+    // rejecting the happy path too.
+    const { client } = await connected();
+    expect(client).toBeTruthy();
+  });
+
   test('greeting deadline: init() rejects if the greeting never arrives, and closes the socket', async () => {
     const f = makeFakeWs();
     const client = createSocketEngineClient('ws://x/engine', () => f.ws);

@@ -42,6 +42,18 @@ function defaultWsFactory(url: string): EngineWsLike {
  */
 const DEFAULT_GREETING_TIMEOUT_MS = 5000;
 
+/**
+ * The wire protocol version this client speaks -- must match the greeting's
+ * `v` exactly (additive growth is not assumed; see `engine_host.py`'s
+ * `ENGINE_PROTOCOL_VERSION`). A mismatch is rejected rather than tolerated,
+ * so a client talking to a server from a different pydvma release fails
+ * loudly at connect time instead of exchanging frames neither side decodes
+ * the way the other expects. `resolveEngineClient`'s `tryNative` turns this
+ * rejection into the ordinary silent pyodide fallback, same as any other
+ * native-connect failure.
+ */
+const SUPPORTED_ENGINE_PROTOCOL_VERSION = 1;
+
 interface Pending { op: string; resolve: (v: any) => void; reject: (e: any) => void }
 
 /**
@@ -243,6 +255,20 @@ export function createSocketEngineClient(
         }
         if (msg?.type !== 'engine_ready') return;
         if (settled) return;
+        // Version gate: a greeting whose `v` doesn't match what this client
+        // speaks is treated as a connect FAILURE, not a successful connect to
+        // an incompatible peer -- same `giveUp` path a bad URL or a dead
+        // socket takes, so `tryNative`'s catch turns it into the ordinary
+        // silent pyodide fallback (see the constant's docstring above).
+        if (msg.v !== SUPPORTED_ENGINE_PROTOCOL_VERSION) {
+          giveUp(
+            new Error(
+              `native engine protocol v${msg.v} unsupported (this client speaks v${SUPPORTED_ENGINE_PROTOCOL_VERSION}) — falling back to browser engine`,
+            ),
+            true,
+          );
+          return;
+        }
         settled = true;
         clearTimeout(timeoutHandle);
         initReject = null;
