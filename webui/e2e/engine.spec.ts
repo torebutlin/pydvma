@@ -22,6 +22,13 @@ async function bootAndRoundTrip(page: Page): Promise<void> {
   await expect(page.getByTestId('engine-status')).toHaveText('ready', {
     timeout: 200_000,
   });
+  // Task 10 review follow-up: this page is reached through Playwright's own
+  // webServer (vite dev/preview — no pydvma-serve, no /config route), the
+  // same shape a real GitHub Pages visit takes with NO `?enginehost=`
+  // stated. Pins that the stage-2 default-flip's served-detection never
+  // fires a spurious native attempt here — every Pages user must stay on
+  // pyodide, unconditionally.
+  await expect(page.getByTestId('engine-status')).toHaveAttribute('data-engine-host', 'pyodide');
 
   const result = await page.evaluate(() => (window as any).__engineSelfTest());
 

@@ -228,6 +228,37 @@ class EngineCancelled(Exception):
     """Raised inside the child when the cancel event is set mid-op."""
 
 
+def _configure_child_limits():
+    """Raise per-process resource ceilings that default to a wasm32-safe
+    value in shared ``pydvma`` code, called once as the FIRST thing
+    ``_worker_main`` does -- in the CHILD process only, never the parent
+    (which never allocates a CWT image itself).
+
+    ``analysis.CWT_MAX_IMAGE_BYTES`` defaults to 768 MiB specifically to
+    protect the pyodide/wasm32 worker's 32-bit address space, where an
+    over-size allocation would otherwise hit numpy's bare "array is too
+    big" past the ``2**31-1`` byte ceiling (see that constant's own
+    docstring in ``analysis.py``). Applying that wasm32-era default here
+    too would leave the native engine's headline benefit -- no memory wall
+    -- UNREALISED for CWT specifically, the one op shaped by that ceiling;
+    every other op already benefits just by running outside wasm.
+
+    This is an ordinary 64-bit CPython child process (``sys.maxsize >
+    2**32`` on every desktop/server platform pydvma-serve targets), so the
+    ceiling is raised to 8 GiB -- still a genuine CAP, not unlimited (a
+    runaway-allocation guard, exercising the constant's own "a desktop user
+    with plenty of RAM can raise it deliberately" affordance), chosen to
+    clear any realistic lab capture on a 16 GB machine while staying
+    comfortably under it. A 32-bit interpreter (not a real deployment
+    target) is left at the wasm32-safe default rather than risking an
+    8 GiB request it cannot actually address.
+    """
+    import sys
+    from pydvma import analysis
+    if sys.maxsize > 2 ** 32:
+        analysis.CWT_MAX_IMAGE_BYTES = 8 * 1024 ** 3
+
+
 def _worker_main(req_q, res_q, cancel_ev):
     """Child entry: answer ``(id, op, kwargs)`` until ``None`` arrives.
 
@@ -236,6 +267,8 @@ def _worker_main(req_q, res_q, cancel_ev):
     checkpoint) and exactly one ``('done', id, ok, result_or_msg)`` per
     request.
     """
+    _configure_child_limits()
+
     # Ignore Ctrl-C here: the PARENT owns SIGINT (it decides whether to
     # cancel(), kill(), or let a request run to completion). Without this,
     # an interactive ``pydvma-serve`` session's ^C hits every spawned child

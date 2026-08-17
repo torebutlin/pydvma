@@ -44,6 +44,11 @@
 
   let statusText = $state('idle');
   let hostText = $state('unresolved');
+  // The native host's greeted pydvma release ('data-engine-version'), or
+  // undefined on the pyodide path / before a factory resolves -- Svelte
+  // omits the attribute entirely for an undefined value, so this is present
+  // ONLY when native answered. See stores/engine.ts's `pydvmaVersion`.
+  let versionText = $state<string | undefined>(undefined);
 
   const engineRequested =
     typeof window !== 'undefined' &&
@@ -54,6 +59,7 @@
     const engine: EngineStore = createEngineStore();
     const unsub = engine.status.subscribe((s) => (statusText = s));
     const unsubHost = engine.host.subscribe((h) => (hostText = h ?? 'unresolved'));
+    const unsubVersion = engine.pydvmaVersion.subscribe((v) => (versionText = v ?? undefined));
 
     // e2e self-test hook: 2-channel sine, calc_fft, return shape metadata.
     (window as any).__engineSelfTest = async () => {
@@ -231,6 +237,7 @@
     return () => {
       unsub();
       unsubHost();
+      unsubVersion();
       // `?.` — on the factory path the client does not exist until boot()
       // resolves one, so an unmount mid-boot has nothing to dispose.
       engine.client?.dispose();
@@ -241,9 +248,11 @@
   });
 </script>
 
-<!-- Visually hidden status line; present so e2e can read the boot state (text)
-     and which transport answered (data-engine-host). -->
-<span data-testid="engine-status" class="sr-only" data-engine-host={hostText}>{statusText}</span>
+<!-- Visually hidden status line; present so e2e can read the boot state (text),
+     which transport answered (data-engine-host), and -- native only -- the
+     greeted pydvma release (data-engine-version; absent on the pyodide path,
+     Svelte omits an attribute set to undefined). -->
+<span data-testid="engine-status" class="sr-only" data-engine-host={hostText} data-engine-version={versionText}>{statusText}</span>
 
 <style>
   .sr-only {

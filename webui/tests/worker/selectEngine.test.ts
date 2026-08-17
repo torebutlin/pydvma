@@ -6,7 +6,7 @@
 // drift when it does, which is what these pin.
 import { describe, expect, test, vi } from 'vitest';
 
-// resolveEngineClient's served-probe wiring pulls in two modules this file
+// resolveEngineClient's served-probe wiring pulls in three modules this file
 // mocks so the test can run in node (no `window`, no real WebSocket/Worker):
 //  - `audio/provider.ts`'s `probeServeConfig` (the /config served-ness
 //    signature probe itself — stubbed rather than faking a fetch response;
@@ -14,8 +14,12 @@ import { describe, expect, test, vi } from 'vitest';
 //    empty-object semantics — see selectEngine.ts's resolveEngineClient
 //    docstring for why that distinction is load-bearing here);
 //  - `worker/socketClient.ts`'s `createSocketEngineClient` (so a "tries
-//    native" assertion never has to construct a real WebSocket).
-// vi.mock is hoisted above module init, so both fakes are built via
+//    native" assertion never has to construct a real WebSocket);
+//  - `worker/client.ts`'s `createEngineClient` (the pyodide FALLBACK path —
+//    needed only by the tests below that drive a native FAILURE through to
+//    completion; its real implementation eagerly constructs a Worker, which
+//    node has no global for).
+// vi.mock is hoisted above module init, so all three fakes are built via
 // vi.hoisted (the established pattern — see provider-webaudio.test.ts).
 const { probeServeConfigMock } = vi.hoisted(() => ({
   probeServeConfigMock: vi.fn(),
@@ -26,6 +30,11 @@ vi.mock('../../src/lib/audio/provider', () => ({
 
 const { createSocketEngineClientMock, fakeSocketClient } = vi.hoisted(() => {
   const client = {
+    // Present because SocketEngineClient declares it (see socketClient.ts) --
+    // resolveEngineClient's tryNative reads it straight off the client after
+    // init() resolves. null by default, same as a freshly-constructed real
+    // client before its first greeting.
+    pydvmaVersion: null as string | null,
     init: vi.fn().mockResolvedValue(undefined),
     call: vi.fn(),
     observe: vi.fn(),
@@ -36,6 +45,14 @@ const { createSocketEngineClientMock, fakeSocketClient } = vi.hoisted(() => {
 });
 vi.mock('../../src/lib/worker/socketClient', () => ({
   createSocketEngineClient: createSocketEngineClientMock,
+}));
+
+const { createEngineClientMock } = vi.hoisted(() => {
+  const client = { init: vi.fn(), call: vi.fn(), observe: vi.fn(), restart: vi.fn(), dispose: vi.fn() };
+  return { createEngineClientMock: vi.fn(() => client) };
+});
+vi.mock('../../src/lib/worker/client', () => ({
+  createEngineClient: createEngineClientMock,
 }));
 
 import { decideEnginePolicy, parseEngineParam, resolveEngineClient } from '../../src/lib/worker/selectEngine';
@@ -89,12 +106,19 @@ describe('decideEnginePolicy (stage-2: served-by-pydvma-serve default)', () => {
   });
 });
 
+/** Reset the shared socketClient/probeServeConfig fakes to a clean slate. */
+function resetFakes(): void {
+  probeServeConfigMock.mockReset();
+  probeServeConfigMock.mockResolvedValue(true); // default: "served"
+  createSocketEngineClientMock.mockClear();
+  fakeSocketClient.init.mockReset();
+  fakeSocketClient.init.mockResolvedValue(undefined); // default: connects fine
+  fakeSocketClient.pydvmaVersion = null;
+}
+
 describe('resolveEngineClient (served-probe wiring, off-window / no real transport)', () => {
   test('no explicit param + a served /config -> probes once, then tries native at the default same-origin URL', async () => {
-    probeServeConfigMock.mockClear();
-    probeServeConfigMock.mockResolvedValueOnce(true); // "served" signature, incl. an EMPTY {} config
-    createSocketEngineClientMock.mockClear();
-    fakeSocketClient.init.mockClear();
+    resetFakes();
 
     const resolved = await resolveEngineClient();
 
@@ -107,11 +131,72 @@ describe('resolveEngineClient (served-probe wiring, off-window / no real transpo
     expect(fakeSocketClient.init).toHaveBeenCalledTimes(1);
     expect(resolved).toEqual({ client: fakeSocketClient, host: 'native' });
   });
-  // The "not served" fallback branch (`createEngineClient()`) is NOT unit
-  // tested here: it eagerly constructs a real ES-module Worker
-  // (`client.ts`'s `defaultWorkerFactory`), which node has no global for --
-  // mocking `./client` too just to dodge that would contort this test past
-  // the value it adds. That branch is already covered at the pure-function
-  // level (`decideEnginePolicy(null, false)` above) and end-to-end by every
-  // pre-existing e2e test that boots through plain vite (no `pydvma serve`).
+
+  test('the greeted client.pydvmaVersion is carried into the resolved ResolvedEngine', async () => {
+    resetFakes();
+    fakeSocketClient.pydvmaVersion = '2.3.0';
+
+    const resolved = await resolveEngineClient();
+
+    expect(resolved.host).toBe('native');
+    expect(resolved.pydvmaVersion).toBe('2.3.0');
+  });
+
+  // ---- note: only for the auto-detected-native-then-failed case (item 2),
+  // and probeServeConfig is skipped entirely for an explicit param (item 4b)
+  // -- both need a REAL `window` so `engineHostParam()` actually reads a
+  // `?enginehost=` value; `vi.stubGlobal` supplies just enough of it
+  // (`location.search`) without pulling in jsdom. ----
+
+  test('no param + served, but native init() fails -> note IS set (a silent capability downgrade)', async () => {
+    resetFakes();
+    fakeSocketClient.init.mockRejectedValueOnce(new Error('native engine connect failed'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('window', { location: { search: '' } }); // states no preference
+
+    try {
+      const resolved = await resolveEngineClient();
+      expect(probeServeConfigMock).toHaveBeenCalledTimes(1); // param null -> probe ran
+      expect(resolved.host).toBe('pyodide');
+      expect(resolved.note).toMatch(/native engine unavailable/);
+    } finally {
+      vi.unstubAllGlobals();
+      warn.mockRestore();
+    }
+  });
+
+  test('explicit ?enginehost=native that fails -> note is undefined AND probeServeConfig is never called', async () => {
+    resetFakes();
+    fakeSocketClient.init.mockRejectedValueOnce(new Error('native engine connect failed'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('window', {
+      location: { search: '?enginehost=' + encodeURIComponent('ws://127.0.0.1:8764/engine') },
+    });
+
+    try {
+      const resolved = await resolveEngineClient();
+      expect(resolved.host).toBe('pyodide');
+      expect(resolved.note).toBeUndefined(); // the user asked for this host; console-only
+      // item 4b: an explicit param short-circuits BEFORE `served` is ever
+      // consulted -- probeServeConfig must not have been called at all.
+      expect(probeServeConfigMock).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalled(); // still diagnosable from the console
+    } finally {
+      vi.unstubAllGlobals();
+      warn.mockRestore();
+    }
+  });
+
+  test('explicit ?enginehost=pyodide -> resolves pyodide directly, probeServeConfig never called', async () => {
+    resetFakes();
+    vi.stubGlobal('window', { location: { search: '?enginehost=pyodide' } });
+    try {
+      const resolved = await resolveEngineClient();
+      expect(resolved.host).toBe('pyodide');
+      expect(probeServeConfigMock).not.toHaveBeenCalled();
+      expect(createSocketEngineClientMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

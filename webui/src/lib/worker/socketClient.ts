@@ -51,10 +51,37 @@ const DEFAULT_GREETING_TIMEOUT_MS = 5000;
  * the way the other expects. `resolveEngineClient`'s `tryNative` turns this
  * rejection into the ordinary silent pyodide fallback, same as any other
  * native-connect failure.
+ *
+ * DECISION: this is the ONLY version gated hard. The greeting also carries
+ * `pydvma` (the server's `pydvma.datastructure.VERSION`, e.g. `'2.3.0'`) --
+ * that one is surfaced (`pydvmaVersion` below, plus a `console.info` at
+ * connect) and compared against `stores/engine.ts`'s `ENGINE_WHEELS[0]`
+ * (the release this webui BUNDLE was built against), but a mismatch there
+ * only `console.warn`s, it never rejects the connection. A patch-level skew
+ * is a LEGITIMATE working configuration -- an editable `pydvma` install
+ * paired with an unrebuilt webui bundle, or `pydvma serve` upgraded a patch
+ * ahead of a cached bundle -- as long as the WIRE PROTOCOL (this constant)
+ * still matches; the fat wheel normally ships the UI and `pydvma serve`
+ * together (see CLAUDE.md's release notes), so the common case is an exact
+ * match and the warn never fires.
  */
 const SUPPORTED_ENGINE_PROTOCOL_VERSION = 1;
 
 interface Pending { op: string; resolve: (v: any) => void; reject: (e: any) => void }
+
+/**
+ * `EngineClient` plus the ONE extra the socket transport carries that a
+ * Worker has no equivalent for: the native host's own `pydvma` release
+ * (`pydvmaVersion`, from the greeting's `pydvma` field — `null` before any
+ * greeting has arrived, e.g. never connected, or connected but not yet
+ * greeted). Not part of the shared `EngineClient` interface: it is
+ * meaningless for the pyodide worker client, which has no server release to
+ * report. `resolveEngineClient`'s `tryNative` reads it off THIS type to
+ * carry it into `ResolvedEngine.pydvmaVersion`.
+ */
+export interface SocketEngineClient extends EngineClient {
+  readonly pydvmaVersion: string | null;
+}
 
 /**
  * Create an engine client over the native `/engine` websocket. Pass a
@@ -67,13 +94,18 @@ interface Pending { op: string; resolve: (v: any) => void; reject: (e: any) => v
 export function createSocketEngineClient(
   url: string,
   wsFactory: (url: string) => EngineWsLike = defaultWsFactory,
-): EngineClient {
+): SocketEngineClient {
   const pending = new Map<number, Pending>();
   let nextId = 1;
   let ws: EngineWsLike | null = null;
   let connected = false;
   let disposed = false;
   let events: EngineCallEvents = {};
+  // The native host's own pydvma release, from the greeting's `pydvma`
+  // field -- null until the first greeting arrives. Surfaced (not gated;
+  // see SUPPORTED_ENGINE_PROTOCOL_VERSION's docstring) via the
+  // `pydvmaVersion` getter below.
+  let pydvmaVersion: string | null = null;
   // The in-flight init()'s reject, live only while a connect is awaiting its
   // greeting. init() is NOT in `pending` (it has no request id yet), so
   // rejectAll() can't reach it -- restart()/dispose() must settle it
@@ -234,9 +266,6 @@ export function createSocketEngineClient(
         }
       };
 
-      // Task 10: version gate lands here (compare the greeting's `v`
-      // against this client's expected ENGINE_PROTOCOL_VERSION and reject
-      // on mismatch).
       const timeoutMs = opts?.greetingTimeoutMs ?? DEFAULT_GREETING_TIMEOUT_MS;
       timeoutHandle = setTimeout(() => {
         giveUp(new Error('native engine greeting timed out — is the URL an /engine endpoint?'), true);
@@ -273,6 +302,12 @@ export function createSocketEngineClient(
         clearTimeout(timeoutHandle);
         initReject = null;
         connected = true;
+        // Surface the native host's own pydvma release -- diagnostic only
+        // (see SUPPORTED_ENGINE_PROTOCOL_VERSION's docstring: unlike `v`
+        // above, this is never gated). `typeof` guards a greeting from an
+        // older/odd server that omits or mistypes the field.
+        pydvmaVersion = typeof msg.pydvma === 'string' ? msg.pydvma : null;
+        if (pydvmaVersion) console.info('[engine-socket] native engine: pydvma ' + pydvmaVersion);
         // Steady-state handlers take over only now that init is done.
         sock.onmessage = (ev: { data: unknown }) => handleMessage(ev.data);
         sock.onclose = () => handleUnsolicitedClose();
@@ -287,6 +322,9 @@ export function createSocketEngineClient(
   }
 
   return {
+    /** The native host's greeted pydvma release, or null pre-greeting. */
+    get pydvmaVersion(): string | null { return pydvmaVersion; },
+
     // baseUrl/wheels/pyodideVersion are pyodide-worker concerns (vendored
     // engine assets + wheel install) -- meaningless for a CPython host over
     // a socket, so they're accepted (to satisfy the EngineClient shape) and

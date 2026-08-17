@@ -29,6 +29,27 @@ export type EngineHostKind = 'pyodide' | 'native';
 export interface ResolvedEngine {
   client: EngineClient;
   host: EngineHostKind;
+  /**
+   * Set ONLY when `served` auto-detection (no explicit `?enginehost=`)
+   * chose native and the connect/greeting then failed — a capability
+   * DOWNGRADE the user should know about (the wasm32 memory ceiling is back)
+   * rather than the one detection promised, not just a `console.warn` they'd
+   * have to open devtools to see. `undefined` in every other case, including
+   * an EXPLICIT `?enginehost=native`/URL that fails: there the user asked
+   * for a specific host, already knows what they asked for, and the
+   * `console.warn` in {@link tryNative}'s catch is enough. `stores/engine.ts`
+   * surfaces this as `hostNote`; `App.svelte` raises it as a toast.
+   */
+  note?: string;
+  /**
+   * The native host's greeted pydvma release (`SocketEngineClient.
+   * pydvmaVersion`), or `undefined` on the pyodide path (no server to
+   * report one). Carried through so `stores/engine.ts` can surface it
+   * (`EngineProbe`'s `data-engine-version`) and warn on a mismatch against
+   * `ENGINE_WHEELS[0]` — see `SUPPORTED_ENGINE_PROTOCOL_VERSION`'s docstring
+   * in `socketClient.ts` for why that check warns rather than gates.
+   */
+  pydvmaVersion?: string;
 }
 
 /**
@@ -68,7 +89,7 @@ export function parseEngineParam(p: string | null): EngineParamChoice | null {
  * one by folding in `served`. `'same-origin'` is still the unresolved
  * sentinel (see {@link EngineParamChoice}).
  */
-export type EnginePolicy = { kind: 'pyodide' } | { kind: 'native'; url: string };
+export type EnginePolicy = NonNullable<EngineParamChoice>;
 
 /**
  * Stage-2 policy, pure and unit-testable without `window`: an explicit
@@ -79,11 +100,13 @@ export type EnginePolicy = { kind: 'pyodide' } | { kind: 'native'; url: string }
  * `param` states no preference does `served` decide: served-by-`pydvma
  * serve` defaults to the native host at the same origin, anything else
  * (Pages, plain `vite dev`, JupyterLite) stays on pyodide.
+ *
+ * `served` must be computed LAZILY by the caller — only probe `/config` when
+ * `param` is null — this function itself has no opinion on that; the rule
+ * lives in {@link resolveEngineClient}.
  */
 export function decideEnginePolicy(param: string | null, served: boolean): EnginePolicy {
-  const choice = parseEngineParam(param);
-  if (choice) return choice.kind === 'native' ? { kind: 'native', url: choice.url } : choice;
-  return served ? { kind: 'native', url: 'same-origin' } : { kind: 'pyodide' };
+  return parseEngineParam(param) ?? (served ? { kind: 'native', url: 'same-origin' } : { kind: 'pyodide' });
 }
 
 /**
@@ -127,7 +150,9 @@ async function tryNative(url: string): Promise<ResolvedEngine | null> {
   const client = createSocketEngineClient(url);
   try {
     await client.init('', [], '');
-    return { client, host: 'native' };
+    // client.pydvmaVersion is populated by the greeting client.init() just
+    // awaited above — see SocketEngineClient's docstring in socketClient.ts.
+    return { client, host: 'native', pydvmaVersion: client.pydvmaVersion ?? undefined };
   } catch (e) {
     console.warn('[engine-socket] native engine probe failed:', e);
     client.dispose();
@@ -175,6 +200,17 @@ export async function resolveEngineClient(): Promise<ResolvedEngine> {
     const native = await tryNative(url);
     if (native) return native;
     console.warn('[engine-socket] native engine unavailable, using browser engine');
+    // A user-facing notice ONLY for the auto-detected case: `policy.kind ===
+    // 'native'` with no explicit `param` is reachable ONLY when `served` was
+    // true (decideEnginePolicy), i.e. detection promised native on the
+    // user's behalf and then failed to deliver it -- see ResolvedEngine.note.
+    // An explicit `?enginehost=` failure stays console-only: the user asked
+    // for a specific host and the console.warn above already told them why
+    // it didn't work.
+    const note = !param
+      ? 'native engine unavailable — using browser engine (see console)'
+      : undefined;
+    return { client: createEngineClient(), host: 'pyodide', note };
   }
   return { client: createEngineClient(), host: 'pyodide' };
 }

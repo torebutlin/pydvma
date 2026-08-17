@@ -357,6 +357,18 @@
     // inline boot script in index.html already stamped data-theme pre-paint).
     initTheme();
 
+    // Native-engine review follow-up: a session that AUTO-DETECTED native
+    // (served by pydvma-serve, no explicit ?enginehost=) but then failed to
+    // connect silently downgrades to the slower pyodide worker — the
+    // console.warn in worker/selectEngine.ts is not enough on its own, since
+    // nobody watches devtools. `engine.hostNote` carries that ONE notice
+    // (set at most once per store lifetime, see stores/engine.ts); a bare
+    // null-guarded subscribe is enough — it only ever transitions null ->
+    // a string, never toggles, so no extra de-duplication is needed.
+    const unsubHostNote = engine.hostNote.subscribe((note) => {
+      if (note) toasts.push(note, { level: 'info' });
+    });
+
     // Fixture hook: fetch the selected checked-in .dvma into the tray.
     if (fixtureRequested) {
       fetch(fixtureUrl)
@@ -416,7 +428,7 @@
     });
 
     if (forcedNarrow || typeof window.matchMedia !== 'function') {
-      return () => { unsubDataset(); cleanupUnload(); };
+      return () => { unsubDataset(); unsubHostNote(); cleanupUnload(); };
     }
     const mq = window.matchMedia('(max-width: 1000px)');
     mediaNarrow = mq.matches;
@@ -424,6 +436,7 @@
     mq.addEventListener('change', update);
     return () => {
       unsubDataset();
+      unsubHostNote();
       mq.removeEventListener('change', update);
       cleanupUnload();
     };

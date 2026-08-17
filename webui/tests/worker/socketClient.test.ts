@@ -296,9 +296,7 @@ describe('createSocketEngineClient', () => {
     await expect(init2).resolves.toBeUndefined();
   });
 
-  // ---- greeting deadline ----
-
-  // ---- protocol version gate (Task 10) ----
+  // ---- protocol version gate ----
 
   test('greeting with an unsupported protocol version rejects init() and closes the socket', async () => {
     const f = makeFakeWs();
@@ -317,6 +315,28 @@ describe('createSocketEngineClient', () => {
     // rejecting the happy path too.
     const { client } = await connected();
     expect(client).toBeTruthy();
+  });
+
+  // ---- greeted pydvma release (surfaced, NOT gated -- see the module
+  // docstring's decision note on SUPPORTED_ENGINE_PROTOCOL_VERSION) ----
+
+  test('the greeted pydvma release is exposed via pydvmaVersion and logged at connect', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { client } = await connected(); // connected()'s greet() sends pydvma: '2.3.0'
+    expect((client as any).pydvmaVersion).toBe('2.3.0');
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('pydvma 2.3.0'));
+    info.mockRestore();
+  });
+
+  test('pydvmaVersion is null before any greeting has arrived', async () => {
+    const f = makeFakeWs();
+    const client = createSocketEngineClient('ws://x/engine', () => f.ws);
+    expect((client as any).pydvmaVersion).toBeNull();
+    const initP = client.init('http://x/', [], '0');
+    f.open();
+    f.greet();
+    await initP;
+    expect((client as any).pydvmaVersion).toBe('2.3.0');
   });
 
   test('greeting deadline: init() rejects if the greeting never arrives, and closes the socket', async () => {

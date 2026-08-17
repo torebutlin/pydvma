@@ -152,6 +152,30 @@ def test_frame_roundtrip_empty_blobs_both_kinds():
     assert out['b'] == b''
 
 
+# --- child resource-limit configuration --------------------------------------
+
+def test_configure_child_limits_raises_cwt_ceiling_on_64bit():
+    """`_worker_main` calls this first, in the CHILD process only -- the
+    parent (and this test, running in the pytest process) never allocates a
+    CWT image, so it is safe to call directly here and just restore the
+    module constant afterwards.
+
+    This machine's `sys.maxsize` (any CPython running this test suite) is
+    64-bit, so the raise must always fire in CI/dev; the `sys.maxsize >
+    2**32` guard inside `_configure_child_limits` itself is what would skip
+    it on a 32-bit interpreter (not reachable here, not worth mocking --
+    the wasm32-only path is exercised for real via the pyodide worker
+    instead).
+    """
+    from pydvma import analysis
+    original = analysis.CWT_MAX_IMAGE_BYTES
+    try:
+        engine_host._configure_child_limits()
+        assert analysis.CWT_MAX_IMAGE_BYTES == 8 * 1024 ** 3
+    finally:
+        analysis.CWT_MAX_IMAGE_BYTES = original
+
+
 # --- worker subprocess -------------------------------------------------------
 
 def _mk_time(n=256, fs=1000.0, ch=2):

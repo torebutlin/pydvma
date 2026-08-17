@@ -165,6 +165,46 @@ export function stopEngine(): Promise<void> {
 export const ENGINE_WHEELS = ['pydvma-2.3.0-py3-none-any.whl', 'PeakUtils-1.3.5-py3-none-any.whl'];
 
 /**
+ * Parse the pydvma release a wheel filename embeds
+ * (`'pydvma-2.3.0-py3-none-any.whl'` -> `'2.3.0'`), or `null` if it doesn't
+ * match that shape. Exported so {@link warnOnPydvmaVersionMismatch} is
+ * testable without constructing a real `ENGINE_WHEELS`-shaped array.
+ */
+export function pydvmaVersionFromWheelFilename(filename: string): string | null {
+  const m = /^pydvma-([^-]+)-/.exec(filename);
+  return m ? m[1] : null;
+}
+
+/**
+ * `console.warn` when the native host's greeted pydvma release differs from
+ * `ENGINE_WHEELS[0]`'s -- the release this webui BUNDLE was built against.
+ * Called from `boot()` right after a factory resolves a native client (see
+ * `SocketEngineClient.pydvmaVersion` / `ResolvedEngine.pydvmaVersion`).
+ *
+ * DELIBERATELY diagnostic only, never fatal -- unlike
+ * `socketClient.ts`'s `SUPPORTED_ENGINE_PROTOCOL_VERSION`, which gates the
+ * connection HARD on a wire-protocol mismatch. A pydvma PATCH-level skew is
+ * a legitimate, working configuration (an editable `pydvma` install paired
+ * with an unrebuilt webui bundle, or `pydvma serve` upgraded a patch ahead
+ * of a cached bundle) as long as the wire protocol still matches -- the fat
+ * wheel normally ships the UI and `pydvma serve` together (see CLAUDE.md's
+ * release notes), so the common case is an exact match and this never
+ * fires. No-ops when either version is unknown (a wheel filename that
+ * doesn't parse, or no greeted version at all) or they already match.
+ */
+export function warnOnPydvmaVersionMismatch(actual: string | null | undefined): void {
+  if (!actual) return;
+  const expected = pydvmaVersionFromWheelFilename(ENGINE_WHEELS[0]);
+  if (expected && actual !== expected) {
+    console.warn(
+      `[engine] native engine reports pydvma ${actual}, this webui build expects ${expected} `
+      + '-- the wire protocol still matches (see SUPPORTED_ENGINE_PROTOCOL_VERSION in '
+      + 'worker/socketClient.ts), but results may differ from what this bundle assumes.',
+    );
+  }
+}
+
+/**
  * Vendored pyodide version. Must match the `pyodide` devDependency (and thus
  * the assets staged by scripts/fetch-pyodide.sh). Drives the CDN
  * `packageBaseUrl` the worker uses for prebuilt numpy/scipy/micropip wheels.
@@ -221,6 +261,25 @@ export function createEngineStore(
    */
   const host = writable<EngineHostKind | null>(
     typeof clientSource === 'function' ? null : 'pyodide');
+  /**
+   * A one-time, user-facing notice from the factory resolution (currently
+   * only "auto-detected native, then failed to connect" — see
+   * `ResolvedEngine.note`'s docstring in `worker/selectEngine.ts`), or
+   * `null` when there is nothing to say. Set at most once per store
+   * lifetime (the factory branch in `boot()` below runs only the FIRST time
+   * `client` resolves), so `App.svelte` can raise it as a single toast with
+   * no de-duplication of its own. A directly-injected client (every test,
+   * every pre-Task-10 caller) never sets this.
+   */
+  const hostNote = writable<string | null>(null);
+  /**
+   * The native host's greeted pydvma release (`ResolvedEngine.
+   * pydvmaVersion`), or `null` on the pyodide path / before a factory
+   * resolves. Surfaced so `EngineProbe`'s status element can carry
+   * `data-engine-version` for e2e/diagnosis; the store also uses it (right
+   * below) to `warnOnPydvmaVersionMismatch` once at resolution time.
+   */
+  const pydvmaVersion = writable<string | null>(null);
   const status = writable<EngineStatus>('idle');
   // Each queued item carries its own `reject` so a boot FAILURE can settle it
   // (not just a boot success draining it). Without this, a compute call
@@ -348,6 +407,9 @@ export function createEngineStore(
         if (bootToken !== token) { resolved.client.dispose(); return; }
         client = resolved.client;
         host.set(resolved.host);
+        hostNote.set(resolved.note ?? null);
+        pydvmaVersion.set(resolved.pydvmaVersion ?? null);
+        if (resolved.host === 'native') warnOnPydvmaVersionMismatch(resolved.pydvmaVersion);
         wireObserve();
       }
       // Idempotent on the socket client (it hands back the connection the
@@ -465,6 +527,10 @@ export function createEngineStore(
     status,
     /** 'pyodide' | 'native', or null until a client factory has resolved. */
     host: { subscribe: host.subscribe } as Readable<EngineHostKind | null>,
+    /** One-time user-facing notice from factory resolution, or null. See above. */
+    hostNote: { subscribe: hostNote.subscribe } as Readable<string | null>,
+    /** The native host's greeted pydvma release, or null. See above. */
+    pydvmaVersion: { subscribe: pydvmaVersion.subscribe } as Readable<string | null>,
     boot,
     whenReady,
     enqueue,
