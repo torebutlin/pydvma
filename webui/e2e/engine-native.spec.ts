@@ -32,7 +32,10 @@ import { fileURLToPath } from 'node:url';
 const BRIDGE_E2E = !!process.env.BRIDGE_E2E;
 // See bridge.spec.ts: `python3` is the MS-Store stub on Windows.
 const PYTHON = process.env.PYDVMA_PYTHON ?? 'python3';
-const PORT = Number(process.env.ENGINE_PORT ?? 8764);
+// 8765, NOT 8764: bridge.spec.ts's SETTINGS_PORT defaults to 8764, and a
+// combined run without --workers=1 races both beforeAlls onto one port —
+// surfacing as a misleading settings-prefill value mismatch, not a bind error.
+const PORT = Number(process.env.ENGINE_PORT ?? 8765);
 const ENGINE_URL = `ws://127.0.0.1:${PORT}/engine`;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
