@@ -32,6 +32,16 @@ function defaultWsFactory(url: string): EngineWsLike {
   return ws;
 }
 
+/**
+ * How long `init()` waits for the `engine_ready` greeting before giving up.
+ * A silent peer -- the classic trap is `?enginehost=` pointed at `/ws`
+ * instead of `/engine` by a one-character slip, which accepts the socket
+ * and then says nothing until commanded -- would otherwise hang `init()`
+ * forever, since nothing here ever settles on its own without SOME message
+ * arriving. Injectable via `init()`'s `opts` for tests.
+ */
+const DEFAULT_GREETING_TIMEOUT_MS = 5000;
+
 interface Pending { op: string; resolve: (v: any) => void; reject: (e: any) => void }
 
 /**
@@ -58,6 +68,15 @@ export function createSocketEngineClient(
   // separately, and BEFORE detaching the socket's onclose/onerror handlers
   // that would otherwise be its only path to ever settling.
   let initReject: ((e: Error) => void) | null = null;
+  // The current connect attempt, kept around for as long as it is either
+  // still in flight OR successfully connected -- so a second init() call
+  // (Task 8 calls init() twice: a native-host probe, then the store's own
+  // boot()) reuses it instead of opening a second socket, which server-side
+  // means a second orphaned worker subprocess. Cleared whenever the
+  // connection actually ends (failure, unsolicited close, restart, dispose)
+  // so the NEXT init() genuinely reconnects rather than replaying a dead
+  // promise forever.
+  let connectPromise: Promise<void> | null = null;
 
   /** Settle one pending call and announce it, so progress state can clear. */
   function finish(id: number): Pending | undefined {
@@ -71,11 +90,17 @@ export function createSocketEngineClient(
   /** Reject every in-flight call with `err`, announcing each as settled. */
   function rejectAll(err: Error) {
     for (const id of [...pending.keys()]) finish(id)?.reject(err);
+    // finish() already deletes each entry it settles, so by here `pending`
+    // is normally already empty -- this is defensive parity with
+    // client.ts's rejectAll, in case a reject handler above re-enters and
+    // adds something mid-loop.
+    pending.clear();
   }
 
   /** Steady-state onclose: the server (or network) went away unasked. */
   function handleUnsolicitedClose() {
     connected = false;
+    connectPromise = null; // let a subsequent init() actually reconnect
     ws = null;
     rejectAll(new Error('native engine connection closed'));
   }
@@ -89,7 +114,7 @@ export function createSocketEngineClient(
       // A corrupt/truncated frame must not wedge the client -- drop it and
       // keep serving whatever else is pending (mirrors engine_host.py's own
       // per-frame try/except: one bad frame must not kill the connection).
-      console.warn('engine socket: undecodable frame', e);
+      console.warn('[engine-socket] undecodable frame', e);
       return;
     }
     const entry = finish(reply.id);
@@ -103,7 +128,8 @@ export function createSocketEngineClient(
     let msg: any;
     try {
       msg = JSON.parse(text);
-    } catch {
+    } catch (e) {
+      console.warn('[engine-socket] unparseable text frame', text, e);
       return;
     }
     if (msg?.type === 'progress') {
@@ -117,7 +143,7 @@ export function createSocketEngineClient(
       // The server couldn't decode an inbound frame at all, so it carries no
       // id to correlate -- nothing in `pending` can be resolved/rejected
       // from this alone. Surface it for diagnosis and otherwise ignore.
-      console.warn('engine socket: server error', msg.message);
+      console.warn('[engine-socket] server error', msg.message);
       return;
     }
     // A stray engine_ready (or anything else) outside init -- ignore rather
@@ -137,58 +163,128 @@ export function createSocketEngineClient(
     // This client always sets binaryType='arraybuffer', so a Blob here would
     // mean something bypassed that (a hand-rolled fake, a future browser
     // quirk) -- warn rather than throw so one weird frame doesn't wedge us.
-    console.warn('engine socket: unexpected message data type', data);
+    console.warn('[engine-socket] unexpected message data type', data);
+  }
+
+  /**
+   * Open one socket and resolve once its greeting arrives. Factored out of
+   * `init()` so the `connectPromise` dedup wrapper is the only place that
+   * decides WHETHER to start a new attempt; this only knows how to run one.
+   */
+  function doConnect(opts?: { greetingTimeoutMs?: number }): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      // Defensive: every termination path below nulls `ws`, so a live one
+      // here should never happen -- but if some future change forgets to,
+      // this must not leak a second socket alongside it (server-side, a
+      // second live socket = a second orphaned worker subprocess).
+      if (ws) {
+        const stale = ws;
+        stale.onopen = null;
+        stale.onmessage = null;
+        stale.onerror = null;
+        stale.onclose = null;
+        stale.close();
+        ws = null;
+      }
+
+      const sock = wsFactory(url);
+      sock.binaryType = 'arraybuffer';
+      ws = sock;
+      let settled = false;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+      const settleReject = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        initReject = null;
+        reject(err);
+      };
+      // Live for the duration of this connect attempt only -- cleared on
+      // any settle path (including the greeting arriving), so a
+      // restart()/dispose() after that point falls through to the normal
+      // `pending`-map rejection instead of double-settling this promise.
+      initReject = settleReject;
+
+      /** A failure path: settle + release the socket, optionally forcing it shut. */
+      const giveUp = (err: Error, forceClose: boolean) => {
+        settleReject(err);
+        if (ws === sock) { ws = null; connected = false; }
+        if (forceClose) {
+          sock.onclose = null;
+          sock.close();
+        }
+      };
+
+      // Task 10: version gate lands here (compare the greeting's `v`
+      // against this client's expected ENGINE_PROTOCOL_VERSION and reject
+      // on mismatch).
+      const timeoutMs = opts?.greetingTimeoutMs ?? DEFAULT_GREETING_TIMEOUT_MS;
+      timeoutHandle = setTimeout(() => {
+        giveUp(new Error('native engine greeting timed out — is the URL an /engine endpoint?'), true);
+      }, timeoutMs);
+
+      sock.onerror = () => giveUp(new Error('native engine connect failed'), false);
+      sock.onclose = () => giveUp(new Error('native engine connection closed before greeting'), false);
+      sock.onmessage = (e: { data: unknown }) => {
+        if (typeof e.data !== 'string') return; // the greeting is always text
+        let msg: any;
+        try {
+          msg = JSON.parse(e.data);
+        } catch (err) {
+          console.warn('[engine-socket] unparseable text frame during connect', e.data, err);
+          return;
+        }
+        if (msg?.type !== 'engine_ready') return;
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        initReject = null;
+        connected = true;
+        // Steady-state handlers take over only now that init is done.
+        sock.onmessage = (ev: { data: unknown }) => handleMessage(ev.data);
+        sock.onclose = () => handleUnsolicitedClose();
+        // The init-time onerror above would otherwise sit here as a dead
+        // settleReject closure (settled is already true, so it's a silent
+        // no-op) -- replace it with a visible diagnostic instead.
+        sock.onerror = (ev?: unknown) => console.warn('[engine-socket] socket error', ev);
+        resolve();
+      };
+      sock.onopen = () => { /* wait for the engine_ready greeting */ };
+    });
   }
 
   return {
     // baseUrl/wheels/pyodideVersion are pyodide-worker concerns (vendored
     // engine assets + wheel install) -- meaningless for a CPython host over
     // a socket, so they're accepted (to satisfy the EngineClient shape) and
-    // ignored.
-    init(_baseUrl?: string, _wheels?: string[], _pyodideVersion?: string): Promise<void> {
+    // ignored. `opts.greetingTimeoutMs` overrides the connect+greeting
+    // deadline (tests only; production callers get the default).
+    init(
+      _baseUrl?: string,
+      _wheels?: string[],
+      _pyodideVersion?: string,
+      opts?: { greetingTimeoutMs?: number },
+    ): Promise<void> {
       if (disposed) return Promise.reject(new Error('engine client disposed'));
-      return new Promise<void>((resolve, reject) => {
-        const sock = wsFactory(url);
-        sock.binaryType = 'arraybuffer';
-        ws = sock;
-        let settled = false;
-
-        const settleReject = (err: Error) => {
-          if (settled) return;
-          settled = true;
-          initReject = null;
-          reject(err);
-        };
-        // Live for the duration of this connect attempt only -- cleared on
-        // any settle path below (including the greeting arriving), so a
-        // restart()/dispose() after that point falls through to the normal
-        // `pending`-map rejection instead of double-settling this promise.
-        initReject = settleReject;
-
-        sock.onerror = () => settleReject(new Error('native engine connect failed'));
-        sock.onclose = () => settleReject(new Error('native engine connection closed before greeting'));
-        sock.onmessage = (e: { data: unknown }) => {
-          if (typeof e.data !== 'string') return; // the greeting is always text
-          let msg: any;
-          try {
-            msg = JSON.parse(e.data);
-          } catch {
-            return;
-          }
-          if (msg?.type !== 'engine_ready') return;
-          if (settled) return;
-          // Task 10: version gate lands here (compare msg.v against the
-          // client's expected ENGINE_PROTOCOL_VERSION and reject on mismatch).
-          settled = true;
-          initReject = null;
-          connected = true;
-          // Steady-state handlers take over only now that init is done.
-          sock.onmessage = (ev: { data: unknown }) => handleMessage(ev.data);
-          sock.onclose = () => handleUnsolicitedClose();
-          resolve();
-        };
-        sock.onopen = () => { /* wait for the engine_ready greeting */ };
+      // In-flight OR already connected: Task 8 calls init() twice (a
+      // native-host probe, then the store's own boot()) -- both must
+      // resolve off the SAME connection, not spawn a second socket.
+      if (connectPromise) return connectPromise;
+      const attempt = doConnect(opts);
+      connectPromise = attempt;
+      // Only clear connectPromise for what turns out to be a FAILED
+      // attempt, and only if nothing newer has already replaced it
+      // (restart()/dispose() may themselves have reset connectPromise by
+      // the time this runs). Attached AFTER the assignment above:
+      // doConnect's executor runs synchronously, so wiring this from
+      // *inside* doConnect (before `connectPromise = attempt` had even
+      // executed) would risk a same-tick failure being silently
+      // overwritten right back to the dead promise by that assignment.
+      attempt.catch(() => {
+        if (connectPromise === attempt) connectPromise = null;
       });
+      return attempt;
     },
 
     call<T = unknown>(op: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -198,7 +294,21 @@ export function createSocketEngineClient(
       const sock = ws;
       return new Promise<T>((resolve, reject) => {
         pending.set(id, { op, resolve, reject });
-        sock.send(encodeFrame({ id, op, payload: payload ?? {} }));
+        let frame: ArrayBuffer;
+        try {
+          frame = encodeFrame({ id, op, payload: payload ?? {} });
+        } catch (e) {
+          // encodeFrame throws BY DESIGN on a payload carrying a typed array
+          // it doesn't recognise (frames.ts) -- without this, the pending
+          // entry above would leak forever: never sent, never replied-to,
+          // never settled. finish() removes it and fires onSettled; the
+          // rethrow settles THIS promise the same as calling reject(e)
+          // would (resolve/reject haven't fired yet, so a throw inside the
+          // executor rejects it).
+          finish(id);
+          throw e;
+        }
+        sock.send(frame);
       });
     },
 
@@ -209,6 +319,7 @@ export function createSocketEngineClient(
     restart(reason: Error): void {
       if (disposed) return;
       connected = false;
+      connectPromise = null; // invalidate whether pending or already resolved
       // Settle a still-pending init() FIRST: its only settlement paths are
       // the socket's own onclose/onerror/onmessage closures, which we are
       // about to detach/close below -- without this, restarting mid-boot
@@ -232,6 +343,7 @@ export function createSocketEngineClient(
     dispose(reason?: Error): void {
       disposed = true;
       connected = false;
+      connectPromise = null;
       const err = reason ?? new Error('engine client disposed');
       initReject?.(err); // see restart() -- same reasoning, terminal instead
       rejectAll(err);

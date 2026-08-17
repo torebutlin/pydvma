@@ -204,4 +204,208 @@ describe('createSocketEngineClient', () => {
     await expect(initP).rejects.toThrow('shutting down');
     await expect(client.init('http://x/', [], '0')).rejects.toThrow(/disposed/);
   });
+
+  // ---- init() idempotency (Task 8 calls init() twice: probe, then boot) ----
+
+  test('idempotency (a): concurrent double init() shares ONE connection attempt', async () => {
+    const factories: ReturnType<typeof makeFakeWs>[] = [];
+    const client = createSocketEngineClient('ws://x/engine', () => {
+      const f = makeFakeWs();
+      factories.push(f);
+      return f.ws;
+    });
+    const p1 = client.init('http://x/', [], '0');
+    const p2 = client.init('http://x/', [], '0');
+    expect(factories.length).toBe(1); // ONE factory call for both
+
+    factories[0].open();
+    factories[0].greet();
+    await expect(p1).resolves.toBeUndefined();
+    await expect(p2).resolves.toBeUndefined();
+  });
+
+  test('idempotency (b): sequential init() after already connected does not open a second socket', async () => {
+    let factoryCalls = 0;
+    const f = makeFakeWs();
+    const client = createSocketEngineClient('ws://x/engine', () => {
+      factoryCalls += 1;
+      return f.ws;
+    });
+    const init1 = client.init('http://x/', [], '0');
+    f.open();
+    f.greet();
+    await init1;
+    expect(factoryCalls).toBe(1);
+
+    const init2 = client.init('http://x/', [], '0');
+    await expect(init2).resolves.toBeUndefined();
+    expect(factoryCalls).toBe(1); // still just the one socket
+  });
+
+  test('idempotency (c): init() after an unsolicited close reconnects via a fresh socket', async () => {
+    const factories: ReturnType<typeof makeFakeWs>[] = [];
+    const client = createSocketEngineClient('ws://x/engine', () => {
+      const f = makeFakeWs();
+      factories.push(f);
+      return f.ws;
+    });
+    const init1 = client.init('http://x/', [], '0');
+    factories[0].open();
+    factories[0].greet();
+    await init1;
+
+    factories[0].serverClose(); // unsolicited -- server/network went away
+
+    const init2 = client.init('http://x/', [], '0');
+    expect(factories.length).toBe(2); // fresh socket, not the dead one
+    factories[1].open();
+    factories[1].greet();
+    await expect(init2).resolves.toBeUndefined();
+  });
+
+  // ---- greeting deadline ----
+
+  test('greeting deadline: init() rejects if the greeting never arrives, and closes the socket', async () => {
+    const f = makeFakeWs();
+    const client = createSocketEngineClient('ws://x/engine', () => f.ws);
+    const initP = client.init('http://x/', [], '0', { greetingTimeoutMs: 5 });
+    f.open(); // connects fine, but the peer stays silent (e.g. /ws not /engine)
+    await expect(initP).rejects.toThrow(/greeting timed out/);
+    expect(f.ws.readyState).toBe(3); // client gave up and closed it
+  });
+
+  test('greeting deadline: the timer is cleared on success (no late rejection or close)', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = makeFakeWs();
+      const client = createSocketEngineClient('ws://x/engine', () => f.ws);
+      const initP = client.init('http://x/', [], '0', { greetingTimeoutMs: 50 });
+      f.open();
+      f.greet();
+      await initP;
+
+      vi.advanceTimersByTime(10_000); // long past the deadline
+      expect(f.ws.readyState).toBe(1); // never force-closed
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ---- send hygiene ----
+
+  test('call() with an unencodable payload rejects and still fires onSettled (no pending-map leak)', async () => {
+    const { client } = await connected();
+    const settled: Array<{ callId: number; op: string }> = [];
+    client.observe?.({ onSettled: (info) => settled.push(info) });
+    const bad = new Int32Array([1, 2, 3]);
+    await expect(client.call('calc_fft', { time_data: bad } as any)).rejects.toThrow();
+    expect(settled).toHaveLength(1);
+    expect(settled[0].op).toBe('calc_fft');
+  });
+
+  // ---- late-close ordering: a stale socket must never affect its replacement ----
+
+  /** Like makeFakeWs, but close() fires onclose asynchronously (a microtask
+   *  later), mirroring how a real WebSocket's close event is never synchronous. */
+  function makeDeferredCloseWs() {
+    const sent: unknown[] = [];
+    const ws: EngineWsLike = {
+      readyState: 0,
+      binaryType: 'arraybuffer',
+      send(d) { sent.push(d); },
+      close() {
+        this.readyState = 3;
+        queueMicrotask(() => this.onclose?.());
+      },
+      onopen: null, onmessage: null, onerror: null, onclose: null,
+    };
+    const open = () => { ws.readyState = 1; ws.onopen?.(); };
+    const greet = () =>
+      ws.onmessage?.({ data: JSON.stringify({ type: 'engine_ready', v: 1, pydvma: '2.3.0' }) });
+    return { ws, sent, open, greet };
+  }
+
+  test('a stale socket\'s late onclose cannot reject or null out the socket that replaced it', async () => {
+    const factories: ReturnType<typeof makeDeferredCloseWs>[] = [];
+    const client = createSocketEngineClient('ws://x/engine', () => {
+      const f = makeDeferredCloseWs();
+      factories.push(f);
+      return f.ws;
+    });
+
+    const init1 = client.init('http://x/', [], '0');
+    factories[0].open();
+    factories[0].greet();
+    await init1;
+
+    client.restart(new Error('stopped')); // detaches old.onclose, then closes it (deferred)
+    const init2 = client.init('http://x/', [], '0'); // pre-greeting -- pending
+    expect(factories.length).toBe(2);
+
+    // Flush the deferred onclose microtask from the FIRST (now-stale) socket.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A call right now should fail as "not connected" (init2 hasn't greeted
+    // yet) rather than with the stale socket's close error -- proves the
+    // late close didn't corrupt state via the new attempt.
+    await expect(client.call('x')).rejects.toThrow(/not connected/);
+
+    // The new socket is unaffected: greeting it still resolves init2.
+    factories[1].open();
+    factories[1].greet();
+    await expect(init2).resolves.toBeUndefined();
+  });
+
+  // ---- onSettled fires on restart/dispose teardown (the store clears progress off it) ----
+
+  test('onSettled fires for every in-flight call when restart() tears down', async () => {
+    const { client } = await connected();
+    const settled: Array<{ callId: number; op: string }> = [];
+    client.observe?.({ onSettled: (info) => settled.push(info) });
+    const p1 = client.call('a');
+    const p2 = client.call('b');
+    client.restart(new Error('stopped'));
+    await Promise.allSettled([p1, p2]);
+    expect(settled.map((s) => s.op).sort()).toEqual(['a', 'b']);
+  });
+
+  test('onSettled fires for every in-flight call when dispose() tears down', async () => {
+    const { client } = await connected();
+    const settled: Array<{ callId: number; op: string }> = [];
+    client.observe?.({ onSettled: (info) => settled.push(info) });
+    const p1 = client.call('a');
+    const p2 = client.call('b');
+    client.dispose(new Error('bye'));
+    await Promise.allSettled([p1, p2]);
+    expect(settled.map((s) => s.op).sort()).toEqual(['a', 'b']);
+  });
+
+  // ---- unparseable text frames (steady-state and during the greeting wait) ----
+
+  test('unparseable text frames are warned and ignored, in both steady-state and during connect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Steady state:
+    const { f, client } = await connected();
+    const p = client.call('a');
+    const id = sentId(f, 0);
+    f.ws.onmessage?.({ data: '{not json' });
+    expect(warn).toHaveBeenCalled();
+    f.reply(encodeFrame({ id, ok: true, result: 'fine' }));
+    await expect(p).resolves.toBe('fine');
+
+    // During init (pre-greeting):
+    warn.mockClear();
+    const f2 = makeFakeWs();
+    const client2 = createSocketEngineClient('ws://x/engine', () => f2.ws);
+    const initP = client2.init('http://x/', [], '0');
+    f2.open();
+    f2.ws.onmessage?.({ data: '{also not json' });
+    expect(warn).toHaveBeenCalled();
+    f2.greet();
+    await expect(initP).resolves.toBeUndefined();
+
+    warn.mockRestore();
+  });
 });

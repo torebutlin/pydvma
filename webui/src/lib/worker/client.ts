@@ -61,10 +61,14 @@ export interface EngineClient {
    */
   observe?(events: EngineCallEvents): void;
   /**
-   * Hard stop: terminate the worker, reject every in-flight call with
-   * `reason`, and spawn a FRESH worker in its place (the client stays usable —
-   * the caller must `init` again). This is the only way to interrupt a
-   * synchronous pyodide compute: a busy worker never reads a cancel message.
+   * Hard stop: reject every in-flight call with `reason` and tear down the
+   * underlying transport (worker termination, socket close — whatever the
+   * implementation uses). The client stays usable but not connected — the
+   * caller must `init` again. For the pyodide worker client this is the
+   * only way to interrupt a synchronous compute: a busy worker never reads
+   * a cancel message, so `restart` terminates it and spawns a fresh one in
+   * its place; a socket-transport client instead just closes the socket
+   * (the server treats that as cancel-and-kill of the in-flight op).
    */
   restart(reason: Error): void;
   /** Tear down the worker and reject all in-flight calls. */
