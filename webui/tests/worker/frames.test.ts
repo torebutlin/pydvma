@@ -223,3 +223,53 @@ describe('engine frame codec: utf-8 header length', () => {
     expect(byteLen).toBeGreaterThan(headerText.length);
   });
 });
+
+describe('engine frame codec: rejects non-f8/bytes typed array views', () => {
+  // Without this guard, lift() falls through to the plain-object branch and
+  // silently mis-encodes e.g. Int32Array.from([1,2,3]) as
+  // {"0":1,"1":2,"2":3} with no error -- Python's encode_frame raises
+  // TypeError for any non-<f8> ndarray dtype instead of silently
+  // converting, and the JS side must match. Float32Array is pervasive in
+  // this codebase's audio paths, so this trap is realistic, not academic.
+  test('Int32Array throws instead of silently mis-encoding', () => {
+    expect(() => encodeFrame({ x: Int32Array.from([1, 2, 3]) })).toThrow(/float64array/i);
+  });
+
+  test('Float32Array throws instead of silently mis-encoding', () => {
+    let caught: unknown;
+    try {
+      encodeFrame({ x: Float32Array.from([1, 2, 3]) });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TypeError);
+    expect(String((caught as Error).message)).toMatch(/float64array/i);
+    expect(String((caught as Error).message)).toMatch(/Float32Array/);
+  });
+
+  test('DataView (an ArrayBufferView that is neither typed array kind) also throws', () => {
+    const dv = new DataView(new ArrayBuffer(8));
+    expect(() => encodeFrame({ x: dv })).toThrow(/float64array/i);
+  });
+});
+
+describe('engine frame codec: byteOffset view handling', () => {
+  test('a subarray view (non-zero byteOffset) round-trips only its own elements, isolated from later buffer mutation', () => {
+    const backing = Float64Array.from([10, 20, 30, 40]);
+    const view = backing.subarray(1, 3); // [20, 30] -- byteOffset = 8, not 0
+    expect(view.byteOffset).toBe(8);
+    expect(view.length).toBe(2);
+
+    const frame = encodeFrame({ x: view });
+
+    // Mutate the backing buffer AFTER encoding -- pins that encodeFrame
+    // copied out the view's own bytes (buffer.slice) rather than keeping a
+    // reference into the live, mutable backing buffer.
+    backing[1] = 999;
+    backing[2] = 999;
+
+    const out = decodeFrame(frame) as any;
+    expect(out.x).toBeInstanceOf(Float64Array);
+    expect([...out.x]).toEqual([20, 30]);
+  });
+});

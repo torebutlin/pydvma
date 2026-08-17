@@ -41,6 +41,12 @@ function isPlaceholder(v: unknown): v is BinPlaceholder {
  * to `null` natively -- matching the Python side's `allow_nan=False` +
  * pre-sanitise behaviour without any extra code.
  *
+ * Any OTHER `ArrayBufferView` (`Int32Array`, `Float32Array`, `DataView`,
+ * ...) throws `TypeError` rather than silently falling into the plain-
+ * object branch (which would serialise it as `{"0":1,"1":2,...}` with no
+ * error) -- mirrors `engine_host.encode_frame` raising `TypeError` for any
+ * non-`<f8>` ndarray dtype instead of silently converting.
+ *
  * Builds one `Uint8Array` sized from the summed header + blob lengths (no
  * incremental resizing) and blits each blob straight into it, mirroring
  * `engine_host.encode_frame`'s single-allocation guarantee.
@@ -62,6 +68,15 @@ export function encodeFrame(header: unknown): ArrayBuffer {
       const b = new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
       blobs.push(b);
       return { __bin__: blobs.length - 1, kind: 'bytes', len: b.byteLength };
+    }
+    if (ArrayBuffer.isView(v)) {
+      // Any other typed-array view (Int32Array, Float32Array, DataView, ...)
+      // -- without this check it falls through to the plain-object branch
+      // below and silently mis-encodes as {"0":1,"1":2,...}. Float32Array
+      // is pervasive in this codebase's audio paths, so this trap is real.
+      throw new TypeError(
+        `engine frames carry Float64Array/Uint8Array only, got ${(v as ArrayBufferView).constructor.name}`,
+      );
     }
     if (Array.isArray(v)) return v.map(lift);
     if (v !== null && typeof v === 'object') {
