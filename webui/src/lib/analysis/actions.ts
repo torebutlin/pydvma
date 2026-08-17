@@ -106,7 +106,14 @@ function mval(v: unknown, k: string): unknown {
  * `Number(null)` is 0, so a bare `Number(mval(…))` would render a degenerate
  * mode as a plausible-looking `Qn = 0` on the native host where pyodide shows
  * NaN — a wrong NUMBER rather than a visible failure. Use this at EVERY
- * scalar decode site so both hosts agree.
+ * scalar decode site.
+ *
+ * What that buys is agreement on NOT-FINITE, not on the value: the wire maps
+ * NaN and ±Infinity alike to `null`, so a scalar that is `Infinity` under
+ * pyodide arrives as NaN from the native host. Every consumer here already
+ * treats these as "no usable number" (`Number.isFinite` guards, NaN-gapped
+ * plot lines), so the distinction does not reach the user — but do not read a
+ * decoded NaN as proof the engine produced one.
  */
 function num(v: unknown): number {
   return v == null ? NaN : Number(v);

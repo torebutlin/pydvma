@@ -4,11 +4,21 @@
 // the engine boots lazily off the main thread, and any compute requested
 // before `ready` is queued and drained once boot completes. This store owns:
 //   - `status`   : 'idle' | 'loading' | 'ready' | 'error' (bindable UI state)
+//   - `host`     : 'pyodide' | 'native' | null-until-resolved — WHICH engine
+//     answered (the browser worker, or a CPython pydvma-serve over the
+//     `/engine` socket). Read-only; decided once per session by the client
+//     factory in `worker/selectEngine.ts` and surfaced in the UI as
+//     provenance, never as a mode the user has to manage.
 //   - a FIFO queue of thunks enqueued while not ready
 //   - `whenReady()` / `enqueue()` for callers, and `boot()` to kick it off.
 //   - `stop()` + the `engineProgress` store: round-11 P7's long-calc progress
 //     and its only possible cancel (terminate + reboot). See the P7 block
 //     below for why nothing gentler works.
+//   - the TRANSPORT-LOST transition: a socket engine can die unasked (a
+//     stopped or restarted pydvma-serve), which a Worker cannot. That lands
+//     as 'error' with a message naming the cause AND leaves the store
+//     re-bootable, so the next `boot()` reconnects instead of the app sitting
+//     at a healthy-looking 'ready' over a dead transport.
 //
 // The underlying EngineClient is injectable so tests can drive the store with
 // a fake worker; the default RESOLVES one at boot (`worker/selectEngine.ts`),
@@ -219,8 +229,19 @@ export function createEngineStore(
   const queue: QueueItem[] = [];
   const readyWaiters: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
   let booted = false;
-  /** Error captured on boot failure, so callers arriving AFTER the failure
-   *  (when `booted` is already true and drain never re-runs) still get it. */
+  /**
+   * Why the store is in 'error', for callers that arrive AFTER the failure —
+   * `drain()` never re-runs, so nothing else would ever tell them. Two
+   * writers, and they leave `booted` in DIFFERENT states on purpose:
+   *
+   *  - `boot()` on a failed init/factory: `booted` stays true, so the failure
+   *    is terminal until something explicitly stops or re-boots the store;
+   *  - `handleTransportLost()`: `booted` is cleared, because the engine was
+   *    fine and the connection was not — a re-boot is a reconnect, and is
+   *    expected to succeed.
+   *
+   * Cleared at the top of every `boot()` so a recovery starts clean.
+   */
   let bootError: Error | null = null;
   /** In-flight `stop()`, so concurrent Stop clicks share one terminate+reboot. */
   let stopping: Promise<void> | null = null;
@@ -419,6 +440,12 @@ export function createEngineStore(
     while (readyWaiters.length) readyWaiters.shift()!.reject(err);
     // `?.` for the factory path before its first boot: there is nothing to
     // restart yet, and the boot() below will resolve a client normally.
+    // NB that path is superseded, not CANCELLED: a factory already in flight
+    // keeps running, so the boot() below starts a SECOND one and two clients
+    // eventually exist. The loser is the one whose `bootToken` check fails,
+    // and that check disposes it — which is what keeps a stop() mid-connect
+    // from leaving a live socket (server-side: an orphaned worker subprocess)
+    // behind for the rest of the session.
     // For the SOCKET client, restart() closes the socket (the server reads
     // that as cancel-and-kill of the in-flight op) and clears its
     // `connectPromise`, so the boot() below genuinely RECONNECTS rather than

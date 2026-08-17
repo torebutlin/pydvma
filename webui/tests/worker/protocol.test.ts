@@ -336,3 +336,62 @@ test('store: after a transport loss an explicit re-boot recovers', async () => {
   expect(client.init).toHaveBeenCalledTimes(2);
   await expect(store.enqueue('calc_fft')).resolves.toEqual({ op: 'calc_fft' });
 });
+
+test('store: a transport loss does NOT re-run the factory — the session keeps its host', async () => {
+  // The client is kept deliberately: re-resolving would let a session that
+  // chose the native host slide silently onto the browser engine mid-run
+  // (different memory ceiling, different speed, same-looking answers).
+  const { client, finishInit, events } = makeFakeClient();
+  let factoryCalls = 0;
+  const store = createEngineStore(async () => {
+    factoryCalls += 1;
+    return { client: client as any, host: 'native' as const };
+  }, 'http://x/');
+
+  store.boot();
+  finishInit();
+  await store.whenReady();
+  expect(factoryCalls).toBe(1);
+  expect(get(store.host)).toBe('native');
+
+  events().onTransportLost!();
+  expect(get(store.status)).toBe('error');
+
+  await store.boot();
+  expect(factoryCalls).toBe(1);            // resolved once, for the session
+  expect(get(store.host)).toBe('native');  // ...and still reported as native
+  expect(get(store.status)).toBe('ready');
+});
+
+test('store: a stop during a factory-in-flight boot disposes the superseded client', async () => {
+  // stop() cannot CANCEL a factory already in flight — it supersedes it and
+  // starts a second one. Both eventually resolve a client; exactly one may
+  // survive. Left undisposed, the loser would be a live socket, i.e. an
+  // orphaned worker subprocess on the server for the rest of the session.
+  const made: Array<ReturnType<typeof makeFakeClient>> = [];
+  const gates: Array<() => void> = [];
+  const store = createEngineStore(() => {
+    const f = makeFakeClient();
+    made.push(f);
+    return new Promise<any>((resolve) => {
+      gates.push(() => resolve({ client: f.client as any, host: 'native' as const }));
+    });
+  }, 'http://x/');
+
+  store.boot();                       // factory #1 called, still in flight
+  expect(made.length).toBe(1);
+  const stopped = store.stop();       // supersedes it, starts factory #2
+  expect(made.length).toBe(2);
+
+  gates[0]();                         // the SUPERSEDED factory finally answers
+  gates[1]();
+  made[1].finishInit();
+  await stopped;
+
+  expect(made[0].client.dispose).toHaveBeenCalled();   // loser released
+  expect(made[0].client.init).not.toHaveBeenCalled();  // never used at all
+  expect(made[1].client.dispose).not.toHaveBeenCalled();
+  expect(store.client).toBe(made[1].client);           // exactly one live client
+  expect(get(store.status)).toBe('ready');
+  expect(get(store.host)).toBe('native');
+});
