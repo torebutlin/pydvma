@@ -2,6 +2,7 @@
 """Native engine host: frame codec, worker subprocess, /engine endpoint."""
 import asyncio
 import json
+import logging
 import struct
 import threading
 
@@ -397,3 +398,44 @@ def test_bridge_ws_still_works_alongside_engine():
         finally:
             await _stop_server(task)
     run_async(scenario)
+
+
+def test_engine_endpoint_client_close_mid_op_is_a_clean_stop(caplog):
+    # Reproduces the canonical Stop / tab-close during a long CWT calc:
+    # the client drops the socket while an op is still running in the
+    # worker. The reply (and any further progress frames) then try to
+    # send on an already-closed socket -- that must be treated as the
+    # client's Stop, not an unhandled error that websockets logs as
+    # "connection handler failed".
+    async def scenario():
+        _s, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws:
+                await ws.recv()  # greeting
+                await ws.send(engine_host.encode_frame(
+                    {'id': 9, 'op': 'calc_sono', 'payload': _cwt_payload()}))
+                raw = await ws.recv()
+                assert not isinstance(raw, (bytes, bytearray))  # a progress frame
+            # `async with` exit above closes the socket while the op is
+            # still running in the worker subprocess.
+
+            # Give the in-flight op time to finish and attempt its reply
+            # (and any further progress frames) against the closed socket.
+            await asyncio.sleep(0.5)
+
+            # The server process must have survived cleanly and be ready
+            # to serve a fresh connection:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws2:
+                await ws2.recv()  # greeting
+                await ws2.send(engine_host.encode_frame(
+                    {'id': 10, 'op': 'calc_fft', 'payload': _mk_time()}))
+                reply = engine_host.decode_frame(await ws2.recv())
+                assert reply['ok'] is True
+        finally:
+            await _stop_server(task)
+
+    with caplog.at_level(logging.ERROR, logger='websockets.server'):
+        run_async(scenario)
+    assert 'connection handler failed' not in caplog.text

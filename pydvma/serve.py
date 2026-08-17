@@ -1264,9 +1264,9 @@ class BridgeServer:
     def _process_request(self, connection, request):
         """``websockets`` process_request hook.
 
-        Returns ``None`` for ``/ws`` (let the WebSocket handshake
-        proceed), a JSON ``Response`` for ``/config``, or a static-file
-        ``Response`` for anything else.
+        Returns ``None`` for ``/ws`` or ``/engine`` (let the WebSocket
+        handshake proceed), a JSON ``Response`` for ``/config``, or a
+        static-file ``Response`` for anything else.
         """
         path = request.path.split('?', 1)[0]
         if path == '/ws':

@@ -437,16 +437,39 @@ async def handle_connection(websocket):
     A frame that fails to decode gets a text ``{"type":"error"}`` reply
     (there is no id to correlate) and the connection lives on — one bad
     frame must not kill a session.
+
+    Every outbound ``send`` here can race the client closing the socket
+    (the canonical case: Stop, or a tab close, during a long CWT calc) --
+    ``websockets.exceptions.ConnectionClosed`` from any of them is treated
+    as that clean Stop, not an error: the ``finally`` below already
+    cancels + kills the worker, so there is nothing left to do but return.
+    Without this, the reply send after an op finishes on an already-closed
+    socket propagates out of this coroutine and ``websockets`` logs a full
+    "connection handler failed" traceback server-side for what is, from
+    the client's point of view, entirely routine.
     """
+    # Imported here rather than at module top: this module must stay
+    # importable with no ``websockets`` package present at all -- the
+    # frame codec / worker classes (and their tests) have no such
+    # dependency, and serve.py's capabilities builder imports this module
+    # purely for ENGINE_PROTOCOL_VERSION. Only handle_connection, which is
+    # never reached unless a real websockets server is already running,
+    # needs the exception type.
+    from websockets.exceptions import ConnectionClosed
+
     from pydvma import datastructure
     worker = EngineWorker()
     loop = asyncio.get_running_loop()
     try:
-        await websocket.send(json.dumps({
-            'type': 'engine_ready',
-            'v': ENGINE_PROTOCOL_VERSION,
-            'pydvma': datastructure.VERSION,
-        }))
+        try:
+            await websocket.send(json.dumps({
+                'type': 'engine_ready',
+                'v': ENGINE_PROTOCOL_VERSION,
+                'pydvma': datastructure.VERSION,
+            }))
+        except ConnectionClosed:
+            return  # closed before the greeting landed -- nothing to serve
+
         async for raw in websocket:
             if not isinstance(raw, (bytes, bytearray)):
                 continue                    # inbound text frames are unused
@@ -456,10 +479,13 @@ async def handle_connection(websocket):
                 op = req.get('op')
                 payload = req.get('payload') or {}
             except Exception as e:
-                await websocket.send(json.dumps({
-                    'type': 'error',
-                    'message': 'undecodable engine frame: %s' % e,
-                }))
+                try:
+                    await websocket.send(json.dumps({
+                        'type': 'error',
+                        'message': 'undecodable engine frame: %s' % e,
+                    }))
+                except ConnectionClosed:
+                    break                    # client's Stop -- exit cleanly
                 continue
 
             last_sent = [0.0]
@@ -472,11 +498,17 @@ async def handle_connection(websocket):
                 if done < total and now - last_sent[0] < PROGRESS_MIN_INTERVAL_S:
                     return
                 last_sent[0] = now
-                asyncio.run_coroutine_threadsafe(
+                fut = asyncio.run_coroutine_threadsafe(
                     websocket.send(json.dumps({
                         'type': 'progress', 'callId': rid,
                         'done': done, 'total': total,
                     })), loop)
+                # Fire-and-forget: a progress frame racing a client close
+                # is expected (the socket can drop between any two of a
+                # long CWT's scale steps), not an error. Retrieve and drop
+                # the Future's exception so it never surfaces as an
+                # unhandled "Future exception was never retrieved" warning.
+                fut.add_done_callback(lambda f: f.exception())
 
             # functools.partial binds rid/op/payload/on_progress by VALUE
             # at construction time -- the loop awaits this call before its
@@ -496,7 +528,10 @@ async def handle_connection(websocket):
                 ok, result = False, '%s: %s' % (type(e).__name__, e)
             reply = ({'id': rid, 'ok': True, 'result': result} if ok
                      else {'id': rid, 'ok': False, 'error': str(result)})
-            await websocket.send(encode_frame(reply))
+            try:
+                await websocket.send(encode_frame(reply))
+            except ConnectionClosed:
+                break  # client closed mid-op (its Stop) -- exit cleanly
     finally:
         worker.cancel()
         worker.kill()
