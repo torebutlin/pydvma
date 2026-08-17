@@ -58,6 +58,8 @@ this text alone:
   PLACEHOLDER SEMANTICS above are normative. ``header_len`` is always
   the byte length of whatever UTF-8 text ``header`` actually encodes to.
 """
+import asyncio
+import functools
 import json
 import math
 import multiprocessing as _mp
@@ -65,6 +67,7 @@ import queue as _queue
 import signal
 import struct
 import threading
+import time
 import traceback
 
 import numpy as np
@@ -414,3 +417,86 @@ class EngineWorker:
                 proc.join(timeout=2.0)
         finally:
             self.kill()
+
+
+# --- /engine websocket handler ---------------------------------------------
+
+#: Minimum seconds between forwarded progress frames (terminal always sent) —
+#: parity with the pyodide worker's ~10 Hz throttle (progress.ts).
+PROGRESS_MIN_INTERVAL_S = 0.1
+
+
+async def handle_connection(websocket):
+    """Serve one /engine connection: greeting, then serial op frames.
+
+    One :class:`EngineWorker` per connection (one app tab is the expected
+    client). Closing the socket is the client's Stop: cancel cooperatively,
+    then terminate the child so the connection's resources are gone by the
+    time the close completes.
+
+    A frame that fails to decode gets a text ``{"type":"error"}`` reply
+    (there is no id to correlate) and the connection lives on — one bad
+    frame must not kill a session.
+    """
+    from pydvma import datastructure
+    worker = EngineWorker()
+    loop = asyncio.get_running_loop()
+    try:
+        await websocket.send(json.dumps({
+            'type': 'engine_ready',
+            'v': ENGINE_PROTOCOL_VERSION,
+            'pydvma': datastructure.VERSION,
+        }))
+        async for raw in websocket:
+            if not isinstance(raw, (bytes, bytearray)):
+                continue                    # inbound text frames are unused
+            try:
+                req = decode_frame(raw)
+                rid = req['id']
+                op = req.get('op')
+                payload = req.get('payload') or {}
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'error',
+                    'message': 'undecodable engine frame: %s' % e,
+                }))
+                continue
+
+            last_sent = [0.0]
+
+            def on_progress(done, total, rid=rid, last_sent=last_sent):
+                # Called from the executor thread -- hop to the loop.
+                # Throttled to ~10 Hz; the terminal frame always goes
+                # through, however recently the last one was sent.
+                now = time.monotonic()
+                if done < total and now - last_sent[0] < PROGRESS_MIN_INTERVAL_S:
+                    return
+                last_sent[0] = now
+                asyncio.run_coroutine_threadsafe(
+                    websocket.send(json.dumps({
+                        'type': 'progress', 'callId': rid,
+                        'done': done, 'total': total,
+                    })), loop)
+
+            # functools.partial binds rid/op/payload/on_progress by VALUE
+            # at construction time -- the loop awaits this call before its
+            # next iteration could rebind any of them, so a plain closure
+            # would already be safe, but partial keeps that obviously true
+            # without relying on the await ordering.
+            call = functools.partial(worker.request, rid, op, payload,
+                                     on_progress=on_progress)
+            try:
+                _kind, _rid, ok, result = await loop.run_in_executor(None, call)
+            except Exception as e:
+                # worker.request() is documented to always return a
+                # ('done', rid, ok, ...) tuple rather than raise, but a
+                # frame that hits an unexpected exception here (e.g. some
+                # future edge case) must still get a reply -- not silently
+                # drop the connection.
+                ok, result = False, '%s: %s' % (type(e).__name__, e)
+            reply = ({'id': rid, 'ok': True, 'result': result} if ok
+                     else {'id': rid, 'ok': False, 'error': str(result)})
+            await websocket.send(encode_frame(reply))
+    finally:
+        worker.cancel()
+        worker.kill()

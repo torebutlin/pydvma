@@ -15,12 +15,17 @@ Design constraints (locked by the Wave-B brief,
 
 * **One port, one origin.**  A single :func:`websockets.asyncio.server.serve`
   listener on ``127.0.0.1`` (loopback only — no auth, lab-local stance).
-  ``GET /ws`` upgrades to the control WebSocket; every other ``GET`` is
-  handled by :meth:`BridgeServer._process_request`, which serves the
-  built UI (``--ui-dir``, defaulting to the dev checkout's
-  ``<repo>/webui/dist`` or, in an installed wheel, the packaged
-  ``pydvma/_webui`` — see :func:`_resolve_ui_dir`) and the ``/config``
-  launch document.
+  ``GET /ws`` upgrades to the control WebSocket documented below;
+  ``GET /engine`` upgrades to the SEPARATE native engine-ops WebSocket —
+  its own binary-frame protocol, documented in full in
+  :mod:`pydvma.engine_host` (that module's docstring is the normative
+  spec, shared with the JS mirror) — dispatched straight to
+  :func:`engine_host.handle_connection` before any of the ``_Connection``
+  bridge-protocol machinery below runs; every other ``GET`` is handled by
+  :meth:`BridgeServer._process_request`, which serves the built UI
+  (``--ui-dir``, defaulting to the dev checkout's ``<repo>/webui/dist``
+  or, in an installed wheel, the packaged ``pydvma/_webui`` — see
+  :func:`_resolve_ui_dir`) and the ``/config`` launch document.
 * **Pure-Python dependency.**  Only ``websockets`` is required (the
   ``[serve]`` extra); it has zero transitive deps and works under the
   base install everywhere pydvma runs.
@@ -247,6 +252,8 @@ import numpy as np
 from . import acquisition
 from . import _soundcard_specs
 from . import container
+from . import datastructure
+from . import engine_host
 from . import options
 from . import streams
 from . import _ni_backend
@@ -903,6 +910,15 @@ def build_capabilities() -> dict[str, Any]:
         'default_output': default_output,
         'pretrigger': True,
         'ao': ao,
+        # The native /engine websocket (a second route on this same port,
+        # see the module docstring's protocol block and engine_host.py) --
+        # its own protocol version and the pydvma version answering it, so
+        # a client can tell whether the native path is worth trying before
+        # ever opening it.
+        'engine': {
+            'v': engine_host.ENGINE_PROTOCOL_VERSION,
+            'pydvma': datastructure.VERSION,
+        },
     }
 
 
@@ -1255,6 +1271,8 @@ class BridgeServer:
         path = request.path.split('?', 1)[0]
         if path == '/ws':
             return None  # proceed with the WebSocket upgrade
+        if path == '/engine':
+            return None  # proceed with the WebSocket upgrade (native engine ops)
         if path == '/config':
             body = json.dumps(self.settings_json).encode('utf-8')
             return self._http_response(200, 'application/json; charset=utf-8', body)
@@ -1265,10 +1283,19 @@ class BridgeServer:
     async def _handler(self, websocket):
         """Per-connection entry point: dispatch control messages.
 
-        Creates a fresh :class:`_Connection` (its own stream id, seq,
+        Branches FIRST on the upgrade path: ``/engine`` is the native
+        engine-ops websocket (:func:`engine_host.handle_connection`, its
+        own binary-frame protocol — see that module's docstring), and
+        everything else (``/ws``) is the acquisition bridge protocol
+        documented at the top of this module. Creates a fresh
+        :class:`_Connection` for the bridge path (its own stream id, seq,
         and monitor task) and drives it until the socket closes, then
         tears the monitor down.
         """
+        path = websocket.request.path.split('?', 1)[0]
+        if path == '/engine':
+            await engine_host.handle_connection(websocket)
+            return
         conn = _Connection(websocket)
         try:
             async for raw in websocket:
@@ -1290,6 +1317,12 @@ class BridgeServer:
         async with serve(
             self._handler, self.host, self.port,
             process_request=self._process_request,
+            # The default 1 MiB inbound-message cap fits /ws's small JSON
+            # control frames but would sever /engine mid-calc -- its binary
+            # frames carry whole capture arrays. Loopback-only, lab-local
+            # trust model (see the module docstring), so an unbounded
+            # inbound size from a local client is an accepted trade.
+            max_size=None,
         ) as server:
             self._server = server
             await server.serve_forever()

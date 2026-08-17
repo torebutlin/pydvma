@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """Native engine host: frame codec, worker subprocess, /engine endpoint."""
+import asyncio
 import json
 import struct
 import threading
 
 import numpy as np
 import pytest
+from websockets.asyncio.client import connect
 
 from pydvma import engine_host
+from pydvma import serve as serve_mod
 
 
 def test_frame_roundtrip_scalars_only():
@@ -261,3 +264,136 @@ def test_worker_kill_mid_request_returns_clean_reply_and_respawns():
         assert ok is True
     finally:
         w.close()
+
+
+# --- /engine websocket endpoint ---------------------------------------------
+
+async def _start_server(**kwargs):
+    kwargs.setdefault('default_driver', 'mock')
+    server = serve_mod.BridgeServer(host='127.0.0.1', port=0, **kwargs)
+    task = asyncio.create_task(server.run())
+    for _ in range(500):
+        if server.sockets:
+            break
+        await asyncio.sleep(0.005)
+    port = next(iter(server.sockets)).getsockname()[1]
+    return server, task, port
+
+
+async def _stop_server(task):
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+def run_async(coro_fn):
+    asyncio.run(coro_fn())
+
+
+def test_engine_endpoint_greets_and_answers_calc_fft():
+    async def scenario():
+        _s, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws:
+                greeting = json.loads(await ws.recv())
+                assert greeting['type'] == 'engine_ready'
+                assert greeting['v'] == engine_host.ENGINE_PROTOCOL_VERSION
+                await ws.send(engine_host.encode_frame(
+                    {'id': 1, 'op': 'calc_fft', 'payload': _mk_time()}))
+                raw = await ws.recv()
+                assert isinstance(raw, (bytes, bytearray))
+                reply = engine_host.decode_frame(raw)
+                assert reply['id'] == 1 and reply['ok'] is True
+                fd = reply['result']['freq_data']
+                assert fd['complex'] is True
+                assert isinstance(fd['data'], np.ndarray) and fd['data'].size > 0
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_engine_endpoint_error_reply_keeps_connection():
+    async def scenario():
+        _s, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws:
+                await ws.recv()  # greeting
+                await ws.send(engine_host.encode_frame(
+                    {'id': 5, 'op': 'nope', 'payload': {}}))
+                reply = engine_host.decode_frame(await ws.recv())
+                assert reply['ok'] is False and 'nope' in reply['error']
+                await ws.send(engine_host.encode_frame(
+                    {'id': 6, 'op': 'calc_fft', 'payload': _mk_time()}))
+                assert engine_host.decode_frame(await ws.recv())['ok'] is True
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_engine_endpoint_streams_progress_frames():
+    async def scenario():
+        _s, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws:
+                await ws.recv()  # greeting
+                payload = _mk_time(n=4096)
+                payload.pop('window')
+                payload.update(ch=0, nperseg=256, noverlap=128, method='cwt')
+                await ws.send(engine_host.encode_frame(
+                    {'id': 2, 'op': 'calc_sono', 'payload': payload}))
+                frames = []
+                while True:
+                    raw = await ws.recv()
+                    if isinstance(raw, (bytes, bytearray)):
+                        reply = engine_host.decode_frame(raw)
+                        break
+                    msg = json.loads(raw)
+                    if msg.get('type') == 'progress':
+                        frames.append((msg['callId'], msg['done'], msg['total']))
+                assert reply['ok'] is True
+                assert frames and all(c == 2 for c, _d, _t in frames)
+                assert frames[-1][1] == frames[-1][2]  # terminal frame passed through
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_engine_endpoint_malformed_frame_gets_error_text_not_disconnect():
+    async def scenario():
+        _s, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws:
+                await ws.recv()  # greeting
+                await ws.send(b'\xff\xff\xff\xff garbage')
+                msg = json.loads(await ws.recv())
+                assert msg['type'] == 'error'
+                # Connection survives:
+                await ws.send(engine_host.encode_frame(
+                    {'id': 3, 'op': 'calc_fft', 'payload': _mk_time()}))
+                assert engine_host.decode_frame(await ws.recv())['ok'] is True
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_bridge_ws_still_works_alongside_engine():
+    async def scenario():
+        _s, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/ws' % port) as ws:
+                await ws.send(json.dumps({'type': 'hello'}))
+                cap = json.loads(await ws.recv())
+                assert cap['type'] == 'capabilities'
+                assert cap['engine'] == {
+                    'v': engine_host.ENGINE_PROTOCOL_VERSION,
+                    'pydvma': serve_mod.datastructure.VERSION,
+                }
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
