@@ -5,6 +5,7 @@ import json
 import logging
 import struct
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -439,3 +440,103 @@ def test_engine_endpoint_client_close_mid_op_is_a_clean_stop(caplog):
     with caplog.at_level(logging.ERROR, logger='websockets.server'):
         run_async(scenario)
     assert 'connection handler failed' not in caplog.text
+
+
+def test_engine_endpoint_close_mid_op_kills_worker_promptly(monkeypatch):
+    # handle_connection currently just `await`s the executor call, and
+    # websockets does NOT cancel a running handler task when the peer
+    # closes -- so a client's Stop (= socket close) mid-op does nothing
+    # until the op finishes on its own: the child keeps burning CPU, a
+    # fresh connection's re-init would spin up a SECOND worker alongside
+    # it, and the abandoned executor thread starves the thread pool.
+    # Reproduce it directly: close mid-op and assert the worker's CHILD
+    # PROCESS dies promptly, not after the op's full duration.
+    #
+    # Capture the EngineWorker instance handle_connection constructs (the
+    # server runs IN-PROCESS in this harness -- asyncio.create_task -- so
+    # a subclass swapped in via monkeypatch reaches the real handler) so
+    # the test can poll its child process directly.
+    captured = []
+    _RealEngineWorker = engine_host.EngineWorker
+
+    class _CapturingWorker(_RealEngineWorker):
+        def __init__(self):
+            super().__init__()
+            captured.append(self)
+
+    monkeypatch.setattr(engine_host, 'EngineWorker', _CapturingWorker)
+
+    async def scenario():
+        _s, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws:
+                await ws.recv()  # greeting
+
+                # Sized to run solo for several seconds: measured directly
+                # via engine.calc_sono(n=262144, voices_per_octave=40,
+                # method='cwt') on this machine at ~4.36s (vs. ~0.29s for
+                # the default n=65536/voices=16 the other tests use) --
+                # comfortably over a 3s floor with margin for slower CI.
+                payload = _mk_time(n=262144)
+                payload.pop('window')
+                payload.update(ch=0, nperseg=256, noverlap=128,
+                               method='cwt', voices_per_octave=40)
+                await ws.send(engine_host.encode_frame(
+                    {'id': 20, 'op': 'calc_sono', 'payload': payload}))
+                raw = await ws.recv()
+                assert not isinstance(raw, (bytes, bytearray))  # a progress frame
+
+                assert captured, 'EngineWorker was never constructed'
+                worker = captured[-1]
+                proc = worker._proc
+                assert proc is not None and proc.is_alive()
+            # `async with` above closes the client socket here, with the
+            # op still running server-side.
+
+            t_close = time.monotonic()
+            while proc.is_alive() and time.monotonic() - t_close < 1.5:
+                await asyncio.sleep(0.02)
+            latency = time.monotonic() - t_close
+            assert not proc.is_alive(), (
+                'worker child still alive %.2fs after socket close '
+                '(op was sized to run ~4.3s)' % latency)
+
+            # A fresh connection must still work (one worker per
+            # connection, not left double-booked by the abandoned one):
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws2:
+                await ws2.recv()  # greeting
+                await ws2.send(engine_host.encode_frame(
+                    {'id': 21, 'op': 'calc_fft', 'payload': _mk_time()}))
+                reply = engine_host.decode_frame(await ws2.recv())
+                assert reply['ok'] is True
+            return latency
+        finally:
+            await _stop_server(task)
+
+    latency = asyncio.run(scenario())
+    print('close -> child-dead latency: %.3fs' % latency)
+
+
+def test_engine_endpoint_two_connections_get_independent_workers():
+    async def scenario():
+        _s, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws1, \
+                       connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws2:
+                await ws1.recv()  # greeting
+                await ws2.recv()  # greeting
+                await ws1.send(engine_host.encode_frame(
+                    {'id': 30, 'op': 'calc_fft', 'payload': _mk_time()}))
+                await ws2.send(engine_host.encode_frame(
+                    {'id': 31, 'op': 'calc_fft', 'payload': _mk_time()}))
+                reply1 = engine_host.decode_frame(await ws1.recv())
+                reply2 = engine_host.decode_frame(await ws2.recv())
+                assert reply1['id'] == 30 and reply1['ok'] is True
+                assert reply2['id'] == 31 and reply2['ok'] is True
+        finally:
+            await _stop_server(task)
+    run_async(scenario)

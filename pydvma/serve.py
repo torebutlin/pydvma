@@ -66,8 +66,11 @@ Server → client:
 
 * ``capabilities`` — ``{v, backends, devices:{soundcard, nidaq},
   fs_ladders, max_channels, device_caps, default_input, default_output,
-  pretrigger, ao}``.  All keys
+  pretrigger, ao, engine}``.  All keys
   are stable across the additive Wave-C growth; ``v`` stays ``1``.
+  ``engine`` is ``{v, pydvma}`` — the separate ``/engine`` websocket's own
+  protocol version and the pydvma version answering it (see the module
+  docstring's route enumeration above and :mod:`pydvma.engine_host`).
   ``fs_ladders`` and ``max_channels`` are now **per-device maps** keyed
   by ``"<driver>:<index>"`` (e.g. ``"soundcard:0"``, ``"nidaq:0"``):
   ``fs_ladders[id]`` is a list of candidate sample rates and
@@ -1319,10 +1322,12 @@ class BridgeServer:
             process_request=self._process_request,
             # The default 1 MiB inbound-message cap fits /ws's small JSON
             # control frames but would sever /engine mid-calc -- its binary
-            # frames carry whole capture arrays. Loopback-only, lab-local
-            # trust model (see the module docstring), so an unbounded
-            # inbound size from a local client is an accepted trade.
-            max_size=None,
+            # frames carry whole capture arrays. Not unbounded, though:
+            # /ws is reachable cross-origin by design (the app's `?bridge=`
+            # dev/e2e flow, see the module docstring), so a ceiling stays
+            # worth keeping even in this loopback-only, lab-local trust
+            # model. 256 MiB clears any realistic capture frame.
+            max_size=256 * 1024 * 1024,
         ) as server:
             self._server = server
             await server.serve_forever()

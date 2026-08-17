@@ -430,9 +430,17 @@ async def handle_connection(websocket):
     """Serve one /engine connection: greeting, then serial op frames.
 
     One :class:`EngineWorker` per connection (one app tab is the expected
-    client). Closing the socket is the client's Stop: cancel cooperatively,
-    then terminate the child so the connection's resources are gone by the
-    time the close completes.
+    client). Closing the socket is the client's Stop -- and, crucially,
+    it INTERRUPTS an op that is still running: each op is raced against
+    ``websocket.wait_closed()`` (``websockets`` does not cancel a running
+    handler task on peer close by itself, so without this the child would
+    keep computing -- potentially minutes of CPU and gigabytes of RAM --
+    until it finished on its own, a fresh connection's re-init would spin
+    up a second worker alongside the abandoned one, and the orphaned
+    executor thread would sit on the thread pool for as long as the op
+    took). Losing that race cancels cooperatively then terminates the
+    child, so the connection's resources are gone promptly, not at the
+    op's natural end.
 
     A frame that fails to decode gets a text ``{"type":"error"}`` reply
     (there is no id to correlate) and the connection lives on — one bad
@@ -517,8 +525,37 @@ async def handle_connection(websocket):
             # without relying on the await ordering.
             call = functools.partial(worker.request, rid, op, payload,
                                      on_progress=on_progress)
+            op_fut = loop.run_in_executor(None, call)
+            # Race the op against the peer closing the socket -- see the
+            # docstring above. wait_closed() resolves only once the closing
+            # handshake AND the TCP teardown are both done, so losing this
+            # race means the peer is genuinely gone, not just mid-handshake.
+            closed_fut = asyncio.ensure_future(websocket.wait_closed())
             try:
-                _kind, _rid, ok, result = await loop.run_in_executor(None, call)
+                done, _pending = await asyncio.wait(
+                    {op_fut, closed_fut}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                if not closed_fut.done():
+                    closed_fut.cancel()
+
+            if op_fut not in done:
+                # Client's Stop landed before the op finished. The outer
+                # `finally` below cancels + kills the worker, which is what
+                # actually unblocks the still-running executor thread --
+                # kill()ing the child makes the blocked request() call
+                # notice (at its next 1s queue-poll timeout) that the
+                # process died and return an 'engine worker died' reply,
+                # so the thread does unwind, just not on this tick. Its
+                # result is never retrieved; drop the exception the same
+                # way the progress futures above do (worker.request() is
+                # documented to never raise, so this is a belt-and-braces
+                # match for the same-shaped guard below, not an expected
+                # path).
+                op_fut.add_done_callback(lambda f: f.exception())
+                break
+
+            try:
+                _kind, _rid, ok, result = op_fut.result()
             except Exception as e:
                 # worker.request() is documented to always return a
                 # ('done', rid, ok, ...) tuple rather than raise, but a
@@ -529,9 +566,25 @@ async def handle_connection(websocket):
             reply = ({'id': rid, 'ok': True, 'result': result} if ok
                      else {'id': rid, 'ok': False, 'error': str(result)})
             try:
-                await websocket.send(encode_frame(reply))
+                frame = encode_frame(reply)
+            except Exception as e:
+                # A result that fails to encode (e.g. an op accidentally
+                # returning a non-f8 ndarray) must still get a diagnostic
+                # reply, not silently kill the connection -- this
+                # replacement reply is built entirely from plain types, so
+                # it cannot itself fail to encode.
+                reply = {'id': rid, 'ok': False,
+                         'error': 'unencodable result: %s: %s' %
+                                  (type(e).__name__, e)}
+                frame = encode_frame(reply)
+            try:
+                await websocket.send(frame)
             except ConnectionClosed:
                 break  # client closed mid-op (its Stop) -- exit cleanly
     finally:
         worker.cancel()
-        worker.kill()
+        # kill() joins the dying child for up to 2s; run it off the loop
+        # thread so a slow teardown doesn't stall the event loop (the
+        # monitor feed, any /ws connection, and every other /engine
+        # connection all share this loop).
+        await loop.run_in_executor(None, worker.kill)
