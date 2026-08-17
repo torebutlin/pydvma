@@ -2,6 +2,7 @@
 """Native engine host: frame codec, worker subprocess, /engine endpoint."""
 import json
 import struct
+import threading
 
 import numpy as np
 import pytest
@@ -200,5 +201,63 @@ def test_worker_kill_and_respawn():
         w.kill()
         kind, rid, ok, _ = w.request(4, 'calc_fft', _mk_time())
         assert ok is True  # respawned transparently
+    finally:
+        w.close()
+
+
+def _cwt_payload(n=4096):
+    payload = _mk_time(n=n)
+    payload.pop('window')
+    payload.update(ch=0, nperseg=256, noverlap=128, method='cwt')
+    return payload
+
+
+def test_worker_cancel_is_cooperative_and_worker_stays_usable():
+    w = engine_host.EngineWorker()
+    started = threading.Event()
+    result = {}
+
+    def run():
+        result['reply'] = w.request(9, 'calc_sono', _cwt_payload(),
+                                    on_progress=lambda d, t: started.set())
+
+    try:
+        t = threading.Thread(target=run)
+        t.start()
+        assert started.wait(timeout=10.0), 'no progress frame arrived before cancel'
+        w.cancel()
+        t.join(timeout=10.0)
+        assert not t.is_alive()
+        assert result['reply'] == ('done', 9, False, 'cancelled')
+        # cancel_ev.clear() at the top of the next request -- a cancelled op
+        # must not poison the worker for the request that follows it.
+        kind, rid, ok, _ = w.request(11, 'calc_fft', _mk_time())
+        assert ok is True
+    finally:
+        w.close()
+
+
+def test_worker_kill_mid_request_returns_clean_reply_and_respawns():
+    w = engine_host.EngineWorker()
+    started = threading.Event()
+    result = {}
+
+    def run():
+        result['reply'] = w.request(10, 'calc_sono', _cwt_payload(),
+                                    on_progress=lambda d, t: started.set())
+
+    try:
+        t = threading.Thread(target=run)
+        t.start()
+        assert started.wait(timeout=10.0), 'no progress frame arrived before kill'
+        w.kill()
+        t.join(timeout=10.0)
+        assert not t.is_alive()
+        kind, rid, ok, msg = result['reply']
+        assert (kind, rid, ok) == ('done', 10, False)
+        assert 'engine worker died' in msg
+        # respawns transparently:
+        kind, rid, ok, _ = w.request(12, 'calc_fft', _mk_time())
+        assert ok is True
     finally:
         w.close()

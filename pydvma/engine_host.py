@@ -62,7 +62,10 @@ import json
 import math
 import multiprocessing as _mp
 import queue as _queue
+import signal
 import struct
+import threading
+import traceback
 
 import numpy as np
 
@@ -205,9 +208,17 @@ def decode_frame(data):
 # the only context on Windows and the safe one under macOS CoreAudio. The
 # child imports numpy/scipy/pydvma once and stays warm; a hard stop
 # terminates just the child and the next request respawns it.
-
-#: Seconds to wait for a cancelled op to unwind before terminating the child.
-CANCEL_GRACE_S = 0.5
+#
+# DECISION (recorded, no code change intended): every result crosses the
+# multiprocessing.Queue between child and parent, which pickles it in the
+# child and unpickles it in the parent -- roughly two extra full copies of
+# each returned array on top of whatever ``fn(**kwargs)`` itself allocated.
+# ``encode_frame``'s single-allocation guarantee (module docstring, top of
+# this file) is about the WEBSOCKET FRAME only and says nothing about this
+# hop. A shared-memory / out-of-band buffer (e.g. ``multiprocessing.shared_
+# memory`` or ``Queue`` subclassed to hand back a raw buffer) is the
+# recorded future option if this copy ever shows up as a bottleneck; not
+# worth the complexity until then.
 
 
 class EngineCancelled(Exception):
@@ -222,6 +233,13 @@ def _worker_main(req_q, res_q, cancel_ev):
     checkpoint) and exactly one ``('done', id, ok, result_or_msg)`` per
     request.
     """
+    # Ignore Ctrl-C here: the PARENT owns SIGINT (it decides whether to
+    # cancel(), kill(), or let a request run to completion). Without this,
+    # an interactive ``pydvma-serve`` session's ^C hits every spawned child
+    # too, printing a KeyboardInterrupt traceback per worker for no benefit
+    # -- the parent's own shutdown path already tears children down.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     from pydvma import engine
     current = {'id': None}
 
@@ -242,24 +260,49 @@ def _worker_main(req_q, res_q, cancel_ev):
             fn = getattr(engine, op, None)
             if fn is None or op.startswith('_') or not callable(fn):
                 raise ValueError('unknown op: %s' % op)
+            # DECISION (recorded, no code change intended): if this result
+            # is unpicklable or exceeds the platform pipe limit (Windows:
+            # ~2 GiB), the failure happens inside multiprocessing.Queue's
+            # background FEEDER THREAD, not in this call frame -- a
+            # child-side try/except around ``put()`` cannot catch it, the
+            # item is silently dropped, and the parent (a live, responsive
+            # child) polls forever with no 'done' ever arriving. No shipped
+            # op returns anything unpicklable today and only a >2 GiB
+            # result could hit the Windows limit, so this is not fixed
+            # here; revisit with a ``multiprocessing.queues.Queue``
+            # subclass that surfaces its feeder thread's exception (the
+            # ``_SafeQueue`` pattern used by e.g. loky/joblib) if a real op
+            # ever gets large or exotic enough to trigger it.
             res_q.put(('done', rid, True, fn(**kwargs)))
         except EngineCancelled:
             res_q.put(('done', rid, False, 'cancelled'))
         except Exception as e:
+            # Full traceback to the serve terminal for whoever is running
+            # pydvma-serve; the wire reply itself stays the one-line
+            # summary (below) -- the browser has no use for a Python stack.
+            traceback.print_exc()
             res_q.put(('done', rid, False, '%s: %s' % (type(e).__name__, e)))
 
 
 class EngineWorker:
     """Owner of one engine subprocess; blocking request/response API.
 
-    Thread-safety: one request at a time (the /engine connection task
-    serialises calls). ``request`` blocks until the op's ``done`` arrives,
-    invoking ``on_progress(done, total)`` for each progress frame.
+    Thread-safety: ``request()`` holds a private lock for its ENTIRE
+    duration, turning "one request at a time" from a documented convention
+    into a checked invariant -- a second thread calling ``request()``
+    concurrently simply blocks until the first one's ``done`` (or died/
+    cancelled) reply comes back. ``cancel()`` and ``kill()`` stay LOCK-FREE
+    on purpose: they are the cross-thread controls a caller uses to
+    interrupt the request that is *currently* blocked inside another
+    thread's ``request()`` call, so taking the same lock there would
+    deadlock against the very call they exist to interrupt.
     """
 
     def __init__(self):
         self._ctx = _mp.get_context('spawn')
         self._proc = None
+        self._lock = threading.Lock()
+        self._closed = False
         self._spawn()
 
     def _spawn(self):
@@ -277,32 +320,74 @@ class EngineWorker:
         self._proc.start()
 
     def request(self, rid, op, kwargs, on_progress=None):
-        """Run one op; returns ``('done', rid, ok, result_or_errmsg)``."""
-        if self._proc is None or not self._proc.is_alive():
-            self._spawn()
-        self._req.put((rid, op, kwargs))
-        while True:
-            try:
-                item = self._res.get(timeout=1.0)
-            except _queue.Empty:
-                if not self._proc.is_alive():
-                    # The child may have managed to put its result before
-                    # dying (e.g. it returned normally and was then reaped) --
-                    # drain once more before declaring it lost.
-                    try:
-                        item = self._res.get_nowait()
-                    except _queue.Empty:
-                        return ('done', rid, False, 'engine worker died')
-                else:
+        """Run one op; returns ``('done', rid, ok, result_or_errmsg)``.
+
+        Blocks until the op's ``done`` reply arrives (or the worker is
+        cancelled/killed from another thread), invoking
+        ``on_progress(done, total)`` for each progress frame in between.
+        Holds ``self._lock`` for the whole call -- see the class
+        docstring for why ``cancel()``/``kill()`` stay reachable from
+        another thread regardless.
+        """
+        with self._lock:
+            if self._closed:
+                return ('done', rid, False, 'engine worker closed')
+            if self._proc is None or not self._proc.is_alive():
+                self._spawn()
+            self._req.put((rid, op, kwargs))
+            while True:
+                try:
+                    item = self._res.get(timeout=1.0)
+                except (_queue.Empty, EOFError, OSError):
+                    # Empty: an ordinary poll timeout. EOFError/OSError: a
+                    # kill() racing this poll from another thread can
+                    # terminate() the child mid write, truncating the pipe
+                    # this queue reads from -- route that to the same
+                    # died-check below instead of letting it escape as an
+                    # unhandled exception.
+                    #
+                    # Local ref: kill() may rebind self._proc to None from
+                    # another thread at any point from here on, so capture
+                    # it once and use only this snapshot for the rest of
+                    # the except block.
+                    proc = self._proc
+                    if proc is None or not proc.is_alive():
+                        # The child may have managed to put its result
+                        # before dying (e.g. it finished normally and was
+                        # then reaped) -- drain once more before declaring
+                        # it lost.
+                        try:
+                            item = self._res.get_nowait()
+                        except (_queue.Empty, EOFError, OSError):
+                            exitcode = 'unknown' if proc is None else proc.exitcode
+                            msg = 'engine worker died (exit %s)' % (exitcode,)
+                            if exitcode in (-9, -15):
+                                msg += ' — killed by the OS (out of memory?)'
+                            return ('done', rid, False, msg)
+                    else:
+                        continue
+                if item[0] == 'progress':
+                    if on_progress is not None and item[1] == rid:
+                        on_progress(item[2], item[3])
                     continue
-            if item[0] == 'progress':
-                if on_progress is not None and item[1] == rid:
-                    on_progress(item[2], item[3])
-                continue
-            return item
+                return item
 
     def cancel(self):
-        """Cooperative cancel; escalate to terminate after CANCEL_GRACE_S."""
+        """Ask the running op to stop at its next progress checkpoint.
+
+        Sets the cancel event; the CHILD observes it the next time the
+        engine progress hook fires (one call per wavelet scale on the CWT
+        path -- see ``_worker_main.hook``) and raises ``EngineCancelled``,
+        which turns into a ``('done', rid, False, 'cancelled')`` reply. An
+        op with no progress checkpoints (anything that never calls the
+        hook) cannot observe a cancel this way at all -- the CALLER is
+        responsible for escalating to ``kill()`` if a bounded response
+        time is required. The event is cleared again at the top of the
+        next request (``_worker_main``'s loop), so a ``cancel()`` that
+        arrives before any request has started running -- or after the
+        current one has already finished -- is deliberately LOST rather
+        than pre-arming the next unrelated request.
+        """
         self._cancel.set()
 
     def kill(self):
@@ -313,10 +398,19 @@ class EngineWorker:
         self._proc = None
 
     def close(self):
-        """Graceful shutdown for tests/teardown."""
+        """Graceful shutdown for tests/teardown.
+
+        Lock-free like ``cancel()``/``kill()`` so it can tear the worker
+        down even while another thread is blocked inside ``request()``.
+        Sets ``self._closed`` first so any request that hasn't yet taken
+        the lock (or a future one) gets a clean 'engine worker closed'
+        reply instead of racing a queue this call is about to kill.
+        """
+        self._closed = True
+        proc = self._proc
         try:
-            if self._proc is not None and self._proc.is_alive():
+            if proc is not None and proc.is_alive():
                 self._req.put(None)
-                self._proc.join(timeout=2.0)
+                proc.join(timeout=2.0)
         finally:
             self.kill()
