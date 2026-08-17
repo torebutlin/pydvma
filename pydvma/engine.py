@@ -22,6 +22,8 @@ never reimplemented in JS.
 """
 import inspect
 import io
+import os
+import tempfile
 
 import numpy as np
 import pydvma as dvma
@@ -381,13 +383,15 @@ def legacy_to_dvma(npy_bytes):
     a Python ``bytes``); it is loaded with ``allow_pickle=True`` /
     ``fix_imports=True`` (Py2->Py3 pickle compatibility), the single ``DataSet``
     is pulled out (``d[0]``), and ``container.save`` writes a real ``.dvma``
-    zip. That file is read back from pyodide's in-memory ``/tmp`` and returned
-    as ``{'dvma': <bytes>}``.
+    zip. That file is written into a fresh ``tempfile.TemporaryDirectory``
+    (in-memory under pyodide, a real per-call temp dir on the native CPython
+    host; removed again as soon as the bytes are read back), then read back
+    and returned as ``{'dvma': <bytes>}``.
 
     The returned Python ``bytes`` marshals across the worker's ``toJs``
     (``create_proxies=False``) boundary as a JS ``Uint8Array`` — exactly what
     the client feeds to ``readDvma``. (``container.save`` takes a FILENAME, not
-    a buffer, so the ``/tmp`` hop is required; pyodide's FS is in-memory.)
+    a buffer, so the temp-dir hop is required.)
 
     STALE-WHEEL GUARD: old pydvma pickles (<= 1.4.0) predate one or more of
     the per-kind ``*_list`` attributes on ``DataSet`` (e.g. the 2019/4C6-era
@@ -401,9 +405,11 @@ def legacy_to_dvma(npy_bytes):
     """
     d = np.load(io.BytesIO(bytes(npy_bytes)), allow_pickle=True, fix_imports=True)
     ds = _normalise_legacy_dataset(d[0])
-    container.save(ds, '/tmp/legacy.dvma')
-    with open('/tmp/legacy.dvma', 'rb') as f:
-        return {'dvma': f.read()}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, 'legacy.dvma')
+        container.save(ds, path)
+        with open(path, 'rb') as f:
+            return {'dvma': f.read()}
 
 
 def _normalise_legacy_dataset(ds):
@@ -433,20 +439,26 @@ def _normalise_legacy_dataset(ds):
 def mat_to_dvma(mat_bytes):
     """Import a JW-logger MATLAB ``.mat`` file and return ``.dvma`` bytes.
 
-    ``mat_bytes`` (a JS ``Uint8Array``) is written to pyodide's in-memory
-    ``/tmp`` because ``pydvma.file.import_from_matlab_jwlogger`` reads from a
-    FILENAME (signature ``(filename=None)``). The resulting dataset is saved
-    with ``container.save`` and the ``.dvma`` bytes read back, returned as
-    ``{'dvma': <bytes>}`` — marshalled to a JS ``Uint8Array`` for ``readDvma``,
-    same as ``legacy_to_dvma``.
+    ``mat_bytes`` (a JS ``Uint8Array``) is written into a fresh
+    ``tempfile.TemporaryDirectory`` (in-memory under pyodide, a real
+    per-call temp dir on the native CPython host; removed again once the
+    result bytes are read back) because
+    ``pydvma.file.import_from_matlab_jwlogger`` reads from a FILENAME
+    (signature ``(filename=None)``). The resulting dataset is saved with
+    ``container.save`` and the ``.dvma`` bytes read back, returned as
+    ``{'dvma': <bytes>}`` — marshalled to a JS ``Uint8Array`` for
+    ``readDvma``, same as ``legacy_to_dvma``.
     """
     from pydvma import file as pfile
-    with open('/tmp/import.mat', 'wb') as f:
-        f.write(bytes(mat_bytes))
-    ds = pfile.import_from_matlab_jwlogger(filename='/tmp/import.mat')
-    container.save(ds, '/tmp/import.dvma')
-    with open('/tmp/import.dvma', 'rb') as f:
-        return {'dvma': f.read()}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mat_path = os.path.join(tmpdir, 'import.mat')
+        dvma_path = os.path.join(tmpdir, 'import.dvma')
+        with open(mat_path, 'wb') as f:
+            f.write(bytes(mat_bytes))
+        ds = pfile.import_from_matlab_jwlogger(filename=mat_path)
+        container.save(ds, dvma_path)
+        with open(dvma_path, 'rb') as f:
+            return {'dvma': f.read()}
 
 
 def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):
