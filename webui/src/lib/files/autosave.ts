@@ -47,6 +47,21 @@ export function __setIdb(next: IdbLike): void {
   idb = next;
 }
 
+/**
+ * Optional second autosave target: the pydvma-serve session journal
+ * (native-engine stage 3). When registered, every persisted autosave
+ * is ALSO handed to the sink (which posts it over /engine as a
+ * journal_set op). Best-effort and fire-and-forget, exactly like the
+ * idb/folder write: a sink failure (socket closed mid-write) must
+ * never break the local autosave. Registered by App.svelte when the
+ * native engine + journal capability are live; cleared on fallback.
+ */
+export type JournalSink = (bytes: Uint8Array) => void;
+let journalSink: JournalSink | null = null;
+export function setJournalSink(next: JournalSink | null): void {
+  journalSink = next;
+}
+
 /** The single pending debounce timer (module-level; one autosave at a time). */
 let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -105,6 +120,13 @@ export function cancelAutosave(): void {
 
 /** Perform the actual write (folder file for fsaccess, else IndexedDB). */
 async function persist(bytes: Uint8Array, dir: WorkDir | null): Promise<void> {
+  if (journalSink) {
+    try {
+      journalSink(bytes);
+    } catch (e) {
+      console.warn('[autosave] journal sink failed:', e);
+    }
+  }
   try {
     if (dir && dir.kind === 'fsaccess') {
       await dir.save(AUTOSAVE_NAME, bytes);

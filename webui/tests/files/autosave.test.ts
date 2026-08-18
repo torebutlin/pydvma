@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { autosave, cancelAutosave, clearAutosave, restoreOffer, __setIdb } from '../../src/lib/files/autosave';
+import {
+  autosave,
+  cancelAutosave,
+  clearAutosave,
+  restoreOffer,
+  setJournalSink,
+  __setIdb,
+} from '../../src/lib/files/autosave';
 import type { WorkDir } from '../../src/lib/files/workdir';
 
 /** A fake in-memory idb so restoreOffer/clearAutosave are deterministic. */
@@ -34,6 +41,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
+  setJournalSink(null); // guard: a leaked sink from a failing test must not poison later ones
 });
 
 describe('autosave debounce', () => {
@@ -133,5 +141,49 @@ describe('restoreOffer / clearAutosave', () => {
     await clearAutosave();
     expect(idb.del).toHaveBeenCalledWith('pydvma:autosave');
     expect(await restoreOffer()).toBeNull();
+  });
+});
+
+describe('journal sink', () => {
+  test('persist() also posts to a registered journal sink', async () => {
+    const posted: Uint8Array[] = [];
+    setJournalSink((b) => posted.push(b));
+    autosave(() => new Uint8Array([1, 2, 3]), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(posted).toHaveLength(1);
+    expect([...posted[0]]).toEqual([1, 2, 3]);
+    setJournalSink(null);
+  });
+
+  test('sink errors never break the idb write', async () => {
+    setJournalSink(() => {
+      throw new Error('socket gone');
+    });
+    autosave(() => new Uint8Array([9]), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    // The throwing sink must not stop the idb write from landing.
+    expect(idb.set).toHaveBeenCalledTimes(1);
+    expect(idb.store.get('pydvma:autosave')).toEqual(new Uint8Array([9]));
+    setJournalSink(null);
+  });
+
+  test('no sink registered leaves behaviour unchanged', async () => {
+    autosave(() => new Uint8Array([7]), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(idb.set).toHaveBeenCalledTimes(1);
+    expect(idb.store.get('pydvma:autosave')).toEqual(new Uint8Array([7]));
+  });
+
+  test('sink also fires for the fsaccess-dir branch', async () => {
+    const dir = fakeFsDir();
+    const posted: Uint8Array[] = [];
+    setJournalSink((b) => posted.push(b));
+    const marker = new Uint8Array([5, 6]);
+    autosave(marker, dir, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(dir.save).toHaveBeenCalledWith('autosave.dvma', marker);
+    expect(posted).toHaveLength(1);
+    expect([...posted[0]]).toEqual([5, 6]);
+    setJournalSink(null);
   });
 });
