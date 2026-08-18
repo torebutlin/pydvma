@@ -13,26 +13,50 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
-- **Native engine, stages 3–4 (2026-08-17 design, §4.4–4.5 of
-  `dev/plans/2026-08-17-native-engine-design.md`)** — stages 0–2 (glue
-  into the package, `/engine` host, default flip when served) are
-  landed and live-verified on BOTH benches: Mac + 2i2 (2026-08-17) and
-  the Windows PC + cDAQ-9174 (2026-08-18 — default flip, NI capture
-  analysed natively, 6.34 GiB CWT through the 8 GiB ceiling, Stop
-  killing the worker subprocess mid-calc; see the checklist ticks in
-  `dev/2026-08-17-native-engine-round.md`). Next arc: the **session
-  journal** (serve owns the session doc server-side; capture → close
-  tab → reopen restores it) and **`dvma.launch(settings)`** (the
-  notebook front door that replaces the removed `dvma.Logger`, with
-  `session.data`/`session.push` pull/push access). Needs its own fresh
-  plan before implementation starts.
-- **Real-app-over-socket e2e coverage gap** — no Playwright spec
-  drives the REAL app's calc path through the native `/engine` socket:
-  `engine-native.spec.ts` uses the `?engine=1` probe page, and the
-  `@engine` app specs run pyodide. A cheap BRIDGE_E2E spec (mock
-  serve → Log Data → Calc FFT → plot lines) would close it; the
-  2026-08-18 PC session hand-rolled exactly that flow to verify the
-  arc (it passes) and to isolate the hidden-page park below.
+- ~~**Native engine, stages 3–4**~~ — **DONE** 2026-08-18/19
+  (`dev/2026-08-18-session-journal-round.md`; plan
+  `dev/plans/2026-08-18-session-journal-launch-plan.md`). The session
+  journal (`pydvma/journal.py`, serve ownership with captures
+  registered at birth, crash-recovery adoption, `/engine` journal ops)
+  and `dvma.launch` / `Session` (`pydvma/session.py`) both landed with
+  full suites green. Committed locally, **not pushed**, and **not yet
+  live-verified** — the round doc's next-lab-visit checklist is
+  unticked. NB one deliberate asymmetry recorded there: the app's
+  autosave `journal_set` is **not** generation-checked (the app owns
+  the whole document, so it has no partial-write race to lose); only
+  `Session.push`, a partial writer merging into what it read, carries
+  the check, and a notebook push racing an autosave serialises through
+  push's bounded retry loop.
+- ~~**Real-app-over-socket e2e coverage gap**~~ — **CLOSED** by
+  `webui/e2e/session-journal.spec.ts` test 1, which drives the REAL
+  app against a spawned `pydvma-serve`: Log Data (mock driver) → Calc
+  FFT → plot lines, all through the native `/engine` socket, before it
+  goes on to test the restore. (`engine-native.spec.ts` still uses the
+  `?engine=1` probe page for its own low-level checks; that is now
+  supplementary rather than the only socket coverage.)
+- **Derived analysis views are not part of the session document** —
+  restore-from-journal and `Session.data` return the captured data (and
+  any saved `ModalData`), not the FFT/TF/sonogram results computed from
+  it: the app's derived-results store lives outside the document, so a
+  restored session re-runs its analyses. This is **pre-existing** and
+  equally true of `.dvma` files and the IndexedDB autosave — the
+  journal just makes it user-visible, because "restore my session"
+  promises more than "open my file". Documented honestly for now
+  (`docs/web-logger/index.md`, `docs/web-logger/migration.md`), and
+  belongs on the same honest-limitation trail as the non-destructive
+  display transform. **Decide deliberately** whether computed results
+  should serialise into the document — it is a container-schema
+  question (size, staleness against edited source data, and what
+  `Session.data` should then hand a notebook), not a UI one.
+- **`dvma.attach(url)` — session API against an externally started
+  serve** — `launch()` owns the server it returns a handle to, so a
+  notebook cannot currently get `session.data` / `session.push` against
+  a `pydvma-serve` someone started from a terminal (or a second kernel
+  wanting to read a colleague's running session). The design doc names
+  this as the natural follow-on; it needs the journal ops driven as a
+  *client* over `/engine` rather than reached in-process, so `Session`
+  would grow a second backing implementation. Deliberately out of
+  scope for the stages 3–4 arc.
 - **Calc completion parks in a hidden page (rAF)** — with the page
   `document.hidden` (background tab, or an embedded/hidden webview)
   a calc's engine round-trip completes — request sent, reply decoded,

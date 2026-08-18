@@ -2,8 +2,45 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-18 evening (Mac session, 2i2 + loopback cable back on the
-bench): **the bridge soundcard-OUTPUT bug is FIXED and the
+As of 2026-08-19 (Mac session, overnight): **stages 3–4 of the
+native-engine arc — the session journal and `dvma.launch` — are LANDED
+and committed locally (NOT pushed; Tore hasn't asked), with the full
+suite gate green but NO live verification yet.** `pydvma-serve` now
+owns the session document: a `SessionJournal` (atomic spill, generation
+counter, 256 MB pending-capture budget) fed by the app's debounced
+autosave over new `/engine` journal ops AND by the serve log path
+registering every capture **at birth**, so closing the tab inside the
+autosave debounce still loses nothing; reopening offers the session
+back, and a `kill -9`'d previous run is offered as a crash recovery
+(liveness-probed, PK-gated, 7-day pruned, `--session-dir` injectable).
+`dvma.launch(settings)` is the notebook front door replacing the removed
+`dvma.Logger` — the whole serve stack on a daemon thread inside the
+kernel, returning a `Session` with `.data` / `.push` (generation-checked,
+smart-merged by `unique_id`) / `.close`; `container.save_bytes`/
+`load_bytes` gave the journal, the capture path and `engine.py`'s import
+ops **one shared writer**. Round doc:
+`dev/2026-08-18-session-journal-round.md` (what landed, six honest
+deviations from the plan, and the review-loop findings — non-atomic
+spill, journal writes on the event loop, a destructive test suite
+pruning REAL session files, a capture-loss window in push, e2e teardown
+holes). Suites at close: pytest **1005/6**, vitest **1066/1**, check
+**0/0**, Playwright **69/19skip** + @engine **19/19** + BRIDGE_E2E
+**22/22** (bridge+bla+engine-native+session-journal, ports
+8763/8765/8766/8767), mkdocs --strict clean; engine wheel rebuilt (still
+2.3.0) and verified byte-identical to the tree — it really was stale,
+`engine.py` moved to `container.save_bytes` this arc. Two known
+limitations went to TODO.md: **restore brings back DATA, not computed
+analysis views** (derived store sits outside the document — pre-existing,
+newly user-visible, docs say so, and the deliberate decision is
+outstanding) and `dvma.attach(url)` for an externally started serve.
+**Next: Tore's live verification via the round doc's unticked
+next-lab-visit checklist (real 2i2 capture → close → reopen → Restore;
+launch from a real Jupyter kernel; kill -9 recovery; two concurrent
+serves; the Windows run of the four bridge specs) — and then his
+decision on pushing.**
+
+Previous (2026-08-18 evening, Mac session, 2i2 + loopback cable back on
+the bench): **the bridge soundcard-OUTPUT bug is FIXED and the
 native-engine round's checklist is now fully ticked** (committed
 locally, NOT pushed — Tore hasn't asked). Root cause of the
 zeroed-capture half was confirmed ENVIRONMENTAL with raw sounddevice —
@@ -30,11 +67,12 @@ Also closed: the "2i2 cable −27 dB" mystery was just the output volume
 knob (−3 dB at full). NB the device indices REORDERED mid-session when
 an iPhone continuity mic left (2i2 1→0) — name-based re-resolution
 absorbed it on the bridge; pin bench scripts by name. Suites: pytest
-907/6, mkdocs --strict green (webui untouched). **Next: the stages 3–4
-plan (session journal + `dvma.launch`) — being drafted for Tore's
-approval before implementation.**
+907/6, mkdocs --strict green (webui untouched). (That session closed by
+drafting the stages 3–4 plan,
+`dev/plans/2026-08-18-session-journal-launch-plan.md`, which Tore
+approved and which is now implemented — see the top block.)
 
-Previous (2026-08-18, Windows PC session, via RDP): **the native-engine
+Earlier (2026-08-18, Windows PC session, via RDP): **the native-engine
 arc is verified on the PC too, and everything is PUSHED.** The
 round-doc checklist's four PC items are all ticked live against the
 cDAQ-9174 (native-engine default flip on Windows; a real 4-ch NI
