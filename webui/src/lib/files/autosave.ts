@@ -15,7 +15,10 @@
 //     journal over /engine, when the native engine + journal capability are
 //     live. It has NO clearAutosave counterpart by design: the serve journal
 //     stays authoritative on its own terms, and an explicit Save only clears
-//     the local (folder/idb) stores.
+//     the local (folder/idb) stores. It is also SIZE-GUARDED — see
+//     JOURNAL_SINK_MAX_BYTES — because the whole document crosses /engine in
+//     one frame; a session past the guard keeps its local autosave and drops
+//     only the server copy.
 //
 // On an explicit Save Dataset (or when the user dismisses the restore
 // banner) the caller invokes clearAutosave() so a stale autosave never
@@ -65,6 +68,31 @@ export function __setIdb(next: IdbLike): void {
  */
 export type JournalSink = (bytes: Uint8Array) => void | Promise<void>;
 let journalSink: JournalSink | null = null;
+
+/**
+ * Largest document the journal sink will post. The whole session goes over
+ * /engine in ONE websocket frame, and `pydvma-serve` caps an inbound frame at
+ * 256 MiB (`max_size` in serve.py's `run()`); an over-cap frame does not fail
+ * politely — the server closes the socket with 1009, the app reports "engine
+ * connection lost", re-boots, and the next autosave (still over cap) kills it
+ * again, forever. So this guard sits comfortably BELOW that cap — the margin
+ * covers the frame's own header/envelope and any future growth of serve's
+ * per-frame overhead — and a session past it simply stops using the sink:
+ * local autosave (folder / IndexedDB) is unaffected, and nothing is lost that
+ * an explicit Save would not also have to write.
+ */
+export const JOURNAL_SINK_MAX_BYTES = 192 * 1024 * 1024;
+
+let journalSinkMaxBytes = JOURNAL_SINK_MAX_BYTES;
+
+/**
+ * TEST-ONLY: shrink (or restore) the sink's size guard, so the over-limit
+ * branch can be exercised without allocating 192 MB. Not used by the app —
+ * same escape hatch as `__setIdb`.
+ */
+export function __setJournalSinkMaxBytes(next: number): void {
+  journalSinkMaxBytes = next;
+}
 
 /**
  * Register (or clear, with null) the journal sink; read at persist time, so
@@ -132,10 +160,18 @@ export function cancelAutosave(): void {
 
 /**
  * Perform the actual write: folder file for fsaccess, else IndexedDB — and,
- * when registered, fan out a copy to the journal sink too.
+ * when registered and within `JOURNAL_SINK_MAX_BYTES`, fan out a copy to the
+ * journal sink too. An over-size session degrades to local-only autosave with
+ * one console warning, rather than repeatedly closing the /engine socket.
  */
 async function persist(bytes: Uint8Array, dir: WorkDir | null): Promise<void> {
-  if (journalSink) {
+  if (journalSink && bytes.length > journalSinkMaxBytes) {
+    const mb = (n: number) => Math.round(n / (1024 * 1024));
+    console.warn(
+      `[autosave] session too large for the serve journal (${mb(bytes.length)} MB > ` +
+        `${mb(journalSinkMaxBytes)} MB limit) — local autosave only`,
+    );
+  } else if (journalSink) {
     try {
       // The sink may be sync (throws) or async (rejects) — the real /engine
       // sink in Task 5 is async. Catch both shapes so neither can reach an

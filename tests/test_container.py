@@ -527,6 +527,202 @@ def test_save_data_dialog_path_appends_extension(tmp_path, monkeypatch):
     assert (tmp_path / 'typed_name.dvma').is_file()
 
 
+FIXTURE_DVMA = (pathlib.Path(__file__).resolve().parent.parent
+                / 'webui' / 'tests' / 'fixtures' / 'impulse.dvma')
+
+
+def _manifest_of(blob):
+    with zipfile.ZipFile(io.BytesIO(blob), 'r') as zf:
+        return json.loads(zf.read('manifest.json'))
+
+
+def _extras_of(manifest):
+    """Per-item {top-level extras} + {meta extras} for comparison."""
+    out = []
+    for entry in manifest['items']:
+        out.append(container._collect_item_extra(entry, entry['kind']))
+    return out
+
+
+class TestManifestExtraPassthrough:
+    """Manifest keys Python does not consume must SURVIVE a Python
+    round-trip: the browser app stores per-item document state there
+    (its `ui` block; ModalData's measurement_type / source_targets),
+    and Session.push's load→merge→save cycle would otherwise destroy it
+    on every push."""
+
+    def test_unknown_item_and_meta_keys_survive_load_save_load(self):
+        # A dataset as the app would have written it: a top-level `ui`
+        # block on the capture, and unknown meta keys on the modal fit.
+        ds = _make_full_dataset()
+        blob = container.save_bytes(ds)
+        manifest = _manifest_of(blob)
+        for entry in manifest['items']:
+            if entry['kind'] == 'TimeData':
+                entry['ui'] = {'labels': ['hammer', 'accel'],
+                               'analysis': {'nfft': 4096, 'iw_power': -2}}
+            if entry['kind'] == 'ModalData':
+                entry['meta']['measurement_type'] = 'acc'
+                entry['meta']['source_targets'] = [
+                    {'id_link': 'abc', 'ch_in': 0, 'n_channels': 2}]
+        authored = _rezip_with_manifest(blob, manifest)
+
+        loaded = container.load_bytes(authored)
+        out = _manifest_of(container.save_bytes(loaded))
+
+        by_kind = {e['kind']: e for e in out['items']}
+        assert by_kind['TimeData']['ui'] == {
+            'labels': ['hammer', 'accel'],
+            'analysis': {'nfft': 4096, 'iw_power': -2}}
+        assert by_kind['ModalData']['meta']['measurement_type'] == 'acc'
+        assert by_kind['ModalData']['meta']['source_targets'] == [
+            {'id_link': 'abc', 'ch_in': 0, 'n_channels': 2}]
+
+    def test_second_round_trip_is_stable(self):
+        # The stash must survive REPEATED cycles (every Session.push is
+        # another one), not just the first.
+        ds = _make_full_dataset()
+        manifest = _manifest_of(container.save_bytes(ds))
+        manifest['items'][0]['ui'] = {'labels': ['x']}
+        authored = _rezip_with_manifest(container.save_bytes(ds), manifest)
+        once = container.save_bytes(container.load_bytes(authored))
+        twice = container.save_bytes(container.load_bytes(once))
+        assert _manifest_of(twice)['items'][0]['ui'] == {'labels': ['x']}
+
+    def test_known_fields_win_on_collision(self):
+        # A stash whose key collides with a field Python owns must NOT
+        # overwrite the object's own value.
+        ds = _make_full_dataset()
+        td = ds.time_data_list[0]
+        setattr(td, container._ITEM_EXTRA_ATTR,
+                {'kind': 'Nonsense', 'settings': 'nonsense',
+                 'meta': {'test_name': 'stale', 'ui_only': 1}})
+        entry = _manifest_of(container.save_bytes(ds))['items'][0]
+        assert entry['kind'] == 'TimeData'
+        assert entry['settings'] is None or isinstance(entry['settings'], dict)
+        assert entry['meta']['test_name'] == 'roundtrip'
+        assert entry['meta']['ui_only'] == 1      # genuinely unknown: kept
+
+    def test_ordinary_objects_have_no_stash(self):
+        # Absence must stay absence: nothing built in Python, and no
+        # item from a file without extras, grows the attribute.
+        ds = _make_full_dataset()
+        loaded = container.load_bytes(container.save_bytes(ds))
+        for name in datastructure.DataSet._LIST_ATTRS:
+            for item in getattr(loaded, name):
+                assert not hasattr(item, container._ITEM_EXTRA_ATTR)
+
+    def test_stash_is_not_written_as_a_data_field(self):
+        # It merges into the manifest dict only — never into `meta`
+        # under its own name, and never as an array member.
+        ds = _make_full_dataset()
+        setattr(ds.time_data_list[0], container._ITEM_EXTRA_ATTR,
+                {'ui': {'labels': ['a']}})
+        entry = _manifest_of(container.save_bytes(ds))['items'][0]
+        assert container._ITEM_EXTRA_ATTR not in entry
+        assert container._ITEM_EXTRA_ATTR not in entry['meta']
+        assert container._ITEM_EXTRA_ATTR not in entry['arrays']
+
+    def test_non_dict_stash_is_ignored(self):
+        ds = _make_full_dataset()
+        setattr(ds.time_data_list[0], container._ITEM_EXTRA_ATTR, 'garbage')
+        entry = _manifest_of(container.save_bytes(ds))['items'][0]
+        assert entry['kind'] == 'TimeData'
+
+    def test_real_webui_fixture_round_trips_losslessly(self):
+        # REAL browser-authored bytes (webui's own test fixture): every
+        # item's unconsumed manifest keys must come back byte-for-value
+        # after load_bytes -> save_bytes. Generic on purpose — it holds
+        # whatever that fixture carries today, and keeps holding when
+        # the fixture is regenerated by a newer app.
+        if not FIXTURE_DVMA.is_file():
+            pytest.skip('webui fixture %s not present' % FIXTURE_DVMA)
+        original = FIXTURE_DVMA.read_bytes()
+        before = _manifest_of(original)
+        after = _manifest_of(container.save_bytes(
+            container.load_bytes(original)))
+        assert [e['kind'] for e in after['items']] == \
+            [e['kind'] for e in before['items']]
+        assert _extras_of(after) == _extras_of(before)
+
+    def test_pickle_round_trip_keeps_the_stash(self):
+        # The stash is a plain dict attribute: pickling (the legacy .npy
+        # path, and DataSet.__setstate__) must be unaffected by it.
+        import pickle
+        ds = _make_full_dataset()
+        setattr(ds.time_data_list[0], container._ITEM_EXTRA_ATTR,
+                {'ui': {'labels': ['a']}})
+        out = pickle.loads(pickle.dumps(ds))
+        assert getattr(out.time_data_list[0],
+                       container._ITEM_EXTRA_ATTR) == {'ui': {'labels': ['a']}}
+
+
+def _rezip_with_manifest(blob, manifest):
+    """Rebuild `blob` with `manifest` swapped in (arrays untouched)."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(blob), 'r') as src:
+        with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as dst:
+            for name in src.namelist():
+                if name == 'manifest.json':
+                    dst.writestr(name, json.dumps(manifest, indent=1))
+                else:
+                    dst.writestr(name, src.read(name))
+    return out.getvalue()
+
+
+class TestManifestIds:
+    """container.manifest_ids: the journal's cheap capture identity."""
+
+    def test_returns_time_data_unique_ids(self):
+        ds = _make_full_dataset()
+        blob = container.save_bytes(ds)
+        expected = {str(td.unique_id) for td in ds.time_data_list}
+        assert container.manifest_ids(blob) == expected
+        assert expected                                  # non-trivial
+
+    def test_reads_manifest_only(self, monkeypatch):
+        # No .npy member may be decompressed: this runs on whole
+        # session documents, on the caller's thread.
+        ds = _make_full_dataset()
+        blob = container.save_bytes(ds)
+        read = zipfile.ZipFile.read
+        seen = []
+
+        def spy(self, name, *a, **k):
+            seen.append(name if isinstance(name, str) else name.filename)
+            return read(self, name, *a, **k)
+
+        monkeypatch.setattr(zipfile.ZipFile, 'read', spy)
+        container.manifest_ids(blob)
+        assert seen == ['manifest.json']
+
+    def test_accepts_untagged_string_ids(self):
+        # A hand-built / browser-authored manifest may carry the id as a
+        # plain string rather than {'__uuid__': ...}.
+        ds = _make_full_dataset()
+        blob = container.save_bytes(ds)
+        manifest = _manifest_of(blob)
+        manifest['items'][0]['meta']['unique_id'] = 'plain-string-id'
+        assert 'plain-string-id' in container.manifest_ids(
+            _rezip_with_manifest(blob, manifest))
+
+    @pytest.mark.parametrize('bad', [
+        b'', b'not a zip at all', b'PK\x03\x04truncated',
+    ])
+    def test_malformed_bytes_give_an_empty_set(self, bad):
+        assert container.manifest_ids(bad) == set()
+
+    def test_zip_without_manifest_gives_an_empty_set(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as zf:
+            zf.writestr('other.txt', 'hello')
+        assert container.manifest_ids(buf.getvalue()) == set()
+
+    def test_empty_dataset_has_no_ids(self):
+        assert container.manifest_ids(
+            container.save_bytes(datastructure.DataSet())) == set()
+
+
 class TestBytesRoundTrip:
 
     def test_save_bytes_load_bytes_round_trip(self):

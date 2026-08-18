@@ -2033,7 +2033,12 @@ class _Connection:
 
             if self._journal is not None:
                 # Stage 3: the journal holds every capture from birth, so a
-                # tab closing inside the app's autosave debounce loses nothing.
+                # tab closing inside the app's autosave debounce loses
+                # nothing. It stays pending until a posted document
+                # actually contains it (matched by unique_id), so a
+                # capture registered here while the app was already
+                # serialising its own document is not cleared by that
+                # document's arrival -- see journal's module docstring.
                 self._journal.add_capture(dvma_bytes)
 
             if armed and not triggered['seen']:

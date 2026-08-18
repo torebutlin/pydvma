@@ -45,9 +45,18 @@ tagged, so ``JSON.parse`` in a browser never chokes on bare
 ``Infinity`` / ``NaN``. Arrays embedded in the manifest
 (``__array__``) are stored as plain JSON lists and restore as
 float64/int arrays; the ``.npy`` members preserve dtype exactly.
-Manifest keys unknown to this reader are ignored on load. ``meta``
-may also carry optional analysis flags (see `_OPTIONAL_META`) that
-are written only when set on the object.
+``meta`` may also carry optional analysis flags (see `_OPTIONAL_META`)
+that are written only when set on the object.
+
+Manifest keys unknown to this reader are not consumed — but they are
+not DISCARDED either: `load` stashes them, per item, on the rebuilt
+object as `_ITEM_EXTRA_ATTR` and `_write_dataset` re-emits them
+verbatim. That makes a Python load→save round-trip LOSSLESS for
+document state only the browser app understands (its per-item ``ui``
+block of channel labels and per-set analysis settings; the ModalData
+``meta`` extras ``measurement_type`` / ``source_targets``), which
+:meth:`pydvma.session.Session.push` would otherwise destroy on every
+push. Python's own known fields always win on collision.
 
 Use `save` / `load`, or their in-memory twins `save_bytes` /
 `load_bytes` (same manifest, same members, one shared writer/reader —
@@ -119,6 +128,20 @@ _OPTIONAL_META = {
 
 # Tag keys reserved by _encode_value; user dicts must not use them.
 _RESERVED_TAGS = ('__uuid__', '__datetime__', '__array__', '__float__')
+
+# Item-entry keys this reader consumes itself. Everything else in an
+# item's manifest entry belongs to some other writer (today: the
+# browser app's `ui` block) and is stashed verbatim by `load`.
+_ITEM_KEYS = ('kind', 'arrays', 'meta', 'settings')
+
+# Private attribute holding one item's unconsumed manifest keys, as
+# raw (already-encoded) manifest JSON. Shape mirrors the entry: unknown
+# top-level keys at the top level, unknown `meta` keys under 'meta'
+# (unambiguous, since 'meta' itself is never a top-level extra). Absent
+# when the item had none, so `hasattr` stays a meaningful test and
+# objects built in Python never grow it. Never a data field: it merges
+# into the manifest dict on save and nowhere else.
+_ITEM_EXTRA_ATTR = '_container_extra'
 
 _KIND_CLASSES = {
     'TimeData': datastructure.TimeData,
@@ -219,6 +242,107 @@ def _settings_from_dict(d):
     return settings
 
 
+def _collect_item_extra(entry, kind):
+    """Every manifest key in one item ``entry`` this reader does not
+    consume, as raw manifest JSON ready to re-emit.
+
+    Returns a dict of unknown TOP-LEVEL entry keys (see `_ITEM_KEYS`),
+    plus — under the key ``'meta'``, which can never collide with a
+    top-level extra because ``meta`` is itself consumed — a dict of the
+    ``meta`` keys unknown for this ``kind`` (`_META_FIELDS` +
+    `_OPTIONAL_META`). Empty dict when there is nothing unknown, which
+    is what keeps `_ITEM_EXTRA_ATTR` absent on ordinary files.
+
+    Values are NOT decoded: they are re-emitted exactly as they were
+    read, so a writer that owns them (the browser app) sees its own
+    bytes back regardless of what they mean.
+
+    Args:
+        entry (dict): one ``manifest['items']`` entry.
+        kind (str): the entry's data kind, selecting the known-field
+            sets to subtract.
+    """
+    extra = {k: v for k, v in entry.items() if k not in _ITEM_KEYS}
+    known_meta = set(_META_FIELDS.get(kind, ()))
+    known_meta.update(_OPTIONAL_META.get(kind, ()))
+    meta = entry.get('meta') or {}
+    meta_extra = {k: v for k, v in meta.items() if k not in known_meta}
+    if meta_extra:
+        extra['meta'] = meta_extra
+    return extra
+
+
+def _apply_item_extra(item, entry):
+    """Merge `item`'s stashed manifest extras into its ``entry``.
+
+    The item's own known fields ALWAYS win: a top-level extra is only
+    written when the key is absent from ``entry``, and a ``meta`` extra
+    only when absent from ``entry['meta']`` (which by then already
+    holds every `_META_FIELDS` key, present-but-None included). A
+    non-dict stash — nothing writes one, but pickles are forgiving — is
+    ignored rather than raising.
+
+    Args:
+        item: the data object being written, possibly carrying
+            `_ITEM_EXTRA_ATTR`.
+        entry (dict): the manifest entry built for it, mutated in place.
+    """
+    extra = getattr(item, _ITEM_EXTRA_ATTR, None)
+    if not isinstance(extra, dict):
+        return
+    for key, value in extra.items():
+        if key == 'meta':
+            if isinstance(value, dict):
+                for meta_key, meta_value in value.items():
+                    entry['meta'].setdefault(meta_key, meta_value)
+        elif key not in entry:
+            entry[key] = value
+
+
+def manifest_ids(data):
+    """The ``unique_id`` of every item in in-memory ``.dvma`` bytes.
+
+    Reads ``manifest.json`` ONLY — no ``.npy`` member is decompressed —
+    so this is cheap enough to run on a whole session document on the
+    calling thread. Ids come back as ``str`` whether the manifest tags
+    them (``{"__uuid__": "..."}``, what `save` writes) or stores a plain
+    string (what a hand-built or browser-authored manifest may carry).
+    Only `TimeData` currently carries a ``unique_id`` — derived items
+    reference their source through ``id_link`` instead — so in practice
+    this is the set of captures a document contains.
+
+    Deliberately total: anything unreadable (not a zip, no manifest,
+    invalid JSON, unexpected shapes) yields an EMPTY set rather than
+    raising, because the callers
+    (:meth:`pydvma.journal.SessionJournal.add_capture` /
+    :meth:`~pydvma.journal.SessionJournal.set_doc`) use it only to
+    decide whether a pending capture is already inside a posted
+    document, and must degrade to the conservative answer rather than
+    fail a write.
+
+    Args:
+        data (bytes-like): ``.dvma`` container bytes.
+
+    Returns:
+        ids (set): the ``unique_id`` strings found, possibly empty.
+    """
+    ids = set()
+    try:
+        with zipfile.ZipFile(io.BytesIO(data), 'r') as zf:
+            manifest = json.loads(zf.read('manifest.json').decode('utf-8'))
+        items = manifest.get('items') or []
+        for entry in items:
+            meta = (entry or {}).get('meta') or {}
+            value = meta.get('unique_id')
+            if isinstance(value, dict):
+                value = value.get('__uuid__')
+            if isinstance(value, str) and value:
+                ids.add(value)
+    except Exception:
+        return set()
+    return ids
+
+
 def _write_array(zf, member, arr):
     buf = io.BytesIO()
     np.save(buf, np.asarray(arr), allow_pickle=False)
@@ -277,6 +401,10 @@ def _write_dataset(zf, dataset):
                 raise type(e)(
                     'while encoding {} field {!r}: {}'.format(
                         kind, 'settings', e)) from e
+            # Re-emit whatever `load` stashed but did not consume (the
+            # app's `ui` block, ModalData's meta extras) — see the
+            # module docstring's lossless-round-trip paragraph.
+            _apply_item_extra(item, entry)
             manifest['items'].append(entry)
             index += 1
     zf.writestr('manifest.json',
@@ -339,9 +467,13 @@ def load(filename, _source_name=None):
 
     Objects are rebuilt attribute-by-attribute (no constructors run),
     so timestamps, unique ids and settings come back exactly as
-    saved. Only manifest-known fields are restored — the schema, not
-    the class layout, defines the file. Manifest keys unknown to this
-    reader are ignored.
+    saved. Only manifest-known fields become attributes — the schema,
+    not the class layout, defines the file. Manifest keys unknown to
+    this reader are not turned into attributes, but they ARE kept: each
+    item's unconsumed keys are stashed verbatim on the object as
+    `_ITEM_EXTRA_ATTR` and re-emitted by the next `save`, so a Python
+    round-trip never destroys browser-authored document state (see the
+    module docstring).
 
     Raises ValueError if the file's ``format_version`` is newer than
     this reader supports, or if an item's ``kind`` is unknown —
@@ -398,6 +530,9 @@ def load(filename, _source_name=None):
                 if meta.get(field) is not None:
                     setattr(item, field, _decode_value(meta[field]))
             item.settings = _settings_from_dict(entry.get('settings'))
+            extra = _collect_item_extra(entry, kind)
+            if extra:
+                setattr(item, _ITEM_EXTRA_ATTR, extra)
             if kind == 'ModalData' and 'M' in arrays:
                 # rebuild the derived per-mode summary arrays
                 from . import modal

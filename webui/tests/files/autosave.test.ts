@@ -5,7 +5,9 @@ import {
   clearAutosave,
   restoreOffer,
   setJournalSink,
+  JOURNAL_SINK_MAX_BYTES,
   __setIdb,
+  __setJournalSinkMaxBytes,
 } from '../../src/lib/files/autosave';
 import type { WorkDir } from '../../src/lib/files/workdir';
 
@@ -42,6 +44,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   setJournalSink(null); // guard: a leaked sink from a failing test must not poison later ones
+  __setJournalSinkMaxBytes(JOURNAL_SINK_MAX_BYTES); // and a shrunk limit must not leak either
 });
 
 describe('autosave debounce', () => {
@@ -196,6 +199,42 @@ describe('journal sink', () => {
     expect(dir.save).toHaveBeenCalledWith('autosave.dvma', marker);
     expect(posted).toHaveLength(1);
     expect([...posted[0]]).toEqual([5, 6]);
+  });
+
+  test('an over-limit session skips the sink but still autosaves locally', async () => {
+    // serve caps an inbound /engine frame at 256 MiB and CLOSES the socket
+    // (1009) on anything bigger — which the app reports as "engine connection
+    // lost", re-boots, and hits again on the next autosave. So an over-limit
+    // document must never be posted. Limit shrunk for the test; the real one
+    // is 192 MiB and cannot be allocated here.
+    __setJournalSinkMaxBytes(8);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const posted: Uint8Array[] = [];
+    setJournalSink((b) => posted.push(b));
+    const big = new Uint8Array(9);
+    autosave(big, null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(posted).toHaveLength(0); // sink skipped
+    expect(idb.set).toHaveBeenCalledTimes(1); // local autosave unaffected
+    expect(idb.store.get('pydvma:autosave')).toEqual(big);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('too large for the serve journal');
+    expect(String(warn.mock.calls[0][0])).toContain('local autosave only');
+    warn.mockRestore();
+  });
+
+  test('a payload exactly at the limit still posts', async () => {
+    __setJournalSinkMaxBytes(8);
+    const posted: Uint8Array[] = [];
+    setJournalSink((b) => posted.push(b));
+    autosave(new Uint8Array(8), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(posted).toHaveLength(1);
+  });
+
+  test('the default limit sits under serve’s 256 MiB frame cap', () => {
+    expect(JOURNAL_SINK_MAX_BYTES).toBe(192 * 1024 * 1024);
+    expect(JOURNAL_SINK_MAX_BYTES).toBeLessThan(256 * 1024 * 1024);
   });
 
   test('a cancelled or disabled autosave never reaches the sink', async () => {

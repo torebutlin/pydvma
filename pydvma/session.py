@@ -338,6 +338,15 @@ class Session(object):
         back something you pulled and edited updates that item in
         place, while genuinely new items append.
 
+        The merge replaces a matched item WHOLE, so what you push is
+        what is stored — including the app-side display state a pulled
+        item carries invisibly (channel labels, per-set analysis
+        settings: the manifest keys `pydvma.container` stashes as
+        ``_container_extra`` rather than dropping). Pull → modify →
+        push therefore preserves it; pushing a NEWLY built item in
+        place of a stored one legitimately replaces that state with
+        nothing, and the app re-seeds its defaults on reload.
+
         The read-merge-write cycle is guarded by the journal's
         generation counter, so nothing is lost to a race: if a capture
         lands, or the app's autosave posts, between the read and the
@@ -436,7 +445,12 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
     :attr:`Session.url`. Printing that URL is how a session announces
     itself, matching ``pydvma-serve``'s startup line.
 
-    Raises ``RuntimeError`` if the server does not bind within
+    Raises ``ImportError`` naming ``pip install pydvma[serve]`` when the
+    optional server dependencies are absent — the retired ``dvma.Logger``
+    tombstone sends people straight here, and a base install would
+    otherwise fail deep inside the background thread with an opaque
+    ``RuntimeError`` about the server not starting. Raises
+    ``RuntimeError`` if the server does not bind within
     :data:`STARTUP_TIMEOUT_S` — chained to the underlying error (an
     ``OSError`` when an explicit ``port`` is already taken) when there
     was one.
@@ -468,6 +482,21 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
             :class:`~pydvma.serve.BridgeServer`; False skips the
             startup scan entirely.
     """
+    try:
+        import websockets                              # noqa: F401
+    except ImportError as e:
+        # Same message shape as pydvma/__init__.py's _LAZY_EXTRAS guard,
+        # which does NOT fire for this module: importing pydvma.session
+        # succeeds on a base install (nothing at module scope needs
+        # websockets), so the miss surfaces only here, on the `serve`
+        # import below, as a bare "No module named 'websockets'". The
+        # retired dvma.Logger tombstone points people straight at
+        # launch(), so this is a first-contact error and must name the
+        # extra to install.
+        raise ImportError(
+            'pydvma.launch needs optional dependencies (websockets). '
+            'Install them with: pip install pydvma[serve]. '
+            'Original error: {}'.format(e)) from e
     from . import serve
 
     driver = getattr(settings, 'device_driver', None) or 'mock'

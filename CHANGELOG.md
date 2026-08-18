@@ -66,6 +66,15 @@ field, plus the acquisition UX it showed was missing.
   a view re-fits y (and x if the view was empty); unit-changing view
   switches drop the stale range; an automatic y fits what is inside
   the current x window; an x-only zoom no longer silently pins y.
+- **A Python round trip no longer strips app-authored `.dvma` state.**
+  The web app stores per-item document state the Python reader does not
+  interpret (channel labels, per-set analysis settings, a modal fit's
+  measurement type and source mapping). `container.load` used to drop
+  those manifest keys and `save` never wrote them back, so opening and
+  re-saving a file in Python quietly discarded them — and, with the new
+  session journal, so did every `session.push`, permanently, because the
+  app reloads and autosaves the stripped document. Unknown per-item keys
+  now survive verbatim; the reader's own fields still win on collision.
 
 ### Added
 
@@ -110,7 +119,14 @@ field, plus the acquisition UX it showed was missing.
   only in the browser: the app's existing debounced autosave also posts
   to the server, and every capture is registered server-side the moment
   it is taken (so a tab closing inside the two-second autosave window
-  still loses nothing). Closing the tab therefore costs nothing —
+  still loses nothing). A registered capture is held until a posted
+  document is shown to contain it — matched by `unique_id` — so one
+  taken while the app was already serialising its document, or one
+  belonging to another tab, is never dropped by that post. A session
+  too large to cross the `/engine` socket in one frame (192 MiB guard,
+  under serve's 256 MiB cap) falls back to browser-local autosave with
+  a console warning rather than repeatedly severing the connection.
+  Closing the tab therefore costs nothing —
   reopening offers *"Restore session from pydvma-serve?"*. If the serve
   process itself died, the next start finds the session file it left
   behind and the app offers *"Recover session from a previous

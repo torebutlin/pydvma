@@ -137,6 +137,12 @@ it **merges** rather than replaces:
 - Anything without an id — the spectra, transfer functions and sonograms
   you compute in the notebook — **appends**. Push the same computed set
   twice and you get two copies of it.
+- An item you pulled carries the app's display state for it (channel
+  labels, units, the set's analysis settings) invisibly through the round
+  trip, so pushing it back preserves what you see on screen. An item you
+  *built* in the notebook has none, so replacing a stored item with a
+  newly built one clears that state and the app re-seeds its defaults on
+  reload.
 
 A connected app is never silently overwritten: it raises a *"pydvma
 session updated from a notebook — reload?"* offer (with an empty tray it

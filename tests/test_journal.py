@@ -7,10 +7,33 @@ best-effort spill file and the crash-recovery adoption surface.
 """
 import threading
 
+import numpy as np
 import pytest
 
 import pydvma.journal as journal_module
+from pydvma import container, datastructure, options
 from pydvma.journal import SessionJournal
+
+
+def _capture_bytes(n_samples=8):
+    """Real ``.dvma`` bytes holding one TimeData — a capture as
+    `serve` registers it. Returns ``(bytes, unique_id_str)``."""
+    settings = options.MySettings.__new__(options.MySettings)
+    td = datastructure.TimeData(
+        np.arange(n_samples, dtype=float),
+        np.zeros((n_samples, 1)), settings, test_name='cap')
+    ds = datastructure.DataSet(td)
+    return container.save_bytes(ds), str(td.unique_id)
+
+
+def _doc_bytes(*capture_blobs):
+    """A session document containing exactly the given captures — what
+    the app posts once it has received them."""
+    ds = datastructure.DataSet()
+    for blob in capture_blobs:
+        for td in container.load_bytes(blob).time_data_list:
+            ds.add_to_dataset(td)
+    return container.save_bytes(ds)
 
 
 class TestDocAndCaptures:
@@ -59,6 +82,108 @@ class TestDocAndCaptures:
         _, captures, _ = j.state()
         captures.append(b'evil')
         assert j.state()[1] == [b'c1']
+
+
+class TestIdMatchedClearing:
+    """A post clears only the captures the posted document PROVABLY
+    contains (matched by TimeData unique_id), so a capture registered
+    after the poster serialised its document -- or one belonging to
+    another tab -- is never dropped without being anywhere.
+    """
+
+    def test_capture_inside_the_posted_doc_is_cleared(self):
+        blob, _uid = _capture_bytes()
+        j = SessionJournal()
+        j.add_capture(blob)
+        j.set_doc(_doc_bytes(blob))
+        assert j.state()[1] == []
+
+    def test_capture_absent_from_the_posted_doc_survives(self):
+        # THE capture-loss window: registered after the app serialised
+        # its document, cleared before this fix without ever being in
+        # any document.
+        early, _ = _capture_bytes()
+        late, _ = _capture_bytes()
+        j = SessionJournal()
+        j.add_capture(early)
+        doc = _doc_bytes(early)         # app serialises what it has...
+        j.add_capture(late)             # ...capture lands...
+        j.set_doc(doc)                  # ...post arrives
+        assert j.state()[1] == [late]
+
+    def test_two_tabs_do_not_clear_each_other(self):
+        # Tab B posts a document that knows nothing of tab A's capture.
+        a, _ = _capture_bytes()
+        b, _ = _capture_bytes()
+        j = SessionJournal()
+        j.add_capture(a)
+        j.add_capture(b)
+        j.set_doc(_doc_bytes(b))        # only B's capture is inside
+        assert j.state()[1] == [a]
+        j.set_doc(_doc_bytes(a, b))     # a doc holding both clears both
+        assert j.state()[1] == []
+
+    def test_partial_overlap_keeps_only_the_missing_capture(self):
+        a, _ = _capture_bytes()
+        b, _ = _capture_bytes()
+        c, _ = _capture_bytes()
+        j = SessionJournal()
+        for blob in (a, b, c):
+            j.add_capture(blob)
+        j.set_doc(_doc_bytes(a, c))
+        assert j.state()[1] == [b]
+
+    def test_multi_capture_bytes_need_every_id_present(self):
+        # A capture blob holding two TimeData is only redundant once
+        # the document holds BOTH (subset, not intersection).
+        one, _ = _capture_bytes()
+        two, _ = _capture_bytes()
+        pair = _doc_bytes(one, two)     # one blob, two ids
+        j = SessionJournal()
+        j.add_capture(pair)
+        j.set_doc(_doc_bytes(one))
+        assert j.state()[1] == [pair]
+        j.set_doc(_doc_bytes(one, two))
+        assert j.state()[1] == []
+
+    def test_malformed_capture_is_cleared_by_any_post(self):
+        # No readable ids -> the old behaviour, so junk cannot pile up.
+        j = SessionJournal()
+        j.add_capture(b'not a dvma at all')
+        j.set_doc(_doc_bytes())
+        assert j.state()[1] == []
+
+    def test_malformed_doc_clears_only_id_less_captures(self):
+        good, _ = _capture_bytes()
+        j = SessionJournal()
+        j.add_capture(good)
+        j.add_capture(b'junk')
+        j.set_doc(b'not a dvma either')
+        assert j.state()[1] == [good]
+
+    def test_generation_semantics_unchanged(self):
+        # Both writers still count, whatever the id matching decided.
+        blob, _ = _capture_bytes()
+        j = SessionJournal()
+        j.add_capture(blob)
+        assert j.generation == 1
+        j.set_doc(_doc_bytes())          # clears nothing now
+        assert j.generation == 2
+        assert j.state()[1] == [blob]
+        assert j.set_doc(_doc_bytes(blob), expect_generation=2) is True
+        assert j.generation == 3
+
+    def test_surviving_capture_still_evicts_under_the_budget(self, monkeypatch):
+        # The pending list is still bounded: id-matching decides what a
+        # POST clears, not what the budget evicts.
+        blob, _ = _capture_bytes()
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES',
+                            len(blob))
+        j = SessionJournal()
+        j.add_capture(blob)
+        second, _ = _capture_bytes()
+        j.add_capture(second)
+        assert j.state()[1] == [second]
 
 
 class TestGeneration:

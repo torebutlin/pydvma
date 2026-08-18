@@ -18,14 +18,28 @@ Writers:
 * :meth:`pydvma.session.Session.push` from a notebook kernel
   (``notify=True`` so connected apps reload).
 
-The clears-pending contract: a document post CLEARS the pending capture
-list, because the app serialises its whole dataset at post time — any
-capture it had already received is inside that document. A capture
-landing after the post stays pending until the next one.
+The clears-pending contract: a document post clears exactly those
+pending captures the document PROVABLY contains. Each capture's
+``TimeData`` ``unique_id``s are read from its manifest at registration
+(:func:`pydvma.container.manifest_ids` — manifest only, no arrays), the
+posted document's are read the same way, and a pending capture is
+dropped only when its ids are a SUBSET of the document's. Anything the
+document does not contain stays pending.
 
-That contract is exactly why writers need a way to detect that the
-world moved under them: a post is a WHOLE-DOCUMENT replace that also
-drops pending captures, so a writer which read the journal, spent time
+The naive version — clear everything, because the app serialises its
+whole dataset at post time — is right for the common case and wrong at
+its edges, both of which lose a measurement outright: a capture
+registered AFTER the app serialised its document but BEFORE the post
+arrived was never in any document, and a second tab's post would clear
+the first tab's captures on nothing but structure. Id-matching closes
+both without weakening the common case. A capture whose ids cannot be
+read at all (malformed bytes — nothing writes those, but the journal
+must not accumulate junk forever) keeps the OLD behaviour and is
+cleared by any post.
+
+The whole-document replace is exactly why writers need a way to detect
+that the world moved under them: a post replaces the WHOLE DOCUMENT, so
+a writer which read the journal, spent time
 merging, and then posted would silently discard any capture (or any
 other writer's post) that landed in between. Hence the
 :attr:`~SessionJournal.generation` counter — bumped under the lock by
@@ -76,6 +90,8 @@ before any autosave has ever landed leaves no spill file at all.
 import os
 import tempfile
 import threading
+
+from . import container
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
@@ -139,6 +155,16 @@ class SessionJournal(object):
     def set_doc(self, doc_bytes, notify=False, expect_generation=None):
         """Replace the session document (and clear pending captures).
 
+        Only the captures this document PROVABLY contains are cleared:
+        the document's ``unique_id`` set is read from its manifest
+        (:func:`pydvma.container.manifest_ids`) and a pending capture is
+        dropped only when its own ids are a subset of it, so a capture
+        that landed after the poster serialised its document — or one
+        belonging to a different tab — survives the post and is still
+        offered on the next :meth:`state`. A capture with no readable
+        ids is cleared by any post (see the module docstring's
+        clears-pending contract).
+
         Returns True when the document was written, and False only when
         an ``expect_generation`` was supplied and no longer matches — in
         which case NOTHING happens: the document is untouched, pending
@@ -172,12 +198,18 @@ class SessionJournal(object):
         # doing that copy while holding the lock would stall every other
         # thread's unrelated add_capture/state/etc. for its duration.
         doc = bytes(doc_bytes)
+        # Manifest parse before the lock too (same reasoning): it reads
+        # only manifest.json, but the zip's central directory still has
+        # to be walked, and both call sites are already off the event
+        # loop (the /engine executor; Session.push's own thread).
+        doc_ids = container.manifest_ids(doc)
         with self._lock:
             if (expect_generation is not None
                     and expect_generation != self._generation):
                 return False
             self._doc = doc
-            self._captures = []
+            self._captures = [entry for entry in self._captures
+                              if entry[1] and not entry[1] <= doc_ids]
             self._generation += 1
             listeners = list(self._listeners) if notify else []
         self._spill()
@@ -189,8 +221,15 @@ class SessionJournal(object):
         return True
 
     def add_capture(self, dvma_bytes):
-        """Register one capture's ``.dvma`` bytes, pending until the
-        next document post (see the module docstring's contract).
+        """Register one capture's ``.dvma`` bytes, pending until a
+        document containing it is posted (module docstring's contract).
+
+        The capture's identity — its ``TimeData`` ``unique_id``s, read
+        from the manifest by :func:`pydvma.container.manifest_ids` and
+        stored beside the bytes — is what a later
+        :meth:`set_doc` matches against to decide whether that document
+        already holds this capture. Reading it here, once, keeps the
+        cost off every subsequent post.
 
         This does NOT touch the spill file — the spill mirrors only
         the posted document (see the module docstring), so a capture
@@ -214,19 +253,23 @@ class SessionJournal(object):
                 capture's full ``.dvma`` bytes.
         """
         _check_bytes(dvma_bytes, 'dvma_bytes')
-        # Coerce BEFORE the lock -- see set_doc's matching comment.
+        # Coerce (and read the manifest) BEFORE the lock -- see set_doc's
+        # matching comments.
         data = bytes(dvma_bytes)
+        ids = container.manifest_ids(data)
         with self._lock:
-            self._captures.append(data)
-            total = sum(len(c) for c in self._captures)
+            self._captures.append((data, ids))
+            total = sum(len(c) for c, _ in self._captures)
             while total > PENDING_CAPTURES_MAX_BYTES and self._captures:
-                total -= len(self._captures.pop(0))
+                total -= len(self._captures.pop(0)[0])
             self._generation += 1
 
     def state(self):
         """Current ``(doc_bytes_or_None, [capture_bytes, ...], generation)``.
 
-        The list is a copy — mutating it never touches the journal.
+        The list is a fresh list of the capture BYTES (the per-capture
+        id sets kept alongside them are the journal's own bookkeeping
+        and never leave it) — mutating it never touches the journal.
         The document is returned by reference, but ``bytes`` is
         immutable so that is equivalent to a copy for callers. The
         generation describes THIS snapshot: hand it back as
@@ -234,7 +277,8 @@ class SessionJournal(object):
         refuses to clobber anything that landed since.
         """
         with self._lock:
-            return self._doc, list(self._captures), self._generation
+            return (self._doc, [data for data, _ids in self._captures],
+                    self._generation)
 
     @property
     def generation(self):

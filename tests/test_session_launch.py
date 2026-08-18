@@ -112,6 +112,24 @@ class TestLaunchLifecycle:
         assert repr(s) == '<Session %s (driver=mock, closed)>' % s.url
 
 
+class TestLaunchDependencies:
+    """The tombstone for the removed `dvma.Logger` sends people straight
+    to `launch()`, so a base install (no [serve] extra) must meet an
+    actionable ImportError there, not a bare missing-module error."""
+
+    def test_missing_websockets_names_the_extra(self, monkeypatch, tmp_path):
+        import sys
+        # None in sys.modules makes `import websockets` raise ImportError
+        # — the standard way to simulate an absent dependency.
+        monkeypatch.setitem(sys.modules, 'websockets', None)
+        with pytest.raises(ImportError) as excinfo:
+            launch(_mock_settings(), open_browser=False, port=0,
+                   session_dir=tmp_path, recover=False)
+        message = str(excinfo.value)
+        assert 'pydvma[serve]' in message
+        assert 'websockets' in message
+
+
 class TestSessionData:
 
     def test_empty_session_data(self, tmp_path):
@@ -148,6 +166,46 @@ class TestSessionData:
             s.push(td)
             names = [t.test_name for t in s.data.time_data_list]
         assert names == ['modified']
+
+    def test_push_preserves_app_authored_document_state(self, tmp_path):
+        # A pull -> modify -> push round trip must not destroy the
+        # per-item manifest keys only the browser app understands (its
+        # `ui` block). The pulled item carries them as _container_extra,
+        # and the whole-item replacement carries them back.
+        import io
+        import json
+        import zipfile
+
+        doc = container.save_bytes(_tiny_dataset('original'))
+        with zipfile.ZipFile(io.BytesIO(doc)) as zf:
+            manifest = json.loads(zf.read('manifest.json'))
+            members = {n: zf.read(n) for n in zf.namelist()}
+        manifest['items'][0]['ui'] = {'labels': ['hammer', 'accel']}
+        members['manifest.json'] = json.dumps(manifest).encode()
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for name, blob in members.items():
+                zf.writestr(name, blob)
+
+        with _launch(tmp_path) as s:
+            s._server.journal.set_doc(buf.getvalue())
+            td = s.data.time_data_list[0]          # pulled: carries the stash
+            td.test_name = 'modified'
+            s.push(td)
+            out, _, _ = s._server.journal.state()
+        with zipfile.ZipFile(io.BytesIO(out)) as zf:
+            entry = json.loads(zf.read('manifest.json'))['items'][0]
+        assert entry['ui'] == {'labels': ['hammer', 'accel']}
+        assert entry['meta']['test_name'] == 'modified'
+
+    def test_push_of_a_new_item_carries_no_app_state(self, tmp_path):
+        # The documented flip side: a NEWLY created item replacing a
+        # stored one has no display state, and none is invented.
+        with _launch(tmp_path) as s:
+            s.push(_tiny_dataset('fresh'))
+            out, _, _ = s._server.journal.state()
+        item = container.load_bytes(out).time_data_list[0]
+        assert not hasattr(item, '_container_extra')
 
     def test_data_includes_pending_captures(self, tmp_path):
         with _launch(tmp_path) as s:
