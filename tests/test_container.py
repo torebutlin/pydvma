@@ -534,6 +534,10 @@ class TestBytesRoundTrip:
         blob = container.save_bytes(ds)
         out = container.load_bytes(blob)
         assert len(out.time_data_list) == len(ds.time_data_list)
+        np.testing.assert_array_equal(out.time_data_list[0].time_data,
+                                       ds.time_data_list[0].time_data)
+        np.testing.assert_array_equal(out.freq_data_list[0].freq_data,
+                                       ds.freq_data_list[0].freq_data)
 
     def test_load_bytes_reads_a_file_written_by_save(self, tmp_path):
         ds = _make_full_dataset()
@@ -541,13 +545,18 @@ class TestBytesRoundTrip:
         container.save(ds, str(p))
         out = container.load_bytes(p.read_bytes())
         assert len(out.time_data_list) == len(ds.time_data_list)
+        np.testing.assert_array_equal(out.time_data_list[0].time_data,
+                                       ds.time_data_list[0].time_data)
+        np.testing.assert_array_equal(out.freq_data_list[0].freq_data,
+                                       ds.freq_data_list[0].freq_data)
 
-    def test_save_writes_what_load_bytes_reads_identically(self, tmp_path):
+    def test_save_and_save_bytes_share_one_writer(self, tmp_path):
         # save() and save_bytes() must share ONE writer: assert the
-        # member NAMES and manifest content agree between the two
-        # (byte-identity of the whole zip is not required — zip metadata
-        # may embed timestamps — but the member list and the manifest
-        # must match).
+        # member NAMES, manifest content, AND every member's raw payload
+        # bytes agree between the two (byte-identity of the whole zip is
+        # not required — zip metadata may embed timestamps — but the
+        # member list, manifest, and each member's read() payload must
+        # match exactly).
         ds = _make_full_dataset()
         p = tmp_path / 'x.dvma'
         container.save(ds, str(p))
@@ -557,12 +566,20 @@ class TestBytesRoundTrip:
         with zipfile.ZipFile(p, 'r') as zf_file:
             file_names = sorted(zf_file.namelist())
             file_manifest = json.loads(zf_file.read('manifest.json'))
+            file_payloads = {name: zf_file.read(name) for name in file_names}
+            file_compress = {name: zf_file.getinfo(name).compress_type
+                              for name in file_names}
         with zipfile.ZipFile(io.BytesIO(blob), 'r') as zf_bytes:
             bytes_names = sorted(zf_bytes.namelist())
             bytes_manifest = json.loads(zf_bytes.read('manifest.json'))
+            bytes_payloads = {name: zf_bytes.read(name) for name in bytes_names}
+            bytes_compress = {name: zf_bytes.getinfo(name).compress_type
+                               for name in bytes_names}
 
         assert file_names == bytes_names
         assert file_manifest == bytes_manifest
+        assert file_payloads == bytes_payloads
+        assert file_compress == bytes_compress
 
     def test_save_bytes_output_is_a_zip(self):
         ds = _make_full_dataset()

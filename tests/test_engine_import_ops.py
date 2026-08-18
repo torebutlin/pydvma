@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 """pydvma.engine legacy/mat import ops — native-host safety (no fixed /tmp).
 
-``legacy_to_dvma`` and ``mat_to_dvma`` round-trip through a file path
-(``container.save`` / ``import_from_matlab_jwlogger`` both take a
-FILENAME, not a buffer). In pyodide that path is an in-memory FS, so a
-hard-coded ``/tmp/...`` name was harmless; under the native CPython host
-it is a real filesystem write, and a fixed ``/tmp`` path is unsafe
-cross-platform (absent on Windows, and a fixed name collides between
-concurrent connections).
+``mat_to_dvma`` round-trips its ``.mat`` INPUT through a file path
+(``import_from_matlab_jwlogger`` takes a FILENAME, not a buffer). In
+pyodide that path is an in-memory FS, so a hard-coded ``/tmp/...`` name
+was harmless; under the native CPython host it is a real filesystem
+write, and a fixed ``/tmp`` path is unsafe cross-platform (absent on
+Windows, and a fixed name collides between concurrent connections).
+``legacy_to_dvma`` has no such need at all — it serialises its
+``.dvma`` output straight to bytes via ``container.save_bytes`` — so
+only ``mat_to_dvma`` still exercises the tempfile-safety story below;
+its test is kept here alongside a plain bytes-in/bytes-out correctness
+check for ``legacy_to_dvma``.
 
 NOTE on what `monkeypatch.chdir` does and does not prove: it only
 changes the CWD, so it cannot itself catch a regression to an ABSOLUTE
@@ -16,11 +20,11 @@ CWD) — these tests do not claim otherwise (see names below). What they
 verify is the actual end-to-end behaviour of the ops: the returned
 `.dvma` bytes load back with `container.load` into the same data that
 went in (fs, sample count, item count), from a CWD that is NOT `/tmp`.
-That is real coverage of the tempfile mechanism, and it is the
-regression net for a fixed-path bug on a system where `/tmp` is simply
-absent (e.g. Windows) — such a system fails at the `open()` call
-itself, which no CWD trick is needed to catch. They are expected to
-ALREADY PASS on macOS/Linux (where `/tmp` exists) even before the
+For `mat_to_dvma` that is real coverage of the tempfile mechanism, and
+it is the regression net for a fixed-path bug on a system where `/tmp`
+is simply absent (e.g. Windows) — such a system fails at the `open()`
+call itself, which no CWD trick is needed to catch. They are expected
+to ALREADY PASS on macOS/Linux (where `/tmp` exists) even before the
 tempfile fix landed; their job is to keep passing once it did.
 """
 import io
@@ -51,18 +55,20 @@ def _legacy_npy_bytes():
 
 
 def _load_dvma_bytes(tmp_path, dvma_bytes, name):
-    # container.load takes a FILENAME, not a buffer -- round-trip through
-    # tmp_path (a directory distinct from wherever the op itself ran) so
-    # the assertions below exercise a real save/read, not just "non-empty".
+    # container.load_bytes could read `dvma_bytes` directly, but this
+    # helper deliberately writes through tmp_path (a directory distinct
+    # from wherever the op itself ran) first -- that proves the returned
+    # bytes are a genuine on-disk-valid .dvma, not just "non-empty".
     path = tmp_path / name
     path.write_bytes(dvma_bytes)
     return container.load(str(path))
 
 
 def test_legacy_to_dvma_roundtrips(tmp_path, monkeypatch):
-    # Run from a directory that is NOT /tmp -- the op must still work
-    # (it uses its own tempfile.TemporaryDirectory internally regardless
-    # of CWD; this just keeps the test independent of any stray /tmp state).
+    # legacy_to_dvma no longer touches the filesystem at all (it writes
+    # straight to bytes via container.save_bytes); this chdir just keeps
+    # the test independent of any stray /tmp state, matching its
+    # mat_to_dvma sibling below.
     monkeypatch.chdir(tmp_path)
     out = engine.legacy_to_dvma(_legacy_npy_bytes())
     assert isinstance(out['dvma'], (bytes, bytearray))

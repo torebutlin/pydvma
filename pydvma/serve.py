@@ -948,8 +948,8 @@ def _capture_to_dvma(settings, test_name, output=None, cancel_event=None):
     sleeps for ``stored_time`` seconds (or blocks waiting for a
     trigger).  Returns ``(dvma_bytes, n_samples, n_channels)`` where the
     counts come from the captured ``TimeData``.  The container is
-    written through :func:`pydvma.container.save_bytes` (the one save
-    story, in memory — no temp file) — the browser owns the "save to
+    written through :func:`pydvma.container.save_bytes` — straight to
+    bytes, in memory, no temp file — the browser owns the "save to
     disk" step (decision #4).
 
     ``output`` is an optional ``(N, output_channels)`` stimulus waveform

@@ -86,7 +86,7 @@ class DataSet():
         the version field) so files saved by pydvma <= 1.4.0 load forever —
         the compatibility contract — on BOTH the Qt load path
         (``file.load_data`` → ``np.load``) and the browser legacy-import
-        path (``glue.legacy_to_dvma`` → ``np.load`` → ``container.save``).
+        path (``glue.legacy_to_dvma`` → ``np.load`` → ``container.save_bytes``).
         Called only when unpickling; freshly constructed DataSets go through
         ``__init__`` and never touch this. Newly saved objects already carry
         every attribute, so this is a no-op for them.

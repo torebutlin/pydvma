@@ -49,9 +49,14 @@ Manifest keys unknown to this reader are ignored on load. ``meta``
 may also carry optional analysis flags (see `_OPTIONAL_META`) that
 are written only when set on the object.
 
-Use `save` / `load`; ``file.save_data`` and ``file.load_data``
-delegate here — load sniffs the format from magic bytes so old
-pickle ``.npy`` files keep working.
+Use `save` / `load`, or their in-memory twins `save_bytes` /
+`load_bytes` (same manifest, same members, one shared writer/reader —
+no filesystem touched) for callers that move a dataset over a socket
+or straight into another buffer rather than a file, e.g. the serve
+bridge's capture path and the pyodide engine's legacy/mat import ops.
+``file.save_data`` and ``file.load_data`` delegate to `save`/`load` —
+`load` sniffs the format from magic bytes so old pickle ``.npy``
+files keep working.
 """
 import datetime
 import io
@@ -329,7 +334,7 @@ def save_bytes(dataset):
     return buf.getvalue()
 
 
-def load(filename):
+def load(filename, _source_name=None):
     """Load a .dvma container file and return the DataSet.
 
     Objects are rebuilt attribute-by-attribute (no constructors run),
@@ -341,18 +346,25 @@ def load(filename):
     Raises ValueError if the file's ``format_version`` is newer than
     this reader supports, or if an item's ``kind`` is unknown —
     rather than silently misreading a file written by a newer pydvma.
+    These messages are user-facing (e.g. the crash-recovery offer that
+    lets a user re-open a previous pydvma version's spill file), so
+    they name the offending source; the private ``_source_name``
+    overrides what's named in place of ``filename`` when the caller
+    has a friendlier name to give (`load_bytes` uses it since its
+    `filename` is a bare `BytesIO` with no useful repr).
     """
+    source = filename if _source_name is None else _source_name
     with zipfile.ZipFile(filename, 'r') as zf:
         try:
             manifest = json.loads(zf.read('manifest.json').decode('utf-8'))
         except KeyError:
             raise ValueError(
                 '{!r} is a zip file but not a dvma-dataset '
-                '(no manifest.json inside)'.format(filename)) from None
+                '(no manifest.json inside)'.format(source)) from None
         if manifest.get('format') != FORMAT_NAME:
             raise ValueError(
                 '{!r} is a zip file but not a dvma-dataset '
-                '(manifest format={!r})'.format(filename,
+                '(manifest format={!r})'.format(source,
                                                  manifest.get('format')))
         file_version = manifest.get('format_version')
         if not isinstance(file_version, int) or file_version > FORMAT_VERSION:
@@ -360,7 +372,7 @@ def load(filename):
                 '{!r} uses dvma-dataset format_version {!r}, but this '
                 'pydvma reads up to {}. Update pydvma to open this file '
                 '(pip install --upgrade pydvma).'.format(
-                    filename, file_version, FORMAT_VERSION))
+                    source, file_version, FORMAT_VERSION))
         dataset = datastructure.DataSet()
         for entry in manifest['items']:
             kind = entry['kind']
@@ -368,7 +380,7 @@ def load(filename):
             if cls is None:
                 raise ValueError(
                     '{!r} contains unknown data kind {!r} — written by '
-                    'a newer pydvma?'.format(filename, kind))
+                    'a newer pydvma?'.format(source, kind))
             item = cls.__new__(cls)
             arrays = entry.get('arrays', {})
             meta = entry.get('meta', {})
@@ -403,8 +415,9 @@ def load_bytes(data):
     The bytes-side twin of `load` (which see for the schema/version
     rules — both share the reader; `zipfile.ZipFile` accepts a
     file-like object exactly like a filename, so this just wraps
-    `data` in a `io.BytesIO` and delegates). Error messages that would
-    normally name the offending filename instead show the ``BytesIO``
-    object's repr.
+    `data` in a `io.BytesIO` and delegates). Any of `load`'s
+    user-facing error messages name the source as
+    ``'<in-memory .dvma bytes>'`` rather than a `BytesIO` object's
+    unhelpful repr.
     """
-    return load(io.BytesIO(data))
+    return load(io.BytesIO(data), _source_name='<in-memory .dvma bytes>')

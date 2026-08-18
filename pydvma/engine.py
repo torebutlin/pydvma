@@ -382,44 +382,38 @@ def legacy_to_dvma(npy_bytes):
     arrives as a JS ``Uint8Array`` (which ``bytes(...)`` faithfully turns into
     a Python ``bytes``); it is loaded with ``allow_pickle=True`` /
     ``fix_imports=True`` (Py2->Py3 pickle compatibility), the single ``DataSet``
-    is pulled out (``d[0]``), and ``container.save`` writes a real ``.dvma``
-    zip. That file is written into a fresh ``tempfile.TemporaryDirectory``
-    (in-memory under pyodide, a real per-call temp dir on the native CPython
-    host; removed again as soon as the bytes are read back), then read back
-    and returned as ``{'dvma': <bytes>}``.
+    is pulled out (``d[0]``), and ``container.save_bytes`` writes a real
+    ``.dvma`` zip straight into memory — no temp file at all — returned as
+    ``{'dvma': <bytes>}``.
 
     The returned Python ``bytes`` marshals across the worker's ``toJs``
     (``create_proxies=False``) boundary as a JS ``Uint8Array`` — exactly what
-    the client feeds to ``readDvma``. (``container.save`` takes a FILENAME, not
-    a buffer, so the temp-dir hop is required.)
+    the client feeds to ``readDvma``.
 
     STALE-WHEEL GUARD: old pydvma pickles (<= 1.4.0) predate one or more of
     the per-kind ``*_list`` attributes on ``DataSet`` (e.g. the 2019/4C6-era
-    files lack ``modal_data_list``), and ``container.save`` reads every list,
-    so it would raise ``AttributeError: 'DataSet' object has no attribute
-    'modal_data_list'``. Repo pydvma fixes this in ``DataSet.__setstate__``,
-    but a browser session may still be running an OLD cached engine wheel
-    without that fix. We re-apply the same normalisation here so a legacy
-    ``.npy`` loads even against a stale wheel. Idempotent on a DataSet that
+    files lack ``modal_data_list``), and ``container.save_bytes`` (via the
+    shared ``_write_dataset`` writer) reads every list, so it would raise
+    ``AttributeError: 'DataSet' object has no attribute 'modal_data_list'``.
+    Repo pydvma fixes this in ``DataSet.__setstate__``, but a browser
+    session may still be running an OLD cached engine wheel without that
+    fix. We re-apply the same normalisation here so a legacy ``.npy``
+    loads even against a stale wheel. Idempotent on a DataSet that
     ``__setstate__`` (new wheel) already normalised.
     """
     d = np.load(io.BytesIO(bytes(npy_bytes)), allow_pickle=True, fix_imports=True)
     ds = _normalise_legacy_dataset(d[0])
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, 'legacy.dvma')
-        container.save(ds, path)
-        with open(path, 'rb') as f:
-            return {'dvma': f.read()}
+    return {'dvma': container.save_bytes(ds)}
 
 
 def _normalise_legacy_dataset(ds):
     """Ensure a legacy-unpickled ``DataSet`` carries every ``*_list``.
 
     Fills in any per-kind list attribute a pre-1.4.0 pickle predates with an
-    empty instance of the right type, so ``container.save`` never trips over
-    a missing list. Mirrors ``DataSet.__setstate__`` in repo pydvma; kept
-    here as well so stale engine wheels (shipped before that fix) still
-    import legacy files. Returns ``ds`` (mutated in place).
+    empty instance of the right type, so ``container.save``/``save_bytes``
+    never trips over a missing list. Mirrors ``DataSet.__setstate__`` in
+    repo pydvma; kept here as well so stale engine wheels (shipped before
+    that fix) still import legacy files. Returns ``ds`` (mutated in place).
     """
     list_classes = {
         'time_data_list': datastructure.TimeDataList,
@@ -442,23 +436,22 @@ def mat_to_dvma(mat_bytes):
     ``mat_bytes`` (a JS ``Uint8Array``) is written into a fresh
     ``tempfile.TemporaryDirectory`` (in-memory under pyodide, a real
     per-call temp dir on the native CPython host; removed again once the
-    result bytes are read back) because
+    dataset has been read out of it) because
     ``pydvma.file.import_from_matlab_jwlogger`` reads from a FILENAME
-    (signature ``(filename=None)``). The resulting dataset is saved with
-    ``container.save`` and the ``.dvma`` bytes read back, returned as
+    (signature ``(filename=None)``) — the hop is for the ``.mat`` INPUT
+    (``scipy.io.loadmat`` wants a path), not for the container write.
+    The resulting dataset is serialised straight to bytes with
+    ``container.save_bytes`` (no second temp file) and returned as
     ``{'dvma': <bytes>}`` — marshalled to a JS ``Uint8Array`` for
     ``readDvma``, same as ``legacy_to_dvma``.
     """
     from pydvma import file as pfile
     with tempfile.TemporaryDirectory() as tmpdir:
         mat_path = os.path.join(tmpdir, 'import.mat')
-        dvma_path = os.path.join(tmpdir, 'import.dvma')
         with open(mat_path, 'wb') as f:
             f.write(bytes(mat_bytes))
         ds = pfile.import_from_matlab_jwlogger(filename=mat_path)
-        container.save(ds, dvma_path)
-        with open(dvma_path, 'rb') as f:
-            return {'dvma': f.read()}
+    return {'dvma': container.save_bytes(ds)}
 
 
 def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):
