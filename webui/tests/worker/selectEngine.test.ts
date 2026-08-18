@@ -35,6 +35,11 @@ const { createSocketEngineClientMock, fakeSocketClient } = vi.hoisted(() => {
     // init() resolves. null by default, same as a freshly-constructed real
     // client before its first greeting.
     pydvmaVersion: null as string | null,
+    // Same reasoning as pydvmaVersion: SocketEngineClient declares it and
+    // tryNative reads it straight off the client after init() resolves.
+    // false by default -- a greeting that never said `journal: true`.
+    journalSupported: false,
+    onJournalUpdate: vi.fn(() => () => {}),
     init: vi.fn().mockResolvedValue(undefined),
     call: vi.fn(),
     observe: vi.fn(),
@@ -55,7 +60,9 @@ vi.mock('../../src/lib/worker/client', () => ({
   createEngineClient: createEngineClientMock,
 }));
 
-import { decideEnginePolicy, parseEngineParam, resolveEngineClient } from '../../src/lib/worker/selectEngine';
+import {
+  decideEnginePolicy, parseEngineParam, resolveEngineClient, willUseNativeEngine,
+} from '../../src/lib/worker/selectEngine';
 
 describe('parseEngineParam (stage-1 opt-in policy)', () => {
   test('no param expresses no preference at all', () => {
@@ -114,6 +121,7 @@ function resetFakes(): void {
   fakeSocketClient.init.mockReset();
   fakeSocketClient.init.mockResolvedValue(undefined); // default: connects fine
   fakeSocketClient.pydvmaVersion = null;
+  fakeSocketClient.journalSupported = false;
 }
 
 describe('resolveEngineClient (served-probe wiring, off-window / no real transport)', () => {
@@ -129,7 +137,19 @@ describe('resolveEngineClient (served-probe wiring, off-window / no real transpo
     // socketClient's own tests connect to.
     expect(createSocketEngineClientMock).toHaveBeenCalledWith('ws://127.0.0.1:8760/engine');
     expect(fakeSocketClient.init).toHaveBeenCalledTimes(1);
-    expect(resolved).toEqual({ client: fakeSocketClient, host: 'native' });
+    expect(resolved).toEqual({ client: fakeSocketClient, host: 'native', journal: false });
+  });
+
+  test('the greeted journal capability is carried into the resolved ResolvedEngine', async () => {
+    // stores/engine.ts gates every journal op on this (journalAvailable()),
+    // so a serve that never advertised one must resolve to `journal: false`
+    // and NOT merely to a missing key.
+    resetFakes();
+    fakeSocketClient.journalSupported = true;
+    expect((await resolveEngineClient()).journal).toBe(true);
+
+    resetFakes();
+    expect((await resolveEngineClient()).journal).toBe(false);
   });
 
   test('the greeted client.pydvmaVersion is carried into the resolved ResolvedEngine', async () => {
@@ -195,6 +215,57 @@ describe('resolveEngineClient (served-probe wiring, off-window / no real transpo
       expect(resolved.host).toBe('pyodide');
       expect(probeServeConfigMock).not.toHaveBeenCalled();
       expect(createSocketEngineClientMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('willUseNativeEngine (App.svelte\'s boot-time journal gate)', () => {
+  test('no param + served -> true, having probed /config exactly once', async () => {
+    resetFakes();
+    vi.stubGlobal('window', { location: { search: '' } });
+    try {
+      await expect(willUseNativeEngine()).resolves.toBe(true);
+      expect(probeServeConfigMock).toHaveBeenCalledTimes(1);
+      // The whole point: it decides WITHOUT connecting anything.
+      expect(createSocketEngineClientMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('no param + NOT served (Pages / vite dev / JupyterLite) -> false', async () => {
+    resetFakes();
+    probeServeConfigMock.mockResolvedValue(false);
+    vi.stubGlobal('window', { location: { search: '' } });
+    try {
+      await expect(willUseNativeEngine()).resolves.toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('explicit ?enginehost=pyodide -> false, and the probe is skipped', async () => {
+    resetFakes();
+    vi.stubGlobal('window', { location: { search: '?enginehost=pyodide' } });
+    try {
+      await expect(willUseNativeEngine()).resolves.toBe(false);
+      expect(probeServeConfigMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('an explicit native URL -> true even when not served (the e2e cross-origin form)', async () => {
+    resetFakes();
+    probeServeConfigMock.mockResolvedValue(false);
+    vi.stubGlobal('window', {
+      location: { search: '?enginehost=' + encodeURIComponent('ws://127.0.0.1:8767/engine') },
+    });
+    try {
+      await expect(willUseNativeEngine()).resolves.toBe(true);
+      expect(probeServeConfigMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

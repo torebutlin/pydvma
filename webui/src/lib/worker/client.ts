@@ -86,6 +86,19 @@ export interface EngineClient {
   restart(reason: Error): void;
   /** Tear down the worker and reject all in-flight calls. */
   dispose(reason?: Error): void;
+  /**
+   * Subscribe to server-initiated SESSION JOURNAL updates (stage 3);
+   * returns an unsubscribe callable.
+   *
+   * OPTIONAL, and only the socket transport implements it: the update is a
+   * `pydvma-serve` process telling this client that the session document it
+   * owns has changed under it (a notebook `dvma.launch` session's
+   * `Session.push`). A pyodide worker has no server and no journal, so it
+   * simply doesn't offer this — callers reach it through
+   * `stores/engine.ts`'s `onJournalUpdate`, which no-ops when the active
+   * engine has none.
+   */
+  onJournalUpdate?(cb: () => void): () => void;
 }
 
 /** Default factory: the real ES-module worker. Overridable for tests. */

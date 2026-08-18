@@ -70,17 +70,31 @@ const SUPPORTED_ENGINE_PROTOCOL_VERSION = 1;
 interface Pending { op: string; resolve: (v: any) => void; reject: (e: any) => void }
 
 /**
- * `EngineClient` plus the ONE extra the socket transport carries that a
- * Worker has no equivalent for: the native host's own `pydvma` release
- * (`pydvmaVersion`, from the greeting's `pydvma` field — `null` before any
- * greeting has arrived, e.g. never connected, or connected but not yet
- * greeted). Not part of the shared `EngineClient` interface: it is
- * meaningless for the pyodide worker client, which has no server release to
- * report. `resolveEngineClient`'s `tryNative` reads it off THIS type to
- * carry it into `ResolvedEngine.pydvmaVersion`.
+ * `EngineClient` plus the extras the socket transport carries that a Worker
+ * has no equivalent for:
+ *
+ *  - `pydvmaVersion` — the native host's own `pydvma` release (the
+ *    greeting's `pydvma` field); `null` before any greeting has arrived
+ *    (never connected, or connected but not yet greeted);
+ *  - `journalSupported` — whether this server owns a session journal (the
+ *    greeting's `journal` field, `false` unless it is exactly `true`), i.e.
+ *    whether `journal_set`/`journal_get`/`journal_discard_recovered` ops are
+ *    answered here. Capability-gated rather than version-gated: a serve that
+ *    predates the journal greets with the SAME protocol version and simply
+ *    omits the flag, so the app must gate on this and never on `v`.
+ *  - `onJournalUpdate` — see {@link EngineClient.onJournalUpdate}; declared
+ *    non-optional here because the socket transport always provides it.
+ *
+ * None of these belong in the shared `EngineClient` shape as required
+ * members: they are meaningless for the pyodide worker client, which has no
+ * server release to report and no server-side journal.
+ * `resolveEngineClient`'s `tryNative` reads them off THIS type to carry them
+ * into `ResolvedEngine`.
  */
 export interface SocketEngineClient extends EngineClient {
   readonly pydvmaVersion: string | null;
+  readonly journalSupported: boolean;
+  onJournalUpdate(cb: () => void): () => void;
 }
 
 /**
@@ -106,6 +120,23 @@ export function createSocketEngineClient(
   // see SUPPORTED_ENGINE_PROTOCOL_VERSION's docstring) via the
   // `pydvmaVersion` getter below.
   let pydvmaVersion: string | null = null;
+  // Whether the greeted server owns a session journal (stage 3) -- false
+  // until a greeting says otherwise, and re-read on every greeting so a
+  // reconnect to a DIFFERENT server (a serve restarted without the journal)
+  // cannot leave a stale `true` behind.
+  let journalSupported = false;
+  /**
+   * Subscribers to server-initiated journal updates (`{"type":"journal"}`
+   * text frames — a notebook `Session.push`). Per-INSTANCE, not module-level:
+   * this client is instance-based (a second one exists whenever `EngineProbe`
+   * is mounted under `?engine=1`), so module-scoped subscribers would receive
+   * another connection's pushes. `stores/engine.ts` re-exports a module-level
+   * `onJournalUpdate` facade over the ACTIVE client so `App.svelte` still has
+   * one stable import. Survives `restart()` + reconnect deliberately (the
+   * socket is replaced, this client object is not), and is dropped only by
+   * the terminal `dispose()`.
+   */
+  const journalSubs = new Set<() => void>();
   // The in-flight init()'s reject, live only while a connect is awaiting its
   // greeting. init() is NOT in `pending` (it has no request id yet), so
   // rejectAll() can't reach it -- restart()/dispose() must settle it
@@ -188,6 +219,24 @@ export function createSocketEngineClient(
         events.onProgress?.({ callId: msg.callId, op: entry.op, done: msg.done, total: msg.total });
       }
       return; // unknown/settled callId -- ignore silently
+    }
+    if (msg?.type === 'journal') {
+      // The serve process's session document changed under us -- a notebook
+      // `Session.push` (the app's OWN journal_set posts are silent, so this
+      // is never an echo of our own write). Carries no payload by design:
+      // subscribers re-read the journal with `journal_get`. Iterate a COPY
+      // so a subscriber that unsubscribes itself from inside the callback
+      // cannot mutate the set mid-iteration.
+      for (const cb of [...journalSubs]) {
+        try {
+          cb();
+        } catch (e) {
+          // One broken subscriber must not silence the rest, nor wedge the
+          // socket's message pump.
+          console.warn('[engine-socket] journal subscriber failed', e);
+        }
+      }
+      return;
     }
     if (msg?.type === 'error') {
       // The server couldn't decode an inbound frame at all, so it carries no
@@ -307,6 +356,11 @@ export function createSocketEngineClient(
         // above, this is never gated). `typeof` guards a greeting from an
         // older/odd server that omits or mistypes the field.
         pydvmaVersion = typeof msg.pydvma === 'string' ? msg.pydvma : null;
+        // Session-journal capability (stage 3), strict-true only: an absent
+        // or non-boolean field means "this server has no journal", which is
+        // exactly what a pre-journal serve of the same protocol version
+        // sends. See SocketEngineClient's docstring.
+        journalSupported = msg.journal === true;
         if (pydvmaVersion) console.info('[engine-socket] native engine: pydvma ' + pydvmaVersion);
         // Steady-state handlers take over only now that init is done.
         sock.onmessage = (ev: { data: unknown }) => handleMessage(ev.data);
@@ -324,6 +378,14 @@ export function createSocketEngineClient(
   return {
     /** The native host's greeted pydvma release, or null pre-greeting. */
     get pydvmaVersion(): string | null { return pydvmaVersion; },
+
+    /** Whether the greeted server answers journal ops (false pre-greeting). */
+    get journalSupported(): boolean { return journalSupported; },
+
+    onJournalUpdate(cb: () => void): () => void {
+      journalSubs.add(cb);
+      return () => { journalSubs.delete(cb); };
+    },
 
     // baseUrl/wheels/pyodideVersion are pyodide-worker concerns (vendored
     // engine assets + wheel install) -- meaningless for a CPython host over
@@ -414,6 +476,10 @@ export function createSocketEngineClient(
       disposed = true;
       connected = false;
       connectPromise = null;
+      // Terminal: nothing can arrive on this client again, so drop the
+      // journal subscribers too (restart() deliberately keeps them -- see
+      // `journalSubs`).
+      journalSubs.clear();
       const err = reason ?? new Error('engine client disposed');
       initReject?.(err); // see restart() -- same reasoning, terminal instead
       rejectAll(err);

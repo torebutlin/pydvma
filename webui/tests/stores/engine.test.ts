@@ -11,6 +11,11 @@ import { get } from 'svelte/store';
 import {
   createEngineStore,
   ENGINE_WHEELS,
+  journalAvailable,
+  journalDiscardRecovered,
+  journalGet,
+  journalSet,
+  onJournalUpdate,
   pydvmaVersionFromWheelFilename,
   warnOnPydvmaVersionMismatch,
 } from '../../src/lib/stores/engine';
@@ -119,5 +124,135 @@ describe('createEngineStore: hostNote / pydvmaVersion surfaced from factory reso
     expect(get(store.host)).toBe('pyodide');
     expect(get(store.hostNote)).toBeNull();
     expect(get(store.pydvmaVersion)).toBeNull();
+  });
+});
+
+describe('session journal helpers (native-engine stage 3)', () => {
+  /**
+   * A fake native client that also speaks the journal surface. `call`
+   * records every op and answers `journal_get` with `reply`.
+   */
+  function fakeJournalClient(reply: Record<string, unknown> = {}) {
+    const calls: Array<{ op: string; payload?: Record<string, unknown> }> = [];
+    const subs = new Set<() => void>();
+    const client: EngineClient = {
+      init: vi.fn().mockResolvedValue(undefined),
+      call: vi.fn(async (op: string, payload?: Record<string, unknown>) => {
+        calls.push({ op, payload });
+        return op === 'journal_get' ? reply : {};
+      }) as EngineClient['call'],
+      observe: vi.fn(),
+      restart: vi.fn(),
+      dispose: vi.fn(),
+      onJournalUpdate: (cb: () => void) => {
+        subs.add(cb);
+        return () => { subs.delete(cb); };
+      },
+    };
+    return { client, calls, push: () => { for (const cb of subs) cb(); } };
+  }
+
+  /** Boot a store on a native+journal resolution and hand back the fake. */
+  async function bootWithJournal(reply: Record<string, unknown> = {}) {
+    const f = fakeJournalClient(reply);
+    const resolved: ResolvedEngine = { client: f.client, host: 'native', journal: true };
+    const store = createEngineStore(async () => resolved);
+    await store.boot();
+    return f;
+  }
+
+  /** Park the module-level journal handle back on "nothing available". */
+  async function clearJournalClient(): Promise<void> {
+    const resolved: ResolvedEngine = { client: fakeClient(), host: 'pyodide' };
+    await createEngineStore(async () => resolved).boot();
+  }
+
+  test('journalAvailable() is false on pyodide, false without the capability, true on native+journal', async () => {
+    await createEngineStore(async () => (
+      { client: fakeClient(), host: 'pyodide' } as ResolvedEngine)).boot();
+    expect(journalAvailable()).toBe(false);
+
+    // Native but the greeting never advertised a journal (a serve predating
+    // stage 3) -- the whole point of gating on the capability, not the host.
+    await createEngineStore(async () => (
+      { client: fakeClient(), host: 'native', journal: false } as ResolvedEngine)).boot();
+    expect(journalAvailable()).toBe(false);
+
+    await bootWithJournal();
+    expect(journalAvailable()).toBe(true);
+    await clearJournalClient();
+  });
+
+  test('journalAvailable() is false before any boot has resolved a client', async () => {
+    await clearJournalClient();          // known-null starting point
+    const store = createEngineStore(async () => (
+      { client: fakeClient(), host: 'native', journal: true } as ResolvedEngine));
+    expect(journalAvailable()).toBe(false);
+    await store.boot();
+    expect(journalAvailable()).toBe(true);
+    await clearJournalClient();
+  });
+
+  test('journalSet posts the doc bytes through the active client', async () => {
+    const f = await bootWithJournal();
+    const doc = new Uint8Array([1, 2, 3]);
+    await journalSet(doc);
+    expect(f.calls).toEqual([{ op: 'journal_set', payload: { doc } }]);
+    await clearJournalClient();
+  });
+
+  test('journalGet normalises the wire result to Uint8Array / null', async () => {
+    const f = await bootWithJournal({
+      doc: new Uint8Array([7]),
+      captures: [new Uint8Array([8]).buffer, new Uint8Array([9])],
+      recovered: null,
+    });
+    const state = await journalGet();
+    expect(f.calls[0].op).toBe('journal_get');
+    expect(state.doc).toBeInstanceOf(Uint8Array);
+    expect([...state.doc!]).toEqual([7]);
+    expect(state.captures).toHaveLength(2);
+    expect(state.captures.every((c) => c instanceof Uint8Array)).toBe(true);
+    expect([...state.captures[0]]).toEqual([8]);
+    expect(state.recovered).toBeNull();
+    await clearJournalClient();
+  });
+
+  test('journalGet on an empty journal yields nulls and an empty capture list', async () => {
+    await bootWithJournal({ doc: null, captures: [], recovered: null });
+    await expect(journalGet()).resolves.toEqual({ doc: null, captures: [], recovered: null });
+    await clearJournalClient();
+  });
+
+  test('journalDiscardRecovered sends the discard op', async () => {
+    const f = await bootWithJournal();
+    await journalDiscardRecovered();
+    expect(f.calls[0].op).toBe('journal_discard_recovered');
+    await clearJournalClient();
+  });
+
+  test('every journal call rejects (never silently no-ops) when no journal is available', async () => {
+    await clearJournalClient();
+    await expect(journalSet(new Uint8Array([1]))).rejects.toThrow(/no session journal/);
+    await expect(journalGet()).rejects.toThrow(/no session journal/);
+    await expect(journalDiscardRecovered()).rejects.toThrow(/no session journal/);
+  });
+
+  test('onJournalUpdate forwards the client\'s push frames, and unsubscribes', async () => {
+    const f = await bootWithJournal();
+    let hits = 0;
+    const unsub = onJournalUpdate(() => { hits += 1; });
+    f.push();
+    expect(hits).toBe(1);
+    unsub();
+    f.push();
+    expect(hits).toBe(1);
+    await clearJournalClient();
+  });
+
+  test('onJournalUpdate is a safe no-op (with a callable unsubscribe) with no journal', async () => {
+    await clearJournalClient();
+    const unsub = onJournalUpdate(() => { throw new Error('must never fire'); });
+    expect(() => unsub()).not.toThrow();
   });
 });

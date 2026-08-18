@@ -33,7 +33,11 @@
   import { createViewState, type ViewId } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
   import { createAnalysisSettings } from './lib/stores/analysisSettings';
-  import { createEngineStore } from './lib/stores/engine';
+  import {
+    createEngineStore, journalAvailable, journalDiscardRecovered, journalGet,
+    journalSet, onJournalUpdate, type JournalState,
+  } from './lib/stores/engine';
+  import { willUseNativeEngine } from './lib/worker/selectEngine';
   import { createToasts } from './lib/stores/toast';
   import { createActions } from './lib/analysis/actions';
   import { createModalStore } from './lib/stores/modal';
@@ -50,7 +54,7 @@
   import { legendOverlaySvg } from './lib/export/legendOverlay';
   import { sniffFormat } from './lib/files/sniff';
   import { fallbackDir, pickWorkDir, restoreWorkDir, type WorkDir } from './lib/files/workdir';
-  import { autosave, clearAutosave, restoreOffer } from './lib/files/autosave';
+  import { autosave, clearAutosave, restoreOffer, setJournalSink } from './lib/files/autosave';
   import type { DvmaDataset } from './lib/model/dataset';
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
@@ -369,6 +373,37 @@
       if (note) toasts.push(note, { level: 'info' });
     });
 
+    // SESSION JOURNAL (native-engine stage 3): when the engine that answered
+    // is a `pydvma-serve` owning a session journal, every persisted autosave
+    // ALSO posts the document to that server (so closing the tab loses
+    // nothing), and a notebook `Session.push` offers a reload here. Both are
+    // wired off engine STATUS rather than once at mount, because the engine
+    // resolves lazily — `journalAvailable()` only answers truthfully once a
+    // client exists, i.e. from 'ready' onwards. Everything below is a no-op
+    // on Pages / JupyterLite / any pyodide session (`journalAvailable()`
+    // false ⇒ no sink, no subscription).
+    let unsubJournalPush: (() => void) | null = null;
+    const unsubJournalStatus = engineStatus.subscribe((s) => {
+      if (s === 'ready' && journalAvailable()) {
+        // Async sink: `persist()` fires it and swallows a rejection (see
+        // autosave.ts), which is what a socket closing mid-write looks like.
+        setJournalSink((bytes) => journalSet(bytes));
+        // Subscribed ONCE — the client (and its subscriber set) survives a
+        // reconnect, so re-subscribing per ready would stack duplicates.
+        unsubJournalPush ??= onJournalUpdate(() => void onJournalPushed());
+      } else {
+        // Not ready (booting, stopped, transport lost): stop posting until
+        // it comes back. A debounced autosave that fires in the gap simply
+        // skips the sink and still writes locally.
+        setJournalSink(null);
+      }
+    });
+    const cleanupJournal = () => {
+      setJournalSink(null);
+      unsubJournalPush?.();
+      unsubJournalStatus();
+    };
+
     // Fixture hook: fetch the selected checked-in .dvma into the tray.
     if (fixtureRequested) {
       fetch(fixtureUrl)
@@ -428,7 +463,7 @@
     });
 
     if (forcedNarrow || typeof window.matchMedia !== 'function') {
-      return () => { unsubDataset(); unsubHostNote(); cleanupUnload(); };
+      return () => { unsubDataset(); unsubHostNote(); cleanupJournal(); cleanupUnload(); };
     }
     const mq = window.matchMedia('(max-width: 1000px)');
     mediaNarrow = mq.matches;
@@ -437,6 +472,7 @@
     return () => {
       unsubDataset();
       unsubHostNote();
+      cleanupJournal();
       mq.removeEventListener('change', update);
       cleanupUnload();
     };
@@ -465,10 +501,133 @@
   }
 
   /**
+   * Load a session document (plus any captures the server holds) from the
+   * pydvma-serve journal into the tray.
+   *
+   * `doc` REPLACES whatever is loaded (`loadAndFocus` with no `append`) —
+   * this is a session restore, not an "Add on load", and it is what makes
+   * the notebook-push Reload action a true reload. `captures` are the ones
+   * born server-side since that document was posted (a Log the tab closed
+   * inside the 2 s autosave debounce of), appended in order; `append`
+   * degrades to a plain load when nothing is loaded, so a doc-less
+   * captures-only journal restores — and focuses a populated view — too.
+   */
+  function restoreFromJournal(doc: Uint8Array | null, captures: Uint8Array[]): void {
+    try {
+      if (doc) loadAndFocus(readDvma(doc));
+      for (const c of captures) loadAndFocus(readDvma(c), { append: true });
+    } catch (e) {
+      toasts.push(`Restore failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+    }
+  }
+
+  /**
+   * Boot-time restore from the pydvma-serve SESSION JOURNAL (stage 3).
+   * Returns true when it raised an offer — the signal for `bootFileRestore`
+   * to skip the IndexedDB one, because the server document wins whenever
+   * both exist (it receives the same debounced autosaves AND every capture
+   * at birth, so it is always ≥ the browser copy).
+   *
+   * Sequencing: the journal lives on the native engine, which the shell
+   * boots LAZILY (nothing has computed yet at this point). `willUseNativeEngine`
+   * answers whether this session was going to be native at all without
+   * connecting anything, so only such a session pays an eager `boot()` (a
+   * socket connect plus a greeting); Pages/JupyterLite answer false and boot
+   * nothing, exactly as before. Every failure path — not native, engine
+   * never came up, no journal capability, a rejected read — returns false
+   * and leaves today's IndexedDB flow untouched.
+   */
+  async function offerJournalRestore(): Promise<boolean> {
+    if (!(await willUseNativeEngine())) return false;
+    engine.boot();                    // idempotent; resolves the native client
+    try {
+      await engine.whenReady();
+    } catch (e) {
+      console.warn('[journal] engine unavailable, skipping journal restore:', e);
+      return false;
+    }
+    if (!journalAvailable()) return false;   // a serve predating the journal
+    let state: JournalState;
+    try {
+      state = await journalGet();
+    } catch (e) {
+      console.warn('[journal] read failed:', e);
+      return false;
+    }
+    if (state.doc || state.captures.length) {
+      const { doc, captures } = state;
+      toasts.push('Restore session from pydvma-serve?', {
+        level: 'info',
+        actions: [
+          { label: 'Restore', run: () => restoreFromJournal(doc, captures) },
+          // Dismiss is client-side only: the journal stays authoritative
+          // (the next autosave replaces it anyway), unlike the IndexedDB
+          // offer's Dismiss, which clears the stored bytes.
+          { label: 'Dismiss', run: () => {} },
+        ],
+      });
+      return true;
+    }
+    if (state.recovered) {
+      // Crash recovery: a PREVIOUS serve run's spill file, adopted at this
+      // server's start. Offered only when the live journal is empty.
+      const recovered = state.recovered;
+      toasts.push('Recover session from a previous pydvma-serve run?', {
+        level: 'info',
+        actions: [
+          { label: 'Restore', run: () => restoreFromJournal(recovered, []) },
+          {
+            // Dismiss discards it SERVER-side (deleting the spill file), so
+            // it is never offered again.
+            label: 'Dismiss',
+            run: () => void journalDiscardRecovered().catch(
+              (e) => console.warn('[journal] discard failed:', e)),
+          },
+        ],
+      });
+      return true;
+    }
+    return false;                     // live journal empty, nothing recovered
+  }
+
+  /**
+   * The serve journal changed under us — a notebook `dvma.launch` session's
+   * `Session.push` (the app's own autosave posts are silent by design, so
+   * this is never an echo of our own write).
+   *
+   * Local unsaved work is NEVER silently clobbered: with an empty tray the
+   * pushed session simply loads, and otherwise the user is asked, with
+   * Dismiss doing nothing at all.
+   */
+  async function onJournalPushed(): Promise<void> {
+    let state: JournalState;
+    try {
+      state = await journalGet();
+    } catch (e) {
+      console.warn('[journal] update read failed:', e);
+      return;
+    }
+    const { doc, captures } = state;
+    if (!doc && captures.length === 0) return;
+    if (!hasData) {
+      restoreFromJournal(doc, captures);
+      return;
+    }
+    toasts.push('pydvma session updated from a notebook — reload?', {
+      level: 'info',
+      actions: [
+        { label: 'Reload', run: () => restoreFromJournal(doc, captures) },
+        { label: 'Dismiss', run: () => {} },
+      ],
+    });
+  }
+
+  /**
    * Boot-time file restore: reconnect last session's working folder, then
-   * — if an autosave is waiting — show a "Restore last session?" toast.
-   * Restore parses the autosaved bytes and loads them; Dismiss clears the
-   * autosave so it never re-offers.
+   * offer to restore a session — the pydvma-serve journal first (native
+   * sessions; see `offerJournalRestore`), else the IndexedDB autosave with
+   * its "Restore last session?" toast. Restore parses the autosaved bytes
+   * and loads them; Dismiss clears the autosave so it never re-offers.
    */
   async function bootFileRestore(): Promise<void> {
     try {
@@ -476,6 +635,12 @@
       if (dir) workdir = dir;
     } catch (e) {
       console.warn('[workdir] restore failed:', e);
+    }
+    // The server copy wins when there is one (see offerJournalRestore).
+    try {
+      if (await offerJournalRestore()) return;
+    } catch (e) {
+      console.warn('[journal] restore offer failed:', e);
     }
     let saved: Uint8Array | null = null;
     try {

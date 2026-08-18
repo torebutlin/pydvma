@@ -645,6 +645,39 @@ class TestJournalOps:
     every connected ``/engine`` client.
     """
 
+    def test_greeting_advertises_the_journal_capability(self):
+        # The app gates every journal op on THIS flag (see
+        # SocketEngineClient.journalSupported in
+        # webui/src/lib/worker/socketClient.ts): the /ws capabilities carry
+        # the same fact, but the analysis app never opens /ws, so the
+        # greeting is its only route to it.
+        async def scenario():
+            server, port = await _start_engine_server(SessionJournal())
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    greeting = json.loads(await _recv(ws))
+                    assert greeting['journal'] is True
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_greeting_without_a_journal_says_so(self):
+        # A bare handler (and, historically, any serve predating stage 3)
+        # greets with the same protocol version -- the flag is what tells
+        # the app to stay off the journal ops.
+        async def scenario():
+            server, port = await _start_engine_server(None)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    greeting = json.loads(await _recv(ws))
+                    assert greeting['journal'] is False
+                    assert greeting['v'] == engine_host.ENGINE_PROTOCOL_VERSION
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
     def test_journal_set_replaces_doc(self):
         async def scenario():
             journal = SessionJournal()

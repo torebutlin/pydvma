@@ -50,6 +50,18 @@ export interface ResolvedEngine {
    * in `socketClient.ts` for why that check warns rather than gates.
    */
   pydvmaVersion?: string;
+  /**
+   * Whether the native host owns a SESSION JOURNAL (`SocketEngineClient.
+   * journalSupported`, from the greeting's `journal` field) — i.e. whether
+   * `journal_set`/`journal_get`/`journal_discard_recovered` are answered.
+   * `undefined` on the pyodide path (no server, no journal).
+   *
+   * Capability-gated, never version-gated: a `pydvma-serve` predating the
+   * journal speaks the same wire protocol and simply omits the flag, so
+   * `stores/engine.ts`'s `journalAvailable()` gates on THIS and the app then
+   * behaves exactly as it did before stage 3 (IndexedDB autosave only).
+   */
+  journal?: boolean;
 }
 
 /**
@@ -127,6 +139,33 @@ function engineHostParam(): string | null {
 }
 
 /**
+ * Would this session's engine be the NATIVE host? The SAME decision
+ * {@link resolveEngineClient} makes — an explicit `?enginehost=` first, then
+ * the lazy `/config` served probe — but without constructing or connecting
+ * anything.
+ *
+ * Exists for `App.svelte`'s boot-time session-journal check, which has a
+ * chicken-and-egg problem: the journal lives on the native engine, but
+ * whether the engine IS native is only knowable once one has been resolved,
+ * and resolving it means `boot()` — which on the pyodide path costs a
+ * multi-second wasm boot the shell deliberately defers until the first
+ * compute. Asking this first keeps that deferral intact: only a session
+ * that was going to be native anyway boots eagerly (a socket connect and a
+ * greeting), and Pages / `vite dev` / JupyterLite answer `false` here and
+ * boot nothing.
+ *
+ * Costs one extra same-origin `/config` probe when (and only when) no
+ * `?enginehost=` param is stated — the same cheap request
+ * {@link resolveEngineClient} and `audio/provider.ts`'s `selectProvider`
+ * each already make, and skipped entirely when a param decides it.
+ */
+export async function willUseNativeEngine(): Promise<boolean> {
+  const param = engineHostParam();
+  const served = param ? false : await probeServeConfig();
+  return decideEnginePolicy(param, served).kind === 'native';
+}
+
+/**
  * Try the native host: connect and wait for the `engine_ready` greeting
  * (`init` does both), returning null on any failure so the caller can fall
  * back. The greeting check is what makes the probe meaningful — a wrong URL
@@ -150,9 +189,15 @@ async function tryNative(url: string): Promise<ResolvedEngine | null> {
   const client = createSocketEngineClient(url);
   try {
     await client.init('', [], '');
-    // client.pydvmaVersion is populated by the greeting client.init() just
-    // awaited above — see SocketEngineClient's docstring in socketClient.ts.
-    return { client, host: 'native', pydvmaVersion: client.pydvmaVersion ?? undefined };
+    // client.pydvmaVersion / .journalSupported are populated by the greeting
+    // client.init() just awaited above — see SocketEngineClient's docstring
+    // in socketClient.ts.
+    return {
+      client,
+      host: 'native',
+      pydvmaVersion: client.pydvmaVersion ?? undefined,
+      journal: client.journalSupported,
+    };
   } catch (e) {
     console.warn('[engine-socket] native engine probe failed:', e);
     client.dispose();

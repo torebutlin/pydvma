@@ -21,8 +21,10 @@ function makeFakeWs() {
     onopen: null, onmessage: null, onerror: null, onclose: null,
   };
   const open = () => { ws.readyState = 1; ws.onopen?.(); };
-  const greet = () =>
-    ws.onmessage?.({ data: JSON.stringify({ type: 'engine_ready', v: 1, pydvma: '2.3.0' }) });
+  const greet = (extra: Record<string, unknown> = {}) =>
+    ws.onmessage?.({
+      data: JSON.stringify({ type: 'engine_ready', v: 1, pydvma: '2.3.0', ...extra }),
+    });
   const reply = (frame: ArrayBuffer) => ws.onmessage?.({ data: frame });
   const text = (obj: unknown) => ws.onmessage?.({ data: JSON.stringify(obj) });
   /** The server (or the network) going away WITHOUT the client asking. */
@@ -32,12 +34,12 @@ function makeFakeWs() {
 }
 
 /** Wire a client to a fresh fake socket and resolve init() through it. */
-async function connected() {
+async function connected(greetExtra: Record<string, unknown> = {}) {
   const f = makeFakeWs();
   const client = createSocketEngineClient('ws://x/engine', () => f.ws);
   const initP = client.init('http://x/', [], '0');
   f.open();
-  f.greet();
+  f.greet(greetExtra);
   await initP;
   return { f, client };
 }
@@ -363,6 +365,111 @@ describe('createSocketEngineClient', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ---- session journal (stage 3): greeted capability + push frames ----
+
+  test('the greeting advertises the session journal via journalSupported', async () => {
+    const { client } = await connected({ journal: true });
+    expect(client.journalSupported).toBe(true);
+  });
+
+  test('journalSupported is false without the greeting flag (an older serve)', async () => {
+    // The flag is capability-GATED, not version-gated: a serve that predates
+    // the journal greets with the same protocol v1 and simply omits it, and
+    // the app must then never send a journal op (stores/engine.ts's
+    // `journalAvailable`). Anything non-true (absent, null, 'yes') reads false.
+    const { client } = await connected();
+    expect(client.journalSupported).toBe(false);
+    const other = await connected({ journal: 'yes' });
+    expect(other.client.journalSupported).toBe(false);
+  });
+
+  test('journalSupported is false before any greeting has arrived', () => {
+    const f = makeFakeWs();
+    const client = createSocketEngineClient('ws://x/engine', () => f.ws);
+    expect(client.journalSupported).toBe(false);
+  });
+
+  test('a journal text frame fans out to subscribers; unsubscribe stops it', async () => {
+    const { f, client } = await connected({ journal: true });
+    let hits = 0;
+    const unsub = client.onJournalUpdate(() => { hits += 1; });
+    f.text({ type: 'journal', event: 'updated' });
+    expect(hits).toBe(1);
+    f.text({ type: 'journal', event: 'updated' });
+    expect(hits).toBe(2);
+    unsub();
+    f.text({ type: 'journal', event: 'updated' });
+    expect(hits).toBe(2);
+  });
+
+  test('a journal frame arriving BEFORE any subscriber registers is harmless', async () => {
+    const { f, client } = await connected({ journal: true });
+    expect(() => f.text({ type: 'journal', event: 'updated' })).not.toThrow();
+    let hits = 0;
+    client.onJournalUpdate(() => { hits += 1; });
+    expect(hits).toBe(0);           // the earlier frame was not replayed
+    f.text({ type: 'journal', event: 'updated' });
+    expect(hits).toBe(1);
+  });
+
+  test('unknown text frame types never reach journal subscribers', async () => {
+    const { f, client } = await connected({ journal: true });
+    let hits = 0;
+    client.onJournalUpdate(() => { hits += 1; });
+    f.text({ type: 'something_else', event: 'updated' });
+    f.text({ type: 'progress', callId: 12345, done: 1, total: 2 });
+    expect(hits).toBe(0);
+  });
+
+  test('a throwing journal subscriber is warned about and never blocks the others', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { f, client } = await connected({ journal: true });
+    const order: string[] = [];
+    client.onJournalUpdate(() => { order.push('bad'); throw new Error('boom'); });
+    client.onJournalUpdate(() => { order.push('good'); });
+    f.text({ type: 'journal', event: 'updated' });
+    expect(order).toEqual(['bad', 'good']);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test('dispose drops journal subscribers (terminal teardown)', async () => {
+    const { f, client } = await connected({ journal: true });
+    let hits = 0;
+    client.onJournalUpdate(() => { hits += 1; });
+    client.dispose();
+    f.text({ type: 'journal', event: 'updated' });
+    expect(hits).toBe(0);
+  });
+
+  test('journal subscriptions SURVIVE a restart+reconnect (the socket is replaced, the client is not)', async () => {
+    // A serve restart / Stop re-boots through the SAME client object (see
+    // stores/engine.ts's handleTransportLost), so App.svelte's one-time
+    // subscription must keep working across it -- otherwise a notebook push
+    // after a reconnect silently stops offering a reload.
+    const factories: ReturnType<typeof makeFakeWs>[] = [];
+    const client = createSocketEngineClient('ws://x/engine', () => {
+      const f = makeFakeWs();
+      factories.push(f);
+      return f.ws;
+    });
+    const init1 = client.init('http://x/', [], '0');
+    factories[0].open();
+    factories[0].greet({ journal: true });
+    await init1;
+
+    let hits = 0;
+    client.onJournalUpdate(() => { hits += 1; });
+    client.restart(new Error('serve restarted'));
+    const init2 = client.init('http://x/', [], '0');
+    factories[1].open();
+    factories[1].greet({ journal: true });
+    await init2;
+
+    factories[1].text({ type: 'journal', event: 'updated' });
+    expect(hits).toBe(1);
   });
 
   // ---- send hygiene ----

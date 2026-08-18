@@ -472,7 +472,10 @@ async def handle_connection(websocket, journal=None):
     posted with ``notify=True``
     (:meth:`pydvma.journal.SessionJournal.set_doc`) is forwarded to this
     connection's client as a ``{"type": "journal", "event": "updated"}``
-    text frame for as long as the connection lives.
+    text frame for as long as the connection lives. Whether a journal is
+    present at all is advertised in the greeting as ``journal`` (see the
+    ``engine_ready`` send below), which is how the app decides whether to
+    use the journal ops without ever opening the ``/ws`` bridge socket.
 
     One :class:`EngineWorker` per connection (one app tab is the expected
     client). Closing the socket is the client's Stop -- and, crucially,
@@ -522,6 +525,17 @@ async def handle_connection(websocket, journal=None):
                 'type': 'engine_ready',
                 'v': ENGINE_PROTOCOL_VERSION,
                 'pydvma': datastructure.VERSION,
+                # Session-journal capability, for the client that has
+                # already connected -- the twin of the same flag in
+                # serve.build_capabilities' ``engine`` block, which is for
+                # a client deciding whether to connect at all (and which
+                # reaches the app only over /ws, a socket the analysis-only
+                # page never opens). Capability-gated, NOT version-gated:
+                # a serve predating the journal greets with this same
+                # protocol version and simply omits the key, and the app
+                # (worker/socketClient.ts) reads anything but ``true`` as
+                # "no journal here" and never sends a journal op.
+                'journal': journal is not None,
             }))
         except ConnectionClosed:
             return  # closed before the greeting landed -- nothing to serve

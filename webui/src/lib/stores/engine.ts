@@ -161,6 +161,116 @@ export function stopEngine(): Promise<void> {
   return activeEngine ? activeEngine.stop() : Promise.resolve();
 }
 
+// --- session journal (native-engine stage 3) --------------------------------
+
+/**
+ * The live engine client that advertised a SESSION JOURNAL, or null when the
+ * active engine has none (every pyodide session; a `pydvma-serve` predating
+ * stage 3; anything before `boot()` has resolved a client).
+ *
+ * Module-level for the same reason as `activeEngine` above: the journal
+ * helpers are called from `App.svelte` and from `files/autosave.ts`'s sink,
+ * neither of which is handed the store. Registered by `boot()` when — and
+ * only when — a factory resolves a native client whose greeting carried
+ * `journal: true`, and (like `activeEngine`) last writer wins if a second
+ * store ever resolves one (`EngineProbe`'s, behind `?engine=1`).
+ *
+ * Deliberately NOT cleared by a transport loss: the store keeps the same
+ * client across a `pydvma-serve` restart and re-boots it (see
+ * `handleTransportLost`), so the journal comes back with the reconnect. In
+ * the gap, journal calls reject with "engine not connected" — which every
+ * caller here already treats as best-effort.
+ */
+let journalClient: EngineClient | null = null;
+
+/** The serve journal's state, as {@link journalGet} returns it. */
+export interface JournalState {
+  /** The session document (`.dvma` bytes), or null when nothing is stored. */
+  doc: Uint8Array | null;
+  /** Captures born server-side since the last document post, oldest first. */
+  captures: Uint8Array[];
+  /** A PREVIOUS serve run's session, offered for crash recovery, or null. */
+  recovered: Uint8Array | null;
+}
+
+/**
+ * True when the active engine is the native socket AND its greeting
+ * advertised a session journal — the one gate every journal path checks.
+ * False on pyodide, false against a serve that never advertised the
+ * capability, and false before `boot()` has resolved a client.
+ */
+export function journalAvailable(): boolean {
+  return journalClient !== null;
+}
+
+/** The active journal client, or a rejection naming why there isn't one. */
+function requireJournal(): EngineClient {
+  if (!journalClient) throw new Error('no session journal on this engine');
+  return journalClient;
+}
+
+/**
+ * Normalise one wire value into `.dvma` bytes. `frames.ts` decodes a
+ * `'bytes'` blob to a `Uint8Array` already, so this is a defensive
+ * pass-through that additionally accepts a bare `ArrayBuffer` and maps the
+ * journal's "nothing stored" `null` (and an absent key) to null.
+ */
+function asBytes(v: unknown): Uint8Array | null {
+  if (v instanceof Uint8Array) return v;
+  if (v instanceof ArrayBuffer) return new Uint8Array(v);
+  return null;
+}
+
+/**
+ * Post the session document to the serve journal (`journal_set`), replacing
+ * whatever it held. Called by the autosave sink on every persisted autosave
+ * (`files/autosave.ts`), so it is best-effort by construction: the sink
+ * already swallows a rejection (a socket closed mid-write, a serve stopped).
+ */
+export async function journalSet(doc: Uint8Array): Promise<void> {
+  await requireJournal().call('journal_set', { doc });
+}
+
+/**
+ * Read the serve journal (`journal_get`): the stored document, any captures
+ * born server-side since it was posted, and a previous run's recovered
+ * session if one was adopted at serve start.
+ */
+export async function journalGet(): Promise<JournalState> {
+  const res = await requireJournal().call<Record<string, unknown>>('journal_get');
+  const captures = Array.isArray(res?.captures) ? res.captures : [];
+  return {
+    doc: asBytes(res?.doc),
+    // filter(Boolean) can't narrow, hence the explicit reduce-style walk: a
+    // malformed entry is dropped rather than surfacing as a null capture.
+    captures: captures.map(asBytes).filter((b): b is Uint8Array => b !== null),
+    recovered: asBytes(res?.recovered),
+  };
+}
+
+/**
+ * Dismiss the crash-recovery offer server-side
+ * (`journal_discard_recovered`), which also deletes its spill file so it is
+ * never offered again.
+ */
+export async function journalDiscardRecovered(): Promise<void> {
+  await requireJournal().call('journal_discard_recovered');
+}
+
+/**
+ * Subscribe to server-initiated journal updates — a notebook
+ * `Session.push` changing the document under the app. Returns an
+ * unsubscribe callable; a no-op unsubscribe when the active engine has no
+ * journal (or no such transport), so callers need no gate of their own.
+ *
+ * The module-level facade over `SocketEngineClient.onJournalUpdate`, which
+ * is per-CLIENT (see its docstring in `worker/socketClient.ts`): App.svelte
+ * imports this one stable name instead of reaching for the live client.
+ */
+export function onJournalUpdate(cb: () => void): () => void {
+  return journalClient?.onJournalUpdate?.(cb) ?? (() => {});
+}
+
 /** Wheel filenames the worker micropip-installs (served from /pypi/). */
 export const ENGINE_WHEELS = ['pydvma-2.3.0-py3-none-any.whl', 'PeakUtils-1.3.5-py3-none-any.whl'];
 
@@ -410,6 +520,13 @@ export function createEngineStore(
         hostNote.set(resolved.note ?? null);
         pydvmaVersion.set(resolved.pydvmaVersion ?? null);
         if (resolved.host === 'native') warnOnPydvmaVersionMismatch(resolved.pydvmaVersion);
+        // Session journal (stage 3): only a native client whose greeting
+        // advertised one. Anything else NULLS the handle, so
+        // `journalAvailable()` is false and every journal path in the app is
+        // a no-op — Pages/JupyterLite behave exactly as before. Assigned in
+        // both directions (not just set on success) so the last resolution
+        // wins symmetrically, as `activeEngine` does.
+        journalClient = (resolved.host === 'native' && resolved.journal) ? client : null;
         wireObserve();
       }
       // Idempotent on the socket client (it hands back the connection the
