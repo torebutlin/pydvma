@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for the .dvma container format (format v2) and the legacy
 pickle reader. See dev/2026-07-01-web-ui-design.md, Stage 0.5."""
+import io
 import json
 import pathlib
 import uuid
@@ -524,3 +525,45 @@ def test_save_data_dialog_path_appends_extension(tmp_path, monkeypatch):
     out = dvma.save_data(data)
     assert out == target + '.dvma'
     assert (tmp_path / 'typed_name.dvma').is_file()
+
+
+class TestBytesRoundTrip:
+
+    def test_save_bytes_load_bytes_round_trip(self):
+        ds = _make_full_dataset()
+        blob = container.save_bytes(ds)
+        out = container.load_bytes(blob)
+        assert len(out.time_data_list) == len(ds.time_data_list)
+
+    def test_load_bytes_reads_a_file_written_by_save(self, tmp_path):
+        ds = _make_full_dataset()
+        p = tmp_path / 'x.dvma'
+        container.save(ds, str(p))
+        out = container.load_bytes(p.read_bytes())
+        assert len(out.time_data_list) == len(ds.time_data_list)
+
+    def test_save_writes_what_load_bytes_reads_identically(self, tmp_path):
+        # save() and save_bytes() must share ONE writer: assert the
+        # member NAMES and manifest content agree between the two
+        # (byte-identity of the whole zip is not required — zip metadata
+        # may embed timestamps — but the member list and the manifest
+        # must match).
+        ds = _make_full_dataset()
+        p = tmp_path / 'x.dvma'
+        container.save(ds, str(p))
+
+        blob = container.save_bytes(ds)
+
+        with zipfile.ZipFile(p, 'r') as zf_file:
+            file_names = sorted(zf_file.namelist())
+            file_manifest = json.loads(zf_file.read('manifest.json'))
+        with zipfile.ZipFile(io.BytesIO(blob), 'r') as zf_bytes:
+            bytes_names = sorted(zf_bytes.namelist())
+            bytes_manifest = json.loads(zf_bytes.read('manifest.json'))
+
+        assert file_names == bytes_names
+        assert file_manifest == bytes_manifest
+
+    def test_save_bytes_output_is_a_zip(self):
+        ds = _make_full_dataset()
+        assert container.save_bytes(ds)[:2] == b'PK'

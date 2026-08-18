@@ -948,9 +948,9 @@ def _capture_to_dvma(settings, test_name, output=None, cancel_event=None):
     sleeps for ``stored_time`` seconds (or blocks waiting for a
     trigger).  Returns ``(dvma_bytes, n_samples, n_channels)`` where the
     counts come from the captured ``TimeData``.  The container is
-    written through :func:`pydvma.container.save` (the one save story)
-    to a temp file and read back as bytes — the browser owns the "save
-    to disk" step (decision #4).
+    written through :func:`pydvma.container.save_bytes` (the one save
+    story, in memory — no temp file) — the browser owns the "save to
+    disk" step (decision #4).
 
     ``output`` is an optional ``(N, output_channels)`` stimulus waveform
     in volts (built by :func:`acquisition.signal_generator`); it is
@@ -970,17 +970,7 @@ def _capture_to_dvma(settings, test_name, output=None, cancel_event=None):
     td = dataset.time_data_list[0]
     n_samples, n_channels = td.time_data.shape
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.dvma')
-    tmp.close()
-    try:
-        container.save(dataset, tmp.name)
-        with open(tmp.name, 'rb') as fh:
-            dvma_bytes = fh.read()
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+    dvma_bytes = container.save_bytes(dataset)
     return dvma_bytes, int(n_samples), int(n_channels)
 
 

@@ -224,6 +224,60 @@ def _read_array(zf, member):
     return np.load(io.BytesIO(zf.read(member)), allow_pickle=False)
 
 
+def _write_dataset(zf, dataset):
+    """Write every item in `dataset` plus `manifest.json` into the
+    already-open `zf`. The one writer shared by `save` and
+    `save_bytes` — the manifest schema and member layout are defined
+    here, once (see module docstring)."""
+    manifest = {
+        'format': FORMAT_NAME,
+        'format_version': FORMAT_VERSION,
+        'pydvma_version': datastructure.VERSION,
+        'storage': 'npy',
+        'items': [],
+    }
+    data_lists = [dataset.time_data_list, dataset.freq_data_list,
+                  dataset.cross_spec_data_list, dataset.tf_data_list,
+                  dataset.modal_data_list, dataset.sono_data_list,
+                  dataset.meta_data_list]
+    index = 0
+    for data_list in data_lists:
+        for item in data_list:
+            kind = item.__class__.__name__
+            entry = {'kind': kind, 'arrays': {}, 'meta': {}}
+            for field in _ARRAY_FIELDS[kind]:
+                # Default None: an object unpickled from a legacy
+                # file predates any array field added since it was
+                # written (e.g. TfData.bla_sigma_n), and must still
+                # save — absent is written exactly like None.
+                arr = getattr(item, field, None)
+                if arr is None:      # e.g. TfData.tf_coherence
+                    continue
+                if kind == 'ModalData' and len(arr) == 0:
+                    continue         # fresh ModalData has M == []
+                member = 'arrays/{:04d}_{}.npy'.format(index, field)
+                _write_array(zf, member, arr)
+                entry['arrays'][field] = member
+            for field in _META_FIELDS[kind]:
+                entry['meta'][field] = _encode_field(
+                    kind, field, getattr(item, field, None))
+            for field in _OPTIONAL_META.get(kind, ()):
+                if hasattr(item, field):
+                    entry['meta'][field] = _encode_field(
+                        kind, field, getattr(item, field))
+            try:
+                entry['settings'] = _settings_to_dict(
+                    getattr(item, 'settings', None))
+            except (TypeError, ValueError) as e:
+                raise type(e)(
+                    'while encoding {} field {!r}: {}'.format(
+                        kind, 'settings', e)) from e
+            manifest['items'].append(entry)
+            index += 1
+    zf.writestr('manifest.json',
+                json.dumps(manifest, indent=1, allow_nan=False))
+
+
 def save(dataset, filename):
     """Save a DataSet to `filename` in .dvma container format (v2).
 
@@ -242,58 +296,12 @@ def save(dataset, filename):
     non-finite float that escapes `_encode_value`'s tagging raises at
     save time rather than corrupting the file.
     """
-    manifest = {
-        'format': FORMAT_NAME,
-        'format_version': FORMAT_VERSION,
-        'pydvma_version': datastructure.VERSION,
-        'storage': 'npy',
-        'items': [],
-    }
-    data_lists = [dataset.time_data_list, dataset.freq_data_list,
-                  dataset.cross_spec_data_list, dataset.tf_data_list,
-                  dataset.modal_data_list, dataset.sono_data_list,
-                  dataset.meta_data_list]
     tmp = tempfile.NamedTemporaryFile(
         delete=False, suffix='.dvma.tmp',
         dir=os.path.dirname(os.path.abspath(filename)))
     try:
         with zipfile.ZipFile(tmp, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
-            index = 0
-            for data_list in data_lists:
-                for item in data_list:
-                    kind = item.__class__.__name__
-                    entry = {'kind': kind, 'arrays': {}, 'meta': {}}
-                    for field in _ARRAY_FIELDS[kind]:
-                        # Default None: an object unpickled from a legacy
-                        # file predates any array field added since it was
-                        # written (e.g. TfData.bla_sigma_n), and must still
-                        # save — absent is written exactly like None.
-                        arr = getattr(item, field, None)
-                        if arr is None:      # e.g. TfData.tf_coherence
-                            continue
-                        if kind == 'ModalData' and len(arr) == 0:
-                            continue         # fresh ModalData has M == []
-                        member = 'arrays/{:04d}_{}.npy'.format(index, field)
-                        _write_array(zf, member, arr)
-                        entry['arrays'][field] = member
-                    for field in _META_FIELDS[kind]:
-                        entry['meta'][field] = _encode_field(
-                            kind, field, getattr(item, field, None))
-                    for field in _OPTIONAL_META.get(kind, ()):
-                        if hasattr(item, field):
-                            entry['meta'][field] = _encode_field(
-                                kind, field, getattr(item, field))
-                    try:
-                        entry['settings'] = _settings_to_dict(
-                            getattr(item, 'settings', None))
-                    except (TypeError, ValueError) as e:
-                        raise type(e)(
-                            'while encoding {} field {!r}: {}'.format(
-                                kind, 'settings', e)) from e
-                    manifest['items'].append(entry)
-                    index += 1
-            zf.writestr('manifest.json',
-                        json.dumps(manifest, indent=1, allow_nan=False))
+            _write_dataset(zf, dataset)
         tmp.close()
         os.replace(tmp.name, filename)
     except BaseException:
@@ -304,6 +312,21 @@ def save(dataset, filename):
             pass
         raise
     return filename
+
+
+def save_bytes(dataset):
+    """Serialise a DataSet to ``.dvma`` container bytes in memory.
+
+    The same archive `save` writes (same manifest, same members, one
+    shared writer, see `_write_dataset`) without touching the
+    filesystem — for the session journal and
+    :meth:`pydvma.session.Session.push`, which move documents over
+    sockets rather than into files.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+        _write_dataset(zf, dataset)
+    return buf.getvalue()
 
 
 def load(filename):
@@ -372,3 +395,16 @@ def load(filename):
         dataset.pydvma_version = manifest.get('pydvma_version',
                                                dataset.pydvma_version)
     return dataset
+
+
+def load_bytes(data):
+    """Load a DataSet from in-memory ``.dvma`` container bytes.
+
+    The bytes-side twin of `load` (which see for the schema/version
+    rules — both share the reader; `zipfile.ZipFile` accepts a
+    file-like object exactly like a filename, so this just wraps
+    `data` in a `io.BytesIO` and delegates). Error messages that would
+    normally name the offending filename instead show the ``BytesIO``
+    object's repr.
+    """
+    return load(io.BytesIO(data))
