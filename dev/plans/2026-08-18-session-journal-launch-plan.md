@@ -33,33 +33,45 @@ and verified on both benches.
 
 ---
 
-## Decisions taken in this plan (approve/adjust before execution)
+## Decisions (agreed with Tore, 2026-08-18 evening)
 
-1. **Restore is an OFFER, not an auto-restore.** Native mode reuses the
-   exact "Restore last session?" toast the app already shows for
-   IndexedDB autosaves (App.svelte `bootFileRestore`). Flipping to
-   auto-restore later is a one-line change; offering keeps Pages and
-   native behaviour identical. (Design left this open — "UX decided at
-   implementation".)
-2. **When both exist, the server document wins.** On boot in native
-   mode the app asks the journal first; only if the journal is empty
-   does the IndexedDB offer appear. Rationale: in native mode the
-   journal is written by the same autosaves that feed IndexedDB, plus
-   captures at birth — it is always at least as new.
-3. **Spill file** = `<tempdir>/pydvma-session-<pid>.dvma`, best-effort,
-   written on every journal update, path printed at serve start. It is
-   an ordinary `.dvma` the user can open by hand after a serve crash.
-   Serve does NOT auto-load it on start — the journal's restore scope
-   is tab-close/reopen while serve lives (the design's promise);
-   crash recovery stays manual-but-possible.
+1. **Restore is an OFFER, not an auto-restore** — AGREED. Native mode
+   reuses the exact "Restore last session?" toast the app already
+   shows for IndexedDB autosaves (App.svelte `bootFileRestore`).
+2. **When both exist, the server document wins** — AGREED, and it is
+   equivalent to "latest wins": both stores receive the same debounced
+   autosave writes (IndexedDB is per-origin, so the localhost app's
+   IndexedDB only ever holds sessions that also fed this journal), and
+   the journal additionally receives captures at birth, so a non-empty
+   journal is always ≥ the browser copy. When the journal is empty
+   (fresh server start), the IndexedDB offer appears as today — again
+   the latest available.
+3. **Crash recovery is OFFERED IN THE APP, not left to file-hunting**
+   (revised per Tore's question "how would a user know to find it?").
+   The spill file is `<tempdir>/pydvma-session-<port>.dvma`, written
+   on every journal update, path printed at serve start. On the NEXT
+   serve start, the server scans for previous `pydvma-session-*.dvma`
+   files, READS the newest non-empty one into memory as a "recovered
+   session" (reading at startup makes later overwrites of the same
+   path harmless), and the app's restore flow offers **"Recover
+   session from a previous pydvma-serve run?"** whenever the live
+   journal is empty. Restore loads it; Dismiss discards it server-side
+   and deletes the file. The user never needs to know the path —
+   though it stays printed for belt-and-braces.
 4. **`/engine` protocol version stays 1.** The journal ops are
    additive and capability-gated: `/ws` capabilities advertise
    `engine: {v, pydvma, journal: true}`; an app without the flag never
    sends journal ops, an old server never receives them. (The
    socketClient's exact-`v` gate is untouched.)
-5. **`session.push` appends** (a new dataset merged into the doc, the
-   app notified to reload) — no in-place mutation semantics, matching
-   the design's "explicit handoff, not shared mutation".
+5. **`session.push` smart-merges by `unique_id`** (revised per Tore:
+   modified data should replace, not duplicate — with the question
+   first). Every data item carries a `unique_id` (uuid4, preserved
+   through container save/load), so: a pushed item whose id already
+   exists in the session REPLACES that item (the pull → filter/scale →
+   push-back flow updates in place); an item with a new id APPENDS.
+   The app always asks ("session updated from notebook — reload?")
+   before applying, so nothing in the tab is silently overwritten
+   either way.
 6. **Module is `pydvma/session.py`** (`launch` + `Session`), not
    `launch.py`: the lazy-name registry in `pydvma/__init__.py` returns
    the MODULE when the lazy name equals the module basename, so a
@@ -252,6 +264,49 @@ class TestSpill:
         j.set_doc(b'doc')          # must not raise
         assert j.state()[0] == b'doc'
 
+    def test_spill_path_settable_after_construction(self, tmp_path):
+        # BridgeServer only knows its real port after bind (port=0).
+        j = SessionJournal()
+        j.set_spill_path(tmp_path / 'late.dvma')
+        j.set_doc(b'doc')
+        assert (tmp_path / 'late.dvma').read_bytes() == b'doc'
+
+
+class TestRecovered:
+    """Crash recovery (decision 3): a previous run's spill file is read
+    into memory at startup and OFFERED; discard deletes the file."""
+
+    def test_adopt_recovered_reads_bytes(self, tmp_path):
+        old = tmp_path / 'pydvma-session-8765.dvma'
+        old.write_bytes(b'old-session')
+        j = SessionJournal()
+        j.adopt_recovered(old)
+        assert j.recovered() == b'old-session'
+
+    def test_recovered_survives_file_overwrite(self, tmp_path):
+        # Read-at-adopt: overwriting the same path later (same-port
+        # restart spills onto it) must not corrupt the offer.
+        old = tmp_path / 's.dvma'
+        old.write_bytes(b'old-session')
+        j = SessionJournal(spill_path=old)
+        j.adopt_recovered(old)
+        j.set_doc(b'new-live-doc')          # overwrites the file
+        assert j.recovered() == b'old-session'
+
+    def test_discard_recovered_deletes_file(self, tmp_path):
+        old = tmp_path / 's.dvma'
+        old.write_bytes(b'old')
+        j = SessionJournal()
+        j.adopt_recovered(old)
+        j.discard_recovered()
+        assert j.recovered() is None
+        assert not old.exists()
+
+    def test_adopt_missing_file_is_noop(self, tmp_path):
+        j = SessionJournal()
+        j.adopt_recovered(tmp_path / 'absent.dvma')
+        assert j.recovered() is None
+
 
 class TestThreadSafety:
 
@@ -393,20 +448,67 @@ class SessionJournal(object):
                     pass
         return unsubscribe
 
-    def _spill(self):
-        """Mirror the current doc to ``spill_path``, best-effort."""
-        if self._spill_path is None:
+    def set_spill_path(self, path):
+        """Set (or move) the spill target after construction —
+        ``BridgeServer`` only knows its real port after binding."""
+        with self._lock:
+            self._spill_path = path
+
+    @property
+    def spill_path(self):
+        """Where the document is mirrored, or None (read-only)."""
+        return self._spill_path
+
+    def adopt_recovered(self, path):
+        """Read a PREVIOUS run's spill file into memory as a recovery
+        offer (decision 3). Reading now — not at offer time — makes a
+        later overwrite of the same path harmless. Missing/unreadable
+        file → no-op."""
+        try:
+            with open(path, 'rb') as fh:
+                data = fh.read()
+        except OSError:
+            return
+        if not data:
             return
         with self._lock:
+            self._recovered = data
+            self._recovered_path = path
+
+    def recovered(self):
+        """The adopted previous-run document bytes, or None."""
+        with self._lock:
+            return getattr(self, '_recovered', None)
+
+    def discard_recovered(self):
+        """Drop the recovery offer and delete its file (Dismiss)."""
+        with self._lock:
+            path = getattr(self, '_recovered_path', None)
+            self._recovered = None
+            self._recovered_path = None
+        if path is not None:
+            try:
+                import os
+                os.remove(path)
+            except OSError:
+                pass
+
+    def _spill(self):
+        """Mirror the current doc to ``spill_path``, best-effort."""
+        with self._lock:
             doc = self._doc
-        if doc is None:
+            path = self._spill_path
+        if path is None or doc is None:
             return
         try:
-            with open(self._spill_path, 'wb') as fh:
+            with open(path, 'wb') as fh:
                 fh.write(doc)
         except OSError:
             pass
 ```
+
+(`__init__` additionally initialises `self._recovered = None` and
+`self._recovered_path = None`.)
 
 - [ ] **Step 4: Run the tests**
 
@@ -470,6 +572,32 @@ class TestJournalOps:
         assert reply['ok'] is True
         assert reply['result']['doc'] is None
         assert reply['result']['captures'] == []
+        assert reply['result']['recovered'] is None
+
+    async def test_journal_get_includes_recovered(self, journal_server,
+                                                  tmp_path):
+        ws, journal = journal_server
+        p = tmp_path / 'old.dvma'
+        p.write_bytes(b'OLD')
+        journal.adopt_recovered(p)
+        await ws.send(encode_frame({'id': 5, 'op': 'journal_get',
+                                    'payload': {}}))
+        reply = decode_frame(await recv_binary(ws))
+        assert reply['result']['recovered'] == b'OLD'
+
+    async def test_journal_discard_recovered(self, journal_server,
+                                             tmp_path):
+        ws, journal = journal_server
+        p = tmp_path / 'old.dvma'
+        p.write_bytes(b'OLD')
+        journal.adopt_recovered(p)
+        await ws.send(encode_frame({'id': 6,
+                                    'op': 'journal_discard_recovered',
+                                    'payload': {}}))
+        reply = decode_frame(await recv_binary(ws))
+        assert reply['ok'] is True
+        assert journal.recovered() is None
+        assert not p.exists()
 
     async def test_journal_op_without_journal_errors(self, plain_server):
         # handle_connection(websocket) with no journal: a journal op
@@ -524,7 +652,8 @@ In the frame loop, after `rid`/`op`/`payload` decode and BEFORE the
 `worker.request` dispatch:
 
 ```python
-            if op in ('journal_set', 'journal_get'):
+            if op in ('journal_set', 'journal_get',
+                      'journal_discard_recovered'):
                 if journal is None:
                     reply = {'id': rid, 'ok': False,
                              'error': 'no session journal on this server'}
@@ -536,10 +665,14 @@ In the frame loop, after `rid`/`op`/`payload` decode and BEFORE the
                     else:
                         journal.set_doc(doc)
                         reply = {'id': rid, 'ok': True, 'result': {}}
+                elif op == 'journal_discard_recovered':
+                    journal.discard_recovered()
+                    reply = {'id': rid, 'ok': True, 'result': {}}
                 else:
                     doc, captures = journal.state()
                     reply = {'id': rid, 'ok': True,
-                             'result': {'doc': doc, 'captures': captures}}
+                             'result': {'doc': doc, 'captures': captures,
+                                        'recovered': journal.recovered()}}
                 try:
                     await websocket.send(encode_frame(reply))
                 except ConnectionClosed:
@@ -616,24 +749,43 @@ Expected: FAIL — capabilities lack `journal`; journal_get errors.
 
 1. Import at top (with the existing `from . import engine_host`):
    `from . import journal as journal_mod`.
-2. `BridgeServer.__init__` gains a journal (document it in the class
-   docstring's Args):
+2. `BridgeServer.__init__` gains a journal and adopts the newest
+   previous run's spill file as the recovery offer (decision 3 —
+   reading happens at adopt time, so later overwrites are harmless).
+   Document both in the class docstring's Args:
 
 ```python
+        self.journal = journal_mod.SessionJournal()
+        # Crash recovery: offer the newest previous-run session file,
+        # if any (the app surfaces it; Dismiss deletes it).
         import tempfile
-        self.journal = journal_mod.SessionJournal(
-            spill_path=Path(tempfile.gettempdir())
-            / ('pydvma-session-%d.dvma' % os.getpid()))
+        candidates = sorted(
+            Path(tempfile.gettempdir()).glob('pydvma-session-*.dvma'),
+            key=lambda p: p.stat().st_mtime, reverse=True)
+        if candidates:
+            self.journal.adopt_recovered(candidates[0])
 ```
 
-3. `_handler`: `/engine` branch becomes
+3. In `run()`, right after the server binds (inside the `async with`,
+   where `self._server = server` is set), point the spill at the REAL
+   port (ephemeral ports resolve here):
+
+```python
+            port = server.sockets[0].getsockname()[1]
+            import tempfile
+            self.journal.set_spill_path(
+                Path(tempfile.gettempdir())
+                / ('pydvma-session-%d.dvma' % port))
+```
+
+4. `_handler`: `/engine` branch becomes
    `await engine_host.handle_connection(websocket, journal=self.journal)`;
    the `_Connection` construction becomes
    `conn = _Connection(websocket, journal=self.journal)`.
-4. `_Connection.__init__(self, websocket, journal=None)` stores
+5. `_Connection.__init__(self, websocket, journal=None)` stores
    `self._journal = journal` (docstring: "captures register here at
    birth — stage 3").
-5. In `_on_log`, at the point `_capture_to_dvma` has returned
+6. In `_on_log`, at the point `_capture_to_dvma` has returned
    (serve.py:~1820–1830, just before `encode_container`):
 
 ```python
@@ -641,13 +793,13 @@ Expected: FAIL — capabilities lack `journal`; journal_get errors.
             self._journal.add_capture(dvma_bytes)
 ```
 
-6. In `build_capabilities`'s engine dict (serve.py:916–922) add
+7. In `build_capabilities`'s engine dict (serve.py:916–922) add
    `'journal': True,`.
-7. In `main()`, after the server is constructed, print the spill path
-   once: `print('session journal spill: %s' % server.journal._spill_path)`
-   — expose a small `spill_path` property instead of reaching into the
-   private attr:  add `@property def spill_path(self)` on
-   `SessionJournal` returning `self._spill_path`, and print that.
+8. In `main()`, after the server starts, print the spill path once
+   (`server.journal.spill_path` — the read-only property) plus a
+   one-line recovery note when `server.journal.recovered()` is not
+   None ("a session from a previous run is available — the app will
+   offer to recover it").
 
 - [ ] **Step 4: Run the serve suite**
 
@@ -813,9 +965,16 @@ Fill the `...` bodies against the real store internals; each helper is
    clear the sink (`setJournalSink(null)`) on engine fallback/restart.
 2. `bootFileRestore` grows a native-first branch: if
    `journalAvailable()` (await the engine resolution the same way the
-   boot path awaits the engine store), call `journalGet()`; when
-   `doc !== null || captures.length > 0` show the existing restore
-   toast wired to a `restoreFromJournal(doc, captures)` helper:
+   boot path awaits the engine store), call `journalGet()`:
+   - `doc !== null || captures.length > 0` → the live-session offer
+     (`'Restore session from pydvma-serve?'`);
+   - else `recovered !== null` → the crash-recovery offer
+     (`'Recover session from a previous pydvma-serve run?'`), whose
+     Restore loads the recovered bytes (the app's next autosave then
+     posts them as the live doc) and whose Dismiss calls the
+     `journal_discard_recovered` op (add a `journalDiscardRecovered()`
+     helper beside the other two in `stores/engine.ts`);
+   - both wired through a `restoreFromJournal(doc, captures)` helper:
 
 ```typescript
   function restoreFromJournal(doc: Uint8Array | null, captures: Uint8Array[]): void {
@@ -1100,6 +1259,16 @@ class TestSessionData:
             names = [t.test_name for t in s.data.time_data_list]
         assert names == ['a', 'b']
 
+    def test_push_same_unique_id_replaces(self):
+        # decision 5: pull → modify → push back updates IN PLACE.
+        with launch(_mock_settings(), open_browser=False, port=0) as s:
+            s.push(_tiny_dataset('original'))
+            td = s.data.time_data_list[0]
+            td.test_name = 'modified'          # same unique_id
+            s.push(td)
+            names = [t.test_name for t in s.data.time_data_list]
+        assert names == ['modified']
+
     def test_data_includes_pending_captures(self):
         with launch(_mock_settings(), open_browser=False, port=0) as s:
             s._server.journal.add_capture(
@@ -1169,17 +1338,32 @@ from . import options
 
 
 def _merge_dataset(target, source):
-    """Append every item of ``source`` (a DataSet) into ``target``.
+    """Merge every item of ``source`` (a DataSet) into ``target``,
+    replacing by id.
 
-    ``DataSet.add_to_dataset`` accepts one item or one HOMOGENEOUS
-    list, so a whole-DataSet merge walks the per-kind list attributes
-    (``DataSet._LIST_ATTRS``) and appends each non-empty list.
+    An item whose ``unique_id`` already exists in the target's
+    same-kind list REPLACES that entry — so the pull → filter/scale →
+    push-back flow updates data in place instead of duplicating it
+    (decision 5) — and anything else appends. Items without a
+    ``unique_id`` always append. ``DataSet.add_to_dataset`` accepts
+    one item or one HOMOGENEOUS list, hence the per-kind walk over
+    ``DataSet._LIST_ATTRS``.
     """
     from .datastructure import DataSet
     for name in DataSet._LIST_ATTRS:
-        items = list(getattr(source, name, []) or [])
-        if items:
-            target.add_to_dataset(items)
+        target_list = getattr(target, name)
+        by_id = {getattr(t, 'unique_id', None): i
+                 for i, t in enumerate(target_list)}
+        by_id.pop(None, None)
+        appends = []
+        for item in list(getattr(source, name, []) or []):
+            uid = getattr(item, 'unique_id', None)
+            if uid is not None and uid in by_id:
+                target_list[by_id[uid]] = item
+            else:
+                appends.append(item)
+        if appends:
+            target.add_to_dataset(appends)
 
 
 def _settings_to_config_json(settings):
@@ -1242,16 +1426,17 @@ class Session(object):
         """Merge ``data`` (a DataSet or a single data object) into the
         session and notify connected apps.
 
-        Appends to the current document (never replaces existing
-        items) and posts the result as the new authoritative doc; the
-        app shows a reload offer rather than silently replacing
-        anything unsaved.
+        Smart merge by ``unique_id``: an item the session already
+        holds (same id — the normal case after pulling ``data``,
+        modifying it, and pushing it back) REPLACES the stored copy;
+        new items append. The result is posted as the new
+        authoritative document; the app shows a reload offer rather
+        than silently replacing anything unsaved.
         """
         ds = self.data
-        if isinstance(data, datastructure.DataSet):
-            _merge_dataset(ds, data)
-        else:
-            ds.add_to_dataset(data)
+        if not isinstance(data, datastructure.DataSet):
+            data = datastructure.DataSet(data)
+        _merge_dataset(ds, data)
         self._server.journal.set_doc(container.save_bytes(ds),
                                      notify=True)
 
@@ -1512,9 +1697,17 @@ git commit -m "docs: stages 3-4 close-out — round doc, TODO, focus"
   read-the-file-first instruction with the target shape fully
   specified, not a design gap. (`DataSet`/`TimeData` APIs were
   verified at plan time — see Task 8's note.)
-- **Type consistency:** journal ops are `journal_set`/`journal_get`
-  everywhere; the notify frame is `{'type':'journal','event':'updated'}`
+- **Type consistency:** journal ops are `journal_set`/`journal_get`/
+  `journal_discard_recovered` everywhere; `journal_get` returns
+  `{doc, captures, recovered}` in Task 2 (server) and Task 5 (client)
+  alike; the notify frame is `{'type':'journal','event':'updated'}`
   in Task 2 (server) and Task 5 (client); `SessionJournal.state()`
-  returns `(doc, captures)` in Tasks 1/2/3/8 alike; `save_bytes`/
-  `load_bytes` (Task 7) are the only container additions and Task 8
-  uses exactly those names.
+  returns `(doc, captures)` and the recovery surface is
+  `adopt_recovered`/`recovered()`/`discard_recovered` in Tasks 1/2/3
+  alike; `save_bytes`/`load_bytes` (Task 7) are the only container
+  additions and Task 8 uses exactly those names.
+- **Decisions round-trip (2026-08-18 evening):** Tore approved 1/2/4/6
+  as written and refined 3 (crash recovery must be discoverable → the
+  in-app recovery offer) and 5 (modified data replaces rather than
+  duplicates → the `unique_id` smart merge). Both refinements are in
+  the tasks above.
