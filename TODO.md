@@ -32,7 +32,11 @@ is still open, as one consolidated list.
   session past that keeps its browser-local autosave and drops only the
   server copy, with a console warning (an unguarded over-cap frame
   closed the socket with 1009 and re-killed the engine on every
-  autosave). If real sessions ever approach it, the fix is chunked or
+  autosave). The refusal is currently console-only — the restore offer
+  would then serve a STALE document with no user-visible signal —
+  so add a one-shot toast when the sink first refuses (final-review
+  recommendation, ~3 lines via an overflow callback beside
+  `setJournalSink`). If real sessions ever approach it, the fix is chunked or
   delta posts, not a bigger number.
 - ~~**Real-app-over-socket e2e coverage gap**~~ — **CLOSED** by
   `webui/e2e/session-journal.spec.ts` test 1, which drives the REAL

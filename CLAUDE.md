@@ -23,12 +23,21 @@ ops **one shared writer**. Round doc:
 deviations from the plan, and the review-loop findings — non-atomic
 spill, journal writes on the event loop, a destructive test suite
 pruning REAL session files, a capture-loss window in push, e2e teardown
-holes). Suites at close: pytest **1005/6**, vitest **1066/1**, check
+holes). A FINAL whole-arc review then caught three cross-task seams no
+per-task review could see, all fixed before handover (`ff1baab`):
+`Session.push` stripped webui-authored document state (channel labels,
+ModalData fit-source keys — container now passes unknown manifest keys
+through, making Python round-trips lossless); a >256 MiB autosave frame
+would kill the /engine socket in a loop (sink guarded at 192 MiB,
+falls back to local-only with a console warning — a one-shot toast is
+TODO'd); and clears-pending had a capture-loss window (now id-matched:
+a doc post clears only captures it actually contains, two-tab safe).
+Suites at close: pytest **1033/6**, vitest **1069/1**, check
 **0/0**, Playwright **69/19skip** + @engine **19/19** + BRIDGE_E2E
 **22/22** (bridge+bla+engine-native+session-journal, ports
-8763/8765/8766/8767), mkdocs --strict clean; engine wheel rebuilt (still
-2.3.0) and verified byte-identical to the tree — it really was stale,
-`engine.py` moved to `container.save_bytes` this arc. Two known
+8763/8765/8766/8767), mkdocs --strict clean; engine wheel rebuilt
+TWICE (still 2.3.0; second rebuild after `container.py` changed) and
+verified byte-identical to the tree. Two known
 limitations went to TODO.md: **restore brings back DATA, not computed
 analysis views** (derived store sits outside the document — pre-existing,
 newly user-visible, docs say so, and the deliberate decision is

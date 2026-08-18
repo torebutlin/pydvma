@@ -236,29 +236,36 @@ Two divergences this writeup should have carried from the start:
   before the user has asked for any calculation. The plan discussed the
   eager boot purely as a latency trade.
 
-## Suites at close (this Mac, 2026-08-19 00:0x)
+## Suites at close (this Mac, 2026-08-19, after the final-review fixes
+`ff1baab`/`d4405c6`/`ee1b6ab`)
 
 - `python -m pytest tests/ -q --ignore=tests/test_acquisition_hardware.py`:
-  **1005 passed, 6 skipped.**
+  **1033 passed, 6 skipped** (1005/6 before the final-review fixes;
+  +28 from the passthrough / id-matched-clearing / launch-import
+  tests).
 - `python -m mkdocs build --strict`: **clean** (exit 0).
 - `npm run check`: **185 files, 0 errors, 0 warnings.**
-- `npx vitest run`: **1066 passed, 1 skipped** (68 files passed, 1
-  skipped).
+- `npx vitest run`: **1069 passed, 1 skipped** (1066/1 before the
+  final-review fixes; +3 sink-size-guard tests).
 - `npx playwright test --grep-invert @engine`: **69 passed, 19
   skipped.**
 - `npx playwright test --grep @engine --workers=1`: **19 passed.**
 - `BRIDGE_E2E=1 npx playwright test e2e/bridge.spec.ts e2e/bla.spec.ts
   e2e/engine-native.spec.ts e2e/session-journal.spec.ts --workers=1`:
   **22 passed** (four real spawned `pydvma-serve` processes on ports
-  8763/8765/8766/8767).
-- **Engine wheel rebuilt** (`npm run vendor:wheels`, still
-  `pydvma-2.3.0-py3-none-any.whl`, matching `ENGINE_WHEELS`) and
-  verified: all **23** `pydvma/*.py` modules in the wheel are
-  byte-identical to the tree (`cmp` per file; `engine.py` SHA-256
-  `9a692fe5…`), the wheel is lean (no `pydvma/_webui`), and `npm run
-  build` produced a `dist/` whose bundle references that exact wheel
-  filename. The pre-rebuild wheel's `engine.py` hashed `41e8c496…` —
-  i.e. it really was stale, exactly as the arc predicted.
+  8763/8765/8766/8767); the session-journal spec re-run 4/4 after the
+  final-review fixes.
+- **Engine wheel rebuilt TWICE** (`npm run vendor:wheels`, still
+  `pydvma-2.3.0-py3-none-any.whl`, matching `ENGINE_WHEELS`): once at
+  close-out (all **23** `pydvma/*.py` modules byte-identical to the
+  tree; the pre-rebuild wheel's `engine.py` hashed `41e8c496…` vs the
+  tree's `9a692fe5…` — it really was stale, exactly as the arc
+  predicted), and AGAIN after `ff1baab` because `container.py` also
+  ships in the wheel (behaviourally inert for the browser engine —
+  its only container use builds fresh datasets with no extras — but
+  byte-identity is the ritual). Final state verified:
+  container/journal/session/engine all MATCH the tree; `npm run
+  build`'s `dist/` bundle references that exact wheel filename.
 
 One real defect was found by this close-out itself: exposing
 `journal.py` to mkdocstrings for the first time failed
