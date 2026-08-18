@@ -342,6 +342,14 @@ async def _stop_engine_server(server):
     await server.wait_closed()
 
 
+async def _recv(ws, timeout=5.0):
+    """``ws.recv()`` bounded by a timeout -- a regression in the journal
+    ops (e.g. a reply or push frame that never arrives) must fail this
+    test promptly, not hang CI forever.
+    """
+    return await asyncio.wait_for(ws.recv(), timeout)
+
+
 def test_engine_endpoint_greets_and_answers_calc_fft():
     async def scenario():
         _s, task, port = await _start_server()
@@ -607,11 +615,11 @@ class TestJournalOps:
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    await ws.recv()  # greeting
+                    await _recv(ws)  # greeting
                     await ws.send(engine_host.encode_frame(
                         {'id': 1, 'op': 'journal_set',
                          'payload': {'doc': b'DOCBYTES'}}))
-                    reply = engine_host.decode_frame(await ws.recv())
+                    reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is True
                 assert journal.state()[0] == b'DOCBYTES'
             finally:
@@ -627,10 +635,10 @@ class TestJournalOps:
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    await ws.recv()  # greeting
+                    await _recv(ws)  # greeting
                     await ws.send(engine_host.encode_frame(
                         {'id': 2, 'op': 'journal_get', 'payload': {}}))
-                    reply = engine_host.decode_frame(await ws.recv())
+                    reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is True
                     assert reply['result'] == {
                         'doc': b'DOC', 'captures': [b'CAP1'], 'recovered': None}
@@ -645,10 +653,10 @@ class TestJournalOps:
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    await ws.recv()  # greeting
+                    await _recv(ws)  # greeting
                     await ws.send(engine_host.encode_frame(
                         {'id': 3, 'op': 'journal_get', 'payload': {}}))
-                    reply = engine_host.decode_frame(await ws.recv())
+                    reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is True
                     assert reply['result'] == {
                         'doc': None, 'captures': [], 'recovered': None}
@@ -666,10 +674,10 @@ class TestJournalOps:
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    await ws.recv()  # greeting
+                    await _recv(ws)  # greeting
                     await ws.send(engine_host.encode_frame(
                         {'id': 4, 'op': 'journal_get', 'payload': {}}))
-                    reply = engine_host.decode_frame(await ws.recv())
+                    reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is True
                     assert reply['result']['recovered'] == b'OLD'
             finally:
@@ -686,11 +694,11 @@ class TestJournalOps:
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    await ws.recv()  # greeting
+                    await _recv(ws)  # greeting
                     await ws.send(engine_host.encode_frame(
                         {'id': 5, 'op': 'journal_discard_recovered',
                          'payload': {}}))
-                    reply = engine_host.decode_frame(await ws.recv())
+                    reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is True
                 assert journal.recovered() is None
                 assert not spill.exists()
@@ -699,20 +707,23 @@ class TestJournalOps:
         run_async(scenario)
 
     def test_journal_op_without_a_journal_declines_inline(self):
-        # journal=None (a bare harness, or -- today -- BridgeServer, which
-        # does not yet wire a journal through) must answer the op itself
-        # with an error reply, never forward it to the calc worker.
+        # journal=None (a bare harness serving handle_connection directly)
+        # must answer the op itself with an error reply, never forward it
+        # to the calc worker -- pinned to the EXACT message so this test
+        # cannot pass merely because the worker's own unknown-op error
+        # happens to also contain the word "journal" (e.g. from
+        # "unknown op: journal_get").
         async def scenario():
             server, port = await _start_engine_server(journal=None)
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    await ws.recv()  # greeting
+                    await _recv(ws)  # greeting
                     await ws.send(engine_host.encode_frame(
                         {'id': 6, 'op': 'journal_get', 'payload': {}}))
-                    reply = engine_host.decode_frame(await ws.recv())
+                    reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is False
-                    assert 'journal' in reply['error']
+                    assert reply['error'] == 'no session journal on this server'
             finally:
                 await _stop_engine_server(server)
         run_async(scenario)
@@ -724,10 +735,10 @@ class TestJournalOps:
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    await ws.recv()  # greeting
+                    await _recv(ws)  # greeting
                     await ws.send(engine_host.encode_frame(
                         {'id': 7, 'op': 'journal_set', 'payload': {}}))
-                    reply = engine_host.decode_frame(await ws.recv())
+                    reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is False
                     assert 'doc bytes' in reply['error']
             finally:
@@ -741,27 +752,93 @@ class TestJournalOps:
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    greeting = json.loads(await ws.recv())
+                    greeting = json.loads(await _recv(ws))
                     assert greeting['type'] == 'engine_ready'
                     journal.set_doc(b'DOC', notify=True)
-                    msg = json.loads(await ws.recv())
+                    msg = json.loads(await _recv(ws))
                     assert msg == {'type': 'journal', 'event': 'updated'}
             finally:
                 await _stop_engine_server(server)
         run_async(scenario)
 
-    def test_journal_notify_after_disconnect_does_not_raise(self):
+    def test_journal_listener_is_unregistered_after_disconnect(self):
+        # Pins the outer finally's unsubscribe. "set_doc(notify=True)
+        # after disconnect doesn't raise" would be vacuous -- listener
+        # exceptions are already swallowed inside set_doc (see its
+        # docstring), so that alone gives zero coverage of the unsubscribe
+        # actually running. Poll the journal's own listener list instead
+        # (private-attr access is fine in a test whose whole point is to
+        # pin this internal contract).
         async def scenario():
             journal = SessionJournal()
             server, port = await _start_engine_server(journal)
             try:
                 async with connect('ws://127.0.0.1:%d/engine' % port,
                                    max_size=None) as ws:
-                    await ws.recv()  # greeting
-                # client disconnected here -- give the server a moment to
-                # notice the close and unsubscribe the listener.
-                await asyncio.sleep(0.3)
-                journal.set_doc(b'DOC2', notify=True)  # must not raise
+                    await _recv(ws)  # greeting
+                    assert journal._listeners  # registered while connected
+                # client disconnected here -- the server notices and runs
+                # its finally asynchronously; poll for it with a deadline
+                # so a regression fails this test instead of hanging CI.
+                deadline = time.monotonic() + 5.0
+                while journal._listeners and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                assert journal._listeners == []
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_set_produces_no_notify_frame_to_the_posting_client(self):
+        # The silent-autosave contract: journal_set calls set_doc with the
+        # default notify=False (see SessionJournal.set_doc's own
+        # docstring -- "the app already has what it just posted"), so the
+        # client that just posted a doc must not get its own update
+        # echoed back as a {"type": "journal"} push frame.
+        async def scenario():
+            journal = SessionJournal()
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await _recv(ws)  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 8, 'op': 'journal_set',
+                         'payload': {'doc': b'DOC3'}}))
+                    reply = engine_host.decode_frame(await _recv(ws))
+                    assert reply['ok'] is True
+                    # Bounded drain: nothing arriving within the window is
+                    # the PASSING outcome; anything that does arrive must
+                    # not be a journal push frame.
+                    try:
+                        extra = await asyncio.wait_for(ws.recv(), 0.3)
+                    except asyncio.TimeoutError:
+                        extra = None
+                    if extra is not None and not isinstance(extra, (bytes, bytearray)):
+                        assert json.loads(extra).get('type') != 'journal'
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_compute_op_still_works_after_a_journal_op_same_connection(self):
+        # Proves the journal-ops `continue` leaves the frame loop healthy
+        # for an ordinary compute op that follows on the SAME connection
+        # -- not a one-shot dead end that only ever answers journal ops.
+        async def scenario():
+            journal = SessionJournal()
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await _recv(ws)  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 9, 'op': 'journal_get', 'payload': {}}))
+                    reply1 = engine_host.decode_frame(await _recv(ws))
+                    assert reply1['ok'] is True
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 10, 'op': 'calc_fft', 'payload': _mk_time()}))
+                    reply2 = engine_host.decode_frame(await _recv(ws))
+                    assert reply2['ok'] is True
+                    assert reply2['result']['freq_data']['complex'] is True
             finally:
                 await _stop_engine_server(server)
         run_async(scenario)

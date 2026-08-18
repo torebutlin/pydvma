@@ -466,10 +466,9 @@ async def handle_connection(websocket, journal=None):
     SessionJournal` -- when given, ``journal_set``/``journal_get``/
     ``journal_discard_recovered`` op frames are answered INLINE, right
     here in the host, and never reach the calc worker subprocess (which
-    only knows compute ops). ``None`` (a bare harness with no session
-    journal -- today, also ``BridgeServer`` itself, which does not yet
-    wire one through) declines every journal op with an ``ok: False``
-    error reply instead of raising or forwarding it. A journal update
+    only knows compute ops). ``None`` (a bare harness serving this
+    handler directly) declines journal ops with an ``ok: False`` error
+    reply instead of raising or forwarding it. A journal update
     posted with ``notify=True``
     (:meth:`pydvma.journal.SessionJournal.set_doc`) is forwarded to this
     connection's client as a ``{"type": "journal", "event": "updated"}``
@@ -514,8 +513,10 @@ async def handle_connection(websocket, journal=None):
     from pydvma import datastructure
     worker = EngineWorker()
     loop = asyncio.get_running_loop()
+    # Hoisted out of the try (rather than set as its first statement) so a
+    # future early raise there can never leave the finally's read unbound.
+    unsubscribe_journal = None
     try:
-        unsubscribe_journal = None
         try:
             await websocket.send(json.dumps({
                 'type': 'engine_ready',
@@ -548,6 +549,11 @@ async def handle_connection(websocket, journal=None):
                 rid = req['id']
                 op = req.get('op')
                 payload = req.get('payload') or {}
+                if not isinstance(payload, dict):
+                    # A non-dict payload (e.g. a bare list) must not reach
+                    # payload.get(...) below and blow up the connection --
+                    # one bad frame must not kill a session (see docstring).
+                    payload = {}
             except Exception as e:
                 try:
                     await websocket.send(json.dumps({
@@ -567,14 +573,25 @@ async def handle_connection(websocket, journal=None):
                              'error': 'no session journal on this server'}
                 elif op == 'journal_set':
                     doc = payload.get('doc')
+                    # decode_frame only ever yields bytes for a 'bytes'
+                    # blob (never memoryview) -- see the module docstring.
                     if not isinstance(doc, (bytes, bytearray)):
                         reply = {'id': rid, 'ok': False,
                                  'error': 'journal_set needs doc bytes'}
                     else:
-                        journal.set_doc(doc)
+                        # set_doc's spill does synchronous disk I/O (a
+                        # tempfile write of the whole doc + os.replace,
+                        # tens of MB for a lab session) -- off the loop so
+                        # it never stalls the monitor feed, /ws, or any
+                        # other /engine connection sharing it (see the
+                        # loop-discipline note on the close-mid-op path
+                        # below).
+                        await loop.run_in_executor(None, journal.set_doc, doc)
                         reply = {'id': rid, 'ok': True, 'result': {}}
                 elif op == 'journal_discard_recovered':
-                    journal.discard_recovered()
+                    # os.remove is a syscall too -- same off-loop reasoning
+                    # as journal_set above.
+                    await loop.run_in_executor(None, journal.discard_recovered)
                     reply = {'id': rid, 'ok': True, 'result': {}}
                 else:
                     doc, captures = journal.state()
