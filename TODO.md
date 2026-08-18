@@ -26,7 +26,14 @@ is still open, as one consolidated list.
   the whole document, so it has no partial-write race to lose); only
   `Session.push`, a partial writer merging into what it read, carries
   the check, and a notebook push racing an autosave serialises through
-  push's bounded retry loop.
+  push's bounded retry loop. NB the journal has a **frame ceiling**:
+  each autosave posts the WHOLE document in one `/engine` frame, so the
+  sink is guarded at 192 MiB against serve's 256 MiB `max_size` — a
+  session past that keeps its browser-local autosave and drops only the
+  server copy, with a console warning (an unguarded over-cap frame
+  closed the socket with 1009 and re-killed the engine on every
+  autosave). If real sessions ever approach it, the fix is chunked or
+  delta posts, not a bigger number.
 - ~~**Real-app-over-socket e2e coverage gap**~~ — **CLOSED** by
   `webui/e2e/session-journal.spec.ts` test 1, which drives the REAL
   app against a spawned `pydvma-serve`: Log Data (mock driver) → Calc

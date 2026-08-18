@@ -183,6 +183,59 @@ findings worth remembering:
   would offer any non-empty file at all. Now liveness-probed, PK-gated,
   and pruned at 7 days.
 
+### Final whole-arc review (fixed in `ff1baab`)
+
+Reviewing the arc as a whole — rather than task by task — found three
+seams, all of them *between* the Python side and the browser app, i.e.
+exactly where a per-task review does not look. Plus one ergonomics gap.
+
+- **Python round trips stripped app-authored document state.**
+  `container.load` dropped every per-item manifest key it does not
+  consume (the app's `ui` block — channel labels, per-set analysis
+  settings; ModalData's `measurement_type` / `source_targets` inside
+  `meta`) and `save` never wrote them back. Pre-existing for files, but
+  the journal made it *destructive*: `Session.push` loads, merges and
+  saves, then the app reloads the stripped document and autosaves it,
+  so one push silently and permanently deleted the labels. `load` now
+  stashes unconsumed keys verbatim as `_container_extra` and the writer
+  re-emits them; Python's own fields win on collision.
+- **A post cleared pending captures it did not contain.** `set_doc`
+  cleared the whole pending list, so a capture registered *after* the
+  app serialised its document and *before* the post landed was dropped
+  without ever being in any document — the same class of loss the
+  generation counter closed for `push`, still open on the app's own
+  path. Now matched by TimeData `unique_id` (`container.manifest_ids`,
+  manifest only): cleared iff the capture's ids are a subset of the
+  document's. Also fixes a second tab's post clearing the first tab's
+  captures.
+- **An oversized session killed the engine in a loop.** Every autosave
+  posts the whole document in ONE `/engine` frame against serve's
+  256 MiB `max_size`; over cap the socket closes with 1009, the app
+  reports "engine connection lost", re-boots, and the next autosave
+  does it again — with a message pointing at the wrong thing. The sink
+  is now guarded at 192 MiB and degrades to local-only autosave with
+  one console warning.
+- **`launch()` did not name its extra.** Importing `pydvma.session`
+  succeeds on a base install (nothing at module scope needs
+  `websockets`), so `_LAZY_EXTRAS` never fired for it and a missing
+  dependency surfaced as a bare `ModuleNotFoundError` — from the exact
+  entry point the `dvma.Logger` tombstone sends people to. Now an
+  `ImportError` naming `pip install pydvma[serve]`.
+
+Two divergences this writeup should have carried from the start:
+
+- **The spill path is NOT printed at serve start.** Decision 3's
+  belt-and-braces "print where the session file lives" was dropped: the
+  path embeds the bound port, which is only known after binding, and by
+  then the startup banner has been written. Only the *recovery* note is
+  printed (when a previous run's file is adopted). The path is still
+  discoverable — `--session-dir DIR` chooses it, and the offer names it.
+- **The eager native boot costs memory, not just latency.** On a served
+  origin the app resolves and boots the native engine at page load,
+  which SPAWNS the engine host's worker subprocess (~100+ MB RSS) —
+  before the user has asked for any calculation. The plan discussed the
+  eager boot purely as a latency trade.
+
 ## Suites at close (this Mac, 2026-08-19 00:0x)
 
 - `python -m pytest tests/ -q --ignore=tests/test_acquisition_hardware.py`:
