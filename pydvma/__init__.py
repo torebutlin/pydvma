@@ -48,12 +48,21 @@ _LAZY_NAMES = {
     # and the coming native engine host — deferred like `serve` so a
     # bare `import pydvma` stays cheap.
     'engine': '.engine',
+    # `session` is the whole submodule (name == basename resolves to
+    # the module, matching the `serve` precedent) so `from pydvma
+    # import session` works alongside the two attribute entries below.
+    'session': '.session',
+    # The notebook front door (stage 4). Deferred like `serve` (same
+    # optional websockets dependency, pulled only when launch() runs).
+    'launch': '.session',
+    'Session': '.session',
 }
 
 # Friendly-error hints for lazy modules whose optional deps may be
 # missing: {module: (human-readable package list, extras name)}.
 _LAZY_EXTRAS = {
     '.serve': ('websockets', 'serve'),
+    '.session': ('websockets', 'serve'),
 }
 
 # Names retired when the Qt logger was removed after the web logger
@@ -69,8 +78,13 @@ _REMOVED_NAMES = ('Logger', 'Oscilloscope')
 
 _REMOVED_MESSAGE = (
     "'pydvma.{name}' was removed. The Qt logger was retired after the "
-    "web logger reached full parity. Use the web logger:\n"
-    "    pip install pydvma[serve] && pydvma-serve --open\n"
+    "web logger reached full parity. From a notebook or script, use "
+    "the new front door:\n"
+    "    session = dvma.launch(dvma.MySettings(...))\n"
+    "(the web logger opens in your browser; captures accumulate in the "
+    "session — pull them back with session.data, hand data over with "
+    "session.push).\n"
+    "From a terminal: pip install pydvma[serve] && pydvma-serve --open\n"
     "(docs: https://torebutlin.github.io/pydvma/web-logger/).\n"
     "To run the old Qt GUI, check out the 'qt-final' git tag."
 )

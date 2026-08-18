@@ -235,6 +235,22 @@ print('COLOURS-OK')
     assert 'COLOURS-OK' in result.stdout, (result.stdout, result.stderr)
 
 
+def test_launch_and_session_are_importable_lazily():
+    import pydvma as dvma
+    assert callable(dvma.launch)
+    from pydvma.session import Session
+    assert dvma.Session is Session
+
+
+def test_tombstone_names_launch():
+    import pydvma as dvma
+    import pytest
+    with pytest.raises(AttributeError, match='dvma.launch'):
+        dvma.Logger
+    with pytest.raises(AttributeError, match='dvma.launch'):
+        dvma.Oscilloscope
+
+
 def test_core_import_with_broken_sounddevice(tmp_path):
     # sounddevice installed but PortAudio C library missing raises
     # OSError at import (not ImportError); pydvma must still import
