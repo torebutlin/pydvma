@@ -212,8 +212,11 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
         ``None`` (the default) is the plain blocking behaviour — the
         Python API is unchanged. Used by the ``pydvma serve`` bridge,
         which runs this in a worker thread that cannot be killed from
-        outside. The one wait it cannot interrupt is soundcard playback
-        of a stimulus, which blocks inside ``sd.OutputStream.write``.
+        outside. Same-device soundcard playback (through the capture
+        stream's duplex output) polls the event too and stops the
+        stimulus mid-play. The one wait that cannot be interrupted is
+        playback on a SEPARATE output device, which blocks inside
+        ``sd.OutputStream.write``.
 
     Returns
     -------
@@ -444,10 +447,10 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
         # basic way to control logging time: won't be precise time from calling function
         # also won't be exactly synced to output signal
         if output is not None:
-            s = output_signal(settings,output)
+            s = output_signal(settings,output,cancel_event=cancel_event)
             # rec.write(output.astype('float32'))
 
-        if (settings.device_driver != 'soundcard') or (output is None): # soundcard output is blocking via sd.OutputStream.write; nidaq and mock are non-blocking
+        if (settings.device_driver != 'soundcard') or (output is None): # soundcard output blocks until played (duplex queue_output, or sd.OutputStream.write on a separate device); nidaq and mock are non-blocking
             # Chunked so a `cancel_event` is seen within
             # CANCEL_POLL_INTERVAL rather than at the end of the dwell.
             if _wait(settings.stored_time, cancel_event):
@@ -456,8 +459,10 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
                     'capture cancelled during the {} s log'
                     .format(settings.stored_time))
         elif cancel_event is not None and cancel_event.is_set():
-            # Soundcard playback blocked in sd.OutputStream.write for the
-            # whole capture; honour a cancel that arrived meanwhile.
+            # Soundcard playback blocked for the whole stimulus (the
+            # duplex path exits its wait early on cancel; a separate
+            # output device blocks in sd.OutputStream.write regardless);
+            # honour a cancel that arrived meanwhile.
             _stop_output(settings, s, wait=False)
             raise CaptureCancelled('capture cancelled during soundcard playback')
 
@@ -497,7 +502,7 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
                     break
                 MESSAGE = 'Starting output signal.\n'
                 print(MESSAGE)
-                s = output_signal(settings,output)
+                s = output_signal(settings,output,cancel_event=cancel_event)
                 # rec.write(output.astype('float32'))
                 start_output_flag = False
                 # Restart the timeout clock now the stimulus is actually
@@ -686,16 +691,30 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
     
 
 
-def output_signal(settings, output):
+def output_signal(settings, output, cancel_event=None):
     '''Play ``output`` (in volts) on the configured AO device.
 
     For soundcard, divides by ``output_VmaxSC`` to recover the ±1
-    normalised float sounddevice expects. For NI, the voltage array
-    is passed straight through to `setup_output_NI` (the AO task is
-    configured with ±``output_VmaxNI`` rails).
+    normalised float sounddevice expects, then writes through
+    `streams.setup_output_soundcard` — which plays through the live
+    capture stream itself when input and output are the same device
+    (one full-duplex stream; a second stream there would silence the
+    capture on macOS), or a separate ``sd.OutputStream`` otherwise.
+    Either way the write blocks until the stimulus has been handed to
+    the stream. For NI, the voltage array is passed straight through
+    to `setup_output_NI` (the AO task is configured with
+    ±``output_VmaxNI`` rails).
+
+    ``cancel_event`` (a `threading.Event` or None) makes the
+    SAME-DEVICE soundcard wait cancellable: the duplex playback wait
+    polls it and stops the stimulus as soon as it is set, regardless of
+    whether the cancel arrives before or during playback. The
+    separate-device path cannot honour it mid-write (a blocking
+    ``sd.OutputStream.write`` is uninterruptible) and ignores it.
     '''
     if settings.output_device_driver == 'soundcard':
-        s = streams.setup_output_soundcard(settings)
+        s = streams.setup_output_soundcard(settings,
+                                           cancel_event=cancel_event)
         # sounddevice expects ±1 normalised float32. `output` is in
         # volts, so divide by the calibration constant before writing.
         data = (output / settings.output_VmaxSC).astype('float32')

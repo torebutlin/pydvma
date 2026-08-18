@@ -223,9 +223,13 @@ class TestNiOutputDeviceFollowsInput:
         s = dvma.MySettings(device_driver='mock', device_index=1)
         assert s.output_device_index == 1
 
-    def test_soundcard_output_still_uses_default_output(self, monkeypatch):
-        """Soundcard semantics must NOT change: an unset soundcard output
-        resolves to the default OUTPUT device, never the input's index."""
+    def test_soundcard_output_falls_back_to_default_output(self, monkeypatch):
+        """An unset soundcard output falls back to the default OUTPUT
+        device whenever the input device cannot be shown to play (a
+        mic-only input, or — as here — a device whose output count
+        cannot even be queried). The duplex-capable case, where it
+        follows the input device instead, is covered in
+        test_soundcard_duplex_output.py."""
         from pydvma import options
 
         class _FakeDefault:

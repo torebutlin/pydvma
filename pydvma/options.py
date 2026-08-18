@@ -286,13 +286,15 @@ class MySettings(object):
         output_device_driver (str): Backend for the output/AO path;
             defaults to ``device_driver`` (same device as the input).
         output_device_index (int or None): Device index for the output
-            path. ``None`` resolves per backend: for ``soundcard`` it
-            picks the default *output* soundcard (the input device is
-            typically a microphone with no output channels); for
-            ``nidaq``/``mock`` it follows ``device_index`` when the
-            output driver matches the input driver (the stimulus goes
-            out of the same device the input is on), falling back to
-            device 0 for cross-driver output.
+            path. ``None`` follows the resolved ``device_index`` when
+            the output driver matches the input driver and the input
+            device can play (for ``soundcard``, when it reports output
+            channels — a USB audio interface drives its own outputs; a
+            capture on it then runs as ONE full-duplex stream, see
+            `pydvma.streams.Recorder.init_stream`). Otherwise:
+            ``soundcard`` falls back to the default *output* device
+            (a microphone-only input cannot play the stimulus), and
+            ``nidaq``/``mock`` to device 0 for cross-driver output.
         output_channels (int): Number of output (AO) channels
             (default ``1``).
         output_channels_spec (str or None): Raw DAQmx physical-channel
@@ -525,30 +527,49 @@ class MySettings(object):
                 
         # set output device index to defaults if not specified
         if (output_device_driver == 'soundcard') and ((output_device_index is None) or  (output_device_index == 'None')):
-            try:
-                # try to find default output soundcard device
-                self.output_device_index = sd.default.device[1]
-            except (AttributeError, TypeError, IndexError):
-                # sd.default unavailable — fall back to a name-based
-                # guess over enumerated devices. No device name may
-                # contain 'output' at all (e.g. input-only Mac setups),
-                # so guard the scan before indexing into it.
-                from . import streams  # lazy import to avoid heavy/circular load at module import
-                devices = streams.get_devices_soundcard()
-                output_devices = None
-                if devices is not None:
-                    matches = np.where(['output' in names for names in devices])[0]
-                    if len(matches) > 0:
-                        output_devices = int(matches[0])
-                self.output_device_index = output_devices if output_devices is not None else 1
+            # "Same device as the input", like NI below, whenever the
+            # input device can actually play: a stimulus should excite
+            # the rig through the interface that is measuring it, not
+            # the system speakers — and a same-device capture then runs
+            # as ONE full-duplex stream (`streams.Recorder.init_stream`;
+            # a second stream on the device kills the running capture on
+            # macOS). Falls back to the default OUTPUT device when the
+            # input cannot play (a microphone) or cross-driver.
+            self.output_device_index = None
+            if (output_device_driver == device_driver) and (sd is not None):
+                try:
+                    n_out = int(sd.query_devices(
+                        self.device_index)['max_output_channels'])
+                except Exception:
+                    # Best-effort probe: anything that stops us reading
+                    # the device's output count (PortAudio error, index
+                    # out of range, exotic sd stand-in) means we cannot
+                    # confirm the input device plays — fall back.
+                    n_out = 0
+                if n_out > 0:
+                    self.output_device_index = self.device_index
+            if self.output_device_index is None:
+                try:
+                    # fall back to the default output soundcard device
+                    self.output_device_index = sd.default.device[1]
+                except (AttributeError, TypeError, IndexError):
+                    # sd.default unavailable — fall back to a name-based
+                    # guess over enumerated devices. No device name may
+                    # contain 'output' at all (e.g. input-only Mac
+                    # setups), so guard the scan before indexing into it.
+                    from . import streams  # lazy import to avoid heavy/circular load at module import
+                    devices = streams.get_devices_soundcard()
+                    output_devices = None
+                    if devices is not None:
+                        matches = np.where(['output' in names for names in devices])[0]
+                        if len(matches) > 0:
+                            output_devices = int(matches[0])
+                    self.output_device_index = output_devices if output_devices is not None else 1
         elif (output_device_driver in ('nidaq', 'mock')) and ((output_device_index is None) or (output_device_index == 'None')):
             # "Same device as the input": an unset NI/mock output index
             # follows the resolved input device when the drivers match,
             # so e.g. an input on NI device 2 drives that device's AO —
             # not device 0's. Cross-driver output falls back to device 0.
-            # Soundcard is deliberately different (above): its unset
-            # output resolves to the default OUTPUT device, because the
-            # input is typically a microphone with no output channels.
             if output_device_driver == device_driver:
                 self.output_device_index = self.device_index
             else:

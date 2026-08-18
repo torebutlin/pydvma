@@ -4,6 +4,8 @@ from . import _coreaudio
 from . import _win_audio
 
 import copy
+import threading
+
 import numpy as np
 import pprint as pp
 import time
@@ -1127,6 +1129,20 @@ class Recorder(object):
         #: `pydvma.serve` so the browser UI can say so rather than
         #: leaving the news in a terminal nobody is watching.
         self.clock_note = getattr(self, 'clock_note', None)
+        #: Output-channel count of the open DUPLEX stream, or ``None``
+        #: when the stream is input-only. Set by `init_stream` (see the
+        #: same-device output rationale there); read by
+        #: `setup_output_soundcard` to route a stimulus through this
+        #: stream instead of opening a second one. Carried across a
+        #: re-``__init__`` for the same reason as ``stream_fs``: that
+        #: call zeroes buffers without touching the open stream.
+        self.duplex_output_channels = getattr(self, 'duplex_output_channels',
+                                              None)
+        # Pending stimulus for the duplex callback: dict(data, pos, done)
+        # under `_duplex_lock`, or None when idle (callback plays
+        # silence). Carried like the stream itself.
+        self._duplex_lock = getattr(self, '_duplex_lock', threading.Lock())
+        self._duplex_pending = getattr(self, '_duplex_pending', None)
         self.trigger_detected = False
         # Second phase of the trigger state machine (see the class
         # docstring): the wanted window is complete and the stored
@@ -1260,7 +1276,20 @@ class Recorder(object):
     
     
     def init_stream(self,settings,_input_=True,_output_=False):
-        '''Open the live `sd.InputStream` against ``settings.device_index``.
+        '''Open the live stream against ``settings.device_index``.
+
+        Opens ONE full-duplex `sd.Stream` when settings route the
+        stimulus output onto this same device
+        (`output_shares_input_clock`) and the device can play; a plain
+        `sd.InputStream` otherwise. The duplex form exists because a
+        soundcard capture and a same-device stimulus must share one
+        stream: opening a second (output) stream on a device whose
+        input stream is running KILLS that input stream's callback on
+        macOS (measured 2026-08-18, raw sounddevice, PaMacCore
+        err=-50) — the capture silently returns zeros. While no
+        stimulus is queued the duplex stream plays silence;
+        `setup_output_soundcard` routes playback through it via
+        `queue_output`.
 
         If ``settings.device_index`` is ``None`` it's resolved to
         ``sd.default.device[0]`` and printed to stdout. ``settings.channels``
@@ -1268,6 +1297,9 @@ class Recorder(object):
         via `_clamp_soundcard_input_channels` before this method runs,
         so the value passed to ``sd.InputStream`` will not exceed the
         device's ``max_input_channels`` even if the caller asked for more.
+        The duplex output side is clamped here instead
+        (`_clamp_soundcard_output_channels`), since output streams are
+        otherwise opened on a separate code path.
 
         Two rate facts are recorded once the stream is open, because
         ``settings.fs`` is a REQUEST and neither of them is guaranteed to
@@ -1304,19 +1336,39 @@ class Recorder(object):
         self._pin_input_volume(settings)
 
         dtype = 'float32'
-        self.audio_stream = sd.InputStream(samplerate=settings.fs, 
-                                      blocksize=settings.chunk_size, 
-                                      device=settings.device_index, 
-                                      channels=settings.channels, 
-                                      dtype=dtype, 
-                                      latency='low', 
-                                      extra_settings=None, 
-                                      callback=self.callback, 
-                                      finished_callback=None, 
-                                      clip_off=None, 
-                                      dither_off=None, 
-                                      never_drop_input=None, 
+        duplex_channels = self._duplex_output_channels_wanted(settings)
+        if duplex_channels:
+            self.audio_stream = sd.Stream(samplerate=settings.fs,
+                                          blocksize=settings.chunk_size,
+                                          device=(settings.device_index,
+                                                  settings.output_device_index),
+                                          channels=(settings.channels,
+                                                    duplex_channels),
+                                          dtype=dtype,
+                                          latency='low',
+                                          extra_settings=None,
+                                          callback=self.duplex_callback,
+                                          finished_callback=None,
+                                          clip_off=None,
+                                          dither_off=None,
+                                          never_drop_input=None,
+                                          prime_output_buffers_using_stream_callback=None)
+            self.duplex_output_channels = duplex_channels
+        else:
+            self.audio_stream = sd.InputStream(samplerate=settings.fs,
+                                      blocksize=settings.chunk_size,
+                                      device=settings.device_index,
+                                      channels=settings.channels,
+                                      dtype=dtype,
+                                      latency='low',
+                                      extra_settings=None,
+                                      callback=self.callback,
+                                      finished_callback=None,
+                                      clip_off=None,
+                                      dither_off=None,
+                                      never_drop_input=None,
                                       prime_output_buffers_using_stream_callback=None)
+            self.duplex_output_channels = None
         self.audio_stream.start()
         # What the stream ACTUALLY runs at, straight from PortAudio.
         # Normally identical to the request (a host API that cannot make
@@ -1329,8 +1381,107 @@ class Recorder(object):
         except Exception:
             self.stream_fs = float(settings.fs)
 
-        
-    
+    def _duplex_output_channels_wanted(self, settings):
+        '''Output-channel count the live stream should open with, or 0.
+
+        Non-zero exactly when settings route the stimulus output onto
+        this capture device (`output_shares_input_clock`) and the
+        output device reports playable channels — the case where a
+        separate output stream would break the running capture (see
+        `init_stream`). Clamps ``settings.output_channels`` to the
+        device's ``max_output_channels`` on the way (mutating
+        ``settings``, exactly as the separate-stream path does via
+        `setup_output_soundcard`).
+        '''
+        if sd is None or not output_shares_input_clock(settings):
+            return 0
+        try:
+            info = sd.query_devices(settings.output_device_index)
+            if int(info['max_output_channels']) < 1:
+                return 0
+        except (sd.PortAudioError, ValueError, TypeError, KeyError,
+                IndexError):
+            return 0
+        _clamp_soundcard_output_channels(settings)
+        return int(settings.output_channels)
+
+    def duplex_callback(self, in_data, out_data, frame_count, time_info,
+                        status):
+        '''Stream callback for the full-duplex form of the live stream.
+
+        Fills ``out_data`` from the stimulus queued by `queue_output`
+        (silence when idle, zero-padded past the stimulus end, with the
+        completion event set as the last samples are handed over), then
+        runs the ordinary input-side processing — buffer shifting and
+        the trigger state machine — by delegating to `callback`.
+        Runs on the audio thread: the queue handoff is a slice copy
+        under `_duplex_lock` and nothing here allocates per call.
+        '''
+        with self._duplex_lock:
+            pending = self._duplex_pending
+            if pending is None:
+                out_data.fill(0)
+            else:
+                data = pending['data']
+                pos = pending['pos']
+                n = min(frame_count, len(data) - pos)
+                out_data[:n] = data[pos:pos + n]
+                out_data[n:] = 0
+                pending['pos'] = pos + n
+                if pending['pos'] >= len(data):
+                    self._duplex_pending = None
+                    pending['done'].set()
+        self.callback(in_data, frame_count, time_info, status)
+
+    def queue_output(self, data):
+        '''Queue a stimulus for playback through the duplex stream.
+
+        ``data`` is in sounddevice's ±1 normalised units (the caller —
+        `pydvma.acquisition.output_signal` — has already divided volts
+        by ``output_VmaxSC``), shaped ``(N, channels)`` or ``(N,)``.
+        Narrower data than the stream's output side is zero-padded onto
+        the remaining channels; wider data is truncated with a printed
+        warning (the stream was opened before the caller widened its
+        buffer). Replaces any stimulus still playing.
+
+        Returns a `threading.Event` that the audio callback sets when
+        the final samples have been handed to the stream — the duplex
+        equivalent of ``sd.OutputStream.write`` returning.
+        '''
+        data = np.ascontiguousarray(data, dtype='float32')
+        if data.ndim == 1:
+            data = data[:, np.newaxis]
+        n_stream = int(self.duplex_output_channels or data.shape[1])
+        if data.shape[1] > n_stream:
+            print('WARNING: output has %d channels but the stream was '
+                  'opened with %d output channel(s); extra columns are '
+                  'not played.' % (data.shape[1], n_stream))
+            data = np.ascontiguousarray(data[:, :n_stream])
+        elif data.shape[1] < n_stream:
+            padded = np.zeros((data.shape[0], n_stream), dtype='float32')
+            padded[:, :data.shape[1]] = data
+            data = padded
+        done = threading.Event()
+        with self._duplex_lock:
+            self._duplex_pending = {'data': data, 'pos': 0, 'done': done}
+        return done
+
+    def cancel_output(self):
+        '''Stop duplex stimulus playback where it stands.
+
+        The callback returns to playing silence from its next block,
+        and the completion event from `queue_output` is set so a
+        blocked waiter (`_DuplexOutputAdapter.write`) is released — the
+        cancel path (`pydvma.acquisition._stop_output` with
+        ``wait=False``) must not leave the capture thread hanging.
+        No-op when nothing is playing.
+        '''
+        with self._duplex_lock:
+            pending = self._duplex_pending
+            self._duplex_pending = None
+        if pending is not None:
+            pending['done'].set()
+
     def _pin_hardware_clock(self, settings):
         '''Pin the device's hardware clock to ``settings.fs`` before opening.
 
@@ -2311,15 +2462,104 @@ def setup_output_NI_nidaqmx(settings, output):
 
     return _NidaqmxTaskAdapter(task)
 
-def setup_output_soundcard(settings):
-    '''Open a soundcard `sd.OutputStream` for `acquisition.output_signal`.
+class _DuplexOutputAdapter(object):
+    '''Stream-like handle playing through a `Recorder`'s duplex stream.
 
+    Returned by `setup_output_soundcard` when the stimulus targets the
+    device the live capture stream is already running on, so
+    `acquisition.output_signal` and `acquisition._stop_output` keep
+    their ``sd.OutputStream``-shaped contract (``write`` / ``stop`` /
+    ``close``) without a second stream ever being opened. ``write``
+    blocks until the stimulus has been handed to the stream — the same
+    point at which ``sd.OutputStream.write`` returns — via the event
+    from `Recorder.queue_output`; ``stop`` cancels playback where it
+    stands; ``close`` is a no-op because the underlying stream is the
+    capture stream, which outlives the stimulus.
+    '''
+
+    def __init__(self, recorder, settings, cancel_event=None):
+        self._recorder = recorder
+        self._settings = settings
+        self._cancel_event = cancel_event
+
+    def write(self, data):
+        '''Play ``data`` (±1 normalised, shape ``(N, channels)``),
+        blocking until it has been handed to the stream.
+
+        The wait polls ``cancel_event`` (when one was supplied) every
+        `acquisition.CANCEL_POLL_INTERVAL` seconds and stops playback
+        as soon as it is set — polling closes the race where a cancel
+        lands before the stimulus is queued (observed live: the cancel
+        arrived while the capture stream was still opening, and a
+        release-once call had nothing to release yet). It is also
+        bounded (signal duration plus a 10 s margin) so a capture
+        thread cannot hang forever on a stream that died mid-playback;
+        on timeout a warning is printed and playback is cancelled
+        rather than left dangling.
+        '''
+        done = self._recorder.queue_output(data)
+        fs = float(getattr(self._settings, 'output_fs', None)
+                   or self._settings.fs)
+        deadline = time.time() + len(data) / fs + 10.0
+        poll = acquisition.CANCEL_POLL_INTERVAL
+        while not done.wait(poll):
+            if (self._cancel_event is not None
+                    and self._cancel_event.is_set()):
+                self._recorder.cancel_output()
+                return
+            if time.time() > deadline:
+                print('WARNING: stimulus playback did not complete in '
+                      'time — the capture stream may have stopped. '
+                      'Cancelling playback.')
+                self._recorder.cancel_output()
+                return
+
+    def stop(self):
+        self._recorder.cancel_output()
+
+    def close(self):
+        pass
+
+
+def setup_output_soundcard(settings, cancel_event=None):
+    '''Open the soundcard output path for `acquisition.output_signal`.
+
+    When the stimulus targets the SAME device the live capture stream
+    is running on, returns a `_DuplexOutputAdapter` that plays through
+    that (full-duplex) stream — opening a second stream on the device
+    would kill the running capture on macOS (see
+    `Recorder.init_stream`). The adapter's blocking ``write`` polls
+    ``cancel_event`` (a `threading.Event` or None) so a bridge cancel
+    stops the stimulus mid-play. If the live stream on that device was
+    somehow opened input-only, this raises ``ValueError`` naming the
+    remedy instead of silently corrupting the measurement.
+
+    Otherwise opens and returns a separate `sd.OutputStream` as before
+    (output on a different device coexists fine with the capture).
     Clamps ``settings.output_channels`` against the output device's
     ``max_output_channels`` first (mutating ``settings`` in place via
     `_clamp_soundcard_output_channels`); without this clamp,
     ``sd.OutputStream`` would raise PortAudio ``-9998`` on a device
     that supports fewer output channels than requested.
     '''
+    rec = REC
+    if (isinstance(rec, Recorder)
+            and getattr(rec, 'audio_stream', None) is not None
+            and getattr(rec.audio_stream, 'active', True)
+            and settings.output_device_index is not None
+            and getattr(rec.settings, 'device_index', None)
+                == settings.output_device_index):
+        if getattr(rec, 'duplex_output_channels', None):
+            return _DuplexOutputAdapter(rec, settings,
+                                        cancel_event=cancel_event)
+        raise ValueError(
+            'output_device_index %r is the same device the capture '
+            'stream is running on, but that stream is input-only — '
+            'opening a second stream on it would silence the capture '
+            '(macOS). Set output_device_index before the stream starts '
+            '(so it opens full-duplex), or route the output to a '
+            'different device.' % (settings.output_device_index,))
+
     _clamp_soundcard_output_channels(settings)
     dtype = 'float32'
 

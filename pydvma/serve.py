@@ -1938,9 +1938,14 @@ class _Connection:
         **With no log in flight** this is the original behaviour — stop
         the monitor feed, then acknowledge.
 
-        Still best-effort at the edges: a capture blocked inside
-        soundcard playback (``sd.OutputStream.write``) cannot be
-        interrupted mid-write, and if the worker has not unwound within
+        A capture blocked inside SAME-DEVICE soundcard playback is
+        released within :data:`acquisition.CANCEL_POLL_INTERVAL`: that
+        path plays through the capture stream's own duplex output, and
+        its wait polls this same cancel event
+        (`streams._DuplexOutputAdapter.write`). Still best-effort at
+        the edges: playback on a SEPARATE output device blocks inside
+        ``sd.OutputStream.write`` and cannot be interrupted mid-write,
+        and if the worker has not unwound within
         :data:`CANCEL_JOIN_TIMEOUT` seconds the acknowledgement is sent
         anyway.  Either way the log task suppresses its own result once
         the event is set, so a late finisher cannot leak a

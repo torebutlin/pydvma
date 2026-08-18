@@ -430,7 +430,7 @@ class TestStimulusOnSharedClock:
             def stop(self): pass
             def close(self): pass
 
-        def fake_output(settings, out):
+        def fake_output(settings, out, cancel_event=None):
             played.update(fs=settings.output_fs, n=len(out))
             return FakeStream()
 
