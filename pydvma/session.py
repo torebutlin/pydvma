@@ -26,11 +26,20 @@ optional — ``pydvma-serve --open`` starts the same server with no kernel
 anywhere; the only difference is that no one holds a :class:`Session`.
 """
 import asyncio
+import math
 import threading
 import webbrowser
 
 from . import container
 from . import datastructure
+
+#: How many times :meth:`Session.push` re-reads and re-merges when the
+#: journal moved under it (a capture landing, or another writer posting)
+#: before giving up. Each retry only loses if something else writes
+#: again in the merge window, so a handful is already generous for a
+#: single-user lab session; the cap exists so a pathological writer
+#: cannot spin here forever.
+PUSH_MAX_ATTEMPTS = 10
 
 #: Seconds :func:`launch` waits for the background server to bind before
 #: giving up and raising. Generous: binding a loopback port is instant,
@@ -55,11 +64,16 @@ def _merge_dataset(target, source):
     """Merge every item of ``source`` into ``target``, replacing by id.
 
     An item whose ``unique_id`` already exists in the target's same-kind
-    list REPLACES that entry — so the pull → filter/scale → push-back
-    flow updates data in place instead of duplicating it — and anything
-    else appends. Items without a ``unique_id`` always append.
-    ``DataSet.add_to_dataset`` accepts one item or one HOMOGENEOUS list,
-    hence the per-kind walk over ``DataSet._LIST_ATTRS``.
+    list REPLACES that entry IN PLACE, at its existing index — so the
+    pull → filter/scale → push-back flow updates data where it sits
+    instead of duplicating it or reordering the set — and anything else
+    appends. Items without a ``unique_id`` always append. Should the
+    target somehow already hold two items sharing one ``unique_id``,
+    the LAST of them is the one replaced (the index map is a dict
+    comprehension, so a later duplicate wins the key) and the earlier
+    copies are left alone. ``DataSet.add_to_dataset`` accepts one item
+    or one HOMOGENEOUS list, hence the per-kind walk over
+    ``DataSet._LIST_ATTRS``.
 
     Mutates ``target`` in place and returns nothing.
 
@@ -84,19 +98,60 @@ def _merge_dataset(target, source):
             target.add_to_dataset(appends)
 
 
+def _count_items(dataset):
+    """Total number of data items a DataSet holds, across every kind.
+
+    Used by :meth:`Session.push` to notice that wrapping its argument
+    produced an EMPTY DataSet — ``DataSet.add_to_dataset`` silently
+    ignores anything it does not recognise, so without this an
+    unsupported object would post an unchanged document and look like
+    a successful push.
+
+    Args:
+        dataset (pydvma.datastructure.DataSet): the dataset to count.
+    """
+    return sum(len(getattr(dataset, name, []) or [])
+               for name in datastructure.DataSet._LIST_ATTRS)
+
+
+def _json_scalar(value):
+    """Return ``value`` as a JSON-safe scalar, or :data:`_MISSING`.
+
+    ``bool`` is tested before ``int`` (it is a subclass) so True stays
+    a JSON boolean. Non-finite floats are REJECTED rather than passed
+    through: ``json.dumps`` writes them as bare ``Infinity``/``NaN``,
+    which is not JSON, and the browser's ``JSON.parse`` throws on the
+    whole document — one bad setting would cost the UI its entire
+    prefill.
+
+    Args:
+        value: the candidate value, of any type.
+    """
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else _MISSING
+    return _MISSING
+
+
 def _settings_to_config_json(settings):
     """Convert MySettings to the JSON dict served at ``/config``.
 
     That document is the web UI's Setup prefill. Keys come from the
     serve module's settings whitelist (derived from the
     ``MySettings.__init__`` signature) so the launch path and the
-    ``--settings`` CLI path accept exactly the same set, and only
-    JSON-representable values survive: array-valued settings
-    (``iepe_excit_current_A``, ``channel_sensitivities``) and any other
-    resolved runtime baggage are dropped, matching what a hand-written
-    settings JSON could contain. Constructor arguments that MySettings
-    consumes without storing (``device``, the by-name selector) are
-    absent from the instance and so absent here too.
+    ``--settings`` CLI path accept exactly the same set, and every
+    value is coerced to what a hand-written settings JSON could carry:
+    numpy arrays and scalars go through ``tolist()``, so the per-channel
+    settings (``iepe_excit_current_A``, ``channel_sensitivities``) reach
+    the UI in the array form it already reads, and anything still
+    unrepresentable — a nested array, a resolved device object, a
+    non-finite float (see :func:`_json_scalar`) — is dropped key and
+    all rather than breaking the document. Constructor arguments that
+    MySettings consumes without storing (``device``, the by-name
+    selector) are absent from the instance and so absent here too.
 
     Returns an empty dict when ``settings`` is None.
 
@@ -112,11 +167,18 @@ def _settings_to_config_json(settings):
         value = getattr(settings, name, _MISSING)
         if value is _MISSING:
             continue
+        if hasattr(value, 'tolist'):
+            # numpy array OR numpy scalar: both grow Python equivalents
+            # this way (np.float64 -> float, array -> nested lists).
+            value = value.tolist()
         if isinstance(value, (list, tuple)):
-            if all(isinstance(v, (int, float, str, bool)) for v in value):
-                out[name] = list(value)
-        elif isinstance(value, (bool, int, float, str)) or value is None:
-            out[name] = value
+            items = [_json_scalar(v) for v in value]
+            if _MISSING not in items:
+                out[name] = items
+            continue
+        scalar = _json_scalar(value)
+        if scalar is not _MISSING:
+            out[name] = scalar
     return out
 
 
@@ -222,6 +284,31 @@ class Session(object):
         self._thread = thread
         self._loop = loop
         self.url = url
+        self._closed = False
+        self._close_lock = threading.Lock()
+
+    def __repr__(self):
+        """Notebook-facing summary: URL, driver, and open/closed."""
+        state = 'closed' if (self._closed or not self._thread.is_alive()) \
+            else 'open'
+        return '<Session %s (driver=%s, %s)>' % (
+            self.url, self._server.default_driver, state)
+
+    def _snapshot(self):
+        """Return ``(dataset, generation)`` — the journal, materialised.
+
+        The generation belongs to the same read as the data, so a
+        writer can hand it back to
+        :meth:`pydvma.journal.SessionJournal.set_doc` as
+        ``expect_generation`` and be refused if anything changed in
+        between. :attr:`data` is this without the bookkeeping.
+        """
+        doc, captures, generation = self._server.journal.state()
+        dataset = (container.load_bytes(doc) if doc
+                   else datastructure.DataSet())
+        for capture in captures:
+            _merge_dataset(dataset, container.load_bytes(capture))
+        return dataset, generation
 
     @property
     def data(self):
@@ -236,14 +323,12 @@ class Session(object):
         in place.
 
         An empty DataSet when the session has no document and no
-        pending captures yet.
+        pending captures yet. Still readable after :meth:`close` —
+        pulling your data out of a session you have finished with is
+        the point of the explicit handoff, and the journal outlives
+        the server thread that fed it.
         """
-        doc, captures = self._server.journal.state()
-        dataset = (container.load_bytes(doc) if doc
-                   else datastructure.DataSet())
-        for capture in captures:
-            _merge_dataset(dataset, container.load_bytes(capture))
-        return dataset
+        return self._snapshot()[0]
 
     def push(self, data):
         """Hand data to the session; connected apps offer to reload.
@@ -253,13 +338,20 @@ class Session(object):
         back something you pulled and edited updates that item in
         place, while genuinely new items append.
 
-        Not atomic against a concurrent capture: the read and the write
-        are each individually locked by the journal, but a capture that
-        lands between them stays pending and is picked up by the next
-        read (and by the app's next autosave), rather than being lost.
-        Acceptable for a single-user lab session, where a push from the
-        kernel and a capture from the bridge are not simultaneous in
-        practice.
+        The read-merge-write cycle is guarded by the journal's
+        generation counter, so nothing is lost to a race: if a capture
+        lands, or the app's autosave posts, between the read and the
+        write, the post is REFUSED and this retries from a fresh read
+        (up to :data:`PUSH_MAX_ATTEMPTS` times). Two concurrent pushes
+        therefore serialise — one wins, the other re-merges on top of
+        the winner's document — instead of one silently overwriting
+        the other.
+
+        Raises ``TypeError`` if ``data`` is not a DataSet and is not
+        something ``DataSet.add_to_dataset`` recognises (which would
+        otherwise post an unchanged document and look like success),
+        ``RuntimeError`` if the session is closed, and ``RuntimeError``
+        if the journal kept changing under every attempt.
 
         Args:
             data (pydvma.datastructure.DataSet or a single data item):
@@ -269,24 +361,52 @@ class Session(object):
                 item ``DataSet.add_to_dataset`` accepts) works
                 directly.
         """
+        with self._close_lock:
+            if self._closed:
+                raise RuntimeError('session is closed')
         if isinstance(data, datastructure.DataSet):
             source = data
         else:
             source = datastructure.DataSet(data)
-        merged = self.data
-        _merge_dataset(merged, source)
-        self._server.journal.set_doc(container.save_bytes(merged),
-                                     notify=True)
+            if _count_items(source) == 0:
+                raise TypeError(
+                    'cannot push %s: expected a DataSet or a single data '
+                    'item (TimeData, FreqData, CrossSpecData, TfData, '
+                    'ModalData, SonoData, MetaData), or a homogeneous '
+                    'list of them' % type(data).__name__)
+        journal = self._server.journal
+        for _ in range(PUSH_MAX_ATTEMPTS):
+            merged, generation = self._snapshot()
+            _merge_dataset(merged, source)
+            if journal.set_doc(container.save_bytes(merged), notify=True,
+                               expect_generation=generation):
+                return
+        raise RuntimeError(
+            'session changed repeatedly during push — retry')
 
     def close(self):
-        """Stop the server and its thread. Idempotent.
+        """Stop the server and its thread. Idempotent and thread-safe.
 
-        A second call on an already-closed session is a clean no-op.
-        The served app stops responding immediately; anything the
-        journal held goes with it, so save or :attr:`data` out
-        whatever you still want first.
+        A second call — from this thread or another — is a clean no-op
+        rather than a second stop injected into a shutdown already in
+        progress. Prints a WARNING if the thread has not finished
+        within :data:`SHUTDOWN_TIMEOUT_S`, in which case the port may
+        still be bound; the thread is a daemon, so it cannot keep the
+        interpreter alive either way.
+
+        :attr:`data` keeps working afterwards (the journal is plain
+        memory); :meth:`push` does not, since there is no longer an
+        app to notify.
         """
-        _shutdown(self._loop, self._thread)
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            _shutdown(self._loop, self._thread)
+            if self._thread.is_alive():
+                print('WARNING: pydvma session server thread did not stop '
+                      'within %g s; %s may still be bound'
+                      % (SHUTDOWN_TIMEOUT_S, self.url))
 
     def __enter__(self):
         """Return self, so ``with launch(...) as session:`` works."""

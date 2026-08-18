@@ -7,6 +7,8 @@ isolated session_dir + recover=False so the suite never touches the
 real system temp dir (same hygiene as tests/test_serve_protocol.py).
 """
 import asyncio
+import socket
+import threading
 
 import numpy as np
 import pytest
@@ -14,7 +16,8 @@ import pytest
 pytest.importorskip('websockets')
 
 from pydvma import container, datastructure, options
-from pydvma.session import Session, launch, _settings_to_config_json
+from pydvma.session import (Session, _merge_dataset, _settings_to_config_json,
+                            launch)
 
 
 def _mock_settings():
@@ -81,6 +84,33 @@ class TestLaunchLifecycle:
         with _launch(tmp_path / 'a') as s1, _launch(tmp_path / 'b') as s2:
             assert s1.url != s2.url
 
+    def test_bind_failure_raises_and_leaves_no_thread(self, tmp_path):
+        # Hold an ephemeral port ourselves, then ask launch for it: the
+        # readiness poll must notice the FAILED task rather than waiting
+        # out the whole startup timeout, and must chain the real OSError.
+        # (No hardcoded port -- the OS picks it.)
+        held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        held.bind(('127.0.0.1', 0))
+        held.listen(1)
+        taken = held.getsockname()[1]
+        try:
+            with pytest.raises(RuntimeError) as excinfo:
+                _launch(tmp_path, port=taken)
+        finally:
+            held.close()
+        assert isinstance(excinfo.value.__cause__, OSError)
+        assert str(taken) in str(excinfo.value)
+        assert not [t for t in threading.enumerate()
+                    if t.name == 'pydvma-session-server' and t.is_alive()]
+
+    def test_repr_reports_url_driver_and_state(self, tmp_path):
+        s = _launch(tmp_path)
+        try:
+            assert repr(s) == '<Session %s (driver=mock, open)>' % s.url
+        finally:
+            s.close()
+        assert repr(s) == '<Session %s (driver=mock, closed)>' % s.url
+
 
 class TestSessionData:
 
@@ -135,6 +165,129 @@ class TestSessionData:
             pulled.test_name = 'mutated-locally'
             assert s.data.time_data_list[0].test_name == 'original'
 
+    def test_data_still_readable_after_close(self, tmp_path):
+        s = _launch(tmp_path)
+        s.push(_tiny_dataset('kept'))
+        s.close()
+        assert [t.test_name for t in s.data.time_data_list] == ['kept']
+
+
+class TestPushGuards:
+    """`push` must be loud when it cannot do what it was asked, and
+    must never lose a write it raced with.
+    """
+
+    def test_push_notifies_listeners(self, tmp_path):
+        # notify=True is what makes a connected app offer to reload --
+        # pin it, since a silent post would look identical here.
+        with _launch(tmp_path) as s:
+            hits = []
+            s._server.journal.add_listener(lambda: hits.append(1))
+            s.push(_tiny_dataset())
+        assert hits == [1]
+
+    def test_push_unsupported_object_raises_and_leaves_journal(self, tmp_path):
+        with _launch(tmp_path) as s:
+            before = s._server.journal.generation
+            with pytest.raises(TypeError) as excinfo:
+                s.push(42)
+            assert 'TimeData' in str(excinfo.value)   # names what IS accepted
+            assert s._server.journal.generation == before
+
+    def test_push_after_close_raises(self, tmp_path):
+        s = _launch(tmp_path)
+        s.close()
+        with pytest.raises(RuntimeError, match='closed'):
+            s.push(_tiny_dataset())
+
+    def test_push_retries_when_a_capture_lands_mid_merge(self, tmp_path):
+        # The capture-loss window: a capture registered between push's
+        # read and its write used to be wiped by set_doc's clear. The
+        # generation check turns that into a refusal + re-merge, so BOTH
+        # survive. Simulated by a listener-free one-shot hook on the
+        # journal's own state() -- the only moment the race matters.
+        with _launch(tmp_path) as s:
+            journal = s._server.journal
+            real_state = journal.state
+            fired = []
+
+            def racing_state():
+                result = real_state()
+                if not fired:
+                    fired.append(1)
+                    journal.add_capture(
+                        container.save_bytes(_tiny_dataset('raced')))
+                return result
+
+            journal.state = racing_state
+            try:
+                s.push(_tiny_dataset('pushed'))
+            finally:
+                journal.state = real_state
+            names = sorted(t.test_name for t in s.data.time_data_list)
+        assert fired == [1]              # the race really happened
+        assert names == ['pushed', 'raced']
+
+    def test_push_gives_up_after_bounded_retries(self, tmp_path):
+        # A journal that changes on EVERY read can never be posted to;
+        # push must raise rather than spin forever.
+        with _launch(tmp_path) as s:
+            journal = s._server.journal
+            real_state = journal.state
+
+            def always_racing_state():
+                result = real_state()
+                journal.add_capture(container.save_bytes(_tiny_dataset('r')))
+                return result
+
+            journal.state = always_racing_state
+            try:
+                with pytest.raises(RuntimeError, match='changed repeatedly'):
+                    s.push(_tiny_dataset('pushed'))
+            finally:
+                journal.state = real_state
+
+
+class TestMergeDataset:
+    """`_merge_dataset` on its own -- the id rule that makes push
+    idempotent rather than duplicating.
+    """
+
+    def test_empty_source_is_a_no_op(self):
+        target = _tiny_dataset('a')
+        _merge_dataset(target, datastructure.DataSet())
+        assert [t.test_name for t in target.time_data_list] == ['a']
+
+    def test_new_ids_append(self):
+        target = _tiny_dataset('a')
+        _merge_dataset(target, _tiny_dataset('b'))
+        assert [t.test_name for t in target.time_data_list] == ['a', 'b']
+
+    def test_replacement_preserves_index(self):
+        target = _tiny_dataset('a')
+        target.add_to_dataset(_tiny_dataset('b').time_data_list[0])
+        target.add_to_dataset(_tiny_dataset('c').time_data_list[0])
+        edited = datastructure.DataSet(target.time_data_list[1])
+        edited.time_data_list[0].test_name = 'b-edited'
+        _merge_dataset(target, edited)
+        assert [t.test_name for t in target.time_data_list] == [
+            'a', 'b-edited', 'c']
+
+    def test_item_without_unique_id_appends(self):
+        target = _tiny_dataset('a')
+        source = _tiny_dataset('b')
+        del source.time_data_list[0].unique_id
+        _merge_dataset(target, source)
+        assert [t.test_name for t in target.time_data_list] == ['a', 'b']
+
+    def test_merges_every_kind_at_once(self):
+        target = datastructure.DataSet()
+        source = _tiny_dataset('td')
+        source.add_to_dataset(datastructure.MetaData(test_name='md'))
+        _merge_dataset(target, source)
+        assert len(target.time_data_list) == 1
+        assert len(target.meta_data_list) == 1
+
 
 class TestSettingsToConfigJson:
 
@@ -143,7 +296,31 @@ class TestSettingsToConfigJson:
         import json
         json.dumps(d)                      # must be JSON-serialisable
         assert d['device_driver'] == 'mock'
-        assert 'device_full_info' not in d  # non-JSON fields dropped
+        assert 'device' not in d           # constructor-only, never stored
+
+    def test_arrays_reach_the_ui_as_lists(self):
+        # serveConfig.ts reads iepe_excit_current_A as an array (or a
+        # scalar); dropping it entirely -- as a naive JSON filter does,
+        # since these default to numpy arrays -- silently loses the
+        # prefill.
+        d = _settings_to_config_json(_mock_settings())
+        assert d['iepe_excit_current_A'] == [0.0, 0.0]
+        assert d['channel_sensitivities'] == [1.0, 1.0]
+        assert isinstance(d['iepe_excit_current_A'], list)
+
+    def test_non_finite_values_are_dropped(self):
+        # json.dumps would emit bare NaN/Infinity, which JSON.parse
+        # rejects -- taking the WHOLE prefill document down with it.
+        import json
+        s = _mock_settings()
+        s.VmaxSC = float('nan')
+        s.pretrig_timeout = float('inf')
+        s.channel_sensitivities = np.array([1.0, np.nan])
+        d = _settings_to_config_json(s)
+        assert 'VmaxSC' not in d
+        assert 'pretrig_timeout' not in d
+        assert 'channel_sensitivities' not in d
+        assert 'NaN' not in json.dumps(d) and 'Infinity' not in json.dumps(d)
 
     def test_none_settings_gives_empty(self):
         assert _settings_to_config_json(None) == {}

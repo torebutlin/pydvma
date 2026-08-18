@@ -17,7 +17,7 @@ class TestDocAndCaptures:
 
     def test_empty_state(self):
         j = SessionJournal()
-        doc, captures = j.state()
+        doc, captures, _ = j.state()
         assert doc is None
         assert captures == []
 
@@ -25,14 +25,14 @@ class TestDocAndCaptures:
         j = SessionJournal()
         j.set_doc(b'v1')
         j.set_doc(b'v2')
-        doc, _ = j.state()
+        doc, _, _ = j.state()
         assert doc == b'v2'
 
     def test_add_capture_accumulates_in_order(self):
         j = SessionJournal()
         j.add_capture(b'c1')
         j.add_capture(b'c2')
-        _, captures = j.state()
+        _, captures, _ = j.state()
         assert captures == [b'c1', b'c2']
 
     def test_set_doc_clears_pending_captures(self):
@@ -42,23 +42,84 @@ class TestDocAndCaptures:
         j = SessionJournal()
         j.add_capture(b'c1')
         j.set_doc(b'doc')
-        _, captures = j.state()
+        _, captures, _ = j.state()
         assert captures == []
 
     def test_capture_after_doc_stays_pending(self):
         j = SessionJournal()
         j.set_doc(b'doc')
         j.add_capture(b'c1')
-        doc, captures = j.state()
+        doc, captures, _ = j.state()
         assert doc == b'doc'
         assert captures == [b'c1']
 
     def test_state_returns_copies(self):
         j = SessionJournal()
         j.add_capture(b'c1')
-        _, captures = j.state()
+        _, captures, _ = j.state()
         captures.append(b'evil')
         assert j.state()[1] == [b'c1']
+
+
+class TestGeneration:
+    """The optimistic-concurrency counter that lets a read-modify-write
+    writer (`pydvma.session.Session.push`) detect that a capture or
+    another writer's post landed while it was merging -- without which
+    `set_doc`'s whole-document replace would silently drop it.
+    """
+
+    def test_starts_at_zero_and_state_reports_it(self):
+        j = SessionJournal()
+        assert j.generation == 0
+        assert j.state()[2] == 0
+
+    def test_set_doc_increments(self):
+        j = SessionJournal()
+        j.set_doc(b'v1')
+        assert j.generation == 1
+        j.set_doc(b'v2')
+        assert j.generation == 2
+
+    def test_add_capture_increments(self):
+        # A capture is exactly the kind of change a merging writer must
+        # not overwrite, so it counts as a generation too.
+        j = SessionJournal()
+        j.add_capture(b'c1')
+        assert j.generation == 1
+        j.add_capture(b'c2')
+        assert j.generation == 2
+
+    def test_matching_expect_generation_succeeds(self):
+        j = SessionJournal()
+        j.set_doc(b'v1')
+        _, _, gen = j.state()
+        assert j.set_doc(b'v2', expect_generation=gen) is True
+        assert j.state()[0] == b'v2'
+
+    def test_stale_expect_generation_refuses_and_preserves(self):
+        j = SessionJournal()
+        j.set_doc(b'v1')
+        _, _, gen = j.state()
+        j.add_capture(b'c1')            # the world moves under the writer
+        assert j.set_doc(b'v2', expect_generation=gen) is False
+        doc, captures, now = j.state()
+        assert doc == b'v1'             # document untouched
+        assert captures == [b'c1']      # capture NOT cleared
+        assert now == gen + 1           # refusal did not itself count
+
+    def test_refused_post_does_not_notify(self):
+        j = SessionJournal()
+        hits = []
+        j.add_listener(lambda: hits.append(1))
+        j.add_capture(b'c1')
+        assert j.set_doc(b'v2', notify=True, expect_generation=0) is False
+        assert hits == []
+
+    def test_unconditional_post_returns_true(self):
+        # The app's own autosave path: no expect_generation, always wins.
+        j = SessionJournal()
+        j.add_capture(b'c1')
+        assert j.set_doc(b'v1') is True
 
 
 class TestPendingCapturesBudget:
@@ -75,10 +136,10 @@ class TestPendingCapturesBudget:
         monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 10)
         j = SessionJournal()
         j.add_capture(b'1234567890')       # exactly at the cap -- kept
-        _, captures = j.state()
+        _, captures, _ = j.state()
         assert captures == [b'1234567890']
         j.add_capture(b'x')                # pushes total to 11 -- evicts it
-        _, captures = j.state()
+        _, captures, _ = j.state()
         assert captures == [b'x']
 
     def test_budget_evicts_multiple_oldest_entries_as_needed(self, monkeypatch):
@@ -87,7 +148,7 @@ class TestPendingCapturesBudget:
         j.add_capture(b'aa')
         j.add_capture(b'bb')
         j.add_capture(b'cc')       # total 6 > 5 -- evicts 'aa' -> total 4
-        _, captures = j.state()
+        _, captures, _ = j.state()
         assert captures == [b'bb', b'cc']
 
     def test_single_capture_over_budget_alone_is_evicted_too(self, monkeypatch):
@@ -97,7 +158,7 @@ class TestPendingCapturesBudget:
         monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 2)
         j = SessionJournal()
         j.add_capture(b'toolong')
-        _, captures = j.state()
+        _, captures, _ = j.state()
         assert captures == []
 
     def test_doc_post_still_clears_everything_regardless_of_budget(
@@ -110,7 +171,7 @@ class TestPendingCapturesBudget:
         j.add_capture(b'c1')
         j.add_capture(b'c2')
         j.set_doc(b'doc')
-        doc, captures = j.state()
+        doc, captures, _ = j.state()
         assert doc == b'doc'
         assert captures == []
 
@@ -364,7 +425,7 @@ class TestThreadSafety:
             t.start()
         for t in threads:
             t.join()
-        doc, captures = j.state()
+        doc, captures, _ = j.state()
         assert doc == b'd%d' % (n - 1)
         # Pending list is consistent (no torn state); exact content
         # depends on interleaving.

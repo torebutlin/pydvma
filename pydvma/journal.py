@@ -23,6 +23,22 @@ list, because the app serialises its whole dataset at post time — any
 capture it had already received is inside that document. A capture
 landing after the post stays pending until the next one.
 
+That contract is exactly why writers need a way to detect that the
+world moved under them: a post is a WHOLE-DOCUMENT replace that also
+drops pending captures, so a writer which read the journal, spent time
+merging, and then posted would silently discard any capture (or any
+other writer's post) that landed in between. Hence the
+:attr:`~SessionJournal.generation` counter — bumped under the lock by
+every :meth:`~SessionJournal.set_doc` AND every
+:meth:`~SessionJournal.add_capture`, and returned by
+:meth:`~SessionJournal.state` alongside the data it describes. Pass the
+generation you read back as ``set_doc(..., expect_generation=g)`` and
+the post is REFUSED (returns False, writes nothing, clears nothing) if
+anything changed meanwhile, so the caller can re-read and re-merge —
+see :meth:`pydvma.session.Session.push`. Writers that legitimately own
+the whole document (the app's own autosave, which serialises what it
+already holds) simply omit it and post unconditionally.
+
 Pending-captures budget: a document post is what NORMALLY bounds the
 pending list, but nothing forces one to ever land — a client that
 predates journal support (or simply never opens the app after logging)
@@ -118,9 +134,18 @@ class SessionJournal(object):
         self._spill_path = spill_path
         self._recovered = None
         self._recovered_path = None
+        self._generation = 0
 
-    def set_doc(self, doc_bytes, notify=False):
+    def set_doc(self, doc_bytes, notify=False, expect_generation=None):
         """Replace the session document (and clear pending captures).
+
+        Returns True when the document was written, and False only when
+        an ``expect_generation`` was supplied and no longer matches — in
+        which case NOTHING happens: the document is untouched, pending
+        captures are untouched, no spill is written and no listener
+        fires. Callers that pass ``expect_generation`` must handle the
+        False by re-reading :meth:`state` and re-merging (see
+        :meth:`pydvma.session.Session.push`).
 
         Args:
             doc_bytes (bytes, bytearray, or memoryview): the full
@@ -132,6 +157,14 @@ class SessionJournal(object):
                 reload; the app's own autosave posts use the default
                 ``False`` (silent — the app already has what it just
                 posted).
+            expect_generation (int or None): the
+                :attr:`generation` this document was built from. When
+                given, the post is refused unless the journal is still
+                at that generation, so a capture or another writer's
+                post that landed in between can never be silently
+                overwritten (see the module docstring). ``None`` (the
+                default) posts unconditionally — right for a writer
+                that owns the whole document already.
         """
         _check_bytes(doc_bytes, 'doc_bytes')
         # Coerce BEFORE taking the lock: a whole session document can be
@@ -140,8 +173,12 @@ class SessionJournal(object):
         # thread's unrelated add_capture/state/etc. for its duration.
         doc = bytes(doc_bytes)
         with self._lock:
+            if (expect_generation is not None
+                    and expect_generation != self._generation):
+                return False
             self._doc = doc
             self._captures = []
+            self._generation += 1
             listeners = list(self._listeners) if notify else []
         self._spill()
         for cb in listeners:
@@ -149,6 +186,7 @@ class SessionJournal(object):
                 cb()
             except Exception:
                 pass
+        return True
 
     def add_capture(self, dvma_bytes):
         """Register one capture's ``.dvma`` bytes, pending until the
@@ -183,16 +221,34 @@ class SessionJournal(object):
             total = sum(len(c) for c in self._captures)
             while total > PENDING_CAPTURES_MAX_BYTES and self._captures:
                 total -= len(self._captures.pop(0))
+            self._generation += 1
 
     def state(self):
-        """Current ``(doc_bytes_or_None, [capture_bytes, ...])``.
+        """Current ``(doc_bytes_or_None, [capture_bytes, ...], generation)``.
 
         The list is a copy — mutating it never touches the journal.
         The document is returned by reference, but ``bytes`` is
-        immutable so that is equivalent to a copy for callers.
+        immutable so that is equivalent to a copy for callers. The
+        generation describes THIS snapshot: hand it back as
+        :meth:`set_doc`'s ``expect_generation`` to post an update that
+        refuses to clobber anything that landed since.
         """
         with self._lock:
-            return self._doc, list(self._captures)
+            return self._doc, list(self._captures), self._generation
+
+    @property
+    def generation(self):
+        """How many writes this journal has accepted (read-only).
+
+        Starts at 0 and increments on every accepted :meth:`set_doc`
+        and every :meth:`add_capture` — see the module docstring. A
+        refused ``set_doc`` does not increment it. Read it through
+        :meth:`state` when the value must match the data you read;
+        this property is for tests and diagnostics, where a bare
+        counter is enough.
+        """
+        with self._lock:
+            return self._generation
 
     def add_listener(self, cb):
         """Register a zero-arg callable invoked on ``notify`` updates.

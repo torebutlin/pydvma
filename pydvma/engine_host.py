@@ -608,7 +608,11 @@ async def handle_connection(websocket, journal=None):
                     await loop.run_in_executor(None, journal.discard_recovered)
                     reply = {'id': rid, 'ok': True, 'result': {}}
                 else:
-                    doc, captures = journal.state()
+                    # The generation is a WRITER's concern (see
+                    # SessionJournal.set_doc's expect_generation); the
+                    # app's autosave owns the whole document and posts
+                    # unconditionally, so it stays off this wire.
+                    doc, captures, _generation = journal.state()
                     reply = {'id': rid, 'ok': True,
                              'result': {'doc': doc, 'captures': captures,
                                         'recovered': journal.recovered()}}
