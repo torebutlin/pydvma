@@ -69,8 +69,45 @@ interface Serve {
 
 const MAX_OUTPUT_LINES = 50;
 
+/**
+ * The serve and scratch dir currently owned by this file, tracked at MODULE
+ * scope rather than inside `withServe`'s closure. Two failure modes need
+ * that, and both are silent:
+ *
+ *  - a Playwright test TIMEOUT aborts the test body without unwinding any
+ *    `finally`, so the per-test teardown has to be reachable from an
+ *    `afterEach` too (see `teardown`);
+ *  - a spawn whose `waitForPort` rejects would otherwise leave a child
+ *    NOBODY holds a reference to — still bound to `PORT`, still serving —
+ *    and since this file spawns four serves on that one port, the next
+ *    test's `waitForPort` would connect to the orphan and run happily
+ *    against a server whose `--session-dir` has already been removed.
+ *
+ * `live` is therefore assigned IMMEDIATELY after `spawn`, before anything
+ * that can throw.
+ */
+let live: Serve | undefined;
+let liveDir: string | undefined;
+
+/** Resolve true when `proc` has exited, false if `timeoutMs` elapses first. */
+function onceExit(proc: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const finish = (exited: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(exited);
+    };
+    timer = setTimeout(() => finish(false), timeoutMs);
+    proc.once('exit', () => finish(true));
+  });
+}
+
 /** Poll the loopback TCP port until the server accepts a connection. */
-function waitForPort(port: number, output: string[], timeoutMs = 20000): Promise<void> {
+function waitForPort(port: number, output: string[], timeoutMs = 30000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     const attempt = () => {
@@ -103,12 +140,22 @@ function portIsLive(port: number): Promise<boolean> {
 }
 
 /** Spawn `pydvma serve --driver mock` on `port`, serving the built dist. */
-async function startServe(port: number, sessionDir: string): Promise<Serve> {
+async function startServe(port: number, sessionDir: string): Promise<void> {
+  // Bind only once the port is demonstrably FREE. Four spawn/kill cycles
+  // land on this one port, and a straggler still holding it would let the
+  // `waitForPort` below connect to the PREVIOUS test's server — same port,
+  // same protocol, stale (already removed) session dir — instead of failing.
+  await expect
+    .poll(() => portIsLive(port), { timeout: 30_000 })
+    .toBe(false);
+
   const output: string[] = [];
   const proc = spawn(PYTHON, [
     '-m', 'pydvma.serve', '--driver', 'mock', '--port', String(port),
     '--session-dir', sessionDir,
   ], { cwd: REPO_ROOT, stdio: 'pipe' });
+  // BEFORE anything that can throw — see the `live` docstring.
+  live = { proc, output };
   const ingest = (chunk: Buffer | string) => {
     for (const line of chunk.toString().split('\n')) {
       if (!line) continue;
@@ -118,15 +165,57 @@ async function startServe(port: number, sessionDir: string): Promise<Serve> {
   };
   proc.stdout.on('data', ingest);
   proc.stderr.on('data', ingest);
-  await waitForPort(port, output);
-  return { proc, output };
+  try {
+    await waitForPort(port, output);
+  } catch (e) {
+    // A server that never answered may still be RUNNING (a slow import, a
+    // half-open bind): kill it hard before rethrowing, or it keeps the port
+    // and poisons every later test in the file.
+    proc.kill('SIGKILL');
+    await onceExit(proc, 2000);
+    live = undefined;
+    throw e;
+  }
 }
 
-/** SIGINT the server and give it a moment to release the port. */
-async function stopServe(serve: Serve | undefined): Promise<void> {
+/**
+ * Stop the live serve and WAIT for the process to actually exit — a fixed
+ * sleep after SIGINT is not an exit barrier, and this file rebinds the same
+ * port immediately afterwards.
+ *
+ * The SIGINT grace is deliberately SHORT. An idle serve exits in tens of
+ * milliseconds (measured), but teardown here runs while the browser still
+ * holds an `/engine` websocket — Playwright disposes the page fixture AFTER
+ * our hooks, so we cannot close it first — and serve then sits waiting on
+ * its own connection handler. SIGKILL is the bounded fallback for exactly
+ * that case, and costs nothing: the server owns no state worth draining
+ * (the scratch session dir is deleted moments later anyway).
+ */
+async function stopServe(): Promise<void> {
+  const serve = live;
+  live = undefined;
   if (!serve) return;
-  serve.proc.kill('SIGINT');
-  await new Promise((r) => setTimeout(r, 300));
+  const { proc } = serve;
+  if (proc.exitCode !== null || proc.signalCode !== null) return;
+  proc.kill('SIGINT');
+  if (!(await onceExit(proc, 1500))) {
+    proc.kill('SIGKILL');
+    await onceExit(proc, 2000);
+  }
+}
+
+/**
+ * Stop any live serve and remove any lingering scratch dir. Idempotent, and
+ * called from BOTH `withServe`'s `finally` and an `afterEach` — the latter
+ * is the net for a Playwright test timeout, which aborts the body without
+ * unwinding a single `finally`.
+ */
+async function teardown(): Promise<void> {
+  await stopServe();
+  if (liveDir) {
+    fs.rmSync(liveDir, { recursive: true, force: true });
+    liveDir = undefined;
+  }
 }
 
 /**
@@ -142,15 +231,22 @@ async function withServe(
   opts: { seedSpillFrom?: string } = {},
 ): Promise<void> {
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pydvma-e2e-journal-'));
+  liveDir = sessionDir;                       // teardown owns it from here
   if (opts.seedSpillFrom) {
+    // Recovery adoption only ever offers a spill file whose port is DEAD (a
+    // live one belongs to a running serve), so a seeded test is silently
+    // meaningless if anything happens to hold this port. Checked here, so
+    // every seeding test gets the precondition for free.
+    expect(await portIsLive(DEAD_SPILL_PORT),
+           `port ${DEAD_SPILL_PORT} must be free: recovery only adopts a spill file whose port is dead`)
+      .toBe(false);
     fs.copyFileSync(
       opts.seedSpillFrom,
       path.join(sessionDir, `pydvma-session-${DEAD_SPILL_PORT}.dvma`),
     );
   }
-  let serve: Serve | undefined;
   try {
-    serve = await startServe(PORT, sessionDir);
+    await startServe(PORT, sessionDir);
     await body({
       sessionDir,
       // Where THIS server mirrors its posted document — an observable that
@@ -159,8 +255,7 @@ async function withServe(
       spillPath: path.join(sessionDir, `pydvma-session-${PORT}.dvma`),
     });
   } finally {
-    await stopServe(serve);
-    fs.rmSync(sessionDir, { recursive: true, force: true });
+    await teardown();
   }
 }
 
@@ -208,6 +303,32 @@ async function logOnce(page: Page): Promise<void> {
   await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(1, { timeout: 20000 });
 }
 
+/**
+ * Byte length of the app's IndexedDB autosave record, or 0 when absent.
+ * Reads the raw store (idb-keyval's defaults: db `keyval-store`, store
+ * `keyval`; key = `IDB_KEY` in `lib/files/autosave.ts`), exactly as
+ * files.spec.ts does, so nothing has to be imported into page context.
+ */
+function idbAutosaveBytes(page: Page): Promise<number> {
+  return page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        const open = indexedDB.open('keyval-store');
+        open.onsuccess = () => {
+          const db = open.result;
+          if (!db.objectStoreNames.contains('keyval')) return resolve(0);
+          const req = db.transaction('keyval').objectStore('keyval').get('pydvma:autosave');
+          req.onsuccess = () => {
+            const v = req.result as Uint8Array | undefined;
+            resolve(v ? v.byteLength : 0);
+          };
+          req.onerror = () => resolve(0);
+        };
+        open.onerror = () => resolve(0);
+      }),
+  );
+}
+
 const journalToast = (page: Page) =>
   page.getByTestId('toast').filter({ hasText: 'Restore session from pydvma-serve?' });
 const recoveryToast = (page: Page) =>
@@ -228,6 +349,11 @@ test.describe('pydvma-serve session journal', () => {
       throw new Error(`webui/dist not built (${DIST_DIR}); run \`npm run build\` first`);
     }
   });
+
+  // The teardown net: `withServe`'s own `finally` handles a failing
+  // assertion, but a test TIMEOUT unwinds nothing, and a leaked serve holds
+  // PORT (and its scratch dir) against every test that follows.
+  test.afterEach(teardown);
 
   test('capture + FFT, tab close, reopen → the journal offers the session back', async ({ page, context }) => {
     await withServe(async ({ spillPath }) => {
@@ -259,10 +385,16 @@ test.describe('pydvma-serve session journal', () => {
       await openApp(reopened);
 
       // The journal answers first: its offer is up, and the IndexedDB offer
-      // ("Restore last session?" — page A autosaved there too, so it WOULD
-      // have fired) never appears, because a raised journal offer returns
-      // before `bootFileRestore` ever reads IndexedDB.
+      // ("Restore last session?") never appears, because a raised journal
+      // offer returns before `bootFileRestore` ever reads IndexedDB.
       await expect(journalToast(reopened)).toBeVisible({ timeout: 60_000 });
+      // …and that negative is not VACUOUS: page A's autosave fans out to
+      // IndexedDB as well as the journal, so there really is a stored
+      // session here that WOULD have been offered. Without this the
+      // assertion would pass just as happily if the IndexedDB write had
+      // never landed at all.
+      await expect.poll(() => idbAutosaveBytes(reopened), { timeout: 15_000 })
+        .toBeGreaterThan(0);
       await expect(idbToast(reopened)).toHaveCount(0);
 
       await journalToast(reopened).getByRole('button', { name: 'Restore' }).click();
@@ -286,10 +418,17 @@ test.describe('pydvma-serve session journal', () => {
   test('a capture is journalled at BIRTH — a tab closed inside the autosave debounce loses nothing', async ({ page, context }) => {
     await withServe(async ({ spillPath }) => {
       await openApp(page);
+
+      // Take the 2 s debounce out of the equation entirely rather than
+      // racing it: with autosave OFF the app can never post a document at
+      // all (`onAutosaveToggle` also cancels anything already pending), so
+      // "the journal knows this capture ONLY because the server registered
+      // it at birth" becomes a controlled fact instead of a timing margin.
+      await ribbon(page).getByRole('button', { name: 'Export' }).click();
+      await page.getByRole('checkbox', { name: 'autosave' }).uncheck();
+
       await logOnce(page);
-      // Close immediately: the app's autosave is debounced by 2 s and the
-      // tray card lands within ~100 ms of `log_result`, so nothing has been
-      // posted. Deterministic server-side regardless of that margin —
+      // Server-side this is deterministic regardless of when the tab goes:
       // `_Connection._on_log` calls `journal.add_capture` BEFORE it sends
       // `log_result`, so the capture is registered before the client can
       // even know the log finished.
@@ -310,9 +449,6 @@ test.describe('pydvma-serve session journal', () => {
   });
 
   test('a previous run\'s spill file is offered for crash recovery and restores', async ({ page }) => {
-    expect(await portIsLive(DEAD_SPILL_PORT),
-           `port ${DEAD_SPILL_PORT} must be free: recovery only adopts a spill file whose port is dead`)
-      .toBe(false);
     await withServe(async () => {
       await openApp(page);
       // No live journal (fresh server, nothing logged), so the adopted
