@@ -98,6 +98,64 @@ and raises a one-shot toast explaining why. To force a specific engine —
 for testing, or if you hit a native-only quirk — append `?enginehost=`
 to the URL with `native`, `pyodide`, or an explicit `ws://` URL.
 
+#### The session lives in `pydvma-serve`
+
+Served locally, the **serve process holds the authoritative copy of your
+session**. The same debounced autosave that writes to browser storage also
+posts to the server, and every capture is registered server-side the moment
+it is taken — so a capture is safe even if the tab closes inside the
+autosave's two-second window.
+
+- **Close the tab and reopen it**: the app offers *"Restore session from
+  pydvma-serve?"*. The session is still on the server; closing the tab
+  cost you nothing.
+- **If the serve process itself died**, the next `pydvma-serve` start finds
+  the session file it left behind and the app offers *"Recover session from
+  a previous pydvma-serve run?"*. **Dismiss** deletes the file, so it is
+  never offered again. The file lives in the system temp directory;
+  `pydvma-serve --session-dir DIR` puts it somewhere you choose.
+
+Neither is automatic — both are offers you accept or dismiss. The
+browser-side autosave still works exactly as it did (see
+[Autosave and session restore](export.md#autosave-and-session-restore)),
+and the **Pages app is unchanged** — with no serve process there is no
+server-side journal, and the browser autosave is all there is, exactly as
+before. When both the server and the browser hold a session, the server's
+copy is the one offered.
+
+!!! note "What a restore brings back"
+    The **data**: your captures, loaded sets, calibration, units, channel
+    labels and any saved modal fit. **Not** the analysis you computed from
+    them — the FFT, TF and sonogram results shown in the analysis views are
+    not part of the session document (a `.dvma` saved from the app does not
+    carry them either), so re-run the calculation after restoring. On the
+    native engine that is quick.
+
+#### `dvma.launch` — the notebook front door
+
+From a notebook or script, `dvma.launch` starts all of the above from your
+kernel and hands back a handle to the running session:
+
+```python
+import pydvma as dvma
+
+session = dvma.launch(dvma.MySettings(device_driver='soundcard',
+                                      fs=8000, channels=2, stored_time=2.0))
+# ... record in the browser ...
+data = session.data          # a fresh DataSet, captures included
+data.calculate_fft_set(window='hann')
+session.push(data)           # hand it back; the app offers to reload
+session.close()
+```
+
+It runs the server on a background thread inside the calling process, so it
+behaves the same in a plain script and inside Jupyter, and `MySettings`
+prefills **Setup** just as `--settings` does. This is the replacement for
+the removed `dvma.Logger` — see [From the Qt logger](migration.md#the-notebook-front-door-dvmalaunch)
+for the full story and [Basic Examples](../examples/basic.md#a-notebook-session-dvmalaunch)
+for a worked flow. `pydvma-serve --open` starts exactly the same server
+when you do not need a kernel handle.
+
 ### 3. JupyterLite — `import pydvma` in the browser
 
 For scripted analysis with no install, the

@@ -146,6 +146,100 @@ coh = tf.tf_coherence[:, 0]    # its coherence
 # |H| = np.abs(H);  phase = np.angle(H, deg=True);  axis = tf.freq_axis
 ```
 
+## A notebook session: `dvma.launch`
+
+The flow above records from the notebook. `dvma.launch` is the other
+shape: it opens the [web logger](../web-logger/index.md) in your browser
+and hands the notebook a **`Session`** handle, so you record and monitor
+point-and-click and analyse in Python. It is the successor to the removed
+`dvma.Logger` (see [From the Qt logger](../web-logger/migration.md)) and
+needs the bridge extra:
+
+```bash
+pip install "pydvma[serve,soundcard]"    # [ni] for National Instruments
+```
+
+### 1. Launch
+
+```python
+import pydvma as dvma
+
+settings = dvma.MySettings(device_driver='soundcard', fs=8000,
+                           channels=2, stored_time=2.0)
+session = dvma.launch(settings)
+print(session.url)          # e.g. http://127.0.0.1:53421/ — also printed
+```
+
+Your browser opens on the app with **Setup** already filled in from
+`settings`. The server runs on a background thread inside this kernel, so
+the cell returns immediately and the notebook stays usable — and analysis
+runs in this same Python process rather than in the browser.
+
+### 2. Capture in the browser
+
+Work in the app as usual: check levels on **Live**, then record on
+**Acquire**. Each capture is registered with the session the moment it is
+taken, so the notebook can see it without you saving anything. (Closing
+the tab is safe too — reopen it and the app offers to restore the
+session. See
+[the session journal](../web-logger/index.md#the-session-lives-in-pydvma-serve).)
+
+### 3. Pull the data into the notebook
+
+```python
+data = session.data                        # a fresh DataSet
+print(len(data.time_data_list), 'captures')
+```
+
+`session.data` is a **copy**, rebuilt on every access — mutate it freely;
+nothing reaches the app until you push. It holds the session's *data*:
+the captures and any file loaded in the app. Results computed in the
+app's Frequency / TF / Sonogram views are **not** part of the session
+document, so compute what you need here.
+
+### 4. Analyse and plot
+
+Everything on `DataSet` works as it does anywhere else:
+
+```python
+data.calculate_fft_set(window='hann')
+data.calculate_tf_set(ch_in=0, window='hann', N_frames=8, overlap=0.5)
+
+data.plot_time_data()
+data.plot_tf_data()
+```
+
+### 5. Push back
+
+```python
+session.push(data)
+```
+
+The app raises a *"pydvma session updated from a notebook — reload?"*
+offer rather than replacing what is on screen — unsaved work in the tab
+is never silently clobbered (with an empty tray the pushed session simply
+loads). Merging follows the item's id:
+
+- the captures you pulled carry a `unique_id`, so an edited capture
+  **replaces** the stored one in place; and
+- the FFT and TF you just computed have no id, so they **append** — push
+  the same computed results twice and the session ends up with two
+  copies.
+
+### 6. Finish
+
+```python
+session.close()       # stops the server; session.data still reads
+```
+
+Or scope it, which closes the server even if the cell raises:
+
+```python
+with dvma.launch(settings) as session:
+    ...
+    data = session.data
+```
+
 ## Example 1: Simple Measurement and FFT
 
 ```python

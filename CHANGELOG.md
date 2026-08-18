@@ -105,6 +105,41 @@ field, plus the acquisition UX it showed was missing.
   unreachable (a toast reports the fallback when serve was detected).
   Force a host with `?enginehost=` (`native`, `pyodide`, or an explicit
   `ws://` URL). The BusyChip tooltip names the active engine.
+- **Session journal — `pydvma-serve` owns the session.** Served locally,
+  the authoritative session document now lives in the serve process, not
+  only in the browser: the app's existing debounced autosave also posts
+  to the server, and every capture is registered server-side the moment
+  it is taken (so a tab closing inside the two-second autosave window
+  still loses nothing). Closing the tab therefore costs nothing —
+  reopening offers *"Restore session from pydvma-serve?"*. If the serve
+  process itself died, the next start finds the session file it left
+  behind and the app offers *"Recover session from a previous
+  pydvma-serve run?"*, with **Dismiss** deleting the file; it lives in
+  the system temp dir unless `pydvma-serve --session-dir DIR` says
+  otherwise. Both are offers, never an automatic load. The browser-side
+  IndexedDB autosave is unchanged and the Pages app is untouched; when
+  both hold a session, the server's copy is the one offered. Restoring
+  brings back the **data** — captures, loaded sets, calibration, units,
+  channel labels, any saved modal fit — but not the analysis views
+  computed from them, which were never part of the document: re-run the
+  calculation (fast on the native engine).
+- **`dvma.launch(settings)` — the notebook front door**, successor to the
+  removed `dvma.Logger`. Starts the whole serve stack — acquisition
+  bridge, native `/engine` compute host, session journal, embedded UI —
+  on a background thread with its own event loop inside the kernel
+  process, opens the browser, prints the URL and returns a `Session`. So
+  it works identically from a plain script and from inside Jupyter, whose
+  kernel already runs a loop of its own. `session.data` materialises a
+  fresh `DataSet` from the session on every access, captures included;
+  `session.push(data)` hands data back and connected apps offer to reload
+  rather than silently replacing what is on screen; `session.close()`
+  stops the server (context-manager supported, and `session.url` is the
+  address). Push **merges by id** instead of replacing: an item carrying
+  a `unique_id` — a capture — replaces the stored copy *in place*, so
+  pull → modify → push updates data where it sits, while anything else
+  appends. `MySettings` prefills Setup exactly as `--settings` does.
+  `pydvma-serve --open` remains the same server without a kernel handle,
+  and the `dvma.Logger` / `dvma.Oscilloscope` tombstones now point here.
 
 ### Changed
 

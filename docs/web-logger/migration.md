@@ -3,7 +3,9 @@
 The desktop **Qt Logger** (`dvma.Logger(...)`) has been **removed**. The
 browser-based **web logger** reached full parity and is now the single
 interactive interface. `dvma.Logger(...)` and `dvma.Oscilloscope(...)` no
-longer exist — accessing either raises an error that points here. This
+longer exist — accessing either raises an error that points here. From a
+notebook, the replacement is
+[**`dvma.launch(settings)`**](#the-notebook-front-door-dvmalaunch). This
 page maps what you did in the Qt logger onto where it lives now.
 
 !!! info "The Python/notebook interface is unaffected"
@@ -38,6 +40,7 @@ page maps what you did in the Qt logger onto where it lives now.
 
 | Qt Logger | Web logger |
 | --------- | ---------- |
+| `dvma.Logger(settings)` | [`dvma.launch(settings)`](#the-notebook-front-door-dvmalaunch) — same settings; returns a `Session` handle instead of a window |
 | `MySettings(...)` fields (device, `fs`, `channels`, `stored_time`, ...) | **Setup** stage controls |
 | Live **Oscilloscope** window | **Live** scope + the persistent mini-monitor (docked on every stage) |
 | Record button / `log_data` | **Acquire** stage (with pretrigger arm and output stimulus) |
@@ -70,7 +73,7 @@ overrides, and the browser engine is the automatic fallback) — so
 FFT/TF/windowing/modal maths are never reimplemented — results match
 the desktop tool exactly.
 
-## The labsheet launch path
+## The notebook front door: `dvma.launch`
 
 A labsheet notebook used to set `MySettings` and pop the Logger window:
 
@@ -81,7 +84,77 @@ settings = dvma.MySettings(device_driver='soundcard', fs=44100,
 logger = dvma.Logger(settings)          # Qt window (removed; see qt-final)
 ```
 
-The web-logger equivalent depends on which mode you need (see
+`dvma.launch` takes the same `MySettings` and opens the web logger
+instead — but where `Logger` gave you a window, `launch` gives you a
+**handle to the running session**, so the notebook and the browser can
+pass data back and forth:
+
+```python
+import pydvma as dvma
+
+settings = dvma.MySettings(device_driver='soundcard', fs=44100,
+                           channels=2, stored_time=2.0)
+session = dvma.launch(settings)     # starts the server, opens the browser
+print(session.url)                  # http://127.0.0.1:<port>/ (also printed)
+
+# ... record in the browser: Setup is prefilled, press Log on Acquire ...
+
+data = session.data                 # a fresh DataSet, captures included
+data.calculate_fft_set(window='hann')
+data.plot_freq_data()
+
+session.push(data)                  # hand it back; the app offers to reload
+session.close()
+```
+
+Installed from the `[serve]` extra
+(`pip install "pydvma[serve,soundcard]"`), `launch` starts the whole
+`pydvma-serve` stack — acquisition bridge, native compute engine,
+[session journal](index.md#the-session-lives-in-pydvma-serve) and the
+embedded UI — on a background thread **inside your kernel**, so it works
+the same from a plain script and from inside Jupyter (whose kernel
+already runs an event loop of its own). `MySettings` prefills **Setup**
+exactly as [`--settings`](#pre-seeding-settings-with-settings) does, and
+supplies the acquisition driver.
+
+Useful arguments: `open_browser=False` starts the server without opening
+a tab (`session.url` still tells you where it is), and `port=8760` pins
+the port instead of taking a free one — handy for a fixed bookmark, at
+the cost of failing if something already holds it. `Session` is a context
+manager, so
+`with dvma.launch(settings) as session:` stops the server on the way out.
+
+### Getting data in and out
+
+`session.data` **materialises a fresh `DataSet` on every access** — it is
+a copy, not a live reference, so anything you do to it changes nothing
+until you push it back. `session.push(data)` is the only write path, and
+it **merges** rather than replaces:
+
+- A capture carries a `unique_id`, so one you pulled, modified and pushed
+  back **replaces** the stored copy in place — the pull → filter → push
+  round trip updates data where it sits instead of duplicating it.
+- Anything without an id — the spectra, transfer functions and sonograms
+  you compute in the notebook — **appends**. Push the same computed set
+  twice and you get two copies of it.
+
+A connected app is never silently overwritten: it raises a *"pydvma
+session updated from a notebook — reload?"* offer (with an empty tray it
+simply loads the pushed session). Likewise, what `session.data` holds is
+the session's *data* — captures and loaded sets — not the analysis views
+the app computed from them, which are not part of the session document.
+Compute what you need in the notebook.
+
+`session.close()` stops the server; `session.data` still reads afterwards
+(pulling your data out of a session you have finished with is the point),
+but `push` does not, because there is no longer an app to notify.
+
+A [worked notebook flow](../examples/basic.md#a-notebook-session-dvmalaunch)
+runs through the whole cycle.
+
+### Without a notebook
+
+You do not need a kernel at all. The other two routes are unchanged (see
 [the three modes](index.md)):
 
 - **Analysis / soundcard, no install** — just open the Pages app at
@@ -89,14 +162,15 @@ The web-logger equivalent depends on which mode you need (see
   capture in **Setup**. Nothing to launch from the notebook.
 
 - **Lab PC with NI (or a local soundcard bridge)** — start the bridge
-  instead of opening the Logger window:
+  from a terminal:
 
   ```bash
   pydvma-serve --driver nidaq --open      # or --driver soundcard
   ```
 
-  This serves the app *and* the WebSocket bridge from one local port and
-  opens your browser at it.
+  This is the same server `dvma.launch` runs, minus the `Session`
+  handle: it serves the app *and* the WebSocket bridge from one local
+  port and opens your browser at it.
 
 ### Pre-seeding settings with `--settings`
 

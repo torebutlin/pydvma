@@ -28,6 +28,12 @@ storage a couple of seconds after every change:
 A clean **Save Dataset** clears the autosave. Turn Autosave off to stop
 the background writes.
 
+When the app is served by `pydvma-serve`, each autosave is *also* posted
+to the server, which keeps the authoritative session — so the restore
+offer on the next open comes from there rather than from browser storage,
+and a session survives the tab closing or the serve process crashing. See
+[the session journal](index.md#the-session-lives-in-pydvma-serve).
+
 ## Export data
 
 - **Export Matlab** writes a `.mat` file. The MATLAB bytes are built by
