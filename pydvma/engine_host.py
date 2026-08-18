@@ -459,8 +459,21 @@ class EngineWorker:
 PROGRESS_MIN_INTERVAL_S = 0.1
 
 
-async def handle_connection(websocket):
+async def handle_connection(websocket, journal=None):
     """Serve one /engine connection: greeting, then serial op frames.
+
+    ``journal`` is the serve process's :class:`pydvma.journal.
+    SessionJournal` -- when given, ``journal_set``/``journal_get``/
+    ``journal_discard_recovered`` op frames are answered INLINE, right
+    here in the host, and never reach the calc worker subprocess (which
+    only knows compute ops). ``None`` (a bare harness with no session
+    journal -- today, also ``BridgeServer`` itself, which does not yet
+    wire one through) declines every journal op with an ``ok: False``
+    error reply instead of raising or forwarding it. A journal update
+    posted with ``notify=True``
+    (:meth:`pydvma.journal.SessionJournal.set_doc`) is forwarded to this
+    connection's client as a ``{"type": "journal", "event": "updated"}``
+    text frame for as long as the connection lives.
 
     One :class:`EngineWorker` per connection (one app tab is the expected
     client). Closing the socket is the client's Stop -- and, crucially,
@@ -502,6 +515,7 @@ async def handle_connection(websocket):
     worker = EngineWorker()
     loop = asyncio.get_running_loop()
     try:
+        unsubscribe_journal = None
         try:
             await websocket.send(json.dumps({
                 'type': 'engine_ready',
@@ -510,6 +524,21 @@ async def handle_connection(websocket):
             }))
         except ConnectionClosed:
             return  # closed before the greeting landed -- nothing to serve
+
+        if journal is not None:
+            def _notify_journal_update():
+                # Called from ANY thread (see SessionJournal.add_listener's
+                # docstring) -- hop back onto this connection's event loop
+                # the same way on_progress does below.
+                fut = asyncio.run_coroutine_threadsafe(
+                    websocket.send(json.dumps(
+                        {'type': 'journal', 'event': 'updated'})), loop)
+                # Fire-and-forget, same reasoning as on_progress's callback
+                # below: a notify racing a client close is routine, not an
+                # error, and must not surface as an unretrieved-exception
+                # warning.
+                fut.add_done_callback(lambda f: f.exception())
+            unsubscribe_journal = journal.add_listener(_notify_journal_update)
 
         async for raw in websocket:
             if not isinstance(raw, (bytes, bytearray)):
@@ -527,6 +556,35 @@ async def handle_connection(websocket):
                     }))
                 except ConnectionClosed:
                     break                    # client's Stop -- exit cleanly
+                continue
+
+            # Journal ops are host-state ops -- answered here, never
+            # shipped to the calc worker (which only knows compute ops).
+            if op in ('journal_set', 'journal_get',
+                      'journal_discard_recovered'):
+                if journal is None:
+                    reply = {'id': rid, 'ok': False,
+                             'error': 'no session journal on this server'}
+                elif op == 'journal_set':
+                    doc = payload.get('doc')
+                    if not isinstance(doc, (bytes, bytearray)):
+                        reply = {'id': rid, 'ok': False,
+                                 'error': 'journal_set needs doc bytes'}
+                    else:
+                        journal.set_doc(doc)
+                        reply = {'id': rid, 'ok': True, 'result': {}}
+                elif op == 'journal_discard_recovered':
+                    journal.discard_recovered()
+                    reply = {'id': rid, 'ok': True, 'result': {}}
+                else:
+                    doc, captures = journal.state()
+                    reply = {'id': rid, 'ok': True,
+                             'result': {'doc': doc, 'captures': captures,
+                                        'recovered': journal.recovered()}}
+                try:
+                    await websocket.send(encode_frame(reply))
+                except ConnectionClosed:
+                    break
                 continue
 
             last_sent = [0.0]
@@ -615,6 +673,8 @@ async def handle_connection(websocket):
             except ConnectionClosed:
                 break  # client closed mid-op (its Stop) -- exit cleanly
     finally:
+        if unsubscribe_journal is not None:
+            unsubscribe_journal()
         worker.cancel()
         # kill() joins the dying child for up to 2s; run it off the loop
         # thread so a slow teardown doesn't stall the event loop (the

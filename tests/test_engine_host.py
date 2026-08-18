@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Native engine host: frame codec, worker subprocess, /engine endpoint."""
 import asyncio
+import functools
 import json
 import logging
 import struct
@@ -13,6 +14,7 @@ from websockets.asyncio.client import connect
 
 from pydvma import engine_host
 from pydvma import serve as serve_mod
+from pydvma.journal import SessionJournal
 
 
 def test_frame_roundtrip_scalars_only():
@@ -318,6 +320,28 @@ def run_async(coro_fn):
     asyncio.run(coro_fn())
 
 
+async def _start_engine_server(journal=None):
+    """Serve ``handle_connection`` directly on an ephemeral port, no
+    :class:`~pydvma.serve.BridgeServer` involved.
+
+    The journal-ops tests need to pass an explicit
+    :class:`~pydvma.journal.SessionJournal` (or exercise the no-journal
+    default) straight into ``handle_connection`` -- ``BridgeServer``
+    does not wire one through yet, so ``_start_server`` above (which
+    goes via ``BridgeServer``) cannot express that.
+    """
+    from websockets.asyncio.server import serve
+    handler = functools.partial(engine_host.handle_connection, journal=journal)
+    server = await serve(handler, '127.0.0.1', 0)
+    port = next(iter(server.sockets)).getsockname()[1]
+    return server, port
+
+
+async def _stop_engine_server(server):
+    server.close()
+    await server.wait_closed()
+
+
 def test_engine_endpoint_greets_and_answers_calc_fft():
     async def scenario():
         _s, task, port = await _start_server()
@@ -564,3 +588,180 @@ def test_engine_endpoint_two_connections_get_independent_workers():
         finally:
             await _stop_server(task)
     run_async(scenario)
+
+
+# --- journal ops --------------------------------------------------------
+
+class TestJournalOps:
+    """``journal_set`` / ``journal_get`` / ``journal_discard_recovered``,
+    answered INLINE by ``handle_connection`` -- never dispatched to the
+    calc worker subprocess, which only knows compute ops -- plus the
+    push-notify text frame a ``notify=True`` journal update sends to
+    every connected ``/engine`` client.
+    """
+
+    def test_journal_set_replaces_doc(self):
+        async def scenario():
+            journal = SessionJournal()
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await ws.recv()  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 1, 'op': 'journal_set',
+                         'payload': {'doc': b'DOCBYTES'}}))
+                    reply = engine_host.decode_frame(await ws.recv())
+                    assert reply['ok'] is True
+                assert journal.state()[0] == b'DOCBYTES'
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_get_returns_doc_and_captures(self):
+        async def scenario():
+            journal = SessionJournal()
+            journal.set_doc(b'DOC')
+            journal.add_capture(b'CAP1')
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await ws.recv()  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 2, 'op': 'journal_get', 'payload': {}}))
+                    reply = engine_host.decode_frame(await ws.recv())
+                    assert reply['ok'] is True
+                    assert reply['result'] == {
+                        'doc': b'DOC', 'captures': [b'CAP1'], 'recovered': None}
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_get_on_empty_journal(self):
+        async def scenario():
+            journal = SessionJournal()
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await ws.recv()  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 3, 'op': 'journal_get', 'payload': {}}))
+                    reply = engine_host.decode_frame(await ws.recv())
+                    assert reply['ok'] is True
+                    assert reply['result'] == {
+                        'doc': None, 'captures': [], 'recovered': None}
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_get_includes_recovered(self, tmp_path):
+        async def scenario():
+            journal = SessionJournal()
+            spill = tmp_path / 'old.dvma'
+            spill.write_bytes(b'OLD')
+            journal.adopt_recovered(str(spill))
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await ws.recv()  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 4, 'op': 'journal_get', 'payload': {}}))
+                    reply = engine_host.decode_frame(await ws.recv())
+                    assert reply['ok'] is True
+                    assert reply['result']['recovered'] == b'OLD'
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_discard_recovered(self, tmp_path):
+        async def scenario():
+            journal = SessionJournal()
+            spill = tmp_path / 'old.dvma'
+            spill.write_bytes(b'OLD')
+            journal.adopt_recovered(str(spill))
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await ws.recv()  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 5, 'op': 'journal_discard_recovered',
+                         'payload': {}}))
+                    reply = engine_host.decode_frame(await ws.recv())
+                    assert reply['ok'] is True
+                assert journal.recovered() is None
+                assert not spill.exists()
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_op_without_a_journal_declines_inline(self):
+        # journal=None (a bare harness, or -- today -- BridgeServer, which
+        # does not yet wire a journal through) must answer the op itself
+        # with an error reply, never forward it to the calc worker.
+        async def scenario():
+            server, port = await _start_engine_server(journal=None)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await ws.recv()  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 6, 'op': 'journal_get', 'payload': {}}))
+                    reply = engine_host.decode_frame(await ws.recv())
+                    assert reply['ok'] is False
+                    assert 'journal' in reply['error']
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_set_rejects_missing_doc_bytes(self):
+        async def scenario():
+            journal = SessionJournal()
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await ws.recv()  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 7, 'op': 'journal_set', 'payload': {}}))
+                    reply = engine_host.decode_frame(await ws.recv())
+                    assert reply['ok'] is False
+                    assert 'doc bytes' in reply['error']
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_notify_pushes_update_frame_to_client(self):
+        async def scenario():
+            journal = SessionJournal()
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    greeting = json.loads(await ws.recv())
+                    assert greeting['type'] == 'engine_ready'
+                    journal.set_doc(b'DOC', notify=True)
+                    msg = json.loads(await ws.recv())
+                    assert msg == {'type': 'journal', 'event': 'updated'}
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_journal_notify_after_disconnect_does_not_raise(self):
+        async def scenario():
+            journal = SessionJournal()
+            server, port = await _start_engine_server(journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await ws.recv()  # greeting
+                # client disconnected here -- give the server a moment to
+                # notice the close and unsubscribe the listener.
+                await asyncio.sleep(0.3)
+                journal.set_doc(b'DOC2', notify=True)  # must not raise
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
