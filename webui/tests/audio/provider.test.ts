@@ -4,8 +4,8 @@
 // `fetchServeConfig` (a different function, different semantics for an
 // EMPTY `{}` config — see `worker/selectEngine.ts`'s `resolveEngineClient`
 // docstring for why that distinction matters to a caller).
-import { describe, expect, test } from 'vitest';
-import { probeServeConfig } from '../../src/lib/audio/provider';
+import { describe, expect, test, vi } from 'vitest';
+import { __resetServeProbe, probeServeConfig } from '../../src/lib/audio/provider';
 
 /** A minimal fake `fetch` returning a fixed status/content-type/body. */
 function fakeFetch(opts: { ok: boolean; contentType?: string | null; body?: unknown }): typeof fetch {
@@ -63,6 +63,41 @@ describe('probeServeConfig', () => {
     // to swallow. Proves the "no fetchImpl" default-resolution path is
     // reached AND that a real-world failure (no /config route, network
     // down) never propagates as a rejection.
+    __resetServeProbe();   // this is the ONE memoised path -- start clean
     await expect(probeServeConfig()).resolves.toBe(false);
+    __resetServeProbe();
+  });
+
+  test('the default-fetch probe is MEMOISED: boot\'s three askers share one request', async () => {
+    // selectProvider, willUseNativeEngine and resolveEngineClient each ask at
+    // boot; the answer cannot change for the life of a page, so it is fetched
+    // once. The PROMISE is memoised, so concurrent askers share the in-flight
+    // request rather than racing three of them.
+    __resetServeProbe();
+    const spy = vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({}),
+    }));
+    vi.stubGlobal('fetch', spy as unknown as typeof fetch);
+    try {
+      const [a, b] = await Promise.all([probeServeConfig(), probeServeConfig()]);
+      const c = await probeServeConfig();
+      expect([a, b, c]).toEqual([true, true, true]);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      __resetServeProbe();
+    }
+  });
+
+  test('an explicit fetchImpl always runs a real probe (never served from the memo)', async () => {
+    __resetServeProbe();
+    await expect(probeServeConfig(fakeFetch({ ok: true, contentType: 'application/json', body: {} })))
+      .resolves.toBe(true);
+    // A DIFFERENT injected fetch must be able to answer differently -- the
+    // memo must not have captured the first answer for every caller.
+    await expect(probeServeConfig(fakeFetch({ ok: false }))).resolves.toBe(false);
+    __resetServeProbe();
   });
 });

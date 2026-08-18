@@ -244,15 +244,70 @@ describe('session journal helpers (native-engine stage 3)', () => {
     const unsub = onJournalUpdate(() => { hits += 1; });
     f.push();
     expect(hits).toBe(1);
-    unsub();
+    unsub!();
     f.push();
     expect(hits).toBe(1);
     await clearJournalClient();
   });
 
-  test('onJournalUpdate is a safe no-op (with a callable unsubscribe) with no journal', async () => {
+  test('onJournalUpdate returns null (not a no-op unsubscribe) when there is no journal', async () => {
+    // Load-bearing: App.svelte latches "already subscribed" on a truthy
+    // return, so a no-op unsubscribe here would lock the latch shut and a
+    // later journal engine would never get subscribed to.
     await clearJournalClient();
-    const unsub = onJournalUpdate(() => { throw new Error('must never fire'); });
-    expect(() => unsub()).not.toThrow();
+    expect(onJournalUpdate(() => { throw new Error('must never fire'); })).toBeNull();
+  });
+
+  test('a null return leaves App.svelte\'s ??= latch open until a real subscription happens', async () => {
+    await clearJournalClient();
+    let latch: (() => void) | null = null;
+    latch ??= onJournalUpdate(() => {});
+    expect(latch).toBeNull();                  // nothing captured
+
+    const f = await bootWithJournal();
+    latch ??= onJournalUpdate(() => {});
+    expect(latch).not.toBeNull();              // the later engine DID subscribe
+    let hits = 0;
+    onJournalUpdate(() => { hits += 1; });
+    f.push();
+    expect(hits).toBe(1);
+    await clearJournalClient();
+  });
+});
+
+describe('createEngineStore: whenResolved (which engine ANSWERED, not "is it ready")', () => {
+  /** A client whose init() never settles — i.e. a boot that runs long. */
+  function slowBootClient(): EngineClient {
+    return { ...fakeClient(), init: vi.fn(() => new Promise<void>(() => {})) };
+  }
+
+  test('resolves with the host as soon as the factory answers — NOT after init', async () => {
+    // The App.svelte case this exists for: a session that expected native,
+    // fell back to pyodide, and must not have its restore flow parked behind
+    // the multi-second wasm boot that fallback then starts.
+    const resolved: ResolvedEngine = { client: slowBootClient(), host: 'pyodide' };
+    const store = createEngineStore(async () => resolved);
+    void store.boot();
+    await expect(store.whenResolved()).resolves.toBe('pyodide');
+    expect(get(store.status)).toBe('loading');   // still booting, deliberately
+  });
+
+  test('resolves immediately when a host is already known', async () => {
+    const store = createEngineStore(async () => (
+      { client: fakeClient(), host: 'native' } as ResolvedEngine));
+    await store.boot();
+    await expect(store.whenResolved()).resolves.toBe('native');
+  });
+
+  test('a directly-injected client resolves without booting at all', async () => {
+    await expect(createEngineStore(fakeClient()).whenResolved()).resolves.toBe('pyodide');
+  });
+
+  test('a factory that FAILS settles it with null instead of hanging', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = createEngineStore(async () => { throw new Error('no engine anywhere'); });
+    void store.boot();
+    await expect(store.whenResolved()).resolves.toBeNull();
+    err.mockRestore();
   });
 });

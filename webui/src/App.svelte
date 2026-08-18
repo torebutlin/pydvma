@@ -345,6 +345,12 @@
   const fixtureParam = params.get('fixture');
   const fixtureRequested = fixtureParam === '1' || fixtureParam === '3ch';
   const fixtureUrl = fixtureParam === '3ch' ? impulse3chUrl : impulseUrl;
+  // `?engine=1` mounts EngineProbe, which builds its OWN engine store and
+  // boots it (see EngineProbe.svelte) — so the shell must not also boot one
+  // eagerly for the journal, or a served page would open two /engine sockets
+  // (two worker subprocesses server-side) and, on the fallback path, two
+  // pyodide workers. The probe's session is a diagnostic, not a work session.
+  const engineProbeRequested = params.get('engine') === '1';
   // `?fixture=1` also opens a read-only e2e test hook: `window.__viewState`
   // exposes the live view-state store so Playwright can assert on the
   // active view's range and zoom-history length without brittle DOM
@@ -389,7 +395,9 @@
         // autosave.ts), which is what a socket closing mid-write looks like.
         setJournalSink((bytes) => journalSet(bytes));
         // Subscribed ONCE — the client (and its subscriber set) survives a
-        // reconnect, so re-subscribing per ready would stack duplicates.
+        // reconnect, so re-subscribing per ready would stack duplicates. The
+        // facade returns null when it subscribed to NOTHING, which leaves
+        // the latch open for a later engine that does carry a journal.
         unsubJournalPush ??= onJournalUpdate(() => void onJournalPushed());
       } else {
         // Not ready (booting, stopped, transport lost): stop posting until
@@ -513,11 +521,26 @@
    * captures-only journal restores — and focuses a populated view — too.
    */
   function restoreFromJournal(doc: Uint8Array | null, captures: Uint8Array[]): void {
-    try {
-      if (doc) loadAndFocus(readDvma(doc));
-      for (const c of captures) loadAndFocus(readDvma(c), { append: true });
-    } catch (e) {
-      toasts.push(`Restore failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+    let focused = false;
+    if (doc) {
+      try {
+        loadAndFocus(readDvma(doc));
+        focused = true;
+      } catch (e) {
+        toasts.push(`Restore failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+      }
+    }
+    for (const c of captures) {
+      try {
+        // Each capture is INDEPENDENT: one unreadable blob must cost only
+        // itself, not the rest of the session. Only the first load needs to
+        // move the view (`loadAndFocus`); the rest go straight through
+        // `loadDataset` so N captures don't run N re-focus passes.
+        if (focused) actions.loadDataset(readDvma(c), { append: true });
+        else { loadAndFocus(readDvma(c), { append: true }); focused = true; }
+      } catch (e) {
+        console.warn('[journal] skipped an unreadable capture:', e);
+      }
     }
   }
 
@@ -528,24 +551,32 @@
    * both exist (it receives the same debounced autosaves AND every capture
    * at birth, so it is always ≥ the browser copy).
    *
-   * Sequencing: the journal lives on the native engine, which the shell
-   * boots LAZILY (nothing has computed yet at this point). `willUseNativeEngine`
-   * answers whether this session was going to be native at all without
-   * connecting anything, so only such a session pays an eager `boot()` (a
-   * socket connect plus a greeting); Pages/JupyterLite answer false and boot
-   * nothing, exactly as before. Every failure path — not native, engine
-   * never came up, no journal capability, a rejected read — returns false
-   * and leaves today's IndexedDB flow untouched.
+   * Sequencing, in two gates, because the journal lives on the native engine
+   * and the shell boots the engine LAZILY (nothing has computed yet here):
+   *
+   *  1. `willUseNativeEngine` — would this session have been native at all?
+   *     Answered without constructing or connecting anything, so Pages /
+   *     `vite dev` / JupyterLite boot nothing, exactly as before.
+   *  2. `engine.whenResolved()` — which engine actually ANSWERED. Gating on
+   *     resolution, NOT on `whenReady()`, is what keeps the degraded case
+   *     cheap: when native was expected but the connect failed, the store
+   *     falls back to pyodide and carries on into a multi-second wasm boot —
+   *     waiting for readiness there would park the whole restore flow (and
+   *     the IndexedDB toast behind it) on a boot this path does not need.
+   *     On the native path resolution already implies a connected, greeted
+   *     socket, so `journalGet` below can go straight out.
+   *
+   * Every failure path — not native, resolved to something else, no journal
+   * capability, a rejected read — returns false and leaves today's IndexedDB
+   * flow untouched.
    */
   async function offerJournalRestore(): Promise<boolean> {
+    // The engine probe owns its own store and boots it (see
+    // `engineProbeRequested`) — never double-boot alongside it.
+    if (engineProbeRequested) return false;
     if (!(await willUseNativeEngine())) return false;
     engine.boot();                    // idempotent; resolves the native client
-    try {
-      await engine.whenReady();
-    } catch (e) {
-      console.warn('[journal] engine unavailable, skipping journal restore:', e);
-      return false;
-    }
+    if (await engine.whenResolved() !== 'native') return false;
     if (!journalAvailable()) return false;   // a serve predating the journal
     let state: JournalState;
     try {

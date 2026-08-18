@@ -943,8 +943,36 @@ function defaultBridgeWsUrl(): string {
  * `worker/selectEngine.ts`'s served-by-serve default-engine detection reuses
  * THIS function for exactly that reason — an unset-settings bridge session
  * (the common case) must still default to the native engine.
+ *
+ * MEMOISED on the default-fetch path (see {@link servedProbe}) — the answer
+ * cannot change for the life of a page, and boot asks three times.
  */
-export async function probeServeConfig(fetchImpl?: typeof fetch): Promise<boolean> {
+export function probeServeConfig(fetchImpl?: typeof fetch): Promise<boolean> {
+  // An explicit fetch (tests only) always runs a real probe, so no test can
+  // be polluted by another's memo.
+  if (fetchImpl) return runServeProbe(fetchImpl);
+  if (!servedProbe) servedProbe = runServeProbe();
+  return servedProbe;
+}
+
+/**
+ * Memoised default-fetch served-ness probe. A page is either being served by
+ * `pydvma serve` or it is not, for its whole life — and THREE independent
+ * callers ask at boot (`selectProvider`, `worker/selectEngine.ts`'s
+ * `willUseNativeEngine` and its `resolveEngineClient`), which is three
+ * identical `/config` round-trips on the shell's critical path. The PROMISE
+ * is memoised, not the value, so concurrent callers share one in-flight
+ * request rather than racing three.
+ */
+let servedProbe: Promise<boolean> | null = null;
+
+/** TEST-ONLY: forget the memoised probe (see {@link probeServeConfig}). */
+export function __resetServeProbe(): void {
+  servedProbe = null;
+}
+
+/** One real `/config` probe — the un-memoised body of {@link probeServeConfig}. */
+async function runServeProbe(fetchImpl?: typeof fetch): Promise<boolean> {
   const f = fetchImpl ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : undefined);
   if (!f) return false;
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -1046,10 +1074,13 @@ export async function selectProvider(
   // (a) truthy-but-URL-less injection → same-origin bridge.
   if (injected) return new BridgeProvider(defaultBridgeWsUrl(), opts.wsFactory);
 
-  // (c) same-origin /config probe.
-  const fetchImpl = opts.fetchImpl
-    ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : undefined);
-  if (fetchImpl && await probeServeConfig(fetchImpl)) {
+  // (c) same-origin /config probe. The caller's fetch is passed THROUGH
+  // rather than resolved to a default here, so the app (which injects none)
+  // takes probeServeConfig's memoised path and shares this one request with
+  // `worker/selectEngine.ts`'s two askers instead of making boot's third.
+  // An environment with no fetch at all still answers false there, so the
+  // old `fetchImpl &&` guard is not lost.
+  if (await probeServeConfig(opts.fetchImpl)) {
     return new BridgeProvider(defaultBridgeWsUrl(), opts.wsFactory);
   }
 

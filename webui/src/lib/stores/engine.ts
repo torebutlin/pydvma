@@ -259,16 +259,20 @@ export async function journalDiscardRecovered(): Promise<void> {
 
 /**
  * Subscribe to server-initiated journal updates — a notebook
- * `Session.push` changing the document under the app. Returns an
- * unsubscribe callable; a no-op unsubscribe when the active engine has no
- * journal (or no such transport), so callers need no gate of their own.
+ * `Session.push` changing the document under the app. Returns the
+ * unsubscribe callable, or **null** when nothing was subscribed because the
+ * active engine has no journal (or a transport that cannot report one).
+ *
+ * `null` rather than a no-op unsubscribe DELIBERATELY: a caller that latches
+ * "already subscribed" on a truthy return would otherwise capture the no-op
+ * forever and never subscribe again once a journal engine does come up.
  *
  * The module-level facade over `SocketEngineClient.onJournalUpdate`, which
  * is per-CLIENT (see its docstring in `worker/socketClient.ts`): App.svelte
  * imports this one stable name instead of reaching for the live client.
  */
-export function onJournalUpdate(cb: () => void): () => void {
-  return journalClient?.onJournalUpdate?.(cb) ?? (() => {});
+export function onJournalUpdate(cb: () => void): (() => void) | null {
+  return journalClient?.onJournalUpdate?.(cb) ?? null;
 }
 
 /** Wheel filenames the worker micropip-installs (served from /pypi/). */
@@ -516,17 +520,19 @@ export function createEngineStore(
         const resolved = await (clientSource as () => Promise<ResolvedEngine>)();
         if (bootToken !== token) { resolved.client.dispose(); return; }
         client = resolved.client;
-        host.set(resolved.host);
-        hostNote.set(resolved.note ?? null);
-        pydvmaVersion.set(resolved.pydvmaVersion ?? null);
-        if (resolved.host === 'native') warnOnPydvmaVersionMismatch(resolved.pydvmaVersion);
         // Session journal (stage 3): only a native client whose greeting
         // advertised one. Anything else NULLS the handle, so
         // `journalAvailable()` is false and every journal path in the app is
         // a no-op — Pages/JupyterLite behave exactly as before. Assigned in
         // both directions (not just set on success) so the last resolution
-        // wins symmetrically, as `activeEngine` does.
+        // wins symmetrically, as `activeEngine` does — and assigned BEFORE
+        // `host.set` below, whose subscribers (`whenResolved`) read it the
+        // moment they wake.
         journalClient = (resolved.host === 'native' && resolved.journal) ? client : null;
+        host.set(resolved.host);
+        hostNote.set(resolved.note ?? null);
+        pydvmaVersion.set(resolved.pydvmaVersion ?? null);
+        if (resolved.host === 'native') warnOnPydvmaVersionMismatch(resolved.pydvmaVersion);
         wireObserve();
       }
       // Idempotent on the socket client (it hands back the connection the
@@ -562,6 +568,46 @@ export function createEngineStore(
     if (s === 'ready') return Promise.resolve();
     if (s === 'error') return Promise.reject(bootError ?? new Error('engine failed to boot'));
     return new Promise<void>((resolve, reject) => readyWaiters.push({ resolve, reject }));
+  }
+
+  /**
+   * Resolve once the client factory has ANSWERED — i.e. `host` is known and
+   * (for a native client) its socket is already connected and greeted —
+   * without waiting for the rest of `boot()`. Yields the resolved host, or
+   * null when boot failed before ever resolving one.
+   *
+   * Distinct from {@link whenReady} on purpose, and the difference is the
+   * whole point: on the pyodide path `boot()` continues into a multi-second
+   * wasm+wheel install, so a caller that only needs to know WHICH engine
+   * answered (App.svelte's session-journal gate) must not be parked behind
+   * that — otherwise the degraded case, where native was expected and the
+   * browser engine answered instead, is exactly the one that stalls the
+   * shell's own restore flow. On the native path there is nothing left to
+   * wait for anyway: the factory's `init` already opened the socket and took
+   * the greeting, and the store's own `init` is idempotent over it.
+   *
+   * Never hangs: a boot that errors settles this too (with whatever host had
+   * been recorded, normally null). A directly-injected client is 'pyodide'
+   * from construction, so this resolves immediately.
+   */
+  function whenResolved(): Promise<EngineHostKind | null> {
+    const known = get(host);
+    if (known !== null) return Promise.resolve(known);
+    if (get(status) === 'error') return Promise.resolve(null);
+    return new Promise<EngineHostKind | null>((resolve) => {
+      let settled = false;
+      const unsubs: Array<() => void> = [];
+      const done = (v: EngineHostKind | null) => {
+        if (settled) return;
+        settled = true;
+        // Deferred: a svelte store fires its callback synchronously ON
+        // subscribe, so `unsubs` may not hold this subscription yet.
+        queueMicrotask(() => { for (const u of unsubs) u(); });
+        resolve(v);
+      };
+      unsubs.push(host.subscribe((v) => { if (v !== null) done(v); }));
+      unsubs.push(status.subscribe((s) => { if (s === 'error') done(get(host)); }));
+    });
   }
 
   /**
@@ -650,6 +696,7 @@ export function createEngineStore(
     pydvmaVersion: { subscribe: pydvmaVersion.subscribe } as Readable<string | null>,
     boot,
     whenReady,
+    whenResolved,
     enqueue,
     stop,
     /**

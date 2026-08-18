@@ -139,10 +139,29 @@ function engineHostParam(): string | null {
 }
 
 /**
+ * This page's engine-host decision, plus the raw `?enginehost=` value it was
+ * made from (which the caller still needs afterwards — see
+ * {@link ResolvedEngine.note}).
+ *
+ * The ONE place the served-ness rule lives: probe `/config` only when the
+ * param states no preference ({@link decideEnginePolicy}'s contract — the
+ * probe must be LAZY). Both consumers — {@link willUseNativeEngine} and
+ * {@link resolveEngineClient} — go through here, so the predicate App.svelte
+ * gates on and the resolution it then gets can never drift apart. The probe
+ * itself is memoised in `audio/provider.ts`, so asking twice at boot costs
+ * one request.
+ */
+async function decideForThisPage(): Promise<{ policy: EnginePolicy; param: string | null }> {
+  const param = engineHostParam();
+  const served = param ? false : await probeServeConfig();
+  return { policy: decideEnginePolicy(param, served), param };
+}
+
+/**
  * Would this session's engine be the NATIVE host? The SAME decision
  * {@link resolveEngineClient} makes — an explicit `?enginehost=` first, then
- * the lazy `/config` served probe — but without constructing or connecting
- * anything.
+ * the lazy `/config` served probe (both via {@link decideForThisPage}) — but
+ * without constructing or connecting anything.
  *
  * Exists for `App.svelte`'s boot-time session-journal check, which has a
  * chicken-and-egg problem: the journal lives on the native engine, but
@@ -154,15 +173,12 @@ function engineHostParam(): string | null {
  * greeting), and Pages / `vite dev` / JupyterLite answer `false` here and
  * boot nothing.
  *
- * Costs one extra same-origin `/config` probe when (and only when) no
- * `?enginehost=` param is stated — the same cheap request
- * {@link resolveEngineClient} and `audio/provider.ts`'s `selectProvider`
- * each already make, and skipped entirely when a param decides it.
+ * Costs no extra network: the `/config` probe it shares with
+ * {@link resolveEngineClient} and `audio/provider.ts`'s `selectProvider` is
+ * memoised there (and skipped entirely when a param decides it).
  */
 export async function willUseNativeEngine(): Promise<boolean> {
-  const param = engineHostParam();
-  const served = param ? false : await probeServeConfig();
-  return decideEnginePolicy(param, served).kind === 'native';
+  return (await decideForThisPage()).policy.kind === 'native';
 }
 
 /**
@@ -237,9 +253,7 @@ async function tryNative(url: string): Promise<ResolvedEngine | null> {
  * wasm32 memory ceiling back in play.
  */
 export async function resolveEngineClient(): Promise<ResolvedEngine> {
-  const param = engineHostParam();
-  const served = param ? false : await probeServeConfig();
-  const policy = decideEnginePolicy(param, served);
+  const { policy, param } = await decideForThisPage();
   if (policy.kind === 'native') {
     const url = policy.url === 'same-origin' ? defaultEngineWsUrl() : policy.url;
     const native = await tryNative(url);
