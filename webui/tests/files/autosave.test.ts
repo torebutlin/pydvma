@@ -152,7 +152,6 @@ describe('journal sink', () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(posted).toHaveLength(1);
     expect([...posted[0]]).toEqual([1, 2, 3]);
-    setJournalSink(null);
   });
 
   test('sink errors never break the idb write', async () => {
@@ -164,7 +163,20 @@ describe('journal sink', () => {
     // The throwing sink must not stop the idb write from landing.
     expect(idb.set).toHaveBeenCalledTimes(1);
     expect(idb.store.get('pydvma:autosave')).toEqual(new Uint8Array([9]));
-    setJournalSink(null);
+  });
+
+  test('an async sink whose promise rejects never breaks the idb write', async () => {
+    setJournalSink(async () => {
+      throw new Error('socket gone mid-await');
+    });
+    autosave(() => new Uint8Array([11]), null, true);
+    // advanceTimersByTimeAsync flushes microtasks between ticks, so the
+    // rejected promise's .catch() has already settled by the time this
+    // resolves — a real unhandled rejection would fail the test/process,
+    // so a clean pass here doubles as proof there isn't one.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(idb.set).toHaveBeenCalledTimes(1);
+    expect(idb.store.get('pydvma:autosave')).toEqual(new Uint8Array([11]));
   });
 
   test('no sink registered leaves behaviour unchanged', async () => {
@@ -184,6 +196,19 @@ describe('journal sink', () => {
     expect(dir.save).toHaveBeenCalledWith('autosave.dvma', marker);
     expect(posted).toHaveLength(1);
     expect([...posted[0]]).toEqual([5, 6]);
-    setJournalSink(null);
+  });
+
+  test('a cancelled or disabled autosave never reaches the sink', async () => {
+    const dir = fakeFsDir();
+    const posted: Uint8Array[] = [];
+    setJournalSink((b) => posted.push(b));
+    autosave(new Uint8Array([1]), dir, true);
+    await vi.advanceTimersByTimeAsync(1000); // partway through the debounce
+    cancelAutosave();
+    autosave(new Uint8Array([2]), dir, false); // disable path also clears the timer
+    await vi.advanceTimersByTimeAsync(5000); // well past when either would have fired
+    expect(posted).toHaveLength(0);
+    expect(dir.save).not.toHaveBeenCalled();
+    expect(idb.set).not.toHaveBeenCalled();
   });
 });

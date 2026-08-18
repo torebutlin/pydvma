@@ -3,13 +3,19 @@
 // Every dataset mutation (a new capture, a cleaned impulse, a renamed set)
 // schedules an autosave. To avoid thrashing the disk / IndexedDB on rapid
 // edits, writes are DEBOUNCED: only the latest payload after a 2 s quiet
-// period is persisted. Where it goes depends on the working directory:
+// period is persisted. Where it goes depends on the working directory, PLUS
+// an optional journal sink that always gets a copy when registered:
 //
 //   - fsaccess dir → write `autosave.dvma` into the folder (a durable file
 //     the user can see and reopen even if IndexedDB is cleared).
 //   - download dir → there is no folder, so persist the bytes to IndexedDB
 //     under IDB_KEY; on next boot restoreOffer() reads them back and the app
 //     offers to restore the session.
+//   - journal sink (optional, see setJournalSink) → the pydvma-serve session
+//     journal over /engine, when the native engine + journal capability are
+//     live. It has NO clearAutosave counterpart by design: the serve journal
+//     stays authoritative on its own terms, and an explicit Save only clears
+//     the local (folder/idb) stores.
 //
 // On an explicit Save Dataset (or when the user dismisses the restore
 // banner) the caller invokes clearAutosave() so a stale autosave never
@@ -52,12 +58,18 @@ export function __setIdb(next: IdbLike): void {
  * (native-engine stage 3). When registered, every persisted autosave
  * is ALSO handed to the sink (which posts it over /engine as a
  * journal_set op). Best-effort and fire-and-forget, exactly like the
- * idb/folder write: a sink failure (socket closed mid-write) must
- * never break the local autosave. Registered by App.svelte when the
- * native engine + journal capability are live; cleared on fallback.
+ * idb/folder write: a sink failure (socket closed mid-write, or a
+ * rejected promise once the real /engine sink lands) must never break
+ * the local autosave. Registered by App.svelte when the native engine
+ * + journal capability are live; cleared on fallback.
  */
-export type JournalSink = (bytes: Uint8Array) => void;
+export type JournalSink = (bytes: Uint8Array) => void | Promise<void>;
 let journalSink: JournalSink | null = null;
+
+/**
+ * Register (or clear, with null) the journal sink; read at persist time, so
+ * a pending debounce scheduled before a clear simply skips the sink.
+ */
 export function setJournalSink(next: JournalSink | null): void {
   journalSink = next;
 }
@@ -118,11 +130,19 @@ export function cancelAutosave(): void {
   }
 }
 
-/** Perform the actual write (folder file for fsaccess, else IndexedDB). */
+/**
+ * Perform the actual write: folder file for fsaccess, else IndexedDB — and,
+ * when registered, fan out a copy to the journal sink too.
+ */
 async function persist(bytes: Uint8Array, dir: WorkDir | null): Promise<void> {
   if (journalSink) {
     try {
-      journalSink(bytes);
+      // The sink may be sync (throws) or async (rejects) — the real /engine
+      // sink in Task 5 is async. Catch both shapes so neither can reach an
+      // unhandled rejection or break the local write below.
+      void Promise.resolve(journalSink(bytes)).catch((e) =>
+        console.warn('[autosave] journal sink failed:', e),
+      );
     } catch (e) {
       console.warn('[autosave] journal sink failed:', e);
     }
