@@ -296,8 +296,41 @@ def test_worker_kill_mid_request_returns_clean_reply_and_respawns():
 
 # --- /engine websocket endpoint ---------------------------------------------
 
+#: Set by `_isolated_session_dir` for the duration of each test; read by
+#: `_start_server` as its `session_dir` default -- see that fixture's
+#: docstring for why this matters (this module's own copy of the same
+#: isolation `tests/test_serve_protocol.py` uses).
+_TEST_SESSION_DIR = None
+
+
+@pytest.fixture(autouse=True)
+def _isolated_session_dir(tmp_path_factory):
+    """Give every server ``_start_server`` spawns in this test its own
+    throwaway ``session_dir``, so ``BridgeServer.__init__``'s startup
+    scan never touches the real system temp dir.
+
+    Without this, every one of this module's ~8 ``_start_server`` call
+    sites constructs a real ``BridgeServer`` with the real-tempdir
+    default: each run would scan a developer's actual temp dir, fire a
+    liveness probe at whatever ports its ``pydvma-session-*.dvma``
+    files name, and could PRUNE (delete) real files older than 7 days
+    -- see ``pydvma.serve._adopt_previous_session``. One fresh
+    directory per test function makes all of that impossible; combined
+    with ``recover=False`` below (this module never exercises recovery
+    itself), the startup scan does not even run.
+    """
+    global _TEST_SESSION_DIR
+    _TEST_SESSION_DIR = tmp_path_factory.mktemp('sessions')
+    yield
+    _TEST_SESSION_DIR = None
+
+
 async def _start_server(**kwargs):
     kwargs.setdefault('default_driver', 'mock')
+    kwargs.setdefault('session_dir', _TEST_SESSION_DIR)
+    # This module never exercises startup recovery -- skip the scan
+    # entirely rather than merely pointing it at an (empty) scratch dir.
+    kwargs.setdefault('recover', False)
     server = serve_mod.BridgeServer(host='127.0.0.1', port=0, **kwargs)
     task = asyncio.create_task(server.run())
     for _ in range(500):

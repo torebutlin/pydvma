@@ -247,17 +247,26 @@ class SessionJournal(object):
         Args:
             path (pathlib.Path or str): the previous run's spill file
                 to read.
+
+        Returns:
+            bool: True if ``path`` was actually adopted (readable and
+            non-empty), False on the no-op paths above. Callers that
+            try several candidates in order (see
+            :func:`pydvma.serve._adopt_previous_session`) use this to
+            know whether to keep trying the next one, rather than
+            checking :meth:`recovered` for a change.
         """
         try:
             with open(path, 'rb') as fh:
                 data = fh.read()
         except OSError:
-            return
+            return False
         if not data:
-            return
+            return False
         with self._lock:
             self._recovered = data
             self._recovered_path = path
+        return True
 
     def recovered(self):
         """The adopted previous-run document bytes, or None."""

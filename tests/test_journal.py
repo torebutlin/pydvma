@@ -261,7 +261,7 @@ class TestRecovered:
         old = tmp_path / 'pydvma-session-8765.dvma'
         old.write_bytes(b'old-session')
         j = SessionJournal()
-        j.adopt_recovered(old)
+        assert j.adopt_recovered(old) is True
         assert j.recovered() == b'old-session'
 
     def test_recovered_survives_file_overwrite(self, tmp_path):
@@ -285,14 +285,14 @@ class TestRecovered:
 
     def test_adopt_missing_file_is_noop(self, tmp_path):
         j = SessionJournal()
-        j.adopt_recovered(tmp_path / 'absent.dvma')
+        assert j.adopt_recovered(tmp_path / 'absent.dvma') is False
         assert j.recovered() is None
 
     def test_adopt_empty_file_is_noop(self, tmp_path):
         old = tmp_path / 'empty.dvma'
         old.write_bytes(b'')
         j = SessionJournal()
-        j.adopt_recovered(old)
+        assert j.adopt_recovered(old) is False
         assert j.recovered() is None
 
     def test_discard_recovered_twice_is_safe(self, tmp_path):

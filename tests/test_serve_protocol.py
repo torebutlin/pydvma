@@ -71,8 +71,10 @@ def _isolated_session_dir(tmp_path_factory):
     ``pydvma-serve`` a developer starts later — would have its startup
     recovery scan see it. One fresh directory per test function
     (``tmp_path_factory.mktemp('sessions')``) makes that impossible:
-    nothing this test suite does ever touches, writes to, or scans the
-    real system temp dir.
+    nothing in THIS MODULE ever touches, writes to, or scans the real
+    system temp dir. (``tests/test_engine_host.py`` carries its own
+    copy of this same fixture for its own ``BridgeServer``-spawning
+    tests.)
     """
     global _TEST_SESSION_DIR
     _TEST_SESSION_DIR = tmp_path_factory.mktemp('sessions')
@@ -2026,6 +2028,18 @@ class TestUnsupportedRateError:
 
 
 # ---- live: session journal (stage 3) -------------------------------------
+#
+# Port-collision registry (this repo's convention for a hardcoded port a
+# test actually dials -- cf. webui/e2e/engine-native.spec.ts's PORT/
+# BLA_BRIDGE_PORT comment block): the adoption/pruning tests below name
+# their fake ``pydvma-session-<port>.dvma`` files after ports in the
+# 51111-54444 range specifically so `_adopt_previous_session`'s real
+# `_port_is_live` probe dials them -- each site below claims its own
+# number(s) so a future test picking a NEW port here knows which are
+# already spoken for:
+#   51111, 52222  test_startup_adopts_newest_previous_session_file
+#   53001-53003   test_pruning_deletes_only_old_non_live_non_adopted_candidates
+#   54111, 54444  test_adoption_skips_non_pk_candidate_and_falls_back_to_an_older_valid_one
 
 def test_log_registers_capture_in_journal():
     """A completed ``log`` over ``/ws`` registers its ``.dvma`` bytes in

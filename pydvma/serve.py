@@ -1259,7 +1259,7 @@ def _port_is_live(port, host=DEFAULT_HOST):
         sock.close()
 
 
-def _adopt_previous_session(journal, directory=None):
+def _adopt_previous_session(journal, directory=None, host=DEFAULT_HOST):
     """Offer the newest READABLE previous-run session file for recovery.
 
     Scans ``directory`` (default: the system temp dir) for
@@ -1272,20 +1272,25 @@ def _adopt_previous_session(journal, directory=None):
       :data:`_SESSION_FILE_RE`) is left ALONE entirely — it may not
       even be a pydvma spill file (e.g. a user's manual rename);
     - a candidate whose port answers a live TCP connect right now (see
-      `_port_is_live`) belongs to a STILL-RUNNING serve process, so it
-      too is left alone entirely — never adopted, never pruned.
+      `_port_is_live`) is presumed to belong to a STILL-RUNNING serve
+      process, so it too is left alone entirely — never adopted, never
+      pruned. This is an ACCEPTED trade-off, not an oversight: an
+      unrelated process that happens to be listening on that same port
+      right now (a different app, a stale non-pydvma service) makes a
+      genuinely dead spill file look live and get skipped. The cost is
+      a missed recovery offer / a delayed prune, never a wrong adopt or
+      a wrong delete, which is the direction that actually matters.
 
     Adoption then walks the remaining candidates NEWEST-to-OLDEST (by
     mtime) and adopts the first one that is actually good: it must
     start with the zip magic ``b'PK'`` (a stray non-``.dvma`` file must
-    never be offered to a user as a session) AND actually read back as
-    non-empty via
-    :meth:`pydvma.journal.SessionJournal.adopt_recovered` — checked via
-    ``journal.recovered()`` after the call, since a corrupt, truncated,
-    or since-deleted file is a silent no-op there. A candidate that
-    fails either check is skipped in favour of the next-newest one,
-    rather than suppressing recovery entirely just because the single
-    newest file happened to be bad.
+    never be offered to a user as a session) AND actually read back via
+    :meth:`pydvma.journal.SessionJournal.adopt_recovered`, whose return
+    value says whether it did (a corrupt, truncated, or since-deleted
+    file is a no-op there). A candidate that fails either check is
+    skipped in favour of the next-newest one, rather than suppressing
+    recovery entirely just because the single newest file happened to
+    be bad.
 
     Pruning runs last: every non-live, parseable-port candidate that
     was NOT the one adopted, and whose mtime is older than
@@ -1309,6 +1314,11 @@ def _adopt_previous_session(journal, directory=None):
             :attr:`~BridgeServer.session_dir`, and tests point that at
             a scratch directory so a scan never touches (or adopts
             from) a real user's temp dir.
+        host: address the liveness probe (:func:`_port_is_live`) dials.
+            ``BridgeServer`` passes its own :attr:`~BridgeServer.host`
+            — a ``--host``-bound serve's live spill must be probed on
+            the SAME address it is actually listening on, or a still-
+            running process there would be misjudged dead.
 
     Returns:
         The :class:`pathlib.Path` of the adopted file, or ``None`` if
@@ -1327,7 +1337,7 @@ def _adopt_previous_session(journal, directory=None):
         m = _SESSION_FILE_RE.match(p.name)
         if not m:
             continue
-        if _port_is_live(int(m.group(1))):
+        if _port_is_live(int(m.group(1)), host=host):
             continue
         try:
             mtime = p.stat().st_mtime
@@ -1345,8 +1355,7 @@ def _adopt_previous_session(journal, directory=None):
             continue
         if magic != b'PK':
             continue
-        journal.adopt_recovered(p)
-        if journal.recovered() is not None:
+        if journal.adopt_recovered(p):
             adopted = p
             break
 
@@ -1427,7 +1436,7 @@ class BridgeServer:
         self.recovered_session_path = None
         if recover:
             self.recovered_session_path = _adopt_previous_session(
-                self.journal, directory=self.session_dir)
+                self.journal, directory=self.session_dir, host=self.host)
 
     # -- HTTP (static + /config) --
 
@@ -2246,6 +2255,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              'packaged in the installed wheel)')
     parser.add_argument('--settings', default=None,
                         help='JSON file pre-loaded and served at /config')
+    parser.add_argument('--session-dir', default=None,
+                        help='where session spill/recovery files live '
+                             '(default: the system temp dir). Mainly for '
+                             'tests/e2e, to isolate a run\'s spill files '
+                             'from a real serve session\'s.')
     parser.add_argument('--driver', default='mock',
                         choices=['mock', 'soundcard', 'nidaq'],
                         help="default device_driver for configure messages "
@@ -2286,6 +2300,7 @@ def main(argv=None) -> int:
     server = BridgeServer(
         host=args.host, port=args.port, ui_dir=ui_dir,
         settings_json=settings_json, default_driver=args.driver,
+        session_dir=args.session_dir,
     )
 
     url = 'http://%s:%d/' % (args.host, args.port)
