@@ -175,13 +175,16 @@ class TestIdMatchedClearing:
 
     def test_surviving_capture_still_evicts_under_the_budget(self, monkeypatch):
         # The pending list is still bounded: id-matching decides what a
-        # POST clears, not what the budget evicts.
-        blob, _ = _capture_bytes()
-        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES',
-                            len(blob))
-        j = SessionJournal()
-        j.add_capture(blob)
+        # POST clears, not what the budget evicts. Cap sized from BOTH
+        # blobs -- zip payloads of two captures differ by a few bytes
+        # (uuid/timestamp), so a cap taken from the first alone would
+        # sometimes evict the second one too.
+        first, _ = _capture_bytes()
         second, _ = _capture_bytes()
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES',
+                            max(len(first), len(second)))
+        j = SessionJournal()
+        j.add_capture(first)
         j.add_capture(second)
         assert j.state()[1] == [second]
 
