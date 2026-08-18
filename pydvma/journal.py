@@ -46,7 +46,7 @@ _BYTES_TYPES = (bytes, bytearray, memoryview)
 
 
 def _check_bytes(value, param_name):
-    """Raise ``TypeError`` unless `value` is bytes-like.
+    """Raise ``TypeError`` unless ``value`` is bytes-like.
 
     Guards against a stray ``int`` (or other non-bytes payload) that
     would otherwise silently become NUL bytes via ``bytes(n)`` instead
@@ -56,6 +56,20 @@ def _check_bytes(value, param_name):
         raise TypeError(
             '{} must be bytes, bytearray, or memoryview, not {}'.format(
                 param_name, type(value).__name__))
+
+
+def _same_path(a, b):
+    """Whether two spill-file identifiers (``str`` or ``pathlib.Path``,
+    either may be ``None``) name the same file.
+
+    Both sides are normalised through ``os.path.abspath`` on their
+    ``str`` form before comparing, so a ``str`` spill path and a
+    ``pathlib.Path`` recovered path naming the same file compare equal
+    even though the raw objects would not.
+    """
+    if a is None or b is None:
+        return a is b
+    return os.path.abspath(str(a)) == os.path.abspath(str(b))
 
 
 class SessionJournal(object):
@@ -138,7 +152,7 @@ class SessionJournal(object):
         Returns an unsubscribe callable. Listener exceptions are
         swallowed (one broken listener must not silence the rest). An
         update already in flight when ``unsubscribe()`` returns may
-        still call `cb` once more — :meth:`set_doc` snapshots the
+        still call ``cb`` once more — :meth:`set_doc` snapshots the
         listener list before releasing the lock, so a race between an
         in-progress notify and a concurrent unsubscribe is possible;
         consumers must tolerate one extra call.
@@ -209,11 +223,16 @@ class SessionJournal(object):
         Skips the delete when the recovered file IS the current spill
         target — a same-port restart adopts what is now its own live
         spill file, and deleting it would remove the live mirror, not
-        just the stale offer. Best-effort on the delete; idempotent.
+        just the stale offer. The comparison is normalised through
+        ``os.path.abspath`` on both sides so a ``str`` spill path and a
+        ``pathlib.Path`` recovered path (or vice versa) still compare
+        equal when they name the same file. Best-effort on the delete;
+        idempotent.
         """
         with self._lock:
             path = self._recovered_path
-            is_live_spill = path is not None and path == self._spill_path
+            is_live_spill = (path is not None
+                              and _same_path(path, self._spill_path))
             self._recovered = None
             self._recovered_path = None
         if path is not None and not is_live_spill:
@@ -225,14 +244,14 @@ class SessionJournal(object):
     def _spill(self):
         """Mirror the current doc to ``spill_path``, atomically.
 
-        Serialised against concurrent calls via `_spill_lock` (held
+        Serialised against concurrent calls via ``_spill_lock`` (held
         for the whole body) so overlapping spills can never interleave
         their writes. The write itself goes to a temporary file in the
-        same directory, then `os.replace`s over `spill_path` — the
+        same directory, then ``os.replace``s over ``spill_path`` — the
         same tempfile-then-rename idiom as
         :func:`pydvma.container.save` — so a crash mid-write can never
         truncate or tear the previous good copy. Best-effort: any
-        `OSError` (including the temp file's own creation, e.g. a
+        ``OSError`` (including the temp file's own creation, e.g. a
         missing directory) is swallowed after cleaning up any partial
         temp file.
         """

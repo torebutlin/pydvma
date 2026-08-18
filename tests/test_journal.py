@@ -9,6 +9,7 @@ import threading
 
 import pytest
 
+import pydvma.journal as journal_module
 from pydvma.journal import SessionJournal
 
 
@@ -142,28 +143,60 @@ class TestSpill:
         assert not spill.exists()
 
     def test_concurrent_spill_matches_final_doc(self, tmp_path):
-        # Pins the serialised atomic spill: after concurrent doc and
-        # capture writers finish, the file on disk matches whatever
-        # the journal itself considers current.
+        # Pins the serialised atomic spill against the real production
+        # shape: two independent set_doc writers (app autosave thread +
+        # notebook push thread) racing each other. Large,
+        # single-byte-repeated payloads make a torn/interleaved write
+        # fail deterministically -- an interleave of A's and B's could
+        # never read back as a pure run of one byte value.
         spill = tmp_path / 'session.dvma'
         j = SessionJournal(spill_path=spill)
-        n = 200
+        payload_a = b'A' * 1_000_000
+        payload_b = b'B' * 900_000
+        rounds = 5
 
-        def capture_writer():
-            for i in range(n):
-                j.add_capture(b'c%d' % i)
+        def writer_a():
+            for _ in range(rounds):
+                j.set_doc(payload_a)
 
-        def doc_writer():
-            for i in range(n):
-                j.set_doc(b'd%d' % i)
+        def writer_b():
+            for _ in range(rounds):
+                j.set_doc(payload_b)
 
-        threads = [threading.Thread(target=capture_writer),
-                   threading.Thread(target=doc_writer)]
+        threads = [threading.Thread(target=writer_a),
+                   threading.Thread(target=writer_b)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        assert spill.read_bytes() == j.state()[0]
+
+        on_disk = spill.read_bytes()
+        assert on_disk == j.state()[0]
+        distinct = set(on_disk)
+        assert distinct <= {ord('A')} or distinct <= {ord('B')}
+
+    def test_no_tmp_residue_after_normal_spill(self, tmp_path):
+        spill = tmp_path / 'session.dvma'
+        j = SessionJournal(spill_path=spill)
+        j.set_doc(b'doc-bytes')
+        names = {p.name for p in tmp_path.iterdir()}
+        assert names == {'session.dvma'}
+
+    def test_replace_failure_leaves_previous_file_intact(
+            self, tmp_path, monkeypatch):
+        spill = tmp_path / 'session.dvma'
+        j = SessionJournal(spill_path=spill)
+        j.set_doc(b'first')
+        assert spill.read_bytes() == b'first'
+
+        def boom(*args, **kwargs):
+            raise OSError('simulated os.replace failure')
+
+        monkeypatch.setattr(journal_module.os, 'replace', boom)
+        j.set_doc(b'second')          # must not raise
+        assert spill.read_bytes() == b'first'
+        names = {p.name for p in tmp_path.iterdir()}
+        assert names == {'session.dvma'}
 
 
 class TestRecovered:
@@ -224,6 +257,21 @@ class TestRecovered:
         live.write_bytes(b'old-session')
         j = SessionJournal(spill_path=live)
         j.adopt_recovered(live)
+        j.discard_recovered()
+        assert j.recovered() is None
+        assert live.exists()
+
+    def test_discard_keeps_file_with_mixed_str_and_path_identity(
+            self, tmp_path):
+        # spill_path set as a str, adopted path passed as a Path (or
+        # vice versa) must still be recognised as the SAME file -- the
+        # raw objects compare unequal, but the guard normalises both
+        # through os.path.abspath before comparing.
+        live = tmp_path / 's.dvma'
+        live.write_bytes(b'old-session')
+        j = SessionJournal(spill_path=str(live))
+        j.adopt_recovered(live)             # a pathlib.Path this time
+        assert str(live) != live            # sanity: raw objects differ
         j.discard_recovered()
         assert j.recovered() is None
         assert live.exists()
