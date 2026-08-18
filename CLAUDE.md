@@ -2,7 +2,36 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-18 (Windows PC session, via RDP): **the native-engine
+As of 2026-08-18 evening (Mac session, 2i2 + loopback cable back on the
+bench): **the bridge soundcard-OUTPUT bug is FIXED and the
+native-engine round's checklist is now fully ticked** (committed
+locally, NOT pushed — Tore hasn't asked). Root cause of the
+zeroed-capture half was confirmed ENVIRONMENTAL with raw sounddevice —
+macOS now permanently stops a running input stream's callback the
+moment a second stream opens on the same device (PaMacCore err=-50;
+worked 2026-08-10, broken by 2026-08-17) — so the fix is structural:
+an unset soundcard output now follows the capture device whenever it
+can play (options.py; mic-only inputs keep the default-output
+fallback), and a same-device capture+stimulus runs as ONE full-duplex
+`sd.Stream` (Recorder.init_stream opens duplex when
+`output_shares_input_clock`; `setup_output_soundcard` returns an
+adapter that plays through the capture stream's own output side, and
+refuses actionably if the live stream is input-only). Bonus: bridge
+cancel now stops a soundcard stimulus MID-PLAY — the adapter's wait
+polls the cancel event (a release-once call raced a cancel arriving
+before the stimulus was queued; measured 1.91 s → 0.49 s over /ws).
+Evidence: 20 mocked-sd unit tests (`tests/test_soundcard_duplex_output.py`),
+direct live 6/6 (BlackHole pinned "nothing at the system default"),
+/ws live 10/10, BLA identity G ≡ 1 to 4e-17 through the duplex stream.
+Also closed: the "2i2 cable −27 dB" mystery was just the output volume
+knob (−3 dB at full). NB the device indices REORDERED mid-session when
+an iPhone continuity mic left (2i2 1→0) — name-based re-resolution
+absorbed it on the bridge; pin bench scripts by name. Suites: pytest
+907/6, mkdocs --strict green (webui untouched). **Next: the stages 3–4
+plan (session journal + `dvma.launch`) — being drafted for Tore's
+approval before implementation.**
+
+Previous (2026-08-18, Windows PC session, via RDP): **the native-engine
 arc is verified on the PC too, and everything is PUSHED.** The
 round-doc checklist's four PC items are all ticked live against the
 cDAQ-9174 (native-engine default flip on Windows; a real 4-ch NI

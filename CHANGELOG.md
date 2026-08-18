@@ -10,6 +10,24 @@ field, plus the acquisition UX it showed was missing.
 
 ### Fixed
 
+- **Soundcard stimulus output no longer plays on the wrong device — or
+  silences the capture.** Two stacked defects on the bridge/Python
+  soundcard path: an unset output device resolved to the SYSTEM
+  DEFAULT output (laptop speakers) instead of the interface being
+  measured, and explicitly routing the output to the capture device
+  opened a second CoreAudio stream that killed the running input
+  stream — the capture came back all-zero (measured on raw
+  sounddevice: macOS stops the input callback permanently the moment
+  the second stream opens). Now an unset output follows the capture
+  device whenever it can play (a microphone-only input still falls
+  back to the default output), and a same-device capture+stimulus runs
+  as ONE full-duplex stream — the capture stream plays the stimulus
+  itself. A bridge **cancel now also stops a soundcard stimulus
+  mid-play** (the playback wait polls the cancel event; previously it
+  was uninterruptible). Live-verified on a Scarlett 2i2 4th Gen:
+  direct path, /ws bridge path incl. mid-stimulus cancel, and the BLA
+  loopback identity harness (G ≡ 1 to 4e-17 through the duplex
+  stream).
 - **The soundcard trigger now actually triggers.** Three stacked
   defects fixed: Setup's trigger fields never armed anything (and the
   group only rendered when NI was installed); the threshold compared

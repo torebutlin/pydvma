@@ -173,11 +173,26 @@ notes" below.
       mid-compute) was gone within one 5 s process poll, a replacement
       connected (second engine greeting in the console), and the next
       Fit damping ran to completion cleanly.
-- [ ] **Soundcard-output bug fix, once it lands** — re-run a stimulus
-      log on the 2i2 (and ideally the U24 XL), confirming both the
-      unset-device and same-device cases play from the right output and
-      the capture is no longer zeroed. (Not attempted 2026-08-18: the
-      fix hasn't landed, and RDP exposes no audio endpoints anyway.)
+- [x] **Soundcard-output bug fix, once it lands** — DONE 2026-08-18
+      (Mac session, 2i2 4th Gen + physical loopback cable, output knob
+      at full): the fix landed same-day (unset output follows the
+      capture device; same-device capture+stimulus is ONE full-duplex
+      `sd.Stream` — root cause confirmed environmental with raw
+      sounddevice: macOS now permanently stops a running input
+      stream's callback when a second stream opens on the same device,
+      PaMacCore err=-50). Live evidence: direct path 6/6 (unset output
+      resolves to the 2i2 and the tone lands on cable ch1 at −3 dB +
+      digital loopback ch3/4, with NOTHING at the system default
+      output, pinned measurably via BlackHole; explicit same-device
+      identical); real `pydvma-serve` over `/ws` 10/10 (sweep in the
+      returned .dvma both ways, `status/cancelled` releasing a
+      mid-stimulus cancel in 0.49 s, monitor stream flowing after the
+      capture); `bla_soundcard_check.py` identity **G ≡ 1 to 4e-17
+      through the duplex stream** (its "open-input" check now reads
+      the plugged cable on ch1 — expected while the cable stays in).
+      The U24 XL half remains untested (box not on this bench) but
+      exercises the same code path. (2i2 cable mystery closed too: the
+      −27 dB was the output volume knob, −3 dB at full.)
 
 ## PC verification notes (2026-08-18, Windows session)
 

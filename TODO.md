@@ -517,28 +517,35 @@ is still open, as one consolidated list.
   session (no shared-mode WASAPI endpoint for the 2i2; needs a console
   login). Only pairing-free readable facts: serial `S2J525A573389F`,
   productId 33305 (0x8219). Probe script: not kept — one-off.
-- **Bridge soundcard OUTPUT path is broken two ways** (found live,
-  2026-08-17, native-engine verification session on the Mac + 2i2 4th
-  Gen — pre-existing, not from that arc). (a) With
-  `output_device_index` unset, `sd.OutputStream(device=None)` plays the
-  stimulus on the **system default output** (Mac speakers, audibly
-  confirmed) instead of the capture device — the round-9 "unset output
-  follows input" fix (`options.py`) covers NI/mock only, not soundcard.
-  (b) With `output_device_index` set explicitly to the *same* device as
-  the input, the capture comes back **all-zero** — opening a second
-  CoreAudio stream on a device that already has a running input stream
-  appears to break the input stream on macOS. Repro'd headlessly via
-  the `/ws` protocol both ways (configure the 2i2, log with an output
-  sweep enabled). Direct `sd.playrec` duplex on the same device works
-  fine, which is likely the fix shape — one duplex stream instead of
-  separate input+output streams — or at minimum default the output
-  device to the input device the way the NI/mock path already does.
-- **2i2 4th Gen physical loopback cable is ~-27 dB down** (found in the
-  same session: RMS 0.009 on the Out L → In 1 cable vs 0.204 on the
-  digital loopback for the same tone) — cable or gain-staging suspect,
-  not chased further. The **digital loopback (channels 3/4) remains the
-  reliable cable-free self-test path** on this interface; prefer it
-  over the physical cable for any future 2i2 bench check.
+- ~~**Bridge soundcard OUTPUT path is broken two ways**~~ — FIXED
+  2026-08-18 (Mac + 2i2 4th Gen live). (a) An unset
+  `output_device_index` now follows the capture device whenever it can
+  play (`options.py`; microphone-only inputs keep the default-output
+  fallback), and (b) a same-device capture+stimulus runs as **one
+  full-duplex `sd.Stream`** (`streams.Recorder.init_stream` +
+  `setup_output_soundcard` routing playback through the capture
+  stream's own output side). Root cause of (b) was confirmed
+  environmental, not a pydvma regression: raw sounddevice shows macOS
+  now kills a running input stream's callback permanently the moment a
+  second stream opens on the same device (PaMacCore err=-50) — it
+  worked on 2026-08-10, broke by 2026-08-17. Bonus from the duplex
+  path: bridge **cancel stops a soundcard stimulus mid-play** (the
+  playback wait polls the cancel event; measured 0.49 s release
+  through /ws). Unit-tested with a mocked sd
+  (`tests/test_soundcard_duplex_output.py`, 20 cases) and
+  live-verified: direct path 6/6, /ws bridge 10/10 (incl.
+  mid-stimulus cancel + monitor restore after capture),
+  `bla_soundcard_check.py` identity G ≡ 1 to 4e-17 through the duplex
+  stream.
+- ~~**2i2 4th Gen physical loopback cable is ~-27 dB down**~~ —
+  ANSWERED 2026-08-18: it was the **output volume knob**, not the
+  cable. With the knob at full the Out L → In 1 cable delivers −3.0 dB
+  relative to the played level (digital loopback = 0.0 dB exactly).
+  The analogue loopback is now a usable second self-test path;
+  the digital loopback (channels 3/4) remains the knob-independent
+  one. NB `dev/bla_soundcard_check.py`'s "open-input response" check
+  now reads the cable's signal on ch1 and reports one expected FAIL
+  while the cable stays plugged in.
 - **Lab-testing period (Tore, days/weeks)** — real structures, real
   measurements; expect feedback-driven fix rounds. Newest surfaces to
   exercise: the Nonlin/BLA stage, Setup level check + gain-derived
