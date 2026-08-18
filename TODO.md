@@ -16,13 +16,34 @@ is still open, as one consolidated list.
 - **Native engine, stages 3–4 (2026-08-17 design, §4.4–4.5 of
   `dev/plans/2026-08-17-native-engine-design.md`)** — stages 0–2 (glue
   into the package, `/engine` host, default flip when served) are
-  landed and live-verified; see
-  `dev/2026-08-17-native-engine-round.md`. Next arc: the **session
+  landed and live-verified on BOTH benches: Mac + 2i2 (2026-08-17) and
+  the Windows PC + cDAQ-9174 (2026-08-18 — default flip, NI capture
+  analysed natively, 6.34 GiB CWT through the 8 GiB ceiling, Stop
+  killing the worker subprocess mid-calc; see the checklist ticks in
+  `dev/2026-08-17-native-engine-round.md`). Next arc: the **session
   journal** (serve owns the session doc server-side; capture → close
   tab → reopen restores it) and **`dvma.launch(settings)`** (the
   notebook front door that replaces the removed `dvma.Logger`, with
   `session.data`/`session.push` pull/push access). Needs its own fresh
   plan before implementation starts.
+- **Real-app-over-socket e2e coverage gap** — no Playwright spec
+  drives the REAL app's calc path through the native `/engine` socket:
+  `engine-native.spec.ts` uses the `?engine=1` probe page, and the
+  `@engine` app specs run pyodide. A cheap BRIDGE_E2E spec (mock
+  serve → Log Data → Calc FFT → plot lines) would close it; the
+  2026-08-18 PC session hand-rolled exactly that flow to verify the
+  arc (it passes) and to isolate the hidden-page park below.
+- **Calc completion parks in a hidden page (rAF)** — with the page
+  `document.hidden` (background tab, or an embedded/hidden webview)
+  a calc's engine round-trip completes — request sent, reply decoded,
+  the socket client's pending entry resolved (verified to that depth,
+  2026-08-18) — but the action then parks awaiting an animation frame:
+  "computing…" forever, no lines, no error, until the page is visible
+  again. Applies to mock and nidaq alike; a visible or Playwright
+  browser completes instantly. Real-user impact is only "finishes when
+  you return to the tab", but it blocks hidden-webview automation and
+  the exact await-rAF site is still unlocated — worth finding and
+  making visibility-independent.
 - **Serve HTTP HEAD requests log noisy websockets tracebacks** — an
   external health probe (or a browser's favicon/preflight-style
   request) sending `HEAD` instead of `GET` produces an "unsupported

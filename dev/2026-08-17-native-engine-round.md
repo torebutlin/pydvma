@@ -143,19 +143,71 @@ fixed here:**
 
 ## Next-lab-visit checklist (live re-verification)
 
-- [ ] **Native-engine default flip on the lab PC** — serve with no
-      param, confirm the console reports the native engine on Windows.
-- [ ] **A real NI capture analysed natively** — configure/log through
-      an actual NI device (6003 / 6212 / cDAQ-9234), FFT/TF end to end
-      (today's verification used soundcard captures only).
-- [ ] **CWT damping on a 30 s capture, exercising the 8 GiB ceiling** —
-      confirm a record that would refuse under pyodide's 768 MiB cap
-      now succeeds natively, and the sizing error still fires correctly
-      when actually exceeded.
-- [ ] **Stop mid-CWT in the real UI** — not just the e2e harness:
-      trigger a long CWT calc, click Stop, confirm the server-side
-      worker subprocess is actually gone.
+Run 2026-08-18 on the Windows PC (RDP session; cDAQ-9174 + USB-6212
+connected, 6003 absent). The stale gitignored artifacts were rebuilt
+first — this PC's `webui/public/pypi` still held a **v2.0.0** engine
+wheel from July and a July-era `dist/`, exactly the silent trap
+CLAUDE.md's release notes describe (`npm run vendor:wheels` + `npm run
+build`, wheel verified byte-identical to the tree's `engine.py`). The
+UI was driven by Playwright scripts against a real
+`pydvma-serve --driver nidaq` because the in-app browser pane turned
+out to be `document.hidden` with rAF suspended — see "PC verification
+notes" below.
+
+- [x] **Native-engine default flip on the lab PC** — 2026-08-18:
+      served with no param on Windows, console reports
+      `[engine-socket] native engine: pydvma 2.3.0`.
+- [x] **A real NI capture analysed natively** — 2026-08-18: 2 s
+      4-channel 9234 capture at 51.2 kHz with a 9260 sweep on the
+      loopback, FFT and TF both rendered through the `/engine` socket.
+- [x] **CWT damping on a 30 s capture, exercising the 8 GiB ceiling** —
+      2026-08-18: 30 s × 51.2 kHz capture; default-band CWT damping is
+      a **6.34 GiB** image (8.4× over pyodide's 768 MiB cap) and
+      completed natively in ~35 s (worker RSS peaked 6.88 GB, decay
+      fits + mode chip rendered); at 64 voices/octave the sizing error
+      fired correctly — "25.27 GB, over the **8.00 GB** limit" with
+      the full remedies text, proving the raised native ceiling (not
+      pyodide's 0.75) is the one enforced end-to-end.
+- [x] **Stop mid-CWT in the real UI** — 2026-08-18: Stop clicked ~15 s
+      into the transform; the worker subprocess (2.7 GB RSS,
+      mid-compute) was gone within one 5 s process poll, a replacement
+      connected (second engine greeting in the console), and the next
+      Fit damping ran to completion cleanly.
 - [ ] **Soundcard-output bug fix, once it lands** — re-run a stimulus
       log on the 2i2 (and ideally the U24 XL), confirming both the
       unset-device and same-device cases play from the right output and
-      the capture is no longer zeroed.
+      the capture is no longer zeroed. (Not attempted 2026-08-18: the
+      fix hasn't landed, and RDP exposes no audio endpoints anyway.)
+
+## PC verification notes (2026-08-18, Windows session)
+
+Suites on the PC at the same tree: pytest **927/18** with cDAQ + 6212
+live (first hardware run of the native-engine era), vitest **1030/1**,
+check **0/0**, Playwright main **69 passing** (two live-monitor specs
+flaked once under CPU contention with the concurrently-running pytest
+and passed clean on re-run), `--grep @engine` **19/19**, BRIDGE_E2E
+bridge+bla+engine-native **18/18** (first Windows run of the spawned
+`/engine` host — spawn-context worker, large frames, Stop, default
+flip all green), mkdocs --strict clean.
+
+**Real bug found and fixed (commit `8cc9f48`):** running
+`dev/bridge_hw_check.py` (58/58 after the fix) exposed a round-11
+race — serve restored the post-capture stream rate AFTER delivering
+`log_result`, so a client reacting promptly hit either "a log is
+already in flight" or a DAQmx property-conflict error from the
+restore racing the next `configure`. Mock reopen is instant, which is
+why every Mac/mock run had passed. The restore now runs before the
+result goes out; regression-pinned in `test_serve_protocol.py`.
+
+**Not a bug, but a trap for automation:** the served app driven in a
+HIDDEN page (`document.hidden`, rAF suspended — e.g. the Claude
+browser pane, potentially any background tab) never completes a calc:
+the engine round-trip finishes (request sent, reply received and
+resolved — verified down to the client's pending map) but the action
+then parks awaiting an animation frame, "computing…" forever, no
+error. Perfectly reproducible with mock and nidaq drivers alike;
+completes instantly in a visible/Playwright browser. For a real user
+this is at worst "calc finishes when you come back to the tab". The
+exact rAF-await site was not located; noted in TODO.md alongside the
+related e2e coverage gap (no test drives the real app's calc path
+over the socket engine — the e2e uses the `?engine=1` probe page).

@@ -2,9 +2,32 @@
 
 ## Current focus (update when it changes)
 
+As of 2026-08-18 (Windows PC session, via RDP): **the native-engine
+arc is verified on the PC too, and everything is PUSHED.** The
+round-doc checklist's four PC items are all ticked live against the
+cDAQ-9174 (native-engine default flip on Windows; a real 4-ch NI
+capture FFT/TF'd through `/engine`; a 30 s × 51.2 kHz CWT damping fit
+whose 6.34 GiB image sails through the 8 GiB native ceiling with the
+sizing error firing correctly at 64 voices; Stop mid-CWT killing the
+worker subprocess within seconds) — only the soundcard-output item
+remains, blocked on its fix landing (and RDP has no audio endpoints).
+Suites on the PC: pytest 927/18 with hardware live, vitest 1030/1,
+check 0/0, Playwright 69 + @engine 19/19 + BRIDGE_E2E 18/18 (first
+Windows run of the spawned engine host), bridge_hw_check 58/58,
+mkdocs --strict green. **One real bug found and fixed (`8cc9f48`)**:
+serve restored the post-capture stream rate AFTER `log_result`, a
+race only real NI hardware loses (refusal or DAQmx property-conflict
+on a prompt follow-up; regression-pinned mock-side). Two notes went
+to TODO.md: the real-app-over-socket e2e coverage gap, and calc
+completion parking in a HIDDEN page (rAF suspended — engine
+round-trip completes, the action then waits for an animation frame;
+bit this session's browser-pane automation, harmless for visible
+tabs). Remember the gitignored-artifact trap when switching machines:
+this PC still had a v2.0.0 engine wheel + July dist until rebuilt.
+
 As of 2026-08-17 evening (Mac session): **the native compute engine —
 stages 0–2 of `dev/plans/2026-08-17-native-engine-design.md` — is
-landed, committed LOCALLY (NOT pushed), and live-verified on real
+landed, pushed, and live-verified on real
 hardware.** When the app is opened through `pydvma-serve`, analysis now
 runs in ordinary CPython on the serving machine over a new `/engine`
 websocket (`pydvma.engine_host`: per-connection worker subprocess,
