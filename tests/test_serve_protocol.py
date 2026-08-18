@@ -18,6 +18,7 @@ each test wraps its scenario in ``asyncio.run``).
 import asyncio
 import io
 import json
+import time
 import urllib.request
 
 import numpy as np
@@ -1678,6 +1679,48 @@ def test_failed_log_still_restores_the_stream_rate(monkeypatch):
                 assert err['type'] == 'error', err
                 assert 'capture exploded' in err['message']
                 assert float(streams.REC.settings.fs) == 1000.0
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_prompt_follow_up_log_after_a_decimating_log_is_not_refused(
+        monkeypatch):
+    """``log_result`` means the log cycle is COMPLETE — tail work included.
+
+    The post-capture stream restore used to run AFTER the result was
+    delivered, so a client that configured/logged again the moment it
+    had the result raced the tail: the new ``log`` was refused as
+    "already in flight", or a new ``configure`` collided with the
+    restore's device reopen into a DAQmx property-conflict error (both
+    seen live on NI hardware, 2026-08-18, where reopening a stream
+    takes hundreds of ms — the mock's reopen is instant, so it is
+    slowed here to hold the race window open).
+    """
+    real_start = streams.start_stream
+
+    def slow_start(settings):
+        time.sleep(0.3)
+        return real_start(settings)
+
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure',
+                            settings=_decimating_settings(stored_time=0.2))
+                await _recv_json(ws)
+                monkeypatch.setattr(streams, 'start_stream', slow_start)
+                await _send(ws, type='log', duration=0.2, pretrigger=None)
+                first = await _recv_json(ws, timeout=10.0)
+                assert first['type'] == 'log_result', first
+                await _recv_binary(ws, timeout=10.0)      # the container
+                # React instantly, the way a scripted client (or a quick
+                # operator) does.
+                await _send(ws, type='log', duration=0.2, pretrigger=None)
+                second = await _recv_json(ws, timeout=10.0)
+                assert second['type'] == 'log_result', second
+                await _recv_binary(ws, timeout=10.0)
         finally:
             await _stop_server(task)
     run_async(scenario)

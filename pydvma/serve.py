@@ -1781,8 +1781,17 @@ class _Connection:
                      if armed else None)
         # The capture may have swapped the live stream onto a different
         # rate (see `_restore_stream_rate`); put it back on EVERY exit —
-        # result, cancel or error — but only after the client has its
-        # data, so reopening a device never delays the delivery.
+        # result, cancel or error.  On the success path it must happen
+        # BEFORE `log_result` goes out: an earlier cut restored after
+        # delivery ("so reopening a device never delays the delivery"),
+        # but the client is free to configure/log the moment it has the
+        # result, and on real NI hardware the reopen is slow enough that
+        # a prompt follow-up either got refused as "already in flight"
+        # or raced the restore's device reopen into a DAQmx property-
+        # conflict error — both seen live (2026-08-18, cDAQ-9174 +
+        # USB-6212 via dev/bridge_hw_check.py).  The `finally` covers
+        # the cancel/error exits, where the client has not been
+        # answered yet; after the success path it is a cheap no-op.
         try:
             try:
                 dvma_bytes, n_samples, n_channels = await capture
@@ -1794,9 +1803,14 @@ class _Connection:
                     except asyncio.CancelledError:
                         pass
 
-            # A cancel that landed while the capture was finishing still
-            # wins: the client contract is that `status/cancelled` arrives
-            # INSTEAD of `log_result`, never as well as it.
+            # Restore the stream before anything client-visible goes out
+            # (see the comment above the `try`), and only then decide
+            # whether a cancel won — a cancel that landed while the
+            # capture was finishing OR while the stream was being
+            # restored still wins: the client contract is that
+            # `status/cancelled` arrives INSTEAD of `log_result`, never
+            # as well as it.
+            await self._restore_stream_rate()
             if cancel_event is not None and cancel_event.is_set():
                 return
 
@@ -1849,6 +1863,15 @@ class _Connection:
         executor because opening a device blocks.  A failure to reopen
         is reported and swallowed: the capture that just succeeded still
         gets delivered.
+
+        Called on the success path BEFORE ``log_result`` is sent — the
+        client may configure/log again the moment it has the result, so
+        any device reopen still in flight at that point races the next
+        command (seen live on NI hardware, 2026-08-18) — and again from
+        ``_on_log``'s ``finally`` as the backstop for the cancel/error
+        exits, where the rates-equal early return makes the repeat call
+        free.  On a reopen failure the ``error`` frame therefore now
+        arrives just BEFORE the ``log_result`` it annotates.
         """
         rec = streams.REC
         settings = self._stream_settings or self.settings
