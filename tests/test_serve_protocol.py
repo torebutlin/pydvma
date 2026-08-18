@@ -51,14 +51,50 @@ def _clean_streams_state():
     streams.REC_MOCK = None
 
 
+#: Set by `_isolated_session_dir` for the duration of each test; read by
+#: `_start_server` as its `session_dir` default.
+_TEST_SESSION_DIR = None
+
+
+@pytest.fixture(autouse=True)
+def _isolated_session_dir(tmp_path_factory):
+    """Give every server ``_start_server`` spawns in this test its own
+    throwaway ``session_dir``.
+
+    ``BridgeServer``'s real default ``session_dir`` is the system temp
+    dir. Without this fixture, any live-server test whose server binds
+    and spills a document (e.g. a ``journal_set`` op — see
+    ``pydvma.journal.SessionJournal._spill``) would leave a real
+    ``pydvma-session-<port>.dvma`` file behind in the ACTUAL system temp
+    dir after the test ends, and every subsequent ``BridgeServer``
+    construction anywhere on the machine — including a real
+    ``pydvma-serve`` a developer starts later — would have its startup
+    recovery scan see it. One fresh directory per test function
+    (``tmp_path_factory.mktemp('sessions')``) makes that impossible:
+    nothing this test suite does ever touches, writes to, or scans the
+    real system temp dir.
+    """
+    global _TEST_SESSION_DIR
+    _TEST_SESSION_DIR = tmp_path_factory.mktemp('sessions')
+    yield
+    _TEST_SESSION_DIR = None
+
+
 # ---- server harness ------------------------------------------------------
 
 async def _start_server(**kwargs):
     """Start a BridgeServer on an ephemeral loopback port.
 
+    ``session_dir`` defaults to this test's isolated scratch directory
+    (see ``_isolated_session_dir``) rather than ``BridgeServer``'s own
+    real-system-temp-dir default — pass ``session_dir=...`` explicitly
+    to test recovery/pruning against a directory this test controls
+    directly.
+
     Returns ``(server, task, port)``; caller must ``_stop_server(task)``.
     """
     kwargs.setdefault('default_driver', 'mock')
+    kwargs.setdefault('session_dir', _TEST_SESSION_DIR)
     server = serve_mod.BridgeServer(host='127.0.0.1', port=0, **kwargs)
     task = asyncio.create_task(server.run())
     for _ in range(500):
@@ -2069,23 +2105,87 @@ def test_spill_path_set_after_bind():
 
 
 def test_startup_adopts_newest_previous_session_file(tmp_path):
-    """``_adopt_previous_session`` picks the newest
-    ``pydvma-session-*.dvma`` file in the scanned directory. The scan
-    directory is not injectable into a spawned ``BridgeServer`` (it
-    always scans the real system temp dir), so this calls the helper
-    directly against a fresh journal, and separately checks that
-    ``BridgeServer.__init__`` really does create a ``SessionJournal``."""
-    older = tmp_path / 'pydvma-session-1111.dvma'
-    newer = tmp_path / 'pydvma-session-2222.dvma'
-    older.write_bytes(b'OLDER')
-    newer.write_bytes(b'NEWER')
+    """A real ``BridgeServer(session_dir=tmp_path)`` adopts the newest
+    previous-run spill file it finds there at ``__init__`` time --
+    end-to-end through the constructor, not the bare helper."""
+    older = tmp_path / 'pydvma-session-51111.dvma'
+    newer = tmp_path / 'pydvma-session-52222.dvma'
+    older.write_bytes(b'PK' + b'OLDER-ZIP-ISH')
+    newer.write_bytes(b'PK' + b'NEWER-ZIP-ISH')
     now = time.time()
     os.utime(older, (now - 100, now - 100))
     os.utime(newer, (now - 10, now - 10))
 
-    journal = SessionJournal()
-    serve_mod._adopt_previous_session(journal, directory=tmp_path)
-    assert journal.recovered() == b'NEWER'
+    server = serve_mod.BridgeServer(host='127.0.0.1', port=0,
+                                    session_dir=tmp_path)
+    assert server.journal.recovered() == b'PK' + b'NEWER-ZIP-ISH'
+    assert server.recovered_session_path == newer
 
-    server = serve_mod.BridgeServer(host='127.0.0.1', port=0)
-    assert isinstance(server.journal, SessionJournal)
+
+def test_adoption_skips_a_candidate_whose_port_is_still_live(tmp_path):
+    """A spill file named after a port that answers a live TCP connect
+    right now belongs to a STILL-RUNNING serve process, not a crash --
+    it must never be adopted (or pruned), however new it is."""
+    import socket as socket_module
+    listener = socket_module.socket(socket_module.AF_INET,
+                                    socket_module.SOCK_STREAM)
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    try:
+        live_port = listener.getsockname()[1]
+        live = tmp_path / ('pydvma-session-%d.dvma' % live_port)
+        live.write_bytes(b'PK' + b'LIVE-SESSION')
+
+        journal = SessionJournal()
+        adopted = serve_mod._adopt_previous_session(journal, directory=tmp_path)
+
+        assert adopted is None
+        assert journal.recovered() is None
+        assert live.exists()  # never pruned either
+    finally:
+        listener.close()
+
+
+def test_adoption_skips_non_pk_candidate_and_falls_back_to_an_older_valid_one(
+        tmp_path):
+    """A stray/corrupt file (no zip magic) must never be offered as a
+    session -- the newest-first walk falls through to the next-newest
+    candidate that actually starts ``b'PK'``."""
+    newer_bad = tmp_path / 'pydvma-session-54444.dvma'
+    older_good = tmp_path / 'pydvma-session-54111.dvma'
+    newer_bad.write_bytes(b'NOT A ZIP FILE AT ALL')
+    older_good.write_bytes(b'PK' + b'GOOD-SESSION')
+    now = time.time()
+    os.utime(older_good, (now - 100, now - 100))
+    os.utime(newer_bad, (now - 10, now - 10))
+
+    journal = SessionJournal()
+    adopted = serve_mod._adopt_previous_session(journal, directory=tmp_path)
+
+    assert adopted == older_good
+    assert journal.recovered() == b'PK' + b'GOOD-SESSION'
+
+
+def test_pruning_deletes_only_old_non_live_non_adopted_candidates(tmp_path):
+    """Pruning must never touch the file it just adopted, and must leave
+    alone anything inside the 7-day grace window -- only a genuinely
+    stale, non-adopted candidate gets deleted."""
+    newest = tmp_path / 'pydvma-session-53001.dvma'        # adopted
+    recent_stale = tmp_path / 'pydvma-session-53002.dvma'  # not adopted, recent
+    old_stale = tmp_path / 'pydvma-session-53003.dvma'     # not adopted, old -> pruned
+    for p in (newest, recent_stale, old_stale):
+        p.write_bytes(b'PK' + p.name.encode())
+
+    now = time.time()
+    os.utime(newest, (now, now))
+    os.utime(recent_stale, (now - 3600, now - 3600))              # 1 hour old
+    eight_days = 8 * 24 * 60 * 60
+    os.utime(old_stale, (now - eight_days, now - eight_days))     # 8 days old
+
+    journal = SessionJournal()
+    adopted = serve_mod._adopt_previous_session(journal, directory=tmp_path)
+
+    assert adopted == newest
+    assert newest.exists()
+    assert recent_stale.exists()
+    assert not old_stale.exists()

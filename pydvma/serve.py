@@ -245,10 +245,13 @@ import json
 import math
 import mimetypes
 import os
+import re
+import socket
 import struct
 import sys
 import tempfile
 import threading
+import time
 import types
 import webbrowser
 from pathlib import Path
@@ -1201,32 +1204,162 @@ pydvma-serve --ui-dir webui/dist</pre>
 """
 
 
+#: Matches a session spill filename and captures its port segment (see
+#: `BridgeServer.run`, which names the file ``pydvma-session-<port>.dvma``
+#: after the real bound port). A name that does not match this exactly —
+#: e.g. a hand-renamed backup — is left alone entirely by
+#: `_adopt_previous_session`: neither adopted nor pruned.
+_SESSION_FILE_RE = re.compile(r'^pydvma-session-(\d+)\.dvma$')
+
+#: Age (seconds) beyond which a non-adopted, non-live session spill file
+#: is deleted by `_adopt_previous_session` — see its docstring's pruning
+#: policy. One week comfortably outlives any normal recover-or-dismiss
+#: cadence while still keeping an always-on lab machine's temp dir from
+#: growing one file per restart forever.
+_SESSION_PRUNE_AGE_S = 7 * 24 * 60 * 60
+
+#: Timeout for the liveness probe in `_port_is_live` — long enough that a
+#: slow loopback stack never gives a false "dead", short enough that a
+#: startup scan over several stale candidates stays fast.
+_LIVENESS_PROBE_TIMEOUT_S = 0.2
+
+
+def _port_is_live(port, host=DEFAULT_HOST):
+    """True when something is listening on ``host:port`` right now.
+
+    A short-timeout TCP connect probe. `_adopt_previous_session` uses
+    this to recognise a candidate spill file as belonging to a
+    STILL-RUNNING ``pydvma-serve`` process (the same port reused across
+    a quick restart, or simply two processes at once) rather than one
+    genuinely abandoned by a crash — adopting or deleting a live
+    process's own spill file out from under it would be a real bug, not
+    just an edge case.
+
+    Any probe failure (connection refused — the overwhelmingly common
+    case, an unreachable host, an out-of-range port from a corrupt
+    filename) is treated as "not live": the caller's candidate then
+    goes through the ordinary adopt/prune path instead of being
+    protected as someone's live spill.
+
+    Args:
+        port: TCP port to probe.
+        host: address to probe (loopback in normal use — this module
+            never binds anywhere else).
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return False
+    try:
+        sock.settimeout(_LIVENESS_PROBE_TIMEOUT_S)
+        return sock.connect_ex((host, port)) == 0
+    except (OSError, OverflowError):
+        return False
+    finally:
+        sock.close()
+
+
 def _adopt_previous_session(journal, directory=None):
-    """Offer the newest previous-run session file for recovery.
+    """Offer the newest READABLE previous-run session file for recovery.
 
     Scans ``directory`` (default: the system temp dir) for
-    ``pydvma-session-*.dvma`` spill files left by earlier serve
-    processes and adopts the newest non-empty one into ``journal``
-    (read eagerly — see :meth:`pydvma.journal.SessionJournal.adopt_recovered`).
-    The app then offers "Recover session from a previous run?"; the
-    file itself is deleted only when the user dismisses the offer.
+    ``pydvma-session-<port>.dvma`` spill files left by earlier serve
+    processes (see `BridgeServer.run`, which names the file after the
+    real bound port). Each candidate is classified before anything else
+    happens to it:
+
+    - a filename whose port segment does not parse as an integer (see
+      :data:`_SESSION_FILE_RE`) is left ALONE entirely — it may not
+      even be a pydvma spill file (e.g. a user's manual rename);
+    - a candidate whose port answers a live TCP connect right now (see
+      `_port_is_live`) belongs to a STILL-RUNNING serve process, so it
+      too is left alone entirely — never adopted, never pruned.
+
+    Adoption then walks the remaining candidates NEWEST-to-OLDEST (by
+    mtime) and adopts the first one that is actually good: it must
+    start with the zip magic ``b'PK'`` (a stray non-``.dvma`` file must
+    never be offered to a user as a session) AND actually read back as
+    non-empty via
+    :meth:`pydvma.journal.SessionJournal.adopt_recovered` — checked via
+    ``journal.recovered()`` after the call, since a corrupt, truncated,
+    or since-deleted file is a silent no-op there. A candidate that
+    fails either check is skipped in favour of the next-newest one,
+    rather than suppressing recovery entirely just because the single
+    newest file happened to be bad.
+
+    Pruning runs last: every non-live, parseable-port candidate that
+    was NOT the one adopted, and whose mtime is older than
+    :data:`_SESSION_PRUNE_AGE_S` (7 days), is deleted (best-effort —
+    this is what keeps an always-on lab machine's temp dir from
+    accumulating one spill file per ``pydvma-serve`` restart forever).
+    A candidate inside that window is left in place even when it was
+    not the one offered, so a human can still find it by hand.
+
+    The app offers "Recover session from a previous run?" for whatever
+    was adopted; the file itself is deleted only when the user
+    dismisses the offer (:meth:`pydvma.journal.SessionJournal.
+    discard_recovered`).
 
     Args:
         journal: the :class:`pydvma.journal.SessionJournal` to adopt
             the recovered bytes into.
         directory: directory to scan, or ``None`` for the system temp
             dir (``tempfile.gettempdir()``) — the real default in
-            normal use; tests point this at a scratch directory so the
-            scan is deterministic.
+            normal use; ``BridgeServer`` instead passes its own
+            :attr:`~BridgeServer.session_dir`, and tests point that at
+            a scratch directory so a scan never touches (or adopts
+            from) a real user's temp dir.
+
+    Returns:
+        The :class:`pathlib.Path` of the adopted file, or ``None`` if
+        nothing was adopted.
     """
     root = Path(directory) if directory is not None else Path(tempfile.gettempdir())
     try:
-        candidates = sorted(root.glob('pydvma-session-*.dvma'),
-                            key=lambda p: p.stat().st_mtime, reverse=True)
+        paths = list(root.glob('pydvma-session-*.dvma'))
     except OSError:
-        return
-    if candidates:
-        journal.adopt_recovered(candidates[0])
+        return None
+
+    # Only a parseable, currently-dead-port candidate is ever adopted or
+    # pruned -- see the docstring.
+    eligible = []
+    for p in paths:
+        m = _SESSION_FILE_RE.match(p.name)
+        if not m:
+            continue
+        if _port_is_live(int(m.group(1))):
+            continue
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            continue
+        eligible.append((p, mtime))
+    eligible.sort(key=lambda item: item[1], reverse=True)  # newest first
+
+    adopted = None
+    for p, _mtime in eligible:
+        try:
+            with open(p, 'rb') as fh:
+                magic = fh.read(2)
+        except OSError:
+            continue
+        if magic != b'PK':
+            continue
+        journal.adopt_recovered(p)
+        if journal.recovered() is not None:
+            adopted = p
+            break
+
+    cutoff = time.time() - _SESSION_PRUNE_AGE_S
+    for p, mtime in eligible:
+        if p == adopted or mtime >= cutoff:
+            continue
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+    return adopted
 
 
 # ---- the server ----
@@ -1247,6 +1380,17 @@ class BridgeServer:
             UI's launch document); ``{}`` when no ``--settings`` given.
         default_driver: ``device_driver`` injected into ``configure``
             messages that omit one (from ``--driver``).
+        session_dir: directory :attr:`journal`'s spill file lives in
+            and :func:`_adopt_previous_session` scans, or ``None`` for
+            the system temp dir (``tempfile.gettempdir()``) — the real
+            default in normal use. Tests pass a scratch directory so a
+            test run's spill files never land in (or get adopted from)
+            a real user's temp dir.
+        recover: whether ``__init__`` offers a previous-run spill file
+            for recovery at all (default ``True``). ``False`` skips
+            the startup scan entirely — for tests that construct many
+            short-lived servers against a shared ``session_dir`` and
+            don't want one run adopting another's leftovers.
 
     Attributes:
         journal: this process's :class:`pydvma.journal.SessionJournal`
@@ -1256,22 +1400,34 @@ class BridgeServer:
             (``_handler`` passes it into
             :func:`engine_host.handle_connection`) and by the bridge's
             ``log`` path (:meth:`_Connection._on_log` registers each
-            capture at birth). ``__init__`` also offers the newest
-            previous-run spill file for recovery, if one exists — see
-            :func:`_adopt_previous_session`.
+            capture at birth).
+        session_dir: resolved from the ``session_dir`` constructor
+            argument (see above) — where the spill file is written
+            (:meth:`run`) and where recovery is scanned from
+            (:func:`_adopt_previous_session`).
+        recovered_session_path: the :class:`pathlib.Path` adopted for
+            recovery at startup, or ``None`` — the return value of
+            :func:`_adopt_previous_session`, kept so callers (``main``)
+            can report which file the offer refers to.
     """
 
     def __init__(self, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                  ui_dir: Path | None = None, settings_json: dict | None = None,
-                 default_driver: str = 'mock'):
+                 default_driver: str = 'mock',
+                 session_dir: Path | str | None = None, recover: bool = True):
         self.host = host
         self.port = port
         self.ui_dir = ui_dir
         self.settings_json = settings_json or {}
         self.default_driver = default_driver
         self._server = None
+        self.session_dir = (Path(session_dir) if session_dir is not None
+                            else Path(tempfile.gettempdir()))
         self.journal = journal_mod.SessionJournal()
-        _adopt_previous_session(self.journal)
+        self.recovered_session_path = None
+        if recover:
+            self.recovered_session_path = _adopt_previous_session(
+                self.journal, directory=self.session_dir)
 
     # -- HTTP (static + /config) --
 
@@ -1369,8 +1525,9 @@ class BridgeServer:
         Binds ``host:port`` (use port 0 for an ephemeral port; read it
         back from :attr:`sockets`) and blocks in the server's
         ``serve_forever`` loop.  Also points :attr:`journal`'s spill
-        file at the REAL bound port — only known once the listener is
-        up, so this cannot happen in ``__init__`` when ``port=0``.
+        file at ``<session_dir>/pydvma-session-<port>.dvma`` for the
+        REAL bound port — only known once the listener is up, so this
+        cannot happen in ``__init__`` when ``port=0``.
         """
         from websockets.asyncio.server import serve
         async with serve(
@@ -1388,8 +1545,7 @@ class BridgeServer:
             self._server = server
             port = server.sockets[0].getsockname()[1]
             self.journal.set_spill_path(
-                Path(tempfile.gettempdir())
-                / ('pydvma-session-%d.dvma' % port))
+                self.session_dir / ('pydvma-session-%d.dvma' % port))
             await server.serve_forever()
 
     @property
@@ -2140,12 +2296,13 @@ def main(argv=None) -> int:
               'Build webui/dist or pass --ui-dir.', file=sys.stderr)
     else:
         print('  serving UI from %s' % ui_dir, file=sys.stderr)
-    if server.journal.recovered() is not None:
-        # The spill path itself is only known after bind (see run()) --
-        # the app's recovery flow is where the operator actually sees it,
-        # so this note stays a plain heads-up.
-        print('a session from a previous pydvma-serve run is available '
-              '— the app will offer to recover it', file=sys.stderr)
+    if server.recovered_session_path is not None:
+        # Adopted at BridgeServer construction time, well before bind --
+        # the app's recovery flow is where the operator actually acts on
+        # it, so this note stays a plain heads-up naming the file.
+        print('  a session from a previous pydvma-serve run is available '
+              '(%s) — the app will offer to recover it'
+              % server.recovered_session_path, file=sys.stderr)
     if args.open:
         webbrowser.open(url)
 

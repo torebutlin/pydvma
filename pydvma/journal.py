@@ -23,10 +23,29 @@ list, because the app serialises its whole dataset at post time — any
 capture it had already received is inside that document. A capture
 landing after the post stays pending until the next one.
 
+Pending-captures budget: a document post is what NORMALLY bounds the
+pending list, but nothing forces one to ever land — a client that
+predates journal support (or simply never opens the app after logging)
+would otherwise let :meth:`add_capture` grow the list, and the bytes it
+holds, without limit for as long as the server runs. So the pending list
+is ALSO capped at :data:`PENDING_CAPTURES_MAX_BYTES` total: every
+``add_capture`` that pushes the running total over the cap evicts
+OLDEST-first until back under it, or the list is empty — including the
+entry just added, if a single capture alone exceeds the whole budget.
+This only ever bites when the cap is actually exceeded — an ordinary
+session, where the app's autosave posts a clearing document well
+before pending captures could add up to hundreds of megabytes, never
+triggers it.
+
 Thread-safe (one lock around all state): writers arrive from the
 asyncio loop's executor threads, the bridge's log worker thread and the
 notebook kernel thread. Listeners are called OUTSIDE the lock, and a
-raising listener never blocks the others.
+raising listener never blocks the others. The one exception is the
+``bytes(...)`` coercion of an incoming payload in :meth:`set_doc` /
+:meth:`add_capture`: that copy runs BEFORE the lock is taken, so a large
+capture's memcpy never blocks another thread's unrelated journal call
+for its duration — only the (cheap) list/dict mutation itself happens
+under the lock.
 
 The spill file is best-effort crash insurance only — an ordinary
 ``.dvma`` the user can open by hand if the serve process dies. On the
@@ -43,6 +62,13 @@ import tempfile
 import threading
 
 _BYTES_TYPES = (bytes, bytearray, memoryview)
+
+#: Total-bytes ceiling on the pending-captures list — see the module
+#: docstring's "Pending-captures budget" paragraph. 256 MiB comfortably
+#: covers a real lab session's captures between autosaves while still
+#: bounding the worst case (a client that never posts a document at
+#: all) to a fixed, modest amount of server memory.
+PENDING_CAPTURES_MAX_BYTES = 256 * 1024 * 1024
 
 
 def _check_bytes(value, param_name):
@@ -108,8 +134,13 @@ class SessionJournal(object):
                 posted).
         """
         _check_bytes(doc_bytes, 'doc_bytes')
+        # Coerce BEFORE taking the lock: a whole session document can be
+        # tens of MB, and copying it is the expensive part of this call —
+        # doing that copy while holding the lock would stall every other
+        # thread's unrelated add_capture/state/etc. for its duration.
+        doc = bytes(doc_bytes)
         with self._lock:
-            self._doc = bytes(doc_bytes)
+            self._doc = doc
             self._captures = []
             listeners = list(self._listeners) if notify else []
         self._spill()
@@ -128,13 +159,30 @@ class SessionJournal(object):
         registered here is absent from the crash artifact until the
         app's next autosave lands.
 
+        If appending pushes the pending list's total size over
+        :data:`PENDING_CAPTURES_MAX_BYTES`, the OLDEST pending entries
+        are evicted (silently — there is no error, no truncation
+        signal, just fewer captures on the next :meth:`state`) until
+        the total is back under the cap or the list is empty. Eviction
+        is strictly oldest-first with no special case for the entry
+        just appended: a single capture that alone exceeds the whole
+        budget is evicted too, leaving the list empty rather than
+        holding one capture over cap. See the module docstring's
+        "Pending-captures budget" paragraph — this only matters when
+        nothing ever posts a clearing document.
+
         Args:
             dvma_bytes (bytes, bytearray, or memoryview): one
                 capture's full ``.dvma`` bytes.
         """
         _check_bytes(dvma_bytes, 'dvma_bytes')
+        # Coerce BEFORE the lock -- see set_doc's matching comment.
+        data = bytes(dvma_bytes)
         with self._lock:
-            self._captures.append(bytes(dvma_bytes))
+            self._captures.append(data)
+            total = sum(len(c) for c in self._captures)
+            while total > PENDING_CAPTURES_MAX_BYTES and self._captures:
+                total -= len(self._captures.pop(0))
 
     def state(self):
         """Current ``(doc_bytes_or_None, [capture_bytes, ...])``.

@@ -61,6 +61,60 @@ class TestDocAndCaptures:
         assert j.state()[1] == [b'c1']
 
 
+class TestPendingCapturesBudget:
+    """`add_capture` bounds the pending list's TOTAL bytes at
+    `PENDING_CAPTURES_MAX_BYTES` -- the only backstop against unbounded
+    growth for a client that never posts a clearing document (see the
+    module docstring's "Pending-captures budget" paragraph). Every test
+    here monkeypatches the module constant down to a tiny value so the
+    eviction path is exercised without allocating real hundreds-of-MB
+    payloads.
+    """
+
+    def test_oversized_accumulation_drops_oldest(self, monkeypatch):
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 10)
+        j = SessionJournal()
+        j.add_capture(b'1234567890')       # exactly at the cap -- kept
+        _, captures = j.state()
+        assert captures == [b'1234567890']
+        j.add_capture(b'x')                # pushes total to 11 -- evicts it
+        _, captures = j.state()
+        assert captures == [b'x']
+
+    def test_budget_evicts_multiple_oldest_entries_as_needed(self, monkeypatch):
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 5)
+        j = SessionJournal()
+        j.add_capture(b'aa')
+        j.add_capture(b'bb')
+        j.add_capture(b'cc')       # total 6 > 5 -- evicts 'aa' -> total 4
+        _, captures = j.state()
+        assert captures == [b'bb', b'cc']
+
+    def test_single_capture_over_budget_alone_is_evicted_too(self, monkeypatch):
+        # No special case for the just-appended entry: with only one
+        # entry in the list, "oldest" and "newest" are the same entry,
+        # and the eviction loop still runs until back under budget.
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 2)
+        j = SessionJournal()
+        j.add_capture(b'toolong')
+        _, captures = j.state()
+        assert captures == []
+
+    def test_doc_post_still_clears_everything_regardless_of_budget(
+            self, monkeypatch):
+        # The cap only ever matters when nothing posts a document; an
+        # ordinary set_doc clears the pending list unconditionally, same
+        # as always, however small the budget is set.
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 1000)
+        j = SessionJournal()
+        j.add_capture(b'c1')
+        j.add_capture(b'c2')
+        j.set_doc(b'doc')
+        doc, captures = j.state()
+        assert doc == b'doc'
+        assert captures == []
+
+
 class TestListeners:
 
     def test_notify_fans_out(self):
