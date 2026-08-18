@@ -525,10 +525,15 @@ is still open, as one consolidated list.
   full-duplex `sd.Stream`** (`streams.Recorder.init_stream` +
   `setup_output_soundcard` routing playback through the capture
   stream's own output side). Root cause of (b) was confirmed
-  environmental, not a pydvma regression: raw sounddevice shows macOS
-  now kills a running input stream's callback permanently the moment a
-  second stream opens on the same device (PaMacCore err=-50) — it
-  worked on 2026-08-10, broke by 2026-08-17. Bonus from the duplex
+  environmental, not a pydvma regression: raw sounddevice shows the
+  running input stream's callback now dies permanently the moment a
+  second stream opens on the same device (PaMacCore err=-50) — worked
+  2026-08-10, broken by 2026-08-17, and the change tracks the
+  **Focusrite Control 2 install (10 Aug) + self-update (12 Aug,
+  confirmed by Tore)**, not the OS (no macOS update since 30 Jun, no
+  reboot since 26 Jul, sounddevice unchanged since Oct 2025; persists
+  with FC2 quit → likely a flashed 2i2 firmware change, possibly
+  device-specific). Bonus from the duplex
   path: bridge **cancel stops a soundcard stimulus mid-play** (the
   playback wait polls the cancel event; measured 0.49 s release
   through /ws). Unit-tested with a mocked sd

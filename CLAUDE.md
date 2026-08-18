@@ -7,9 +7,12 @@ bench): **the bridge soundcard-OUTPUT bug is FIXED and the
 native-engine round's checklist is now fully ticked** (committed
 locally, NOT pushed — Tore hasn't asked). Root cause of the
 zeroed-capture half was confirmed ENVIRONMENTAL with raw sounddevice —
-macOS now permanently stops a running input stream's callback the
-moment a second stream opens on the same device (PaMacCore err=-50;
-worked 2026-08-10, broken by 2026-08-17) — so the fix is structural:
+the running input stream's callback now stops permanently the moment a
+second stream opens on the same device (PaMacCore err=-50; worked
+2026-08-10, broken by 2026-08-17 — tracks the Focusrite Control 2
+install 10 Aug + self-update 12 Aug, Tore-confirmed, likely flashed
+2i2 firmware: no OS update/reboot in the window, persists with FC2
+quit) — so the fix is structural:
 an unset soundcard output now follows the capture device whenever it
 can play (options.py; mic-only inputs keep the default-output
 fallback), and a same-device capture+stimulus runs as ONE full-duplex

@@ -178,9 +178,18 @@ notes" below.
       at full): the fix landed same-day (unset output follows the
       capture device; same-device capture+stimulus is ONE full-duplex
       `sd.Stream` — root cause confirmed environmental with raw
-      sounddevice: macOS now permanently stops a running input
-      stream's callback when a second stream opens on the same device,
-      PaMacCore err=-50). Live evidence: direct path 6/6 (unset output
+      sounddevice: on this bench a running input stream's callback now
+      stops permanently when a second stream opens on the same device,
+      PaMacCore err=-50. Attribution, checked 2026-08-18 evening with
+      Tore: NOT an OS change — no macOS update since 30 Jun, no reboot
+      since 26 Jul, sounddevice/PortAudio unchanged since Oct 2025 —
+      but **Focusrite Control 2 was installed 10 Aug (after that day's
+      passing BLA run) and self-updated 12 Aug** (Tore confirms the
+      update), and FC2 updates carry 2i2 firmware; the breakage
+      persists with FC2 quit, so a flashed firmware change is the
+      prime suspect. Possibly 2i2-specific rather than macOS-wide —
+      the duplex arrangement is the correct one regardless). Live
+      evidence: direct path 6/6 (unset output
       resolves to the 2i2 and the tone lands on cable ch1 at −3 dB +
       digital loopback ch3/4, with NOTHING at the system default
       output, pinned measurably via BlackHole; explicit same-device
