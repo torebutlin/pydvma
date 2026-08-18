@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -43,6 +45,7 @@ const PYTHON = process.env.PYDVMA_PYTHON ?? 'python3';
 //   8764  bridge.spec.ts        (--settings describe, BRIDGE_SETTINGS_PORT)
 //   8765  bla.spec.ts           (bridge-run describe, BLA_BRIDGE_PORT)
 //   8766  engine-native.spec.ts (this file, ENGINE_PORT)
+//   8767  session-journal.spec.ts (JOURNAL_PORT — one fresh serve per test)
 // A collision is NASTIER than a bind error here: a mock `pydvma serve`
 // answers both /ws and /engine, so the loser's tests can silently run
 // against the winner's server instead of failing to start.
@@ -51,6 +54,14 @@ const ENGINE_URL = `ws://127.0.0.1:${PORT}/engine`;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 let server: ChildProcessWithoutNullStreams | undefined;
+// Scratch session dir for the spawned serve (`--session-dir`). Hermeticity:
+// without it, every e2e run leaves a real, PK-valid `pydvma-session-*.dvma`
+// in the SYSTEM temp dir, which a later REAL `pydvma-serve` would adopt and
+// offer the user as "Recover session from a previous pydvma-serve run?" —
+// and, in the other direction, a stray file from an earlier real serve would
+// raise that recovery toast over these specs' own clicks. Created in
+// beforeAll (so a non-BRIDGE_E2E run leaves nothing) and removed in afterAll.
+let sessionDir: string | undefined;
 
 // Buffered (not drained-to-nothing) spawned-server output: the last
 // MAX_OUTPUT_LINES lines of stdout+stderr combined, so a failure to start
@@ -97,7 +108,9 @@ function waitForPort(port: number, timeoutMs = 20000): Promise<void> {
 
 test.beforeAll(async () => {
   if (!BRIDGE_E2E) return;
-  server = spawn(PYTHON, ['-m', 'pydvma.serve', '--driver', 'mock', '--port', String(PORT)], {
+  sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pydvma-e2e-'));
+  server = spawn(PYTHON, ['-m', 'pydvma.serve', '--driver', 'mock', '--port', String(PORT),
+                          '--session-dir', sessionDir], {
     cwd: REPO_ROOT,
     stdio: 'pipe',
   });
@@ -107,9 +120,14 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  if (!server) return;
-  server.kill('SIGINT');
-  await new Promise((r) => setTimeout(r, 300));
+  if (server) {
+    server.kill('SIGINT');
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  if (sessionDir) {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    sessionDir = undefined;
+  }
 });
 
 test.describe('native engine', () => {

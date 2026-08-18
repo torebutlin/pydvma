@@ -39,6 +39,15 @@ const WS_URL = `ws://127.0.0.1:${PORT}/ws`;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 let server: ChildProcessWithoutNullStreams | undefined;
+// Scratch session dir for the spawned serves (`--session-dir`). Hermeticity:
+// without it, every e2e run leaves a real, PK-valid `pydvma-session-*.dvma`
+// in the SYSTEM temp dir, which a later REAL `pydvma-serve` would adopt and
+// offer the user as "Recover session from a previous pydvma-serve run?" —
+// and, in the other direction, a stray file from an earlier real serve would
+// raise that recovery toast over this spec's own clicks. Created in beforeAll
+// (so a non-BRIDGE_E2E run leaves nothing) and removed in afterAll; each
+// describe's server gets its own.
+let sessionDir: string | undefined;
 
 /** Poll the loopback TCP port until the bridge server accepts a connection. */
 function waitForPort(port: number, timeoutMs = 20000): Promise<void> {
@@ -59,7 +68,9 @@ function waitForPort(port: number, timeoutMs = 20000): Promise<void> {
 
 test.beforeAll(async () => {
   if (!BRIDGE_E2E) return;
-  server = spawn(PYTHON, ['-m', 'pydvma.serve', '--driver', 'mock', '--port', String(PORT)], {
+  sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pydvma-e2e-'));
+  server = spawn(PYTHON, ['-m', 'pydvma.serve', '--driver', 'mock', '--port', String(PORT),
+                          '--session-dir', sessionDir], {
     cwd: REPO_ROOT,
     stdio: 'pipe',
   });
@@ -69,9 +80,14 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  if (!server) return;
-  server.kill('SIGINT');
-  await new Promise((r) => setTimeout(r, 300));
+  if (server) {
+    server.kill('SIGINT');
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  if (sessionDir) {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    sessionDir = undefined;
+  }
 });
 
 test.describe('pydvma serve bridge', () => {
@@ -258,6 +274,8 @@ test.describe('pydvma serve --settings launch prefill', () => {
 
   let settingsServer: ChildProcessWithoutNullStreams | undefined;
   let settingsFile: string | undefined;
+  // This describe's own scratch session dir — see the module-level comment.
+  let settingsSessionDir: string | undefined;
 
   test.beforeAll(async () => {
     if (!BRIDGE_E2E) return;
@@ -271,9 +289,11 @@ test.describe('pydvma serve --settings launch prefill', () => {
       pretrig_samples: 150, pretrig_timeout: 3,
       output: { type: 'sweep', amp: 0.4, f1: 20, f2: 800 },
     }));
+    settingsSessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pydvma-e2e-'));
     settingsServer = spawn(PYTHON, [
       '-m', 'pydvma.serve', '--driver', 'mock', '--port', String(SETTINGS_PORT),
       '--settings', settingsFile, '--ui-dir', DIST_DIR,
+      '--session-dir', settingsSessionDir,
     ], { cwd: REPO_ROOT, stdio: 'pipe' });
     settingsServer.stdout.on('data', () => { /* drain */ });
     settingsServer.stderr.on('data', () => { /* drain */ });
@@ -283,6 +303,10 @@ test.describe('pydvma serve --settings launch prefill', () => {
   test.afterAll(async () => {
     if (settingsServer) { settingsServer.kill('SIGINT'); await new Promise((r) => setTimeout(r, 300)); }
     if (settingsFile) { try { fs.unlinkSync(settingsFile); } catch { /* */ } }
+    if (settingsSessionDir) {
+      fs.rmSync(settingsSessionDir, { recursive: true, force: true });
+      settingsSessionDir = undefined;
+    }
   });
 
   test('Setup + Acquire are prefilled from the served MySettings', async ({ page }) => {
