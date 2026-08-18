@@ -110,6 +110,7 @@ nav:
   - API Reference:
       - Analysis: api/analysis.md
       - Acquisition: api/acquisition.md
+      - Session & Launch: api/session.md
       - Data Structures: api/datastructure.md
       - Plotting: api/plotting.md
       - Modal Analysis: api/modal.md
