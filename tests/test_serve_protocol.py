@@ -18,8 +18,10 @@ each test wraps its scenario in ``asyncio.run``).
 import asyncio
 import io
 import json
+import os
 import time
 import urllib.request
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -27,6 +29,8 @@ import pytest
 import pydvma as dvma
 from pydvma import streams, container
 from pydvma import serve as serve_mod
+from pydvma import engine_host
+from pydvma.journal import SessionJournal
 
 from websockets.asyncio.client import connect
 
@@ -266,6 +270,11 @@ def test_build_capabilities_soundcard_per_device_caps():
                           'default_samplerate', 'candidate_rates', 'ao'}
         assert cap['max_channels'][did]['input'] == c['max_input_channels']
         assert isinstance(cap['fs_ladders'][did], list)
+
+
+def test_build_capabilities_advertises_journal():
+    caps = serve_mod.build_capabilities()
+    assert caps['engine']['journal'] is True
 
 
 # ---- unit: output-signal builder ----------------------------------------
@@ -1978,3 +1987,105 @@ class TestUnsupportedRateError:
     ])
     def test_leaves_every_other_failure_alone(self, text):
         assert not serve_mod._is_unsupported_rate_error(RuntimeError(text))
+
+
+# ---- live: session journal (stage 3) -------------------------------------
+
+def test_log_registers_capture_in_journal():
+    """A completed ``log`` over ``/ws`` registers its ``.dvma`` bytes in
+    the server's journal, readable back over a separate ``/engine``
+    connection via ``journal_get`` (belt-and-braces crash recovery — see
+    ``pydvma.journal``)."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            test_name='journal-capture')
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'
+                await _recv_binary(ws, timeout=10.0)
+
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as eng:
+                await eng.recv()  # greeting
+                await eng.send(engine_host.encode_frame(
+                    {'id': 1, 'op': 'journal_get', 'payload': {}}))
+                reply = engine_host.decode_frame(await eng.recv())
+                assert reply['ok'] is True
+                captures = reply['result']['captures']
+                assert len(captures) == 1
+                ds = container.load(io.BytesIO(captures[0]))
+                assert len(ds.time_data_list) == 1
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_engine_connection_can_set_and_get_journal():
+    """Proves ``_handler`` actually passes ``self.journal`` through to
+    ``engine_host.handle_connection`` for the real ``BridgeServer`` (not
+    just the bare harness in ``tests/test_engine_host.py``)."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws:
+                await ws.recv()  # greeting
+                await ws.send(engine_host.encode_frame(
+                    {'id': 1, 'op': 'journal_set',
+                     'payload': {'doc': b'HELLOWORLD'}}))
+                reply = engine_host.decode_frame(await ws.recv())
+                assert reply['ok'] is True
+
+                await ws.send(engine_host.encode_frame(
+                    {'id': 2, 'op': 'journal_get', 'payload': {}}))
+                reply2 = engine_host.decode_frame(await ws.recv())
+                assert reply2['ok'] is True
+                assert reply2['result']['doc'] == b'HELLOWORLD'
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_spill_path_set_after_bind():
+    """``run()`` only learns the REAL bound port after the listener is
+    up (port 0 = ephemeral), so the spill path is set there, not in
+    ``__init__``."""
+    async def scenario():
+        server, task, port = await _start_server()
+        try:
+            spill_path = server.journal.spill_path
+            assert spill_path is not None
+            assert Path(spill_path).name == 'pydvma-session-%d.dvma' % port
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_startup_adopts_newest_previous_session_file(tmp_path):
+    """``_adopt_previous_session`` picks the newest
+    ``pydvma-session-*.dvma`` file in the scanned directory. The scan
+    directory is not injectable into a spawned ``BridgeServer`` (it
+    always scans the real system temp dir), so this calls the helper
+    directly against a fresh journal, and separately checks that
+    ``BridgeServer.__init__`` really does create a ``SessionJournal``."""
+    older = tmp_path / 'pydvma-session-1111.dvma'
+    newer = tmp_path / 'pydvma-session-2222.dvma'
+    older.write_bytes(b'OLDER')
+    newer.write_bytes(b'NEWER')
+    now = time.time()
+    os.utime(older, (now - 100, now - 100))
+    os.utime(newer, (now - 10, now - 10))
+
+    journal = SessionJournal()
+    serve_mod._adopt_previous_session(journal, directory=tmp_path)
+    assert journal.recovered() == b'NEWER'
+
+    server = serve_mod.BridgeServer(host='127.0.0.1', port=0)
+    assert isinstance(server.journal, SessionJournal)

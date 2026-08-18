@@ -324,11 +324,14 @@ async def _start_engine_server(journal=None):
     """Serve ``handle_connection`` directly on an ephemeral port, no
     :class:`~pydvma.serve.BridgeServer` involved.
 
-    The journal-ops tests need to pass an explicit
+    Lets the journal-ops tests pass an explicit
     :class:`~pydvma.journal.SessionJournal` (or exercise the no-journal
-    default) straight into ``handle_connection`` -- ``BridgeServer``
-    does not wire one through yet, so ``_start_server`` above (which
-    goes via ``BridgeServer``) cannot express that.
+    default) straight into ``handle_connection`` without standing up a
+    full ``BridgeServer`` and its bridge-protocol machinery -- a bare,
+    single-purpose harness for exercising the ``/engine`` endpoint in
+    isolation. (``BridgeServer`` itself owns and wires through its own
+    journal -- see ``tests/test_serve_protocol.py``'s live-server
+    journal tests for that path.)
     """
     from websockets.asyncio.server import serve
     handler = functools.partial(engine_host.handle_connection, journal=journal)
@@ -451,6 +454,7 @@ def test_bridge_ws_still_works_alongside_engine():
                 assert cap['engine'] == {
                     'v': engine_host.ENGINE_PROTOCOL_VERSION,
                     'pydvma': serve_mod.datastructure.VERSION,
+                    'journal': True,
                 }
         finally:
             await _stop_server(task)

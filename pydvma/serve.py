@@ -68,9 +68,13 @@ Server → client:
   fs_ladders, max_channels, device_caps, default_input, default_output,
   pretrigger, ao, engine}``.  All keys
   are stable across the additive Wave-C growth; ``v`` stays ``1``.
-  ``engine`` is ``{v, pydvma}`` — the separate ``/engine`` websocket's own
-  protocol version and the pydvma version answering it (see the module
-  docstring's route enumeration above and :mod:`pydvma.engine_host`).
+  ``engine`` is ``{v, pydvma, journal}`` — the separate ``/engine``
+  websocket's own protocol version, the pydvma version answering it (see
+  the module docstring's route enumeration above and
+  :mod:`pydvma.engine_host`), and whether this server owns a
+  :class:`pydvma.journal.SessionJournal` (stage 3 of the native-engine
+  arc — always ``True`` as of this version; capability-gated so an old
+  app build simply never sends a ``journal_*`` op).
   ``fs_ladders`` and ``max_channels`` are now **per-device maps** keyed
   by ``"<driver>:<index>"`` (e.g. ``"soundcard:0"``, ``"nidaq:0"``):
   ``fs_ladders[id]`` is a list of candidate sample rates and
@@ -257,6 +261,7 @@ from . import _soundcard_specs
 from . import container
 from . import datastructure
 from . import engine_host
+from . import journal as journal_mod
 from . import options
 from . import streams
 from . import _ni_backend
@@ -921,6 +926,12 @@ def build_capabilities() -> dict[str, Any]:
         'engine': {
             'v': engine_host.ENGINE_PROTOCOL_VERSION,
             'pydvma': datastructure.VERSION,
+            # Capability-gated (stage 3): this server owns a SessionJournal
+            # and answers journal_set/journal_get/journal_discard_recovered
+            # on /engine (see engine_host.handle_connection). An old app
+            # build that predates the journal simply never sends those ops
+            # and ignores this key, so the addition is purely additive.
+            'journal': True,
         },
     }
 
@@ -1190,6 +1201,34 @@ pydvma-serve --ui-dir webui/dist</pre>
 """
 
 
+def _adopt_previous_session(journal, directory=None):
+    """Offer the newest previous-run session file for recovery.
+
+    Scans ``directory`` (default: the system temp dir) for
+    ``pydvma-session-*.dvma`` spill files left by earlier serve
+    processes and adopts the newest non-empty one into ``journal``
+    (read eagerly — see :meth:`pydvma.journal.SessionJournal.adopt_recovered`).
+    The app then offers "Recover session from a previous run?"; the
+    file itself is deleted only when the user dismisses the offer.
+
+    Args:
+        journal: the :class:`pydvma.journal.SessionJournal` to adopt
+            the recovered bytes into.
+        directory: directory to scan, or ``None`` for the system temp
+            dir (``tempfile.gettempdir()``) — the real default in
+            normal use; tests point this at a scratch directory so the
+            scan is deterministic.
+    """
+    root = Path(directory) if directory is not None else Path(tempfile.gettempdir())
+    try:
+        candidates = sorted(root.glob('pydvma-session-*.dvma'),
+                            key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    if candidates:
+        journal.adopt_recovered(candidates[0])
+
+
 # ---- the server ----
 
 class BridgeServer:
@@ -1208,6 +1247,18 @@ class BridgeServer:
             UI's launch document); ``{}`` when no ``--settings`` given.
         default_driver: ``device_driver`` injected into ``configure``
             messages that omit one (from ``--driver``).
+
+    Attributes:
+        journal: this process's :class:`pydvma.journal.SessionJournal`
+            — the authoritative session document plus any captures
+            registered since the last document post (stage 3 of the
+            native-engine arc). Shared by every ``/engine`` connection
+            (``_handler`` passes it into
+            :func:`engine_host.handle_connection`) and by the bridge's
+            ``log`` path (:meth:`_Connection._on_log` registers each
+            capture at birth). ``__init__`` also offers the newest
+            previous-run spill file for recovery, if one exists — see
+            :func:`_adopt_previous_session`.
     """
 
     def __init__(self, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
@@ -1219,6 +1270,8 @@ class BridgeServer:
         self.settings_json = settings_json or {}
         self.default_driver = default_driver
         self._server = None
+        self.journal = journal_mod.SessionJournal()
+        _adopt_previous_session(self.journal)
 
     # -- HTTP (static + /config) --
 
@@ -1293,13 +1346,14 @@ class BridgeServer:
         documented at the top of this module. Creates a fresh
         :class:`_Connection` for the bridge path (its own stream id, seq,
         and monitor task) and drives it until the socket closes, then
-        tears the monitor down.
+        tears the monitor down. Both branches share :attr:`journal` —
+        stage 3 of the native-engine arc.
         """
         path = websocket.request.path.split('?', 1)[0]
         if path == '/engine':
-            await engine_host.handle_connection(websocket)
+            await engine_host.handle_connection(websocket, journal=self.journal)
             return
-        conn = _Connection(websocket)
+        conn = _Connection(websocket, journal=self.journal)
         try:
             async for raw in websocket:
                 if isinstance(raw, (bytes, bytearray)):
@@ -1314,7 +1368,9 @@ class BridgeServer:
 
         Binds ``host:port`` (use port 0 for an ephemeral port; read it
         back from :attr:`sockets`) and blocks in the server's
-        ``serve_forever`` loop.
+        ``serve_forever`` loop.  Also points :attr:`journal`'s spill
+        file at the REAL bound port — only known once the listener is
+        up, so this cannot happen in ``__init__`` when ``port=0``.
         """
         from websockets.asyncio.server import serve
         async with serve(
@@ -1330,6 +1386,10 @@ class BridgeServer:
             max_size=256 * 1024 * 1024,
         ) as server:
             self._server = server
+            port = server.sockets[0].getsockname()[1]
+            self.journal.set_spill_path(
+                Path(tempfile.gettempdir())
+                / ('pydvma-session-%d.dvma' % port))
             await server.serve_forever()
 
     @property
@@ -1349,8 +1409,10 @@ class _Connection:
 
     _next_stream_id = 0
 
-    def __init__(self, websocket):
+    def __init__(self, websocket, journal=None):
         self.ws = websocket
+        # Captures register here at birth — stage 3.
+        self._journal = journal
         _Connection._next_stream_id = (_Connection._next_stream_id + 1) & 0xFFFF
         self.stream_id = _Connection._next_stream_id or 1
         self.seq = 0
@@ -1814,6 +1876,11 @@ class _Connection:
             if cancel_event is not None and cancel_event.is_set():
                 return
 
+            if self._journal is not None:
+                # Stage 3: the journal holds every capture from birth, so a
+                # tab closing inside the app's autosave debounce loses nothing.
+                self._journal.add_capture(dvma_bytes)
+
             if armed and not triggered['seen']:
                 await self._send_json({'type': 'status', 'event': 'timeout',
                                        'streamId': self.stream_id})
@@ -2073,6 +2140,12 @@ def main(argv=None) -> int:
               'Build webui/dist or pass --ui-dir.', file=sys.stderr)
     else:
         print('  serving UI from %s' % ui_dir, file=sys.stderr)
+    if server.journal.recovered() is not None:
+        # The spill path itself is only known after bind (see run()) --
+        # the app's recovery flow is where the operator actually sees it,
+        # so this note stays a plain heads-up.
+        print('a session from a previous pydvma-serve run is available '
+              '— the app will offer to recover it', file=sys.stderr)
     if args.open:
         webbrowser.open(url)
 
