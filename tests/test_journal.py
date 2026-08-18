@@ -7,6 +7,8 @@ best-effort spill file and the crash-recovery adoption surface.
 """
 import threading
 
+import pytest
+
 from pydvma.journal import SessionJournal
 
 
@@ -95,6 +97,15 @@ class TestListeners:
         j.set_doc(b'doc', notify=True)
         assert hits == [1]
 
+    def test_double_unsubscribe_is_safe(self):
+        j = SessionJournal()
+        hits = []
+        unsub = j.add_listener(lambda: hits.append(1))
+        unsub()
+        unsub()                    # must not raise
+        j.set_doc(b'doc', notify=True)
+        assert hits == []
+
 
 class TestSpill:
 
@@ -116,6 +127,43 @@ class TestSpill:
         j.set_spill_path(tmp_path / 'late.dvma')
         j.set_doc(b'doc')
         assert (tmp_path / 'late.dvma').read_bytes() == b'doc'
+
+    def test_spill_path_property_reflects_setter(self, tmp_path):
+        j = SessionJournal()
+        target = tmp_path / 'late.dvma'
+        j.set_spill_path(target)
+        assert j.spill_path == target
+
+    def test_add_capture_alone_creates_no_spill_file(self, tmp_path):
+        # The spill mirrors the DOCUMENT only, never pending captures.
+        spill = tmp_path / 'session.dvma'
+        j = SessionJournal(spill_path=spill)
+        j.add_capture(b'c1')
+        assert not spill.exists()
+
+    def test_concurrent_spill_matches_final_doc(self, tmp_path):
+        # Pins the serialised atomic spill: after concurrent doc and
+        # capture writers finish, the file on disk matches whatever
+        # the journal itself considers current.
+        spill = tmp_path / 'session.dvma'
+        j = SessionJournal(spill_path=spill)
+        n = 200
+
+        def capture_writer():
+            for i in range(n):
+                j.add_capture(b'c%d' % i)
+
+        def doc_writer():
+            for i in range(n):
+                j.set_doc(b'd%d' % i)
+
+        threads = [threading.Thread(target=capture_writer),
+                   threading.Thread(target=doc_writer)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert spill.read_bytes() == j.state()[0]
 
 
 class TestRecovered:
@@ -152,6 +200,46 @@ class TestRecovered:
         j = SessionJournal()
         j.adopt_recovered(tmp_path / 'absent.dvma')
         assert j.recovered() is None
+
+    def test_adopt_empty_file_is_noop(self, tmp_path):
+        old = tmp_path / 'empty.dvma'
+        old.write_bytes(b'')
+        j = SessionJournal()
+        j.adopt_recovered(old)
+        assert j.recovered() is None
+
+    def test_discard_recovered_twice_is_safe(self, tmp_path):
+        old = tmp_path / 's.dvma'
+        old.write_bytes(b'old')
+        j = SessionJournal()
+        j.adopt_recovered(old)
+        j.discard_recovered()
+        j.discard_recovered()      # must not raise
+        assert j.recovered() is None
+
+    def test_discard_keeps_file_that_is_the_live_spill_target(self, tmp_path):
+        # A same-port restart adopts what is now its own live spill
+        # file; discarding the OFFER must not delete the live mirror.
+        live = tmp_path / 's.dvma'
+        live.write_bytes(b'old-session')
+        j = SessionJournal(spill_path=live)
+        j.adopt_recovered(live)
+        j.discard_recovered()
+        assert j.recovered() is None
+        assert live.exists()
+
+
+class TestTypeGuards:
+
+    def test_set_doc_rejects_non_bytes(self):
+        j = SessionJournal()
+        with pytest.raises(TypeError):
+            j.set_doc(5)
+
+    def test_add_capture_rejects_non_bytes(self):
+        j = SessionJournal()
+        with pytest.raises(TypeError):
+            j.add_capture(5)
 
 
 class TestThreadSafety:
