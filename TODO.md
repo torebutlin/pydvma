@@ -76,10 +76,14 @@ is still open, as one consolidated list.
     family** (a set's time data + everything `id_link`ed to it + fits,
     with kind badges), all ticked by default, reached via a
     "Choose sets…" secondary action beside Save/Export — the primary
-    buttons stay zero-friction save-everything. Deliberately NOT
-    driven by view/selection/fade state (Tore: coupling save to
-    display state is confusing — does a greyed line save?). Notebook
-    parity: a `subset`/`sets=` convenience on the Python side.
+    buttons stay zero-friction save-everything (split-button shape
+    AGREED with Tore 2026-08-19: "let's try it and I can see how it
+    plays out"). Deliberately NOT driven by view/selection/fade state
+    (Tore: coupling save to display state is confusing — does a greyed
+    line save?). Notebook parity: a `subset`/`sets=` convenience on
+    the Python side. Journal/autosave deliberately do NOT carry
+    materialised views in this round — explicit Save only, revisit
+    once real file sizes are known.
 - **`dvma.attach(url)` — session API against an externally started
   serve** — `launch()` owns the server it returns a handle to, so a
   notebook cannot currently get `session.data` / `session.push` against
