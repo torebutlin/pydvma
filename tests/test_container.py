@@ -358,6 +358,64 @@ def test_v2_optional_attrs_absent_stay_absent(tmp_path):
     assert not hasattr(loaded.freq_data_list[0], 'iw_power_counter')
 
 
+def test_v2_source_signature_and_settings_roundtrip(tmp_path):
+    # Compute-chain provenance (derived-data save round): FFT/TF results
+    # carry source_signature + source_settings, both optional meta.
+    from pydvma import _signature
+    data = dvma.create_test_impulse_data(noise_level=0)
+    td = data.time_data_list[0]
+    data.add_to_dataset(dvma.calculate_fft(td, window='hann'))
+    data.add_to_dataset(dvma.calculate_tf(td, ch_in=0, N_frames=2))
+    path = tmp_path / 'sig.dvma'
+    container.save(data, str(path))
+    loaded = container.load(str(path))
+
+    expected = _signature.source_signature(td)
+    fd = loaded.freq_data_list[0]
+    assert fd.source_signature == expected
+    assert fd.source_settings == {'calc': 'fft', 'window': 'hann',
+                                  'time_range': [0.0, td.time_axis[-1]]}
+    tf = loaded.tf_data_list[0]
+    assert tf.source_signature == expected
+    assert tf.source_settings['calc'] == 'tf'
+    assert tf.source_settings['ch_in'] == 0
+    assert tf.source_settings['N_frames'] == 2
+    assert tf.source_settings['overlap'] == 0.5
+    # the chain verifies against the time data that travelled with it
+    assert (_signature.source_signature(loaded.time_data_list[0])
+            == tf.source_signature)
+
+
+def test_v2_source_signature_absent_stays_absent(tmp_path):
+    # A file whose derived items predate signatures must not gain them:
+    # the app treats absence as "no claim", not as a broken chain.
+    data = dvma.create_test_impulse_data(noise_level=0)
+    data.calculate_fft_set()
+    for fd in data.freq_data_list:
+        del fd.source_signature
+        del fd.source_settings
+    path = tmp_path / 'nosig.dvma'
+    container.save(data, str(path))
+    loaded = container.load(str(path))
+    assert not hasattr(loaded.freq_data_list[0], 'source_signature')
+    assert not hasattr(loaded.freq_data_list[0], 'source_settings')
+
+
+def test_v2_broken_chain_is_detectable_after_roundtrip(tmp_path):
+    # The whole point: edit the time data after computing, and the
+    # stored signature no longer matches its source.
+    from pydvma import _signature
+    data = dvma.create_test_impulse_data(noise_level=0)
+    td = data.time_data_list[0]
+    data.add_to_dataset(dvma.calculate_fft(td))
+    td.time_data = td.time_data * 2.0        # e.g. a calibration rescale
+    path = tmp_path / 'stale.dvma'
+    container.save(data, str(path))
+    loaded = container.load(str(path))
+    assert (loaded.freq_data_list[0].source_signature
+            != _signature.source_signature(loaded.time_data_list[0]))
+
+
 def test_v2_settings_device_full_info_dict(tmp_path):
     # settings.device_full_info is a dict (sounddevice.query_devices()
     # entry) and can carry numpy scalars / NaN — must round-trip.

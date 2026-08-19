@@ -116,14 +116,18 @@ _META_FIELDS = {
 }
 
 # Optional post-construction attributes set by in-place analysis
-# (analysis.multiply_by_power_of_iw, analysis.clean_impulse). Written
-# only when present on the object; restored only when present in the
+# (analysis.multiply_by_power_of_iw, analysis.clean_impulse) or stamped
+# at the calc sites (analysis._stamp_source: source_signature, the hash
+# of the SOURCE samples this result was computed from, and
+# source_settings, the analysis knobs that call used). Written only
+# when present on the object; restored only when present in the
 # manifest — absence must survive the round-trip because downstream
-# code uses hasattr() guards.
+# code uses hasattr() guards, and because a derived item written before
+# signatures existed makes no claim about its chain.
 _OPTIONAL_META = {
     'TimeData': ['impulse_cleaned'],
-    'FreqData': ['iw_power_counter'],
-    'TfData':   ['iw_power_counter'],
+    'FreqData': ['iw_power_counter', 'source_signature', 'source_settings'],
+    'TfData':   ['iw_power_counter', 'source_signature', 'source_settings'],
 }
 
 # Tag keys reserved by _encode_value; user dicts must not use them.

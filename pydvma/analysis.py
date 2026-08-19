@@ -6,6 +6,7 @@ Created on Sun Sep  2 20:16:26 2018
 """
 
 from . import datastructure
+from . import _signature
 
 import numpy as np
 from scipy import signal
@@ -14,6 +15,42 @@ import peakutils as pu
 from scipy.optimize import curve_fit
 
 MESSAGE = ''
+
+
+def _range_to_list(time_range):
+    """A time range as two plain floats for the JSON manifest.
+
+    Args:
+        time_range (list or np.ndarray or None): the range to
+            normalise; anything that is not a pair of numbers (None, a
+            `PlotData`, a malformed argument) becomes ``None``.
+
+    Returns ``[t_start, t_stop]`` as plain floats, or ``None``.
+    """
+    try:
+        return [float(time_range[0]), float(time_range[1])]
+    except (TypeError, ValueError, IndexError, KeyError):
+        return None
+
+
+def _stamp_source(result, time_data, source_settings):
+    """Record the compute chain on a derived analysis result.
+
+    Sets ``source_signature`` (a hash of the SOURCE samples + rate, see
+    `pydvma._signature`) and ``source_settings`` (the analysis knobs
+    that call used, as JSON-safe scalars) on `result`, in place. Both
+    are optional attributes the container round-trips when present, so
+    a loaded file can flag a chain whose source has since changed.
+
+    Args:
+        result (FreqData or TfData): the freshly built derived item.
+        time_data (TimeData or iterable): the source measurement(s) the
+            result was computed from.
+        source_settings (dict): the analysis parameters actually used,
+            already reduced to JSON-safe scalars.
+    """
+    result.source_signature = _signature.source_signature(time_data)
+    result.source_settings = source_settings
 
 
 def calculate_fft(time_data,time_range=None,window=None):
@@ -66,6 +103,12 @@ def calculate_fft(time_data,time_range=None,window=None):
         units=time_data.units,
         id_link=time_data.unique_id, test_name=time_data.test_name,
     )
+
+    _stamp_source(freq_data, time_data, {
+        'calc': 'fft',
+        'window': None if window is None else str(window),
+        'time_range': _range_to_list(time_range_copy),
+    })
 
     return freq_data
 
@@ -466,6 +509,17 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
         id_link=time_data.unique_id, test_name=time_data.test_name,
     )
 
+    _stamp_source(tfdata, time_data, {
+        'calc': 'tf',
+        'window': None if window is None else str(window),
+        # the EFFECTIVE range: cross_spec_data.settings.time_range is
+        # the full record when the argument was None
+        'time_range': _range_to_list(cross_spec_data.settings.time_range),
+        'ch_in': int(ch_in),
+        'N_frames': int(N_frames),
+        'overlap': float(overlap),
+    })
+
     return tfdata
 
 
@@ -551,6 +605,15 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
         units=tf_units,
         id_link=id_link_list, test_name=time_data_list[0].test_name,
     )
+
+    _stamp_source(tfdata, time_data_list, {
+        'calc': 'tf_averaged',
+        'window': None if window is None else str(window),
+        # the raw argument: the ensemble has no single effective range
+        'time_range': _range_to_list(time_range),
+        'ch_in': int(ch_in),
+        'N_ensemble': int(N_ensemble),
+    })
 
     return tfdata
 
