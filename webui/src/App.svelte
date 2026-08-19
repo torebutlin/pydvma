@@ -465,6 +465,9 @@
     // loadDataset / Restore no longer re-serializes the bytes just loaded).
     // stampUiState is called inside the thunk so channel labels + analysis
     // settings are captured at serialization time (Plan 2 persistence).
+    // Autosave deliberately does NOT materialise derived results (explicit
+    // Save only; once materialised, items are part of the document and
+    // naturally ride later autosaves).
     const unsubDataset = datasetStore.subscribe((ds) => {
       if (!ds) return;
       autosave(() => { actions.stampUiState(); return writeDvma(ds); }, workdir, autosaveEnabled);
@@ -798,6 +801,10 @@
     if (!name) return; // cancelled
     const filename = name.toLowerCase().endsWith('.dvma') ? name : `${name}.dvma`;
     try {
+      // Materialise the computed FFT/TF views into real document items
+      // BEFORE stamping: the new items are part of the document `stampUiState`
+      // then annotates and `writeDvma` serializes.
+      actions.materializeDerived();
       actions.stampUiState();        // persist channel labels + analysis settings
       const bytes = writeDvma(ds);
       const dir = workdir ?? fallbackDir();

@@ -20,6 +20,11 @@
  * longer poison the Sonogram card (the old single `computeError` + owner
  * flag left one kind's error stuck on every card until a same-kind run).
  *
+ * Save (derived-data round): `materializeDerived` turns the computed FFT / TF
+ * views into real `FreqData` / `TfData` items inside the document, linked and
+ * compute-chain-signed, replaced by lineage on a re-save. Explicit Save only —
+ * see its doc for what is deliberately NOT materialised.
+ *
  * Modal fit (Task A1): `calcFit` runs the STATELESS `calc_fit` engine op and
  * pushes the decoded result into the injected `modal` store (which owns the
  * accumulated modal matrix and re-sends it). `exportMat` / `exportArrays` are
@@ -35,9 +40,10 @@
  * concurrent action settles.
  */
 import { writable, derived as svelteDerived, get } from 'svelte/store';
-import type { DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
+import type { DataKind, DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 import { itemChannels, setItemMeta } from '../model/dataset';
 import type { NpyArray } from '../codec/npy';
+import { signatureOfSamples } from '../codec/signature';
 import type { EngineStore } from '../stores/engine';
 import { isEngineStopped, ENGINE_STOPPED_MESSAGE, consumeEngineStopNotice } from '../stores/engine';
 import type { Selection, SetRecord, TriState } from '../stores/selection';
@@ -180,6 +186,71 @@ function hasTimeData(item: DvmaItem): boolean {
 /** Decode a loaded-file `NpyArray` into the plot model's `DecodedArray`. */
 function decodeNpy(a: NpyArray): DecodedArray {
   return decodeArray({ shape: a.shape, data: a.data as Float64Array, complex: a.isComplex });
+}
+
+/**
+ * Re-interleave a decoded array into the stored complex `NpyArray`
+ * convention (`[re, im, re, im, …]`, `isComplex: true`) — the exact inverse
+ * of {@link decodeArray}, and the form `addBlaSets` already writes. A decoded
+ * REAL array (no `im`) contributes zero imaginary parts, so the stored kind
+ * is complex either way: `container.py` reads `freq_data` / `tf_data` back
+ * into complex numpy arrays. The buffer is always freshly allocated, so the
+ * item owns it and a later recompute of the derived slice cannot alias it.
+ */
+function complexNpy(a: DecodedArray): NpyArray {
+  const n = a.re.length;
+  const data = new Float64Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    data[2 * i] = a.re[i];
+    data[2 * i + 1] = a.im ? a.im[i] : 0;
+  }
+  return { shape: a.shape.slice(), data, isComplex: true };
+}
+
+/** A decoded REAL array as a stored `NpyArray` (copied — the item owns it). */
+function realNpy(a: DecodedArray): NpyArray {
+  return { shape: a.shape.slice(), data: Float64Array.from(a.re), isComplex: false };
+}
+
+/** A 1-D axis as a stored `NpyArray` (copied — the item owns it). */
+function axisNpy(axis: Float64Array): NpyArray {
+  return { shape: [axis.length], data: Float64Array.from(axis), isComplex: false };
+}
+
+/**
+ * pydvma's `timestring` spelling of a moment — `YYYY-MM-DD HH:MM:SS` in
+ * LOCAL time, matching what the acquisition paths write and the tray shows.
+ */
+function timestringOf(now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
+    + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+/**
+ * A fresh RFC-4122 v4 id string, for minting the `unique_id` a browser
+ * capture never had (pydvma's Python side sets one in every `TimeData`
+ * constructor; `recordingToItem` does not). Written untagged, which
+ * `container.py`'s reader accepts as a plain string — and the derived items'
+ * `id_link` then matches it exactly, which is what makes the lineage
+ * survive a save/reload.
+ *
+ * `crypto.randomUUID` is unavailable outside a secure context (a serve
+ * reached over plain http at a LAN address, say), so a `getRandomValues`
+ * fallback formats the same v4 shape; the last resort is `Math.random`,
+ * which is fine here — this is a document-local key, never a secret.
+ */
+function newUniqueId(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === 'function') c.getRandomValues(bytes);
+  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;               // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;               // variant 1
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-`
+    + `${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /**
@@ -359,6 +430,40 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   /** Source sets in load order (one per TimeData item), with cached meta. */
   let working: WorkingSet[] = [];
 
+  /** The two derived kinds `materializeDerived` writes into the document. */
+  type DerivedKind = 'freq' | 'tf';
+  /** Lineage key for one set's derived item of one kind. */
+  const lineageKey = (setId: number, kind: DerivedKind) => `${setId}:${kind}`;
+  /**
+   * REPLACE-BY-LINEAGE index: the `FreqData` / `TfData` item in the document
+   * that stands for one set's view of one kind, so a second Save updates the
+   * item it wrote last time instead of piling up a duplicate. Populated both
+   * by `materializeDerived` (items it authors) and by `loadDataset` pass 2
+   * (items a file already carried — a loaded-then-recomputed-then-saved
+   * result therefore REPLACES the file's own item rather than joining it).
+   *
+   * Per ACTIONS INSTANCE, not per module: two instances (the app's and a
+   * test's) own different documents, and a shared map would cross-link them.
+   * Cleared by a fresh (non-append) load; an append keeps what is there and
+   * registers the incoming file's items on top. A file carrying SEVERAL
+   * derived items of one kind for one source (Python can write three FFTs of
+   * one measurement) keeps the LAST — the same one whose slice the view
+   * shows, so what a re-save replaces is always what is on screen.
+   */
+  const materializedItems = new Map<string, DvmaItem>();
+  /**
+   * Which `${setId}:${kind}` slices THIS SESSION computed. Materialisation
+   * writes only these: a slice that merely came off disk is already backed by
+   * its own item, whose stored provenance (the settings that really produced
+   * it, and its signature — possibly a BROKEN one this app is meant to flag)
+   * must not be overwritten with this session's settings on a Save the user
+   * made for some unrelated reason.
+   */
+  const computedThisSession = new Set<string>();
+  /** Record that a calc produced `kind` for `setId` (see the set's doc). */
+  const markComputed = (setId: number, kind: DerivedKind) =>
+    computedThisSession.add(lineageKey(setId, kind));
+
   /** The working sets a target names: one set, or all of them. */
   function targeted(target: AnalysisTarget): WorkingSet[] {
     if (target === 'all') return working;
@@ -499,6 +604,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       cleanedSets.set({});
       resampleUndo.clear();               // stashes belong to the old sets
       working = [];
+      materializedItems.clear();          // fresh document ⇒ fresh lineage
+      computedThisSession.clear();
     }
     // Selection store has no reset; it is created fresh per app load. We
     // simply addSet for each item in this dataset.
@@ -587,6 +694,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const srcChannels = working.find((w) => w.setId === linkedSet)!.nChannels;
         const slice = sliceForLoadedItem(item, srcChannels);
         if (slice) seed[linkedSet] = { ...seed[linkedSet], ...slice, setId: linkedSet };
+        // Adopt the item for replace-by-lineage: a later Save that
+        // re-materialises this set's FFT/TF updates THIS item rather than
+        // adding a second one beside it (see `materializedItems`).
+        if (item.kind === 'FreqData') materializedItems.set(lineageKey(linkedSet, 'freq'), item);
+        else if (item.kind === 'TfData') materializedItems.set(lineageKey(linkedSet, 'tf'), item);
         return;
       }
 
@@ -738,6 +850,196 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
+   * The lineage id of a set's source measurement, minting one if it has
+   * none. pydvma's Python `TimeData` always carries a `unique_id`, but the
+   * browser capture path (`recordingToItem`) writes none — so a derived
+   * item built from a fresh capture would have nothing to link to and would
+   * reload as an ORPHAN set beside its own source. Minting one here (through
+   * `setItemMeta`, so the tagged write view stays consistent) is what makes
+   * `id_link` mean something for browser-acquired data.
+   */
+  function ensureIdLink(ws: WorkingSet): string {
+    const uid = ws.time.meta.unique_id;
+    if (typeof uid === 'string' && uid) return uid;
+    const minted = newUniqueId();
+    setItemMeta(ws.time, 'unique_id', minted);
+    return minted;
+  }
+
+  /** Compute-chain signature of a set's SOURCE samples (+ its rate). */
+  function sourceSignatureOf(ws: WorkingSet): string {
+    const td = ws.time.arrays.time_data;
+    const flat = td.data instanceof Float64Array
+      ? td.data : Float64Array.from(td.data as ArrayLike<number>);
+    const nCols = td.shape.length > 1 ? (td.shape[1] ?? 1) : 1;
+    return signatureOfSamples(flat, nCols, ws.fs);
+  }
+
+  /** `[t_first, t_last]` of a set's time axis — the calc's effective range. */
+  function timeRangeOf(ws: WorkingSet): number[] {
+    const ax = ws.time.arrays.time_axis?.data;
+    return ax && ax.length ? [ax[0], ax[ax.length - 1]] : [0, 0];
+  }
+
+  /**
+   * Per-output-channel calibration + units for a materialised TF, following
+   * `analysis.calculate_tf`'s convention: the OUTPUT channels are every
+   * source channel except `chIn`, in ascending order, each carrying the cal
+   * RATIO `cal[out]/cal[in]` and the unit `"<out>/<in>"`. Returns `null`s
+   * when the geometry does not line up with the stored columns (an
+   * 'across' ensemble whose column count came from a different set, say) —
+   * an absent field is honest, a mis-indexed one is not.
+   */
+  function tfCalibration(
+    setId: number, chIn: number, nChannels: number, nCols: number,
+  ): { factors: number[] | null; units: string[] | null } {
+    const cal = getCalibration(setId);
+    const outs: number[] = [];
+    for (let c = 0; c < nChannels; c++) if (c !== chIn) outs.push(c);
+    if (outs.length !== nCols || chIn < 0 || chIn >= cal.factors.length
+      || outs.some((c) => c >= cal.factors.length)) {
+      return { factors: null, units: null };
+    }
+    return {
+      factors: outs.map((c) => cal.factors[c] / cal.factors[chIn]),
+      units: outs.map((c) => `${cal.units[c]}/${cal.units[chIn]}`),
+    };
+  }
+
+  /**
+   * Insert or update the document item that stands for `setId`'s view of
+   * `kind` — the replace-by-lineage upsert (see `materializedItems`). An
+   * adopted item is mutated IN PLACE (it may already sit anywhere in
+   * `ds.items`, and the file's item order should not shuffle on a re-save);
+   * a new one is appended and registered. `rawLink` is the source's id_link
+   * in its ORIGINAL manifest form — a `{__uuid__}` tag for a python-written
+   * source, so python reads a `uuid.UUID` back and it still equals the
+   * source's own `unique_id`; a plain string for a browser-minted one.
+   */
+  function upsertDerivedItem(
+    ds: DvmaDataset, setId: number, kind: DerivedKind,
+    build: { kind: DataKind; arrays: Record<string, NpyArray>; meta: Record<string, unknown> },
+    rawLink: unknown, iso: string,
+  ): void {
+    const meta = { ...build.meta, timestamp: iso };
+    // `timestamp` carries the datetime tag so python decodes a real datetime
+    // on load, and `id_link` its original tag (same convention as
+    // `upsertModalItem` / `addBlaSets`).
+    const metaRaw = { ...meta, timestamp: { __datetime__: iso }, id_link: rawLink };
+    const existing = materializedItems.get(lineageKey(setId, kind));
+    if (existing && ds.items.includes(existing)) {
+      existing.arrays = build.arrays;
+      existing.meta = meta;
+      existing.metaRaw = metaRaw;
+      return;
+    }
+    const item: DvmaItem = {
+      kind: build.kind, arrays: build.arrays, meta, metaRaw, settings: null,
+    };
+    ds.items.push(item);
+    materializedItems.set(lineageKey(setId, kind), item);
+  }
+
+  /**
+   * Turn this session's COMPUTED analysis views into real items inside the
+   * document — Tore's "data with its processing", written on an explicit
+   * Save. An FFT becomes a `FreqData`, a transfer function a `TfData` (with
+   * its coherence), each `id_link`ed to the measurement it came from, named
+   * after the set as it is named right now, and stamped with a
+   * `source_signature` (a hash of the SOURCE samples + rate — so a loaded
+   * file can tell a chain that is still intact from one whose time data has
+   * since been edited) plus `source_settings` (the analysis knobs in force,
+   * with a `calc` discriminator mirroring `pydvma.analysis._stamp_source`).
+   * Both fields round-trip through `container.py`'s `_OPTIONAL_META`.
+   *
+   * WHAT IS MATERIALISED — deliberately narrow:
+   *   - only the `freq` slice, which is the FFT: `psd` / `csd` live in their
+   *     own slices and are a `CrossSpecData`-shaped job, deferred with the
+   *     sonogram (the app's sono slice is a single-channel magnitude image,
+   *     while `SonoData` wants the full complex cube — an honest one needs a
+   *     recompute at save time);
+   *   - only slices THIS SESSION computed. A view that merely came off disk
+   *     is already backed by its own item, whose stored provenance is the
+   *     truth about how it was made — re-stamping it with this session's
+   *     settings would fabricate provenance, and would silently "repair" a
+   *     broken chain the app is supposed to be flagging;
+   *   - only sets whose source is a real `TimeData`. A BLA result set and an
+   *     orphan TF/spectrum load both sit in `working` with a DERIVED item as
+   *     their source: their views ARE that item, so materialising them would
+   *     clone it. The modal fit persists through `upsertModalItem` and is
+   *     untouched here.
+   *
+   * Re-running is idempotent: each (set, kind) owns ONE item, updated in
+   * place. A set whose source was deleted keeps its item — removal is the
+   * user's own Remove action, not a side effect of saving.
+   *
+   * Called from the Save handler only. Autosave deliberately does not: once
+   * materialised, the items are part of the document and ride subsequent
+   * autosaves like any other item.
+   */
+  function materializeDerived(): void {
+    const ds = get(dataset);
+    if (!ds) return;
+    const d = get(derived);
+    const now = new Date();
+    const iso = now.toISOString();
+    const timestring = timestringOf(now);
+
+    for (const ws of working) {
+      if (ws.time.kind !== 'TimeData' || !hasTimeData(ws.time)) continue;
+      const slice = d[ws.setId];
+      if (!slice) continue;
+      const freq = computedThisSession.has(lineageKey(ws.setId, 'freq')) ? slice.freq : undefined;
+      const tf = computedThisSession.has(lineageKey(ws.setId, 'tf')) ? slice.tf : undefined;
+      if (!freq && !tf) continue;
+
+      const link = ensureIdLink(ws);
+      const rawLink = ws.time.metaRaw?.unique_id ?? link;
+      const signature = sourceSignatureOf(ws);
+      const testName = nameOf(ws.setId);          // read fresh: sets get renamed
+      const timeRange = timeRangeOf(ws);
+
+      if (freq) {
+        const cal = getCalibration(ws.setId);
+        upsertDerivedItem(ds, ws.setId, 'freq', {
+          kind: 'FreqData',
+          arrays: { freq_axis: axisNpy(freq.axis), freq_data: complexNpy(freq.data) },
+          meta: {
+            units: cal.units, channel_cal_factors: cal.factors,
+            test_name: testName, timestring, id_link: link,
+            source_signature: signature,
+            source_settings: { calc: 'fft', time_range: timeRange, ...freqSettings(ws.setId) },
+          },
+        }, rawLink, iso);
+      }
+
+      if (tf) {
+        const chIn = tf.chIn ?? 0;
+        const nCols = tf.data.shape[1] ?? 0;
+        const cal = tfCalibration(ws.setId, chIn, tf.nChannels ?? ws.nChannels, nCols);
+        const arrays: Record<string, NpyArray> = {
+          freq_axis: axisNpy(tf.axis), tf_data: complexNpy(tf.data),
+        };
+        if (tf.coherence) arrays.tf_coherence = realNpy(tf.coherence);
+        upsertDerivedItem(ds, ws.setId, 'tf', {
+          kind: 'TfData',
+          arrays,
+          meta: {
+            units: cal.units, channel_cal_factors: cal.factors,
+            test_name: testName, timestring, id_link: link,
+            source_signature: signature,
+            source_settings: { calc: 'tf', time_range: timeRange, ...tfSettings(ws.setId) },
+          },
+        }, rawLink, iso);
+      }
+    }
+    // No store emission, exactly as `stampUiState`: the items were pushed
+    // into the live document object by reference and the caller serializes
+    // immediately after. Re-emitting here would schedule an autosave that
+    // fires just after the explicit Save cleared the pending one.
+  }
+
+  /**
    * FFT of the targeted set(s), each with ITS OWN window from `settings`,
    * writing decoded freq arrays into `derived`. `target === 'all'` runs
    * every set; a setId runs just that one.
@@ -766,6 +1068,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
             data: decodeArray(asMarshalled(mval(res, 'freq_data'))),
           },
         });
+        markComputed(ws.setId, 'freq');   // Save may materialise this result
       }
       if (added) notify?.linesAdded('frequency', { viewWasEmpty: wasEmpty });
     });
@@ -889,6 +1192,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const tf = tfFromResult(res, axis, chIn, first.nChannels);
         if (get(derived)[first.setId]?.tf === undefined) added = true;
         setDerived(first.setId, { tf });
+        markComputed(first.setId, 'tf');                // Save may materialise it
         maybeRestoreModalRecon([first.setId]);          // deferred modal recon
         if (added) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
         return;
@@ -911,6 +1215,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // Carry this set's chIn + channel count onto the slice so the plot
         // model remaps its out/in columns/labels correctly (R4).
         setDerived(ws.setId, { tf: tfFromResult(res, fAxis, chIn, ws.nChannels) });
+        markComputed(ws.setId, 'tf');                 // Save may materialise it
       }
       if (stale('tf', my)) return;                    // a newer batch superseded us
       if (added) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
@@ -1323,10 +1628,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     let ds = get(dataset);
     if (!ds) ds = { formatVersion: 2, pydvmaVersion: 'webui', items: [] };
     const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const timestring = opts.timestring
-      ?? `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
-        + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const timestring = opts.timestring ?? timestringOf(now);
     const iso = now.toISOString();
     const ids: number[] = [];
     // P5: BLA results are new TF lines (see `linesAdded`), judged before any
@@ -2498,6 +2800,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   return {
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, addBlaSets, removeBlaRun, undoRemoveBlaRun, stampUiState,
+    materializeDerived,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
     resampleTime, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,

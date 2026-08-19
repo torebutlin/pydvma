@@ -6,6 +6,7 @@ import { createAnalysisSettings } from '../../src/lib/stores/analysisSettings';
 import type { EngineStore } from '../../src/lib/stores/engine';
 import type { DvmaDataset, DvmaItem } from '../../src/lib/model/dataset';
 import { readDvma, writeDvma } from '../../src/lib/codec/dvma';
+import { signatureOfSamples } from '../../src/lib/codec/signature';
 
 /** Build the (selection, settings, actions) trio bound to a fake engine. */
 function harness(engine: EngineStore) {
@@ -1377,4 +1378,218 @@ test('null band scalars decode as NaN, not 0 (calcDampingBands)', async () => {
   expect(res!.startTime).toBeNaN();
   expect(res!.bandData[0].fc).toBeNaN();
   expect(res!.bandData[0].fLo).toBe(70);
+});
+
+// ---- Materialise on Save (derived-data save round, Task 3) ----------------
+// Save turns the app's COMPUTED views into real items in the document: an
+// FFT becomes a FreqData, a TF a TfData (coherence included), each linked to
+// its source by `id_link` and stamped with the compute-chain signature of the
+// samples it was derived from. Re-saving REPLACES by lineage rather than
+// piling up duplicates, and items the app did not compute (BLA TFs, the modal
+// matrix, a loaded file's own derived items) are left exactly as they are.
+
+/**
+ * A mock CAPTURE item, shaped like `recordingToItem`'s output: a 2-channel
+ * TimeData with NO `unique_id` — the browser capture path mints none, so
+ * materialisation has to establish the lineage id itself.
+ */
+function capturedItem(name = 'cap', samples = [1, 2, 3, 4, 5, 6]): DvmaItem {
+  return {
+    kind: 'TimeData',
+    arrays: {
+      time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+      time_data: { shape: [3, 2], isComplex: false, data: Float64Array.from(samples) },
+    },
+    meta: { test_name: name, timestring: '2026-08-19 10:00:00' },
+    settings: { fs: 2, channels: 2 },
+  };
+}
+
+/** (Nf=2, Nc=2) complex spectrum with distinct values; `bias` shifts every
+ *  real part, so a recompute is observable in the materialised arrays. */
+const biasedFftResult = (bias = 0) => ({
+  freq_axis: real([2], [0, 1]),
+  freq_data: cplx([2, 2], [1 + bias, 0, 2 + bias, 0, 3 + bias, 0, 4 + bias, 0]),
+});
+
+/** An engine answering calc_fft / calc_tf, with a mutable FFT bias. */
+function calcEngine(bias = { v: 0 }) {
+  return fakeEngine(async (op) => {
+    if (op === 'calc_fft') return biasedFftResult(bias.v);
+    if (op === 'calc_tf') return tfResult();
+    return {};
+  });
+}
+
+/** Count items of a kind in a dataset. */
+const kindCount = (ds: DvmaDataset, kind: string) =>
+  ds.items.filter((i) => i.kind === kind).length;
+
+test('materializeDerived writes the computed FFT + TF into the document and they round-trip onto the source set', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  await actions.calcTf(setId);
+
+  actions.materializeDerived();
+  const ds = get(actions.dataset)!;
+  expect(ds.items.map((i) => i.kind)).toEqual(['TimeData', 'FreqData', 'TfData']);
+
+  const bytes = writeDvma(ds);
+  const back = readDvma(bytes);
+  const src = back.items.find((i) => i.kind === 'TimeData')!;
+  const freq = back.items.find((i) => i.kind === 'FreqData')!;
+  const tf = back.items.find((i) => i.kind === 'TfData')!;
+
+  // Lineage: both derived items point at the source's unique_id.
+  expect(typeof src.meta.unique_id).toBe('string');
+  expect(freq.meta.id_link).toBe(src.meta.unique_id);
+  expect(tf.meta.id_link).toBe(src.meta.unique_id);
+
+  // Arrays: complex spectrum + TF, coherence intact.
+  expect(freq.arrays.freq_data.isComplex).toBe(true);
+  expect(freq.arrays.freq_data.shape).toEqual([2, 2]);
+  expect(Array.from(freq.arrays.freq_data.data as Float64Array))
+    .toEqual([1, 0, 2, 0, 3, 0, 4, 0]);
+  expect(tf.arrays.tf_data.isComplex).toBe(true);
+  expect(Array.from(tf.arrays.tf_coherence.data as Float64Array)).toEqual([0.9, 0.8]);
+
+  // Signature: the source samples + fs, computed independently here.
+  const expected = signatureOfSamples(
+    Float64Array.from(src.arrays.time_data.data as Float64Array), 2, 2);
+  expect(freq.meta.source_signature).toBe(expected);
+  expect(tf.meta.source_signature).toBe(expected);
+
+  // Provenance: the settings that were in force, plus the calc discriminator.
+  expect((freq.meta.source_settings as Record<string, unknown>).calc).toBe('fft');
+  expect((freq.meta.source_settings as Record<string, unknown>).window).toBe('hann');
+  expect((tf.meta.source_settings as Record<string, unknown>).calc).toBe('tf');
+  expect((tf.meta.source_settings as Record<string, unknown>).chIn).toBe(0);
+  expect(freq.meta.test_name).toBe('cap');
+
+  // A fresh session opening the file sees ONE set with both views already
+  // populated — no recompute needed.
+  const { sel: sel2, actions: a2 } = harness(engine);
+  a2.loadDataset(back);
+  expect(get(sel2.sets)).toHaveLength(1);
+  const id2 = get(sel2.sets)[0].id;
+  const d2 = get(a2.derived)[id2];
+  expect(Array.from(d2.freq!.data.re)).toEqual([1, 2, 3, 4]);
+  expect(d2.tf!.coherence).toBeDefined();
+  expect(Array.from(d2.tf!.coherence!.re)).toEqual([0.9, 0.8]);
+});
+
+test('materialising twice replaces by lineage — exactly one FreqData and one TfData', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  await actions.calcTf(setId);
+
+  actions.materializeDerived();
+  const first = get(actions.dataset)!.items.find((i) => i.kind === 'FreqData')!;
+  actions.materializeDerived();
+
+  const ds = get(actions.dataset)!;
+  expect(kindCount(ds, 'FreqData')).toBe(1);
+  expect(kindCount(ds, 'TfData')).toBe(1);
+  // Same item object, updated in place — not a replacement push.
+  expect(ds.items.find((i) => i.kind === 'FreqData')).toBe(first);
+});
+
+test('a loaded file that already carries materialised items does not duplicate them on re-save', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  await actions.calcTf(setId);
+  actions.materializeDerived();
+  const back = readDvma(writeDvma(get(actions.dataset)!));
+
+  // Fresh session: load, recompute NOTHING, materialise (as Save does).
+  const { actions: a2 } = harness(engine);
+  a2.loadDataset(back);
+  a2.materializeDerived();
+
+  const ds2 = get(a2.dataset)!;
+  expect(kindCount(ds2, 'FreqData')).toBe(1);
+  expect(kindCount(ds2, 'TfData')).toBe(1);
+  expect(ds2.items).toHaveLength(3);
+});
+
+test('a set with no computed views materialises nothing', () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  actions.addRecordedSet(capturedItem());
+
+  actions.materializeDerived();
+  const ds = get(actions.dataset)!;
+  expect(ds.items).toHaveLength(1);
+  expect(ds.items[0].kind).toBe('TimeData');
+});
+
+test('materializeDerived leaves BLA TF sets and the modal item alone', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  // A document with a source capture and a hand-placed ModalData item.
+  const setId = actions.addRecordedSet(capturedItem());
+  const modalItem: DvmaItem = {
+    kind: 'ModalData',
+    arrays: { M: { shape: [1, 6], isComplex: false, data: Float64Array.from([1, 2, 3, 4, 5, 6]) } },
+    meta: { test_name: 'modal_cap' },
+    settings: null,
+  };
+  get(actions.dataset)!.items.push(modalItem);
+  // A BLA run: its TF sets are already REAL TfData items with their own
+  // derived tf slice, so materialisation must not clone them.
+  actions.addBlaSets([{
+    freq_axis: real([2], [10, 20]),
+    tf_data: cplx([2, 1], [1, 0, 2, 0]),
+    bla_sigma_nl: real([2, 1], [0.1, 0.2]),
+    bla_sigma_n: real([2, 1], [0.01, 0.02]),
+  }], { names: ['bla q1'] });
+  await actions.calcFft(setId);
+
+  const before = get(actions.dataset)!.items.length;
+  const blaItem = get(actions.dataset)!.items.find((i) => i.kind === 'TfData')!;
+  actions.materializeDerived();
+
+  const ds = get(actions.dataset)!;
+  expect(ds.items).toHaveLength(before + 1);        // the new FreqData only
+  expect(kindCount(ds, 'TfData')).toBe(1);          // the BLA set, untouched
+  expect(kindCount(ds, 'ModalData')).toBe(1);
+  expect(ds.items.find((i) => i.kind === 'TfData')).toBe(blaItem);
+  expect(ds.items.find((i) => i.kind === 'ModalData')).toBe(modalItem);
+  expect(blaItem.meta.source_signature).toBeUndefined();
+});
+
+test('editing the source samples and recomputing updates the item AND its signature', async () => {
+  const bias = { v: 0 };
+  const { engine } = calcEngine(bias);
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+
+  const item = get(actions.dataset)!.items.find((i) => i.kind === 'FreqData')!;
+  const sigBefore = item.meta.source_signature as string;
+
+  // Edit the source samples in place (a scale / clean / resample would), then
+  // recompute and re-materialise.
+  const src = get(actions.dataset)!.items[0];
+  (src.arrays.time_data.data as Float64Array)[0] = 99;
+  bias.v = 10;
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+
+  const ds = get(actions.dataset)!;
+  expect(kindCount(ds, 'FreqData')).toBe(1);
+  const after = ds.items.find((i) => i.kind === 'FreqData')!;
+  expect(after).toBe(item);                                   // updated in place
+  expect(Array.from(after.arrays.freq_data.data as Float64Array))
+    .toEqual([11, 0, 12, 0, 13, 0, 14, 0]);
+  expect(after.meta.source_signature).not.toBe(sigBefore);
+  expect(after.meta.source_signature).toBe(signatureOfSamples(
+    Float64Array.from(src.arrays.time_data.data as Float64Array), 2, 2));
 });
