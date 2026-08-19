@@ -198,15 +198,17 @@ field, plus the acquisition UX it showed was missing.
   materialised, and neither is an ensemble ("across sets") transfer
   function — it has many sources, and a single-source stamp could not
   honestly report staleness.
-- **Derived items carry their own `unique_id`.** `FreqData`, `TfData`,
-  `CrossSpecData` and `SonoData` mint one at construction, exactly as
-  `TimeData` always has, and the app stamps one on every item it
-  materialises (stable across re-saves). `Session.push` merges by id, so
-  this is what makes a notebook pull → push-back of an unchanged session
-  a genuine no-op instead of appending a second copy of every spectrum.
-  Optional in the container, so files written before this load unchanged
-  — with no id, and therefore still duplicating on a repeated push;
-  recompute or re-Save to give them one.
+- **Every item carries its own `unique_id`.** `FreqData`, `TfData`,
+  `CrossSpecData`, `SonoData`, `ModalData` and `MetaData` all mint one at
+  construction, exactly as `TimeData` always has, and the app stamps one
+  on every item it materialises *and* on the modal fit it persists
+  (stable across re-saves, and preserved when it adopts an item written
+  by python). `Session.push` merges by id, so this is what makes a
+  notebook pull → push-back of an unchanged session a genuine no-op
+  instead of appending a second copy of every spectrum — and of the modal
+  fit. Optional in the container, so files written before this load
+  unchanged — with no id, and therefore still duplicating on a repeated
+  push; recompute or re-Save to give them one.
 - **Broken compute chains are flagged, not silently trusted.** If a
   measurement's time data changed after a result was stored — a
   resample, a Clean Impulse, or an edit pushed back from a notebook —

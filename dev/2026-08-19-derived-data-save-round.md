@@ -254,6 +254,26 @@ ids are a SUBSET of a document's, and a capture blob still holds just its
 docstring and test updated to say so rather than to keep claiming only
 captures carry ids.
 
+A re-verification pass then closed the same hole one kind wider:
+
+- **`ModalData` (and `MetaData`) still duplicated on every push.** The
+  identity fix above covered the four derived kinds and stopped there,
+  which left the one item Tore actually pushes back — a modal fit —
+  appending a fresh copy on every `session.push`. Both kinds now mint a
+  `unique_id` at construction, both ride `_OPTIONAL_META` (so pre-round
+  files load unchanged), and `upsertModalItem` mints/preserves one. That
+  last one carried the SAME defect `upsertDerivedItem` had already been
+  fixed for — it replaced `meta`/`metaRaw` WHOLESALE, so an adopted
+  python-written fit lost the id python minted *and* every foreign
+  manifest key, on the first app-side re-fit. Merged now, not replaced.
+  Pinned by three vitest cases (all three fail against the wholesale
+  version) and by the no-op-push fixture, which now carries a real
+  `modal_fit_all_channels` result and a `MetaData` — with the
+  ModalData mint disabled its `modal_data_list` count goes 1 → 2.
+  This is what makes the broad claims in `migration.md` and the
+  CHANGELOG (*"every item carries a `unique_id`"*, *"pushing an
+  unmodified pull is a no-op"*) true as written.
+
 ## Deviations from the plan (honest list)
 
 1. **The reduction rule is ROW-STRIDED, not flat-byte-strided.** The
@@ -309,7 +329,8 @@ captures carry ids.
   round's close; +84 this round, the last 6 from the final review)
 - `python -m mkdocs build --strict`: **clean** (exit 0)
 - `npm run check`: **188 files, 0 errors, 0 warnings**
-- `npx vitest run`: **1142 passed, 1 skipped** (1069/1 before; the last 9 from the final review)
+- `npx vitest run`: **1145 passed, 1 skipped** (1069/1 before; the last 12 from the final review
+  and its re-verification)
 - `npx playwright test --grep-invert @engine`: **69 passed, 23 skipped** (19 skipped
   before — the four new BRIDGE_E2E tests are gated off here)
 - `npx playwright test --grep @engine --workers=1`: **19 passed**
@@ -321,14 +342,14 @@ captures carry ids.
   after the final-review fixes.
 - **Engine wheel** (`npm run vendor:wheels`, still
   `pydvma-2.3.0-py3-none-any.whl`, matching `ENGINE_WHEELS`): rebuilt
-  **four times** this round — twice inside Task 5b (`56a03b8`,
+  **five times** this round — twice inside Task 5b (`56a03b8`,
   `e61aee7`, both for `pydvma/engine.py`), once at close-out (Task 6
   changed `pydvma/datastructure.py` and `pydvma/file.py` after the last
-  rebuild, and both ship in the wheel), and once more after the final
-  review touched `datastructure.py` + `container.py`. Final state
-  verified: all **24** `pydvma/*.py` modules byte-identical to the tree,
-  `dist/pypi/` carrying that same wheel, and @engine re-run 19/19 after
-  it.
+  rebuild, and both ship in the wheel), and twice more as the final
+  review and its re-verification touched `datastructure.py` +
+  `container.py`. Final state verified: all **24** `pydvma/*.py` modules
+  byte-identical to the tree, `dist/pypi/` carrying that same wheel, and
+  @engine re-run 19/19 after it.
 
 ## Next-lab-visit checklist (live verification — none of this is done)
 

@@ -140,10 +140,10 @@ it **merges** rather than replaces:
   it **appends**. Compute the same spectrum twice, from two separate
   pulls, and you get two copies; push the *same* object twice and the
   second push simply replaces the first.
-- Derived items inside a file written by an **older pydvma** have no id
-  (they were not given one until the derived-data save round), so a
-  repeated push of those does append copies. Recompute them — or re-Save
-  in the app — to give them ids.
+- Derived items and modal fits inside a file written by an **older
+  pydvma** have no id (they were not given one until the derived-data
+  save round), so a repeated push of those does append copies. Recompute
+  them — or re-Save in the app — to give them ids.
 - An item you pulled carries the app's display state for it (channel
   labels, units, the set's analysis settings) invisibly through the round
   trip, so pushing it back preserves what you see on screen. An item you

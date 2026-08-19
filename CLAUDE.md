@@ -25,10 +25,14 @@ channel" costs ONE channel, not all — a 4× bug caught in review, 20.54 s
 47.8 → 138.7 MB if you include all four). **Choose sets…** turns
 Save/Export Matlab/Export CSV into all-by-default split buttons with a
 per-measurement subset picker, and Python got the parity
-(`DataSet.subset`, `save_data(sets=…)`). Because materialised items are
-ordinary document items they now ride the autosave, the journal AND
-`session.data` — which closes the "restore brings back DATA only"
-limitation stages 3–4 left open. Round doc:
+(`DataSet.subset`, `save_data(sets=…)`). Save also POSTS the full live
+document to the serve journal itself (`journalPost` in App's `onsave`) —
+materialisation deliberately emits no store change, so without that post
+the server kept the pre-Save session; thereafter the items are ordinary
+document items and ride autosaves like any other. Between them that
+closes the "restore brings back DATA only" limitation stages 3–4 left
+open: a restore, and `session.data` in a notebook, now carry the saved
+analysis. Round doc:
 `dev/2026-08-19-derived-data-save-round.md` (what landed per task, the
 measured cost tables, seven deviations, and the review-loop finds — the
 signature originally hashed ONE CHANNEL of a multi-channel record;
@@ -36,17 +40,23 @@ ensemble-TF provenance deferred; remove/undo orphaning materialised
 items; metaRaw merge-not-replace; the bridge capture that never carried
 its server `unique_id`, duplicating on restore and MASKED by a too-weak
 e2e assertion; the picker keeping ticks across split-button targets; the
-sono cube preflight; a dead Escape handler). Suites at close: pytest
-**1117/6**, vitest **1142/1**, check **0/0** (188 files), Playwright
+sono cube preflight; a dead Escape handler — plus the FINAL whole-round
+review's three: Save never posted the materialised items to the journal
+at all; derived items (and the modal fit) carried no `unique_id`, so a
+notebook pull→push duplicated them every time; and the 192 MiB journal
+guard failed silently). Suites at close: pytest
+**1117/6**, vitest **1145/1**, check **0/0** (188 files), Playwright
 **69/23skip** + @engine **19/19** + BRIDGE_E2E **26/26** (five
 specs, ports 8763–8768), mkdocs --strict clean; engine
-wheel rebuilt FOUR times this round (twice in Task 5b, once at
-close-out because Task 6 touched `datastructure.py`/`file.py`, once more
-after the final review — all ship in the wheel), all **24**
-`pydvma/*.py` byte-identical to the tree.
+wheel rebuilt FIVE times this round (twice in Task 5b, once at
+close-out because Task 6 touched `datastructure.py`/`file.py`, twice more
+for the final review and its re-verification — all ship in the wheel),
+all **24** `pydvma/*.py` byte-identical to the tree.
 Still deferred, in TODO.md: ensemble-TF and CSD materialisation,
 provenance-dialect normalisation (app camelCase vs Python snake_case),
-the journal sink-overflow toast, `dvma.attach(url)`. **Next: Tore's live
+pre-round files whose derived items still have no id (so a repeated
+notebook push duplicates those), `dvma.attach(url)`. The journal
+sink-overflow toast is DONE, landed in this round's final review. **Next: Tore's live
 verification — BOTH rounds' next-lab-visit checklists belong in one
 visit — and then his decision on pushing.**
 
