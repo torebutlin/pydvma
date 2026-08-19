@@ -100,6 +100,30 @@ Each entry in `items` is one data object:
 - **`settings`** is the item's `MySettings` as a plain dict (or
   `null`).
 
+### Compute provenance (`source_signature` / `source_settings`)
+
+A derived item — `FreqData`, `TfData`, `SonoData` — may also carry two
+optional `meta` fields describing how it was made:
+
+- **`source_signature`** — 16 hex characters: an FNV-1a-64 hash of the
+  **source samples plus the sample rate**, and nothing else. Recomputing
+  it from the `TimeData` in the file and comparing answers one question:
+  *does this result still belong to the data sitting beside it?* That is
+  what raises the app's **⚠ source changed** badge (see
+  [Saving and exporting](export.md#source-changed)). Settings are
+  deliberately outside the hash: a result computed with a different
+  window is still a valid result *of those settings*.
+- **`source_settings`** — the analysis knobs that produced it, with a
+  `calc` key naming the calculation (`'fft'`, `'tf'`, `'sonogram'`, …).
+
+Both are optional and absent on older files. One honest wrinkle: the
+**key spellings differ by writer**. Results materialised by the web app
+use its own camelCase setting names (`nFft`, `voicesPerOctave`), while
+`pydvma.analysis` stamps snake_case (`nperseg`, `voices_per_octave`).
+`calc` — and, for sonograms, `method` — are spelled the same by both, so
+a reader keys off those and accepts either dialect for the rest.
+Normalising the two is a follow-up.
+
 ### Lossless JSON encoding
 
 So the manifest stays strict, parseable JSON (it is written with

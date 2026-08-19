@@ -45,45 +45,44 @@ is still open, as one consolidated list.
   goes on to test the restore. (`engine-native.spec.ts` still uses the
   `?engine=1` probe page for its own low-level checks; that is now
   supplementary rather than the only socket coverage.)
-- **Derived analysis views are not part of the session document** —
-  restore-from-journal and `Session.data` return the captured data (and
-  any saved `ModalData`), not the FFT/TF/sonogram results computed from
-  it: the app's derived-results store lives outside the document, so a
-  restored session re-runs its analyses. This is **pre-existing** and
-  equally true of `.dvma` files and the IndexedDB autosave — the
-  journal just makes it user-visible, because "restore my session"
-  promises more than "open my file". Documented honestly for now
-  (`docs/web-logger/index.md`, `docs/web-logger/migration.md`), and
-  belongs on the same honest-limitation trail as the non-destructive
-  display transform. **DECIDED with Tore (2026-08-19 chat) — needs its
-  own design round (doc for approval first), sequenced AFTER the
-  stages 3–4 live verification:**
-  - **Save materialises derived data into the document** (Tore's
-    original data-with-processing concept: load a colleague's file and
-    the TFs are there, no rederiving, exports carry them too).
-  - **Materialised items stand until recomputed**, but carry a
-    compute-chain signature (short hash of the source samples + the
-    analysis settings, stamped in item meta at compute time; `id_link`
-    already gives identity) — a broken chain (source edited/scaled)
-    shows a "source changed — rederive?" flag, never a silent
-    recompute. Display-side scaling (calibration, x(iω)) is
-    non-destructive and does NOT break the chain.
-  - **Replace-by-lineage on repeated saves**: the materialisation step
-    refreshes an item whose source-link matches rather than appending
-    a duplicate — re-saving is idempotent (file-save protocol itself
-    unchanged).
-  - **Subset save/export via an explicit picker, per MEASUREMENT
-    family** (a set's time data + everything `id_link`ed to it + fits,
-    with kind badges), all ticked by default, reached via a
-    "Choose sets…" secondary action beside Save/Export — the primary
-    buttons stay zero-friction save-everything (split-button shape
-    AGREED with Tore 2026-08-19: "let's try it and I can see how it
-    plays out"). Deliberately NOT driven by view/selection/fade state
-    (Tore: coupling save to display state is confusing — does a greyed
-    line save?). Notebook parity: a `subset`/`sets=` convenience on
-    the Python side. Journal/autosave deliberately do NOT carry
-    materialised views in this round — explicit Save only, revisit
-    once real file sizes are known.
+- ~~**Derived analysis views are not part of the session document**~~ —
+  **DONE (2026-08-19), not yet live-verified.** Round doc:
+  `dev/2026-08-19-derived-data-save-round.md`; plan:
+  `dev/plans/2026-08-19-derived-data-save-plan.md`. Save now
+  materialises the computed FFT and TF into the document as real
+  `FreqData`/`TfData` items, each stamped with `source_signature` (an
+  FNV-1a-64 hash of the SOURCE samples + rate, computed identically in
+  `pydvma/_signature.py` and `webui/src/lib/codec/signature.ts`) and
+  `source_settings`; a broken chain is flagged **⚠ source changed** on
+  the tray card with click-to-rederive, never silently trusted or
+  silently recomputed. Re-saves replace by lineage. Once materialised
+  the items are ordinary document items, so they ride the autosave, the
+  journal and `Session.data` — which is what closes the
+  restore-brings-back-data-only gap this item was raised for.
+  Sonograms are stored behind an explicit save-time prompt (Tore's
+  design: only when computed, This channel / All channels / Don't
+  include). Subset save/export landed as the "Choose sets…"
+  split-button, with `DataSet.subset` / `save_data(sets=…)` for parity.
+  **Deferred remainder, still live:**
+  - **Ensemble ("across sets") TF materialisation.**
+    `calc_tf_averaged` derives one curve from every working set but
+    hangs it on the first, so a single-source stamp would name one
+    member's `id_link` and hash one member's samples — an edit to any
+    other member would read as an intact chain, exactly the failure the
+    signature exists to catch. Needs the JS multi-source signature
+    (python's `source_signature` already accepts a list) AND
+    list-valued-`id_link` load seeding, since a list link reloads as an
+    orphan set today and the flag could not attach to it.
+  - **CSD / PSD (`CrossSpecData`) materialisation** — deferred whole
+    this round; the slices live outside the freq/tf shapes the
+    materialiser handles.
+  - **Provenance-dialect normalisation** — app-written
+    `source_settings` use the webui's camelCase knob names, python's own
+    stamps use snake_case. Both agree on `calc` (and `method` for
+    sonograms), and a reader keys off those; documented in
+    `docs/web-logger/dvma-format.md`. Worth unifying if anything ever
+    needs to read the settings generically.
+  - **Sink-overflow toast** (see the journal item above) — still open.
 - **`dvma.attach(url)` — session API against an externally started
   serve** — `launch()` owns the server it returns a handle to, so a
   notebook cannot currently get `session.data` / `session.push` against

@@ -136,9 +136,11 @@ field, plus the acquisition UX it showed was missing.
   IndexedDB autosave is unchanged and the Pages app is untouched; when
   both hold a session, the server's copy is the one offered. Restoring
   brings back the **data** — captures, loaded sets, calibration, units,
-  channel labels, any saved modal fit — but not the analysis views
-  computed from them, which were never part of the document: re-run the
-  calculation (fast on the native engine).
+  channel labels, any saved modal fit — plus whatever analysis is
+  already part of the document (see derived-data save below: pressing
+  Save materialises the FFT and TF views into it, and they ride the
+  journal from then on). Analysis computed but never saved is not in the
+  document: re-run it (fast on the native engine).
 - **`dvma.launch(settings)` — the notebook front door**, successor to the
   removed `dvma.Logger`. Starts the whole serve stack — acquisition
   bridge, native `/engine` compute host, session journal, embedded UI —
@@ -156,6 +158,51 @@ field, plus the acquisition UX it showed was missing.
   appends. `MySettings` prefills Setup exactly as `--settings` does.
   `pydvma-serve --open` remains the same server without a kernel handle,
   and the `dvma.Logger` / `dvma.Oscilloscope` tombstones now point here.
+- **Save Dataset stores data *with* its processing.** Saving now
+  materialises the analysis you computed into the document itself: every
+  FFT becomes a real `FreqData` and every transfer function a real
+  `TfData` (coherence included), linked to the measurement it came from
+  and readable straight back in Python — `data.freq_data_list` is
+  populated by a file the app saved. Each stored result records the
+  analysis settings that produced it (`source_settings`) and a signature
+  of the **source samples** it was computed from (`source_signature`: an
+  FNV-1a-64 hash of the samples plus the rate, computed identically in
+  Python and in the browser and pinned by shared known-answer vectors).
+  Re-saving replaces by lineage, so a measurement owns one FFT and one
+  TF however many times you save; a session that has been saved carries
+  its results through the journal and through `session.data` too.
+  Deliberately narrow for now: PSD/cross-spectra are not materialised,
+  and neither is an ensemble ("across sets") transfer function — it has
+  many sources, and a single-source stamp could not honestly report
+  staleness.
+- **Broken compute chains are flagged, not silently trusted.** If a
+  measurement's time data changed after a result was stored — a
+  resample, a Clean Impulse, or an edit pushed back from a notebook —
+  loading the file shows a **⚠ source changed** badge on that
+  measurement's tray card; clicking it rederives exactly the affected
+  views and the badge clears. Files with no signature (anything saved by
+  an earlier pydvma) are never flagged.
+- **"Include sonogram data?" on Save.** A sonogram is stored only when
+  you say so, because the view is one channel's picture while the file
+  wants the full complex sonogram — an extra transform and a bigger
+  file. The prompt appears only when a sonogram was actually computed
+  this session (never in a session that did not open the Sonogram
+  stage, and never on autosave or the journal), offers **This channel**
+  (the default; stores just that channel, so the cost matches the
+  picture), **All channels** or **Don't include**, and does not ask
+  again while the stored sonogram is still current. A refusal from the
+  memory preflight reports itself and the save completes without it.
+- **"Choose sets…" — save or export a subset.** Save Dataset, Export
+  Matlab and Export CSV are now split controls: the button still means
+  everything, and the ▾ opens a tick list of measurements. A subset save
+  writes the chosen measurements plus everything derived from them
+  (spectra, transfer functions, a modal fit spanning them) and nothing
+  else. The pick is per-invocation, starts all-ticked every time, and is
+  deliberately independent of what is shown or hidden on the plot.
+- **Python subset parity**: `DataSet.subset(sets)` returns a new dataset
+  holding the chosen measurements and every item derived from them
+  (items are shared, not copied), and `save_data(..., sets=[…])` writes
+  that subset — the notebook counterpart of Choose sets….
 
 ### Changed
 

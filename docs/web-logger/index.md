@@ -125,11 +125,16 @@ copy is the one offered.
 
 !!! note "What a restore brings back"
     The **data**: your captures, loaded sets, calibration, units, channel
-    labels and any saved modal fit. **Not** the analysis you computed from
-    them — the FFT, TF and sonogram results shown in the analysis views are
-    not part of the session document (a `.dvma` saved from the app does not
-    carry them either), so re-run the calculation after restoring. On the
-    native engine that is quick.
+    labels and any saved modal fit — plus any analysis results that are
+    already **part of the document**.
+
+    Computed results become part of the document when you press **Save
+    Dataset**: saving materialises the FFT and TF views into real items
+    (see [what Save writes](export.md#what-save-writes-data-with-its-processing)),
+    and from then on they ride the autosave and the journal like any other
+    item, so a restore brings them back too. Analysis you computed but
+    never saved is **not** in the session document — re-run it after
+    restoring. On the native engine that is quick.
 
 #### `dvma.launch` — the notebook front door
 

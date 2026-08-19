@@ -146,10 +146,22 @@ it **merges** rather than replaces:
 
 A connected app is never silently overwritten: it raises a *"pydvma
 session updated from a notebook — reload?"* offer (with an empty tray it
-simply loads the pushed session). Likewise, what `session.data` holds is
-the session's *data* — captures and loaded sets — not the analysis views
-the app computed from them, which are not part of the session document.
-Compute what you need in the notebook.
+simply loads the pushed session).
+
+What `session.data` holds is the session **document**: captures, loaded
+sets, and any analysis the app has *materialised* into it. Pressing **Save
+Dataset** in the app is what materialises the FFT and TF views (see
+[what Save writes](export.md#what-save-writes-data-with-its-processing)),
+so a `session.data` taken after a save arrives with
+`freq_data_list` / `tf_data_list` populated, each carrying the settings it
+was computed with. Analysis the app computed but has not saved is not in
+the document — compute what you need in the notebook.
+
+The reverse direction has a trap worth knowing: if you modify a capture's
+samples and push it back, the app's stored spectra were computed from the
+*old* samples. They are not silently trusted — the app compares each
+stored result's source signature against the data it now has and flags the
+measurement with **⚠ source changed**, one click from a recompute.
 
 `session.close()` stops the server; `session.data` still reads afterwards
 (pulling your data out of a session you have finished with is the point),

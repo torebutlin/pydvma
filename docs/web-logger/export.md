@@ -15,6 +15,84 @@ units, channel labels and any modal fit — so reopening it (in the web
 logger, in Python via `dvma.load_data()`, or in the JupyterLite notebook)
 restores exactly where you were.
 
+### What Save writes: data *with* its processing
+
+Saving stores the **results you computed**, not just the raw captures.
+Any **FFT** and **transfer function** on screen is written into the file
+as a real `FreqData` / `TfData` item (coherence included), linked to the
+measurement it came from. Reopening the file draws those views
+immediately — no engine, no waiting, and the same items load in Python:
+
+```python
+data = dvma.load_data('session.dvma')
+data.freq_data_list      # the spectra you computed in the app
+data.tf_data_list        # transfer functions, with coherence
+```
+
+Each stored result also records **how it was made**: the analysis
+settings in force (window, averaging, channel choice), and a short
+signature of the **source samples** it was computed from.
+
+Re-saving updates the results in place — one FFT and one TF per
+measurement, however many times you save.
+
+#### "⚠ source changed"
+
+The signature is what lets the app tell an intact result from a stale
+one. If the time data changes *after* a result was stored — you
+resampled it, cleaned an impulse, or edited the samples in a notebook and
+pushed them back — the stored spectrum no longer belongs to the samples
+sitting beside it. On load, that measurement's tray card shows a
+**⚠ source changed** badge; click it to recompute the affected views (the
+badge clears), or leave it and the file keeps what it always had. A file
+saved by an older pydvma carries no signature and is never flagged —
+absence of a signature is not evidence of staleness.
+
+#### Sonograms are asked for
+
+A sonogram is **not** stored automatically. The view is one channel's
+picture; the file wants the full complex sonogram, so storing it means
+running the transform again — slower to save and a bigger file. If you
+computed a sonogram this session, Save asks **Include sonogram data?**:
+
+- **This channel** — store the channel you are looking at (the default);
+- **All channels** — store every channel of that measurement;
+- **Don't include** — skip it. Sonograms already in the document stay
+  there; this only declines the new one.
+
+Never opened the Sonogram stage? You will never see the dialog. Answer it
+once and an unchanged session will not ask again on the next save.
+
+!!! note "Not everything is materialised yet"
+    **Power spectral densities and cross-spectra** are not written as
+    stored results — recompute them after loading. Neither is an
+    **ensemble ("across sets") transfer function**: it is derived from
+    several measurements at once, and a result that named only one of them
+    as its source could not honestly be checked for staleness. Both are
+    on the follow-up list.
+
+### Choose which measurements to save
+
+Each of **Save Dataset**, **Export Matlab** and **Export CSV** is a split
+control: the button itself always means *everything*, and the **▾** beside
+it opens **Choose sets…**, a tick list of your measurements (with badges
+showing what each carries — time · fft · tf · fit).
+
+A subset save writes the chosen measurements *and* everything hanging off
+them — their spectra, transfer functions and any modal fit that spans
+them — and nothing else. The pick applies to that one save: it starts
+all-ticked every time, is never remembered, and is deliberately unrelated
+to what is shown, faded or hidden on the plot. A subset save also does not
+clear the autosave, since it is not the whole session.
+
+The same split exists in Python:
+
+```python
+# one measurement plus everything derived from it
+dvma.save_data(dataset, filename='just-4.dvma', sets=[3])
+small = dataset.subset([0, 3])       # or take the subset in memory
+```
+
 ### Autosave and session restore
 
 The **Autosave** switch (on by default) writes your session to browser

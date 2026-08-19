@@ -192,10 +192,20 @@ print(len(data.time_data_list), 'captures')
 ```
 
 `session.data` is a **copy**, rebuilt on every access — mutate it freely;
-nothing reaches the app until you push. It holds the session's *data*:
-the captures and any file loaded in the app. Results computed in the
-app's Frequency / TF / Sonogram views are **not** part of the session
-document, so compute what you need here.
+nothing reaches the app until you push. It holds the session **document**:
+the captures, any file loaded in the app, and any analysis the app has
+saved into it. Pressing **Save Dataset** in the browser is what puts the
+computed FFT and TF views into the document, so after a save they arrive
+here too:
+
+```python
+data.freq_data_list                        # spectra the app computed
+data.tf_data_list[0].source_settings       # {'calc': 'tf', 'window': 'hann', ...}
+data.tf_data_list[0].source_signature      # hash of the samples it came from
+```
+
+Anything the app computed but never saved is not in the document —
+compute what you need here.
 
 ### 4. Analyse and plot
 
@@ -226,7 +236,28 @@ loads). Merging follows the item's id:
   the same computed results twice and the session ends up with two
   copies.
 
-### 6. Finish
+!!! warning "Editing samples invalidates what the app already stored"
+    If you change a capture's `time_data` and push it back, any spectrum
+    the app had *saved* for that capture was computed from the old
+    samples. The app notices: each stored result carries a signature of
+    its source, so the measurement comes back flagged **⚠ source
+    changed** in the tray, one click from a recompute. Nothing is
+    silently trusted, and nothing is silently thrown away.
+
+### 6. Save part of a session
+
+`save_data` takes the same subset pick as the app's **Choose sets…**:
+
+```python
+# measurement 3 only — plus every spectrum, transfer function and modal
+# fit derived from it, and nothing else
+dvma.save_data(data, filename='measurement-3.dvma', sets=[3])
+
+# or work with the subset in memory (items are SHARED, not copied)
+just_two = data.subset([0, 3])
+```
+
+### 7. Finish
 
 ```python
 session.close()       # stops the server; session.data still reads

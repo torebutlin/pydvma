@@ -2,7 +2,54 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-19 (Mac session, overnight): **stages 3–4 of the
+As of 2026-08-19 (Mac session, second half): **the derived-data save
+round is LANDED on top of stages 3–4 — committed locally, NOT pushed
+(Tore hasn't asked), full suite gate green, and NEITHER round is
+live-verified yet.** Save Dataset now materialises the app's computed
+**FFT and TF** into the `.dvma` as real `FreqData`/`TfData` items
+(coherence included, `id_link`ed to their measurement,
+replace-by-lineage so re-saves are idempotent) — Tore's "data with its
+processing". Every stamped item carries `source_settings` plus a
+**`source_signature`**: an FNV-1a-64 hash of the SOURCE samples + rate,
+written once in `pydvma/_signature.py` and mirrored in
+`webui/src/lib/codec/signature.ts`, pinned by eleven shared
+known-answer vectors and a checked-in JS prototype
+(`dev/prototypes/signature_prototype.mjs`). A file whose time data
+changed after stamping loads with a **⚠ source changed** tray badge and
+click-to-rederive — never a silent recompute, never silent trust.
+Sonograms are stored only behind an explicit save-time prompt (Tore's
+design: only when computed this session, This channel / All channels /
+Don't include, not re-asked while the stored one is fresh; "This
+channel" costs ONE channel, not all — a 4× bug caught in review, 20.54 s
+→ 4.91 s on the 30 s × 51.2 kHz × 4 ch CWT bench, and the file goes
+47.8 → 138.7 MB if you include all four). **Choose sets…** turns
+Save/Export Matlab/Export CSV into all-by-default split buttons with a
+per-measurement subset picker, and Python got the parity
+(`DataSet.subset`, `save_data(sets=…)`). Because materialised items are
+ordinary document items they now ride the autosave, the journal AND
+`session.data` — which closes the "restore brings back DATA only"
+limitation stages 3–4 left open. Round doc:
+`dev/2026-08-19-derived-data-save-round.md` (what landed per task, the
+measured cost tables, seven deviations, and the review-loop finds — the
+signature originally hashed ONE CHANNEL of a multi-channel record;
+ensemble-TF provenance deferred; remove/undo orphaning materialised
+items; metaRaw merge-not-replace; the bridge capture that never carried
+its server `unique_id`, duplicating on restore and MASKED by a too-weak
+e2e assertion; the picker keeping ticks across split-button targets; the
+sono cube preflight; a dead Escape handler). Suites at close: pytest
+**1111/6**, vitest **1133/1**, check **0/0** (188 files), Playwright
+**69/23skip** + @engine **19/19** + BRIDGE_E2E **26/26** (five
+specs, ports 8763–8768), mkdocs --strict clean; engine
+wheel rebuilt THREE times this round (twice in Task 5b, once at
+close-out because Task 6 touched `datastructure.py`/`file.py` — both
+ship in the wheel), all **24** `pydvma/*.py` byte-identical to the tree.
+Still deferred, in TODO.md: ensemble-TF and CSD materialisation,
+provenance-dialect normalisation (app camelCase vs Python snake_case),
+the journal sink-overflow toast, `dvma.attach(url)`. **Next: Tore's live
+verification — BOTH rounds' next-lab-visit checklists belong in one
+visit — and then his decision on pushing.**
+
+Previous (2026-08-19, Mac session, overnight): **stages 3–4 of the
 native-engine arc — the session journal and `dvma.launch` — are LANDED
 and committed locally (NOT pushed; Tore hasn't asked), with the full
 suite gate green but NO live verification yet.** `pydvma-serve` now
@@ -40,13 +87,12 @@ TWICE (still 2.3.0; second rebuild after `container.py` changed) and
 verified byte-identical to the tree. Two known
 limitations went to TODO.md: **restore brings back DATA, not computed
 analysis views** (derived store sits outside the document — pre-existing,
-newly user-visible, docs say so, and the deliberate decision is
-outstanding) and `dvma.attach(url)` for an externally started serve.
-**Next: Tore's live verification via the round doc's unticked
-next-lab-visit checklist (real 2i2 capture → close → reopen → Restore;
-launch from a real Jupyter kernel; kill -9 recovery; two concurrent
-serves; the Windows run of the four bridge specs) — and then his
-decision on pushing.**
+newly user-visible, docs say so; **now CLOSED by the derived-data round
+above**) and `dvma.attach(url)` for an externally started serve.
+Its live-verification checklist (real 2i2 capture → close → reopen →
+Restore; launch from a real Jupyter kernel; kill -9 recovery; two
+concurrent serves; the Windows bridge-spec run) is **still unticked** and
+should be run alongside the derived-data one.
 
 Previous (2026-08-18 evening, Mac session, 2i2 + loopback cable back on
 the bench): **the bridge soundcard-OUTPUT bug is FIXED and the
