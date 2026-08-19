@@ -644,9 +644,19 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
  * `meta` (Wave C) is optional container provenance from a BRIDGE capture:
  * when present, the item keeps the real device driver used (not the
  * hard-coded `'web_audio'`), plus calibration factors, units, test name,
- * and timestamp read from the logged `.dvma`.  The Web Audio path passes no
- * `meta` and behaves exactly as before (`device_driver: 'web_audio'`, a
- * fresh browser timestamp/name).
+ * timestamp and — critically — the server's own `unique_id`, read from the
+ * logged `.dvma`.  The Web Audio path passes no `meta` and behaves exactly as
+ * before (`device_driver: 'web_audio'`, a fresh browser timestamp/name, and
+ * no id until something needs one).
+ *
+ * Why the id matters: the serve session journal registers every capture at
+ * birth and clears it only when a posted document provably CONTAINS its ids,
+ * so a capture whose id the app dropped is never cleared and a reopen offers
+ * it back beside the copy already in the restored document. It is also the
+ * `id_link` that derived results saved from this capture point at. When the
+ * container tagged it (`{__uuid__}`, what `container.save` writes for a real
+ * `uuid.UUID`) the tagged form is preserved in `metaRaw`, so a re-save reads
+ * back in python as a UUID rather than a plain string.
  */
 export function recordingToItem(
   rec: Recording,
@@ -666,6 +676,13 @@ export function recordingToItem(
   if (meta?.timestamp != null) itemMeta.timestamp = meta.timestamp;
   if (meta?.units != null) itemMeta.units = meta.units;
   if (meta?.channelCalFactors != null) itemMeta.channel_cal_factors = meta.channelCalFactors;
+  if (meta?.uniqueId) itemMeta.unique_id = meta.uniqueId;
+  // Only a TAGGED id needs the raw write view; everything else in `itemMeta`
+  // is already plain, so a metaRaw copy would just be a duplicate to keep in
+  // sync (`setItemMeta` handles both when it exists).
+  const metaRaw = meta?.uniqueId && meta.uniqueIdRaw !== undefined
+    ? { ...itemMeta, unique_id: meta.uniqueIdRaw }
+    : undefined;
 
   return {
     kind: 'TimeData',
@@ -682,6 +699,7 @@ export function recordingToItem(
       },
     },
     meta: itemMeta,
+    ...(metaRaw ? { metaRaw } : {}),
     settings: {
       fs: rec.fs,
       channels: rec.nChannels,

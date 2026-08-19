@@ -291,6 +291,23 @@ export interface BridgeRecordingMeta {
   units?: unknown;
   /** `meta.channel_cal_factors` — per-channel calibration multipliers. */
   channelCalFactors?: number[];
+  /**
+   * `meta.unique_id` — the SERVER's identity for this capture, decoded to a
+   * plain string. It has to travel: the serve session journal registers each
+   * capture at birth and clears it only when a posted document PROVABLY
+   * contains its ids (`pydvma.container.manifest_ids`), so a capture whose id
+   * the app dropped can never be cleared — a reopen then restores the
+   * document AND re-appends the capture beside its own copy. It is also the
+   * `id_link` every derived item saved from this capture points at.
+   */
+  uniqueId?: string;
+  /**
+   * The same value in its ORIGINAL manifest form — `{__uuid__: '…'}` from a
+   * server-written container, where the id really is a `uuid.UUID`. Carried
+   * verbatim so the re-saved item still reads back as a UUID in python
+   * (`manifest_ids` normalises both forms, but a python reader does not).
+   */
+  uniqueIdRaw?: unknown;
   /** `settings.device_driver` — the backend actually used ('nidaq'/'soundcard'/'mock'). */
   deviceDriver?: string;
 }

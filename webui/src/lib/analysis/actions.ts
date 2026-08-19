@@ -911,7 +911,12 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * `kind` — the replace-by-lineage upsert (see `materializedItems`). An
    * adopted item is mutated IN PLACE (it may already sit anywhere in
    * `ds.items`, and the file's item order should not shuffle on a re-save);
-   * a new one is appended and registered. `rawLink` is the source's id_link
+   * a new one is appended and registered. `arrays` is REPLACED wholesale,
+   * which is safe only because a σ-bearing BLA `TfData` is never adopted:
+   * `analysis.calculate_bla` writes a LIST `id_link` and `addBlaSets` writes
+   * `null`, so both land in `loadDataset`'s ORPHAN branch and never enter the
+   * lineage map. If that link ever became scalar, a TF recompute + Save would
+   * silently delete `bla_sigma_nl` / `bla_sigma_n`. `rawLink` is the source's id_link
    * in its ORIGINAL manifest form — a `{__uuid__}` tag for a python-written
    * source, so python reads a `uuid.UUID` back and it still equals the
    * source's own `unique_id`; a plain string for a browser-minted one.
@@ -928,9 +933,14 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const metaRaw = { ...meta, timestamp: { __datetime__: iso }, id_link: rawLink };
     const existing = materializedItems.get(lineageKey(setId, kind));
     if (existing && ds.items.includes(existing)) {
+      // MERGE the metadata, never replace it: an adopted item may carry
+      // manifest keys this builder does not re-emit — python's
+      // `flag_modal_TF` / `iw_power_counter`, or any key a newer writer added
+      // — and the container round-trip contract is that browser-authored
+      // state and unknown keys both SURVIVE a foreign writer.
       existing.arrays = build.arrays;
-      existing.meta = meta;
-      existing.metaRaw = metaRaw;
+      existing.meta = { ...existing.meta, ...meta };
+      existing.metaRaw = { ...existing.metaRaw, ...metaRaw };
       return;
     }
     const item: DvmaItem = {
@@ -981,8 +991,15 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *     untouched here.
    *
    * Re-running is idempotent: each (set, kind) owns ONE item, updated in
-   * place. A set whose source was deleted keeps its item — removal is the
-   * user's own Remove action, not a side effect of saving.
+   * place. `removeBlaRun` takes a removed set's materialised items out with
+   * it (and its undo puts them back under the new set id), so the document
+   * never keeps a derived item whose source has gone.
+   *
+   * A destructive edit — a resample, a Clean Impulse toggle — changes the
+   * source samples, so the item already in the document legitimately becomes
+   * STALE until the next Save re-materialises it. Task 4's badge firing there
+   * is the intended behaviour, not a bug: it is exactly the "the chain no
+   * longer holds" state the signature exists to show.
    *
    * Called from the Save handler only. Autosave deliberately does not: once
    * materialised, the items are part of the document and ride subsequent
@@ -1047,7 +1064,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     // No store emission, exactly as `stampUiState`: the items were pushed
     // into the live document object by reference and the caller serializes
     // immediately after. Re-emitting here would schedule an autosave that
-    // fires just after the explicit Save cleared the pending one.
+    // fires just after the explicit Save cleared the pending one. The
+    // consequence is cosmetic and deliberate: the autosave/journal copy lags
+    // the materialised items until the NEXT dataset mutation re-emits, while
+    // the file the user just saved is complete and correct.
   }
 
   /**
@@ -1718,6 +1738,16 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     labels: Record<string, string> | undefined;
     ws: WorkingSet | null;
     slice: SetArrays | undefined;
+    /**
+     * The set's MATERIALISED derived items (see `materializeDerived`) with
+     * their original positions, pulled out of the document alongside the
+     * source they were derived from. Without this a removed set's saved FFT/TF
+     * would stay in `ds.items` with an `id_link` to a source that is gone —
+     * reloading the file as a phantom orphan tray set.
+     */
+    derivedItems: { kind: DerivedKind; item: DvmaItem; index: number }[];
+    /** Which kinds were marked computed-this-session, so undo can re-mark. */
+    computedKinds: DerivedKind[];
   }
   let blaRunUndo: RemovedSet[] = [];
 
@@ -1758,6 +1788,19 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       if (!record) continue;
       const ws = working.find((w) => w.setId === id) ?? null;
       const item = ws?.time ?? null;
+      // This set's materialised FFT/TF leave WITH it — they are derived from
+      // the very item being removed, and the lineage/computed keys would
+      // otherwise linger and be re-used by a future set (see `RemovedSet`).
+      const derivedItems: RemovedSet['derivedItems'] = [];
+      const computedKinds: DerivedKind[] = [];
+      for (const kind of ['freq', 'tf'] as const) {
+        const key = lineageKey(id, kind);
+        const mat = materializedItems.get(key);
+        const at = mat && ds ? ds.items.indexOf(mat) : -1;
+        if (mat && at >= 0) { derivedItems.push({ kind, item: mat, index: at }); drop.add(mat); }
+        materializedItems.delete(key);
+        if (computedThisSession.delete(key)) computedKinds.push(kind);
+      }
       removed.push({
         item,
         index: ds && item ? ds.items.indexOf(item) : -1,
@@ -1766,6 +1809,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         labels: selection.getLabelsForSet(id),
         ws,
         slice: get(derived)[id],
+        derivedItems,
+        computedKinds,
       });
       if (item) drop.add(item);
       working = working.filter((w) => w.setId !== id);
@@ -1834,6 +1879,16 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       }
       if (r.ws) working.push({ ...r.ws, setId: id });
       if (r.slice) setDerived(id, { ...r.slice, setId: id });
+      // Put the materialised FFT/TF back and re-key their lineage under the
+      // NEW selection id — otherwise the next Save would push a SECOND copy
+      // beside the restored one. Positions are best-effort (the same
+      // original-index convention as the source item above).
+      for (const dItem of r.derivedItems) {
+        const at = dItem.index >= 0 && dItem.index <= ds.items.length ? dItem.index : ds.items.length;
+        ds.items.splice(at, 0, dItem.item);
+        materializedItems.set(lineageKey(id, dItem.kind), dItem.item);
+      }
+      for (const kind of r.computedKinds) computedThisSession.add(lineageKey(id, kind));
     }
     dataset.set(ds);
     return true;

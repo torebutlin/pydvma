@@ -399,7 +399,15 @@ test.describe('pydvma-serve session journal', () => {
 
       await journalToast(reopened).getByRole('button', { name: 'Restore' }).click();
 
-      // The captured set is back, drawn on the Time view it focuses.
+      // The captured set is back, drawn on the Time view it focuses — and
+      // there is EXACTLY ONE of it. The count is the load-bearing half:
+      // `restoreFromJournal` loads the document and then APPENDS every
+      // still-pending capture, so a capture the journal could not clear
+      // (its `unique_id` missing from the posted document — the app's bridge
+      // path used to drop the server's id) comes back a SECOND time beside
+      // its own copy inside the document. A bare visibility check on
+      // `tray-card-0` passes just as happily with two cards.
+      await expect(reopened.locator('[data-testid^="tray-card-"]')).toHaveCount(1);
       await expect(reopened.getByTestId('tray-card-0')).toBeVisible();
       await expect(reopened.getByTestId('plot-line').first()).toBeAttached();
 
@@ -443,6 +451,9 @@ test.describe('pydvma-serve session journal', () => {
       await expect(journalToast(reopened)).toBeVisible({ timeout: 60_000 });
       await journalToast(reopened).getByRole('button', { name: 'Restore' }).click();
 
+      // One capture registered at birth ⇒ exactly one card (no document was
+      // ever posted here, so this is the pending-capture path on its own).
+      await expect(reopened.locator('[data-testid^="tray-card-"]')).toHaveCount(1);
       await expect(reopened.getByTestId('tray-card-0')).toBeVisible();
       await expect(reopened.getByTestId('plot-line').first()).toBeAttached();
     });

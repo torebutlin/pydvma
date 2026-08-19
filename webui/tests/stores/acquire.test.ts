@@ -651,3 +651,36 @@ test('the elapsed store mirrors the handle clock, so a held clock reads 0', asyn
     vi.useRealTimers();
   }
 });
+
+// ---- the server's capture identity travels with the recording ------------
+// The serve session journal registers each capture at birth and clears it
+// only when a posted document PROVABLY contains its unique_id
+// (`container.manifest_ids`), so a capture whose id the app dropped can never
+// be cleared: a reopen restores the document AND re-offers the capture beside
+// its own copy. The id is also what derived results saved from this capture
+// point their `id_link` at.
+
+test('recordingToItem carries the bridge capture\'s server unique_id', () => {
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  const meta: BridgeRecordingMeta = { deviceDriver: 'nidaq', testName: 'shot1', uniqueId: uuid };
+  const item = recordingToItem(fakeRecording(), undefined, meta);
+  expect(item.meta.unique_id).toBe(uuid);
+  // No tagged form supplied ⇒ no metaRaw needed (the plain meta is written).
+  expect(item.metaRaw).toBeUndefined();
+});
+
+test('recordingToItem preserves a TAGGED server unique_id in the write view', () => {
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  const meta: BridgeRecordingMeta = { uniqueId: uuid, uniqueIdRaw: { __uuid__: uuid } };
+  const item = recordingToItem(fakeRecording(), 'x', meta);
+  expect(item.meta.unique_id).toBe(uuid);
+  // writeDvma serializes metaRaw when present, so python reads a uuid.UUID.
+  expect(item.metaRaw!.unique_id).toEqual({ __uuid__: uuid });
+  expect(item.metaRaw!.test_name).toBe('x');          // a complete write view
+});
+
+test('a web-audio capture (no bridge meta) carries no unique_id', () => {
+  const item = recordingToItem(fakeRecording(), 'browser');
+  expect(item.meta.unique_id).toBeUndefined();
+  expect(item.metaRaw).toBeUndefined();
+});

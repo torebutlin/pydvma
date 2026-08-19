@@ -1668,3 +1668,78 @@ test('editing the source samples and recomputing updates the item AND its signat
   expect(after.meta.source_signature).toBe(signatureOfSamples(
     Float64Array.from(src.arrays.time_data.data as Float64Array), 2, 2));
 });
+
+test('an adopted item keeps its tagged uuid AND manifest keys this builder never writes', async () => {
+  // A python-authored file: the source's unique_id and the derived item's
+  // id_link are {__uuid__} tags, and the FreqData carries an analysis flag
+  // (iw_power_counter) plus a key from some future writer. Re-materialising
+  // it must not amputate any of that — the container round-trip contract.
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  const source: DvmaItem = {
+    ...capturedItem('py_cap'),
+    metaRaw: {
+      test_name: 'py_cap', timestring: '2026-08-19 10:00:00',
+      unique_id: { __uuid__: uuid },
+    },
+  };
+  source.meta = { ...source.meta, unique_id: uuid };
+  const stale: DvmaItem = {
+    kind: 'FreqData',
+    arrays: {
+      freq_axis: { shape: [2], isComplex: false, data: Float64Array.from([0, 1]) },
+      freq_data: { shape: [2, 2], isComplex: true, data: Float64Array.from([9, 0, 9, 0, 9, 0, 9, 0]) },
+    },
+    meta: { test_name: 'py_cap', id_link: uuid, iw_power_counter: 2, future_key: 'keep me' },
+    metaRaw: {
+      test_name: 'py_cap', id_link: { __uuid__: uuid },
+      iw_power_counter: 2, future_key: 'keep me',
+    },
+    settings: null,
+  };
+  const file = readDvma(writeDvma({ formatVersion: 2, pydvmaVersion: 'py', items: [source, stale] }));
+
+  const { engine } = calcEngine();
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(file);
+  expect(get(sel.sets)).toHaveLength(1);              // adopted, not orphaned
+  await actions.calcFft(get(sel.sets)[0].id);
+  actions.materializeDerived();
+
+  const back = readDvma(writeDvma(get(actions.dataset)!));
+  expect(back.items.filter((i) => i.kind === 'FreqData')).toHaveLength(1);
+  const freq = back.items.find((i) => i.kind === 'FreqData')!;
+  // Refreshed…
+  expect(Array.from(freq.arrays.freq_data.data as Float64Array)).toEqual([1, 0, 2, 0, 3, 0, 4, 0]);
+  expect(typeof freq.meta.source_signature).toBe('string');
+  // …without losing the keys this builder does not write.
+  expect(freq.meta.iw_power_counter).toBe(2);
+  expect(freq.meta.future_key).toBe('keep me');
+  // …and the id_link is still the TAG, so python reads a uuid.UUID that
+  // still equals the source's own unique_id.
+  expect(freq.metaRaw!.id_link).toEqual({ __uuid__: uuid });
+  expect(freq.meta.id_link).toBe(uuid);
+  expect(back.items[0].metaRaw!.unique_id).toEqual({ __uuid__: uuid });
+});
+
+test('an appended file gets its own lineage — the already-materialised set is untouched', async () => {
+  const { engine } = calcEngine();
+  const { sel, actions } = harness(engine);
+  const first = actions.addRecordedSet(capturedItem('cap_first'));
+  await actions.calcFft(first);
+  actions.materializeDerived();
+  const firstItem = get(actions.dataset)!.items.find((i) => i.kind === 'FreqData')!;
+  const firstData = Array.from(firstItem.arrays.freq_data.data as Float64Array);
+
+  // Load-with-append: a second measurement joins the document.
+  actions.loadDataset(makeDataset(1), { append: true });
+  const second = get(sel.sets)[1].id;
+  await actions.calcFft(second);
+  actions.materializeDerived();
+
+  const items = get(actions.dataset)!.items;
+  expect(items.filter((i) => i.kind === 'FreqData')).toHaveLength(2);   // distinct keys
+  expect(items.find((i) => i.kind === 'FreqData')).toBe(firstItem);     // same object
+  expect(Array.from(firstItem.arrays.freq_data.data as Float64Array)).toEqual(firstData);
+  expect(firstItem.meta.test_name).toBe('cap_first');
+  expect(items.filter((i) => i.kind === 'FreqData')[1].meta.test_name).toBe('set_0');
+});

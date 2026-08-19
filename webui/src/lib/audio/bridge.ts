@@ -203,12 +203,14 @@ export function recordingFromDvma(bytes: Uint8Array): Recording {
  * Extract the provenance metadata from a bridged `.dvma` container so a
  * bridged set keeps its real identity (device driver actually used,
  * calibration, units, test name, timestamp) instead of being relabelled
- * `'web_audio'`.  Reads the single `TimeData` item's `meta` (units /
- * channel_cal_factors / test_name / timestring / timestamp) and `settings`
- * (device_driver).  Returns `null` when the container carries nothing worth
- * preserving.  Values are already tag-decoded by {@link readDvma} to plain
- * JSON-safe scalars/lists, so they can be written straight back into a
- * JS-authored DvmaItem.
+ * `'web_audio'`.  Reads the single `TimeData` item's `meta` (unique_id /
+ * units / channel_cal_factors / test_name / timestring / timestamp) and
+ * `settings` (device_driver).  Returns `null` when the container carries
+ * nothing worth preserving.  Values are already tag-decoded by
+ * {@link readDvma} to plain JSON-safe scalars/lists, so they can be written
+ * straight back into a JS-authored DvmaItem — except `unique_id`, whose
+ * ORIGINAL tagged form is carried alongside as `uniqueIdRaw` so the id can be
+ * re-emitted as the `{__uuid__}` python wrote (see `BridgeRecordingMeta`).
  */
 export function recordingMetaFromDvma(bytes: Uint8Array): BridgeRecordingMeta | null {
   const ds = readDvma(bytes);
@@ -217,6 +219,11 @@ export function recordingMetaFromDvma(bytes: Uint8Array): BridgeRecordingMeta | 
   const meta = item.meta ?? {};
   const settings = item.settings ?? {};
   const out: BridgeRecordingMeta = {};
+  if (typeof meta.unique_id === 'string' && meta.unique_id) {
+    out.uniqueId = meta.unique_id;
+    const raw = item.metaRaw?.unique_id;
+    if (raw !== undefined && raw !== meta.unique_id) out.uniqueIdRaw = raw;
+  }
   if (typeof meta.test_name === 'string') out.testName = meta.test_name;
   if (typeof meta.timestring === 'string') out.timestring = meta.timestring;
   if (typeof meta.timestamp === 'string') out.timestamp = meta.timestamp;

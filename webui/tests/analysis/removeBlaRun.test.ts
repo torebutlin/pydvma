@@ -199,3 +199,87 @@ test('removeBlaRun with nothing to remove changes nothing and stays silent', () 
   // the WRONG batch.
   expect(actions.undoRemoveBlaRun()).toBe(false);
 });
+
+// ---- Removal participates in the materialise lineage (derived-data round) --
+// A set's MATERIALISED FFT/TF are derived from the very item being removed:
+// leaving them behind orphans them in `ds.items` (a phantom tray set on
+// reload), and leaving their lineage keys behind makes the next Save push a
+// duplicate beside the restored one.
+
+/** An engine answering the two calcs materialisation reads. */
+const calcStubEngine = () => ({
+  status: writable('ready'),
+  boot: async () => {},
+  whenReady: async () => {},
+  enqueue: async (op: string) => (op === 'calc_fft'
+    ? {
+      freq_axis: { shape: [2], data: Float64Array.from([0, 1]), complex: false },
+      freq_data: { shape: [2, 2], data: Float64Array.from([1, 0, 2, 0, 3, 0, 4, 0]), complex: true },
+    }
+    : {
+      freq_axis: { shape: [2], data: Float64Array.from([0, 1]), complex: false },
+      tf_data: { shape: [2, 1], data: Float64Array.from([5, 0, 6, 0]), complex: true },
+      coherence: { shape: [2, 1], data: Float64Array.from([0.9, 0.8]), complex: false },
+    }),
+  client: {} as unknown,
+} as unknown as EngineStore);
+
+/** A 2-channel capture (a TF needs an output channel besides the input). */
+function twoChannelItem(name: string): DvmaItem {
+  return {
+    kind: 'TimeData',
+    arrays: {
+      time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+      time_data: { shape: [3, 2], isComplex: false, data: Float64Array.from([1, 2, 3, 4, 5, 6]) },
+    },
+    meta: { test_name: name, timestring: 'tr' },
+    settings: { fs: 2, channels: 2 },
+  };
+}
+
+/** One set with a materialised FFT + TF in the document. */
+async function withMaterialised() {
+  const sel = createSelection();
+  const toasts = createToasts();
+  const actions = createActions(calcStubEngine(), sel, undefined, undefined, toasts);
+  const setId = actions.addRecordedSet(twoChannelItem('cap'));
+  await actions.calcFft(setId);
+  await actions.calcTf(setId);
+  actions.materializeDerived();
+  return { sel, actions, setId };
+}
+
+const kinds = (actions: { dataset: { subscribe: unknown } }) =>
+  get((actions as ReturnType<typeof createActions>).dataset)!.items.map((i) => i.kind);
+
+test('removeBlaRun takes a set\'s materialised FFT/TF out with it — no orphans left to save', async () => {
+  const { actions, setId } = await withMaterialised();
+  expect(kinds(actions)).toEqual(['TimeData', 'FreqData', 'TfData']);
+
+  expect(actions.removeBlaRun([setId], { label: 'set' })).toBe(1);
+
+  expect(get(actions.dataset)!.items).toEqual([]);
+  // And a Save right after adds nothing back (the computed marks went too).
+  actions.materializeDerived();
+  expect(get(actions.dataset)!.items).toEqual([]);
+});
+
+test('Undo restores the materialised items and re-keys their lineage — a later Save does not duplicate', async () => {
+  const { actions, setId } = await withMaterialised();
+  const before = get(actions.dataset)!.items.map((i) => i.kind);
+  const freqData = Array.from(
+    get(actions.dataset)!.items.find((i) => i.kind === 'FreqData')!.arrays.freq_data.data as Float64Array);
+
+  actions.removeBlaRun([setId], { label: 'set' });
+  expect(actions.undoRemoveBlaRun()).toBe(true);
+  expect(get(actions.dataset)!.items.map((i) => i.kind)).toEqual(before);
+
+  // The restored set carries a NEW selection id; the lineage must have moved
+  // with it, or this Save pushes a SECOND FreqData/TfData.
+  actions.materializeDerived();
+  const items = get(actions.dataset)!.items;
+  expect(items.filter((i) => i.kind === 'FreqData')).toHaveLength(1);
+  expect(items.filter((i) => i.kind === 'TfData')).toHaveLength(1);
+  expect(Array.from(items.find((i) => i.kind === 'FreqData')!.arrays.freq_data.data as Float64Array))
+    .toEqual(freqData);
+});

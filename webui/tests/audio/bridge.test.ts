@@ -1711,3 +1711,35 @@ test('isCancelled recognises both backends cancellations, and nothing else', () 
   expect(isCancelled('cancelled')).toBe(false);             // a bare string is not a throw we own
   expect(isCancelled(null)).toBe(false);
 });
+
+test('recordingMetaFromDvma lifts the capture unique_id, tagged form included', () => {
+  // What the serve log path actually sends: container.save writes a real
+  // uuid.UUID as {"__uuid__": "…"}. Both the decoded string (what the journal
+  // matches on) and the tag (what python needs back) have to travel.
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  const nSamples = 2, nChannels = 1, fs = 1000;
+  const ds: DvmaDataset = {
+    formatVersion: 2,
+    pydvmaVersion: 'pydvma',
+    items: [{
+      kind: 'TimeData',
+      arrays: {
+        time_axis: { shape: [nSamples], data: Float64Array.from([0, 1 / fs]), isComplex: false },
+        time_data: { shape: [nSamples, nChannels], data: Float64Array.from([0.1, 0.2]), isComplex: false },
+      },
+      meta: { test_name: 'shot1', unique_id: uuid },
+      metaRaw: { test_name: 'shot1', unique_id: { __uuid__: uuid } },
+      settings: { fs, channels: nChannels, device_driver: 'nidaq' },
+    }],
+  };
+  const meta = recordingMetaFromDvma(writeDvma(ds))!;
+  expect(meta.uniqueId).toBe(uuid);
+  expect(meta.uniqueIdRaw).toEqual({ __uuid__: uuid });
+});
+
+test('recordingMetaFromDvma leaves uniqueId absent when the container has none', () => {
+  const { bytes } = dvmaWithMeta();
+  const meta = recordingMetaFromDvma(bytes)!;
+  expect(meta.uniqueId).toBeUndefined();
+  expect(meta.uniqueIdRaw).toBeUndefined();
+});
