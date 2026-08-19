@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from scipy import io as sio
 
-from pydvma import analysis, datastructure, file, options
+from pydvma import analysis, container, datastructure, file, options
 
 
 def _make_tf_only_dataset(n_chans=2, fs=1000, n_samples=2048, seed=0):
@@ -26,6 +26,27 @@ def _make_tf_only_dataset(n_chans=2, fs=1000, n_samples=2048, seed=0):
     tf = analysis.calculate_tf(td, ch_in=0, N_frames=4, window='hann')
     ds = datastructure.DataSet()
     ds.add_to_dataset(datastructure.TfDataList([tf]))
+    return ds
+
+
+def _make_multiset_dataset(n_sets=3, n_chans=2, fs=1000, n_samples=1024):
+    """A DataSet with `n_sets` TimeData captures plus their FFTs/TFs,
+    computed via the DataSet wrappers so id_links are real."""
+    ds = datastructure.DataSet()
+    for i in range(n_sets):
+        rng = np.random.default_rng(i)
+        settings = options.MySettings(fs=fs, channels=n_chans)
+        time_axis = np.arange(n_samples) / fs
+        td = datastructure.TimeData(
+            time_axis,
+            rng.standard_normal((n_samples, n_chans)),
+            settings,
+            channel_cal_factors=np.ones(n_chans),
+            test_name='set{}'.format(i),
+        )
+        ds.add_to_dataset(td)
+    ds.calculate_fft_set()
+    ds.calculate_tf_set(ch_in=0)
     return ds
 
 
@@ -192,3 +213,64 @@ class TestImportFromMatlabJwloggerTime:
         td = ds.time_data_list[0]
         assert td.time_data.shape == (n, 2)
         assert td.settings.channels == 2
+
+
+class TestSaveDataSets:
+    """`save_data(..., sets=...)` — the notebook counterpart of the web
+    app's Save "Choose sets…" picker: `None` writes the dataset
+    unchanged, an int/iterable writes `dataset.subset(sets)` instead
+    (see `datastructure.DataSet.subset`)."""
+
+    def test_sets_none_matches_the_unfiltered_save(self, tmp_path):
+        ds = _make_multiset_dataset(n_sets=2)
+
+        path_plain = file.save_data(
+            ds, filename=str(tmp_path / 'plain'), overwrite_without_prompt=True)
+        path_explicit_none = file.save_data(
+            ds, filename=str(tmp_path / 'explicit_none'),
+            overwrite_without_prompt=True, sets=None)
+
+        loaded_plain = container.load(path_plain)
+        loaded_none = container.load(path_explicit_none)
+
+        assert len(loaded_plain.time_data_list) == len(loaded_none.time_data_list) == 2
+        assert len(loaded_plain.freq_data_list) == len(loaded_none.freq_data_list) == 2
+        assert len(loaded_plain.tf_data_list) == len(loaded_none.tf_data_list) == 2
+
+    def test_sets_int_writes_exactly_that_measurements_family(self, tmp_path):
+        ds = _make_multiset_dataset(n_sets=3)
+
+        path = file.save_data(
+            ds, filename=str(tmp_path / 'subset'),
+            overwrite_without_prompt=True, sets=1)
+        loaded = container.load(path)
+
+        assert len(loaded.time_data_list) == 1
+        assert str(loaded.time_data_list[0].unique_id) == str(ds.time_data_list[1].unique_id)
+        assert loaded.time_data_list[0].test_name == 'set1'
+        assert len(loaded.freq_data_list) == 1
+        assert len(loaded.tf_data_list) == 1
+        assert str(loaded.freq_data_list[0].id_link) == str(ds.time_data_list[1].unique_id)
+        assert str(loaded.tf_data_list[0].id_link) == str(ds.time_data_list[1].unique_id)
+
+    def test_sets_iterable_writes_the_union_of_those_measurements(self, tmp_path):
+        ds = _make_multiset_dataset(n_sets=3)
+
+        path = file.save_data(
+            ds, filename=str(tmp_path / 'subset_two'),
+            overwrite_without_prompt=True, sets=[0, 2])
+        loaded = container.load(path)
+
+        loaded_names = sorted(td.test_name for td in loaded.time_data_list)
+        assert loaded_names == ['set0', 'set2']
+        assert len(loaded.freq_data_list) == 2
+        assert len(loaded.tf_data_list) == 2
+
+    def test_datasets_own_save_data_forwards_sets(self, tmp_path):
+        """`DataSet.save_data(sets=...)` is the method-form equivalent of
+        `file.save_data(dataset, sets=...)`."""
+        ds = _make_multiset_dataset(n_sets=2)
+        path = ds.save_data(filename=str(tmp_path / 'via_method'), sets=0)
+        loaded = container.load(path)
+        assert len(loaded.time_data_list) == 1
+        assert loaded.time_data_list[0].test_name == 'set0'

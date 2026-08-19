@@ -37,7 +37,108 @@ def update_dataset(dataset):
         if not hasattr(tf_data,'flag_modal_TF'):
             tf_data.flag_modal_TF = False
     return dataset_new
-    
+
+
+#%% subset() helpers — id_link resolution shared by DataSet.subset
+
+def _flatten_link_ids(value):
+    '''Yield the string form of every scalar id nested inside `value`.
+
+    `id_link` conventions across `analysis.py` and `modal.py` are not
+    uniform: a single-source result (e.g. `analysis.calculate_fft`)
+    stores a bare `uuid.UUID`, while an ensemble result
+    (`analysis.calculate_tf_averaged`, `analysis.calculate_cross_spectra_averaged`,
+    `analysis.calculate_bla`, `modal.modal_fit_all_channels`,
+    `modal.modal_refine`) stores a LIST — and a modal fit's list can
+    itself contain list-valued entries, one per spanned TF that was
+    itself an ensemble average. This walks lists/tuples/sets
+    recursively and yields `str(...)` of every leaf, so a single
+    membership test against a set of wanted id strings covers every
+    shape uniformly.
+
+    A dict leaf tagged ``{'__uuid__': '...'}`` — the raw `.dvma`
+    manifest encoding `container` stashes verbatim for manifest keys
+    it does not consume (see `ModalData`'s `source_targets` extra) —
+    is unwrapped to its id string; any other dict, and `None`, are
+    skipped (not everything nested inside an `id_link` or a
+    `source_targets` entry is an id).
+
+    Args:
+        value: An `id_link`-shaped value — `None`, a `str`/`uuid.UUID`,
+            or an arbitrarily nested list/tuple/set of those (or of
+            `{'__uuid__': ...}` tag dicts).
+
+    Yields:
+        str: One id string per scalar leaf found in `value`.
+    '''
+    if value is None:
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            for leaf in _flatten_link_ids(item):
+                yield leaf
+        return
+    if isinstance(value, dict):
+        if '__uuid__' in value:
+            yield str(value['__uuid__'])
+        return
+    yield str(value)
+
+
+def _links_intersect(value, wanted):
+    '''True if any id flattened out of `value` (see `_flatten_link_ids`) is in `wanted`.
+
+    Args:
+        value: An `id_link`-shaped value, per `_flatten_link_ids`.
+        wanted (set): Id strings to match against.
+
+    Returns:
+        bool: Whether any leaf of `value` is a member of `wanted`.
+    '''
+    for leaf in _flatten_link_ids(value):
+        if leaf in wanted:
+            return True
+    return False
+
+
+def _modal_item_in_subset(modal_item, wanted):
+    '''Whether a `ModalData` item belongs in a `DataSet.subset` pick.
+
+    ANY of its links resolving into `wanted` is enough (see
+    `DataSet.subset`): its own `id_link` — scalar for a single-set
+    fit, or a possibly-nested list for a multi-set/ensemble-sourced
+    fit (`modal.modal_fit_all_channels`, `modal.modal_refine`; see
+    `_flatten_link_ids`) — OR, for a dataset that round-tripped
+    through the web app, any `source_targets[].id_link` entry. pydvma
+    itself never writes `source_targets`; only the browser's
+    shared-pole-fit UI does (one entry per spanned set), and it
+    survives a Python load->save round trip only because `container`
+    stashes every manifest key this reader does not consume verbatim
+    on `_container_extra` (see `container.py`'s module docstring). The
+    equivalent web-side rule is `subsetDataset` in
+    `webui/src/lib/analysis/actions.ts`.
+
+    Args:
+        modal_item (ModalData): The item being tested.
+        wanted (set): Id strings the chosen `TimeData` items resolve to.
+
+    Returns:
+        bool: Whether `modal_item` should ride along with the subset.
+    '''
+    if _links_intersect(getattr(modal_item, 'id_link', None), wanted):
+        return True
+    extra = getattr(modal_item, '_container_extra', None)
+    if isinstance(extra, dict):
+        meta_extra = extra.get('meta')
+        if isinstance(meta_extra, dict):
+            targets = meta_extra.get('source_targets')
+            if isinstance(targets, list):
+                for target in targets:
+                    if isinstance(target, dict) and _links_intersect(target.get('id_link'), wanted):
+                        return True
+    return False
+
+
 #%% Data structure
 class DataSet():
     def __init__(self,data=None):#,*,timedata=[],freqdata=[],cspecdata=[],tfdata=[],sonodata=[],metadata=[]):
@@ -349,14 +450,134 @@ class DataSet():
             print('No time data found in dataset')
             return None
             
-    def save_data(self, filename=None):
+    def subset(self, sets):
+        '''Return a new `DataSet` holding chosen measurement(s) and everything derived from them.
+
+        This is the Python counterpart of the web app's Save
+        "Choose sets…" picker (`subsetDataset` in
+        `webui/src/lib/analysis/actions.ts`) — the same inclusion
+        rule, mirrored here so a notebook workflow and the browser
+        produce the same subset from the same dataset:
+
+        1. the chosen `TimeData` item(s) themselves;
+        2. every `FreqData` / `CrossSpecData` / `TfData` / `SonoData`
+           item whose `id_link` resolves into a chosen item's
+           `unique_id`. A scalar `id_link` (`analysis.calculate_fft`,
+           `analysis.calculate_tf`, `analysis.calculate_cross_spectrum_matrix`,
+           `analysis.calculate_sonogram`/`calculate_cwt`) matches
+           directly; a LIST `id_link` (`analysis.calculate_tf_averaged`,
+           `analysis.calculate_cross_spectra_averaged`,
+           `analysis.calculate_bla` — one entry per source `TimeData`
+           in the ensemble) matches on ANY member, not all — an
+           ensemble result whose sources only partly overlap the pick
+           still rides along;
+        3. a `ModalData` fit when ANY of its links lands in the chosen
+           lineage — see `_modal_item_in_subset` for the exact link
+           shapes checked (own `id_link`, scalar or nested-list, plus
+           a browser-authored `source_targets` extra when present).
+           This is deliberately an ANY rule, not ALL: a fit is worth
+           carrying with any set it describes. **Note the web app's
+           own loader is stricter** — it re-seeds a *live, editable*
+           fit only when EVERY `source_targets` link resolves — so a
+           subset spanning only part of a shared-pole fit still
+           carries the `ModalData` as data (readable, replottable,
+           reloadable) without silently re-seeding a fit session for a
+           model that no longer has all its sources; carrying the
+           modes as DATA is the contract here, not re-seeding a fit.
+        4. `MetaData`, and any derived item whose `id_link` cannot be
+           resolved into the pick (an orphan, or a link to a
+           `TimeData` outside the pick), are excluded — that is the
+           point of a subset.
+
+        **Items are SHARED, not copied.** The returned `DataSet`'s
+        lists hold the SAME objects as `self`'s, so mutating a
+        `TimeData` (or any derived item) reached through either
+        dataset is visible through both — consistent with the rest of
+        this class (`add_to_dataset`, `replace_data_item` never copy
+        either). Take your own `copy.deepcopy` first if independent
+        objects are needed. Lists keep their original relative order.
+
+        Unlike the web app's `subsetDataset`, there is no
+        "picking every set returns the live document" short-circuit:
+        this always builds a fresh `DataSet` (still item-SHARING, per
+        above), so passing every valid index is not the same as
+        "everything" — a genuinely unattributable item (an orphan
+        derived item, `MetaData`) is excluded even then, whereas the
+        web app's "everything" pick keeps such items because it
+        returns the untouched document unchanged.
+
+        Args:
+            sets (int or Iterable[int]): Index or indices into
+                `time_data_list` to keep (0-based). Duplicate indices
+                are ignored after the first.
+
+        Returns:
+            dataset (DataSet): A new `DataSet`, with `pydvma_version`
+                copied from `self`, containing the chosen measurements
+                and their resolved derived/modal items, sharing objects
+                with `self`.
+
+        Raises:
+            IndexError: `sets` contains an index outside
+                ``range(len(self.time_data_list))``.
+        '''
+        n = len(self.time_data_list)
+        if isinstance(sets, (int, np.integer)):
+            requested = [int(sets)]
+        else:
+            requested = [int(s) for s in sets]
+
+        valid_range = '0..{}'.format(n - 1) if n > 0 else 'none (this DataSet has no TimeData items)'
+        indices = []
+        seen = set()
+        for idx in requested:
+            if idx < 0 or idx >= n:
+                raise IndexError(
+                    'subset() index {} out of range: this DataSet has {} '
+                    'TimeData item(s) (valid indices: {})'.format(idx, n, valid_range))
+            if idx not in seen:
+                seen.add(idx)
+                indices.append(idx)
+
+        chosen_time = [self.time_data_list[i] for i in indices]
+        wanted = set(str(td.unique_id) for td in chosen_time)
+
+        new_dataset = DataSet()
+        new_dataset.time_data_list = TimeDataList(chosen_time)
+        new_dataset.freq_data_list = FreqDataList(
+            fd for fd in self.freq_data_list
+            if _links_intersect(getattr(fd, 'id_link', None), wanted))
+        new_dataset.cross_spec_data_list = CrossSpecDataList(
+            cs for cs in self.cross_spec_data_list
+            if _links_intersect(getattr(cs, 'id_link', None), wanted))
+        new_dataset.tf_data_list = TfDataList(
+            tf for tf in self.tf_data_list
+            if _links_intersect(getattr(tf, 'id_link', None), wanted))
+        new_dataset.sono_data_list = SonoDataList(
+            sd for sd in self.sono_data_list
+            if _links_intersect(getattr(sd, 'id_link', None), wanted))
+        new_dataset.modal_data_list = ModalDataList(
+            md for md in self.modal_data_list
+            if _modal_item_in_subset(md, wanted))
+        new_dataset.meta_data_list = MetaDataList()
+        new_dataset.pydvma_version = self.pydvma_version
+        return new_dataset
+
+    def save_data(self, filename=None, sets=None):
         '''
         Saves the whole DataSet via `file.save_data` — writes the
         .dvma container format by default (legacy pickle format if
         `filename` explicitly ends in ``.npy``). Shows a save dialog
         if no filename is given.
+
+        Args:
+            filename (str, optional): Output filename, dialog shown if not provided.
+            sets (int or Iterable[int], optional): If given, saves
+                `self.subset(sets)` instead of the whole dataset — see
+                `subset` for the exact inclusion rule. `None` (the
+                default) saves everything, unchanged.
         '''
-        savename = file.save_data(self, filename=filename, overwrite_without_prompt=False)
+        savename = file.save_data(self, filename=filename, overwrite_without_prompt=False, sets=sets)
         return savename
     
     def export_to_matlab(self, filename=None, overwrite_without_prompt=False):

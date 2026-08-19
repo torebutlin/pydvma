@@ -9,6 +9,8 @@ ModalData.__init__ mutating the caller's settings object.
 Pure-Python, no hardware required.
 """
 
+import uuid
+
 import numpy as np
 import pytest
 
@@ -38,6 +40,14 @@ def _make_modal_row(fn, zn, n_tfs, an=1.0, pn=0.0, rk=0.0, rm=0.0):
         np.full(n_tfs, an), np.full(n_tfs, pn),
         np.full(n_tfs, rk), np.full(n_tfs, rm),
     ))
+
+
+def _make_dataset(n_sets=3, n_chans=2, fs=1000, n_samples=1024):
+    """A DataSet with `n_sets` independent TimeData captures, unfitted."""
+    ds = datastructure.DataSet()
+    for i in range(n_sets):
+        ds.add_to_dataset(_make_time_data(n_chans=n_chans, fs=fs, n_samples=n_samples, seed=i))
+    return ds
 
 
 # ---------- set_calibration_factor ----------
@@ -164,3 +174,138 @@ class TestCrossSpectrumSetWindowForwarding:
         direct = analysis.calculate_cross_spectrum_matrix(td, window=None)
         np.testing.assert_allclose(ds.cross_spec_data_list[0].Pxy, direct.Pxy)
         assert ds.cross_spec_data_list[0].settings.window == 'boxcar'
+
+
+# ---------- DataSet.subset — notebook parity with the web app's
+# "Choose sets…" picker (subsetDataset in
+# webui/src/lib/analysis/actions.ts) ----------
+
+class TestDataSetSubset:
+
+    def test_picks_time_and_scalar_derived_items_by_kind(self):
+        ds = _make_dataset(n_sets=3)
+        ds.calculate_fft_set()
+        ds.calculate_tf_set(ch_in=0)
+        ds.calculate_sono_set()
+
+        sub = ds.subset(1)
+
+        assert list(sub.time_data_list) == [ds.time_data_list[1]]
+        assert list(sub.freq_data_list) == [ds.freq_data_list[1]]
+        assert list(sub.tf_data_list) == [ds.tf_data_list[1]]
+        assert list(sub.sono_data_list) == [ds.sono_data_list[1]]
+        # objects are the SAME ones, not copies
+        assert sub.time_data_list[0] is ds.time_data_list[1]
+        assert sub.freq_data_list[0] is ds.freq_data_list[1]
+
+    def test_int_and_iterable_forms_are_equivalent(self):
+        ds = _make_dataset(n_sets=3)
+        ds.calculate_fft_set()
+
+        sub_int = ds.subset(1)
+        sub_list = ds.subset([1])
+        sub_tuple = ds.subset((1,))
+
+        for other in (sub_list, sub_tuple):
+            assert list(sub_int.time_data_list) == list(other.time_data_list)
+            assert list(sub_int.freq_data_list) == list(other.freq_data_list)
+
+    def test_duplicate_indices_are_collapsed(self):
+        ds = _make_dataset(n_sets=3)
+        sub = ds.subset([1, 1, 1])
+        assert len(sub.time_data_list) == 1
+        assert sub.time_data_list[0] is ds.time_data_list[1]
+
+    def test_out_of_range_index_raises_indexerror_with_valid_range(self):
+        ds = _make_dataset(n_sets=3)
+        with pytest.raises(IndexError, match=r'0\.\.2'):
+            ds.subset(3)
+        with pytest.raises(IndexError, match=r'0\.\.2'):
+            ds.subset([0, 5])
+        with pytest.raises(IndexError, match=r'0\.\.2'):
+            ds.subset(-1)
+
+    def test_empty_dataset_out_of_range_message_is_helpful(self):
+        ds = datastructure.DataSet()
+        with pytest.raises(IndexError, match='no TimeData items'):
+            ds.subset(0)
+
+    def test_scalar_and_list_id_link_any_but_not_all(self):
+        """`analysis.calculate_tf_set` stamps a SCALAR id_link (one TF per
+        TimeData); `analysis.calculate_tf_averaged` stamps a LIST id_link
+        (one entry per source TimeData in the ensemble) — pin both shapes,
+        and confirm the list case matches on ANY member, including a
+        PARTIAL overlap with the picked sets, not on every member."""
+        ds = _make_dataset(n_sets=3, n_chans=2)
+        ds.calculate_tf_set(ch_in=0)
+        assert all(isinstance(tf.id_link, uuid.UUID) for tf in ds.tf_data_list)
+
+        avg_tf = analysis.calculate_tf_averaged(
+            datastructure.TimeDataList(ds.time_data_list[0:2]), ch_in=0)
+        assert avg_tf.id_link == [ds.time_data_list[0].unique_id, ds.time_data_list[1].unique_id]
+        ds.add_to_dataset(avg_tf)
+
+        sub0 = ds.subset([0])
+        sub2 = ds.subset([2])
+        sub_both = ds.subset([0, 2])
+
+        # scalar per-set TF: exact match only
+        assert ds.tf_data_list[0] in list(sub0.tf_data_list)
+        assert ds.tf_data_list[2] not in list(sub0.tf_data_list)
+
+        # list id_link: ANY member matching is enough
+        assert avg_tf in list(sub0.tf_data_list)       # set 0 is a member
+        assert avg_tf not in list(sub2.tf_data_list)    # set 2 is not a member at all
+        # ANY, not ALL: set 2 doesn't overlap the ensemble, set 0 does
+        assert avg_tf in list(sub_both.tf_data_list)
+
+    def test_modal_data_any_rule_rides_the_set_it_links_to(self):
+        """Mirrors modal.py's own construction (`modal_fit_all_channels`,
+        `modal_refine`): `ModalData.id_link` is a LIST of the source
+        TF(s)' own `id_link`, in `tf_data_list` order. A fit built from
+        set 2's TF alone must ride a `[2]` subset, not a `[1]` subset."""
+        ds = _make_dataset(n_sets=3, n_chans=2)
+        ds.calculate_tf_set(ch_in=0)
+        n_out = ds.tf_data_list[0].tf_data.shape[1]
+
+        m = datastructure.ModalData(
+            _make_modal_row(120.0, 0.01, n_out),
+            id_link=[ds.tf_data_list[2].id_link],
+        )
+        ds.add_to_dataset(m)
+
+        sub2 = ds.subset([2])
+        sub1 = ds.subset([1])
+
+        assert m in list(sub2.modal_data_list)
+        assert m not in list(sub1.modal_data_list)
+
+    def test_orphans_and_metadata_excluded_even_from_a_full_pick(self):
+        """A derived item whose id_link resolves to nothing in this
+        dataset, and MetaData (which never carries an id_link at all),
+        are excluded from a subset — even one covering every valid
+        TimeData index (subset() never falls back to "return everything
+        unfiltered", unlike the web app's live-document short-circuit;
+        see the DataSet.subset docstring)."""
+        ds = _make_dataset(n_sets=2, n_chans=2)
+        ds.calculate_fft_set()
+        orphan = analysis.calculate_fft(_make_time_data(n_chans=2, seed=99))
+        ds.add_to_dataset(orphan)
+        ds.add_to_dataset(datastructure.MetaData())
+
+        sub = ds.subset([0, 1])  # every valid TimeData index
+
+        assert orphan not in list(sub.freq_data_list)
+        assert len(sub.meta_data_list) == 0
+        assert len(sub.freq_data_list) == 2  # the attributable items remain
+
+    def test_items_are_shared_not_copied(self):
+        ds = _make_dataset(n_sets=2, n_chans=2)
+        ds.calculate_fft_set()
+        sub = ds.subset([0])
+
+        sub.time_data_list[0].test_name = 'mutated-through-subset'
+        assert ds.time_data_list[0].test_name == 'mutated-through-subset'
+
+        ds.freq_data_list[0].test_name = 'mutated-through-original'
+        assert sub.freq_data_list[0].test_name == 'mutated-through-original'

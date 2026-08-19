@@ -69,7 +69,7 @@ def load_data(parent=None, filename=None):
     return dataset
 
 
-def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=False):
+def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=False, sets=None):
     '''
     Saves a DataSet to 'filename.dvma' (container format v2 — a zip
     of manifest.json + pickle-free .npy arrays; see `container`), or
@@ -85,7 +85,16 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
        parent (optional): Parent widget for file dialog
        filename (str, optional): Output filename, dialog shown if not provided
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
+       sets (int or Iterable[int], optional): If given, writes
+           ``dataset.subset(sets)`` instead of the whole dataset — the
+           notebook counterpart of the web app's Save "Choose sets…"
+           picker (see `datastructure.DataSet.subset` for the exact
+           inclusion rule). `None` (the default) writes `dataset`
+           unchanged.
     '''
+    if sets is not None:
+        dataset = dataset.subset(sets)
+
     # If filename not specified, provide dialog
     from_dialog = filename is None
     if from_dialog:
