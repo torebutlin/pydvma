@@ -958,6 +958,17 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *     sonogram (the app's sono slice is a single-channel magnitude image,
    *     while `SonoData` wants the full complex cube — an honest one needs a
    *     recompute at save time);
+   *   - NOT an 'across'-averaged (ensemble) TF. `calc_tf_averaged` derives one
+   *     curve from EVERY working set but hangs it on the first, so the
+   *     single-source stamp this function writes would name one member's
+   *     id_link and hash one member's samples: an edit to any other member
+   *     would leave the chain looking intact, which is precisely the failure
+   *     the signature exists to catch. Doing it properly needs the
+   *     multi-source signature (python's `source_signature` already accepts a
+   *     list) plus a LIST-valued `id_link` — and a list id_link does not seed
+   *     onto a set at all today (`loadDataset` pass 2 keys on a single link,
+   *     so such a TF reloads as an orphan set the flag could not attach to).
+   *     Deferred whole rather than half-stamped;
    *   - only slices THIS SESSION computed. A view that merely came off disk
    *     is already backed by its own item, whose stored provenance is the
    *     truth about how it was made — re-stamping it with this session's
@@ -1192,7 +1203,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const tf = tfFromResult(res, axis, chIn, first.nChannels);
         if (get(derived)[first.setId]?.tf === undefined) added = true;
         setDerived(first.setId, { tf });
-        markComputed(first.setId, 'tf');                // Save may materialise it
+        // NOT `markComputed`: an ensemble result has MANY sources but hangs on
+        // the first set, so materialising it would stamp single-source
+        // provenance and an edit to any other member would never flip the
+        // staleness flag. Deferred — see `materializeDerived`'s doc.
         maybeRestoreModalRecon([first.setId]);          // deferred modal recon
         if (added) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
         return;

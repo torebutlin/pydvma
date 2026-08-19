@@ -1412,11 +1412,11 @@ const biasedFftResult = (bias = 0) => ({
   freq_data: cplx([2, 2], [1 + bias, 0, 2 + bias, 0, 3 + bias, 0, 4 + bias, 0]),
 });
 
-/** An engine answering calc_fft / calc_tf, with a mutable FFT bias. */
+/** An engine answering calc_fft / calc_tf (both modes), with a mutable bias. */
 function calcEngine(bias = { v: 0 }) {
   return fakeEngine(async (op) => {
     if (op === 'calc_fft') return biasedFftResult(bias.v);
-    if (op === 'calc_tf') return tfResult();
+    if (op === 'calc_tf' || op === 'calc_tf_averaged') return tfResult();
     return {};
   });
 }
@@ -1429,6 +1429,8 @@ test('materializeDerived writes the computed FFT + TF into the document and they
   const { engine } = calcEngine();
   const { actions } = harness(engine);
   const setId = actions.addRecordedSet(capturedItem());
+  // Distinct per-channel calibration, so the TF's cal RATIO is provable.
+  actions.setCalFactors(setId, [2, 8], ['N', 'g']);
   await actions.calcFft(setId);
   await actions.calcTf(setId);
 
@@ -1467,6 +1469,14 @@ test('materializeDerived writes the computed FFT + TF into the document and they
   expect((tf.meta.source_settings as Record<string, unknown>).calc).toBe('tf');
   expect((tf.meta.source_settings as Record<string, unknown>).chIn).toBe(0);
   expect(freq.meta.test_name).toBe('cap');
+
+  // Calibration: the FFT carries the source's own factors/units; the TF
+  // carries the RATIO cal[out]/cal[in] and '<out>/<in>' units over the
+  // non-input channels, per `analysis.calculate_tf`'s convention.
+  expect(freq.meta.channel_cal_factors).toEqual([2, 8]);
+  expect(freq.meta.units).toEqual(['N', 'g']);
+  expect(tf.meta.channel_cal_factors).toEqual([4]);         // 8 / 2, ch_in = 0
+  expect(tf.meta.units).toEqual(['g/N']);
 
   // A fresh session opening the file sees ONE set with both views already
   // populated — no recompute needed.
@@ -1516,6 +1526,71 @@ test('a loaded file that already carries materialised items does not duplicate t
   expect(kindCount(ds2, 'FreqData')).toBe(1);
   expect(kindCount(ds2, 'TfData')).toBe(1);
   expect(ds2.items).toHaveLength(3);
+});
+
+test('recomputing a loaded file\'s FFT REPLACES its item in place (pass-2 lineage adoption)', async () => {
+  const bias = { v: 0 };
+  const { engine } = calcEngine(bias);
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+  const back = readDvma(writeDvma(get(actions.dataset)!));
+
+  // Fresh session: open the file, then genuinely RECOMPUTE its FFT — with
+  // different settings, and after an edit to the source samples.
+  const { sel: sel2, settings: s2, actions: a2 } = harness(engine);
+  a2.loadDataset(back);
+  const id2 = get(sel2.sets)[0].id;
+  const adopted = get(a2.dataset)!.items.find((i) => i.kind === 'FreqData')!;
+  const before = {
+    signature: adopted.meta.source_signature,
+    settings: adopted.meta.source_settings as Record<string, unknown>,
+    data: Array.from(adopted.arrays.freq_data.data as Float64Array),
+  };
+
+  (get(a2.dataset)!.items[0].arrays.time_data.data as Float64Array)[0] = 42;
+  s2.patch(id2, 'freq', { window: 'blackman' });
+  bias.v = 5;
+  await a2.calcFft(id2);
+  a2.materializeDerived();
+
+  const ds2 = get(a2.dataset)!;
+  expect(kindCount(ds2, 'FreqData')).toBe(1);
+  const after = ds2.items.find((i) => i.kind === 'FreqData')!;
+  expect(after).toBe(adopted);                               // the SAME item
+  // …with genuinely refreshed content, not the values it was loaded with.
+  expect(Array.from(after.arrays.freq_data.data as Float64Array)).not.toEqual(before.data);
+  expect(after.meta.source_signature).not.toBe(before.signature);
+  expect(before.settings.window).toBe('hann');
+  expect((after.meta.source_settings as Record<string, unknown>).window).toBe('blackman');
+  // And the written file still carries exactly one of it.
+  const reread = readDvma(writeDvma(ds2));
+  expect(kindCount(reread, 'FreqData')).toBe(1);
+  expect(reread.items.find((i) => i.kind === 'FreqData')!.meta.source_signature)
+    .toBe(after.meta.source_signature);
+});
+
+test('an across-averaged (ensemble) TF is NOT materialised — its provenance has many sources', async () => {
+  const { engine } = calcEngine();
+  const { sel, settings, actions } = harness(engine);
+  const a = actions.addRecordedSet(capturedItem('cap_a'));
+  const b = actions.addRecordedSet(capturedItem('cap_b', [7, 8, 9, 10, 11, 12]));
+  expect(get(sel.sets)).toHaveLength(2);
+
+  settings.patch(a, 'tf', { averaging: 'across' });
+  await actions.calcTf(a);
+  expect(get(actions.derived)[a].tf).toBeDefined();          // the view is there
+  actions.materializeDerived();
+  expect(kindCount(get(actions.dataset)!, 'TfData')).toBe(0);
+
+  // …while an ordinary per-set TF on the other set still materialises.
+  settings.patch(a, 'tf', { averaging: 'within' });
+  await actions.calcTf(b);
+  actions.materializeDerived();
+  const ds = get(actions.dataset)!;
+  expect(kindCount(ds, 'TfData')).toBe(1);
+  expect(ds.items.find((i) => i.kind === 'TfData')!.meta.test_name).toBe('cap_b');
 });
 
 test('a set with no computed views materialises nothing', () => {
