@@ -85,6 +85,12 @@ all-ticked every time, is never remembered, and is deliberately unrelated
 to what is shown, faded or hidden on the plot. A subset save also does not
 clear the autosave, since it is not the whole session.
 
+One thing a subset save does *not* narrow: results it materialises join
+your **live session** as well as the file. Say yes to the sonogram prompt
+during a subset save and that sonogram is now part of the session too —
+it will be in the next full save, and it is what a restore or
+`session.data` brings back. Only the file is filtered.
+
 The same split exists in Python:
 
 ```python

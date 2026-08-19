@@ -37,12 +37,13 @@ items; metaRaw merge-not-replace; the bridge capture that never carried
 its server `unique_id`, duplicating on restore and MASKED by a too-weak
 e2e assertion; the picker keeping ticks across split-button targets; the
 sono cube preflight; a dead Escape handler). Suites at close: pytest
-**1111/6**, vitest **1133/1**, check **0/0** (188 files), Playwright
+**1117/6**, vitest **1142/1**, check **0/0** (188 files), Playwright
 **69/23skip** + @engine **19/19** + BRIDGE_E2E **26/26** (five
 specs, ports 8763–8768), mkdocs --strict clean; engine
-wheel rebuilt THREE times this round (twice in Task 5b, once at
-close-out because Task 6 touched `datastructure.py`/`file.py` — both
-ship in the wheel), all **24** `pydvma/*.py` byte-identical to the tree.
+wheel rebuilt FOUR times this round (twice in Task 5b, once at
+close-out because Task 6 touched `datastructure.py`/`file.py`, once more
+after the final review — all ship in the wheel), all **24**
+`pydvma/*.py` byte-identical to the tree.
 Still deferred, in TODO.md: ensemble-TF and CSD materialisation,
 provenance-dialect normalisation (app camelCase vs Python snake_case),
 the journal sink-overflow toast, `dvma.attach(url)`. **Next: Tore's live

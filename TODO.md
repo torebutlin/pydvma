@@ -30,14 +30,15 @@ is still open, as one consolidated list.
   each autosave posts the WHOLE document in one `/engine` frame, so the
   sink is guarded at 192 MiB against serve's 256 MiB `max_size` — a
   session past that keeps its browser-local autosave and drops only the
-  server copy, with a console warning (an unguarded over-cap frame
-  closed the socket with 1009 and re-killed the engine on every
-  autosave). The refusal is currently console-only — the restore offer
-  would then serve a STALE document with no user-visible signal —
-  so add a one-shot toast when the sink first refuses (final-review
-  recommendation, ~3 lines via an overflow callback beside
-  `setJournalSink`). If real sessions ever approach it, the fix is chunked or
-  delta posts, not a bigger number.
+  server copy (an unguarded over-cap frame closed the socket with 1009
+  and re-killed the engine on every autosave). The refusal is no longer
+  silent: `setJournalOverflowNotice` raises a ONE-SHOT toast saying the
+  server-side copy is stale from here while the local autosave is still
+  current — landed in the derived-data round, once including a sonogram
+  on Save made the limit reachable in ordinary use (one all-channel
+  sonogram of the 30 s × 51.2 kHz × 4 ch bench case is ~139 MB, so two
+  measurements cross it). If real sessions routinely approach it, the
+  fix is chunked or delta posts, not a bigger number.
 - ~~**Real-app-over-socket e2e coverage gap**~~ — **CLOSED** by
   `webui/e2e/session-journal.spec.ts` test 1, which drives the REAL
   app against a spawned `pydvma-serve`: Log Data (mock driver) → Calc
@@ -82,7 +83,15 @@ is still open, as one consolidated list.
     sonograms), and a reader keys off those; documented in
     `docs/web-logger/dvma-format.md`. Worth unifying if anything ever
     needs to read the settings generically.
-  - **Sink-overflow toast** (see the journal item above) — still open.
+  - ~~**Sink-overflow toast**~~ — **DONE** in the same round's final
+    review (see the journal item above); the 192 MiB guard now tells the
+    user once instead of only the console.
+  - **Pre-round files still duplicate derived items on a repeated
+    notebook push.** Every derived item minted from now on carries a
+    `unique_id`, but one loaded from an older file has none and so has
+    no identity to merge on. A composite-key fallback (kind + `id_link`
+    + settings) was deliberately NOT built — recomputing or re-Saving in
+    the app gives the item an id, which is the honest repair.
 - **`dvma.attach(url)` — session API against an externally started
   serve** — `launch()` owns the server it returns a handle to, so a
   notebook cannot currently get `session.data` / `session.push` against

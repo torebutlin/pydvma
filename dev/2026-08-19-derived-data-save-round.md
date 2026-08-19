@@ -12,7 +12,9 @@ doc closes Task 7). Predecessor round (stages 3–4):
 top of it and answers the limitation that round left open ("restore
 brings back DATA, not computed analysis views").
 
-Commits `ee24ba0..561832f` on master, plus this close-out commit.
+Commits `ee24ba0..561832f` on master (Tasks 1–7), plus this close-out's
+docs commit and the final whole-round review's two (`554551b` + this
+doc's amendment) — see "Final whole-round review" below.
 
 > **Reading the plan against the tree:** several tasks deviated under
 > review, one of them in the cross-language contract itself, and Task 5b
@@ -54,9 +56,11 @@ known-answer vectors** that appear literal-for-literal in both
 `TfData` (coherence included) per computed TF, `id_link`ed to the
 measurement, named as the set is named at save time, stamped. Called from
 the Save handler only; autosave never materialises — but once
-materialised, items are ordinary document items and ride later autosaves
-and the journal, which is the intended behaviour and is what makes a
-restored session bring analysis back. **Replace-by-lineage** (a per-(set,
+materialised, items are ordinary document items and ride later autosaves,
+which is the intended behaviour. (Reaching the serve JOURNAL needed one
+more thing, found in the final review below: the save handler posts the
+live document itself, because materialisation deliberately emits no store
+change.) **Replace-by-lineage** (a per-(set,
 kind) map, seeded both by materialisation and by `loadDataset` pass 2)
 keeps re-saves idempotent and adopts a loaded file's own items instead of
 duplicating them. Four deliberate narrowings, all documented at the
@@ -203,6 +207,53 @@ with the view, not with the result** — waiting on its visibility raced
 the calc and left nothing for Save to offer, so the wait reads the canvas
 backing store instead.
 
+### Final whole-round review
+
+Reviewing the round as a whole — after every task had passed its own
+review — found three more, all of them at the seam between the new
+document items and the machinery from the PREVIOUS round (the journal,
+`Session.push`), which is exactly where a per-task review does not look.
+
+- **CRITICAL: materialised items never reached the journal.**
+  `materializeDerived` emits no store change (deliberately — a re-emit
+  would schedule a debounced autosave that fires just after the explicit
+  Save cleared the pending one), and the journal is fed ONLY by the
+  autosave subscription. So the server kept the pre-Save session:
+  `session.data` after a Save had no TF, a tab closed after a Save
+  restored without one, and a notebook push replaced the document so the
+  materialised item vanished — with no stale badge, because it was gone
+  rather than stale. Fixed by posting from the save flow DIRECTLY
+  (`journalPost` in `App.svelte`'s `onsave`, right after the file write),
+  which keeps the no-emit choice and its race protection intact. The
+  journal always gets the FULL live document, so a subset save pays one
+  extra serialise. Pinned in the e2e: test 1 now TAKES the journal
+  restore offer and asserts both views draw — with the post removed it
+  fails on exactly that assertion (verified).
+- **IMPORTANT: a notebook pull → push duplicated derived items.** They
+  carried no `unique_id`, and `_merge_dataset` appends anything without
+  one — so pushing back an UNMODIFIED pull doubled every spectrum, every
+  time. Fixed on both sides: `FreqData`/`TfData`/`CrossSpecData`/
+  `SonoData` mint one at construction like `TimeData`, the app mints one
+  per materialised item and preserves it across re-saves and reloads, and
+  `container` round-trips it as OPTIONAL meta so older files load
+  unchanged. Caveat kept honest rather than papered over: derived items
+  inside a PRE-round file have no id and still append on a repeated push
+  — a composite-key fallback was considered and rejected; recompute or
+  re-Save to give them ids.
+- **IMPORTANT: the 192 MiB journal guard was console-only.** Fine while
+  only a pathological session could reach it; including one all-channel
+  sonogram on Save (139 MB on the bench case) makes two measurements
+  enough. The whole server-side surface then went stale in silence.
+  `setJournalOverflowNotice` now raises a one-shot toast, fired from both
+  the autosave sink and the new direct post.
+
+`container.manifest_ids` picked up a consequence worth recording: it now
+returns derived ids too. The journal only ever asks whether a capture's
+ids are a SUBSET of a document's, and a capture blob still holds just its
+`TimeData`, so a larger document set cannot make that test wrongly true —
+docstring and test updated to say so rather than to keep claiming only
+captures carry ids.
+
 ## Deviations from the plan (honest list)
 
 1. **The reduction rule is ROW-STRIDED, not flat-byte-strided.** The
@@ -254,11 +305,11 @@ backing store instead.
 ## Suites at close (this Mac, 2026-08-19)
 
 - `python -m pytest tests/ -q --ignore=tests/test_acquisition_hardware.py`:
-  **1111 passed, 6 skipped** (1033/6 at the previous
-  round's close; +78 this round)
+  **1117 passed, 6 skipped** (1033/6 at the previous
+  round's close; +84 this round, the last 6 from the final review)
 - `python -m mkdocs build --strict`: **clean** (exit 0)
 - `npm run check`: **188 files, 0 errors, 0 warnings**
-- `npx vitest run`: **1133 passed, 1 skipped** (1069/1 before)
+- `npx vitest run`: **1142 passed, 1 skipped** (1069/1 before; the last 9 from the final review)
 - `npx playwright test --grep-invert @engine`: **69 passed, 23 skipped** (19 skipped
   before — the four new BRIDGE_E2E tests are gated off here)
 - `npx playwright test --grep @engine --workers=1`: **19 passed**
@@ -266,14 +317,18 @@ backing store instead.
   e2e/engine-native.spec.ts e2e/session-journal.spec.ts
   e2e/derived-save.spec.ts --workers=1`: **26 passed** (22 before; five real spawned
   `pydvma-serve` processes across ports 8763–8768). The new spec was
-  additionally run twice on its own, green both times.
+  additionally run twice on its own, green both times, and re-run green
+  after the final-review fixes.
 - **Engine wheel** (`npm run vendor:wheels`, still
   `pydvma-2.3.0-py3-none-any.whl`, matching `ENGINE_WHEELS`): rebuilt
-  **three times** this round — twice inside Task 5b (`56a03b8`,
-  `e61aee7`, both for `pydvma/engine.py`) and once in this close-out,
-  because Task 6 changed `pydvma/datastructure.py` and `pydvma/file.py`
-  AFTER the last rebuild and both ship in the wheel. Final state
-  verified: all **24** `pydvma/*.py` modules byte-identical to the tree.
+  **four times** this round — twice inside Task 5b (`56a03b8`,
+  `e61aee7`, both for `pydvma/engine.py`), once at close-out (Task 6
+  changed `pydvma/datastructure.py` and `pydvma/file.py` after the last
+  rebuild, and both ship in the wheel), and once more after the final
+  review touched `datastructure.py` + `container.py`. Final state
+  verified: all **24** `pydvma/*.py` modules byte-identical to the tree,
+  `dist/pypi/` carrying that same wheel, and @engine re-run 19/19 after
+  it.
 
 ## Next-lab-visit checklist (live verification — none of this is done)
 
@@ -289,6 +344,12 @@ should be run in the same visit — the two arcs share the serve stack.
       `session.data`, scale or filter a capture, `session.push`, and
       confirm the measurement comes back with **⚠ source changed** and
       that clicking it rederives.
+- [ ] **Pull → push an UNMODIFIED session** after a Save and confirm
+      nothing doubles (the derived-`unique_id` fix, live rather than
+      against the mock).
+- [ ] **Save with an all-channel sonogram on a long record** and watch
+      for the over-size journal toast — the 192 MiB guard is now
+      reachable, and its message has never been seen outside a unit test.
 - [ ] **Subset save of one measurement** out of a multi-capture session;
       reopen and confirm exactly that measurement plus its own results.
 - [ ] **Sonogram include on a real capture**: compute a sonogram, Save,

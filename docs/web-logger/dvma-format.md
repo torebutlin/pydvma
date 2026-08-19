@@ -113,6 +113,19 @@ optional `meta` fields describing how it was made:
   [Saving and exporting](export.md#source-changed)). Settings are
   deliberately outside the hash: a result computed with a different
   window is still a valid result *of those settings*.
+
+    The hashed byte stream is `n_rows`, `n_cols` and `fs` as
+    little-endian float64, then whole selected **rows** of the sample
+    array (every value in a row, so an edit to any channel of a sampled
+    time instant shows). Hashing every sample of a long record is too
+    slow for a save click, so the row selection is capped at **65536
+    hashed values**: up to `65536 // n_cols` rows are taken at an even
+    stride, with the final row always appended. Both languages implement
+    exactly this — `pydvma/_signature.py` is the **normative**
+    description, `webui/src/lib/codec/signature.ts` is its twin, and
+    they are pinned to each other by shared known-answer vectors. One
+    consequence worth knowing: on a reduced (long) record, an edit
+    confined to a few consecutive *unsampled* rows can go unnoticed.
 - **`source_settings`** — the analysis knobs that produced it, with a
   `calc` key naming the calculation (`'fft'`, `'tf'`, `'sonogram'`, …).
 

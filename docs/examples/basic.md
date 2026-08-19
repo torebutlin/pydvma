@@ -195,8 +195,8 @@ print(len(data.time_data_list), 'captures')
 nothing reaches the app until you push. It holds the session **document**:
 the captures, any file loaded in the app, and any analysis the app has
 saved into it. Pressing **Save Dataset** in the browser is what puts the
-computed FFT and TF views into the document, so after a save they arrive
-here too:
+computed FFT and TF views into the document (and posts it to the server
+immediately), so from that moment they arrive here too:
 
 ```python
 data.freq_data_list                        # spectra the app computed
@@ -232,9 +232,11 @@ loads). Merging follows the item's id:
 
 - the captures you pulled carry a `unique_id`, so an edited capture
   **replaces** the stored one in place; and
-- the FFT and TF you just computed have no id, so they **append** — push
-  the same computed results twice and the session ends up with two
-  copies.
+- results **the app materialised** on a Save carry ids too, so pulling a
+  session and pushing it straight back changes nothing; and
+- the FFT and TF *you* just computed are new items with new ids, so they
+  **append** the first time and replace themselves on any later push of
+  the same objects.
 
 !!! warning "Editing samples invalidates what the app already stored"
     If you change a capture's `time_data` and push it back, any spectrum

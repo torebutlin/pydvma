@@ -131,12 +131,19 @@ a copy, not a live reference, so anything you do to it changes nothing
 until you push it back. `session.push(data)` is the only write path, and
 it **merges** rather than replaces:
 
-- A capture carries a `unique_id`, so one you pulled, modified and pushed
-  back **replaces** the stored copy in place — the pull → filter → push
-  round trip updates data where it sits instead of duplicating it.
-- Anything without an id — the spectra, transfer functions and sonograms
-  you compute in the notebook — **appends**. Push the same computed set
-  twice and you get two copies of it.
+- **Every item carries a `unique_id`** — captures and derived results
+  alike — so one you pulled, modified and pushed back **replaces** the
+  stored copy in place. The pull → filter → push round trip updates data
+  where it sits instead of duplicating it, and pushing an unmodified pull
+  changes nothing at all.
+- A result you **build** in the notebook is a new item with a new id, so
+  it **appends**. Compute the same spectrum twice, from two separate
+  pulls, and you get two copies; push the *same* object twice and the
+  second push simply replaces the first.
+- Derived items inside a file written by an **older pydvma** have no id
+  (they were not given one until the derived-data save round), so a
+  repeated push of those does append copies. Recompute them — or re-Save
+  in the app — to give them ids.
 - An item you pulled carries the app's display state for it (channel
   labels, units, the set's analysis settings) invisibly through the round
   trip, so pushing it back preserves what you see on screen. An item you
@@ -152,10 +159,18 @@ What `session.data` holds is the session **document**: captures, loaded
 sets, and any analysis the app has *materialised* into it. Pressing **Save
 Dataset** in the app is what materialises the FFT and TF views (see
 [what Save writes](export.md#what-save-writes-data-with-its-processing)),
-so a `session.data` taken after a save arrives with
+and the save posts the updated session straight to the server — so a
+`session.data` read any time after that save arrives with
 `freq_data_list` / `tf_data_list` populated, each carrying the settings it
 was computed with. Analysis the app computed but has not saved is not in
 the document — compute what you need in the notebook.
+
+Those materialised results carry their own `unique_id`, like captures do,
+so pulling a session and pushing it back **replaces** them in place. A
+pull → push of an unmodified session changes nothing. (One exception:
+derived items inside a file written by an older pydvma have no id, so a
+repeated push of those does append copies — recompute or re-Save them in
+the app to give them ids.)
 
 The reverse direction has a trap worth knowing: if you modify a capture's
 samples and push it back, the app's stored spectra were computed from the

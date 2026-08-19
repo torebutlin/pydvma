@@ -10,6 +10,21 @@ field, plus the acquisition UX it showed was missing.
 
 ### Fixed
 
+- **A bridge capture now carries the server's `unique_id`.** The webui's
+  capture path dropped it, so `pydvma-serve`'s journal could never prove
+  a posted document contained that capture: reopening restored the
+  document *and* re-appended the capture beside its own copy. The
+  session-journal e2e was checking only that a card was visible, so it
+  passed with two — it now asserts the set count.
+- **The journal's size guard is no longer silent.** An over-size session
+  fell back to local-only autosave with a `console.warn`, so every
+  server-side feature (tab-close restore, crash recovery, `session.data`)
+  quietly stopped tracking the session while the app looked healthy. It
+  now raises a one-shot toast saying exactly that.
+- **`onsave` no longer receives a `MouseEvent` as its subset pick.** The
+  header and Export-card buttons call `onsave()` explicitly; a bare
+  `onclick={onsave}` would have handed the click event to the new
+  optional `setIds` parameter.
 - **Soundcard stimulus output no longer plays on the wrong device — or
   silences the capture.** Two stacked defects on the bridge/Python
   soundcard path: an unset output device resolved to the SYSTEM
@@ -124,8 +139,11 @@ field, plus the acquisition UX it showed was missing.
   taken while the app was already serialising its document, or one
   belonging to another tab, is never dropped by that post. A session
   too large to cross the `/engine` socket in one frame (192 MiB guard,
-  under serve's 256 MiB cap) falls back to browser-local autosave with
-  a console warning rather than repeatedly severing the connection.
+  under serve's 256 MiB cap) falls back to browser-local autosave rather
+  than repeatedly severing the connection, and **says so once** — a
+  toast explaining that the server-side copy is stale from here while
+  the local autosave is still current (a limit that stops being
+  theoretical as soon as sonograms are included on Save).
   Closing the tab therefore costs nothing —
   reopening offers *"Restore session from pydvma-serve?"*. If the serve
   process itself died, the next start finds the session file it left
@@ -153,9 +171,11 @@ field, plus the acquisition UX it showed was missing.
   rather than silently replacing what is on screen; `session.close()`
   stops the server (context-manager supported, and `session.url` is the
   address). Push **merges by id** instead of replacing: an item carrying
-  a `unique_id` — a capture — replaces the stored copy *in place*, so
-  pull → modify → push updates data where it sits, while anything else
-  appends. `MySettings` prefills Setup exactly as `--settings` does.
+  a `unique_id` replaces the stored copy *in place*, so pull → modify →
+  push updates data where it sits, while a newly built item appends.
+  Every kind mints one (see the derived-data entry below), so pushing an
+  unmodified pull is a no-op. `MySettings` prefills Setup exactly as
+  `--settings` does.
   `pydvma-serve --open` remains the same server without a kernel handle,
   and the `dvma.Logger` / `dvma.Oscilloscope` tombstones now point here.
 - **Save Dataset stores data *with* its processing.** Saving now
@@ -171,10 +191,22 @@ field, plus the acquisition UX it showed was missing.
   Re-saving replaces by lineage, so a measurement owns one FFT and one
   TF however many times you save; a session that has been saved carries
   its results through the journal and through `session.data` too.
-  Deliberately narrow for now: PSD/cross-spectra are not materialised,
-  and neither is an ensemble ("across sets") transfer function — it has
-  many sources, and a single-source stamp could not honestly report
-  staleness.
+  Saving also posts the updated session to `pydvma-serve` immediately, so
+  the results are in the journal from the moment the file is written — a
+  tab-close restore brings them back, and `session.data` in a notebook
+  sees them. Deliberately narrow for now: PSD/cross-spectra are not
+  materialised, and neither is an ensemble ("across sets") transfer
+  function — it has many sources, and a single-source stamp could not
+  honestly report staleness.
+- **Derived items carry their own `unique_id`.** `FreqData`, `TfData`,
+  `CrossSpecData` and `SonoData` mint one at construction, exactly as
+  `TimeData` always has, and the app stamps one on every item it
+  materialises (stable across re-saves). `Session.push` merges by id, so
+  this is what makes a notebook pull → push-back of an unchanged session
+  a genuine no-op instead of appending a second copy of every spectrum.
+  Optional in the container, so files written before this load unchanged
+  — with no id, and therefore still duplicating on a repeated push;
+  recompute or re-Save to give them one.
 - **Broken compute chains are flagged, not silently trusted.** If a
   measurement's time data changed after a result was stored — a
   resample, a Clean Impulse, or an edit pushed back from a notebook —
