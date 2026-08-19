@@ -1114,6 +1114,16 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * in its ORIGINAL manifest form — a `{__uuid__}` tag for a python-written
    * source, so python reads a `uuid.UUID` back and it still equals the
    * source's own `unique_id`; a plain string for a browser-minted one.
+   *
+   * IDENTITY. Every item written here carries its OWN `unique_id`, minted on
+   * creation and preserved across every later re-save (an adopted item keeps
+   * whatever id it arrived with, in whatever manifest form — a `{__uuid__}`
+   * tag from python stays a tag). This is not decoration:
+   * `pydvma.session.Session.push` merges by `unique_id`, so a derived item
+   * without one APPENDS on every push — pull the session into a notebook and
+   * push it straight back unmodified and the spectra would double each time.
+   * An adopted item that has no id (a file written before derived items
+   * carried them) is given one here, since this call is rewriting it anyway.
    */
   function upsertDerivedItem(
     ds: DvmaDataset, setId: number, kind: DerivedKind,
@@ -1123,7 +1133,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const meta = { ...build.meta, timestamp: iso };
     // `timestamp` carries the datetime tag so python decodes a real datetime
     // on load, and `id_link` its original tag (same convention as
-    // `upsertModalItem` / `addBlaSets`).
+    // `upsertModalItem` / `addBlaSets`). Neither carries `unique_id`: identity
+    // is decided below, per creation-vs-adoption, and a key present here would
+    // overwrite an adopted item's own id in the merge.
     const metaRaw = { ...meta, timestamp: { __datetime__: iso }, id_link: rawLink };
     const existing = materializedItems.get(lineageKey(setId, kind));
     if (existing && ds.items.includes(existing)) {
@@ -1132,13 +1144,24 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // `flag_modal_TF` / `iw_power_counter`, or any key a newer writer added
       // — and the container round-trip contract is that browser-authored
       // state and unknown keys both SURVIVE a foreign writer.
+      const mergedMeta: Record<string, unknown> = { ...existing.meta, ...meta };
+      const mergedRaw: Record<string, unknown> = { ...existing.metaRaw, ...metaRaw };
+      if (mergedMeta.unique_id === undefined) {
+        const uid = newUniqueId();
+        mergedMeta.unique_id = uid;
+        mergedRaw.unique_id = uid;
+      }
       existing.arrays = build.arrays;
-      existing.meta = { ...existing.meta, ...meta };
-      existing.metaRaw = { ...existing.metaRaw, ...metaRaw };
+      existing.meta = mergedMeta;
+      existing.metaRaw = mergedRaw;
       return;
     }
+    const uid = newUniqueId();
     const item: DvmaItem = {
-      kind: build.kind, arrays: build.arrays, meta, metaRaw, settings: null,
+      kind: build.kind, arrays: build.arrays,
+      meta: { ...meta, unique_id: uid },
+      metaRaw: { ...metaRaw, unique_id: uid },
+      settings: null,
     };
     ds.items.push(item);
     materializedItems.set(lineageKey(setId, kind), item);
@@ -1260,11 +1283,18 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     }
     // No store emission, exactly as `stampUiState`: the items were pushed
     // into the live document object by reference and the caller serializes
-    // immediately after. Re-emitting here would schedule an autosave that
-    // fires just after the explicit Save cleared the pending one. The
-    // consequence is cosmetic and deliberate: the autosave/journal copy lags
-    // the materialised items until the NEXT dataset mutation re-emits, while
-    // the file the user just saved is complete and correct.
+    // immediately after. Re-emitting here would schedule a debounced autosave
+    // that fires just after the explicit Save cleared the pending one.
+    //
+    // The consequence — that nothing else would learn about these items until
+    // the next unrelated mutation — is NOT cosmetic for the serve journal,
+    // which owns the session: a tab closed right after Save would restore a
+    // session missing the results just saved, and `session.data` in a
+    // notebook would never see them. So the save handler posts the live
+    // document to the journal DIRECTLY (`journalPost` in App.svelte's
+    // `onsave`); that call, not this function, is the journal seam. The
+    // remaining lag is the local IndexedDB/folder autosave copy, which a full
+    // Save clears anyway.
   }
 
   // ---- Task 5b: the "Include sonogram?" save prompt ----------------------

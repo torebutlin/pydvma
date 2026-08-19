@@ -124,11 +124,26 @@ _META_FIELDS = {
 # manifest — absence must survive the round-trip because downstream
 # code uses hasattr() guards, and because a derived item written before
 # signatures existed makes no claim about its chain.
+#
+# `unique_id` on the DERIVED kinds is here for exactly that
+# absence-tolerance. Every derived object built today mints one (see
+# `datastructure.FreqData.unique_id`) and the browser stamps one on
+# each item it materialises, because `session.Session.push` merges by
+# id and an item without one appends a duplicate on every push. But a
+# file written before that must load UNCHANGED — with the attribute
+# genuinely absent, not present-as-None, so `getattr(item,
+# 'unique_id', None)` keeps reading "no identity" rather than a null
+# that some later dict could key on. `TimeData` keeps its `unique_id`
+# in `_META_FIELDS`: it has always had one, and its absence would be a
+# corrupt file rather than an old one.
 _OPTIONAL_META = {
     'TimeData': ['impulse_cleaned'],
-    'FreqData': ['iw_power_counter', 'source_signature', 'source_settings'],
-    'TfData':   ['iw_power_counter', 'source_signature', 'source_settings'],
-    'SonoData': ['source_signature', 'source_settings'],
+    'FreqData': ['unique_id', 'iw_power_counter',
+                 'source_signature', 'source_settings'],
+    'CrossSpecData': ['unique_id'],
+    'TfData':   ['unique_id', 'iw_power_counter',
+                 'source_signature', 'source_settings'],
+    'SonoData': ['unique_id', 'source_signature', 'source_settings'],
 }
 
 # Tag keys reserved by _encode_value; user dicts must not use them.
@@ -312,9 +327,15 @@ def manifest_ids(data):
     calling thread. Ids come back as ``str`` whether the manifest tags
     them (``{"__uuid__": "..."}``, what `save` writes) or stores a plain
     string (what a hand-built or browser-authored manifest may carry).
-    Only `TimeData` currently carries a ``unique_id`` — derived items
-    reference their source through ``id_link`` instead — so in practice
-    this is the set of captures a document contains.
+
+    EVERY kind that carries a ``unique_id`` contributes — derived items
+    have carried their own since the derived-data save round (they also
+    reference their source through ``id_link``), so this is no longer
+    only the captures. That is deliberately harmless for the callers:
+    a pending capture's own ids come from a capture blob, which holds
+    just its ``TimeData``, and the journal clears it only when those
+    ids are a SUBSET of a posted document's — a larger document set can
+    never make that test wrongly true.
 
     Deliberately total: anything unreadable (not a zip, no manifest,
     invalid JSON, unexpected shapes) yields an EMPTY set rather than

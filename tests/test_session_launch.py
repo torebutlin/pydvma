@@ -33,6 +33,40 @@ def _tiny_dataset(name='pushed'):
     return datastructure.DataSet(td)
 
 
+def _dataset_with_derived():
+    '''A capture plus one item of every derived kind linked to it.
+
+    Built with the real analysis calls so the items carry exactly what
+    pydvma gives them — `unique_id` included, which is the point of the
+    tests that use this.
+    '''
+    import pydvma as dvma
+    data = dvma.create_test_impulse_data(noise_level=0)
+    td = data.time_data_list[0]
+    data.add_to_dataset(dvma.calculate_fft(td))
+    data.add_to_dataset(dvma.calculate_tf(td, ch_in=0, N_frames=2))
+    data.add_to_dataset(dvma.calculate_cross_spectrum_matrix(td, N_frames=2))
+    data.add_to_dataset(dvma.calculate_sonogram(td, nperseg=64, noverlap=32))
+    return data
+
+
+def _counts(dataset):
+    '''Item count per kind — what a duplicating push visibly changes.'''
+    return {name: len(getattr(dataset, name, []) or [])
+            for name in datastructure.DataSet._LIST_ATTRS}
+
+
+def _all_ids(dataset):
+    '''Every item's `unique_id` as strings (absent ids skipped).'''
+    out = set()
+    for name in datastructure.DataSet._LIST_ATTRS:
+        for item in getattr(dataset, name, []) or []:
+            uid = getattr(item, 'unique_id', None)
+            if uid is not None:
+                out.add(str(uid))
+    return out
+
+
 def _launch(tmp_path, **over):
     kw = dict(open_browser=False, port=0,
               session_dir=tmp_path, recover=False)
@@ -228,6 +262,44 @@ class TestSessionData:
         s.push(_tiny_dataset('kept'))
         s.close()
         assert [t.test_name for t in s.data.time_data_list] == ['kept']
+
+    def test_push_of_an_unmodified_pull_is_a_no_op(self, tmp_path):
+        # The round trip a notebook does by reflex: pull the session,
+        # look at it, push it back. Nothing changed, so nothing may
+        # change server-side — and that only holds because DERIVED items
+        # carry their own `unique_id` too. Without one they have no
+        # identity to match, so `_merge_dataset` appends them, and the
+        # spectra double on every push (they did, before this round).
+        with _launch(tmp_path) as s:
+            s.push(_dataset_with_derived())
+            before = _counts(s.data)
+            ids_before = _all_ids(s.data)
+
+            s.push(s.data)                      # straight back, untouched
+            assert _counts(s.data) == before
+            s.push(s.data)                      # and again, for luck
+            assert _counts(s.data) == before
+            assert _all_ids(s.data) == ids_before
+
+        # non-trivial: every kind really was present
+        assert before == {'time_data_list': 1, 'freq_data_list': 1,
+                          'cross_spec_data_list': 1, 'tf_data_list': 1,
+                          'modal_data_list': 0, 'sono_data_list': 1,
+                          'meta_data_list': 0}
+
+    def test_a_derived_item_with_no_id_still_appends(self, tmp_path):
+        # The honest caveat, pinned: items in a file written BEFORE
+        # derived ids existed have no identity, so a repeated push does
+        # duplicate them. Deliberately not papered over with a
+        # composite-key fallback — recompute (or re-Save) to give them
+        # ids instead.
+        with _launch(tmp_path) as s:
+            ds = _dataset_with_derived()
+            del ds.freq_data_list[0].unique_id
+            s.push(ds)
+            assert _counts(s.data)['freq_data_list'] == 1
+            s.push(s.data)
+            assert _counts(s.data)['freq_data_list'] == 2
 
 
 class TestPushGuards:

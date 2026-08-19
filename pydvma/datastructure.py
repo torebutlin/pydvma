@@ -896,6 +896,12 @@ class FreqData():
         channel_cal_factors (np.ndarray): Per-channel multipliers from
             volts to engineering units; applied at display time.
         id_link (uuid.UUID): `unique_id` of the source TimeData.
+        unique_id (uuid.UUID): This item's own identity, minted at
+            construction. It is what makes a pull → modify → push round
+            trip through :class:`pydvma.session.Session` REPLACE this
+            result in place instead of appending a second copy beside
+            it. Optional in the container: a file written before
+            derived items carried ids restores without the attribute.
         test_name (str or None): Free-form label.
         timestamp (datetime.datetime): When this FreqData was constructed.
         timestring (str): Filesystem-safe rendering of `timestamp`.
@@ -929,7 +935,10 @@ class FreqData():
         t = datetime.datetime.now()
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
-        
+        # Own identity, like TimeData's: Session.push merges by unique_id,
+        # so a derived item without one appends a duplicate on every push.
+        self.unique_id = uuid.uuid4()
+
     def __repr__(self):
         return "<FreqData>"
     
@@ -956,6 +965,9 @@ class CrossSpecData():
             volts to engineering units.
         id_link: `unique_id` of the source TimeData (or list of
             ids when averaged across a TimeDataList).
+        unique_id (uuid.UUID): This item's own identity, minted at
+            construction — see `FreqData.unique_id` for why a derived
+            item needs one.
         test_name (str or None): Free-form label.
         timestamp (datetime.datetime): When constructed.
         timestring (str): Filesystem-safe rendering of `timestamp`.
@@ -974,7 +986,9 @@ class CrossSpecData():
         t = datetime.datetime.now()
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
-        
+        # Own identity, like TimeData's — see FreqData.unique_id.
+        self.unique_id = uuid.uuid4()
+
     def __repr__(self):
         return "<CrossSpecData>"
     
@@ -1017,6 +1031,9 @@ class TfData():
             (cal[out] / cal[in]). A manual override here overwrites
             the inherited ratio.
         id_link: `unique_id` of the source TimeData (or list when averaged).
+        unique_id (uuid.UUID): This item's own identity, minted at
+            construction — see `FreqData.unique_id` for why a derived
+            item needs one.
         test_name (str or None): Free-form label.
         timestamp (datetime.datetime): When constructed.
         timestring (str): Filesystem-safe rendering of `timestamp`.
@@ -1086,6 +1103,8 @@ class TfData():
         self.bla_sigma_nl = None
         self.bla_sigma_n = None
         self.bla = None
+        # Own identity, like TimeData's — see FreqData.unique_id.
+        self.unique_id = uuid.uuid4()
 
     def __repr__(self):
         return "<TfData>"
@@ -1251,6 +1270,9 @@ class SonoData():
         channel_cal_factors (np.ndarray): Multipliers from volts to
             engineering units, one per PLANE of `sono_data`.
         id_link: `unique_id` of the source TimeData.
+        unique_id (uuid.UUID): This item's own identity, minted at
+            construction — see `FreqData.unique_id` for why a derived
+            item needs one.
         test_name (str or None): Free-form label.
         timestamp (datetime.datetime): When constructed.
         timestring (str): Filesystem-safe rendering of `timestamp`.
@@ -1268,7 +1290,9 @@ class SonoData():
         t = datetime.datetime.now()
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
-        
+        # Own identity, like TimeData's — see FreqData.unique_id.
+        self.unique_id = uuid.uuid4()
+
     def __repr__(self):
         return "<SonoData>"
         

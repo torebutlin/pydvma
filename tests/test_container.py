@@ -768,12 +768,25 @@ def _rezip_with_manifest(blob, manifest):
 class TestManifestIds:
     """container.manifest_ids: the journal's cheap capture identity."""
 
-    def test_returns_time_data_unique_ids(self):
+    def test_returns_every_item_unique_id(self):
+        # Captures AND derived items (which have carried their own id
+        # since the derived-data save round). The journal only ever asks
+        # whether a capture's ids are a SUBSET of a document's, so the
+        # wider set cannot make that test wrongly true — but it must
+        # still contain every capture.
         ds = _make_full_dataset()
         blob = container.save_bytes(ds)
-        expected = {str(td.unique_id) for td in ds.time_data_list}
-        assert container.manifest_ids(blob) == expected
-        assert expected                                  # non-trivial
+        captures = {str(td.unique_id) for td in ds.time_data_list}
+        found = container.manifest_ids(blob)
+        assert captures                                  # non-trivial
+        assert captures <= found
+        expected = set()
+        for name in datastructure.DataSet._LIST_ATTRS:
+            for item in getattr(ds, name, []) or []:
+                uid = getattr(item, 'unique_id', None)
+                if uid is not None:
+                    expected.add(str(uid))
+        assert found == expected
 
     def test_reads_manifest_only(self, monkeypatch):
         # No .npy member may be decompressed: this runs on whole
@@ -875,3 +888,72 @@ class TestBytesRoundTrip:
     def test_save_bytes_output_is_a_zip(self):
         ds = _make_full_dataset()
         assert container.save_bytes(ds)[:2] == b'PK'
+
+
+class TestDerivedItemUniqueId:
+    '''`unique_id` on the DERIVED kinds — the identity that makes a
+    notebook pull -> push round trip REPLACE a stored result instead of
+    appending a second copy of it (see `session._merge_dataset`).
+
+    Optional meta by design: a file written before derived items carried
+    ids must load with the attribute genuinely ABSENT, so
+    ``getattr(item, 'unique_id', None)`` keeps reading "no identity".
+    '''
+
+    def test_every_derived_kind_mints_one(self):
+        data = dvma.create_test_impulse_data(noise_level=0)
+        td = data.time_data_list[0]
+        derived = [
+            dvma.calculate_fft(td),
+            dvma.calculate_tf(td, ch_in=0, N_frames=2),
+            dvma.calculate_cross_spectrum_matrix(td, N_frames=2),
+            dvma.calculate_sonogram(td, nperseg=64, noverlap=32),
+        ]
+        ids = [item.unique_id for item in derived]
+        assert all(isinstance(i, uuid.UUID) for i in ids)
+        assert len(set(ids)) == len(ids)          # each item its own identity
+
+    def test_roundtrip_preserves_each_id(self, tmp_path):
+        data = dvma.create_test_impulse_data(noise_level=0)
+        td = data.time_data_list[0]
+        data.add_to_dataset(dvma.calculate_fft(td))
+        data.add_to_dataset(dvma.calculate_tf(td, ch_in=0, N_frames=2))
+        data.add_to_dataset(dvma.calculate_cross_spectrum_matrix(td, N_frames=2))
+        data.add_to_dataset(dvma.calculate_sonogram(td, nperseg=64, noverlap=32))
+        path = tmp_path / 'ids.dvma'
+        container.save(data, str(path))
+        loaded = container.load(str(path))
+
+        for name in ('freq_data_list', 'tf_data_list',
+                     'cross_spec_data_list', 'sono_data_list'):
+            before = getattr(data, name)[0].unique_id
+            after = getattr(loaded, name)[0].unique_id
+            assert after == before, name
+            # decoded back to a real UUID, not the manifest's tag dict
+            assert isinstance(after, uuid.UUID), name
+
+    def test_absent_id_stays_absent(self, tmp_path):
+        # A pre-round file: no unique_id on the derived item. Loading must
+        # not invent one, and must not leave a None behind either — some
+        # later index map could key on it.
+        data = dvma.create_test_impulse_data(noise_level=0)
+        fd = dvma.calculate_fft(data.time_data_list[0])
+        del fd.unique_id
+        data.add_to_dataset(fd)
+        path = tmp_path / 'no_id.dvma'
+        container.save(data, str(path))
+        loaded = container.load(str(path))
+        assert not hasattr(loaded.freq_data_list[0], 'unique_id')
+
+    def test_a_browser_written_string_id_survives(self, tmp_path):
+        # The app mints a plain-string uuid (no `{'__uuid__': ...}` tag —
+        # it does not apply pydvma's JSON tag scheme), so the reader must
+        # hand that back unchanged rather than insisting on a UUID.
+        data = dvma.create_test_impulse_data(noise_level=0)
+        fd = dvma.calculate_fft(data.time_data_list[0])
+        fd.unique_id = 'b6a0f1de-0000-4000-8000-000000000001'
+        data.add_to_dataset(fd)
+        path = tmp_path / 'str_id.dvma'
+        container.save(data, str(path))
+        loaded = container.load(str(path))
+        assert loaded.freq_data_list[0].unique_id == fd.unique_id

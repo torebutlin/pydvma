@@ -18,11 +18,18 @@
 //     the local (folder/idb) stores. It is also SIZE-GUARDED — see
 //     JOURNAL_SINK_MAX_BYTES — because the whole document crosses /engine in
 //     one frame; a session past the guard keeps its local autosave and drops
-//     only the server copy.
+//     only the server copy, and says so ONCE (setJournalOverflowNotice).
 //
-// On an explicit Save Dataset (or when the user dismisses the restore
+// The journal leg is also reachable on its own, via journalPost(): an
+// explicit Save materialises analysis into the document and must reach the
+// server WITHOUT waiting for (or racing) the debounce — see App.svelte's
+// save handler.
+//
+// On a FULL explicit Save Dataset (or when the user dismisses the restore
 // banner) the caller invokes clearAutosave() so a stale autosave never
-// resurfaces after a clean save.
+// resurfaces after a clean save. A SUBSET save deliberately does not: the
+// file it wrote is not the whole session, so the autosave still holds
+// something the file does not.
 import { del as idbDelReal, get as idbGetReal, set as idbSetReal } from 'idb-keyval';
 import type { WorkDir } from './workdir';
 
@@ -102,6 +109,84 @@ export function setJournalSink(next: JournalSink | null): void {
   journalSink = next;
 }
 
+/**
+ * Told once, with the offending size and the limit, when a document is too
+ * big for the journal sink (see {@link JOURNAL_SINK_MAX_BYTES}).
+ */
+export type JournalOverflowNotice = (bytes: number, limit: number) => void;
+let overflowNotice: JournalOverflowNotice | null = null;
+let overflowNotified = false;
+
+/**
+ * Register (or clear) the over-size notice — the user-visible half of the
+ * size guard, registered by App alongside the sink.
+ *
+ * Why it exists at all: the guard used to be a bare `console.warn`, which
+ * meant the ENTIRE server-side session surface (tab-close restore, crash
+ * recovery, `session.data` in a notebook) silently stopped tracking the
+ * session while the app carried on looking healthy. That was tolerable while
+ * only a pathological session could reach 192 MiB; including sonograms on
+ * Save makes it ordinary — one all-channel sonogram of a 30 s × 51.2 kHz ×
+ * 4 ch record is ~139 MB, so two measurements cross it.
+ *
+ * ONE-SHOT: fired at most once per session, because the condition repeats on
+ * every autosave and a toast per autosave would be its own bug. It is
+ * therefore a *state* notice ("from here on the server copy is stale"), not
+ * a per-write error.
+ */
+export function setJournalOverflowNotice(next: JournalOverflowNotice | null): void {
+  overflowNotice = next;
+}
+
+/** TEST-ONLY: re-arm the one-shot notice (each test starts fresh). */
+export function __resetJournalOverflowNotice(): void {
+  overflowNotified = false;
+}
+
+/**
+ * Hand `bytes` to the journal sink if one is registered and the document is
+ * within the size guard; otherwise warn (and raise the one-shot notice).
+ *
+ * Called from two places, and it matters that both go through here:
+ *   - `persist()`, the debounced autosave's journal leg;
+ *   - App's explicit Save, which materialises computed analysis INTO the
+ *     document and posts it directly (see the exported-seam note in the
+ *     module header) — without that post the journal would only learn about
+ *     materialised items on the next unrelated mutation, so a tab closed
+ *     right after Save would restore a session missing the very results the
+ *     user just saved.
+ *
+ * Fire-and-forget and failure-tolerant in both directions, exactly like the
+ * local write: a sink that throws (sync) or rejects (async — the real
+ * `/engine` sink is async) must never break the caller's flow.
+ */
+export function journalPost(bytes: Uint8Array): void {
+  if (!journalSink) return;
+  if (bytes.length > journalSinkMaxBytes) {
+    const mb = (n: number) => Math.round(n / (1024 * 1024));
+    console.warn(
+      `[autosave] session too large for the serve journal (${mb(bytes.length)} MB > ` +
+        `${mb(journalSinkMaxBytes)} MB limit) — local autosave only`,
+    );
+    if (!overflowNotified) {
+      overflowNotified = true;
+      try {
+        overflowNotice?.(bytes.length, journalSinkMaxBytes);
+      } catch (e) {
+        console.warn('[autosave] journal overflow notice failed:', e);
+      }
+    }
+    return;
+  }
+  try {
+    void Promise.resolve(journalSink(bytes)).catch((e) =>
+      console.warn('[autosave] journal sink failed:', e),
+    );
+  } catch (e) {
+    console.warn('[autosave] journal sink failed:', e);
+  }
+}
+
 /** The single pending debounce timer (module-level; one autosave at a time). */
 let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -165,24 +250,7 @@ export function cancelAutosave(): void {
  * one console warning, rather than repeatedly closing the /engine socket.
  */
 async function persist(bytes: Uint8Array, dir: WorkDir | null): Promise<void> {
-  if (journalSink && bytes.length > journalSinkMaxBytes) {
-    const mb = (n: number) => Math.round(n / (1024 * 1024));
-    console.warn(
-      `[autosave] session too large for the serve journal (${mb(bytes.length)} MB > ` +
-        `${mb(journalSinkMaxBytes)} MB limit) — local autosave only`,
-    );
-  } else if (journalSink) {
-    try {
-      // The sink may be sync (throws) or async (rejects) — the real /engine
-      // sink in Task 5 is async. Catch both shapes so neither can reach an
-      // unhandled rejection or break the local write below.
-      void Promise.resolve(journalSink(bytes)).catch((e) =>
-        console.warn('[autosave] journal sink failed:', e),
-      );
-    } catch (e) {
-      console.warn('[autosave] journal sink failed:', e);
-    }
-  }
+  journalPost(bytes);          // size-guarded, failure-tolerant; see its doc
   try {
     if (dir && dir.kind === 'fsaccess') {
       await dir.save(AUTOSAVE_NAME, bytes);
@@ -208,9 +276,13 @@ export async function restoreOffer(): Promise<Uint8Array | null> {
 }
 
 /**
- * Delete the IndexedDB autosave. Called after a successful explicit Save
+ * Delete the IndexedDB autosave. Called after a successful FULL explicit Save
  * Dataset (the autosave is now redundant) and when the user dismisses the
  * restore banner, so a stale session never re-offers.
+ *
+ * NOT called after a SUBSET save ("Choose sets…"): that file holds only the
+ * chosen measurements, so the autosave still carries session state the file
+ * does not and must survive.
  */
 export async function clearAutosave(): Promise<void> {
   await idb.del(IDB_KEY);

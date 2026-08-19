@@ -55,7 +55,10 @@
   import { legendOverlaySvg } from './lib/export/legendOverlay';
   import { sniffFormat } from './lib/files/sniff';
   import { fallbackDir, pickWorkDir, restoreWorkDir, type WorkDir } from './lib/files/workdir';
-  import { autosave, clearAutosave, restoreOffer, setJournalSink } from './lib/files/autosave';
+  import {
+    autosave, clearAutosave, journalPost, restoreOffer,
+    setJournalOverflowNotice, setJournalSink,
+  } from './lib/files/autosave';
   import type { DvmaDataset } from './lib/model/dataset';
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
@@ -390,6 +393,19 @@
     // on Pages / JupyterLite / any pyodide session (`journalAvailable()`
     // false ⇒ no sink, no subscription).
     let unsubJournalPush: (() => void) | null = null;
+    // The over-size notice: registered once, fired at most once by autosave.ts
+    // when a document is too big for the journal frame. Worth a toast rather
+    // than a console line because everything server-side — tab-close restore,
+    // crash recovery, `session.data` in a notebook — silently stops tracking
+    // the session from that point, while the app itself looks fine.
+    setJournalOverflowNotice((bytes, limit) => {
+      const mb = (n: number) => Math.round(n / (1024 * 1024));
+      toasts.push(
+        `Session too large for the serve journal (${mb(bytes)} MB > ${mb(limit)} MB) — `
+          + 'server-side restore is stale from here; your local autosave is still current.',
+        { level: 'error' },
+      );
+    });
     const unsubJournalStatus = engineStatus.subscribe((s) => {
       if (s === 'ready' && journalAvailable()) {
         // Async sink: `persist()` fires it and swallows a rejection (see
@@ -409,6 +425,7 @@
     });
     const cleanupJournal = () => {
       setJournalSink(null);
+      setJournalOverflowNotice(null);
       unsubJournalPush?.();
       unsubJournalStatus();
     };
@@ -881,6 +898,20 @@
       // A SUBSET save is not the whole session, so it must not supersede the
       // autosave that still holds it (only a full save does).
       const partial = doc !== ds;
+      // POST THE MATERIALISED DOCUMENT TO THE JOURNAL, NOW. Save is the only
+      // thing that turns computed views into document items, and
+      // `materializeDerived` deliberately emits no store change (re-emitting
+      // would schedule a debounced autosave that fires just after the
+      // `clearAutosave` below — the race the no-emit choice avoids). Without
+      // this direct post the server would not learn about the items until
+      // some unrelated later mutation, so closing the tab straight after Save
+      // restored a session missing exactly the results just saved, and a
+      // notebook `session.data` / `push` never saw them at all.
+      // ALWAYS THE FULL LIVE DOCUMENT: the journal is the session, not the
+      // file, so a subset save pays one extra serialise rather than posting
+      // its filtered document. A sonogram included above is already in `ds`,
+      // so it rides this post too.
+      journalPost(partial ? writeDvma(ds) : bytes);
       if (!partial) await clearAutosave();
       const total = partial ? actions.choosableSets().length : 0;
       toasts.push(

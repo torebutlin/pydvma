@@ -3,11 +3,14 @@ import {
   autosave,
   cancelAutosave,
   clearAutosave,
+  journalPost,
   restoreOffer,
+  setJournalOverflowNotice,
   setJournalSink,
   JOURNAL_SINK_MAX_BYTES,
   __setIdb,
   __setJournalSinkMaxBytes,
+  __resetJournalOverflowNotice,
 } from '../../src/lib/files/autosave';
 import type { WorkDir } from '../../src/lib/files/workdir';
 
@@ -44,7 +47,9 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   setJournalSink(null); // guard: a leaked sink from a failing test must not poison later ones
+  setJournalOverflowNotice(null);
   __setJournalSinkMaxBytes(JOURNAL_SINK_MAX_BYTES); // and a shrunk limit must not leak either
+  __resetJournalOverflowNotice();                   // the notice is ONE-SHOT per session
 });
 
 describe('autosave debounce', () => {
@@ -249,5 +254,91 @@ describe('journal sink', () => {
     expect(posted).toHaveLength(0);
     expect(dir.save).not.toHaveBeenCalled();
     expect(idb.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('journal overflow notice (one-shot)', () => {
+  test('an over-limit autosave raises the notice ONCE, and still writes locally', async () => {
+    // The guard used to be console-only, which meant the entire server-side
+    // session surface (tab-close restore, crash recovery, session.data) went
+    // stale in silence. Including a sonogram on Save makes that ordinary
+    // rather than pathological, so the user has to be told.
+    __setJournalSinkMaxBytes(8);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const notices: [number, number][] = [];
+    setJournalSink(() => {});
+    setJournalOverflowNotice((bytes, limit) => notices.push([bytes, limit]));
+
+    autosave(new Uint8Array(9), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(notices).toEqual([[9, 8]]);
+    expect(idb.set).toHaveBeenCalledTimes(1);      // local write unaffected
+
+    // ONE-SHOT: the condition repeats on every autosave, and a toast per
+    // autosave would be its own bug.
+    autosave(new Uint8Array(10), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(notices).toHaveLength(1);
+    expect(idb.set).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  test('a notice that throws cannot break the local write', async () => {
+    __setJournalSinkMaxBytes(8);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setJournalSink(() => {});
+    setJournalOverflowNotice(() => { throw new Error('toast host gone'); });
+    autosave(new Uint8Array(9), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(idb.set).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  test('within the limit, nothing is raised', async () => {
+    const notices: number[] = [];
+    setJournalSink(() => {});
+    setJournalOverflowNotice((b) => notices.push(b));
+    autosave(new Uint8Array(4), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(notices).toEqual([]);
+  });
+});
+
+describe('journalPost — the explicit-Save journal seam', () => {
+  // Save materialises computed analysis INTO the document, and nothing else
+  // re-emits it, so the save handler posts the live document to the journal
+  // itself rather than waiting for (or racing) the debounce.
+  test('posts immediately, with no timers involved', () => {
+    const posted: Uint8Array[] = [];
+    setJournalSink((b) => posted.push(b));
+    journalPost(new Uint8Array([4, 2]));
+    expect(posted).toHaveLength(1);               // no advanceTimers needed
+    expect([...posted[0]]).toEqual([4, 2]);
+  });
+
+  test('is a no-op with no sink registered (Pages / pyodide sessions)', () => {
+    expect(() => journalPost(new Uint8Array([1]))).not.toThrow();
+  });
+
+  test('honours the same size guard, and raises the same one-shot notice', () => {
+    __setJournalSinkMaxBytes(8);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const posted: Uint8Array[] = [];
+    const notices: number[] = [];
+    setJournalSink((b) => posted.push(b));
+    setJournalOverflowNotice((b) => notices.push(b));
+    journalPost(new Uint8Array(9));
+    expect(posted).toHaveLength(0);
+    expect(notices).toEqual([9]);
+    warn.mockRestore();
+  });
+
+  test('a rejecting sink does not escape as an unhandled rejection', async () => {
+    setJournalSink(async () => { throw new Error('socket gone'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    journalPost(new Uint8Array([1]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

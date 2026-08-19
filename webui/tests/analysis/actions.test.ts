@@ -1508,6 +1508,67 @@ test('materialising twice replaces by lineage — exactly one FreqData and one T
   expect(ds.items.find((i) => i.kind === 'FreqData')).toBe(first);
 });
 
+test('a materialised item carries its own unique_id, stable across re-saves and a reload', async () => {
+  // Identity is what makes a notebook pull -> push-back REPLACE this result
+  // instead of appending a copy (pydvma.session._merge_dataset merges by
+  // unique_id). Without it the spectra double on every push.
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  await actions.calcTf(setId);
+
+  actions.materializeDerived();
+  const ds = get(actions.dataset)!;
+  const freq = ds.items.find((i) => i.kind === 'FreqData')!;
+  const tf = ds.items.find((i) => i.kind === 'TfData')!;
+  const freqId = freq.meta.unique_id as string;
+  const tfId = tf.meta.unique_id as string;
+  expect(typeof freqId).toBe('string');
+  expect(freqId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(tfId).not.toBe(freqId);                 // one identity per item
+  expect(freqId).not.toBe(ds.items.find((i) => i.kind === 'TimeData')!.meta.unique_id);
+  // and it is written to the manifest, not just held in memory
+  expect(freq.metaRaw!.unique_id).toBe(freqId);
+
+  // A second Save must not re-mint: the stored result is the same result.
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+  expect(freq.meta.unique_id).toBe(freqId);
+
+  // …and it survives the file, so the item a notebook pulls matches the item
+  // the app still holds.
+  const back = readDvma(writeDvma(get(actions.dataset)!));
+  const { actions: a2 } = harness(engine);
+  a2.loadDataset(back);
+  const reloaded = get(a2.dataset)!.items.find((i) => i.kind === 'FreqData')!;
+  expect(reloaded.meta.unique_id).toBe(freqId);
+  // re-materialising an ADOPTED item keeps the id it arrived with
+  await a2.calcFft(0);
+  a2.materializeDerived();
+  expect(get(a2.dataset)!.items.find((i) => i.kind === 'FreqData')!.meta.unique_id)
+    .toBe(freqId);
+});
+
+test('an adopted item with NO unique_id is given one when it is re-materialised', async () => {
+  // A file written before derived items carried ids: nothing to preserve, so
+  // the rewrite mints one rather than leaving it identity-less forever.
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+  const ds = get(actions.dataset)!;
+  const freq = ds.items.find((i) => i.kind === 'FreqData')!;
+  delete freq.meta.unique_id;
+  delete freq.metaRaw!.unique_id;
+
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+  expect(typeof freq.meta.unique_id).toBe('string');
+  expect(freq.metaRaw!.unique_id).toBe(freq.meta.unique_id);
+});
+
 test('a loaded file that already carries materialised items does not duplicate them on re-save', async () => {
   const { engine } = calcEngine();
   const { actions } = harness(engine);

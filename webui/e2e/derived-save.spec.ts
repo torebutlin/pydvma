@@ -472,8 +472,31 @@ test.describe('derived-data save', () => {
       // diverge — a stride rule, a byte order, the fs tail — this fails.
       expect(summary.freq_sig_recomputed[0]).toBe(summary.freq_sig[0]);
 
-      // ---- fresh page, load the file, and DO NOT press Calc ----
+      // ---- the JOURNAL learned about the materialised items ----
+      // Save is the only thing that turns computed views into document items,
+      // and materialisation deliberately emits no store change — so unless
+      // the save handler posts the document to the journal ITSELF, the server
+      // still holds the pre-Save session and everything downstream of it
+      // (this restore, `session.data`, a notebook push) silently loses the
+      // results. Taking the offer here, rather than dismissing it, is what
+      // pins that: without the direct post the tray comes back with the
+      // capture and NO analysis, and the assertions below fail.
       await page.close();
+      const restored = await context.newPage();
+      await openApp(restored);
+      await expect(journalToast(restored)).toBeVisible({ timeout: 60_000 });
+      await journalToast(restored).getByRole('button', { name: 'Restore' }).click();
+      // Exactly one card: the posted document cleared the pending capture it
+      // provably contains, so the capture does not come back a second time
+      // beside its own copy.
+      await expect(restored.locator('[data-testid^="tray-card-"]')).toHaveCount(1);
+      await ribbon(restored).getByRole('button', { name: 'Frequency' }).click();
+      await expect(restored.getByTestId('plot-line').first()).toBeAttached({ timeout: 20_000 });
+      await ribbon(restored).getByRole('button', { name: 'TF' }).click();
+      await expect(restored.getByTestId('plot-line').first()).toBeAttached({ timeout: 20_000 });
+      await restored.close();
+
+      // ---- fresh page, load the FILE, and DO NOT press Calc ----
       const reopened = await context.newPage();
       await reopenEmpty(reopened);
       await loadViaFallback(reopened, file);
