@@ -678,6 +678,18 @@ class FreqData():
         test_name (str or None): Free-form label.
         timestamp (datetime.datetime): When this FreqData was constructed.
         timestring (str): Filesystem-safe rendering of `timestamp`.
+        source_signature (str): OPTIONAL, set post-construction by
+            `analysis.calculate_fft` — a 16-hex-character hash of the
+            SOURCE samples and rate (`pydvma._signature`), so a loaded
+            file can tell an intact compute chain from one whose time
+            data changed after the compute. Genuinely optional (needs a
+            `hasattr` guard): items written before signatures existed
+            make no claim about their chain.
+        source_settings (dict): OPTIONAL, set alongside
+            `source_signature` — the analysis knobs that call used, as
+            JSON-safe scalars, so the result is self-describing. A
+            settings change does NOT invalidate a stored result; only a
+            source-sample change does.
     '''
 
     def __init__(self,freq_axis,freq_data,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
@@ -807,6 +819,20 @@ class TfData():
             belongs to). JSON-clean scalars only, so it round-trips
             through the .dvma manifest. None on an ordinary transfer
             function.
+        source_signature (str): OPTIONAL, set post-construction by
+            `analysis.calculate_tf` / `analysis.calculate_tf_averaged` —
+            a 16-hex-character hash of the SOURCE samples and rate
+            (`pydvma._signature`; for an ensemble, every source in list
+            order), so a loaded file can tell an intact compute chain
+            from one whose time data changed after the compute.
+            Genuinely optional (needs a `hasattr` guard): items written
+            before signatures existed, and BLA estimates, carry no
+            signature and make no claim about their chain.
+        source_settings (dict): OPTIONAL, set alongside
+            `source_signature` — the analysis knobs that call used, as
+            JSON-safe scalars, so the result is self-describing. A
+            settings change does NOT invalidate a stored result; only a
+            source-sample change does.
 
     All three BLA attributes are set in `__init__` and are declared
     container fields, so they survive a .dvma round trip as None or as

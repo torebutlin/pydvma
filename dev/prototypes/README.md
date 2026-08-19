@@ -1,5 +1,24 @@
 # Web UI prototypes
 
+## `signature_prototype.mjs` — compute-chain signature cross-check
+
+An independent JavaScript implementation of the signature byte-stream
+contract documented in `pydvma/_signature.py`, written from that
+contract rather than ported from the Python, so agreement between the
+two is evidence the contract is unambiguous. It makes the
+"verified against a JavaScript prototype" claim in
+`tests/test_signature.py` falsifiable.
+
+```bash
+node dev/prototypes/signature_prototype.mjs
+```
+
+The printed table must match the frozen literals in
+`tests/test_signature.py` (and in the shipped twin's vitest,
+`webui/tests/codec/signature.test.ts`) row for row. It also prints a
+timing for the worst realistic record (30 s x 4 ch x 51.2 kHz). This is
+a prototype, not the shipped twin — do not import it from the app.
+
 ## `scope.html` — Stage 2 gate prototype
 
 A self-contained Web Audio oscilloscope (one HTML file, vanilla JS, no

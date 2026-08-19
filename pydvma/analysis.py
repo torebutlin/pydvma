@@ -453,6 +453,14 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
 
 def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, overlap=0.5):
     '''
+    Transfer function of one <TimeData> capture (H1 estimator).
+
+    Provenance: the result is stamped with ``source_signature`` (a hash
+    of the source samples, see `pydvma._signature`) and
+    ``source_settings`` — the knobs of this call, with ``time_range``
+    recorded as the EFFECTIVE range used (the whole record when the
+    argument was None).
+
     Args:
         time_data (<TimeData> object): time series data
         ch_in (int): index of input channel
@@ -550,13 +558,20 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
 
     Does not average data across sub-frames.
 
+    Provenance: the result is stamped with ``source_signature`` (hashing
+    every source's samples, concatenated in list order) and
+    ``source_settings``. That settings snapshot records ``time_range``
+    as PASSED — ``None`` meaning "the whole of each record" — whereas
+    `calculate_tf` records the effective range it resolved, because an
+    ensemble of records has no single effective range.
+
     Args:
         time_data_list (<TimeDataList> object): a list of time series data
         ch_in (int): index of input channel
         time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
         window (None or str): type of window to use, default is None.
     '''
-    
+
     if time_data_list.__class__.__name__ != 'TimeDataList':
         raise Exception('Input argument must be <TimeDataList> object.')
 
