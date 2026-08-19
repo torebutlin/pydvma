@@ -7,8 +7,12 @@ pydvma quickly — scripting acquisition and analysis in a notebook.
     For interactive work, use the **[web logger](../web-logger/index.md)** —
     including a **no-install** browser app at
     [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/).
-    It replaced the old desktop **Qt Logger**, which has been **removed**
-    (its last version is the `qt-final` git tag) — see
+    You can also have both at once: `session = dvma.launch(settings)`
+    starts the web logger from a notebook and hands captures back as
+    Python objects (`session.data`) — see
+    [the notebook front door](../web-logger/migration.md#the-notebook-front-door-dvmalaunch).
+    The web logger replaced the old desktop **Qt Logger**, which has
+    been **removed** (its last version is the `qt-final` git tag) — see
     [From the Qt logger](../web-logger/migration.md).
 
 ## Opening the Template

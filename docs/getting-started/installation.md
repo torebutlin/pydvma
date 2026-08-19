@@ -11,6 +11,7 @@ them need **no installation at all**:
 | **Analyse saved data** (or capture from a soundcard) with nothing to install | Open the **Pages app** at [`torebutlin.github.io/pydvma/app/`](https://torebutlin.github.io/pydvma/app/) | **None** |
 | **Script analysis in a notebook**, no install | Open the **[JupyterLite site](https://torebutlin.github.io/pydvma/lite/)** and `import pydvma` | **None** |
 | **Acquire from real hardware in the browser** (soundcard or **NI-DAQ**) | Run the **local bridge**: `pydvma-serve` | `pip install "pydvma[serve,soundcard]"` (`[ni]` for NI) |
+| **Log in the browser, analyse in a notebook** — both at once | `session = dvma.launch(settings)` — the [notebook front door](../web-logger/migration.md#the-notebook-front-door-dvmalaunch) | `pip install "pydvma[serve,soundcard]"` (`[ni]` for NI) |
 | **Work in Python / Jupyter on your own machine** | `import pydvma as dvma` | `pip install pydvma` (add extras below) |
 | **Run the old desktop Qt logger** (removed) | See the [`qt-final` git tag](../web-logger/migration.md) | `git checkout qt-final` |
 
