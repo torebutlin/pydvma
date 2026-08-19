@@ -156,27 +156,47 @@ interface WorkingSet {
 type DerivedMap = Record<number, SetArrays>;
 
 /**
- * The derived-item kinds `materializeDerived` writes into the document and
- * `staleChains` (see `createActions`) tracks for broken-chain detection —
- * `'freq'` (a `FreqData`, the FFT) and `'tf'` (a `TfData`, the transfer
- * function + coherence). Task 5b's honest SonoData materialisation adds
- * `'sono'` to this union; every consumer (`materializedItems`,
- * `staleChains`, `derivedKindOf`) is already keyed generically by it, so
- * that lands as a one-line type change plus a `derivedKindOf` case.
+ * The derived-item kinds Save writes into the document and `staleChains`
+ * (see `createActions`) tracks for broken-chain detection — `'freq'` (a
+ * `FreqData`, the FFT), `'tf'` (a `TfData`, the transfer function +
+ * coherence) and `'sono'` (a `SonoData`, the complex sonogram cube).
+ *
+ * The first two are materialised AUTOMATICALLY on Save (`materializeDerived`);
+ * the sonogram is written only when the user says so at the save-time prompt
+ * (`includeSonograms`), because an honest `SonoData` cannot be built from the
+ * app's slice and needs a recompute. Everything downstream of that difference
+ * — the lineage map, the staleness store, the removal bookkeeping — is keyed
+ * generically by this union and treats all three alike.
  */
-export type DerivedKind = 'freq' | 'tf';
+export type DerivedKind = 'freq' | 'tf' | 'sono';
+
+/** Every `DerivedKind`, for the loops that must cover all of them. */
+export const DERIVED_KINDS: readonly DerivedKind[] = ['freq', 'tf', 'sono'];
 
 /**
  * Map a loaded item's `DataKind` to its `DerivedKind` bucket, or `null` for
  * a kind neither lineage adoption (`loadDataset` pass 2) nor staleness
- * detection tracks. The single seam Task 5b extends to fold SonoData into
- * both systems.
+ * detection tracks (`CrossSpecData`, `ModalData`, `MetaData`).
  */
 function derivedKindOf(kind: DataKind): DerivedKind | null {
   if (kind === 'FreqData') return 'freq';
   if (kind === 'TfData') return 'tf';
+  if (kind === 'SonoData') return 'sono';
   return null;
 }
+
+/**
+ * What a Save should do with the sonograms computed this session — the
+ * answer to the "Include sonogram data?" prompt (Task 5b, Tore's design).
+ *
+ * - `'channel'` (the default offered): store just the channel the sono view
+ *   is currently showing — the one the user has been looking at;
+ * - `'all'`: store every channel of each set that has a sonogram;
+ * - `'none'`: save without any sonogram. Dismissing the dialog (Escape,
+ *   a click outside) resolves to this too, so a prompt can never block or
+ *   silently cancel a save the user already committed to.
+ */
+export type SonoSaveChoice = 'channel' | 'all' | 'none';
 
 /** fs from a TimeData item: prefer settings.fs, else infer from the axis. */
 function sampleRate(item: DvmaItem): number {
@@ -245,6 +265,25 @@ function axisNpy(axis: Float64Array): NpyArray {
 }
 
 /**
+ * A freshly-marshalled worker array as a stored `NpyArray`, unchanged.
+ *
+ * The engine's `_arr` and `codec/npy.ts` agree on the wire layout — row-major
+ * ravel, complex interleaved `[re, im, …]` — for arrays of ANY rank, so a
+ * worker result destined straight for the file needs no decode/re-encode
+ * round trip (which for a sonogram cube would double the peak memory of the
+ * one array in this system big enough to notice). Used by the sonogram
+ * materialisation; `complexNpy` / `realNpy` remain the path for arrays that
+ * were decoded for display first.
+ */
+function marshalledNpy(a: MarshalledArray): NpyArray {
+  return {
+    shape: a.shape.slice(),
+    data: a.data instanceof Float64Array ? a.data : Float64Array.from(a.data),
+    isComplex: a.complex,
+  };
+}
+
+/**
  * pydvma's `timestring` spelling of a moment — `YYYY-MM-DD HH:MM:SS` in
  * LOCAL time, matching what the acquisition paths write and the tray shows.
  */
@@ -291,11 +330,11 @@ function newUniqueId(): string {
  * with the out/in remap fields, PLUS the Schoukens BLA σ_NL/σ_n pair when the
  * item carries `bla_sigma_nl`/`bla_sigma_n` — a saved-then-reopened BLA set
  * is a plain `TfData`, see `addBlaSets`, so its σ overlay must round-trip
- * the same way `coherence` does); `CrossSpecData → csd` (coherence). NOT
- * restored as a slice: stored `SonoData` is a 3-D complex `(Nf, Nt, Nc)`
- * cube whereas the webui's sono slice is a 2-D per-channel magnitude image,
- * and PSD is derivable from the stored `Pxy` — both are left to an on-demand
- * Calc (the FFT still shows). `ModalData`/`MetaData` carry no plottable slice.
+ * the same way `coherence` does); `CrossSpecData → csd` (coherence);
+ * `SonoData → sono` (see {@link sonoSliceFromCube} for the cube → image
+ * reduction). NOT restored as a slice: PSD, which is derivable from the
+ * stored `Pxy` and is left to an on-demand Calc (the FFT still shows).
+ * `ModalData`/`MetaData` carry no plottable slice.
  *
  * chIn CONVENTION (two cases):
  *   - LINKED TF (a source `TimeData` IS in the file): its input channel was
@@ -338,9 +377,55 @@ function sliceForLoadedItem(
     case 'CrossSpecData':
       if (!A.freq_axis || !A.Cxy) return null;
       return { csd: { axis: Float64Array.from(A.freq_axis.data), data: decodeNpy(A.Cxy) } };
+    case 'SonoData': {
+      if (!A.time_axis || !A.freq_axis || !A.sono_data) return null;
+      const data = sonoSliceFromCube(A.sono_data);
+      if (!data) return null;
+      return {
+        sono: {
+          timeAxis: Float64Array.from(A.time_axis.data),
+          freqAxis: Float64Array.from(A.freq_axis.data),
+          data,
+        },
+      };
+    }
     default:
       return null;
   }
+}
+
+/**
+ * Reduce a stored `SonoData` cube to the 2-D real image the sono view draws.
+ *
+ * A `SonoData`'s `sono_data` is `(n_freq, n_frames, n_channels)` and COMPLEX
+ * (pydvma stores the transform, not a picture); the webui's `sono` slice is a
+ * single channel's `(n_freq, n_frames)` MAGNITUDE image, exactly what
+ * `engine.calc_sono` returns for the heat canvas. So a loaded cube shows its
+ * FIRST stored plane as `abs`, which for an app-written item is the channel
+ * the user chose to save (`source_settings.channels[0]`) and for a
+ * notebook-written one is source channel 0.
+ *
+ * Only the first plane is decoded — a 4-channel 8-megapixel cube would
+ * otherwise cost four times the memory to show one image. A cube with no
+ * channel axis (a 2-D array some other writer produced) is read as a single
+ * plane; anything smaller is not an image and yields `null`.
+ */
+function sonoSliceFromCube(a: NpyArray): DecodedArray | null {
+  const nF = a.shape[0] ?? 0;
+  const nT = a.shape[1] ?? 0;
+  const nC = a.shape.length > 2 ? (a.shape[2] ?? 1) : 1;
+  if (nF < 1 || nT < 1 || nC < 1) return null;
+  const src = a.data instanceof Float64Array
+    ? a.data : Float64Array.from(a.data as ArrayLike<number>);
+  const re = new Float64Array(nF * nT);
+  // Row-major (Nf, Nt, Nc): plane 0 sits at flat index (i*nT + j)*nC, and a
+  // complex buffer interleaves [re, im] at every one of those slots.
+  const stride = a.isComplex ? 2 * nC : nC;
+  for (let k = 0; k < nF * nT; k++) {
+    const at = k * stride;
+    re[k] = a.isComplex ? Math.hypot(src[at], src[at + 1]) : Math.abs(src[at]);
+  }
+  return { shape: [nF, nT], re };
 }
 
 /**
@@ -793,8 +878,12 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       }
 
       // Orphan (source TimeData absent). Only worth a standalone display set
-      // if the item yields a plottable slice — an orphan SonoData / ModalData
-      // has nothing to show, so it is skipped rather than left as an empty set.
+      // if the item yields a plottable slice — an orphan `ModalData` /
+      // `MetaData` has nothing to show, so it is skipped rather than left as
+      // an empty set. An orphan `SonoData` DOES now show (its stored cube's
+      // first plane, see `sonoSliceFromCube`), so a sonogram-only file opens
+      // on its sonogram rather than on nothing; the set carries no time
+      // series, so a recompute is refused with the usual clear message.
       // `orphan = true` restores an orphan TF with chIn = null (columns are
       // the lines) instead of the linked chIn = 0 convention (round-5 item 3).
       const nCh = orphanChannels(item);
@@ -1054,10 +1143,13 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *
    * WHAT IS MATERIALISED — deliberately narrow:
    *   - only the `freq` slice, which is the FFT: `psd` / `csd` live in their
-   *     own slices and are a `CrossSpecData`-shaped job, deferred with the
-   *     sonogram (the app's sono slice is a single-channel magnitude image,
-   *     while `SonoData` wants the full complex cube — an honest one needs a
-   *     recompute at save time);
+   *     own slices and are a `CrossSpecData`-shaped job, still deferred;
+   *   - NOT the sonogram, which is not automatic at all: the app's sono slice
+   *     is a single-channel magnitude image while `SonoData` wants the full
+   *     complex cube, so an honest item needs a save-time RECOMPUTE — which
+   *     costs real time on a long record and grows the file. That is a choice
+   *     to put to the user, not a side effect of pressing Save, so it lives in
+   *     {@link includeSonograms} behind an explicit prompt;
    *   - NOT an 'across'-averaged (ensemble) TF. `calc_tf_averaged` derives one
    *     curve from EVERY working set but hangs it on the first, so the
    *     single-source stamp this function writes would name one member's
@@ -1158,6 +1250,173 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     // consequence is cosmetic and deliberate: the autosave/journal copy lags
     // the materialised items until the NEXT dataset mutation re-emits, while
     // the file the user just saved is complete and correct.
+  }
+
+  // ---- Task 5b: the "Include sonogram?" save prompt ----------------------
+
+  /**
+   * The sets a Save could store a sonogram for: chosen by the (optional)
+   * subset pick, backed by real time data, and carrying a sono slice THIS
+   * SESSION computed.
+   *
+   * The computed-this-session gate is the same one `materializeDerived` uses
+   * and matters for the same reason: a sono view that merely came off disk is
+   * already backed by its own `SonoData`, whose stored settings and signature
+   * are the truth about how it was made. Re-deriving it from this session's
+   * settings would fabricate provenance — and would silently "repair" a chain
+   * the app is supposed to be flagging.
+   */
+  function sonoEligibleSets(setIds?: readonly number[]): WorkingSet[] {
+    const chosen = setIds ? new Set(setIds) : null;
+    const d = get(derived);
+    return working.filter((ws) => (
+      (!chosen || chosen.has(ws.setId))
+      && ws.time.kind === 'TimeData' && hasTimeData(ws.time)
+      && computedThisSession.has(lineageKey(ws.setId, 'sono'))
+      && d[ws.setId]?.sono !== undefined
+    ));
+  }
+
+  /**
+   * Whether a Save of these sets should raise the "Include sonogram data?"
+   * prompt — true exactly when there is a sonogram it could store.
+   *
+   * A pure query, so the save flow can ask before doing anything irreversible
+   * and a headless test can assert the eligibility rule on its own. `setIds`
+   * is the "Choose sets…" pick (absent ⇒ every set): a subset save that
+   * excludes the only set with a sonogram must not prompt.
+   */
+  function sonoPromptNeeded(setIds?: readonly number[]): boolean {
+    return sonoEligibleSets(setIds).length > 0;
+  }
+
+  /**
+   * Recompute ONE set's sonogram as the complex cube a `SonoData` stores and
+   * upsert it into the document (lineage key `${setId}:sono`).
+   *
+   * The recompute uses the set's CURRENT sono settings — the same knobs the
+   * displayed image was computed with — so `abs()` of the stored cube is the
+   * picture the user was looking at when they said yes (pinned in
+   * `tests/test_webui_glue_sono.py`). Only the chosen `chans` are transformed
+   * and stored, in the order given, and that list is recorded in
+   * `source_settings.channels` so a reader knows which measured channel each
+   * plane is. Calibration and units are sliced to the same channels, since the
+   * item's channel axis is the SAVED channels, not the source's.
+   *
+   * Throws whatever the engine raised — the CWT/STFT memory preflights refuse
+   * here exactly as they do for the on-screen sonogram, and the caller turns
+   * that into "saved without the sonogram" rather than a failed save.
+   */
+  async function materializeSonoFor(
+    ds: DvmaDataset, ws: WorkingSet, chans: number[], iso: string, timestring: string,
+  ): Promise<void> {
+    const s = sonoSettings(ws.setId);
+    const { axis, data, nCh } = timePayload(ws.time);
+    const res = await engine.enqueue('calc_sono_full', {
+      time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
+      channels: chans, nperseg: s.nFft, noverlap: s.nFft >> 1,
+      // CWT passthrough (ignored by the engine when method === 'stft'), the
+      // same payload `calcSono` sends for the display.
+      method: s.method, voices_per_octave: s.voicesPerOctave, w0: s.w0,
+      f_min: s.fMin ?? undefined, f_max: s.fMax ?? undefined,
+    });
+    const cal = getCalibration(ws.setId);
+    const link = ensureIdLink(ws);
+    upsertDerivedItem(ds, ws.setId, 'sono', {
+      kind: 'SonoData',
+      arrays: {
+        time_axis: axisNpy(axisData(mval(res, 'time_axis'))),
+        freq_axis: axisNpy(axisData(mval(res, 'freq_axis'))),
+        sono_data: marshalledNpy(asMarshalled(mval(res, 'sono_data'))),
+      },
+      meta: {
+        units: chans.map((c) => cal.units[c] ?? 'V'),
+        channel_cal_factors: chans.map((c) => cal.factors[c] ?? 1),
+        test_name: nameOf(ws.setId), timestring, id_link: link,
+        source_signature: sourceSignatureOf(ws),
+        source_settings: {
+          calc: 'sonogram', time_range: timeRangeOf(ws), channels: chans, ...s,
+        },
+      },
+    }, ws.time.metaRaw?.unique_id ?? link, iso);
+  }
+
+  /**
+   * The sonogram half of Save (Task 5b, Tore's design): ask whether to include
+   * the sonogram data, and if so recompute and store it.
+   *
+   * WHY A PROMPT AT ALL. FFT and TF materialise silently because the app
+   * already holds exactly what the file wants. A sonogram does not: the view
+   * is one channel's magnitude image, the file wants the whole complex cube,
+   * so including it means running the transform again — seconds on a long
+   * record under the browser engine, and a file several times larger. That is
+   * a decision, so it is asked, once, at the moment it applies.
+   *
+   * WHEN IT IS ASKED. Only when a sonogram was actually computed this session
+   * on a set this save will contain ({@link sonoPromptNeeded}) — a session
+   * that never opened the Sono card never sees the dialog. NEVER on autosave
+   * or the session journal: those are unattended writes, and an unattended
+   * write must not stall on a question or silently pay a recompute.
+   *
+   * `choose` is injected rather than imported so the flow is testable headless
+   * and App owns the dialog. Dismissal must resolve to `'none'` (see
+   * {@link SonoSaveChoice}): a save the user already committed to is never
+   * cancelled by this prompt.
+   *
+   * A refusal from the engine (the CWT/PSD memory preflights, a stale wheel
+   * with no `calc_sono_full`) is collected into `failures` — one message per
+   * set, already prefixed with the set name — and the save proceeds WITHOUT
+   * that sonogram. Returning them rather than toasting keeps this layer
+   * UI-free; App raises the toast.
+   *
+   * @param choose Given the display names of the measurements a sonogram
+   *   would be stored for (so the dialog can name them), resolves to the
+   *   user's choice — or `'none'` on dismissal.
+   * @param setIds The "Choose sets…" pick; absent ⇒ every set.
+   * @returns Whether the user was asked, what they answered (`'none'` when
+   *   they were not asked), and any per-set failures.
+   */
+  async function includeSonograms(
+    choose: (names: string[]) => Promise<SonoSaveChoice> | SonoSaveChoice,
+    setIds?: readonly number[],
+  ): Promise<{ prompted: boolean; choice: SonoSaveChoice; failures: string[] }> {
+    const sets = sonoEligibleSets(setIds);
+    if (!sets.length) return { prompted: false, choice: 'none', failures: [] };
+    const choice = await choose(sets.map((ws) => nameOf(ws.setId)));
+    if (choice !== 'channel' && choice !== 'all') {
+      return { prompted: true, choice: 'none', failures: [] };
+    }
+    const ds = get(dataset);
+    if (!ds) return { prompted: true, choice, failures: [] };
+
+    const failures: string[] = [];
+    const now = new Date();
+    const iso = now.toISOString();
+    const timestring = timestringOf(now);
+    // Same reference-counted busy bookkeeping as `guarded`, so the header's
+    // computing chip is honest while a save-time recompute runs. Deliberately
+    // NOT `guarded` itself: a refusal here belongs in the save toast, not as a
+    // red banner on the Sono card for a sonogram that is still on screen and
+    // still correct.
+    engine.boot();                 // idempotent; the engine is already up here
+    busyN += 1;
+    busy.set(true);
+    try {
+      for (const ws of sets) {
+        const chans = choice === 'all'
+          ? Array.from({ length: ws.nChannels }, (_, c) => c)
+          : [Math.min(Math.max(0, lastSonoCh.get(ws.setId) ?? 0), Math.max(0, ws.nChannels - 1))];
+        try {
+          await materializeSonoFor(ds, ws, chans, iso, timestring);
+        } catch (e) {
+          failures.push(`${nameOf(ws.setId)}: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+    } finally {
+      busyN -= 1;
+      busy.set(busyN > 0);
+    }
+    return { prompted: true, choice, failures };
   }
 
   /**
@@ -1377,6 +1636,16 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    */
   const lastSonoCh = new Map<number, number>();
 
+  /**
+   * The sonogram channel `setId` last computed with (0 when it has none) —
+   * what "this channel" means at the save prompt, and what the stale-chain
+   * badge re-runs. Exposed so App can rederive the channel the user is
+   * actually looking at instead of resetting to 0.
+   */
+  function lastSonoChannel(setId: number): number {
+    return lastSonoCh.get(setId) ?? 0;
+  }
+
   function calcSono(target: AnalysisTarget, ch: number) {
     const ws = target === 'all'
       ? working.find((w) => hasTimeData(w.time))
@@ -1419,6 +1688,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           data: decodeArray(asMarshalled(mval(res, 'sono_data'))),
         },
       });
+      markComputed(ws.setId, 'sono');    // a Save may now OFFER to store this
       if (added) notify?.linesAdded('sono', { viewWasEmpty: wasEmpty });
     });
   }
@@ -1878,12 +2148,12 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       if (!record) continue;
       const ws = working.find((w) => w.setId === id) ?? null;
       const item = ws?.time ?? null;
-      // This set's materialised FFT/TF leave WITH it — they are derived from
+      // This set's materialised FFT/TF/sonogram leave WITH it — derived from
       // the very item being removed, and the lineage/computed keys would
       // otherwise linger and be re-used by a future set (see `RemovedSet`).
       const derivedItems: RemovedSet['derivedItems'] = [];
       const computedKinds: DerivedKind[] = [];
-      for (const kind of ['freq', 'tf'] as const) {
+      for (const kind of DERIVED_KINDS) {
         const key = lineageKey(id, kind);
         const mat = materializedItems.get(key);
         const at = mat && ds ? ds.items.indexOf(mat) : -1;
@@ -2896,8 +3166,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * The measurements a subset pick can choose between — one row per source
    * set in `working`, in load order, each with its display NAME (read fresh,
    * so a renamed set reads right) and the kinds it currently carries:
-   * `'time'` / `'fft'` / `'tf'` from the decoded `derived` slices, `'fit'`
-   * when the modal model targets it. Feeds `ChooseSetsPopover`'s rows.
+   * `'time'` / `'fft'` / `'tf'` / `'sono'` from the decoded `derived` slices,
+   * `'fit'` when the modal model targets it. Feeds `ChooseSetsPopover`'s rows.
    *
    * Source measurements ONLY: a modal-fit pseudo-set is not a row of its own
    * (it rides its source set's `'fit'` badge, and the subset filter carries
@@ -2912,6 +3182,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       if (s?.time) kinds.push('time');
       if (s?.freq) kinds.push('fft');
       if (s?.tf) kinds.push('tf');
+      if (s?.sono) kinds.push('sono');
       if (fitted.has(ws.setId)) kinds.push('fit');
       return { setId: ws.setId, name: nameOf(ws.setId), kinds };
     });
@@ -3067,9 +3338,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, addBlaSets, removeBlaRun, undoRemoveBlaRun, stampUiState,
     materializeDerived,
+    /** The "Include sonogram?" save prompt (Task 5b) — see each function. */
+    sonoPromptNeeded, includeSonograms,
     /** Broken-chain flag store — see its doc. Read by `TrayCard`'s badge. */
     staleChains,
-    calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
+    calcFft, calcPsd, calcTf, calcSono, lastSonoChannel, cleanImpulse, cleanedSets, hasComputed,
     resampleTime, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
     /** Subset Save/Export (round-12 "Choose sets…") — see each function's doc. */

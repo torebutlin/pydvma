@@ -1869,3 +1869,284 @@ test('an orphan derived item (no source present) is never flagged, even carrying
   actions.loadDataset(ds);
   expect(get(actions.staleChains)).toEqual({});
 });
+
+// ---- Task 5b: the "Include sonogram?" save prompt -------------------------
+// A sonogram is NOT materialised automatically: the app's sono slice is one
+// channel's magnitude image, while a `SonoData` stores the full complex cube,
+// so an honest item needs a save-time RECOMPUTE. Save therefore asks — but
+// only when a sonogram was actually computed this session (the 3c6 case never
+// sees the prompt), and never on autosave.
+
+/** (Nf=2, Nt=2, Nc) COMPLEX cube, as `calc_sono_full` returns for the file.
+ *  Its axes differ from `sonoResult`'s on purpose, so the stored item can be
+ *  proved to carry the SAVE-time recompute's axes, not the display's. */
+const sonoFullResult = (nCh: number) => ({
+  time_axis: real([2], [0, 0.5]),
+  freq_axis: real([2], [10, 20]),
+  sono_data: cplx([2, 2, nCh],
+    Array.from({ length: 2 * 2 * nCh * 2 }, (_, i) => i + 1)),
+});
+
+/** An engine answering the fft/tf/sono ops; `fullFails` makes the save-time
+ *  complex recompute refuse, as a CWT memory preflight would. */
+function sonoEngine(opts: { fullFails?: string } = {}) {
+  return fakeEngine(async (op, payload) => {
+    if (op === 'calc_fft') return biasedFftResult(0);
+    if (op === 'calc_tf') return tfResult();
+    if (op === 'calc_sono') return sonoResult();
+    if (op === 'calc_sono_full') {
+      if (opts.fullFails) throw new Error(opts.fullFails);
+      return sonoFullResult((payload.channels as number[]).length);
+    }
+    return {};
+  });
+}
+
+/** Record every choice request, answering with `answer`. */
+function chooser(answer: 'channel' | 'all' | 'none') {
+  const asked: number[] = [];
+  return {
+    asked,
+    choose: async () => { asked.push(1); return answer; },
+  };
+}
+
+test('no sonogram computed ⇒ the save flow never asks and writes no SonoData', async () => {
+  const { engine } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+
+  expect(actions.sonoPromptNeeded()).toBe(false);
+  const c = chooser('all');
+  const r = await actions.includeSonograms(c.choose);
+  expect(r.prompted).toBe(false);
+  expect(c.asked).toHaveLength(0);
+  expect(kindCount(get(actions.dataset)!, 'SonoData')).toBe(0);
+});
+
+test('a sonogram computed on a chosen set makes the save flow request the choice', async () => {
+  const { engine } = sonoEngine();
+  const { actions } = harness(engine);
+  const a = actions.addRecordedSet(capturedItem('cap_a'));
+  const b = actions.addRecordedSet(capturedItem('cap_b'));
+  await actions.calcSono(a, 0);
+
+  expect(actions.sonoPromptNeeded()).toBe(true);
+  expect(actions.sonoPromptNeeded([a])).toBe(true);
+  // ...but a subset save that excludes the sono-bearing set does not ask.
+  expect(actions.sonoPromptNeeded([b])).toBe(false);
+});
+
+test('a sonogram that only came off disk does not re-prompt (its item is already the truth)', async () => {
+  const { engine } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcSono(setId, 0);
+  await actions.includeSonograms(async () => 'all');
+  const back = readDvma(writeDvma(get(actions.dataset)!));
+
+  const { actions: a2 } = harness(engine);
+  a2.loadDataset(back);
+  expect(a2.sonoPromptNeeded()).toBe(false);
+});
+
+test('"Don\'t include" saves without a SonoData', async () => {
+  const { engine } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcSono(setId, 0);
+
+  const r = await actions.includeSonograms(async () => 'none');
+  expect(r.prompted).toBe(true);
+  expect(r.choice).toBe('none');
+  expect(kindCount(get(actions.dataset)!, 'SonoData')).toBe(0);
+});
+
+test('"This channel" writes an honest single-channel complex SonoData that round-trips', async () => {
+  const { engine, calls } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  actions.setCalFactors(setId, [2, 8], ['N', 'g']);
+  await actions.calcSono(setId, 1);            // the view shows channel 1
+
+  const r = await actions.includeSonograms(async () => 'channel');
+  expect(r.choice).toBe('channel');
+  expect(r.failures).toEqual([]);
+
+  // The recompute asked for exactly the channel on screen, with the set's
+  // current sono settings.
+  const full = calls.filter((c) => c.op === 'calc_sono_full');
+  expect(full).toHaveLength(1);
+  expect(full[0].payload.channels).toEqual([1]);
+  expect(full[0].payload.nperseg).toBe(512);
+  expect(full[0].payload.method).toBe('stft');
+
+  const back = readDvma(writeDvma(get(actions.dataset)!));
+  const src = back.items.find((i) => i.kind === 'TimeData')!;
+  const sono = back.items.find((i) => i.kind === 'SonoData')!;
+  expect(sono.meta.id_link).toBe(src.meta.unique_id);
+  expect(sono.arrays.sono_data.isComplex).toBe(true);
+  expect(sono.arrays.sono_data.shape).toEqual([2, 2, 1]);
+  expect(Array.from(sono.arrays.time_axis.data as Float64Array)).toEqual([0, 0.5]);
+  expect(Array.from(sono.arrays.freq_axis.data as Float64Array)).toEqual([10, 20]);
+
+  // Signature + provenance, including WHICH channels the cube holds.
+  const expected = signatureOfSamples(
+    Float64Array.from(src.arrays.time_data.data as Float64Array), 2, 2);
+  expect(sono.meta.source_signature).toBe(expected);
+  const ss = sono.meta.source_settings as Record<string, unknown>;
+  expect(ss.calc).toBe('sonogram');
+  expect(ss.channels).toEqual([1]);
+  expect(ss.method).toBe('stft');
+  expect(ss.nFft).toBe(512);
+  expect(sono.meta.test_name).toBe('cap');
+  expect(sono.meta.channel_cal_factors).toEqual([8]);   // channel 1 only
+  expect(sono.meta.units).toEqual(['g']);
+});
+
+test('"All channels" saves every channel of the set', async () => {
+  const { engine, calls } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  actions.setCalFactors(setId, [2, 8], ['N', 'g']);
+  await actions.calcSono(setId, 0);
+
+  await actions.includeSonograms(async () => 'all');
+  const full = calls.filter((c) => c.op === 'calc_sono_full');
+  expect(full[0].payload.channels).toEqual([0, 1]);
+
+  const sono = get(actions.dataset)!.items.find((i) => i.kind === 'SonoData')!;
+  expect(sono.arrays.sono_data.shape).toEqual([2, 2, 2]);
+  expect((sono.meta.source_settings as Record<string, unknown>).channels).toEqual([0, 1]);
+  expect(sono.meta.channel_cal_factors).toEqual([2, 8]);
+  expect(sono.meta.units).toEqual(['N', 'g']);
+});
+
+test('including the sonogram twice replaces by lineage — exactly one SonoData', async () => {
+  const { engine } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcSono(setId, 0);
+
+  await actions.includeSonograms(async () => 'channel');
+  const first = get(actions.dataset)!.items.find((i) => i.kind === 'SonoData')!;
+  await actions.includeSonograms(async () => 'all');
+
+  const ds = get(actions.dataset)!;
+  expect(kindCount(ds, 'SonoData')).toBe(1);
+  expect(ds.items.find((i) => i.kind === 'SonoData')).toBe(first);
+  // ...and the replacement carries the NEW channel pick, not the old one.
+  expect(first.arrays.sono_data.shape).toEqual([2, 2, 2]);
+});
+
+test('a refused recompute (memory preflight) leaves the save intact and reports why', async () => {
+  const { engine } = sonoEngine({ fullFails: 'CWT image too large: reduce voices.' });
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcSono(setId, 0);
+
+  const r = await actions.includeSonograms(async () => 'all');
+  expect(r.choice).toBe('all');
+  expect(r.failures).toHaveLength(1);
+  expect(r.failures[0]).toContain('CWT image too large');
+  expect(r.failures[0]).toContain('cap');
+  // The document is still saveable — just without the sonogram.
+  expect(kindCount(get(actions.dataset)!, 'SonoData')).toBe(0);
+});
+
+test('a stored SonoData seeds the sono view on load (first saved channel, magnitude)', async () => {
+  const { engine, calls } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcSono(setId, 0);
+  await actions.includeSonograms(async () => 'channel');
+  const back = readDvma(writeDvma(get(actions.dataset)!));
+
+  const before = calls.length;
+  const { sel: sel2, actions: a2 } = harness(engine);
+  a2.loadDataset(back);
+  expect(calls.length).toBe(before);            // seeded, not recomputed
+  const id2 = get(sel2.sets)[0].id;
+  const slice = get(a2.derived)[id2].sono!;
+  expect(Array.from(slice.timeAxis)).toEqual([0, 0.5]);
+  expect(Array.from(slice.freqAxis)).toEqual([10, 20]);
+  expect(slice.data.shape).toEqual([2, 2]);
+  // |1+2i|, |3+4i|, |5+6i|, |7+8i| — the cube's first saved plane
+  expect(Array.from(slice.data.re).map((v) => Math.round(v * 1e6) / 1e6))
+    .toEqual([Math.hypot(1, 2), Math.hypot(3, 4), Math.hypot(5, 6), Math.hypot(7, 8)]
+      .map((v) => Math.round(v * 1e6) / 1e6));
+  expect(slice.data.im).toBeUndefined();
+});
+
+test('a loaded SonoData whose source samples changed since it was stamped is flagged stale', async () => {
+  const { engine } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcSono(setId, 0);
+  await actions.includeSonograms(async () => 'channel');
+  const bytes = writeDvma(get(actions.dataset)!);
+
+  const corrupted = readDvma(bytes);
+  const src = corrupted.items.find((i) => i.kind === 'TimeData')!;
+  (src.arrays.time_data.data as Float64Array)[0] = 999;
+
+  const { sel: sel2, actions: a2 } = harness(engine);
+  a2.loadDataset(readDvma(writeDvma(corrupted)));
+  const id2 = get(sel2.sets)[0].id;
+  expect(get(a2.staleChains)[id2]).toEqual(['sono']);
+
+  // Rederiving the sonogram clears its flag, like any other kind.
+  await a2.calcSono(id2, 0);
+  expect(get(a2.staleChains)[id2]).toBeUndefined();
+});
+
+test('a subset save only recomputes sonograms for the chosen sets', async () => {
+  const { engine, calls } = sonoEngine();
+  const { actions } = harness(engine);
+  const a = actions.addRecordedSet(capturedItem('cap_a'));
+  const b = actions.addRecordedSet(capturedItem('cap_b', [7, 8, 9, 10, 11, 12]));
+  await actions.calcSono(a, 0);
+  await actions.calcSono(b, 0);
+
+  await actions.includeSonograms(async () => 'channel', [b]);
+  const full = calls.filter((c) => c.op === 'calc_sono_full');
+  expect(full).toHaveLength(1);
+  const ds = get(actions.dataset)!;
+  expect(kindCount(ds, 'SonoData')).toBe(1);
+  expect(ds.items.find((i) => i.kind === 'SonoData')!.meta.test_name).toBe('cap_b');
+});
+
+test('an orphan SonoData (no source TimeData) still shows its sonogram', () => {
+  const { engine } = sonoEngine();
+  const { sel, actions } = harness(engine);
+  const item: DvmaItem = {
+    kind: 'SonoData',
+    arrays: {
+      time_axis: { shape: [2], isComplex: false, data: Float64Array.from([0, 0.5]) },
+      freq_axis: { shape: [2], isComplex: false, data: Float64Array.from([10, 20]) },
+      sono_data: {
+        shape: [2, 2, 1], isComplex: true,
+        data: Float64Array.from([3, 4, 0, 0, 0, 0, 6, 8]),
+      },
+    },
+    meta: { test_name: 'orphan_sono', timestring: 'ts' },   // no id_link
+    settings: null,
+  };
+  actions.loadDataset({ formatVersion: 1, pydvmaVersion: '1.5.0', items: [item] });
+  const id = get(sel.sets)[0].id;
+  const slice = get(actions.derived)[id].sono!;
+  expect(Array.from(slice.data.re)).toEqual([5, 0, 0, 10]);   // |3+4i| … |6+8i|
+  // ...and it is NOT offered to a Save: nothing computed it this session, and
+  // there is no time series to recompute it from.
+  expect(actions.sonoPromptNeeded()).toBe(false);
+});
+
+test('choosableSets badges a set that carries a sonogram', async () => {
+  const { engine } = sonoEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcSono(setId, 0);
+  expect(actions.choosableSets()[0].kinds).toEqual(['time', 'sono']);
+});

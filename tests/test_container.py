@@ -386,6 +386,43 @@ def test_v2_source_signature_and_settings_roundtrip(tmp_path):
             == tf.source_signature)
 
 
+def test_v2_sono_source_signature_and_settings_roundtrip(tmp_path):
+    # Task 5b: SonoData joins the optional-meta provenance set, so a
+    # sonogram saved by the app (or by a notebook) carries the chain it
+    # was computed from — complex cube and all.
+    from pydvma import _signature
+    data = dvma.create_test_impulse_data(noise_level=0)
+    td = data.time_data_list[0]
+    sd = dvma.calculate_sonogram(td, nperseg=64, noverlap=32)
+    data.add_to_dataset(sd)
+    path = tmp_path / 'sono_sig.dvma'
+    container.save(data, str(path))
+    loaded = container.load(str(path))
+
+    back = loaded.sono_data_list[0]
+    assert back.source_signature == _signature.source_signature(td)
+    assert back.source_settings == {'calc': 'sonogram', 'method': 'stft',
+                                    'nperseg': 64, 'noverlap': 32}
+    # the cube itself survives complex and 3-D, as it always did
+    assert back.sono_data.shape == sd.sono_data.shape
+    assert np.iscomplexobj(back.sono_data)
+    np.testing.assert_allclose(back.sono_data, sd.sono_data)
+
+
+def test_v2_sono_source_signature_absent_stays_absent(tmp_path):
+    # Same "absence is no claim" contract as FreqData/TfData.
+    data = dvma.create_test_impulse_data(noise_level=0)
+    sd = dvma.calculate_sonogram(data.time_data_list[0], nperseg=64)
+    del sd.source_signature
+    del sd.source_settings
+    data.add_to_dataset(sd)
+    path = tmp_path / 'sono_nosig.dvma'
+    container.save(data, str(path))
+    loaded = container.load(str(path))
+    assert not hasattr(loaded.sono_data_list[0], 'source_signature')
+    assert not hasattr(loaded.sono_data_list[0], 'source_settings')
+
+
 def test_v2_source_signature_absent_stays_absent(tmp_path):
     # A file whose derived items predate signatures must not gain them:
     # the app treats absence as "no claim", not as a broken chain.

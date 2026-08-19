@@ -29,6 +29,7 @@
   import Legend from './components/Legend.svelte';
   import EngineProbe from './components/EngineProbe.svelte';
   import ToastHost from './components/ToastHost.svelte';
+  import SonoIncludeDialog from './components/SonoIncludeDialog.svelte';
   import { activeStage, capabilities } from './lib/stores/stages';
   import { createViewState, type ViewId } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
@@ -39,7 +40,7 @@
   } from './lib/stores/engine';
   import { willUseNativeEngine } from './lib/worker/selectEngine';
   import { createToasts } from './lib/stores/toast';
-  import { createActions, type DerivedKind } from './lib/analysis/actions';
+  import { createActions, type DerivedKind, type SonoSaveChoice } from './lib/analysis/actions';
   import { createModalStore } from './lib/stores/modal';
   import { createDampingStore } from './lib/stores/damping';
   import DampingPanel from './components/DampingPanel.svelte';
@@ -785,14 +786,42 @@
   /**
    * Rederive exactly the flagged kinds for one set — the stale-chain
    * badge's click handler (Task 4, see `actions.staleChains`'s doc). Runs
-   * FFT/TF's normal calc actions, which clear the flag on success via
-   * `markComputed`; a fresh Save later re-materialises and re-stamps.
+   * FFT/TF/sonogram's normal calc actions, which clear the flag on success
+   * via `markComputed`; a fresh Save later re-materialises and re-stamps
+   * (for the sonogram, only if the user says yes at the include prompt —
+   * the flag has already cleared by then, since the on-screen sonogram IS
+   * current again).
+   *
+   * The sonogram re-runs on the channel that set last computed with, which
+   * is what `calcSono('all')`-style recomputes elsewhere do too; the stored
+   * item's own channel record is not consulted, because the view is
+   * single-channel and the user's current channel is the one to refresh.
    */
   async function rederiveStale(setId: number, kinds: readonly DerivedKind[]): Promise<void> {
     for (const kind of kinds) {
       if (kind === 'freq') await actions.calcFft(setId);
       else if (kind === 'tf') await actions.calcTf(setId);
+      else if (kind === 'sono') await actions.calcSono(setId, actions.lastSonoChannel(setId));
     }
+  }
+
+  /**
+   * The pending "Include sonogram data?" dialog, or `null` when none is up:
+   * the measurement names to show plus the resolver that lets the awaiting
+   * save continue. Set only by {@link askSonoChoice}, cleared by the
+   * dialog's `onchoose` (dismissal included — see `SonoIncludeDialog`).
+   */
+  let sonoAsk = $state<{ names: string[]; resolve: (c: SonoSaveChoice) => void } | null>(null);
+
+  /**
+   * Raise the include-sonogram dialog and resolve with the user's answer —
+   * the chooser `actions.includeSonograms` injects. Only ever called when
+   * that function has already decided a sonogram is on offer, so this never
+   * flashes a dialog for a session with nothing to include; autosave and the
+   * session journal never reach it at all.
+   */
+  function askSonoChoice(names: string[]): Promise<SonoSaveChoice> {
+    return new Promise<SonoSaveChoice>((resolve) => { sonoAsk = { names, resolve }; });
   }
 
   /** Default save filename: pydvma_YYYY-MM-DD_HHMM.dvma from the clock. */
@@ -828,6 +857,16 @@
       // BEFORE stamping: the new items are part of the document `stampUiState`
       // then annotates and `writeDvma` serializes.
       actions.materializeDerived();
+      // The sonogram is NOT automatic — it needs a save-time recompute to be
+      // an honest SonoData, so the user is asked (Task 5b). The dialog is
+      // raised only when there is a sonogram in the chosen sets to store, and
+      // a dismissal reads as "don't include": this await can delay a save but
+      // never abandons one. Failures (a CWT memory refusal, say) are reported
+      // and the save carries on without that sonogram.
+      const sono = await actions.includeSonograms(askSonoChoice, setIds);
+      for (const why of sono.failures) {
+        toasts.push(`Sonogram not included — ${why}`, { level: 'error' });
+      }
       actions.stampUiState();        // persist channel labels + analysis settings
       const doc = actions.subsetDataset(setIds);
       const bytes = writeDvma(doc);
@@ -1564,6 +1603,17 @@
       {/if}
     </section>
   </main>
+
+  <!-- The save-time "Include sonogram data?" prompt (Task 5b). Mounted only
+       while a save is waiting on the answer; `sonoAsk` carries the resolver,
+       so every exit path — including a dismissal, which means "don't
+       include" — hands control back to `onsave`. -->
+  {#if sonoAsk}
+    <SonoIncludeDialog
+      setNames={sonoAsk.names}
+      onchoose={(choice) => { const a = sonoAsk!; sonoAsk = null; a.resolve(choice); }}
+    />
+  {/if}
 
   <ToastHost {toasts} />
 </div>

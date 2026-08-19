@@ -128,6 +128,7 @@ _OPTIONAL_META = {
     'TimeData': ['impulse_cleaned'],
     'FreqData': ['iw_power_counter', 'source_signature', 'source_settings'],
     'TfData':   ['iw_power_counter', 'source_signature', 'source_settings'],
+    'SonoData': ['source_signature', 'source_settings'],
 }
 
 # Tag keys reserved by _encode_value; user dicts must not use them.

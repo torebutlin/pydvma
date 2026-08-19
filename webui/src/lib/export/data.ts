@@ -43,9 +43,13 @@ export type ExportKind = 'time' | 'freq' | 'tf';
 
 /**
  * What one measurement carries, as the "Choose sets…" picker badges it:
- * a time series, an FFT, a transfer function, a modal fit.
+ * a time series, an FFT, a transfer function, a sonogram, a modal fit.
+ *
+ * NOT the same list as `ExportKind` (CSV/Matlab still export time/freq/tf
+ * only) — this is what a SAVE would carry, and a Save can now include the
+ * sonogram if the user says yes at the include prompt.
  */
-export type ChoosableKind = 'time' | 'fft' | 'tf' | 'fit';
+export type ChoosableKind = 'time' | 'fft' | 'tf' | 'sono' | 'fit';
 
 /**
  * One row of the "Choose sets…" subset picker — a source MEASUREMENT, its

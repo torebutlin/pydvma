@@ -43,7 +43,8 @@ def _stamp_source(result, time_data, source_settings):
     a loaded file can flag a chain whose source has since changed.
 
     Args:
-        result (FreqData or TfData): the freshly built derived item.
+        result (FreqData or TfData or SonoData): the freshly built
+            derived item.
         time_data (TimeData or iterable): the source measurement(s) the
             result was computed from.
         source_settings (dict): the analysis parameters actually used,
@@ -1250,6 +1251,12 @@ def calculate_sonogram(time_data, nperseg=None, noverlap=None):
     Calculates a complex STFT spectrogram (sonogram) for every channel of
     a <TimeData> object using a Hann window, and returns a <SonoData>.
 
+    Provenance: the result is stamped with ``source_signature`` (a hash
+    of the source samples, see `pydvma._signature`) and
+    ``source_settings`` — ``{'calc': 'sonogram', 'method': 'stft', ...}``
+    with the EFFECTIVE ``nperseg`` / ``noverlap`` recorded (the values
+    derived from the record length when either argument was None).
+
     Channel calibration factors and units are copied from the source, and
     `id_link` is set to the source's `unique_id` (same provenance
     convention as the other `calculate_*` functions).
@@ -1286,6 +1293,13 @@ def calculate_sonogram(time_data, nperseg=None, noverlap=None):
         units=time_data.units,
         id_link=time_data.unique_id, test_name=time_data.test_name,
     )
+
+    _stamp_source(sono_data, time_data, {
+        'calc': 'sonogram',
+        'method': 'stft',
+        'nperseg': int(nperseg),
+        'noverlap': int(noverlap),
+    })
 
     return sono_data
 
@@ -1512,6 +1526,12 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
                   progress_callback=None):
     '''Continuous wavelet transform (complex Morlet) as a `SonoData`.
 
+    Provenance: the result is stamped with ``source_signature`` and
+    ``source_settings`` — ``{'calc': 'sonogram', 'method': 'cwt', ...}``
+    with the EFFECTIVE ``f_range`` recorded (the automatic band when the
+    argument was None or one-sided), exactly as `calculate_sonogram`
+    records its effective window.
+
     A drop-in ALTERNATIVE to `calculate_sonogram`: produces the SAME
     `SonoData` shape (``sono_data`` of shape ``(n_freq, n_frames, n_channels)``,
     complex, with ``time_axis`` and ``freq_axis``) so the whole downstream
@@ -1618,6 +1638,18 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
         units=time_data.units,
         id_link=time_data.unique_id, test_name=time_data.test_name,
     )
+
+    _stamp_source(sono_data, time_data, {
+        'calc': 'sonogram',
+        'method': 'cwt',
+        # the EFFECTIVE band transformed, not the (possibly None-sided)
+        # request — same convention as calculate_fft's time_range
+        'f_range': [float(f_out[0]), float(f_out[-1])],
+        'voices_per_octave': int(voices_per_octave),
+        'w0': float(w0),
+        'max_time_columns': None if max_time_columns is None else int(max_time_columns),
+        'uniform_freq': bool(uniform_freq),
+    })
 
     return sono_data
 

@@ -58,7 +58,7 @@
   import type { DerivedKind } from '../lib/analysis/actions';
 
   /** Human-readable label for one derived kind, for the stale badge's title. */
-  const KIND_LABEL: Record<DerivedKind, string> = { freq: 'FFT', tf: 'TF' };
+  const KIND_LABEL: Record<DerivedKind, string> = { freq: 'FFT', tf: 'TF', sono: 'sonogram' };
 
   /** "FFT", "FFT and TF", "FFT, TF, and Sono" — grammatical join of kind labels. */
   function kindsLabel(kinds: readonly DerivedKind[]): string {

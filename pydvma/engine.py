@@ -250,6 +250,8 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
 
     Either way ``sono_data`` is returned as a real magnitude image (Nf, Nt) —
     ``abs`` of the complex transform for channel ``ch`` — plus its two axes.
+    That is what the heat display needs; `calc_sono_full` returns the same
+    transform as the COMPLEX multi-channel cube a stored ``SonoData`` holds.
 
     Engine guards:
     - STFT: the shipped pyodide wheel (pydvma 1.5.0) segments inside
@@ -270,6 +272,24 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
     — see `set_progress_hook`. The STFT branch has no such loop and stays
     silent. Both are unaffected numerically.
     """
+    sd = _sono_data(time_axis, time_data, n_channels, fs, nperseg, noverlap,
+                    method, voices_per_octave, w0, f_min, f_max)
+    return {'time_axis': _arr(sd.time_axis), 'freq_axis': _arr(sd.freq_axis),
+            'sono_data': _arr(np.abs(sd.sono_data[:, :, int(ch)]))}
+
+
+def _sono_data(time_axis, time_data, n_channels, fs, nperseg, noverlap,
+               method='stft', voices_per_octave=16, w0=6.0, f_min=None, f_max=None):
+    """The all-channel complex `SonoData` behind both sonogram ops.
+
+    Shared by `calc_sono` (which reduces it to one channel's magnitude image
+    for the heat display) and `calc_sono_full` (which marshals the whole
+    complex cube for an honest stored ``SonoData``), so the method dispatch,
+    the stale-wheel CWT guard and the 32-bit STFT overflow guard are written
+    once and both ops behave identically. See `calc_sono` for the parameter
+    semantics; ``method``, ``f_min``/``f_max`` and the progress hook all work
+    exactly the same here.
+    """
     td = _time_data(time_axis, time_data, n_channels, fs)
     if str(method) == 'cwt':
         if not hasattr(analysis, 'calculate_cwt'):
@@ -279,25 +299,83 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
                 'STFT method.'
             )
         f_range = _f_range(f_min, f_max)
-        sd = analysis.calculate_cwt(
+        return analysis.calculate_cwt(
             td, f_range=f_range, voices_per_octave=int(voices_per_octave),
             w0=float(w0), uniform_freq=False,
             **_progress_kw(analysis.calculate_cwt))
-    else:
-        try:
-            sd = analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
-        except (ValueError, MemoryError) as e:
-            msg = str(e).lower()
-            if isinstance(e, MemoryError) or 'too big' in msg or 'maximum possible size' in msg:
-                n_samples = int(td.time_data.shape[0])
-                raise ValueError(
-                    'Sonogram at this window size needs too large an internal buffer '
-                    'for the browser engine ({} samples × {}-pt STFT window). '
-                    'Use a smaller nFFT.'.format(n_samples, int(nperseg))
-                ) from e
-            raise
+    try:
+        return analysis.calculate_sonogram(td, nperseg=int(nperseg), noverlap=int(noverlap))
+    except (ValueError, MemoryError) as e:
+        msg = str(e).lower()
+        if isinstance(e, MemoryError) or 'too big' in msg or 'maximum possible size' in msg:
+            n_samples = int(td.time_data.shape[0])
+            raise ValueError(
+                'Sonogram at this window size needs too large an internal buffer '
+                'for the browser engine ({} samples × {}-pt STFT window). '
+                'Use a smaller nFFT.'.format(n_samples, int(nperseg))
+            ) from e
+        raise
+
+
+def calc_sono_full(time_axis, time_data, n_channels, fs, channels, nperseg, noverlap,
+                   method='stft', voices_per_octave=16, w0=6.0, f_min=None, f_max=None):
+    """The sonogram as the COMPLEX cube a stored ``SonoData`` holds.
+
+    `calc_sono` returns what the heat display needs — ONE channel, magnitude
+    only. pydvma's `datastructure.SonoData` instead stores the full complex
+    transform of shape ``(n_freq, n_frames, n_channels)``, which is what the
+    ``.dvma`` container writes and what `analysis.calculate_damping_from_sono`
+    and any notebook analysis expect. This op exists so the web app can
+    materialise an HONEST ``SonoData`` when the user asks a Save to include the
+    sonogram: same maths, same settings, complex output, and only the channels
+    the user chose to store.
+
+    ``channels`` is the list of source channel indices to keep, in the order
+    given; the returned cube's third axis is indexed by POSITION in that list,
+    so the app records the list alongside the item (``source_settings
+    ['channels']``) and a reader knows which measured channel each plane is.
+    Duplicates are allowed (they simply repeat a plane); an index outside the
+    source's channel range is refused rather than silently clamped, because a
+    mislabelled plane is worse than a failed save.
+
+    Everything else — the STFT / CWT dispatch, the memory guards, the CWT
+    progress frames — is `calc_sono`'s behaviour verbatim (both go through
+    `_sono_data`). In particular the CWT preflight can REFUSE a large image
+    with its normal sizing message; the app treats that as "save without the
+    sonogram" rather than a failed save.
+
+    Args:
+        time_axis: source sample times (marshalled 1-D array).
+        time_data: source samples, row-major ``(n_samples, n_channels)``.
+        n_channels (int): source channel count.
+        fs (float): sample rate in Hz.
+        channels (list of int): source channel indices to transform and keep.
+        nperseg (int): STFT segment length (ignored when ``method='cwt'``).
+        noverlap (int): STFT segment overlap (ignored when ``method='cwt'``).
+        method (str): ``'stft'`` (default) or ``'cwt'``.
+        voices_per_octave (int): CWT log-frequency density.
+        w0 (float): CWT non-dimensional Morlet frequency (the wavelet Q).
+        f_min (float or None): CWT lower band edge in Hz, or unset.
+        f_max (float or None): CWT upper band edge in Hz, or unset.
+
+    Returns:
+        dict: ``time_axis``, ``freq_axis`` and a COMPLEX ``sono_data`` of
+        shape ``(n_freq, n_frames, len(channels))``, all marshalled.
+    """
+    chans = [int(c) for c in (channels or [])]
+    n_src = int(n_channels)
+    bad = [c for c in chans if c < 0 or c >= n_src]
+    if not chans:
+        raise ValueError('No channels requested for the sonogram.')
+    if bad:
+        raise ValueError(
+            'Sonogram channel(s) {} out of range for a {}-channel '
+            'measurement.'.format(bad, n_src))
+    sd = _sono_data(time_axis, time_data, n_channels, fs, nperseg, noverlap,
+                    method, voices_per_octave, w0, f_min, f_max)
+    cube = np.take(sd.sono_data, chans, axis=2)
     return {'time_axis': _arr(sd.time_axis), 'freq_axis': _arr(sd.freq_axis),
-            'sono_data': _arr(np.abs(sd.sono_data[:, :, int(ch)]))}
+            'sono_data': _arr(cube)}
 
 
 def calc_tf_averaged(sets, ch_in, window):

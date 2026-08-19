@@ -354,6 +354,43 @@ class TestStampedByAnalysis:
         assert tf.source_settings['window'] == 'hann'
         assert tf.source_settings['ch_in'] == 0
 
+    def test_sonogram_is_stamped(self):
+        # Task 5b: the STFT sonogram carries the same provenance as
+        # FFT/TF, with calc='sonogram' and a method discriminator.
+        from pydvma import analysis
+        td = _time_data(n=256)
+        sd = analysis.calculate_sonogram(td, nperseg=64, noverlap=32)
+        assert sd.source_signature == _signature.source_signature(td)
+        assert sd.source_settings['calc'] == 'sonogram'
+        assert sd.source_settings['method'] == 'stft'
+        assert sd.source_settings['nperseg'] == 64
+        assert sd.source_settings['noverlap'] == 32
+
+    def test_sonogram_records_the_effective_window(self):
+        # nperseg/noverlap default from the record length — the stamp
+        # must record what was USED, not the None that was passed.
+        from pydvma import analysis
+        td = _time_data(n=500)
+        sd = analysis.calculate_sonogram(td)
+        assert sd.source_settings['nperseg'] == 10          # n // 50
+        assert sd.source_settings['noverlap'] == 5
+
+    def test_cwt_is_stamped(self):
+        from pydvma import analysis
+        td = _time_data(n=512, fs=512)
+        sd = analysis.calculate_cwt(td, voices_per_octave=4, w0=6.0)
+        assert sd.source_signature == _signature.source_signature(td)
+        assert sd.source_settings['calc'] == 'sonogram'
+        assert sd.source_settings['method'] == 'cwt'
+        assert sd.source_settings['voices_per_octave'] == 4
+        assert sd.source_settings['w0'] == 6.0
+        assert sd.source_settings['uniform_freq'] is True
+        # the EFFECTIVE band actually transformed (f_range=None here),
+        # same convention as calculate_fft's time_range
+        lo, hi = sd.source_settings['f_range']
+        assert lo == pytest.approx(float(sd.freq_axis[0]))
+        assert hi == pytest.approx(float(sd.freq_axis[-1]))
+
     def test_source_settings_are_json_safe(self):
         import json
 
@@ -361,7 +398,10 @@ class TestStampedByAnalysis:
         td = _time_data(n=64)
         fd = analysis.calculate_fft(td)
         tf = analysis.calculate_tf(td)
-        for item in (fd, tf):
+        sono = analysis.calculate_sonogram(td, nperseg=16, noverlap=8)
+        cwt = analysis.calculate_cwt(_time_data(n=512, fs=512),
+                                     voices_per_octave=4)
+        for item in (fd, tf, sono, cwt):
             # plain scalars only — the container writes these into the
             # strict-JSON manifest
             json.dumps(item.source_settings, allow_nan=False)
