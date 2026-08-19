@@ -999,21 +999,36 @@ class SonoData():
     Produced by `analysis.calculate_sonogram`. Each frame is a windowed
     FFT of a `nperseg`-sample segment of the source data; segments are
     overlapped by `noverlap` and the resulting matrix lets you see how
-    spectral content evolves over time. Used by
+    spectral content evolves over time. `analysis.calculate_cwt` produces
+    the same object from a Morlet wavelet transform instead. Used by
     `analysis.calculate_damping_from_sono` to extract per-mode damping
     from free-decay measurements.
+
+    Also produced by the WEB APP, when a Save is told to include the
+    sonogram. Such an item differs in one way a reader must know about:
+    its third axis holds only the channels the user chose to save, in
+    the order they were saved, NOT every channel of the source. So
+    ``sono_data[:, :, k]``, ``units[k]`` and ``channel_cal_factors[k]``
+    are all indexed by PLANE, and the source channel each plane came
+    from is recorded in ``source_settings['channels'][k]``. A
+    single-channel save is the common case (it is the default the prompt
+    offers), and then ``sono_data.shape[2] == 1`` however many channels
+    the measurement has.
 
     Attributes:
         time_axis (np.ndarray): Frame midpoints in seconds.
         freq_axis (np.ndarray): One-sided frequency bins in Hz.
         sono_data (np.ndarray): Shape ``(n_freq, n_frames, n_channels)``,
             complex. Magnitude-squared gives a per-bin power spectrogram.
+            For an app-written item the last axis is the SAVED channel
+            subset — see above.
         settings (MySettings): Snapshot including `pretrig_samples`
             (used by `calculate_damping_from_sono` to pick the
             free-decay start time).
-        units (list[str] or None): Engineering units per channel.
-        channel_cal_factors (np.ndarray): Per-channel multipliers from
-            volts to engineering units.
+        units (list[str] or None): Engineering units, one per PLANE of
+            `sono_data`.
+        channel_cal_factors (np.ndarray): Multipliers from volts to
+            engineering units, one per PLANE of `sono_data`.
         id_link: `unique_id` of the source TimeData.
         test_name (str or None): Free-form label.
         timestamp (datetime.datetime): When constructed.

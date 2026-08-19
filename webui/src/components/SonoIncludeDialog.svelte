@@ -16,7 +16,10 @@
    *   - **This channel** (the default): store the channel the sono view is
    *     showing — the one the user has been looking at;
    *   - **All channels**: store every channel of each listed measurement;
-   *   - **Don't include**: save without it.
+   *   - **Don't include**: skip the recompute. It does NOT strip sonograms
+   *     the document already holds (a loaded one, or an earlier Save's) —
+   *     those are ordinary items and ride the save as they always did,
+   *     which is what the note under the buttons says out loud.
    *
    * DISMISSAL IS "DON'T INCLUDE", NOT "CANCEL". Escape and a backdrop click
    * both resolve to `'none'`, so the save the user already committed to (they
@@ -41,10 +44,25 @@
 
   const many = $derived(setNames.length > 1);
 
+  /** The default button, focused on mount so Enter takes "This channel". */
+  let defaultBtn = $state<HTMLButtonElement>();
+
+  $effect(() => { defaultBtn?.focus(); });
+
+  /**
+   * Escape dismisses — bound on the WINDOW, not on the overlay element.
+   * The overlay's own `onkeydown` only fires when focus is already inside it,
+   * and a dialog raised from a header button leaves focus on that button, so
+   * an overlay-scoped handler misses the keypress entirely (observed: Escape
+   * did nothing until this moved to the window). ChooseSetsPopover binds it
+   * the same way for the same reason.
+   */
   function onKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') onchoose('none');
   }
 </script>
+
+<svelte:window on:keydown={onKeydown} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div
@@ -55,7 +73,6 @@
   aria-label="Include sonogram data?"
   tabindex="-1"
   onclick={(e) => { if (e.target === e.currentTarget) onchoose('none'); }}
-  onkeydown={onKeydown}
 >
   <div class="modal">
     <div class="modal-title">Include sonogram data?</div>
@@ -68,6 +85,7 @@
     </p>
     <p class="note">
       Including sonograms can make saving slower and files larger.
+      (Sonograms already in the document stay there.)
     </p>
 
     <div class="mrow end">
@@ -77,11 +95,10 @@
       <button class="btn" data-testid="sono-include-all" onclick={() => onchoose('all')}>
         All channels
       </button>
-      <!-- svelte-ignore a11y_autofocus -->
       <button
         class="btn indigo"
         data-testid="sono-include-channel"
-        autofocus
+        bind:this={defaultBtn}
         onclick={() => onchoose('channel')}
       >This channel</button>
     </div>

@@ -821,6 +821,12 @@
    * session journal never reach it at all.
    */
   function askSonoChoice(names: string[]): Promise<SonoSaveChoice> {
+    // Defence against a stranded promise: only one dialog can be on screen, so
+    // if a second save somehow asks while one is pending, the outgoing
+    // resolver would never be called and its save would hang forever with no
+    // dialog to answer. Settle it as a dismissal — "don't include" — which is
+    // the safe reading everywhere else too.
+    sonoAsk?.resolve('none');
     return new Promise<SonoSaveChoice>((resolve) => { sonoAsk = { names, resolve }; });
   }
 

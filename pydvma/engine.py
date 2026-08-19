@@ -85,6 +85,23 @@ def _accepts_kw(fn, name):
         return False
 
 
+def _default_kw(fn, name, fallback):
+    """``fn``'s declared default for keyword ``name``, or ``fallback``.
+
+    Lets a size preflight reproduce what a transform WILL do without
+    duplicating its constants — read the default rather than copy it, so the
+    two cannot drift apart on a later edit. Unknown signatures and
+    no-default parameters both yield ``fallback``.
+    """
+    try:
+        p = inspect.signature(fn).parameters.get(name)
+    except (TypeError, ValueError):     # pragma: no cover - builtin/C callables
+        return fallback
+    if p is None or p.default is inspect.Parameter.empty:
+        return fallback
+    return p.default
+
+
 def _progress_kw(fn):
     """``{'progress_callback': hook}`` when one is installed AND ``fn`` takes it.
 
@@ -317,6 +334,49 @@ def _sono_data(time_axis, time_data, n_channels, fs, nperseg, noverlap,
         raise
 
 
+def _sono_cube_shape(n_samples, fs, n_chans, nperseg, noverlap, method,
+                     voices_per_octave, w0, f_min, f_max):
+    """Predict the sonogram cube's ``(n_freq, n_frames, n_chans)`` — no transform.
+
+    Both branches reproduce the grid their transform will build, from the
+    parameters alone, so `calc_sono_full` can refuse an over-size request
+    BEFORE paying for it:
+
+    - STFT: ``n_freq = nperseg//2 + 1`` one-sided bins, and
+      ``1 + (N - nperseg) // (nperseg - noverlap)`` whole segments (zero when
+      the record is shorter than one window).
+    - CWT: the log-frequency ladder `analysis._cwt_default_frequencies` will
+      pick, and the decimated time axis `analysis.calculate_cwt` will keep
+      (``ceil(N / ceil(N / max_time_columns))`` columns). ``max_time_columns``
+      is read from `calculate_cwt`'s own signature rather than duplicated, so
+      the two cannot drift.
+
+    Returns ``(n_freq, n_frames)``, or ``None`` when the prediction cannot be
+    made — an engine wheel too old to expose `_cwt_default_frequencies`. A
+    ``None`` means "no preflight", never "no limit": the per-channel
+    `_morlet_cwt_1d` / STFT guards inside the transform still fire, just later
+    and one channel at a time.
+    """
+    n_samples, n_chans = int(n_samples), int(n_chans)
+    if str(method) == 'cwt':
+        if not hasattr(analysis, '_cwt_default_frequencies'):
+            return None
+        try:
+            freqs = analysis._cwt_default_frequencies(
+                float(fs), n_samples, _f_range(f_min, f_max),
+                int(voices_per_octave), w0=float(w0))
+        except (ValueError, TypeError):
+            return None                      # a bad band; the transform reports it
+        max_cols = _default_kw(analysis.calculate_cwt, 'max_time_columns', 2000)
+        step = 1 if max_cols is None else max(1, int(np.ceil(n_samples / float(max_cols))))
+        return len(freqs), len(range(0, n_samples, step))
+    nperseg, noverlap = int(nperseg), int(noverlap)
+    if nperseg <= 0 or nperseg <= noverlap:
+        return None                          # nonsense window; scipy reports it
+    n_frames = 0 if n_samples < nperseg else 1 + (n_samples - nperseg) // (nperseg - noverlap)
+    return nperseg // 2 + 1, n_frames
+
+
 def calc_sono_full(time_axis, time_data, n_channels, fs, channels, nperseg, noverlap,
                    method='stft', voices_per_octave=16, w0=6.0, f_min=None, f_max=None):
     """The sonogram as the COMPLEX cube a stored ``SonoData`` holds.
@@ -338,11 +398,37 @@ def calc_sono_full(time_axis, time_data, n_channels, fs, channels, nperseg, nove
     source's channel range is refused rather than silently clamped, because a
     mislabelled plane is worse than a failed save.
 
-    Everything else — the STFT / CWT dispatch, the memory guards, the CWT
-    progress frames — is `calc_sono`'s behaviour verbatim (both go through
-    `_sono_data`). In particular the CWT preflight can REFUSE a large image
-    with its normal sizing message; the app treats that as "save without the
-    sonogram" rather than a failed save.
+    COST IS PROPORTIONAL TO ``len(channels)``, NOT to the source's channel
+    count. The requested COLUMNS are sliced out of the time payload before the
+    transform runs, because the sonogram maths is per-channel independent
+    (`calculate_sonogram` strides each column separately; `calculate_cwt` loops
+    channels). Transforming all four channels of a 4-channel record and then
+    discarding three would cost 4x for a "This channel" include — minutes on a
+    30 s x 51.2 kHz CWT. `calc_sono` deliberately does NOT do this: its CWT
+    progress total is ``n_channels * n_scales`` and that count is pinned by the
+    test suite.
+
+    One honest consequence: the STFT batches its FFT over the channel axis, so
+    a NARROWER array sums in a different order and a single-channel cube is not
+    BIT-identical to the corresponding plane of the all-channel display image —
+    it differs by about one ULP of the image peak (measured ~2e-16 relative;
+    pinned in ``tests/test_webui_glue_sono.py``). The CWT loops channels
+    independently and stays bit-identical.
+
+    SIZE PREFLIGHT. The cube's bytes are predicted from the parameters
+    (`_sono_cube_shape`) and refused above `analysis.CWT_MAX_IMAGE_BYTES` — the
+    SAME ceiling and the same "refuse before allocating" discipline as
+    `_morlet_cwt_1d`, so it is 768 MiB under the browser engine and 8 GiB when
+    `engine_host` raises it for the native one. The check is deliberately made
+    against the WHOLE cube rather than one plane: marshalling it peaks at
+    roughly three times its size (the complex cube, `_arr`'s interleaved
+    float64 copy, and the frame buffer alive together), and that peak is what
+    actually breaks. The refusal names the grid and the remedies.
+
+    Everything else — the STFT / CWT dispatch, the in-transform memory guards,
+    the CWT progress frames — is `calc_sono`'s behaviour verbatim (both go
+    through `_sono_data`). Any refusal, preflight or in-transform, is treated
+    by the app as "save without the sonogram" rather than a failed save.
 
     Args:
         time_axis: source sample times (marshalled 1-D array).
@@ -371,11 +457,35 @@ def calc_sono_full(time_axis, time_data, n_channels, fs, channels, nperseg, nove
         raise ValueError(
             'Sonogram channel(s) {} out of range for a {}-channel '
             'measurement.'.format(bad, n_src))
-    sd = _sono_data(time_axis, time_data, n_channels, fs, nperseg, noverlap,
+
+    # Slice to the requested COLUMNS first — see "COST IS PROPORTIONAL" above.
+    # Fancy indexing copies, so the result is C-contiguous and its ravel is the
+    # row-major buffer `_time_data` expects; duplicates simply repeat a column.
+    y = np.asarray(time_data, dtype=np.float64).reshape(-1, n_src)[:, chans]
+    n_keep = len(chans)
+
+    shape = _sono_cube_shape(y.shape[0], fs, n_keep, nperseg, noverlap,
+                             method, voices_per_octave, w0, f_min, f_max)
+    if shape is not None:
+        n_freq, n_frames = shape
+        n_bytes = n_freq * n_frames * n_keep * 16
+        if n_bytes > analysis.CWT_MAX_IMAGE_BYTES:
+            raise ValueError(
+                'Saving this sonogram needs too large an image for the '
+                'analysis engine: {} frequency bins x {} time frames x {} '
+                'channel{} x 16 B = {:.2f} GB, over the {:.2f} GB limit (and '
+                'writing it peaks at roughly three times that). Remedies: save '
+                'ONE channel instead of all of them, use a coarser nFFT{}, or '
+                'save without the sonogram.'.format(
+                    n_freq, n_frames, n_keep, '' if n_keep == 1 else 's',
+                    n_bytes / 1024 ** 3,
+                    analysis.CWT_MAX_IMAGE_BYTES / 1024 ** 3,
+                    '' if str(method) != 'cwt' else ' / fewer voices per octave'))
+
+    sd = _sono_data(time_axis, y.ravel(), n_keep, fs, nperseg, noverlap,
                     method, voices_per_octave, w0, f_min, f_max)
-    cube = np.take(sd.sono_data, chans, axis=2)
     return {'time_axis': _arr(sd.time_axis), 'freq_axis': _arr(sd.freq_axis),
-            'sono_data': _arr(cube)}
+            'sono_data': _arr(sd.sono_data)}
 
 
 def calc_tf_averaged(sets, ch_in, window):

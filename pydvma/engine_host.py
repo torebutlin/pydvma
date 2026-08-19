@@ -302,13 +302,22 @@ def _worker_main(req_q, res_q, cancel_ev):
             # background FEEDER THREAD, not in this call frame -- a
             # child-side try/except around ``put()`` cannot catch it, the
             # item is silently dropped, and the parent (a live, responsive
-            # child) polls forever with no 'done' ever arriving. No shipped
-            # op returns anything unpicklable today and only a >2 GiB
-            # result could hit the Windows limit, so this is not fixed
-            # here; revisit with a ``multiprocessing.queues.Queue``
-            # subclass that surfaces its feeder thread's exception (the
-            # ``_SafeQueue`` pattern used by e.g. loky/joblib) if a real op
-            # ever gets large or exotic enough to trigger it.
+            # child) polls forever with no 'done' ever arriving.
+            #
+            # No shipped op returns anything unpicklable. The SIZE half of
+            # the premise changed when ``calc_sono_full`` landed (the
+            # derived-data save round): it is the first op whose result is
+            # user-sized rather than display-sized -- a whole complex
+            # sonogram cube, which at 8 GiB of headroom could in principle
+            # exceed the Windows pipe limit. What keeps this unreachable is
+            # that op's own SIZE PREFLIGHT: it predicts the cube's bytes
+            # and refuses above ``analysis.CWT_MAX_IMAGE_BYTES`` before
+            # transforming, so nothing over that ceiling is ever built, let
+            # alone put on this queue. Should a future op grow past it
+            # without such a guard, fix it with a
+            # ``multiprocessing.queues.Queue`` subclass that surfaces its
+            # feeder thread's exception (the ``_SafeQueue`` pattern used by
+            # e.g. loky/joblib) rather than relying on per-op discipline.
             res_q.put(('done', rid, True, fn(**kwargs)))
         except EngineCancelled:
             res_q.put(('done', rid, False, 'cancelled'))

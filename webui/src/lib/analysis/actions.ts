@@ -192,9 +192,14 @@ function derivedKindOf(kind: DataKind): DerivedKind | null {
  * - `'channel'` (the default offered): store just the channel the sono view
  *   is currently showing — the one the user has been looking at;
  * - `'all'`: store every channel of each set that has a sonogram;
- * - `'none'`: save without any sonogram. Dismissing the dialog (Escape,
- *   a click outside) resolves to this too, so a prompt can never block or
- *   silently cancel a save the user already committed to.
+ * - `'none'`: DON'T ADD one. This is not "strip sonograms from the file":
+ *   a `SonoData` already in the document — loaded from disk, or written by
+ *   an earlier Save — is ordinary document data and rides this save like
+ *   any other item. `'none'` declines the save-time recompute, nothing
+ *   more; removing a stored sonogram is a Remove action, not this prompt.
+ *   Dismissing the dialog (Escape, a click outside) resolves to `'none'`
+ *   too, so a prompt can never block or silently cancel a save the user
+ *   already committed to.
  */
 export type SonoSaveChoice = 'channel' | 'all' | 'none';
 
@@ -408,9 +413,13 @@ function sliceForLoadedItem(
  * Only the first plane is decoded — a 4-channel 8-megapixel cube would
  * otherwise cost four times the memory to show one image. A cube with no
  * channel axis (a 2-D array some other writer produced) is read as a single
- * plane; anything smaller is not an image and yields `null`.
+ * plane; a 0/1-D array is not an image, and a rank ABOVE 3 is not a shape
+ * this convention can index (the flat stride below assumes exactly one
+ * trailing channel axis). Both yield `null` — the item then simply
+ * contributes no slice, rather than rendering transposed nonsense.
  */
 function sonoSliceFromCube(a: NpyArray): DecodedArray | null {
+  if (a.shape.length < 2 || a.shape.length > 3) return null;
   const nF = a.shape[0] ?? 0;
   const nT = a.shape[1] ?? 0;
   const nC = a.shape.length > 2 ? (a.shape[2] ?? 1) : 1;
@@ -435,6 +444,12 @@ function sonoSliceFromCube(a: NpyArray): DecodedArray | null {
  * the lines (chIn = null convention, round-5 item 3), so an 11-column ruler-
  * grid TF yields 11 channels/chips/lines, NOT 12. `FreqData` uses its own
  * column count; `CrossSpecData` its matrix dimension; anything else → 1.
+ *
+ * `SonoData` deliberately falls through to 1, cube or no cube: the sono view
+ * is a single-plane HEAT IMAGE with no per-channel lines (see
+ * {@link sonoSliceFromCube}), so N channel chips on the tray card would
+ * toggle nothing. One image, one card, one channel — the display convention,
+ * not a claim about what the file holds.
  */
 function orphanChannels(item: DvmaItem): number {
   const A = item.arrays;
@@ -1255,9 +1270,74 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   // ---- Task 5b: the "Include sonogram?" save prompt ----------------------
 
   /**
+   * The sono `source_settings` a materialisation of `setId` WOULD write —
+   * minus the channel record, which depends on an answer not given yet.
+   *
+   * Used both to stamp the item and, compared against a stored item's own
+   * record, to decide whether that item is still current
+   * ({@link sonoItemIsFresh}). Deriving both from one function is what keeps
+   * "what we would write" and "what we compare" from drifting.
+   *
+   * PROVENANCE DIALECT (known asymmetry, recorded in the round doc): these
+   * keys are the webui's camelCase setting names (`nFft`, `voicesPerOctave`,
+   * `fMin`…), because Task 3 established that shape for `fft`/`tf` and a
+   * split spelling within one document would be worse than one consistent
+   * dialect per writer. `pydvma.analysis`'s OWN sonograms stamp snake_case
+   * (`nperseg`/`noverlap`, or `voices_per_octave`/`w0`/`f_range`), so a
+   * reader must key off `method` and accept either spelling. `calc` and
+   * `method` are the two keys both dialects agree on. `dynRangeDb` is
+   * deliberately absent: it is the heat map's display contrast, not a knob
+   * the transform ever saw, and provenance must describe the compute.
+   *
+   * No `time_range` either — unlike `fft`/`tf`, the sonogram has no such
+   * parameter and always transforms the whole record, so recording one would
+   * be decoration. Python's own sono stamp omits it for the same reason.
+   *
+   * Every value here is a SCALAR (or null), which is what lets
+   * {@link sonoItemIsFresh} compare two records with `!==`. Adding an array-
+   * or object-valued knob would silently make every comparison unequal and
+   * so re-arm the prompt on every save — add a deep compare with it.
+   */
+  function sonoProvenance(setId: number): Record<string, unknown> {
+    const { dynRangeDb: _display, ...knobs } = sonoSettings(setId);
+    return { calc: 'sonogram', ...knobs };
+  }
+
+  /**
+   * Whether `setId`'s materialised `SonoData` is already current — its stored
+   * signature matches the source's samples now AND its stored settings match
+   * the sono knobs in force now.
+   *
+   * This is what stops a second Save re-asking (and re-paying for) a
+   * sonogram nothing has changed. Change the source (a resample, a Clean
+   * Impulse) or change a sono setting and the item stops matching, so the
+   * prompt returns — which is right: it would now be storing something
+   * different from what it stored last time.
+   *
+   * The channel record is excluded from the comparison for the same reason
+   * {@link sonoProvenance} omits it: the stored item legitimately holds
+   * whichever channels the user picked last time, and "you already answered
+   * this question" is the whole point.
+   */
+  function sonoItemIsFresh(ws: WorkingSet): boolean {
+    const item = materializedItems.get(lineageKey(ws.setId, 'sono'));
+    if (!item) return false;
+    const ds = get(dataset);
+    if (!ds || !ds.items.includes(item)) return false;   // removed from the doc
+    if (item.meta.source_signature !== sourceSignatureOf(ws)) return false;
+    const stored = item.meta.source_settings;
+    if (!stored || typeof stored !== 'object') return false;
+    const { channels: _saved, ...rest } = stored as Record<string, unknown>;
+    const want = sonoProvenance(ws.setId);
+    const keys = new Set([...Object.keys(rest), ...Object.keys(want)]);
+    for (const k of keys) if (rest[k] !== want[k]) return false;
+    return true;
+  }
+
+  /**
    * The sets a Save could store a sonogram for: chosen by the (optional)
-   * subset pick, backed by real time data, and carrying a sono slice THIS
-   * SESSION computed.
+   * subset pick, backed by real time data, carrying a sono slice THIS SESSION
+   * computed, and NOT already stored up to date.
    *
    * The computed-this-session gate is the same one `materializeDerived` uses
    * and matters for the same reason: a sono view that merely came off disk is
@@ -1265,6 +1345,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * are the truth about how it was made. Re-deriving it from this session's
    * settings would fabricate provenance — and would silently "repair" a chain
    * the app is supposed to be flagging.
+   *
+   * The freshness gate ({@link sonoItemIsFresh}) is what makes the prompt
+   * ask ONCE. Without it, every subsequent Save of an unchanged session would
+   * re-raise the dialog and, on a yes, re-run a transform whose answer is
+   * already sitting in the document.
    */
   function sonoEligibleSets(setIds?: readonly number[]): WorkingSet[] {
     const chosen = setIds ? new Set(setIds) : null;
@@ -1274,6 +1359,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       && ws.time.kind === 'TimeData' && hasTimeData(ws.time)
       && computedThisSession.has(lineageKey(ws.setId, 'sono'))
       && d[ws.setId]?.sono !== undefined
+      && !sonoItemIsFresh(ws)
     ));
   }
 
@@ -1334,9 +1420,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         channel_cal_factors: chans.map((c) => cal.factors[c] ?? 1),
         test_name: nameOf(ws.setId), timestring, id_link: link,
         source_signature: sourceSignatureOf(ws),
-        source_settings: {
-          calc: 'sonogram', time_range: timeRangeOf(ws), channels: chans, ...s,
-        },
+        // `channels` records WHICH source channel each stored plane is; the
+        // rest is the compute provenance — see `sonoProvenance` for the
+        // dialect note and why `dynRangeDb` is not in it.
+        source_settings: { ...sonoProvenance(ws.setId), channels: chans },
       },
     }, ws.time.metaRaw?.unique_id ?? link, iso);
   }
@@ -2108,6 +2195,13 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     derivedItems: { kind: DerivedKind; item: DvmaItem; index: number }[];
     /** Which kinds were marked computed-this-session, so undo can re-mark. */
     computedKinds: DerivedKind[];
+    /**
+     * The set's remembered sonogram channel (`lastSonoCh`), or `undefined`
+     * if it never had one. Restored under the new id so an undone set's next
+     * "This channel" include stores the channel the user was looking at
+     * rather than silently falling back to channel 0.
+     */
+    sonoCh: number | undefined;
   }
   let blaRunUndo: RemovedSet[] = [];
 
@@ -2171,6 +2265,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         slice: get(derived)[id],
         derivedItems,
         computedKinds,
+        sonoCh: lastSonoCh.get(id),
       });
       if (item) drop.add(item);
       working = working.filter((w) => w.setId !== id);
@@ -2179,6 +2274,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       cleanCache.delete(id);
       cleanedSets.update((m) => { const n = { ...m }; delete n[id]; return n; });
       resampleUndo.delete(id);
+      lastSonoCh.delete(id);            // stashed above; ids are never reused
       // `analysisSettings` prunes itself off `selection.setsView`, so removing
       // the tray set is enough to drop its per-set settings record.
       selection.removeSet(id);
@@ -2249,6 +2345,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         materializedItems.set(lineageKey(id, dItem.kind), dItem.item);
       }
       for (const kind of r.computedKinds) computedThisSession.add(lineageKey(id, kind));
+      // The sonogram channel goes back with the set: "This channel" at the
+      // next save prompt must still mean the channel that was on screen.
+      if (r.sonoCh !== undefined) lastSonoCh.set(id, r.sonoCh);
     }
     dataset.set(ds);
     return true;
