@@ -38,8 +38,10 @@
    * (nothing selected) keeps the enter-solo behaviours above.
    */
   import { get } from 'svelte/store';
+  import type { Readable } from 'svelte/store';
   import type { Selection } from '../lib/stores/selection';
   import type { ModalStore } from '../lib/stores/modal';
+  import type { DerivedKind } from '../lib/analysis/actions';
   import { summariseColumn, type ColumnState } from '../lib/stores/channelSummary';
   import { factorToSensitivity, sensitivityToFactor, type CalRow } from '../lib/model/calibration';
   import { calibrationController } from '../lib/stores/calibrationController';
@@ -63,6 +65,13 @@
      *  clears the modal model with one-level undo (see `actions.clearFit`).
      *  Falls back to `selection.removeSet` if absent. */
     onDeleteFit,
+    /** Broken-chain flag store (Task 4 — `actions.staleChains`). Absent →
+     *  no card ever shows the stale badge. */
+    staleChains,
+    /** Rederive `setId`'s flagged `kinds` (Task 4 — normally
+     *  `actions.calcFft`/`calcTf` for that set). Absent → the badge is
+     *  never shown even when `staleChains` names a stale kind. */
+    onRederive,
   }: {
     selection: Selection;
     modal?: ModalStore;
@@ -70,6 +79,8 @@
     getCalibration?: (setId: number) => { factors: number[]; units: string[] };
     applyCalibration?: (setId: number, factors: number[], units: string[]) => void;
     onDeleteFit?: () => void;
+    staleChains?: Readable<Record<number, DerivedKind[]>>;
+    onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
   } = $props();
 
   // Live mode count for the fit pseudo-set's tray-card badge (round-5 item 13).
@@ -79,6 +90,14 @@
   $effect(() => {
     if (!modal) { modeCount = 0; return; }
     return modal.subscribe((s) => { modeCount = s.modes.length; });
+  });
+
+  // Live broken-chain map (Task 4), same absent-prop-safe subscription
+  // pattern as `modeCount` above — the narrow-rail Tray may not pass one.
+  let staleMap = $state<Record<number, DerivedKind[]>>({});
+  $effect(() => {
+    if (!staleChains) { staleMap = {}; return; }
+    return staleChains.subscribe((m) => { staleMap = m; });
   });
 
   // Prefer explicit props (idiomatic / testable); otherwise use the app-scoped
@@ -248,6 +267,8 @@
             onDeleteSet={selection.removeSet}
             onCalibrate={canCalibrate ? openCalibrate : undefined}
             channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
+            staleKinds={staleMap[set.id]}
+            onRederive={onRederive ? (kinds) => onRederive(set.id, kinds) : undefined}
           />
         {/if}
       {/each}

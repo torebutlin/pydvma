@@ -1743,3 +1743,129 @@ test('an appended file gets its own lineage — the already-materialised set is 
   expect(firstItem.meta.test_name).toBe('cap_first');
   expect(items.filter((i) => i.kind === 'FreqData')[1].meta.test_name).toBe('set_0');
 });
+
+// ---- Task 4: broken-chain (staleness) flag on load ----
+// A materialised FreqData/TfData carries `source_signature`. If the source
+// TimeData's samples change AFTER that stamp (a destructive edit, or a
+// hand-corrupted file), the signature computed fresh at load time no longer
+// matches the stored one — `loadDataset` pass 2 flags that (set, kind) in
+// `actions.staleChains`, the store `TrayCard`'s badge reads.
+
+test('a loaded FreqData whose source samples changed since it was stamped is flagged stale', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+  const bytes = writeDvma(get(actions.dataset)!);
+
+  // Corrupt: re-load the written bytes, mutate the LOADED source item's
+  // samples in the object graph, write again — the file now carries a
+  // FreqData whose stamped signature no longer matches its source.
+  const corrupted = readDvma(bytes);
+  const src = corrupted.items.find((i) => i.kind === 'TimeData')!;
+  (src.arrays.time_data.data as Float64Array)[0] = 999;
+  const corruptedBytes = writeDvma(corrupted);
+
+  const { sel: sel2, actions: a2 } = harness(engine);
+  a2.loadDataset(readDvma(corruptedBytes));
+  const id2 = get(sel2.sets)[0].id;
+  expect(get(a2.staleChains)[id2]).toEqual(['freq']);
+});
+
+test('an untouched materialise → save → reload round-trip carries no stale flags', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  await actions.calcTf(setId);
+  actions.materializeDerived();
+  const back = readDvma(writeDvma(get(actions.dataset)!));
+
+  const { actions: a2 } = harness(engine);
+  a2.loadDataset(back);
+  expect(get(a2.staleChains)).toEqual({});
+});
+
+test('a loaded derived item with no source_signature is never flagged, even with an edited source', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+  const ds = get(actions.dataset)!;
+  const freq = ds.items.find((i) => i.kind === 'FreqData')!;
+  // Strip the signature this builder just wrote — an older file that never
+  // carried a compute chain looks exactly like this.
+  delete (freq.meta as Record<string, unknown>).source_signature;
+  if (freq.metaRaw) delete (freq.metaRaw as Record<string, unknown>).source_signature;
+  const bytes = writeDvma(ds);
+
+  // Edit the source too, so a signature — if one were present — WOULD
+  // mismatch; absence, not a false match, is what must suppress the flag.
+  const corrupted = readDvma(bytes);
+  const src = corrupted.items.find((i) => i.kind === 'TimeData')!;
+  (src.arrays.time_data.data as Float64Array)[0] = 999;
+
+  const { sel: sel2, actions: a2 } = harness(engine);
+  a2.loadDataset(readDvma(writeDvma(corrupted)));
+  const id2 = get(sel2.sets)[0].id;
+  expect(get(a2.staleChains)[id2]).toBeUndefined();
+});
+
+test('recomputing exactly one flagged kind clears only that kind\'s flag', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  await actions.calcTf(setId);
+  actions.materializeDerived();
+  const bytes = writeDvma(get(actions.dataset)!);
+
+  const corrupted = readDvma(bytes);
+  const src = corrupted.items.find((i) => i.kind === 'TimeData')!;
+  (src.arrays.time_data.data as Float64Array)[0] = 999;
+  const corruptedBytes = writeDvma(corrupted);
+
+  const { sel: sel2, actions: a2 } = harness(engine);
+  a2.loadDataset(readDvma(corruptedBytes));
+  const id2 = get(sel2.sets)[0].id;
+  expect([...get(a2.staleChains)[id2]!].sort()).toEqual(['freq', 'tf']);
+
+  // Rederive ONLY the FFT (as clicking the badge with just 'freq' would):
+  // its flag clears; the TF's stays, since its item is still the stale one.
+  await a2.calcFft(id2);
+  expect(get(a2.staleChains)[id2]).toEqual(['tf']);
+});
+
+test('a fresh (non-append) load clears previous stale flags before re-detecting', async () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const setId = actions.addRecordedSet(capturedItem());
+  await actions.calcFft(setId);
+  actions.materializeDerived();
+  const bytes = writeDvma(get(actions.dataset)!);
+  const corrupted = readDvma(bytes);
+  const src = corrupted.items.find((i) => i.kind === 'TimeData')!;
+  (src.arrays.time_data.data as Float64Array)[0] = 999;
+
+  const { sel, actions: a2 } = harness(engine);
+  a2.loadDataset(readDvma(writeDvma(corrupted)));
+  const staleId = get(sel.sets)[0].id;
+  expect(get(a2.staleChains)[staleId]).toEqual(['freq']);
+
+  // A second, FRESH (non-append) load of an unrelated clean dataset must not
+  // carry the first file's flag forward under its (now stale) old id.
+  a2.loadDataset(makeDataset(1));
+  expect(get(a2.staleChains)).toEqual({});
+});
+
+test('an orphan derived item (no source present) is never flagged, even carrying a signature', () => {
+  const { engine } = calcEngine();
+  const { actions } = harness(engine);
+  const item = orphanTfItem(3);
+  item.meta = { ...item.meta, source_signature: 'deadbeefdeadbeef' };
+  const ds: DvmaDataset = { formatVersion: 1, pydvmaVersion: '1.5.0', items: [item] };
+  actions.loadDataset(ds);
+  expect(get(actions.staleChains)).toEqual({});
+});

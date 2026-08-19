@@ -151,6 +151,29 @@ interface WorkingSet {
 /** Per-set derived arrays, keyed by selection setId (fed to buildPlotModel). */
 type DerivedMap = Record<number, SetArrays>;
 
+/**
+ * The derived-item kinds `materializeDerived` writes into the document and
+ * `staleChains` (see `createActions`) tracks for broken-chain detection —
+ * `'freq'` (a `FreqData`, the FFT) and `'tf'` (a `TfData`, the transfer
+ * function + coherence). Task 5b's honest SonoData materialisation adds
+ * `'sono'` to this union; every consumer (`materializedItems`,
+ * `staleChains`, `derivedKindOf`) is already keyed generically by it, so
+ * that lands as a one-line type change plus a `derivedKindOf` case.
+ */
+export type DerivedKind = 'freq' | 'tf';
+
+/**
+ * Map a loaded item's `DataKind` to its `DerivedKind` bucket, or `null` for
+ * a kind neither lineage adoption (`loadDataset` pass 2) nor staleness
+ * detection tracks. The single seam Task 5b extends to fold SonoData into
+ * both systems.
+ */
+function derivedKindOf(kind: DataKind): DerivedKind | null {
+  if (kind === 'FreqData') return 'freq';
+  if (kind === 'TfData') return 'tf';
+  return null;
+}
+
 /** fs from a TimeData item: prefer settings.fs, else infer from the axis. */
 function sampleRate(item: DvmaItem): number {
   const fromSettings = item.settings?.fs;
@@ -430,8 +453,6 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   /** Source sets in load order (one per TimeData item), with cached meta. */
   let working: WorkingSet[] = [];
 
-  /** The two derived kinds `materializeDerived` writes into the document. */
-  type DerivedKind = 'freq' | 'tf';
   /** Lineage key for one set's derived item of one kind. */
   const lineageKey = (setId: number, kind: DerivedKind) => `${setId}:${kind}`;
   /**
@@ -460,9 +481,64 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * made for some unrelated reason.
    */
   const computedThisSession = new Set<string>();
-  /** Record that a calc produced `kind` for `setId` (see the set's doc). */
-  const markComputed = (setId: number, kind: DerivedKind) =>
+
+  /**
+   * Broken-chain (staleness) flag: `setId -> derived kinds whose ADOPTED
+   * item's `source_signature` no longer matches its source TimeData's
+   * CURRENT samples — detected once, at LOAD time, in `loadDataset` pass 2
+   * (see its doc). A signature hashes SOURCE SAMPLES + rate only
+   * (`codec/signature.ts` / `pydvma._signature`), so a mismatch means "the
+   * time data changed since this was computed" — a destructive edit
+   * (resample, Clean Impulse, a Python edit-then-push) legitimately leaves
+   * a materialised item stale until the NEXT Save re-materialises it.
+   * `materializeDerived`'s doc names this the intended, not-a-bug case; this
+   * store is what makes it visible instead of silently trusted.
+   *
+   * An item with no `source_signature` (an older file, or one that never
+   * carried a compute chain) is never flagged — absence is not evidence of
+   * staleness. `TrayCard`'s badge reads this store; clicking it recomputes
+   * the flagged kind(s) via the normal calc actions, which clears the flag
+   * through `markComputed` below.
+   *
+   * KIND-GENERIC by design (mirrors `DerivedKind`): Task 5b's SonoData
+   * materialisation joins this same check by adding `'sono'` to
+   * `DerivedKind` — nothing here names 'freq'/'tf' specifically.
+   *
+   * Per ACTIONS INSTANCE, like `materializedItems` — see its doc.
+   */
+  const staleChains = writable<Record<number, DerivedKind[]>>({});
+
+  /** Flag `setId`'s `kind` as stale (no-op if already flagged). */
+  function markStale(setId: number, kind: DerivedKind): void {
+    staleChains.update((m) => {
+      const existing = m[setId] ?? [];
+      if (existing.includes(kind)) return m;
+      return { ...m, [setId]: [...existing, kind] };
+    });
+  }
+
+  /** Clear `setId`'s `kind` flag (no-op if not flagged) — see `markComputed`. */
+  function clearStale(setId: number, kind: DerivedKind): void {
+    staleChains.update((m) => {
+      const existing = m[setId];
+      if (!existing || !existing.includes(kind)) return m;
+      const next = existing.filter((k) => k !== kind);
+      const copy = { ...m };
+      if (next.length) copy[setId] = next; else delete copy[setId];
+      return copy;
+    });
+  }
+
+  /**
+   * Record that a calc produced `kind` for `setId` (see the set's doc) and
+   * repair its staleness flag: a fresh compute of exactly the flagged kind
+   * is what "rederive" means, so it clears immediately rather than waiting
+   * for the next Save to re-materialise and re-verify.
+   */
+  const markComputed = (setId: number, kind: DerivedKind) => {
     computedThisSession.add(lineageKey(setId, kind));
+    clearStale(setId, kind);
+  };
 
   /** The working sets a target names: one set, or all of them. */
   function targeted(target: AnalysisTarget): WorkingSet[] {
@@ -606,6 +682,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       working = [];
       materializedItems.clear();          // fresh document ⇒ fresh lineage
       computedThisSession.clear();
+      staleChains.set({});                // fresh document ⇒ re-detect from scratch
     }
     // Selection store has no reset; it is created fresh per app load. We
     // simply addSet for each item in this dataset.
@@ -691,14 +768,23 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
       if (linkedSet !== undefined) {
         // Source TimeData present: seed the view slice onto its set.
-        const srcChannels = working.find((w) => w.setId === linkedSet)!.nChannels;
-        const slice = sliceForLoadedItem(item, srcChannels);
+        const srcWs = working.find((w) => w.setId === linkedSet)!;
+        const slice = sliceForLoadedItem(item, srcWs.nChannels);
         if (slice) seed[linkedSet] = { ...seed[linkedSet], ...slice, setId: linkedSet };
-        // Adopt the item for replace-by-lineage: a later Save that
-        // re-materialises this set's FFT/TF updates THIS item rather than
-        // adding a second one beside it (see `materializedItems`).
-        if (item.kind === 'FreqData') materializedItems.set(lineageKey(linkedSet, 'freq'), item);
-        else if (item.kind === 'TfData') materializedItems.set(lineageKey(linkedSet, 'tf'), item);
+        const dKind = derivedKindOf(item.kind);
+        if (dKind) {
+          // Adopt the item for replace-by-lineage: a later Save that
+          // re-materialises this set's FFT/TF updates THIS item rather than
+          // adding a second one beside it (see `materializedItems`).
+          materializedItems.set(lineageKey(linkedSet, dKind), item);
+          // Broken-chain (staleness) detection (Task 4, see `staleChains`'s
+          // doc): an item with no signature is a file that never carried a
+          // compute chain — never flagged. One with a signature is checked
+          // against the source's CURRENT samples, reusing the exact hash
+          // `materializeDerived` writes (`sourceSignatureOf`).
+          const sig = item.meta.source_signature;
+          if (typeof sig === 'string' && sourceSignatureOf(srcWs) !== sig) markStale(linkedSet, dKind);
+        }
         return;
       }
 
@@ -2870,6 +2956,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, addBlaSets, removeBlaRun, undoRemoveBlaRun, stampUiState,
     materializeDerived,
+    /** Broken-chain flag store — see its doc. Read by `TrayCard`'s badge. */
+    staleChains,
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
     resampleTime, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,

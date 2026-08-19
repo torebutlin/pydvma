@@ -18,8 +18,10 @@
    * It hosts the real `Tray` (Task 10) and starts CLOSED, so the tray
    * region (`data-testid="tray"`) is hidden until opened.
    */
+  import type { Readable } from 'svelte/store';
   import type { Selection } from '../lib/stores/selection';
   import type { MonitorStore } from '../lib/stores/monitor';
+  import type { DerivedKind } from '../lib/analysis/actions';
   import { activeStage } from '../lib/stores/stages';
   import Tray from './Tray.svelte';
   import LevelBars from './LevelBars.svelte';
@@ -37,12 +39,17 @@
      */
     monitor,
     onDeleteFit,
+    /** Forwarded to the hosted Tray for the stale-chain badge (Task 4). */
+    staleChains,
+    onRederive,
   }: {
     selection: Selection;
     channelSeries?: (setId: number, ch: number) => Float64Array | undefined;
     modal?: import('../lib/stores/modal').ModalStore;
     monitor?: MonitorStore;
     onDeleteFit?: () => void;
+    staleChains?: Readable<Record<number, DerivedKind[]>>;
+    onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
   } = $props();
 
   const setsView = $derived(selection.setsView);
@@ -181,7 +188,7 @@
     data-testid="tray"
     onkeydown={onDrawerKeydown}
   >
-    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} />
+    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {staleChains} {onRederive} />
   </div>
 {/if}
 

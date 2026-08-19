@@ -39,7 +39,7 @@
   } from './lib/stores/engine';
   import { willUseNativeEngine } from './lib/worker/selectEngine';
   import { createToasts } from './lib/stores/toast';
-  import { createActions } from './lib/analysis/actions';
+  import { createActions, type DerivedKind } from './lib/analysis/actions';
   import { createModalStore } from './lib/stores/modal';
   import { createDampingStore } from './lib/stores/damping';
   import DampingPanel from './components/DampingPanel.svelte';
@@ -782,6 +782,19 @@
     }
   };
 
+  /**
+   * Rederive exactly the flagged kinds for one set — the stale-chain
+   * badge's click handler (Task 4, see `actions.staleChains`'s doc). Runs
+   * FFT/TF's normal calc actions, which clear the flag on success via
+   * `markComputed`; a fresh Save later re-materialises and re-stamps.
+   */
+  async function rederiveStale(setId: number, kinds: readonly DerivedKind[]): Promise<void> {
+    for (const kind of kinds) {
+      if (kind === 'freq') await actions.calcFft(setId);
+      else if (kind === 'tf') await actions.calcTf(setId);
+    }
+  }
+
   /** Default save filename: pydvma_YYYY-MM-DD_HHMM.dvma from the clock. */
   function defaultSaveName(now: Date): string {
     const p = (n: number) => String(n).padStart(2, '0');
@@ -1381,7 +1394,8 @@
 
   <main class="main">
     {#if narrow}
-      <NarrowRail {selection} {modal} {monitor} {channelSeries} onDeleteFit={actions.clearFit} />
+      <NarrowRail {selection} {modal} {monitor} {channelSeries} onDeleteFit={actions.clearFit}
+        staleChains={actions.staleChains} onRederive={rederiveStale} />
     {:else}
       <aside class="tray" data-testid="tray">
         <div class="tray-scroll">
@@ -1390,7 +1404,8 @@
           <Tray {selection} {modal} channelData={channelSeries}
             getCalibration={actions.getCalibration}
             applyCalibration={actions.setCalFactors}
-            onDeleteFit={actions.clearFit} />
+            onDeleteFit={actions.clearFit}
+            staleChains={actions.staleChains} onRederive={rederiveStale} />
         </div>
         <MiniMonitor {monitor} />
       </aside>

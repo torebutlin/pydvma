@@ -43,10 +43,30 @@
    * `AUTO_COLLAPSE_CHANNELS` channels start collapsed; smaller sets start
    * expanded. The expanded `.ch-list` is height-capped with its own scroll so a
    * large set stays bounded inside the (also-scrolling) tray column.
+   *
+   * Broken-chain badge (Task 4, derived-data save round): when `staleKinds`
+   * names one or more derived kinds whose saved item no longer matches its
+   * source samples (`actions.staleChains` — see its doc for what a mismatch
+   * means and why it is sometimes the INTENDED post-edit state, not a bug),
+   * a `⚠ source changed` badge appears beside the duration/fit badge.
+   * Clicking it calls `onRederive` with exactly those kinds; the caller runs
+   * the matching calc action(s), which clears the flag on success.
    */
   import type { Selection, SetView } from '../lib/stores/selection';
   import { minMaxDecimate } from '../lib/plot/decimate';
   import { sigFigs } from '../lib/format';
+  import type { DerivedKind } from '../lib/analysis/actions';
+
+  /** Human-readable label for one derived kind, for the stale badge's title. */
+  const KIND_LABEL: Record<DerivedKind, string> = { freq: 'FFT', tf: 'TF' };
+
+  /** "FFT", "FFT and TF", "FFT, TF, and Sono" — grammatical join of kind labels. */
+  function kindsLabel(kinds: readonly DerivedKind[]): string {
+    const labels = kinds.map((k) => KIND_LABEL[k] ?? k);
+    if (labels.length <= 1) return labels.join('');
+    if (labels.length === 2) return labels.join(' and ');
+    return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+  }
 
   let {
     selection,
@@ -55,6 +75,8 @@
     onCalibrate,
     channelData,
     fit,
+    staleKinds,
+    onRederive,
   }: {
     selection: Selection;
     set: SetView;
@@ -70,6 +92,11 @@
      * so the recon lines get normal tri-state / rename / legend behaviour.
      */
     fit?: { modeCount: number };
+    /** This set's broken-chain kinds (Task 4). Absent/empty → no badge. */
+    staleKinds?: readonly DerivedKind[];
+    /** Rederive exactly these stale kinds. Absent → the badge is not shown
+     *  even when `staleKinds` is non-empty (no way to act on it). */
+    onRederive?: (kinds: readonly DerivedKind[]) => void;
   } = $props();
 
   const stateStore = $derived(selection.state);
@@ -290,6 +317,16 @@
     {:else}
       <span class="dur-badge">{sigFigs(set.durationS)} s</span>
     {/if}
+    {#if onRederive && staleKinds && staleKinds.length > 0}
+      <button
+        type="button"
+        class="stale-badge"
+        data-testid="stale-chain-badge"
+        title={`Saved ${kindsLabel(staleKinds)} for this set were computed from earlier time data — click to rederive.`}
+        aria-label={`${set.name}: saved ${kindsLabel(staleKinds)} out of date — click to rederive`}
+        onclick={() => onRederive?.(staleKinds!)}
+      >⚠ source changed</button>
+    {/if}
     {#if onCalibrate}
       <button
         class="cal-btn"
@@ -488,6 +525,24 @@
     color: var(--indigo, #4f46e5);
     border-color: color-mix(in srgb, var(--indigo, #4f46e5) 35%, var(--border));
     background: color-mix(in srgb, var(--indigo, #4f46e5) 8%, var(--surface));
+  }
+  /* Broken-chain badge (Task 4): amber warning tone, clickable — sits beside
+     the duration/fit badge rather than replacing it, since it names an
+     ADDITIONAL fact about the set (its saved FFT/TF is out of date). */
+  .stale-badge {
+    margin-left: 4px;
+    font: 600 10.5px var(--font-mono);
+    color: var(--amber);
+    border: 1px solid var(--amber);
+    border-radius: 5px;
+    padding: 1px 5px;
+    background: var(--amber-soft);
+    flex: 0 0 auto;
+    cursor: pointer;
+    line-height: 1.3;
+  }
+  .stale-badge:hover {
+    filter: brightness(0.96);
   }
   .cal-btn {
     border: 1px solid var(--border);
