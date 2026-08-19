@@ -23,12 +23,18 @@ subsequent autosaves like any other item, which is correct and
 intended).
 
 **Scope decisions taken in this plan (Tore can veto):**
-1. **Round 1 materialises FFT (FreqData) and TF (TfData incl.
-   coherence).** SonoData is EXCLUDED: the app's derived sono slice is
-   a single-channel magnitude image (the container schema wants the
-   full multi-channel complex cube), so an honest SonoData would need
-   a full recompute at save time. Deferred with a TODO note. CSD
-   matrices likewise deferred. BLA TfData and ModalData are ALREADY
+1. **Materialisation covers FFT (FreqData), TF (TfData incl.
+   coherence) automatically, and SONOGRAMS via an explicit save-time
+   prompt** (REVISED 2026-08-19 — Tore's design, replacing the
+   original defer-sono decision): the app's derived sono slice is a
+   single-channel magnitude image while the container schema wants
+   the full multi-channel complex cube, so an honest SonoData needs a
+   recompute at save time — therefore Save shows an "Include
+   sonogram?" prompt, but ONLY when a sonogram has actually been
+   computed in the session (3c6 never sees it), with the choice
+   visible-channel / all-channels / don't include and a note that
+   saving may take longer (and grow the file). See Task 5b. CSD
+   matrices remain deferred. BLA TfData and ModalData are ALREADY
    real items — untouched.
 2. **The signature covers SOURCE SAMPLES only** (+ fs), not settings:
    staleness means "the time data changed since this was computed"
@@ -350,7 +356,9 @@ view-model, following how `fit-badge` gets its data).
 `source_signature` AND its source TimeData is present, recompute the
 source's signature; on mismatch mark that set+kind stale (store:
 `staleChains: Record<setId, kinds[]>` or similar). Items without a
-signature (older files): no flag, no assumption.
+signature (older files): no flag, no assumption. (When Task 5b lands,
+SonoData items join the same check — write the detection kind-generic
+so that is a one-line addition.)
 - [ ] TrayCard: a small badge beside `.dur-badge` when the set has any
 stale chain — text `⚠ source changed`, `title` explaining ("this
 set's saved TF/FFT was computed from earlier time data — rederive to
@@ -393,6 +401,58 @@ first, so a subset save carries the chosen sets' derived items.
 its derived items and nothing else); all-ticked path byte-equivalent
 to today's. `npm run check` green.
 - [ ] Commit: `feat(webui): Choose sets… — subset Save/Export per measurement, all-by-default split-buttons`
+
+### Task 5b: Sonogram include-prompt on Save (Tore's design, 2026-08-19)
+
+**Files:** Modify `webui/src/lib/analysis/actions.ts`,
+`webui/src/App.svelte` (save flow), a small prompt component (reuse
+the toast-with-actions pattern OR the ChooseSetsPopover shell —
+read both landed surfaces first and pick the lighter one that can
+offer three choices); `pydvma/container.py` (`_OPTIONAL_META` gains
+`source_signature`/`source_settings` for `SonoData`);
+`pydvma/analysis.py` (stamp the sonogram calc sites —
+`calculate_sonogram` and the CWT variant — same `_stamp_source`
+pattern as FFT/TF, `calc: 'sonogram'` with the real knobs: nperseg /
+w0 / voices etc., read the signatures); `pydvma/engine.py` ONLY IF
+the sono op cannot already return the complex multi-channel data
+(read it first; an engine.py change re-triggers the wheel-rebuild
+ritual — it is already scheduled in Task 7 regardless).
+
+**Behaviour:**
+- On Save (both the plain path and a Choose-sets subset save), IF any
+  chosen set has a sonogram computed this session
+  (`derived[setId].sono` present): prompt "Include sonogram data?"
+  with three choices — **This channel** (the channel the sono view
+  shows — default), **All channels**, **Don't include** — plus the
+  note "including sonograms can make saving slower and files larger".
+  NO prompt when no sonogram exists anywhere in the chosen sets
+  (the 3c6 case), and no prompt on autosave/journal ever.
+- On include: recompute the sonogram(s) COMPLEX for the chosen
+  channel(s) with the set's current sono settings (engine round-trip;
+  the native engine makes this fast — the prompt's note covers
+  Pages), build an honest SonoData item (`time_axis` + `freq_axis` +
+  complex `sono_data` cube shaped (n_freq, n_frames, n_channels_saved)
+  with a `source_settings` record of WHICH channels were saved),
+  stamped and lineage-upserted exactly like Task 3's items
+  (map key `${setId}:sono`). The existing CWT/PSD memory preflights
+  apply to the recompute — a refusal surfaces its normal message and
+  the save proceeds WITHOUT the sonogram (toast says so).
+- Loading a file with SonoData already seeds the sono view (verify —
+  Pass 2 handles Freq/Tf/CrossSpec; extend to SonoData if it does
+  not, single-channel display of the stored cube per the existing
+  sono view conventions).
+
+**Tests:** vitest — prompt-eligibility logic (sono computed → save
+flow requests the choice; none → straight save; autosave never);
+materialised SonoData round-trips with signature+settings+channel
+record; replace-by-lineage on re-save; container pytest for the
+`_OPTIONAL_META` SonoData fields; analysis pytest for the two
+stamped sono sites. The interactive prompt itself is covered in Task
+7's e2e (compute a sonogram → Save → choose This channel → reload →
+sono view seeds without recomputing; and a no-sono save shows no
+prompt).
+
+**Commit:** `feat(webui/analysis): Include-sonogram save prompt — explicit, only when computed; honest complex SonoData materialisation`
 
 ### Task 6: Python subset parity
 
@@ -443,10 +503,13 @@ now contains), `index.md` + `migration.md` restore/`session.data`
 notes updated (restored sessions and pulled data now INCLUDE saved
 FFT/TF results once you have Saved; the journal itself still doesn't
 auto-materialise), `examples/basic.md` (subset + signature notes),
-CHANGELOG (Added: derived-data save + signatures + subset picker;
-one honest note: sonograms/CSD not yet materialised). TODO.md:
-strike the decided item's "decide deliberately" framing → point at
-this plan/round; add the sono/CSD deferral note.
+CHANGELOG (Added: derived-data save + signatures + subset picker +
+the include-sonogram prompt; one honest note: CSD matrices not yet
+materialised). TODO.md: strike the decided item's "decide
+deliberately" framing → point at this plan/round; note the CSD
+deferral. E2E additionally covers Task 5b's prompt (sono computed →
+prompt → This channel → reload seeds the sono view; no-sono save →
+no prompt).
 - [ ] **Suites:** full pytest, vitest, check, Playwright non-engine +
 @engine + BRIDGE_E2E (all five bridge specs now), mkdocs strict.
 `pydvma/analysis.py` changed → it ships in the engine wheel → `npm
