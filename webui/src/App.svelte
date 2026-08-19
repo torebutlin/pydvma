@@ -802,8 +802,18 @@
     return `pydvma_${stamp}.dvma`;
   }
 
-  /** Save Dataset: prompt a name, write the .dvma, persist via the working dir. */
-  const onsave = async () => {
+  /**
+   * Save Dataset: prompt a name, write the .dvma, persist via the working dir.
+   *
+   * `setIds` is the Export card's optional "Choose sets…" pick — ABSENT (the
+   * primary button, and the header's) writes the whole document exactly as
+   * before. Materialisation and UI-stamping run FIRST and unfiltered, so the
+   * chosen sets' derived items exist and are annotated before
+   * `subsetDataset` selects which of them the file carries; the unchosen
+   * sets' materialised items stay in the live document and ride the next
+   * autosave, as any other item does.
+   */
+  const onsave = async (setIds?: readonly number[]) => {
     const ds = $datasetStore;
     if (!ds) {
       toasts.push('Nothing to save yet — load or acquire data first.', { level: 'info' });
@@ -819,11 +829,19 @@
       // then annotates and `writeDvma` serializes.
       actions.materializeDerived();
       actions.stampUiState();        // persist channel labels + analysis settings
-      const bytes = writeDvma(ds);
+      const doc = actions.subsetDataset(setIds);
+      const bytes = writeDvma(doc);
       const dir = workdir ?? fallbackDir();
       await dir.save(filename, bytes);
-      await clearAutosave(); // a clean save supersedes any pending autosave
-      toasts.push(`Saved ${filename}`, { level: 'success' });
+      // A SUBSET save is not the whole session, so it must not supersede the
+      // autosave that still holds it (only a full save does).
+      const partial = doc !== ds;
+      if (!partial) await clearAutosave();
+      const total = partial ? actions.choosableSets().length : 0;
+      toasts.push(
+        partial ? `Saved ${filename} (${setIds?.length ?? 0} of ${total} sets)` : `Saved ${filename}`,
+        { level: 'success' },
+      );
     } catch (e) {
       toasts.push(`Save failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
     }

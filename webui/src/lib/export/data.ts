@@ -42,15 +42,39 @@ export interface ExportSet {
 export type ExportKind = 'time' | 'freq' | 'tf';
 
 /**
+ * What one measurement carries, as the "Choose sets…" picker badges it:
+ * a time series, an FFT, a transfer function, a modal fit.
+ */
+export type ChoosableKind = 'time' | 'fft' | 'tf' | 'fit';
+
+/**
+ * One row of the "Choose sets…" subset picker — a source MEASUREMENT, its
+ * display name, and the kinds it currently carries. Serves Save and Export
+ * alike (both subset by measurement), which is why it lives beside the
+ * `Exporter` surface the card already reads rather than inside the popover.
+ */
+export interface ChoosableSet {
+  setId: number;
+  name: string;
+  kinds: ChoosableKind[];
+}
+
+/**
  * The minimal engine-side accessor surface the Export card depends on
  * (implemented on `actions` by the analysis layer). Typed locally so this
  * module — and the card — stay decoupled from the full `Actions` type.
+ *
+ * The optional `setIds` on each export is the "Choose sets…" pick: ABSENT
+ * means every set (what the primary buttons always do), a list restricts the
+ * export to those measurements.
  */
 export interface Exporter {
   /** Raw per-set arrays for a kind (empty when that kind has no data). */
-  exportArrays(kind: ExportKind): ExportSet[];
+  exportArrays(kind: ExportKind, setIds?: readonly number[]): ExportSet[];
   /** Ready `.mat` bytes (engine-side `scipy.io.savemat`; boots pyodide). */
-  exportMat(): Promise<Uint8Array>;
+  exportMat(setIds?: readonly number[]): Promise<Uint8Array>;
+  /** The measurements a subset pick can choose between, in load order. */
+  choosableSets(): ChoosableSet[];
 }
 
 /**
@@ -151,11 +175,18 @@ export interface NamedFile {
  * everything too). A single kind yields `<base>-time.csv`; multiple yield
  * `<base>-time.csv`, `<base>-freq.csv`, `<base>-tf.csv`. Returns [] when
  * nothing is present.
+ *
+ * `setIds` threads the "Choose sets…" pick straight through to
+ * `exportArrays`: absent exports every measurement (the primary button), a
+ * list exports only those — and a kind none of them carries drops out of the
+ * file list entirely, as an absent kind always has.
  */
-export function buildCsvFiles(exporter: Exporter, base: string): NamedFile[] {
+export function buildCsvFiles(
+  exporter: Exporter, base: string, setIds?: readonly number[],
+): NamedFile[] {
   const files: NamedFile[] = [];
   for (const { kind, suffix } of CSV_KINDS) {
-    const sets = exporter.exportArrays(kind);
+    const sets = exporter.exportArrays(kind, setIds);
     if (sets.length === 0) continue;
     files.push({ name: `${base}-${suffix}.csv`, text: buildCsv(kind, sets) });
   }

@@ -21,9 +21,17 @@
    * (`scipy.io.savemat`), CSV serialises the raw arrays in pure TS
    * (src/lib/export/data.ts). When no exporter is provided they fall back to
    * DISABLED with an honest tooltip.
+   *
+   * SUBSET PICKING (derived-data round, Task 5): each of the three dataset
+   * buttons is a SPLIT control — the primary button is unchanged and always
+   * means EVERYTHING with no dialog, and a narrow `▾` beside it opens
+   * `ChooseSetsPopover` to run the same action on a chosen subset of
+   * measurements. The pick is per-invocation and starts all-ticked; it is
+   * never derived from what is visible on the plot.
    */
   import { exportPdf, exportPng, type BackgroundMode } from '../../lib/export/figure';
-  import { buildCsvFiles, type Exporter } from '../../lib/export/data';
+  import { buildCsvFiles, type ChoosableSet, type Exporter } from '../../lib/export/data';
+  import ChooseSetsPopover from '../ChooseSetsPopover.svelte';
   import { cancelAutosave } from '../../lib/files/autosave';
   import type { WorkDir } from '../../lib/files/workdir';
   import type { Toasts } from '../../lib/stores/toast';
@@ -42,8 +50,12 @@
     getSvg: () => SVGSVGElement | undefined;
     /** Working directory to write into (null → browser download fallback). */
     workdir: WorkDir | null;
-    /** The header's Save Dataset handler (single .dvma write path). */
-    onsave: () => void;
+    /**
+     * The header's Save Dataset handler (single .dvma write path). Takes the
+     * optional subset pick: absent ⇒ the whole document, as the primary
+     * button has always written.
+     */
+    onsave: (setIds?: readonly number[]) => void;
     /** Shared toast store for success/error feedback. */
     toasts: Toasts;
     /** Whether any dataset is loaded (gates Save Figure + data export). */
@@ -65,6 +77,42 @@
   let bg = $state<BackgroundMode>('white');
   let filename = $state(defaultFigureName(new Date()));
   let busy = $state(false);
+
+  // ---- "Choose sets…" subset picker -------------------------------------
+  /** Which split control's popover is open (null = none). */
+  type PickTarget = 'save' | 'mat' | 'csv';
+  let pick = $state<PickTarget | null>(null);
+  /** Rows SNAPSHOT for the open popover, taken at open time. */
+  let pickSets = $state<ChoosableSet[]>([]);
+  /** The relative anchor the popover positions against / dismisses outside of. */
+  let pickWrap = $state<HTMLDivElement>();
+
+  /** Heading + confirm verb per target. */
+  const PICK_LABEL: Record<PickTarget, { title: string; confirm: string }> = {
+    save: { title: 'Save Dataset', confirm: 'Save' },
+    mat: { title: 'Export Matlab', confirm: 'Export' },
+    csv: { title: 'Export CSV', confirm: 'Export' },
+  };
+
+  /** Can a subset be picked at all? (needs the actions accessor + data) */
+  const canPick = $derived(!!exporter && hasData);
+
+  /** Open (or re-open, re-snapshotting the rows) one control's picker. */
+  function openPick(target: PickTarget): void {
+    if (!exporter) return;
+    if (pick === target) { pick = null; return; }
+    pickSets = exporter.choosableSets();
+    pick = target;
+  }
+
+  /** OK: run the picked control's action over the chosen measurements. */
+  function runPick(setIds: number[]): void {
+    const target = pick;
+    pick = null;
+    if (target === 'save') onsave(setIds);
+    else if (target === 'mat') void exportMatlab(setIds);
+    else if (target === 'csv') void exportCsv(setIds);
+  }
 
   /**
    * Autosave toggle change: when it goes OFF, cancel any pending debounced
@@ -152,12 +200,13 @@
   /**
    * Export Matlab: the engine builds the `.mat` (scipy.io.savemat, schema
    * matching pydvma export_to_matlab); this only downloads the bytes.
+   * `setIds` is the optional "Choose sets…" pick (absent ⇒ everything).
    */
-  async function exportMatlab(): Promise<void> {
+  async function exportMatlab(setIds?: readonly number[]): Promise<void> {
     if (!exporter) return;
     busy = true;
     try {
-      const bytes = await exporter.exportMat();
+      const bytes = await exporter.exportMat(setIds);
       await write(`${dataBaseName()}.mat`, bytes);
       toasts.push('Exported Matlab (.mat)', { level: 'success' });
     } catch (e) {
@@ -171,12 +220,13 @@
    * Export CSV: one raw-values file per data kind present (time / freq / tf),
    * mirroring the "save the whole dataset" theme of Save Dataset + Matlab.
    * Built in pure TS to reproduce pydvma export_to_csv exactly.
+   * `setIds` is the optional "Choose sets…" pick (absent ⇒ everything).
    */
-  async function exportCsv(): Promise<void> {
+  async function exportCsv(setIds?: readonly number[]): Promise<void> {
     if (!exporter) return;
     busy = true;
     try {
-      const files = buildCsvFiles(exporter, dataBaseName());
+      const files = buildCsvFiles(exporter, dataBaseName(), setIds);
       if (files.length === 0) {
         toasts.push('No data to export yet.', { level: 'info' });
         return;
@@ -197,25 +247,64 @@
   <div class="ctx-name"><span class="cn-t">Export</span><span class="cn-s">save</span></div>
   <div class="ctx-body">
     <div class="ctx-row">
-      <div class="grp">
+      <!-- Each dataset action is a split control: the primary button writes
+           EVERYTHING with no dialog (unchanged), the ▾ picks a subset. -->
+      <div class="grp pick-anchor" bind:this={pickWrap}>
         <span class="grp-lab">dataset</span>
         <div class="grp-ctl">
-          <button class="btn" onclick={onsave}>Save Dataset</button>
-          <button
-            class="btn"
-            disabled={busy || !hasData || !exporter}
-            title={exporter
-              ? 'Export all data as a Matlab .mat file'
-              : 'Data export unavailable — engine not connected'}
-            onclick={exportMatlab}>Export Matlab</button>
-          <button
-            class="btn"
-            disabled={busy || !hasData || !exporter}
-            title={exporter
-              ? 'Export data as CSV (one file per kind: time / freq / tf)'
-              : 'Data export unavailable — engine not connected'}
-            onclick={exportCsv}>Export CSV</button>
+          <div class="split">
+            <button class="btn" onclick={() => onsave()}>Save Dataset</button>
+            <button
+              class="btn more"
+              aria-label="Choose sets to save"
+              aria-expanded={pick === 'save'}
+              disabled={!canPick}
+              title={canPick ? 'Choose which measurements to save' : 'No data to choose from'}
+              onclick={() => openPick('save')}>▾</button>
+          </div>
+          <div class="split">
+            <button
+              class="btn"
+              disabled={busy || !hasData || !exporter}
+              title={exporter
+                ? 'Export all data as a Matlab .mat file'
+                : 'Data export unavailable — engine not connected'}
+              onclick={() => exportMatlab()}>Export Matlab</button>
+            <button
+              class="btn more"
+              aria-label="Choose sets to export as Matlab"
+              aria-expanded={pick === 'mat'}
+              disabled={busy || !canPick}
+              title={canPick ? 'Choose which measurements to export' : 'No data to choose from'}
+              onclick={() => openPick('mat')}>▾</button>
+          </div>
+          <div class="split">
+            <button
+              class="btn"
+              disabled={busy || !hasData || !exporter}
+              title={exporter
+                ? 'Export data as CSV (one file per kind: time / freq / tf)'
+                : 'Data export unavailable — engine not connected'}
+              onclick={() => exportCsv()}>Export CSV</button>
+            <button
+              class="btn more"
+              aria-label="Choose sets to export as CSV"
+              aria-expanded={pick === 'csv'}
+              disabled={busy || !canPick}
+              title={canPick ? 'Choose which measurements to export' : 'No data to choose from'}
+              onclick={() => openPick('csv')}>▾</button>
+          </div>
         </div>
+        {#if pick}
+          <ChooseSetsPopover
+            sets={pickSets}
+            title={PICK_LABEL[pick].title}
+            confirmLabel={PICK_LABEL[pick].confirm}
+            anchor={pickWrap}
+            onconfirm={runPick}
+            oncancel={() => (pick = null)}
+          />
+        {/if}
       </div>
       <div class="grp">
         <span class="grp-lab">figure format</span>
@@ -260,6 +349,29 @@
 </section>
 
 <style>
+  /* Anchor for the absolutely-positioned "Choose sets…" popover. Written
+     `.grp.pick-anchor` to out-specify app.css's `.ctx-card .grp`. */
+  .grp.pick-anchor {
+    position: relative;
+  }
+  /* Split control: primary button + a narrow ▾, joined so they read as one. */
+  .split {
+    display: inline-flex;
+    align-items: stretch;
+  }
+  .split :global(.btn:first-child) {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .split :global(.btn.more) {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left-width: 0;
+    min-width: 0;
+    padding: 0 6px;
+    font-size: 10px;
+    line-height: 1;
+  }
   .chk {
     display: inline-flex;
     align-items: center;

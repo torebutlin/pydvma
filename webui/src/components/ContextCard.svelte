@@ -76,8 +76,9 @@
     getSvg: () => SVGSVGElement | undefined;
     /** Working directory for Save Figure / Save Dataset. */
     workdir: WorkDir | null;
-    /** Header's Save Dataset handler (reused by the Export card). */
-    onsave: () => void;
+    /** Header's Save Dataset handler (reused by the Export card, which can
+     *  hand it a "Choose sets…" subset pick; absent ⇒ the whole document). */
+    onsave: (setIds?: readonly number[]) => void;
     /** Shared toast store. */
     toasts: Toasts;
     /** Whether any dataset is loaded (gates figure export). */

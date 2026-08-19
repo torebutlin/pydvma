@@ -103,10 +103,18 @@ test('buildCsv: mismatched row counts throw (numpy np.append would fail)', () =>
 });
 
 /** A fake exporter for the file-routing tests. */
-function stubExporter(data: Partial<Record<ExportKind, ExportSet[]>>): Exporter {
+function stubExporter(
+  data: Partial<Record<ExportKind, ExportSet[]>>,
+  seen?: (readonly number[] | undefined)[],
+): Exporter {
   return {
-    exportArrays: (kind) => data[kind] ?? [],
+    exportArrays: (kind, setIds) => {
+      seen?.push(setIds);
+      const sets = data[kind] ?? [];
+      return setIds ? sets.filter((s) => setIds.includes(s.setId)) : sets;
+    },
     exportMat: async () => new Uint8Array([1, 2, 3]),
+    choosableSets: () => [],
   };
 }
 
@@ -139,4 +147,27 @@ test('buildCsvFiles: multiple kinds → one file each, in time/freq/tf order', (
 
 test('buildCsvFiles: no data → no files', () => {
   expect(buildCsvFiles(stubExporter({}), 'logged_data')).toEqual([]);
+});
+
+test('buildCsvFiles: a "Choose sets…" pick threads through to every kind', () => {
+  const seen: (readonly number[] | undefined)[] = [];
+  const exporter = stubExporter({
+    time: [
+      { setId: 0, axis: Float64Array.of(0, 1), columns: [Float64Array.of(2, 3)] },
+      { setId: 1, axis: Float64Array.of(0, 1), columns: [Float64Array.of(8, 9)] },
+    ],
+  }, seen);
+
+  const files = buildCsvFiles(exporter, 'run7', [1]);
+  expect(seen).toEqual([[1], [1], [1]]);            // time, freq, tf all asked
+  expect(files.map((f) => f.name)).toEqual(['run7-time.csv']);
+  // Only the chosen set's column is beside the axis.
+  expect(files[0].text).toBe(
+    '0.000000000000000000e+00,8.000000000000000000e+00\n' +
+      '1.000000000000000000e+00,9.000000000000000000e+00\n',
+  );
+  // No pick ⇒ no filter reaches the accessor (today's behaviour, unchanged).
+  seen.length = 0;
+  buildCsvFiles(exporter, 'run7');
+  expect(seen).toEqual([undefined, undefined, undefined]);
 });

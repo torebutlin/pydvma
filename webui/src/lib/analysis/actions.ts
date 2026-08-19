@@ -28,7 +28,10 @@
  * Modal fit (Task A1): `calcFit` runs the STATELESS `calc_fit` engine op and
  * pushes the decoded result into the injected `modal` store (which owns the
  * accumulated modal matrix and re-sends it). `exportMat` / `exportArrays` are
- * shared-spine accessors the Export card (a sibling agent) consumes.
+ * shared-spine accessors the Export card (a sibling agent) consumes; both,
+ * plus `subsetDataset` for Save, take the Export card's optional
+ * "Choose sets…" pick (`choosableSets` supplies its rows) — absent always
+ * means EVERY measurement, exactly as before the picker existed.
  *
  * Concurrency: live slider re-issues are debounced (150 ms) and each
  * action kind carries a PER-KIND stale seq (keyed 'fft'/'psd'/'tf'/
@@ -58,6 +61,7 @@ import type {
 } from '../stores/damping';
 import type { Toasts } from '../stores/toast';
 import { normalizeFactors, normalizeUnits } from '../model/calibration';
+import type { ChoosableKind, ChoosableSet } from '../export/data';
 import { calibrationController } from '../stores/calibrationController';
 import { tfColumn } from '../plot/tfChannels';
 import { fromNFrames, fromNFft } from './resolution';
@@ -2881,17 +2885,121 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     };
   }
 
+  /** The working sets an export's optional subset pick names (absent ⇒ all). */
+  function exportSets(setIds?: readonly number[]): WorkingSet[] {
+    if (!setIds) return working;
+    const chosen = new Set(setIds);
+    return working.filter((w) => chosen.has(w.setId));
+  }
+
+  /**
+   * The measurements a subset pick can choose between — one row per source
+   * set in `working`, in load order, each with its display NAME (read fresh,
+   * so a renamed set reads right) and the kinds it currently carries:
+   * `'time'` / `'fft'` / `'tf'` from the decoded `derived` slices, `'fit'`
+   * when the modal model targets it. Feeds `ChooseSetsPopover`'s rows.
+   *
+   * Source measurements ONLY: a modal-fit pseudo-set is not a row of its own
+   * (it rides its source set's `'fit'` badge, and the subset filter carries
+   * the `ModalData` with that set — see `subsetDataset`).
+   */
+  function choosableSets(): ChoosableSet[] {
+    const d = get(derived);
+    const fitted = new Set(modal ? modal.get().targets.map((t) => t.setId) : []);
+    return working.map((ws) => {
+      const s = d[ws.setId];
+      const kinds: ChoosableKind[] = [];
+      if (s?.time) kinds.push('time');
+      if (s?.freq) kinds.push('fft');
+      if (s?.tf) kinds.push('tf');
+      if (fitted.has(ws.setId)) kinds.push('fit');
+      return { setId: ws.setId, name: nameOf(ws.setId), kinds };
+    });
+  }
+
+  /**
+   * The document a Save should write for a chosen subset of measurements —
+   * a FILTERED view of the live dataset, never a mutation of it.
+   *
+   * `setIds === undefined`, or a pick naming EVERY working set, returns the
+   * live dataset object itself: "everything" means everything, including the
+   * items this app cannot attribute to any set (an orphan `SonoData`, a
+   * `MetaData` block, a `ModalData` whose links no longer resolve). That
+   * short-circuit is what keeps an all-ticked save byte-identical to the
+   * unfiltered save the app has always written.
+   *
+   * A PROPER subset keeps, in the document's own item order:
+   *   1. each chosen set's SOURCE item (its `TimeData` — or, for a set that
+   *      loaded from an orphan derived item, that item);
+   *   2. every item whose `id_link` is one of the chosen sets' lineage ids
+   *      (the materialised FFT/TF, a python-written spectrum, coherence…) —
+   *      the same `id_link → set` resolution `loadDataset` pass 2 uses;
+   *   3. the `ModalData` fit when ANY of its links lands in the chosen sets,
+   *      whether the model spans one set (`id_link` a string, or a single
+   *      `source_targets` entry) or several (`id_link` a LIST plus one
+   *      `source_targets` entry per spanned set — see `upsertModalItem`).
+   *
+   * Rule 3 is deliberately ANY, not all: a fit is worth carrying with any set
+   * it describes. Note the loader is stricter — pass 3 restores the model
+   * only when EVERY `source_targets` link resolves — so a subset that spans
+   * just part of a shared-pole fit carries the `ModalData` as data (python
+   * reads it; the modes are not lost) without re-seeding the fit on reload.
+   *
+   * An item that matches nothing is dropped from a proper subset — that is
+   * the point of picking. Items are shared BY REFERENCE with the live
+   * document (they are already stamped by `materializeDerived` /
+   * `stampUiState`, which run first); only the `items` ARRAY is new.
+   */
+  function subsetDataset(setIds?: readonly number[]): DvmaDataset {
+    const ds = get(dataset);
+    if (!ds) throw new Error('No dataset to save.');
+    if (!setIds) return ds;
+    const chosen = new Set(setIds);
+    const picked = working.filter((w) => chosen.has(w.setId));
+    if (picked.length === working.length) return ds;      // everything ⇒ the whole document
+
+    const sources = new Set(picked.map((w) => w.time));
+    // The lineage ids the chosen sets answer to: a source TimeData's own
+    // `unique_id`, plus the `id_link` an orphan-derived source was keyed by.
+    const links = new Set<string>();
+    for (const w of picked) {
+      for (const k of ['unique_id', 'id_link']) {
+        const v = w.time.meta[k];
+        if (typeof v === 'string' && v) links.add(v);
+      }
+    }
+    const linked = (v: unknown): boolean => typeof v === 'string' && links.has(v);
+    const modalWanted = (item: DvmaItem): boolean => {
+      if (item.kind !== 'ModalData') return false;
+      const link = item.meta.id_link;
+      if (Array.isArray(link) && link.some(linked)) return true;
+      const targets = item.meta.source_targets as { id_link?: unknown }[] | undefined;
+      return Array.isArray(targets) && targets.some((t) => linked(t?.id_link));
+    };
+
+    return {
+      formatVersion: ds.formatVersion,
+      pydvmaVersion: ds.pydvmaVersion,
+      items: ds.items.filter(
+        (it) => sources.has(it) || linked(it.meta.id_link) || modalWanted(it)),
+    };
+  }
+
   /**
    * Raw decoded per-set arrays for the CSV builder (Wave-A shared spine —
    * Agent 2 owns the CSV/preview UI). PURE accessor, no engine call: reads
    * the decoded `derived` slices and splits each into per-channel columns.
    * `'time'` returns real `Float64Array` columns; `'freq'`/`'tf'` return
    * complex `{re, im}` columns. Sets without the requested kind are skipped.
+   *
+   * `setIds` (the "Choose sets…" pick) restricts the export to those
+   * measurements; ABSENT means every set, exactly as before. An EMPTY list
+   * is an empty pick, not "no filter" — it exports nothing.
    */
-  function exportArrays(kind: 'time' | 'freq' | 'tf'): ExportSetArrays[] {
+  function exportArrays(kind: 'time' | 'freq' | 'tf', setIds?: readonly number[]): ExportSetArrays[] {
     const d = get(derived);
     const out: ExportSetArrays[] = [];
-    for (const ws of working) {
+    for (const ws of exportSets(setIds)) {
       const slice = kind === 'time' ? d[ws.setId]?.time
         : kind === 'freq' ? d[ws.setId]?.freq
           : d[ws.setId]?.tf;
@@ -2930,13 +3038,16 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * already row-major (rows, cols)) to the `export_mat` glue op, which
    * interpolates onto a per-kind common axis, column-concatenates, and
    * `scipy.io.savemat`s. RAW values (no cal factors); no coherence.
+   *
+   * `setIds` (the "Choose sets…" pick) restricts the export to those
+   * measurements; ABSENT means every set, exactly as before.
    */
-  async function exportMat(): Promise<Uint8Array> {
+  async function exportMat(setIds?: readonly number[]): Promise<Uint8Array> {
     const d = get(derived);
     const time_sets: unknown[] = [];
     const freq_sets: unknown[] = [];
     const tf_sets: unknown[] = [];
-    for (const ws of working) {
+    for (const ws of exportSets(setIds)) {
       const t = d[ws.setId]?.time;
       if (t) time_sets.push({ axis: t.axis, data: t.data.re, cols: t.data.shape[1] ?? 1 });
       // Complex kinds always carry `im`; include it only when present (never
@@ -2961,6 +3072,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     calcFft, calcPsd, calcTf, calcSono, cleanImpulse, cleanedSets, hasComputed,
     resampleTime, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
+    /** Subset Save/Export (round-12 "Choose sets…") — see each function's doc. */
+    choosableSets, subsetDataset,
     getCalibration, setCalFactors,
     /**
      * Report a UNITS/quantity change on `views` to the injected

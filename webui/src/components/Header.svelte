@@ -35,7 +35,11 @@
     workdirName?: string;
     /** Fired by the Load Data button (App wires the load pipeline). */
     onload?: () => void;
-    /** Fired by the Save Dataset button (App wires the save pipeline). */
+    /**
+     * Fired by the Save Dataset button (App wires the save pipeline). Called
+     * with NO arguments — the header always saves the whole document; the
+     * subset pick lives on the Export card's split control.
+     */
     onsave?: () => void;
     /** Fired by Save Figure — opens the export flow for the ACTIVE view. */
     onsavefigure?: () => void;
@@ -96,7 +100,9 @@
       disabled={!canSaveFigure}
       onclick={onsavefigure}
     >Save Figure</button>
-    <button class="btn green" title="Save everything to a .dvma dataset" onclick={onsave}>Save Dataset</button>
+    <!-- `() => onsave()` not `onsave`: the handler takes an optional subset
+         pick, and a bare reference would hand it the MouseEvent. -->
+    <button class="btn green" title="Save everything to a .dvma dataset" onclick={() => onsave()}>Save Dataset</button>
   </div>
 </header>
 
