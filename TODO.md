@@ -55,10 +55,31 @@ is still open, as one consolidated list.
   promises more than "open my file". Documented honestly for now
   (`docs/web-logger/index.md`, `docs/web-logger/migration.md`), and
   belongs on the same honest-limitation trail as the non-destructive
-  display transform. **Decide deliberately** whether computed results
-  should serialise into the document — it is a container-schema
-  question (size, staleness against edited source data, and what
-  `Session.data` should then hand a notebook), not a UI one.
+  display transform. **DECIDED with Tore (2026-08-19 chat) — needs its
+  own design round (doc for approval first), sequenced AFTER the
+  stages 3–4 live verification:**
+  - **Save materialises derived data into the document** (Tore's
+    original data-with-processing concept: load a colleague's file and
+    the TFs are there, no rederiving, exports carry them too).
+  - **Materialised items stand until recomputed**, but carry a
+    compute-chain signature (short hash of the source samples + the
+    analysis settings, stamped in item meta at compute time; `id_link`
+    already gives identity) — a broken chain (source edited/scaled)
+    shows a "source changed — rederive?" flag, never a silent
+    recompute. Display-side scaling (calibration, x(iω)) is
+    non-destructive and does NOT break the chain.
+  - **Replace-by-lineage on repeated saves**: the materialisation step
+    refreshes an item whose source-link matches rather than appending
+    a duplicate — re-saving is idempotent (file-save protocol itself
+    unchanged).
+  - **Subset save/export via an explicit picker, per MEASUREMENT
+    family** (a set's time data + everything `id_link`ed to it + fits,
+    with kind badges), all ticked by default, reached via a
+    "Choose sets…" secondary action beside Save/Export — the primary
+    buttons stay zero-friction save-everything. Deliberately NOT
+    driven by view/selection/fade state (Tore: coupling save to
+    display state is confusing — does a greyed line save?). Notebook
+    parity: a `subset`/`sets=` convenience on the Python side.
 - **`dvma.attach(url)` — session API against an externally started
   serve** — `launch()` owns the server it returns a handle to, so a
   notebook cannot currently get `session.data` / `session.push` against
