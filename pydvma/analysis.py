@@ -55,6 +55,12 @@ def _stamp_source(result, time_data, source_settings):
 
 def calculate_fft(time_data,time_range=None,window=None):
     '''
+    Provenance: the result is stamped with ``source_signature`` (a hash
+    of the source samples, see `pydvma._signature`) and
+    ``source_settings`` — the knobs of this call, with ``time_range``
+    recorded as the EFFECTIVE range used (the whole record when the
+    argument was None).
+
     Args:
         time_data (<TimeData> object): time series data
         time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use

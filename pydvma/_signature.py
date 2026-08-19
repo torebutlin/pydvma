@@ -22,7 +22,11 @@ THE BYTE STREAM (the cross-language contract — change it and you must
 change the TypeScript twin and every frozen vector in both suites).
 The samples are treated as a 2-D block of ``n_rows`` time instants by
 ``n_cols`` channels, C-order (row-major), exactly as the ``.npy``
-payload is laid out; a 1-D record has ``n_cols = 1``. Hashed, in order:
+payload is laid out; a 1-D record has ``n_cols = 1``. The shape
+normalisation that gets an arbitrary input array to ``(n_rows,
+n_cols)`` in the first place (0-D -> 1x1, 1-D -> a single column,
+>2-D -> ``(shape[0], -1)``) is `_as_rows`'s contract, not repeated
+here. Hashed, in order:
 
 1. ``n_rows`` as one little-endian float64;
 2. ``n_cols`` as one little-endian float64;
@@ -48,6 +52,24 @@ Because the threshold applies to ROWS with a per-row budget, reduction
 starts at 65536 time samples for a 1-channel record but at 16384 time
 samples for a 4-channel one (``65536 // 4``) — it is a cap on hashed
 VALUES, not on time samples.
+
+THE ``n_cols == 0`` DEGENERATE (a zero-channel block, e.g. an
+``(n_rows, 0)`` array): ``rows_cap`` falls back to ``MAX_HASHED_VALUES``
+(the ``// n_cols`` division is skipped rather than dividing by zero),
+so the "every row" branch always applies. Every row contributes zero
+value bytes (``n_cols`` values per row, times zero), so the resulting
+stream is exactly ``head`` — ``n_rows``, ``0``, ``fs`` — with no value
+bytes appended, whatever ``n_rows`` is. The TypeScript twin's API takes
+a FLAT row-major buffer plus an explicit ``n_cols``, which cannot
+distinguish between different row counts once ``n_cols`` is 0 (every
+row contributes nothing to the flat buffer's length, so ``n_rows``
+cannot be recovered by division); it defines ``n_rows = 0`` for
+``n_cols = 0`` rather than raising. This matches this Python behaviour
+whenever the true row count is itself 0 — the only ``n_cols == 0``
+case either side's real call sites ever produce (`TimeData.time_data`
+always carries at least one channel) — and is a documented, harmless
+divergence for the purely hypothetical case of a nonzero-row,
+zero-column array, which no code path here constructs.
 
 Special float values (NaN, +/-inf, -0.0) are hashed as their stored
 bit patterns like any other sample; signatures are only ever compared

@@ -37,6 +37,15 @@ export function fnv1a64(bytes) {
  *   the n_cols channel values of one time instant are adjacent.
  * @param {number} nCols channels per row (1 for a 1-D record).
  * @param {number} fs sample rate in Hz (0 when unknown).
+ *
+ * nCols === 0 degenerate: a flat row-major buffer cannot distinguish
+ * different row counts once each row contributes zero values (the
+ * buffer's length is 0 regardless of the "intended" row count), so
+ * nRows is defined as 0 rather than dividing by zero. This matches
+ * pydvma._signature's Python behaviour (n_rows kept in the head, zero
+ * value bytes) exactly when the true row count is itself 0 — the only
+ * case either twin's real callers ever produce. See the "n_cols == 0
+ * DEGENERATE" paragraph in pydvma/_signature.py's module docstring.
  */
 export function signatureOfSamples(samples, nCols, fs) {
   const nRows = nCols > 0 ? Math.floor(samples.length / nCols) : 0;
@@ -92,6 +101,12 @@ const vectors = [
   ['2-col 100000 rows    ', signatureOfSamples(ramp(200000), 2, 1000)],
   ['special values       ', signatureOfSamples(
     [NaN, Infinity, -Infinity, -0.0], 1, 1)],
+  // n_cols == 0 degenerate — see the JSDoc above and the matching
+  // paragraph in pydvma/_signature.py: head-only stream, no value
+  // bytes. NOT a frozen cross-language vector (Python's n_rows for a
+  // zero-column array can differ from this side's, per the documented
+  // divergence) — printed here only as a sanity check on this branch.
+  ['n_cols=0 degenerate  ', signatureOfSamples([], 0, 100)],
 ];
 
 for (const [name, hex] of vectors) console.log(name, hex);

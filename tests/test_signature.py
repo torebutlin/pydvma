@@ -195,13 +195,57 @@ class TestReducedBranchSensitivity:
         arr[:, 3] *= 2.0
         assert _signature.signature_of_samples(arr, 1000.0) != before
 
+
+def _big_impulse_time_data(n=50000, fs=10000):
+    """A >32768-row 2-channel impulse-hammer-shaped `TimeData`.
+
+    Same shape as `pydvma.create_test_impulse_data` (pulse on channel
+    0, an exponentially-decaying sinusoid on channel 1) but built at a
+    length that genuinely exercises the REDUCED branch of the
+    signature: for 2 channels, ``rows_cap = 65536 // 2 = 32768``, and
+    `create_test_impulse_data` itself is fixed at 10000 rows, which
+    would take the FULL-hash branch and prove nothing about reduction.
+
+    Args:
+        n (int): number of time samples (rows).
+        fs (int): sample rate in Hz.
+
+    Returns the record, as `pydvma.datastructure.TimeData`.
+    """
+    from pydvma import datastructure, options
+    settings = options.MySettings(fs=fs)
+    time_axis = np.arange(n) / float(fs)
+    time_data = np.zeros((n, 2))
+    pulse_width = 0.002
+    n_pulse = int(np.ceil(pulse_width * fs))
+    k = np.arange(n_pulse)
+    time_data[k, 0] = 0.5 * (1 - np.cos(2 * np.pi * k / n_pulse))
+    test_freq = 100
+    test_time_const = 0.1
+    time_data[:, 1] = (np.exp(-time_axis / test_time_const)
+                       * np.sin(2 * np.pi * test_freq * time_axis))
+    return datastructure.TimeData(
+        time_axis, time_data, settings, units=['N', 'm/s'],
+        channel_cal_factors=[1, 1],
+        test_name='big impulse record for reduction test')
+
+
+class TestReducedBranchRealisticEdit:
+    """The reduced branch under a REAL analysis call, not a synthetic
+    per-element mutation — moved out of TestReducedBranchSensitivity
+    (re-review finding) because a stock `create_test_impulse_data`
+    record is only 10000 rows and, with 2 channels, falls well under
+    the 32768-row cap: that version of this test took the FULL-hash
+    branch and proved nothing about reduction specifically.
+    """
+
     def test_clean_impulse_on_a_non_zero_channel_is_visible(self):
         # The realistic case: clean_impulse deep-copies and keeps the
         # source unique_id, so the chain check is the only thing that
-        # can notice it.
+        # can notice it. Built at >32768 rows so this genuinely
+        # exercises the REDUCED branch.
         import pydvma as dvma
-        data = dvma.create_test_impulse_data(noise_level=0)
-        td = data.time_data_list[0]
+        td = _big_impulse_time_data()
         before = _signature.source_signature(td)
         cleaned = dvma.clean_impulse(td, ch_impulse=1)
         assert _signature.source_signature(cleaned) != before
