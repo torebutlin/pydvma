@@ -560,3 +560,104 @@ test('a subset fit (hidden line) yields an orphan-style pseudo-set with source l
   expect(get(sel.channelLabel)(fit.id, 0)).toBe('bridge');
   expect(sel.lineColor(fit.id, 0)).toBe(sel.lineColor(id, 2));
 });
+
+test('the ModalData item carries a stable unique_id, minted once and preserved on re-fit', async () => {
+  // Identity, as on every other item: `pydvma.session.Session.push` merges by
+  // `unique_id`, so a fit without one appends ANOTHER copy of itself on every
+  // notebook push — and fitting modes then handing the session back is exactly
+  // the workflow this protects.
+  const { actions } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+
+  const item = get(actions.dataset)!.items.find((it) => it.kind === 'ModalData')!;
+  const id = item.meta.unique_id as string;
+  expect(id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(item.metaRaw!.unique_id).toBe(id);           // written to the manifest too
+  expect(id).not.toBe(get(actions.dataset)!.items[0].meta.unique_id);  // its own, not the source's
+
+  // Re-fitting upserts the SAME item; identity must not be re-minted.
+  await actions.calcFit('all', [60, 110], 'vel', 'fit', 1);
+  const after = get(actions.dataset)!.items.find((it) => it.kind === 'ModalData')!;
+  expect(after).toBe(item);
+  expect(after.meta.unique_id).toBe(id);
+  expect(after.meta.measurement_type).toBe('vel');    // the fit itself did update
+});
+
+test('an ADOPTED python-written fit keeps its id and its foreign meta keys across an app re-fit', async () => {
+  // upsertModalItem used to replace meta/metaRaw WHOLESALE — the same defect
+  // already fixed in upsertDerivedItem. On an adopted item that amputates
+  // both the id python minted (so the next push duplicates the fit) and any
+  // manifest key this builder does not re-emit.
+  const ds: DvmaDataset = {
+    formatVersion: 1, pydvmaVersion: '1.5.0',
+    items: [
+      makeDataset().items[0],
+      {
+        kind: 'TfData',
+        arrays: {
+          freq_axis: { shape: [2], isComplex: false, data: Float64Array.from([0, 1]) },
+          tf_data: { shape: [2, 1], isComplex: true, data: Float64Array.from([2, 0, 2, 0]) },
+        },
+        meta: { test_name: 'set_0', id_link: 'UID1' }, settings: null,
+      },
+      {
+        kind: 'ModalData',
+        arrays: { M: { shape: [1, 6], isComplex: false, data: Float64Array.from([80, 0.02, 1, 0, 0, 0]) } },
+        meta: {
+          id_link: 'UID1', channels: 1, measurement_type: 'acc',
+          source_ch_in: 0, source_n_channels: 2, test_name: 'modal_set_0',
+          unique_id: 'PY-MODAL-ID', some_future_key: 42,
+        },
+        metaRaw: {
+          id_link: 'UID1', channels: 1, measurement_type: 'acc',
+          source_ch_in: 0, source_n_channels: 2, test_name: 'modal_set_0',
+          unique_id: { __uuid__: 'PY-MODAL-ID' }, some_future_key: 42,
+        },
+        settings: null,
+      },
+    ],
+  };
+  const { actions } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(ds);
+  await flush();                       // the restore's async recon settles
+  await actions.calcFit('all', [60, 110], 'vel', 'fit', 1);
+
+  const items = get(actions.dataset)!.items.filter((it) => it.kind === 'ModalData');
+  expect(items).toHaveLength(1);                       // updated in place
+  const item = items[0];
+  expect(item.meta.unique_id).toBe('PY-MODAL-ID');     // python's id survives
+  expect(item.metaRaw!.unique_id).toEqual({ __uuid__: 'PY-MODAL-ID' });  // tag form kept
+  expect(item.meta.some_future_key).toBe(42);          // and unknown keys with it
+  expect(item.meta.measurement_type).toBe('vel');      // the fit still updated
+});
+
+test('an adopted fit with NO unique_id is given one when it is re-upserted', async () => {
+  // A pre-round file: nothing to preserve, so the rewrite mints one rather
+  // than leaving the fit identity-less forever.
+  const ds: DvmaDataset = {
+    formatVersion: 1, pydvmaVersion: '1.5.0',
+    items: [
+      makeDataset().items[0],
+      {
+        kind: 'ModalData',
+        arrays: { M: { shape: [1, 6], isComplex: false, data: Float64Array.from([80, 0.02, 1, 0, 0, 0]) } },
+        meta: {
+          id_link: 'UID1', channels: 1, measurement_type: 'acc',
+          source_ch_in: 0, source_n_channels: 2, test_name: 'modal_set_0',
+        },
+        settings: null,
+      },
+    ],
+  };
+  const { actions } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(ds);
+  await flush();
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+
+  const item = get(actions.dataset)!.items.find((it) => it.kind === 'ModalData')!;
+  expect(typeof item.meta.unique_id).toBe('string');
+  expect(item.metaRaw!.unique_id).toBe(item.meta.unique_id);
+});

@@ -2626,6 +2626,14 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * reconstruction-column order. pydvma ignores manifest keys it does not know,
    * so they are harmless to the python reader. `timestamp` carries a
    * `{__datetime__}` tag in `metaRaw` so python decodes a real datetime.
+   *
+   * IDENTITY + MERGE, exactly as {@link upsertDerivedItem}: the item carries
+   * its own `unique_id` (minted once, preserved forever) so a notebook
+   * pull → push-back REPLACES the fit instead of appending another copy of
+   * it, and the metadata is MERGED rather than replaced so an adopted
+   * python-written fit keeps that id — and any other manifest key this
+   * builder does not re-emit — across every later app save. Wholesale
+   * replacement here would have amputated both.
    */
   function upsertModalItem(m: ModalState): void {
     const ds = get(dataset);
@@ -2655,9 +2663,24 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       isComplex: false,
     };
     if (modalItem) {
-      modalItem.arrays = { M }; modalItem.meta = meta; modalItem.metaRaw = metaRaw;
+      const mergedMeta: Record<string, unknown> = { ...modalItem.meta, ...meta };
+      const mergedRaw: Record<string, unknown> = { ...modalItem.metaRaw, ...metaRaw };
+      if (mergedMeta.unique_id === undefined) {
+        const uid = newUniqueId();
+        mergedMeta.unique_id = uid;
+        mergedRaw.unique_id = uid;
+      }
+      modalItem.arrays = { M };
+      modalItem.meta = mergedMeta;
+      modalItem.metaRaw = mergedRaw;
     } else {
-      modalItem = { kind: 'ModalData', arrays: { M }, meta, metaRaw, settings: null };
+      const uid = newUniqueId();
+      modalItem = {
+        kind: 'ModalData', arrays: { M },
+        meta: { ...meta, unique_id: uid },
+        metaRaw: { ...metaRaw, unique_id: uid },
+        settings: null,
+      };
       ds.items.push(modalItem);
     }
   }

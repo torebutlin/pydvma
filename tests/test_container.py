@@ -903,11 +903,14 @@ class TestDerivedItemUniqueId:
     def test_every_derived_kind_mints_one(self):
         data = dvma.create_test_impulse_data(noise_level=0)
         td = data.time_data_list[0]
+        tf = dvma.calculate_tf(td, ch_in=0, N_frames=2)
         derived = [
             dvma.calculate_fft(td),
-            dvma.calculate_tf(td, ch_in=0, N_frames=2),
+            tf,
             dvma.calculate_cross_spectrum_matrix(td, N_frames=2),
             dvma.calculate_sonogram(td, nperseg=64, noverlap=32),
+            dvma.modal_fit_all_channels([tf]),
+            datastructure.MetaData(),
         ]
         ids = [item.unique_id for item in derived]
         assert all(isinstance(i, uuid.UUID) for i in ids)
@@ -916,16 +919,20 @@ class TestDerivedItemUniqueId:
     def test_roundtrip_preserves_each_id(self, tmp_path):
         data = dvma.create_test_impulse_data(noise_level=0)
         td = data.time_data_list[0]
+        tf = dvma.calculate_tf(td, ch_in=0, N_frames=2)
         data.add_to_dataset(dvma.calculate_fft(td))
-        data.add_to_dataset(dvma.calculate_tf(td, ch_in=0, N_frames=2))
+        data.add_to_dataset(tf)
         data.add_to_dataset(dvma.calculate_cross_spectrum_matrix(td, N_frames=2))
         data.add_to_dataset(dvma.calculate_sonogram(td, nperseg=64, noverlap=32))
+        data.add_to_dataset(dvma.modal_fit_all_channels([tf]))
+        data.add_to_dataset(datastructure.MetaData())
         path = tmp_path / 'ids.dvma'
         container.save(data, str(path))
         loaded = container.load(str(path))
 
         for name in ('freq_data_list', 'tf_data_list',
-                     'cross_spec_data_list', 'sono_data_list'):
+                     'cross_spec_data_list', 'sono_data_list',
+                     'modal_data_list', 'meta_data_list'):
             before = getattr(data, name)[0].unique_id
             after = getattr(loaded, name)[0].unique_id
             assert after == before, name
@@ -937,13 +944,21 @@ class TestDerivedItemUniqueId:
         # not invent one, and must not leave a None behind either — some
         # later index map could key on it.
         data = dvma.create_test_impulse_data(noise_level=0)
-        fd = dvma.calculate_fft(data.time_data_list[0])
-        del fd.unique_id
-        data.add_to_dataset(fd)
+        td = data.time_data_list[0]
+        tf = dvma.calculate_tf(td, ch_in=0, N_frames=2)
+        fd = dvma.calculate_fft(td)
+        md = dvma.modal_fit_all_channels([tf])
+        meta = datastructure.MetaData()
+        for item in (fd, tf, md, meta):
+            del item.unique_id
+        for item in (fd, tf, md, meta):
+            data.add_to_dataset(item)
         path = tmp_path / 'no_id.dvma'
         container.save(data, str(path))
         loaded = container.load(str(path))
-        assert not hasattr(loaded.freq_data_list[0], 'unique_id')
+        for name in ('freq_data_list', 'tf_data_list',
+                     'modal_data_list', 'meta_data_list'):
+            assert not hasattr(getattr(loaded, name)[0], 'unique_id'), name
 
     def test_a_browser_written_string_id_survives(self, tmp_path):
         # The app mints a plain-string uuid (no `{'__uuid__': ...}` tag —

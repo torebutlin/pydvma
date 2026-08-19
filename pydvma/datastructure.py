@@ -1134,6 +1134,10 @@ class ModalData():
         settings (MySettings): Snapshot including the source TF's settings.
         units: Engineering units (passed through from source).
         id_link: `unique_id`(s) of the TFs that produced these modes.
+        unique_id (uuid.UUID): This item's own identity, minted at
+            construction — see `FreqData.unique_id`. Modal fits are
+            pushed back from notebooks like any other item, and without
+            an id every push would append another copy of the fit.
         test_name (str or None): Free-form label.
     '''
 
@@ -1153,6 +1157,8 @@ class ModalData():
         t = datetime.datetime.now()
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+        # Own identity, like TimeData's — see FreqData.unique_id.
+        self.unique_id = uuid.uuid4()
 
         if xn is not None:
             self.add_mode(xn)
@@ -1297,6 +1303,19 @@ class SonoData():
         return "<SonoData>"
         
 class MetaData():
+    '''Dataset-level units and calibration, kept for legacy datasets.
+
+    Attributes:
+        units: Engineering units.
+        channel_cal_factors: Per-channel multipliers (legacy; always
+            None here — calibration lives on each data item instead).
+        tf_cal_factors: Per-TF multipliers (legacy; always None here).
+        timestamp (datetime.datetime): When this MetaData was built.
+        timestring (str): Filesystem-safe rendering of `timestamp`.
+        unique_id (uuid.UUID): This item's own identity, minted at
+            construction — see `FreqData.unique_id`.
+    '''
+
     def __init__(self, units=None, channel_cal_factors=None, tf_cal_factors = None,test_name=None):
         ### not sure this is a helpful datafield: might delete. Metadata then contained within each data unit.
         self.units = units
@@ -1305,6 +1324,8 @@ class MetaData():
         t = datetime.datetime.now()
         self.timestamp = t
         self.timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
+        # Own identity, like TimeData's — see FreqData.unique_id.
+        self.unique_id = uuid.uuid4()
         
     def __repr__(self):
         return "<MetaData>"

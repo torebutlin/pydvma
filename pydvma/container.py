@@ -125,11 +125,13 @@ _META_FIELDS = {
 # code uses hasattr() guards, and because a derived item written before
 # signatures existed makes no claim about its chain.
 #
-# `unique_id` on the DERIVED kinds is here for exactly that
-# absence-tolerance. Every derived object built today mints one (see
+# `unique_id` on every kind BUT `TimeData` is here for exactly that
+# absence-tolerance. Every such object built today mints one (see
 # `datastructure.FreqData.unique_id`) and the browser stamps one on
-# each item it materialises, because `session.Session.push` merges by
-# id and an item without one appends a duplicate on every push. But a
+# each item it materialises — including the `ModalData` it upserts,
+# since a modal fit is pushed back from a notebook like anything else —
+# because `session.Session.push` merges by id and an item without one
+# appends a duplicate on every push. But a
 # file written before that must load UNCHANGED — with the attribute
 # genuinely absent, not present-as-None, so `getattr(item,
 # 'unique_id', None)` keeps reading "no identity" rather than a null
@@ -144,6 +146,8 @@ _OPTIONAL_META = {
     'TfData':   ['unique_id', 'iw_power_counter',
                  'source_signature', 'source_settings'],
     'SonoData': ['unique_id', 'source_signature', 'source_settings'],
+    'ModalData': ['unique_id'],
+    'MetaData': ['unique_id'],
 }
 
 # Tag keys reserved by _encode_value; user dicts must not use them.

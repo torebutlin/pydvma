@@ -34,7 +34,9 @@ def _tiny_dataset(name='pushed'):
 
 
 def _dataset_with_derived():
-    '''A capture plus one item of every derived kind linked to it.
+    '''A capture plus one item of every other kind linked to it —
+    including a real MODAL FIT, which is exactly the workflow a push
+    round trip has to survive.
 
     Built with the real analysis calls so the items carry exactly what
     pydvma gives them — `unique_id` included, which is the point of the
@@ -43,10 +45,13 @@ def _dataset_with_derived():
     import pydvma as dvma
     data = dvma.create_test_impulse_data(noise_level=0)
     td = data.time_data_list[0]
+    tf = dvma.calculate_tf(td, ch_in=0, N_frames=2)
     data.add_to_dataset(dvma.calculate_fft(td))
-    data.add_to_dataset(dvma.calculate_tf(td, ch_in=0, N_frames=2))
+    data.add_to_dataset(tf)
     data.add_to_dataset(dvma.calculate_cross_spectrum_matrix(td, N_frames=2))
     data.add_to_dataset(dvma.calculate_sonogram(td, nperseg=64, noverlap=32))
+    data.add_to_dataset(dvma.modal_fit_all_channels([tf]))
+    data.add_to_dataset(datastructure.MetaData())
     return data
 
 
@@ -281,11 +286,13 @@ class TestSessionData:
             assert _counts(s.data) == before
             assert _all_ids(s.data) == ids_before
 
-        # non-trivial: every kind really was present
+        # non-trivial: every kind really was present — the modal fit
+        # especially, since fitting modes and handing the session back
+        # is the workflow this is protecting.
         assert before == {'time_data_list': 1, 'freq_data_list': 1,
                           'cross_spec_data_list': 1, 'tf_data_list': 1,
-                          'modal_data_list': 0, 'sono_data_list': 1,
-                          'meta_data_list': 0}
+                          'modal_data_list': 1, 'sono_data_list': 1,
+                          'meta_data_list': 1}
 
     def test_a_derived_item_with_no_id_still_appends(self, tmp_path):
         # The honest caveat, pinned: items in a file written BEFORE
