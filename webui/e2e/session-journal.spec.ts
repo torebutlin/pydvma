@@ -43,7 +43,8 @@ const BRIDGE_E2E = !!process.env.BRIDGE_E2E;
 const PYTHON = process.env.PYDVMA_PYTHON ?? 'python3';
 // This file's port claim — the full cross-spec register lives in the
 // `PORT` comment in engine-native.spec.ts (8763/8764 bridge, 8765 bla,
-// 8766 engine-native, 8767 here). Only ONE serve is alive at a time here:
+// 8766 engine-native, 8767 here, 8768 derived-save). Only ONE serve is alive
+// at a time here:
 // `withServe` spawns and kills per test, and Playwright runs a file's tests
 // sequentially in one worker.
 const PORT = Number(process.env.JOURNAL_PORT ?? 8767);
@@ -57,7 +58,7 @@ const DIST_DIR = path.join(REPO_ROOT, 'webui', 'dist');
 const FIXTURE_DVMA = fileURLToPath(new URL('../tests/fixtures/impulse.dvma', import.meta.url));
 // The port a seeded spill file CLAIMS to come from. Recovery adoption only
 // offers a file whose port is dead (a live one belongs to a running serve),
-// so this must be a port nothing binds — deliberately outside the 8763-8767
+// so this must be a port nothing binds — deliberately outside the 8763-8768
 // block every bridge-flavoured spec spawns into.
 const DEAD_SPILL_PORT = 8759;
 
