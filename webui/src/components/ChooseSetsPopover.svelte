@@ -11,6 +11,11 @@
    * What is on screen and what a save contains are separate questions by
    * design; the primary buttons beside this one still mean "everything".
    *
+   * That guarantee rests on being MOUNTED FRESH per open, which the card
+   * arranges with `{#key pick}` — hopping straight from one split control's
+   * picker to another leaves the surrounding `{#if}` truthy throughout, so
+   * without the key this instance would be reused and carry its ticks over.
+   *
    * Positioned absolutely inside a `position: relative` anchor, following
    * ZoomToolbar's `.ax-pop` precedent (which is where the surface styling
    * comes from). Dismissal follows CalibrateDialog: Escape cancels, and a

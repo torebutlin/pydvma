@@ -295,15 +295,22 @@
               onclick={() => openPick('csv')}>▾</button>
           </div>
         </div>
+        <!-- `{#key pick}`: hopping straight from one split control's picker
+             to another keeps `pick` truthy, so the `{#if}` alone would REUSE
+             the instance and carry its ticks across — the key remounts per
+             target, which is what makes the popover's all-ticked-per-open
+             guarantee hold (same keyed-mount trick as CalibrateDialog). -->
         {#if pick}
-          <ChooseSetsPopover
-            sets={pickSets}
-            title={PICK_LABEL[pick].title}
-            confirmLabel={PICK_LABEL[pick].confirm}
-            anchor={pickWrap}
-            onconfirm={runPick}
-            oncancel={() => (pick = null)}
-          />
+          {#key pick}
+            <ChooseSetsPopover
+              sets={pickSets}
+              title={PICK_LABEL[pick].title}
+              confirmLabel={PICK_LABEL[pick].confirm}
+              anchor={pickWrap}
+              onconfirm={runPick}
+              oncancel={() => (pick = null)}
+            />
+          {/key}
         {/if}
       </div>
       <div class="grp">
