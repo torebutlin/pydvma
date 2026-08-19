@@ -14,7 +14,7 @@ import uuid
 import numpy as np
 import pytest
 
-from pydvma import analysis, datastructure, modal, options
+from pydvma import analysis, container, datastructure, modal, options
 
 
 # ---------- helpers ----------
@@ -48,6 +48,29 @@ def _make_dataset(n_sets=3, n_chans=2, fs=1000, n_samples=1024):
     for i in range(n_sets):
         ds.add_to_dataset(_make_time_data(n_chans=n_chans, fs=fs, n_samples=n_samples, seed=i))
     return ds
+
+
+def _sdof_captures(fs=1000, n_samples=1000, f0=100.0, tau=0.1, n=3,
+                    noise=1e-4, seed=99):
+    """Ensemble of (delta input, SDOF displacement response) TimeData
+    captures — a trimmed copy of test_modal.py's `_sdof_impulse_ensemble`
+    (same construction, dropped the fn_true/zn_true accuracy checks: these
+    subset() tests only need `modal_fit_all_channels` to run and produce a
+    REAL ModalData, not a numerically accurate one)."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(n_samples) / fs
+    h = np.exp(-t / tau) * np.sin(2 * np.pi * f0 * t)
+    tdl = datastructure.TimeDataList()
+    for _ in range(n):
+        x = np.zeros(n_samples)
+        x[0] = 1.0
+        y = h + noise * rng.standard_normal(n_samples)
+        settings = options.MySettings(fs=fs, channels=2)
+        tdl.append(datastructure.TimeData(
+            t, np.column_stack([x, y]), settings,
+            channel_cal_factors=np.ones(2), test_name='sdof',
+        ))
+    return tdl
 
 
 # ---------- set_calibration_factor ----------
@@ -309,3 +332,118 @@ class TestDataSetSubset:
 
         ds.freq_data_list[0].test_name = 'mutated-through-original'
         assert sub.freq_data_list[0].test_name == 'mutated-through-original'
+
+
+# ---------- DataSet.subset — ModalData ANY-rule against REAL
+# modal.modal_fit_all_channels output (not a hand-built id_link) ----------
+
+class TestDataSetSubsetRealModalFits:
+    """The hand-built ModalData in `TestDataSetSubset` pins the ANY-rule's
+    MECHANISM cheaply; these pin it against what `modal.modal_fit_all_channels`
+    ACTUALLY produces — including the NESTED list-of-lists shape the
+    `subset` docstring calls out (a fit spanning a `calculate_tf_averaged`
+    TF, whose own `id_link` is already a list, so `ModalData.id_link`
+    becomes a list containing that list). Fit ACCURACY is irrelevant here
+    (see `_sdof_captures`) — only that the fit runs and that its real
+    `id_link` plumbing resolves through `subset()` correctly."""
+
+    def _make_ds(self, n=3):
+        ds = datastructure.DataSet()
+        ds.add_to_dataset(_sdof_captures(n=n))
+        ds.add_to_dataset(datastructure.TfDataList(
+            [analysis.calculate_tf(td, ch_in=0) for td in ds.time_data_list]))
+        return ds
+
+    def test_fit_from_a_single_tf_rides_its_own_set_only(self):
+        ds = self._make_ds()
+        m = modal.modal_fit_all_channels(
+            datastructure.TfDataList([ds.tf_data_list[0]]),
+            freq_range=[60.0, 140.0], measurement_type='dsp')
+        # pin the real shape: a list wrapping the ONE source TF's own
+        # (scalar) id_link — modal_fit_all_channels's own construction
+        assert m.id_link == [ds.tf_data_list[0].id_link]
+        assert isinstance(m.id_link[0], uuid.UUID)
+        ds.add_to_dataset(m)
+
+        sub0 = ds.subset([0])
+        sub1 = ds.subset([1])
+
+        assert m in list(sub0.modal_data_list)
+        assert m not in list(sub1.modal_data_list)
+
+    def test_fit_from_an_averaged_tf_gives_nested_list_matched_on_any_member(self):
+        ds = self._make_ds()
+        avg_tf = analysis.calculate_tf_averaged(
+            datastructure.TimeDataList(ds.time_data_list[0:2]), ch_in=0)
+
+        m = modal.modal_fit_all_channels(
+            datastructure.TfDataList([avg_tf]),
+            freq_range=[60.0, 140.0], measurement_type='dsp')
+
+        # pin the real NESTED shape: a list containing ONE list (avg_tf's
+        # own id_link, itself a list of the two sets it averages over)
+        assert m.id_link == [[ds.time_data_list[0].unique_id,
+                               ds.time_data_list[1].unique_id]]
+        assert isinstance(m.id_link, list) and isinstance(m.id_link[0], list)
+        ds.add_to_dataset(m)
+
+        sub0 = ds.subset([0])
+        sub1 = ds.subset([1])
+        sub2 = ds.subset([2])
+
+        assert m in list(sub0.modal_data_list)      # recursive flatten reaches set 0
+        assert m in list(sub1.modal_data_list)       # ... and set 1
+        assert m not in list(sub2.modal_data_list)   # set 2 is unrelated to avg_tf
+
+
+# ---------- DataSet.subset — ModalData's browser-authored `source_targets`
+# passthrough branch (container.py's unknown-manifest-key stash) ----------
+
+class TestDataSetSubsetSourceTargetsPassthrough:
+    """`_modal_item_in_subset` falls back to a ModalData's `source_targets`
+    extra when its own `id_link` does not resolve — the only way a Python
+    load of a browser-authored shared-pole fit still carries a usable link
+    (pydvma itself never writes `source_targets`; see `_modal_item_in_subset`).
+
+    Fixture shape verified against `tests/test_container.py`'s
+    `TestManifestExtraPassthrough` (the same passthrough mechanism) and the
+    real writer, `upsertModalItem`/`idLinkOf` in
+    `webui/src/lib/analysis/actions.ts`: `source_targets[].id_link` is a
+    PLAIN STRING there, not pydvma's `{'__uuid__': ...}` tag — the browser
+    never applies pydvma's own JSON type-tagging scheme, and `container.py`
+    stashes unknown keys VERBATIM (undecoded), so the plain string is
+    exactly what a real round trip carries."""
+
+    def test_matches_via_source_targets_when_own_id_link_resolves_nowhere(self):
+        ds = _make_dataset(n_sets=2, n_chans=2)
+        chosen = ds.time_data_list[0]
+
+        m = datastructure.ModalData(_make_modal_row(100.0, 0.01, n_tfs=1))
+        assert m.id_link is None  # own link resolves nowhere
+        setattr(m, container._ITEM_EXTRA_ATTR, {
+            'meta': {'source_targets': [
+                {'id_link': str(chosen.unique_id), 'ch_in': 0, 'n_channels': 2},
+            ]},
+        })
+        ds.add_to_dataset(m)
+
+        sub0 = ds.subset([0])
+        sub1 = ds.subset([1])
+
+        assert m in list(sub0.modal_data_list)
+        assert m not in list(sub1.modal_data_list)
+
+    def test_excluded_when_neither_id_link_nor_source_targets_resolve(self):
+        ds = _make_dataset(n_sets=2, n_chans=2)
+
+        m = datastructure.ModalData(_make_modal_row(100.0, 0.01, n_tfs=1))
+        setattr(m, container._ITEM_EXTRA_ATTR, {
+            'meta': {'source_targets': [
+                {'id_link': str(uuid.uuid4()), 'ch_in': 0, 'n_channels': 2},
+            ]},
+        })
+        ds.add_to_dataset(m)
+
+        sub = ds.subset([0, 1])  # every valid TimeData index
+
+        assert m not in list(sub.modal_data_list)
