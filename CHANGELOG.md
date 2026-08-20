@@ -3,10 +3,19 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.4.0 — 2026-08-19
 
-The first 3c6 lab round's fixes (round 11): every bug found in the
-field, plus the acquisition UX it showed was missing.
+Three arcs in one release. The first 3c6 lab round's fixes (round 11):
+every bug found in the field, plus the acquisition UX it showed was
+missing. The native compute engine grown to own the whole session:
+served locally, analysis runs in full CPython, `pydvma-serve` keeps
+the session document (close the tab and lose nothing), and
+`dvma.launch(settings)` is the notebook front door that replaces the
+removed `dvma.Logger`. And the derived-data save: Save Dataset now
+writes your processing — FFTs, TFs, optionally sonograms — into the
+`.dvma` beside the data, signature-checked so a broken compute chain
+is flagged, with per-measurement subset saving in the app and in
+Python.
 
 ### Fixed
 

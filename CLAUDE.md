@@ -56,9 +56,18 @@ Still deferred, in TODO.md: ensemble-TF and CSD materialisation,
 provenance-dialect normalisation (app camelCase vs Python snake_case),
 pre-round files whose derived items still have no id (so a repeated
 notebook push duplicates those), `dvma.attach(url)`. The journal
-sink-overflow toast is DONE, landed in this round's final review. **Next: Tore's live
-verification — BOTH rounds' next-lab-visit checklists belong in one
-visit — and then his decision on pushing.**
+sink-overflow toast is DONE, landed in this round's final review.
+Everything is PUSHED, and **v2.4.0 is CUT and pushed** (five version
+sites bumped; engine wheel reborn as 2.4.0 and re-verified through
+@engine + engine-native; UI staged; sdist + fat wheel built and proven
+from a CLEAN venv — `dvma.launch` from the installed wheel served the
+embedded UI referencing its own 2.4.0 engine wheel, /engine greeting
+`{v:1, pydvma:'2.4.0', journal:true}`). **Next: Tore's twine upload to
+PyPI** (`twine upload dist/pydvma-2.4.0*`), then his live verification
+on the lab PC via BOTH rounds' next-lab-visit checklists; the GitHub
+release + tag stay HELD until after the PyPI upload per the v2.3.0
+precedent (Zenodo auto-archives on release — no DOI for a
+not-yet-installable version).
 
 Previous (2026-08-19, Mac session, overnight): **stages 3–4 of the
 native-engine arc — the session journal and `dvma.launch` — are LANDED
