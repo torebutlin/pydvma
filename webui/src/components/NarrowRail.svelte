@@ -42,6 +42,8 @@
     /** Forwarded to the hosted Tray for the stale-chain badge (Task 4). */
     staleChains,
     onRederive,
+    /** Forwarded to the hosted Tray for TF-view row labelling (round-12). */
+    tfChIn,
   }: {
     selection: Selection;
     channelSeries?: (setId: number, ch: number) => Float64Array | undefined;
@@ -50,6 +52,7 @@
     onDeleteFit?: () => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
+    tfChIn?: (setId: number) => number | null | undefined;
   } = $props();
 
   const setsView = $derived(selection.setsView);
@@ -188,7 +191,7 @@
     data-testid="tray"
     onkeydown={onDrawerKeydown}
   >
-    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {staleChains} {onRederive} />
+    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {staleChains} {onRederive} {tfChIn} />
   </div>
 {/if}
 

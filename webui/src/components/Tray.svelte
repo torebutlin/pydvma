@@ -72,6 +72,10 @@
      *  `actions.calcFft`/`calcTf` for that set). Absent → the badge is
      *  never shown even when `staleChains` names a stale kind. */
     onRederive,
+    /** TF-view row labelling (round-12): per-set TF input channel, passed
+     *  only while the TF view is active (App threads `tfChInFor`). Cards
+     *  then label rows `out/in` and mark the ref row — see `TrayCard`. */
+    tfChIn,
   }: {
     selection: Selection;
     modal?: ModalStore;
@@ -81,6 +85,7 @@
     onDeleteFit?: () => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
+    tfChIn?: (setId: number) => number | null | undefined;
   } = $props();
 
   // Live mode count for the fit pseudo-set's tray-card badge (round-5 item 13).
@@ -269,6 +274,7 @@
             channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
             staleKinds={staleMap[set.id]}
             onRederive={onRederive ? (kinds) => onRederive(set.id, kinds) : undefined}
+            tfChIn={tfChIn?.(set.id)}
           />
         {/if}
       {/each}

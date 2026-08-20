@@ -1489,7 +1489,8 @@
   <main class="main">
     {#if narrow}
       <NarrowRail {selection} {modal} {monitor} {channelSeries} onDeleteFit={actions.clearFit}
-        staleChains={actions.staleChains} onRederive={rederiveStale} />
+        staleChains={actions.staleChains} onRederive={rederiveStale}
+        tfChIn={view === 'tf' ? tfChInFor : undefined} />
     {:else}
       <aside class="tray" data-testid="tray">
         <div class="tray-scroll">
@@ -1499,7 +1500,8 @@
             getCalibration={actions.getCalibration}
             applyCalibration={actions.setCalFactors}
             onDeleteFit={actions.clearFit}
-            staleChains={actions.staleChains} onRederive={rederiveStale} />
+            staleChains={actions.staleChains} onRederive={rederiveStale}
+            tfChIn={view === 'tf' ? tfChInFor : undefined} />
         </div>
         <MiniMonitor {monitor} />
       </aside>

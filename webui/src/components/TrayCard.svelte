@@ -55,6 +55,7 @@
   import type { Selection, SetView } from '../lib/stores/selection';
   import { minMaxDecimate } from '../lib/plot/decimate';
   import { sigFigs } from '../lib/format';
+  import { tfLineLabel } from '../lib/plot/tfChannels';
   import type { DerivedKind } from '../lib/analysis/actions';
 
   /** Human-readable label for one derived kind, for the stale badge's title. */
@@ -77,6 +78,7 @@
     fit,
     staleKinds,
     onRederive,
+    tfChIn,
   }: {
     selection: Selection;
     set: SetView;
@@ -97,6 +99,20 @@
     /** Rederive exactly these stale kinds. Absent → the badge is not shown
      *  even when `staleKinds` is non-empty (no way to act on it). */
     onRederive?: (kinds: readonly DerivedKind[]) => void;
+    /**
+     * TF-view row labelling (round-12 lab report): the input channel this
+     * set's TF was computed with, when the ACTIVE view is TF and the set
+     * has a computed TF. The card then labels each output row `out/in`
+     * (`ch_1/ch_0` — matching the legend's `tfLineLabel` form exactly) and
+     * marks the input row `… (ref)`, dimmed: in the TF view the two
+     * source channels pair into ONE line, and two plain `ch_n` rows
+     * implied two. Only the DISPLAY changes — the tri-states, sparklines
+     * (source time channels) and double-click rename (which edits the
+     * underlying channel label) are untouched. `undefined`/`null` (not
+     * the TF view, no TF yet, or an orphan TF whose columns are the
+     * lines) renders the ordinary per-channel labels.
+     */
+    tfChIn?: number | null;
   } = $props();
 
   const stateStore = $derived(selection.state);
@@ -366,14 +382,21 @@
         <!-- The WHOLE row cycles the line (chip + label + sparkline + badge),
              not just the colour chip — matches the mockup's click target. -->
         {@const chLab = $labelStore(set.id, ch)}
+        {@const isTfRef = tfChIn != null && ch === tfChIn}
+        {@const rowLab = tfChIn == null ? chLab
+          : isTfRef ? `${chLab} (ref)`
+          : tfLineLabel(set.id, ch, tfChIn, (id, c) => $labelStore(id, c))}
         <button
           type="button"
           class="ch-row"
           class:st-fade={st === 'fade'}
           class:st-off={st === 'off'}
+          class:tf-ref={isTfRef}
           class:editing={editingCh === ch}
           data-testid={`ch-row-${ch}`}
-          title={`${chLab}: ${st} — click to cycle on → fade → off`}
+          title={isTfRef
+            ? `${chLab} is the TF reference (input) channel — it pairs with the other channel(s) and has no TF line of its own`
+            : `${rowLab}: ${st} — click to cycle on → fade → off`}
           aria-label={`Toggle channel ${ch} (currently ${st})`}
           onclick={(e) => onChRowClick(ch, e)}
         >
@@ -402,7 +425,7 @@
               data-testid={`ch-lab-${ch}`}
               title="Double-click to rename"
               ondblclick={(e) => { e.stopPropagation(); startChRename(ch); }}
-            >{chLab}</span>
+            >{rowLab}</span>
           {/if}
           <svg class="spark" viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none" aria-hidden="true">
             {#if pts}
@@ -661,6 +684,15 @@
   .ch-row.st-off .ch-lab {
     text-decoration: line-through;
     color: var(--muted);
+  }
+  /* TF view: the reference (input) channel has no TF line of its own —
+     mute its row so the out/in rows read as the set's lines. */
+  .ch-row.tf-ref .ch-lab {
+    color: var(--muted);
+    font-style: italic;
+  }
+  .ch-row.tf-ref .spark {
+    opacity: 0.45;
   }
   .ch-chip {
     width: 14px;
