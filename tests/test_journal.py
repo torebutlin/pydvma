@@ -364,6 +364,7 @@ class TestSpill:
         j = SessionJournal(spill_path=tmp_path / 'no' / 'such' / 'dir' / 'f.dvma')
         j.set_doc(b'doc')          # must not raise
         assert j.state()[0] == b'doc'
+        assert j.spill_failures == 1
 
     def test_spill_path_settable_after_construction(self, tmp_path):
         # BridgeServer only knows its real port after bind (port=0).
@@ -392,6 +393,19 @@ class TestSpill:
         # single-byte-repeated payloads make a torn/interleaved write
         # fail deterministically -- an interleave of A's and B's could
         # never read back as a pure run of one byte value.
+        #
+        # The disk-equals-memory half of the assertion is conditional
+        # on spill_failures == 0: on a loaded Windows machine an
+        # EXTERNAL scanner (Defender real-time scan of the freshly
+        # written temp file) can hold a file long enough that even the
+        # retry ladder in _replace_with_retry loses, the spill is
+        # swallowed by the documented best-effort contract, and the
+        # disk legitimately keeps the PREVIOUS doc -- that is the
+        # environment failing, not the journal (flaked exactly this
+        # way in a 2026-08-20 full-suite run; reproduced at 6/100
+        # under CPU load with the retry absent, 0/100 with it). The
+        # never-torn half is unconditional -- atomicity must hold no
+        # matter what the environment does.
         spill = tmp_path / 'session.dvma'
         j = SessionJournal(spill_path=spill)
         payload_a = b'A' * 1_000_000
@@ -414,9 +428,11 @@ class TestSpill:
             t.join()
 
         on_disk = spill.read_bytes()
-        assert on_disk == j.state()[0]
         distinct = set(on_disk)
         assert distinct <= {ord('A')} or distinct <= {ord('B')}
+        assert len(on_disk) in (len(payload_a), len(payload_b))
+        if j.spill_failures == 0:
+            assert on_disk == j.state()[0]
 
     def test_no_tmp_residue_after_normal_spill(self, tmp_path):
         spill = tmp_path / 'session.dvma'
@@ -431,13 +447,44 @@ class TestSpill:
         j = SessionJournal(spill_path=spill)
         j.set_doc(b'first')
         assert spill.read_bytes() == b'first'
+        assert j.spill_failures == 0
 
         def boom(*args, **kwargs):
             raise OSError('simulated os.replace failure')
 
         monkeypatch.setattr(journal_module.os, 'replace', boom)
+        # Zero the retry sleeps: this test exhausts the whole ladder.
+        monkeypatch.setattr(
+            journal_module, '_SPILL_REPLACE_RETRY_DELAYS', (0,) * 3)
         j.set_doc(b'second')          # must not raise
         assert spill.read_bytes() == b'first'
+        assert j.spill_failures == 1
+        names = {p.name for p in tmp_path.iterdir()}
+        assert names == {'session.dvma'}
+
+    def test_replace_transient_failure_is_retried(
+            self, tmp_path, monkeypatch):
+        # The Windows flake: an external scanner (Defender, indexer)
+        # briefly holds the temp file or target open without delete
+        # sharing and os.replace gets a sharing violation. The retry
+        # ladder must ride out a short transient so the spill still
+        # lands and nothing is counted as failed.
+        spill = tmp_path / 'session.dvma'
+        j = SessionJournal(spill_path=spill)
+        real_replace = journal_module.os.replace
+        calls = {'n': 0}
+
+        def flaky(src, dst):
+            calls['n'] += 1
+            if calls['n'] <= 2:
+                raise PermissionError(13, 'Access is denied')
+            real_replace(src, dst)
+
+        monkeypatch.setattr(journal_module.os, 'replace', flaky)
+        j.set_doc(b'doc-bytes')       # must not raise
+        assert spill.read_bytes() == b'doc-bytes'
+        assert calls['n'] == 3
+        assert j.spill_failures == 0
         names = {p.name for p in tmp_path.iterdir()}
         assert names == {'session.dvma'}
 

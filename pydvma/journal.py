@@ -86,10 +86,20 @@ the last posted document, and anything captured after that is not in
 it. Those captures are covered once the app's next autosave lands
 (within its debounce window, currently 2 s); a crash on a fresh server
 before any autosave has ever landed leaves no spill file at all.
+Best-effort has a real Windows failure mode: an external scanner
+(Defender real-time protection, the search indexer) transiently holds
+the just-written temp file or the spill target open without delete
+sharing, and ``os.replace`` fails with a sharing violation — measured
+at a 37 % per-replace rate on a loaded bench. :meth:`_spill` therefore
+retries the replace over a short ladder (~0.2 s worst case) before
+giving up, and every spill that STILL fails end-to-end increments
+:attr:`~SessionJournal.spill_failures`, so a stale spill is at least
+observable rather than silent.
 """
 import os
 import tempfile
 import threading
+import time
 
 from . import container
 
@@ -101,6 +111,40 @@ _BYTES_TYPES = (bytes, bytearray, memoryview)
 #: bounding the worst case (a client that never posts a document at
 #: all) to a fixed, modest amount of server memory.
 PENDING_CAPTURES_MAX_BYTES = 256 * 1024 * 1024
+
+#: Sleep after each failed ``os.replace`` attempt in :meth:`_spill`
+#: (seconds); one final attempt follows the last sleep. Windows sharing
+#: violations from an external scanner holding the temp file or the
+#: spill target are millisecond-scale transients, so the ladder front-
+#: loads short waits and totals ~0.19 s — long enough to ride out a
+#: scan, short enough that a PERMANENTLY held target (the user opened
+#: the spill file in an exclusive-lock app) costs each set_doc well
+#: under the app's 2 s autosave debounce.
+_SPILL_REPLACE_RETRY_DELAYS = (0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1)
+
+
+def _replace_with_retry(src, dst):
+    """``os.replace`` that retries transient failures before raising.
+
+    On Windows, replacing onto (or renaming from) a file another
+    process holds open without ``FILE_SHARE_DELETE`` fails with a
+    sharing-violation ``PermissionError`` — Defender's real-time scan
+    of a freshly written temp file does exactly this under load. Each
+    failed attempt sleeps the next :data:`_SPILL_REPLACE_RETRY_DELAYS`
+    entry and retries; the attempt after the final sleep propagates its
+    ``OSError`` to the caller.
+
+    Args:
+        src (str): path to rename from (the just-written temp file).
+        dst (str): path to atomically replace (the spill target).
+    """
+    for delay in _SPILL_REPLACE_RETRY_DELAYS:
+        try:
+            os.replace(src, dst)
+            return
+        except OSError:
+            time.sleep(delay)
+    os.replace(src, dst)
 
 
 def _check_bytes(value, param_name):
@@ -151,6 +195,7 @@ class SessionJournal(object):
         self._recovered = None
         self._recovered_path = None
         self._generation = 0
+        self._spill_failures = 0
 
     def set_doc(self, doc_bytes, notify=False, expect_generation=None):
         """Replace the session document (and clear pending captures).
@@ -338,6 +383,23 @@ class SessionJournal(object):
         with self._lock:
             return self._spill_path
 
+    @property
+    def spill_failures(self):
+        """How many spills failed end-to-end and were swallowed
+        (read-only).
+
+        Counts every :meth:`_spill` that had a document and a path but
+        could not land it on disk — temp-file creation, the write, or
+        an ``os.replace`` still failing after
+        :func:`_replace_with_retry`'s whole ladder. A non-zero count
+        means the spill file may be STALE relative to :meth:`state`;
+        the next successful spill overwrites it, but nothing rewinds
+        this counter. Disabled spilling (no path) and empty journals
+        do not count — those are no-ops, not failures.
+        """
+        with self._spill_lock:
+            return self._spill_failures
+
     def adopt_recovered(self, path):
         """Read a PREVIOUS run's spill file into memory as a recovery
         offer. Reading now — not at offer time — makes a later
@@ -403,14 +465,19 @@ class SessionJournal(object):
 
         Serialised against concurrent calls via ``_spill_lock`` (held
         for the whole body) so overlapping spills can never interleave
-        their writes. The write itself goes to a temporary file in the
-        same directory, then ``os.replace``s over ``spill_path`` — the
-        same tempfile-then-rename idiom as
-        :func:`pydvma.container.save` — so a crash mid-write can never
-        truncate or tear the previous good copy. Best-effort: any
-        ``OSError`` (including the temp file's own creation, e.g. a
-        missing directory) is swallowed after cleaning up any partial
-        temp file.
+        their writes; each call re-reads the CURRENT document under the
+        lock, so whichever spill runs last always writes the latest
+        doc. The write itself goes to a temporary file in the same
+        directory, then ``os.replace``s over ``spill_path`` — the same
+        tempfile-then-rename idiom as :func:`pydvma.container.save` —
+        so a crash mid-write can never truncate or tear the previous
+        good copy. The replace runs through :func:`_replace_with_retry`
+        because on Windows an external scanner transiently holding the
+        temp file or the target makes it fail spuriously. Best-effort
+        beyond that: any ``OSError`` (including the temp file's own
+        creation, e.g. a missing directory) is swallowed after cleaning
+        up any partial temp file, and counted in
+        :attr:`spill_failures` so a stale spill is observable.
         """
         with self._spill_lock:
             with self._lock:
@@ -424,12 +491,14 @@ class SessionJournal(object):
                     delete=False, suffix='.dvma.tmp',
                     dir=os.path.dirname(os.path.abspath(path)))
             except OSError:
+                self._spill_failures += 1
                 return
             try:
                 tmp.write(doc)
                 tmp.close()
-                os.replace(tmp.name, path)
+                _replace_with_retry(tmp.name, path)
             except OSError:
+                self._spill_failures += 1
                 tmp.close()
                 try:
                     os.unlink(tmp.name)
