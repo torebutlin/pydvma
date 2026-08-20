@@ -366,6 +366,20 @@
   function onFsKey(e: KeyboardEvent) {
     if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
   }
+  /**
+   * Commit a rate picked from the ladder select.  The select's own value
+   * is pinned back to the empty placeholder (it is an arrow-only picker,
+   * not the display — the input shows the stored rate), so re-picking
+   * the same entry later still fires a change event.
+   */
+  function onFsPick(e: Event) {
+    const el = e.target as HTMLSelectElement;
+    const fs = Number(el.value);
+    el.value = '';
+    if (Number.isFinite(fs) && fs > 0 && fs !== $settings.sampleRate) {
+      acquire.patch({ sampleRate: fs });
+    }
+  }
   function onChannelsChange(e: Event) {
     const v = Math.max(1, Math.min(maxChannels, Number((e.target as HTMLInputElement).value) || 1));
     acquire.patch({ channelCount: v });
@@ -498,30 +512,43 @@
       <div class="grp">
         <span class="grp-lab">sample rate</span>
         <div class="grp-ctl">
-          <!-- A typed combo, not a select. A select can only show a value it
-               has an option for: an off-ladder fs (a `--settings` prefill of
+          <!-- A typed input PLUS an arrow-only select, not a bare select and
+               not a datalist. A select can only show a value it has an
+               option for: an off-ladder fs (a `--settings` prefill of
                10000, say) rendered BLANK, so the rate could be neither read
-               nor changed — the root cause of two lab reports. The input
-               always shows the stored value, and the ladder is offered as
-               suggestions rather than as the only permitted answers. -->
+               nor changed — the root cause of two lab reports. A datalist
+               (the first replacement) was no better as a browser: Chromium
+               PREFIX-FILTERS its suggestions by the current text, so with
+               "44100" in the field the whole ladder collapsed to one
+               entry, shown twice (value + label) — the round-12 "odd
+               dropdown" lab report. The input always shows the stored
+               value and accepts any rate; the select beside it always
+               lists the full ladder, unfiltered. -->
           <input
             type="text"
             inputmode="decimal"
-            list="setup-fs-options"
             aria-label="sample rate"
             data-testid="setup-fs"
-            title="Sample rate in Hz. Type any rate — 3000, 3k, 48k — or pick one the device runs natively."
+            title="Sample rate in Hz. Type any rate — 3000, 3k, 48k — or pick one from the list."
             style="width:84px"
             bind:value={fsText}
             onchange={onFsCommit}
             onblur={onFsCommit}
             onkeydown={onFsKey}
           />
-          <datalist id="setup-fs-options">
+          <select
+            class="fs-pick"
+            aria-label="sample rate options"
+            data-testid="setup-fs-pick"
+            title="Rates this device runs (plus targets pydvma delivers by capturing high and decimating)."
+            value=""
+            onchange={onFsPick}
+          >
+            <option value="" disabled hidden></option>
             {#each fsSuggestions as fs (fs)}
               <option value={String(fs)}>{fmtHz(fs)} Hz</option>
             {/each}
-          </datalist>
+          </select>
           <span class="ml">Hz</span>
         </div>
       </div>
@@ -1071,6 +1098,14 @@
 </section>
 
 <style>
+  /* Arrow-only ladder picker beside the fs input: wide enough for the
+     native dropdown arrow, with the (placeholder) value area collapsed. */
+  .fs-pick {
+    width: 26px;
+    min-width: 26px;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
   .perm-btn {
     color: var(--indigo);
     border-color: var(--accent-soft-border);
