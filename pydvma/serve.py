@@ -204,9 +204,10 @@ samples in that ring.  So the bridge sends only the samples that are
 pydvma's recorders (`streams.Recorder`, `streams.Recorder_NI_nidaqmx`,
 `streams.MockRecorder`) expose a fixed-size sliding window
 ``osc_time_data`` of shape ``(num_chunks*chunk_size, channels)``: each
-hardware callback shifts it left by ``chunk_size`` and appends the new
-chunk at the tail, so the *newest* samples are always at the end and old
-samples scroll off the front.  There is no monotonic sample counter to
+hardware callback appends the new chunk at the tail (a circular buffer
+on the soundcard recorder, unrolled to time order on read; a literal
+left-shift on the others), so the *newest* samples are always at the
+end and old samples scroll off the front.  There is no monotonic sample counter to
 read, and we must not edit the recorder.  So the bridge derives the
 new-sample count from elapsed wall-clock time (:class:`_MonitorCursor`):
 ``n_new = round(fs · Δt)``, and ships ``osc_time_data[-n_new:]`` — the
@@ -565,12 +566,19 @@ def _is_unsupported_rate_error(exc: BaseException) -> bool:
     -9997`` on stream open, wrapped in a ``PortAudioError``; matching on
     the text keeps this working without importing ``sounddevice`` (which
     is an optional extra) and covers the NI/driver wrappers that quote
-    the same phrase.  Deliberately narrow: everything else — device
-    busy, wrong channel count, missing driver — must keep failing
-    loudly.  See :meth:`_Connection._open_live_stream`.
+    the same phrase.  WDM-KS on Windows conflates the two refusals and
+    answers an off-ladder RATE with ``Sample format not supported`` /
+    ``-9994`` instead (measured live: a Scarlett 2i2 asked for 3 kHz,
+    2026-08-20), so that code is treated the same way — safely, because
+    the caller's remedy is "retry at a rate the device does run", and a
+    genuine format refusal simply fails again there and propagates.
+    Everything else — device busy, wrong channel count, missing driver —
+    must keep failing loudly.  See
+    :meth:`_Connection._open_live_stream`.
     """
     text = str(exc).lower()
-    return 'invalid sample rate' in text or '-9997' in text
+    return ('invalid sample rate' in text or '-9997' in text
+            or 'sample format not supported' in text or '-9994' in text)
 
 
 def _soundcard_native_rates(index: int) -> list[float]:
@@ -611,6 +619,14 @@ def _soundcard_candidate_rates(sd, index: int, max_in: int,
     included.  Output-only devices (``max_in <= 0``) just get their
     default rate.  If the probe API is missing or misbehaves, the full
     standard list is returned unfiltered rather than an empty one.
+
+    The sub-audio decimation targets stay ladder-gated on purpose: with
+    no ladder, ``streams.select_capture_fs`` answers ``'unknown'`` and a
+    capture at a sub-native target opens the stream AT that rate — which
+    the host then refuses — so offering the targets there would offer
+    rates nothing can deliver.  (A probe-based fallback for the
+    no-ladder case is a TODO.md item; a Windows session whose RDP audio
+    stack was churning made it unverifiable in round-12.)
     """
     rates: set[int] = set()
     if default_sr and default_sr > 0:
@@ -2044,6 +2060,20 @@ class _Connection:
             if armed and not triggered['seen']:
                 await self._send_json({'type': 'status', 'event': 'timeout',
                                        'streamId': self.stream_id})
+
+            # Data-integrity warning: the audio host dropped input during
+            # this capture (see `acquisition.LAST_CAPTURE_OVERFLOWS`).
+            # Sent as an `error` frame because those pin open as toasts
+            # in the browser UI — a gap-riddled capture that LOOKS fine
+            # is exactly the thing the operator must not miss. The
+            # capture itself is still delivered below, warts and all.
+            overflows = getattr(acquisition, 'LAST_CAPTURE_OVERFLOWS', 0)
+            if overflows:
+                await self._send_error(
+                    'capture integrity: the audio host dropped input %d '
+                    'time(s) during this capture — the data has gaps, and '
+                    'TF/coherence computed from it is not trustworthy. '
+                    'A busy machine is the usual cause.' % overflows)
 
             await self._send_json({
                 'type': 'log_result',

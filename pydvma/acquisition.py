@@ -18,6 +18,13 @@ import time
 
 MESSAGE = ''
 
+#: Input overflows PortAudio reported during the most recent `log_data`
+#: capture — i.e. how many times the audio host dropped samples before
+#: the callback saw them, leaving gaps in that capture's data. Reset at
+#: the end of every capture (0 = clean). Read by `pydvma.serve` to warn
+#: the browser UI; parked module-globally like :data:`MESSAGE`.
+LAST_CAPTURE_OVERFLOWS = 0
+
 # Smallest oversample factor that clears the resampler's passband:
 # `analysis.resample_to_fs` passes to fs/2.56 on a downsample, so a x2
 # capture would clip the top of the band. ceil(2.56) = 3.
@@ -27,6 +34,17 @@ MIN_OVERSAMPLE_FACTOR = 3
 #: seconds. Fine enough that an operator's "stop" feels immediate,
 #: coarse enough to cost nothing over a multi-second capture.
 CANCEL_POLL_INTERVAL = 0.05
+
+#: Extra seconds `log_data` allows, after its wall-clock dwell, for the
+#: stream to have delivered a full window of REAL samples. A freshly
+#: (re)opened PortAudio stream produces nothing during its startup
+#: latency (~0.1 s measured on a Scarlett 2i2 via WDM-KS; more on some
+#: hosts), so a dwell timed from `start_stream` ends with the ring still
+#: short by that much — the "capture starts with zeros" lab bug. The
+#: grace is a ceiling, not a wait: a stream that was already running
+#: (the `streams.start_stream` reuse path) satisfies the sample count
+#: immediately.
+BUFFER_FILL_GRACE = 5.0
 
 #: Extra seconds allowed for the post-trigger half of an armed capture,
 #: on top of ``stored_time`` itself — the same margin the NI path passes
@@ -65,6 +83,53 @@ def _wait(duration, cancel_event=None, poll=CANCEL_POLL_INTERVAL):
         if remaining <= 0:
             return False
         time.sleep(min(poll, remaining))
+
+
+def _wait_for_buffer_fill(rec, settings, number_samples, cancel_event=None):
+    '''Block until ``rec`` has appended ``number_samples`` real samples.
+
+    The free-run dwell is wall-clock, timed from `streams.start_stream`
+    — but a freshly opened PortAudio stream delivers its first samples
+    only after the host's startup latency, so at the end of the dwell
+    the ring can still be short of a full window and the returned
+    capture starts with the buffer's initial zeros (measured live:
+    ~0.1 s / 172 decimated samples on a Scarlett 2i2 at a 3 kHz
+    target, 2026-08-20). This tops the dwell up by exactly the
+    shortfall: it waits until ``chunks_seen * chunk_size`` covers the
+    window, bounded by :data:`BUFFER_FILL_GRACE`.
+
+    A recorder without ``chunks_seen`` (NI, whose DAQmx task buffers
+    in C and has no startup gap; mock) returns immediately, as does a
+    stream that was already running (`start_stream`'s reuse path — its
+    ring holds real history from the start). Raises
+    :class:`CaptureCancelled` if ``cancel_event`` is set while waiting;
+    on grace expiry it prints a warning and returns, so a wedged stream
+    degrades to today's behaviour instead of hanging.
+    '''
+    global MESSAGE
+    if getattr(rec, 'chunks_seen', None) is None:
+        return
+    chunk_size = int(rec.settings.chunk_size)
+    needed = int(np.ceil(number_samples / chunk_size))
+    deadline = time.time() + BUFFER_FILL_GRACE
+    warned = False
+    while rec.chunks_seen < needed:
+        if time.time() > deadline:
+            MESSAGE = ('WARNING: the stream delivered fewer samples than '
+                       'the capture window ({} of {} chunks) — the data '
+                       'will start with zeros. The device may have '
+                       'stalled, or the host is dropping input.\n'
+                       .format(rec.chunks_seen, needed))
+            print(MESSAGE)
+            warned = True
+            break
+        if _wait(CANCEL_POLL_INTERVAL, cancel_event):
+            raise CaptureCancelled(
+                'capture cancelled while waiting for the stream to fill')
+    if not warned:
+        # One chunk of slack so the final ring write is not mid-flight
+        # while the copy below reads it.
+        _wait(chunk_size / float(rec.settings.fs), cancel_event)
 
 
 def _stop_output(settings, s, wait=True):
@@ -195,9 +260,21 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
     rec : Recorder-like or None
         Ignored. Retained for backward compatibility with callers (the
         GUI's ``LogDataThread``) that still pass a cached recorder.
-        ``log_data`` now always rebuilds the stream via
-        ``streams.start_stream(settings)`` so that switching device or
-        backend between calls doesn't leave a stale recorder.
+        ``log_data`` always calls ``streams.start_stream(settings)``
+        itself so that switching device or backend between calls
+        doesn't leave a stale recorder; a running stream whose
+        signature matches is REUSED (soundcard and NI both), so the
+        call is cheap for back-to-back captures and the buffer already
+        holds real history — a capture never starts with the startup-
+        latency zeros a freshly opened stream begins with. On top of
+        that, the free-run dwell is topped up until the buffer really
+        holds ``stored_time * fs`` delivered samples
+        (`_wait_for_buffer_fill`), covering the fresh-stream case.
+        A capture during which the audio host reported dropped input
+        prints a loud warning and sets
+        :data:`LAST_CAPTURE_OVERFLOWS` — gaps in the data are
+        unrecoverable and quietly destroy TF coherence, so they must
+        never pass silently.
     output : ndarray (N_samples, output_channels) or None
         Optional playback signal **in volts**. For NI it's passed
         through as-is (must stay within ±``output_VmaxNI``). For
@@ -433,8 +510,14 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
 
     # Stream is slightly longer than settings.stored_time, so need to add delay
     # from initialisation to allow stream to fill up and prevent zeros at start
-    # of logged data.
+    # of logged data. (This 2-chunk sleep is NOT enough on its own — a fresh
+    # PortAudio stream's startup latency exceeds it — so the free-run path
+    # additionally waits for a real sample count via `_wait_for_buffer_fill`.)
     time.sleep(2*settings.chunk_size/settings.fs)
+    # Baseline for the per-capture overflow report below. The counter is
+    # carried across the armed path's buffer re-__init__, so this read is
+    # stable wherever the capture goes from here.
+    overflow_baseline = getattr(streams.REC, 'input_overflows', 0)
     t = datetime.datetime.now()
     timestring = '_'+str(t.year)+'_'+str(t.month)+'_'+str(t.day)+'_at_'+str(t.hour)+'_'+str(t.minute)+'_'+str(t.second)
 
@@ -466,10 +549,20 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
             _stop_output(settings, s, wait=False)
             raise CaptureCancelled('capture cancelled during soundcard playback')
 
+        # Top the wall-clock dwell up to a full window of REAL samples:
+        # a freshly opened stream spends its startup latency delivering
+        # nothing, and snapshotting on the dwell alone returned that
+        # latency as zeros at the front of the capture.
+        number_samples = int(streams.REC.settings.stored_time * streams.REC.settings.fs)
+        try:
+            _wait_for_buffer_fill(streams.REC, settings, number_samples,
+                                  cancel_event)
+        except CaptureCancelled:
+            _stop_output(settings, s, wait=False)
+            raise
 
         # make copy of data
         stored_time_data_copy = np.copy(streams.REC.stored_time_data)
-        number_samples = int(streams.REC.settings.stored_time * streams.REC.settings.fs)
 
         stored_time_data_copy = stored_time_data_copy[-number_samples:,:]
         MESSAGE += 'Logging complete.\n'
@@ -585,14 +678,34 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
         # bridge's trigger poller then reports "triggered" on the next
         # armed capture before log_data has re-zeroed anything). While
         # the capture is still marked complete the callback is frozen,
-        # so this zeroing cannot race an append.
-        streams.REC.stored_time_data[:] = 0.0
+        # so this zeroing cannot race an append. Must go through
+        # `zero_stored` — `Recorder.stored_time_data` is a property
+        # returning a COPY of the ring, so writing to it directly would
+        # be a silent no-op.
+        streams.REC.zero_stored()
         _reset_trigger_state(streams.REC)
 
         MESSAGE = 'Logging complete.\n'
         print(MESSAGE)
 
         _stop_output(settings, s)
+
+    # Data integrity: PortAudio flags every callback that arrived after
+    # the host dropped input (`streams.Recorder.callback` counts them).
+    # Dropped samples are unrecoverable — the capture has time-warps at
+    # each gap, which quietly destroys TF coherence — so say so loudly
+    # rather than returning corrupt data that LOOKS fine. The count is
+    # parked module-globally (like MESSAGE) so the serve bridge can
+    # forward it to the browser as a pinned toast.
+    global LAST_CAPTURE_OVERFLOWS
+    LAST_CAPTURE_OVERFLOWS = max(
+        0, getattr(streams.REC, 'input_overflows', 0) - overflow_baseline)
+    if LAST_CAPTURE_OVERFLOWS > 0:
+        MESSAGE = ('WARNING: the audio host dropped input {} time(s) during '
+                   'this capture — the data has gaps and TF/coherence '
+                   'results from it are not trustworthy. A busy machine '
+                   'is the usual cause.\n'.format(LAST_CAPTURE_OVERFLOWS))
+        print(MESSAGE)
 
     # Clipping is an ADC-domain property — take the raw peak BEFORE any
     # digital filtering, or the anti-alias FIR below would smear rail hits

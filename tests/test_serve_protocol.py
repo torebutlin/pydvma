@@ -725,6 +725,50 @@ def test_log_returns_loadable_dvma():
     run_async(scenario)
 
 
+def test_log_with_dropped_input_sends_integrity_error(monkeypatch):
+    """A capture during which the audio host dropped input arrives WITH a
+    loud data-integrity ``error`` frame (which pins open as a toast in
+    the webui) just before its ``log_result`` — never silently. Round-12:
+    dropped samples time-warp the capture and quietly destroy TF
+    coherence, so the operator must be told at capture time.
+
+    The overflow itself is simulated at the `_capture_to_dvma` seam (the
+    mock recorder never overflows): the wrapper runs the real capture and
+    then stamps `acquisition.LAST_CAPTURE_OVERFLOWS`, exactly as
+    `acquisition.log_data` does after a lossy soundcard capture.
+    """
+    real_capture = serve_mod._capture_to_dvma
+
+    def lossy_capture(settings, test_name, output=None, cancel_event=None):
+        out = real_capture(settings, test_name, output, cancel_event)
+        serve_mod.acquisition.LAST_CAPTURE_OVERFLOWS = 3
+        return out
+
+    monkeypatch.setattr(serve_mod, '_capture_to_dvma', lossy_capture)
+
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None)
+                warn = await _recv_json(ws, timeout=10.0)
+                assert warn['type'] == 'error'
+                assert 'dropped input 3 time' in warn['message']
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'   # data still delivered
+        finally:
+            await _stop_server(task)
+    try:
+        run_async(scenario)
+    finally:
+        serve_mod.acquisition.LAST_CAPTURE_OVERFLOWS = 0
+
+
 def test_log_before_configure_errors():
     async def scenario():
         _server, task, port = await _start_server()
@@ -2013,6 +2057,13 @@ class TestUnsupportedRateError:
         'Error opening InputStream: Invalid sample rate [PaErrorCode -9997]',
         'invalid sample rate',
         'PaErrorCode -9997',
+        # WDM-KS conflates rate and format refusals: an off-ladder RATE
+        # comes back as a format error (measured live, Scarlett 2i2 asked
+        # for 3 kHz, 2026-08-20). Safe to treat as a rate refusal — the
+        # retry runs at a rate the device does support, so a genuine
+        # format problem still fails there and propagates.
+        'Error opening InputStream: Sample format not supported [PaErrorCode -9994]',
+        'PaErrorCode -9994',
     ])
     def test_recognises_a_rate_refusal(self, text):
         assert serve_mod._is_unsupported_rate_error(RuntimeError(text))

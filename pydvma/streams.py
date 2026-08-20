@@ -88,6 +88,43 @@ def _ni_settings_signature(s):
     )
 
 
+def _sc_settings_signature(s):
+    """Tuple of stream- and buffer-impacting soundcard settings.
+
+    The soundcard twin of `_ni_settings_signature`: when the new
+    settings' signature matches the running stream's, `start_stream`
+    keeps that stream (and its already-filled ring buffers) instead of
+    tearing it down. Reuse is what makes a capture's window start with
+    real samples rather than the ~0.1 s of zeros a freshly opened
+    PortAudio stream delivers during its startup latency (measured live
+    on a Scarlett 2i2 via WDM-KS, 2026-08-20 — the "capture starts at
+    zero" lab bug), and it also spares the per-log teardown/reopen.
+
+    ``VmaxSC`` is included because the callback scales samples on the
+    way IN: reusing a buffer of differently-scaled history would mix
+    two calibrations in one window. The duplex determinants
+    (``output_device_index`` / ``output_channels`` when
+    `output_shares_input_clock`) are included because they decide the
+    stream's SHAPE (input-only vs full-duplex) at open time.
+    ``pretrig_*`` fields are deliberately absent — the trigger state
+    machine reads them live from ``settings``, and the armed path
+    re-inits the buffers itself.
+    """
+    shares = output_shares_input_clock(s)
+    return (
+        s.device_driver,
+        s.device_index if s.device_index is None else int(s.device_index),
+        int(s.channels),
+        float(s.fs),
+        int(s.chunk_size),
+        int(s.num_chunks),
+        float(s.stored_time),  # affects stored_time_data buffer size
+        float(getattr(s, 'VmaxSC', 1.0)),
+        (int(s.output_device_index), int(getattr(s, 'output_channels', 1)))
+        if shares else None,
+    )
+
+
 def _clamp_soundcard_input_channels(settings):
     '''Clamp ``settings.channels`` to the soundcard input device's
     ``max_input_channels``, mutating ``settings`` in place.
@@ -777,6 +814,34 @@ def start_stream(settings):
         # `Recorder.__init__` use `settings.channels`, so any clamping
         # has to happen here, not inside `init_stream`.
         _clamp_soundcard_input_channels(settings)
+        # Reuse path (the NI branch has had this since the IEPE work):
+        # a live stream whose signature matches the request keeps
+        # running, ring buffers and all. That is what gives a capture a
+        # window of REAL history instead of the startup-latency zeros a
+        # fresh stream begins with (see `_sc_settings_signature`), and
+        # it makes `log_data`'s unconditional start_stream call cheap
+        # for back-to-back logs. The settings object is swapped in so
+        # read-side fields the signature ignores (pretrig_*) take
+        # effect immediately.
+        # The running stream's identity is the signature FROZEN at open
+        # time (`_open_signature`), not a live read of `REC_SC.settings`
+        # — callers (the serve bridge, notebooks) mutate the settings
+        # object in place between logs, and after a reuse pass that can
+        # be the VERY OBJECT the recorder holds, making a live compare
+        # trivially equal while the buffers stay sized for the old
+        # values.
+        if REC_SC is not None:
+            stream = getattr(REC_SC, 'audio_stream', None)
+            try:
+                stream_alive = bool(stream is not None and stream.active)
+            except Exception:
+                stream_alive = False
+            if (stream_alive
+                    and getattr(REC_SC, '_open_signature', None)
+                        == _sc_settings_signature(settings)):
+                REC_SC.settings = settings
+                REC = REC_SC
+                return
         # End any previous soundcard stream FIRST. Overwriting REC_SC
         # leaks the old sd.InputStream — its callback keeps firing into
         # the orphaned recorder's buffers, and the PortAudio handle stays
@@ -793,6 +858,10 @@ def start_stream(settings):
             REC_SC = None
         REC_SC = Recorder(settings)
         REC_SC.init_stream(settings)
+        # Frozen AFTER init_stream so the recorded values are the ones
+        # the stream and buffers were really opened with (channel
+        # clamps applied). See the reuse comment above.
+        REC_SC._open_signature = _sc_settings_signature(settings)
         REC = REC_SC
     elif settings.device_driver == 'nidaq':
         cls = _ni_recorder_class(settings)
@@ -1045,8 +1114,9 @@ class Recorder(object):
     Each incoming chunk (``chunk_size`` samples, ``channels`` wide)
     runs through `callback`:
 
-    1. Shift both buffers left by ``chunk_size`` and append the new
-       chunk at the end, unless the capture is complete (armed
+    1. Write the chunk into both circular buffers at their moving
+       write positions (O(chunk_size) — see the circular-buffer note
+       in ``__init__``), unless the capture is complete (armed
        captures only), in which case `stored_time_data` is left frozen.
     2. Before the trigger: scan the **newest** chunk for a sample whose
        magnitude exceeds ``pretrig_threshold`` on ``pretrig_channel``.
@@ -1161,22 +1231,101 @@ class Recorder(object):
         #: been seen; None while waiting for the crossing.
         self._post_trigger_pending = None
         self.trigger_first_detected_message = False
+        #: Count of PortAudio ``input_overflow`` callback flags seen on
+        #: the OPEN stream — each one means the audio host dropped
+        #: samples before the callback got them, i.e. the captured data
+        #: has a gap at that point. Carried across a re-``__init__``
+        #: like ``stream_fs`` (the counter describes the stream, and the
+        #: armed path re-inits buffers mid-capture); `log_data` snapshots
+        #: it around each capture and warns on any increase.
+        self.input_overflows = getattr(self, 'input_overflows', 0)
+        #: Same for ``output_underflow`` on the duplex stream's output
+        #: side (a stutter in the stimulus playback).
+        self.output_underflows = getattr(self, 'output_underflows', 0)
+        # Startup-priming filter state (see `callback`). Armed by
+        # `init_stream` at stream OPEN — priming only happens there —
+        # and carried across the armed path's buffer re-__init__ like
+        # the other stream-lifetime attributes. A buffers-only Recorder
+        # (tests) never skips.
+        self._awaiting_first_signal = getattr(self, '_awaiting_first_signal',
+                                              False)
+        self._startup_zero_chunks = getattr(self, '_startup_zero_chunks', 0)
         self.osc_time_axis=np.arange(0,(self.settings.num_chunks*self.settings.chunk_size)/self.settings.fs,1/self.settings.fs)
         self.osc_freq_axis=np.fft.rfftfreq(len(self.osc_time_axis),1/self.settings.fs)
-        self.osc_time_data=np.zeros(shape=((self.settings.num_chunks*self.settings.chunk_size),self.settings.channels))  
-        self.osc_time_data_windowed=np.zeros_like(self.osc_time_data)
-        self.osc_freq_data = np.abs(np.fft.rfft(self.osc_time_data,axis=0))
 
-        
-        #rounds up the number of chunks needed in the pretrig array    
+        # Both capture buffers are CIRCULAR: the callback writes each
+        # chunk at a moving position instead of shifting the whole
+        # array left every time. The shift design cost O(buffer) per
+        # callback — a 30 s x 48 kHz x 2 ch stored buffer is a ~23 MB
+        # memmove against a 2 ms callback budget at the default
+        # chunk_size of 100, which PortAudio answers by dropping input
+        # (measured live on a Scarlett 2i2, 2026-08-20: coherence
+        # collapse on long captures). Ring writes are O(chunk_size), so
+        # the callback cost no longer depends on stored_time. Readers
+        # get the time-ordered view through the `osc_time_data` /
+        # `stored_time_data` properties.
+        n_osc = self.settings.num_chunks * self.settings.chunk_size
+        self._osc_ring = np.zeros(shape=(n_osc, self.settings.channels))
+        self._osc_pos = 0
+        self.osc_time_data_windowed = np.zeros(shape=(n_osc, self.settings.channels))
+        self.osc_freq_data = np.abs(np.fft.rfft(self._osc_ring, axis=0))
+
+        #rounds up the number of chunks needed in the pretrig array
         self.stored_num_chunks=2+int(np.ceil((self.settings.stored_time*self.settings.fs)/self.settings.chunk_size))
         #the +2 is to allow for the updating process on either side
-        self.stored_time_data=np.zeros(shape=(self.stored_num_chunks*self.settings.chunk_size,self.settings.channels))
-        self.stored_time_data_windowed=np.zeros_like(self.stored_time_data)
+        n_stored = self.stored_num_chunks * self.settings.chunk_size
+        self._stored_ring = np.zeros(shape=(n_stored, self.settings.channels))
+        self._stored_pos = 0
+        self.stored_time_data_windowed = np.zeros(shape=(n_stored, self.settings.channels))
         #note the +2s to match up the length of stored_num_chunks
         #formula used from the np.fft.rfft documentation
-        self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data,axis=0))
+        self.stored_freq_data = np.abs(np.fft.rfft(self._stored_ring, axis=0))
         # self.list_dt = []
+
+    @property
+    def osc_time_data(self):
+        '''Oscilloscope window in time order (oldest first), as an array
+        of shape ``(num_chunks * chunk_size, channels)``. A fresh copy,
+        unrolled from the internal circular buffer — safe to hold across
+        callbacks.'''
+        return self._unrolled(self._osc_ring, self._osc_pos)
+
+    @property
+    def stored_time_data(self):
+        '''Capture buffer in time order (oldest first), as an array of
+        shape ``(stored_num_chunks * chunk_size, channels)``, ending at
+        the most recently appended sample (the freeze point once
+        ``capture_complete`` is set). A fresh copy — writes to it do NOT
+        reach the recorder; use `zero_stored` to clear the buffer.'''
+        return self._unrolled(self._stored_ring, self._stored_pos)
+
+    @staticmethod
+    def _unrolled(ring, pos):
+        if pos == 0:
+            return ring.copy()
+        return np.concatenate((ring[pos:], ring[:pos]), axis=0)
+
+    @staticmethod
+    def _ring_write(ring, pos, data):
+        '''Write ``data`` into ``ring`` at ``pos`` with wraparound;
+        returns the new write position.'''
+        n = data.shape[0]
+        length = ring.shape[0]
+        end = pos + n
+        if end <= length:
+            ring[pos:end, :] = data
+        else:
+            k = length - pos
+            ring[pos:, :] = data[:k]
+            ring[:end - length, :] = data[k:]
+        return end % length
+
+    def zero_stored(self):
+        '''Zero the capture buffer in place (the ring itself, not a
+        copy). `pydvma.acquisition.log_data` calls this before
+        unfreezing after an armed capture, so the finished window
+        cannot re-arm the trigger as it re-rolls through.'''
+        self._stored_ring[:] = 0.0
     
     def callback(self, in_data, frame_count, time_info, status):
         '''
@@ -1196,27 +1345,60 @@ class Recorder(object):
         one. The default 0.05 therefore means "5% of full scale" only
         while ``VmaxSC`` is 1.0; on a device with a measured voltage
         scale it means 50 mV, which may sit in the noise.
+
+        Runs on the audio thread with an O(chunk_size) budget: one
+        scaled copy of the chunk, two ring writes, and (armed only) the
+        trigger scan. Nothing here touches the whole buffer — see the
+        circular-buffer note in ``__init__``.
         '''
-        t0 = time.time()
+        # PortAudio flags dropped input on the way in (`status` is a
+        # `sd.CallbackFlags`; None when a test drives the callback
+        # directly). Count it rather than losing the news — the samples
+        # are gone and the capture has a gap.
+        if status:
+            try:
+                if status.input_overflow:
+                    self.input_overflows += 1
+                if status.output_underflow:
+                    self.output_underflows += 1
+            except AttributeError:
+                pass
         # self.osc_data_chunk = (np.frombuffer(in_data, dtype='int'+str(self.settings.nbits))/2**(self.settings.nbits-1))
         self.osc_data_chunk = np.copy(in_data) * self.settings.VmaxSC
         self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
         armed = self.settings.pretrig_samples is not None
         frozen = armed and self.capture_complete
-        for i in range(self.settings.channels):
-            self.osc_time_data[:-(self.settings.chunk_size),i] = self.osc_time_data[self.settings.chunk_size:,i]
-            self.osc_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-            if not frozen:
-                self.stored_time_data[:-(self.settings.chunk_size),i] = self.stored_time_data[self.settings.chunk_size:,i]
-                self.stored_time_data[-(self.settings.chunk_size):,i] = self.osc_data_chunk[:,i]
-
+        self._osc_pos = self._ring_write(self._osc_ring, self._osc_pos,
+                                         self.osc_data_chunk)
+        # Startup-priming filter: some hosts (measured: WDM-KS on
+        # Windows, both 'low' and 'high' latency) deliver a burst of
+        # EXACT-zero chunks while a freshly opened stream primes,
+        # before real ADC data flows. Those are not samples of
+        # anything — counting them put ~0.05-0.1 s of digital zeros at
+        # the front of every first capture (the "capture starts at
+        # zero" lab bug). Real analogue inputs are never exactly zero
+        # (dither/noise floor), so skip zero chunks until the first
+        # nonzero sample — bounded to ~1 s so a genuinely silent
+        # digital input (S/PDIF) still proceeds, its zeros then kept
+        # as the data they are. The oscilloscope ring above is NOT
+        # filtered: the scope shows what the host delivers.
+        if self._awaiting_first_signal:
+            if np.any(self.osc_data_chunk):
+                self._awaiting_first_signal = False
+            elif (self._startup_zero_chunks * self.settings.chunk_size
+                    < self.settings.fs):
+                self._startup_zero_chunks += 1
+                return
+            else:
+                self._awaiting_first_signal = False
         if not frozen:
+            self._stored_pos = self._ring_write(self._stored_ring,
+                                                self._stored_pos,
+                                                self.osc_data_chunk)
             self.chunks_seen += 1
 
         if armed and not self.capture_complete:
             self._run_trigger_state_machine()
-
-        # self.list_dt += [time.time()-t0]
 
         # return in_data
 
@@ -1345,7 +1527,11 @@ class Recorder(object):
                                           channels=(settings.channels,
                                                     duplex_channels),
                                           dtype=dtype,
-                                          latency='low',
+                                          # 'high': deep host buffering.
+                                          # This is a measurement
+                                          # logger, not a live effect —
+                                          # see the input-only branch.
+                                          latency='high',
                                           extra_settings=None,
                                           callback=self.duplex_callback,
                                           finished_callback=None,
@@ -1360,7 +1546,18 @@ class Recorder(object):
                                       device=settings.device_index,
                                       channels=settings.channels,
                                       dtype=dtype,
-                                      latency='low',
+                                      # 'high', not 'low': deep host
+                                      # buffering absorbs late callbacks
+                                      # (GIL stalls from the serve
+                                      # bridge's websocket/journal
+                                      # threads), where 'low' answered
+                                      # them by dropping input — the
+                                      # measured cause of the 2i2
+                                      # coherence collapse (2026-08-20).
+                                      # A logger has no use for low
+                                      # latency; the cost is ~0.1-0.4 s
+                                      # of scope/trigger-status lag.
+                                      latency='high',
                                       extra_settings=None,
                                       callback=self.callback,
                                       finished_callback=None,
@@ -1369,6 +1566,10 @@ class Recorder(object):
                                       never_drop_input=None,
                                       prime_output_buffers_using_stream_callback=None)
             self.duplex_output_channels = None
+        # Arm the startup-priming filter (see `callback`) for THIS
+        # stream open — the host's priming zeros happen only at open.
+        self._awaiting_first_signal = True
+        self._startup_zero_chunks = 0
         self.audio_stream.start()
         # What the stream ACTUALLY runs at, straight from PortAudio.
         # Normally identical to the request (a host API that cannot make
@@ -1412,7 +1613,7 @@ class Recorder(object):
         Fills ``out_data`` from the stimulus queued by `queue_output`
         (silence when idle, zero-padded past the stimulus end, with the
         completion event set as the last samples are handed over), then
-        runs the ordinary input-side processing — buffer shifting and
+        runs the ordinary input-side processing — the ring writes and
         the trigger state machine — by delegating to `callback`.
         Runs on the audio thread: the queue handoff is a slice copy
         under `_duplex_lock` and nothing here allocates per call.
@@ -2171,6 +2372,13 @@ class Recorder_NI_nidaqmx(object):
         # same (validated) implementation.
         return setup_output_NI_nidaqmx(settings, output)
 
+    def zero_stored(self):
+        '''Zero the capture buffer in place — the NI/mock counterpart of
+        `Recorder.zero_stored` (here ``stored_time_data`` is a plain
+        array, but `pydvma.acquisition.log_data` clears it through this
+        one driver-generic call).'''
+        self.stored_time_data[:] = 0.0
+
     def end_stream(self):
         global REC
         REC = None
@@ -2671,6 +2879,11 @@ class MockRecorder(object):
         # not None` (the test that gates the NI-task reuse path)
         # reads truthy.
         self.audio_stream = object()
+
+    def zero_stored(self):
+        '''Zero the capture buffer in place (see `Recorder.zero_stored`;
+        here it is a plain array).'''
+        self.stored_time_data[:] = 0.0
 
     def end_stream(self):
         global REC
