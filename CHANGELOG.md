@@ -3,6 +3,56 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## 2.4.1 — 2026-08-20
+
+Same-day fixes for the first 2.4.0 lab round, which found soundcard
+capture (a Scarlett 2i2) unusable: TF coherence collapsed on longer
+captures and every capture began with a run of zeros. Both were
+capture-integrity bugs in the soundcard recorder, root-caused live
+against a signal generator; NI acquisition was never affected.
+
+### Fixed
+
+- **Soundcard coherence collapse.** The audio callback shifted the
+  whole capture buffer per chunk — O(buffer) work against a
+  milliseconds callback budget — so PortAudio silently dropped input
+  on long or high-rate captures, and every drop time-warped the data
+  (transfer-function magnitude survives that; coherence does not).
+  Both capture buffers are now circular rings with O(chunk) writes,
+  and streams open with deep host buffering (`latency='high'`), so
+  callback cost no longer depends on capture length and background
+  load no longer causes drops.
+- **Dropped input is now reported, never silent.** PortAudio's
+  overflow flag is counted per capture; a lossy capture prints a
+  warning in Python and pins a "capture integrity" toast in the web
+  app. Gap-riddled data that looks fine is exactly what an operator
+  must not miss.
+- **Captures started with zeros.** Every log rebuilt the soundcard
+  stream and snapshotted before the host had delivered a full window
+  (startup latency, plus WDM-KS's burst of zero-filled priming
+  chunks). The stream is now reused across matching captures, the
+  capture waits until the buffer genuinely holds `stored_time * fs`
+  delivered samples, and leading all-zero priming chunks are skipped
+  (bounded, so a genuinely silent digital input still records).
+- **3 kHz on Windows/WDM-KS.** WDM-KS refuses a sub-native sample
+  rate with "Sample format not supported" (-9994) rather than the
+  expected invalid-rate code; the serve bridge now recognises it and
+  steps the live monitor up to a runnable rate (captures were already
+  delivered by capture-high-and-decimate).
+- **Sample-rate dropdown.** The typed fs field's suggestion list was
+  a browser `datalist`, which Chromium prefix-filters by the typed
+  text — the ladder collapsed to one entry shown twice. The field now
+  pairs the typed input with a proper dropdown that always lists
+  every rate.
+- **TF-view channel labels.** Data-tray cards now label rows the way
+  the TF view draws them — `ch_1/ch_0` for the line and `ch_0 (ref)`
+  for the reference channel — instead of implying two independent
+  lines.
+- **Session journal on Windows.** The crash-recovery spill could be
+  left stale when an antivirus/indexer scan transiently held the file
+  during the atomic replace; the replace now retries over a short
+  ladder and any spill that still fails is counted observably.
+
 ## 2.4.0 — 2026-08-19
 
 Three arcs in one release. The first 3c6 lab round's fixes (round 11):

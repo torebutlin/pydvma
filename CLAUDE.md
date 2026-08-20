@@ -51,10 +51,39 @@ verified byte-identical; webui dist rebuilt. NB this RDP session's
 audio stack CHURNED mid-bench (enumeration reordered twice, WASAPI
 endpoints vanished, probes went -9998) — deferred a
 `select_capture_fs` probe fallback for ladder-less machines to
-TODO.md rather than build against a moving target. **Next: Tore's
-lab re-verification** (checklist at the top of TODO.md) alongside the
-two still-unticked next-lab-visit checklists from stages 3–4 and the
-derived-data round; the v2.4.0 PyPI upload remains his.
+TODO.md rather than build against a moving target.
+
+Same evening (after a PC restart): **v2.4.1 is CUT, committed and
+PUSHED — the twine upload is Tore's, from the Mac.** Context: Tore
+had already uploaded v2.4.0 to PyPI and the failing lab round ran
+against that install, so these fixes NEED a release. The flaky
+journal test I'd flagged got its own spawned session, whose fix is
+reviewed and merged (`7917bbd`): the one-in-a-full-suite failure was
+Defender/indexer transiently holding the spill file during
+`os.replace` (measured 368/1000 replaces failing under load, zero
+torn writes — the atomic design was sound), fixed with a bounded
+retry ladder + an observable `SessionJournal.spill_failures` counter,
+stress harness in `dev/journal_spill_stress.py`. Then the five-site
+version bump (pyproject / datastructure / CITATION.cff / CHANGELOG —
+full 2.4.1 entry — / ENGINE_WHEELS), engine wheel reborn as 2.4.1,
+UI staged, sdist + fat wheel built on the PC and PROVEN: embedded
+`_webui/pypi/` carries the 2.4.1 engine wheel, the bundled
+`index-*.js` references it, all five changed `pydvma/*.py`
+byte-identical in fat AND engine wheels, and a CLEAN venv install of
+the fat wheel served its own embedded UI with the `/ws` engine
+greeting `{v:1, pydvma:'2.4.1', journal:true}`. Suites at the cut:
+pytest 1164/14, vitest 1145/1, check 0/0, mkdocs --strict clean.
+`dist/` on the PC holds
+the proven artifacts, but dist is gitignored — **Tore rebuilds on the
+Mac** (`git pull && python scripts/stage_webui.py && python -m build
+--sdist --wheel`, then `twine upload dist/pydvma-2.4.1*`); per the
+v2.3.0 precedent the GitHub release + tag wait until AFTER the
+upload (Zenodo auto-archives on release). NB he never tagged/released
+v2.4.0 either — with 2.4.1 superseding it same-day, tagging both at
+their cut commits (16ec307, and this one) at release time is his
+call. **Next: Tore's lab re-verification** (checklist at the top of
+TODO.md) alongside the two still-unticked next-lab-visit checklists
+from stages 3–4 and the derived-data round.
 
 Previous (2026-08-19, Mac session, second half): **the derived-data save
 round is LANDED on top of stages 3–4 — committed locally, NOT pushed
