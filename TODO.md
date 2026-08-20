@@ -253,6 +253,46 @@ is still open, as one consolidated list.
 
 ## Backlog — hardware, acquisition & the next PC session
 
+- **Round-12 lab re-verification (2i2 coherence/zeros fixes,
+  2026-08-20)** — on the lab PC with the real rig: repeat the
+  morning's failing cases (fs=3000 and fs=48000, 2 s / 10 s / 30 s
+  captures, monitor running) and confirm coherence is consistent
+  across repeats and capture lengths, time data starts with signal
+  (no zero run), and no "capture integrity" toast appears. The fs
+  picker should list 500–5000 + the native ladder for the 2i2; TF
+  view tray cards should read `ch_1/ch_0` + `ch_0 (ref)`. Round doc
+  with the bench evidence:
+  `dev/2026-08-20-round12-2i2-lab-feedback.md`; headless harness
+  `dev/soundcard_drop_check.py` (needs the Rigol or any two-tone
+  source on L/R).
+
+- **NI recorder: two latent issues mirrored from round-12's soundcard
+  fixes, deferred to an NI-live session** (both benign in current
+  usage, neither is regression-safe to change blind):
+  (1) `Recorder_NI_nidaqmx.stream_audio_callback` still shifts its
+  whole stored buffer per chunk (O(buffer)); DAQmx's deep C-side
+  buffering absorbs the cost today, but a ring conversion like
+  `streams.Recorder`'s would future-proof it. (2) The NI reuse path
+  compares `_ni_settings_signature(REC_NI.settings)` against a
+  settings object that can BE `REC_NI.settings` after a reuse pass
+  (serve mutates `stored_time` in place), so the compare is
+  object-vs-itself — masked today because the webui reconfigures on
+  any duration change. Fix like the soundcard side: freeze the
+  signature at task-build time (`_open_signature`).
+
+- **`select_capture_fs` probe fallback for ladder-less machines** —
+  with no native ladder (Windows over RDP hides the endpoints
+  `_win_audio` reads) the function answers `'unknown'`, a sub-native
+  capture opens the stream AT the target, and WDM-KS refuses
+  (-9994). A fallback that probes `check_input_settings` for the
+  lowest runnable rate above the target would make 3 kHz deliverable
+  there too — and would let `serve._soundcard_candidate_rates` offer
+  the decimation targets on its probe branch (currently ladder-gated,
+  test-pinned: `test_sub_audio_targets_need_a_known_ladder`).
+  Attempted in round-12 but unverifiable: that session's RDP audio
+  stack was churning (enumeration reordered twice mid-bench, probes
+  answering -9998 for everything). Needs a console session.
+
 - **3c6 station device: 2i2 is the TENTATIVE pick (round 11,
   2026-08-12)** — first lab round found it worked better than the
   U24 XL (wider input range + gain knob; the U24's ±1.9 Vpk ceiling bit

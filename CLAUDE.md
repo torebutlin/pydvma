@@ -2,7 +2,61 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-19 (Mac session, second half): **the derived-data save
+As of 2026-08-20 (office Windows PC, 2i2 + Rigol DG1022Z on the bench,
+over RDP): **ROUND 12 — Tore's same-morning lab report that the 2i2
+was unusable — is root-caused, fixed, live-verified on real hardware,
+and committed (NOT pushed).** The two acquisition bugs were: (1)
+**coherence collapse** — `Recorder.callback` shifted the WHOLE stored
+buffer per chunk (23 MB memmove vs a 2 ms budget at 48 kHz/chunk 100;
+measured 3.4 ms), so PortAudio dropped input and every drop time-warped
+the capture; worse for longer captures, intermittent at 3 kHz (33 ms
+budget survives standalone, dies under the v2.4 serve journal's GIL
+load — the "broke since v2.3" delta), NI immune (DAQmx buffers in C).
+Fixed: both buffers are circular rings (O(chunk) callback;
+`osc_time_data`/`stored_time_data` became copy-returning PROPERTIES —
+zero via `zero_stored()`, assignment is a silent no-op), streams open
+`latency='high'`, and dropped input is now COUNTED
+(`Recorder.input_overflows` → `acquisition.LAST_CAPTURE_OVERFLOWS` →
+a pinned "capture integrity" toast via a serve error frame). (2)
+**zero-start** — every log rebuilt the stream and the 2-chunk settle
+sleep lost to startup latency (172 zeros at 3 kHz exactly, reproduced
+to the sample; 100–110 ms variable at 48 kHz), PLUS WDM-KS delivers a
+burst of exact-zero PRIMING chunks a sample-count wait can't see
+through. Fixed three ways: `start_stream` REUSES a live matching
+soundcard stream (signature FROZEN at open — `_open_signature` — since
+serve mutates the settings object the recorder may hold; the NI reuse
+has the same latent aliasing, TODO'd), `log_data` tops the dwell up
+until the ring truly holds the window (`_wait_for_buffer_fill`), and
+the callback skips leading all-zero chunks bounded to ~1 s. Also
+fixed: WDM-KS refuses sub-native rates with **-9994** (not -9997) —
+`_is_unsupported_rate_error` now accepts it, so configure steps the
+monitor up instead of dying; the fs dropdown (a Chromium datalist that
+PREFIX-FILTERS by the typed text — ladder collapsed to one entry shown
+twice) is now a typed input + arrow-only `<select>` (`setup-fs-pick`)
+listing the full ladder unfiltered; and TF-view tray cards label rows
+`ch_1/ch_0` + `ch_0 (ref)` via the legend's own `tfLineLabel`
+(App threads `tfChInFor` through Tray). Evidence & verification: Rigol
+sines phase-tracked (a drop = a phase step) — before: 5–11 events +
+~1700 rad resid per 30 s capture; after: **0 events, 0 leading zeros,
+~0.001 rad** across fresh/reused/3 kHz/48 kHz, plus a real spawned
+serve with the ws monitor streaming through a 30 s log (clean), plus
+Playwright against the built dist + real bridge for both webui fixes.
+Round doc: `dev/2026-08-20-round12-2i2-lab-feedback.md`; reusable
+harness `dev/soundcard_drop_check.py`. Suites: pytest 1163/14 (new
+`tests/test_streams_ring.py`, 24 tests; serve gained -9994 + the
+overflow-toast test), vitest 1145/1, check 0/0; engine wheel rebuilt
+(same 2.4.0 name — remember `PYTHON=<anaconda>` or build-wheels.sh
+hits the MS-Store python stub and my `| tail` masked its failure) and
+verified byte-identical; webui dist rebuilt. NB this RDP session's
+audio stack CHURNED mid-bench (enumeration reordered twice, WASAPI
+endpoints vanished, probes went -9998) — deferred a
+`select_capture_fs` probe fallback for ladder-less machines to
+TODO.md rather than build against a moving target. **Next: Tore's
+lab re-verification** (checklist at the top of TODO.md) alongside the
+two still-unticked next-lab-visit checklists from stages 3–4 and the
+derived-data round; the v2.4.0 PyPI upload remains his.
+
+Previous (2026-08-19, Mac session, second half): **the derived-data save
 round is LANDED on top of stages 3–4 — committed locally, NOT pushed
 (Tore hasn't asked), full suite gate green, and NEITHER round is
 live-verified yet.** Save Dataset now materialises the app's computed
