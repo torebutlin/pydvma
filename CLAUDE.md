@@ -73,17 +73,21 @@ byte-identical in fat AND engine wheels, and a CLEAN venv install of
 the fat wheel served its own embedded UI with the `/ws` engine
 greeting `{v:1, pydvma:'2.4.1', journal:true}`. Suites at the cut:
 pytest 1164/14, vitest 1145/1, check 0/0, mkdocs --strict clean.
-`dist/` on the PC holds
-the proven artifacts, but dist is gitignored — **Tore rebuilds on the
-Mac** (`git pull && python scripts/stage_webui.py && python -m build
---sdist --wheel`, then `twine upload dist/pydvma-2.4.1*`); per the
-v2.3.0 precedent the GitHub release + tag wait until AFTER the
-upload (Zenodo auto-archives on release). NB he never tagged/released
-v2.4.0 either — with 2.4.1 superseding it same-day, tagging both at
-their cut commits (16ec307, and this one) at release time is his
-call. **Next: Tore's lab re-verification** (checklist at the top of
-TODO.md) alongside the two still-unticked next-lab-visit checklists
-from stages 3–4 and the derived-data round.
+**v2.4.1 is RELEASED end-to-end** — Tore rebuilt on the Mac and
+uploaded the same evening. Re-verified 2026-09-03 against the live
+index: PyPI serves the 2.4.1 wheel + sdist (2026-08-20 21:35 UTC,
+`latest`), `v2.4.0` and `v2.4.1` are both tagged at their cut
+commits (16ec307, df93286) and pushed, and the GitHub release
+"v2.4.1 — soundcard capture-integrity fixes" is published (so
+Zenodo has archived it); webui + docs CI green on the release
+commit. The PUBLISHED fat wheel passes both release traps —
+embedded `_webui/pypi/pydvma-2.4.1-py3-none-any.whl`, the bundled
+`index-*.js` references that same filename, and all 24
+`pydvma/*.py` byte-identical to tag `v2.4.1`. Lab install is
+`pip install --upgrade "pydvma[serve,soundcard]"`. **Nothing is
+pending on the release side. Next: Tore's lab re-verification**
+(round-12 checklist in TODO.md) alongside the two still-unticked
+next-lab-visit checklists from stages 3–4 and the derived-data round.
 
 Previous (2026-08-19, Mac session, second half): **the derived-data save
 round is LANDED on top of stages 3–4 — committed locally, NOT pushed
@@ -959,10 +963,10 @@ hardware-surfaced bugs at write time, not at notebook time.
   the function that enforces or depends on them. Don't bury them in
   `# comments` — the rendered docs won't pick those up.
 
-## Releasing — the two silent traps
+## Releasing — the three silent traps
 
-Both of these produce a *working* artifact that is quietly wrong, so
-neither shows up as an error. Check them explicitly.
+Each of these produces a *working* artifact that is quietly wrong, so
+none of them shows up as an error. Check them explicitly.
 
 **1. Stage the UI before building the wheel.** `pydvma/_webui` is a
 gitignored staged copy that the build backend simply zips — it does
@@ -986,6 +990,14 @@ must reference that same filename.
 are test-enforced. A stale `ENGINE_WHEELS` does **not** 404 under vite —
 the SPA fallback hands micropip `index.html` and it fails deep in the
 install. Prove it by booting the app, not by checking a status code.
+
+**3. After the upload, re-check the traps on the artifact PyPI actually
+serves.** A `dist/` proof on the build machine proves nothing when the
+upload comes from a different machine (2.4.1: built on the PC, uploaded
+from the Mac). Download the published wheel and re-run both checks —
+`zipfile` for `pydvma/_webui/pypi/pydvma-<version>-*.whl`, grep the
+bundled `assets/index-*.js` for that same filename, and hash every
+`pydvma/*.py` against `git show v<tag>:<path>`.
 
 Extras are separable: `[serve]` is the bridge alone (`websockets`), and
 an absent acquisition backend is skipped **silently** — no error, the
