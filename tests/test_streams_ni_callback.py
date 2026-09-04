@@ -73,9 +73,11 @@ def _bare_recorder(queue, pretrig=True):
     rec.trigger_detected = False
     rec.trigger_first_detected_message = False  # skip MESSAGE print path
     rec._closing = False
-    rec.osc_time_data = np.zeros((s.num_chunks * CHUNK, CHANNELS))
-    stored_num_chunks = 2 + int(np.ceil(s.stored_time * s.fs / CHUNK))
-    rec.stored_time_data = np.zeros((stored_num_chunks * CHUNK, CHANNELS))
+    rec.input_overflows = 0
+    rec._overflow_notes_printed = 0
+    # The buffers are circular rings behind copy-returning properties
+    # (round-13), so build them the way the recorder does.
+    rec._alloc_buffers()
     rec._read_buffer = np.zeros((CHANNELS, CHUNK))
     rec._reader = FakeReader(queue)
     rec.audio_stream = FakeTask(queue)

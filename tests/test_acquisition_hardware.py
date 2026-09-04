@@ -823,3 +823,119 @@ def test_lpf_antialiases_out_of_band_stimulus(device_entry, device_index):
         'anti-alias filtering not effective'.format(alias_off, alias_on))
 
 
+# ---------------------------------------------------------------------------
+# Round-13 (2026-09-04 cDAQ lab report): long captures must not lose samples,
+# and a coerced AO rate must not shift or shorten the stimulus.
+# ---------------------------------------------------------------------------
+
+def _sweep_time_warps(x, fs, f_rate_hz_per_s, block_s=0.25):
+    """Instantaneous-frequency trace of a linear-sweep loopback: returns
+    ``(times, peak_hz)`` per block with signal, and the count of blocks
+    whose frequency step differs from the sweep's own rate by more than
+    three blocks' worth — a dropped stretch of samples shows up as a
+    frequency JUMP (the capture is time-compressed there)."""
+    seg = int(fs * block_s)
+    n = x.shape[0] // seg
+    times, peaks = [], []
+    for k in range(n):
+        blk = x[k * seg:(k + 1) * seg]
+        if np.sqrt(np.mean(blk ** 2)) < 0.02:
+            continue
+        spec = np.abs(np.fft.rfft(blk * np.hanning(seg)))
+        f = np.fft.rfftfreq(seg, 1.0 / fs)
+        peaks.append(f[np.argmax(spec)])
+        times.append((k + 0.5) * block_s)
+    peaks = np.asarray(peaks)
+    times = np.asarray(times)
+    expected_step = f_rate_hz_per_s * block_s
+    jumps = 0
+    if len(peaks) > 2:
+        steps = np.diff(peaks)
+        jumps = int(np.sum(np.abs(steps - expected_step) > 3 * expected_step
+                           + 2 * fs / seg))
+    return times, peaks, jumps
+
+
+def test_long_capture_loses_no_samples(device_entry, device_index):
+    """A capture whose stored buffer used to cost more per chunk than the
+    chunk lasts must come back intact (round-13). Before the ring
+    conversion the NI recorder shifted its WHOLE stored buffer per
+    callback: at 51.2 kHz x 4 ch x 15 s that is a ~49 MB memmove per
+    1.95 ms chunk (5.7x over budget on the bench PC), which overflowed
+    the DAQmx buffer, lost about half the samples and returned a
+    time-compressed capture with leading zeros — the lab's "gaps".
+    Now: zero overflows, no leading zeros, and the loopback sweep's
+    instantaneous frequency stays a straight line."""
+    from pydvma import _ni_backend
+    caps = _ni_backend.entry_capabilities(device_entry)
+    if not caps.get('simultaneous'):
+        pytest.skip('sized for a DSA module at its top rate (9234-class)')
+    if not _has_ao_to_ai_loopback(device_entry, device_index):
+        pytest.skip('AO->AI loopback not wired on this device')
+    n_ch = min(4, int(device_entry['ai_channel_count']))
+    fs = float(caps.get('ai_max_rate') or 51200.0)
+    T = 15.0
+    s = _settings_for(device_entry, device_index, channels=n_ch,
+                      stored_time=T, fs=fs)
+    _t, y = dvma.signal_generator(s, sig='sweep', T=T, amplitude=1.0,
+                                  f=[100, 2000])
+    ds = dvma.log_data(s, output=y)
+    rec = dvma.streams.REC
+    x = ds.time_data_list[0].time_data
+    fs_actual = float(ds.time_data_list[0].settings.fs)
+
+    assert rec.input_overflows == 0
+    assert dvma.acquisition.LAST_CAPTURE_OVERFLOWS == 0
+    assert x.shape == (int(round(T * fs_actual)), n_ch)
+    # No leading zeros (the old failure signature) — analogue inputs
+    # are never exactly zero.
+    assert np.any(x[:100, :] != 0.0)
+    # The sweep is a straight line: no time-warp jumps.
+    _times, peaks, jumps = _sweep_time_warps(x[:, 0], fs_actual,
+                                             (2000 - 100) / T)
+    assert len(peaks) > 20
+    assert jumps == 0, 'sweep frequency jumps -> samples were dropped'
+    # And it runs at the generated rate to within a block.
+    slope = np.polyfit(_times, peaks, 1)[0]
+    assert slope == pytest.approx((2000 - 100) / T, rel=0.03)
+
+
+def test_ao_coerced_rate_keeps_stimulus_frequencies_and_duration(
+        device_entry, device_index):
+    """`output_fs` defaults to the REQUESTED fs, which a DSA AO module
+    coerces (8000 -> 8533.33 on the 9260). The waveform is now
+    resampled onto the coerced rate before it is written (round-13),
+    so the stimulus keeps its physical frequencies and its duration —
+    it used to play 6.7 % fast and stop 6.7 % early, the silent tail
+    on every capture in the 2026-09-04 lab report."""
+    from pydvma import _ni_backend
+    caps = _ni_backend.entry_capabilities(device_entry)
+    if not caps.get('simultaneous'):
+        pytest.skip('rate-ladder coercion applies to DSA hardware only')
+    if not _has_ao_to_ai_loopback(device_entry, device_index):
+        pytest.skip('AO->AI loopback not wired on this device')
+    T = 4.0
+    s = _settings_for(device_entry, device_index, channels=1,
+                      stored_time=T, fs=8000)
+    assert s.output_fs == 8000
+    _t, y = dvma.signal_generator(s, sig='sweep', T=T, amplitude=1.0,
+                                  f=[100, 1000])
+    ds = dvma.log_data(s, output=y)
+    td = ds.time_data_list[0]
+    fs_actual = float(td.settings.fs)
+    assert fs_actual != 8000  # the AI side coerced (9234 ladder)
+    x = td.time_data[:, 0]
+    # Driven for (almost) the whole window, not T * 8000/8533 = 3.75 s.
+    blk = int(fs_actual * 0.1)
+    n = x.shape[0] // blk
+    rms = np.sqrt(np.mean(x[:n * blk].reshape(n, blk) ** 2, axis=1))
+    driven = rms > 0.1
+    assert driven[:int(0.9 * n)].mean() > 0.95
+    assert driven[-3:].any()  # the last 0.3 s are still driven
+    # Sweep rate is the GENERATED one, (1000-100)/T, not 6.7 % faster.
+    times, peaks, jumps = _sweep_time_warps(x, fs_actual, (1000 - 100) / T,
+                                            block_s=0.2)
+    assert jumps == 0
+    slope = np.polyfit(times, peaks, 1)[0]
+    assert slope == pytest.approx((1000 - 100) / T, rel=0.03)
+

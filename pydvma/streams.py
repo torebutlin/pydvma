@@ -58,6 +58,18 @@ def _ni_recorder_class(settings):
 # change (different device, channels, fs, IEPE current, ...).
 _IEPE_WARMUP_S = 2.0
 
+#: DAQmx error code for an input-buffer overflow: "the application is
+#: not able to keep up with the hardware acquisition". Raised by a read
+#: once the driver has overwritten unread samples; the task itself
+#: keeps running, so the failure is a silent gap unless it is counted
+#: (`Recorder_NI_nidaqmx.input_overflows`).
+_DAQMX_INPUT_OVERFLOW = -200279
+
+#: Minimum DAQmx input-buffer depth, in seconds of samples, that
+#: `Recorder_NI_nidaqmx._build_and_start_ai_task` asks for — how long a
+#: host stall the capture can ride out without losing samples.
+_DAQMX_BUFFER_HEADROOM_S = 10.0
+
 
 def _ni_settings_signature(s):
     """Tuple of hardware-impacting AI-task settings.
@@ -872,10 +884,19 @@ def start_stream(settings):
         # log_data-side fields (pretrig_*, channel_sensitivities,
         # output_*) get picked up via the settings reference update
         # and applied at read time.
+        # As on the soundcard side, the running task's identity is the
+        # signature FROZEN when it was built (`_open_signature`, stamped
+        # by `_build_and_start_ai_task` after any rate coercion), never a
+        # live read of `REC_NI.settings`: after a reuse pass that object
+        # can BE the caller's, which serve and notebooks mutate in place
+        # (`stored_time` on every log), so a live compare was the object
+        # against itself and a ring sized for the OLD stored_time could
+        # serve a longer capture short.
         if (REC_NI is not None
                 and isinstance(REC_NI, cls)
-                and REC_NI.audio_stream is not None):
-            sig_running = _ni_settings_signature(REC_NI.settings)
+                and REC_NI.audio_stream is not None
+                and getattr(REC_NI, '_open_signature', None) is not None):
+            sig_running = REC_NI._open_signature
             match = _ni_settings_signature(settings) == sig_running
             if not match:
                 # DSA hardware may have coerced the running task's rate
@@ -1972,6 +1993,15 @@ class Recorder_NI_nidaqmx(object):
       not as a normalised float — no ±1 scaling is applied. This
       differs from the soundcard path, which returns ±1-normalised
       float32.
+    * **Buffers are circular rings** (`_alloc_buffers`), so the
+      every-N-samples callback costs O(chunk_size) however long the
+      capture. ``osc_time_data`` / ``stored_time_data`` are properties
+      returning time-ordered COPIES; clear the capture buffer with
+      `zero_stored`. A DAQmx input-buffer overflow (the host falling
+      behind the hardware, error -200279) does not stop the task — the
+      driver overwrites unread samples and later reads succeed — so it
+      is COUNTED in ``input_overflows`` and reported per capture by
+      `pydvma.acquisition.log_data` rather than being a silent gap.
     '''
 
     def __init__(self, settings):
@@ -2011,6 +2041,19 @@ class Recorder_NI_nidaqmx(object):
             self._callback_ref = None  # keep a strong reference for nidaqmx
             self._closing = False  # set by end_stream; callback bails out
             self._requested_fs = None  # pre-coercion fs; see start_stream
+            #: Signature of the settings the live task was BUILT with
+            #: (post-coercion), or None before the first build — the
+            #: reuse key `start_stream` compares against. Stream-lifetime,
+            #: like ``audio_stream``.
+            self._open_signature = None
+            #: Count of DAQmx input-buffer overflows (error -200279) seen
+            #: on the live task — each one means the driver overwrote
+            #: samples this recorder never read, i.e. the capture has a
+            #: gap there. The NI twin of `Recorder.input_overflows`, read
+            #: by `pydvma.acquisition.log_data` around every capture and
+            #: forwarded to the browser as a pinned integrity warning.
+            self.input_overflows = 0
+            self._overflow_notes_printed = 0
 
     def _alloc_buffers(self):
         '''(Re)allocate the osc/stored rolling buffers and axes from
@@ -2029,20 +2072,58 @@ class Recorder_NI_nidaqmx(object):
             1 / settings.fs,
         )
         self.osc_freq_axis = np.fft.rfftfreq(len(self.osc_time_axis), 1 / settings.fs)
-        self.osc_time_data = np.zeros(
-            shape=(settings.num_chunks * settings.chunk_size, settings.channels)
-        )
-        self.osc_time_data_windowed = np.zeros_like(self.osc_time_data)
-        self.osc_freq_data = np.abs(np.fft.rfft(self.osc_time_data, axis=0))
+        # Both buffers are CIRCULAR rings, exactly as on the soundcard
+        # `Recorder` (round-12). The previous shift design moved the
+        # WHOLE stored buffer by one chunk per callback — a
+        # 12.8 kHz x 60 s x 5 ch capture is a ~30 MB strided memmove
+        # against a 7.8 ms chunk budget, which a lab laptop cannot
+        # sustain: DAQmx's input buffer (~7.8 s at that rate) then
+        # overflows, the driver keeps the task running but every other
+        # read fails with -200279, and the capture comes back as a
+        # time-compressed patchwork — leading zeros, silent stretches
+        # spanning the pre-/post-stimulus quiet, the sweep running at
+        # twice its rate (measured live on a cDAQ-9174, 2026-09-04; the
+        # 2026-09-04 lab report). Ring writes are O(chunk_size), so the
+        # callback cost no longer depends on ``stored_time``. Readers
+        # get the time-ordered view through the ``osc_time_data`` /
+        # ``stored_time_data`` properties.
+        n_osc = settings.num_chunks * settings.chunk_size
+        self._osc_ring = np.zeros(shape=(n_osc, settings.channels))
+        self._osc_pos = 0
+        self.osc_time_data_windowed = np.zeros(shape=(n_osc, settings.channels))
+        self.osc_freq_data = np.abs(np.fft.rfft(self._osc_ring, axis=0))
 
         self.stored_num_chunks = 2 + int(
             np.ceil((settings.stored_time * settings.fs) / settings.chunk_size)
         )
-        self.stored_time_data = np.zeros(
-            shape=(self.stored_num_chunks * settings.chunk_size, settings.channels)
-        )
-        self.stored_time_data_windowed = np.zeros_like(self.stored_time_data)
-        self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data, axis=0))
+        n_stored = self.stored_num_chunks * settings.chunk_size
+        self._stored_ring = np.zeros(shape=(n_stored, settings.channels))
+        self._stored_pos = 0
+        self.stored_time_data_windowed = np.zeros(shape=(n_stored, settings.channels))
+        self.stored_freq_data = np.abs(np.fft.rfft(self._stored_ring, axis=0))
+        #: Chunks appended to the stored ring since these buffers were
+        #: (re)allocated — lets `acquisition._wait_for_buffer_fill` top
+        #: a dwell up until the ring truly holds a full window, the same
+        #: contract as the soundcard recorder.
+        self.chunks_seen = 0
+
+    @property
+    def osc_time_data(self):
+        '''Oscilloscope window in time order (oldest first), shape
+        ``(num_chunks * chunk_size, channels)``, in volts. A fresh copy
+        unrolled from the internal ring — safe to hold across
+        callbacks.'''
+        return Recorder._unrolled(self._osc_ring, self._osc_pos)
+
+    @property
+    def stored_time_data(self):
+        '''Capture buffer in time order (oldest first), shape
+        ``(stored_num_chunks * chunk_size, channels)``, in volts, ending
+        at the most recently appended chunk (frozen once
+        ``trigger_detected`` is set on an armed capture). A fresh copy
+        — writes to it do NOT reach the recorder; use `zero_stored` to
+        clear the buffer.'''
+        return Recorder._unrolled(self._stored_ring, self._stored_pos)
 
     def available_devices(self):
         entries = _ni_backend.enumerate_devices()
@@ -2113,8 +2194,25 @@ class Recorder_NI_nidaqmx(object):
             # Expected (and harmless) when end_stream closes the task
             # while a read is in flight on the callback thread — stay
             # quiet then; anything else is worth surfacing.
-            if not self._closing:
-                print('nidaqmx read error:', e)
+            if self._closing:
+                return False
+            if getattr(e, 'error_code', None) == _DAQMX_INPUT_OVERFLOW:
+                # The driver overwrote samples we had not read yet: the
+                # task keeps running and later reads succeed, so the
+                # capture silently loses the overwritten stretch. Count
+                # it (log_data reports it per capture) and say so once,
+                # not once per failed read — under a sustained overflow
+                # roughly every other read fails.
+                self.input_overflows += 1
+                if self._overflow_notes_printed < 1:
+                    self._overflow_notes_printed += 1
+                    print('nidaqmx input overflow (-200279): the host is '
+                          'not reading the DAQmx buffer fast enough and '
+                          'samples have been lost — this capture has '
+                          'gaps. Further overflows are counted, not '
+                          'printed (see Recorder_NI_nidaqmx.input_overflows).')
+                return False
+            print('nidaqmx read error:', e)
             return False
         # Reader fills shape (channels, chunk_size); downstream wants
         # (chunk_size, channels) to match the soundcard path.
@@ -2129,14 +2227,19 @@ class Recorder_NI_nidaqmx(object):
         buffer freezes once ``trigger_detected`` is set; the osc
         (monitor) buffer always advances.
         '''
-        self.osc_data_chunk = data_array
+        # A copy: `data_array` is a view of the reusable DAQmx read
+        # buffer, which the next read overwrites.
+        self.osc_data_chunk = np.array(data_array, dtype=float, copy=True)
+        chunk = self.settings.chunk_size
 
-        for i in range(self.settings.channels):
-            self.osc_time_data[:-(self.settings.chunk_size), i] = self.osc_time_data[self.settings.chunk_size:, i]
-            self.osc_time_data[-(self.settings.chunk_size):, i] = self.osc_data_chunk[:, i]
-            if (not self.trigger_detected) or (self.settings.pretrig_samples is None):
-                self.stored_time_data[:-(self.settings.chunk_size), i] = self.stored_time_data[self.settings.chunk_size:, i]
-                self.stored_time_data[-(self.settings.chunk_size):, i] = self.osc_data_chunk[:, i]
+        # O(chunk) ring writes replace the per-channel whole-buffer
+        # shifts (see the note in `_alloc_buffers`).
+        self._osc_pos = Recorder._ring_write(self._osc_ring, self._osc_pos,
+                                             self.osc_data_chunk)
+        if (not self.trigger_detected) or (self.settings.pretrig_samples is None):
+            self._stored_pos = Recorder._ring_write(
+                self._stored_ring, self._stored_pos, self.osc_data_chunk)
+            self.chunks_seen += 1
 
         trigger_first_detected = np.any(
             np.abs(self.osc_data_chunk[:, self.settings.pretrig_channel])
@@ -2150,10 +2253,17 @@ class Recorder_NI_nidaqmx(object):
             print(acquisition.MESSAGE)
             self.trigger_first_detected_message = False
 
-        trigger_check = self.stored_time_data[
-            self.settings.chunk_size:(2 * self.settings.chunk_size),
-            self.settings.pretrig_channel,
-        ]
+        # The check window is the SECOND-OLDEST chunk of the stored
+        # buffer, i.e. ``stored_time_data[chunk:2*chunk]`` in the
+        # unrolled view — same contract as before (hardware-verified
+        # sample-exact; `log_data` slices the window from that index).
+        # In ring terms the oldest chunk starts at the write pointer, so
+        # the second-oldest starts one chunk after it. The ring length
+        # is a whole number of chunks and writes are whole chunks, so a
+        # chunk never straddles the wrap.
+        start = (self._stored_pos + chunk) % self._stored_ring.shape[0]
+        trigger_check = self._stored_ring[start:start + chunk,
+                                          self.settings.pretrig_channel]
         if np.any(np.abs(trigger_check) > self.settings.pretrig_threshold):
             self.trigger_detected = True
 
@@ -2245,18 +2355,23 @@ class Recorder_NI_nidaqmx(object):
             self._alloc_buffers()
 
         # Give the DAQmx input buffer several seconds of headroom. The
-        # driver default (10 kS at these rates = 2 s at fs=5000) means
-        # a host stall longer than that overflows the buffer (-200279)
-        # and kills the capture; with headroom the samples just queue
-        # and the drain loop in `stream_audio_callback` catches the
-        # rolling buffers back up when callbacks resume. The size must
+        # driver default (10 kS below 10 kS/s, 100 kS above: 2 s at
+        # fs=5000, 7.8 s at 12.8 kHz, under 2 s at 51.2 kHz) means a
+        # host stall longer than that overflows the buffer (-200279) —
+        # the driver then keeps running and overwrites unread samples,
+        # so the capture silently loses them (counted in
+        # `input_overflows`); with headroom the samples just queue and
+        # the drain loop in `stream_audio_callback` catches the ring
+        # buffers back up when callbacks resume. Ten seconds costs a
+        # few MB of driver memory at the highest rates. The size must
         # be an exact multiple of the every-N event interval
         # (chunk_size) — DAQmx rejects other sizes with -200877 on
         # DMA/USB-bulk transfers (seen on the real cDAQ-9174).
         try:
-            chunks_5s = int(np.ceil(5 * float(settings.fs)
-                                    / settings.chunk_size))
-            min_buf = chunks_5s * int(settings.chunk_size)
+            chunks_min = int(np.ceil(_DAQMX_BUFFER_HEADROOM_S
+                                     * float(settings.fs)
+                                     / settings.chunk_size))
+            min_buf = chunks_min * int(settings.chunk_size)
             if task.in_stream.input_buf_size < min_buf:
                 task.in_stream.input_buf_size = min_buf
         except (ni.errors.DaqError, AttributeError):
@@ -2286,6 +2401,13 @@ class Recorder_NI_nidaqmx(object):
         # find the task to close if ``task.start()`` raises -50103.
         self.audio_stream = task
         task.start()
+        # Frozen AFTER the rate coercion above, so the recorded values
+        # are the ones the task and rings were really built with — the
+        # reuse key for `start_stream` (see the comment there). Reset
+        # the overflow bookkeeping for the fresh task as well.
+        self._open_signature = _ni_settings_signature(settings)
+        self.input_overflows = 0
+        self._overflow_notes_printed = 0
 
         # IEPE warmup: when the 2 mA excitation step turns on at
         # task.start(), the sensor's DC bias rises and propagates
@@ -2373,11 +2495,12 @@ class Recorder_NI_nidaqmx(object):
         return setup_output_NI_nidaqmx(settings, output)
 
     def zero_stored(self):
-        '''Zero the capture buffer in place — the NI/mock counterpart of
-        `Recorder.zero_stored` (here ``stored_time_data`` is a plain
-        array, but `pydvma.acquisition.log_data` clears it through this
-        one driver-generic call).'''
-        self.stored_time_data[:] = 0.0
+        '''Zero the capture ring in place — the NI counterpart of
+        `Recorder.zero_stored`. ``stored_time_data`` is a property
+        returning a COPY, so this is the only way to clear the buffer;
+        `pydvma.acquisition.log_data` clears it through this one
+        driver-generic call.'''
+        self._stored_ring[:] = 0.0
 
     def end_stream(self):
         global REC
@@ -2574,6 +2697,18 @@ def setup_output_NI_nidaqmx(settings, output):
     the chassis 80 MHz timebase implicitly, which is phase-coherent
     but not sample-accurate across tasks. USB-600x low-cost devices
     have software-timed AO and always run unsynchronised.
+
+    Notes on AO rate coercion
+    -------------------------
+    A DSA AO module (NI 9260) only runs rates on its divider ladder
+    and DAQmx silently coerces any other ``output_fs`` (8000 ->
+    8533.33 Hz, 12500 -> 12800 Hz — the same ladder as the 9234's AI).
+    When that happens and the AO is on its own timebase, the waveform
+    is **resampled** (`pydvma.analysis.resample_to_fs`) from
+    ``output_fs`` to the rate the hardware really runs before it is
+    written, so the stimulus keeps its physical frequencies and
+    duration; a note is printed and left in ``acquisition.MESSAGE``.
+    The task's ``samp_clk_rate`` is the authority for the played rate.
     '''
     # `output` is already in volts; no pre-scaling needed.
     output = np.asarray(output)
@@ -2639,27 +2774,46 @@ def setup_output_NI_nidaqmx(settings, output):
     )
 
     # DSA AO modules (NI 9260) coerce off-ladder rates just like DSA AI
-    # (see the coercion note in `_build_and_start_ai_task`). The
-    # waveform was generated at `output_fs`, so playback at a coerced
-    # rate shifts the stimulus frequencies by the coercion ratio — warn
-    # so the user knows the drive band moved (with use_output_as_ch0
-    # the *recorded* drive is the measured loopback, so TFs stay
-    # correct).
+    # (see the coercion note in `_build_and_start_ai_task`): the 9260
+    # snaps onto the 9234's own 51200/n ladder, so an ``output_fs`` of
+    # 12500 or 8000 — MySettings' default is "same as fs", i.e. the
+    # rate the user ASKED for, not the one the AI task adopted — plays
+    # at 12800 or 8533.33. The waveform was generated at `output_fs`, so
+    # playing it unchanged at the coerced rate would shift every
+    # stimulus frequency by the coercion ratio AND end early (a 30 s
+    # sweep at 8000 -> 8533.33 stops at 28.1 s: the silent tail on
+    # every capture in the 2026-09-04 lab report). Do what the
+    # shared-clock soundcard path does: move the SIGNAL onto the rate
+    # the hardware really runs, preserving volts against wall-clock
+    # time, and re-time the task for the new sample count. Skipped
+    # when the AO steps on the routed AI clock (then the rate argument
+    # is advisory and the AI rate already equals output_fs).
     try:
         actual_out_fs = float(task.timing.samp_clk_rate)
     except (ni.errors.DaqError, AttributeError):
         actual_out_fs = None
     if (not clock_source and actual_out_fs
             and abs(actual_out_fs - float(settings.output_fs)) > 1e-6):
-        print(
-            'WARNING: requested output_fs = {:g} Hz was coerced to {:g} Hz '
-            'by {} (hardware rate ladder); the stimulus plays at {:.4g}x '
-            'the intended frequencies. Set output_fs to a supported rate '
-            'to avoid this.'.format(
-                float(settings.output_fs), actual_out_fs,
-                device_entry['name'],
-                actual_out_fs / float(settings.output_fs))
+        from . import analysis  # lazy: analysis imports nothing from here
+        output, fs_played, _ = analysis.resample_to_fs(
+            np.asarray(output, dtype=float), float(settings.output_fs),
+            actual_out_fs)
+        N_output = int(np.shape(output)[0])
+        task.timing.cfg_samp_clk_timing(
+            rate=actual_out_fs,
+            source=clock_source,
+            sample_mode=ni.constants.AcquisitionType.FINITE,
+            samps_per_chan=N_output,
         )
+        msg = ('Output stimulus: {} runs its AO at {:g} Hz, not the '
+               'requested output_fs = {:g} Hz (hardware rate ladder); the '
+               'signal generated at {:g} Hz has been resampled to {:g} Hz '
+               'so it plays at the intended frequencies for the intended '
+               'duration.'.format(device_entry['name'], actual_out_fs,
+                                  float(settings.output_fs),
+                                  float(settings.output_fs), fs_played))
+        print(msg)
+        acquisition.MESSAGE = msg + '\n'
 
     # nidaqmx write: shape is (n_channels, n_samples) for multi-channel,
     # or 1D for single channel. `output` here is (N_output, n_channels).

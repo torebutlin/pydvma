@@ -19,7 +19,7 @@ import time
 MESSAGE = ''
 
 #: Input overflows PortAudio reported during the most recent `log_data`
-#: capture — i.e. how many times the audio host dropped samples before
+#: capture — i.e. how many times the acquisition host dropped samples before
 #: the callback saw them, leaving gaps in that capture's data. Reset at
 #: the end of every capture (0 = clean). Read by `pydvma.serve` to warn
 #: the browser UI; parked module-globally like :data:`MESSAGE`.
@@ -98,10 +98,12 @@ def _wait_for_buffer_fill(rec, settings, number_samples, cancel_event=None):
     shortfall: it waits until ``chunks_seen * chunk_size`` covers the
     window, bounded by :data:`BUFFER_FILL_GRACE`.
 
-    A recorder without ``chunks_seen`` (NI, whose DAQmx task buffers
-    in C and has no startup gap; mock) returns immediately, as does a
-    stream that was already running (`start_stream`'s reuse path — its
-    ring holds real history from the start). Raises
+    A recorder without ``chunks_seen`` (mock) returns immediately, as
+    does a stream that was already running (`start_stream`'s reuse path
+    — its ring holds real history from the start). The NI recorder
+    counts chunks too (its DAQmx task has no PortAudio-style startup
+    gap, so a fresh task normally satisfies the count at once — this is
+    a safety net there, not a wait). Raises
     :class:`CaptureCancelled` if ``cancel_event`` is set while waiting;
     on grace expiry it prints a warning and returns, so a wedged stream
     degrades to today's behaviour instead of hanging.
@@ -270,7 +272,7 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
         that, the free-run dwell is topped up until the buffer really
         holds ``stored_time * fs`` delivered samples
         (`_wait_for_buffer_fill`), covering the fresh-stream case.
-        A capture during which the audio host reported dropped input
+        A capture during which the acquisition host reported dropped input
         prints a loud warning and sets
         :data:`LAST_CAPTURE_OVERFLOWS` — gaps in the data are
         unrecoverable and quietly destroy TF coherence, so they must
@@ -691,9 +693,12 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
         _stop_output(settings, s)
 
     # Data integrity: PortAudio flags every callback that arrived after
-    # the host dropped input (`streams.Recorder.callback` counts them).
-    # Dropped samples are unrecoverable — the capture has time-warps at
-    # each gap, which quietly destroys TF coherence — so say so loudly
+    # the host dropped input (`streams.Recorder.callback` counts them),
+    # and the NI recorder counts every DAQmx input-buffer overflow
+    # (-200279: the driver overwrote samples nobody had read — the task
+    # keeps running, so the loss is otherwise invisible). Dropped
+    # samples are unrecoverable — the capture has time-warps at each
+    # gap, which quietly destroys TF coherence — so say so loudly
     # rather than returning corrupt data that LOOKS fine. The count is
     # parked module-globally (like MESSAGE) so the serve bridge can
     # forward it to the browser as a pinned toast.
@@ -701,10 +706,11 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
     LAST_CAPTURE_OVERFLOWS = max(
         0, getattr(streams.REC, 'input_overflows', 0) - overflow_baseline)
     if LAST_CAPTURE_OVERFLOWS > 0:
-        MESSAGE = ('WARNING: the audio host dropped input {} time(s) during '
-                   'this capture — the data has gaps and TF/coherence '
-                   'results from it are not trustworthy. A busy machine '
-                   'is the usual cause.\n'.format(LAST_CAPTURE_OVERFLOWS))
+        MESSAGE = ('WARNING: the acquisition host dropped input {} time(s) '
+                   'during this capture — the data has gaps and '
+                   'TF/coherence results from it are not trustworthy. A '
+                   'busy machine is the usual cause.\n'
+                   .format(LAST_CAPTURE_OVERFLOWS))
         print(MESSAGE)
 
     # Clipping is an ADC-domain property — take the raw peak BEFORE any

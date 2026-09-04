@@ -2061,8 +2061,9 @@ class _Connection:
                 await self._send_json({'type': 'status', 'event': 'timeout',
                                        'streamId': self.stream_id})
 
-            # Data-integrity warning: the audio host dropped input during
-            # this capture (see `acquisition.LAST_CAPTURE_OVERFLOWS`).
+            # Data-integrity warning: the acquisition host (PortAudio, or
+            # the DAQmx input buffer) dropped input during this capture
+            # (see `acquisition.LAST_CAPTURE_OVERFLOWS`).
             # Sent as an `error` frame because those pin open as toasts
             # in the browser UI — a gap-riddled capture that LOOKS fine
             # is exactly the thing the operator must not miss. The
@@ -2070,9 +2071,9 @@ class _Connection:
             overflows = getattr(acquisition, 'LAST_CAPTURE_OVERFLOWS', 0)
             if overflows:
                 await self._send_error(
-                    'capture integrity: the audio host dropped input %d '
-                    'time(s) during this capture — the data has gaps, and '
-                    'TF/coherence computed from it is not trustworthy. '
+                    'capture integrity: the acquisition host dropped input '
+                    '%d time(s) during this capture — the data has gaps, '
+                    'and TF/coherence computed from it is not trustworthy. '
                     'A busy machine is the usual cause.' % overflows)
 
             await self._send_json({
