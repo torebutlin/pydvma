@@ -168,14 +168,33 @@ def report(td, index, ref, band):
                  np.round(noisy[:6] * 0.05, 2).tolist()))
     cc = common_cause_test(y, fs)
     if cc is None:
-        print('   common-cause test: needs a capture at >= 20 kHz (this one is %g Hz)' % fs)
+        if n_ch < 2:
+            print('   common-cause test: needs two channels (this set has %d)' % n_ch)
+        else:
+            print('   common-cause test: needs a capture at >= 20 kHz (this one is %g Hz)' % fs)
     else:
         lag0, off, floors, steps = cc
-        verdict = ('SIMULTANEOUS on both channels -> frame-level corruption in the '
-                   'interface digital path' if lag0 > 0.4 else
-                   'not simultaneous -> per-channel (analogue) or none')
-        print('   common-cause test (>6 kHz envelopes): lag-0 correlation %.2f vs other lags max %.2f -> %s'
-              % (lag0, off, verdict))
+        # The corruption signature is a lag-0 PEAK: high at zero lag, near
+        # zero at every other lag (2026-09-04 lab captures: 0.63 vs 0.01).
+        # Two channels carrying the SAME signal above 6 kHz (a known-source
+        # bench test, ao0 == ao1) correlate at EVERY lag (0.95 vs 0.88) —
+        # that is shared content, not simultaneous corruption. Judge the
+        # peak against its own yardstick, not an absolute threshold.
+        # Calibration: the 2026-09-04 lab captures read 0.63-0.64 at lag 0
+        # against 0.23-0.28 off-lag (ratio 2.3); the known-source bench
+        # test with ao0 == ao1 read 0.95 against 0.88 (ratio 1.08); the
+        # one clean lab capture 0.19.
+        ratio = lag0 / max(off, 0.02)
+        if lag0 > 0.4 and ratio > 1.5:
+            verdict = ('SIMULTANEOUS on both channels -> frame-level corruption '
+                       'in the interface digital path')
+        elif lag0 > 0.4:
+            verdict = ('correlated at every lag -> the channels share above-6 kHz '
+                       'CONTENT (common source), not the corruption signature')
+        else:
+            verdict = 'not simultaneous -> per-channel (analogue) or none'
+        print('   common-cause test (>6 kHz envelopes): lag-0 correlation %.2f vs other lags max %.2f '
+              '(peak ratio %.1f) -> %s' % (lag0, off, ratio, verdict))
         print('      >6 kHz floor per channel: %s dB; largest one-sample step / rms: %s'
               % (np.round(floors, 1).tolist(), np.round(steps, 1).tolist()))
     for ch in range(n_ch):
