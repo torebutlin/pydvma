@@ -44,10 +44,15 @@ follows [semantic versioning](https://semver.org/).
 - **2i2 coherence collapse on the 3C6 rig (round 14,
   `dev/2026-09-04-round14-2i2-lab-coherence.md`).** Not an acquisition
   fault: zero input overflows in every capture, and the same
-  intermittent broadband noise bursts on the accelerometer channel
-  appear in raw `sounddevice` captures that never touch pydvma, while
-  the noise-source channel in the same USB frames is unaffected. The
-  noise enters upstream of the converter on input 2.
+  intermittent noise appears in raw `sounddevice` captures that never
+  touch pydvma. Traced by the evening to frame-level corruption of
+  BOTH channels in the 2i2's digital path (device, USB link or power):
+  simultaneous one-sample outliers on both channels, a high-frequency
+  floor 10–20 dB above a clean capture on both, envelope correlation
+  0.63 at lag zero above 6 kHz against 0.19 when clean — visible only
+  on the accelerometer because that signal is the weaker one. Cables,
+  extensions, charge amp and accelerometer were exonerated by Tore's
+  own swap and NI runs.
 
 ## 2.4.2 — 2026-09-04
 

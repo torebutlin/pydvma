@@ -17,12 +17,24 @@ answered from the data rather than argued::
 
 Per time set it reports the capture settings, per-channel RMS, exact-
 zero runs (dropouts: both channels zero at once is the host/driver
-zero-filling; one channel alone is not a digital event), per-second
-coherence of every channel against ``--ref`` (min / median / max and
-how many seconds fall below 0.3), each channel's band-envelope "noisy"
-window count (50 ms windows more than 6 dB over that channel's own
-median - the burst signature), and the inter-channel lag in the good
-seconds (a stable physical delay when the pair is healthy).
+zero-filling; one channel alone is not a digital event), the
+common-cause test (`common_cause_test`: are the above-6 kHz noise
+envelopes of the two channels correlated at lag zero? — that is how the
+2026-09-04 round found the "accelerometer noise" was really
+frame-synchronous corruption of BOTH channels, only visible on the
+weaker one), per-second coherence of every channel against ``--ref``
+(min / median / max and how many seconds fall below 0.3), each
+channel's band-envelope "noisy" window count (50 ms windows more than
+6 dB over that channel's own median - the burst signature), and the
+inter-channel lag in the good seconds (a stable physical delay when the
+pair is healthy).
+
+Reading it: a noisy channel whose bursts are NOT simultaneous with the
+other channel's is an analogue problem on that input (cable, connector,
+preamp). Bursts that ARE simultaneous, with waveforms uncorrelated and
+one-sample steps far above the channel RMS, are the interface's data
+path — USB link, power, firmware — and no amount of cable swapping
+will move them.
 
 The band defaults to 420-700 Hz - between the rig's 310 Hz and 760 Hz
 modes, where the structural response is small and an added floor shows
@@ -85,6 +97,47 @@ def lag_samples(x, y, fs, seconds):
     return lags
 
 
+def common_cause_test(y, fs, hf_hz=6000.0):
+    """Is the noise arriving on ALL channels at the same instants?
+
+    Band-pass each channel above ``hf_hz`` — where neither a shaker
+    drive nor a structural response has content, so what is left is
+    noise — rectify, and cross-correlate the envelopes of channel pairs.
+    Returns ``(lag0, off_lag_max, floors_db, max_step_ratio)``:
+
+    - ``lag0``: envelope correlation at zero lag (bad 2i2 captures on
+      2026-09-04: 0.63 on every one, the raw-sounddevice controls
+      included; the one clean capture: 0.19; any other lag: ~0.01).
+      Noise that is simultaneous on both channels but uncorrelated in
+      waveform is frame-level corruption in the interface's digital
+      path — samples wrong on every channel of the same frames — not a
+      cable, connector or preamp on one input.
+    - ``off_lag_max``: the largest envelope correlation at lags 6..200,
+      the yardstick for ``lag0``.
+    - ``floors_db``: per-channel RMS level above ``hf_hz`` in dB — a
+      floor 10–20 dB above a known-clean capture of the same rig is the
+      same corruption seen from the other side.
+    - ``max_step_ratio``: per-channel largest sample-to-sample jump
+      divided by the channel RMS. A one-sample outlier with no ringing
+      cannot come through an anti-alias filter from the analogue side.
+
+    Needs a capture rate well above ``2 * hf_hz``; returns ``None``
+    below 20 kHz.
+    """
+    if fs < 20000 or y.shape[1] < 2:
+        return None
+    sos = signal.butter(4, hf_hz, btype='high', fs=fs, output='sos')
+    hp = np.column_stack([signal.sosfiltfilt(sos, y[:, c]) for c in range(y.shape[1])])
+    floors = 20 * np.log10(np.sqrt(np.mean(hp ** 2, axis=0)) + 1e-12)
+    env = np.abs(hp) - np.mean(np.abs(hp), axis=0)
+    a, b = env[:, 0], env[:, 1]
+    xc = signal.correlate(b, a, mode='full', method='fft') / np.sqrt(np.dot(a, a) * np.dot(b, b))
+    mid = len(a) - 1
+    off = np.concatenate([xc[mid - 200:mid - 5], xc[mid + 6:mid + 201]])
+    steps = np.max(np.abs(np.diff(y, axis=0)), axis=0) / (np.sqrt(np.mean(y ** 2, axis=0)) + 1e-12)
+    return float(xc[mid]), float(off.max()), floors, steps
+
+
 def report(td, index, ref, band):
     s = td.settings
     y = np.asarray(td.time_data, dtype=float)
@@ -113,6 +166,18 @@ def report(td, index, ref, band):
         print('   ch%d %d-%d Hz floor: median %.1f dB, noisy 50 ms windows %d of %d (%.0f%%), first at t=%s'
               % (ch, band[0], band[1], med, len(noisy), len(e), 100 * len(noisy) / max(1, len(e)),
                  np.round(noisy[:6] * 0.05, 2).tolist()))
+    cc = common_cause_test(y, fs)
+    if cc is None:
+        print('   common-cause test: needs a capture at >= 20 kHz (this one is %g Hz)' % fs)
+    else:
+        lag0, off, floors, steps = cc
+        verdict = ('SIMULTANEOUS on both channels -> frame-level corruption in the '
+                   'interface digital path' if lag0 > 0.4 else
+                   'not simultaneous -> per-channel (analogue) or none')
+        print('   common-cause test (>6 kHz envelopes): lag-0 correlation %.2f vs other lags max %.2f -> %s'
+              % (lag0, off, verdict))
+        print('      >6 kHz floor per channel: %s dB; largest one-sample step / rms: %s'
+              % (np.round(floors, 1).tolist(), np.round(steps, 1).tolist()))
     for ch in range(n_ch):
         if ch == ref:
             continue

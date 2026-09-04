@@ -53,7 +53,24 @@ packets, invisible to PortAudio's overflow flag. Landed:
 `dev/channel_noise_check.py`, the per-capture report that cracked the
 round. pytest on dropouts+serve+acquisition-mock/guards 224/0. Test
 runner on this PC: `C:\Users\tb267\.pydvma-testvenv` (pytest on top of
-the conda env; the conda env has no pytest).
+the conda env; the conda env has no pytest). **Evening revision (Tore
+remote, 2i2 unplugged): the "analogue noise on input 2" reading was
+WRONG in mechanism — it is frame-level corruption of BOTH channels in
+the 2i2's digital path** (device / USB link / bus power), only visible
+on the accel because that signal is 15 dB weaker in-band: residual
+analysis (no distortion, no clipping, kurtosis 150–350 vs 3 clean,
+one-sample steps 20× the clean capture), the drive channel's own >5 kHz
+floor 9–13 dB above the clean set, the biggest spikes of both channels
+in the SAME frames without filter ringing, and the decisive
+`common_cause_test` (>6 kHz envelope correlation at lag 0: 0.63 in every
+bad capture incl. my raw-sounddevice controls, 0.19 clean, ~0.01 off
+lag; now in `dev/channel_noise_check.py`). Tore's extra facts:
+charge-mode accel → charge amp → BNC termination → BNC extension → 2i2
+per channel (NI has no extensions); the extensions were what he
+exchanged; Safe/Inst/Air off. Next: USB port/cable first, then the
+loopback-channel discriminator and another computer — checklist in the
+round doc. All four earlier commits are PUSHED (0c1df14, 773aa36,
+11dcc4a, 8b8e249); this revision is a fifth commit.
 
 Previous (2026-09-04, office Windows PC, cDAQ-9174 on the bench, no
 soundcard work): **ROUND 13 — Tore's cDAQ lab round on v2.4.1 — is

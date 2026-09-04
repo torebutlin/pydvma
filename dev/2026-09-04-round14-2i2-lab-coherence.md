@@ -9,9 +9,17 @@ most of the time, occasionally the first test in a batch doing better,
 true for fs = 3k, 48k…; the NI DAQ is better", plus "default device
 lists the Focusrite but in practice I got the mock sine waves".
 
-## Verdict
+## Verdict (revised the same evening — see "Revision" below)
 
-1. **The coherence loss is not an acquisition fault.** Every capture —
+1. **The coherence loss is not an acquisition fault, and — revising
+   the afternoon's reading — it is not an analogue fault on input 2
+   either: it is frame-level corruption of BOTH channels in the 2i2's
+   digital path** (device, its USB link to this PC, or its power),
+   visible only on the accelerometer because that signal is 15 dB
+   weaker in-band and lives at a few modal peaks. Evidence in the
+   Revision section; the afternoon's evidence below stands as
+   evidence, its interpretation is superseded.
+   ~~The coherence loss is not an acquisition fault.~~ Every capture —
    the lab's own `.dvma` files and 7 live captures made here — had
    zero PortAudio input overflows, and the accelerometer channel's
    coherence collapses exactly where **its own broadband noise floor
@@ -151,23 +159,94 @@ of the above (which channel's floor jumps, per-second coherence,
 inter-channel lag, dropouts) — run it on any `.dvma` before arguing
 about acquisition.
 
-## What to check on the rig (in this order)
+## Revision (evening, Tore remote, 2i2 unplugged): it is the 2i2's data path, on both channels
 
-1. ~~Exchange the physical cables~~ — DONE 17:04, bursts stayed with
-   the accel on input 2: cables exonerated.
+Tore's later facts: the accelerometer is charge-mode into a charge
+amp whose voltage output is what both boxes see; the 2i2 path is
+charge amp → BNC termination → BNC extension → 2i2 on each channel,
+the NI path has no extensions; "swapping the cables" exchanged the two
+extensions, and Safe/Inst/Air were off throughout (one run with Inst
+on: no change). So the extensions were exonerated as well, and the
+"which input" question needed a better instrument than the band
+envelope. Three further looks at the 48 kHz captures, comparing the
+bad sets (17:01:48, 15:59:57) with the one clean set (15:58:17):
+
+1. **Residual analysis** (accel minus the drive filtered through the
+   H1 estimate): the residual does not scale with signal level
+   (corr −0.12 / +0.14 within noisy windows — no distortion, and
+   peaks are 0.15–0.18 FS, no clipping); its 2–15 kHz kurtosis is
+   150–350 against 3 (Gaussian) in the clean set — sparse impulses,
+   present even in the bad sets' "quiet" windows; and the largest
+   sample-to-sample step on the accel channel is 0.22–0.24 FS against
+   0.035 in the clean set, twenty times a channel whose RMS is 0.04.
+2. **The drive channel is not clean either** — it only looked clean
+   because its own white-noise signal is 15 dB above the added noise
+   in-band. Above 5 kHz, where the generator rolls off, the drive
+   channel's floor in the bad sets is 9–13 dB above the clean set (at
+   10 kHz: −93.7 / −91.2 dB vs −102.8; at 20 kHz: −98.7 / −95.5 vs
+   −108.1), and it rises a further 3–4 dB in the accel's noisy
+   windows. The biggest spikes on the two channels sit in the SAME
+   frames (samples 878306, 878360, 425473, 1319336 head both lists),
+   as one- or two-sample outliers with no filter ringing — which an
+   analogue event cannot produce through a delta-sigma decimation
+   filter.
+3. **Common-cause test** (`dev/channel_noise_check.py
+   common_cause_test`): band-pass both channels above 6 kHz, rectify,
+   cross-correlate the envelopes. Lag-0 correlation **0.63–0.64 in
+   every bad capture — Tore's three and both of my raw-sounddevice
+   controls — against 0.19 in the clean capture and ~0.01 at any
+   other lag**, while the waveform coherence between the residual and
+   the drive stays at 0.02: noise arriving on both channels at the
+   same instants, independent in value. That is frame-level
+   corruption — samples wrong on every channel of the same frames —
+   somewhere between the 2i2's converter and the Windows audio engine.
+   The exact-zero dropouts (packets the driver zero-filled) are the
+   same link in its worst moments.
+
+Everything else lines up: NI clean (a different box), extensions and
+cables exchanged with no effect (they carry the signal before the
+corruption), Inst irrelevant, any fs (the corruption is at the 48 kHz
+capture rate whatever pydvma decimates to), "first test in a batch
+better" (a marginal device or link degrading as it warms), and my
+earlier sighting of the Focusrite delivering nothing to any new stream
+for ten minutes (the same link in a bad state). The PC is not short of
+anything — i7-8700, 16 GB, DPC time 0.1–0.6 %, no USB or PnP events
+logged today — but its USB port, cable and 5 V supply to a bus-powered
+interface are inside the suspect boundary. (Housekeeping noticed on
+the way: `NI Device Monitor 17.0` has burnt 25 CPU-hours on a core
+since boot and McAfee's `mcshield` 4.7 — neither touches audio timing,
+but the NI one is worth disabling.)
+
+## What to check next (in this order)
+
+1. ~~Exchange the physical cables / extensions~~ — DONE 17:04, no
+   effect: cables and extensions exonerated.
 2. ~~NI comparison with the same charge amp~~ — DONE 15:54/15:55,
    clean: accelerometer and charge amp exonerated.
-3. **Channel swap proper**: charge-amp output into 2i2 input 1,
-   generator into input 2, log again. Bursts move to ch0 → the
-   charge-amp output does not get on with the 2i2's inputs (see 4).
-   Bursts stay on ch1 → the 2i2's input 2 hardware.
-4. **How the charge amp meets the 2i2**: is the 48 V button lit
-   (phantom on the XLR pins into a charge-amp output stage), is the
-   connection on the XLR or the TRS jack, is Inst (Hi-Z) lit, is Air
-   lit? All should be off / line / TRS for a line-level source.
-5. **USB**: move the 2i2 to a motherboard USB port with a known-good
-   cable (no hub) and re-check with `dev/channel_noise_check.py` —
-   the dropout count must go to zero.
+3. ~~Inst / Air / Safe~~ — off throughout; Inst on once, no change.
+4. **USB first, no rig needed**: the 2i2 on a rear motherboard USB
+   port with the Focusrite-supplied cable (no hub, no front-panel
+   port), then a 60 s capture of the generator alone on both inputs
+   (or any signal) at 48 kHz and `dev/channel_noise_check.py` on it:
+   the common-cause lag-0 correlation must drop to the clean value
+   (~0.2) and the dropout count to zero. If it does, the port/cable
+   was the fault.
+5. **Loopback discriminator, no rig needed**: play noise out of the
+   2i2 into its own inputs via a cable, and record all four MME/WDM-KS
+   channels (3/4 are the digital loopback of the output mix). If the
+   loopback channels carry the same impulses/floor as the analogue
+   inputs, the corruption is on the USB link or in the driver (digital
+   domain); if the loopback is pristine while the analogue inputs
+   corrupt, it is the 2i2's converter/power section.
+6. **Same 2i2 on another computer** (a laptop, same rig or the
+   loopback above): corruption persists → the unit (check/update its
+   firmware in Focusrite Control 2, then RMA); vanishes → this PC's
+   USB.
+7. The channel swap proper is no longer diagnostic — both channels are
+   affected — but a **stronger accelerometer signal** (more charge-amp
+   gain: the accel peaks at 0.18 FS, 15 dB of headroom) would raise
+   its coherence against a corruption floor that is fixed in absolute
+   terms, as a stop-gap only.
 
 ## Side observations (not root-caused, logged for the next visit)
 
