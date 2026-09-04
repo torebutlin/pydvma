@@ -39,11 +39,21 @@ and proven — embedded 2.4.2 engine wheel referenced by the bundled
 `index-*.js`, all 24 `pydvma/*.py` byte-identical across tree / engine
 wheel / fat wheel, a CLEAN venv install serving its own UI with the
 capabilities + `/engine` greetings both reporting 2.4.2). `dist/` is
-gitignored, so per the 2.4.1 precedent **Tore rebuilds on the Mac and
-uploads** (`git pull && python scripts/stage_webui.py && python -m
-build --sdist --wheel && twine upload dist/pydvma-2.4.2*`), then tags
-`v2.4.2` at the cut commit and publishes the GitHub release (Zenodo
-auto-archives), then re-checks trap 3 on the DOWNLOADED wheel. NB:
+gitignored, so the Mac rebuilt its own artifacts (2026-09-04, Mac
+session): `npm run vendor:wheels` FIRST — the one-liner previously
+written here skipped it, and this Mac's gitignored `webui/public/pypi`
+still held the 2.4.1 engine wheel, so staging as written would have
+shipped trap 2 — then `python scripts/stage_webui.py`, then `python -m
+build --sdist --wheel`. PROVEN on the Mac build: embedded 2.4.2 engine
+wheel referenced by the bundled `index-B2BLYNje.js`, all 24
+`pydvma/*.py` byte-identical across tree / engine wheel / fat wheel,
+`twine check` passed, CI green at HEAD, and a CLEAN venv install
+served its own embedded UI with `/ws` capabilities + `/engine`
+greeting both reporting 2.4.2. **Next: Tore's `twine upload
+dist/pydvma-2.4.2*`** from the Mac, then tag `v2.4.2` at the cut
+commit `142e5c4` (the commits after it are docs-only: CLAUDE.md + the round doc) and publish
+the GitHub release (Zenodo auto-archives), then re-check trap 3 on
+the DOWNLOADED wheel. NB:
 killing a spawned serve with a PowerShell `CommandLine -like
 '*pydvma.serve*'` filter also kills the bash shell that launched it
 (its own command line matches) — filter on `Name -eq 'python.exe'`.
@@ -1023,6 +1033,7 @@ engine wheel*, so it is internally consistent and boots happily while
 serving a months-old app. Order:
 
 ```bash
+(cd webui && npm run vendor:wheels)    # rebuild the ENGINE wheel for THIS version (gitignored!)
 python scripts/stage_webui.py          # runs npm run build, mirrors dist -> pydvma/_webui
 python -m build --sdist --wheel        # both flags: the bare form yields a LEAN wheel
 ```
@@ -1030,6 +1041,13 @@ python -m build --sdist --wheel        # both flags: the bare form yields a LEAN
 Verify by listing the wheel: `pydvma/_webui/pypi/` must contain the
 engine wheel for *this* version, and the embedded `assets/index-*.js`
 must reference that same filename.
+
+The engine wheel has the same trap one level down: `webui/public/pypi`
+is gitignored too, so on any machine other than the one that last
+built it, `vite build` copies a STALE engine wheel into `dist` while
+`ENGINE_WHEELS` already names the new one — the served app then fails
+at boot. Run `vendor:wheels` first, every time, on the machine that
+builds the artifacts (2.4.2 nearly shipped this way from the Mac).
 
 **2. Version bump touches five places, not one.** `pyproject.toml`,
 `pydvma/datastructure.py`, `CITATION.cff`, `CHANGELOG.md`, and
