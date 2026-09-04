@@ -4,8 +4,8 @@
 
 As of 2026-09-04 (office Windows PC, cDAQ-9174 on the bench, no
 soundcard work): **ROUND 13 — Tore's cDAQ lab round on v2.4.1 — is
-root-caused, fixed, hardware-verified and COMMITTED (not pushed, not
-released).** His file (`data/not-working-examples/pydvma_2026-09-04_1057.dvma`,
+root-caused, fixed, hardware-verified, COMMITTED, PUSHED and CUT as
+v2.4.2 — the twine upload is Tore's, from the Mac.** His file (`data/not-working-examples/pydvma_2026-09-04_1057.dvma`,
 5 ch, 12.8 kHz / 8533 Hz, 10–60 s) showed 30 s of leading zeros, a
 22.5 s "silent gap with drifting voltages", coherence as a lobed
 comb, and every drive stopping early. Two causes, both reproduced
@@ -33,8 +33,17 @@ before/after bench table, next-lab checklist). Suites: pytest
 1182/13 + 1 load-sensitive soundcard test (TODO'd; passes alone),
 hardware 17/4 incl. two new tests, `bridge_hw_check` 42/42, vitest
 1148/1, check 0/0, Playwright bridge 7/7 + derived-save/session-journal
-8/8, mkdocs --strict clean; engine wheel rebuilt (still 2.4.1 —
-NO version bump; the release is Tore's call) and dist rebuilt. NB:
+8/8, mkdocs --strict clean. **v2.4.2 cut** (five-site bump; engine
+wheel reborn as 2.4.2; UI staged; sdist + fat wheel built on the PC
+and proven — embedded 2.4.2 engine wheel referenced by the bundled
+`index-*.js`, all 24 `pydvma/*.py` byte-identical across tree / engine
+wheel / fat wheel, a CLEAN venv install serving its own UI with the
+capabilities + `/engine` greetings both reporting 2.4.2). `dist/` is
+gitignored, so per the 2.4.1 precedent **Tore rebuilds on the Mac and
+uploads** (`git pull && python scripts/stage_webui.py && python -m
+build --sdist --wheel && twine upload dist/pydvma-2.4.2*`), then tags
+`v2.4.2` at the cut commit and publishes the GitHub release (Zenodo
+auto-archives), then re-checks trap 3 on the DOWNLOADED wheel. NB:
 killing a spawned serve with a PowerShell `CommandLine -like
 '*pydvma.serve*'` filter also kills the bash shell that launched it
 (its own command line matches) — filter on `Name -eq 'python.exe'`.

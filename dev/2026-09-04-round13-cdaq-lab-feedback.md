@@ -198,5 +198,8 @@ control that was actually missing.
 ## Release note
 
 These fixes need a release the same way round-12's did (the lab
-installs from PyPI). Version bump and the five-site ritual are
-untouched here — Tore's call whether this is 2.4.2 or 2.5.0.
+installs from PyPI). **v2.4.2 is cut** (five-site bump, engine wheel
+2.4.2, UI staged, sdist + fat wheel built and proven on the PC from a
+clean venv) and pushed; the twine upload, the `v2.4.2` tag and the
+GitHub release are Tore's from the Mac, followed by the trap-3
+re-check on the wheel PyPI actually serves.
