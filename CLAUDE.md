@@ -2,8 +2,45 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-08-20 (office Windows PC, 2i2 + Rigol DG1022Z on the bench,
-over RDP): **ROUND 12 — Tore's same-morning lab report that the 2i2
+As of 2026-09-04 (office Windows PC, cDAQ-9174 on the bench, no
+soundcard work): **ROUND 13 — Tore's cDAQ lab round on v2.4.1 — is
+root-caused, fixed, hardware-verified and COMMITTED (not pushed, not
+released).** His file (`data/not-working-examples/pydvma_2026-09-04_1057.dvma`,
+5 ch, 12.8 kHz / 8533 Hz, 10–60 s) showed 30 s of leading zeros, a
+22.5 s "silent gap with drifting voltages", coherence as a lobed
+comb, and every drive stopping early. Two causes, both reproduced
+live with an instrumented callback (`dev/ni_drop_check.py`): (1) the
+**NI recorder still shifted its whole stored buffer per chunk** (the
+round-12 fix was soundcard-only; "NI immune" was wrong) — 30 MB per
+7.8 ms chunk at the lab geometry, 99 % of budget on this desktop, over
+budget on a laptop; and **DAQmx does not stop on overflow**: it
+overwrites unread samples, keeps the task running and fails ~45 % of
+reads with -200279, so the buffer held a time-compressed history (the
+"gap" is the pre-/post-stimulus quiet spliced in; the shaker WAS
+driving). Now: NI ring buffers (copy-returning properties, no
+setter), -200279 counted into `input_overflows` → the existing
+integrity toast fires on NI, 10 s DAQmx headroom, frozen
+`_open_signature` for reuse. (2) **`output_fs` defaults to the
+REQUESTED fs**, which the 9260 coerces (12500→12800, 8000→8533): the
+stimulus played fast and stopped early to the sample — now resampled
+onto the AO's real rate in `setup_output_NI_nidaqmx`. UX: duration is
+typed+picked (`setup-duration`/`-pick`), output duration has a
+"match capture" switch (default on), "FS" → "full scale", and a
+bridged capture's FULL settings now survive into the saved set and
+its materialised FFT/TF (`BridgeRecordingMeta.settings`). Round doc
+`dev/2026-09-04-round13-cdaq-lab-feedback.md` (forensics table,
+before/after bench table, next-lab checklist). Suites: pytest
+1182/13 + 1 load-sensitive soundcard test (TODO'd; passes alone),
+hardware 17/4 incl. two new tests, `bridge_hw_check` 42/42, vitest
+1148/1, check 0/0, Playwright bridge 7/7 + derived-save/session-journal
+8/8, mkdocs --strict clean; engine wheel rebuilt (still 2.4.1 —
+NO version bump; the release is Tore's call) and dist rebuilt. NB:
+killing a spawned serve with a PowerShell `CommandLine -like
+'*pydvma.serve*'` filter also kills the bash shell that launched it
+(its own command line matches) — filter on `Name -eq 'python.exe'`.
+
+Previous (2026-08-20, office Windows PC, 2i2 + Rigol DG1022Z on the
+bench, over RDP): **ROUND 12 — Tore's same-morning lab report that the 2i2
 was unusable — is root-caused, fixed, live-verified on real hardware,
 and committed (NOT pushed).** The two acquisition bugs were: (1)
 **coherence collapse** — `Recorder.callback` shifted the WHOLE stored
@@ -11,7 +48,8 @@ buffer per chunk (23 MB memmove vs a 2 ms budget at 48 kHz/chunk 100;
 measured 3.4 ms), so PortAudio dropped input and every drop time-warped
 the capture; worse for longer captures, intermittent at 3 kHz (33 ms
 budget survives standalone, dies under the v2.4 serve journal's GIL
-load — the "broke since v2.3" delta), NI immune (DAQmx buffers in C).
+load — the "broke since v2.3" delta), NI thought immune (WRONG — see
+round 13 above).
 Fixed: both buffers are circular rings (O(chunk) callback;
 `osc_time_data`/`stored_time_data` became copy-returning PROPERTIES —
 zero via `zero_stored()`, assignment is a silent no-op), streams open

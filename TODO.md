@@ -266,19 +266,25 @@ is still open, as one consolidated list.
   `dev/soundcard_drop_check.py` (needs the Rigol or any two-tone
   source on L/R).
 
-- **NI recorder: two latent issues mirrored from round-12's soundcard
-  fixes, deferred to an NI-live session** (both benign in current
-  usage, neither is regression-safe to change blind):
-  (1) `Recorder_NI_nidaqmx.stream_audio_callback` still shifts its
-  whole stored buffer per chunk (O(buffer)); DAQmx's deep C-side
-  buffering absorbs the cost today, but a ring conversion like
-  `streams.Recorder`'s would future-proof it. (2) The NI reuse path
-  compares `_ni_settings_signature(REC_NI.settings)` against a
-  settings object that can BE `REC_NI.settings` after a reuse pass
-  (serve mutates `stored_time` in place), so the compare is
-  object-vs-itself — masked today because the webui reconfigures on
-  any duration change. Fix like the soundcard side: freeze the
-  signature at task-build time (`_open_signature`).
+- ~~**NI recorder: two latent issues mirrored from round-12's
+  soundcard fixes, deferred to an NI-live session**~~ — **DONE
+  2026-09-04 (round 13)**, and they were NOT benign: the O(buffer)
+  shift was the whole cause of the cDAQ lab round's "silent gaps"
+  (DAQmx does not stop on overflow — it overwrites unread samples and
+  keeps going, so the returned record was time-compressed). Rings +
+  overflow counting + the frozen `_open_signature` all landed;
+  `dev/2026-09-04-round13-cdaq-lab-feedback.md`, harness
+  `dev/ni_drop_check.py`. **Next lab visit checklist is in the round
+  doc** (the failing 5 ch × 12.5 kHz × 60 s geometry on the lab
+  laptop; the duration / match-capture controls; settings round-trip).
+- **Load-sensitive soundcard test**:
+  `tests/test_acquisition_cancel.py::TestTwoPhaseArmedWait::test_trigger_state_is_cleared_and_the_buffer_unfrozen_after`
+  asserts an all-zero stored buffer after `log_data` while its own
+  `_Feeder` thread may still append a chunk between `zero_stored` and
+  the assertion; failed once in a full-suite run on the PC
+  (2026-09-04), passes alone. Fix: stop the feeder before the buffer
+  assertion, or assert only on chunks older than the feeder's last
+  append.
 
 - **`select_capture_fs` probe fallback for ladder-less machines** —
   with no native ladder (Windows over RDP hides the endpoints
@@ -343,10 +349,14 @@ is still open, as one consolidated list.
      (b) The 9260 coerces AO onto exactly the 9234's own 51200/n
      ladder (8000 → 8533.33; exact at 8533.33 — `bridge_hw_check`
      check H pins it), so a BLA run at the AI-coerced rate keeps
-     output_fs == fs physically. STILL OPEN in the general case: an
+     output_fs == fs physically. ~~STILL OPEN in the general case: an
      ordinary stimulus log at a coercing fs plays the drive at
-     shifted frequencies with only a server-console warning — routing
-     that into the bridge status channel remains worth doing.
+     shifted frequencies with only a server-console warning~~ —
+     **CLOSED 2026-09-04 (round 13)**: `setup_output_NI_nidaqmx` now
+     resamples the waveform onto the AO's real `samp_clk_rate`, so
+     the drive keeps its frequencies and duration (the early-stopping
+     sweeps in the lab file were exactly this). The console note
+     still does not reach the browser; harmless now.
 
 - ~~**NEXT CONSOLE (non-RDP) SESSION**~~ — RUN (2026-08-11, console
   login; the 2i2 surfaced on every host API as predicted). Results:

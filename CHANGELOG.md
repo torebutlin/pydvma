@@ -3,6 +3,56 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+Fixes for the 2026-09-04 cDAQ lab round on 2.4.1 (round 13,
+`dev/2026-09-04-round13-cdaq-lab-feedback.md`): long NI captures
+came back with silent stretches and leading zeros, coherence collapsed
+into a lobed comb, and every stimulus stopped early. Root-caused and
+re-verified live on a cDAQ-9174.
+
+### Fixed
+
+- **NI captures lost samples on long or high-rate captures.** The NI
+  recorder still shifted its whole capture buffer per chunk (the
+  O(buffer) design 2.4.1 replaced on the soundcard side): at
+  12.8 kHz × 60 s × 5 ch that is a 30 MB memmove per 7.8 ms chunk,
+  and once the host fell behind, DAQmx kept the task running while
+  overwriting unread samples — so the returned record was a
+  time-compressed patchwork (leading zeros, the pre-/post-stimulus
+  quiet spliced into the window, a sweep at twice its rate). Both NI
+  buffers are now circular rings with O(chunk) writes; the DAQmx
+  input buffer asks for 10 s of headroom.
+- **NI overflows are now reported.** DAQmx `-200279` reads are
+  counted per capture like PortAudio's overflow flag, so a lossy NI
+  capture prints a warning and pins the web app's "capture integrity"
+  toast instead of failing silently.
+- **Stimulus played at the wrong rate on a coerced AO clock.** A DSA
+  AO module (NI 9260) coerces `output_fs` onto its ladder just as the
+  AI side does; the waveform generated at the requested rate then
+  played fast and stopped early (8000 → 8533 Hz: 6.7 % fast, 2 s short
+  on a 30 s sweep). The stimulus is now resampled onto the rate the AO
+  really runs, preserving its frequencies and duration.
+- **NI stream reuse compared a settings object with itself** after an
+  in-place `stored_time` change (the serve/notebook pattern); the
+  reuse key is now the signature frozen at task build, as on the
+  soundcard side.
+- **Saved sets lost their acquisition settings.** A bridged capture's
+  full `MySettings` (device, IEPE, terminal config, rails, output and
+  trigger fields) now travels into the set the app keeps and saves,
+  and materialised FFT/TF items are stamped with their source set's
+  settings, as python's own analysis functions do.
+
+### Changed
+
+- **Setup duration is typed or picked** (a text field plus an
+  arrow-only preset list), so any length — a 40 s prefill included —
+  can be entered and edited.
+- **Output duration defaults to "match capture"**, an explicit switch;
+  untick it to play a different length.
+- The unit "FS" is spelled out as **full scale** wherever it appeared,
+  to stop it reading as a multiple of *fs*.
+
 ## 2.4.1 — 2026-08-20
 
 Same-day fixes for the first 2.4.0 lab round, which found soundcard
