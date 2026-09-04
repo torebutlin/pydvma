@@ -2162,6 +2162,20 @@ class _Connection:
                     '%d time(s) during this capture — the data has gaps, '
                     'and TF/coherence computed from it is not trustworthy. '
                     'A busy machine is the usual cause.' % overflows)
+            # Same toast for gaps the host never flagged: stretches of
+            # exact digital silence inside the capture (a USB audio
+            # driver zero-filling lost packets — see
+            # `acquisition.exact_zero_dropouts`).
+            dropouts = getattr(acquisition, 'LAST_CAPTURE_DROPOUTS', (0, 0.0))
+            if dropouts and dropouts[0]:
+                await self._send_error(
+                    'capture integrity: the device delivered %d stretch(es) '
+                    'of exact digital silence totalling %.0f ms during this '
+                    'capture — data is missing there, and TF/coherence '
+                    'computed from it is not trustworthy. On a USB sound '
+                    'card this is the driver zero-filling lost USB packets: '
+                    'try another USB port or cable, without a hub.'
+                    % (dropouts[0], 1000.0 * dropouts[1]))
 
             await self._send_json({
                 'type': 'log_result',

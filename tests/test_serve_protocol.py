@@ -2394,3 +2394,42 @@ def test_configure_with_an_explicit_default_driver_is_unchanged(monkeypatch):
     assert seen['driver'] == 'mock'
     assert 'deviceNote' not in status
 
+
+def test_log_with_silent_dropouts_sends_integrity_error(monkeypatch):
+    """The twin of the dropped-input toast for gaps the host never
+    flagged: stretches of exact digital silence inside the capture (a USB
+    audio driver zero-filling lost packets; measured on a 2i2, 2026-09-04,
+    with PortAudio's overflow flag never set). Simulated at the
+    `_capture_to_dvma` seam like the overflow test above."""
+    real_capture = serve_mod._capture_to_dvma
+
+    def gappy_capture(settings, test_name, output=None, cancel_event=None):
+        out = real_capture(settings, test_name, output, cancel_event)
+        serve_mod.acquisition.LAST_CAPTURE_DROPOUTS = (2, 0.19)
+        return out
+
+    monkeypatch.setattr(serve_mod, '_capture_to_dvma', gappy_capture)
+
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None)
+                warn = await _recv_json(ws, timeout=10.0)
+                assert warn['type'] == 'error'
+                assert '2 stretch(es)' in warn['message']
+                assert '190 ms' in warn['message']
+                assert 'USB' in warn['message']
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'   # data still delivered
+        finally:
+            await _stop_server(task)
+    try:
+        run_async(scenario)
+    finally:
+        serve_mod.acquisition.LAST_CAPTURE_DROPOUTS = (0, 0.0)

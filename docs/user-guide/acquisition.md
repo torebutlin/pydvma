@@ -332,6 +332,21 @@ last capture, `log_data` prints a warning, and the web logger pins a
 and transfer functions or coherence computed from it are not
 trustworthy — repeat it.
 
+Not every gap is flagged by the host. A USB audio driver that loses a
+USB packet zero-fills it, and PortAudio never sees an overflow — the
+capture simply contains stretches of exact digital silence (measured on
+a Scarlett 2i2: anything from 8 samples to 188 ms). `log_data` therefore
+also scans every capture for runs of at least
+`acquisition.DROPOUT_MIN_RUN` frames in which every channel is exactly
+zero (`acquisition.exact_zero_dropouts`; a live analogue input never
+produces that, its noise floor keeps the converter busy), parks the
+result in `acquisition.LAST_CAPTURE_DROPOUTS` as `(count, seconds)`,
+and warns — and the web logger pins the same toast. Leading zeros are
+not counted (they are the fresh-stream startup shortfall, handled
+separately), nor is an effectively silent record, where a 16-bit host
+legitimately delivers zeros. Dropouts of this kind point at the USB
+link: try another port or cable, without a hub.
+
 `pretrig_threshold` is a magnitude in the units the recorder stores. On NI that is volts. On a soundcard it is volts **once `VmaxSC` is set**, and full-scale units while it is left at its default of 1.0 — so the default threshold of 0.05 means "5% of full scale" on an uncalibrated device but 50 mV on a calibrated one, which may sit close to the noise floor. Raise it to a sensible fraction of the signal you expect.
 
 ## Output Generation

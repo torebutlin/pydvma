@@ -25,6 +25,25 @@ MESSAGE = ''
 #: the browser UI; parked module-globally like :data:`MESSAGE`.
 LAST_CAPTURE_OVERFLOWS = 0
 
+#: ``(count, seconds)`` of exact-digital-silence stretches found INSIDE
+#: the most recent `log_data` capture — every channel exactly zero for
+#: at least :data:`DROPOUT_MIN_RUN` consecutive frames, somewhere after
+#: the first sample. A live analogue input never produces that (its
+#: noise floor keeps the converter busy), so such a stretch is data the
+#: host silently replaced: on a USB sound card the driver zero-filling
+#: lost USB packets (measured on a Scarlett 2i2 4th Gen, 2026-09-04:
+#: runs from 8 frames to 188 ms, PortAudio's overflow flag never set).
+#: The twin of :data:`LAST_CAPTURE_OVERFLOWS` for gaps the host does
+#: not report; reset every capture, ``(0, 0.0)`` = clean. Read by
+#: `pydvma.serve` for the capture-integrity toast.
+LAST_CAPTURE_DROPOUTS = (0, 0.0)
+
+#: Shortest all-channel exact-zero run `exact_zero_dropouts` counts, in
+#: frames. Eight is far past chance on a 24-bit converter (a ~2e-6 FS
+#: noise floor is ~34 LSB) and still catches the smallest zero-fill
+#: unit seen on the bench (8 frames at 48 kHz).
+DROPOUT_MIN_RUN = 8
+
 # Smallest oversample factor that clears the resampler's passband:
 # `analysis.resample_to_fs` passes to fs/2.56 on a downsample, so a x2
 # capture would clip the top of the band. ceil(2.56) = 3.
@@ -61,6 +80,54 @@ class CaptureCancelled(Exception):
     serve`` bridge turns it into a ``status/cancelled`` frame, sent
     instead of the usual ``log_result``.
     '''
+
+
+def exact_zero_dropouts(data, fs, full_scale=1.0, min_run=None,
+                        silent_fraction=1e-3):
+    '''Count stretches of exact digital silence inside a live capture.
+
+    Returns ``(n_runs, total_seconds)``: the number of runs of at least
+    ``min_run`` (default :data:`DROPOUT_MIN_RUN`) consecutive frames in
+    which EVERY channel of ``data`` (``(samples, channels)``, or 1-D)
+    is exactly zero, and the time they add up to at ``fs`` Hz.
+
+    Two exclusions keep this honest. A run touching the first sample is
+    not counted — leading zeros are the fresh-stream startup shortfall
+    that `_wait_for_buffer_fill` already handles, not a mid-capture
+    gap. And a record whose peak is below ``silent_fraction`` of
+    ``full_scale`` returns ``(0, 0.0)`` outright: with nothing plugged
+    in, a 16-bit host (MME) legitimately delivers long exact-zero runs,
+    and there is no coherence in a silent record to protect anyway.
+
+    Why exact zeros are a fault signature at all: a connected analogue
+    input never produces eight consecutive all-channel zeros — dither
+    and the noise floor keep the converter busy (2e-6 FS on a Scarlett
+    2i2 is ~34 LSB at 24 bits). A run of them is data the host
+    substituted: the USB audio driver zero-filling lost packets
+    (measured 2026-09-04, runs from 8 frames to 188 ms on a 2i2 4th
+    Gen, PortAudio's ``input_overflow`` flag never set). Such a gap
+    time-warps the record at each edge, which destroys TF coherence
+    the same way a counted overflow does — so `log_data` reports them
+    alongside :data:`LAST_CAPTURE_OVERFLOWS`.
+    '''
+    if min_run is None:
+        min_run = DROPOUT_MIN_RUN
+    y = np.asarray(data)
+    if y.ndim == 1:
+        y = y[:, None]
+    if y.size == 0:
+        return 0, 0.0
+    if float(np.max(np.abs(y))) < silent_fraction * float(full_scale):
+        return 0, 0.0
+    silent = np.all(y == 0, axis=1)
+    if not silent.any():
+        return 0, 0.0
+    edges = np.diff(np.concatenate(([0], silent.astype(np.int8), [0])))
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1)
+    lengths = ends - starts
+    keep = (lengths >= int(min_run)) & (starts > 0)
+    return int(keep.sum()), float(lengths[keep].sum()) / float(fs)
 
 
 def _wait(duration, cancel_event=None, poll=CANCEL_POLL_INTERVAL):
@@ -711,6 +778,23 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
                    'TF/coherence results from it are not trustworthy. A '
                    'busy machine is the usual cause.\n'
                    .format(LAST_CAPTURE_OVERFLOWS))
+        print(MESSAGE)
+
+    # Gaps the host never flagged: stretches of exact digital silence
+    # inside the window (see `exact_zero_dropouts`). Checked on the
+    # capture-rate data, before any resample smears the edges.
+    global LAST_CAPTURE_DROPOUTS
+    LAST_CAPTURE_DROPOUTS = exact_zero_dropouts(
+        stored_time_data_copy, float(settings.fs), settings.input_vmax())
+    if LAST_CAPTURE_DROPOUTS[0] > 0:
+        MESSAGE = ('WARNING: the device delivered {} stretch(es) of exact '
+                   'digital silence totalling {:.0f} ms during this capture '
+                   '— data is missing there and TF/coherence results from '
+                   'it are not trustworthy. On a USB sound card this is the '
+                   'driver zero-filling lost USB packets: try another USB '
+                   'port or cable, without a hub.\n'
+                   .format(LAST_CAPTURE_DROPOUTS[0],
+                           1000.0 * LAST_CAPTURE_DROPOUTS[1]))
         print(MESSAGE)
 
     # Clipping is an ADC-domain property — take the raw peak BEFORE any
