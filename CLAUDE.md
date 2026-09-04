@@ -16,11 +16,11 @@ round-14 doc). That exonerates pydvma's chain, the 2i2 model/driver
 API (the lab captured via WASAPI shared; this bench via WDM-KS — test
 the WDM-KS row first), its USB port/cable, and its unit**. Two bugs
 fixed on the way: `setup_output_NI_nidaqmx` wrote a non-contiguous
-array (any 2-ch NI stimulus at a coerced rate failed — **this is in
-the 2.4.2 cut, so 2.4.2 must be re-cut from HEAD**: the five version
-sites already say 2.4.2, Unreleased entries should fold into the
-2.4.2 CHANGELOG section, then the Mac build steps; the `v2.4.2` tag
-goes on the final commit), and the webui's "set has only one channel"
+array (any 2-ch NI stimulus at a coerced rate failed — it SHIPPED in
+2.4.2, which Tore had already uploaded and installed in the lab, so
+**v2.4.3 is cut** with it plus the lab session's Default-device and
+dropout fixes; twine upload from the Mac is Tore's, then tag `v2.4.3`
+at the cut commit), and the webui's "set has only one channel"
 (compute over "all" now skips TF-only sets: `timeBearing`). Checker
 verdict recalibrated (peak ratio > 1.5). NB PortAudio RENUMBERS
 devices inside a pydvma-importing process — an hour of this bench was

@@ -3,15 +3,21 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.4.3 — 2026-09-04
+
+Same-day follow-up to 2.4.2 from the 3C6 lab and the office bench: a
+two-channel NI stimulus bug that shipped in 2.4.2, the "Default"
+device recording mock sines, silent USB dropouts now reported, and the
+intermittent single-channel TF error.
+
 
 ### Fixed
 
 - **Two-channel NI stimulus at a coerced rate failed to write.** The
   2.4.2 AO resample handed DAQmx a transposed view that is not
   C-contiguous, which nidaqmx refuses (`array must have flags
-  ['C_CONTIGUOUS']`); the waveform is now copied into C order. Caught
-  on the bench before the 2.4.2 upload.
+  ['C_CONTIGUOUS']`); the waveform is now copied into C order. Shipped
+  in 2.4.2; caught on the office bench the same day.
 - **Intermittent "Transfer function needs at least one output channel —
   set “set” has only one channel"** with two-channel sets present.
   Compute over all sets fed TF-only sets (a loaded transfer function,
