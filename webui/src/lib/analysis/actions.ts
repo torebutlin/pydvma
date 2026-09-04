@@ -651,9 +651,39 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     return ws ? [ws] : [];
   }
 
-  /** Display name of a set (for user-facing messages), from the selection. */
+  /**
+   * The targeted sets that carry a TIME SERIES — the only ones a
+   * time-domain compute (FFT / PSD / TF) can run on. `working` also holds
+   * TF-only sets: an orphan `TfData` from a TF-only file, and the Nonlin
+   * stage's BLA result set (one `TfData` per excitation, `nOut` columns).
+   * Over `'all'` those are simply not measurements to recompute, so they
+   * are skipped; before this they were handed to the compute loops as if
+   * they were, where a one-column BLA result tripped the single-channel TF
+   * guard ("set … has only one channel" while the real sets computed fine —
+   * the 2026-09-04 lab's intermittent error) and any wider one crashed
+   * `calcFft` on a `time_axis` that does not exist. An EXPLICIT TF-only
+   * target is refused with a clear message via `noTimeMessage` instead.
+   */
+  function timeBearing(target: AnalysisTarget, what: string): WorkingSet[] {
+    const sets = targeted(target);
+    if (target === 'all') return sets.filter((ws) => hasTimeData(ws.time));
+    const bad = sets.find((ws) => !hasTimeData(ws.time));
+    if (bad) throw new Error(noTimeMessage(what, nameOf(bad.setId)));
+    return sets;
+  }
+
+  /**
+   * Display name of a set (for user-facing messages): the selection's name,
+   * else the set's own item name, else a numbered placeholder — never a bare
+   * "set" that reads as a real set called "set" (the derived items a Save
+   * used to write as `test_name: 'set'` came from this fallback).
+   */
   function nameOf(setId: number): string {
-    return get(selection.sets).find((s) => s.id === setId)?.name ?? 'set';
+    const fromSelection = get(selection.sets).find((s) => s.id === setId)?.name;
+    if (fromSelection) return fromSelection;
+    const ws = working.find((w) => w.setId === setId);
+    const own = ws?.time.meta.test_name;
+    return typeof own === 'string' && own ? own : `set #${setId}`;
   }
 
   /**
@@ -1562,7 +1592,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // whole batch, before any of it lands.
       const wasEmpty = !viewPopulated(get(derived), 'frequency');
       let added = false;
-      for (const ws of targeted(target)) {
+      for (const ws of timeBearing(target, 'FFT')) {
         const { window } = freqSettings(ws.setId);
         const { axis, data, nCh } = timePayload(ws.time);
         const res = await engine.enqueue('calc_fft', {
@@ -1601,7 +1631,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // frequency view, and one op fills both slices).
       const wasEmpty = !viewPopulated(get(derived), 'frequency');
       let added = false;
-      for (const ws of targeted(target)) {
+      for (const ws of timeBearing(target, 'PSD')) {
         const s = freqSettings(ws.setId);
         const window = s.window === 'none' ? null : s.window;
         const { axis, data, nCh } = timePayload(ws.time);
@@ -1665,7 +1695,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   function calcTf(target: AnalysisTarget = 'all') {
     const my = bump('tf');
     return guarded('tf', async () => {
-      const sets = targeted(target);
+      const sets = timeBearing(target, 'Transfer function');
       // P5 data-add rule — see `calcFft`.
       const wasEmpty = !viewPopulated(get(derived), 'tf');
       let added = false;
@@ -1682,12 +1712,13 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // 'across' is an ensemble over ALL sets; the target set names the
         // chIn/window to use. The averaged curve attaches to the FIRST set,
         // so that set must have an output channel too.
-        const first = working[0];
+        const members = working.filter((ws) => hasTimeData(ws.time));
+        const first = members[0];
         if (!first || first.nChannels < 2) {
           throw new Error(tfNoOutputMessage(first ? [nameOf(first.setId)] : []));
         }
         const { chIn, window } = tfSettings(acrossSet.setId);
-        const ensemble = working.map(ws => {
+        const ensemble = members.map(ws => {
           const { axis, data, nCh } = timePayload(ws.time);
           return { time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs };
         });
@@ -3588,6 +3619,12 @@ function tfNoOutputMessage(names: string[]): string {
  * Surfaced via `computeErrors.sono` (SonoCard + the under-plot banner) instead
  * of the opaque "Cannot read properties of undefined" the missing array threw.
  */
+function noTimeMessage(what: string, name: string): string {
+  return `${what} needs a time signal — “${name}” has no time data `
+    + '(it is a loaded transfer function or spectrum, or a Nonlin result). '
+    + 'Choose a recorded or time-bearing set.';
+}
+
 function sonoNoTimeMessage(name: string): string {
   return `Sonogram needs a time signal — “${name}” has no time data `
     + '(it is a loaded spectrum or transfer function). Choose a recorded or time-bearing set.';
