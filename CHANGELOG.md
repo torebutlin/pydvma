@@ -3,7 +3,7 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.4.2 — 2026-09-04
 
 Fixes for the 2026-09-04 cDAQ lab round on 2.4.1 (round 13,
 `dev/2026-09-04-round13-cdaq-lab-feedback.md`): long NI captures
