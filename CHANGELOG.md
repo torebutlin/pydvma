@@ -3,6 +3,52 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **"Default" input recorded mock sines.** `dvma.launch()` with no
+  settings (and `pydvma-serve` with no `--driver`) started the bridge
+  with `device_driver='mock'`, while the capability handshake labelled
+  the app's Default row with the operating system's default input —
+  the Scarlett on the bench. Pressing Log without picking a device
+  therefore logged 100/200 Hz mock sines under a Focusrite label (3C6
+  lab, 2026-09-04). The default driver is now `'auto'`: a configure that
+  names no device records from the OS default input soundcard, moved
+  onto the recommended backend of that interface (WASAPI/WDM-KS rather
+  than the 16-bit, silently-resampling MME twin), and falls back to
+  the mock generator only when there is no soundcard. The reply and
+  the launch banner say which device "Default" resolved to.
+  `--driver mock/soundcard/nidaq` keep their old meaning.
+
+- **Silent dropouts are now reported.** A USB audio driver that loses a
+  packet zero-fills it and PortAudio never raises an overflow, so a
+  capture could carry stretches of exact digital silence (measured on
+  a Scarlett 2i2 4th Gen: 8 samples to 188 ms, both channels at once)
+  with the capture-integrity toast silent. `log_data` now scans every
+  capture for all-channel exact-zero runs
+  (`acquisition.exact_zero_dropouts`, `DROPOUT_MIN_RUN`), parks
+  `(count, seconds)` in `acquisition.LAST_CAPTURE_DROPOUTS`, prints a
+  warning naming the USB link, and the web logger pins the same toast.
+  Leading zeros and effectively silent records are not counted.
+
+### Added
+
+- `dev/channel_noise_check.py`: per-capture report of which channel's
+  own noise floor jumps, per-second coherence, inter-channel lag and
+  exact-zero dropouts for any `.dvma` — the round-14 diagnostic that
+  separates "the acquisition dropped data" from "one input is noisy".
+
+### Investigated (no code change)
+
+- **2i2 coherence collapse on the 3C6 rig (round 14,
+  `dev/2026-09-04-round14-2i2-lab-coherence.md`).** Not an acquisition
+  fault: zero input overflows in every capture, and the same
+  intermittent broadband noise bursts on the accelerometer channel
+  appear in raw `sounddevice` captures that never touch pydvma, while
+  the noise-source channel in the same USB frames is unaffected. The
+  noise enters upstream of the converter on input 2.
+
 ## 2.4.2 — 2026-09-04
 
 Fixes for the 2026-09-04 cDAQ lab round on 2.4.1 (round 13,

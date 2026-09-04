@@ -2,7 +2,60 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-09-04 (office Windows PC, cDAQ-9174 on the bench, no
+As of 2026-09-04 late afternoon (ON the 3C6 lab PC, Claude desktop app,
+clone at `C:\Users\tb267\pydvma`, conda env `pydvma` with 2.4.2
+pip-installed — NOT the clone; 2i2 4th Gen + noise generator on input 1
++ accelerometer on input 2, driving the rig): **ROUND 14 — Tore's
+same-afternoon report that 2i2 coherence is "really poor most of the
+time, first test in a batch sometimes better, any fs; NI is better" —
+is diagnosed as NOT an acquisition fault, with one real bug found and
+fixed alongside. Uncommitted.** Round doc
+`dev/2026-09-04-round14-2i2-lab-coherence.md`. Evidence: his three
+`.dvma` files (`data/not-working-examples/wetransfer_…/`, nine captures)
+plus seven live captures here — zero PortAudio overflows in every one,
+clean callback timing, and the coherence collapses exactly where the
+ACCELEROMETER channel's broadband noise floor rises 10–15 dB (sustained
+bursts of seconds, plus isolated 50 ms spikes) while the noise-source
+channel in the same USB frames is flat. The same bursts appear in a raw
+`sd.InputStream` capture with no pydvma in the loop. One stream, one
+callback, one ring: nothing in software touches one channel only — the
+noise enters upstream of the ADC on input 2 (accel / cable / connector /
+IEPE supply / the 2i2's second preamp). Next-lab checks in the round doc
+(swap the two inputs first). The bug: `dvma.launch()` with no settings
+ran the bridge with `default_driver='mock'` while the UI's Default row
+was labelled with the OS default input (the Focusrite) — his first two
+captures that day ARE 100/200 Hz mock sines. Fixed: `--driver auto`
+(new default for the CLI and `launch()`) resolves "Default" to the OS
+default input soundcard on its recommended backend
+(`serve.resolve_default_device`, `_preferred_twin`), else mock; the
+reply's `deviceNote` and the launch banner say which. 8 new tests;
+pytest serve+launch 193/0. NB on this PC: scratchpad paths are ~245
+chars, so script names over ~10 chars hit MAX_PATH; the Focusrite
+stopped delivering samples to every new stream for ~10 min while the
+notebook session held it (a WASAPI-exclusive open+close un-wedged it);
+two of five pydvma 3 kHz runs carried 0.1–0.2 s exact-zero stretches on
+both channels that did not reproduce under raw-chunk tracing. **Later
+the same evening (17:00–17:30):** Tore's own files closed two more
+branches — his 15:54/15:55 **NI captures of the SAME charge-mode accel
++ charge amp are clean (0 noisy windows, coherence 0.77–0.81 every
+second)** between noisy 2i2 runs, and after he **exchanged the two
+physical cables** (17:04) the bursts stayed with the accel on 2i2
+input 2 — accel, charge amp and cables all exonerated; remaining
+suspects are the 2i2's input 2 and how the charge amp output is
+presented to it (48 V phantom / Inst / Air) — the channel swap proper
+decides (round-doc checklist). His 17:04 file also showed real
+**dropouts**: 188 ms and hundreds of 2–34-frame stretches of exact
+zeros on both channels = the Focusrite driver zero-filling lost USB
+packets, invisible to PortAudio's overflow flag. Landed:
+`acquisition.exact_zero_dropouts` + `LAST_CAPTURE_DROPOUTS` +
+`DROPOUT_MIN_RUN`, log_data warning, serve toast, docs paragraph,
+`tests/test_dropouts.py` (10) + a serve toast test; and
+`dev/channel_noise_check.py`, the per-capture report that cracked the
+round. pytest on dropouts+serve+acquisition-mock/guards 224/0. Test
+runner on this PC: `C:\Users\tb267\.pydvma-testvenv` (pytest on top of
+the conda env; the conda env has no pytest).
+
+Previous (2026-09-04, office Windows PC, cDAQ-9174 on the bench, no
 soundcard work): **ROUND 13 — Tore's cDAQ lab round on v2.4.1 — is
 root-caused, fixed, hardware-verified, COMMITTED, PUSHED and CUT as
 v2.4.2 — the twine upload is Tore's, from the Mac.** His file (`data/not-working-examples/pydvma_2026-09-04_1057.dvma`,
