@@ -2,7 +2,34 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-09-04 late afternoon (ON the 3C6 lab PC, Claude desktop app,
+As of 2026-09-04 evening (office Windows PC over RDP, cDAQ-9174 + the
+office 2i2, **cDAQ ao0/ao1 wired into 2i2 inputs 1/2** through the
+lab's BNC extensions; the ao0→ai0 loopback is currently NOT connected):
+**ROUND 14b — a KNOWN source into the 2i2 is clean on this bench**, raw
+and through pydvma alike: coherence 1.0000 every second for 5 min at
+48 k and for 60 s decimated to 3 k, lag 0 (or the injected 9-sample
+delay) in every second, L−R residual 66 dB down and Gaussian, zero
+dropouts/overflows, 24-bit, full scale 2.435 V measured vs 2.452 V
+profiled at 15 dB (`dev/twoi2_known_source_check.py`; addendum in the
+round-14 doc). That exonerates pydvma's chain, the 2i2 model/driver
+4.150 and WDM-KS; the lab's remaining discriminators are **its host
+API (the lab captured via WASAPI shared; this bench via WDM-KS — test
+the WDM-KS row first), its USB port/cable, and its unit**. Two bugs
+fixed on the way: `setup_output_NI_nidaqmx` wrote a non-contiguous
+array (any 2-ch NI stimulus at a coerced rate failed — **this is in
+the 2.4.2 cut, so 2.4.2 must be re-cut from HEAD**: the five version
+sites already say 2.4.2, Unreleased entries should fold into the
+2.4.2 CHANGELOG section, then the Mac build steps; the `v2.4.2` tag
+goes on the final commit), and the webui's "set has only one channel"
+(compute over "all" now skips TF-only sets: `timeBearing`). Checker
+verdict recalibrated (peak ratio > 1.5). NB PortAudio RENUMBERS
+devices inside a pydvma-importing process — an hour of this bench was
+spent measuring the Realtek Stereo Mix as "the 2i2"; resolve by name.
+Over RDP the 2i2's WDM-KS pin opens 2 channels only (float32/int32,
+48 k); the loopback pins 3/4 need a console login. Suites: vitest
+1152/1, check 0/0, pytest on the touched files green.
+
+Previous (2026-09-04 late afternoon, ON the 3C6 lab PC, Claude desktop app,
 clone at `C:\Users\tb267\pydvma`, conda env `pydvma` with 2.4.2
 pip-installed — NOT the clone; 2i2 4th Gen + noise generator on input 1
 + accelerometer on input 2, driving the rig): **ROUND 14 — Tore's

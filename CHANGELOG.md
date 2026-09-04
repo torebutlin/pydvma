@@ -7,6 +7,17 @@ follows [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **Two-channel NI stimulus at a coerced rate failed to write.** The
+  2.4.2 AO resample handed DAQmx a transposed view that is not
+  C-contiguous, which nidaqmx refuses (`array must have flags
+  ['C_CONTIGUOUS']`); the waveform is now copied into C order. Caught
+  on the bench before the 2.4.2 upload.
+- **Intermittent "Transfer function needs at least one output channel —
+  set “set” has only one channel"** with two-channel sets present.
+  Compute over all sets fed TF-only sets (a loaded transfer function,
+  or a Nonlin/BLA result) to the single-channel guard; FFT, PSD and TF
+  over "all" now consider only time-bearing sets, and an explicit
+  TF-only target is refused with a clear message.
 - **"Default" input recorded mock sines.** `dvma.launch()` with no
   settings (and `pydvma-serve` with no `--driver`) started the bridge
   with `device_driver='mock'`, while the capability handshake labelled

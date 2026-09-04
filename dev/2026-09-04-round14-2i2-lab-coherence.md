@@ -290,3 +290,89 @@ Not touched: the webui (it already sends nothing for "Default", which
 is exactly the case the server now resolves; the row's label is the
 OS default's name, and the reply's note names the backend actually
 used).
+
+## Round 14b — the office bench, same evening: a KNOWN source into the 2i2 is clean
+
+Office PC (i7 desktop, RDP session, Claude desktop app), bench cDAQ-9174
++ the office Scarlett 2i2 4th Gen (driver 4.150.0.432 — the same
+version as the lab PC; Focusrite Control 2 had just updated and the PC
+rebooted), 2i2 gain 15 dB on both channels, **cDAQ 9260 ao0 → 2i2 input
+1, ao1 → input 2** through the same BNC extensions the lab used (front
+combo jacks; the old ao0→ai0 loopback is gone, so the cDAQ's own AI
+cannot be used as a reference for now). Harness:
+`dev/twoi2_known_source_check.py` — brick-wall 20–3000 Hz Gaussian
+noise, 0.5 Vpk, identical on both outputs, regenerating; the 2i2
+recorded through raw `sounddevice` AND `pydvma.log_data` (WDM-KS: RDP
+hides the WASAPI/MME endpoints), then the round-14 checker plus
+identical-signal metrics.
+
+| run | seconds with coherence < 0.99 (20–3000 Hz) | per-second lag | L − g·R residual | dropouts / overflows | one-sample step / rms | bits |
+|---|---|---|---|---|---|---|
+| raw sounddevice, 48 k, 60 s | **0 / 60** (min 1.0000) | 0 in every second | 65.7 dB below signal, kurtosis 3.0 | 0 / 0 | 1.2 | 24.0 |
+| pydvma `log_data`, 48 k, 60 s | **0 / 60** | 0 | 65.7 dB, Gaussian | 0 / 0 | 1.2 | 24.1 |
+| raw, 48 k, **300 s** | **0 / 300** | 0 | 65.7 dB | 0 / 0 | 1.2 | 24.0 |
+| pydvma, **fs = 3000** (the lab setting; captured at 48 k, decimated), 60 s | **0 / 60** | 0 | 68.2 dB | 0 / 0 | — | — |
+| raw, ao1 delayed 10 AO samples (9.4 capture samples), 30 s | 0 / 30 (0.9999) | **−9 in 30 of 30 s** | — | 0 / 0 | — | — |
+
+Amplitude linearity, 1 kHz sine 0.05 → 1.0 Vpk: 0.4107 FS/V at every
+level (four digits), third harmonic 0.000, L/R within 0.5 % — i.e. full
+scale **2.435 V**, against the profile's 2.452 V at 15 dB line gain
+(0.06 dB). The checker's ">6 kHz envelope" test reads lag-0 0.95 vs
+off-lag 0.88 here — shared CONTENT (the two channels carry the same
+signal above 6 kHz too), not the lab's peak (0.63 vs 0.25); the verdict
+now judges the peak against its own off-lag yardstick (ratio > 1.5,
+lab 2.2–2.8, bench and clean-lab 1.1).
+
+So on this PC, this USB port and cable, this 2i2 unit, over WDM-KS:
+**no corruption of any kind, raw or through pydvma, at 48 k or
+decimated to 3 k, for five minutes**. That exonerates, for the lab
+problem: pydvma's soundcard chain (raw = pydvma, sample for sample),
+the 2i2 model and its 4.150 driver in general, WDM-KS capture, the
+line-input path at 15 dB, and the BNC extensions (they carried the
+cDAQ's signal here to 0.06 dB). What is left is exactly what differs
+between the two benches: **the lab PC's USB port / cable / 5 V, the lab
+2i2 unit, and the host API — the lab captured through WASAPI shared
+(device 12 in its files), this bench through kernel streaming**.
+
+Two lessons that cost an hour: (1) PortAudio **renumbers devices
+inside a process that imports pydvma** (its rate probes re-initialise
+PortAudio) — index 5 was the 2i2 in one process and the Realtek Stereo
+Mix in the next, so the first "no signal, only ground noise when the
+AO task runs" results, the amplitude sweep that showed a constant 11 mV
+"square wave", and a suspicion that the extensions were in the 2i2's
+rear OUTPUTS were all measurements of the wrong device. Resolve by
+name, every time (the harness now does). (2) The WDM-KS pin refuses
+4 channels in every format over RDP, so the loopback-channel
+discriminator (checklist item 5) needs a console login (WASAPI/MME).
+
+Two bugs found on the way, both fixed and committed:
+
+- **`setup_output_NI_nidaqmx` wrote a non-contiguous array** — the
+  round-13 resample hands `task.write` a fresh C-order (N, 2) array
+  whose transpose nidaqmx's ctypes layer refuses. Any two-channel NI
+  stimulus at a coerced rate died with `array must have flags
+  ['C_CONTIGUOUS']`. **This is in the 2.4.2 cut**, caught before the
+  upload; the cut must be re-taken from HEAD (`78fabcb`).
+- **The intermittent "set “set” has only one channel"**: `calcTf('all')`
+  (and `calcFft`/`calcPsd`) iterated every working set including
+  TF-only ones — an orphan TfData, or the Nonlin stage's BLA result
+  set, which with one response column has "one channel" — and
+  `nameOf` fell back to the literal "set". Compute over "all" now
+  considers only time-bearing sets; an explicit TF-only target is
+  refused with a clear message (`81d9088`).
+
+### What to check next in the lab (revised order)
+
+1. **Host API, no rig needed** (new, cheapest, most likely): in
+   Setup pick the 2i2's **WDM-KS** row, not the WASAPI one, and repeat
+   a 60 s capture of anything at 48 kHz; run
+   `dev/channel_noise_check.py` on it. If the lag-0 peak ratio drops to
+   ~1 and the dropouts to zero, the fault is the Windows audio engine's
+   shared-mode path on that PC (the same engine that "wedged" the
+   endpoint for ten minutes), and the fix is the backend default — the
+   `--driver auto` resolver already prefers WDM-KS.
+2. USB port (rear, motherboard) and the Focusrite cable, no hub.
+3. `dev/twoi2_known_source_check.py` on the lab PC with the office
+   cDAQ (or any generator into both inputs) — the numbers above are
+   the reference.
+4. Same 2i2 on another PC / another 2i2 on the lab PC → unit vs host.
