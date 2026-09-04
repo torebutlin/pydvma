@@ -110,3 +110,38 @@ test('addRecordedSet works alongside loadDataset sets', () => {
   expect(ds!.items).toHaveLength(2);
   expect(get(actions.derived)[newId].time).toBeDefined();
 });
+
+// ---- round-13: a bridged capture keeps its FULL acquisition settings ----
+
+test('recordingToItem merges the container settings under the capture-derived keys', () => {
+  const rec = fakeRecording(1, 100);
+  const item = recordingToItem(rec, 'bridged', {
+    deviceDriver: 'nidaq',
+    settings: {
+      fs: 12500,               // the REQUESTED rate — the capture's own wins
+      channels: 1, stored_time: 60, device_driver: 'nidaq',
+      device_index: 0, NI_mode: 'DAQmx_Val_PseudoDiff', VmaxNI: 5,
+      iepe_excit_current_A: { __array__: { dtype: '<f8', shape: [1], data: [0.002] } },
+      output_fs: 12500, pretrig_samples: null,
+    },
+  });
+  expect(item.settings).toMatchObject({
+    device_index: 0, NI_mode: 'DAQmx_Val_PseudoDiff', VmaxNI: 5,
+    output_fs: 12500, pretrig_samples: null,
+    iepe_excit_current_A: { __array__: { dtype: '<f8', shape: [1], data: [0.002] } },
+  });
+  // The four keys the app has always written describe the samples kept.
+  expect(item.settings).toMatchObject({
+    fs: rec.fs, channels: rec.nChannels,
+    stored_time: rec.nSamples / rec.fs, device_driver: 'nidaq',
+  });
+});
+
+test('recordingToItem without bridge meta still writes the four classic keys', () => {
+  const rec = fakeRecording(1, 100);
+  const item = recordingToItem(rec, 'web');
+  expect(item.settings).toEqual({
+    fs: rec.fs, channels: rec.nChannels,
+    stored_time: rec.nSamples / rec.fs, device_driver: 'web_audio',
+  });
+});

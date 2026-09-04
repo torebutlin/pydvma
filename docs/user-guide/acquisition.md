@@ -318,6 +318,20 @@ When recording starts, the system continuously buffers data. When the trigger co
 
 Two constraints on `pretrig_samples`: it must not exceed `chunk_size` (that is all the pre-trigger context the buffer retains), and it must be less than `stored_time * fs` (or there is no post-trigger data left to record). Both raise a `ValueError` naming the offending pair.
 
+### Capture integrity
+
+Long captures are as safe as short ones: both recorders keep their
+buffers as circular rings, so the per-chunk work is fixed however long
+`stored_time` is. If the host nevertheless falls behind the hardware —
+PortAudio flags dropped input, and a DAQmx task overwrites unread
+samples once its input buffer (pydvma asks for ten seconds of headroom)
+overflows — the loss is **counted** rather than hidden:
+`acquisition.LAST_CAPTURE_OVERFLOWS` holds the number of events in the
+last capture, `log_data` prints a warning, and the web logger pins a
+"capture integrity" toast. A capture with a non-zero count has gaps,
+and transfer functions or coherence computed from it are not
+trustworthy — repeat it.
+
 `pretrig_threshold` is a magnitude in the units the recorder stores. On NI that is volts. On a soundcard it is volts **once `VmaxSC` is set**, and full-scale units while it is left at its default of 1.0 — so the default threshold of 0.05 means "5% of full scale" on an uncalibrated device but 50 mV on a calibrated one, which may sit close to the noise floor. Raise it to a sensible fraction of the signal you expect.
 
 ## Output Generation

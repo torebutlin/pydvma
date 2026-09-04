@@ -141,12 +141,15 @@
   const thresholdEffective = $derived(
     $bridgeConfig.pretrigThreshold ?? defaultPretrigThreshold(triggerFullScale),
   );
+  // "full scale" spelled out: the app writes `fs` for the sample rate
+  // everywhere, so an "FS" unit read as a sampling-frequency multiple
+  // (round-13 lab feedback).
   const thresholdText = $derived(
     triggerFullScale != null
       ? `${thresholdEffective} V (${((thresholdEffective / triggerFullScale) * 100).toFixed(
           (thresholdEffective / triggerFullScale) * 100 >= 10 ? 0 : 1,
-        )} % FS)`
-      : `${thresholdEffective} ×FS`,
+        )} % of full scale)`
+      : `${thresholdEffective} × full scale`,
   );
 
   /**
@@ -235,6 +238,18 @@
     const raw = (e.target as HTMLInputElement).value.trim();
     const v = raw === '' ? undefined : Number(raw);
     acquire.patchBridge({ outputDuration: v != null && isFinite(v) && v > 0 ? v : undefined });
+  }
+  /**
+   * "match capture" — the DEFAULT. Ticked means no explicit output duration
+   * is stored and the server plays the stimulus for exactly the capture
+   * length; unticking seeds the box with the capture length so the operator
+   * edits a number rather than facing a blank (round-13: the blank box with
+   * a placeholder read as "unset", not as "same as the capture").
+   */
+  const outputMatchesCapture = $derived(outputDuration == null);
+  function onOutputMatch(e: Event) {
+    const match = (e.target as HTMLInputElement).checked;
+    acquire.patchBridge({ outputDuration: match ? undefined : $settings.durationS });
   }
   /** Output device (AO); blank = same as input device / server default. */
   function onOutputDevice(e: Event) {
@@ -375,13 +390,25 @@
               value={outputF2} onchange={onOutputF2} disabled={!outputOn}
             />
             <span class="ml">dur (s)</span>
+            <label class="switch" title="Play the stimulus for exactly the capture duration (untick to set a different length)">
+              <input
+                type="checkbox"
+                aria-label="output duration matches capture"
+                data-testid="output-duration-match"
+                checked={outputMatchesCapture} onchange={onOutputMatch} disabled={!outputOn}
+              />
+              <span class="ml">match capture</span>
+            </label>
             <input
               type="number" step="0.1" min="0" style="width:56px"
-              placeholder={$settings.durationS.toFixed(1)}
-              title="Output duration (s); blank = match capture duration"
+              title={outputMatchesCapture
+                ? 'Stimulus plays for the capture duration — untick "match capture" to change it'
+                : 'Output duration (s)'}
               aria-label="output duration"
               data-testid="output-duration"
-              value={outputDuration ?? ''} onchange={onOutputDuration} disabled={!outputOn}
+              value={outputDuration ?? $settings.durationS.toFixed(1)}
+              onchange={onOutputDuration}
+              disabled={!outputOn || outputMatchesCapture}
             />
             {#if outDevices.length}
               <span class="ml">device</span>

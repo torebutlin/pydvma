@@ -234,6 +234,12 @@ export function recordingMetaFromDvma(bytes: Uint8Array): BridgeRecordingMeta | 
   if (settings && typeof (settings as Record<string, unknown>).device_driver === 'string') {
     out.deviceDriver = (settings as Record<string, unknown>).device_driver as string;
   }
+  if (settings && typeof settings === 'object' && Object.keys(settings).length) {
+    // Verbatim, tags and all — the codec passes `settings` through
+    // untouched in both directions, so what python wrote is what python
+    // reads back after the app re-saves the set.
+    out.settings = { ...(settings as Record<string, unknown>) };
+  }
   return Object.keys(out).length ? out : null;
 }
 

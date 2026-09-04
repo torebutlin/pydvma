@@ -137,7 +137,7 @@
    * full scale (the ±1 buffer rail) — the same split `outputRailFor` makes.
    */
   const volts = $derived($kind === 'bridge' && outDriver === 'nidaq');
-  const ampUnit = $derived(volts ? 'V rms' : '×FS rms');
+  const ampUnit = $derived(volts ? 'V rms' : '× full scale rms');
   const rail = $derived(outputRailFor($kind, $bridgeConfig, $settings.deviceId));
 
   /** AO channels the effective output device exposes (clamped, ≥ 1). */

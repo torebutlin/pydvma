@@ -1449,6 +1449,13 @@ test('materializeDerived writes the computed FFT + TF into the document and they
   expect(freq.meta.id_link).toBe(src.meta.unique_id);
   expect(tf.meta.id_link).toBe(src.meta.unique_id);
 
+  // Settings: stamped with the source measurement's, as python's
+  // calculate_fft / calculate_tf stamp theirs (round-13: a saved TfData
+  // used to carry `settings: null`).
+  expect(src.settings).not.toBeNull();
+  expect(freq.settings).toEqual(src.settings);
+  expect(tf.settings).toEqual(src.settings);
+
   // Arrays: complex spectrum + TF, coherence intact.
   expect(freq.arrays.freq_data.isComplex).toBe(true);
   expect(freq.arrays.freq_data.shape).toEqual([2, 2]);

@@ -136,7 +136,28 @@
   // Common sample rates for the dropdown.
   const SAMPLE_RATES = [8000, 16000, 22050, 44100, 48000, 96000];
   // Duration presets.
+  /** Duration presets offered by the arrow-only picker beside the typed
+   *  field — suggestions, not the only values: the field accepts any
+   *  positive number of seconds (round-13: "preset 40 s, found the
+   *  dropdown blank, couldn't type it back"). */
   const DURATIONS = [0.5, 1, 2, 5, 10, 30, 60];
+  /** Typed duration text — display state, same pattern as `fsText`. */
+  let durationText = $state('');
+  $effect(() => { durationText = fmtDuration($settings.durationS); });
+  function fmtDuration(s: number): string {
+    return Number.isFinite(s) ? String(Math.round(s * 1000) / 1000) : '';
+  }
+  /** Parse a typed duration: plain seconds (`40`, `2.5`), or with a unit
+   *  (`500ms`, `40s`, `1m`). Null when unparseable / non-positive. */
+  function parseDuration(raw: string): number | null {
+    const m = raw.trim().toLowerCase().match(/^([0-9]*\.?[0-9]+)\s*(ms|s|m|min)?$/);
+    if (!m) return null;
+    let v = Number(m[1]);
+    if (!Number.isFinite(v) || v <= 0) return null;
+    if (m[2] === 'ms') v /= 1000;
+    else if (m[2] === 'm' || m[2] === 'min') v *= 60;
+    return v;
+  }
 
   // ---- capability-derived constraints ----
   // Bridge per-device caps (Wave C): when bridged and the selected device
@@ -384,8 +405,27 @@
     const v = Math.max(1, Math.min(maxChannels, Number((e.target as HTMLInputElement).value) || 1));
     acquire.patch({ channelCount: v });
   }
-  function onDurationChange(e: Event) {
-    acquire.patch({ durationS: Number((e.target as HTMLSelectElement).value) });
+  /** Commit the typed duration; anything unparseable reverts the field. */
+  function onDurationCommit(e: Event) {
+    const raw = (e.target as HTMLInputElement).value;
+    const d = parseDuration(raw);
+    if (d == null) { durationText = fmtDuration($settings.durationS); return; }
+    if (d !== $settings.durationS) acquire.patch({ durationS: d });
+    else durationText = fmtDuration(d);   // normalise "40s" → "40"
+  }
+  function onDurationKey(e: KeyboardEvent) {
+    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+  }
+  /** A preset picked from the arrow-only list (value pinned back to the
+   *  placeholder so re-picking the same entry fires again — see
+   *  `onFsPick`). */
+  function onDurationPick(e: Event) {
+    const el = e.target as HTMLSelectElement;
+    const d = Number(el.value);
+    el.value = '';
+    if (Number.isFinite(d) && d > 0 && d !== $settings.durationS) {
+      acquire.patch({ durationS: d });
+    }
   }
   function onLatencyChange(e: Event) {
     const raw = (e.target as HTMLInputElement).value.trim();
@@ -569,11 +609,38 @@
       <div class="grp">
         <span class="grp-lab">duration</span>
         <div class="grp-ctl">
-          <select style="width:68px" aria-label="duration" value={$settings.durationS} onchange={onDurationChange}>
+          <!-- Typed field + arrow-only preset picker, the same shape as the
+               sample-rate control above: the input always shows the stored
+               duration and accepts any value (a `--settings` prefill of 40 s
+               used to render a BLANK select that could not be typed into —
+               round-13 lab report); the select beside it only offers the
+               presets. -->
+          <input
+            type="text"
+            inputmode="decimal"
+            aria-label="duration"
+            data-testid="setup-duration"
+            title="Capture length in seconds. Type any duration — 40, 2.5, 500ms — or pick a preset from the list."
+            style="width:56px"
+            bind:value={durationText}
+            onchange={onDurationCommit}
+            onblur={onDurationCommit}
+            onkeydown={onDurationKey}
+          />
+          <select
+            class="fs-pick"
+            aria-label="duration presets"
+            data-testid="setup-duration-pick"
+            title="Common capture lengths"
+            value=""
+            onchange={onDurationPick}
+          >
+            <option value="" disabled hidden></option>
             {#each DURATIONS as d (d)}
-              <option value={d}>{d < 1 ? `${d * 1000}ms` : `${d}s`}</option>
+              <option value={String(d)}>{d < 1 ? `${d * 1000} ms` : `${d} s`}</option>
             {/each}
           </select>
+          <span class="ml">s</span>
         </div>
       </div>
       <!--
@@ -611,9 +678,9 @@
                 ? 'Trigger level in VOLTS — the server compares it against calibrated data. Blank uses 5 % of full scale.'
                 : 'Trigger level as a fraction of full scale (this input is not calibrated, so there are no volts to compare against). Blank uses 0.05.'}
             />
-            <span class="ml">{thresholdInVolts ? 'V' : '×FS'}</span>
+            <span class="ml">{thresholdInVolts ? 'V' : '× full scale'}</span>
             {#if thresholdPctFs != null}
-              <span class="note" data-testid="setup-threshold-pct">= {thresholdPctFs} % FS</span>
+              <span class="note" data-testid="setup-threshold-pct">= {thresholdPctFs} % of full scale</span>
             {/if}
             {#if $settings.channelCount > 1}
               <span class="ml">on ch</span>

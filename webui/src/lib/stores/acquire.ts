@@ -639,7 +639,10 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
  *
  * The item mirrors what pydvma's Python `log_data` produces: `time_axis`
  * is a 1-D array [N], `time_data` is row-major [N, C], and `settings`
- * carries `fs`, `channels`, `stored_time`.
+ * carries `fs`, `channels`, `stored_time` — on top of the capture's FULL
+ * server-side settings when a bridge container supplied them (`meta.settings`,
+ * see `BridgeRecordingMeta`), so a saved set records the device, IEPE,
+ * rails, output and trigger configuration it was measured with.
  *
  * `meta` (Wave C) is optional container provenance from a BRIDGE capture:
  * when present, the item keeps the real device driver used (not the
@@ -701,6 +704,10 @@ export function recordingToItem(
     meta: itemMeta,
     ...(metaRaw ? { metaRaw } : {}),
     settings: {
+      ...(meta?.settings ?? {}),
+      // The four the app has always written win over the container's copy:
+      // they describe the samples actually kept (a decimated capture, a
+      // trimmed window), and `device_driver` names the real source.
       fs: rec.fs,
       channels: rec.nChannels,
       stored_time: rec.nSamples / rec.fs,

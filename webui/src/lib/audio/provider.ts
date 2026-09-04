@@ -310,6 +310,16 @@ export interface BridgeRecordingMeta {
   uniqueIdRaw?: unknown;
   /** `settings.device_driver` — the backend actually used ('nidaq'/'soundcard'/'mock'). */
   deviceDriver?: string;
+  /**
+   * The capture's COMPLETE `MySettings` as the server wrote it into the
+   * logged container (tag-encoded values included, verbatim from
+   * `readDvma`): device and index, IEPE currents, terminal config, voltage
+   * rails, the coerced `fs`, output settings, pretrigger fields … Carried
+   * so the set the app keeps (and later saves) records how it was
+   * measured, not just `fs`/`channels`/`stored_time` (round-13: a saved
+   * file whose TimeData settings had four keys and whose TfData had none).
+   */
+  settings?: Record<string, unknown>;
 }
 
 /** A pretrigger lifecycle event surfaced during a log (Wave C). */

@@ -219,7 +219,11 @@ test.describe('pydvma serve bridge', () => {
     await page.getByTestId('output-on').check();
     await expect(page.getByTestId('out-badge')).toBeVisible();
 
-    // Fuller controls (round-4 item 12): an explicit output duration…
+    // Fuller controls (round-4 item 12): an explicit output duration — the
+    // box follows the capture length until "match capture" is unticked
+    // (round-13).
+    await expect(page.getByTestId('output-duration')).toBeDisabled();
+    await page.getByTestId('output-duration-match').uncheck();
     await page.getByTestId('output-duration').fill('0.3');
     // …and, when the bridge lists AO devices, an output device + channel count.
     const dev = page.getByTestId('output-device');
@@ -319,7 +323,8 @@ test.describe('pydvma serve --settings launch prefill', () => {
     // Core input fields reflect the served fs / channels / duration.
     await expect(page.getByTestId('setup-fs')).toHaveValue('8000');
     await expect(page.getByRole('spinbutton', { name: 'channel count' })).toHaveValue('3');
-    await expect(page.getByRole('combobox', { name: 'duration' })).toHaveValue('5');
+    // Duration is a typed field beside an arrow-only preset picker (round-13).
+    await expect(page.getByTestId('setup-duration')).toHaveValue('5');
 
     // The device dropdown resolved device_driver='mock' → the mock entry.
     await expect(page.getByRole('combobox', { name: 'input device' }))

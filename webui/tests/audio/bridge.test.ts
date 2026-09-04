@@ -810,7 +810,38 @@ test('recordingMetaFromDvma extracts provenance from a container', () => {
     units: ['V', 'V'],
     channelCalFactors: [2.5, 1.0],
     deviceDriver: 'nidaq',
+    // Round-13: the container's whole settings dict rides along, verbatim.
+    settings: { fs: 8000, channels: 2, stored_time: 0.0005, device_driver: 'nidaq' },
   });
+});
+
+test('recordingMetaFromDvma carries the server settings verbatim, tags included', () => {
+  // A server-written container's settings hold MySettings.__dict__ with
+  // tag-encoded values (an ndarray of IEPE currents, a float rail). The
+  // codec passes `settings` through untouched, so the meta must too —
+  // that is what lets a re-saved set read back in python as it was logged.
+  const nSamples = 2, nChannels = 2, fs = 8000;
+  const settings = {
+    fs, channels: nChannels, stored_time: nSamples / fs, device_driver: 'nidaq',
+    device_index: 0, NI_mode: 'DAQmx_Val_PseudoDiff', VmaxNI: 5,
+    iepe_excit_current_A: { __array__: { dtype: '<f8', shape: [2], data: [0, 0.002] } },
+    output_fs: 8000, pretrig_samples: null,
+  };
+  const ds: DvmaDataset = {
+    formatVersion: 2, pydvmaVersion: '2.4.1',
+    items: [{
+      kind: 'TimeData',
+      arrays: {
+        time_axis: { shape: [nSamples], data: Float64Array.from([0, 1 / fs]), isComplex: false },
+        time_data: { shape: [nSamples, nChannels], data: Float64Array.from([0, 0, 0, 0]), isComplex: false },
+      },
+      meta: { test_name: 't', timestring: 'x' },
+      settings,
+    }],
+  };
+  const meta = recordingMetaFromDvma(writeDvma(ds));
+  expect(meta?.settings).toEqual(settings);
+  expect(meta?.deviceDriver).toBe('nidaq');
 });
 
 test('recordingMetaFromDvma reads the driver from a bare (web_audio) container', () => {

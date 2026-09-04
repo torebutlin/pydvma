@@ -1127,7 +1127,13 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    */
   function upsertDerivedItem(
     ds: DvmaDataset, setId: number, kind: DerivedKind,
-    build: { kind: DataKind; arrays: Record<string, NpyArray>; meta: Record<string, unknown> },
+    build: {
+      kind: DataKind; arrays: Record<string, NpyArray>; meta: Record<string, unknown>;
+      /** Acquisition settings to stamp on a NEW item (the source set's own,
+       *  as python's `calculate_tf` / `calculate_fft` stamp theirs). An
+       *  adopted item keeps whatever it already carries. */
+      settings?: Record<string, unknown> | null;
+    },
     rawLink: unknown, iso: string,
   ): void {
     const meta = { ...build.meta, timestamp: iso };
@@ -1161,7 +1167,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       kind: build.kind, arrays: build.arrays,
       meta: { ...meta, unique_id: uid },
       metaRaw: { ...metaRaw, unique_id: uid },
-      settings: null,
+      // Python stamps a derived item with its source measurement's
+      // settings; do the same so a saved TfData/FreqData is not the only
+      // item in the file that says nothing about how it was measured
+      // (round-13 lab report: "TF shouldn't be missing settings").
+      settings: build.settings ? { ...build.settings } : null,
     };
     ds.items.push(item);
     materializedItems.set(lineageKey(setId, kind), item);
@@ -1252,6 +1262,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         upsertDerivedItem(ds, ws.setId, 'freq', {
           kind: 'FreqData',
           arrays: { freq_axis: axisNpy(freq.axis), freq_data: complexNpy(freq.data) },
+          settings: ws.time.settings,
           meta: {
             units: cal.units, channel_cal_factors: cal.factors,
             test_name: testName, timestring, id_link: link,
@@ -1272,6 +1283,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         upsertDerivedItem(ds, ws.setId, 'tf', {
           kind: 'TfData',
           arrays,
+          settings: ws.time.settings,
           meta: {
             units: cal.units, channel_cal_factors: cal.factors,
             test_name: testName, timestring, id_link: link,

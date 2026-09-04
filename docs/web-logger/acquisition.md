@@ -26,8 +26,8 @@ settings.
 | **input device** | Pick the acquisition device. The **Default** entry names the device it actually resolves to (`Default — ESI U24 XL`), so you always know which hardware a capture will use; **↻** refreshes the list. In the browser, device *names* only appear once you grant microphone access. Through the bridge the app also remembers which device you *named*, not just its position in the list: audio devices are renumbered whenever one is plugged in or removed, so if yours has moved the server follows it and says so (`'Scarlett 2i2 4th Gen' moved from device index 2 to 1…`), and if it has been unplugged the capture is refused rather than silently recording a different input. |
 | **sample rate** | **Type it or pick it** — the field accepts any rate (`3000`, `3k`, `48 kHz`) and offers the device's deliverable rates as suggestions. Through the bridge the suggestions are the device's own ladder — the rates the hardware genuinely runs, plus standard rates *below* its floor (500 / 1k / 2k / 3k / 4k / 5k upward), which pydvma delivers by capturing natively and decimating; in the browser they are the standard ladder constrained by the device. A typed rate the converter itself does not run is fine: a note reads `captures at 48000 Hz, resampled to 3000 Hz`, and a rate above the device ceiling gets a warning rather than silence. |
 | **channels** | Number of input channels (1 up to the device maximum). Not every input a device reports is an analogue one: a Focusrite Scarlett 2i2 4th Gen advertises four, but 3–4 are a digital loopback of its own output mix. Setup says so — `channels 3+ are the device's digital loopback, not inputs` — as soon as the count reaches them. |
-| **duration** | Capture length: 0.5, 1, 2, 5, 10, 30 or 60 s. |
-| **trigger** | The essentials live here in basic settings (they used to hide under Full): **arm**, the **threshold**, and the trigger **channel** (shown once you have more than one). The threshold field knows its units — on a calibrated interface it reads in volts with a live `= N % FS` hint, otherwise in full-scale units — and its default is 5 % of the device's full scale, so it does not sit in the noise floor of a wide-range interface. The group appears whenever the source supports triggering (any soundcard or NI device through the bridge, and the browser path). Advanced fields (pretrigger samples, timeout) stay under Full; arming is mirrored on the Acquire card. |
+| **duration** | Capture length in seconds. **Type it or pick it**, like the sample rate: the field accepts any positive value (`40`, `2.5`, `500ms`) and the arrow list beside it offers presets (0.5, 1, 2, 5, 10, 30, 60 s). A `--settings` prefill of 40 s shows as 40, and stays editable. |
+| **trigger** | The essentials live here in basic settings (they used to hide under Full): **arm**, the **threshold**, and the trigger **channel** (shown once you have more than one). The threshold field knows its units — on a calibrated interface it reads in volts with a live `= N % of full scale` hint, otherwise as a fraction of full scale (spelled out, so it is never mistaken for a multiple of *fs*, the sample rate) — and its default is 5 % of the device's full scale, so it does not sit in the noise floor of a wide-range interface. The group appears whenever the source supports triggering (any soundcard or NI device through the bridge, and the browser path). Advanced fields (pretrigger samples, timeout) stay under Full; arming is mirrored on the Acquire card. |
 
 Defaults are 44.1 kHz, 1 channel, 2 s.
 
@@ -217,8 +217,10 @@ transfer-function measurements. In the **output** group:
 - pick a **type**: **sweep** (a linear chirp from *f1* to *f2*),
   **white** (band-limited uniform noise), or **gaussian** (band-limited
   Gaussian noise);
-- set the **amplitude**, the band **f1**/**f2**, and optionally the
-  output **duration**, **device** and **channel**.
+- set the **amplitude** and the band **f1**/**f2**; the output
+  **duration** follows the capture length by default (**match capture**
+  is ticked) — untick it to play a shorter or longer stimulus; and
+  optionally pick the output **device** and **channel**.
 
 When output is armed the **Log Data** button carries an **OUT** badge.
 

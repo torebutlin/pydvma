@@ -77,7 +77,13 @@ rate and uses it for every time and frequency axis, so your data is
 correctly scaled even when it differs from what you asked for. In the
 app, **Setup** and **Acquire** show a note when the rate has been
 coerced, and the fs picker constrains to the selected device's ladder to
-reduce surprises. A sound card, whose ladder is published, is handled
+reduce surprises. The output side is handled the same way: a DSA AO
+module (the NI 9260) coerces `output_fs` onto its own ladder too, so
+the stimulus — generated at the rate you asked for — is **resampled
+onto the rate the AO really runs** before it is played. A 30 s sweep
+requested at 8000 Hz on a 9234/9260 chassis therefore still sweeps its
+band over 30 s at 8533.33 Hz, rather than playing 6.7 % fast and
+stopping 2 s early. A sound card, whose ladder is published, is handled
 the other way round: pydvma captures at a rate the hardware really runs
 and resamples to the rate you asked for — see
 [Capture rate and delivered rate](acquisition.md#capture-rate-and-delivered-rate).
