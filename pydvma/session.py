@@ -460,7 +460,10 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
             settings the app opens with. Prefills Setup via ``/config``
             (see :func:`_settings_to_config_json`) and supplies the
             default acquisition driver; ``None`` prefills nothing and
-            leaves the driver at ``'mock'``.
+            leaves the driver at ``'auto'`` — a capture that names no
+            device then records from the OS default input soundcard
+            when there is one, else the mock generator (see
+            :func:`pydvma.serve.resolve_default_device`).
         open_browser (bool): open the app in a browser tab (default
             True). Pass False for a headless or scripted launch — the
             URL is still printed and on :attr:`Session.url`.
@@ -499,7 +502,12 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
             'Original error: {}'.format(e)) from e
     from . import serve
 
-    driver = getattr(settings, 'device_driver', None) or 'mock'
+    # No settings → 'auto': a capture that names no device records from
+    # the OS default input soundcard when there is one (what the UI's
+    # "Default" row is labelled with), else the mock generator. It was
+    # 'mock' outright, which logged mock sines under a Focusrite label
+    # (see serve.resolve_default_device).
+    driver = getattr(settings, 'device_driver', None) or 'auto'
     resolved_ui_dir = serve._resolve_ui_dir(ui_dir)
     server = serve.BridgeServer(
         port=port, ui_dir=resolved_ui_dir,
@@ -526,8 +534,14 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
 
     real_port = server.sockets[0].getsockname()[1]
     url = 'http://%s:%d/' % (server.host, real_port)
+    shown, default_note = driver, None
+    if driver == 'auto':
+        resolved_driver, _index, default_note = serve.resolve_default_device('auto')
+        shown = '%s (auto)' % resolved_driver
     print('pydvma session listening on %s (ws at %s/ws, driver=%s)'
-          % (url, url.rstrip('/'), driver))
+          % (url, url.rstrip('/'), shown))
+    if default_note:
+        print('  ' + default_note)
     if resolved_ui_dir is None:
         print('  no built UI found; serving the bridge + a help page. '
               'Build webui/dist or pass ui_dir=...')

@@ -2254,3 +2254,143 @@ def test_pruning_deletes_only_old_non_live_non_adopted_candidates(tmp_path):
     assert newest.exists()
     assert recent_stale.exists()
     assert not old_stale.exists()
+
+
+# ---- "Default" device resolution (3C6 lab, 2026-09-04) --------------------
+#
+# `dvma.launch()` with no settings started the bridge with
+# default_driver='mock', while the capability handshake labelled the UI's
+# Default row with the OS default input — the Scarlett on the bench. A
+# configure that named no device therefore recorded 100/200 Hz mock sines
+# under a Focusrite label. 'auto' makes the two halves agree.
+
+_FOCUSRITE_DEFAULT = {'driver': 'soundcard', 'index': 1,
+                      'name': 'Analogue 1 + 2 (Focusrite USB A',
+                      'hostapi': 'MME'}
+
+
+def _fake_focusrite_enumeration(monkeypatch):
+    """One interface listed by three host APIs, MME as the OS default."""
+    from pydvma import devices as devices_mod
+    group = 'analogue 1 + 2'
+    monkeypatch.setattr(devices_mod, 'backend_map', lambda kind='input': {
+        1: {'group': group, 'hostapi': 'MME', 'recommended': False,
+            'is_alias': False, 'is_auxiliary': False, 'siblings': 3},
+        6: {'group': group, 'hostapi': 'Windows DirectSound',
+            'recommended': False, 'is_alias': False, 'is_auxiliary': False,
+            'siblings': 3},
+        12: {'group': group, 'hostapi': 'Windows WASAPI', 'recommended': True,
+             'is_alias': False, 'is_auxiliary': False, 'siblings': 3},
+    })
+    names = [''] * 13
+    names[1] = 'Analogue 1 + 2 (Focusrite USB A'
+    names[6] = 'Analogue 1 + 2 (Focusrite USB Audio)'
+    names[12] = 'Analogue 1 + 2 (Focusrite USB Audio)'
+    monkeypatch.setattr(serve_mod.streams, 'enumerated_device_names',
+                        lambda driver: names)
+    monkeypatch.setattr(serve_mod, '_default_soundcard_devices',
+                        lambda: (dict(_FOCUSRITE_DEFAULT), None))
+
+
+def test_resolve_default_device_passes_explicit_drivers_through():
+    assert serve_mod.resolve_default_device('mock') == ('mock', None, None)
+    assert serve_mod.resolve_default_device('nidaq') == ('nidaq', None, None)
+    assert serve_mod.resolve_default_device('soundcard') == ('soundcard', None, None)
+
+
+def test_resolve_default_device_auto_without_a_soundcard_is_mock(monkeypatch):
+    monkeypatch.setattr(serve_mod, '_default_soundcard_devices',
+                        lambda: (None, None))
+    driver, index, note = serve_mod.resolve_default_device('auto')
+    assert (driver, index) == ('mock', None)
+    assert 'mock' in note
+
+
+def test_resolve_default_device_auto_moves_onto_the_recommended_backend(monkeypatch):
+    """The OS default is the MME twin (16-bit, silent resampling); the
+    capture should run on the recommended backend of the same box."""
+    _fake_focusrite_enumeration(monkeypatch)
+    driver, index, note = serve_mod.resolve_default_device('auto')
+    assert (driver, index) == ('soundcard', 12)
+    assert 'Windows WASAPI' in note
+    assert 'Focusrite USB Audio' in note
+
+
+def test_preferred_twin_keeps_an_already_recommended_default(monkeypatch):
+    from pydvma import devices as devices_mod
+    monkeypatch.setattr(devices_mod, 'backend_map', lambda kind='input': {
+        3: {'group': 'g', 'hostapi': 'Core Audio', 'recommended': True,
+            'is_alias': False, 'is_auxiliary': False, 'siblings': 1}})
+    default = {'driver': 'soundcard', 'index': 3, 'name': 'Scarlett 2i2',
+               'hostapi': 'Core Audio'}
+    assert serve_mod._preferred_twin(default) == default
+    assert serve_mod._preferred_twin(None) is None
+
+
+def _start_mock_recorder(seen):
+    """A `streams.start_stream` stand-in: record what the bridge asked
+    for, then serve the mock recorder so configure can complete."""
+    def fake_start(settings):
+        seen['driver'] = settings.device_driver
+        seen['index'] = settings.device_index
+        streams.REC_MOCK = streams.MockRecorder(settings)
+        streams.REC_MOCK.init_stream(settings)
+        streams.REC = streams.REC_MOCK
+    return fake_start
+
+
+def _configure_without_a_device(monkeypatch, seen, **server_kwargs):
+    monkeypatch.setattr(streams, 'start_stream', _start_mock_recorder(seen))
+
+    async def scenario():
+        _server, task, port = await _start_server(**server_kwargs)
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 1, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                return await _recv_json(ws)
+        finally:
+            await _stop_server(task)
+    return run_async(scenario)
+
+
+def test_configure_without_a_device_records_from_the_auto_default(monkeypatch):
+    """The regression itself: no device named, server on 'auto', a
+    soundcard is the OS default → the capture is a soundcard capture on
+    that interface's recommended backend, and the reply says so."""
+    _fake_focusrite_enumeration(monkeypatch)
+
+    class FakeSd:  # only its presence matters: the "[soundcard] extra" guard
+        pass
+    monkeypatch.setattr(serve_mod.streams, 'sd', FakeSd)
+    seen = {}
+    status = _configure_without_a_device(monkeypatch, seen, default_driver='auto')
+    assert status['type'] == 'status' and status['event'] == 'configured'
+    assert status['driver'] == 'soundcard'
+    assert seen == {'driver': 'soundcard', 'index': 12}
+    assert 'Windows WASAPI' in status['deviceNote']
+
+
+def test_configure_without_a_device_and_no_soundcard_stays_mock(monkeypatch):
+    monkeypatch.setattr(serve_mod, '_default_soundcard_devices',
+                        lambda: (None, None))
+    seen = {}
+    status = _configure_without_a_device(monkeypatch, seen, default_driver='auto')
+    assert status['event'] == 'configured'
+    assert status['driver'] == 'mock'
+    assert seen['driver'] == 'mock'
+    assert 'mock' in status['deviceNote']
+
+
+def test_configure_with_an_explicit_default_driver_is_unchanged(monkeypatch):
+    """`--driver mock` (what every e2e spawn passes) keeps its meaning:
+    no device named → the mock generator, no note about defaults."""
+    _fake_focusrite_enumeration(monkeypatch)
+    seen = {}
+    status = _configure_without_a_device(monkeypatch, seen, default_driver='mock')
+    assert status['driver'] == 'mock'
+    assert seen['driver'] == 'mock'
+    assert 'deviceNote' not in status
+

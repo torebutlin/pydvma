@@ -230,8 +230,11 @@ CLI
 Console script ``pydvma-serve`` and ``python -m pydvma.serve`` both call
 :func:`main`.  Flags: ``--port`` (default :data:`DEFAULT_PORT`),
 ``--ui-dir``, ``--settings`` (a JSON file pre-loaded for ``/config``),
-``--driver`` (default ``mock``; ``soundcard``/``nidaq`` require their
-extras), ``--open`` (open a browser at the served UI).
+``--driver`` (default ``auto``: a configure that names no device
+records from the OS default input soundcard when there is one, else the
+mock generator; ``mock``/``soundcard``/``nidaq`` force a backend, the
+latter two requiring their extras), ``--open`` (open a browser at the
+served UI).
 """
 from __future__ import annotations
 
@@ -860,6 +863,78 @@ def _default_soundcard_devices() -> tuple[dict | None, dict | None]:
     return entry(indices[0]), entry(indices[1])
 
 
+def _preferred_twin(device: dict | None) -> dict | None:
+    """The best-ranked backend entry of the same physical interface.
+
+    ``device`` is a ``{driver, index, name, hostapi}`` record as
+    :func:`_default_soundcard_devices` returns. On Windows the OS
+    default points at the MME entry of the interface — the backend
+    that truncates to 16 bits and resamples silently (see
+    ``devices.HOSTAPI_RANK``) — so "record from the default" should
+    move onto the recommended twin (WASAPI / WDM-KS) of that same box.
+    Probe-free (``devices.backend_map``); returns ``device`` unchanged
+    when there is nothing better, and on any failure.
+    """
+    if not device:
+        return device
+    try:
+        from . import devices as _devices
+        by_input = _devices.backend_map(kind='input')
+        index = int(device['index'])
+        mine = by_input.get(index)
+        if not mine:
+            return device
+        for i, g in sorted(by_input.items()):
+            if g.get('group') == mine.get('group') and g.get('recommended'):
+                if int(i) == index:
+                    return device
+                names = streams.enumerated_device_names('soundcard') or []
+                return {
+                    'driver': 'soundcard',
+                    'index': int(i),
+                    'name': names[int(i)] if int(i) < len(names) else device.get('name'),
+                    'hostapi': g.get('hostapi'),
+                }
+    except Exception:
+        pass
+    return device
+
+
+def resolve_default_device(default_driver: str) -> tuple[str, int | None, str | None]:
+    """What a ``configure`` that names no device should record from.
+
+    Returns ``(driver, index, note)``. For an explicit
+    ``default_driver`` (``'mock'``, ``'soundcard'``, ``'nidaq'``) this
+    is ``(default_driver, None, None)`` — that backend's own default
+    device, exactly as before. For ``'auto'`` it is the operating
+    system's default INPUT soundcard, moved onto the best-ranked
+    backend of that interface (:func:`_preferred_twin`), or the mock
+    signal generator when there is no soundcard at all. ``note`` says
+    which, for the operator.
+
+    This exists because the two halves of "Default" used to disagree:
+    the capability handshake labelled the UI's Default row with the OS
+    default input (the Scarlett on the bench), while a configure that
+    omitted ``device_driver`` fell back to the server's ``--driver`` —
+    ``mock`` for ``dvma.launch()`` with no settings — so the operator
+    read "Default — Analogue 1 + 2 (Focusrite …)", pressed Log, and
+    got 100/200 Hz mock sines (3C6 lab, 2026-09-04).
+    """
+    if default_driver != 'auto':
+        return default_driver, None, None
+    default_input, _ = _default_soundcard_devices()
+    if default_input is None:
+        return 'mock', None, ('No default input device found, so "Default" '
+                              'records from the mock signal generator.')
+    chosen = _preferred_twin(default_input) or default_input
+    index = int(chosen['index'])
+    hostapi = chosen.get('hostapi')
+    note = ('"Default" input is %s%s (soundcard device index %d).'
+            % (chosen.get('name'), ' via %s' % hostapi if hostapi else '',
+               index))
+    return 'soundcard', index, note
+
+
 def build_capabilities() -> dict[str, Any]:
     """Build the ``capabilities`` payload advertised on ``hello``.
 
@@ -1394,7 +1469,8 @@ class BridgeServer:
         settings_json: dict returned verbatim from ``GET /config`` (the
             UI's launch document); ``{}`` when no ``--settings`` given.
         default_driver: ``device_driver`` injected into ``configure``
-            messages that omit one (from ``--driver``).
+            messages that omit one (from ``--driver``); ``'auto'``
+            resolves per :func:`resolve_default_device`.
         session_dir: directory :attr:`journal`'s spill file lives in
             and :func:`_adopt_previous_session` scans, or ``None`` for
             the system temp dir (``tempfile.gettempdir()``) — the real
@@ -1706,7 +1782,18 @@ class _Connection:
             return
 
         kwargs = dict(raw_settings)
-        kwargs.setdefault('device_driver', server.default_driver)
+        # No device named: record from what "Default" means on this
+        # server — the OS default input soundcard under ``--driver
+        # auto`` (the device the UI's Default row is labelled with),
+        # else the configured backend's own default. See
+        # `resolve_default_device` for the lab bug this closes.
+        default_note = None
+        if kwargs.get('device_driver') is None:
+            drv, default_index, default_note = resolve_default_device(
+                server.default_driver)
+            kwargs['device_driver'] = drv
+            if default_index is not None and kwargs.get('device_index') is None:
+                kwargs['device_index'] = default_index
         driver = kwargs['device_driver']
         # Guard driver availability with a clear message before MySettings
         # (which would otherwise probe hardware / raise late).
@@ -1763,7 +1850,7 @@ class _Connection:
         # not otherwise know — the index had to be re-pointed, the
         # monitor had to step up to a runnable rate, or the device clock
         # could not be put where it was asked to go.
-        notes = [n for n in (device_note, rate_note,
+        notes = [n for n in (default_note, device_note, rate_note,
                              getattr(rec, 'clock_note', None)) if n]
         if notes:
             payload['deviceNote'] = ' '.join(notes)
@@ -2286,10 +2373,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              '(default: the system temp dir). Mainly for '
                              'tests/e2e, to isolate a run\'s spill files '
                              'from a real serve session\'s.')
-    parser.add_argument('--driver', default='mock',
-                        choices=['mock', 'soundcard', 'nidaq'],
-                        help="default device_driver for configure messages "
-                             "that omit one (default: mock)")
+    parser.add_argument('--driver', default='auto',
+                        choices=['auto', 'mock', 'soundcard', 'nidaq'],
+                        help="device_driver for configure messages that omit "
+                             "one. 'auto' (default) records from the OS "
+                             "default input soundcard when there is one "
+                             "(the device the UI's Default row names) and "
+                             "from the mock signal generator otherwise; the "
+                             "other values force that backend's default.")
     parser.add_argument('--open', action='store_true',
                         help='open the served UI in a web browser on start')
     parser.add_argument('--list-devices', action='store_true',
