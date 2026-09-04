@@ -2817,9 +2817,14 @@ def setup_output_NI_nidaqmx(settings, output):
 
     # nidaqmx write: shape is (n_channels, n_samples) for multi-channel,
     # or 1D for single channel. `output` here is (N_output, n_channels).
-    data = np.asarray(output, dtype=np.float64).T
+    # The transpose of a C-order (N, channels) array is NOT C-contiguous,
+    # and nidaqmx's ctypes write refuses such a view outright
+    # ("array must have flags ['C_CONTIGUOUS']") — seen live the moment
+    # the resample above handed a fresh (N, 2) array to a 2-channel task
+    # (2026-09-04). Copy into C order explicitly.
+    data = np.ascontiguousarray(np.asarray(output, dtype=np.float64).T)
     if settings.output_channels == 1:
-        data = data[0]
+        data = np.ascontiguousarray(data[0])
     task.write(data, auto_start=False)
 
     return _NidaqmxTaskAdapter(task)
