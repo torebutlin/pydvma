@@ -103,7 +103,7 @@ def common_cause_test(y, fs, hf_hz=6000.0):
     Band-pass each channel above ``hf_hz`` — where neither a shaker
     drive nor a structural response has content, so what is left is
     noise — rectify, and cross-correlate the envelopes of channel pairs.
-    Returns ``(lag0, off_lag_max, floors_db, max_step_ratio)``:
+    Returns ``(lag0, off_lag_max, floors_db, max_step_ratio, hf_waveform_coherence)``:
 
     - ``lag0``: envelope correlation at zero lag (bad 2i2 captures on
       2026-09-04: 0.63 on every one, the raw-sounddevice controls
@@ -135,7 +135,14 @@ def common_cause_test(y, fs, hf_hz=6000.0):
     mid = len(a) - 1
     off = np.concatenate([xc[mid - 200:mid - 5], xc[mid + 6:mid + 201]])
     steps = np.max(np.abs(np.diff(y, axis=0)), axis=0) / (np.sqrt(np.mean(y ** 2, axis=0)) + 1e-12)
-    return float(xc[mid]), float(off.max()), floors, steps
+    # Applicability: the envelope test presumes the channels carry NO common
+    # signal above hf_hz. A known-source bench with the same signal on both
+    # inputs (ao0 == ao1) is coherent up there in WAVEFORM, which makes the
+    # envelopes correlate at every lag for an innocent reason. Report that
+    # waveform coherence so the caller can say 'not applicable'.
+    f_c, c_hf = signal.coherence(hp[:, 0], hp[:, 1], fs=fs, nperseg=4096)
+    hf_coh = float(np.mean(c_hf[f_c >= hf_hz]))
+    return float(xc[mid]), float(off.max()), floors, steps, hf_coh
 
 
 def report(td, index, ref, band):
@@ -173,7 +180,7 @@ def report(td, index, ref, band):
         else:
             print('   common-cause test: needs a capture at >= 20 kHz (this one is %g Hz)' % fs)
     else:
-        lag0, off, floors, steps = cc
+        lag0, off, floors, steps, hf_coh = cc
         # The corruption signature is a lag-0 PEAK: high at zero lag, near
         # zero at every other lag (2026-09-04 lab captures: 0.63 vs 0.01).
         # Two channels carrying the SAME signal above 6 kHz (a known-source
@@ -185,7 +192,10 @@ def report(td, index, ref, band):
         # test with ao0 == ao1 read 0.95 against 0.88 (ratio 1.08); the
         # one clean lab capture 0.19.
         ratio = lag0 / max(off, 0.02)
-        if lag0 > 0.4 and ratio > 1.5:
+        if hf_coh > 0.5:
+            verdict = ('NOT APPLICABLE: the channels carry the same signal above 6 kHz '
+                       '(waveform coherence %.2f) - a known-source bench, not a rig' % hf_coh)
+        elif lag0 > 0.4 and ratio > 1.5:
             verdict = ('SIMULTANEOUS on both channels -> frame-level corruption '
                        'in the interface digital path')
         elif lag0 > 0.4:

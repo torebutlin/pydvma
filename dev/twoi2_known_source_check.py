@@ -31,8 +31,20 @@ resolution (bits) from the value grid the host delivered.
 
 Usage (cDAQ ao0 -> 2i2 L, ao1 -> 2i2 R; 2i2 line inputs at a known gain)::
 
-    python dev/twoi2_known_source_check.py --T=60 --gain=15 --sc-device=5
+    python dev/twoi2_known_source_check.py --T=60 --gain=15
     python dev/twoi2_known_source_check.py --mode=delay --T=30
+    python dev/twoi2_known_source_check.py --sc-hostapi=WASAPI --wasapi-exclusive --skip-pydvma
+    python dev/twoi2_known_source_check.py --sc-hostapi=MME --skip-pydvma
+
+The 2i2 is resolved by NAME (``--sc-hostapi`` picks the backend:
+WDM-KS default, WASAPI, MME, DirectSound); a bare ``--sc-device`` index
+is accepted but PortAudio renumbers devices inside a pydvma-importing
+process, so prefer the name. Office-bench results, 2026-09-04, all
+clean (coherence 1.0000 every second, lag 0, residual >64 dB down):
+WDM-KS 24-bit; WASAPI exclusive, MME and DirectSound 16-bit. WASAPI
+SHARED — the path pydvma's recorder and the 3C6 lab used — could not
+be measured on this PC: the open blocks inside the driver (an RDP
+session with audio redirection off; see the round-14 doc).
 """
 import argparse
 import os
@@ -96,6 +108,9 @@ def resolve_input(token='4800_8219', prefer_api='WDM-KS'):
     return i
 
 
+WASAPI_EXCLUSIVE = False
+
+
 def capture_raw(device, fs, seconds, channels=2):
     if device is None:
         device = resolve_input()
@@ -108,8 +123,9 @@ def capture_raw(device, fs, seconds, channels=2):
             flags += 1
         chunks.append(indata.copy())
 
+    extra = sd.WasapiSettings(exclusive=True) if WASAPI_EXCLUSIVE else None
     with sd.InputStream(device=device, channels=channels, samplerate=fs, dtype='float32',
-                        blocksize=480, latency='high', callback=cb):
+                        blocksize=480, latency='high', callback=cb, extra_settings=extra):
         t0 = time.time()
         while sum(c.shape[0] for c in chunks) < n_target + 4800:
             time.sleep(0.05)
@@ -195,6 +211,8 @@ def main():
     ap.add_argument('--fs', type=float, default=48000.0, help='soundcard capture rate')
     ap.add_argument('--sc-device', type=int, default=None, help='sounddevice index; default: resolve the 2i2 by name (WDM-KS preferred)')
     ap.add_argument('--gain', type=float, default=15.0, help='2i2 preamp gain stated on the knobs, dB')
+    ap.add_argument('--sc-hostapi', default='WDM-KS', help="host API to prefer when resolving by name: 'WDM-KS', 'WASAPI', 'MME', 'DirectSound'")
+    ap.add_argument('--wasapi-exclusive', action='store_true', help='open the WASAPI input in exclusive mode (raw capture only)')
     ap.add_argument('--mode', choices=('identical', 'ratio', 'delay'), default='identical')
     ap.add_argument('--band', type=float, nargs=2, default=(3500.0, 5500.0),
                     help='floor band for the envelope test (must be clear of the 20-3000 Hz stimulus)')
@@ -217,8 +235,10 @@ def main():
     print('AO running: %s at %g Hz, %.2f Vpk, 20-3000 Hz brick-wall noise, 10 s regenerating'
           % (args.mode, fs_ao_actual, args.amp))
     time.sleep(1.0)
+    global WASAPI_EXCLUSIVE
+    WASAPI_EXCLUSIVE = bool(args.wasapi_exclusive)
     if args.sc_device is None:
-        args.sc_device = resolve_input()
+        args.sc_device = resolve_input(prefer_api=args.sc_hostapi)
     results = {}
     try:
         if not args.skip_raw:
@@ -233,9 +253,14 @@ def main():
             # By NAME, not index: pydvma's own probes re-initialise PortAudio,
             # which renumbers devices within the process; a name also lets
             # MySettings derive VmaxSC from the stated gain.
-            sc_name = sd.query_devices(args.sc_device)['name']
-            s = dvma.MySettings(device_driver='soundcard', device=sc_name, channels=2,
+            sc_dev = sd.query_devices(args.sc_device)
+            sc_api = sd.query_hostapis()[sc_dev['hostapi']]['name']
+            # index + host API + name: the identity pydvma re-resolves by name
+            # (PortAudio renumbers within a process), pinned to THIS backend.
+            s = dvma.MySettings(device_driver='soundcard', device_index=args.sc_device,
+                                device_name=sc_dev['name'], device_hostapi=sc_api, channels=2,
                                 fs=args.fs, stored_time=args.T, input_gain_db=args.gain)
+            print('   pydvma device: %d %r via %s' % (args.sc_device, sc_dev['name'], sc_api))
             print('   VmaxSC derived: %s V (full scale)' % getattr(s, 'VmaxSC', None))
             d = dvma.log_data(s, test_name='known-source-%s' % args.mode)
             td = d.time_data_list[0]
