@@ -55,6 +55,14 @@ intermittent single-channel TF error.
   own noise floor jumps, per-second coherence, inter-channel lag and
   exact-zero dropouts for any `.dvma` — the round-14 diagnostic that
   separates "the acquisition dropped data" from "one input is noisy".
+  Its common-cause verdict is calibrated on the lab files (lag-0 peak
+  ratio > 1.5) and says "not applicable" when the channels share
+  signal above 6 kHz.
+- `dev/twoi2_known_source_check.py`: known-source test of a 2-in
+  soundcard from the bench cDAQ (identical / ratio / delay stimuli,
+  any Windows host API, raw sounddevice and `log_data`), and
+  `dev/twoi2_loopback_check.py`: the round-14 loopback discriminator
+  (analogue inputs vs the 2i2's digital loopback pair in one stream).
 
 ### Investigated (no code change)
 

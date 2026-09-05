@@ -12,9 +12,19 @@ delay) in every second, L−R residual 66 dB down and Gaussian, zero
 dropouts/overflows, 24-bit, full scale 2.435 V measured vs 2.452 V
 profiled at 15 dB (`dev/twoi2_known_source_check.py`; addendum in the
 round-14 doc). That exonerates pydvma's chain, the 2i2 model/driver
-4.150 and WDM-KS; the lab's remaining discriminators are **its host
-API (the lab captured via WASAPI shared; this bench via WDM-KS — test
-the WDM-KS row first), its USB port/cable, and its unit**. Two bugs
+4.150 and — after Tore reconnected over RDP with audio redirection
+OFF, which exposes the physical endpoints — **every Windows host API:
+WASAPI shared (the lab's path, raw + pydvma), WASAPI exclusive, MME,
+DirectSound and WDM-KS are all clean** (round 14c in the round doc).
+The lab's remaining discriminators are **its USB port/cable/5 V and
+its unit** (same 2i2 on another PC / another 2i2 on the lab PC). NB
+the WASAPI shared open BLOCKED (unkillable) right after the endpoint
+re-enumeration until one WASAPI-exclusive open+close un-wedged it —
+the round-14 "no samples for ten minutes" from the other side; and
+the 2i2's loopback pair stayed silent under PC playback here (render
+endpoint / FC2 routing), so `dev/twoi2_loopback_check.py` is for the
+lab PC. Bit depth per backend: WDM-KS + WASAPI shared 24-bit; WASAPI
+exclusive / MME / DirectSound 16-bit. Two bugs
 fixed on the way: `setup_output_NI_nidaqmx` wrote a non-contiguous
 array (any 2-ch NI stimulus at a coerced rate failed — it SHIPPED in
 2.4.2, which Tore had already uploaded and installed in the lab, so

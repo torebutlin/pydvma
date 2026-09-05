@@ -376,3 +376,63 @@ Two bugs found on the way, both fixed and committed:
    cDAQ (or any generator into both inputs) — the numbers above are
    the reference.
 4. Same 2i2 on another PC / another 2i2 on the lab PC → unit vs host.
+
+### Round 14c — every Windows host API, same bench, same evening
+
+Tore reconnected over RDP with audio redirection OFF (Remote audio:
+"Play on remote computer", recording "Do not record"), which leaves
+the PC's physical endpoints in the session: the 2i2 then enumerates on
+MME and DirectSound (4 in, incl. the loopback pair), WASAPI (2 in) and
+WDM-KS. Known-source test (cDAQ ao0 == ao1 → inputs 1/2, 15 dB gain),
+60 s each, `dev/twoi2_known_source_check.py --sc-hostapi=…`:
+
+| backend | seconds with coherence < 0.99 | lag | residual below signal | dropouts / overflows | max step / rms | bits |
+|---|---|---|---|---|---|---|
+| **WASAPI shared** — the lab's path — raw AND `pydvma.log_data` | **0 / 60** (1.0000) | 0 | 65.7 dB | 0 / 0 | 1.2 | 24 |
+| WASAPI exclusive | 0 / 60 | 0 | 64.2 dB | 0 / 0 | — | 16 |
+| MME (48 k) | 0 / 60 | 0 | 62.2 dB | 0 / 0 | — | 16 |
+| DirectSound | 0 / 60 | 0 | 62.2 dB | 0 / 0 | — | 16 |
+| WDM-KS (14b) | 0 / 300 | 0 | 65.7 dB | 0 / 0 | 1.2 | 24 |
+| MME, 4-ch, with the loopback script's playback (`dev/twoi2_loopback_check.py --with-ao`) | analogue pair 0 / 60 | 0 | — | 0 | 1.1 | 16 |
+
+So on this PC + link + unit the 2i2 is clean through **every** host
+API, including the one the lab used, raw and through pydvma alike.
+The host API is no longer a candidate for the lab's corruption in
+itself; what remains is the lab PC's USB port/cable/5 V and the lab
+unit — item 6 of the checklist (the same 2i2 on another PC, or another
+2i2 on the lab PC) is now the decisive one. Bit depth is a real
+difference between backends, though: WDM-KS and WASAPI shared deliver
+24-bit here, WASAPI exclusive / MME / DirectSound 16-bit (PortAudio's
+format negotiation), which is why `--driver auto` prefers WDM-KS.
+
+Two things the evening also turned up:
+
+- **The WASAPI shared open blocked, then didn't.** Right after the
+  reconnect, every `sd.InputStream` on the 2i2's WASAPI endpoint in
+  shared mode blocked inside the driver — unkillable (TerminateProcess
+  could not end the child), any latency/blocksize/channel-count
+  variant — while WDM-KS streamed. A WASAPI **exclusive** open + close
+  (which streams) cleared it: from then on every shared-mode variant
+  opened in 0.4 s and streamed at 24-bit. This is the round-14 "no
+  samples to any new stream for ten minutes, un-wedged by an
+  exclusive open" seen from the other side, and it follows an
+  endpoint (re)enumeration. Worth remembering when the app's Default
+  device "hangs" on configure: pydvma's rate probe already opens the
+  WASAPI twin exclusively (`_windows_native_rates`), which may be why
+  the app rarely sees it. 44.1 kHz on WASAPI shared is refused
+  (-9997), never resampled.
+- **The loopback tap did not carry the PC's playback here**, whether
+  the noise went to the 2i2's `Speakers` endpoint via MME or WASAPI
+  shared: channels 3/4 of the 4-ch MME capture stayed at −100 dBFS.
+  Either the render endpoint is muted in this RDP session (no way to
+  read render volume remotely; `_win_audio` covers capture only) or
+  the loopback source needs routing in Focusrite Control 2. The script
+  is ready for the lab PC, where the playback can be heard: run
+  `dev/twoi2_loopback_check.py --T=60` with the rig or a generator on
+  the inputs, and read the three pair lines as its docstring says.
+
+Also fixed on the way: the checker's common-cause test now reports
+the >6 kHz WAVEFORM coherence and says "not applicable" when the two
+channels genuinely share signal up there (a known-source bench), and
+judges the lag-0 peak against its off-lag yardstick (ratio > 1.5: lab
+2.2–2.8 → flagged; clean lab 1.1 and every bench run 1.1 → not).
