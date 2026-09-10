@@ -347,6 +347,19 @@ separately), nor is an effectively silent record, where a 16-bit host
 legitimately delivers zeros. Dropouts of this kind point at the USB
 link: try another port or cable, without a hub.
 
+**Sound cards need a quiet computer.** A USB audio interface streams
+without retries and with a small driver buffer, so a computer that is
+short of memory and paging can lose packets (the zero-filled dropouts
+above) and garble samples on every channel at once — which shows up as
+transfer-function coherence collapsing on whichever channel is weaker,
+often only for stretches of a few seconds, and worst late in a long
+session as the logger's own memory grows. A DAQ over USB or PCI is
+immune (its driver retries and buffers seconds of data). If a sound
+card gives poor coherence that a DAQ on the same rig does not, close
+other applications, restart the kernel between batches, and check the
+computer has several gigabytes of free memory before suspecting the
+interface or the cables.
+
 `pretrig_threshold` is a magnitude in the units the recorder stores. On NI that is volts. On a soundcard it is volts **once `VmaxSC` is set**, and full-scale units while it is left at its default of 1.0 — so the default threshold of 0.05 means "5% of full scale" on an uncalibrated device but 50 mV on a calibrated one, which may sit close to the noise floor. Raise it to a sensible fraction of the signal you expect.
 
 ## Output Generation

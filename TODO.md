@@ -253,6 +253,26 @@ is still open, as one consolidated list.
 
 ## Backlog — hardware, acquisition & the next PC session
 
+- **Hardware lessons learnt** are consolidated in
+  `dev/hardware-lessons-learnt.md` (USB audio's host requirements vs a
+  DAQ's, the 2i2's Windows behaviours incl. the endpoint wedge, NI
+  coercion/overflow facts, and the acquisition-vs-rig diagnosis method).
+  Open from rounds 14d/15 (2026-09-10):
+  - Lab PC: re-measure the 2i2 after a reboot on a quiet machine
+    (`dev/channel_noise_check.py`, target the −83 dB floor / lag-0 ratio
+    ~1 seen once); unit swap only if still corrupt; free C:, disable NI
+    Device Monitor 17, McAfee exclusion, more RAM.
+  - Route the 2i2 loopback source in Focusrite Control 2 and run
+    `dev/twoi2_loopback_check.py` (converter vs link discriminator).
+  - Verify a USB NI device (6003/6212/cDAQ) under the same host load —
+    expected immune (bulk transfers + 10 s DAQmx buffer).
+  - Live-verify on the PCI-6220: an impulse test now reports
+    "triggered" within a poll tick (two-phase NI trigger), and an
+    across-sets TF over the 6 s taps averages (rate-jitter tolerant).
+  - Round-15 web-UI changes were written on the lab PC without node —
+    `npm run check`, vitest and the Playwright Clean Impulse spec on
+    the Mac before release (`dev/2026-09-10-round15-lab-feedback.md`).
+
 - **Round-12 lab re-verification (2i2 coherence/zeros fixes,
   2026-08-20)** — on the lab PC with the real rig: repeat the
   morning's failing cases (fs=3000 and fs=48000, 2 s / 10 s / 30 s

@@ -2,6 +2,12 @@
 
 ## Current focus (update when it changes)
 
+**Hardware lessons learnt (USB audio host requirements, 2i2 Windows
+behaviours, NI facts, the acquisition-vs-rig diagnosis method) are
+consolidated in `dev/hardware-lessons-learnt.md` — read it before any
+sound-card or lab-PC work; TODO.md's hardware section lists what is
+still open.**
+
 As of 2026-09-10, late afternoon (still ON the 3C6 lab PC, which has NO
 node — every web-UI change below is written blind and must go through
 `npm run check` + vitest + the Playwright Clean-Impulse spec on the

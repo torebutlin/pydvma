@@ -263,6 +263,16 @@ XLR-female→TS adapter, <£15, no fabrication.
 
 ## Conclusions (current as of 2026-08-12)
 
+> **2026-09-10 addendum.** The audio-interface option carries a HOST
+> requirement the DAQ options do not: USB audio class streams
+> isochronously with no retry, and a PC under memory pressure (paging)
+> loses packets and garbles frames — measured on the 3C6 lab PC, where
+> a Scarlett 2i2 corrupted on every USB port while a PCI-6220 was clean
+> at 50 kHz. A sound-card front end therefore needs a quiet, RAM-rich
+> host or a dedicated measurement PC; see
+> `dev/hardware-lessons-learnt.md` §1 before recommending one for a
+> teaching lab.
+
 - **3C6-scale (2-in/2-out stations):** the owned ESI U24 XL is
   **characterised and landed in pydvma** (2026-08-11 bench: +4.7 dBu
   fixed FS to 0.07 dB, native 8k–48k with tracking anti-alias, digital
