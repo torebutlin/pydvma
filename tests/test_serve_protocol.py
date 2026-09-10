@@ -2433,3 +2433,123 @@ def test_log_with_silent_dropouts_sends_integrity_error(monkeypatch):
         run_async(scenario)
     finally:
         serve_mod.acquisition.LAST_CAPTURE_DROPOUTS = (0, 0.0)
+
+
+# ---- monitor: ship what the recorder DELIVERED, not a wall-clock guess ----
+#
+# 3C6 lab, 2026-09-10: a 2i2 whose USB link stalled and burst made the
+# app's scope show its right half frozen while the left half scrolled —
+# the bridge estimated the new-sample count from elapsed time and
+# re-shipped the same newest stretch tick after tick. Hardware recorders
+# now count the frames they write into the scope ring; the monitor ships
+# exactly that, and says so when nothing arrives for MONITOR_STALL_S.
+
+import types as _types
+
+
+class _CountingRecorder:
+    """A stand-in with the hardware recorders' `osc_samples_seen` count,
+    whose window the test fills with a sample index so every shipped
+    frame can be checked for exact tiling."""
+
+    def __init__(self, fs=8000.0, n=4000, channels=2):
+        self.settings = _types.SimpleNamespace(fs=fs)
+        self._win = np.zeros((n, channels), dtype=float)
+        self.osc_samples_seen = 0
+
+    @property
+    def osc_time_data(self):
+        return self._win.copy()
+
+    def deliver(self, k):
+        idx = np.arange(self.osc_samples_seen, self.osc_samples_seen + k, dtype=float)
+        self._win = np.roll(self._win, -k, axis=0)
+        self._win[-k:, :] = idx[:, None]
+        self.osc_samples_seen += k
+
+    def end_stream(self):
+        pass
+
+
+async def _monitor_on_counting_recorder(ws, rec):
+    await _send(ws, type='configure', settings={
+        'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+        'num_chunks': 4, 'viewed_time': None,
+    })
+    await _recv_json(ws)                      # configured (mock)
+    streams.REC = rec                         # the loop reads streams.REC each tick
+    await _send(ws, type='start_monitor')
+    await _recv_json(ws)                      # monitoring
+
+
+def test_monitor_ships_exactly_the_samples_a_counting_recorder_delivered():
+    async def scenario():
+        _server, task, port = await _start_server()
+        saved = streams.REC
+        try:
+            async with connect(_ws_url(port)) as ws:
+                rec = _CountingRecorder()
+                await _monitor_on_counting_recorder(ws, rec)
+                await asyncio.sleep(0.2)          # bound, nothing delivered: silence
+                rec.deliver(700)
+                frame = await _recv_binary(ws, timeout=2.0)
+                hdr = serve_mod.decode_header(frame)
+                assert hdr['nSamples'] == 700
+                payload = np.frombuffer(frame[serve_mod.HEADER_SIZE:], dtype='<f4').reshape(700, 2)
+                np.testing.assert_array_equal(payload[:, 0], np.arange(700))
+                rec.deliver(300)
+                rec.deliver(500)
+                got, first = 0, None
+                while got < 800:
+                    frame = await _recv_binary(ws, timeout=2.0)
+                    n = serve_mod.decode_header(frame)['nSamples']
+                    payload = np.frombuffer(frame[serve_mod.HEADER_SIZE:], dtype='<f4').reshape(n, 2)
+                    if first is None:
+                        first = payload[0, 0]
+                    got += n
+                assert got == 800 and first == 700      # tiles on exactly, no re-shipped tail
+                with pytest.raises(TimeoutError):        # nothing delivered → nothing shipped
+                    await _recv_binary(ws, timeout=0.3)
+                await _send(ws, type='stop_monitor')
+        finally:
+            streams.REC = saved
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_monitor_reports_a_stalled_counting_recorder_once(monkeypatch):
+    monkeypatch.setattr(serve_mod, 'MONITOR_STALL_S', 0.25)
+
+    async def scenario():
+        _server, task, port = await _start_server()
+        saved = streams.REC
+        try:
+            async with connect(_ws_url(port)) as ws:
+                rec = _CountingRecorder()
+                await _monitor_on_counting_recorder(ws, rec)
+                rec.deliver(100)
+                assert serve_mod.decode_header(await _recv_binary(ws, timeout=2.0))['nSamples'] == 100
+                msg = await _recv_json(ws, timeout=3.0)
+                assert msg['type'] == 'error'
+                assert 'stalled' in msg['message'] and 'no samples' in msg['message']
+                with pytest.raises(TimeoutError):        # said once per stall
+                    await _recv_json(ws, timeout=0.6)
+                rec.deliver(50)                           # flow resumes: frames again
+                assert serve_mod.decode_header(await _recv_binary(ws, timeout=2.0))['nSamples'] == 50
+                await _send(ws, type='stop_monitor')
+        finally:
+            streams.REC = saved
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_osc_snapshot_reads_count_and_window_consistently():
+    rec = _CountingRecorder()
+    rec.deliver(40)
+    osc, seen = serve_mod._osc_snapshot(rec)
+    assert seen == 40 and osc.dtype == np.dtype('<f4') and osc.shape == (4000, 2)
+    np.testing.assert_array_equal(osc[-40:, 0], np.arange(40))
+    mock = streams.MockRecorder(dvma.MySettings(device_driver='mock', channels=2, fs=8000,
+                                                chunk_size=100, num_chunks=4, stored_time=0.1))
+    osc, seen = serve_mod._osc_snapshot(mock)
+    assert seen is None and osc.shape[0] == mock.osc_time_data.shape[0]

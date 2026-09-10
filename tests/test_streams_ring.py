@@ -486,3 +486,26 @@ class TestStreamReuse:
         first.audio_stream.active = False
         streams.start_stream(_settings())
         assert streams.REC_SC is not first
+
+
+# ---------------------------------------------------------------------------
+# Delivered-frame count for the serve monitor (2026-09-10)
+# ---------------------------------------------------------------------------
+
+def test_osc_samples_seen_counts_every_delivered_chunk():
+    """`osc_samples_seen` is the monotonic count of frames the callback
+    wrote into the scope ring — priming zeros included, since the scope
+    ring is never filtered — and survives the armed path's buffer
+    re-``__init__`` like the overflow counter. The serve monitor ships
+    exactly what this advanced by, instead of a wall-clock guess."""
+    s = _settings()
+    rec = streams.Recorder(s)
+    assert rec.osc_samples_seen == 0
+    rec.callback(_chunk(s, 0.0), s.chunk_size, None, None)
+    rec.callback(_ramp_chunk(s, 0), s.chunk_size, None, None)
+    rec.callback(_ramp_chunk(s, s.chunk_size), s.chunk_size, None, None)
+    assert rec.osc_samples_seen == 3 * s.chunk_size
+    rec.__init__(s)
+    assert rec.osc_samples_seen == 3 * s.chunk_size
+    rec.callback(_ramp_chunk(s, 0), s.chunk_size, None, None)
+    assert rec.osc_samples_seen == 4 * s.chunk_size

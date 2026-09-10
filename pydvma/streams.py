@@ -1263,6 +1263,17 @@ class Recorder(object):
         #: Same for ``output_underflow`` on the duplex stream's output
         #: side (a stutter in the stimulus playback).
         self.output_underflows = getattr(self, 'output_underflows', 0)
+        #: Frames written into the oscilloscope ring since the stream
+        #: opened — a monotonic count of what the device has actually
+        #: delivered, priming zeros included (the scope ring is never
+        #: filtered). `pydvma.serve`'s monitor ships exactly the samples
+        #: this advanced by since its last tick, instead of guessing from
+        #: wall-clock time: a device that delivers late, in bursts or
+        #: not at all (a stalled USB link) then shows as a scope that
+        #: pauses, rather than one whose newest stretch is re-shipped
+        #: and looks frozen while the rest scrolls (3C6 lab, 2026-09-10).
+        #: Carried across a re-``__init__`` like the counters above.
+        self.osc_samples_seen = getattr(self, 'osc_samples_seen', 0)
         # Startup-priming filter state (see `callback`). Armed by
         # `init_stream` at stream OPEN — priming only happens there —
         # and carried across the armed path's buffer re-__init__ like
@@ -1391,6 +1402,10 @@ class Recorder(object):
         frozen = armed and self.capture_complete
         self._osc_pos = self._ring_write(self._osc_ring, self._osc_pos,
                                          self.osc_data_chunk)
+        # Counted AFTER the write lands, so a reader that sees the count
+        # can rely on the ring holding those frames (see
+        # `serve._osc_snapshot`).
+        self.osc_samples_seen += self.osc_data_chunk.shape[0]
         # Startup-priming filter: some hosts (measured: WDM-KS on
         # Windows, both 'low' and 'high' latency) deliver a burst of
         # EXACT-zero chunks while a freshly opened stream primes,
@@ -2090,6 +2105,10 @@ class Recorder_NI_nidaqmx(object):
         n_osc = settings.num_chunks * settings.chunk_size
         self._osc_ring = np.zeros(shape=(n_osc, settings.channels))
         self._osc_pos = 0
+        #: Frames delivered into the scope ring since the task started —
+        #: the NI twin of `Recorder.osc_samples_seen`, read by the serve
+        #: monitor; carried across a buffer re-allocation.
+        self.osc_samples_seen = getattr(self, 'osc_samples_seen', 0)
         self.osc_time_data_windowed = np.zeros(shape=(n_osc, settings.channels))
         self.osc_freq_data = np.abs(np.fft.rfft(self._osc_ring, axis=0))
 
@@ -2236,6 +2255,9 @@ class Recorder_NI_nidaqmx(object):
         # shifts (see the note in `_alloc_buffers`).
         self._osc_pos = Recorder._ring_write(self._osc_ring, self._osc_pos,
                                              self.osc_data_chunk)
+        # Monotonic delivered-frame count for the serve monitor — the NI
+        # twin of `Recorder.osc_samples_seen`; counted after the write.
+        self.osc_samples_seen += self.osc_data_chunk.shape[0]
         if (not self.trigger_detected) or (self.settings.pretrig_samples is None):
             self._stored_pos = Recorder._ring_write(
                 self._stored_ring, self._stored_pos, self.osc_data_chunk)

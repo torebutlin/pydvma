@@ -418,3 +418,18 @@ def test_wait_for_buffer_fill_honours_ni_chunk_count(monkeypatch):
     acquisition.MESSAGE = ''
     acquisition._wait_for_buffer_fill(short, short.settings, number_samples)
     assert 'fewer samples' in acquisition.MESSAGE
+
+
+def test_osc_samples_seen_counts_delivered_chunks():
+    """The NI twin of `Recorder.osc_samples_seen`: advanced by every
+    chunk `_process_chunk` writes into the scope ring, kept across a
+    buffer re-allocation, read by the serve monitor."""
+    rec = _bare_recorder([])
+    assert rec.osc_samples_seen == 0
+    for k in range(3):
+        rec._process_chunk(_chunk(k).T)
+    assert rec.osc_samples_seen == 3 * CHUNK
+    rec._alloc_buffers()
+    assert rec.osc_samples_seen == 3 * CHUNK
+    rec._process_chunk(_chunk(4).T)
+    assert rec.osc_samples_seen == 4 * CHUNK

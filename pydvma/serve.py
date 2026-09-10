@@ -207,20 +207,33 @@ pydvma's recorders (`streams.Recorder`, `streams.Recorder_NI_nidaqmx`,
 hardware callback appends the new chunk at the tail (a circular buffer
 on the soundcard recorder, unrolled to time order on read; a literal
 left-shift on the others), so the *newest* samples are always at the
-end and old samples scroll off the front.  There is no monotonic sample counter to
-read, and we must not edit the recorder.  So the bridge derives the
-new-sample count from elapsed wall-clock time (:class:`_MonitorCursor`):
-``n_new = round(fs · Δt)``, and ships ``osc_time_data[-n_new:]`` — the
-freshly-scrolled tail.  Because the buffer physically scrolled by ≈
-``fs·Δt`` samples between ticks, that tail does not overlap the previous
-tick's tail.  This matches decision #3 (lossy latest-state, ~30 Hz):
-tiny clock/scheduling jitter can drop or duplicate a sample at the
-boundary, which is invisible on an oscilloscope.
+end and old samples scroll off the front.  The hardware recorders also
+keep a monotonic count of the frames they have written into that
+window (``osc_samples_seen`` on `streams.Recorder` and
+`streams.Recorder_NI_nidaqmx`), and the bridge ships exactly the
+samples that count advanced by since its last tick:
+``osc_time_data[-n_new:]`` with ``n_new = seen − seen_last`` — the
+freshly-delivered tail, read consistently with the count by
+:func:`_osc_snapshot`.  A device that delivers late, in bursts or not
+at all then shows as a scope that pauses and catches up, which is the
+truth.  Until 2026-09-10 the count was estimated from wall-clock time
+instead (``n_new = round(fs · Δt)``); with a 2i2 whose USB link
+stalled and burst, that re-shipped the same newest stretch tick after
+tick, and the browser's scope showed its right half frozen while the
+left half scrolled and wobbled (3C6 lab).  The wall-clock estimate
+survives as :class:`_MonitorCursor`, the fallback for a recorder
+without the counter (`streams.MockRecorder`, whose window is static).
 
-**Overrun / drop-oldest.**  If a tick is delayed so long that
-``fs·Δt`` exceeds the whole window (``buffer_len``), the older samples
-have already scrolled off and are unrecoverable — the cursor caps
-``n_new`` at ``buffer_len`` and ships only the newest window's worth,
+**Stalls.**  When a counting recorder delivers nothing for
+:data:`MONITOR_STALL_S`, the bridge sends one ``error`` frame saying so
+(it pins as a toast in the app) — a frozen scope with no explanation
+is exactly what the operator must not be left with — and says nothing
+more until samples flow again.
+
+**Overrun / drop-oldest.**  If a tick is delayed so long that the
+new-sample count exceeds the whole window (``buffer_len``), the older
+samples have already scrolled off and are unrecoverable — the count is
+capped at ``buffer_len`` and only the newest window's worth is shipped,
 silently dropping the oldest missed samples (the same drop-oldest
 semantics as the ring buffer itself).
 
@@ -299,6 +312,13 @@ DEFAULT_PORT = 8760
 DEFAULT_HOST = '127.0.0.1'
 #: Monitor feed cadence (frames/second).  Decision #3: ~30 Hz.
 MONITOR_HZ = 30.0
+
+#: Seconds a counting recorder may deliver nothing before the monitor
+#: tells the client the stream has stalled (one ``error`` frame per
+#: stall). Two seconds is far beyond any host's callback jitter and
+#: short enough that a wedged USB interface is reported while the
+#: operator is still looking at the scope.
+MONITOR_STALL_S = 2.0
 #: Poll cadence (Hz) for the pretrigger ``trigger_detected`` flag while a
 #: pretriggered ``log`` capture blocks in the executor thread.
 PRETRIG_POLL_HZ = 10.0
@@ -501,14 +521,41 @@ def decode_header(frame: bytes) -> dict[str, Any]:
 
 # ---- incremental monitor cursor ----
 
-class _MonitorCursor:
-    """Tracks the oscilloscope feed so only *new* samples are shipped.
+def _osc_snapshot(rec) -> tuple[np.ndarray, int | None]:
+    """``(window, samples_seen)`` from a recorder, read consistently.
 
-    The recorder's ``osc_time_data`` is a sliding window with no sample
-    counter, so we estimate how many samples scrolled in since the last
-    tick from elapsed wall-clock time: ``n_new = round(fs · Δt)``.  See
-    the module docstring's "Incremental monitor scheme" for the full
-    rationale and the drop-oldest overrun rule.
+    Returns the recorder's ``osc_time_data`` as a contiguous ``<f4``
+    array and its ``osc_samples_seen`` count, or ``None`` for a recorder
+    without one (the mock).  The hardware callback writes the ring and
+    then advances the count on another thread, so the count is read
+    before and after the copy and the copy retried while it moved; a
+    count that held still brackets a window holding at least that many
+    delivered frames.  If it keeps moving (a very busy callback), the
+    last pair is returned — at worst one chunk mis-tiled at a frame
+    boundary, the tolerance the monitor has always accepted.
+    """
+    seen = getattr(rec, 'osc_samples_seen', None)
+    if seen is None:
+        return np.ascontiguousarray(rec.osc_time_data, dtype='<f4'), None
+    before = int(seen)
+    for _ in range(4):
+        osc = np.ascontiguousarray(rec.osc_time_data, dtype='<f4')
+        after = int(rec.osc_samples_seen)
+        if after == before:
+            return osc, after
+        before = after
+    return osc, after
+
+
+class _MonitorCursor:
+    """Wall-clock fallback for shipping only *new* oscilloscope samples.
+
+    Used for a recorder with no ``osc_samples_seen`` count (the mock,
+    whose window is static): the samples that scrolled in since the
+    last tick are estimated from elapsed wall-clock time, ``n_new =
+    round(fs · Δt)``.  Hardware recorders count what they deliver and
+    the monitor ships exactly that instead — see the module docstring's
+    "Incremental monitor scheme" and the drop-oldest overrun rule.
 
     Bind one cursor to a given ``(fs, buffer_len)``; recreate it if
     either changes (e.g. after a reconfigure mid-monitor).
@@ -1977,13 +2024,16 @@ class _Connection:
         loop = asyncio.get_running_loop()
         tick = 1.0 / MONITOR_HZ
         cursor: _MonitorCursor | None = None
+        seen_last: int | None = None      # counting recorders (hardware)
+        quiet_since: float | None = None  # when new samples last stopped
+        stall_reported = False
         try:
             while not self._monitor_stop.is_set():
                 rec = streams.REC
                 if rec is None:
                     await asyncio.sleep(tick)
                     continue
-                osc = np.ascontiguousarray(rec.osc_time_data, dtype='<f4')
+                osc, seen = _osc_snapshot(rec)
                 buffer_len = osc.shape[0]
                 n_channels = osc.shape[1] if osc.ndim == 2 else 1
                 fs = float(rec.settings.fs)
@@ -1991,16 +2041,45 @@ class _Connection:
 
                 if (cursor is None or cursor.fs != fs
                         or cursor.buffer_len != buffer_len):
+                    # (Re)bind to this recorder geometry: the wall-clock
+                    # cursor for the mock, the delivered count for the
+                    # rest. A reconfigure mid-monitor lands here too.
                     cursor = _MonitorCursor(fs, buffer_len)
                     cursor.start(now)
+                    seen_last = seen
+                    quiet_since = None
+                    stall_reported = False
                     await asyncio.sleep(tick)
                     continue
 
-                n_new, _overrun = cursor.take(now)
+                if seen is not None and seen_last is not None:
+                    n_new = min(max(int(seen - seen_last), 0), buffer_len)
+                    seen_last = seen
+                elif seen is not None:
+                    seen_last = seen
+                    n_new = 0
+                else:
+                    n_new, _overrun = cursor.take(now)
                 if n_new > 0:
                     payload = osc[buffer_len - n_new:, :]
                     frame = encode_chunk(self.stream_id, self._next_seq(), payload, fs)
                     await self.ws.send(frame)
+                    quiet_since = None
+                    stall_reported = False
+                elif seen is not None:
+                    # Nothing delivered since the last tick. A pause
+                    # under MONITOR_STALL_S is host jitter; beyond it
+                    # the stream has stalled — say so, once per stall.
+                    if quiet_since is None:
+                        quiet_since = now
+                    elif not stall_reported and now - quiet_since >= MONITOR_STALL_S:
+                        stall_reported = True
+                        await self._send_error(
+                            'monitor: the device has delivered no samples for '
+                            '%.0f s — the stream has stalled, so the scope is '
+                            'paused rather than scrolling. Reconfigure, or '
+                            'check the interface\'s USB connection.'
+                            % (now - quiet_since))
                 await asyncio.sleep(tick)
         except asyncio.CancelledError:
             raise
