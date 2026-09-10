@@ -1537,3 +1537,68 @@ class TestResampleToFs:
             self._tone(700.0, seconds=1.0, fs=fs_src), fs_src, 8000.0)
         assert max(up, down) <= 1024
         assert fs_out == pytest.approx(8000.0, rel=1e-5)
+
+
+# ---------- calculate_tf_averaged: ensemble compatibility (round 15) ----------
+
+class TestCalculateTfAveragedEnsembleGuards:
+    """3C6 lab, 2026-09-10: a PCI-6220 coerced a 3 kHz request to 3000.3 Hz
+    or 2999.88 Hz depending on the low-pass setting, so an ensemble of 6 s
+    impulse taps came in at 18000 and 18002 samples and the averaging died
+    on a cross-spectrum shape mismatch; the app's "across sets" ensemble
+    had swept a single-channel set in as well. Records are now truncated
+    to the shortest, rates must agree to 0.1 %, and channel counts must
+    match — the last two refused by name."""
+
+    def _record(self, n, fs, name, channels=2, seed=0):
+        rng = np.random.default_rng(seed)
+        x = rng.standard_normal(n)
+        cols = [x] + [np.roll(x, 3 + k) for k in range(channels - 1)]
+        td = _make_time_data(np.column_stack(cols), fs)
+        td.test_name = name
+        return td
+
+    def test_records_are_truncated_to_the_shortest(self):
+        tdl = datastructure.TimeDataList([
+            self._record(4096, 1000, 'a', seed=1),
+            self._record(4098, 1000, 'b', seed=2),
+            self._record(4100, 1000, 'c', seed=3),
+        ])
+        tf = analysis.calculate_tf_averaged(tdl, ch_in=0)
+        assert len(tf.freq_axis) == 4096 // 2 + 1
+        # Identical to averaging records cut to 4096 samples up front.
+        cut = datastructure.TimeDataList([
+            _make_time_data(td.time_data[:4096], 1000) for td in tdl])
+        ref = analysis.calculate_tf_averaged(cut, ch_in=0)
+        np.testing.assert_allclose(tf.tf_data, ref.tf_data, rtol=1e-12, atol=1e-14)
+        np.testing.assert_allclose(tf.tf_coherence, ref.tf_coherence, rtol=1e-12, atol=1e-14)
+        assert tf.source_settings['n_samples'] == 4096
+        # The originals are untouched.
+        assert tdl[2].time_data.shape[0] == 4100
+
+    def test_channel_count_mismatch_is_refused_by_name(self):
+        tdl = datastructure.TimeDataList([
+            self._record(4096, 1000, 'two-ch', channels=2),
+            self._record(4096, 1000, 'one-ch', channels=1),
+        ])
+        with pytest.raises(ValueError, match="one-ch"):
+            analysis.calculate_tf_averaged(tdl, ch_in=0)
+
+    def test_sample_rate_mismatch_is_refused_beyond_tolerance(self):
+        tdl = datastructure.TimeDataList([
+            self._record(4096, 1000, 'at-1000'),
+            self._record(4096, 1010, 'at-1010'),
+        ])
+        with pytest.raises(ValueError, match="at-1010"):
+            analysis.calculate_tf_averaged(tdl, ch_in=0)
+
+    def test_coerced_rate_jitter_is_within_tolerance(self):
+        """3000.3 vs 2999.88 Hz (0.014 %) — the PCI-6220's two answers to
+        one nominal 3 kHz request — average without complaint."""
+        tdl = datastructure.TimeDataList([
+            self._record(18002, 3000.3, 'lpf-off'),
+            self._record(18000, 2999.88, 'lpf-on'),
+        ])
+        tf = analysis.calculate_tf_averaged(tdl, ch_in=0)
+        assert len(tf.freq_axis) == 18000 // 2 + 1
+        assert np.all(np.isfinite(tf.tf_coherence))

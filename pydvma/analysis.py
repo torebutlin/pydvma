@@ -581,21 +581,57 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
 
     if time_data_list.__class__.__name__ != 'TimeDataList':
         raise Exception('Input argument must be <TimeDataList> object.')
+    if len(time_data_list) == 0:
+        raise ValueError('calculate_tf_averaged needs at least one TimeData.')
 
+    # ---- ensemble compatibility --------------------------------------
+    # Cross-spectra are averaged bin by bin, so every record has to
+    # produce the same bins: the same channel count, the same sample
+    # rate, and the same length. Channels and rate are the operator's
+    # to fix and are refused by name; length is not — repeated taps
+    # logged at a coerced rate come back a few samples apart (a
+    # PCI-6220 answered a 3 kHz request with 3000.3 Hz or 2999.88 Hz
+    # depending on the low-pass setting: 18002 vs 18000 samples for
+    # 6 s, 3C6 lab 2026-09-10), so records are truncated to the
+    # shortest. The rate tolerance is loose enough for that coercion
+    # (0.014 %) and tight enough that a 44.1 k / 48 k mix is refused.
+    ref = time_data_list[0]
+    n_channels = ref.time_data.shape[1]
+    fs_ref = float(ref.settings.fs)
+    bad_channels = [str(getattr(td, 'test_name', '?')) for td in time_data_list
+                    if td.time_data.shape[1] != n_channels]
+    if bad_channels:
+        raise ValueError(
+            'calculate_tf_averaged: every record must have the same number '
+            'of channels (%d, from %r); different: %s'
+            % (n_channels, getattr(ref, 'test_name', '?'), ', '.join(repr(n) for n in bad_channels)))
+    bad_rates = ['%r (%g Hz)' % (getattr(td, 'test_name', '?'), float(td.settings.fs))
+                 for td in time_data_list
+                 if abs(float(td.settings.fs) - fs_ref) > TF_ENSEMBLE_FS_TOLERANCE * fs_ref]
+    if bad_rates:
+        raise ValueError(
+            'calculate_tf_averaged: every record must share the sample rate '
+            'to within %g %% (%g Hz, from %r); different: %s'
+            % (100 * TF_ENSEMBLE_FS_TOLERANCE, fs_ref, getattr(ref, 'test_name', '?'),
+               ', '.join(bad_rates)))
+    n_samples = min(td.time_data.shape[0] for td in time_data_list)
 
     id_link_list = []
     for td in time_data_list:
         id_link_list += [td.unique_id]
-        
+
     N_ensemble = len(time_data_list)
     Pxy_av = 0
+    f = None
     count = -1
     for td in time_data_list:
         count += 1
+        td = _truncated_time_data(td, n_samples)
         ch_all = np.arange(len(td.time_data[0,:]))
         ch_out_set = np.setxor1d(ch_all,ch_in)
         cross_spec_data = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
-        f = cross_spec_data.freq_axis
+        if f is None:
+            f = cross_spec_data.freq_axis
         Pxy = cross_spec_data.Pxy
         Pxy_av += Pxy / N_ensemble
     
@@ -635,9 +671,33 @@ def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None)
         'time_range': _range_to_list(time_range),
         'ch_in': int(ch_in),
         'N_ensemble': int(N_ensemble),
+        # every record was truncated to this many samples before use
+        'n_samples': int(n_samples),
     })
 
     return tfdata
+
+
+#: Relative sample-rate mismatch `calculate_tf_averaged` tolerates
+#: between the records of one ensemble (0.1 %). Wide enough for a
+#: DAQ's clock coercion of one nominal rate to differ between captures
+#: (a PCI-6220: 3000.3 vs 2999.88 Hz, 0.014 %), narrow enough that
+#: records logged at genuinely different rates are refused rather than
+#: averaged bin by bin against the wrong frequency axis.
+TF_ENSEMBLE_FS_TOLERANCE = 1e-3
+
+
+def _truncated_time_data(td, n_samples):
+    '''``td`` cut to its first ``n_samples`` samples, or ``td`` itself
+    when it is already that long. A shallow copy carrying trimmed
+    ``time_data`` / ``time_axis`` views — settings, ids and calibration
+    are shared with the original, which is not modified.'''
+    if td.time_data.shape[0] <= n_samples:
+        return td
+    trimmed = copy.copy(td)
+    trimmed.time_data = td.time_data[:n_samples]
+    trimmed.time_axis = td.time_axis[:n_samples]
+    return trimmed
 
 
 #%% BEST LINEAR APPROXIMATION
