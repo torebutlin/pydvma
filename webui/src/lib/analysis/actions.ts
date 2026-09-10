@@ -45,6 +45,7 @@
 import { writable, derived as svelteDerived, get } from 'svelte/store';
 import type { DataKind, DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 import { itemChannels, setItemMeta } from '../model/dataset';
+import { impulseTailFraction } from './impulse';
 import type { NpyArray } from '../codec/npy';
 import { signatureOfSamples } from '../codec/signature';
 import type { EngineStore } from '../stores/engine';
@@ -1712,10 +1713,22 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // 'across' is an ensemble over ALL sets; the target set names the
         // chIn/window to use. The averaged curve attaches to the FIRST set,
         // so that set must have an output channel too.
-        const members = working.filter((ws) => hasTimeData(ws.time));
+        // Round 15 (3C6 lab, 2026-09-10): the ensemble is the COMPATIBLE
+        // working sets — those with an output channel and the target's
+        // sample rate (to 0.1 %, the tolerance `analysis.calculate_tf_averaged`
+        // applies; record LENGTHS it truncates itself). A 30 s single-
+        // channel set logged alongside five 6 s impulse taps used to be
+        // swept in as `first` and refuse the whole ensemble, leaving the
+        // stale per-set lines (single frame, coherence ≡ 1) on screen.
+        const timed = working.filter((ws) => hasTimeData(ws.time));
+        const fsRef = acrossSet.fs;
+        const compatible = (ws: WorkingSet) =>
+          ws.nChannels >= 2 && Math.abs(ws.fs - fsRef) <= 1e-3 * fsRef;
+        const members = timed.filter(compatible);
+        const leftOut = timed.filter((ws) => !compatible(ws));
         const first = members[0];
-        if (!first || first.nChannels < 2) {
-          throw new Error(tfNoOutputMessage(first ? [nameOf(first.setId)] : []));
+        if (!first) {
+          throw new Error(tfNoOutputMessage(timed.map((ws) => nameOf(ws.setId))));
         }
         const { chIn, window } = tfSettings(acrossSet.setId);
         const ensemble = members.map(ws => {
@@ -1738,6 +1751,17 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // staleness flag. Deferred — see `materializeDerived`'s doc.
         maybeRestoreModalRecon([first.setId]);          // deferred modal recon
         if (added) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
+        // The ensemble is drawn; now say which sets it could not include
+        // (routes to `computeErrors.tf` via `guarded`, like the per-set
+        // single-channel note below).
+        if (leftOut.length > 0) {
+          throw new Error(tfEnsembleLeftOutMessage(
+            members.length,
+            leftOut.map((ws) => ws.nChannels < 2
+              ? `${nameOf(ws.setId)} (one channel)`
+              : `${nameOf(ws.setId)} (${ws.fs} Hz, ensemble at ${fsRef} Hz)`),
+          ));
+        }
         return;
       }
       // Per-set: run only the sets that HAVE an output channel; collect the
@@ -3570,6 +3594,19 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       setId: w.setId, fs: w.fs, durationS: w.durationS, nChannels: w.nChannels,
       hasTime: hasTimeData(w.time),
     })),
+    /**
+     * Fraction of channel `ch`'s energy in the second half of set
+     * `setId`'s record (round-15 item 4; see `lib/analysis/impulse.ts`),
+     * or `null` for an unknown / time-less set or a silent channel. The
+     * Time card gates its Clean Impulse button on this: cleaning is only
+     * offered where the input channel looks like an impulse. Reads the
+     * source arrays in place (no copy).
+     */
+    impulseEnergyTail: (setId: number, ch: number): number | null => {
+      const ws = working.find((w) => w.setId === setId);
+      if (!ws || !hasTimeData(ws.time)) return null;
+      return impulseTailFraction(ws.time.arrays.time_data.data, itemChannels(ws.time), ch);
+    },
   };
 }
 
@@ -3610,6 +3647,16 @@ function tfNoOutputMessage(names: string[]): string {
   if (names.length === 0) return `${base}.`;
   if (names.length === 1) return `${base} — set “${names[0]}” has only one channel.`;
   return `${base} — single-channel sets: ${names.join(', ')}.`;
+}
+
+/**
+ * User-facing note after an across-sets TF that had to leave sets out
+ * (round 15): the ensemble needs an output channel and one sample rate,
+ * and the compatible sets have already been averaged and drawn.
+ */
+function tfEnsembleLeftOutMessage(used: number, leftOut: string[]): string {
+  return `Across-sets TF averaged ${used} set${used === 1 ? '' : 's'}; left out `
+    + `(needs two channels and the same sample rate): ${leftOut.join(', ')}.`;
 }
 
 /**

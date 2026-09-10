@@ -15,6 +15,7 @@
   import type { ViewState } from '../../lib/stores/viewstate';
   import type { Selection } from '../../lib/stores/selection';
   import type { Actions } from '../../lib/analysis/actions';
+  import { IMPULSE_TAIL_MAX, looksLikeImpulse } from '../../lib/analysis/impulse';
 
   let {
     viewState,
@@ -46,6 +47,17 @@
     if (targetId >= 0) actions.cleanImpulse(targetId, impulseCh);
   }
   const isCleaned = $derived(targetId >= 0 && !!$cleanedSets[targetId]);
+  // Round-15 item 4: offer Clean Impulse only where the chosen input
+  // channel actually looks like an impulse — at most IMPULSE_TAIL_MAX of
+  // its energy in the second half of the record (see lib/analysis/
+  // impulse.ts). A set that is already cleaned keeps its button so the
+  // toggle can be turned off again. Re-read when the set list, the busy
+  // flag (a resample / clean changes the arrays) or the channel changes.
+  const impulseTail = $derived.by(() => {
+    void $setsView; void $busy; void $cleanedSets;
+    return targetId >= 0 ? actions.impulseEnergyTail(targetId, impulseCh) : null;
+  });
+  const showClean = $derived(isCleaned || looksLikeImpulse(impulseTail));
 
   // ---- Resample (round-9) -------------------------------------------------
   // Change the highlighted set's sample rate: pick another set to MATCH
@@ -147,17 +159,26 @@
     {/if}
   </div>
   <div class="ctx-primary">
-    <button
-      class="btn indigo"
-      class:on={isCleaned}
-      aria-pressed={isCleaned}
-      data-testid="clean-impulse-toggle"
-      disabled={$busy || targetId < 0}
-      title={isCleaned
-        ? 'Cleaned data applied — click to restore the raw recording (the clean stays cached)'
-        : 'Zero the pre-impulse noise and window the tail (toggles — the raw data is kept)'}
-      onclick={clean}>{isCleaned ? 'Clean Impulse: on' : 'Clean Impulse'}</button
-    >
+    {#if showClean}
+      <button
+        class="btn indigo"
+        class:on={isCleaned}
+        aria-pressed={isCleaned}
+        data-testid="clean-impulse-toggle"
+        disabled={$busy || targetId < 0}
+        title={isCleaned
+          ? 'Cleaned data applied — click to restore the raw recording (the clean stays cached)'
+          : 'Zero the pre-impulse noise and window the tail (toggles — the raw data is kept)'}
+        onclick={clean}>{isCleaned ? 'Clean Impulse: on' : 'Clean Impulse'}</button
+      >
+    {:else if targetId >= 0}
+      <span class="note" data-testid="clean-impulse-hidden"
+        title={`Clean Impulse is offered when at most ${Math.round(IMPULSE_TAIL_MAX * 100)}% of the input channel's energy is in the second half of the record`}>
+        {impulseTail === null
+          ? `ch_${impulseCh} has no signal to clean`
+          : `not an impulse on ch_${impulseCh} (${Math.round(impulseTail * 100)}% of its energy is in the second half)`}
+      </span>
+    {/if}
   </div>
 </section>
 

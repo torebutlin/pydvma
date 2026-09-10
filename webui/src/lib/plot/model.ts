@@ -13,7 +13,7 @@
  * `{ shape, data (flat Float64Array, row-major), complex }`; complex is
  * INTERLEAVED `[re, im, re, im, …]`. `decodeArray` is the single decoder.
  */
-import { dataExtent, type PlotLine, type PlotModel } from './build';
+import { dataExtent, DB_FLOOR, type PlotLine, type PlotModel } from './build';
 import type { TfPlotType } from '../stores/viewstate';
 import { tfColumn } from './tfChannels';
 
@@ -399,15 +399,16 @@ function padExtent([lo, hi]: [number, number], frac = 0.05): [number, number] {
   return [lo - p, hi + p];
 }
 
-/** 20·log10|z|, guarding log10(0) → a large-negative floor (−300 dB). */
+/** 20·log10|z|, guarding log10(0) → the finite `DB_FLOOR` (−300 dB),
+ *  which `dataExtent` ignores on `dbY` lines. */
 function magDb(re: number, im: number): number {
   const m = Math.hypot(re, im);
-  return m > 0 ? 20 * Math.log10(m) : -300;
+  return m > 0 ? 20 * Math.log10(m) : DB_FLOOR;
 }
 
 /** 10·log10(x) for real power spectra, floored like `magDb`. */
 function powDb(x: number): number {
-  return x > 0 ? 10 * Math.log10(x) : -300;
+  return x > 0 ? 10 * Math.log10(x) : DB_FLOOR;
 }
 
 /** Base PlotLine fields common to every left-axis, x-monotonic line. */
@@ -614,7 +615,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           }
           y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
         }
-        lines.push(baseLine(f.axis, y, v));
+        lines.push({ ...baseLine(f.axis, y, v), dbY: !linMag });
       } else if (mode === 'psd') {
         const p = s?.psd; if (!p) continue;                  // psd shape (Nc, Nf)
         const nc = p.data.shape[0] ?? 1;
@@ -627,7 +628,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           const x = p.data.re[v.ch * nf + i] * cal2;
           y[i] = linMag ? x : powDb(x);
         }
-        lines.push(baseLine(p.axis, y, v));
+        lines.push({ ...baseLine(p.axis, y, v), dbY: !linMag });
       } else {                                               // csd: cross-spectrum |S_xy| for the pair (i, j)
         const c = s?.csd; if (!c) continue;                  // Cxy (coherence) shape (Nc, Nc, Nf)
         const nc = c.data.shape[0] ?? 1;
@@ -706,6 +707,9 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         // `recon` overlay option (primary-set-only pink local) is gone.
         x, y, color: v.color, opacity: OPACITY[v.state],
         width: 1.5, dashed: !!v.dashed, yAxis: 'left', xMonotonic,
+        // Magnitude in dB floors log10(0) at DB_FLOOR; flag it so a DC bin
+        // zeroed by an x(iω) power cannot drag the autoscale to −300 dB.
+        dbY: type === 'mag' && !linMag,
       });
     }
 

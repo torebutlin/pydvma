@@ -800,6 +800,12 @@
       -->
       <div class="full-block" data-testid="setup-full">
         <!-- ── device ─────────────────────────────────────────────── -->
+        <!-- Web Audio only (round-15 item 3): capabilities come from
+             getCapabilities, the processing switches are getUserMedia
+             constraints and the timing box a getUserMedia latency hint —
+             none of which exists for a bridge driver, where "allow mic
+             access" read as nonsense next to an NI card. -->
+        {#if !isBridge}
         <div class="full-sec">
           <span class="sec-head">device</span>
           <div class="ctx-row sec-row">
@@ -862,6 +868,7 @@
             </div>
           </div>
         </div>
+        {/if}
 
         <!-- ── rates ──────────────────────────────────────────────── -->
         <div class="full-sec">
@@ -894,9 +901,16 @@
               <div class="grp" data-testid="setup-capture-rate">
                 <span class="grp-lab">capture rate</span>
                 <div class="grp-ctl">
+                  <!-- Two different questions (round-15 item 2): the STRATEGY
+                       (how far above fs the oversampled capture goes) and,
+                       only where the device publishes a rate ladder, an
+                       explicit hardware RATE. An NI device publishes no
+                       ladder, so its rate select had one entry, "auto", and
+                       read as a broken control — it is now omitted there. -->
+                  <span class="ml">strategy</span>
                   <select
                     aria-label="oversample strategy"
-                    title="How far above fs to capture when oversampling. Auto follows the device: the lowest sufficient rate on a delta-sigma converter (already anti-aliased in silicon), the highest available on one with no anti-alias filter."
+                    title="How far above fs to capture when oversampling (digital low-pass on). Auto follows the device: the lowest sufficient rate on a delta-sigma converter (already anti-aliased in silicon), the highest available on one with no anti-alias filter (e.g. a multiplexed NI card)."
                     value={$bridgeConfig.oversample ?? 'auto'}
                     onchange={onOversampleChange}
                     style="width:110px"
@@ -905,19 +919,21 @@
                     <option value="lowest">lowest</option>
                     <option value="highest">highest</option>
                   </select>
-                  <select
-                    aria-label="capture sample rate"
-                    title="Force the rate the hardware samples at. Auto picks it from the device's own ladder."
-                    value={$bridgeConfig.captureFs == null ? '' : String($bridgeConfig.captureFs)}
-                    onchange={onCaptureFsChange}
-                    style="width:96px"
-                  >
-                    <option value="">auto</option>
-                    {#each nativeRateOptions as r}
-                      <option value={String(r)}>{fmtHz(r)} Hz</option>
-                    {/each}
-                  </select>
-                  <span class="ml note">hardware rate</span>
+                  {#if nativeRateOptions.length > 0}
+                    <span class="ml">hardware rate</span>
+                    <select
+                      aria-label="capture sample rate"
+                      title="Force the rate the hardware samples at. Auto picks it from the device's own ladder."
+                      value={$bridgeConfig.captureFs == null ? '' : String($bridgeConfig.captureFs)}
+                      onchange={onCaptureFsChange}
+                      style="width:96px"
+                    >
+                      <option value="">auto</option>
+                      {#each nativeRateOptions as r}
+                        <option value={String(r)}>{fmtHz(r)} Hz</option>
+                      {/each}
+                    </select>
+                  {/if}
                 </div>
               </div>
             {/if}

@@ -14,10 +14,26 @@ import { minMaxDecimate } from './decimate';
  * model assembly, not here). `yAxis: 'right'` scales against
  * `PlotModel.y2Range` (coherence overlay).
  */
+/**
+ * The finite stand-in a dB transform uses for `log10(0)` (see `magDb` /
+ * `powDb` in model.ts). Kept FINITE so a zero bin still draws as a
+ * point rather than tearing a gap in the line, but excluded from
+ * autoscale by `dataExtent` on lines flagged `dbY` — an x(iω)^p display
+ * power collapses the DC bin to exactly 0, and letting that one point
+ * pull the y axis down to −300 dB flattened every TF it touched (round
+ * 15, 2026-09-10).
+ */
+export const DB_FLOOR = -300;
+
 export interface PlotLine {
   x: ArrayLike<number>; y: ArrayLike<number>;
   color: string; opacity: number; width: number; dashed: boolean;
   yAxis: 'left' | 'right';                        // right = coherence
+  /**
+   * `y` is a dB transform: values at `DB_FLOOR` are a floored `log10(0)`,
+   * not data, and are ignored when autoscaling (see `DB_FLOOR`).
+   */
+  dbY?: boolean;
   /**
    * Whether `x` is known to be sorted non-decreasing. Set `true` for
    * time/frequency axes (model assembly knows this a priori) to skip
@@ -104,11 +120,15 @@ export function dataExtent(
   const w = xWindow && Number.isFinite(xWindow[0]) && Number.isFinite(xWindow[1])
     && xWindow[1] >= xWindow[0] ? xWindow : null;
   let lo = Infinity, hi = -Infinity;
+  let floorSkip = false;
   const take = (v: number) => {
-    if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (!Number.isFinite(v)) return;
+    if (floorSkip && v <= DB_FLOOR) return;      // a floored log10(0), not data
+    if (v < lo) lo = v; if (v > hi) hi = v;
   };
   for (const l of lines) {
     if (which !== 'any' && l.yAxis !== which) continue;
+    floorSkip = axis === 'y' && !!l.dbY;
     const arr = axis === 'x' ? l.x : l.y;
     if (!w) {
       for (let i = 0; i < arr.length; i++) take(arr[i]);

@@ -191,7 +191,8 @@
           <select value={mixed('window') ? '' : tf.window}
             onchange={(e) => patchLive({ window: e.currentTarget.value })} aria-label="window">
             {#if mixed('window')}<option value="" disabled>–mixed–</option>{/if}
-            <option>hann</option><option>hamming</option><option>none</option>
+            <!-- 'none' first, matching the avg list (round-15 item 8). -->
+            <option>none</option><option>hann</option><option>hamming</option>
           </select>
           <span class="ml">avg</span>
           <select value={mixed('averaging') ? '' : tf.averaging}
