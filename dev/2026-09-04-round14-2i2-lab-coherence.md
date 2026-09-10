@@ -598,3 +598,22 @@ that — but it is the cheaper thing to fix first.
 4. **Only then the unit swap**, if the quiet capture is still corrupt.
 5. More RAM (16 GB with an AV suite, vendor agents and a browser is
    tight) or a dedicated measurement PC is the structural fix.
+
+**Logger footprint and the app's own coherence, measured 2026-09-10
+~14:15 with Tore's logger open after two captures (2 s and 10 s at
+44.1 k).** Machine: 11.8 GB of 15.8 GB in use, 4.0 GB free, commit
+17.7 of 21.2 GB, paging quiet (0–140 pages/s, disk 2–19 %, DPC < 1 %).
+Logger: kernel 1.0 GB private, engine worker 0.8 GB, the app's Edge
+tab ~0.5 GB — about 2 GB after two captures. With nothing of Tore's
+running the PC already sat at 10.6 GB (Windows services + kernel pools
+~3.6 GB, the Claude desktop app 1.3 GB, McAfee ~1.0 GB, memory
+compression 0.8 GB, Explorer/Edge/Task Manager ~1.4 GB, Tanium/Dell
+agents ~0.7 GB). The two captures, computed the app's way
+(`analysis.calculate_tf`, Hann, 50 % overlap): band-mean coherence
+20–1000 Hz **0.84–0.86** on the 10 s set (0.99 on the 2 s set, which has
+too few frames to judge), against **0.97–0.98** for the NI reference and
+**0.95–0.97** for the one clean 2i2 capture, and 0.13–0.18 for a
+collapsed one — i.e. mildly corrupted on a calm machine (accelerometer
+>6 kHz floor −67 dB against −81 pristine, one dip), not collapsed. A
+30 s raw capture taken in the same minute agreed (lag-0 ratio 1.7,
+floor −73 dB, no dropouts).
