@@ -2,7 +2,41 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-09-10 (back ON the 3C6 lab PC, Claude desktop app; clone
+As of 2026-09-10, late afternoon (still ON the 3C6 lab PC, which has NO
+node — every web-UI change below is written blind and must go through
+`npm run check` + vitest + the Playwright Clean-Impulse spec on the
+Mac; Tore builds and uploads from there): **ROUND 15 — Tore's PCI-6220
+feedback batch, eight items, all root-caused, Python side fixed and
+tested (443/1 on the touched suites), web side written and flagged.**
+Round doc `dev/2026-09-10-round15-lab-feedback.md`; file
+`data/not-working-examples/pydvma_2026-09-10_1454.dvma`. The two real
+bugs: (5) the NI recorder raised `trigger_detected` only on completion,
+so impulse tests read "waiting for trigger" throughout and reported
+timeout-or-triggered at random — now two-phase like the soundcard
+(`trigger_detected` at the crossing, `capture_complete` from the
+second-oldest-chunk check, slicing untouched; `_reset_trigger_state`
+no longer invents `trigger_overshoot`, on which `log_data` now routes
+the slicing); (6) `calculate_tf_averaged` had no ensemble
+compatibility check and the app's 'across' ensemble swept in every
+time-bearing set — the 6220's two coercions of "3 kHz" (3000.3 /
+2999.88 Hz → 18002 / 18000 samples) plus a single-channel set made it
+raise, the "coherence = 1" being stale single-frame lines; now
+truncate-to-shortest, one channel count, fs to 0.1 %
+(`TF_ENSEMBLE_FS_TOLERANCE`), refused by name, `n_samples` stamped;
+app filters members and notes the rest (`tfEnsembleLeftOutMessage`).
+Also: (7) x(iω) DC bin flattened plots via the −300 dB floor → `DB_FLOOR`
++ `dbY` lines ignored by `dataExtent`; (2)/(3) Setup-full: capture-rate
+selects labelled strategy / hardware rate, the latter omitted without a
+ladder, the Web-Audio "device" section bridge-gated; (4) Clean Impulse
+gated on ≤ 25 % second-half energy (`lib/analysis/impulse.ts`,
+`actions.impulseEnergyTail`, note when hidden, vitest added); (8)
+window list 'none' first. The 14:46:46 "recording regardless" set had
+the noise generator still on the trigger channel (physics, not a bug).
+USB NI should be immune to the host-load problem (bulk transfers with
+retry + a 10 s DAQmx buffer) — the PCI-6220 is clean at 50 kHz on this
+same PC.
+
+Earlier that day (back ON the 3C6 lab PC, Claude desktop app; clone
 pulled to `0b66b3c` = the 2.4.3 cut + rounds 14b/14c; pydvma 2.4.3
 installed in the USER site `%APPDATA%\Python\Python314\site-packages`,
 which shadows the conda env's copy; 2i2 plugged in and streaming into

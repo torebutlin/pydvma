@@ -7,6 +7,48 @@ follows [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **NI impulse tests said "waiting for trigger" while recording, and
+  reported a timeout or a trigger at random.** The NI recorder raised
+  its trigger flag only once the window was complete, so the bridge's
+  poller saw nothing until the end and then raced `log_data`'s reset.
+  `Recorder_NI_nidaqmx` is now two-phase like the soundcard recorder:
+  `trigger_detected` at the crossing, `capture_complete` when the
+  window is in (exactly where the old flag was raised, so the
+  hardware-verified slicing is unchanged). The app reports "triggered"
+  within a poll tick of the tap (3C6 lab, PCI-6220, 2026-09-10).
+- **Across-sets TF averaging died on a mixed ensemble and showed
+  coherence 1.** `calculate_tf_averaged` averaged cross-spectra bin by
+  bin with no compatibility check; an ensemble mixing channel counts,
+  lengths or a DAQ's two coercions of one nominal rate (3000.3 vs
+  2999.88 Hz) raised on a shape mismatch, and the app's ensemble
+  included every time-bearing set, so a single-channel set refused the
+  whole compute and the stale per-set single-frame lines (coherence
+  ≡ 1) stayed on screen. Records are now truncated to the shortest,
+  channel count and sample rate (to 0.1 %, `TF_ENSEMBLE_FS_TOLERANCE`)
+  must agree and are refused by name, `n_samples` is stamped into the
+  provenance, and the web logger's ensemble is the compatible sets with
+  the others named in a note after the average is drawn.
+- **A zeroed DC bin flattened the whole TF under an x(iω) power.** The
+  dB transform floors `log10(0)` at a finite −300 dB, which autoscale
+  followed; magnitude and PSD lines now flag their dB floor
+  (`DB_FLOOR`, `dbY`) and autoscale ignores it. The data is unchanged.
+- **Setup showed Web Audio controls for a bridge driver.** The "device"
+  section of Setup-full (mic capabilities, "allow mic access",
+  echo/noise/AGC switches, latency hint) is getUserMedia machinery and
+  is now rendered only off the bridge; the capture-rate row labels its
+  two selects "strategy" and "hardware rate" and omits the latter when
+  the device publishes no rate ladder (an NI device), where it showed a
+  lone "auto".
+
+### Changed
+
+- **Clean Impulse is offered only where the input channel looks like an
+  impulse** — at most 25 % of its energy in the second half of the
+  record (`lib/analysis/impulse.ts`); otherwise the Time card says why.
+  A set already cleaned keeps its button so the toggle can come off.
+- The TF card's window list starts with 'none', like its averaging
+  list.
+
 - **Live scope showed a frozen right half while the left half
   scrolled.** The web logger's monitor estimated how many new samples
   to ship each tick from elapsed wall-clock time, and re-shipped the
