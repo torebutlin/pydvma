@@ -7,9 +7,20 @@ pulled to `0b66b3c` = the 2.4.3 cut + rounds 14b/14c; pydvma 2.4.3
 installed in the USER site `%APPDATA%\Python\Python314\site-packages`,
 which shadows the conda env's copy; 2i2 plugged in and streaming into
 Tore's notebook session): **ROUND 14d — the app's half-frozen live view
-is FIXED and committed (`8a38d6a`, not pushed), and the 2i2 corruption
-is confirmed still present on every host API and every USB port of
-this PC.** The live view: the bridge's monitor estimated new samples
+is FIXED (`8a38d6a`), the recurring "endpoint opens but never delivers"
+wedge is now recovered automatically (`e13bb9e`: `FIRST_SAMPLES_GRACE_S`
+wait + WASAPI-exclusive cycle on the twin + reopen, `wedge_note`), and
+the 2i2 corruption on this PC is REPRODUCED BY HOST LOAD: with the
+commit charge at 22 of 24.5 GB and 4.5 % disk free, four processes
+churning 100 MB arrays gave 12/14/480 zero-fill dropouts and +10–25 dB
+on the accel floor, three runs out of three; disk load and playback
+did not. Revised reading: host-side (this PC under memory pressure
+servicing the USB audio stream late), which also explains every port
+the same, the office unit clean elsewhere, "first test best", and the
+wedge. Checklist in the round doc: free the disk, quiet the machine,
+restart the kernel between batches, re-measure quiet; unit swap only if
+still corrupt.** Earlier that day: the corruption was confirmed
+present on every host API and every USB port of this PC. The live view: the bridge's monitor estimated new samples
 from WALL-CLOCK time and re-shipped the newest stretch whenever the
 device delivered late or in bursts — measured 11 % duplicated samples
 on the installed 2.4.3 even with healthy delivery, a frozen right half

@@ -506,3 +506,95 @@ this PC. A known-source run without the cDAQ is available here in one
 re-cable: the noise generator teed into BOTH 2i2 inputs, then a 60 s
 capture and `dev/channel_noise_check.py` (coherence must be 1.0, lag 0,
 a Gaussian residual); the office numbers in 14b/14c are the reference.
+
+### Round 14d, continued: host load reproduces the corruption; the endpoint wedge recurs and is now recovered automatically
+
+**Loopback discriminator (2i2 outputs free, so playback was allowed):**
+`dev/twoi2_loopback_check.py --T=60` played noise to the 2i2's
+`Speakers` endpoint via MME while recording all four MME capture
+channels. The loopback pair carried nothing (RMS 1e-5, >6 kHz floor
+−98 dB) — the same result as on the office bench — so the tap needs
+its source set in Focusrite Control 2 (running here since 12:17) before
+it can discriminate. Inconclusive, again. The analogue pair in that
+same minute was the worst seen today (coherence median 0.11, floors
+−42.6 / −46.3 dB) — and a disk-heavy folder scan of mine was running
+at the time, which is what prompted the load test below.
+
+**The wedge, third sighting, now handled.** Right after the loopback
+and counter captures closed their streams, a fresh WASAPI shared
+stream opened and delivered nothing for 30 s; a WASAPI exclusive
+open/close brought 89 callbacks in the next 3 s, as on 2026-09-04 (lab)
+and 2026-09-04 (office, RDP). `Recorder.init_stream` now waits
+`FIRST_SAMPLES_GRACE_S` (1 s) for the first callback and, on silence,
+performs that exclusive cycle on the device's WASAPI twin and reopens
+the stream, reporting in `wedge_note` (`e13bb9e`, tests in
+`tests/test_streams_wedge.py`). A healthy open on the real 2i2 took
+0.48 s end to end with no note.
+
+**RAM and disk (Tore's suggestion).** 15.8 GB RAM with 3.2 GB free;
+commit charge 22.0 GB of a 24.5 GB limit; C: 10.6 GB free of 237 GB
+(4.5 %), so the pagefile has nowhere to grow; pages/s spiked to 6 000
+with the disk at 100 % during a routine counter sample. Resident
+load: McAfee `mcshield` (618 MB, 4.7 CPU-h), Edge, two Claude apps,
+Dell SupportAssist, the notebook kernel (1.2 GB private), Memory
+Compression 1 GB. `NI Device Monitor 17.0` still burning a core.
+
+**Load A/B on the live 2i2** (30 s raw WASAPI captures, rig running;
+`ab.py`: quiet / disk hammer over `anaconda3` / four workers churning
+100 MB arrays + FFTs / noise played through the 2i2 output; two runs
+in different orders; endpoint un-wedged before each run):
+
+| phase | 1 s coherence median (min) | lag-0 / off-lag (ratio) | accel >6 kHz floor | max step / rms | zero-fill runs |
+|---|---|---|---|---|---|
+| A quiet | 0.69 (0.67) | 0.12 / 0.09 (1.3) | **−82.9 dB** | 0.8 | startup only |
+| B disk load | 0.68 (0.58) | 0.28 (2.8) | −69.2 | 3.7 | startup only |
+| C cpu+mem churn | n/a (a zeroed second) | 0.56 (2.1) | −56.1 | 6.2 | **14** |
+| D playback via 2i2 | 0.68 (0.41) | 0.33 (4.2) | −67.1 | 3.5 | startup only |
+| E quiet | 0.68 (0.34) | 0.48 (2.1) | −61.4 | 4.2 | startup only |
+| A2 quiet | 0.68 (0.43) | 0.48 (1.8) | −65.1 | 3.2 | startup only |
+| B2 cpu+mem churn | n/a | 0.61 (1.9) | **−49.5** | 6.8 | **480** |
+| C2 quiet | 0.69 (0.41) | 0.25 (4.0) | −71.4 | 2.9 | startup only |
+| D2 disk load | 0.69 (0.38) | 0.23 (2.9) | −69.4 | 3.4 | startup only |
+| E2 quiet | 0.68 (0.50) | 0.34 (6.1) | −72.9 | 2.5 | startup only |
+| F2 cpu+mem churn | 0.30 (0.11) | 0.64 (2.9) | −52.0 | 4.9 | **12** |
+| G2 quiet | 0.69 (0.61) | 0.45 (4.5) | −76.5 | 1.2 | startup only |
+
+Three times out of three, CPU + memory churn on this PC produced
+mid-record zero-fill dropouts (12, 14 and 480 in 30 s) and pushed the
+accelerometer channel's floor 10–25 dB above the surrounding quiet
+phases; disk load and playback did neither. The quiet phases
+themselves wander between a pristine −83 dB and a corrupted −61 dB,
+which is the episodic pattern of the whole round — and this PC is
+never actually quiet (see the resident load above). Nothing in
+`ab.py` is exotic: four processes allocating 100 MB arrays is what a
+notebook does when it holds a session's captures, and the commit
+charge is already at 90 % of its limit.
+
+**Revised reading.** The corruption is host-side: this PC, under
+memory pressure, services the USB audio stream late enough that the
+Focusrite driver loses packets (zero-fill) and hands over garbled
+frames (the impulses on both channels). That explains every USB port
+behaving the same, the office unit being clean on the office PC, the
+first test in a batch being the best (the kernel grows as captures
+accumulate), and the endpoint wedging after stream churn. It does not
+yet rule the lab unit out — the unit swap remains the clean way to do
+that — but it is the cheaper thing to fix first.
+
+### What to do on the lab PC (in this order)
+
+1. **Free the disk and the commit charge.** 10 GB free on C: is too
+   little for the pagefile; move the `.dvma` exports and downloads off
+   C:, and reboot before a lab session.
+2. **Run measurements on a quiet machine.** Close Edge, the Claude
+   apps and anything else while logging; restart the notebook kernel
+   between batches (or save and clear) so its captures do not
+   accumulate; disable `NI Device Monitor` (Task Manager → Startup, or
+   uninstall) and consider a McAfee exclusion for the working folder.
+3. **Re-measure quiet.** A 60 s raw capture and
+   `dev/channel_noise_check.py`: the office-bench reference is a
+   lag-0 ratio near 1, no dropouts, and the accelerometer's >6 kHz floor
+   at its −83 dB best. If the fresh-boot quiet capture is clean over
+   minutes, the host was the fault.
+4. **Only then the unit swap**, if the quiet capture is still corrupt.
+5. More RAM (16 GB with an AV suite, vendor agents and a browser is
+   tight) or a dedicated measurement PC is the structural fix.

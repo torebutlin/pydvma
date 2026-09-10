@@ -22,6 +22,28 @@ follows [semantic versioning](https://semver.org/).
   instead of leaving a silent, half-frozen scope. Verified live: zero
   re-shipped samples across 170 consecutive frames on the same 2i2.
   The mock recorder keeps the wall-clock scheme (its window is static).
+- **A Windows audio endpoint that opens but never delivers is reset
+  automatically.** Seen three times on Scarlett 2i2 4th Gen
+  interfaces: after some stream churn every new stream on the device
+  starts normally and delivers nothing, on every host API, for
+  minutes, and an exclusive-mode open of the device's WASAPI endpoint
+  restores delivery. `Recorder.init_stream` now waits one second
+  (`streams.FIRST_SAMPLES_GRACE_S`) for the first callback and on
+  silence performs that exclusive cycle on the WASAPI twin and reopens
+  the stream, reporting the outcome (`wedge_note`, also in the web
+  logger's configure reply). A healthy open is not delayed.
+
+### Investigated (no code change)
+
+- **The 3C6 lab PC corrupts the 2i2's USB audio under memory
+  pressure.** With commit charge at 90 % of its limit and 4.5 % disk
+  free, four processes churning 100 MB arrays produced 12–480
+  zero-filled packet gaps in 30 s captures and lifted the accelerometer
+  channel's noise floor 10–25 dB, three times out of three; disk load
+  and playback through the 2i2 did not. Round-14d notes in
+  `dev/2026-09-04-round14-2i2-lab-coherence.md` with the checklist
+  (free the disk, quiet the machine, restart the kernel between
+  batches, then re-measure; unit swap only if still corrupt).
 
 ## 2.4.3 — 2026-09-04
 
