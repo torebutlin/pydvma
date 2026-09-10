@@ -3,6 +3,26 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **Live scope showed a frozen right half while the left half
+  scrolled.** The web logger's monitor estimated how many new samples
+  to ship each tick from elapsed wall-clock time, and re-shipped the
+  newest stretch whenever the device delivered late or in bursts —
+  measured on a Scarlett 2i2 (3C6 lab, 2026-09-10): 11 % of all
+  shipped samples were duplicates even while the device streamed at
+  the right average rate, and a stalled USB link froze the newest part
+  of the display outright. The hardware recorders now count the frames
+  they write into the scope ring (`osc_samples_seen`), the bridge ships
+  exactly that many (`serve._osc_snapshot` reads count and window
+  consistently), and a device that delivers nothing for
+  `serve.MONITOR_STALL_S` (2 s) pins a "stream has stalled" toast
+  instead of leaving a silent, half-frozen scope. Verified live: zero
+  re-shipped samples across 170 consecutive frames on the same 2i2.
+  The mock recorder keeps the wall-clock scheme (its window is static).
+
 ## 2.4.3 — 2026-09-04
 
 Same-day follow-up to 2.4.2 from the 3C6 lab and the office bench: a

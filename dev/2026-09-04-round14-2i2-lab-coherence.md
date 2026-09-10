@@ -436,3 +436,73 @@ the >6 kHz WAVEFORM coherence and says "not applicable" when the two
 channels genuinely share signal up there (a known-source bench), and
 judges the lag-0 peak against its off-lag yardstick (ratio > 1.5: lab
 2.2–2.8 → flagged; clean lab 1.1 and every bench run 1.1 → not).
+
+## Round 14d — the lab PC again, 2026-09-10: the half-frozen live view, and today's numbers
+
+Back on the 3C6 PC (pydvma 2.4.3 installed in the user site; clone
+pulled to `0b66b3c`), 2i2 plugged in and streaming into Tore's
+notebook session, rig running at higher levels than last week (ch0
+0.21, ch1 0.13 RMS against 0.068 / 0.040). Two reports: the app's live
+time view "right half fixed, left half sometimes scrolling, sometimes
+part fixed and wobbling", and poor coherence on every USB port of the
+PC (blue USB 3 and black USB 2 alike).
+
+### The live view: the bridge's wall-clock monitor, not the recorder
+
+`Recorder.osc_time_data` polled 20×/s in a separate process on the
+same 2i2 (WASAPI, chunk 100 and 1600; MME 44.1 k): every quarter of
+the window changed on every poll, callbacks at the expected rate, no
+zero frames — the ring is fine. The bridge's monitor, though, shipped
+``osc_time_data[-n_new:]`` with ``n_new = round(fs · Δt)`` from
+wall-clock time (module docstring: "there is no monotonic sample
+counter to read"). WASAPI delivers in 10 ms engine bursts against a
+33 ms tick, so every tick's guess is off by up to ±480 samples, and a
+device that stalls has its newest stretch re-shipped tick after tick —
+a right half that never moves while the left half scrolls and wobbles
+as the client ring absorbs duplicated tails. Measured with a ws
+client against a serve on the installed 2.4.3, 6 s of monitor on the
+2i2 at 48 k: **74 of 169 consecutive frames contained a re-shipped
+tail, 11.2 % of all shipped samples duplicated**, with the device
+delivering at 48 271 samples/s.
+
+Fix: `Recorder.osc_samples_seen` / `Recorder_NI_nidaqmx.osc_samples_seen`
+count every frame written into the scope ring (priming zeros
+included; carried across the armed re-init); `serve._osc_snapshot`
+reads count and window consistently (re-reads while the count moves
+under the copy); the monitor ships exactly the delta, capped at the
+window, and after `MONITOR_STALL_S` = 2 s of nothing sends one
+``error`` frame ("the stream has stalled") that pins as a toast. The
+mock keeps the wall-clock `_MonitorCursor` (its window is static).
+Same ws client against the clone's serve: **0 re-shipped samples in
+170 frames**, frame sizes 900–2500 following the engine's bursts,
+48 067 samples/s. Tests: counter tests in `test_streams_ring.py` and
+`test_streams_ni_ring.py`; `test_serve_protocol.py` gains a counting
+stand-in recorder (exact tiling, silence when nothing is delivered,
+one stall notice per stall, `_osc_snapshot`).
+
+### Today's captures (30 s each, raw sounddevice, 48 k)
+
+| host API | overflows | exact-zero runs (both ch) | common-cause lag-0 / off-lag (ratio) | >6 kHz floors | max step / rms | 1 s coherence min / median |
+|---|---|---|---|---|---|---|
+| MME, 4 ch | 0 | **33** short runs (8–15 frames) | 0.18 / 0.11 (1.7) | −56.1 / −70.7 dB | 1.7 / 2.8 | 0.36 / 0.68 |
+| WDM-KS | 0 | startup only | **0.42 / 0.13 (3.3)** | −55.3 / −68.6 | 3.1 / 2.7 | 0.49 / 0.68 |
+| WASAPI shared | 0 | startup only | 0.31 / 0.20 (1.6) | −55.7 / −69.5 | 4.0 / 2.7 | 0.44 / 0.68 |
+
+The corruption is still there on every host API (WDM-KS worst today),
+so the host API is not the lever; the higher signal levels have lifted
+median coherence to 0.68 (NI: 0.79) — the corruption floor is fixed in
+absolute terms, as expected of a digital fault. The MME loopback pair
+(channels 3/4) carried only ±1 LSB of 16-bit dither with nothing
+playing, so the loopback discriminator cannot be read without
+playback through the 2i2's outputs — which needs to know whether those
+outputs are wired to anything before a test signal is played.
+
+### Where the hardware question stands
+
+Every USB port on this PC gives the same result and the office 2i2 is
+clean on the office PC through every host API; the decisive test is
+still a unit swap — this 2i2 on another computer, or the office 2i2 on
+this PC. A known-source run without the cDAQ is available here in one
+re-cable: the noise generator teed into BOTH 2i2 inputs, then a 60 s
+capture and `dev/channel_noise_check.py` (coherence must be 1.0, lag 0,
+a Gaussian residual); the office numbers in 14b/14c are the reference.

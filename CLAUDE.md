@@ -2,7 +2,37 @@
 
 ## Current focus (update when it changes)
 
-As of 2026-09-04 evening (office Windows PC over RDP, cDAQ-9174 + the
+As of 2026-09-10 (back ON the 3C6 lab PC, Claude desktop app; clone
+pulled to `0b66b3c` = the 2.4.3 cut + rounds 14b/14c; pydvma 2.4.3
+installed in the USER site `%APPDATA%\Python\Python314\site-packages`,
+which shadows the conda env's copy; 2i2 plugged in and streaming into
+Tore's notebook session): **ROUND 14d — the app's half-frozen live view
+is FIXED and committed (`8a38d6a`, not pushed), and the 2i2 corruption
+is confirmed still present on every host API and every USB port of
+this PC.** The live view: the bridge's monitor estimated new samples
+from WALL-CLOCK time and re-shipped the newest stretch whenever the
+device delivered late or in bursts — measured 11 % duplicated samples
+on the installed 2.4.3 even with healthy delivery, a frozen right half
+when the link stalled; the recorder ring itself was fine (polled
+20×/s, every quarter updating). Now `osc_samples_seen` on both hardware
+recorders + `serve._osc_snapshot` + exact-delta shipping +
+`MONITOR_STALL_S` stall toast; 0 duplicates measured live; mock keeps
+the wall-clock cursor; tests in the ring / NI-ring / serve suites.
+Hardware today (30 s raw each): MME/WDM-KS/WASAPI all show the
+common-cause signature (WDM-KS lag-0 ratio 3.3), MME also 33 short
+zero-fill runs; the higher rig levels lift median coherence to 0.68
+(NI 0.79). The MME loopback pair carries only 16-bit dither with
+nothing playing, so the loopback discriminator needs playback — ask
+whether the 2i2 outputs are wired before playing anything. Decisive
+next test remains the unit swap; a cDAQ-free known-source run is one
+re-cable away (generator teed into both inputs). Round doc section
+"Round 14d". The fix can be hot-patched into the installed 2.4.3 by
+copying `pydvma/serve.py` + `pydvma/streams.py` over the user-site
+copies (no other `pydvma/*.py` differs from the cut) — Tore's call.
+Test runner: `C:\Users\tb267\.pydvma-testvenv` (pytest is NOT in the
+conda env); the scratchpad path is now short.
+
+Previous (2026-09-04 evening, office Windows PC over RDP, cDAQ-9174 + the
 office 2i2, **cDAQ ao0/ao1 wired into 2i2 inputs 1/2** through the
 lab's BNC extensions; the ao0→ai0 loopback is currently NOT connected):
 **ROUND 14b — a KNOWN source into the 2i2 is clean on this bench**, raw
