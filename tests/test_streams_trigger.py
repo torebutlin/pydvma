@@ -282,24 +282,40 @@ class TestPretriggerSettingsGuards:
 
 class TestCaptureFinishedDuckTyping:
     """`acquisition._capture_finished` is how the two-phase wait stays
-    compatible with the NI recorder, which is hardware-verified and
-    deliberately untouched."""
+    compatible with every recorder: the soundcard and NI recorders both
+    answer with `capture_complete` (NI since 2026-09-10), the mock has
+    no second phase."""
 
     class _SinglePhase:
-        """Stand-in for `Recorder_NI_nidaqmx` / `MockRecorder`: sets
-        `trigger_detected` only once the post-trigger data is in."""
+        """Stand-in for `MockRecorder`: sets `trigger_detected` only once
+        the post-trigger data is in."""
         def __init__(self, triggered):
             self.trigger_detected = triggered
+
+    class _TwoPhaseNoOvershoot:
+        """The NI recorder's shape: both phases, but no
+        `trigger_overshoot` — its window is sliced by scanning for the
+        crossing, not by an overshoot count."""
+        def __init__(self):
+            self.trigger_detected = True
+            self.capture_complete = False
 
     def test_single_phase_recorder_answers_from_trigger_detected(self):
         assert acquisition._capture_finished(self._SinglePhase(True)) is True
         assert acquisition._capture_finished(self._SinglePhase(False)) is False
 
-    def test_ni_recorder_class_has_no_second_phase(self):
-        """Guard against the two-phase flags being copied onto the NI
-        recorder by a future edit — its callback semantics are verified
-        on hardware that cannot be re-tested from a Mac."""
-        assert not hasattr(streams.Recorder_NI_nidaqmx, 'capture_complete')
+    def test_ni_shaped_recorder_waits_for_capture_complete(self):
+        """A triggered-but-incomplete NI-shaped recorder is not finished,
+        and resetting it lowers both flags WITHOUT inventing
+        `trigger_overshoot` — `log_data` routes the window slicing on
+        that attribute, so creating it would mis-slice every NI capture."""
+        rec = self._TwoPhaseNoOvershoot()
+        assert acquisition._capture_finished(rec) is False
+        rec.capture_complete = True
+        assert acquisition._capture_finished(rec) is True
+        acquisition._reset_trigger_state(rec)
+        assert rec.trigger_detected is False and rec.capture_complete is False
+        assert not hasattr(rec, 'trigger_overshoot')
 
     def test_two_phase_recorder_answers_from_capture_complete(self):
         s = _settings()

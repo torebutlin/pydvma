@@ -2285,6 +2285,13 @@ class Recorder_NI_nidaqmx(object):
         #: a dwell up until the ring truly holds a full window, the same
         #: contract as the soundcard recorder.
         self.chunks_seen = 0
+        #: Second phase of the pretrigger (see `_process_chunk`): True
+        #: once the crossing has rolled into the check window and the
+        #: stored ring holds the whole post-trigger window — the point at
+        #: which the ring freezes. `trigger_detected` is the FIRST phase,
+        #: raised at the crossing itself. `acquisition._reset_trigger_state`
+        #: lowers both after each capture.
+        self.capture_complete = False
 
     @property
     def osc_time_data(self):
@@ -2418,15 +2425,30 @@ class Recorder_NI_nidaqmx(object):
         # Monotonic delivered-frame count for the serve monitor — the NI
         # twin of `Recorder.osc_samples_seen`; counted after the write.
         self.osc_samples_seen += self.osc_data_chunk.shape[0]
-        if (not self.trigger_detected) or (self.settings.pretrig_samples is None):
+        armed = self.settings.pretrig_samples is not None
+        # The stored ring keeps rolling until the capture is COMPLETE —
+        # not merely triggered: the post-trigger half of the window
+        # still has to arrive after the crossing.
+        if (not self.capture_complete) or (not armed):
             self._stored_pos = Recorder._ring_write(
                 self._stored_ring, self._stored_pos, self.osc_data_chunk)
             self.chunks_seen += 1
 
+        # Phase 1 — the crossing itself, seen in the NEWEST chunk. Flag it
+        # the moment it happens: `pydvma.serve` polls `trigger_detected`
+        # to tell the app "triggered", and until 2026-09-10 this recorder
+        # only raised the flag when the window was already complete (the
+        # single-phase contract the soundcard recorder left behind in
+        # round 11), so an impulse test showed "waiting for trigger" for
+        # its whole duration and then reported a timeout as often as a
+        # trigger, depending on whether the poll caught the flag before
+        # `log_data` reset it (3C6 lab, PCI-6220).
         trigger_first_detected = np.any(
             np.abs(self.osc_data_chunk[:, self.settings.pretrig_channel])
             > self.settings.pretrig_threshold
         )
+        if armed and trigger_first_detected and not self.trigger_detected:
+            self.trigger_detected = True
         if trigger_first_detected and self.trigger_first_detected_message:
             acquisition.MESSAGE += 'Trigger detected. Logging data for {} seconds.\n'.format(
                 self.settings.stored_time
@@ -2435,19 +2457,22 @@ class Recorder_NI_nidaqmx(object):
             print(acquisition.MESSAGE)
             self.trigger_first_detected_message = False
 
-        # The check window is the SECOND-OLDEST chunk of the stored
-        # buffer, i.e. ``stored_time_data[chunk:2*chunk]`` in the
-        # unrolled view — same contract as before (hardware-verified
-        # sample-exact; `log_data` slices the window from that index).
-        # In ring terms the oldest chunk starts at the write pointer, so
-        # the second-oldest starts one chunk after it. The ring length
-        # is a whole number of chunks and writes are whole chunks, so a
-        # chunk never straddles the wrap.
+        # Phase 2 — completion. The check window is the SECOND-OLDEST
+        # chunk of the stored buffer, i.e. ``stored_time_data[chunk:
+        # 2*chunk]`` in the unrolled view — same contract as before
+        # (hardware-verified sample-exact; `log_data` slices the window
+        # from that index): once the crossing has rolled that far back,
+        # the ring holds the whole post-trigger window and freezes. In
+        # ring terms the oldest chunk starts at the write pointer, so the
+        # second-oldest starts one chunk after it. The ring length is a
+        # whole number of chunks and writes are whole chunks, so a chunk
+        # never straddles the wrap.
         start = (self._stored_pos + chunk) % self._stored_ring.shape[0]
         trigger_check = self._stored_ring[start:start + chunk,
                                           self.settings.pretrig_channel]
         if np.any(np.abs(trigger_check) > self.settings.pretrig_threshold):
             self.trigger_detected = True
+            self.capture_complete = True
 
     def init_stream(self, settings, _input_=True, _output_=False):
         # Tear down any previous task on this recorder

@@ -211,14 +211,18 @@ class TestRing:
 
 
 # ---------------------------------------------------------------------------
-# Pretrigger contract (single-phase, sample-exact on hardware — unchanged)
+# Pretrigger contract: two-phase since 2026-09-10 (crossing → completion),
+# window slicing sample-exact on hardware — unchanged
 # ---------------------------------------------------------------------------
 
 class TestPretriggerWindow:
     def test_check_window_is_the_second_oldest_chunk(self):
         """`log_data` slices the crossing from ``stored[chunk:2*chunk]`` of
-        the unrolled buffer; the ring must arm from exactly that chunk,
-        including after the write pointer has wrapped."""
+        the unrolled buffer; the ring must COMPLETE from exactly that
+        chunk, including after the write pointer has wrapped — while the
+        crossing itself is flagged the moment it arrives, so the serve
+        bridge can say "triggered" at once (round 15: an impulse test on
+        a PCI-6220 read "waiting for trigger" for its whole length)."""
         rec = _bare_recorder([], pretrig=True)
         n = rec.stored_num_chunks
         # Prime past the wrap with quiet chunks, then one loud chunk.
@@ -227,14 +231,18 @@ class TestPretriggerWindow:
         loud = np.zeros((CHUNK, CHANNELS))
         loud[10, 0] = 1.0
         rec._process_chunk(loud)
-        assert not rec.trigger_detected      # loud chunk is the NEWEST
-        # Roll it towards the check window: it becomes second-oldest
-        # after n-3 more quiet chunks (ring holds n chunks).
+        assert rec.trigger_detected          # phase 1: the crossing, in the NEWEST chunk
+        assert not rec.capture_complete      # ... but the window is not in yet
+        assert acquisition._capture_finished(rec) is False
+        # The stored buffer keeps rolling while the post-trigger half
+        # arrives: the crossing becomes second-oldest after n-3 more
+        # quiet chunks (ring holds n chunks).
         for _ in range(n - 3):
             rec._process_chunk(np.zeros((CHUNK, CHANNELS)))
-        assert not rec.trigger_detected
+        assert not rec.capture_complete
         rec._process_chunk(np.zeros((CHUNK, CHANNELS)))
-        assert rec.trigger_detected
+        assert rec.capture_complete          # phase 2: complete, and frozen
+        assert acquisition._capture_finished(rec) is True
         window = rec.stored_time_data[CHUNK:2 * CHUNK, 0]
         assert window[10] == 1.0 and np.count_nonzero(window) == 1
         # Frozen: further chunks no longer move the stored buffer ...
@@ -244,8 +252,25 @@ class TestPretriggerWindow:
         # ... while the oscilloscope keeps going.
         assert np.all(rec.osc_time_data[-CHUNK:] == 5.0)
 
-    def test_ni_recorder_stays_single_phase(self):
-        assert not hasattr(streams.Recorder_NI_nidaqmx, 'capture_complete')
+    def test_unarmed_recorder_never_flags_a_crossing(self):
+        rec = _bare_recorder([], pretrig=False)
+        loud = np.zeros((CHUNK, CHANNELS))
+        loud[3, 0] = 9.0
+        for _ in range(3):
+            rec._process_chunk(loud)
+        assert not rec.trigger_detected and not rec.capture_complete
+        assert np.all(rec.stored_time_data[-CHUNK:, 0] == loud[:, 0])   # still rolling
+
+    def test_reset_lowers_both_phases_without_inventing_overshoot(self):
+        """`acquisition._reset_trigger_state` must not create the soundcard
+        recorder's `trigger_overshoot` here: `log_data` tells the two
+        recorders' window slicing apart by that attribute."""
+        rec = _bare_recorder([], pretrig=True)
+        rec.trigger_detected = True
+        rec.capture_complete = True
+        acquisition._reset_trigger_state(rec)
+        assert rec.trigger_detected is False and rec.capture_complete is False
+        assert not hasattr(rec, 'trigger_overshoot')
 
 
 # ---------------------------------------------------------------------------

@@ -2344,9 +2344,14 @@ class _Connection:
         frame the first time the flag is observed True, then returns; the
         caller cancels this task once the capture completes.  Best-effort:
         ``MockRecorder`` never triggers (so this only ever times out under
-        the mock), and on a very fast real trigger ``log_data`` may reset
-        the flag before a poll catches it — the authoritative outcome is
-        the following ``log_result``.
+        the mock). Both hardware recorders raise the flag at the crossing
+        itself and hold it until ``log_data`` resets it after the capture
+        (the NI recorder since 2026-09-10 — before that it raised the flag
+        only when the window was already complete, so an impulse test
+        showed "waiting for trigger" throughout and reported a timeout or
+        a trigger depending on which won the race with the reset), so
+        the poll misses it only on a capture shorter than one poll tick —
+        the authoritative outcome is the following ``log_result``.
         """
         tick = 1.0 / PRETRIG_POLL_HZ
         while True:

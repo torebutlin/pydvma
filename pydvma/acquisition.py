@@ -224,12 +224,14 @@ def _stop_output(settings, s, wait=True):
 def _capture_finished(rec):
     '''Has ``rec`` finished filling the post-trigger half of its window?
 
-    Duck-typed on purpose. The soundcard `streams.Recorder` runs a
-    two-phase trigger and answers with ``capture_complete``; the NI
-    recorder (`streams.Recorder_NI_nidaqmx`, hardware-verified
-    sample-exact and deliberately left alone) sets ``trigger_detected``
-    only once its buffer already holds the whole post-trigger window,
-    so for it the two questions are the same one.
+    Duck-typed on purpose. Both hardware recorders run a two-phase
+    trigger — ``trigger_detected`` at the crossing, ``capture_complete``
+    once the buffer holds the whole post-trigger window (the soundcard
+    `streams.Recorder` since round 11, `streams.Recorder_NI_nidaqmx`
+    since 2026-09-10) — and answer with the second flag. A recorder
+    with no second phase (`streams.MockRecorder`) sets
+    ``trigger_detected`` only when the data is already in, so for it
+    the two questions are the same one.
     '''
     return getattr(rec, 'capture_complete', rec.trigger_detected)
 
@@ -238,10 +240,13 @@ def _reset_trigger_state(rec):
     '''Disarm a recorder's trigger flags and unfreeze its stored buffer.
 
     Both flags of the two-phase state machine have to go back down
-    together: leaving ``capture_complete`` set would keep
-    `streams.Recorder`'s stored buffer frozen after the capture that
-    set it. Recorders without the second phase (NI, mock) just get
-    ``trigger_detected`` cleared, as before.
+    together: leaving ``capture_complete`` set would keep a recorder's
+    stored buffer frozen after the capture that set it. A recorder
+    without the second phase (mock) just gets ``trigger_detected``
+    cleared, as before. ``trigger_overshoot`` is the soundcard
+    recorder's own bookkeeping and is only reset where it exists —
+    creating it on the NI recorder would misroute `log_data`'s window
+    slicing, which tells the two recorders apart by that attribute.
 
     The recorder's internal post-trigger countdown is deliberately NOT
     touched. It is only ever read after a fresh crossing has just
@@ -252,6 +257,7 @@ def _reset_trigger_state(rec):
     rec.trigger_detected = False
     if hasattr(rec, 'capture_complete'):
         rec.capture_complete = False
+    if hasattr(rec, 'trigger_overshoot'):
         rec.trigger_overshoot = 0
 
 
@@ -708,9 +714,9 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
         # make copy of data
         stored_time_data_copy = np.copy(streams.REC.stored_time_data)
         number_samples = int(settings.stored_time * settings.fs)
-        if hasattr(streams.REC, 'capture_complete'):
-            # Two-phase recorder (`streams.Recorder`): the buffer is
-            # frozen with the window's end `trigger_overshoot` samples
+        if hasattr(streams.REC, 'trigger_overshoot'):
+            # Overshoot-sliced recorder (`streams.Recorder`): the buffer
+            # is frozen with the window's end `trigger_overshoot` samples
             # short of the tail, which puts the first above-threshold
             # sample at index `pretrig_samples` of the slice.
             if streams.REC.capture_complete:
@@ -724,11 +730,15 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
                 # the most recent data — the free-run fallback.
                 stored_time_data_copy = stored_time_data_copy[-number_samples:, :]
         else:
-            # Single-phase recorder (`streams.Recorder_NI_nidaqmx`, and
-            # `MockRecorder`): `trigger_detected` is only set once the
-            # post-trigger data is already in the buffer, and the
-            # crossing sits in the second-oldest chunk. Untouched —
-            # hardware-verified sample-exact on NI.
+            # Scan-sliced recorders (`streams.Recorder_NI_nidaqmx`, and
+            # `MockRecorder`): the NI recorder completes — freezes — the
+            # moment the crossing has rolled into the second-oldest
+            # chunk of its stored ring (`capture_complete`, raised in
+            # the same callback that would have raised the old
+            # single-phase flag), so the crossing sits in that chunk and
+            # the window is sliced from it. Untouched since it was
+            # hardware-verified sample-exact on NI; only the flag that
+            # freezes the buffer changed name (2026-09-10).
             trigger_check = stored_time_data_copy[(settings.chunk_size):(2*settings.chunk_size),settings.pretrig_channel]
             hits = np.where(np.abs(trigger_check) > settings.pretrig_threshold)[0]
             if len(hits) == 0:
