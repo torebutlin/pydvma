@@ -1898,7 +1898,8 @@ class _Connection:
         # monitor had to step up to a runnable rate, or the device clock
         # could not be put where it was asked to go.
         notes = [n for n in (default_note, device_note, rate_note,
-                             getattr(rec, 'clock_note', None)) if n]
+                             getattr(rec, 'clock_note', None),
+                             getattr(rec, 'wedge_note', None)) if n]
         if notes:
             payload['deviceNote'] = ' '.join(notes)
         await self._send_json(payload)

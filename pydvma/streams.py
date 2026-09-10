@@ -365,6 +365,47 @@ def _windows_native_rates(name, channels):
     return []
 
 
+#: Seconds a freshly started soundcard stream is given to deliver its
+#: first callback before `Recorder._unwedge_silent_stream` intervenes.
+#: A healthy PortAudio stream on any Windows host API answers within its
+#: startup latency (~0.1–0.2 s); a wedged endpoint delivers nothing for
+#: minutes. One second is decisive and costs a normal open nothing —
+#: the wait returns at the first sample.
+FIRST_SAMPLES_GRACE_S = 1.0
+
+
+def _wasapi_input_twin(name):
+    """Index of the Windows WASAPI INPUT entry for the device ``name``.
+
+    Windows lists one piece of hardware once per host API; this finds
+    the WASAPI one — the endpoint `Recorder._unwedge_silent_stream`
+    opens in exclusive mode to reset a wedged device, whichever host
+    API the live stream itself uses. Name matching is exact first, then
+    by prefix either way, which covers MME truncating names to 31
+    characters (the same rule as `_windows_native_rates`). ``None`` off
+    Windows, without ``sounddevice``, or when there is no such entry.
+    """
+    if sd is None or not name:
+        return None
+    try:
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+    except Exception:
+        return None
+    for i, dev in enumerate(devices):
+        try:
+            if not dev['max_input_channels']:
+                continue
+            if hostapis[dev['hostapi']]['name'] != 'Windows WASAPI':
+                continue
+            other = dev['name']
+        except (IndexError, KeyError, TypeError):
+            continue
+        if other == name or other.startswith(name) or name.startswith(other):
+            return i
+    return None
+
+
 def _volume_backend():
     """The platform module that can read/write a device's input volume.
 
@@ -1553,6 +1594,23 @@ class Recorder(object):
         self._pin_hardware_format(settings)
         self._pin_input_volume(settings)
 
+        self.wedge_note = None
+        delivered_before = self.osc_samples_seen
+        self._open_and_start(settings)
+        # Windows only (the workaround needs WASAPI): a stream that
+        # opened and started but delivers nothing is a wedged audio
+        # endpoint, not a quiet input — see `_unwedge_silent_stream`.
+        if (hasattr(sd, 'WasapiSettings')
+                and not self._wait_first_samples(FIRST_SAMPLES_GRACE_S,
+                                                 delivered_before)):
+            self._unwedge_silent_stream(settings)
+
+    def _open_and_start(self, settings):
+        '''Build the live stream — full-duplex or input-only, see
+        `init_stream` — arm the priming filter, start it and record
+        `stream_fs`. Split out of `init_stream` so the silent-stream
+        workaround (`_unwedge_silent_stream`) can close and reopen the
+        very same stream.'''
         dtype = 'float32'
         duplex_channels = self._duplex_output_channels_wanted(settings)
         if duplex_channels:
@@ -1617,6 +1675,108 @@ class Recorder(object):
             self.stream_fs = float(self.audio_stream.samplerate)
         except Exception:
             self.stream_fs = float(settings.fs)
+
+    def _wait_first_samples(self, grace, baseline):
+        '''True once the open stream has delivered a callback: polls
+        `osc_samples_seen` for up to ``grace`` seconds (10 ms steps)
+        until it exceeds ``baseline``, the count read BEFORE the stream
+        was opened (a host may deliver before the wait even begins). A
+        healthy stream answers within its startup latency, ~0.1 s.'''
+        deadline = time.time() + float(grace)
+        while time.time() < deadline:
+            if self.osc_samples_seen > baseline:
+                return True
+            time.sleep(0.01)
+        return self.osc_samples_seen > baseline
+
+    def _unwedge_silent_stream(self, settings):
+        '''Clear a Windows audio endpoint that opened but delivers nothing.
+
+        Measured three times on Scarlett 2i2 4th Gen interfaces (the lab
+        PC on 2026-09-04 and 2026-09-10, the office PC over RDP on
+        2026-09-04): after some sequence of stream opens and closes — a
+        re-enumeration, one session holding a shared stream while others
+        come and go — every NEW stream on the device opens and starts
+        normally but never delivers a callback, on MME, DirectSound,
+        WDM-KS and WASAPI shared alike, for as long as ten minutes. Each
+        time, opening the device's WASAPI endpoint in EXCLUSIVE mode,
+        streaming for a moment and closing it restored delivery to every
+        host API at once. Left alone, the symptom in the app is a scope
+        that never moves and captures of zeros.
+
+        So when `_wait_first_samples` comes back empty this does exactly
+        that: an exclusive open/close on the device's WASAPI input twin
+        (`_wasapi_input_twin`; tried at the stream's rate, then 48 k and
+        44.1 k, then the twin's default rate — exclusive mode refuses
+        rates the hardware cannot clock), then the live stream is closed
+        and reopened through `_open_and_start`, and the outcome is put in
+        ``wedge_note`` (forwarded to the app by `pydvma.serve` on
+        configure) and printed. With no WASAPI twin — not Windows, or a
+        device without one — it only reports the silence. A stream that
+        stays silent afterwards is left open: `acquisition.
+        _wait_for_buffer_fill` warns about it at capture time as before.
+        '''
+        name = getattr(settings, 'device_name', None) or 'the device'
+        grace = float(FIRST_SAMPLES_GRACE_S)
+        twin = _wasapi_input_twin(name)
+        if twin is None:
+            self.wedge_note = ('%s delivered no samples within %g s of opening, '
+                               'and there is no WASAPI endpoint to reset it '
+                               'through: check the interface.' % (name, grace))
+            print('WARNING: ' + self.wedge_note)
+            return
+        rates = []
+        for r in (float(settings.fs), 48000.0, 44100.0):
+            if r not in rates:
+                rates.append(r)
+        try:
+            default_rate = float(sd.query_devices(twin)['default_samplerate'])
+            if default_rate and default_rate not in rates:
+                rates.append(default_rate)
+        except Exception:
+            pass
+        cleared_with = None
+        for rate in rates:
+            try:
+                probe = sd.InputStream(device=twin, channels=int(settings.channels),
+                                       samplerate=rate, dtype='float32',
+                                       callback=lambda *args: None,
+                                       extra_settings=sd.WasapiSettings(exclusive=True))
+                probe.start()
+                time.sleep(0.5)
+                probe.stop()
+                probe.close()
+                cleared_with = rate
+                break
+            except Exception:
+                continue
+        if cleared_with is None:
+            self.wedge_note = ('%s delivered no samples within %g s of opening, '
+                               'and its WASAPI endpoint could not be opened in '
+                               'exclusive mode to reset it: check the '
+                               'interface\'s USB connection.' % (name, grace))
+            print('WARNING: ' + self.wedge_note)
+            return
+        for action in ('stop', 'close'):
+            try:
+                getattr(self.audio_stream, action)()
+            except Exception:
+                pass
+        delivered_before = self.osc_samples_seen
+        self._open_and_start(settings)
+        if self._wait_first_samples(grace, delivered_before):
+            self.wedge_note = ('%s delivered no samples within %g s of opening '
+                               '(a wedged Windows audio endpoint); an exclusive-'
+                               'mode open of its WASAPI endpoint at %g Hz cleared '
+                               'it and the stream was reopened.'
+                               % (name, grace, cleared_with))
+            print('note: ' + self.wedge_note)
+        else:
+            self.wedge_note = ('%s delivered no samples within %g s of opening, '
+                               'and still none after a WASAPI exclusive-mode '
+                               'reset: check the interface\'s USB connection; '
+                               'captures will start with zeros.' % (name, grace))
+            print('WARNING: ' + self.wedge_note)
 
     def _duplex_output_channels_wanted(self, settings):
         '''Output-channel count the live stream should open with, or 0.
