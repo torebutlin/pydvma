@@ -50,6 +50,36 @@ pointed at the wrong thing first (input 2, the cable, the extension,
 the charge amp) until the drive channel's own >5 kHz floor and the
 frame-synchronous impulse envelopes were looked at.
 
+**User-space buffering does not help — measured (2026-09-11, lab PC,
+rig off so the inputs carry only their noise floor, which is never
+exactly zero).** Raw `sounddevice` captures on the 2i2's WASAPI entry
+at 44.1 kHz, 30 s each, under the same four-process 100 MB array churn
+that reproduced the fault the day before, with PortAudio asked for
+progressively deeper buffering:
+
+| condition | PortAudio host buffer | zero-fill runs | frames lost (of 1.32 M) | PortAudio overflows |
+|---|---|---|---|---|
+| quiet, block 1600, latency high | 73 ms | 0 | 0 | 0 |
+| churn, block 100, high | 22 ms | 13 | 51 848 (1.2 s) | 0 |
+| churn, block 1600, high | 73 ms | 23 | 88 012 (2.0 s) | 0 |
+| churn, block 9600, high | 435 ms | 38 | 84 908 (1.9 s) | 0 |
+| churn, block 1600, 0.5 s | 536 ms | 131 | 53 512 (1.2 s) | 0 |
+| churn, block 9600, 1.0 s | 1 218 ms | 272 | 57 171 (1.3 s) | 0 |
+| quiet again | 73 ms | 0 | 0 | 0 |
+
+Four to seven per cent of every capture gone whatever the buffering,
+and PortAudio never once fell behind: the loss happens before the
+samples reach any buffer a user-space program owns — in the audio
+engine, the Focusrite driver or the USB link. So larger chunks, larger
+rings, deeper PortAudio latency or pre-allocation in pydvma cannot fix
+it (the rings are pre-allocated already); the levers are the driver's
+own buffer setting (Focusrite Control 2, untested), the host's memory
+headroom, and not generating the churn in the first place. The one
+thing pydvma can do on its own side is keep its footprint down — the
+kernel's growth per capture, the engine worker's 0.8 GB, the journal's
+copies — so that the logger is not the process that tips a marginal
+machine into paging.
+
 **Host requirements we would state for USB audio capture now.**
 Several GB of free RAM and NO paging during the capture; the notebook
 kernel restarted between batches (or the session saved and cleared);
