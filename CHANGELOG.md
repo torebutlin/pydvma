@@ -3,7 +3,17 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.4.4 — 2026-09-14
+
+The 3C6 lab rounds on 2.4.3, plus the two lab-feedback items that came
+back with them. The 2i2 coherence hunt closed with no software fault:
+the lab PCs could not keep up with a long high-rate USB stream, and the
+same rig on a Mac, in shorter captures, and through a USB NI card all
+gave good data. What did need fixing was an NI impulse test that never
+said "triggered", an across-sets TF average that refused a mixed
+ensemble and left coherence reading 1, a half-frozen live scope, level
+meters that called a healthy NI capture clipped, and a frequency
+navigator you could scope but not un-scope.
 
 ### Fixed
 
@@ -39,9 +49,29 @@ follows [semantic versioning](https://semver.org/).
   two selects "strategy" and "hardware rate" and omits the latter when
   the device publishes no rate ladder (an NI device), where it showed a
   lone "auto".
+- **The live level meters read an NI capture as permanently clipped.**
+  The web logger judged peak levels against a hard-coded 1.0, which is
+  right for a normalised soundcard stream and wrong for an NI AI task,
+  whose samples are VOLTS over the configured `±VmaxNI` range: a healthy
+  3 V reading on a ±5 V rail pegged every bar and latched CLIP (3C6 lab,
+  USB NI card, 2026-09). The bridge now reports the stream's full-scale
+  reference with every configure (`serve._input_scale_fields` →
+  `inputVmax` / `inputVmaxIsVolts`, straight from `MySettings.input_vmax`,
+  the same rail `acquisition.log_data` checks its capture-time clip
+  warning against), and the meters, the latching clip flag and Setup's
+  level check all divide by it. A bridge that does not report one keeps
+  the 1.0 assumption, so Web Audio and an uncalibrated jack are
+  unchanged. Bar tooltips now also give the reading in volts wherever
+  the rail has a voltage meaning.
 
 ### Changed
 
+- **The frequency navigator's scope button is a toggle.** Scoping the
+  strip to a band was one click; the only way back out was a
+  double-click on the thin context ribbon, which nobody finds. The ⤢
+  head button now becomes a lit ⤡ once scoped, and clicking it clears
+  the scope and re-expands the strip to the full bandwidth. The ribbon
+  double-click still works.
 - **Clean Impulse is offered only where the input channel looks like an
   impulse** — at most 25 % of its energy in the second half of the
   record (`lib/analysis/impulse.ts`); otherwise the Time card says why.
@@ -77,15 +107,26 @@ follows [semantic versioning](https://semver.org/).
 
 ### Investigated (no code change)
 
-- **The 3C6 lab PC corrupts the 2i2's USB audio under memory
-  pressure.** With commit charge at 90 % of its limit and 4.5 % disk
+- **The 2i2 coherence collapse was the lab PCs, not pydvma — closed.**
+  The same interface and rig gave good data on a Mac, in shorter
+  captures on the lab PC, and through a USB NI card on the lab PC.
+  Nothing in the acquisition chain is at fault. What reproduces it is
+  host load: with commit charge at 90 % of its limit and 4.5 % disk
   free, four processes churning 100 MB arrays produced 12–480
   zero-filled packet gaps in 30 s captures and lifted the accelerometer
-  channel's noise floor 10–25 dB, three times out of three; disk load
-  and playback through the 2i2 did not. Round-14d notes in
-  `dev/2026-09-04-round14-2i2-lab-coherence.md` with the checklist
-  (free the disk, quiet the machine, restart the kernel between
-  batches, then re-measure; unit swap only if still corrupt).
+  channel's noise floor 10–25 dB, three times out of three, while disk
+  load and playback through the 2i2 did not. A buffering A/B then
+  showed the loss sits below any user-space buffer: PortAudio block
+  sizes from 100 to 9600 frames and host buffers from 22 ms to 1.2 s
+  all lost 1.2–2.0 s of every 30 s, PortAudio's overflow counter at
+  zero throughout. The USB NI path on the same PC shows the same
+  ceiling from the other side — decimation at a high sample rate over
+  a long capture occasionally drops samples (missing data, not low
+  coherence). Practical envelope: a machine with memory and disk
+  headroom, or shorter captures. Notes in
+  `dev/hardware-lessons-learnt.md` and
+  `dev/2026-09-04-round14-2i2-lab-coherence.md`; harness in
+  `dev/soundcard_load_check.py`.
 
 ## 2.4.3 — 2026-09-04
 
