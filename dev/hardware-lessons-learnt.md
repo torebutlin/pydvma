@@ -219,4 +219,8 @@ that hits the ceiling says so rather than passing quietly.
   `dev/twoi2_loopback_check.py` converter-vs-link discriminator. Both
   were discriminators for a fault that is not in the interface. The
   harnesses stay for any future interface.
-- Ship 2.4.4 — the lab install is still 2.4.3.
+- ~~Ship 2.4.4~~ — DONE 2026-09-14: on PyPI, tagged, published-wheel
+  traps re-checked clean. Lab install is now
+  `pip install --upgrade "pydvma[serve,soundcard]"`. (The GitHub
+  releases for 2.4.2–2.4.4 are still to publish — that is what
+  triggers the Zenodo archive.)

@@ -42,13 +42,28 @@ vitest 1163/1 skipped, pytest 1192 passed with the SAME 5 failures as
 at HEAD (all `sounddevice`-absent — 4 in `test_capture_rate`, 1 in
 `test_serve_protocol`; verified by running HEAD in a worktree), the
 freq-nav Playwright spec 5/5 against `/opt/pw-browsers/chromium`,
-mkdocs --strict clean. **Version bumped to 2.4.4 at all five sites; the
-engine wheel, UI staging, sdist + fat wheel and `twine upload` are
-Tore's, from the Mac** — and per "Releasing — the three silent traps":
-`npm run vendor:wheels` FIRST, then `python scripts/stage_webui.py`,
-then `python -m build --sdist --wheel`. Note also that **`v2.4.2` and
-`v2.4.3` were never tagged** (both are on PyPI); tag them at their cut
-commits alongside `v2.4.4`.
+mkdocs --strict clean.
+
+**v2.4.4 IS RELEASED to PyPI** (Tore built and uploaded from the Mac,
+2026-09-14 13:36 UTC), and `v2.4.2` / `v2.4.3` / `v2.4.4` are now all
+tagged at their cut commits (142e5c4, fb87401, 45494b0) and pushed —
+the first two had shipped to PyPI untagged. Trap 3 re-checked on the
+DOWNLOADED wheel and it is clean: embedded
+`_webui/pypi/pydvma-2.4.4-py3-none-any.whl`, the bundled
+`index-C28sMvCR.js` references that same filename, and all 24
+`pydvma/*.py` are byte-identical to tag `v2.4.4` in BOTH the fat wheel
+and the engine wheel inside it. A clean-venv install of the published
+wheel serves its own embedded UI (engine wheel fetched 200) with the
+`/engine` greeting `{v:1, pydvma:'2.4.4', journal:true}`. Lab install
+is `pip install --upgrade "pydvma[serve,soundcard]"`.
+
+**The one thing still outstanding: the GitHub RELEASES.** The last
+published release is v2.4.1 — 2.4.2, 2.4.3 and 2.4.4 have tags but no
+release, so **Zenodo has not archived any of them** and the concept
+DOI still resolves to the 2.4.1 archive. Publishing a release is what
+triggers the auto-archive, and the v2.3.0 precedent (hold until after
+the PyPI upload) is now satisfied for all three. Bodies come straight
+out of CHANGELOG.md; `gh release create` from the Mac, oldest first.
 
 As of 2026-09-10, late afternoon (still ON the 3C6 lab PC, which has NO
 node — every web-UI change below is written blind and must go through
