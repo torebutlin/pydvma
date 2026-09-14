@@ -97,6 +97,26 @@ test('scope: ⤢ scopes to the window, ribbon appears; double-click clears', asy
   expect(await freqScope(page)).toBeNull();
 });
 
+test('scope: the head button is a toggle, so a scoped strip can be re-expanded', async ({ page }) => {
+  // Lab feedback (2026-09): scoping to a band was "all nice", but the only
+  // way back out was a double-click on a thin ribbon nobody finds.
+  await openTf(page);
+  await page.getByTestId('freq-nav-toggle').click();
+  await setWindow(page, 250, 750);
+  const btn = page.getByTestId('freq-nav-scope-btn');
+  await expect(btn).toHaveAttribute('aria-pressed', 'false');
+
+  await btn.click();
+  await expect(page.getByTestId('freq-nav-ribbon')).toBeVisible();
+  await expect(btn).toHaveAttribute('aria-pressed', 'true');
+
+  // The same button now clears the scope and re-expands to the full extent.
+  await btn.click();
+  await expect(page.getByTestId('freq-nav-ribbon')).not.toBeAttached();
+  await expect(btn).toHaveAttribute('aria-pressed', 'false');
+  expect(await freqScope(page)).toBeNull();
+});
+
 test('peak-step › keeps the window width and moves it forward', async ({ page }) => {
   await openTf(page);
   await page.getByTestId('freq-nav-toggle').click();

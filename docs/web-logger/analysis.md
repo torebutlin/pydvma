@@ -152,10 +152,14 @@ When the measurement carries more bandwidth than you care about, click
 **⤢** to **scope** the strip to the current window: the strip re-scales to
 span just that region, and a thin ribbon appears above it showing where the
 scope sits in the full bandwidth. Drag the ribbon's band to move or resize
-the scope; double-click the ribbon to clear it. The scope only changes what
-the strip spans — it never moves the window, feeds any calculation, or
-appears in undo history (like other view settings, it lasts for the
-current session and resets on reload).
+the scope.
+
+That button is a **toggle**. Once scoped it becomes **⤡** and lights up;
+click it again to clear the scope and re-expand the strip to the full
+measured bandwidth. (Double-clicking the ribbon does the same.) The scope
+only changes what the strip spans — it never moves the window, feeds any
+calculation, or appears in undo history (like other view settings, it
+lasts for the current session and resets on reload).
 
 The **‹ ›** buttons jump the window to the previous/next spectral peak,
 keeping the window's width (from a wide-open window, the first press

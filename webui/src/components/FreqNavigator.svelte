@@ -28,11 +28,14 @@
    *
    * SCOPE (bandwidth-of-interest): when a `scope` is set the strip zooms to
    * span it, and a thin context ribbon appears above — the full extent in
-   * miniature with the scope as its own draggable band (double-click the ribbon
-   * clears the scope). The ⤢ head button scopes the strip to the current
-   * window; when the window lies wholly outside the scoped strip an off-scope
-   * arrow points toward it. Scope changes are NOT undoable, so the ribbon needs
-   * no transient protocol — `onscope` fires once on release.
+   * miniature with the scope as its own draggable band. The head button is a
+   * TOGGLE: ⤢ scopes the strip to the current window, and once scoped it
+   * becomes ⤡ which clears the scope and re-expands to the full extent
+   * (double-clicking the ribbon does the same, but a thin ribbon is not
+   * somewhere anyone thinks to look — lab feedback, 2026-09). When the window
+   * lies wholly outside the scoped strip an off-scope arrow points toward it.
+   * Scope changes are NOT undoable, so the ribbon needs no transient
+   * protocol — `onscope` fires once on release.
    *
    * v2 LIVE re-windowing (round-6 item 6): a drag no longer waits for release.
    * While the pointer moves the strip emits `onpreview` (throttled to one
@@ -89,7 +92,7 @@
     oncancel?: () => void;
     /** Double-click the strip: window → scope (or full extent when unscoped). */
     onhome: () => void;
-    /** Scope commit: ⤢ button / ribbon drag release; null clears the scope. */
+    /** Scope commit: head toggle / ribbon drag release; null clears the scope. */
     onscope: (s: [number, number] | null) => void;
   } = $props();
 
@@ -470,11 +473,15 @@
       >›</button>
       <button
         class="nbtn"
+        class:on={scope != null}
         type="button"
         data-testid="freq-nav-scope-btn"
-        title="Scope the strip to the current window (double-click the ribbon to clear)"
-        onclick={() => onscope([band[0], band[1]])}
-      >⤢</button>
+        aria-pressed={scope != null}
+        title={scope != null
+          ? 'Clear the scope — show the full frequency range again'
+          : 'Scope the strip to the current window'}
+        onclick={() => onscope(scope != null ? null : [band[0], band[1]])}
+      >{scope != null ? '⤡' : '⤢'}</button>
     </span>
     <span class="brush-fields">
       <input
@@ -706,6 +713,13 @@
   }
   .nbtn:hover:not(:disabled) { color: var(--text, #1b2437); border-color: var(--accent-soft-border, #c7d2fe); }
   .nbtn:disabled { opacity: 0.35; cursor: default; }
+  /* Scoped state: the toggle is lit so "the strip is clipped to a band, and
+     this is what un-clips it" reads at a glance. */
+  .nbtn.on {
+    color: var(--indigo, #4f46e5);
+    border-color: var(--indigo, #4f46e5);
+    background: var(--accent-soft, #eef2ff);
+  }
   .ribbon { display: block; width: 100%; touch-action: none; margin-bottom: 2px; }
   .rband {
     fill: var(--indigo, #4f46e5);
