@@ -167,9 +167,10 @@ structural fix. None of this applies to the NI path.
    exonerates the INPUT; the same sensor chain on another front end
    (the NI) exonerates the sensor and conditioning. None of them
    touches a corruption that sits on both channels.
-4. A load A/B on the live interface (quiet / disk / CPU + memory churn
-   / playback) — the round-14d scripts are in that session's
-   scratchpad description; ten lines of `sounddevice` each.
+4. A load A/B on the live interface: `dev/soundcard_load_check.py`
+   (quiet / CPU + memory churn / disk, and `--buffering` for the
+   block-size and latency sweep under churn; raw `sounddevice`, no
+   pydvma in the loop, no signal needed). It produced the §1 tables.
 5. The app's coherence estimator and the checker's per-second one have
    different ceilings (0.97 vs 0.69 at 48 k with 2048-point segments);
    compare like with like, and against an NI reference of the same rig.
