@@ -257,15 +257,23 @@ is still open, as one consolidated list.
   `dev/hardware-lessons-learnt.md` (USB audio's host requirements vs a
   DAQ's, the 2i2's Windows behaviours incl. the endpoint wedge, NI
   coercion/overflow facts, and the acquisition-vs-rig diagnosis method).
-  Open from rounds 14d/15 (2026-09-10):
-  - Lab PC: re-measure the 2i2 after a reboot on a quiet machine
-    (`dev/channel_noise_check.py`, target the −83 dB floor / lag-0 ratio
-    ~1 seen once); unit swap only if still corrupt; free C:, disable NI
-    Device Monitor 17, McAfee exclusion, more RAM.
-  - Route the 2i2 loopback source in Focusrite Control 2 and run
-    `dev/twoi2_loopback_check.py` (converter vs link discriminator).
-  - Verify a USB NI device (6003/6212/cDAQ) under the same host load —
-    expected immune (bulk transfers + 10 s DAQmx buffer).
+  **The 2i2 coherence question is CLOSED (2026-09-14, Tore's own
+  cross-checks — section 5 of the lessons doc):** the same rig on a
+  Mac, in shorter captures on the lab PC, and through a USB NI card on
+  the lab PC all gave good data. No software fault and no fault in the
+  interface; the lab PCs cannot sustain a long high-rate stream. The
+  USB NI path shows the same ceiling as MISSING DATA rather than as
+  noise — which is itself the diagnostic: noise-shaped corruption
+  points at USB audio, hole-shaped corruption points at the host.
+  Retired with it: the 2i2 unit swap and the
+  `dev/twoi2_loopback_check.py` converter-vs-link discriminator.
+  Still open:
+  - Lab PC housekeeping (now the actionable item): free C:, disable NI
+    Device Monitor 17, McAfee exclusion for the working folder, more
+    RAM.
+  - Characterise where the NI "long + decimated + high fs" ceiling
+    sits on the lab PC — which of rate, duration and decimation
+    dominates — so the envelope is numbers, not "shorter".
   - Live-verify on the PCI-6220: an impulse test now reports
     "triggered" within a poll tick (two-phase NI trigger), and an
     across-sets TF over the 6 s taps averages (rate-jitter tolerant).
@@ -273,18 +281,13 @@ is still open, as one consolidated list.
     `npm run check`, vitest and the Playwright Clean Impulse spec on
     the Mac before release (`dev/2026-09-10-round15-lab-feedback.md`).
 
-- **Round-12 lab re-verification (2i2 coherence/zeros fixes,
-  2026-08-20)** — on the lab PC with the real rig: repeat the
-  morning's failing cases (fs=3000 and fs=48000, 2 s / 10 s / 30 s
-  captures, monitor running) and confirm coherence is consistent
-  across repeats and capture lengths, time data starts with signal
-  (no zero run), and no "capture integrity" toast appears. The fs
-  picker should list 500–5000 + the native ladder for the 2i2; TF
-  view tray cards should read `ch_1/ch_0` + `ch_0 (ref)`. Round doc
+- ~~**Round-12 lab re-verification (2i2 coherence/zeros fixes,
+  2026-08-20)**~~ — **DONE 2026-09-14.** Coherence is good with the
+  2i2 on a Mac and in shorter captures on the lab PC; what remained
+  was the host-bandwidth ceiling, not the round-12 fixes. Round doc
   with the bench evidence:
-  `dev/2026-08-20-round12-2i2-lab-feedback.md`; headless harness
-  `dev/soundcard_drop_check.py` (needs the Rigol or any two-tone
-  source on L/R).
+  `dev/2026-08-20-round12-2i2-lab-feedback.md`; headless harnesses
+  `dev/soundcard_drop_check.py` and `dev/soundcard_load_check.py`.
 
 - ~~**NI recorder: two latent issues mirrored from round-12's
   soundcard fixes, deferred to an NI-live session**~~ — **DONE

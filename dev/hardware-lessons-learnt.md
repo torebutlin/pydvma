@@ -10,6 +10,10 @@ bench, lab or purchase. Not user documentation — the user-facing
 distillate is one paragraph in `docs/user-guide/acquisition.md`
 ("Capture integrity").
 
+**Read section 5 first.** The 2i2 coherence hunt that prompted this
+page closed on 2026-09-14: the interface is fine, the lab PCs were the
+limit, and sections 1–4 are why.
+
 ## 1. A USB audio interface needs a quieter host than a DAQ does
 
 **The mechanism.** USB audio class streams isochronously: packets are
@@ -175,17 +179,44 @@ structural fix. None of this applies to the NI path.
    different ceilings (0.97 vs 0.69 at 48 k with 2048-point segments);
    compare like with like, and against an NI reference of the same rig.
 
-## 5. Open items (2026-09-10)
+## 5. VERDICT (2026-09-14): it was the host, and the 2i2 is fine
 
-- Re-measure the 2i2 on the lab PC after a reboot on a quiet machine;
-  only if still corrupt, swap the unit (this 2i2 on another PC, or the
-  office 2i2 here).
-- Route the loopback source in Focusrite Control 2 and run
-  `dev/twoi2_loopback_check.py` — the last discriminator between the
-  converter and the link.
-- Verify a USB NI device under the same host load.
-- Lab PC housekeeping: free C:, disable NI Device Monitor 17 (25 CPU-h
-  since boot), consider a McAfee exclusion for the working folder;
-  more RAM.
-- Ship 2.4.4 (the round-14d/15 fixes are Unreleased) — the lab install
-  is still 2.4.3.
+Tore's own cross-checks close the question, and they line up exactly
+with section 1:
+
+| What was run | Result |
+|---|---|
+| 2i2 + the lab rig, captured on a **Mac** | good data |
+| 2i2 on the **lab PC**, **shorter** captures | good data |
+| **USB NI** on the lab PC | good data |
+| USB NI on the lab PC, **decimation + high fs + long capture** | occasional corruption — as MISSING DATA, not low coherence |
+
+No fundamental software fault, and no fault in the 2i2. The failure is
+the lab PCs not sustaining a long high-rate stream, and the NI row is
+the same ceiling seen from the other side: the bulk-transfer path does
+not garble frames the way isochronous audio does, so when the host
+finally cannot keep up it shows as a gap, not as noise. That is the
+signature to expect on each transport, and it is a useful diagnostic in
+its own right — **corruption that reads as noise points at USB audio;
+corruption that reads as a hole points at the host.**
+
+Practical envelope for the 3C6 lab as it stands: keep captures short at
+high rates on the lab PCs, or move to a machine with memory and disk
+headroom. Both drivers now report what they lost — the dropout scan
+(2.4.3) and the NI overflow count (2.4.2) pin the toast — so a capture
+that hits the ceiling says so rather than passing quietly.
+
+## 6. Open items (2026-09-14)
+
+- Lab PC housekeeping is now the actionable item, not a hardware swap:
+  free C:, disable NI Device Monitor 17 (25 CPU-h since boot), consider
+  a McAfee exclusion for the working folder; more RAM.
+- Characterise where the NI "long + decimated + high fs" ceiling
+  actually sits on the lab PC (which of rate, duration and decimation
+  dominates), so the envelope can be stated as numbers rather than as
+  "shorter".
+- Retired with the verdict above: the 2i2 unit swap, and the
+  `dev/twoi2_loopback_check.py` converter-vs-link discriminator. Both
+  were discriminators for a fault that is not in the interface. The
+  harnesses stay for any future interface.
+- Ship 2.4.4 — the lab install is still 2.4.3.

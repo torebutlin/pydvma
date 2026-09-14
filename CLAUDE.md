@@ -8,6 +8,48 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-09-14 (remote Linux session; Tore is on the Mac, which is
+where the build and the twine upload happen): **the 2i2 coherence hunt
+is CLOSED, two lab-feedback items are fixed, and v2.4.4 is bumped and
+ready to cut.** Tore's cross-checks settle the coherence question with
+no software fault and no fault in the interface — the same rig gave
+good data on a Mac, in shorter captures on the lab PC, and through a
+USB NI card on the lab PC; the lab PCs simply cannot sustain a long
+high-rate stream. The USB NI path hits the same ceiling from the other
+side, showing it as MISSING DATA rather than as noise, which is itself
+the diagnostic worth keeping: **noise-shaped corruption points at USB
+audio, hole-shaped corruption points at the host.** Written up as
+section 5 of `dev/hardware-lessons-learnt.md`; the unit swap and the
+`twoi2_loopback_check.py` discriminator are retired with it, and lab-PC
+housekeeping (free C:, NI Device Monitor, McAfee exclusion, more RAM) is
+what remains, plus characterising where the NI long/decimated/high-fs
+ceiling actually sits. The two fixes: (1) **the live level meters read
+an NI capture as permanently clipped** — the web logger judged peaks
+against a hard-coded 1.0, right for a normalised soundcard stream and
+wrong for an NI AI task delivering VOLTS over `±VmaxNI`, so 3 V on a
+±5 V rail pegged every bar and latched CLIP. pydvma already owned the
+right notion (`MySettings.input_vmax()`, the same rail
+`acquisition.log_data` clip-checks against), so the bridge now reports
+it: `serve._input_scale_fields` → `inputVmax` / `inputVmaxIsVolts` on
+every `configured` reply → `ConfiguredInfo` → the acquire store's
+`inputFullScale` → the monitor's clip threshold, LevelBars and Setup's
+level check. Additive and guarded at both ends; Web Audio and an
+uncalibrated jack keep the 1.0 assumption unchanged. (2) **the
+frequency navigator could be scoped but not un-scoped** — the ⤢ head
+button is now a toggle (lit ⤡ once scoped, clears and re-expands); the
+ribbon double-click still works. Suites in this container: check 0/0,
+vitest 1163/1 skipped, pytest 1192 passed with the SAME 5 failures as
+at HEAD (all `sounddevice`-absent — 4 in `test_capture_rate`, 1 in
+`test_serve_protocol`; verified by running HEAD in a worktree), the
+freq-nav Playwright spec 5/5 against `/opt/pw-browsers/chromium`,
+mkdocs --strict clean. **Version bumped to 2.4.4 at all five sites; the
+engine wheel, UI staging, sdist + fat wheel and `twine upload` are
+Tore's, from the Mac** — and per "Releasing — the three silent traps":
+`npm run vendor:wheels` FIRST, then `python scripts/stage_webui.py`,
+then `python -m build --sdist --wheel`. Note also that **`v2.4.2` and
+`v2.4.3` were never tagged** (both are on PyPI); tag them at their cut
+commits alongside `v2.4.4`.
+
 As of 2026-09-10, late afternoon (still ON the 3C6 lab PC, which has NO
 node — every web-UI change below is written blind and must go through
 `npm run check` + vitest + the Playwright Clean-Impulse spec on the
