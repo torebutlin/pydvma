@@ -8,8 +8,15 @@
    *
    * Each bar is a bottom-up green→amber→red gradient masked from the top
    * by the inverse of that channel's peak level.  The CLIP pill reads the
-   * monitor's latching clip flag (trips at peak ≥ 0.95, stays lit until
-   * reset) and clicking it clears the latch.
+   * monitor's latching clip flag (trips at peak ≥ 95 % of full scale, stays
+   * lit until reset) and clicking it clears the latch.
+   *
+   * `monitor.levels` is in the STREAM's own units, which are volts on an NI
+   * card (full scale = the configured `±VmaxNI` rail, 5 or 10 V) and a
+   * normalised 1.0 on Web Audio / an uncalibrated soundcard.  Both the bar
+   * fill and the tooltip are therefore taken as a fraction of
+   * `monitor.fullScale` — reading them against a hard-coded 1.0 pegged every
+   * bar and lit CLIP on healthy NI signals (3C6 lab, 2026-09).
    */
   import type { MonitorStore } from '../lib/stores/monitor';
 
@@ -33,6 +40,12 @@
 
   const levels = $derived(monitor.levels);
   const clipLatched = $derived(monitor.clipLatched);
+  const fullScaleStore = $derived(monitor.fullScale);
+  const isVoltsStore = $derived(monitor.fullScaleIsVolts);
+  /** Full scale in the levels' own units; guarded so a bad value never divides by ~0. */
+  const fullScale = $derived(
+    Number.isFinite($fullScaleStore) && $fullScaleStore > 0 ? $fullScaleStore : 1,
+  );
 
   /**
    * Bars to show — always at least the channels we have levels for. The rail
@@ -45,6 +58,20 @@
   function label(ch: number): string {
     return labels ? labels(ch) : `ch_${ch}`;
   }
+
+  /** Peak as a fraction of full scale, clamped to the bar's 0–1 range. */
+  function frac(peak: number): number {
+    return Math.max(0, Math.min(1, peak / fullScale));
+  }
+
+  /**
+   * Tooltip: the percentage of full scale, plus the raw reading in volts
+   * once the scale has a voltage meaning (NI, or a calibrated jack).
+   */
+  function barTitle(ch: number, peak: number): string {
+    const pct = `ch${ch}: peak ${(frac(peak) * 100).toFixed(0)}%`;
+    return $isVoltsStore ? `${pct} (${peak.toPrecision(3)} V of ${fullScale} V)` : pct;
+  }
 </script>
 
 <div
@@ -56,8 +83,8 @@
   <div class="bars">
     {#each bars as lv, ch (ch)}
       <div class="col">
-        <span class="vbar" title={`ch${ch}: peak ${(lv.peak * 100).toFixed(0)}%`}>
-          <i style="height:{Math.max(0, Math.min(100, (1 - lv.peak) * 100)).toFixed(0)}%"></i>
+        <span class="vbar" title={barTitle(ch, lv.peak)}>
+          <i style="height:{((1 - frac(lv.peak)) * 100).toFixed(0)}%"></i>
         </span>
         {#if variant === 'big'}<small>{label(ch)}</small>{/if}
       </div>

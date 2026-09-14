@@ -319,6 +319,42 @@ test('clip flag latches at peak ≥ 0.95 and resets on demand', async () => {
   mon.stop();
 });
 
+test('the clip threshold follows the stream rail, not a hard-coded 1.0', async () => {
+  // An NI AI task delivers VOLTS over its configured ±VmaxNI range, so a
+  // healthy 3 V reading on a ±5 V rail must NOT latch CLIP — it did, and
+  // pegged every level bar, on the 3C6 lab's USB NI card (2026-09).
+  const { mon, acq } = setup();
+  acq.inputFullScale.set(5);
+  await mon.start();
+
+  capturedOndata!({ data: new Float32Array([3.0, 0.4]), nSamples: 1, nChannels: 2, fs: 44100 });
+  expect(get(mon.clipLatched)).toBe(false);
+
+  // 95 % of the 5 V rail is 4.75 V — that still clips.
+  capturedOndata!({ data: new Float32Array([4.8, 0.4]), nSamples: 1, nChannels: 2, fs: 44100 });
+  expect(get(mon.clipLatched)).toBe(true);
+  mon.stop();
+});
+
+test('levels stay in raw stream units; fullScale carries the rail', async () => {
+  const { mon, acq } = setup();
+  acq.inputFullScale.set(5);
+  await mon.start();
+  capturedOndata!({ data: new Float32Array([3.0, 0.0]), nSamples: 1, nChannels: 2, fs: 44100 });
+  expect(get(mon.levels)[0].peak).toBeCloseTo(3.0, 6);
+  expect(get(mon.fullScale)).toBe(5);
+  mon.stop();
+});
+
+test('a nonsense rail falls back to the normalised 1.0', async () => {
+  const { mon, acq } = setup();
+  acq.inputFullScale.set(0);
+  await mon.start();
+  capturedOndata!({ data: new Float32Array([0.99, 0.0]), nSamples: 1, nChannels: 2, fs: 44100 });
+  expect(get(mon.clipLatched)).toBe(true);
+  mon.stop();
+});
+
 test('start() resets a previously latched clip flag', async () => {
   const { mon } = setup();
   await mon.start();

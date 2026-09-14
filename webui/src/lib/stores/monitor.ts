@@ -91,7 +91,16 @@ export function maxWindowSFor(fs: number, nCh: number): number {
 }
 /** The selectable window presets surfaced in the LiveCard. */
 export const WINDOW_PRESETS_S = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10] as const;
-/** Peak level at or above which the latching clip flag trips. */
+/**
+ * Fraction of FULL SCALE at or above which the latching clip flag trips.
+ *
+ * Judged against the stream's own full-scale reference
+ * (`acquire.inputFullScale`), not against a bare 1.0: an NI AI task delivers
+ * VOLTS over its configured `±VmaxNI` range, so a perfectly healthy 3 V
+ * signal on a ±5 V rail reads 3.0 and lit the CLIP pill permanently
+ * (3C6 lab, USB NI card, 2026-09).  0.95 matches the capture-time check in
+ * `acquisition.log_data`, which compares against `0.95 * input_vmax()`.
+ */
 const CLIP_THRESHOLD = 0.95;
 
 /** Smallest FFT max-frequency the user may zoom to (Hz). */
@@ -121,10 +130,22 @@ export function createMonitorStore(acquire: AcquireStore) {
   const stacked = writable(false);
   const autoscaleY = writable(true);
   const levels = writable<ChannelLevel[]>([]);
-  // Latching clip flag: trips when any channel peak ≥ CLIP_THRESHOLD and
-  // STAYS tripped until the user resets it (or a fresh start()).  The mini
-  // + Live CLIP pills read this; clicking a pill calls resetClip().
+  // Latching clip flag: trips when any channel peak ≥ CLIP_THRESHOLD of the
+  // stream's full scale and STAYS tripped until the user resets it (or a
+  // fresh start()).  The mini + Live CLIP pills read this; clicking a pill
+  // calls resetClip().
   const clipLatched = writable(false);
+
+  /**
+   * The stream's full-scale reference, read from the acquire store (which
+   * takes it from the server's `configured` reply).  Guarded so a
+   * missing/absurd value can never scale the meters to nothing: anything
+   * non-finite or non-positive falls back to the normalised 1.0.
+   */
+  function currentFullScale(): number {
+    const v = get(acquire.inputFullScale);
+    return Number.isFinite(v) && v > 0 ? v : 1;
+  }
 
   // ---- scope display settings (osc-specific) ----
   /** Viewed time window in seconds (also the ring-buffer span). */
@@ -245,6 +266,9 @@ export function createMonitorStore(acquire: AcquireStore) {
     const n = chunk.nSamples;
     const lvls: ChannelLevel[] = [];
     let clippedThisChunk = false;
+    // The rail these samples are measured against — volts on NI, a
+    // normalised 1.0 on Web Audio and an uncalibrated soundcard.
+    const fs = currentFullScale();
     for (let ch = 0; ch < nCh; ch++) {
       let peak = 0;
       let sumSq = 0;
@@ -254,7 +278,7 @@ export function createMonitorStore(acquire: AcquireStore) {
         if (a > peak) peak = a;
         sumSq += v * v;
       }
-      if (peak >= CLIP_THRESHOLD) clippedThisChunk = true;
+      if (peak >= CLIP_THRESHOLD * fs) clippedThisChunk = true;
       lvls.push({ peak, rms: Math.sqrt(sumSq / n) });
     }
     levels.set(lvls);
@@ -442,6 +466,15 @@ export function createMonitorStore(acquire: AcquireStore) {
     autoscaleY,
     levels,
     clipLatched,
+    /**
+     * Sample value that means FULL SCALE on this stream, in the same units
+     * as {@link levels} (volts on NI, a normalised 1.0 otherwise).  Meters
+     * divide peak/RMS by it; {@link ChannelLevel} stays in raw stream units
+     * so the Live trace and the meters never disagree.
+     */
+    fullScale: acquire.inputFullScale,
+    /** Whether {@link fullScale} carries volts rather than a bare fraction. */
+    fullScaleIsVolts: acquire.inputFullScaleIsVolts,
     windowS,
     fftYLog,
     fftXLog,

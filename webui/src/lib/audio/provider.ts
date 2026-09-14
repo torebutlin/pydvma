@@ -348,6 +348,21 @@ export interface ConfiguredInfo {
    * capture is correct, but the user should know their device moved.
    */
   deviceNote?: string;
+  /**
+   * The sample value that means FULL SCALE on this stream, in the stream's
+   * own units (`pydvma.serve._input_scale_fields` → `MySettings.input_vmax`).
+   * An NI AI task delivers volts over its configured `±VmaxNI` range, so full
+   * scale is 5 or 10, not 1; a soundcard delivers normalised samples scaled
+   * by `VmaxSC` (1.0 until the jack is calibrated).  Absent on Web Audio and
+   * from a bridge predating the field, where 1.0 is the right assumption.
+   */
+  inputVmax?: number;
+  /**
+   * Whether {@link inputVmax} is in VOLTS (always on NI; on a soundcard only
+   * once `VmaxSC` has been moved off its uncalibrated 1.0).  `false` means
+   * the samples are a bare fraction of full scale with no voltage meaning.
+   */
+  inputVmaxIsVolts?: boolean;
 }
 
 /**

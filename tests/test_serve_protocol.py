@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 
 import pydvma as dvma
-from pydvma import streams, container
+from pydvma import streams, container, options
 from pydvma import serve as serve_mod
 from pydvma import engine_host
 from pydvma.journal import SessionJournal
@@ -2553,3 +2553,58 @@ def test_osc_snapshot_reads_count_and_window_consistently():
                                                 chunk_size=100, num_chunks=4, stored_time=0.1))
     osc, seen = serve_mod._osc_snapshot(mock)
     assert seen is None and osc.shape[0] == mock.osc_time_data.shape[0]
+
+
+class TestInputScaleFields:
+    """`configured.inputVmax` — the rail the client's level meters divide by.
+
+    The bug it fixes: the web logger judged peak levels against a
+    hard-coded 1.0, which is right for a normalised soundcard stream and
+    wrong for an NI AI task, whose samples are VOLTS over ``±VmaxNI``.
+    A healthy 3 V reading on a ±5 V rail therefore pegged every bar and
+    latched CLIP (3C6 lab, USB NI card, 2026-09).
+    """
+
+    def test_ni_reports_its_configured_rail_in_volts(self):
+        settings = options.MySettings(device_driver='nidaq', VmaxNI=5)
+        assert serve_mod._input_scale_fields(settings) == {
+            'inputVmax': 5.0, 'inputVmaxIsVolts': True}
+
+    def test_ni_follows_the_rail_the_user_set(self):
+        settings = options.MySettings(device_driver='nidaq', VmaxNI=10)
+        assert serve_mod._input_scale_fields(settings)['inputVmax'] == 10.0
+
+    def test_an_uncalibrated_soundcard_is_a_bare_full_scale_fraction(self):
+        settings = options.MySettings(device_driver='soundcard')
+        assert serve_mod._input_scale_fields(settings) == {
+            'inputVmax': 1.0, 'inputVmaxIsVolts': False}
+
+    def test_a_calibrated_jack_reports_volts(self):
+        """VmaxSC off its 1.0 default IS the statement that the readings
+        are volts — the same convention `MySettings.input_vmax` uses."""
+        settings = options.MySettings(device_driver='soundcard', VmaxSC=13.8)
+        assert serve_mod._input_scale_fields(settings) == {
+            'inputVmax': 13.8, 'inputVmaxIsVolts': True}
+
+    def test_the_mock_driver_is_normalised(self):
+        settings = options.MySettings(device_driver='mock')
+        assert serve_mod._input_scale_fields(settings)['inputVmaxIsVolts'] is False
+
+    def test_a_settings_object_that_cannot_answer_is_skipped(self):
+        """Guarded: the client keeps its 1.0 default rather than the
+        handshake failing over a capability field."""
+        assert serve_mod._input_scale_fields(object()) == {}
+
+    def test_a_nonsense_rail_is_skipped(self):
+        settings = options.MySettings(device_driver='nidaq', VmaxNI=5)
+        settings.VmaxNI = 0.0
+        assert serve_mod._input_scale_fields(settings) == {}
+
+
+def test_configure_reports_the_input_rail(monkeypatch):
+    """End-to-end: the field really rides the `configured` reply."""
+    _fake_focusrite_enumeration(monkeypatch)
+    seen = {}
+    status = _configure_without_a_device(monkeypatch, seen, default_driver='mock')
+    assert status['inputVmax'] == 1.0
+    assert status['inputVmaxIsVolts'] is False

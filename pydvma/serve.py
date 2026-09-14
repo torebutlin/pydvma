@@ -832,6 +832,45 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
     return names, caps
 
 
+def _input_scale_fields(settings) -> dict[str, Any]:
+    """The full-scale reference for the live stream, for a ``configured`` reply.
+
+    The samples the bridge ships are in the driver's own units, and what
+    counts as *full scale* differs by driver: an NI AI task returns VOLTS
+    over the configured ``±VmaxNI`` range, a soundcard returns normalised
+    samples scaled by ``VmaxSC`` (volts when the jack has been calibrated,
+    a bare 0–1 fraction when it has not).  A client that assumes 1.0 means
+    full scale therefore reads a perfectly healthy 3 V signal on a ±5 V NI
+    rail as hard clipping — which is what the lab saw on a USB NI card.
+
+    Returns the two additive fields:
+
+    * ``inputVmax`` — ``settings.input_vmax()``, the sample value at full
+      scale in whatever units the stream carries.
+    * ``inputVmaxIsVolts`` — whether those units are volts (always on NI;
+      on a soundcard only once ``VmaxSC`` has been moved off its
+      uncalibrated default of 1.0).
+
+    Guarded: a settings object that cannot answer yields ``{}`` rather
+    than failing the handshake, and the client keeps its 1.0 default.
+    """
+    try:
+        vmax = float(settings.input_vmax())
+    except Exception:
+        return {}
+    if not np.isfinite(vmax) or vmax <= 0:
+        return {}
+    try:
+        is_ni = settings.device_driver == 'nidaq'
+        vmax_sc = float(getattr(settings, 'VmaxSC', 1.0))
+    except Exception:
+        return {'inputVmax': vmax}
+    return {
+        'inputVmax': vmax,
+        'inputVmaxIsVolts': bool(is_ni or vmax_sc != 1.0),
+    }
+
+
 def _nidaq_device_caps() -> tuple[list[dict], dict[int, dict]]:
     """Per-device NI capabilities, and the enumerated entries with caps
     attached inline.
@@ -1892,6 +1931,7 @@ class _Connection:
             'channels': int(self.settings.channels),
             'chunkSize': int(self.settings.chunk_size),
             'oscSamples': osc_samples,
+            **_input_scale_fields(self.settings),
         }
         # Additive: present only when there is something the user could
         # not otherwise know — the index had to be re-pointed, the

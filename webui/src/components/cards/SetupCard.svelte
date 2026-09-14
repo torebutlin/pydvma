@@ -309,7 +309,33 @@
   // thing that fixes the normalised-to-volts scale.
   const monitorLevels = $derived(monitor.levels);
   const monitorStatus = $derived(monitor.status);
-  const levelReports = $derived(reportLevels($monitorLevels ?? [], fullScaleVolts));
+  const monitorFullScale = $derived(monitor.fullScale);
+  const monitorFullScaleIsVolts = $derived(monitor.fullScaleIsVolts);
+  /**
+   * The monitor reports peak/RMS in the STREAM's own units — volts over the
+   * `±VmaxNI` rail on an NI card, a normalised 1.0 on Web Audio and an
+   * uncalibrated jack. `reportLevels` wants fractions of full scale, so
+   * divide by the rail the server named rather than assuming 1.0 (which
+   * reported a healthy 3 V NI reading as clipping).
+   */
+  const levelFullScale = $derived(
+    Number.isFinite($monitorFullScale) && $monitorFullScale > 0 ? $monitorFullScale : 1,
+  );
+  const normalisedLevels = $derived(
+    ($monitorLevels ?? []).map((l) => ({
+      peak: l.peak / levelFullScale,
+      rms: l.rms / levelFullScale,
+    })),
+  );
+  /**
+   * The voltage full scale for the volts column: the gain-derived preview
+   * where there is one (a characterised soundcard), else the server's own
+   * rail when it said that rail is in volts (NI, or a calibrated jack).
+   */
+  const levelVoltsScale = $derived(
+    fullScaleVolts ?? ($monitorFullScaleIsVolts ? levelFullScale : null),
+  );
+  const levelReports = $derived(reportLevels(normalisedLevels, levelVoltsScale));
   const levelVerdict = $derived(worstVerdict(levelReports));
   const levelsLive = $derived($monitorStatus === 'streaming' || $monitorStatus === 'paused');
 

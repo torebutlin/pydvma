@@ -74,6 +74,17 @@ so you never miss a brief clip that happened while you were looking
 elsewhere. If CLIP trips, reduce the input level or (on NI) widen the
 voltage range before recording.
 
+**Full scale** is whatever the device's own rail is, not a fixed 1.0.
+On an NI card it is the input range you set (`VmaxNI`, e.g. ±5 V), so a
+3 V peak reads 60 % and does not trip CLIP; on a calibrated audio jack
+it is the full-scale voltage derived from the stated gain; on Web Audio
+and an uncalibrated jack the samples are a bare 0–1 fraction and full
+scale is 1.0. The bridge reports the rail with every configure, so the
+meters and the capture-time clip warning
+(`acquisition.log_data`, which checks against 95 % of the same rail)
+always agree. Hover a bar to see the percentage, and the reading in
+volts where the rail has a voltage meaning.
+
 ## Tips
 
 - Use Live to set levels first, then switch to **Acquire** to record —

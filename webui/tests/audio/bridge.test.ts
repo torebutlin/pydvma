@@ -1062,6 +1062,46 @@ test('onConfigured fires from a log configure too (requested == resolved when ho
   expect(infos).toEqual([{ requestedFs: fs, configuredFs: fs, channels: nChannels }]);
 });
 
+test('onConfigured carries the input rail the server reported', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const infos: ConfiguredInfo[] = [];
+  bp.onConfigured((i) => infos.push(i));
+
+  const monP = bp.startMonitor({ sampleRate: 51200, channelCount: 2 }, () => {});
+  fake.open();
+  await tick();
+  fake.emitJson({
+    type: 'status', event: 'configured', fs: 51200, channels: 2,
+    inputVmax: 5, inputVmaxIsVolts: true,
+  });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  expect(infos[0].inputVmax).toBe(5);
+  expect(infos[0].inputVmaxIsVolts).toBe(true);
+});
+
+test('a bridge that omits the input rail leaves it undefined (1.0 is the client default)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const infos: ConfiguredInfo[] = [];
+  bp.onConfigured((i) => infos.push(i));
+
+  const monP = bp.startMonitor({ sampleRate: 44100, channelCount: 1 }, () => {});
+  fake.open();
+  await tick();
+  // Also covers a nonsense rail: 0 must not travel as a divisor.
+  fake.emitJson({ type: 'status', event: 'configured', fs: 44100, channels: 1, inputVmax: 0 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  expect(infos[0].inputVmax).toBeUndefined();
+  expect(infos[0].inputVmaxIsVolts).toBeUndefined();
+});
+
 test('onConfigured is skipped when the configured reply carries no usable fs', async () => {
   const fake = makeFakeWs();
   const bp = new BridgeProvider('ws://x/ws', () => fake.ws);

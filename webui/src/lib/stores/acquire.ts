@@ -252,6 +252,24 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    */
   const deviceNote = writable<string | null>(null);
   /**
+   * The sample value that means FULL SCALE on the live stream, in the
+   * stream's own units, from the server's `configured` reply
+   * (`MySettings.input_vmax`).  `1` — the Web Audio answer and the
+   * assumption for any bridge predating the field — means a normalised
+   * ±1 sample; an NI AI task instead delivers VOLTS over its `±VmaxNI`
+   * range, so full scale there is 5 or 10.  The level meters and the
+   * clip flag divide by this: judging a 3 V reading on a ±5 V rail
+   * against a hard-coded 1.0 reported healthy signals as clipped
+   * (3C6 lab, USB NI card, 2026-09).
+   */
+  const inputFullScale = writable<number>(1);
+  /**
+   * Whether {@link inputFullScale} is in volts — true on NI, and on a
+   * soundcard once `VmaxSC` states a jack calibration.  `false` means the
+   * readings are bare fractions of full scale with no voltage meaning.
+   */
+  const inputFullScaleIsVolts = writable<boolean>(false);
+  /**
    * The active backend kind as a REACTIVE store (constructor + {@link setProvider}).
    * AcquireCard reads it to light up the output-stimulus + pretrigger groups for
    * the Web Audio path (round-5 #10) WITHOUT touching {@link bridgeCaps} — that
@@ -293,6 +311,10 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       const differs = Math.abs(info.configuredFs - info.requestedFs) >= 0.5;
       coercedFs.set(differs ? { requested: info.requestedFs, configured: info.configuredFs } : null);
       deviceNote.set(info.deviceNote ?? null);
+      // Full-scale reference for the meters. A bridge that omits the field
+      // gets the 1.0 default rather than a stale value from a previous device.
+      inputFullScale.set(info.inputVmax ?? 1);
+      inputFullScaleIsVolts.set(info.inputVmaxIsVolts ?? false);
     });
   }
   wireProvider(provider);
@@ -306,6 +328,10 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     provider = p;
     kind.set(p.kind);
     p.setConfig?.(get(bridgeConfig));
+    // The full-scale reference belongs to the stream that reported it; a
+    // swap to Web Audio (normalised ±1) must not inherit an NI volt rail.
+    inputFullScale.set(1);
+    inputFullScaleIsVolts.set(false);
     wireProvider(p);
   }
 
@@ -606,6 +632,10 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     coercedFs,
     /** Server note when a stale device index was re-pointed (bridge only). */
     deviceNote,
+    /** Sample value that means full scale on the live stream (1 = normalised). */
+    inputFullScale,
+    /** Whether {@link inputFullScale} carries volts rather than a bare fraction. */
+    inputFullScaleIsVolts,
     /** Active backend kind ('webaudio' | 'bridge') as a reactive store. */
     kind,
     /** Web Audio output-device list for the stimulus sink select (round-5 #10). */

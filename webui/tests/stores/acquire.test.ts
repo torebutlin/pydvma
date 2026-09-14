@@ -381,6 +381,49 @@ test('coercedFs is set on a DSA rate snap and cleared on an exact honour', async
   expect(get(store.coercedFs)).toBeNull();
 });
 
+test('the input rail from a configure reaches the meters, and clears when absent', async () => {
+  const { provider, fireConfigured } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  expect(get(store.inputFullScale)).toBe(1);
+  expect(get(store.inputFullScaleIsVolts)).toBe(false);
+
+  fireConfigured({
+    requestedFs: 51200, configuredFs: 51200, channels: 2,
+    inputVmax: 5, inputVmaxIsVolts: true,
+  });
+  expect(get(store.inputFullScale)).toBe(5);
+  expect(get(store.inputFullScaleIsVolts)).toBe(true);
+
+  // A configure of a device that reports no rail must not inherit the NI one.
+  fireConfigured({ requestedFs: 44100, configuredFs: 44100, channels: 2 });
+  expect(get(store.inputFullScale)).toBe(1);
+  expect(get(store.inputFullScaleIsVolts)).toBe(false);
+});
+
+test('swapping to Web Audio drops the bridge input rail', async () => {
+  // Web Audio delivers normalised ±1 samples; inheriting an NI ±5 V rail
+  // would silently scale every level bar to a fifth of its true reading.
+  const { provider, fireConfigured } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  fireConfigured({
+    requestedFs: 51200, configuredFs: 51200, channels: 2,
+    inputVmax: 5, inputVmaxIsVolts: true,
+  });
+  expect(get(store.inputFullScale)).toBe(5);
+
+  store.setProvider({
+    kind: 'webaudio',
+    async capabilities() { return null; },
+    async enumerateInputDevices() { return []; },
+    startRecording() { return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 }; },
+    async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
+  });
+  expect(get(store.inputFullScale)).toBe(1);
+  expect(get(store.inputFullScaleIsVolts)).toBe(false);
+});
+
 test('sub-Hz float noise in the resolved rate is treated as an exact honour', async () => {
   const { provider, fireConfigured } = richBridgeProvider();
   const store = createAcquireStore(provider);

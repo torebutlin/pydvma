@@ -322,15 +322,23 @@ export class BridgeProvider implements SourceProvider {
    * fs paired against the device-resolved `fs` (and channel count).  Ignores
    * a reply that carries no usable `fs` so a soundcard/mock echo without one
    * never emits a spurious note.
+   *
+   * `inputVmax` / `inputVmaxIsVolts` are additive (`serve._input_scale_fields`)
+   * and left `undefined` when a bridge predating them answers — the level
+   * meters then keep their 1.0 = full-scale assumption.
    */
   private emitConfigured(requestedFs: number, status: Record<string, unknown>): void {
     const configuredFs = Number(status.fs);
     if (!Number.isFinite(configuredFs) || configuredFs <= 0) return;
+    const vmax = Number(status.inputVmax);
     this.configuredCb?.({
       requestedFs,
       configuredFs,
       channels: Number(status.channels) || 0,
       deviceNote: typeof status.deviceNote === 'string' ? status.deviceNote : undefined,
+      inputVmax: Number.isFinite(vmax) && vmax > 0 ? vmax : undefined,
+      inputVmaxIsVolts:
+        typeof status.inputVmaxIsVolts === 'boolean' ? status.inputVmaxIsVolts : undefined,
     });
   }
 
