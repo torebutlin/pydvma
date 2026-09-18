@@ -396,11 +396,25 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
 
     f = np.fft.rfftfreq(nperseg, 1.0 / fs)
 
+    # Effective noise bandwidth of the window, in Hz — the ONE number that
+    # converts this spectrum into a spectral density:
+    #
+    #     density = spectrum / enbw_hz
+    #
+    # because the two scipy scalings differ by exactly this factor
+    # (spectrum divides by ``sum(w)**2``, density by ``fs * sum(w**2)``).
+    # Carried on the result so a consumer can offer a true ``unit**2/Hz``
+    # view without re-deriving the window — the web logger's frequency
+    # stage offers both, and the distinction is not cosmetic: a spectrum's
+    # level scales with the resolution, a density's does not.
+    enbw_hz = float(fs) * float(np.sum(win ** 2)) / float(np.sum(win) ** 2)
+
     cross_spec_data = datastructure.CrossSpecData(
         f, Pxy, Cxy, settings,
         channel_cal_factors=np.asarray(time_data.channel_cal_factors, dtype=float).copy(),
         units=time_data.units,
         id_link=time_data.unique_id, test_name=time_data.test_name,
+        enbw_hz=enbw_hz,
     )
 
     return cross_spec_data
@@ -457,6 +471,9 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
         channel_cal_factors=np.asarray(time_data_list[0].channel_cal_factors, dtype=float).copy(),
         units=time_data_list[0].units,
         id_link=id_link_list, test_name=time_data_list[0].test_name,
+        # Same window and rate for every member (they share `settings`),
+        # so the ensemble inherits the per-record ENBW unchanged.
+        enbw_hz=getattr(cross_spec_data, 'enbw_hz', None),
     )
 
     return cross_spec_data_av
@@ -542,15 +559,100 @@ def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, o
     return tfdata
 
 
+def wrap_unit(unit):
+    """Parenthesise a COMPOUND unit so it composes unambiguously.
+
+    A unit containing anything other than a letter or a digit is wrapped:
+    ``'m/s2'`` -> ``'(m/s2)'``, while ``'N'`` and ``'Pa'`` are left bare.
+    Without this, a transfer function's unit string is ambiguous —
+    ``'m/s2/N'`` reads equally as ``(m/s2)/N`` (what it means) or
+    ``m/(s2*N)`` (what it does not) — and anything reading the file
+    outside pydvma has to guess.
+
+    Idempotent: a unit already wrapped in a single matched outer pair is
+    returned unchanged, so composing twice does not nest.
+
+    TWIN of the browser's `wrapUnit` (`webui/src/lib/model/calibration.ts`),
+    which builds the same strings for its own plot labels and export
+    headers; the two are pinned by the shared vectors in
+    :data:`UNIT_WRAP_VECTORS`, mirrored in `webui/tests/export/data.test.ts`.
+
+    NB an OLD file keeps whatever it was written with: an unparenthesised
+    ``'m/s2/N'`` cannot be split back into numerator and denominator
+    without guessing, so it is left alone rather than rewritten.
+
+    Args:
+        unit (str): A unit string, e.g. ``'m/s2'``.
+
+    Returns the unit, parenthesised only if it needs it.
+    """
+    text = str(unit)
+    if not text:
+        return text
+    if _is_wrapped(text):
+        return text
+    if all(ch.isalnum() for ch in text):
+        return text
+    return '({})'.format(text)
+
+
+def _is_wrapped(text):
+    """Whether `text` is already enclosed in ONE matched outer bracket pair.
+
+    ``'(m/s2)'`` is; ``'(a)/(b)'`` is not, despite starting ``(`` and
+    ending ``)`` — the outer pair there does not span the whole string,
+    and treating it as wrapped would let ``wrap_unit`` return an
+    ambiguous ratio unwrapped.
+    """
+    if not (text.startswith('(') and text.endswith(')')):
+        return False
+    depth = 0
+    for i, ch in enumerate(text):
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                return i == len(text) - 1
+    return False
+
+
+#: Known-answer vectors pinning `wrap_unit` and its JavaScript twin
+#: `wrapUnit` to the same output. Mirrored verbatim in
+#: `webui/tests/export/data.test.ts`; a change here must change both.
+UNIT_WRAP_VECTORS = (
+    ('', ''),
+    ('N', 'N'),
+    ('Pa', 'Pa'),
+    ('V', 'V'),
+    ('g', 'g'),
+    ('m', 'm'),
+    ('s2', 's2'),
+    ('m/s2', '(m/s2)'),
+    ('m/s\u00b2', '(m/s\u00b2)'),
+    ('m/s', '(m/s)'),
+    ('N\u00b7m', '(N\u00b7m)'),
+    ('-', '(-)'),
+    ('(m/s2)', '(m/s2)'),
+    ('(m/s2)/N', '((m/s2)/N)'),
+    ('(a)/(b)', '((a)/(b))'),
+)
+
+
 def _tf_units_from_source(src_units, ch_in, ch_out_set):
     '''Build the TF units list as "<out_unit>/<in_unit>" per output
     channel, or return None if the source units are not set. Safe against
-    short/missing entries — returns None on any indexing trouble.'''
+    short/missing entries — returns None on any indexing trouble.
+
+    Compound units are parenthesised (`wrap_unit`) so the stored string
+    is unambiguous: an accelerometer over a force gauge stores
+    ``'(m/s2)/N'``, not the ambiguous ``'m/s2/N'``.'''
     if src_units is None:
         return None
     try:
-        in_unit = src_units[ch_in]
-        return ['{}/{}'.format(src_units[k], in_unit) for k in ch_out_set]
+        in_unit = wrap_unit(src_units[ch_in])
+        return ['{}/{}'.format(wrap_unit(src_units[k]), in_unit)
+                for k in ch_out_set]
     except (IndexError, TypeError):
         return None
 
@@ -989,7 +1091,7 @@ def _tf_units_from_source_volts(src_units, ch_out_set):
     if src_units is None:
         return None
     try:
-        return ['{}/V'.format(src_units[k]) for k in ch_out_set]
+        return ['{}/V'.format(wrap_unit(src_units[k])) for k in ch_out_set]
     except (IndexError, TypeError):
         return None
 

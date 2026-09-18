@@ -564,7 +564,9 @@ class TestCalibrationPropagation:
         tf = analysis.calculate_tf(td, ch_in=1, N_frames=2)
         expected = np.array([cal[0] / cal[1], cal[2] / cal[1], cal[3] / cal[1]])
         np.testing.assert_allclose(tf.channel_cal_factors, expected, rtol=1e-12)
-        assert tf.units == ['N/m/s', 'g/m/s', 'V/m/s']
+        # Compound units are parenthesised so the ratio is unambiguous
+        # (`wrap_unit`): 'N/(m/s)', never the readable-two-ways 'N/m/s'.
+        assert tf.units == ['N/(m/s)', 'g/(m/s)', 'V/(m/s)']
 
     def test_tf_with_unit_cal_stays_unit(self):
         """Regression: when source cal is all ones, TF ratio is also all ones."""
@@ -585,7 +587,7 @@ class TestCalibrationPropagation:
             ))
         tf = analysis.calculate_tf_averaged(tdl, ch_in=0)
         np.testing.assert_allclose(tf.channel_cal_factors, [4.0, 2.0], rtol=1e-12)
-        assert tf.units == ['m/s/N', 'g/N']
+        assert tf.units == ['(m/s)/N', 'g/N']
 
     def test_calibrated_tf_is_raw_tf_times_ratio(self):
         """End-to-end: applying the stored cal ratio to a raw TF gives
@@ -1668,3 +1670,113 @@ def test_cross_spectrum_diagonal_is_a_spectrum_not_a_density():
             tdn, window='hann', N_frames=n_frames)
         levels.append(np.median(np.real(np.einsum('iif->if', csn.Pxy))[0]))
     assert levels[1] > 3 * levels[0]
+
+
+# ---------- ENBW: the number that turns the spectrum into a density ----------
+
+def test_cross_spectrum_records_the_window_enbw():
+    """`enbw_hz` is the window's effective noise bandwidth in Hz.
+
+    It is the ONE number a consumer needs to turn the stored power SPECTRUM
+    into a spectral DENSITY (``density = Pxy / enbw_hz``), which is exactly
+    what the web logger's PSD mode does. Pinned against the closed form for
+    the two windows whose ENBW is analytic: a boxcar is one bin wide, a Hann
+    is 1.5 bins.
+    """
+    fs, n = 1000, 4096
+    t = np.arange(n) / fs
+    settings = options.MySettings(fs=fs, channels=1)
+    td = datastructure.TimeData(t, np.zeros((n, 1)), settings)
+
+    for window, bins in (('boxcar', 1.0), ('hann', 1.5)):
+        cs = analysis.calculate_cross_spectrum_matrix(
+            td, window=window, N_frames=4)
+        df = cs.freq_axis[1] - cs.freq_axis[0]
+        assert cs.enbw_hz == pytest.approx(bins * df, rel=1e-3)
+
+
+def test_enbw_makes_the_noise_floor_resolution_invariant():
+    """The whole point of the density: its level does not move with df.
+
+    The SPECTRUM's white-noise floor halves whenever the resolution doubles
+    (each bin collects half the band); dividing by `enbw_hz` cancels that
+    exactly, which is why a noise floor is quoted per Hz.
+    """
+    fs, n = 1000, 16384
+    t = np.arange(n) / fs
+    settings = options.MySettings(fs=fs, channels=1)
+    noise = np.random.default_rng(7).standard_normal((n, 1))
+    td = datastructure.TimeData(t, noise, settings)
+
+    spectra, densities = [], []
+    for n_frames in (2, 8, 32):
+        cs = analysis.calculate_cross_spectrum_matrix(
+            td, window='hann', N_frames=n_frames)
+        level = np.mean(np.real(np.einsum('iif->if', cs.Pxy))[0])
+        spectra.append(level)
+        densities.append(level / cs.enbw_hz)
+
+    # The spectrum moves by ~16x across a 16x resolution change...
+    assert spectra[2] / spectra[0] > 8
+    # ...the density holds to ~1 %.
+    assert max(densities) / min(densities) < 1.05
+    # And it lands on the analytic value: unit-variance white noise has a
+    # one-sided density of 2/fs, which is what makes this the quantity worth
+    # quoting a noise floor in.
+    for d in densities:
+        assert d == pytest.approx(2.0 / fs, rel=0.05)
+
+
+def test_averaged_cross_spectra_inherit_the_enbw():
+    """Every member shares one `settings`, so the ensemble shares its ENBW."""
+    fs, n = 1000, 2048
+    t = np.arange(n) / fs
+    settings = options.MySettings(fs=fs, channels=1)
+    rng = np.random.default_rng(3)
+    tdl = datastructure.TimeDataList([
+        datastructure.TimeData(t, rng.standard_normal((n, 1)), settings)
+        for _ in range(3)
+    ])
+    one = analysis.calculate_cross_spectrum_matrix(tdl[0], window='hann')
+    av = analysis.calculate_cross_spectra_averaged(tdl, window='hann')
+    assert av.enbw_hz == pytest.approx(one.enbw_hz, rel=1e-12)
+
+
+# ---------- wrap_unit: unambiguous compound units in stored strings ----------
+
+def test_wrap_unit_matches_its_shared_vectors():
+    """The known-answer vectors the JavaScript twin is pinned against.
+
+    Mirrored verbatim in `webui/tests/export/data.test.ts`; python builds the
+    stored `TfData.units` strings and the browser builds the same strings for
+    its export headers, and those files are byte-identical by design.
+    """
+    for value, expected in analysis.UNIT_WRAP_VECTORS:
+        assert (value, analysis.wrap_unit(value)) == (value, expected)
+
+
+def test_wrap_unit_is_idempotent():
+    for value, _ in analysis.UNIT_WRAP_VECTORS:
+        once = analysis.wrap_unit(value)
+        assert analysis.wrap_unit(once) == once
+
+
+def test_tf_units_parenthesise_a_compound_numerator():
+    """`'m/s2/N'` reads equally as `(m/s2)/N` and `m/(s2*N)`.
+
+    A reader outside pydvma has no way to tell, so the stored string says
+    which — the TF of an accelerometer over a force gauge is `'(m/s2)/N'`.
+    """
+    fs, n = 1000, 2048
+    t = np.arange(n) / fs
+    settings = options.MySettings(fs=fs, channels=2)
+    rng = np.random.default_rng(11)
+    td = datastructure.TimeData(
+        t, rng.standard_normal((n, 2)), settings, units=['N', 'm/s2'])
+    tf = analysis.calculate_tf(td, ch_in=0, window='hann')
+    assert list(tf.units) == ['(m/s2)/N']
+
+    # A simple unit stays bare on both sides.
+    td2 = datastructure.TimeData(
+        t, rng.standard_normal((n, 2)), settings, units=['N', 'Pa'])
+    assert list(analysis.calculate_tf(td2, ch_in=0, window='hann').units) == ['Pa/N']

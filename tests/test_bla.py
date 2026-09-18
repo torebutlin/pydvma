@@ -96,7 +96,7 @@ class TestLinearRecovery:
         tfs = analysis.calculate_bla(tds, run_spec)
         for q, tf in enumerate(tfs):
             assert tf.settings.ch_in == run_spec['x_channels'][q]
-            assert tf.units == ['m/s/s/V', 'm/s/s/V']
+            assert tf.units == ['(m/s/s)/V', '(m/s/s)/V']
             for r in range(2):
                 rel = _rel_error(tf.tf_data[:, r], G_true[:, r, q])
                 assert rel.max() < 1e-3, (
@@ -193,10 +193,10 @@ class TestCommandedInput:
         assert tf_cmd.bla['x_mode'] == 'commanded'
         # Commanded drive: units are per volt, cal is the raw response
         # factor (nothing to divide by).
-        assert tf_cmd.units == ['m/s/s/V']
+        assert tf_cmd.units == ['(m/s/s)/V']
         np.testing.assert_allclose(tf_cmd.channel_cal_factors, [6.0])
         # Measured x: the usual out/in ratio.
-        assert tf_measured.units == ['m/s/s/V']
+        assert tf_measured.units == ['(m/s/s)/V']
         np.testing.assert_allclose(tf_measured.channel_cal_factors, [3.0])
 
     def test_bla_commanded_x_miso(self):
@@ -355,7 +355,7 @@ class TestMetadata:
             np.testing.assert_array_equal(tf.settings.ch_out_set,
                                           np.array(run_spec['resp_channels']))
             # TF units and cal follow the usual out/in convention
-            assert tf.units == ['m/s/s/V', 'm/s/s/V']
+            assert tf.units == ['(m/s/s)/V', '(m/s/s)/V']
             np.testing.assert_allclose(tf.channel_cal_factors, expected_cal[q])
             # every capture is credited as a source
             assert len(tf.id_link) == 3 * 2

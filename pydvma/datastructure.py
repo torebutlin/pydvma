@@ -968,6 +968,13 @@ class CrossSpecData():
             power and takes ``cal[i]**2``, while the cross-spectrum
             ``Pxy[i, j]`` takes ``cal[i] * cal[j]``. ``Cxy`` is a
             normalised ratio and is calibration-INVARIANT — never scale it.
+        enbw_hz (float or None): Effective noise bandwidth of the window
+            in Hz, ``fs * sum(w**2) / sum(w)**2``. `Pxy` is a power
+            SPECTRUM (scipy ``scaling='spectrum'``), whose level scales
+            with the frequency resolution; dividing by this converts it
+            to a spectral DENSITY, whose level does not:
+            ``density = Pxy / enbw_hz``. None on an object built before
+            this was recorded, or by hand.
         id_link: `unique_id` of the source TimeData (or list of
             ids when averaged across a TimeDataList).
         unique_id (uuid.UUID): This item's own identity, minted at
@@ -978,7 +985,7 @@ class CrossSpecData():
         timestring (str): Filesystem-safe rendering of `timestamp`.
     '''
 
-    def __init__(self,freq_axis,Pxy,Cxy,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+    def __init__(self,freq_axis,Pxy,Cxy,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None,enbw_hz=None):
         
         # Default to identity, like TimeData / FreqData / TfData. Leaving this
         # as None made CrossSpecData the one exception to "an absent
@@ -990,6 +997,7 @@ class CrossSpecData():
         self.freq_axis = freq_axis
         self.Pxy = Pxy
         self.Cxy = Cxy
+        self.enbw_hz = enbw_hz
         self.settings = settings
         self.test_name = test_name
         self.units = units

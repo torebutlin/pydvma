@@ -103,7 +103,7 @@ _META_FIELDS = {
     'FreqData':      ['units', 'channel_cal_factors', 'test_name',
                        'timestamp', 'timestring', 'id_link'],
     'CrossSpecData': ['units', 'channel_cal_factors', 'test_name',
-                       'timestamp', 'timestring', 'id_link'],
+                       'timestamp', 'timestring', 'id_link', 'enbw_hz'],
     'TfData':        ['units', 'channel_cal_factors', 'test_name',
                        'timestamp', 'timestring', 'id_link', 'flag_modal_TF',
                        'bla'],

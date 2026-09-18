@@ -334,7 +334,9 @@ class TestExportCalibrationMetadata:
         text = open(path, encoding='utf-8').read()
         assert '(Hz)' in text                       # axis unit follows the kind
         assert '# cal_factors: 20' in text          # cal[out]/cal[in] = 10/0.5
-        assert '# units: m/s2/N' in text
+        # Parenthesised so the ratio cannot be read as m/(s2*N) —
+        # `analysis.wrap_unit`, matched byte-for-byte by the browser.
+        assert '# units: (m/s2)/N' in text
 
     def test_matlab_export_carries_cal_factors_and_units(self, tmp_path):
         ds = self._calibrated_dataset()

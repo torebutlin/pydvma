@@ -190,11 +190,16 @@ def calc_fft(time_axis, time_data, n_channels, fs, window):
 
 
 def calc_psd(time_axis, time_data, n_channels, fs, window, n_frames):
-    """Auto-power spectral density (real) + coherence matrix Cxy.
+    """Auto-power SPECTRUM (real) + coherence matrix Cxy + the window's ENBW.
 
-    PSD is the diagonal of the cross-spectrum matrix:
-    ``real(einsum('iif->if', Pxy))`` -> (Nc, Nf). Cxy is (Nc, Nc, Nf).
-    Defaults to a Hann window when none is given.
+    The returned ``psd`` is the diagonal of the cross-spectrum matrix,
+    ``real(einsum('iif->if', Pxy))`` -> (Nc, Nf) — a power SPECTRUM in
+    ``unit**2`` (scipy ``scaling='spectrum'``), NOT a density: its level
+    scales with the frequency resolution. ``enbw`` is the window's
+    effective noise bandwidth in Hz, so a caller wanting a true
+    ``unit**2/Hz`` density divides by it. Cxy is (Nc, Nc, Nf) and is a
+    normalised ratio, unaffected by either scaling. Defaults to a Hann
+    window when none is given.
 
     Engine guard: the shipped pyodide wheel (pydvma 1.5.0) builds the
     per-segment windows inside ``calculate_cross_spectrum_matrix`` via a
@@ -226,7 +231,12 @@ def calc_psd(time_axis, time_data, n_channels, fs, window, n_frames):
             ) from e
         raise
     psd = np.real(np.einsum('iif->if', cs.Pxy))
-    return {'freq_axis': _arr(cs.freq_axis), 'psd': _arr(psd), 'Cxy': _arr(cs.Cxy)}
+    # `enbw` is what turns this power SPECTRUM into a spectral DENSITY:
+    # `density = psd / enbw` (see `CrossSpecData.enbw_hz`). Returned so the
+    # frequency view can offer both quantities from ONE compute rather than
+    # re-deriving the window client-side.
+    return {'freq_axis': _arr(cs.freq_axis), 'psd': _arr(psd), 'Cxy': _arr(cs.Cxy),
+            'enbw': float(getattr(cs, 'enbw_hz', 0.0) or 0.0)}
 
 
 def calc_tf(time_axis, time_data, n_channels, fs, ch_in, window, n_frames):
