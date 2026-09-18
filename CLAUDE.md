@@ -50,10 +50,17 @@ pre-existing `sounddevice`-absent failures, vitest **1201/1 skipped**,
 check **0/0 (190 files)**, mkdocs --strict clean, and the non-@engine
 Playwright specs green incl. the CSV-header one (`export.spec.ts`) —
 the file-format gate CLAUDE.md's own lesson demands. **The `@engine`
-Playwright specs cannot run in this container**: only the pyodide
-RUNTIME is vendored (`public/pyodide` has 7 files), and
-`loadPackage('numpy','scipy')` has nothing local to fetch and no CDN
-through the proxy — pre-existing, not a regression. Engine wheel
+Playwright specs cannot run in this container, and the cause is now
+pinned**: only the pyodide RUNTIME is vendored (`public/pyodide` has 7
+files — `fetch-pyodide.sh` copies the runtime, not the package
+wheels), so `loadPackage` goes to the CDN and every request dies
+`net::ERR_TUNNEL_CONNECTION_FAILED` — `numpy-2.2.5`, `scipy-1.14.1`,
+`libopenblas-0.3.26.zip` and `micropip-0.10.1` off
+`cdn.jsdelivr.net/pyodide/v0.28.3/full/`, ending in `[engine] boot
+failed: ModuleNotFoundError: No module named 'micropip'`. Pre-existing
+and environmental, NOT a regression and nothing to do with the
+rebuilt engine wheel; the browser-side `calc_psd`/`enbw` round trip is
+therefore **unverified in a browser** and wants one run on the Mac. Engine wheel
 rebuilt (same 2.5.0 name) and verified byte-identical across all 24
 `pydvma/*.py`. Also landed: an opt-in `PW_CHROMIUM` override in
 `playwright.config.ts` so this container's Chromium 1194 can run the
