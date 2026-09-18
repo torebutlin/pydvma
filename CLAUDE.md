@@ -18,6 +18,17 @@ come out in different (correct) units; `pydvma.file` also gains
 `format_cal_factor` + `CAL_FACTOR_FORMAT_VECTORS` as public names.
 Five sites bumped (pyproject / datastructure.VERSION / CITATION.cff
 version+date / ENGINE_WHEELS / CHANGELOG with the full 2.5.0 entry).
+The MINOR-vs-patch call was genuinely borderline and Tore queried it:
+nothing breaks either way, so 2.4.5 was defensible; 2.5.0 was chosen
+because the CSV export gains a header LINE (a file-format change) and
+`pydvma.file` gains public names. Kept at 2.5.0 once the tag and the
+GitHub release were already public — changing then would have cost a
+deleted public tag and release plus an un-unmintable Zenodo record, to
+buy a distinction nobody downstream acts on.
+**`scripts/verify_release.py <version>` now automates release traps 1
+and 2** (embedded engine wheel, bundled JS reference, all 24
+`pydvma/*.py` byte-identical across tree/engine/fat wheel, METADATA
+version) — negative-tested, exit 1 with a named reason.
 **Trap 2 verified here**: the rebuilt engine wheel is
 `pydvma-2.5.0-py3-none-any.whl`, the bundled `index-Dp9RQWkc.js`
 references that same filename, and all 24 `pydvma/*.py` inside it are
@@ -28,13 +39,31 @@ on master** (webui + docs) at `e749e6c`. NB `dist/` and
 `webui/public/pypi` are gitignored, so the Mac must run
 `npm run vendor:wheels` FIRST, then `python scripts/stage_webui.py`,
 then `python -m build --sdist --wheel` — the order in "Releasing"
-below. **Next, in this order (the repo's own sequence, 2.4.2 precedent):
-Tore's `twine upload dist/pydvma-2.5.0*` → tag `v2.5.0` at the cut
-commit `cca95a6` → publish the GitHub release from the CHANGELOG entry
-(Zenodo auto-archives) → re-check trap 3 on the DOWNLOADED wheel.** The
-tag was deliberately NOT pushed from here: the artifacts do not exist
-yet, and a tag placed before the upload has to be moved if anything
-changes first.
+below. **STATE AS OF THE END OF THIS SESSION — the release ran OUT OF ORDER
+and is half-done:** the tag `v2.5.0` is pushed and correct (→ `cca95a6`),
+the **GitHub release IS published but with an EMPTY BODY**, and **PyPI
+still serves 2.4.4 — nothing was uploaded.** Cause: the paste block I
+gave Tore had `#` comment lines that zsh mangled (`(NOT cf39d90 — …)`
+parses as glob qualifiers; a `;` made zsh run `Zenodo auto-archives`),
+his `dist/` was empty so `twine upload dist/pydvma-2.5.0*` matched
+nothing and silently did nothing, and `gh release create --notes-file`
+read a CHANGELOG that was still pre-2.5.0 (he had fetched, not pulled)
+so it accepted empty notes without complaint. **Remaining, all on the
+Mac:** build (`vendor:wheels` → `stage_webui.py` → `build`), run
+`python scripts/verify_release.py 2.5.0`, `twine upload`, then
+`gh release edit v2.5.0 --notes-file` with the CHANGELOG 2.5.0 section
+(100 lines). Zenodo will have archived the empty-bodied release; the
+ARCHIVE itself is fine (it captures the source at the tag), only the
+description needs editing on the Zenodo record.
+
+Lessons: **give Tore paste-safe command blocks — no `#` comments, no
+em-dashes or parentheses inside them**, zsh executes what it cannot
+parse. And **`twine upload <glob>` that matches nothing is a silent
+no-op**, so always name the two files explicitly. NB this session ran
+in a REMOTE LINUX CONTAINER, so `dist/` was not on Tore's machine — the
+normal flow (2.4.2 precedent) is that the build happens on the machine
+he is on and he just runs twine; the file-transfer + shasum step was an
+artefact of this environment, not part of the process.
 
 One CI lesson from this round, worth keeping: **the pre-push gate must
 include the Playwright specs whenever a FILE FORMAT changes.** The CSV
