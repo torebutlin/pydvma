@@ -8,6 +8,46 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-09-18 (remote Linux session, end): **v2.5.0 is CUT and
+pushed; the build and the twine upload are Tore's, from the Mac.**
+MINOR not patch — no API was removed and nothing must change to keep
+working, but three user-visible outputs move: the CSV export gains a
+`#`-commented header line, the MATLAB export gains `*_cal_factors` /
+`*_units` keys, and calibrated cross-spectra and modal constants now
+come out in different (correct) units; `pydvma.file` also gains
+`format_cal_factor` + `CAL_FACTOR_FORMAT_VECTORS` as public names.
+Five sites bumped (pyproject / datastructure.VERSION / CITATION.cff
+version+date / ENGINE_WHEELS / CHANGELOG with the full 2.5.0 entry).
+**Trap 2 verified here**: the rebuilt engine wheel is
+`pydvma-2.5.0-py3-none-any.whl`, the bundled `index-Dp9RQWkc.js`
+references that same filename, and all 24 `pydvma/*.py` inside it are
+byte-identical to the tree. Suites at the cut: pytest 1204 passed with
+the same 5 pre-existing `sounddevice`-absent failures, vitest 1178/1
+skipped, check 0/0 (190 files), mkdocs --strict clean, and **CI green
+on master** (webui + docs) at `e749e6c`. NB `dist/` and
+`webui/public/pypi` are gitignored, so the Mac must run
+`npm run vendor:wheels` FIRST, then `python scripts/stage_webui.py`,
+then `python -m build --sdist --wheel` — the order in "Releasing"
+below. **Next, in this order (the repo's own sequence, 2.4.2 precedent):
+Tore's `twine upload dist/pydvma-2.5.0*` → tag `v2.5.0` at the cut
+commit `cca95a6` → publish the GitHub release from the CHANGELOG entry
+(Zenodo auto-archives) → re-check trap 3 on the DOWNLOADED wheel.** The
+tag was deliberately NOT pushed from here: the artifacts do not exist
+yet, and a tag placed before the upload has to be moved if anything
+changes first.
+
+One CI lesson from this round, worth keeping: **the pre-push gate must
+include the Playwright specs whenever a FILE FORMAT changes.** The CSV
+layout is pinned in two places — vitest and `e2e/export.spec.ts` — and
+running only vitest let a red build reach master (fixed in `e749e6c`,
+CI green after). Also NB **this container's Chromium is v1194 while the
+pinned `@playwright/test` wants 1228**, and `npx playwright install`
+cannot reach the CDN through the proxy; run the specs against the
+preinstalled browser by adding `executablePath` to
+`playwright.config.ts`'s `launchOptions` temporarily (3 `files.spec.ts`
+`.mat`-import specs fail under 1194 and are green in CI — not
+regressions).
+
 As of 2026-09-18 (remote Linux session, later): **the CALIBRATION
 chain was reviewed end to end (ADC → save/export) and nine gaps are
 fixed, committed and merged to master.** The architecture came out
@@ -155,13 +195,11 @@ wheel serves its own embedded UI (engine wheel fetched 200) with the
 `/engine` greeting `{v:1, pydvma:'2.4.4', journal:true}`. Lab install
 is `pip install --upgrade "pydvma[serve,soundcard]"`.
 
-**The one thing still outstanding: the GitHub RELEASES.** The last
-published release is v2.4.1 — 2.4.2, 2.4.3 and 2.4.4 have tags but no
-release, so **Zenodo has not archived any of them** and the concept
-DOI still resolves to the 2.4.1 archive. Publishing a release is what
-triggers the auto-archive, and the v2.3.0 precedent (hold until after
-the PyPI upload) is now satisfied for all three. Bodies come straight
-out of CHANGELOG.md; `gh release create` from the Mac, oldest first.
+~~**The one thing still outstanding: the GitHub RELEASES.**~~ **DONE** —
+checked against the live API on 2026-09-18: v2.4.2, v2.4.3 and v2.4.4
+were all published 2026-09-14 15:54 UTC, so Zenodo has archived them
+and the concept DOI is current. Nothing is outstanding on the 2.4.x
+release side.
 
 As of 2026-09-10, late afternoon (still ON the 3C6 lab PC, which has NO
 node — every web-UI change below is written blind and must go through
