@@ -8,6 +8,60 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-09-18 (remote Linux session, after the 2.5.0 release):
+**the five calibration-round QUERIES are answered and built (Q1-Q5),
+plus W1. NO version bump — Tore's steer is to accumulate until the
+next one**, so the CHANGELOG has an `## Unreleased` section and the
+five version sites are untouched. **Q1 became "do PSD properly"**: the
+frequency stage now offers **FFT / Power / PSD / CSD**, where *Power*
+is the power SPECTRUM (unit², the old button's actual quantity) and
+*PSD* is a genuine DENSITY (unit²/Hz), both rendered from ONE
+`calc_psd` via the new `CrossSpecData.enbw_hz` (= `fs·Σw²/(Σw)²`,
+carried through the averaged path, the `.dvma` meta and the engine op
+as `enbw`). So the rename and W1 shipped together, not apart as the
+query proposed — the separation existed to stop a rename being
+mistaken for a rescale, and two separately-named, separately-tested
+modes answer that better than two releases would. The internal mode id
+moved too (`'psd'` → `'power'`, `'density'` new) with
+`migrateFreqMode` on load; **the density deliberately did NOT inherit
+the `'psd'` id**, which would have silently changed what a saved file
+shows. Q2 (volts axes) is judged from the STORED capture settings via
+`calibration.capturedInVolts` (`device_driver=='nidaq'`, or `VmaxSC`
+off 1.0 — the same rule as `serve._input_scale_fields`), NOT from live
+acquisition state: a reopened file and a python-written one then
+answer identically with nothing extra persisted. NB an uncalibrated NI
+TF axis now reads `|H| (V/V)` where it read `|H|`, and the fit
+pseudo-set had to start mirroring its source's units or a visible
+recon line blanked the label. Q3 added a **full scale (for calibrated
+volts)** field in Setup-full/levels, shown exactly when
+`devices.calibration_status` says `uncalibrated`, wired to
+`MySettings.VmaxSC` (a stated `input_gain_db` still wins — they are
+never sent together), plus the Calibrate dialog's `FS / (unit)` label.
+Q4 warns (toast, `info` + 12 s) on `setCalFactors` when that set has a
+fit; Best Match passes `warnFit:false` per set and raises ONE for the
+run, its Undo none. Q5's `analysis.wrap_unit` + the JS twin in
+`lib/model/calibration.ts` (pinned by `UNIT_WRAP_VECTORS`) make a TF
+store `(m/s2)/N`; **the query's "needs a read-side normalisation"
+turned out unbuildable AND unnecessary** — `m/s2/N` cannot be split
+back without guessing, and no display path reads a stored TF unit
+string (the webui builds the ratio from the source channels; an orphan
+TF shows none). Suites: pytest **1210 passed** with the same 5
+pre-existing `sounddevice`-absent failures, vitest **1201/1 skipped**,
+check **0/0 (190 files)**, mkdocs --strict clean, and the non-@engine
+Playwright specs green incl. the CSV-header one (`export.spec.ts`) —
+the file-format gate CLAUDE.md's own lesson demands. **The `@engine`
+Playwright specs cannot run in this container**: only the pyodide
+RUNTIME is vendored (`public/pyodide` has 7 files), and
+`loadPackage('numpy','scipy')` has nothing local to fetch and no CDN
+through the proxy — pre-existing, not a regression. Engine wheel
+rebuilt (same 2.5.0 name) and verified byte-identical across all 24
+`pydvma/*.py`. Also landed: an opt-in `PW_CHROMIUM` override in
+`playwright.config.ts` so this container's Chromium 1194 can run the
+specs at all (unset elsewhere; CI keeps the pinned build). Three
+commits, pushed. **Open: W2** (an ensemble 'across' TF displays with
+the OWNER set's cal factors) **and W3** (no e2e for the Best Match
+prompt) — TODO.md.
+
 As of 2026-09-18 (remote Linux session, end): **v2.5.0 is CUT and
 pushed; the build and the twine upload are Tore's, from the Mac.**
 MINOR not patch — no API was removed and nothing must change to keep
