@@ -3,6 +3,106 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## 2.5.0 — 2026-09-18
+
+An end-to-end review of the calibration chain, from the ADC to save and
+export. The architecture came out sound — captures are stored in volts,
+calibration is a non-destructive display multiplier, and everything
+defaults to 1 — but nine gaps sat on top of it, and three of them could
+put a wrong number in front of you with no warning. Minor rather than
+patch because the CSV export gains a header line, the MATLAB export
+gains keys, and calibrated cross-spectra and modal constants now come
+out in different (correct) units.
+
+### Fixed
+
+- **The cross-spectrum view applied no calibration at all.** It plots
+  the cross-spectrum magnitude `|S_xy| = sqrt(Cxy · Pxx_i · Pxx_j)`,
+  which carries `unit_i · unit_j`, but its display seam still assumed
+  the view showed dimensionless coherence — so a calibrated pair was
+  drawn in volts while every other view was in engineering units. It is
+  now scaled by `cal[i] · cal[j]`, and the axis carries the pair unit.
+  **Coherence itself remains calibration-invariant**, by design and now
+  by test: it is a normalised ratio, so neither the bare-coherence
+  fallback (no auto-power available) nor the TF view's coherence overlay
+  takes any factor.
+- **The frequency view labelled its PSD `unit²/Hz` when it is a power
+  spectrum in `unit²`.** `calculate_cross_spectrum_matrix` normalises by
+  `1/(Σw)²` — scipy's `scaling='spectrum'`, the mean-square amplitude in
+  each bin — so the label overstated a noise floor by the window's
+  noise-equivalent bandwidth, and the number moved whenever the
+  resolution changed. The axis now reads **"Power spectrum (unit²)"**;
+  the mode button keeps the familiar PSD name and states the distinction
+  on hover. The **Live scope's** PSD is a genuine density in `unit²/Hz`
+  and is unchanged — they are two different quantities that share a
+  three-letter name.
+- **Best match silently replaced a transducer calibration.** It stores
+  its relative scaling factors in `channel_cal_factors`, the same slot
+  the Calibrate dialog fills, and left the engineering `units` alone —
+  so a channel calibrated to m/s² kept saying m/s² over numbers that had
+  become relative. It now asks first, naming the measurements whose
+  calibration would be replaced, and the result toast carries an
+  **Undo** restoring the previous factors and units.
+- **The modal fit ran on the raw transfer function.** Natural
+  frequencies, damping ratios and Q are scale-invariant, so those were
+  always right, but the modal CONSTANTS came back in V/V while the plot
+  was in engineering units — and that is what `ModalData` persisted. The
+  fit now sees the same `cal[out]/cal[in]` ratio the measured line does.
+  This also closes a display mismatch: the fit's reconstruction returns
+  in whatever units the fit consumed and the fit pseudo-set carries no
+  calibration of its own, so a raw fit drew its recon at the raw level
+  over a calibrated curve.
+- **`export_to_matlab` dropped a channel from a capture that used
+  `use_output_as_ch0`.** That option PREPENDS the drive column to
+  `time_data` without bumping `settings.channels`, and both MATLAB
+  exporters iterated the setting — so a three-column capture exported
+  two and lost the last measured channel, with no message. Both now use
+  the array's own shape. (`export_to_csv` was never affected.)
+- **`calculate_cross_spectra_averaged` returned a mismatched pair** on
+  the same captures, sizing `Cxy` from the stale channel count while
+  `Pxy` came from the data: `Pxy` (3, 3, F) alongside `Cxy` (2, 2, F).
+- **`CrossSpecData` did not default its calibration to all-ones**, the
+  one data class that kept a `None` where `TimeData`, `FreqData` and
+  `TfData` all fall back to the identity.
+- **The coerced NI input voltage range was never read back.** DAQmx
+  honours `min_val`/`max_val` only up to the discrete ranges a device
+  actually has, rounding UP to the nearest one that contains the request
+  — a 9234 is fixed at ±5 V and accepts any `VmaxNI` silently, a 6212
+  asked for ±1 V runs at ±2 V. The sample rate has been read back and
+  adopted for exactly this reason since 2.4.2; the range had no
+  equivalent, so `settings.VmaxNI` could name a rail the hardware was
+  not using, and both the capture clip warning (at 0.95·VmaxNI) and the
+  live level meters judged against it. The real range is now adopted
+  from the task, and the stream-reuse check covers a coerced range as
+  well as a coerced rate, so re-requesting the original value still
+  reuses the running task instead of repeating the ~2 s IEPE warm-up.
+  (The error was always in the safe direction — a false "may be
+  clipped", never a missed one — since coercion only ever goes upward.)
+
+### Changed
+
+- **The CSV and MATLAB data exports now carry the calibration as
+  metadata.** Both still write the stored arrays RAW, in volts, with no
+  calibration applied — that is deliberate, and it is why the numbers
+  differ from the ones on screen — but the file now says so instead of
+  leaving the discrepancy silent:
+
+    - the CSV opens with a `#`-commented header naming the per-column
+      `cal_factors` and `units`. It is written through
+      `np.savetxt(header=...)`, so the numeric rows are byte-for-byte
+      what they always were and `np.loadtxt`, `np.genfromtxt` and
+      `pandas.read_csv(..., comment='#')` skip it by default;
+    - the MATLAB file gains `time_cal_factors` / `time_units` and the
+      `freq_` and `tf_` equivalents alongside the arrays it has always
+      written. Purely additive — existing scripts are unaffected.
+
+    The browser writes byte-identical CSVs: `pydvma.file.format_cal_factor`
+    and its JavaScript twin are pinned to each other by shared
+    known-answer vectors, as the `.dvma` signature already is.
+
+- `pydvma.file` gains `format_cal_factor` and `CAL_FACTOR_FORMAT_VECTORS`
+  as public names, for anyone reproducing the header format.
+
 ## 2.4.4 — 2026-09-14
 
 The 3C6 lab rounds on 2.4.3, plus the two lab-feedback items that came
