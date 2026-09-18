@@ -8,6 +8,28 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-09-18 (remote Linux session): **both open Dependabot
+security advisories are cleared in `webui/package-lock.json` — dev
+dependencies only, and the built bundle is byte-identical across the
+bump.** (1) GHSA-82fw-gwwq-j7x9 / CVE-2026-84373, moderate,
+`@vitest/mocker` redirect mocks skipped the dev server's fs allowlist
+(arbitrary file read over the HMR socket) — vitest 4.1.9 → 4.1.11, the
+same bump Dependabot raised as PR #12; the lockfile regenerated here is
+**byte-identical** to that PR's, so merging this supersedes it. (2)
+GHSA-9rgm-9g3h-6x36 / CVE-2026-81176, moderate, quadratic blow-up in
+`devalue.parse` on malformed input — devalue 5.8.1 → 5.9.2, a
+lockfile-only transitive bump under `svelte@5.56.4` (range `^5.8.1`),
+which Dependabot had raised NO PR for. devalue is reached only through
+`svelte/internal/server`, and this app is a client-side SPA with no
+SSR, so it was unreachable as well as dev-only. All ten changed
+packages were verified twice over: lockfile `integrity` vs the registry
+metadata, and each downloaded tarball's own sha512 vs that hash.
+`npm audit` 0 vulnerabilities, check 0/0 (189 files), vitest 1163/1
+skipped, and all 16 files of `vite build` hash-identical before and
+after. Python side clean too: `pip-audit` over the runtime deps and
+`requirements-docs.txt` reports no known vulnerabilities. Still no
+`.github/dependabot.yml`, still deliberate (see the 2026-08-03 entry).
+
 As of 2026-09-14 (remote Linux session; Tore is on the Mac, which is
 where the build and the twine upload happen): **the 2i2 coherence hunt
 is CLOSED, two lab-feedback items are fixed, and v2.4.4 is bumped and
