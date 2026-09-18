@@ -39,22 +39,35 @@ on master** (webui + docs) at `e749e6c`. NB `dist/` and
 `webui/public/pypi` are gitignored, so the Mac must run
 `npm run vendor:wheels` FIRST, then `python scripts/stage_webui.py`,
 then `python -m build --sdist --wheel` — the order in "Releasing"
-below. **STATE AS OF THE END OF THIS SESSION — the release ran OUT OF ORDER
-and is half-done:** the tag `v2.5.0` is pushed and correct (→ `cca95a6`),
-the **GitHub release IS published but with an EMPTY BODY**, and **PyPI
-still serves 2.4.4 — nothing was uploaded.** Cause: the paste block I
-gave Tore had `#` comment lines that zsh mangled (`(NOT cf39d90 — …)`
-parses as glob qualifiers; a `;` made zsh run `Zenodo auto-archives`),
-his `dist/` was empty so `twine upload dist/pydvma-2.5.0*` matched
-nothing and silently did nothing, and `gh release create --notes-file`
-read a CHANGELOG that was still pre-2.5.0 (he had fetched, not pulled)
-so it accepted empty notes without complaint. **Remaining, all on the
-Mac:** build (`vendor:wheels` → `stage_webui.py` → `build`), run
-`python scripts/verify_release.py 2.5.0`, `twine upload`, then
-`gh release edit v2.5.0 --notes-file` with the CHANGELOG 2.5.0 section
-(100 lines). Zenodo will have archived the empty-bodied release; the
-ARCHIVE itself is fine (it captures the source at the tag), only the
-description needs editing on the Zenodo record.
+below. **v2.5.0 IS RELEASED END TO END** (Tore built and uploaded from the
+Mac, 2026-09-18). Verified here against the live index: PyPI's simple
+index serves both `pydvma-2.5.0-py3-none-any.whl` and the sdist (the
+`/pypi/pydvma/json` endpoint lagged on cache for a while — check
+`/simple/` when in doubt), the tag `v2.5.0` is at the cut commit
+`cca95a6`, and the GitHub release carries the full CHANGELOG body
+(5894 chars). **Trap 3 re-checked on the DOWNLOADED wheel and it is
+clean**: embedded `_webui/pypi/pydvma-2.5.0-py3-none-any.whl`, the
+bundled `index-Dp9RQWkc.js` references that same filename, and all 24
+`pydvma/*.py` are byte-identical to tag `v2.5.0` in BOTH the fat wheel
+and the engine wheel inside it. A clean-venv install **from PyPI**
+serves its own embedded UI (engine wheel fetched 200) with the
+`/engine` greeting `{v:1, pydvma:'2.5.0', journal:true}`. NB the Mac
+build produced the SAME bundle hash as the container build
+(`index-Dp9RQWkc.js`), so the two environments agree. Lab install is
+`pip install --upgrade "pydvma[serve,soundcard]"`.
+
+It got there out of order and needed two repair passes, which is the
+part worth remembering. The GitHub release was published BEFORE the
+upload and with an EMPTY body, because: the paste block had `#`
+comment lines that zsh mangled (`(NOT cf39d90 — …)` parses as glob
+qualifiers; a `;` made zsh run `Zenodo auto-archives`), `dist/` was
+empty so `twine upload dist/pydvma-2.5.0*` matched nothing and
+silently did nothing, and `gh release create --notes-file` read a
+CHANGELOG that was still pre-2.5.0 (fetched, not pulled) so it
+accepted empty notes without complaint. All three are now fixed.
+**Still worth eyeballing: the Zenodo record**, which auto-archived the
+briefly-empty release — the archive itself is sound (it captures the
+source at the tag) but its description may need editing there.
 
 Lessons: **give Tore paste-safe command blocks — no `#` comments, no
 em-dashes or parentheses inside them**, zsh executes what it cannot
