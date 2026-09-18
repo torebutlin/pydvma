@@ -45,6 +45,7 @@
   const setsView = $derived(selection.dataSetsView);
   const computeErrors = $derived(actions.computeErrors);
   const busy = $derived(actions.busy);
+  const derivedSlices = $derived(actions.derived);   // subscribe → re-derive on calc
 
   const target = $derived(analysisSettings.analysisTarget);
   const settingsMap = $derived(analysisSettings.map);   // subscribe → re-derive on patch
@@ -73,6 +74,8 @@
   // This card owns the FFT error in FFT mode and the PSD error otherwise
   // (PSD + CSD both compute via calcPsd). Per-kind so a TF/sono failure
   // never shows here (Round-3 item 2).
+  // Compute kind, not display quantity: power and density share the one
+  // `calc_psd` op (and therefore its error channel).
   const errKind = $derived(freqMode === 'fft' ? 'fft' : 'psd');
 
   // Coupled resolution seeds off the TARGET set's fs + duration (R1-minor
@@ -88,24 +91,49 @@
       ?? 1,
   );
 
-  // NB the 'psd' mode's quantity is a power SPECTRUM (scipy
-  // `scaling='spectrum'` — mean-square amplitude per bin, unit²), NOT a
-  // spectral density: its level scales with Δf. The y axis says so
-  // ("Power spectrum (unit²)", see `plot/model.ts`); the button keeps the
-  // familiar PSD name and states the distinction on hover. The LIVE scope's
-  // PSD is a separate, genuine density in unit²/Hz.
+  // Power and PSD are ONE compute shown two ways (`calc_psd` fills both):
+  // "Power" is the power SPECTRUM (scipy `scaling='spectrum'` — mean-square
+  // amplitude per bin, unit²), whose level scales with Δf; "PSD" divides it
+  // by the window's effective noise bandwidth to give a genuine density in
+  // unit²/Hz, whose level does not. Read a discrete peak off Power (a sine
+  // gives A²/2) and a noise floor off PSD. The LIVE scope's PSD is a third,
+  // separate density (`lib/audio/fft.ts`).
   const MODES: { id: FreqMode; label: string; title?: string }[] = [
     { id: 'fft', label: 'FFT', title: 'Amplitude spectrum of one frame' },
     {
-      id: 'psd',
-      label: 'PSD',
+      id: 'power',
+      label: 'Power',
       title: 'Averaged power spectrum — mean-square amplitude per bin (unit²). '
-        + 'This is a spectrum, not a density: its level scales with Δf.',
+        + 'A spectrum, not a density: its level scales with Δf. Use for discrete '
+        + 'peaks (a sine of amplitude A peaks at A²/2).',
+    },
+    {
+      id: 'density',
+      label: 'PSD',
+      title: 'Power spectral density (unit²/Hz) — the power spectrum divided by '
+        + "the window's effective noise bandwidth. Its level does NOT move with "
+        + 'Δf, so use it for broadband noise floors.',
     },
     { id: 'csd', label: 'CSD', title: 'Cross-spectrum magnitude |S_xy| for a channel pair' },
   ];
   const averaged = $derived(freqMode !== 'fft');
-  const calcLabel = $derived(freqMode === 'fft' ? 'Calc FFT' : freqMode === 'psd' ? 'Calc PSD' : 'Calc CSD');
+  const calcLabel = $derived(
+    freqMode === 'fft' ? 'Calc FFT'
+      : freqMode === 'power' ? 'Calc power'
+        : freqMode === 'density' ? 'Calc PSD'
+          : 'Calc CSD',
+  );
+
+  /**
+   * Density mode with a stale auto-power slice: computed before the ENBW was
+   * recorded, so there is no honest way to scale it per Hz and the plot draws
+   * nothing. Only reachable for a slice from an older engine; one Calc fixes
+   * it, and the note says so rather than leaving an empty plot unexplained.
+   */
+  const densityNeedsRecalc = $derived(
+    freqMode === 'density'
+    && (void $derivedSlices, actions.autoPowerMissingEnbw($target)),
+  );
 
   const patch = (partial: Partial<{ window: string; mode: FreqMode; nFrames: number; csdX: number; csdY: number }>) =>
     analysisSettings.patch($target, 'freq', partial);
@@ -235,6 +263,14 @@
         {:else}
           <span class="note">CSD needs a 2+ channel set (a pair to cross-correlate).</span>
         {/if}
+      </div>
+    {/if}
+    {#if densityNeedsRecalc}
+      <div class="ctx-row">
+        <span class="note" data-testid="freq-density-recalc">
+          This spectrum was computed without the window bandwidth a density
+          needs — press {calcLabel} to get it.
+        </span>
       </div>
     {/if}
     {#if $computeErrors[errKind]}

@@ -11,6 +11,7 @@ import {
   type ExportSet,
   type Exporter,
 } from '../../src/lib/export/data';
+import { wrapUnit } from '../../src/lib/model/calibration';
 
 // The expected strings below are PINNED against real numpy output:
 //   np.savetxt(io.StringIO(), darray, delimiter=",")
@@ -263,6 +264,41 @@ const CAL_FACTOR_FORMAT_VECTORS: [number, string][] = [
 test('fmtCalFactor matches python format_cal_factor on every shared vector', () => {
   for (const [value, expected] of CAL_FACTOR_FORMAT_VECTORS) {
     expect(`${value} → ${fmtCalFactor(value)}`).toBe(`${value} → ${expected}`);
+  }
+});
+
+// Known-answer vectors mirrored VERBATIM from
+// `pydvma.analysis.UNIT_WRAP_VECTORS`. Python builds the STORED TfData unit
+// strings and the browser builds the same strings for its own export headers,
+// and the two files are byte-identical by design — so the rule is pinned
+// rather than trusted. A change on either side must change both.
+const UNIT_WRAP_VECTORS: [string, string][] = [
+  ['', ''],
+  ['N', 'N'],
+  ['Pa', 'Pa'],
+  ['V', 'V'],
+  ['g', 'g'],
+  ['m', 'm'],
+  ['s2', 's2'],
+  ['m/s2', '(m/s2)'],
+  ['m/s\u00b2', '(m/s\u00b2)'],
+  ['m/s', '(m/s)'],
+  ['N\u00b7m', '(N\u00b7m)'],
+  ['-', '(-)'],
+  ['(m/s2)', '(m/s2)'],
+  ['(m/s2)/N', '((m/s2)/N)'],
+  ['(a)/(b)', '((a)/(b))'],
+];
+
+test('wrapUnit matches python wrap_unit on every shared vector', () => {
+  for (const [value, expected] of UNIT_WRAP_VECTORS) {
+    expect(`${value} → ${wrapUnit(value)}`).toBe(`${value} → ${expected}`);
+  }
+});
+
+test('wrapUnit is idempotent', () => {
+  for (const [value] of UNIT_WRAP_VECTORS) {
+    expect(wrapUnit(wrapUnit(value))).toBe(wrapUnit(value));
   }
 });
 

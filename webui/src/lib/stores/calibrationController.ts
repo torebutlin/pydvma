@@ -19,8 +19,12 @@ import { writable } from 'svelte/store';
 
 /** The calibration operations the tray needs — a subset of the actions API. */
 export interface CalibrationController {
-  /** Persisted per-channel factors + engineering units for a set. */
-  getCalibration: (setId: number) => { factors: number[]; units: string[] };
+  /** Persisted per-channel factors + engineering units for a set.
+   *  `sourceIsVolts` says what the stored samples ARE, so the Calibrate
+   *  dialog can name the sensitivity's numerator (V/unit vs FS/unit). */
+  getCalibration: (setId: number) => {
+    factors: number[]; units: string[]; sourceIsVolts?: boolean;
+  };
   /** Persist a set's cal factors (plus optional per-channel units). */
   setCalFactors: (setId: number, factors: number[], units?: readonly string[]) => void;
 }

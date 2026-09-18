@@ -42,7 +42,7 @@ test('cal seam: FFT linear magnitude scales by cal; PSD by cal²', () => {
   }];
   const fft = buildPlotModel({ view: 'frequency', freqMode: 'fft', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] });
   expect(Array.from(fft.lines[0].y)).toEqual([50, 50]);     // 5×10
-  const psd = buildPlotModel({ view: 'frequency', freqMode: 'psd', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] });
+  const psd = buildPlotModel({ view: 'frequency', freqMode: 'power', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] });
   expect(Array.from(psd.lines[0].y)).toEqual([400, 900]);   // [4,9]×10²
 });
 

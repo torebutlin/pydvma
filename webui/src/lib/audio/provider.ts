@@ -618,6 +618,12 @@ export function effectiveFullScaleVolts(
       const dbu = levels[cfg.inputMode ?? 'line'];
       if (dbu != null && Number.isFinite(dbu)) return dbuToVoltsPeak(dbu - cfg.inputGainDb);
     }
+  } else if (cfg.vmaxSC != null && Number.isFinite(cfg.vmaxSC) && cfg.vmaxSC > 0) {
+    // No published levels — an uncharacterised interface — so the operator's
+    // own measured full scale is the only answer there is. Checked only in
+    // this branch: a profiled device derives the number from its stated gain
+    // and the server overrides an explicit VmaxSC anyway.
+    return cfg.vmaxSC;
   }
   const published = dc.full_scale_volts;
   return typeof published === 'number' && Number.isFinite(published) && published > 0
@@ -730,6 +736,22 @@ export interface BridgeConfig {
   inputGainDb?: number;
   /** Which input the signal is on → `MySettings.input_mode`. */
   inputMode?: 'line' | 'inst' | 'mic';
+  /**
+   * Measured full-scale input voltage → `MySettings.VmaxSC`: the jack voltage
+   * that reads as a normalised 1.0.
+   *
+   * The route for an interface pydvma has NO profile for, where there is no
+   * published maximum input level to turn a stated gain into volts and
+   * `VmaxSC` would otherwise sit at its uncalibrated 1.0 placeholder forever
+   * — captures then come out in full-scale fractions wearing a 'V' label.
+   * Measure it once (a known source through `pydvma.verify_input_scaling`,
+   * or a scope on the input) and state it here.
+   *
+   * Ignored for a device with a profile: there `inputGainDb` derives the same
+   * number and the server would override an explicit value anyway, so the two
+   * are never offered together.
+   */
+  vmaxSC?: number;
   /** Pretrigger sample count (null = no pretrigger / free-run capture). */
   pretrigSamples?: number | null;
   pretrigThreshold?: number;

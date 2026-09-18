@@ -27,6 +27,7 @@
  */
 import { get, writable, type Readable } from 'svelte/store';
 import type { Selection } from './selection';
+import type { FreqMode } from '../plot/model';
 
 /** The three analysis "views" that own per-set settings. */
 export type SettingsView = 'freq' | 'tf' | 'sono';
@@ -39,7 +40,7 @@ export type SettingsView = 'freq' | 'tf' | 'sono';
  * a recompute) and ignored outside CSD mode. Defaults 0/1.
  */
 export interface FreqSettings {
-  window: string; mode: 'fft' | 'psd' | 'csd'; nFrames: number;
+  window: string; mode: FreqMode; nFrames: number;
   csdX: number; csdY: number;
 }
 /** TF-card settings: input channel, window, averaging mode, averaging frames. */

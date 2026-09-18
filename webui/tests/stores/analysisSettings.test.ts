@@ -54,9 +54,9 @@ test('patch to one set leaves others untouched; patch-all writes every set', () 
   expect(settings.get(a, 'freq').window).toBe('flattop');
   expect(settings.get(b, 'freq').window).toBe('hann');   // untouched
 
-  settings.patch('all', 'freq', { mode: 'psd' });
-  expect(settings.get(a, 'freq').mode).toBe('psd');
-  expect(settings.get(b, 'freq').mode).toBe('psd');
+  settings.patch('all', 'freq', { mode: 'power' });
+  expect(settings.get(a, 'freq').mode).toBe('power');
+  expect(settings.get(b, 'freq').mode).toBe('power');
   // patch-all preserves the per-set field it didn't touch
   expect(settings.get(a, 'freq').window).toBe('flattop');
   expect(settings.get(b, 'freq').window).toBe('hann');

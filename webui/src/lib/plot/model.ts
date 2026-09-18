@@ -16,6 +16,7 @@
 import { dataExtent, DB_FLOOR, type PlotLine, type PlotModel } from './build';
 import type { TfPlotType } from '../stores/viewstate';
 import { tfColumn } from './tfChannels';
+import { wrapUnit } from '../model/calibration';
 
 /** The flat `{shape, data, complex}` dict every worker array crosses as. */
 export interface MarshalledArray {
@@ -52,8 +53,46 @@ export function decodeArray(a: MarshalledArray): DecodedArray {
 export type LineState = 'on' | 'fade';
 const OPACITY: Record<LineState, number> = { on: 1.0, fade: 0.35 };
 
-/** Which spectral quantity a frequency-view line represents. */
-export type FreqMode = 'fft' | 'psd' | 'csd';
+/**
+ * Which spectral quantity a frequency-view line represents.
+ *
+ * `'power'` and `'density'` are the SAME computed data (`SetArrays.psd`, one
+ * `calc_psd` per set) shown as two different quantities:
+ *   - `'power'` — the power SPECTRUM, mean-square amplitude per bin, `unit²`.
+ *     Its level scales with the resolution: halve Δf and a broadband floor
+ *     drops 3 dB, because each bin now collects half the band.
+ *   - `'density'` — the power spectral DENSITY, `unit²/Hz`, obtained by
+ *     dividing by the window's effective noise bandwidth (`psd.enbw`). Its
+ *     level does NOT move with the resolution, which is the whole point of a
+ *     density and the reason a noise floor is quoted this way.
+ * A discrete peak reads correctly on `'power'` (a sine gives A²/2); broadband
+ * noise reads correctly on `'density'`.
+ *
+ * LEGACY `'psd'`: saved view state written before the split used `'psd'` for
+ * what is now `'power'` (it was mislabelled `unit²/Hz` on the axis). It
+ * migrates to `'power'` on load (`migrateFreqMode`) — deliberately NOT reused
+ * for the density, which would silently change what a saved file means.
+ */
+export type FreqMode = 'fft' | 'power' | 'density' | 'csd';
+
+/**
+ * Normalise a persisted / external frequency mode onto the current set.
+ *
+ * The one place the legacy `'psd'` spelling is understood, so a file saved
+ * before the power/density split reopens showing the quantity it showed then.
+ * Anything unrecognised falls back to `'fft'`.
+ */
+export function migrateFreqMode(mode: string | undefined | null): FreqMode {
+  if (mode === 'psd') return 'power';
+  return mode === 'fft' || mode === 'power' || mode === 'density' || mode === 'csd'
+    ? mode
+    : 'fft';
+}
+
+/** Whether `mode` draws the auto-power slice (either of its two quantities). */
+export function isAutoPowerMode(mode: FreqMode): boolean {
+  return mode === 'power' || mode === 'density';
+}
 
 /**
  * One channel of one set, tagged with the render state the selection
@@ -82,7 +121,20 @@ export interface SetArrays {
   setId: number;
   time?: { axis: Float64Array; data: DecodedArray };          // TimeData: data (Ns, Nc)
   freq?: { axis: Float64Array; data: DecodedArray };          // FFT: freq_data (Nf, Nc) complex
-  psd?: { axis: Float64Array; data: DecodedArray };           // PSD: psd (Nc, Nf) real
+  /**
+   * Auto-power slice: `data` is `psd (Nc, Nf)` real — a power SPECTRUM in
+   * `unit²` (scipy `scaling='spectrum'`), NOT a density.
+   *
+   * `enbw` is the analysis window's effective noise bandwidth in Hz
+   * (`fs·Σw²/(Σw)²`, computed by `analysis.calculate_cross_spectrum_matrix`
+   * and returned by `engine.calc_psd`). It is the ONE number that converts
+   * the spectrum into a spectral density — `density = data / enbw` — so the
+   * `'power'` and `'density'` modes render from this same slice with no
+   * second compute. Absent (or 0) on a slice produced before it was
+   * recorded: the density mode then has nothing honest to draw and skips
+   * the line rather than plotting a spectrum under a `unit²/Hz` label.
+   */
+  psd?: { axis: Float64Array; data: DecodedArray; enbw?: number };
   /**
    * CSD slice (round-5 item 7). `data` is the COHERENCE matrix `Cxy (Nc, Nc,
    * Nf)` real; combined with the auto-power (`psd`) it reconstructs the
@@ -164,6 +216,21 @@ export interface SetArrays {
    */
   units?: string[];
   /**
+   * Whether this set's samples are known to be true VOLTS
+   * (`calibration.capturedInVolts`, judged from the capture settings: an NI AI
+   * task, or a soundcard whose `VmaxSC` has been characterised).
+   *
+   * It exists because `'V'` is doing two jobs. As the uncalibrated default it
+   * means "no unit stated" — a Web Audio capture wears it over normalised
+   * 0–1 samples — and the axis rightly stays a plain 'Amplitude'. But a
+   * capture from a card that really delivers volts wears the SAME string over
+   * numbers that genuinely are volts, and there the axis should say `(V)`.
+   * This flag is the only thing that tells the two apart, so it lets `'V'`
+   * count as a meaningful unit for THIS set alone. Absent / false keeps the
+   * old behaviour exactly.
+   */
+  unitsAreVolts?: boolean;
+  /**
    * x(iω) DISPLAY POWER (Qt's Scaling tool `multiply_by_power_of_iw`, but
    * NON-DESTRUCTIVE — a per-set display multiplier, never a mutation of the
    * stored arrays). An integer `p` in `[-2, +2]`; the complex FFT / TF value is
@@ -188,20 +255,20 @@ export interface SetArrays {
  */
 const DEFAULT_UNITS = new Set(['', 'v']);
 
-/** A channel's unit if it is meaningful (non-default), else `null`. */
-function meaningfulUnit(u: string | undefined): string | null {
+/**
+ * A channel's unit if it is meaningful (non-default), else `null`.
+ *
+ * `voltsAreReal` lifts `'V'` out of the default set for a set whose samples
+ * are known to be volts (`SetArrays.unitsAreVolts`) — the one case where the
+ * placeholder string and a genuine engineering unit coincide. Everything else
+ * is unchanged: an empty unit is never meaningful, and a set that has not said
+ * its samples are volts keeps the plain 'Amplitude' fallback.
+ */
+function meaningfulUnit(u: string | undefined, voltsAreReal = false): string | null {
   if (typeof u !== 'string') return null;
   const t = u.trim();
+  if (voltsAreReal && t.toLowerCase() === 'v') return t;
   return DEFAULT_UNITS.has(t.toLowerCase()) ? null : t;
-}
-
-/**
- * Parenthesise a COMPOUND unit (one containing anything other than a letter or
- * digit, e.g. `m/s²`) so it composes unambiguously in a ratio or a square —
- * `(m/s²)/N`, `(m/s²)²/Hz` — while a simple unit is left bare (`Pa`, `N`).
- */
-function wrapUnit(u: string): string {
-  return /[^\p{L}\p{N}]/u.test(u) ? `(${u})` : u;
 }
 
 /** Superscript glyphs for a signed integer exponent (matches the 'm/s²' style). */
@@ -277,7 +344,7 @@ function commonUnit(byId: Map<number, SetArrays>, visible: VisibleLine[], applyI
   let unit: string | null = null;
   for (const v of visible) {
     const set = byId.get(v.setId);
-    let u = meaningfulUnit(set?.units?.[v.ch]);
+    let u = meaningfulUnit(set?.units?.[v.ch], set?.unitsAreVolts);
     if (!u) return null;                 // absent/default on any line → no label unit
     // x(iω) power shifts the unit along the derivative ladder (fft only).
     if (applyIw && set?.iwPower) u = differentiateUnit(u, set.iwPower);
@@ -300,8 +367,8 @@ function tfRatioUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): stri
     const t = set?.tf;
     if (!t) continue;                    // no TF for this line → contributes nothing
     if (t.chIn === null) return null;    // orphan TF: no input channel → no ratio unit
-    let o = meaningfulUnit(set?.units?.[v.ch]);
-    const i = meaningfulUnit(set?.units?.[t.chIn ?? 0]);
+    let o = meaningfulUnit(set?.units?.[v.ch], set?.unitsAreVolts);
+    const i = meaningfulUnit(set?.units?.[t.chIn ?? 0], set?.unitsAreVolts);
     if (!o || !i) return null;
     // x(iω) power multiplies the whole TF (a ratio), shifting the NUMERATOR's
     // derivative order — (m/s²)/N integrated once reads (m/s)/N.
@@ -352,8 +419,8 @@ function csdPairUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): stri
     const set = byId.get(v.setId);
     const c = set?.csd;
     if (!c) continue;                    // no CSD for this line → contributes nothing
-    const ui = meaningfulUnit(set?.units?.[c.i ?? 0]);
-    const uj = meaningfulUnit(set?.units?.[c.j ?? 1]);
+    const ui = meaningfulUnit(set?.units?.[c.i ?? 0], set?.unitsAreVolts);
+    const uj = meaningfulUnit(set?.units?.[c.j ?? 1], set?.unitsAreVolts);
     if (!ui || !uj) return null;
     const u = ui === uj ? `${wrapUnit(ui)}²` : `${wrapUnit(ui)}·${wrapUnit(uj)}`;
     if (out === null) out = u;
@@ -625,21 +692,27 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     // FFT honours the x(iω) display power (round-6 Qt-parity); the power
     // spectrum and CSD do not, so their unit labels ignore it too.
     const unit = mode === 'csd' ? null : commonUnit(byId, args.visible, mode === 'fft');
-    // UNITS HONESTY: this quantity is scipy's `scaling='spectrum'` — the
-    // mean-square amplitude in each bin (`Pxy *= 1/(Σw)²` in
-    // `analysis.calculate_cross_spectrum_matrix`), NOT a spectral DENSITY.
-    // Its level therefore scales with Δf, so labelling it `unit²/Hz` (as this
-    // did before) overstated a noise floor by the window's noise-equivalent
-    // bandwidth and moved the number whenever the resolution changed. The
-    // Live scope's PSD is a separate, genuine density (`lib/audio/fft.ts`) and
-    // keeps its `unit²/Hz`. Parenthesise a compound unit so the square is
-    // unambiguous ('m/s²' → '(m/s²)²', but 'Pa' → 'Pa²').
+    // UNITS HONESTY. The computed auto-power is scipy's `scaling='spectrum'` —
+    // the mean-square amplitude in each bin (`Pxy *= 1/(Σw)²` in
+    // `analysis.calculate_cross_spectrum_matrix`), so it is a power SPECTRUM in
+    // `unit²` whose level scales with Δf. Labelling THAT `unit²/Hz` (as this
+    // did before the power/density split) overstated a noise floor by the
+    // window's noise-equivalent bandwidth and moved the number whenever the
+    // resolution changed. The two modes now say what they are: `'power'` keeps
+    // `unit²`, and `'density'` divides by the window ENBW to give a genuine
+    // `unit²/Hz` whose level is resolution-invariant. (The Live scope's PSD is
+    // a third, separate density in `lib/audio/fft.ts`.) Parenthesise a compound
+    // unit so the square is unambiguous ('m/s²' → '(m/s²)²', but 'Pa' → 'Pa²').
     const powUnit = unit ? `${wrapUnit(unit)}²` : '';
     const csdUnit = mode === 'csd' ? csdPairUnit(byId, args.visible) : null;
-    const yLabel = mode === 'psd'
+    const yLabel = mode === 'power'
       ? (unit
         ? (linMag ? `Power spectrum (${powUnit})` : `Power spectrum (${powUnit}, dB)`)
         : (linMag ? 'Power spectrum' : 'Power spectrum (dB)'))
+      : mode === 'density'
+      ? (unit
+        ? (linMag ? `PSD (${powUnit}/Hz)` : `PSD (${powUnit}/Hz, dB)`)
+        : (linMag ? 'PSD (per Hz)' : 'PSD (per Hz, dB)'))
       : mode === 'csd'
         // Cross-spectrum magnitude for the chosen pair (round-5 item 7). dB by
         // default (cross-spectra span orders of magnitude); linear honours the
@@ -668,16 +741,26 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
         }
         lines.push({ ...baseLine(f.axis, y, v), dbY: !linMag });
-      } else if (mode === 'psd') {
+      } else if (isAutoPowerMode(mode)) {
         const p = s?.psd; if (!p) continue;                  // psd shape (Nc, Nf)
         const nc = p.data.shape[0] ?? 1;
         if (v.ch >= nc) continue;
         const nf = p.axis.length;
-        // PSD is POWER, so the amplitude cal enters squared (× cal²).
+        // Auto-power is POWER, so the amplitude cal enters squared (× cal²).
         const cal2 = calOf(s, v.ch) ** 2;
+        // `'density'` is the SAME data per Hz — divide by the window's
+        // effective noise bandwidth. Without a recorded ENBW there is no
+        // honest density to draw, so skip the line rather than relabel a
+        // spectrum (`FrequencyCard` tells the user to recompute).
+        let scale = cal2;
+        if (mode === 'density') {
+          const enbw = p.enbw;
+          if (!enbw || !Number.isFinite(enbw) || enbw <= 0) continue;
+          scale = cal2 / enbw;
+        }
         const y = new Float64Array(nf);
         for (let i = 0; i < nf; i++) {
-          const x = p.data.re[v.ch * nf + i] * cal2;
+          const x = p.data.re[v.ch * nf + i] * scale;
           y[i] = linMag ? x : powDb(x);
         }
         lines.push({ ...baseLine(p.axis, y, v), dbY: !linMag });

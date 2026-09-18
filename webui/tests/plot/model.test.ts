@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import {
-  buildPlotModel, decodeArray, differentiateUnit, iwFactor,
+  buildPlotModel, decodeArray, differentiateUnit, iwFactor, migrateFreqMode,
   type MarshalledArray, type SetArrays, type VisibleLine,
 } from '../../src/lib/plot/model';
 import { dataExtent } from '../../src/lib/plot/build';
@@ -57,7 +57,7 @@ test('frequency PSD: y = 10·log10(psd) with (Nc, Nf) layout', () => {
     setId: 0,
     psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 2], [10, 100, 1, 1000])) },
   }];
-  const m = buildPlotModel({ view: 'frequency', freqMode: 'psd', sets, visible: [vis(0, 1, 'on')] });
+  const m = buildPlotModel({ view: 'frequency', freqMode: 'power', sets, visible: [vis(0, 1, 'on')] });
   expect(Array.from(m.lines[0].y)).toEqual([10 * Math.log10(1), 10 * Math.log10(1000)]);
   expect(m.yLabel).toBe('Power spectrum (dB)');
 });
@@ -284,16 +284,149 @@ test('unit labels: the power spectrum reads as unit², never unit²/Hz', () => {
     psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [10, 100])) },
     units: ['m/s²'],
   }];
-  expect(buildPlotModel({ view: 'frequency', freqMode: 'psd', sets, visible: [vis(0, 0, 'on')] }).yLabel)
+  expect(buildPlotModel({ view: 'frequency', freqMode: 'power', sets, visible: [vis(0, 0, 'on')] }).yLabel)
     .toBe('Power spectrum ((m/s²)², dB)');
-  expect(buildPlotModel({ view: 'frequency', freqMode: 'psd', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] }).yLabel)
+  expect(buildPlotModel({ view: 'frequency', freqMode: 'power', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] }).yLabel)
     .toBe('Power spectrum ((m/s²)²)');
   for (const yScale of ['lin', 'log'] as const) {
     const label = buildPlotModel({
-      view: 'frequency', freqMode: 'psd', yScale, sets, visible: [vis(0, 0, 'on')],
+      view: 'frequency', freqMode: 'power', yScale, sets, visible: [vis(0, 0, 'on')],
     }).yLabel;
     expect(label).not.toContain('/Hz');
   }
+});
+
+// The density mode is the SAME slice per Hz: `density = spectrum / enbw`.
+// Its label must say unit²/Hz, and — the whole reason it exists — its level
+// must not move when the resolution does.
+test('density mode divides the power spectrum by the window ENBW', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    psd: {
+      axis: Float64Array.from([0, 1]),
+      data: decodeArray(real([1, 2], [10, 100])),
+      enbw: 2.5,
+    },
+    units: ['m/s²'],
+  }];
+  const lin = buildPlotModel({
+    view: 'frequency', freqMode: 'density', yScale: 'lin', sets, visible: [vis(0, 0, 'on')],
+  });
+  expect(Array.from(lin.lines[0].y)).toEqual([10 / 2.5, 100 / 2.5]);
+  expect(lin.yLabel).toBe('PSD ((m/s²)²/Hz)');
+
+  const db = buildPlotModel({ view: 'frequency', freqMode: 'density', sets, visible: [vis(0, 0, 'on')] });
+  expect(db.lines[0].y[1]).toBeCloseTo(10 * Math.log10(100 / 2.5), 9);
+  expect(db.yLabel).toBe('PSD ((m/s²)²/Hz, dB)');
+});
+
+test('density is resolution-invariant where the power spectrum is not', () => {
+  // The same white floor at two resolutions: the SPECTRUM level halves with
+  // Δf (each bin collects half the band), the DENSITY does not move.
+  const coarse: SetArrays[] = [{
+    setId: 0,
+    psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [4, 4])), enbw: 2 },
+  }];
+  const fine: SetArrays[] = [{
+    setId: 0,
+    psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [2, 2])), enbw: 1 },
+  }];
+  const y = (sets: SetArrays[], freqMode: 'power' | 'density') => buildPlotModel({
+    view: 'frequency', freqMode, yScale: 'lin', sets, visible: [vis(0, 0, 'on')],
+  }).lines[0].y[0];
+  expect(y(coarse, 'power')).toBe(4);
+  expect(y(fine, 'power')).toBe(2);              // spectrum moved with Δf
+  expect(y(coarse, 'density')).toBe(2);
+  expect(y(fine, 'density')).toBe(2);            // density did not
+});
+
+test('density skips a slice with no ENBW rather than mislabelling it', () => {
+  // No honest per-Hz value exists without the window bandwidth, so the line
+  // is dropped — never drawn as a spectrum under a unit²/Hz axis.
+  const sets: SetArrays[] = [{
+    setId: 0,
+    psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [10, 100])) },
+  }];
+  expect(buildPlotModel({
+    view: 'frequency', freqMode: 'density', sets, visible: [vis(0, 0, 'on')],
+  }).lines).toHaveLength(0);
+  // The power spectrum needs no ENBW and still draws.
+  expect(buildPlotModel({
+    view: 'frequency', freqMode: 'power', sets, visible: [vis(0, 0, 'on')],
+  }).lines).toHaveLength(1);
+});
+
+test('density applies the calibration squared, like the power spectrum', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    psd: { axis: Float64Array.from([0]), data: decodeArray(real([1, 1], [8])), enbw: 4 },
+    calFactors: [3],
+  }];
+  const y = buildPlotModel({
+    view: 'frequency', freqMode: 'density', yScale: 'lin', sets, visible: [vis(0, 0, 'on')],
+  }).lines[0].y[0];
+  expect(y).toBeCloseTo(8 * 9 / 4, 12);
+});
+
+test('migrateFreqMode maps the legacy psd spelling onto power', () => {
+  // A file saved before the split meant the power SPECTRUM by 'psd'. Reusing
+  // the id for the new density would silently change what that file shows.
+  expect(migrateFreqMode('psd')).toBe('power');
+  expect(migrateFreqMode('power')).toBe('power');
+  expect(migrateFreqMode('density')).toBe('density');
+  expect(migrateFreqMode('fft')).toBe('fft');
+  expect(migrateFreqMode('csd')).toBe('csd');
+  expect(migrateFreqMode(undefined)).toBe('fft');
+  expect(migrateFreqMode('nonsense')).toBe('fft');
+});
+
+// 'V' is the uncalibrated PLACEHOLDER, so it normally reads as "no unit" and
+// the axis stays a plain 'Amplitude'. On a set whose samples really ARE volts
+// (`unitsAreVolts`, from the capture settings) it is an engineering unit like
+// any other and the axis says so.
+test('unit labels: V labels the axis only when the samples really are volts', () => {
+  const base = {
+    setId: 0,
+    time: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 1], [1, 2])) },
+    units: ['V'],
+  };
+  const plain = buildPlotModel({
+    view: 'time', sets: [base as SetArrays], visible: [vis(0, 0, 'on')],
+  });
+  expect(plain.yLabel).toBe('Amplitude');
+
+  const volts = buildPlotModel({
+    view: 'time',
+    sets: [{ ...base, unitsAreVolts: true } as SetArrays],
+    visible: [vis(0, 0, 'on')],
+  });
+  expect(volts.yLabel).toBe('Amplitude (V)');
+});
+
+test('unit labels: an empty unit is never meaningful, volts flag or not', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    time: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 1], [1, 2])) },
+    units: [''],
+    unitsAreVolts: true,
+  }];
+  expect(buildPlotModel({ view: 'time', sets, visible: [vis(0, 0, 'on')] }).yLabel)
+    .toBe('Amplitude');
+});
+
+test('unit labels: a volts capture reads its power spectrum as V\u00b2', () => {
+  const sets: SetArrays[] = [{
+    setId: 0,
+    psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [10, 100])), enbw: 2 },
+    units: ['V'],
+    unitsAreVolts: true,
+  }];
+  expect(buildPlotModel({
+    view: 'frequency', freqMode: 'power', yScale: 'lin', sets, visible: [vis(0, 0, 'on')],
+  }).yLabel).toBe('Power spectrum (V\u00b2)');
+  expect(buildPlotModel({
+    view: 'frequency', freqMode: 'density', yScale: 'lin', sets, visible: [vis(0, 0, 'on')],
+  }).yLabel).toBe('PSD (V\u00b2/Hz)');
 });
 
 test('unit labels: TF magnitude reads as the out/in ratio unit', () => {
@@ -799,7 +932,7 @@ test('frequency power spectrum yScale="lin": linear psd, no 10·log10, label dro
     setId: 0,
     psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 2], [10, 100, 1, 1000])) },
   }];
-  const m = buildPlotModel({ view: 'frequency', freqMode: 'psd', yScale: 'lin', sets, visible: [vis(0, 1, 'on')] });
+  const m = buildPlotModel({ view: 'frequency', freqMode: 'power', yScale: 'lin', sets, visible: [vis(0, 1, 'on')] });
   expect(Array.from(m.lines[0].y)).toEqual([1, 1000]);       // raw psd, ch1
   expect(m.yLabel).toBe('Power spectrum');
 });
@@ -1011,7 +1144,7 @@ test('PSD ignores the x(iω) display power (value and label unchanged)', () => {
     psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [10, 100])) },
   }];
   const m = buildPlotModel({
-    view: 'frequency', freqMode: 'psd', sets, visible: [vis(0, 0, 'on')], yScale: 'lin',
+    view: 'frequency', freqMode: 'power', sets, visible: [vis(0, 0, 'on')], yScale: 'lin',
   });
   expect(Array.from(m.lines[0].y)).toEqual([10, 100]);   // no iω scaling
   expect(m.yLabel).toBe('Power spectrum (m²)');          // unit not differentiated

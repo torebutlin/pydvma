@@ -7,6 +7,7 @@ import {
   isIdentity,
   CAL_UNITS,
   DEFAULT_UNIT,
+  capturedInVolts,
 } from '../../src/lib/model/calibration';
 
 // ── The sensitivity ↔ factor convention (pydvma acquisition.py:236) ──────── //
@@ -73,4 +74,35 @@ test('isIdentity is true only when every factor is exactly 1', () => {
   expect(isIdentity([1, 1, 1])).toBe(true);
   expect(isIdentity([1, 2])).toBe(false);
   expect(isIdentity([])).toBe(true);            // vacuously
+});
+
+
+// ---------------------------------------------------------------------------
+// capturedInVolts (Q2): 'V' is doing two jobs, and only the settings tell them
+// apart. A Web Audio capture wears 'V' over normalised 0-1 samples; an NI one
+// wears it over volts. Judged by exactly the rule the bridge uses for its live
+// full-scale reference (`serve._input_scale_fields`).
+// ---------------------------------------------------------------------------
+
+test('capturedInVolts: an NI capture is always volts', () => {
+  expect(capturedInVolts({ device_driver: 'nidaq' })).toBe(true);
+  // Even with VmaxSC untouched — the soundcard field does not apply.
+  expect(capturedInVolts({ device_driver: 'nidaq', VmaxSC: 1 })).toBe(true);
+});
+
+test('capturedInVolts: a soundcard is volts only once VmaxSC is characterised', () => {
+  expect(capturedInVolts({ device_driver: 'soundcard' })).toBe(false);
+  expect(capturedInVolts({ device_driver: 'soundcard', VmaxSC: 1 })).toBe(false);
+  expect(capturedInVolts({ device_driver: 'soundcard', VmaxSC: 1.9036 })).toBe(true);
+});
+
+test('capturedInVolts: Web Audio and anything unreadable are not volts', () => {
+  expect(capturedInVolts({ device_driver: 'web_audio' })).toBe(false);
+  expect(capturedInVolts(undefined)).toBe(false);
+  expect(capturedInVolts(null)).toBe(false);
+  expect(capturedInVolts('nidaq')).toBe(false);
+  // A nonsense VmaxSC is not a calibration.
+  expect(capturedInVolts({ VmaxSC: 0 })).toBe(false);
+  expect(capturedInVolts({ VmaxSC: -2 })).toBe(false);
+  expect(capturedInVolts({ VmaxSC: Number.NaN })).toBe(false);
 });

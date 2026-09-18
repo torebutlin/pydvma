@@ -4,8 +4,10 @@
    * "calibrate stub modal" block of dev/mockups/round2-bench.html:685-701).
    * Opened from a tray card's ⋯ / Calibrate button for ONE set, it shows one
    * row per channel — the channel's display label (custom relabels
-   * respected), a **sensitivity** numeric input (volts per engineering unit),
-   * and a unit `<select>` (V / m/s² / N / Pa, exactly the mockup's options).
+   * respected), a **sensitivity** numeric input (source units per engineering
+   * unit — volts where the device delivers volts, full-scale units where its
+   * voltage scale is unknown; see `sourceUnit`), and a unit `<select>`
+   * (V / m/s² / N / Pa, exactly the mockup's options).
    *
    * What the user types vs what gets stored: the input is a SENSITIVITY (the
    * transducer's V/unit rating, e.g. 0.1 V/g for a 100 mV/g accelerometer).
@@ -28,11 +30,21 @@
   let {
     setName,
     rows,
+    sourceUnit = 'V',
     onApply,
     onCancel,
   }: {
     setName: string;
     rows: CalRow[];
+    /**
+     * What the STORED samples are, and so what a sensitivity is measured
+     * against: `'V'` on a card that delivers volts (an NI task, or a
+     * characterised soundcard), `'FS'` on one whose voltage scale is unknown,
+     * where the samples are full-scale fractions. Getting this wrong is
+     * silent — the calibrated numbers simply come out scaled by the unknown
+     * full scale — so the label says which. Defaults to `'V'`.
+     */
+    sourceUnit?: 'V' | 'FS';
     /** Per-channel edited values, index-aligned to `rows`. */
     onApply: (results: { sensitivity: number; unit: string }[]) => void;
     onCancel: () => void;
@@ -57,9 +69,14 @@
       : [current, ...CAL_UNITS];
   }
 
-  /** Sensitivity denominator label, mirroring the mockup ("V / V", "V / (g)"). */
+  /**
+   * Sensitivity label, mirroring the mockup ("V / V", "V / (g)") but with the
+   * NUMERATOR taken from what the samples actually are: `FS / (g)` where the
+   * device's voltage scale is unknown, so the operator is not invited to enter
+   * a volts-per-unit rating against full-scale-unit data.
+   */
   function sensLabel(unit: string): string {
-    return unit === 'V' ? 'V / V' : `V / (${unit})`;
+    return unit === sourceUnit ? `${sourceUnit} / ${sourceUnit}` : `${sourceUnit} / (${unit})`;
   }
 
   function apply() {
@@ -85,6 +102,14 @@
 >
   <div class="modal">
     <div class="modal-title">Calibrate — {setName}</div>
+
+    {#if sourceUnit !== 'V'}
+      <p class="src-note" data-testid="cal-source-note">
+        This device's voltage scale is not known, so the samples are in
+        full-scale units — enter each sensitivity as FS per engineering unit.
+        Set the full scale in Setup to work in volts instead.
+      </p>
+    {/if}
 
     {#each rows as row, i (row.ch)}
       <div class="mrow" data-testid={`cal-row-${row.ch}`}>
@@ -124,6 +149,12 @@
 </div>
 
 <style>
+  .src-note {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
   /* Ported verbatim from round2-bench.html (.overlay/.modal/.mrow/.ml/.btn). */
   .overlay {
     position: fixed;

@@ -631,6 +631,13 @@ export class BridgeProvider implements SourceProvider {
     } else if (ec.inputGainDb != null) {
       s.input_gain_db = ec.inputGainDb;
       if (ec.inputMode) s.input_mode = ec.inputMode;
+    } else if (ec.vmaxSC != null && Number.isFinite(ec.vmaxSC) && ec.vmaxSC > 0) {
+      // An UNCHARACTERISED interface: no published input level means no gain
+      // to state and nothing to derive from, so the operator's own measured
+      // full scale goes straight to `MySettings.VmaxSC`. Only reached when no
+      // gain was stated — a stated gain derives VmaxSC server-side and would
+      // override this, so the UI never offers both.
+      s.VmaxSC = ec.vmaxSC;
     }
     if (ec.vmaxNI != null) s.VmaxNI = ec.vmaxNI;
     if (ec.outputVmaxNI != null) s.output_VmaxNI = ec.outputVmaxNI;

@@ -661,3 +661,25 @@ test('an adopted fit with NO unique_id is given one when it is re-upserted', asy
   expect(typeof item.meta.unique_id).toBe('string');
   expect(item.metaRaw!.unique_id).toBe(item.meta.unique_id);
 });
+
+
+// The axis unit is the agreement of every VISIBLE line, so a recon line with
+// no units would blank the TF axis label exactly where the fit is shown. The
+// pseudo-set therefore mirrors its source's units on every sync.
+test('the fit pseudo-set mirrors its source set units, and follows a re-calibration', async () => {
+  const { actions, sel } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  const srcId = actions.workingSets()[0].setId;
+  actions.setCalFactors(srcId, [1, 10], ['N', 'm/s²']);
+
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  const fitId = get(sel.setsView).find((x) => x.role === 'fit')!.id;
+  expect(get(actions.derived)[fitId].units).toEqual(['N', 'm/s²']);
+
+  // A later calibration reaches the pseudo-set too — the recon slice has not
+  // changed, so this is deliberately re-seeded outside the slice guard.
+  actions.setCalFactors(srcId, [1, 10], ['N', 'Pa']);
+  await flush();
+  expect(get(actions.derived)[fitId].units).toEqual(['N', 'Pa']);
+});

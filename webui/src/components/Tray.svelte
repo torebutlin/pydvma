@@ -80,7 +80,9 @@
     selection: Selection;
     modal?: ModalStore;
     channelData?: (setId: number, ch: number) => Float64Array | undefined;
-    getCalibration?: (setId: number) => { factors: number[]; units: string[] };
+    getCalibration?: (setId: number) => {
+      factors: number[]; units: string[]; sourceIsVolts?: boolean;
+    };
     applyCalibration?: (setId: number, factors: number[], units: string[]) => void;
     onDeleteFit?: () => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
@@ -118,12 +120,18 @@
   let calSetId = $state<number | null>(null);
   let calName = $state('');
   let calRows = $state<CalRow[]>([]);
+  /** Numerator of the sensitivity the dialog collects — 'V' or 'FS'. */
+  let calSourceUnit = $state<'V' | 'FS'>('V');
 
   function openCalibrate(setId: number) {
     if (!readCal) return;
     const set = $setsView.find((s) => s.id === setId);
     if (!set) return;
-    const { factors, units } = readCal(setId);
+    const { factors, units, sourceIsVolts } = readCal(setId);
+    // What a sensitivity is measured AGAINST: volts on a card that delivers
+    // them, otherwise full-scale units. Naming it wrong is silent — the
+    // numbers just come out scaled by the (unknown) full scale.
+    calSourceUnit = sourceIsVolts ? 'V' : 'FS';
     const label = get(selection.channelLabel);
     calRows = Array.from({ length: set.nChannels }, (_, ch) => ({
       ch,
@@ -287,6 +295,7 @@
     <CalibrateDialog
       setName={calName}
       rows={calRows}
+      sourceUnit={calSourceUnit}
       onApply={commitCalibrate}
       onCancel={closeCalibrate}
     />

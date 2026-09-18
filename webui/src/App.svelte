@@ -45,7 +45,7 @@
   import { createDampingStore } from './lib/stores/damping';
   import DampingPanel from './components/DampingPanel.svelte';
   import DampingStartLine from './components/DampingStartLine.svelte';
-  import { buildPlotModel, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
+  import { buildPlotModel, isAutoPowerMode, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
   import { tfTransformEntries } from './lib/plot/tfChannels';
   import { csdPairEntries } from './lib/plot/csdChannels';
   import type { LegendEntry } from './lib/stores/selection';
@@ -962,8 +962,9 @@
    * Compute-error kind for the ACTIVE view (Round-3 item 2): the under-plot
    * banner shows only the error belonging to what is on screen, so a failed
    * TF never bleeds its message onto the frequency/sono plots. The frequency
-   * view maps to 'fft' or 'psd' by the current spectral mode; the time view
-   * maps to the clean-impulse op.
+   * view maps to the COMPUTE kind behind the current spectral mode ('fft', or
+   * 'psd' for power / density / csd, which all come from one `calc_psd`); the
+   * time view maps to the clean-impulse op.
    */
   const activeErrorKind = $derived(
     view === 'tf' ? 'tf'
@@ -1090,13 +1091,14 @@
   // Which axis toggles to surface in the toolbar (R3). x-log applies
   // where x IS frequency: the frequency view, and the tf view except
   // Nyquist (whose x is Real(H), not frequency). y (dB↔lin) applies to
-  // MAGNITUDE panes only: frequency fft/psd (csd is a coherence, not a
-  // dB magnitude), and tf mag/bode (not phase/real/imag/nyquist).
+  // MAGNITUDE panes only: frequency fft / power / density (csd is a
+  // coherence, not a dB magnitude), and tf mag/bode (not phase/real/imag/
+  // nyquist).
   const showXScale = $derived(
     view === 'frequency' || (view === 'tf' && plotType !== 'nyquist'),
   );
   const showYScale = $derived(
-    (view === 'frequency' && (freqMode === 'fft' || freqMode === 'psd'))
+    (view === 'frequency' && (freqMode === 'fft' || isAutoPowerMode(freqMode)))
     || (view === 'tf' && (plotType === 'mag' || plotType === 'bode')),
   );
 

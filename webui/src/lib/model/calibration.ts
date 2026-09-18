@@ -111,3 +111,77 @@ export interface CalRow {
   sensitivity: number;
   unit: string;
 }
+
+/**
+ * Whether a set's samples are true VOLTS, judged from the capture settings
+ * pydvma stored with it.
+ *
+ * `'V'` is the placeholder unit every uncalibrated channel wears
+ * ({@link DEFAULT_UNIT}), so on its own it says nothing: a Web Audio capture
+ * labelled `'V'` is really a normalised 0–1 fraction. The settings do know,
+ * by exactly the rule the bridge uses for its live full-scale reference
+ * (`serve._input_scale_fields`):
+ *
+ *   - `device_driver === 'nidaq'` — an NI AI task returns volts over its
+ *     configured `±VmaxNI` range, always;
+ *   - otherwise a soundcard's `VmaxSC`, which is the volts at full scale once
+ *     the jack has been characterised and stays at its uncalibrated `1.0`
+ *     placeholder until then.
+ *
+ * Reading it off the STORED settings (rather than off live acquisition state)
+ * means a saved-and-reopened file, and a file written by python, answer the
+ * same way — there is no extra field to persist and nothing to keep in sync.
+ *
+ * @param settings The item's `settings` block, as loaded.
+ * @returns True only when the samples are known to be volts.
+ */
+export function capturedInVolts(settings: unknown): boolean {
+  if (!settings || typeof settings !== 'object') return false;
+  const s = settings as Record<string, unknown>;
+  if (s.device_driver === 'nidaq') return true;
+  const vmaxSc = Number(s.VmaxSC);
+  return Number.isFinite(vmaxSc) && vmaxSc > 0 && vmaxSc !== 1;
+}
+
+/**
+ * Parenthesise a COMPOUND unit so it composes unambiguously.
+ *
+ * A unit containing anything other than a letter or a digit is wrapped:
+ * `'m/s²'` → `'(m/s²)'`, while `'N'` and `'Pa'` are left bare. Without it a
+ * transfer function's unit string is ambiguous — `'m/s²/N'` reads equally as
+ * `(m/s²)/N` (what it means) and `m/(s²·N)` (what it does not) — and anything
+ * reading an exported file outside pydvma has to guess.
+ *
+ * Idempotent: a unit already enclosed in ONE matched outer pair comes back
+ * unchanged, so composing twice does not nest.
+ *
+ * TWIN of `pydvma.analysis.wrap_unit`. Both sides must agree: python builds
+ * the STORED `TfData.units` strings and the browser builds the same strings
+ * for its CSV/Matlab export headers, and those files are byte-identical by
+ * design. Pinned by the shared vectors in `UNIT_WRAP_VECTORS`.
+ */
+export function wrapUnit(u: string): string {
+  if (!u) return u;
+  if (isWrapped(u)) return u;
+  return /[^\p{L}\p{N}]/u.test(u) ? `(${u})` : u;
+}
+
+/**
+ * Whether `text` is already enclosed in ONE matched outer bracket pair.
+ * `'(m/s²)'` is; `'(a)/(b)'` is not, despite starting `(` and ending `)` —
+ * its outer pair does not span the whole string, and calling that wrapped
+ * would leave an ambiguous ratio bare.
+ */
+function isWrapped(text: string): boolean {
+  if (!text.startsWith('(') || !text.endsWith(')')) return false;
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '(') depth += 1;
+    else if (c === ')') {
+      depth -= 1;
+      if (depth === 0) return i === text.length - 1;
+    }
+  }
+  return false;
+}

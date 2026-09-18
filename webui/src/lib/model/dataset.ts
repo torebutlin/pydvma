@@ -25,7 +25,9 @@ export interface DvmaItemUi {
   channel_labels?: Record<string, string>;
   iw_power?: number;
   analysis?: {
-    freq?: { window?: string; mode?: 'fft' | 'psd' | 'csd'; nFrames?: number };
+    /** `mode` accepts the legacy `'psd'` (pre power/density split); it is
+     *  migrated to `'power'` on load by `migrateFreqMode`. */
+    freq?: { window?: string; mode?: 'fft' | 'psd' | 'power' | 'density' | 'csd'; nFrames?: number };
     tf?: { chIn?: number; window?: string; averaging?: 'none' | 'within' | 'across'; nFrames?: number };
     sono?: {
       nFft?: number; dynRangeDb?: number;

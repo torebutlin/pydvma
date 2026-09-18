@@ -113,6 +113,14 @@
   const selectedDevice = $derived(
     $devices.find((d) => d.deviceId === $settings.deviceId),
   );
+  /** The operator's own measured full scale, when they have entered one. */
+  const statedVmaxSc = $derived(
+    typeof $bridgeConfig.vmaxSC === 'number'
+      && Number.isFinite($bridgeConfig.vmaxSC)
+      && $bridgeConfig.vmaxSC > 0
+      ? $bridgeConfig.vmaxSC
+      : null,
+  );
   /** Is the selected device's VOLTAGE scale known, or standing in for a
    *  measurement nobody made? Sample rates and channel counts come from
    *  the driver and are equally reliable either way; volts do not. */
@@ -124,10 +132,18 @@
         ? `calibrated: full scale ${d.fullScaleVolts.toFixed(3)} V peak`
         : null;
     }
+    // An uncharacterised interface whose full scale the operator has MEASURED
+    // and entered below is calibrated — the server just had no profile to
+    // derive it from. Repeating "full scale unknown" there would be wrong.
+    if (d.calibration === 'uncalibrated' && statedVmaxSc != null) {
+      return `calibrated: full scale ${statedVmaxSc.toFixed(3)} V peak (stated)`;
+    }
     return d.calibrationAdvice ?? null;
   });
   const calibrationWarn = $derived(
-    !!selectedDevice?.calibration && selectedDevice.calibration !== 'characterised',
+    !!selectedDevice?.calibration
+    && selectedDevice.calibration !== 'characterised'
+    && !(selectedDevice.calibration === 'uncalibrated' && statedVmaxSc != null),
   );
 
   // Basic (default) vs full settings view. Local UI state.
@@ -249,6 +265,19 @@
     const volts = Math.SQRT2 * 0.7746 * Math.pow(10, dbu / 20);
     return { mode, dbu, volts };
   });
+  /**
+   * An interface pydvma has NO profile for, on the bridge: no published
+   * maximum input level, so there is no gain-to-volts route and `VmaxSC`
+   * would sit at its uncalibrated 1.0 forever — captures come out in
+   * full-scale fractions wearing a 'V' label. The operator's own measured
+   * full scale is the only answer, so THIS is where it gets entered.
+   * Mutually exclusive with the gain group by construction: that one is
+   * shown exactly when `inputModeOptions` exists.
+   */
+  const uncharacterisedInput = $derived(
+    isBridge && selectedDevice?.calibration === 'uncalibrated',
+  );
+
   // Preview of what the stated gain means, so a wrong entry is obvious
   // before it silently scales a whole dataset. A fixed-gain device has no
   // gain TO state, so its full scale comes straight from fixedGainInfo.
@@ -358,6 +387,18 @@
   function onInputModeChange(e: Event) {
     const v = (e.target as HTMLSelectElement).value as 'line' | 'inst' | 'mic';
     acquire.patchBridge({ inputMode: v });
+  }
+  /**
+   * Measured full-scale volts for an uncharacterised interface →
+   * `MySettings.VmaxSC`. Blank clears it back to the uncalibrated 1.0; a
+   * non-positive entry is refused rather than stored, since it would make
+   * every reading zero or negative.
+   */
+  function onVmaxScChange(e: Event) {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    if (raw === '') { acquire.patchBridge({ vmaxSC: undefined }); return; }
+    const v = Number(raw);
+    if (Number.isFinite(v) && v > 0) acquire.patchBridge({ vmaxSC: v });
   }
   // Current input latency hint, shown in the timing group (ms in the UI).
   const latencyMs = $derived(
@@ -1025,6 +1066,35 @@
                   </div>
                 </div>
               {/if}
+            {:else if uncharacterisedInput}
+              <!-- No profile for this interface, so no published input level
+                   and no gain-to-volts route. Measuring full scale once is
+                   the only way off the uncalibrated 1.0 placeholder, and
+                   without it captures are full-scale fractions labelled 'V'.
+                   Same MySettings field either way (VmaxSC) — just entered
+                   directly instead of derived. -->
+              <div class="grp" data-testid="setup-vmax-sc">
+                <span class="grp-lab">full scale (for calibrated volts)</span>
+                <div class="grp-ctl">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={$bridgeConfig.vmaxSC ?? ''}
+                    onchange={onVmaxScChange}
+                    placeholder="not set"
+                    title="The input voltage that reads as full scale, in volts peak. pydvma has no profile for this interface, so measure it once (a known source through verify_input_scaling, or a scope on the input) and state it here. Left blank, captures stay in full-scale fractions."
+                    aria-label="full scale input in volts"
+                    style="width:96px"
+                  />
+                  <span class="ml">V pk</span>
+                  <span class="note">
+                    {$bridgeConfig.vmaxSC
+                      ? 'captures read in volts'
+                      : 'not set — captures read in full-scale units'}
+                  </span>
+                </div>
+              </div>
             {/if}
             <!-- Read off the live monitor, so no second capture path.
                  Getting the gain wrong is silent in both directions: too

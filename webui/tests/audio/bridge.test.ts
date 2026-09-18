@@ -1453,6 +1453,83 @@ test('a variable-gain device still sends the stated input_gain_db', async () => 
   expect(settings.input_mode).toBe('line');
 });
 
+// An UNCHARACTERISED interface has no published input level, so there is no
+// gain to state and nothing to derive from: the operator's own measured full
+// scale goes straight to MySettings.VmaxSC (Q3). Without it VmaxSC sits at its
+// 1.0 placeholder and captures are full-scale fractions wearing a 'V' label.
+test('an uncharacterised device sends the stated full scale as VmaxSC', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({
+    ...CAPS,
+    devices: { soundcard: ['Some Unknown Box'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Some Unknown Box', ao: false,
+        calibration_status: 'uncalibrated',
+      },
+    },
+  });
+  await capsP;
+
+  bp.setConfig({ vmaxSC: 2.5 });
+
+  const monP = bp.startMonitor(
+    { deviceId: 'soundcard:0', sampleRate: 44100, channelCount: 1 }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 44100, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  const cfg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  const settings = cfg.settings as Record<string, unknown>;
+  expect(settings.VmaxSC).toBe(2.5);
+  // No gain was stated, so nothing claims a derivation the device cannot make.
+  expect(settings.input_gain_db).toBeUndefined();
+});
+
+test('a stated gain wins over VmaxSC — the two are never sent together', async () => {
+  // The server derives VmaxSC from the gain and would override an explicit
+  // one, so sending both would be a second, conflicting answer.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({
+    ...CAPS,
+    devices: { soundcard: ['Scarlett 2i2 4th Gen'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Scarlett 2i2 4th Gen', ao: true,
+        input_modes: ['inst', 'line', 'mic'],
+        max_input_dbu: { line: 22, inst: 12, mic: 16 },
+        fixed_gain: false,
+      },
+    },
+  });
+  await capsP;
+
+  bp.setConfig({ inputGainDb: 10, inputMode: 'line', vmaxSC: 2.5 });
+
+  const monP = bp.startMonitor(
+    { deviceId: 'soundcard:0', sampleRate: 44100, channelCount: 1 }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 44100, channels: 1 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+
+  const cfg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  const settings = cfg.settings as Record<string, unknown>;
+  expect(settings.input_gain_db).toBe(10);
+  expect(settings.VmaxSC).toBeUndefined();
+});
+
 // ---------------------------------------------------------------------------
 // round-11: trigger units, chunk-size safety, default device, cancel unwind
 // ---------------------------------------------------------------------------

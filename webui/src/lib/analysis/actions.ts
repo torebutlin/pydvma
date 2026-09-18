@@ -52,8 +52,8 @@ import type { EngineStore } from '../stores/engine';
 import { isEngineStopped, ENGINE_STOPPED_MESSAGE, consumeEngineStopNotice } from '../stores/engine';
 import type { Selection, SetRecord, TriState } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
-import { autoVoicesForW0, defaults, type PerSetSettings } from '../stores/analysisSettings';
-import { decodeArray, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
+import { autoVoicesForW0, defaults, type FreqSettings, type PerSetSettings } from '../stores/analysisSettings';
+import { decodeArray, migrateFreqMode, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
 import type { ViewId } from '../stores/viewstate';
 import { PHASE_DEV_WARN_DEG } from '../stores/modal';
 import type { ModalStore, ModalState, ReconArrays, ReconMode } from '../stores/modal';
@@ -61,7 +61,7 @@ import type {
   BandLadder, DampingBand, DampingBandsResult, DampingModeFit, DampingPeaksResult,
 } from '../stores/damping';
 import type { Toasts } from '../stores/toast';
-import { isIdentity, normalizeFactors, normalizeUnits } from '../model/calibration';
+import { capturedInVolts, isIdentity, normalizeFactors, normalizeUnits, wrapUnit } from '../model/calibration';
 import type { ChoosableKind, ChoosableSet } from '../export/data';
 import { calibrationController } from '../stores/calibrationController';
 import { tfColumn } from '../plot/tfChannels';
@@ -880,8 +880,12 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // all-ones ⇒ identity — the plot model treats it as no-op.
         calFactors: normalizeFactors(item.meta.channel_cal_factors, nCh),
         // Per-channel engineering units for axis labels (round-4): 'V'/absent
-        // reads as unlabelled, so uncalibrated sets keep the plain 'Amplitude'.
+        // reads as unlabelled, so uncalibrated sets keep the plain 'Amplitude'
+        // — EXCEPT where the capture settings show the samples really are
+        // volts (an NI task, or a characterised soundcard), which is the one
+        // case 'V' is an engineering unit rather than a placeholder.
         units: normalizeUnits(item.meta.units, nCh),
+        unitsAreVolts: capturedInVolts(item.settings),
         // x(iω) display power (round-6 Qt-parity Scaling tool), persisted in ui.
         iwPower: normalizeIwPower(item.ui?.iw_power),
       };
@@ -900,7 +904,15 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         }
         // Per-set analysis settings — merge saved partials over defaults.
         if (ui.analysis && settings) {
-          if (ui.analysis.freq) settings.patch(setId, 'freq', ui.analysis.freq);
+          if (ui.analysis.freq) {
+            // Files written before the power/density split stored `'psd'` for
+            // what is now `'power'` — migrate so a reopened file shows the
+            // quantity it showed when it was saved (`migrateFreqMode`).
+            const f = ui.analysis.freq;
+            settings.patch(setId, 'freq', f.mode === undefined
+              ? f as Partial<FreqSettings>
+              : { ...f, mode: migrateFreqMode(f.mode) });
+          }
           if (ui.analysis.tf) settings.patch(setId, 'tf', ui.analysis.tf);
           if (ui.analysis.sono) {
             const s = ui.analysis.sono;
@@ -1670,10 +1682,19 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           if (stale('psd', my)) return;               // a newer PSD batch won
           const freqAxis = axisData(mval(res, 'freq_axis'));
           if (get(derived)[ws.setId]?.psd === undefined) added = true;
-          // Stamp the CSD pair (round-5 item 7) from the set's freq settings so
-          // the cross-spectrum plots the chosen (X, Y) pair immediately.
+          // `enbw` is the window's effective noise bandwidth in Hz. Stored
+          // beside the spectrum so the frequency view can render BOTH the
+          // power spectrum (unit²) and a genuine density (unit²/Hz =
+          // spectrum/enbw) from this one compute. An engine too old to
+          // report it sends 0, which the plot model treats as "no density".
+          const enbw = Number(mval(res, 'enbw'));
+          // The CSD pair (round-5 item 7) is stamped from the set's freq
+          // settings so the cross-spectrum plots the chosen (X, Y) at once.
           setDerived(ws.setId, {
-            psd: { axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'psd'))) },
+            psd: {
+              axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'psd'))),
+              enbw: Number.isFinite(enbw) && enbw > 0 ? enbw : undefined,
+            },
             csd: {
               axis: freqAxis, data: decodeArray(asMarshalled(mval(res, 'Cxy'))),
               i: s.csdX, j: s.csdY,
@@ -2191,6 +2212,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       },
       calFactors: normalizeFactors(item.meta.channel_cal_factors, nCh),
       units: normalizeUnits(item.meta.units, nCh),
+      // A capture from a card that delivers volts gets a '(V)' axis; a Web
+      // Audio one, whose samples are a normalised fraction wearing the same
+      // placeholder 'V', keeps the plain 'Amplitude'. See `capturedInVolts`.
+      unitsAreVolts: capturedInVolts(item.settings),
     });
 
     if (!opts.hidden) notify?.linesAdded('time', { viewWasEmpty: wasEmpty });
@@ -2482,13 +2507,23 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * both normalised to the set's channel count (defaults: factor `1`, unit
    * `'V'`). Reads from the source `DvmaItem` meta — the authoritative store
    * that `.dvma` persists — not the derived slice. Unknown set ⇒ empty arrays.
+   *
+   * `sourceIsVolts` says what the stored samples ARE (`capturedInVolts`), so
+   * the dialog can name the sensitivity's numerator: `V / (unit)` on a card
+   * that delivers volts, `FS / (unit)` on one whose voltage scale is unknown.
    */
-  function getCalibration(setId: number): { factors: number[]; units: string[] } {
+  function getCalibration(
+    setId: number,
+  ): { factors: number[]; units: string[]; sourceIsVolts: boolean } {
     const ws = working.find((w) => w.setId === setId);
-    if (!ws) return { factors: [], units: [] };
+    if (!ws) return { factors: [], units: [], sourceIsVolts: false };
     return {
       factors: normalizeFactors(ws.time.meta.channel_cal_factors, ws.nChannels),
       units: normalizeUnits(ws.time.meta.units, ws.nChannels),
+      // What the stored samples ARE, so the dialog can name the sensitivity's
+      // numerator honestly: volts per unit on a card that delivers volts,
+      // full-scale per unit on one that does not (`capturedInVolts`).
+      sourceIsVolts: capturedInVolts(ws.time.settings),
     };
   }
 
@@ -2506,10 +2541,18 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * derived `calFactors` slice so `buildPlotModel` re-scales at once, and
    * re-emits the `dataset` store so the autosave subscription captures it.
    */
-  function setCalFactors(setId: number, factors: number[], units?: readonly string[]): void {
+  function setCalFactors(
+    setId: number,
+    factors: number[],
+    units?: readonly string[],
+    opts: { warnFit?: boolean } = {},
+  ): void {
     const ws = working.find((w) => w.setId === setId);
     if (!ws) return;
     const norm = normalizeFactors(factors, ws.nChannels);
+    const changed = !sameFactors(
+      normalizeFactors(ws.time.meta.channel_cal_factors, ws.nChannels), norm,
+    );
     setItemMeta(ws.time, 'channel_cal_factors', norm);
     if (units !== undefined) {
       setItemMeta(ws.time, 'units', normalizeUnits(units, ws.nChannels));
@@ -2522,6 +2565,45 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     // sensitivity moves the y decades), so relax their y axes back to auto.
     notify?.unitsChanged(['time', 'frequency', 'tf']);
     dataset.update((d) => d);            // re-emit so autosave persists the edit
+    mirrorUnitsToFitSet(setId);          // keep a fit overlay's axis unit in step
+    if (changed && opts.warnFit !== false) warnStaleFit([setId]);
+  }
+
+  /** Element-wise equality for two already-normalised factor arrays. */
+  function sameFactors(a: readonly number[], b: readonly number[]): boolean {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+
+  /**
+   * Warn that a calibration moved under an existing modal fit (Q4).
+   *
+   * The fit reads the TF through the SAME `cal[out]/cal[in]` ratio the plot
+   * uses (`fitCalRatios`), so its stored modal CONSTANTS are in whatever
+   * engineering units were in force when it ran — change the calibration and
+   * they are quietly in the old ones. The poles are not affected: fn, ζ and Q
+   * are scale-invariant, which is why this warns rather than silently
+   * re-fitting. Re-fitting is the user's call: an automatic one would move a
+   * model they may have hand-curated (rejected modes, refinements) without
+   * being asked.
+   *
+   * No-op when none of `setIds` carries a fit.
+   */
+  function warnStaleFit(setIds: readonly number[]): void {
+    if (!modal || !toasts) return;
+    const fitted = new Set(modal.get().targets.map((t) => t.setId));
+    const hit = setIds.filter((id) => fitted.has(id));
+    if (!hit.length) return;
+    const names = hit.map((id) => nameOf(id)).join(', ');
+    toasts.push(
+      `Calibration changed on ${names}, which has a modal fit: its mode `
+      + 'constants are still in the previous units. Re-fit to update them '
+      + '(frequencies, damping and Q are unaffected).',
+      // Advisory, not a failure: `'info'` so it does not pin open like an
+      // error, but a long dwell because it is easy to miss and silent if
+      // missed. There is nothing to undo — the calibration is what was asked
+      // for; only the fit is now behind it.
+      { level: 'info', timeout: 12_000 },
+    );
   }
 
   // Publish the calibration API so the tray's Calibrate dialog can reach it
@@ -2662,7 +2744,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           }
         }
         before.push({ setId: s.ws.setId, factors: cur.factors.slice(), units: cur.units.slice() });
-        setCalFactors(s.ws.setId, next, cur.units);
+        // `warnFit: false` — a Best Match touches every set at once, so the
+        // stale-fit warning is raised ONCE below rather than per set.
+        setCalFactors(s.ws.setId, next, cur.units, { warnFit: false });
         // Report the reference column's factor per set as the headline number.
         const head = facs[Math.min(refCol, facs.length - 1)];
         summary.push(`${nameOf(s.ws.setId)} ×${Number.isFinite(head) ? head.toPrecision(3) : '1'}`);
@@ -2674,11 +2758,18 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           actions: before.length
             ? [{
               label: '↶ Undo',
-              run: () => { for (const b of before) setCalFactors(b.setId, b.factors, b.units); },
+              run: () => {
+                // Restoring the previous calibration puts any fit back in the
+                // units it was made in, so it needs no warning either.
+                for (const b of before) {
+                  setCalFactors(b.setId, b.factors, b.units, { warnFit: false });
+                }
+              },
             }]
             : undefined,
         },
       );
+      warnStaleFit(before.map((b) => b.setId));
     } catch (e) {
       toasts?.push(`Best match failed: ${e instanceof Error ? e.message : String(e)}`, { level: 'error' });
     } finally {
@@ -2822,6 +2913,30 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     }
   }
 
+  /**
+   * Copy a source set's UNITS onto its fit pseudo-set, if it has one.
+   *
+   * The axis unit is the agreement of EVERY visible line, so a recon line
+   * carrying none would blank the label exactly where the fit is shown — the
+   * Fit stage. The pseudo-set's channels mirror the source's (same `chIn`,
+   * same `nChannels`), so one array indexes both; a SUBSET fit reads as an
+   * orphan TF and takes no ratio unit either way, which is harmless.
+   *
+   * Units ONLY: the pseudo-set deliberately carries no `calFactors`, because
+   * the recon data already has the calibration ratio baked in
+   * (`fitCalRatios`) and a second factor would double-apply it.
+   *
+   * Called from `syncModal` (a new or re-fitted pseudo-set) and from
+   * `setCalFactors` (the units changed under an existing one — the recon
+   * slice does not change, so nothing else would pick it up).
+   */
+  function mirrorUnitsToFitSet(srcId: number): void {
+    const rec = fitSets.get(srcId);
+    if (!rec) return;
+    const src = get(derived)[srcId];
+    setDerived(rec.id, { units: src?.units, unitsAreVolts: src?.unitsAreVolts });
+  }
+
   /** Remove ONE source set's fit pseudo-set from selection + derived. */
   function removeFitSetFor(srcId: number): void {
     const rec = fitSets.get(srcId);
@@ -2936,6 +3051,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         selection.rename(rec.id, fitSetName(t.setId, mode));
         rec.mode = mode;
       }
+      mirrorUnitsToFitSet(t.setId);
       const s = chosenSlice(t, mode)!;
       if (lastSliceBySet.get(t.setId) !== s) {
         setDerived(rec.id, {
@@ -3622,7 +3738,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         if (kind === 'tf' && tfChIn !== null) {
           const fin = cal.factors[tfChIn] ?? 1;
           calFactors.push(fin !== 0 ? f / fin : f);
-          units.push(`${u}/${cal.units[tfChIn] ?? '-'}`);
+          // Parenthesised like python's `analysis.wrap_unit`, so a compound
+          // numerator cannot be misread — `(m/s²)/N`, not `m/s²/N`. The two
+          // exporters write byte-identical files, so the rule has to match.
+          units.push(`${wrapUnit(u)}/${wrapUnit(cal.units[tfChIn] ?? '-')}`);
         } else {
           calFactors.push(f);
           units.push(u);
@@ -3737,6 +3856,23 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const ws = working.find((w) => w.setId === setId);
       if (!ws || !hasTimeData(ws.time)) return null;
       return impulseTailFraction(ws.time.arrays.time_data.data, itemChannels(ws.time), ch);
+    },
+
+    /**
+     * Whether `target` has an auto-power slice that carries NO window ENBW.
+     * The frequency view's density mode needs it (`density = spectrum /
+     * enbw`) and skips any line without one, so the Frequency card uses this
+     * to say "recompute" instead of leaving an empty plot unexplained. False
+     * when nothing is computed yet — that is the ordinary pre-Calc state,
+     * not a stale slice.
+     */
+    autoPowerMissingEnbw(target: AnalysisTarget): boolean {
+      const d = get(derived);
+      const ids = target === 'all' ? working.map((w) => w.setId) : [target];
+      return ids.some((id) => {
+        const p = d[id]?.psd;
+        return p !== undefined && !(p.enbw && p.enbw > 0);
+      });
     },
   };
 }

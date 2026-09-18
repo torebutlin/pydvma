@@ -665,6 +665,39 @@ test("calcPsd reads each set's window + n_frames from settings", async () => {
   expect(psd.payload.n_frames).toBe(12);
 });
 
+// The window's effective noise bandwidth rides on the auto-power slice: it is
+// what turns the stored power SPECTRUM into the frequency view's density mode
+// (`density = spectrum / enbw`), so one compute serves both quantities.
+test('calcPsd carries the window ENBW onto the auto-power slice', async () => {
+  const { engine } = fakeEngine(async () => ({ ...psdResult(), enbw: 1.5 }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  await actions.calcPsd(id);
+  expect(get(actions.derived)[id].psd!.enbw).toBeCloseTo(1.5, 12);
+  expect(actions.autoPowerMissingEnbw(id)).toBe(false);
+});
+
+test('an engine that reports no ENBW leaves the slice without one', async () => {
+  // 0 is what an engine too old to compute it sends. Storing that as a real
+  // bandwidth would divide by zero; it is dropped, and the card can say so.
+  const { engine } = fakeEngine(async () => ({ ...psdResult(), enbw: 0 }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  await actions.calcPsd(id);
+  expect(get(actions.derived)[id].psd!.enbw).toBeUndefined();
+  expect(actions.autoPowerMissingEnbw(id)).toBe(true);
+});
+
+test('autoPowerMissingEnbw is false before anything is computed', async () => {
+  const { engine } = fakeEngine(async () => psdResult());
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const id = get(sel.sets)[0].id;
+  expect(actions.autoPowerMissingEnbw(id)).toBe(false);
+});
+
 // ---- CSD pair (round-5 item 7): the pair is stamped on the csd slice at
 // calc time and can be re-stamped live (no recompute) via setCsdPair. ----
 
@@ -1133,7 +1166,9 @@ test('loadDataset restores analysis settings from item.ui', () => {
   const setId = get(sel.sets)[0].id;
   const f = settings.get(setId, 'freq');
   expect(f.window).toBe('flattop');
-  expect(f.mode).toBe('psd');
+  // The file stores the LEGACY 'psd' spelling; it migrates to 'power' (the
+  // quantity it actually was) rather than to the new density mode.
+  expect(f.mode).toBe('power');
   expect(f.nFrames).toBe(20);
   const t = settings.get(setId, 'tf');
   expect(t.chIn).toBe(1);
@@ -1166,7 +1201,7 @@ test('stampUiState writes labels and settings onto DvmaItems', () => {
 
   // Set custom labels and non-default settings.
   sel.renameChannel(setId, 0, 'impact');
-  settings.patch(setId, 'freq', { window: 'flattop', mode: 'psd', nFrames: 25 });
+  settings.patch(setId, 'freq', { window: 'flattop', mode: 'power', nFrames: 25 });
 
   actions.stampUiState();
 
@@ -1175,7 +1210,7 @@ test('stampUiState writes labels and settings onto DvmaItems', () => {
   expect(item.ui).toBeDefined();
   expect(item.ui!.channel_labels).toEqual({ '0': 'impact' });
   // The CSD pair (round-5 item 7) rides along in the persisted freq settings.
-  expect(item.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'psd', nFrames: 25, csdX: 0, csdY: 1 });
+  expect(item.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'power', nFrames: 25, csdX: 0, csdY: 1 });
 });
 
 test('stampUiState omits ui when labels and settings are all defaults', () => {
@@ -1254,7 +1289,7 @@ test('getCalibration returns normalized factors + units (defaults V, length == c
   ds.items[0].meta.units = ['N'];                  // short: pad with 'V'
   actions.loadDataset(ds);
   const id = get(sel.sets)[0].id;
-  expect(actions.getCalibration(id)).toEqual({ factors: [5, 1], units: ['N', 'V'] });
+  expect(actions.getCalibration(id)).toEqual({ factors: [5, 1], units: ['N', 'V'], sourceIsVolts: false });
 });
 
 test('setCalFactors writes item meta (channel_cal_factors + units) AND the derived slice', () => {
@@ -1332,7 +1367,7 @@ test('codec round-trip: setCalFactors → writeDvma → readDvma → loadDataset
   const id2 = get(sel2.sets)[0].id;
 
   expect(get(a2.derived)[id2].calFactors).toEqual([10, 1]);     // seeded on load
-  expect(a2.getCalibration(id2)).toEqual({ factors: [10, 1], units: ['g', 'V'] });
+  expect(a2.getCalibration(id2)).toEqual({ factors: [10, 1], units: ['g', 'V'], sourceIsVolts: false });
 });
 
 // ---- native-host decode boundary: null-vs-NaN (Task 8 carry-over) ----------
