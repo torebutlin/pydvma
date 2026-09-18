@@ -158,13 +158,19 @@ updated (calibration.md gained "Calibration and the data exports" +
 "Best match replaces the calibration"; analysis.md's stale "CSD
 currently shows coherence / pair selector not shipped" admonition
 replaced with what PSD and CSD actually plot; export.md warns that the
-data exports are raw). **Seven follow-ups are written up in TODO.md
-under "Calibration round follow-ups"** — the biggest being **no
-browser route to `VmaxSC` or `channel_sensitivities`** (a SOUNDCARD gap
-only: NI bridge captures are already volts and a loaded `.dvma` carries
-its own cal either way) and **`'V'` still reading as "no unit"** so a
-real NI volts capture and an uncalibrated FS-units one label
-identically.
+data exports are raw). **The follow-ups are in TODO.md under "Calibration round
+follow-ups", split into QUERIES (Q1-Q5, decisions for Tore, each with
+a recommendation — nothing to build until answered) and WORK (W1-W3,
+scoped).** The queries: Q1 rename the `psd` mode (recommend renaming
+the user-facing words only, keeping the internal id so nothing
+persisted moves); Q2 let a genuine volts capture label its axis `(V)`
+(recommend yes — the bridge already knows via `inputVmaxIsVolts`, it
+just stops at the axis); Q3 where an uncalibrated soundcard's `VmaxSC`
+gets entered, a SOUNDCARD-only gap; Q4 warn vs auto-refit when a
+calibration changes under an existing modal fit (recommend warn); Q5
+parenthesise stored TF unit strings (low priority). W1 is a genuine
+density view, deliberately kept separate from Q1 — conflating a rename
+with a rescale is how the mislabel happened.
 
 As of 2026-09-18 (remote Linux session): **both open Dependabot
 security advisories are cleared in `webui/package-lock.json` — dev
