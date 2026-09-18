@@ -437,3 +437,39 @@ test('fitLineSummary counts visible vs total lines for the Fit-card hint', async
   sel.cycleLine(id, 2); sel.cycleLine(id, 2);     // channel 2 → off
   expect(actions.fitLineSummary('all')).toEqual({ fitted: 1, total: 2 });
 });
+
+// ── Calibrated fit (F11) ───────────────────────────────────────────────────
+// fn / zn / Q are scale-invariant, so a raw fit got those right either way.
+// The modal CONSTANTS are not, and `ModalData` persists them — so the fit is
+// fed the same `cal[out]/cal[in]` ratio the plot applies to the measured line.
+// That also keeps the reconstruction (which returns in whatever units the fit
+// consumed) at the same level as the line it overlays: the fit pseudo-set
+// carries NO calFactors of its own, so a raw fit drew its recon at the raw
+// level over a calibrated measured curve.
+
+test('calcFit feeds the engine the cal[out]/cal[in] ratio, not raw volts', async () => {
+  const { actions, calls } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+
+  const setId = actions.workingSets()[0].setId;
+  // ch0 = 100 mV/g accelerometer (factor 10); ch1 = the TF input (factor 4).
+  actions.setCalFactors(setId, [10, 4], ['m/s²', 'N']);
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+
+  const fit = calls.filter((c) => c.op === 'calc_fit').at(-1)!;
+  // tfResult's single output column is |H| = 2 at both bins; ch_in is 0, so
+  // the ratio is cal[1]/cal[0] = 4/10 for the one fitted column (channel 1).
+  const sent = fit.payload.tf_data as Float64Array;
+  expect(Array.from(sent)).toEqual([2 * 0.4, 0, 2 * 0.4, 0]);
+});
+
+test('an uncalibrated set still sends the raw TF (identity ratio)', async () => {
+  const { actions, calls } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+
+  const fit = calls.filter((c) => c.op === 'calc_fit').at(-1)!;
+  expect(Array.from(fit.payload.tf_data as Float64Array)).toEqual([2, 0, 2, 0]);
+});

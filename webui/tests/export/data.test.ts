@@ -2,6 +2,8 @@ import { expect, test } from 'vitest';
 import {
   buildCsv,
   buildCsvFiles,
+  buildCsvHeader,
+  fmtCalFactor,
   fmtComplex,
   fmtImag,
   fmtReal,
@@ -39,6 +41,22 @@ test('fmtComplex wraps ` (RE±IMj)` with the numpy leading space', () => {
   expect(fmtComplex(0, 0)).toBe(' (0.000000000000000000e+00+0.000000000000000000e+00j)');
 });
 
+/**
+ * The calibration header every CSV now carries (see `buildCsvHeader`), for
+ * the uncalibrated fixtures below: one `1` / `-` per data column. Composed
+ * here so the data-row expectations stay readable and stay the thing under
+ * test — the header gets its own dedicated tests further down.
+ */
+function hdr(kind: 'time' | 'freq' | 'tf', nCols: number): string {
+  return [
+    '# pydvma export: RAW data, calibration NOT applied.',
+    `# Column 1 is the shared axis (${kind === 'time' ? 's' : 'Hz'}); the rest are data columns.`,
+    '# Multiply data column k by cal_factors[k] for engineering units.',
+    `# cal_factors: ${Array(nCols).fill('1').join(',')}`,
+    `# units: ${Array(nCols).fill('-').join(',')}`,
+  ].join('\n') + '\n';
+}
+
 test('buildCsv: single time set (real), two channels — exact numpy bytes', () => {
   const sets: ExportSet[] = [
     {
@@ -48,6 +66,7 @@ test('buildCsv: single time set (real), two channels — exact numpy bytes', () 
     },
   ];
   expect(buildCsv('time', sets)).toBe(
+    hdr('time', 2) +
     '0.000000000000000000e+00,1.500000000000000000e+00,3.000000000000000000e+00\n' +
       '5.000000000000000000e-01,-2.250000000000000000e+00,4.000000000000000000e+00\n' +
       '1.000000000000000000e+00,0.000000000000000000e+00,-5.000000000000000000e-01\n',
@@ -60,6 +79,7 @@ test('buildCsv: two time sets — axis is set[0]-only, then each set appended', 
     { setId: 1, axis: Float64Array.of(0, 1), columns: [Float64Array.of(30, 40)] },
   ];
   expect(buildCsv('time', sets)).toBe(
+    hdr('time', 2) +
     '0.000000000000000000e+00,1.000000000000000000e+01,3.000000000000000000e+01\n' +
       '1.000000000000000000e+00,2.000000000000000000e+01,4.000000000000000000e+01\n',
   );
@@ -74,6 +94,7 @@ test('buildCsv: complex (tf) set — axis is dtype-promoted to complex-with-zero
     },
   ];
   expect(buildCsv('tf', sets)).toBe(
+    hdr('tf', 1) +
     ' (0.000000000000000000e+00+0.000000000000000000e+00j), (1.199999999999999956e+00+3.399999999999999911e+00j)\n' +
       ' (1.000000000000000000e+00+0.000000000000000000e+00j), (-2.000000000000000000e+00-5.000000000000000000e-01j)\n',
   );
@@ -125,6 +146,7 @@ test('buildCsvFiles: only kinds with data are emitted, named <base>-<kind>.csv',
   const files = buildCsvFiles(exporter, 'logged_data');
   expect(files.map((f) => f.name)).toEqual(['logged_data-time.csv']);
   expect(files[0].text).toBe(
+    hdr('time', 1) +
     '0.000000000000000000e+00,2.000000000000000000e+00\n' +
       '1.000000000000000000e+00,3.000000000000000000e+00\n',
   );
@@ -163,6 +185,7 @@ test('buildCsvFiles: a "Choose sets…" pick threads through to every kind', () 
   expect(files.map((f) => f.name)).toEqual(['run7-time.csv']);
   // Only the chosen set's column is beside the axis.
   expect(files[0].text).toBe(
+    hdr('time', 1) +
     '0.000000000000000000e+00,8.000000000000000000e+00\n' +
       '1.000000000000000000e+00,9.000000000000000000e+00\n',
   );
@@ -170,4 +193,81 @@ test('buildCsvFiles: a "Choose sets…" pick threads through to every kind', () 
   seen.length = 0;
   buildCsvFiles(exporter, 'run7');
   expect(seen).toEqual([undefined, undefined, undefined]);
+});
+
+// ── Calibration header (F5) ────────────────────────────────────────────────
+// The data rows stay RAW — that is the point of this export — but the file
+// now says so and carries the per-column factor that converts to engineering
+// units. It must match `pydvma.file._csv_header` byte-for-byte, because the
+// browser and pydvma are supposed to write the same file.
+
+test('buildCsvHeader: states the raw-data contract and the per-column factors', () => {
+  const sets: ExportSet[] = [{
+    setId: 0,
+    axis: Float64Array.of(0, 1),
+    columns: [Float64Array.of(1, 2), Float64Array.of(3, 4)],
+    calFactors: [10, 0.5],
+    units: ['m/s²', 'N'],
+  }];
+  expect(buildCsvHeader('time', sets)).toBe(
+    '# pydvma export: RAW data, calibration NOT applied.\n'
+    + '# Column 1 is the shared axis (s); the rest are data columns.\n'
+    + '# Multiply data column k by cal_factors[k] for engineering units.\n'
+    + '# cal_factors: 10,0.5\n'
+    + '# units: m/s²,N\n',
+  );
+});
+
+test('buildCsvHeader: the axis unit follows the kind; sets concatenate in order', () => {
+  const sets: ExportSet[] = [
+    { setId: 0, axis: Float64Array.of(0), columns: [{ re: Float64Array.of(1), im: Float64Array.of(0) }], calFactors: [2], units: ['Pa'] },
+    { setId: 1, axis: Float64Array.of(0), columns: [{ re: Float64Array.of(1), im: Float64Array.of(0) }], calFactors: [4], units: ['N'] },
+  ];
+  const h = buildCsvHeader('freq', sets);
+  expect(h).toContain('# Column 1 is the shared axis (Hz);');
+  expect(h).toContain('# cal_factors: 2,4\n');
+  expect(h).toContain('# units: Pa,N\n');
+});
+
+test('buildCsvHeader: absent metadata renders as identity / unknown, never blank', () => {
+  const sets: ExportSet[] = [{
+    setId: 0, axis: Float64Array.of(0), columns: [Float64Array.of(1), Float64Array.of(2)],
+    calFactors: [5],          // SHORT on purpose — the second column has none
+  }];
+  expect(buildCsvHeader('time', sets)).toContain('# cal_factors: 5,1\n');
+  expect(buildCsvHeader('time', sets)).toContain('# units: -,-\n');
+});
+
+// Known-answer vectors mirrored VERBATIM from
+// `pydvma.file.CAL_FACTOR_FORMAT_VECTORS`. `%.12g` is not a format JS has
+// natively (`toPrecision` switches to exponential at a different threshold
+// and keeps trailing zeros), so the twin implementation is pinned rather than
+// trusted. A change on either side must change both.
+const CAL_FACTOR_FORMAT_VECTORS: [number, string][] = [
+  [1.0, '1'],
+  [10.0, '10'],
+  [0.5, '0.5'],
+  [-0.5, '-0.5'],
+  [1000.0, '1000'],
+  [0.001, '0.001'],
+  [1e-5, '1e-05'],
+  [1.5e-7, '1.5e-07'],
+  [123456789012.0, '123456789012'],
+  [1234567890123.0, '1.23456789012e+12'],
+  [1.0 / 3.0, '0.333333333333'],
+  [2.0 / 3.0, '0.666666666667'],
+  [0.0001, '0.0001'],
+  [1e16, '1e+16'],
+];
+
+test('fmtCalFactor matches python format_cal_factor on every shared vector', () => {
+  for (const [value, expected] of CAL_FACTOR_FORMAT_VECTORS) {
+    expect(`${value} → ${fmtCalFactor(value)}`).toBe(`${value} → ${expected}`);
+  }
+});
+
+test('fmtCalFactor: a non-finite factor renders as the identity, never NaN', () => {
+  expect(fmtCalFactor(NaN)).toBe('1');
+  expect(fmtCalFactor(Infinity)).toBe('1');
+  expect(fmtCalFactor(-Infinity)).toBe('1');
 });

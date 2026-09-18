@@ -46,17 +46,71 @@ non-finite entry falls back to a factor of 1 (no calibration).
 
 The factor and unit propagate the way they do in pydvma:
 
-- **plots** multiply each channel by its factor, so axes read in
-  engineering units;
-- **FFT / PSD / sonogram** copy the factors and units onto the derived
-  spectra; and
+- **time and FFT** plots multiply each channel by its factor, so axes
+  read in engineering units;
+- the **power spectrum** is a power, so the amplitude factor enters
+  squared (`× factor²`) and the axis reads in `unit²`;
+- the **cross-spectrum** `|S_xy|` of a channel pair carries
+  `unit_i · unit_j`, so it is scaled by `factor_i × factor_j`.
+  **Coherence is not** — it is a normalised ratio, dimensionless, and
+  stays exactly the same however the channels are calibrated;
 - a **transfer function** inherits the calibration *ratio* — its unit is
-  built as `output-unit / input-unit` (e.g. a `g/N` accelerance).
+  built as `output-unit / input-unit` (e.g. a `g/N` accelerance) — and so
+  do the BLA uncertainty bands drawn with it;
+- the **sonogram** is drawn relative to its own peak, so a constant
+  per-channel factor cancels and the image is unchanged; and
+- a **modal fit** is run on the calibrated transfer function, so its
+  modal constants come back in engineering units and its reconstruction
+  overlays the measured curve at the same level. Natural frequencies,
+  damping ratios and Q are scale-invariant either way.
 
 All of this is saved in the [`.dvma` file](dvma-format.md) as the
 `channel_cal_factors` and `units` fields, so calibrated data reopens
 calibrated — in the web logger, in Python, or in the JupyterLite
 notebook.
+
+## Calibration and the data exports
+
+**Save Dataset** (`.dvma`) and **figure exports** are calibrated: the
+file carries the factors and units, and a saved figure carries whatever
+its axes showed.
+
+**Export CSV** and **Export Matlab** are different by design — they write
+the **raw stored arrays, in volts, with no calibration applied**, so that
+what you get is the measurement rather than a view of it. To keep that
+honest rather than silent, both now carry the calibration as metadata:
+
+- the **CSV** begins with a commented header naming the per-column
+  factors and units. It is prefixed `#`, so `np.loadtxt`,
+  `np.genfromtxt` and `pandas.read_csv(..., comment='#')` skip it and
+  the numeric rows are unchanged:
+
+    ```
+    # pydvma export: RAW data, calibration NOT applied.
+    # Column 1 is the shared axis (s); the rest are data columns.
+    # Multiply data column k by cal_factors[k] for engineering units.
+    # cal_factors: 10,0.5
+    # units: m/s2,N
+    ```
+
+- the **Matlab** file gains `time_cal_factors` / `time_units` (and the
+  `freq_` and `tf_` equivalents) alongside the arrays it always wrote.
+  Nothing existing changed, so older scripts keep working.
+
+## Best match replaces the calibration
+
+The TF stage's **Best match** rescales every transfer function onto a
+reference channel — and it stores the result in the *same*
+`channel_cal_factors` slot this dialog writes, because a per-channel
+display multiplier is the only place pydvma has for it. On an
+uncalibrated dataset that is exactly what you want. On a **calibrated**
+one it replaces the transducer calibration with a relative scale, while
+the engineering units stay as they were: the axis goes on saying `m/s²`
+over numbers that have become relative.
+
+So Best match asks first, naming the measurements whose calibration
+would be replaced, and the toast it leaves carries an **Undo** that puts
+the previous factors and units back.
 
 ## Soundcard input gain and full scale
 

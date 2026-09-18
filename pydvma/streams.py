@@ -941,20 +941,28 @@ def start_stream(settings):
             match = _ni_settings_signature(settings) == sig_running
             if not match:
                 # DSA hardware may have coerced the running task's rate
-                # (e.g. 5000 -> 5120 on an NI 9234; see the coercion
-                # note in `_build_and_start_ai_task`). A caller
-                # re-asking for the ORIGINAL rate describes the same
-                # hardware config, so reuse the task — and adopt the
-                # coerced rate — rather than rebuilding (which would
-                # repeat the ~2 s IEPE warmup on every capture).
-                requested = getattr(REC_NI, '_requested_fs', None)
-                if (requested is not None
-                        and float(settings.fs) == float(requested)):
-                    probe = copy.copy(settings)
-                    probe.fs = REC_NI.settings.fs
-                    if _ni_settings_signature(probe) == sig_running:
-                        settings.fs = REC_NI.settings.fs
-                        match = True
+                # (e.g. 5000 -> 5120 on an NI 9234) or its voltage range
+                # (±1 V -> ±2 V on a 6212); see the coercion notes in
+                # `_build_and_start_ai_task`. A caller re-asking for the
+                # ORIGINAL value describes the same hardware config, so reuse
+                # the task — and adopt the coerced value — rather than
+                # rebuilding (which would repeat the ~2 s IEPE warmup on
+                # every capture). Both fields are probed together: a request
+                # that was coerced in BOTH still describes one config.
+                probe = copy.copy(settings)
+                adopted = {}
+                for field, requested_attr in (('fs', '_requested_fs'),
+                                              ('VmaxNI', '_requested_vmax')):
+                    requested = getattr(REC_NI, requested_attr, None)
+                    if (requested is not None
+                            and float(getattr(settings, field)) == float(requested)):
+                        running = getattr(REC_NI.settings, field)
+                        setattr(probe, field, running)
+                        adopted[field] = running
+                if adopted and _ni_settings_signature(probe) == sig_running:
+                    for field, running in adopted.items():
+                        setattr(settings, field, running)
+                    match = True
             if match:
                 REC_NI.settings = settings
                 REC_NI.trigger_detected = False
@@ -2216,6 +2224,7 @@ class Recorder_NI_nidaqmx(object):
             self._callback_ref = None  # keep a strong reference for nidaqmx
             self._closing = False  # set by end_stream; callback bails out
             self._requested_fs = None  # pre-coercion fs; see start_stream
+            self._requested_vmax = None  # pre-coercion VmaxNI; see start_stream
             #: Signature of the settings the live task was BUILT with
             #: (post-coercion), or None before the first build — the
             #: reuse key `start_stream` compares against. Stream-lifetime,
@@ -2560,6 +2569,34 @@ class Recorder_NI_nidaqmx(object):
             )
             settings.fs = actual_fs
             self._alloc_buffers()
+
+        # The VOLTAGE RANGE is coerced exactly like the rate, and for the
+        # same reason: DAQmx honours `min_val`/`max_val` only up to the
+        # discrete ranges the hardware actually has, rounding UP to the
+        # smallest one that contains the request (a 9234 is fixed at ±5 V and
+        # accepts any VmaxNI silently; a 6212 asked for ±1 V runs at ±2 V).
+        # Left unread, `settings.VmaxNI` then names a rail the hardware is not
+        # using, and two things judge against it: `acquisition.log_data`'s
+        # clip warning at 0.95·VmaxNI, and the web UI's live level meters via
+        # `serve._input_scale_fields`. Both would read high — a false CLIP,
+        # never a missed one, since the coercion only ever goes upward. So
+        # adopt the real range, as `settings.fs` adopts the real rate.
+        # `ai_max` is documented to "return the coerced maximum value that the
+        # device can measure with the current settings"; the request is kept
+        # in `_requested_vmax` so `start_stream`'s reuse check still
+        # recognises a repeat request as the same configuration.
+        self._requested_vmax = float(settings.VmaxNI)
+        try:
+            actual_vmax = float(task.ai_channels[0].ai_max)
+        except (ni.errors.DaqError, AttributeError, IndexError, TypeError):
+            actual_vmax = None
+        if actual_vmax and abs(actual_vmax - float(settings.VmaxNI)) > 1e-9:
+            print(
+                'Requested VmaxNI = {:g} V was coerced to {:g} V by {} '
+                '(hardware voltage ranges); using the actual range.'
+                .format(float(settings.VmaxNI), actual_vmax, self.device_name)
+            )
+            settings.VmaxNI = actual_vmax
 
         # Give the DAQmx input buffer several seconds of headroom. The
         # driver default (10 kS below 10 kS/s, 100 kS above: 2 s at

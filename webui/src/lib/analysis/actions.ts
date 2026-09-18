@@ -61,7 +61,7 @@ import type {
   BandLadder, DampingBand, DampingBandsResult, DampingModeFit, DampingPeaksResult,
 } from '../stores/damping';
 import type { Toasts } from '../stores/toast';
-import { normalizeFactors, normalizeUnits } from '../model/calibration';
+import { isIdentity, normalizeFactors, normalizeUnits } from '../model/calibration';
 import type { ChoosableKind, ChoosableSet } from '../export/data';
 import { calibrationController } from '../stores/calibrationController';
 import { tfColumn } from '../plot/tfChannels';
@@ -101,6 +101,14 @@ export interface ExportSetArrays {
   setId: number;
   axis: Float64Array;
   columns: Float64Array[] | { re: Float64Array; im: Float64Array }[];
+  /**
+   * Per-column calibration factors and units for the CSV header. The COLUMNS
+   * stay raw — pydvma's data exports are deliberately uncalibrated — these
+   * only let the file say what the factor would be. Structurally the same as
+   * `export/data.ts`'s `ExportSet`, which consumes them.
+   */
+  calFactors?: readonly number[];
+  units?: readonly string[];
 }
 
 /** A worker array crosses either as a plain object or a toJs Map. */
@@ -203,6 +211,24 @@ function derivedKindOf(kind: DataKind): DerivedKind | null {
  *   already committed to.
  */
 export type SonoSaveChoice = 'channel' | 'all' | 'none';
+
+/**
+ * What the Best Match confirm prompt is told about the action it is gating.
+ *
+ * Best Match writes its relative scaling factors into the same
+ * `channel_cal_factors` slot a transducer calibration lives in, and leaves the
+ * engineering `units` untouched — so a calibrated set keeps saying `m/s²`
+ * while its numbers become relative to the reference. `calibrated` names the
+ * sets that actually have something to lose (any non-identity factor today);
+ * it is a SUBSET of `names`, and empty when every set is still raw, which is
+ * the ordinary case where the prompt is a formality.
+ */
+export interface BestMatchInfo {
+  /** Display names of every set Best Match will rescale. */
+  names: string[];
+  /** Those of `names` whose calibration is non-identity and will be replaced. */
+  calibrated: string[];
+}
 
 /** fs from a TimeData item: prefer settings.fs, else infer from the axis. */
 function sampleRate(item: DvmaItem): number {
@@ -2552,9 +2578,24 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * reference column gets factor ~1 (matches itself, times its current cal
    * factor); every other set/column is scaled relative to it. Toasts the applied
    * per-set factors; no-ops (with a toast) when no TF exists yet.
+   *
+   * IT OVERWRITES CALIBRATION, SO IT ASKS FIRST. Relative scaling and a
+   * transducer calibration are different quantities sharing one storage slot:
+   * a channel calibrated to m/s² that is then Best-Matched keeps its `m/s²`
+   * unit label while its numbers become relative. That is destructive in a way
+   * the button does not suggest, so `confirm` is given the sets involved (and
+   * which of them carry a real, non-identity calibration today) and can refuse.
+   * `confirm` is INJECTED rather than imported so this layer stays UI-free and
+   * headless callers keep working; omitting it proceeds, as before.
+   *
+   * Every overwritten set's previous factors AND units are snapshotted, and the
+   * result toast carries an Undo that puts all of them back — so an accidental
+   * Best Match over a real calibration is one click to reverse rather than a
+   * retyping job in the Calibrate dialog.
    */
   async function calcBestMatch(
     refSetId: number, refChannel: number, freqRange: [number, number] | null = null,
+    confirm?: (info: BestMatchInfo) => Promise<boolean> | boolean,
   ): Promise<void> {
     const specs = working.map((w) => tfSpecOf(w)).filter((s): s is FitSpec => s !== null);
     if (specs.length === 0) {
@@ -2568,10 +2609,26 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const refCol = tfColumn(refChannel, refSpec.chIn, refSpec.nChannels) ?? 0;
     const refCal = getCalibration(refSpec.ws.setId).factors[refChannel] ?? 1;
 
+    if (confirm) {
+      // Named BEFORE the engine call so a refusal costs nothing. "Calibrated"
+      // = any non-identity factor, i.e. a set whose displayed numbers are not
+      // raw volts today — those are the ones with something to lose.
+      const names = specs.map((s) => nameOf(s.ws.setId));
+      const calibrated = specs
+        .filter((s) => !isIdentity(getCalibration(s.ws.setId).factors))
+        .map((s) => nameOf(s.ws.setId));
+      if (!(await confirm({ names, calibrated }))) return;
+    }
+
     engine.boot();
     busyN += 1;
     busy.set(true);
     try {
+      // RAW columns deliberately (no `fitCalRatios`, unlike `calcFit`): the
+      // factors this returns are WRITTEN BACK as cal factors below, so reading
+      // already-calibrated data would fold the existing cal in twice. Matching
+      // raw curves and storing `refCal × f` lands every set at the reference's
+      // displayed level, which is the intent.
       const payload: Record<string, unknown> = {
         sets: specs.map((s) => ({
           freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.cols), n_tf: s.nCols,
@@ -2588,6 +2645,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         ? (raw as unknown[]).map((a) => axisData(a))
         : [];
       const summary: string[] = [];
+      // Snapshot BEFORE any write, so Undo restores the exact prior state —
+      // factors AND units, since a Best Match leaves the units in place and a
+      // partial restore would be its own kind of wrong.
+      const before: { setId: number; factors: number[]; units: string[] }[] = [];
       specs.forEach((s, i) => {
         const facs = factorList[i];
         if (!facs) return;
@@ -2600,6 +2661,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
             next[sc] = refCal * f;
           }
         }
+        before.push({ setId: s.ws.setId, factors: cur.factors.slice(), units: cur.units.slice() });
         setCalFactors(s.ws.setId, next, cur.units);
         // Report the reference column's factor per set as the headline number.
         const head = facs[Math.min(refCol, facs.length - 1)];
@@ -2607,7 +2669,15 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       });
       toasts?.push(
         `Best match → ${nameOf(refSpec.ws.setId)}: ${summary.join(', ')}`,
-        { level: 'success' },
+        {
+          level: 'success',
+          actions: before.length
+            ? [{
+              label: '↶ Undo',
+              run: () => { for (const b of before) setCalFactors(b.setId, b.factors, b.units); },
+            }]
+            : undefined,
+        },
       );
     } catch (e) {
       toasts?.push(`Best match failed: ${e instanceof Error ? e.message : String(e)}`, { level: 'error' });
@@ -2994,21 +3064,57 @@ export function createActions(engine: EngineStore, selection: Selection, setting
              allCols: cols.length === totalCols };
   }
 
-  /** Interleave a TF slice's chosen complex columns to [re,im,…] row-major. */
-  function interleaveTf(slice: NonNullable<SetArrays['tf']>, cols: number[]): Float64Array {
+  /**
+   * Interleave a TF slice's chosen complex columns to [re,im,…] row-major.
+   *
+   * `cals` (optional, one factor per entry of `cols`) scales each column on
+   * the way out — the `cal[out]/cal[in]` display ratio, so the engine sees the
+   * TF in ENGINEERING units rather than volts. Omit it for a consumer that
+   * must work on the raw columns.
+   */
+  function interleaveTf(
+    slice: NonNullable<SetArrays['tf']>, cols: number[], cals?: readonly number[],
+  ): Float64Array {
     const re = slice.data.re, im = slice.data.im;
     const rows = slice.axis.length;
     const total = slice.data.shape[1];
     const flat = new Float64Array(rows * cols.length * 2);
     let o = 0;
     for (let r = 0; r < rows; r++) {
-      for (const c of cols) {
-        const i = r * total + c;
-        flat[o++] = re[i];
-        flat[o++] = im ? im[i] : 0;
+      for (let k = 0; k < cols.length; k++) {
+        const i = r * total + cols[k];
+        const g = cals ? cals[k] : 1;
+        flat[o++] = re[i] * g;
+        flat[o++] = (im ? im[i] : 0) * g;
       }
     }
     return flat;
+  }
+
+  /**
+   * Per-FITTED-COLUMN display cal ratio `cal[out]/cal[in]` for a fit spec —
+   * the same factor `plot/model.ts::calRatio` applies to the measured TF line.
+   *
+   * WHY THE FIT SEES CALIBRATED DATA. Natural frequencies, damping ratios and
+   * Q are scale-invariant, so fitting raw volts gave the right answer for
+   * those either way. The modal CONSTANTS are not: fitted on volts they came
+   * back in V/V while the plot (and the user) were in engineering units, and
+   * that is what `ModalData` persisted. Feeding the ratio here puts the fit,
+   * its stored constants and the axis it is read against in one unit system.
+   *
+   * It also closes a display mismatch: the reconstruction returns in whatever
+   * units the fit consumed, and the fit pseudo-set carries NO `calFactors`
+   * (identity — see `syncModal`), so a raw fit drew its recon at the raw level
+   * over a calibrated measured line. Fitting calibrated makes the two agree
+   * without giving the pseudo-set a cal factor that would double-apply.
+   *
+   * An ORPHAN TF (`chIn === null`) has no input channel to normalise against,
+   * matching `calRatio`'s divisor-of-1 rule.
+   */
+  function fitCalRatios(s: FitSpec): number[] {
+    const cal = getCalibration(s.ws.setId).factors;
+    const denom = s.chIn === null ? 1 : (cal[s.chIn] ?? 1);
+    return s.chans.map((ch) => (cal[ch] ?? 1) / denom);
   }
 
   /** Actions that change the mode set (get a one-level undo snapshot). */
@@ -3145,7 +3251,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // Single set: top-level payload (backward-compatible shape).
         const s = specs[0];
         payload.freq_axis = s.slice.axis;
-        payload.tf_data = interleaveTf(s.slice, s.cols);
+        payload.tf_data = interleaveTf(s.slice, s.cols, fitCalRatios(s));
         payload.n_tf = s.nCols;
         payload.n_channels = s.nChannels;
         payload.fs = s.ws.fs;
@@ -3158,7 +3264,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // is bookkeeping only (the glue never re-drops an input) so a null is
         // harmless inside the nested object — the glue ignores it.
         payload.sets = specs.map((s) => ({
-          freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.cols),
+          freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.cols, fitCalRatios(s)),
           n_tf: s.nCols, ch_in: s.chIn, n_channels: s.nChannels, fs: s.ws.fs,
         }));
       }
@@ -3497,6 +3603,31 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const { axis, data } = slice;
       const rows = axis.length;
       const cols = data.shape[1] ?? 1;
+      // Header-only calibration (the columns themselves stay RAW, as pydvma
+      // writes them): per-CHANNEL factors/units for time and freq; for a TF
+      // the per-output-column RATIO and its 'out/in' unit, matching
+      // `pydvma.file._column_calibration`.
+      const cal = getCalibration(ws.setId);
+      const tfSlice = kind === 'tf' ? d[ws.setId]?.tf : undefined;
+      const tfChIn = tfSlice ? (tfSlice.chIn === undefined ? 0 : tfSlice.chIn) : 0;
+      const srcOf = (c: number): number => (
+        kind !== 'tf' || tfChIn === null ? c : (c < tfChIn ? c : c + 1)
+      );
+      const calFactors: number[] = [];
+      const units: string[] = [];
+      for (let c = 0; c < cols; c++) {
+        const src = srcOf(c);
+        const f = cal.factors[src] ?? 1;
+        const u = cal.units[src] ?? '-';
+        if (kind === 'tf' && tfChIn !== null) {
+          const fin = cal.factors[tfChIn] ?? 1;
+          calFactors.push(fin !== 0 ? f / fin : f);
+          units.push(`${u}/${cal.units[tfChIn] ?? '-'}`);
+        } else {
+          calFactors.push(f);
+          units.push(u);
+        }
+      }
       if (kind === 'time') {
         const columns: Float64Array[] = [];
         for (let c = 0; c < cols; c++) {
@@ -3504,7 +3635,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           for (let r = 0; r < rows; r++) col[r] = data.re[r * cols + c];
           columns.push(col);
         }
-        out.push({ setId: ws.setId, axis, columns });
+        out.push({ setId: ws.setId, axis, columns, calFactors, units });
       } else {
         const columns: { re: Float64Array; im: Float64Array }[] = [];
         for (let c = 0; c < cols; c++) {
@@ -3515,7 +3646,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           }
           columns.push({ re: cre, im: cim });
         }
-        out.push({ setId: ws.setId, axis, columns });
+        out.push({ setId: ws.setId, axis, columns, calFactors, units });
       }
     }
     return out;

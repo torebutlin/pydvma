@@ -274,3 +274,137 @@ class TestSaveDataSets:
         loaded = container.load(path)
         assert len(loaded.time_data_list) == 1
         assert loaded.time_data_list[0].test_name == 'set0'
+
+
+class TestExportCalibrationMetadata:
+    """The CSV and Matlab data exports write RAW (uncalibrated) arrays —
+    deliberately — so they must at least SAY so and carry the factor that
+    converts each column to engineering units.
+
+    Before this, a channel calibrated to 100 mV/g read 5 g on screen and
+    exported 0.5 with nothing in the file to explain the difference. The
+    numbers are unchanged; only the metadata is new.
+    """
+
+    @staticmethod
+    def _calibrated_dataset():
+        fs, n = 1000, 64
+        settings = options.MySettings(
+            fs=fs, channels=2, channel_sensitivities=[0.1, 2.0])
+        cal = 1.0 / np.asarray(settings.channel_sensitivities)
+        td = datastructure.TimeData(
+            np.arange(n) / fs,
+            np.random.default_rng(0).standard_normal((n, 2)),
+            settings,
+            units=['m/s2', 'N'],
+            channel_cal_factors=cal,
+        )
+        ds = datastructure.DataSet()
+        ds.add_to_dataset(td)
+        ds.add_to_dataset(analysis.calculate_tf(td, ch_in=1))
+        return ds
+
+    def test_csv_header_names_the_factors_and_units(self, tmp_path):
+        ds = self._calibrated_dataset()
+        path = str(tmp_path / 'out.csv')
+        file.export_to_csv(ds.time_data_list, filename=path,
+                           overwrite_without_prompt=True)
+        text = open(path, encoding='utf-8').read()
+        assert '# pydvma export: RAW data, calibration NOT applied.' in text
+        assert '# cal_factors: 10,0.5' in text
+        assert '# units: m/s2,N' in text
+
+    def test_csv_header_does_not_disturb_the_data_rows(self, tmp_path):
+        """np.loadtxt and friends skip '#' lines, so the numbers a reader
+        gets back are exactly what they always were."""
+        ds = self._calibrated_dataset()
+        path = str(tmp_path / 'out.csv')
+        file.export_to_csv(ds.time_data_list, filename=path,
+                           overwrite_without_prompt=True)
+        loaded = np.loadtxt(path, delimiter=',')
+        td = ds.time_data_list[0]
+        assert loaded.shape == (len(td.time_axis), 3)
+        np.testing.assert_allclose(loaded[:, 1:], td.time_data)   # RAW, uncalibrated
+
+    def test_csv_tf_header_carries_the_ratio_and_out_over_in_unit(self, tmp_path):
+        ds = self._calibrated_dataset()
+        path = str(tmp_path / 'tf.csv')
+        file.export_to_csv(ds.tf_data_list, filename=path,
+                           overwrite_without_prompt=True)
+        text = open(path, encoding='utf-8').read()
+        assert '(Hz)' in text                       # axis unit follows the kind
+        assert '# cal_factors: 20' in text          # cal[out]/cal[in] = 10/0.5
+        assert '# units: m/s2/N' in text
+
+    def test_matlab_export_carries_cal_factors_and_units(self, tmp_path):
+        ds = self._calibrated_dataset()
+        path = str(tmp_path / 'out.mat')
+        file.export_to_matlab(ds, filename=path, overwrite_without_prompt=True)
+        m = sio.loadmat(path)
+        # Additive: every key the exporter always wrote is still there.
+        assert 'time_data_all' in m and 'time_axis_all' in m
+        np.testing.assert_allclose(m['time_cal_factors'].ravel(), [10.0, 0.5])
+        assert [str(u[0]) for u in m['time_units'].ravel()] == ['m/s2', 'N']
+        np.testing.assert_allclose(m['tf_cal_factors'].ravel(), [20.0])
+
+    def test_absent_calibration_renders_as_identity_not_blank(self, tmp_path):
+        settings = options.MySettings(fs=100, channels=2)
+        td = datastructure.TimeData(
+            np.arange(8) / 100, np.zeros((8, 2)), settings)   # no units given
+        ds = datastructure.DataSet()
+        ds.add_to_dataset(td)
+        path = str(tmp_path / 'plain.csv')
+        file.export_to_csv(ds.time_data_list, filename=path,
+                           overwrite_without_prompt=True)
+        text = open(path, encoding='utf-8').read()
+        assert '# cal_factors: 1,1' in text
+        assert '# units: -,-' in text
+
+    def test_format_cal_factor_matches_its_pinned_vectors(self):
+        """These vectors are mirrored in `webui/tests/export/data.test.ts`,
+        where the JavaScript twin `fmtCalFactor` is checked against the same
+        table — the two must render a header identically."""
+        for value, expected in file.CAL_FACTOR_FORMAT_VECTORS:
+            assert file.format_cal_factor(value) == expected, value
+
+    def test_format_cal_factor_never_writes_nan(self):
+        for bad in (float('nan'), float('inf'), float('-inf')):
+            assert file.format_cal_factor(bad) == '1'
+
+
+class TestExportColumnCountFromArray:
+    """`use_output_as_ch0` PREPENDS the drive column to `time_data` without
+    bumping `settings.channels`, so any consumer trusting the setting reads
+    one column short. The Matlab exporters did exactly that and silently
+    dropped the last measured channel."""
+
+    @staticmethod
+    def _output_ch0_dataset():
+        fs, n = 100, 32
+        settings = options.MySettings(fs=fs, channels=2, use_output_as_ch0=True)
+        # [drive, ch0, ch1] — three columns against settings.channels == 2.
+        data = np.column_stack([np.full(n, 9.0), np.full(n, 1.0), np.full(n, 2.0)])
+        td = datastructure.TimeData(
+            np.arange(n) / fs, data, settings,
+            channel_cal_factors=np.array([1.0, 1.0, 1.0]),
+        )
+        ds = datastructure.DataSet()
+        ds.add_to_dataset(td)
+        return ds
+
+    def test_matlab_export_keeps_every_stored_column(self, tmp_path):
+        ds = self._output_ch0_dataset()
+        path = str(tmp_path / 'o.mat')
+        file.export_to_matlab(ds, filename=path, overwrite_without_prompt=True)
+        cols = sio.loadmat(path)['time_data_all']
+        assert cols.shape[1] == 3                  # was 2: ch1 was dropped
+        np.testing.assert_allclose(cols[0], [9.0, 1.0, 2.0])
+
+    def test_jwlogger_export_keeps_every_stored_column(self, tmp_path):
+        ds = self._output_ch0_dataset()
+        path = str(tmp_path / 'o_jw.mat')
+        file.export_to_matlab_jwlogger(ds, filename=path,
+                                       overwrite_without_prompt=True)
+        cols = sio.loadmat(path)['indata']
+        assert cols.shape[1] == 3
+        np.testing.assert_allclose(cols[0], [9.0, 1.0, 2.0])

@@ -88,10 +88,21 @@
       ?? 1,
   );
 
-  const MODES: { id: FreqMode; label: string }[] = [
-    { id: 'fft', label: 'FFT' },
-    { id: 'psd', label: 'PSD' },
-    { id: 'csd', label: 'CSD' },
+  // NB the 'psd' mode's quantity is a power SPECTRUM (scipy
+  // `scaling='spectrum'` — mean-square amplitude per bin, unit²), NOT a
+  // spectral density: its level scales with Δf. The y axis says so
+  // ("Power spectrum (unit²)", see `plot/model.ts`); the button keeps the
+  // familiar PSD name and states the distinction on hover. The LIVE scope's
+  // PSD is a separate, genuine density in unit²/Hz.
+  const MODES: { id: FreqMode; label: string; title?: string }[] = [
+    { id: 'fft', label: 'FFT', title: 'Amplitude spectrum of one frame' },
+    {
+      id: 'psd',
+      label: 'PSD',
+      title: 'Averaged power spectrum — mean-square amplitude per bin (unit²). '
+        + 'This is a spectrum, not a density: its level scales with Δf.',
+    },
+    { id: 'csd', label: 'CSD', title: 'Cross-spectrum magnitude |S_xy| for a channel pair' },
   ];
   const averaged = $derived(freqMode !== 'fft');
   const calcLabel = $derived(freqMode === 'fft' ? 'Calc FFT' : freqMode === 'psd' ? 'Calc PSD' : 'Calc CSD');
@@ -170,7 +181,7 @@
           <span class="seg" role="group" aria-label="spectral quantity" class:mixed={mixed('mode')}>
             {#each MODES as m (m.id)}
               <button class:active={!mixed('mode') && freqMode === m.id} data-spec={m.id}
-                onclick={() => patchLive({ mode: m.id })}>{m.label}</button>
+                title={m.title} onclick={() => patchLive({ mode: m.id })}>{m.label}</button>
             {/each}
           </span>
         </div>

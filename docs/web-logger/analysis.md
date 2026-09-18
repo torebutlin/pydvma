@@ -56,13 +56,22 @@ The **Frequency** stage computes spectra.
 - **Calc FFT / Calc PSD / Calc CSD** computes the result. Once a result
   exists it recomputes live as you change settings.
 
-!!! info "What CSD currently shows"
-    The **CSD** quantity currently plots the **coherence** (`|Cxy|` on the
-    diagonal) for the set. A full cross-spectrum **pair selector** (pick
-    two channels) and an explicit `E[X*Y]` vs `E[XY*]` **convention**
-    label are **on the roadmap and not yet shipped** — the card notes
-    "cross-power pairs deferred". For arbitrary cross-spectra today, use
-    the Python
+!!! info "What PSD and CSD actually plot"
+    **PSD** is a power **spectrum**, not a spectral **density**: each bin
+    holds the mean-square amplitude in that bin, in `unit²` (scipy's
+    `scaling='spectrum'`), which is why the axis reads e.g.
+    `Power spectrum ((m/s²)²)`. Its level therefore scales with Δf — halve
+    the resolution and a broadband floor moves — so do not read a
+    `unit²/Hz` figure off it. (The Live scope's PSD *is* a true density in
+    `unit²/Hz`; the two are different quantities with the same
+    three-letter name.)
+
+    **CSD** plots the cross-spectrum magnitude `|S_xy|` for the selected
+    channel pair, reconstructed as `sqrt(Cxy · Pxx_i · Pxx_j)`. It carries
+    `unit_i · unit_j` and is calibrated accordingly. Where no auto-power is
+    available the view falls back to bare **coherence**, which is a
+    normalised ratio — dimensionless, and deliberately left
+    **uncalibrated**. For the full matrix, use the Python
     [`calculate_cross_spectrum_matrix`](../user-guide/analysis.md#cross-spectrum-analysis).
 
 ## TF — transfer functions
@@ -109,9 +118,12 @@ of the old Qt logger's Scaling tool.
     recomputes (or is re-fitted) is unaffected. It differs from Python
     `multiply_by_power_of_iw`, which mutates the `FreqData`/`TfData` in
     place. The power applies to the **FFT** view and every **TF** plot
-    type (not PSD or coherence), is saved per set in the `.dvma` file, and
-    does **not** feed the modal fit — [modal fitting](modal-fitting.md)
-    always reads the raw transfer function with its own measurement type.
+    type (not the power spectrum or CSD), is saved per set in the `.dvma`
+    file, and does **not** feed the modal fit —
+    [modal fitting](modal-fitting.md) applies its own measurement type
+    instead. (The fit *does* see the channel **calibration**, so its modal
+    constants come back in engineering units; the x(iω) display power is
+    the part it ignores.)
 
 - **Best match** — pick a **ref ch** (a channel of the focused set) and
   press **Best match** to rescale every TF so the family best overlays
@@ -119,10 +131,17 @@ of the old Qt logger's Scaling tool.
   Qt `best_match` maths: an RMS-magnitude ratio with a least-squares
   sign). The factors are written through the ordinary
   [calibration](calibration.md) path — a per-channel `channel_cal_factors`
-  multiplier — so they persist in the `.dvma` file, show up (and are
-  editable) in the Calibrate dialog afterwards, and are undone by reopening
-  Calibrate and resetting the sensitivities. A toast reports the applied
+  multiplier — so they persist in the `.dvma` file and show up (and are
+  editable) in the Calibrate dialog afterwards. A toast reports the applied
   per-set factors.
+
+    Because it writes the *same* slot a transducer calibration lives in,
+    Best match **replaces** any calibration those channels already had,
+    while leaving their engineering units untouched. It therefore asks
+    before running, naming the measurements whose calibration would be
+    replaced, and the result toast carries an **Undo** that restores the
+    previous factors and units — see
+    [Best match replaces the calibration](calibration.md#best-match-replaces-the-calibration).
 
     Unlike the [modal fit](modal-fitting.md#choosing-which-lines), Best
     match always uses **all** channels of each set — it is a calibration

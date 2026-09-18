@@ -137,7 +137,14 @@ export interface SetArrays {
    *   - time / FFT: the signal / complex spectrum is scaled by `cal[ch]`
    *     (an AMPLITUDE factor) before the dB/linear/phase transform;
    *   - PSD: power, so the amplitude factor enters SQUARED — `× cal[ch]²`;
-   *   - CSD (coherence): dimensionless, cal cancels — left untouched;
+   *   - CSD: the plotted quantity is the cross-spectrum MAGNITUDE
+   *     `|S_xy| = sqrt(Cxy · Pxx_i · Pxx_j)`, which carries `unit_i · unit_j`
+   *     — the dimensionless coherence contributes nothing and the two
+   *     auto-powers bring one `cal²` each, so the display factor is
+   *     `cal[i] · cal[j]` (see `calPair`). COHERENCE ITSELF is a normalised
+   *     ratio and is cal-INVARIANT by construction: the fallback branch (no
+   *     sibling `psd` slice, so `sqrt(Cxy)` is all there is) and the TF
+   *     view's coherence overlay both take NO cal factor;
    *   - TF: each output column is scaled by the RATIO `cal[out]/cal[in]`
    *     (Qt stores this ratio on the TfData; the webui derives it from the
    *     source cal factors), applied to BOTH the measured line and its modal
@@ -164,7 +171,7 @@ export interface SetArrays {
    * transform, so `+1` differentiates (displacement→velocity→acceleration) and
    * `-1` integrates. Absent / `0` ⇒ identity (today's behaviour). Applied to
    * the FFT sub-mode of the frequency view and to every TF plot type (mag /
-   * phase / real / imag / Nyquist) — NOT to PSD (power) or CSD (coherence).
+   * phase / real / imag / Nyquist) — NOT to the power spectrum or CSD.
    * The DC bin (f = 0) maps to 0 for any `p ≠ 0` (Qt sets `iw[0]=inf`). The
    * axis unit label follows the derivative order (`m` → `m/s` → `m/s²`). This
    * display power does NOT feed the modal fit — the fit always reads the RAW TF
@@ -320,6 +327,39 @@ function calOf(set: SetArrays | undefined, ch: number): number {
  */
 function calRatio(set: SetArrays | undefined, out: number, chIn: number | null): number {
   return calOf(set, out) / (chIn === null ? 1 : calOf(set, chIn));
+}
+
+/**
+ * CSD display cal for the cross-spectrum magnitude of the pair `(i, j)`:
+ * `cal[i] · cal[j]`. `|S_xy|` has units `unit_i · unit_j`, and since
+ * `|S_xy| = sqrt(Cxy · Pxx_i · Pxx_j)` with a dimensionless `Cxy`, each
+ * auto-power contributes one `cal²` under the root — one `cal` each out of it.
+ * NOT applied to bare coherence, which is cal-invariant.
+ */
+function calPair(set: SetArrays | undefined, i: number, j: number): number {
+  return calOf(set, i) * calOf(set, j);
+}
+
+/**
+ * The CSD magnitude unit `unit_i·unit_j` for the visible pair lines, or `null`
+ * when a set's two channels do not both carry a meaningful unit, or when
+ * visible sets disagree. `unit_i === unit_j` collapses to a square (`Pa²`)
+ * rather than repeating the unit.
+ */
+function csdPairUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): string | null {
+  let out: string | null = null;
+  for (const v of visible) {
+    const set = byId.get(v.setId);
+    const c = set?.csd;
+    if (!c) continue;                    // no CSD for this line → contributes nothing
+    const ui = meaningfulUnit(set?.units?.[c.i ?? 0]);
+    const uj = meaningfulUnit(set?.units?.[c.j ?? 1]);
+    if (!ui || !uj) return null;
+    const u = ui === uj ? `${wrapUnit(ui)}²` : `${wrapUnit(ui)}·${wrapUnit(uj)}`;
+    if (out === null) out = u;
+    else if (out !== u) return null;     // mixed pairs → plain fallback
+  }
+  return out;
 }
 
 /** Everything `buildPlotModel` needs, kept plain for node testing. */
@@ -580,21 +620,33 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     const linMag = args.yScale === 'lin';
     const lines: PlotLine[] = [];
     // Unit annotation (item 6): the shared engineering unit across visible
-    // channels, if any. CSD is dimensionless (coherence) so it takes no unit.
-    // FFT amplitude carries the channel unit; PSD is power → unit²/Hz.
-    // FFT honours the x(iω) display power (round-6 Qt-parity); PSD (power) and
-    // CSD (coherence) do not, so their unit label ignores it too.
+    // channels, if any. FFT amplitude carries the channel unit; the power
+    // spectrum is power → unit²; CSD carries the PAIR unit `unit_i·unit_j`.
+    // FFT honours the x(iω) display power (round-6 Qt-parity); the power
+    // spectrum and CSD do not, so their unit labels ignore it too.
     const unit = mode === 'csd' ? null : commonUnit(byId, args.visible, mode === 'fft');
-    // PSD is power → unit²/Hz; parenthesise a compound unit so the square is
-    // unambiguous ('m/s²' → '(m/s²)²/Hz', but 'Pa' → 'Pa²/Hz').
-    const psdUnit = unit ? `${wrapUnit(unit)}²/Hz` : '';
+    // UNITS HONESTY: this quantity is scipy's `scaling='spectrum'` — the
+    // mean-square amplitude in each bin (`Pxy *= 1/(Σw)²` in
+    // `analysis.calculate_cross_spectrum_matrix`), NOT a spectral DENSITY.
+    // Its level therefore scales with Δf, so labelling it `unit²/Hz` (as this
+    // did before) overstated a noise floor by the window's noise-equivalent
+    // bandwidth and moved the number whenever the resolution changed. The
+    // Live scope's PSD is a separate, genuine density (`lib/audio/fft.ts`) and
+    // keeps its `unit²/Hz`. Parenthesise a compound unit so the square is
+    // unambiguous ('m/s²' → '(m/s²)²', but 'Pa' → 'Pa²').
+    const powUnit = unit ? `${wrapUnit(unit)}²` : '';
+    const csdUnit = mode === 'csd' ? csdPairUnit(byId, args.visible) : null;
     const yLabel = mode === 'psd'
-      ? (unit ? (linMag ? `PSD (${psdUnit})` : `PSD (${psdUnit}, dB)`) : (linMag ? 'PSD' : 'PSD (dB)'))
+      ? (unit
+        ? (linMag ? `Power spectrum (${powUnit})` : `Power spectrum (${powUnit}, dB)`)
+        : (linMag ? 'Power spectrum' : 'Power spectrum (dB)'))
       : mode === 'csd'
         // Cross-spectrum magnitude for the chosen pair (round-5 item 7). dB by
         // default (cross-spectra span orders of magnitude); linear honours the
         // frequency view's dB↔lin toggle if it is set.
-        ? (linMag ? 'CSD |S_xy|' : 'CSD |S_xy| (dB)')
+        ? (csdUnit
+          ? (linMag ? `CSD |S_xy| (${csdUnit})` : `CSD |S_xy| (${csdUnit}, dB)`)
+          : (linMag ? 'CSD |S_xy|' : 'CSD |S_xy| (dB)'))
         : (unit ? (linMag ? `Magnitude (${unit})` : `Magnitude (${unit}, dB)`) : (linMag ? 'Magnitude' : 'Magnitude (dB)'));
     for (const v of args.visible) {
       const s = byId.get(v.setId);
@@ -645,6 +697,11 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         // (both are produced by the same calc_psd call). Without `psd` (e.g. a
         // bare loaded coherence matrix) fall back to the raw coherence.
         const pxx = s?.psd;
+        // Display cal for the MAGNITUDE branch only: |S_xy| carries
+        // unit_i·unit_j, so it scales by cal[i]·cal[j] (see `calPair`). The
+        // fallback branch below has no auto-powers and plots bare coherence,
+        // which is a normalised ratio — cal-INVARIANT, so it takes no factor.
+        const calIJ = calPair(s, iCh, jCh);
         const y = new Float64Array(nf);
         const baseIJ = (iCh * nc + jCh) * nf;                // Cxy[i, j, :]
         for (let f = 0; f < nf; f++) {
@@ -653,9 +710,9 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
           if (pxx) {
             const pi = Math.abs(pxx.data.re[iCh * nf + f]);
             const pj = Math.abs(pxx.data.re[jCh * nf + f]);
-            mag = Math.sqrt(coh * pi * pj);                  // |Pxy[i,j]|
+            mag = Math.sqrt(coh * pi * pj) * calIJ;          // |Pxy[i,j]| in engineering units
           } else {
-            mag = Math.sqrt(coh);                            // no auto-power → |coherence|
+            mag = Math.sqrt(coh);                            // no auto-power → |coherence| (no cal)
           }
           y[f] = linMag ? mag : (mag > 0 ? 20 * Math.log10(mag) : -300);
         }

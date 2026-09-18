@@ -13,6 +13,72 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+### Calibration round follow-ups (2026-09-18)
+
+The calibration assessment of 2026-09-18 landed nine fixes (CSD
+calibration, the power-spectrum relabel, the Best Match prompt + Undo,
+the calibrated modal fit, the NI range read-back, the two stale
+channel-count bugs, `CrossSpecData`'s cal default, and calibration
+metadata in the CSV/Matlab exports). These are what it deliberately
+did NOT do:
+
+- **No browser route to `VmaxSC` or to `channel_sensitivities`.**
+  Setup exposes `input_gain_db` (only useful on a device in
+  `_soundcard_specs.PROFILES`) and `VmaxNI`, but nothing for the
+  full-scale voltage of an UNCHARACTERISED interface whose spec sheet
+  the user has, and nothing for per-channel sensitivities at capture
+  time. Both are already `MySettings` kwargs and already pass serve's
+  `configure` whitelist, so the work is a Setup field plus the plumbing
+  — add it when the status is `uncalibrated`, with the advice string
+  `devices.calibration_status` already returns. Today's workaround is
+  the post-hoc Calibrate dialog, which absorbs the scale correctly but
+  asks for "sensitivity" in V/unit while the data is in FS units; if
+  that field stays the only route, its label should say which it wants.
+  NB this is a SOUNDCARD gap only: a bridged NI capture is already in
+  volts, and a loaded `.dvma` carries whatever calibration it was saved
+  with, whichever mode opens it.
+- **`'V'` still reads as "no unit" on axis labels**, so a genuine NI
+  volts capture and an uncalibrated soundcard capture in full-scale
+  units render identically ("Amplitude", no unit). The bridge already
+  ships `inputVmaxIsVolts` (`serve._input_scale_fields`) — carrying it
+  onto the set at capture time would let a truly-volts set label its
+  axis `(V)` and leave the FS-units case unlabelled, which is the
+  distinction the whole calibration-status design exists to preserve.
+- **The `psd` mode is still named "PSD" in the UI and the stores**
+  though its quantity is a power spectrum in `unit²`. The AXIS now says
+  `Power spectrum (unit²)` and the button carries a hover note, which
+  is where the numbers are actually read — but a full rename of the
+  mode id (`'psd'` → `'power'`), the button, `Calc PSD`, and the docs
+  vocabulary would remove the residual mismatch. Worth doing only as a
+  deliberate vocabulary change, since "PSD" is what the old logger
+  called it. A genuine density view (divide by the noise-equivalent
+  bandwidth, matching the Live scope) would be a separate feature, not
+  a rename.
+- **Stored TF unit strings are unparenthesised** — Python writes
+  `'m/s2/N'`, ambiguous between `(m/s²)/N` and `m/(s²·N)`. The webui
+  parenthesises compound units at display time (`wrapUnit`); the stored
+  string does not, so anything reading the file directly has to guess.
+  Changing `_tf_units_from_source` would alter strings in existing
+  files, so it needs a read-side normalisation too.
+- **An ensemble ('across') TF displays with the OWNER set's cal
+  factors** even though it averages several sets. Correct when the
+  members share a calibration, misleading when they do not. Related to
+  the already-deferred ensemble-TF materialisation (the round-11
+  derived-data item below), so best done with it.
+- **Re-calibrating after a modal fit leaves the fit stale.** The fit is
+  now run on calibrated data, so its modal constants belong to the
+  calibration in force when it ran; changing the calibration afterwards
+  does not re-fit or warn. Frequencies and damping are unaffected
+  (scale-invariant), so this is a constants-only staleness — a toast on
+  `setCalFactors` when a fit exists for that set, or an auto-refit,
+  would close it.
+- **No e2e coverage for the Best Match prompt.** The confirm dialog and
+  its Undo are covered by vitest against the actions layer
+  (`tests/analysis/bestMatch.test.ts`) and typecheck, but no Playwright
+  spec drives the real dialog. Worth one when the freq-nav/bridge specs
+  are next touched.
+
+
 - ~~**Native engine, stages 3–4**~~ — **DONE** 2026-08-18/19
   (`dev/2026-08-18-session-journal-round.md`; plan
   `dev/plans/2026-08-18-session-journal-launch-plan.md`). The session

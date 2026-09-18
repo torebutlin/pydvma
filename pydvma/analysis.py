@@ -441,7 +441,11 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
         cross_spec_data = calculate_cross_spectrum_matrix(td, time_range=time_range, window=window, N_frames=1)
         Pxy_av += cross_spec_data.Pxy / N_ensemble
     
-    ch_all = np.arange(time_data_list[0].settings.channels)
+    # Channel count from the ARRAY, not settings.channels: `use_output_as_ch0`
+    # prepends the drive column without bumping the setting, and sizing Cxy
+    # from the stale count returned a CrossSpecData whose Cxy was smaller than
+    # its own Pxy (silently dropping the last channel's coherence).
+    ch_all = np.arange(np.shape(Pxy_av)[0])
     Cxy = np.zeros([len(ch_all),len(ch_all),len(Pxy_av[0,0,:])])
     for ch_in in ch_all:
         for ch_out in ch_all:

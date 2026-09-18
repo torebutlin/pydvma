@@ -36,6 +36,19 @@ export interface ExportSet {
   setId: number;
   axis: Float64Array;
   columns: RealColumn[] | ComplexColumn[];
+  /**
+   * Per-column calibration factors, aligned with `columns`. Feeds the CSV
+   * header only — the DATA stays raw, exactly as pydvma writes it. Absent or
+   * short entries render as `1` (identity), matching
+   * `pydvma.file._column_calibration`.
+   */
+  calFactors?: readonly number[];
+  /**
+   * Per-column engineering units, aligned with `columns`. Also header-only;
+   * an absent entry renders as `'-'` rather than asserting a unit nobody
+   * stated.
+   */
+  units?: readonly string[];
 }
 
 /** The three pydvma data-list kinds CSV / Matlab export understands. */
@@ -115,6 +128,44 @@ export function fmtImag(x: number): string {
 }
 
 /**
+ * Format one calibration factor for the CSV header exactly as Python's
+ * `'{:.12g}'.format(x)` does — the JS twin of `pydvma.file.format_cal_factor`.
+ *
+ * This has to be byte-exact, not merely close: the header is part of the file
+ * the browser and pydvma must both produce identically, and it is the line a
+ * script parses to recover engineering units. `%.12g` semantics, which
+ * `Number.toPrecision` alone does NOT give:
+ *   - 12 SIGNIFICANT digits;
+ *   - exponential form when the decimal exponent is < -4 or >= 12 (JS switches
+ *     at < -6, so the -5/-6 band has to be forced by hand);
+ *   - trailing zeros — and a trailing '.' — stripped from the mantissa;
+ *   - a two-digit, always-signed exponent (`1e-05`, not JS's `1e-5`).
+ *
+ * A non-finite factor renders as `'1'`, the identity — never `NaN` into a
+ * header. Pinned against the Python side by the shared known-answer vectors
+ * (`CAL_FACTOR_FORMAT_VECTORS`) in `tests/export/data.test.ts`.
+ */
+export function fmtCalFactor(x: number): string {
+  if (!Number.isFinite(x)) return '1';
+  if (x === 0) return Object.is(x, -0) ? '-0' : '0';   // %g keeps the sign of -0
+  const exp = Math.floor(Math.log10(Math.abs(x)));
+  // Recompute from the rounded representation: log10 can land a hair under an
+  // exact power of ten (log10(1e-5) is exact here, but 1e21-style values are
+  // not), and %g decides on the exponent of the ROUNDED value.
+  const rounded = Number(x.toPrecision(12));
+  const e = rounded === 0 ? exp : Math.floor(Math.log10(Math.abs(rounded)));
+  const strip = (m: string): string =>
+    (m.indexOf('.') >= 0 ? m.replace(/0+$/, '').replace(/\.$/, '') : m);
+  if (e < -4 || e >= 12) {
+    const [mant, ex] = rounded.toExponential(11).split('e');
+    const sign = ex.startsWith('-') ? '-' : '+';
+    return `${strip(mant)}e${sign}${ex.replace(/^[+-]/, '').padStart(2, '0')}`;
+  }
+  // Fixed notation with (12 - 1 - e) fractional digits, then zeros stripped.
+  return strip(rounded.toFixed(Math.max(0, Math.min(100, 11 - e))));
+}
+
+/**
  * numpy's savetxt complex cell: ` (RE±IMj)` — a LEADING SPACE, the pair
  * wrapped in parens, `RE` via {@link fmtReal} and `IM` via {@link fmtImag}.
  */
@@ -123,9 +174,44 @@ export function fmtComplex(re: number, im: number): string {
 }
 
 /**
- * Build a CSV string reproducing pydvma `export_to_csv` exactly: the first
- * column is set[0]'s axis, then EVERY set's data columns are appended in load
- * order (comma-delimited, no header, RAW values). For `'time'` every cell is
+ * The commented metadata block `export_to_csv` puts above its data rows —
+ * the JS twin of `pydvma.file._csv_header`, byte-for-byte.
+ *
+ * WHY IT EXISTS. The data rows are RAW: pydvma stores time series in volts
+ * and converts to engineering units at display time by multiplying each
+ * channel by its `channel_cal_factors` entry. A CSV of just the numbers
+ * therefore disagrees with what the user read off the screen, with nothing in
+ * the file to explain the difference. Keeping the export raw is deliberate;
+ * leaving it unlabelled was not. Each line is prefixed `'# '` exactly as
+ * `np.savetxt(header=...)` does, so the numeric rows below are unchanged and
+ * `np.loadtxt` / `pandas.read_csv(comment='#')` skip it by default.
+ */
+export function buildCsvHeader(kind: ExportKind, sets: ExportSet[]): string {
+  const factors: string[] = [];
+  const units: string[] = [];
+  for (const s of sets) {
+    for (let c = 0; c < s.columns.length; c++) {
+      const f = s.calFactors?.[c];
+      factors.push(fmtCalFactor(typeof f === 'number' ? f : 1));
+      const u = s.units?.[c];
+      units.push(typeof u === 'string' && u.length > 0 ? u : '-');
+    }
+  }
+  const axisUnit = kind === 'time' ? 's' : 'Hz';
+  return [
+    '# pydvma export: RAW data, calibration NOT applied.',
+    `# Column 1 is the shared axis (${axisUnit}); the rest are data columns.`,
+    '# Multiply data column k by cal_factors[k] for engineering units.',
+    `# cal_factors: ${factors.join(',')}`,
+    `# units: ${units.join(',')}`,
+  ].join('\n') + '\n';
+}
+
+/**
+ * Build a CSV string reproducing pydvma `export_to_csv` exactly: a commented
+ * calibration header (see {@link buildCsvHeader}), then set[0]'s axis as the
+ * first column and EVERY set's data columns appended in load order
+ * (comma-delimited, RAW values). For `'time'` every cell is
  * real (`%.18e`); for `'freq'`/`'tf'` the whole array is complex (numpy dtype
  * promotion), so the axis renders complex-with-zero-imaginary too.
  *
@@ -157,7 +243,7 @@ export function buildCsv(kind: ExportKind, sets: ExportSet[]): string {
     }
     lines.push(cells.join(','));
   }
-  return lines.join('\n') + '\n';
+  return buildCsvHeader(kind, sets) + lines.join('\n') + '\n';
 }
 
 /** Kind → filename suffix, in pydvma data-list order (time, freq, tf). */

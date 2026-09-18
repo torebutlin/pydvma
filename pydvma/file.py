@@ -225,18 +225,24 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
             N = len(time_data.time_axis)
             T = np.max([time_data.time_axis[-1]*N/(N-1),T])
             fs = np.max([1/np.mean(np.diff(time_data.time_axis)),fs])
-            n_time += time_data.settings.channels
+            # COLUMN COUNT COMES FROM THE ARRAY, never settings.channels:
+            # `use_output_as_ch0` PREPENDS the drive column to `time_data`
+            # without bumping `settings.channels`, so trusting the setting
+            # silently dropped the last measured channel from the export.
+            n_time += time_data.time_data.shape[1]
         
         t=np.arange(0,T,1/fs)
         time_data_all = np.zeros((len(t),n_time))
         counter = -1
         for time_data in dataset.time_data_list:
-            for i in range(time_data.settings.channels):
+            for i in range(time_data.time_data.shape[1]):
                 counter += 1
                 time_data_all[:,counter] = np.interp(t,time_data.time_axis,time_data.time_data[:,i],right=0)
                 
         data_matlab['time_axis_all'] = np.transpose(np.atleast_2d(t))
         data_matlab['time_data_all'] = time_data_all
+        # The columns above are RAW (volts); these say how to calibrate them.
+        _attach_matlab_calibration(data_matlab, 'time', dataset.time_data_list)
 
     
 
@@ -266,6 +272,7 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
         
         data_matlab['freq_axis_all'] = np.transpose(np.atleast_2d(f))
         data_matlab['freq_data_all'] = freq_data_all
+        _attach_matlab_calibration(data_matlab, 'freq', dataset.freq_data_list)
         
  
 
@@ -295,6 +302,9 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
         
         data_matlab['tf_axis_all'] = np.transpose(np.atleast_2d(f))
         data_matlab['tf_data_all'] = tf_data_all
+        # TF factors are the cal RATIO cal[out]/cal[in] per output column,
+        # and the units the matching 'out/in' strings.
+        _attach_matlab_calibration(data_matlab, 'tf', dataset.tf_data_list)
         
 
     
@@ -361,13 +371,17 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
             N = len(time_data.time_axis)
             T = np.max([time_data.time_axis[-1]*N/(N-1),T])
             fs = np.max([1/np.mean(np.diff(time_data.time_axis)),fs])
-            n_time += time_data.settings.channels
+            # COLUMN COUNT COMES FROM THE ARRAY, never settings.channels:
+            # `use_output_as_ch0` PREPENDS the drive column to `time_data`
+            # without bumping `settings.channels`, so trusting the setting
+            # silently dropped the last measured channel from the export.
+            n_time += time_data.time_data.shape[1]
         
         t=np.arange(0,T,1/fs)
         time_data_all = np.zeros((len(t),n_time))
         counter = -1
         for time_data in dataset.time_data_list:
-            for i in range(time_data.settings.channels):
+            for i in range(time_data.time_data.shape[1]):
                 counter += 1
                 time_data_all[:,counter] = np.interp(t,time_data.time_axis,time_data.time_data[:,i],right=0)
                 
@@ -493,6 +507,143 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
     return filename
 
 
+#%% CALIBRATION METADATA FOR THE RAW-DATA EXPORTS
+def _column_calibration(data_list):
+    """Per-column calibration factors and units for a CSV/Matlab export.
+
+    The CSV and Matlab exporters write the stored arrays VERBATIM — in volts,
+    with no calibration applied — which is the right default for a raw-data
+    export but leaves the file unable to say so. This returns what the header
+    needs to close that gap: one ``(cal_factor, unit)`` pair per exported
+    column, in the same order the exporters emit them, so a reader can
+    recover engineering units by multiplying column *k* by ``cal_factors[k]``.
+
+    The AXIS column is not included — it is time in seconds or frequency in
+    hertz and carries no calibration.
+
+    Column counts come from each item's ARRAY, never ``settings.channels``:
+    ``use_output_as_ch0`` prepends the drive column without bumping the
+    setting. A short or absent ``channel_cal_factors`` pads with 1.0 (the
+    identity, matching every constructor's default) and an absent unit
+    renders as ``'-'`` rather than asserting a unit nobody stated.
+
+    Args:
+        data_list: A TimeDataList, FreqDataList or TfDataList.
+
+    Returns a ``(cal_factors, units)`` pair of equal-length lists.
+    """
+    attr = {'TimeDataList': 'time_data',
+            'FreqDataList': 'freq_data',
+            'TfDataList': 'tf_data'}.get(data_list.__class__.__name__)
+    cal_factors = []
+    units = []
+    if attr is None:
+        return cal_factors, units
+    for item in data_list:
+        n_cols = np.shape(getattr(item, attr))[1]
+        factors = getattr(item, 'channel_cal_factors', None)
+        item_units = getattr(item, 'units', None)
+        for c in range(n_cols):
+            f = 1.0
+            if factors is not None and c < len(factors):
+                try:
+                    f = float(factors[c])
+                except (TypeError, ValueError):
+                    f = 1.0
+            cal_factors.append(f)
+            u = '-'
+            if item_units is not None and c < len(item_units):
+                u = str(item_units[c])
+            units.append(u)
+    return cal_factors, units
+
+
+def _attach_matlab_calibration(data_matlab, prefix, data_list):
+    """Add ``<prefix>_cal_factors`` / ``<prefix>_units`` to a Matlab export.
+
+    The exported arrays are the stored ones — RAW, in volts, with no
+    calibration applied — so the file needs somewhere to state the factor
+    that turns each column into engineering units. These two extra keys are
+    that place: ``<prefix>_cal_factors`` is a column vector aligned with the
+    data columns of ``<prefix>_data_all``, and ``<prefix>_units`` the
+    matching cell array of unit strings (``'-'`` where none was recorded).
+
+    Purely ADDITIVE — every key the exporter already wrote is untouched, so
+    existing MATLAB scripts keep working and only gain the metadata.
+    """
+    cal_factors, units = _column_calibration(data_list)
+    if not cal_factors:
+        return
+    data_matlab[prefix + '_cal_factors'] = np.transpose(
+        np.atleast_2d(np.asarray(cal_factors, dtype=float)))
+    data_matlab[prefix + '_units'] = np.array(units, dtype=object)
+
+
+def format_cal_factor(value):
+    """Render one calibration factor for a CSV header, as ``'%.12g'``.
+
+    Shared format, not a local choice: the browser UI writes byte-identical
+    CSVs (``webui/src/lib/export/data.ts``), so both sides must render these
+    numbers the same way. ``%.12g`` is short enough to read, round-trips every
+    realistic factor, and its C semantics (exponential below 1e-4 or at/above
+    12 significant digits, trailing zeros stripped) are reproducible in
+    JavaScript — the JS twin is ``fmtCalFactor``, pinned against this one by
+    the known-answer vectors in ``CAL_FACTOR_FORMAT_VECTORS``.
+
+    A non-finite factor renders as ``'1'``: the identity, matching how every
+    consumer already treats an unusable factor, rather than writing a ``nan``
+    into a header a script may parse.
+    """
+    v = float(value)
+    if not np.isfinite(v):
+        return '1'
+    return '{:.12g}'.format(v)
+
+
+#: Known-answer vectors pinning `format_cal_factor` and its JavaScript twin
+#: `fmtCalFactor` to the same output. Mirrored verbatim in
+#: `webui/tests/export/data.test.ts`; a change here must change both.
+CAL_FACTOR_FORMAT_VECTORS = (
+    (1.0, '1'),
+    (10.0, '10'),
+    (0.5, '0.5'),
+    (-0.5, '-0.5'),
+    (1000.0, '1000'),
+    (0.001, '0.001'),
+    (1e-05, '1e-05'),
+    (1.5e-07, '1.5e-07'),
+    (123456789012.0, '123456789012'),
+    (1234567890123.0, '1.23456789012e+12'),
+    (1.0 / 3.0, '0.333333333333'),
+    (2.0 / 3.0, '0.666666666667'),
+    (0.0001, '0.0001'),
+    (1e+16, '1e+16'),
+)
+
+
+def _csv_header(data_list):
+    """The comment block `export_to_csv` prefixes to its data rows.
+
+    Written through ``np.savetxt(header=...)``, so every line comes out
+    prefixed with ``'# '`` and the numeric rows below are byte-identical to
+    what the exporter has always produced — ``np.loadtxt`` / ``np.genfromtxt``
+    skip it by default, and ``pandas.read_csv(..., comment='#')`` does too.
+
+    It states three things the bare numbers could not: that the values are
+    RAW (uncalibrated), the per-column factor that converts each to
+    engineering units, and the unit that factor lands in.
+    """
+    cal_factors, units = _column_calibration(data_list)
+    axis_unit = 's' if data_list.__class__.__name__ == 'TimeDataList' else 'Hz'
+    return '\n'.join([
+        'pydvma export: RAW data, calibration NOT applied.',
+        'Column 1 is the shared axis ({}); the rest are data columns.'.format(axis_unit),
+        'Multiply data column k by cal_factors[k] for engineering units.',
+        'cal_factors: ' + ','.join(format_cal_factor(f) for f in cal_factors),
+        'units: ' + ','.join(units),
+    ])
+
+
 def export_to_csv(data_list, parent=None, filename=None, overwrite_without_prompt=False):
     '''
     Exports data to file 'filename.csv', or provides dialog if no
@@ -555,8 +706,11 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
     if not filename.endswith('.csv'):
         filename += '.csv'
         
-    # Actually save!
-    np.savetxt(filename, darray, delimiter=",")
+    # Actually save! The header names the per-column calibration the data
+    # rows deliberately do NOT carry (see `_csv_header`); numpy prefixes it
+    # with '# ', so the numeric rows are unchanged and every standard reader
+    # skips it.
+    np.savetxt(filename, darray, delimiter=",", header=_csv_header(data_list))
     print("Data saved as %s" % filename)
 
     return filename

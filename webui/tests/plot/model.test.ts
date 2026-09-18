@@ -59,7 +59,7 @@ test('frequency PSD: y = 10·log10(psd) with (Nc, Nf) layout', () => {
   }];
   const m = buildPlotModel({ view: 'frequency', freqMode: 'psd', sets, visible: [vis(0, 1, 'on')] });
   expect(Array.from(m.lines[0].y)).toEqual([10 * Math.log10(1), 10 * Math.log10(1000)]);
-  expect(m.yLabel).toBe('PSD (dB)');
+  expect(m.yLabel).toBe('Power spectrum (dB)');
 });
 
 // ── CSD pair (round-5 item 7) ──────────────────────────────────────────────
@@ -88,6 +88,69 @@ test('csd: the pair line is carried on the Y channel (X channel draws nothing)',
     visible: [vis(0, 0, 'on')],                    // only the X channel visible
   });
   expect(m.lines).toHaveLength(0);                 // no Y channel visible ⇒ no pair line
+});
+
+// ── CSD calibration ────────────────────────────────────────────────────────
+// |S_xy| carries unit_i·unit_j, so it scales by cal[i]·cal[j]: the coherence
+// under the root is dimensionless and each auto-power brings one cal². The
+// bare COHERENCE is a normalised ratio and must stay cal-INVARIANT — that is
+// the distinction these three tests pin.
+
+test('csd: |S_xy| scales by cal[i]·cal[j]', () => {
+  const sets = csdSet();
+  sets[0].calFactors = [10, 0.5];                  // cal[0]=10, cal[1]=0.5 ⇒ ×5
+  const m = buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets,
+    visible: [vis(0, 1, 'on')],
+  });
+  expect(m.lines[0].y[0]).toBeCloseTo(Math.sqrt(18) * 5, 9);
+});
+
+test('csd: the pair unit is unit_i·unit_j, squared when both match', () => {
+  const mixed = csdSet();
+  mixed[0].units = ['N', 'm/s²'];
+  expect(buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets: mixed, visible: [vis(0, 1, 'on')],
+  }).yLabel).toBe('CSD |S_xy| (N·(m/s²))');
+
+  const same = csdSet();
+  same[0].units = ['Pa', 'Pa'];
+  expect(buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets: same, visible: [vis(0, 1, 'on')],
+  }).yLabel).toBe('CSD |S_xy| (Pa²)');
+
+  // One channel uncalibrated ('V' is the no-unit default) ⇒ plain fallback.
+  const partial = csdSet();
+  partial[0].units = ['N', 'V'];
+  expect(buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets: partial, visible: [vis(0, 1, 'on')],
+  }).yLabel).toBe('CSD |S_xy|');
+});
+
+test('csd: bare COHERENCE (no auto-power slice) is cal-invariant', () => {
+  // Without the sibling `psd` slice the branch plots sqrt(Cxy) — a normalised
+  // ratio, dimensionless, so NO cal factor may touch it however the channels
+  // are calibrated.
+  const bare = (cal?: number[]): SetArrays[] => [{
+    setId: 0,
+    csd: { axis: Float64Array.from([0]), data: decodeArray(real([2, 2, 1], [1, 0.5, 0.5, 1])), i: 0, j: 1 },
+    ...(cal ? { calFactors: cal } : {}),
+  }];
+  const plain = buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets: bare(), visible: [vis(0, 1, 'on')],
+  });
+  const calibrated = buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets: bare([10, 0.5]), visible: [vis(0, 1, 'on')],
+  });
+  expect(plain.lines[0].y[0]).toBeCloseTo(Math.sqrt(0.5), 9);
+  expect(Array.from(calibrated.lines[0].y)).toEqual(Array.from(plain.lines[0].y));
+});
+
+test('csd: absent calFactors leave |S_xy| untouched (identity default)', () => {
+  const m = buildPlotModel({
+    view: 'frequency', freqMode: 'csd', yScale: 'lin', sets: csdSet(), visible: [vis(0, 1, 'on')],
+  });
+  expect(m.lines[0].y[0]).toBeCloseTo(Math.sqrt(18), 9);
 });
 
 test('csd: default pair (i,j absent) falls back to 0,1; dB by default', () => {
@@ -210,16 +273,27 @@ test('unit labels: frequency magnitude carries the unit before (dB) / in linear'
     .toBe('Magnitude (Pa)');
 });
 
-test('unit labels: PSD is power, so the unit reads as unit²/Hz', () => {
+// UNITS HONESTY: the quantity behind this view is scipy's
+// `scaling='spectrum'` (mean-square amplitude per bin, unit²) — NOT a
+// spectral density, so it must NOT be labelled unit²/Hz. Its level scales
+// with Δf, which a density's does not. The Live scope's PSD is a separate,
+// genuine density and keeps its unit²/Hz.
+test('unit labels: the power spectrum reads as unit², never unit²/Hz', () => {
   const sets: SetArrays[] = [{
     setId: 0,
     psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([1, 2], [10, 100])) },
     units: ['m/s²'],
   }];
   expect(buildPlotModel({ view: 'frequency', freqMode: 'psd', sets, visible: [vis(0, 0, 'on')] }).yLabel)
-    .toBe('PSD ((m/s²)²/Hz, dB)');
+    .toBe('Power spectrum ((m/s²)², dB)');
   expect(buildPlotModel({ view: 'frequency', freqMode: 'psd', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] }).yLabel)
-    .toBe('PSD ((m/s²)²/Hz)');
+    .toBe('Power spectrum ((m/s²)²)');
+  for (const yScale of ['lin', 'log'] as const) {
+    const label = buildPlotModel({
+      view: 'frequency', freqMode: 'psd', yScale, sets, visible: [vis(0, 0, 'on')],
+    }).yLabel;
+    expect(label).not.toContain('/Hz');
+  }
 });
 
 test('unit labels: TF magnitude reads as the out/in ratio unit', () => {
@@ -720,14 +794,14 @@ test('frequency FFT yScale="log" (default) is unchanged: dB + (dB) label', () =>
   expect(m.yLabel).toBe('Magnitude (dB)');
 });
 
-test('frequency PSD yScale="lin": linear psd, no 10·log10, label drops dB', () => {
+test('frequency power spectrum yScale="lin": linear psd, no 10·log10, label drops dB', () => {
   const sets: SetArrays[] = [{
     setId: 0,
     psd: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 2], [10, 100, 1, 1000])) },
   }];
   const m = buildPlotModel({ view: 'frequency', freqMode: 'psd', yScale: 'lin', sets, visible: [vis(0, 1, 'on')] });
   expect(Array.from(m.lines[0].y)).toEqual([1, 1000]);       // raw psd, ch1
-  expect(m.yLabel).toBe('PSD');
+  expect(m.yLabel).toBe('Power spectrum');
 });
 
 test('tf mag yScale="lin": y = |H| (linear), label is |H|', () => {
@@ -940,7 +1014,7 @@ test('PSD ignores the x(iω) display power (value and label unchanged)', () => {
     view: 'frequency', freqMode: 'psd', sets, visible: [vis(0, 0, 'on')], yScale: 'lin',
   });
   expect(Array.from(m.lines[0].y)).toEqual([10, 100]);   // no iω scaling
-  expect(m.yLabel).toBe('PSD (m²/Hz)');                  // unit not differentiated
+  expect(m.yLabel).toBe('Power spectrum (m²)');          // unit not differentiated
 });
 
 test('TF magnitude honours x(iω) power and the ratio unit follows the numerator', () => {

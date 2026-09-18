@@ -123,12 +123,26 @@ and a session survives the tab closing or the serve process crashing. See
 - **Export Matlab** writes a `.mat` file. The MATLAB bytes are built by
   SciPy (`scipy.io.savemat`) in the engine, so the structure matches the
   Python [`export_to_matlab`](../user-guide/import-export.md#export-to-matlab).
+  Alongside the data arrays it writes `time_cal_factors` / `time_units`
+  (and the `freq_` / `tf_` equivalents).
 - **Export CSV** writes CSV files (one per data kind — time / freq / tf).
   The CSV is generated to **byte-for-byte match** pydvma's
   [`export_to_csv`](../user-guide/import-export.md#export-to-csv):
-  `%.18e` formatting, complex values written as `(RE±IMj)`, and **raw**
-  (uncalibrated) values, so a browser export and a Python export of the
-  same data are identical.
+  a commented calibration header, then `%.18e` formatting with complex
+  values written as `(RE±IMj)` — so a browser export and a Python export
+  of the same data are identical.
+
+!!! warning "Data exports are raw — the metadata says so"
+    Both write the **stored arrays in volts, with no calibration
+    applied**, which is deliberate: this is the measurement, not a view
+    of it. So the numbers here will differ from the ones on screen by
+    each channel's calibration factor. Both formats now carry that
+    factor: the CSV in a `#`-commented header (which `np.loadtxt` and
+    `pandas.read_csv(..., comment='#')` skip), the `.mat` in the extra
+    keys above. See
+    [Calibration and the data exports](calibration.md#calibration-and-the-data-exports).
+    **Save Dataset** and **figure exports** are calibrated, so use
+    `.dvma` when you want the data *and* its calibration in one file.
 
 !!! info "Schema parity"
     Both the `.mat` and CSV exporters reproduce the Python file schemas

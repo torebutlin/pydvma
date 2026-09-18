@@ -962,7 +962,12 @@ class CrossSpecData():
             `N_frames`, `overlap` actually used.
         units (list[str] or None): Engineering units per channel.
         channel_cal_factors (np.ndarray): Per-channel multipliers from
-            volts to engineering units.
+            volts to engineering units. Defaults to all-ones. These are
+            AMPLITUDE factors per channel, so a consumer combines them for
+            the quantity it wants: the auto-spectrum ``Pxy[i, i]`` is a
+            power and takes ``cal[i]**2``, while the cross-spectrum
+            ``Pxy[i, j]`` takes ``cal[i] * cal[j]``. ``Cxy`` is a
+            normalised ratio and is calibration-INVARIANT — never scale it.
         id_link: `unique_id` of the source TimeData (or list of
             ids when averaged across a TimeDataList).
         unique_id (uuid.UUID): This item's own identity, minted at
@@ -974,6 +979,13 @@ class CrossSpecData():
     '''
 
     def __init__(self,freq_axis,Pxy,Cxy,settings,units=None,channel_cal_factors=None,id_link=None,test_name=None):
+        
+        # Default to identity, like TimeData / FreqData / TfData. Leaving this
+        # as None made CrossSpecData the one exception to "an absent
+        # calibration is all-ones", so a consumer indexing the array had to
+        # special-case this class alone.
+        if channel_cal_factors is None:
+            channel_cal_factors = np.ones(np.shape(Pxy)[0])
         
         self.freq_axis = freq_axis
         self.Pxy = Pxy

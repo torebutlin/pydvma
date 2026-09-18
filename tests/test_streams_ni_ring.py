@@ -360,12 +360,14 @@ class TestFrozenReuseSignature:
                 self.audio_stream = None
                 self._open_signature = None
                 self._requested_fs = None
+                self._requested_vmax = None
             self._alloc_buffers()
 
         def fake_init_stream(self, settings, _input_=True, _output_=False):
             calls.append('build')
             self.audio_stream = object()
             self._requested_fs = float(settings.fs)
+            self._requested_vmax = float(settings.VmaxNI)
             self._open_signature = streams._ni_settings_signature(settings)
 
         def fake_end_stream(self):
@@ -458,3 +460,53 @@ def test_osc_samples_seen_counts_delivered_chunks():
     assert rec.osc_samples_seen == 3 * CHUNK
     rec._process_chunk(_chunk(4).T)
     assert rec.osc_samples_seen == 4 * CHUNK
+
+
+    def test_requested_vmax_after_coercion_still_reuses(self, stubbed_ni):
+        """Same contract as the rate, for the VOLTAGE RANGE.
+
+        DAQmx coerces ``min_val``/``max_val`` up to the nearest supported
+        range (a 6212 asked for +/-1 V runs at +/-2 V), and
+        `_build_and_start_ai_task` now adopts the real range so the clip
+        warning and the live level meters judge against the rail the hardware
+        is actually using. Without the probe below, a caller re-asking for the
+        original VmaxNI would fail the signature and rebuild the task on every
+        capture — repeating the ~2 s IEPE warmup.
+        """
+        s = self._settings(1.0)
+        s.VmaxNI = 1.0
+        streams.start_stream(s)
+        rec = streams.REC_NI
+        rec._requested_vmax = 1.0        # simulate the DAQmx range coercion
+        rec.settings.VmaxNI = 2.0
+        rec._open_signature = streams._ni_settings_signature(rec.settings)
+        again = self._settings(1.0)
+        again.VmaxNI = 1.0               # asks for +/-1 V again
+        streams.start_stream(again)
+        assert stubbed_ni == ['build']
+        assert again.VmaxNI == 2.0       # adopted, so downstream reads the real rail
+
+    def test_rate_and_vmax_coerced_together_still_reuses(self, stubbed_ni):
+        """Both coerced at once still describes ONE hardware config."""
+        s = self._settings(1.0)
+        s.VmaxNI = 1.0
+        streams.start_stream(s)
+        rec = streams.REC_NI
+        rec._requested_fs, rec._requested_vmax = 5000.0, 1.0
+        rec.settings.fs, rec.settings.VmaxNI = 5120.0, 5.0
+        rec._open_signature = streams._ni_settings_signature(rec.settings)
+        again = self._settings(1.0)
+        again.VmaxNI = 1.0
+        streams.start_stream(again)
+        assert stubbed_ni == ['build']
+        assert (again.fs, again.VmaxNI) == (5120.0, 5.0)
+
+    def test_a_genuinely_different_vmax_rebuilds(self, stubbed_ni):
+        """The probe must not turn every range change into a false reuse."""
+        s = self._settings(1.0)
+        s.VmaxNI = 5.0
+        streams.start_stream(s)
+        again = self._settings(1.0)
+        again.VmaxNI = 10.0              # a real change, not a coercion
+        streams.start_stream(again)
+        assert stubbed_ni == ['build', 'end', 'build']

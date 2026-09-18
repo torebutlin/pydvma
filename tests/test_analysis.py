@@ -1602,3 +1602,69 @@ class TestCalculateTfAveragedEnsembleGuards:
         tf = analysis.calculate_tf_averaged(tdl, ch_in=0)
         assert len(tf.freq_axis) == 18000 // 2 + 1
         assert np.all(np.isfinite(tf.tf_coherence))
+
+
+def test_cross_spectra_averaged_sizes_cxy_from_the_array():
+    """`use_output_as_ch0` prepends the drive column without bumping
+    `settings.channels`, and Cxy used to be sized from that stale count — so
+    the returned CrossSpecData carried a Cxy smaller than its own Pxy, with
+    the last channel's coherence silently missing."""
+    fs, n = 1000, 1024
+    settings = options.MySettings(fs=fs, channels=2, use_output_as_ch0=True)
+    time_axis = np.arange(n) / fs
+    tdl = datastructure.TimeDataList()
+    for k in range(2):
+        tdl.append(datastructure.TimeData(
+            time_axis,
+            np.random.default_rng(k).standard_normal((n, 3)),   # 3 stored columns
+            settings,
+        ))
+    cs = analysis.calculate_cross_spectra_averaged(tdl)
+    assert cs.Pxy.shape[:2] == (3, 3)
+    assert cs.Cxy.shape[:2] == cs.Pxy.shape[:2]
+    assert len(cs.channel_cal_factors) == 3
+
+
+def test_cross_spec_data_defaults_cal_factors_to_ones():
+    """Every other data class defaults an absent calibration to all-ones;
+    CrossSpecData used to keep the None, making it the one class a consumer
+    had to special-case."""
+    settings = options.MySettings(fs=100, channels=3)
+    cs = datastructure.CrossSpecData(
+        np.array([0.0, 1.0]), np.zeros((3, 3, 2)), np.zeros((3, 3, 2)), settings)
+    np.testing.assert_array_equal(cs.channel_cal_factors, np.ones(3))
+
+
+def test_cross_spectrum_diagonal_is_a_spectrum_not_a_density():
+    """Pins the SCALING the webui's axis label depends on.
+
+    `calculate_cross_spectrum_matrix` normalises by `1/(sum(w))**2` — scipy's
+    ``scaling='spectrum'``: mean-square amplitude per bin, in unit**2. It is
+    NOT a density in unit**2/Hz, and the difference is not cosmetic: a
+    spectrum's level scales with the resolution, so a noise floor read off it
+    changes when N_frames changes. The frequency view labels it accordingly
+    ("Power spectrum (unit^2)"); the Live scope's PSD is a separate, genuine
+    density.
+    """
+    fs, n = 1000, 8192
+    amp, f0 = 2.0, 100.0
+    t = np.arange(n) / fs
+    settings = options.MySettings(fs=fs, channels=1)
+    td = datastructure.TimeData(
+        t, (amp * np.sin(2 * np.pi * f0 * t)).reshape(-1, 1), settings)
+    cs = analysis.calculate_cross_spectrum_matrix(td, window='hann', N_frames=8)
+    peak = np.real(np.einsum('iif->if', cs.Pxy))[0].max()
+    # Spectrum scaling puts a sine's peak at A^2/2 (a density would divide
+    # that by the window's noise-equivalent bandwidth).
+    assert peak == pytest.approx(amp ** 2 / 2, rel=0.02)
+
+    # And the noise floor tracks the resolution, which is the user-visible
+    # tell that this is not a density.
+    noise = np.random.default_rng(1).standard_normal((n, 1))
+    tdn = datastructure.TimeData(t, noise, settings)
+    levels = []
+    for n_frames in (2, 16):
+        csn = analysis.calculate_cross_spectrum_matrix(
+            tdn, window='hann', N_frames=n_frames)
+        levels.append(np.median(np.real(np.einsum('iif->if', csn.Pxy))[0]))
+    assert levels[1] > 3 * levels[0]

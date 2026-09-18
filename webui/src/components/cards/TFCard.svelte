@@ -26,6 +26,8 @@
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
   import { distributeByDf } from '../../lib/analysis/resolutionControl';
   import ResolutionControl from '../ResolutionControl.svelte';
+  import BestMatchConfirmDialog from '../BestMatchConfirmDialog.svelte';
+  import type { BestMatchInfo } from '../../lib/analysis/actions';
 
   let {
     viewState,
@@ -152,9 +154,32 @@
 
   /** Best-Match reference channel (a source channel of the reference set). */
   let refCh = $state(1);
+
+  /**
+   * Live confirm prompt for Best Match. Non-null while the dialog is open;
+   * `resolve` is the promise `actions.calcBestMatch` is awaiting, so the
+   * rescale does not start until an answer arrives (and never starts on
+   * Cancel). Same resolver-in-state shape App uses for the sonogram prompt.
+   */
+  let bmAsk = $state<{ info: BestMatchInfo; resolve: (ok: boolean) => void } | null>(null);
+
+  /** Hand the dialog the sets at stake; resolves false on cancel/dismissal. */
+  function askBestMatch(info: BestMatchInfo): Promise<boolean> {
+    bmAsk?.resolve(false);                 // a second ask supersedes the first
+    return new Promise<boolean>((resolve) => { bmAsk = { info, resolve }; });
+  }
+
+  function answerBestMatch(ok: boolean): void {
+    const pending = bmAsk;
+    bmAsk = null;
+    pending?.resolve(ok);
+  }
+
   function bestMatch() {
     if (repId == null) return;
-    actions.calcBestMatch(repId, refCh, $sharedFreq ?? null);
+    // Gated: Best Match overwrites `channel_cal_factors`, which is where a
+    // transducer calibration lives too — see `calcBestMatch`.
+    actions.calcBestMatch(repId, refCh, $sharedFreq ?? null, askBestMatch);
   }
 </script>
 
@@ -288,6 +313,14 @@
     <button class="btn indigo" disabled={$busy || $setsView.length === 0} onclick={calc}>Calc TF</button>
   </div>
 </section>
+
+{#if bmAsk}
+  <BestMatchConfirmDialog
+    names={bmAsk.info.names}
+    calibrated={bmAsk.info.calibrated}
+    onchoose={answerBestMatch}
+  />
+{/if}
 
 <style>
   .grp.dim .grp-ctl > *:not(.switch) {
