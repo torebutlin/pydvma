@@ -8,6 +8,82 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-09-18 (remote Linux session, later): **the CALIBRATION
+chain was reviewed end to end (ADC → save/export) and nine gaps are
+fixed, committed and merged to master.** The architecture came out
+sound — data stored in volts, calibration a non-destructive DISPLAY
+multiplier, `channel_sensitivities`/`VmaxSC`/cal factors all defaulting
+to 1, NI reading true volts via DAQmx, the three-state soundcard
+honesty model (characterised / needs gain / uncalibrated) — so these
+are gaps on top of a good design, not a rewrite. **Wrong numbers or
+labels:** (1) **CSD applied NO cal** — it plots `|S_xy| =
+sqrt(Cxy·Pxx_i·Pxx_j)`, which carries `unit_i·unit_j`, while its
+comment still assumed the view showed coherence; now `×cal[i]·cal[j]`
+with the pair unit on the axis, and **coherence stays cal-INVARIANT**
+(the no-auto-power fallback and the TF coherence overlay both take no
+factor — Tore's explicit steer, and now tested). (2) **the frequency
+view's "PSD (unit²/Hz)" is a power SPECTRUM in unit²** —
+`Pxy *= 1/(Σw)²` is scipy `scaling='spectrum'`; verified by a sine
+peaking at A²/2 and by the ratio to `welch(scaling='density')` being
+exactly the ENBW, and the floor measurably moves with Δf (2.29e-4 →
+1.53e-3 as Δf goes 0.092 → 0.519 Hz). Axis now reads **"Power spectrum
+(unit²)"**; the mode button keeps the familiar PSD name with a hover
+note. The **Live scope's** PSD (`lib/audio/fft.ts`) IS a genuine
+density and is untouched — two quantities, one three-letter name. (3)
+**Best Match overwrote a physical calibration and kept the unit
+label**; it now confirms first (`BestMatchConfirmDialog`, naming the
+sets with a non-identity cal) and its toast carries an **Undo**
+restoring the previous factors AND units. (4) **the modal fit read the
+RAW TF**, so stored modal constants were V/V while the plot was in
+engineering units — it now gets the same `cal[out]/cal[in]` ratio
+(`fitCalRatios`), which ALSO closes a latent display mismatch (the fit
+pseudo-set carries no calFactors, so a raw fit drew its recon at the
+raw level over a calibrated line). fn/ζ/Q are scale-invariant,
+unchanged. **Best Match deliberately still reads RAW** — its factors
+are written back AS the calibration, so calibrated input would fold it
+in twice. **Silent data loss:** (5) `export_to_matlab` (+ the jwlogger
+twin) iterated `settings.channels`, which `use_output_as_ch0` never
+bumps when it prepends the drive column, so a 3-column capture
+exported 2 and **dropped the last measured channel**; (6)
+`calculate_cross_spectra_averaged` sized Cxy from the same stale count
+(Pxy (3,3,F) vs Cxy (2,2,F)); (7) `CrossSpecData` was the one class not
+defaulting its cal factors to ones. **Honest exports:** (8) CSV and
+Matlab stay RAW by design but now CARRY the calibration — CSV gains a
+`#`-commented header with per-column `cal_factors`/`units` (np.loadtxt
+and pandas skip it, numeric rows unchanged), Matlab gains
+`time/freq/tf_cal_factors` + `_units`. The browser writes
+**byte-identical** files: `file.format_cal_factor` and its JS twin
+`fmtCalFactor` implement `%.12g` and are pinned by shared
+known-answer vectors (14 in `CAL_FACTOR_FORMAT_VECTORS`, mirrored in
+`tests/export/data.test.ts`) plus a 4009-value Python fuzz and a
+full-file byte-compare, both run green this session. (9) **the coerced
+NI AI RANGE was never read back** though fs is — DAQmx rounds
+min_val/max_val UP to the nearest supported range (a 9234 is fixed at
+±5 V and accepts any VmaxNI silently; a 6212 asked for ±1 V runs at
+±2 V), so `settings.VmaxNI` could name a rail the hardware wasn't
+using and BOTH the clip warning (0.95·VmaxNI) and the new live level
+meters judged against it — false alarms only, never a missed clip,
+since coercion is always upward. Now adopted from
+`task.ai_channels[0].ai_max` (verified against nidaqmx 1.6.0: its own
+docstring says it "returns the coerced maximum value"), and the
+stream-reuse probe in `start_stream` now covers a coerced RANGE as well
+as a coerced RATE so a repeat request still reuses the task instead of
+repeating the ~2 s IEPE warmup. Suites: **pytest 1204 passed** with the
+same 5 pre-existing `sounddevice`-absent failures as HEAD (4 in
+`test_capture_rate`, 1 in `test_serve_protocol`), **vitest 1178/1
+skipped**, **check 0/0 (190 files)**, **mkdocs --strict clean**. Docs
+updated (calibration.md gained "Calibration and the data exports" +
+"Best match replaces the calibration"; analysis.md's stale "CSD
+currently shows coherence / pair selector not shipped" admonition
+replaced with what PSD and CSD actually plot; export.md warns that the
+data exports are raw). **Seven follow-ups are written up in TODO.md
+under "Calibration round follow-ups"** — the biggest being **no
+browser route to `VmaxSC` or `channel_sensitivities`** (a SOUNDCARD gap
+only: NI bridge captures are already volts and a loaded `.dvma` carries
+its own cal either way) and **`'V'` still reading as "no unit"** so a
+real NI volts capture and an uncalibrated FS-units one label
+identically.
+
 As of 2026-09-18 (remote Linux session): **both open Dependabot
 security advisories are cleared in `webui/package-lock.json` — dev
 dependencies only, and the built bundle is byte-identical across the
