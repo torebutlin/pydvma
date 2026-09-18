@@ -88,7 +88,7 @@ test('the top-bar Save Figure opens the Export stage from any view', async ({ pa
  * `actions.exportMat` are in place. The card's execute buttons are scoped to
  * the Export region so the ribbon's own "Export" stage button never matches.
  */
-test('Export stage → Export CSV downloads a raw-values .csv (first line is real %.18e)', async ({
+test('Export stage → Export CSV downloads a raw-values .csv (calibration header + real %.18e rows)', async ({
   page,
 }) => {
   await openExport(page);
@@ -113,12 +113,25 @@ test('Export stage → Export CSV downloads a raw-values .csv (first line is rea
   expect(names.some((n) => /-freq\.csv$/.test(n))).toBe(true);
   expect(names.some((n) => /-tf\.csv$/.test(n))).toBe(true);
 
-  // The time CSV: axis starts at 0; every cell is numpy's %.18e (no complex parens).
+  // The time CSV opens with the CALIBRATION HEADER: these exports are raw
+  // (uncalibrated) volts by design, so the file has to say so and carry the
+  // per-column factor that converts to engineering units. Every header line is
+  // '#'-prefixed exactly as np.savetxt writes it, so np.loadtxt and
+  // pandas.read_csv(comment='#') skip it — see `buildCsvHeader`.
   const timeDl = downloads.find((d) => /-time\.csv$/.test(d.suggestedFilename()))!;
   const text = readFileSync((await timeDl.path())!, 'utf8');
-  const firstLine = text.split('\n')[0];
-  expect(firstLine.startsWith('0.000000000000000000e+00,')).toBe(true);
-  expect(firstLine).toMatch(/^-?\d\.\d{18}e[+-]\d{2}(,-?\d\.\d{18}e[+-]\d{2})+$/);
+  const lines = text.split('\n');
+  expect(lines[0]).toBe('# pydvma export: RAW data, calibration NOT applied.');
+  const header = lines.filter((l) => l.startsWith('#'));
+  expect(header.some((l) => l.startsWith('# cal_factors: '))).toBe(true);
+  expect(header.some((l) => l.startsWith('# units: '))).toBe(true);
+
+  // The DATA rows are unchanged: axis starts at 0, every cell numpy's %.18e
+  // (no complex parens). This is the byte-for-byte contract with
+  // `pydvma.file.export_to_csv`, which the header must not disturb.
+  const dataLines = lines.filter((l) => l && !l.startsWith('#'));
+  expect(dataLines[0].startsWith('0.000000000000000000e+00,')).toBe(true);
+  expect(dataLines[0]).toMatch(/^-?\d\.\d{18}e[+-]\d{2}(,-?\d\.\d{18}e[+-]\d{2})+$/);
 });
 
 test.describe('@engine', () => {
