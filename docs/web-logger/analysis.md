@@ -48,23 +48,54 @@ The **Time** stage inspects the raw time series.
 
 The **Frequency** stage computes spectra.
 
-- **quantity** — **FFT**, **PSD**, or **CSD**.
+- **quantity** — **FFT**, **Power**, **PSD**, or **CSD**.
 - **window** — **hann** (default), **hamming**, **flattop**, or **none**.
-- **averaging** — shown for **PSD** and **CSD** only (a single FFT is not
-  averaged); this is the resolution control described
+- **averaging** — shown for **Power**, **PSD** and **CSD** only (a single
+  FFT is not averaged); this is the resolution control described
   [below](#resolution-and-averaging).
-- **Calc FFT / Calc PSD / Calc CSD** computes the result. Once a result
-  exists it recomputes live as you change settings.
+- **Calc FFT / Calc power / Calc PSD / Calc CSD** computes the result. Once
+  a result exists it recomputes live as you change settings.
 
-!!! info "What PSD and CSD actually plot"
-    **PSD** is a power **spectrum**, not a spectral **density**: each bin
-    holds the mean-square amplitude in that bin, in `unit²` (scipy's
-    `scaling='spectrum'`), which is why the axis reads e.g.
-    `Power spectrum ((m/s²)²)`. Its level therefore scales with Δf — halve
-    the resolution and a broadband floor moves — so do not read a
-    `unit²/Hz` figure off it. (The Live scope's PSD *is* a true density in
-    `unit²/Hz`; the two are different quantities with the same
-    three-letter name.)
+!!! info "Power vs PSD — which to read"
+    **Power** and **PSD** are the same computation shown as two different
+    quantities, and picking the right one matters.
+
+    **Power** is the power **spectrum**: each bin holds the mean-square
+    amplitude in that bin, in `unit²` (scipy's `scaling='spectrum'`), so
+    the axis reads e.g. `Power spectrum ((m/s²)²)`. A discrete tone reads
+    correctly here — a sine of amplitude $A$ peaks at
+
+    $$
+    \frac{A^{2}}{2}
+    $$
+
+    whatever the resolution. Broadband noise does not: its level scales
+    with Δf, because each bin collects a slice of the band.
+
+    **PSD** is the power spectral **density**, `unit²/Hz`, obtained by
+    dividing by the analysis window's effective noise bandwidth
+
+    $$
+    \mathrm{ENBW} = f_s\,\frac{\sum_k w_k^{2}}{\left(\sum_k w_k\right)^{2}}
+    \quad\text{[Hz]},
+    \qquad
+    S_{xx}(f) = \frac{P_{xx}(f)}{\mathrm{ENBW}}.
+    $$
+
+    A broadband floor read off this does **not** move when you change the
+    resolution, which is why noise floors are quoted per hertz. A discrete
+    tone, conversely, has no meaningful density — its apparent level there
+    depends on the window.
+
+    (The Live scope's PSD is a third, separate density computed in the
+    browser from the live stream; it has always been a true density.)
+
+    !!! warning "Changed from earlier releases"
+        This view used to offer one mode, called **PSD**, whose axis said
+        `unit²/Hz` but whose numbers were the power **spectrum** — so a
+        noise floor read off it was overstated by the ENBW and moved with
+        the resolution. A saved file that selected that mode reopens on
+        **Power**, which is the quantity it was showing.
 
     **CSD** plots the cross-spectrum magnitude `|S_xy|` for the selected
     channel pair, reconstructed as `sqrt(Cxy · Pxx_i · Pxx_j)`. It carries
@@ -295,7 +326,7 @@ Common controls:
 
 ## Resolution and averaging
 
-The **PSD**, **CSD** and averaged-**TF** cards share one resolution
+The **Power**, **PSD**, **CSD** and averaged-**TF** cards share one resolution
 control. It exposes four *coupled* numbers — change any one and the rest
 update — plus a slider:
 
@@ -376,11 +407,11 @@ covers the data area).
   data landing in a view (a capture, a loaded file, a first-time
   calculation) re-fits y — and x too if the view was empty — and
   switching a view's units (dB ↔ linear, magnitude ↔ phase,
-  FFT ↔ PSD) drops the stale y range. A zoom you made deliberately is
+  FFT ↔ Power ↔ PSD) drops the stale y range. A zoom you made deliberately is
   respected otherwise: recomputing an existing result keeps your
   window, and an x-only box zoom no longer quietly freezes y.
 - Axis-scale toggles appear where they apply: **x lin/log** on frequency
-  and TF views, **y dB/lin** on magnitude/PSD views, and on the
+  and TF views, **y dB/lin** on magnitude / power / PSD views, and on the
   **Sonogram** a frequency-axis **y lin/log** plus a heat **colour
   dB/lin** switch (see the Sonogram section).
 - The expander opens a popover with **manual axis limits** (applied live)

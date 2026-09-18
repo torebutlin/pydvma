@@ -14,6 +14,12 @@ export default defineConfig({
     // built-in sine source (used by live.spec.ts); harmless for other specs.
     launchOptions: {
       args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+      // Escape hatch for an environment whose Chromium is NOT the build
+      // `@playwright/test` pins and which cannot reach the download CDN (a
+      // sandboxed container behind a proxy): point `PW_CHROMIUM` at an
+      // already-installed binary. Unset everywhere else, so CI and a normal
+      // dev machine keep the pinned browser.
+      ...(process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {}),
     },
   },
   webServer: [

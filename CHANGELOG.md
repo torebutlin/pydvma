@@ -3,6 +3,65 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+Follow-ups from the 2.5.0 calibration review — the questions it left
+open, answered and built.
+
+### Added
+
+- **A genuine power spectral density in the Frequency stage.** The
+  quantity buttons are now **FFT / Power / PSD / CSD**: *Power* is the
+  power spectrum in `unit²` (what the old *PSD* button actually plotted,
+  correctly labelled since 2.5.0) and *PSD* is the density in
+  `unit²/Hz`, obtained by dividing by the analysis window's effective
+  noise bandwidth. Both come from ONE compute, so switching between them
+  costs nothing. Read a discrete tone off *Power* (a sine of amplitude A
+  peaks at A²/2, whatever the resolution); read a broadband noise floor
+  off *PSD*, whose level does not move with Δf. A file that saved the
+  old *PSD* mode reopens on *Power* — the id is deliberately not reused,
+  so no saved view silently changes meaning.
+- **`CrossSpecData.enbw_hz`** records the window's effective noise
+  bandwidth, `fs * sum(w**2) / sum(w)**2`, so `Pxy / enbw_hz` is a
+  spectral density. Computed by `calculate_cross_spectrum_matrix`,
+  inherited by `calculate_cross_spectra_averaged`, round-tripped through
+  `.dvma`, and returned by the engine op `calc_psd` as `enbw`.
+- **A full-scale field for an uncharacterised soundcard.** Setup → full
+  → levels now offers **full scale (for calibrated volts)** on an
+  interface pydvma has no profile for — there is no published input
+  level to derive `VmaxSC` from, so the measured volts-peak is entered
+  directly. Without it such a device stays at the uncalibrated 1.0
+  placeholder and captures are full-scale fractions wearing a `V` label.
+  The Calibrate dialog follows suit: on such a set the sensitivity reads
+  `FS / (unit)` rather than `V / (unit)`, with a note saying why.
+- **`analysis.wrap_unit`** (and its JavaScript twin), which parenthesises
+  a compound unit before composing it. A transfer function of an
+  accelerometer over a force gauge now stores `(m/s2)/N` instead of the
+  readable-two-ways `m/s2/N`; the CSV and MATLAB export headers follow.
+  Idempotent, and pinned across the two languages by the shared
+  `UNIT_WRAP_VECTORS`. Files written earlier keep the string they were
+  written with — it cannot be split back into numerator and denominator
+  without guessing.
+
+### Changed
+
+- **A capture that really is in volts now says so on the axis.** `'V'`
+  is the placeholder every uncalibrated channel wears, so it has always
+  read as "no unit" and left the axis a plain *Amplitude*. Where the
+  capture settings show the samples genuinely ARE volts — an NI AI task,
+  or a soundcard whose `VmaxSC` has been characterised — the axis now
+  reads *Amplitude (V)*, and the derived views follow (`V²`, `V²/Hz`,
+  `V/V`). Judged from the stored settings, so a reopened file and a
+  python-written one answer the same way.
+- **Changing a calibration under an existing modal fit now warns.** The
+  fit reads the calibrated transfer function, so its stored modal
+  constants are in the units in force when it ran; re-calibrating leaves
+  them quietly in the old ones. A toast names the set and says what is
+  still valid (frequencies, damping and Q are scale-invariant). It warns
+  rather than re-fitting, because an automatic re-fit would discard
+  rejected modes and hand refinements without being asked. A Best match
+  run raises one warning for the whole run, and its Undo raises none.
+
 ## 2.5.0 — 2026-09-18
 
 An end-to-end review of the calibration chain, from the ADC to save and

@@ -26,9 +26,15 @@ appears on hover). The dialog shows **one row per channel**:
 - a **unit** dropdown — **V**, **m/s²**, **N**, **Pa** (any existing
   non-standard unit on the channel is preserved as an option).
 
-Enter the sensitivity in **volts per unit** (V/eu). The denominator
-label next to the box reflects the chosen unit (e.g. `V / (m/s²)`).
-Click **Apply** to scale the data, or **Cancel** (or Esc) to dismiss.
+Enter the sensitivity in **volts per unit** (V/eu). The label next to
+the box reflects the chosen unit (e.g. `V / (m/s²)`). Click **Apply** to
+scale the data, or **Cancel** (or Esc) to dismiss.
+
+On a device whose voltage scale pydvma does **not** know, the stored
+samples are not volts but full-scale fractions, and the dialog says so:
+the label reads `FS / (m/s²)` and a note appears above the rows. Enter
+the sensitivity against full scale there, or state the full scale in
+Setup first (below) and work in volts as usual.
 
 !!! tip "Reading sensitivity off the cal sheet"
     Manufacturers usually print sensitivity in **mV per unit** — divide
@@ -64,6 +70,16 @@ The factor and unit propagate the way they do in pydvma:
   overlays the measured curve at the same level. Natural frequencies,
   damping ratios and Q are scale-invariant either way.
 
+!!! warning "Re-calibrating under an existing fit"
+    Because the fit reads the *calibrated* transfer function, its stored
+    modal constants are in the units that were in force when it ran.
+    Change the calibration afterwards and they are quietly in the old
+    ones — so the logger raises a toast naming the set. Re-fit to bring
+    the constants up to date; the frequencies, damping ratios and Q
+    values are unaffected and need nothing. The fit is never re-run
+    automatically, because that would silently discard rejected modes and
+    refinements you may have made by hand.
+
 All of this is saved in the [`.dvma` file](dvma-format.md) as the
 `channel_cal_factors` and `units` fields, so calibrated data reopens
 calibrated — in the web logger, in Python, or in the JupyterLite
@@ -96,6 +112,16 @@ honest rather than silent, both now carry the calibration as metadata:
 - the **Matlab** file gains `time_cal_factors` / `time_units` (and the
   `freq_` and `tf_` equivalents) alongside the arrays it always wrote.
   Nothing existing changed, so older scripts keep working.
+
+!!! note "Compound units are parenthesised"
+    A transfer function's unit is built as `output/input`, which is
+    ambiguous when the numerator is itself a ratio: `m/s2/N` reads
+    equally as `(m/s2)/N` (what it means) and `m/(s2·N)` (what it does
+    not). pydvma therefore wraps a compound unit before composing it, so
+    an accelerance comes out as `(m/s2)/N`. Files written before this
+    change keep the string they were written with — it cannot be split
+    back into numerator and denominator without guessing, so it is left
+    alone rather than rewritten.
 
 ## Best match replaces the calibration
 
@@ -151,8 +177,27 @@ fixed when you record; the second is the per-channel sensitivity above,
 which you can set or correct at any time. Changing the gain on the
 hardware invalidates the first stage, so re-state it when you do.
 
-There is no Setup control for this — set it in `MySettings`, or in the
-JSON you hand to `pydvma-serve --settings` (see
+### Setting it from the app
+
+Open **Setup → full**, section **levels**. What appears depends on what
+pydvma knows about the selected interface:
+
+- a **characterised** interface with a preamp shows **input gain (for
+  calibrated volts)** plus its input mode, and previews the full scale
+  the pair implies;
+- a **fixed-gain** interface (e.g. the ESI U24 XL) has nothing to state,
+  so it shows its constant full scale as a note;
+- an **uncharacterised** interface — no profile, so no published input
+  level to derive from — shows **full scale (for calibrated volts)**,
+  where you enter the measured volts-peak directly. Leave it blank and
+  captures stay in full-scale units; fill it in and the device's
+  calibration line in Setup changes to say so.
+
+Measure that number once with a known source —
+`dvma.verify_input_scaling()` does it against a signal generator — or
+take it from the maker's spec. It can also be set outside the app as
+`VmaxSC` in `MySettings`, or in the JSON you hand to
+`pydvma-serve --settings` (see
 [From the Qt logger](migration.md#pre-seeding-settings-with-settings)).
 
 ## Best Match scaling writes here too

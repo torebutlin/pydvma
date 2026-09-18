@@ -19,92 +19,69 @@ The calibration assessment of 2026-09-18 landed nine fixes (CSD
 calibration, the power-spectrum relabel, the Best Match prompt + Undo,
 the calibrated modal fit, the NI range read-back, the two stale
 channel-count bugs, `CrossSpecData`'s cal default, and calibration
-metadata in the CSV/Matlab exports). What it deliberately did NOT do
-splits into QUERIES — decisions for Tore, each with a recommendation,
-nothing to build until answered — and WORK, which is scoped and just
-waiting for a slot.
+metadata in the CSV/Matlab exports). It then left five QUERIES for Tore
+and three pieces of scoped WORK. **The queries are answered and built**
+(2026-09-18, second session) — kept below as the record of what was
+decided and why, since each records a design rule worth not
+re-litigating. W1 landed with Q1; W2 and W3 remain open.
 
-#### Queries (need a decision, not a coder)
+#### Queries — ANSWERED and DONE
 
-- **Q1. Rename the `psd` mode to "Power spectrum"?** The quantity is a
-  power SPECTRUM in `unit²` (scipy `scaling='spectrum'`), not a
-  spectral density, and the axis now says so. But the mode is still
-  called "PSD" in the button, in `Calc PSD`, in the store's mode id
-  (`'psd'`), and throughout the docs — and "PSD" literally expands to
-  "power spectral density", so the name still asserts the thing the
-  axis just corrected. Three options:
-    - **(a) leave it** — the axis carries the truth, the button has a
-      hover note, and "PSD" is the vocabulary the old logger and the
-      whole lab use. Zero churn, residual name/quantity mismatch.
-    - **(b) rename the user-facing words only** — button → "Power",
-      `Calc PSD` → `Calc power`, docs vocabulary follows; keep the
-      internal mode id `'psd'` so stores, saved view state and tests
-      are untouched. Half a day, no file-format or state impact.
-    - **(c) rename everything including the mode id** `'psd'` →
-      `'power'`. Cleanest, but the id appears in persisted view state,
-      so it needs a migration for older `.dvma` files.
-  **Recommendation: (b).** It removes the assertion that misleads
-  without touching anything persisted. Deliberately NOT bundled with a
-  real density view — dividing by the noise-equivalent bandwidth to
-  match the Live scope is a separate FEATURE (see W1), and conflating
-  the two is how the mislabel happened in the first place.
-
-- **Q2. Should a genuine volts capture label its axis `(V)`?** Today
-  `'V'` is treated as "no unit", so an NI capture in real volts and an
-  uncalibrated soundcard capture in full-scale units both render
-  "Amplitude" with no unit — indistinguishable, though the bridge
-  already knows which is which (`inputVmaxIsVolts`, from
-  `serve._input_scale_fields`). Carrying that flag onto the set at
-  capture time would let a truly-volts set say `(V)` and leave the FS
-  case bare. **Recommendation: do it** — it is the distinction the
-  whole three-state calibration-status design exists to preserve, and
-  it currently stops at the axis. The only reason it is a query is that
-  it changes what every existing NI plot looks like.
-
-- **Q3. Where should an uncalibrated soundcard's `VmaxSC` be entered?**
-  A SOUNDCARD-only gap (a bridged NI capture is already volts; a loaded
-  `.dvma` carries its own calibration either way). Setup exposes
-  `input_gain_db`, which only helps on a device in
-  `_soundcard_specs.PROFILES` — there is nowhere to type the full-scale
-  voltage of an uncharacterised interface whose spec sheet you have,
-  and nowhere to enter per-channel sensitivities at capture time. Both
-  are already `MySettings` kwargs and already pass serve's `configure`
-  whitelist, so this is a UI question, not a plumbing one:
-    - **(a) a `VmaxSC` field in Setup-full**, shown when the status is
-      `uncalibrated`, using the advice string
-      `devices.calibration_status` already returns;
-    - **(b) leave capture-time alone** and fix the post-hoc Calibrate
-      dialog instead — it absorbs the scale correctly today, but its
-      field is labelled "sensitivity" in V/unit while the data is in FS
-      units, so the label should adapt to say which it wants;
-    - **(c) both.**
-  **Recommendation: (a) now, (b) regardless** — (b) is a labelling bug
-  whichever way (a) goes.
-
-- **Q4. Re-calibrating after a modal fit: warn, auto-refit, or ignore?**
-  The fit now runs on calibrated data, so its modal CONSTANTS belong to
-  the calibration in force when it ran; changing the calibration
-  afterwards neither re-fits nor says anything. Frequencies, damping
-  and Q are scale-invariant and unaffected, so this is
-  constants-only staleness. **Recommendation: warn** — a toast on
-  `setCalFactors` when a fit exists for that set. An auto-refit is
-  heavier and can change results the user did not ask to change.
-
-- **Q5. Parenthesise stored TF unit strings?** Python writes
-  `'m/s2/N'`, ambiguous between `(m/s²)/N` and `m/(s²·N)`. The webui
-  parenthesises compound units at DISPLAY time (`wrapUnit`), so this
-  only bites something reading the file directly. Changing
-  `_tf_units_from_source` alters strings in existing files, so it needs
-  a read-side normalisation too. **Recommendation: low priority** —
-  worth doing only if someone actually parses these outside pydvma.
+- ~~**Q1. Rename the `psd` mode?**~~ **DONE — option (c) plus W1, both
+  at once.** Tore's call was "do PSD properly": the frequency stage now
+  offers **FFT / Power / PSD / CSD**, where *Power* is the old quantity
+  under its right name (`unit²`) and *PSD* is a genuine density
+  (`unit²/Hz`). One `calc_psd` fills both, via the new
+  `CrossSpecData.enbw_hz`. The internal mode id moved too (`'psd'` →
+  `'power'`, `'density'` added) with `migrateFreqMode` handling saved
+  view state; the density deliberately did NOT inherit the `'psd'` id,
+  which would have silently changed what an existing file shows. Note
+  the rename and the new quantity shipped together here, having been
+  scoped apart in Q1/W1 — the reason for keeping them apart was that
+  conflating them is how the original mislabel happened, and that risk
+  is answered by the two modes being separately named and separately
+  tested, not by shipping them in separate releases.
+- ~~**Q2. Should a genuine volts capture label its axis `(V)`?**~~
+  **DONE — yes.** `calibration.capturedInVolts` judges it from the
+  STORED capture settings (`device_driver == 'nidaq'`, or a `VmaxSC`
+  moved off 1.0) rather than from live acquisition state, which is the
+  one change from the query's sketch: it means a reopened file and a
+  python-written one answer identically, with nothing extra persisted.
+  `SetArrays.unitsAreVolts` lets `'V'` count as a real unit for that set
+  alone. NB a consequence worth knowing: an uncalibrated NI TF axis now
+  reads `|H| (V/V)` where it used to read `|H|`.
+- ~~**Q3. Where should an uncalibrated soundcard's `VmaxSC` be
+  entered?**~~ **DONE — (c), both.** Setup → full → levels gains a
+  **full scale (for calibrated volts)** field, shown exactly when
+  `devices.calibration_status` says `uncalibrated`, wired to
+  `MySettings.VmaxSC`; and the Calibrate dialog's sensitivity label now
+  reads `FS / (unit)` with an explanatory note when the samples are not
+  volts. A stated `input_gain_db` still wins — the two are never sent
+  together, since the server derives `VmaxSC` from the gain and would
+  override an explicit one.
+- ~~**Q4. Re-calibrating after a modal fit: warn, auto-refit, or
+  ignore?**~~ **DONE — warn.** `setCalFactors` raises a toast naming the
+  set when a fit exists for it, saying the mode constants are in the
+  previous units and that fn / ζ / Q are unaffected. Best Match passes
+  `warnFit: false` per set and raises ONE warning for the whole run; its
+  Undo raises none, since restoring the old factors puts the fit back in
+  the units it was made in. A no-op re-apply of identical factors is
+  silent.
+- ~~**Q5. Parenthesise stored TF unit strings?**~~ **DONE for new
+  writes; old files deliberately left alone.** `analysis.wrap_unit` (+
+  the JS twin in `lib/model/calibration.ts`, pinned by the shared
+  `UNIT_WRAP_VECTORS`) wraps a compound unit before composing, so a TF
+  stores `(m/s2)/N`. The query's "needs a read-side normalisation too"
+  turned out to be unbuildable and unnecessary: `'m/s2/N'` cannot be
+  split back into numerator and denominator without guessing, and no
+  display path reads a stored TF unit string anyway — the webui builds
+  the ratio from the source channels' units, and an orphan TF shows no
+  ratio unit at all. So old files keep their strings and nothing
+  misreads them.
 
 #### Work (scoped, no decision needed)
 
-- **W1. A genuine density view.** Separate FEATURE, not a rename (see
-  Q1): divide the power spectrum by the noise-equivalent bandwidth so
-  the frequency view can offer a true `unit²/Hz` density matching the
-  Live scope's. Only worth building if someone needs to read a noise
-  floor in density units off the analysis view.
+- ~~**W1. A genuine density view.**~~ **DONE**, with Q1 above.
 - **W2. An ensemble ('across') TF displays with the OWNER set's cal
   factors** even though it averages several sets. Correct when the
   members share a calibration, misleading when they do not. Tied to the

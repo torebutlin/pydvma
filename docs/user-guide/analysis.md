@@ -165,13 +165,39 @@ cross_spec = dvma.calculate_cross_spectrum_matrix(
     overlap=0.5
 )
 
-# Access cross-spectral density matrix
+# Access the cross-spectrum matrix
 Pxy = cross_spec.Pxy  # Complex cross-spectrum [chan x chan x freq]
 Cxy = cross_spec.Cxy  # Coherence matrix
 
 # Auto-spectrum for channel 0
 P00 = cross_spec.Pxy[0, 0, :]
+
+# Effective noise bandwidth of the window, in Hz
+enbw = cross_spec.enbw_hz
 ```
+
+!!! info "`Pxy` is a spectrum, not a density"
+    `Pxy` uses scipy's `scaling='spectrum'`: each bin holds the
+    mean-square amplitude in that bin, in `unit**2`. Its level scales
+    with the frequency resolution, so a broadband noise floor read off it
+    moves when `N_frames` changes.
+
+    `enbw_hz` is the window's effective noise bandwidth,
+
+    $$
+    \mathrm{ENBW} = f_s\,\frac{\sum_k w_k^{2}}{\left(\sum_k w_k\right)^{2}}
+    \quad\text{[Hz]},
+    $$
+
+    and dividing by it converts the spectrum to a spectral **density** in
+    `unit**2/Hz`, whose level does not move with the resolution:
+
+    ```python
+    density = cross_spec.Pxy / cross_spec.enbw_hz
+    ```
+
+    Read a discrete tone off the spectrum (a sine of amplitude `A` peaks
+    at `A**2 / 2`); read a noise floor off the density.
 
 ### Cross-Spectrum Averaging
 
