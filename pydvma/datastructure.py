@@ -727,16 +727,16 @@ class DataSet():
         new_dataset.pydvma_version = self.pydvma_version
         return new_dataset
 
-    def save_data(self, filename=None, sets=None):
+    def save_data(self, filename=None, sets=None, overwrite_without_prompt=False):
         '''Save the DataSet to a file with `file.save_data`.
 
         Writes the ``.dvma`` container format, adding ``.dvma`` when the
         name ends in neither ``.dvma`` nor ``.npy``; a name ending in
         ``.npy`` writes the legacy pickle format instead. If the file
         already exists you are asked at the terminal whether to
-        overwrite it (``y`` overwrites; anything else cancels). This
-        method cannot skip that question: for an unattended save call
-        `file.save_data` with ``overwrite_without_prompt=True``.
+        overwrite it (``y`` overwrites; anything else cancels), unless
+        `overwrite_without_prompt` is True, which a scripted re-save
+        needs.
 
         Args:
             filename (str, optional): Output file name. If omitted, a Qt
@@ -746,12 +746,16 @@ class DataSet():
             sets (int or Iterable[int], optional): If given, saves
                 ``self.subset(sets)`` instead of the whole DataSet; see
                 `subset`. None (the default) saves everything.
+            overwrite_without_prompt (bool, optional): If True, overwrite
+                an existing file without asking. Default False.
 
         Returns:
             filename (str or None): The file written, or None if the save
                 was cancelled.
         '''
-        savename = file.save_data(self, filename=filename, overwrite_without_prompt=False, sets=sets)
+        savename = file.save_data(self, filename=filename,
+                                  overwrite_without_prompt=overwrite_without_prompt,
+                                  sets=sets)
         return savename
     
     def export_to_matlab(self, filename=None, overwrite_without_prompt=False):

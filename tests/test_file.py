@@ -277,6 +277,29 @@ class TestSaveDataSets:
         assert len(loaded.time_data_list) == 1
         assert loaded.time_data_list[0].test_name == 'set0'
 
+    def test_datasets_own_save_data_can_overwrite_without_prompt(self, tmp_path, monkeypatch):
+        """The method hard-coded ``overwrite_without_prompt=False``, so a
+        scripted re-save blocked on ``input()``. Any prompt now fails the
+        test instead of hanging it."""
+        def no_prompt(*args):
+            raise AssertionError('prompted: %r' % (args,))
+        monkeypatch.setattr('builtins.input', no_prompt)
+        ds = _make_multiset_dataset(n_sets=2)
+        target = str(tmp_path / 'resave.dvma')
+        ds.save_data(filename=target, sets=0, overwrite_without_prompt=True)
+        out = ds.save_data(filename=target, overwrite_without_prompt=True)
+        assert out == target
+        assert len(container.load(target).time_data_list) == 2
+
+    def test_datasets_own_save_data_still_prompts_by_default(self, tmp_path, monkeypatch):
+        ds = _make_multiset_dataset(n_sets=1)
+        target = str(tmp_path / 'resave.dvma')
+        ds.save_data(filename=target)
+        asked = []
+        monkeypatch.setattr('builtins.input', lambda q: asked.append(q) or 'n')
+        assert ds.save_data(filename=target) is None
+        assert len(asked) == 1
+
 
 class TestExportCalibrationMetadata:
     """The CSV and Matlab data exports write RAW (uncalibrated) arrays —
