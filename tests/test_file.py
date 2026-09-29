@@ -615,3 +615,46 @@ class TestNoFilenameDialog:
         _FakeQt(monkeypatch, answer='')
         assert _file_calls(tmp_path)[name]() is None
         assert list(tmp_path.iterdir()) == []
+
+
+class TestImportFromMatlabJwloggerFileChecks:
+    """`import_from_matlab_jwlogger` with no filename called
+    ``io.loadmat(None)`` and raised TypeError whatever its docstring said;
+    and a .mat written by pydvma's own `export_to_matlab` (no ``indata``,
+    no ``yspec``) imported as a silently EMPTY DataSet."""
+
+    def test_no_filename_without_qt_says_pass_a_filename(self, no_qt):
+        with pytest.raises(ImportError, match=r"filename='[^']*\.mat'"):
+            file.import_from_matlab_jwlogger()
+
+    def test_no_filename_with_qt_uses_the_dialog(self, tmp_path, monkeypatch):
+        y = np.column_stack([np.sin(np.arange(64) / 5.0), np.ones(64)])
+        path = TestImportFromMatlabJwloggerTime._jw_time_mat(tmp_path, y, fs=1000)
+        qt = _FakeQt(monkeypatch, answer=path)
+        loaded = file.import_from_matlab_jwlogger()
+        assert qt.calls == [('open', None, '*.mat')]
+        np.testing.assert_allclose(loaded.time_data_list[0].time_data, y)
+
+    def test_no_filename_cancelled_dialog_returns_none(self, monkeypatch):
+        _FakeQt(monkeypatch, answer='')
+        assert file.import_from_matlab_jwlogger() is None
+
+    def test_pydvma_export_is_refused_as_export_only(self, tmp_path):
+        ds = _make_multiset_dataset(n_sets=1)
+        path = file.export_to_matlab(ds, filename=str(tmp_path / 'own.mat'))
+        with pytest.raises(ValueError, match='export-only') as info:
+            file.import_from_matlab_jwlogger(path)
+        assert 'Only JW-logger .mat files can be imported' in str(info.value)
+
+    def test_load_data_refuses_a_pydvma_export_too(self, tmp_path):
+        ds = _make_multiset_dataset(n_sets=1)
+        path = file.export_to_matlab(ds, filename=str(tmp_path / 'own.mat'))
+        with pytest.raises(ValueError, match='export-only'):
+            file.load_data(path)
+
+    def test_unrelated_mat_is_refused(self, tmp_path):
+        path = str(tmp_path / 'other.mat')
+        sio.savemat(path, {'x': np.arange(3.0)})
+        with pytest.raises(ValueError,
+                           match='Only JW-logger .mat files can be imported'):
+            file.import_from_matlab_jwlogger(path)

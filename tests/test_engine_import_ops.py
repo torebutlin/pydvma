@@ -30,6 +30,7 @@ tempfile fix landed; their job is to keep passing once it did.
 import io
 
 import numpy as np
+import pytest
 import scipy.io
 
 from pydvma import container, datastructure, options
@@ -99,3 +100,22 @@ def test_mat_to_dvma_roundtrips(tmp_path, monkeypatch):
     td = ds.time_data_list[0]
     assert td.settings.fs == 100
     assert td.time_data.shape[0] == n
+
+
+def test_mat_to_dvma_refuses_a_pydvma_export(tmp_path, monkeypatch):
+    """The browser's .mat import goes through the same
+    ``import_from_matlab_jwlogger``, so a .mat written by pydvma's own
+    ``export_to_matlab`` is refused there too — not converted into an
+    empty .dvma that loads as nothing."""
+    from pydvma import datastructure, file, options
+    monkeypatch.chdir(tmp_path)
+    fs, n = 100.0, 64
+    td = datastructure.TimeData(np.arange(n) / fs, np.ones((n, 1)),
+                                options.MySettings(fs=fs, channels=1))
+    ds = datastructure.DataSet()
+    ds.add_to_dataset(td)
+    path = file.export_to_matlab(ds, filename=str(tmp_path / 'own.mat'))
+    with open(path, 'rb') as f:
+        mat_bytes = f.read()
+    with pytest.raises(ValueError, match='export-only'):
+        engine.mat_to_dvma(mat_bytes)

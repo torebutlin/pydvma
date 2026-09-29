@@ -103,7 +103,9 @@ def load_data(parent=None, filename=None):
       ``np.load(allow_pickle=True)``, and unpickling can execute
       arbitrary code, so only open legacy .npy files you or your lab
       created. `.dvma` files do not have this caveat.
-    - ``.mat`` (by extension) — JW-logger imports.
+    - ``.mat`` (by extension) — JW-logger imports only, via
+      `import_from_matlab_jwlogger`. The .mat that `export_to_matlab`
+      writes is export-only and raises ValueError.
 
     Args:
        parent (optional): Qt parent widget for the file dialog, used
@@ -118,7 +120,8 @@ def load_data(parent=None, filename=None):
 
     Raises:
        FileNotFoundError: If `filename` does not exist.
-       ValueError: If a ``.dvma`` file is not a valid container.
+       ValueError: If a ``.dvma`` file is not a valid container, or a
+           ``.mat`` file is not a JW-logger file.
        ImportError: If no filename is given and Qt is not installed.
     '''
     parent, filename = _positional_filename(parent, filename)
@@ -317,8 +320,10 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
     '''
     Exports a DataSet to 'filename.mat' for MATLAB.
 
-    The file loads directly in MATLAB as a set of arrays. The filename can
-    be given positionally, ``export_to_matlab(dataset, 'name.mat')``, or as
+    The file loads directly in MATLAB as a set of arrays. It is
+    export-only: pydvma cannot read it back (`load_data` refuses it), so
+    keep a `save_data` .dvma alongside it. The filename can be given
+    positionally, ``export_to_matlab(dataset, 'name.mat')``, or as
     ``filename=``; ``.mat`` is added if missing. With no filename a Qt file
     dialog asks for one; that needs ``qtpy`` and a Qt binding, which
     pydvma no longer installs.
@@ -877,13 +882,22 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
 
 
 #%% IMPORT FROM MATLAB JWLOGGER
+# Variables only `export_to_matlab` writes: they mark pydvma's own export.
+_PYDVMA_MATLAB_KEYS = ('time_data_all', 'freq_data_all', 'tf_data_all')
+
+
 def import_from_matlab_jwlogger(filename=None):
     '''
-    Imports dataset class from file 'filename.mat', or provides dialog if no
-    filename provided.
+    Imports a JW-logger .mat file (Jim Woodhouse's MATLAB data logger).
 
-    Saved file is compatible with Jim Woodhouse logger file format. The
-    conventions below were confirmed against the recovered MATLAB source
+    Only JW-logger files can be imported. The .mat that pydvma's own
+    `export_to_matlab` writes is export-only and is refused with a
+    ValueError, as is any other .mat with neither of the logger's
+    ``indata`` / ``yspec`` variables. With no filename a Qt file dialog
+    asks for one; that needs ``qtpy`` and a Qt binding, which pydvma no
+    longer installs.
+
+    The conventions below were confirmed against the recovered MATLAB source
     ("Data logger V2.9a": ``specmenu.m`` save path, ``avtflogpars.m``
     averaged-TF computation, ``dospec.m``):
 
@@ -921,10 +935,40 @@ def import_from_matlab_jwlogger(filename=None):
     channel — nothing is dropped).
 
     Args:
-       filename (str, optional): Input filename, dialog shown if not provided
+       filename (str or os.PathLike, optional): File to import. If
+           omitted, a file dialog is shown (needs Qt).
+
+    Returns:
+       dataset (DataSet or None): The imported data, or None if the
+           dialog was cancelled.
+
+    Raises:
+       ValueError: If the file is not a JW-logger .mat file, including a
+           .mat written by `export_to_matlab`.
+       ImportError: If no filename is given and Qt is not installed.
     '''
-    
+    if filename is None:
+        filename = _ask_filename('open', None, 'Open JW-logger file',
+                                 '*.mat', 'data.mat')
+        if filename is None:
+            return None
+
     d = io.loadmat(filename)
+    if 'indata' not in d and 'yspec' not in d:
+        # Without these the branches below all skip and the result is an
+        # EMPTY DataSet, silently. The browser's .mat import
+        # (`engine.mat_to_dvma`) comes through here too.
+        if any(k in d for k in _PYDVMA_MATLAB_KEYS):
+            raise ValueError(
+                "This .mat file was written by pydvma's export_to_matlab, "
+                "which is export-only (for MATLAB): pydvma cannot read it "
+                "back. Only JW-logger .mat files can be imported. To reload "
+                "the data, load a .dvma written by save_data instead.")
+        raise ValueError(
+            "Not a JW-logger .mat file: it has no 'indata' (time) or "
+            "'yspec' (spectrum or TF) variable. Only JW-logger .mat files "
+            "can be imported; the .mat that pydvma's export_to_matlab "
+            "writes is export-only.")
     dataset = datastructure.DataSet()
 
     # `freq` (the sample rate) is a (1,1) MATLAB scalar array — unwrap once.
