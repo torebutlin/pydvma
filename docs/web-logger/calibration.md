@@ -60,8 +60,9 @@ Each channel keeps a **cal factor**, the reciprocal of the sensitivity
 (a 0.1 V/unit sensor has a factor of 10). The
 [`.dvma` file](dvma-format.md) stores the factors and units, so
 calibrated data reopens calibrated, in the browser, served locally, in
-Python and in JupyterLite. CSV and MATLAB exports write the values as
-recorded; see [What each output holds](export.md#what-each-output-holds).
+Python and in JupyterLite. CSV and MATLAB exports, from the app or from
+Python, write the values as recorded and the factors and units beside
+them; see [What each output holds](export.md#what-each-output-holds).
 
 **From Python**, pass `channel_sensitivities` in `MySettings` when you
 record with `dvma.log_data`, or set the factors afterwards. See

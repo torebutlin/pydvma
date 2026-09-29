@@ -25,7 +25,7 @@ files.
 | Sonograms | if you choose | no | no |
 | Modal fit | yes | no | no |
 | Channel labels and analysis settings | yes | no | no |
-| Calibration factors and units | yes | no | in a `#` header |
+| Calibration factors and units | yes | as extra variables | in a `#` header |
 | Opens again in the web logger | yes | no | no |
 
 Spectra and transfer functions are included only if you have computed
@@ -35,11 +35,11 @@ cross-spectra.
 
 **Export Matlab** and **Export CSV** write the values as recorded, not
 as plotted, so they differ from the screen by each channel's
-[calibration factor](calibration.md). To keep the factors in a file, use
-CSV, which records them in its header, or `.dvma`, which stores them
-with the data. The app's `.mat` does not carry them. Python's
-`export_to_matlab` does, as `time_cal_factors` and `time_units`, with
-`freq_` and `tf_` equivalents.
+[calibration factor](calibration.md). Both files record the factors
+beside the values: the CSV in its header, and the `.mat` as
+`time_cal_factors` and `time_units`, with `freq_` and `tf_` equivalents.
+The app and Python's `export_to_matlab` write the same variables. A
+`.dvma` file stores the factors with the data.
 
 ## Save the session
 
@@ -139,6 +139,12 @@ column per channel, with every measurement's columns side by side:
 | `time_axis_all`, `time_data_all` | time in seconds, and the time series |
 | `freq_axis_all`, `freq_data_all` | frequency in Hz, and the complex FFTs |
 | `tf_axis_all`, `tf_data_all` | frequency in Hz, and the complex transfer functions |
+| `time_cal_factors`, `time_units` (and `freq_`, `tf_`) | each data column's calibration factor and unit |
+
+The data values are raw. To get engineering units, multiply column *k*
+of `time_data_all` by `time_cal_factors(k)`, and likewise for the other
+kinds. A channel with no unit shows `-`, and a transfer function column
+has the ratio of its output and input factors, as in the CSV below.
 
 Measurements with different sample rates or lengths are interpolated
 onto one common axis: the finest resolution and the widest span, with
@@ -177,7 +183,8 @@ while the analysis engine starts.
 
 **From Python**, use `dvma.export_to_matlab(dataset, filename='data')`
 and `dvma.export_to_csv(dataset.time_data_list, filename='time')`. For
-the same data the CSV is identical to the app's. See
+the same data the CSV is identical to the app's, and so is the `.mat`,
+apart from the creation time in its header. See
 [Import and export](../user-guide/import-export.md).
 
 ## Export figures
