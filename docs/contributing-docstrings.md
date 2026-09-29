@@ -1,287 +1,160 @@
 # Docstring Style Guide
 
-This guide explains how to write docstrings for pydvma that will automatically appear in the documentation.
+The API reference is generated from the docstrings in `pydvma/*.py` by
+**mkdocstrings**. What you write in a docstring is what users read, so
+the format matters: a docstring the parser cannot read fails the
+documentation build.
 
-## Overview
+## Format: Google style
 
-pydvma uses **mkdocstrings** to automatically extract documentation from Python docstrings. When you update docstrings in the source code, the changes automatically appear in the online documentation.
+Every docstring uses Google style, with `Args:`, `Returns:` and so on.
+Two things that look like docstrings but do not render properly:
 
-## Docstring Format
+- **NumPy style** (`Parameters` over a row of dashes). The parser does
+  not read it, so the whole docstring appears as one block of prose with
+  no parameter table.
+- **Sphinx roles** such as `:func:` and `:class:`. They appear
+  literally. Use plain backticks: `` `calculate_tf` ``.
 
-The codebase currently uses a simple format. You can use either:
-
-1. **Simple Args format** (current style in most of the codebase)
-2. **Google style** (recommended for new docstrings)
-
-Both will be parsed correctly by mkdocstrings.
-
-## Simple Args Format (Current)
-
-```python
-def calculate_fft(time_data, time_range=None, window=None):
-    '''
-    Calculate FFT of time domain data.
-
-    Args:
-        time_data (<TimeData> object): time series data
-        time_range: 2x1 numpy array to specify data segment to use
-        window (str): window function name ('hann', 'blackman', etc.)
-
-    Returns:
-        <FreqData> object containing frequency domain data
-    '''
-    # Implementation...
-```
-
-## Google Style Format (Recommended for New Code)
+Start with a one-line summary in the imperative mood, then a blank line,
+then any further detail. Do not open with a label such as "Note:" or
+"Provenance:": the first line is the summary shown in the page.
 
 ```python
 def calculate_fft(time_data, time_range=None, window=None):
-    """Calculate FFT of time domain data.
+    """Calculate the FFT of a single-capture TimeData.
 
-    Computes the Fast Fourier Transform of the input time series data,
-    with optional windowing and time range selection.
+    The frequency resolution is the reciprocal of the duration of the
+    selected segment.
 
     Args:
-        time_data (TimeData): Time series data to transform
-        time_range (array-like, optional): 2-element array [start, end]
-            specifying the time segment to use. If None, uses all data.
-        window (str, optional): Window function name. Options include
-            'hann', 'hamming', 'blackman', or None for rectangular window.
-            Defaults to None.
+        time_data (TimeData): The capture to transform.
+        time_range (list or np.ndarray, optional): Two-element
+            ``[start, stop]`` in seconds. None (the default) uses the
+            whole record.
+        window (str, optional): A ``scipy.signal.windows`` name such as
+            ``'hann'``, or None for a rectangular window.
 
     Returns:
-        FreqData: Frequency domain representation of the input data,
-            containing the complex spectrum and frequency axis.
+        freq_data (FreqData): The complex one-sided spectrum and its
+            frequency axis.
 
     Examples:
         >>> freq_data = calculate_fft(time_data, window='hann')
-        >>> magnitude = np.abs(freq_data.freq_data)
-
-    Notes:
-        The frequency resolution is determined by the duration of the
-        selected time segment: Δf = 1/duration
     """
-    # Implementation...
 ```
 
-## Class Docstrings
+pydvma's functions carry no type annotations, so the parser takes the
+types from the docstring: **every `Args:` and `Returns:` entry needs its
+type in parentheses**, as `name (type): description`. That applies to a
+single return value too. Write `freq_data (FreqData): ...`; `FreqData: ...`
+is read as a name with no type and warns. For several return values, give
+one such line per value. Real exemplars to copy from:
+
+- `pydvma.analysis.calculate_damping_from_sono`: `Args:` and a
+  multi-value `Returns:`.
+- `pydvma.datastructure.TimeData`: a class with an `Attributes:` list.
+- `pydvma.options.MySettings`: a long class docstring that states its
+  conventions up front.
+
+## Class docstrings
+
+Describe what the object holds and give an `Attributes:` list. Describe
+any constructor arguments that are not also attributes in the same
+docstring.
 
 ```python
 class TimeData:
-    """Container for time-domain measurement data.
-
-    Stores voltage samples along with metadata, settings, and axis
-    information. Supports multi-channel data.
+    """One block of acquired time-series data plus its metadata.
 
     Attributes:
-        time_axis (ndarray): Sample times in seconds.
-        time_data (ndarray): Shape (n_samples, n_channels), in volts.
-        settings (MySettings): Acquisition settings snapshot.
+        time_axis (np.ndarray): Sample times in seconds.
+        time_data (np.ndarray): Shape ``(n_samples, n_channels)``, in volts.
         units (list[str] or None): Engineering units per channel.
-        channel_cal_factors (ndarray): Per-channel V→eu multipliers.
-        test_name (str or None): Free-form label.
-        unique_id (uuid.UUID): Generated at construction.
-
-    Examples:
-        >>> time_data = TimeData(t, y, settings, test_name='test_01')
-        >>> channel_0 = time_data.time_data[:, 0]
+        channel_cal_factors (np.ndarray): Per-channel multipliers from
+            volts to engineering units. Defaults to all-ones.
     """
-
-    def __init__(self, time_axis, time_data, settings, timestamp=None,
-                 timestring=None, units=None, channel_cal_factors=None,
-                 id_link=None, test_name=None):
-        """Initialise TimeData.
-
-        Args:
-            time_axis (ndarray): Sample times in seconds.
-            time_data (ndarray): Voltage samples, (n_samples, n_channels).
-            settings (MySettings): Acquisition snapshot.
-            timestamp (datetime, optional): Capture start. Defaults to now().
-            timestring (str, optional): Filesystem-safe stamp.
-            units (list[str], optional): Per-channel units.
-            channel_cal_factors (ndarray, optional): V→eu factors.
-                Defaults to all-ones.
-            id_link (uuid.UUID, optional): Link to a parent TimeData.
-            test_name (str, optional): Free-form label.
-        """
-        # Implementation...
 ```
 
-## Type Hints
+## What the parser does with each section
 
-Add type hints where possible:
+| Section | Rule | If you get it wrong |
+| ------- | ---- | ------------------- |
+| `Args:` | One entry per parameter, `name (type): description`. Indent a continuation line four spaces further than its entry. | A missing `(type)` gives "No type or annotation for parameter". A continuation indented two spaces gives a "Confusing indentation" warning. |
+| `Returns:` | One `name (type): description` line per returned value. Indent a continuation line further than its entry. | Prose here, or `Type: description`, gives "No type or annotation for returned value", and each unindented line of a paragraph counts as a separate value. To describe a return in prose, write a paragraph after the `Args:` block instead of a `Returns:` section. |
+| `Raises:` | Only `ExceptionType: description` entries. | Prose under `Raises:` fails with "Failed to get 'exception: description' pair". |
+| `Warnings:` | The plural is a list of `WarningType: description` pairs. | Prose under it fails with "Failed to get 'warning: description' pair" and is dropped. For a callout, write `Warning:` (singular). |
+| `Warning:`, `Note:`, `Notes:`, `See Also:`, `References:` | Rendered as a titled callout box. | `See Also:` is not turned into links. |
+| `Examples:` | `>>>` blocks are shown with highlighting. | They are not run as tests. |
+| `Attributes:` | For classes. | |
 
-```python
-from typing import Optional, Union, Tuple
-import numpy as np
+Each of these warnings stops `python -m mkdocs build --strict`, which CI
+runs on every push and pull request.
 
-def calculate_tf(
-    time_data: 'TimeData',
-    ch_in: int = 0,
-    time_range: Optional[np.ndarray] = None,
-    window: Optional[str] = None,
-    N_frames: int = 1,
-    overlap: float = 0.5
-) -> 'TfData':
-    """Calculate transfer function from time domain data.
+## What belongs in the docstring
 
-    Args:
-        time_data: Input time series data
-        ch_in: Index of input channel
-        time_range: Time segment [start, end] or None for all data
-        window: Window function name or None
-        N_frames: Number of segments for averaging
-        overlap: Overlap fraction between segments (0 to 1)
+Put in the docstring everything a user needs to call the function
+correctly:
 
-    Returns:
-        Transfer function data with coherence
-    """
-    # Implementation...
+- units (Hz, seconds, volts) and shapes;
+- constraints and conventions, including hardware limits such as
+  voltage ranges, terminal modes, clock routing and sample-rate
+  ladders;
+- what is returned, and any argument that is changed in place;
+- what is raised.
+
+Put in a code comment the reasoning behind the implementation: why a
+particular NumPy stride is used, what an earlier bug looked like, how
+the algorithm was derived. A constraint that only lives in a `#`
+comment is invisible on the published page.
+
+Keep docstrings as short as the facts allow, and link to the relevant
+user guide page for a worked example rather than repeating it.
+
+When you edit a function, check its docstring against what the code now
+does and correct it, even if your change was unrelated.
+
+## Adding a function to the API reference
+
+The API pages under `docs/api/` list their entries by hand. A new public
+function or class does not appear until you add one line to the matching
+page:
+
+```markdown
+::: pydvma.analysis.calculate_fft
 ```
 
-## Sections in Docstrings
+Settings that apply to every entry (heading level, no source listing)
+are set once in `mkdocs.yml`. Do not repeat them per entry. A class is
+rendered with its public members automatically; do not add
+`members: true`, which switches off the filter that hides `_private`
+methods and shows them all.
 
-Common sections (all optional):
+## Checking your docstrings
 
-- **Args**: Function/method parameters
-- **Returns**: Return value description
-- **Raises**: Exceptions that may be raised
-- **Examples**: Usage examples
-- **Notes**: Additional information
-- **References**: Citations or links
-- **See Also**: Related functions
-- **Warnings**: Important warnings for users
-
-## Examples Section
-
-Provide practical examples:
-
-```python
-def calculate_damping_from_sono(time_data, n_chan=1, nperseg=None, start_time=None):
-    """Calculate damping from sonogram analysis of free decay.
-
-    Analyzes the decay of spectral peaks in a sonogram to extract
-    modal parameters including natural frequencies and damping ratios.
-
-    Args:
-        time_data (TimeData): Time series containing free decay response
-        n_chan (int): Channel index to analyze. Defaults to 1.
-        nperseg (int, optional): FFT segment length for sonogram.
-            If None, automatically determined based on signal length.
-        start_time (float, optional): Time to start analysis in seconds.
-            If None, automatically detected from pretrigger settings.
-
-    Returns:
-        tuple: A tuple containing:
-            - fn (ndarray): Natural frequencies in Hz
-            - Qn (ndarray): Quality factors (Q = 1/(2ζ))
-            - fit_data (dict): Dictionary with fit visualization data:
-                - 't': time axis
-                - 'fits': list of fit dictionaries for each mode
-
-    Examples:
-        >>> # Single impact test
-        >>> fn, Qn, fit_data = calculate_damping_from_sono(time_data, n_chan=1)
-        >>> zeta = 1 / (2 * Qn)  # Convert Q to damping ratio
-        >>> print(f"Mode 1: f={fn[0]:.1f} Hz, ζ={zeta[0]:.4f}")
-
-        >>> # Specify custom parameters
-        >>> fn, Qn, fit_data = calculate_damping_from_sono(
-        ...     time_data,
-        ...     n_chan=0,
-        ...     nperseg=1024,
-        ...     start_time=0.05
-        ... )
-
-    Notes:
-        The method identifies frequency peaks in the initial spectrum and
-        tracks their exponential decay over time. Better results are obtained
-        with:
-        - Good signal-to-noise ratio
-        - Sufficient decay duration (several oscillation periods)
-        - Appropriate nperseg choice based on frequency spacing
-
-    See Also:
-        calculate_sonogram: Compute the underlying sonogram
-        calculate_tf: Alternative method for modal identification
-    """
-    # Implementation...
-```
-
-## What Gets Documented
-
-mkdocstrings automatically extracts:
-
-- ✅ Function and method signatures
-- ✅ Parameter descriptions from docstrings
-- ✅ Return value descriptions
-- ✅ Class attributes
-- ✅ Examples
-- ✅ Type hints (if provided)
-
-## Testing Your Docstrings
-
-### Local Preview
+Build the site with the same strictness as CI:
 
 ```bash
-# Install dependencies
-pip install -r requirements-docs.txt
-
-# Serve documentation locally
-mkdocs serve
+python -m mkdocs build --strict
 ```
 
-Navigate to the API reference page for your module to see how it looks.
-
-### Docstring Linting
-
-Use `pydocstyle` to check docstring quality:
+Then open the API page for your module to read it as a user would:
 
 ```bash
-pip install pydocstyle
-pydocstyle pydvma/analysis.py
+python -m mkdocs serve
 ```
 
-## Migration Strategy
+Install the dependencies as described under
+[Documentation](contributing.md#documentation).
 
-To gradually improve documentation:
+## Publishing
 
-1. **New code**: Use Google-style docstrings with type hints
-2. **Existing code**: Update docstrings as you modify functions
-3. **Priority**: Focus on user-facing functions first
-4. **No rush**: The current simple format works; improve over time
+The documentation is built and deployed by GitHub Actions on every push
+to `master`. Pull requests get the strict build only. Changes appear on
+the site a few minutes after the push.
 
-## Best Practices
+## Further reading
 
-### Do ✅
-
-- Describe what the function does in one clear sentence
-- Document all parameters and return values
-- Provide at least one usage example
-- Explain units (Hz, seconds, etc.)
-- Note important limitations or assumptions
-
-### Don't ❌
-
-- Don't duplicate information already in type hints
-- Don't describe implementation details (use code comments instead)
-- Don't write overly long docstrings (link to user guide for details)
-- Don't forget to update docstrings when changing function behavior
-
-## Live Documentation Updates
-
-When you push changes to GitHub:
-
-1. Commit updated source files with new docstrings
-2. Push to master/main branch
-3. GitHub Actions automatically rebuilds documentation
-4. Changes appear online within minutes
-
-No need to manually update API reference pages - mkdocstrings handles it automatically!
-
-## Further Reading
-
-- [Google Style Guide](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings)
-- [PEP 257 - Docstring Conventions](https://www.python.org/dev/peps/pep-0257/)
-- [mkdocstrings Documentation](https://mkdocstrings.github.io/)
+- [Google Python Style Guide, section on docstrings](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings)
+- [PEP 257, docstring conventions](https://peps.python.org/pep-0257/)
+- [mkdocstrings documentation](https://mkdocstrings.github.io/)

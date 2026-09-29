@@ -1,82 +1,53 @@
 # Analysis Module
 
-Analysis functions for frequency domain analysis, transfer functions, and modal analysis.
+Analysis functions for spectra, transfer functions, sonograms and
+damping estimates. The `calculate_*` functions take a `TimeData` (or a
+`TimeDataList` for ensemble averages) and return a new result without
+changing their input. Modal fitting is in the
+[Modal Analysis](modal.md) module.
 
 ## FFT Analysis
 
 ::: pydvma.analysis.calculate_fft
-    options:
-      show_source: false
-      heading_level: 3
 
 ## Transfer Functions
 
 ::: pydvma.analysis.calculate_tf
-    options:
-      show_source: false
-      heading_level: 3
 
 ::: pydvma.analysis.calculate_tf_averaged
-    options:
-      show_source: false
-      heading_level: 3
 
 ::: pydvma.analysis.calculate_bla
-    options:
-      show_source: false
-      heading_level: 3
 
 ## Cross-Spectrum Analysis
 
 ::: pydvma.analysis.calculate_cross_spectrum_matrix
-    options:
-      show_source: false
-      heading_level: 3
 
 ::: pydvma.analysis.calculate_cross_spectra_averaged
-    options:
-      show_source: false
-      heading_level: 3
 
 ## Time-Frequency Analysis
 
 ::: pydvma.analysis.calculate_sonogram
-    options:
-      show_source: false
-      heading_level: 3
 
-## Modal Analysis
+::: pydvma.analysis.calculate_cwt
+
+## Damping
 
 ::: pydvma.analysis.calculate_damping_from_sono
-    options:
-      show_source: false
-      heading_level: 3
+
+::: pydvma.analysis.calculate_damping_from_cwt
+
+::: pydvma.analysis.calculate_damping_by_band
 
 ## Signal Processing
 
+::: pydvma.analysis.resample_to_fs
+
 ::: pydvma.analysis.multiply_by_power_of_iw
-    options:
-      show_source: false
-      heading_level: 3
 
 ::: pydvma.analysis.clean_impulse
-    options:
-      show_source: false
-      heading_level: 3
 
 ::: pydvma.analysis.best_match
-    options:
-      show_source: false
-      heading_level: 3
 
-## Helper Functions
+## Units
 
-::: pydvma.analysis.func_real
-    options:
-      show_source: false
-      heading_level: 3
-
-::: pydvma.analysis.func_imag
-    options:
-      show_source: false
-      heading_level: 3
+::: pydvma.analysis.wrap_unit

@@ -1,4 +1,4 @@
-# Support &amp; citation
+# Support & citation
 
 pydvma is **free and open for everyone**. Every feature — the browser
 app, the local hardware bridge, the analysis core, modal fitting,
@@ -19,10 +19,10 @@ recognition that keeps it funded and maintained.
 
 === "Citation"
 
-    > Butlin, T. (2026). *pydvma: a Python package for dynamics and
-    > vibration measurement and analysis* (version 2.0.0).
-    > University of Cambridge, Department of Engineering.
-    > https://github.com/torebutlin/pydvma
+    > Butlin, T. *pydvma: a Python package for dynamics and vibration
+    > measurement and analysis* (version X.Y.Z). University of
+    > Cambridge, Department of Engineering.
+    > https://doi.org/10.5281/zenodo.21888383
 
 === "BibTeX"
 
@@ -31,13 +31,16 @@ recognition that keeps it funded and maintained.
       author    = {Butlin, Tore},
       title     = {{pydvma: a Python package for dynamics and
                    vibration measurement and analysis}},
-      version   = {2.1.0},
-      year      = {2026},
+      version   = {X.Y.Z},
+      year      = {YYYY},
       publisher = {University of Cambridge, Department of Engineering},
       doi       = {10.5281/zenodo.21888383},
       url       = {https://github.com/torebutlin/pydvma}
     }
     ```
+
+Replace `X.Y.Z` with the version you used (`pip show pydvma` prints it)
+and `YYYY` with the year of that release.
 
 The repository also carries a
 [`CITATION.cff`](https://github.com/torebutlin/pydvma/blob/master/CITATION.cff)
@@ -47,9 +50,9 @@ managers (Zotero, etc.) can import the citation for you.
 !!! note "Permanent DOI"
     Releases are archived on [Zenodo](https://doi.org/10.5281/zenodo.21888383).
     The concept DOI **10.5281/zenodo.21888383** always resolves to the
-    latest version and is the most robust thing to cite; each release
-    also carries its own version DOI (v2.1.0:
-    [10.5281/zenodo.21888384](https://doi.org/10.5281/zenodo.21888384)).
+    latest version and is the most robust thing to cite. Each release
+    also has its own version DOI, listed on the Zenodo record, if you
+    need to cite one exact version.
 
 ## 2. Institutional support
 

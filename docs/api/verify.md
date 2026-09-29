@@ -8,9 +8,6 @@ validates *absolute* scaling.
 ## Known-Source Verification
 
 ::: pydvma.verify.verify_input_scaling
-    options:
-      show_source: false
-      heading_level: 3
 
 ## Rigol DG1022Z SCPI Wrapper
 
@@ -19,8 +16,11 @@ known-level source for `verify_input_scaling` on hardware whose
 loopback cannot verify absolute scaling (e.g. a sound card's digital
 loopback, which copies the output stream pre-preamp).
 
+It needs `pyvisa` and the pure-Python `pyvisa-py` backend, which no
+pydvma extra installs:
+
+```bash
+pip install pyvisa pyvisa-py
+```
+
 ::: pydvma.verify.RigolDG1022Z
-    options:
-      show_source: false
-      heading_level: 3
-      members: true

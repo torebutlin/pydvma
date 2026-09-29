@@ -13,6 +13,56 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+### Found by the docs review (2026-09-29)
+
+Running every documented example turned up code issues. The docs now
+describe today's behaviour and show only calls that work. Three
+self-contained fixes were offered as separate tasks: the file functions
+(positional `filename`, a clear no-Qt error, JW import with no filename
+or on a pydvma `.mat`, `DataSet.save_data` overwrite, `best_match` with
+`freq_range=None`), `modal_fit_single_channel` always raising plus the
+NaN DC bin from `multiply_by_power_of_iw` at power ≤ −2, and the app's
+**Export Matlab** writing no `*_cal_factors`/`*_units` (Python's does;
+the 2.5.0 CHANGELOG claims both). When each lands, simplify the docs
+workarounds it names. Still open beyond those:
+
+- **Decisions for Tore:**
+  - `signal_generator` silently rescales the whole waveform to the
+    output rail (message only in `acquisition.MESSAGE`); raise or warn?
+  - Window defaults differ by entry point: `DataSet` /
+    `TimeDataList.calculate_tf_averaged` and
+    `DataSet.calculate_cross_spectrum_matrix_set` default `'hann'`,
+    the `analysis.*` functions default `None`. Unify, given that
+    impacts want `None`?
+  - The app's IEPE switch is all-channel (a list in `--settings` is cut
+    to its first entry), so mixed IEPE / non-IEPE recording has to go
+    through Python. Per-channel IEPE in Setup?
+- **Smaller bugs** (all reproducible from the docstrings now written):
+  - A `PlotData` passed as `time_range=` to `calculate_tf` (and the
+    averaged TF/CSD) is stored in `settings.time_range`, so
+    `save_data` then fails with "not JSON serializable".
+  - `best_match` reads `freq_range.tfax`, which `PlotData` lacks.
+  - Plotting mutates data: `plot_tf_data` writes 1 over NaN coherence,
+    `plot_sono_data` writes 1e-16 over zeros in `sono_data`.
+  - `export_to_matlab` / `export_to_csv` check for an existing file
+    before adding the extension, so `filename='data'` silently
+    overwrites `data.mat` / `data.csv`.
+  - `calculate_cross_spectra_averaged` has no ensemble compatibility
+    check (unlike `calculate_tf_averaged`).
+  - `DataSet.clean_impulse` leaves stale derived lists in the copy;
+    `update_dataset` attaches `modal_data_list` to the old dataset;
+    `remove_data_item_by_index` sorts the caller's list in place and
+    fails on a numpy int; `add_modal_reconstruction('replace')`
+    overwrites the last item whatever it is; `PlotData(...)` ignores
+    its three arguments; `clean_impulse` adds `impulse_cleaned` to its
+    input.
+- **Docs leftovers:** Sphinx roles remain in the non-rendered docstrings
+  of `serve.py`, `container.py`, `engine_host.py`, `_coreaudio.py`,
+  `_win_audio.py`, `_soundcard_specs.py` and private `streams.py`
+  helpers. The JupyterLite notebook (`lite/content/pydvma_analysis.ipynb`)
+  still installs `seaborn`, which pydvma no longer needs. The Qt-era
+  root notebooks are under Housekeeping.
+
 ### Calibration round follow-ups (2026-09-18)
 
 The calibration assessment of 2026-09-18 landed nine fixes (CSD

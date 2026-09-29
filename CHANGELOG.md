@@ -90,6 +90,41 @@ open, answered and built.
 - **Removed the `polyfill.io` script** from the docs site. That domain
   was taken over in 2024 and has served malicious code; MathJax 3 does
   not need it.
+- **Every page reviewed for accuracy, duplication and clarity.** Each
+  topic now has one home, with links from elsewhere. Release history,
+  bug stories and internal names are gone from user pages. Every Python
+  example in the guides was executed; the ones that crashed or quietly
+  gave wrong answers are fixed. That covered settings assigned after
+  construction, pretrigger lengths over `chunk_size`, `|Y|²` sold as a
+  PSD, single-frame coherence, Blackman described as sharper than Hann,
+  Hann on impact records, `multiply_by_power_of_iw` accumulating
+  in place, and the `best_match` scaling line.
+- **Web-logger pages corrected against the app:**
+  - The browser does have output and pretrigger with a threshold field.
+  - Commanded drive in Nonlin is disabled everywhere.
+  - Live view-time presets reach 10 s.
+  - Refine needs two modes.
+  - Clean Impulse only touches the force channel.
+  - The app's IEPE switch applies to every channel; this is now a
+    warning.
+  - The app's `.mat` export carries no calibration keys.
+  - The `--settings` pre-fill ignores gain, full scale and
+    sensitivities.
+  - New *Working with Plots* page.
+- **API reference:**
+  - Private members no longer publish (49 of them did).
+  - Constructor signatures merge into their classes.
+  - Missing public functions are listed (CWT, damping by band,
+    resampling, devices, test data).
+  - Docstrings written or converted to Google style throughout.
+    `log_data` now renders its parameter table.
+  - Broken `#anchor` links fail the strict build.
+- **Housekeeping:**
+  - The docs-about-docs files and `logger.yml` are deleted.
+  - Contributing gains a repository map, real test commands and
+    zsh-safe release steps.
+  - The licence page includes `LICENSE` itself.
+  - The citation no longer hard-codes a version.
 
 ## 2.5.0 — 2026-09-18
 

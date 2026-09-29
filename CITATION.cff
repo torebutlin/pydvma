@@ -4,7 +4,7 @@
 #
 # The `doi:` below is the Zenodo CONCEPT DOI (resolves to the latest
 # archived version); each release also gets its own version DOI via the
-# GitHub–Zenodo integration (v2.1.0: 10.5281/zenodo.21888384).
+# GitHub–Zenodo integration, listed on the Zenodo record.
 cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata from this file."
 title: "pydvma: a Python package for dynamics and vibration measurement and analysis"
@@ -31,6 +31,3 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.21888383
     description: "The concept DOI for all versions (Zenodo)."
-  - type: doi
-    value: 10.5281/zenodo.21888384
-    description: "The version DOI for v2.1.0 (Zenodo)."

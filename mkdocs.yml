@@ -1,14 +1,15 @@
 site_name: pydvma Documentation
 site_description: A Python package for dynamics and vibration measurements and analysis
 site_author: Tore Butlin
-site_url: https://torebutlin.github.io/pydvma
+site_url: https://torebutlin.github.io/pydvma/
 
 repo_name: torebutlin/pydvma
 repo_url: https://github.com/torebutlin/pydvma
 edit_uri: edit/master/docs/
 
-exclude_docs: |
-  README.md
+# Broken #anchor links fail `mkdocs build --strict` (the default only logs them).
+validation:
+  anchors: warn
 
 theme:
   name: material
@@ -45,7 +46,6 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [pydvma]
           options:
             docstring_style: google
             docstring_section_style: list
@@ -58,7 +58,8 @@ plugins:
             show_signature_annotations: true
             separate_signature: true
             members_order: source
-            filters: ["!^_"]
+            filters: ["!^_[^_]", "!^__(?!init__)"]
+            merge_init_into_class: true
             heading_level: 3
 
 markdown_extensions:
@@ -80,7 +81,7 @@ markdown_extensions:
 
 extra_javascript:
   - javascripts/mathjax.js
-  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js
 
 nav:
   - Home: index.md
@@ -94,12 +95,13 @@ nav:
       - Acquisition & Setup: web-logger/acquisition.md
       - Live Monitoring: web-logger/live-monitoring.md
       - Analysis Views: web-logger/analysis.md
+      - Working with Plots: web-logger/working-with-plots.md
       - Noise & Nonlinearity Separation: web-logger/nonlin.md
       - Modal Fitting: web-logger/modal-fitting.md
       - Calibration & Units: web-logger/calibration.md
       - Saving & Exporting: web-logger/export.md
       - The .dvma File Format: web-logger/dvma-format.md
-      - NI Hardware over the Bridge: web-logger/ni-hardware.md
+      - NI Hardware: web-logger/ni-hardware.md
       - From the Qt Logger: web-logger/migration.md
   - Python Interface:
       - Data Acquisition: user-guide/acquisition.md
@@ -107,21 +109,19 @@ nav:
       - Modal Analysis: user-guide/modal-analysis.md
       - Plotting and Visualization: user-guide/plotting.md
       - Import and Export: user-guide/import-export.md
+      - Worked Examples: examples/basic.md
   - API Reference:
-      - Analysis: api/analysis.md
-      - Acquisition: api/acquisition.md
       - Session & Launch: api/session.md
+      - Acquisition: api/acquisition.md
       - Data Structures: api/datastructure.md
-      - Plotting: api/plotting.md
+      - Analysis: api/analysis.md
       - Modal Analysis: api/modal.md
+      - Plotting: api/plotting.md
       - File Operations: api/file.md
+      - Test Data: api/testdata.md
       - Input-Scaling Verification: api/verify.md
-  - Examples:
-      - Basic Examples: examples/basic.md
-      - Advanced Examples: examples/advanced.md
-  - Contributing:
-      - Guidelines: contributing.md
-      - Docstring Style Guide: contributing-docstrings.md
   - About:
       - Support & Citation: about/support.md
-  - License: license.md
+      - Contributing: contributing.md
+      - Docstring Style Guide: contributing-docstrings.md
+      - License: license.md

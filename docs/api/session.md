@@ -13,17 +13,10 @@ session back.
 ## Launching a Session
 
 ::: pydvma.session.launch
-    options:
-      show_source: false
-      heading_level: 3
 
 ## The Session Handle
 
 ::: pydvma.session.Session
-    options:
-      show_source: false
-      heading_level: 3
-      members: true
 
 ## The Session Journal
 
@@ -33,7 +26,3 @@ the `/engine` socket. Normally used through `Session` rather than
 directly.
 
 ::: pydvma.journal.SessionJournal
-    options:
-      show_source: false
-      heading_level: 3
-      members: true
