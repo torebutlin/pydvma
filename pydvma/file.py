@@ -6,6 +6,7 @@ Created on Mon Aug 27 14:32:35 2018
 """
 
 import os.path
+import warnings
 import zipfile
 import numpy as np
 import scipy.io as io
@@ -481,12 +482,33 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
     '''
     Exports a DataSet to 'filename.mat' in the JW-logger format.
 
-    Saved file is compatible with Jim Woodhouse logger file format. The
-    filename can be given positionally,
-    ``export_to_matlab_jwlogger(dataset, 'name.mat')``, or as
-    ``filename=``; ``.mat`` is added if missing. With no filename a Qt file
-    dialog asks for one; that needs ``qtpy`` and a Qt binding, which
-    pydvma no longer installs.
+    Saved file is compatible with Jim Woodhouse logger file format, and
+    `import_from_matlab_jwlogger` reads it back. The filename can be
+    given positionally, ``export_to_matlab_jwlogger(dataset, 'name.mat')``,
+    or as ``filename=``; ``.mat`` is added if missing. With no filename a
+    Qt file dialog asks for one; that needs ``qtpy`` and a Qt binding,
+    which pydvma no longer installs.
+
+    The file holds up to two blocks, each resampled onto one grid:
+
+    - TIME: every channel of every TimeData as a column of ``indata``, at
+      the highest sample rate, zero-padded after a shorter capture; with
+      ``buflen`` (the row count) and ``tsmax``.
+    - SPECTRAL: the transfer functions if there are any (``tfun`` = 1,
+      coherence not exported), otherwise the FFTs (``tfun`` = 0), as the
+      columns of ``yspec``, with ``npts`` (the FFT length). The logger
+      stores no frequency axis: it is ``rfftfreq(npts, 1/freq)``, at the
+      finest spacing of the spectra, padded with 1 above a spectrum's
+      band. Sonograms and cross-spectra are not exported.
+
+    ``freq`` is the sample rate, and one value serves both blocks, as in
+    the logger itself. With time data it is the time data's rate and the
+    spectra are laid on that rate's grid, so spectral data above half the
+    time data's rate is left out, with a warning. Without time data it is
+    the spectra's own sample rate. ``dt2`` holds the column counts
+    ``[n_time, n_spectral, 0]``. Values are the raw stored numbers, and
+    unlike `export_to_matlab` no calibration factors are written: the
+    logger's layout has no variable for them.
 
     Args:
        dataset (DataSet): An object of the class DataSet
@@ -524,100 +546,42 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
             # silently dropped the last measured channel from the export.
             n_time += time_data.time_data.shape[1]
         
-        t=np.arange(0,T,1/fs)
+        fs = _clean_rate(fs)
+        # A sample COUNT, not np.arange(0, T, 1/fs): that float stop
+        # sometimes admits one extra sample past the end.
+        t = np.arange(int(round(T*fs))) / fs
         time_data_all = np.zeros((len(t),n_time))
         counter = -1
         for time_data in dataset.time_data_list:
             for i in range(time_data.time_data.shape[1]):
                 counter += 1
-                time_data_all[:,counter] = np.interp(t,time_data.time_axis,time_data.time_data[:,i],right=0)
-                
+                time_data_all[:,counter] = _interp_onto(t,time_data.time_axis,time_data.time_data[:,i],0)
+
         data_jwlogger['buflen'] = float(np.size(t))
         data_jwlogger['indata'] = time_data_all
         data_jwlogger['tsmax'] = float(t[-1])
+        data_jwlogger['freq'] = float(fs)
+        fs_time = fs
     else:
         n_time = 0
-        time_data_all = 0
-    
-    
-    #%% FFT: get's overwritten by TF if exists
-    if len(dataset.freq_data_list) > 0:
-        df=np.inf
-        fmax=0
-        n_freq=0
-        for freq_data in dataset.freq_data_list:
-            df_check = np.mean(np.diff(freq_data.freq_axis))
-            df = np.min([df,df_check])
-            fmax = np.max([freq_data.freq_axis[-1],fmax])
-            freq_shape = np.shape(freq_data.freq_data)
-            n_freq += freq_shape[1]
-        
-        f=np.arange(0,fmax+df,df)
-        npts = 2*(len(f)-1)
-        fs_freq = 2*f[-1]
-        freq_data_all = np.zeros((len(f),n_freq),dtype=complex)
-        counter = -1
-        for freq_data in dataset.freq_data_list:
-            freq_shape = np.shape(freq_data.freq_data)
-            for i in range(freq_shape[1]):
-                counter += 1
-                freq_data_all[:,counter] = np.interp(f,freq_data.freq_axis,freq_data.freq_data[:,i],right=1)
-                freq_data_all[0,counter] = freq_data_all[1,counter] # to match equivalent tweak in JW Logger for handling DC singularities
-                zero_test = freq_data_all[:,counter] == 0
-                freq_data_all[zero_test,counter] = np.min(np.abs(freq_data_all[:,counter])) # handle zeros
-        
-        # convert
-        data_jwlogger['freq'] = float(fs_freq)
-        data_jwlogger['npts'] = float(npts)
-        data_jwlogger['yspec'] = freq_data_all
-    else:
-        n_freq = 0
-        freq_data_all = 0
-    
-    
-    #%% Transfer Function - doesn't export coherence
+        fs_time = None
+
+
+    #%% SPECTRA: TF (without its coherence) if any, else FFT
     if len(dataset.tf_data_list) > 0:
-        df=np.inf
-        fmax=0
-        n_tf=0
-        for tf_data in dataset.tf_data_list:
-            df_check = np.mean(np.diff(tf_data.freq_axis))
-            df = np.min([df,df_check])
-            fmax = np.max([tf_data.freq_axis[-1],fmax])
-            tf_shape = np.shape(tf_data.tf_data)
-            n_tf += tf_shape[1]
-        
-        f=np.arange(0,fmax+df,df)
-        npts = 2*(len(f)-1)
-        fs_tf = 2*f[-1]
-        tf_data_all = np.zeros((len(f),n_tf),dtype=complex)
-        counter = -1
-        for tf_data in dataset.tf_data_list:
-            tf_shape = np.shape(tf_data.tf_data)
-            for i in range(tf_shape[1]):
-                counter += 1
-                tf_data_all[:,counter] = np.interp(f,tf_data.freq_axis,tf_data.tf_data[:,i],right=1)
-                tf_data_all[0,counter] = tf_data_all[1,counter] # to match equivalent tweak in JW Logger for handling DC singularities
-                zero_test = tf_data_all[:,counter] == 0
-                tf_data_all[zero_test,counter] = np.min(np.abs(tf_data_all[:,counter])) # handle zeros
-        
-        # convert
-        data_jwlogger['freq'] = float(fs_tf)
+        spec_list, attr, tfun = dataset.tf_data_list, 'tf_data', 1
+    else:
+        spec_list, attr, tfun = dataset.freq_data_list, 'freq_data', 0
+    if len(spec_list) > 0:
+        yspec, npts, fs_spec = _jwlogger_yspec(spec_list, attr, fs_time)
+        data_jwlogger['freq'] = float(fs_spec)
         data_jwlogger['npts'] = float(npts)
-        data_jwlogger['yspec'] = tf_data_all
+        data_jwlogger['yspec'] = yspec
+        data_jwlogger['tfun'] = float(tfun)
+        N = yspec.shape[1]
     else:
-        n_tf = 0
-        tf_data_all = 0
-    
-    #%% Convert
-    
-    if (n_freq > 0) & (n_tf > 0):
-        # if both FFT and TF data present then TF overwrites
-        N = n_tf
-    else:
-        # if only one of FFT or TF, or neither, then keep non-zero one, or neither
-        N = np.max([n_tf,n_freq])
-    
+        N = 0
+
     data_jwlogger['dt2'] = np.array([n_time,N,0],dtype=float)
     data_jwlogger['dtype'] = np.array([n_time,N,0],dtype=float)
     
@@ -652,6 +616,108 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
     print("Data saved as %s" % filename)
 
     return filename
+
+
+def _jwlogger_yspec(spec_list, attr, fs=None):
+    '''
+    Lay spectra on the JW-logger frequency grid, one column per channel.
+
+    A JW-logger file stores no frequency axis: the logger (and
+    `import_from_matlab_jwlogger`) rebuilds it as
+    ``rfftfreq(npts, 1/freq)``, so this picks ``npts`` for the given rate
+    and interpolates every channel onto that grid. The spacing is the
+    finest of the spectra's. Above a spectrum's own band the column is
+    padded with 1, and the DC row copies the first positive bin, as the
+    logger's own writer does.
+
+    Args:
+       spec_list (list): FreqData or TfData objects.
+       attr (str): The data attribute, ``'freq_data'`` or ``'tf_data'``.
+       fs (float, optional): The file's sample rate ``freq``, set by its
+           time data. If None it is the spectra's own sample rate (the
+           highest ``settings.fs``) when that reproduces their frequency
+           grid exactly, and otherwise twice the highest frequency, which
+           covers every spectrum. Spectra above ``fs/2`` are left out,
+           with a warning.
+
+    Returns:
+       spectra (tuple): ``(yspec, npts, freq)`` — the complex
+           ``(npts//2 + 1, n_columns)`` array, the FFT length and the
+           sample rate.
+    '''
+    df = min(np.mean(np.diff(s.freq_axis)) for s in spec_list)
+    fmax = max(s.freq_axis[-1] for s in spec_list)
+    if fs is None:
+        # `freq` is the SAMPLE RATE. 2*fmax equals it only for an even FFT
+        # length: an odd-length rfftfreq(N, 1/fs) stops at fs*(N-1)/(2N).
+        fs = _clean_rate(2 * fmax)
+        declared = max(getattr(s.settings, 'fs', 0) or 0 for s in spec_list)
+        if declared > 0:
+            n_declared = int(round(declared / df))
+            if (abs(declared / n_declared - df) <= 1e-9 * df
+                    and fmax <= declared / 2 * (1 + 1e-9)):
+                fs = float(declared)
+    npts = int(round(fs / df))
+    f = np.fft.rfftfreq(npts, 1 / fs)
+    if fmax > f[-1] + df / 2:
+        warnings.warn(
+            "JW-logger export: the time data's sample rate (%g Hz) is the "
+            "file's 'freq', so spectral data above %g Hz is not exported."
+            % (fs, f[-1]), stacklevel=3)
+
+    n_columns = sum(np.shape(getattr(s, attr))[1] for s in spec_list)
+    yspec = np.zeros((len(f), n_columns), dtype=complex)
+    counter = -1
+    for s in spec_list:
+        data = getattr(s, attr)
+        for i in range(np.shape(data)[1]):
+            counter += 1
+            yspec[:,counter] = _interp_onto(f,s.freq_axis,data[:,i],1)
+            yspec[0,counter] = yspec[1,counter] # to match equivalent tweak in JW Logger for handling DC singularities
+            zero_test = yspec[:,counter] == 0
+            yspec[zero_test,counter] = np.min(np.abs(yspec[:,counter])) # handle zeros
+    return yspec, npts, fs
+
+
+def _clean_rate(fs):
+    '''
+    Strip float noise from a sample rate estimated from an axis.
+
+    ``1/mean(diff(t))`` or ``2*f[-1]`` gives 8532.999999999998 for an
+    8533 Hz axis, which `options.MySettings` (it stores ``int(fs)``)
+    truncates to 8532. The estimate is good to about 13 significant
+    figures, so rounding to 12 recovers the rate.
+
+    Args:
+       fs (float): The estimated sample rate in Hz.
+
+    Returns:
+       fs (float): The rate, rounded to 12 significant figures.
+    '''
+    return float('%.12g' % fs)
+
+
+def _interp_onto(grid, axis, values, pad):
+    '''
+    Interpolate samples onto a uniform grid, padding beyond their end.
+
+    A grid point past the end of ``axis`` by float rounding alone (within
+    a millionth of a grid step) counts as the end point. Without that, a
+    grid that matches the axis loses its last sample to the pad value.
+
+    Args:
+       grid (np.ndarray): Uniform, increasing points to evaluate at.
+       axis (np.ndarray): Increasing points the values are sampled at.
+       values (np.ndarray): The samples, real or complex.
+       pad (float): The value beyond the end of ``axis``.
+
+    Returns:
+       resampled (np.ndarray): ``values`` at each ``grid`` point.
+    '''
+    step = grid[1] - grid[0] if len(grid) > 1 else 0.0
+    rounding = (grid > axis[-1]) & (grid <= axis[-1] + 1e-6 * step)
+    return np.interp(np.where(rounding, axis[-1], grid), axis, values,
+                     right=pad)
 
 
 #%% CALIBRATION METADATA FOR THE RAW-DATA EXPORTS
@@ -906,6 +972,35 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
 _PYDVMA_MATLAB_KEYS = ('time_data_all', 'freq_data_all', 'tf_data_all')
 
 
+def _jw_scalar(d, key, meaning):
+    '''
+    Read one scalar variable of a loaded JW-logger .mat file.
+
+    MATLAB saves a scalar as a (1, 1) array, so this unwraps it.
+
+    Args:
+       d (dict): The variables, as returned by `scipy.io.loadmat`.
+       key (str): The variable's name.
+       meaning (str): What the variable holds, for the error message.
+
+    Returns:
+       value (float): The scalar.
+
+    Raises:
+       ValueError: If the file has no such variable. pydvma 2.5.0 and
+           earlier wrote JW-logger files without ``freq`` (time-only
+           exports) or ``tfun`` (spectral exports), so such files exist.
+    '''
+    if key not in d:
+        raise ValueError(
+            "This JW-logger .mat file has no '%s' variable (%s), so it "
+            "cannot be imported. Files written by export_to_matlab_jwlogger "
+            "in pydvma 2.5.0 and earlier can lack 'freq' or 'tfun': export "
+            "the data again, or add the variable to the file in MATLAB."
+            % (key, meaning))
+    return float(np.ravel(d[key])[0])
+
+
 def import_from_matlab_jwlogger(filename=None):
     '''
     Imports a JW-logger .mat file (Jim Woodhouse's MATLAB data logger).
@@ -964,7 +1059,9 @@ def import_from_matlab_jwlogger(filename=None):
 
     Raises:
        ValueError: If the file is not a JW-logger .mat file, including a
-           .mat written by `export_to_matlab`.
+           .mat written by `export_to_matlab`; if it lacks ``freq``, or
+           has ``yspec`` without ``npts`` or ``tfun``; or if ``tfun`` is
+           neither 0 nor 1.
        ImportError: If no filename is given and Qt is not installed.
     '''
     if filename is None:
@@ -991,8 +1088,17 @@ def import_from_matlab_jwlogger(filename=None):
             "writes is export-only.")
     dataset = datastructure.DataSet()
 
-    # `freq` (the sample rate) is a (1,1) MATLAB scalar array — unwrap once.
-    fs = float(np.ravel(d['freq'])[0]) if 'freq' in d else None
+    # Every axis is built from `freq` (the sample rate), and a spectrum's
+    # from `npts` too, so a file without them cannot be imported.
+    fs = _jw_scalar(d, 'freq', 'the sample rate')
+    if 'yspec' in d:
+        tfun = _jw_scalar(d, 'tfun', '0 = spectrum, 1 = transfer function')
+        if tfun not in (0, 1):
+            raise ValueError(
+                "This JW-logger .mat file has tfun = %g; it must be 0 "
+                "(spectrum) or 1 (transfer function)." % tfun)
+        fa = np.fft.rfftfreq(int(_jw_scalar(d, 'npts', 'the FFT length')),
+                             1/fs)
 
     #%% TIME
     if 'indata' in d:
@@ -1013,10 +1119,8 @@ def import_from_matlab_jwlogger(filename=None):
         dataset.add_to_dataset(time_data)
     
     #%% FFT
-    if ('yspec' in d) and (d['tfun'] == 0):
+    if ('yspec' in d) and (tfun == 0):
         fd = d['yspec']
-        fa = np.fft.rfftfreq(int(np.ravel(d['npts'])[0]),1/fs)
-        fa = np.squeeze(fa)
         settings = options.MySettings(channels=np.size(fd,1),
                                       fs=fs)
         
@@ -1026,10 +1130,8 @@ def import_from_matlab_jwlogger(filename=None):
 
     
     #%% TF
-    if ('yspec' in d) and (d['tfun'] == 1):
+    if ('yspec' in d) and (tfun == 1):
         tf = d['yspec']
-        fa = np.fft.rfftfreq(int(np.ravel(d['npts'])[0]),1/fs)
-        fa = np.squeeze(fa)
 
         # Split coherence traces from the TF columns (see docstring). This
         # matters beyond labelling: a coherence trace imported as a TF

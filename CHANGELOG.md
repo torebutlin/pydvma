@@ -146,6 +146,27 @@ Export Matlab.
   function still modifies its argument in place and returns it, as
   before; deep-copy first to keep the original. The web app's x(iω)^p
   display is separate and was not affected.
+- **A JW-logger `.mat` written by pydvma now imports back.**
+  `export_to_matlab_jwlogger` left out two variables the logger's own
+  files always carry, so `import_from_matlab_jwlogger` could not read
+  its output: a time-only export had no `freq`, the sample rate
+  (`TypeError`), and a spectral one no `tfun`, which says spectrum (0)
+  or transfer function (1) (`KeyError`). Both are now written. One
+  `freq` serves the time and spectral blocks, as in the logger, so
+  where a file holds both it is the time data's rate and the spectra
+  are laid on that rate's frequency grid. A spectrum above half that
+  rate is cut off there, with a warning. Without time data `freq` is
+  the spectra's own sample rate; it used to be twice the highest
+  frequency, which is not the sample rate for an odd FFT length. The
+  round trip also exposed float-rounding faults in the export: the time
+  block could gain a trailing zero sample or zero out the last real
+  one, a spectrum could lose its top bin to the padding value, and a
+  rate could come back 1 Hz low. All are fixed; data, axes and rates
+  now round-trip over 1,840 rate, length and content combinations. A
+  file without `freq`, or a spectral one without `npts` or `tfun`, now
+  fails to import with an error naming the missing variable. Files
+  written by pydvma 2.5.0 and earlier can lack `freq` or `tfun`:
+  export them again, or add the variable in MATLAB.
 
 ### Documentation
 

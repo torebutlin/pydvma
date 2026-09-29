@@ -42,10 +42,6 @@ Still open beyond those:
   - A `PlotData` passed as `time_range=` to `calculate_tf` (and the
     averaged TF/CSD) is stored in `settings.time_range`, so
     `save_data` then fails with "not JSON serializable".
-  - pydvma's own `export_to_matlab_jwlogger` output does not import
-    back through `import_from_matlab_jwlogger`: a time-only export
-    writes no `freq` (TypeError on import) and a spectral one no `tfun`
-    (KeyError). Genuine JW files carry both. Found 2026-09-29.
   - Plotting mutates data: `plot_tf_data` writes 1 over NaN coherence,
     `plot_sono_data` writes 1e-16 over zeros in `sono_data`.
   - `export_to_matlab` / `export_to_csv` check for an existing file

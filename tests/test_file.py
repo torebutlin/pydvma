@@ -217,6 +217,186 @@ class TestImportFromMatlabJwloggerTime:
         assert td.settings.channels == 2
 
 
+def _time_data(fs, n, n_chans=2, seed=0):
+    rng = np.random.default_rng(seed)
+    return datastructure.TimeData(
+        np.arange(n) / fs, rng.standard_normal((n, n_chans)),
+        options.MySettings(fs=fs, channels=n_chans),
+        channel_cal_factors=np.ones(n_chans))
+
+
+def _dataset(*items):
+    ds = datastructure.DataSet()
+    for item in items:
+        ds.add_to_dataset(item)
+    return ds
+
+
+def _jw_round_trip(tmp_path, ds, name='jw.mat'):
+    """Export `ds` in the JW-logger layout; return (raw .mat dict, import)."""
+    path = str(tmp_path / name)
+    file.export_to_matlab_jwlogger(ds, filename=path,
+                                   overwrite_without_prompt=True)
+    return sio.loadmat(path), file.import_from_matlab_jwlogger(filename=path)
+
+
+class TestJwloggerExportRoundTrip:
+    """pydvma's own JW-logger export must import back. It did not: a
+    time-only export wrote no `freq` (the sample rate — TypeError building
+    the time axis) and a spectral one no `tfun` (KeyError). Genuine logger
+    files carry both. Row 0 of `yspec` is skipped in comparisons: the
+    writer copies the first positive bin into the DC row, as JW's does."""
+
+    # Sizes where float rounding bit: 1000 Hz x 1023 grew a trailing zero
+    # sample, 8533 Hz x 1000 zeroed the last real one.
+    @pytest.mark.parametrize('fs, n', [(1000, 1024), (1000, 1023),
+                                       (8533, 1000), (44100, 999)])
+    def test_time_only_export_imports_back(self, tmp_path, fs, n):
+        td = _time_data(fs=fs, n=n)
+        raw, ds = _jw_round_trip(tmp_path, _dataset(td))
+        assert float(np.ravel(raw['freq'])[0]) == pytest.approx(fs)
+        assert 'tfun' not in raw          # JW time files carry no tfun
+        back = ds.time_data_list[0]
+        assert back.settings.fs == pytest.approx(fs)
+        assert back.time_data.shape == td.time_data.shape
+        np.testing.assert_allclose(back.time_axis, td.time_axis)
+        np.testing.assert_allclose(back.time_data, td.time_data)
+        assert ds.freq_data_list == [] and ds.tf_data_list == []
+
+    # 1021 Hz x 1000: freq = 2*fmax came out as 1020.9999999999999, which
+    # MySettings's int() truncated to 1021 - 1. At an odd length 2*fmax is
+    # not the sample rate at all: 1000 Hz x 1023 gave 999.02 Hz.
+    @pytest.mark.parametrize('fs, n', [(1000, 1024), (1021, 1000),
+                                       (1000, 1023)])
+    def test_fft_export_imports_back_as_spectrum(self, tmp_path, fs, n):
+        fft = analysis.calculate_fft(_time_data(fs=fs, n=n))
+        raw, ds = _jw_round_trip(tmp_path, _dataset(fft))
+        assert float(np.ravel(raw['freq'])[0]) == fs
+        assert int(np.ravel(raw['tfun'])[0]) == 0
+        assert ds.tf_data_list == []
+        back = ds.freq_data_list[0]
+        assert back.settings.fs == fs
+        np.testing.assert_allclose(back.freq_axis, fft.freq_axis)
+        np.testing.assert_allclose(back.freq_data[1:], fft.freq_data[1:])
+
+    @pytest.mark.parametrize('fs, n', [(1000, 2048), (38399, 3001)])
+    def test_tf_export_imports_back(self, tmp_path, fs, n):
+        tf = analysis.calculate_tf(_time_data(fs=fs, n=n), ch_in=0,
+                                   N_frames=4, window='hann')
+        raw, ds = _jw_round_trip(tmp_path, _dataset(tf))
+        assert float(np.ravel(raw['freq'])[0]) == fs
+        assert int(np.ravel(raw['tfun'])[0]) == 1
+        assert ds.freq_data_list == []
+        back = ds.tf_data_list[0]
+        assert back.settings.fs == fs
+        np.testing.assert_allclose(back.freq_axis, tf.freq_axis)
+        np.testing.assert_allclose(back.tf_data[1:], tf.tf_data[1:])
+
+    def test_tf_takes_yspec_and_tfun_when_fft_is_present_too(self, tmp_path):
+        td = _time_data(fs=1000, n=2048)
+        fft = analysis.calculate_fft(td)
+        tf = analysis.calculate_tf(td, ch_in=0, N_frames=4, window='hann')
+        raw, ds = _jw_round_trip(tmp_path, _dataset(fft, tf))
+        assert int(np.ravel(raw['tfun'])[0]) == 1
+        assert ds.freq_data_list == []
+        np.testing.assert_allclose(ds.tf_data_list[0].tf_data[1:],
+                                   tf.tf_data[1:])
+
+    # At these sizes the top bin used to come back as the pad value 1.
+    @pytest.mark.parametrize('fs, n', [(1000, 1024), (44100, 999),
+                                       (48019, 4096)])
+    @pytest.mark.parametrize('kind', ['fft', 'tf'])
+    def test_time_and_spectrum_from_one_capture_both_import(
+            self, tmp_path, fs, n, kind):
+        td = _time_data(fs=fs, n=n)
+        if kind == 'fft':
+            spec = analysis.calculate_fft(td)
+        else:
+            spec = analysis.calculate_tf(td, ch_in=0, N_frames=4,
+                                         window='hann')
+        raw, ds = _jw_round_trip(tmp_path, _dataset(td, spec))
+        assert float(np.ravel(raw['freq'])[0]) == pytest.approx(fs)
+        np.testing.assert_allclose(ds.time_data_list[0].time_data,
+                                   td.time_data)
+        if kind == 'fft':
+            back, want = ds.freq_data_list[0].freq_data, spec.freq_data
+            axis = ds.freq_data_list[0].freq_axis
+        else:
+            back, want = ds.tf_data_list[0].tf_data, spec.tf_data
+            axis = ds.tf_data_list[0].freq_axis
+        np.testing.assert_allclose(axis, spec.freq_axis)
+        np.testing.assert_allclose(back[1:], want[1:])
+
+    def test_time_rate_wins_and_spectra_follow_its_grid(self, tmp_path):
+        """One `freq` serves both blocks (JW's logger shares it between its
+        time and spectrum windows), so the TIME rate is written and the
+        spectra are laid on `rfftfreq(npts, 1/freq)`: here a 500 Hz
+        capture's TF, exported beside 1 kHz time data, keeps its own
+        spacing and values and is padded with 1 above its 250 Hz band."""
+        td = _time_data(fs=1000, n=1000)
+        tf = analysis.calculate_tf(_time_data(fs=500, n=2048, seed=1),
+                                   ch_in=0, N_frames=4, window='hann')
+        raw, ds = _jw_round_trip(tmp_path, _dataset(td, tf))
+        assert float(np.ravel(raw['freq'])[0]) == pytest.approx(1000)
+        np.testing.assert_allclose(ds.time_data_list[0].time_axis,
+                                   td.time_axis)
+        back = ds.tf_data_list[0]
+        df = tf.freq_axis[1] - tf.freq_axis[0]
+        assert back.freq_axis[1] - back.freq_axis[0] == pytest.approx(df)
+        assert back.freq_axis[-1] == pytest.approx(500)
+        n = len(tf.freq_axis)
+        np.testing.assert_allclose(back.freq_axis[:n], tf.freq_axis)
+        np.testing.assert_allclose(back.tf_data[1:n], tf.tf_data[1:])
+        np.testing.assert_allclose(back.tf_data[n:], 1)
+
+    def test_spectra_above_the_time_nyquist_are_dropped_with_a_warning(
+            self, tmp_path):
+        td = _time_data(fs=500, n=500)
+        tf = analysis.calculate_tf(_time_data(fs=1000, n=2048, seed=1),
+                                   ch_in=0, N_frames=4, window='hann')
+        with pytest.warns(UserWarning, match='above 250 Hz'):
+            raw, ds = _jw_round_trip(tmp_path, _dataset(td, tf))
+        back = ds.tf_data_list[0]
+        assert back.freq_axis[-1] == pytest.approx(250)
+        n = len(back.freq_axis)
+        np.testing.assert_allclose(back.freq_axis, tf.freq_axis[:n])
+        np.testing.assert_allclose(back.tf_data[1:], tf.tf_data[1:n])
+
+
+class TestImportFromMatlabJwloggerMissingKeys:
+    """A .mat with the logger's data but not the variables its axes need
+    raises a ValueError naming the variable, not a bare TypeError or
+    KeyError. pydvma's own JW export omitted both before they were fixed,
+    so such files exist."""
+
+    def test_missing_freq(self, tmp_path):
+        path = str(tmp_path / 'nofreq.mat')
+        sio.savemat(path, {'indata': np.zeros((8, 1)),
+                           'buflen': np.array([[8]]),
+                           'dt2': np.array([[1, 0, 0]]),
+                           'tsmax': np.array([[1.0]])})
+        with pytest.raises(ValueError, match="'freq'"):
+            file.import_from_matlab_jwlogger(filename=path)
+
+    def test_missing_tfun(self, tmp_path):
+        path = _jw_tf_mat(tmp_path, [_frf(5)], npts=8, fs=100)
+        d = sio.loadmat(path)
+        del d['tfun']
+        sio.savemat(path, {k: v for k, v in d.items()
+                           if not k.startswith('__')})
+        with pytest.raises(ValueError, match="'tfun'"):
+            file.import_from_matlab_jwlogger(filename=path)
+
+    def test_missing_npts(self, tmp_path):
+        path = _jw_tf_mat(tmp_path, [_frf(5)], npts=8, fs=100)
+        d = sio.loadmat(path)
+        del d['npts']
+        sio.savemat(path, {k: v for k, v in d.items()
+                           if not k.startswith('__')})
+        with pytest.raises(ValueError, match="'npts'"):
+            file.import_from_matlab_jwlogger(filename=path)
+
+
 class TestSaveDataSets:
     """`save_data(..., sets=...)` — the notebook counterpart of the web
     app's Save "Choose sets…" picker: `None` writes the dataset

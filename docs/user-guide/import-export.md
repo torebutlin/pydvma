@@ -63,7 +63,11 @@ calibration travels with them as `time_cal_factors`, `time_units` and the
 for the full list of variables.
 
 `dvma.export_to_matlab_jwlogger(data, filename='my_test.mat')` writes the
-layout of Jim Woodhouse's MATLAB logger instead.
+layout of Jim Woodhouse's MATLAB logger instead, and
+`dvma.import_from_matlab_jwlogger` reads it back. That layout has one
+spectral block and one sample rate: transfer functions are written in
+preference to FFTs, and in a file holding time data too the spectra are
+put on the time data's frequency grid.
 
 ## Export to CSV
 
