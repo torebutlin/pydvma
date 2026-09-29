@@ -149,18 +149,15 @@ class TestModalFitRoundTrip:
 def _test_impulse_tf_and_truth():
     """The TF of `testdata.create_test_impulse_data` and its known mode.
 
-    That function synthesises h(t) = exp(-t/tau)·sin(2π·f0·t) with
-    f0 = 100 Hz and tau = 0.1 s (constants local to it, restated here),
-    whose TF has a constant numerator: the 'dsp' form of `modal.f_TF`.
-    The true natural frequency sits slightly above f0, since
-    wn = sqrt(σ² + wd²) with σ = 1/tau and wd = 2π·f0.
+    That function drives one mode (natural frequency 100 Hz, free-decay
+    time constant tau = 0.1 s, modal constant 1000 /kg; constants local
+    to it, restated here) with its force pulse and records the VELOCITY,
+    so the TF is the 'vel' form of `modal.f_TF`, with zeta = 1/(tau*wn).
     """
-    f0, tau = 100.0, 0.1
-    sigma = 1.0 / tau
-    wn = np.sqrt(sigma ** 2 + (2 * np.pi * f0) ** 2)
+    fn, tau = 100.0, 0.1
     time_data = testdata.create_test_impulse_data().time_data_list[0]
     tf = analysis.calculate_tf(time_data, ch_in=0)
-    return tf, wn / (2 * np.pi), sigma / wn
+    return tf, fn, 1.0 / (tau * 2 * np.pi * fn)
 
 
 class TestModalFitSingleChannel:
@@ -172,11 +169,13 @@ class TestModalFitSingleChannel:
         tf, fn_true, zn_true = _test_impulse_tf_and_truth()
 
         r = modal.modal_fit_single_channel(
-            tf, freq_range=[80, 120], measurement_type='dsp')
+            tf, freq_range=[80, 120], measurement_type='vel')
 
         assert r.x.shape == (6,)            # [fn, zn, an, pn, rk, rm]
         assert abs(r.x[0] - fn_true) < 0.1  # Hz
         assert abs(r.x[1] - zn_true) / zn_true < 0.05
+        assert r.x[2] == pytest.approx(1000.0, rel=0.02)   # modal constant 1/m
+        assert abs(r.x[3]) < np.deg2rad(2)  # real: no spurious delay
 
     def test_default_measurement_type_recovers_test_impulse_mode(self):
         """The documented call, with the default measurement_type='acc'.

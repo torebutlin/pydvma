@@ -12,15 +12,69 @@ import datetime
     
 
 #%% Create test data
+def _sdof_velocity_ir(t, fn, tau):
+    """Velocity impulse response of one mode, per unit modal constant.
+
+    A mode with undamped natural frequency ``fn`` (Hz) whose free decay has
+    time constant ``tau`` (s), so ``zeta * wn = 1/tau``. For a unit impulse
+    of force at t = 0 the velocity is ``exp(-t/tau) * (cos(wd*t) -
+    sin(wd*t) / (tau*wd))`` times the modal constant ``A`` (``1/m`` for a
+    single mass), whose Fourier transform is the velocity FRF ``i*w*A /
+    (wn**2 - w**2 + 2i*zeta*wn*w)``: the form `modal_fit_all_channels`
+    fits with ``measurement_type='vel'``.
+    """
+    sigma = 1.0 / tau
+    wn = 2 * np.pi * fn
+    wd = np.sqrt(wn ** 2 - sigma ** 2)
+    return np.exp(-sigma * t) * (np.cos(wd * t) - (sigma / wd) * np.sin(wd * t))
+
+
+def _velocity_response(force, fs, modes):
+    """Velocity of a linear structure driven by ``force`` (N, sampled at fs).
+
+    ``modes`` is a list of ``(fn, tau, A)``: natural frequency (Hz), decay
+    time constant (s) and modal constant (1/kg). The response is the
+    convolution of the force with the summed velocity impulse responses,
+    so it starts with the force and a TF of velocity over force is the
+    analytic velocity FRF, with no delay between the two channels. The
+    first impulse-response sample is halved (the trapezoid rule): the plain
+    sampled sum adds ``h(0)*dt/2`` to the FRF at every frequency, 30 % of
+    it at 1 kHz for the default test mode.
+    """
+    t = np.arange(len(force)) / fs
+    h = np.zeros_like(t)
+    for fn, tau, A in modes:
+        h += A * _sdof_velocity_ir(t, fn, tau)
+    h[0] *= 0.5
+    return np.convolve(force, h)[:len(force)] / fs
+
+
+def _raised_cosine_pulse(N, fs, width):
+    """A unit-height raised-cosine force pulse ``width`` s long at t = 0.
+
+    Returns the length-N force channel and its impulse (N s), the area
+    under the pulse.
+    """
+    force = np.zeros(N)
+    N_pulse = int(np.ceil(width * fs))
+    n = np.arange(N_pulse)
+    force[n] = 0.5 * (1 - np.cos(2 * np.pi * n / N_pulse))
+    return force, np.sum(force) / fs
+
+
 def create_test_impulse_data(noise_level=0.0):
     '''Simulate one impulse-hammer test of a single 100 Hz mode.
 
     The DataSet holds one `TimeData` of 1 s at 10 kHz (10000 samples,
     two channels, units ``['N', 'm/s']``). Channel 0 is the hammer
     force: a unit-height raised-cosine pulse, 2 ms long, at the start of
-    the record. Channel 1 is the response,
-    ``exp(-t/0.1) * sin(2*pi*100*t)``: one mode at 100 Hz decaying with
-    a 0.1 s time constant, starting at t = 0.
+    the record (an impulse of 1 mN s). Channel 1 is the VELOCITY it
+    drives: one mode at 100 Hz whose free decay has a 0.1 s time
+    constant (damping ratio 0.0159), with modal constant 1000 /kg (a
+    1 g mass), so the tap sets it moving at about 1 m/s. The response is
+    the force convolved with the mode's velocity impulse response, so it
+    starts with the pulse, and a TF of channel 1 over channel 0 is the
+    velocity FRF: fit it with ``measurement_type='vel'``.
 
     Args:
         noise_level (float): Half-width of uniform random noise added to
@@ -35,15 +89,10 @@ def create_test_impulse_data(noise_level=0.0):
     time_axis = np.arange(N)/settings.fs
     
     time_data = np.zeros([N,2])
-    pulse_width = 0.002
-    N_pulse = int(np.ceil(pulse_width*settings.fs))
-    n = np.arange(N_pulse)
-    pulse = 0.5*(1-np.cos(2*np.pi*n/N_pulse))
-    time_data[n,0] = pulse
+    force, _impulse = _raised_cosine_pulse(N, settings.fs, 0.002)
+    time_data[:,0] = force
     
-    test_freq = 100
-    test_time_const = 0.1
-    y = np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*test_freq*time_axis)
+    y = _velocity_response(force, settings.fs, [(100.0, 0.1, 1000.0)])
     
     y += noise_level*2*(np.random.rand(len(y)) - 0.5)
     
@@ -87,10 +136,11 @@ def create_test_noise_data(added_noise_level=0.1):
     '''Simulate a random-excitation test of a single 100 Hz mode.
 
     The DataSet holds one `TimeData` of 10 s at 10 kHz (100000 samples,
-    two channels, units ``['N', 'm/s']``). Channel 0 is the input:
-    uniform white noise between -0.5 and 0.5. Channel 1 is that input
-    convolved with the impulse response ``exp(-t/0.1) * sin(2*pi*100*t)``
-    (not scaled by the sample interval), plus uniform measurement noise.
+    two channels, units ``['N', 'm/s']``). Channel 0 is the input force:
+    uniform white noise between -0.5 and 0.5 N. Channel 1 is the
+    velocity it drives in the same structure as
+    `create_test_impulse_data` (one mode at 100 Hz, 0.1 s decay time
+    constant, modal constant 1000 /kg), plus uniform measurement noise.
 
     Args:
         added_noise_level (float): Half-width of the uniform noise added
@@ -106,11 +156,7 @@ def create_test_noise_data(added_noise_level=0.1):
     
     time_data = np.zeros([N,2])
     x = np.random.rand(N) - 0.5
-    test_freq = 100
-    test_time_const = 0.1
-    g = np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*test_freq*time_axis)
-    y = np.convolve(x,g)
-    y = y[0:len(x)]
+    y = _velocity_response(x, settings.fs, [(100.0, 0.1, 1000.0)])
     
     added_noise = added_noise_level*2*(np.random.rand(N)-0.5)
     time_data[:,0] = x
@@ -133,9 +179,12 @@ def create_test_impulse_data_nonlinear_v1(noise_level=0):
     The DataSet holds one `TimeData` of 1 s at 10 kHz (10000 samples,
     two channels, units ``['N', 'm/s']``). Channel 0 is the hammer
     force: a unit-height raised-cosine pulse, 2 ms long, at the start of
-    the record. Channel 1 is a 100 Hz response whose
-    envelope is ``0.7*exp(-t/0.05) + 0.3*exp(-t/0.2)``: a decay that a
-    single damping ratio cannot describe.
+    the record. Channel 1 is the velocity of two coincident 100 Hz modes
+    with decay time constants 0.05 s and 0.2 s (modal constants 700 and
+    300 /kg), so its envelope is close to ``0.7*exp(-t/0.05) +
+    0.3*exp(-t/0.2)`` m/s: a decay that a single damping ratio cannot
+    describe. The system is linear despite the name; the response is
+    the force convolved with the modes' velocity impulse responses.
 
     Args:
         noise_level (float): Half-width of uniform random noise added to
@@ -150,21 +199,13 @@ def create_test_impulse_data_nonlinear_v1(noise_level=0):
     time_axis = np.arange(N)/settings.fs
     
     time_data = np.zeros([N,2])
-    pulse_width = 0.002
-    N_pulse = int(np.ceil(pulse_width*settings.fs))
-    n = np.arange(N_pulse)
-    pulse = 0.5*(1-np.cos(2*np.pi*n/N_pulse))
-    time_data[n,0] = pulse
+    force, impulse = _raised_cosine_pulse(N, settings.fs, 0.002)
+    time_data[:,0] = force
     
-    test_freq = 100
-    test_time_const_1 = 0.05  # Fast decay component
-    test_time_const_2 = 0.2   # Slow decay component
-    amplitude_1 = 0.7         # Amplitude of fast component
-    amplitude_2 = 0.3         # Amplitude of slow component
-    
-    # Double exponential decay with constant frequency
-    y = (amplitude_1 * np.exp(-time_axis/test_time_const_1) + 
-            amplitude_2 * np.exp(-time_axis/test_time_const_2)) * np.sin(2*np.pi*test_freq*time_axis)
+    # Two coincident 100 Hz modes, fast and slow decays; the modal
+    # constants make their free-decay amplitudes 0.7 and 0.3 m/s.
+    y = _velocity_response(force, settings.fs,
+                           [(100.0, 0.05, 0.7 / impulse), (100.0, 0.2, 0.3 / impulse)])
     
     y += noise_level*2*(np.random.rand(len(y)) - 0.5)
     
@@ -189,7 +230,10 @@ def create_test_impulse_data_nonlinear_v2(noise_level=0):
     force: a unit-height raised-cosine pulse, 2 ms long, at the start of
     the record. Channel 1 decays as ``exp(-t/0.1)`` while
     its frequency glides from 200 Hz to 100 Hz along a tanh curve
-    centred at 0.2 s with a 0.4 s time scale.
+    centred at 0.2 s with a 0.4 s time scale. This one is genuinely
+    nonlinear, so it has no impulse response to drive with the pulse:
+    channel 1 is that free decay written down directly, starting at
+    t = 0. Use it for decay and sonogram analysis, not a TF fit.
 
     Args:
         noise_level (float): Half-width of uniform random noise added to
@@ -245,12 +289,13 @@ def create_test_impulse_data_multi_harmonics(f1=100, noise_level=0.001):
 
     The DataSet holds one `TimeData` of 1 s at 10 kHz (10000 samples,
     two channels, units ``['N', 'm/s']``). Channel 0 is a raised-cosine
-    force pulse 0.5 ms long (peak about 0.9) at the start of the record.
-    Channel 1 sums decaying sines (time constant 0.1 s) at ``f1``,
-    ``4*f1``, ``9*f1`` and ``16*f1`` (amplitudes 1, 0.5, 0.3, 0.2) and
-    at the same multiples of ``f2 = 1.03*f1`` (amplitudes 0.8, 0.4,
-    0.25, 0.15), so each pair of modes is 3 % apart. Uniform noise is
-    added to both channels.
+    force pulse 0.5 ms long (unit height) at the start of the record.
+    Channel 1 is the velocity of modes (decay time constant 0.1 s) at
+    ``f1``, ``4*f1``, ``9*f1`` and ``16*f1`` (free-decay amplitudes 1,
+    0.5, 0.3, 0.2 m/s) and at the same multiples of ``f2 = 1.03*f1``
+    (0.8, 0.4, 0.25, 0.15 m/s), so each pair of modes is 3 % apart:
+    the force convolved with their velocity impulse responses. Uniform
+    noise is added to both channels.
 
     Args:
         f1 (float): Lowest frequency in Hz (default 100).
@@ -266,34 +311,20 @@ def create_test_impulse_data_multi_harmonics(f1=100, noise_level=0.001):
     time_axis = np.arange(N)/settings.fs
     
     time_data = np.zeros([N,2])
-    pulse_width = 0.0005
-    N_pulse = int(np.ceil(pulse_width*settings.fs))
-    n = np.arange(N_pulse)
-    pulse = 0.5*(1-np.cos(2*np.pi*n/N_pulse))
-    time_data[n,0] = pulse
-    time_data[:,0] += noise_level*2*(np.random.rand(N) - 0.5)
+    force, impulse = _raised_cosine_pulse(N, settings.fs, 0.0005)
     
     f2 = 1.03 * f1
     test_time_const = 0.1
+    harmonics = [1, 4, 9, 16]
+    amplitudes_1 = [1.0, 0.5, 0.3, 0.2]     # free-decay velocity, m/s
+    amplitudes_2 = [0.8, 0.4, 0.25, 0.15]
+    modes = ([(k * f1, test_time_const, a / impulse) for k, a in zip(harmonics, amplitudes_1)]
+             + [(k * f2, test_time_const, a / impulse) for k, a in zip(harmonics, amplitudes_2)])
+    y = _velocity_response(force, settings.fs, modes)
     
-    # Create response with multiple harmonics
-    y = np.zeros_like(time_axis)
-    
-    # First set of harmonics: f1, 4f1, 9f1, 16f1
-    harmonics_1 = [1, 4, 9, 16]
-    amplitudes_1 = [1.0, 0.5, 0.3, 0.2]  # Decreasing amplitudes
-    
-    for harmonic, amplitude in zip(harmonics_1, amplitudes_1):
-        freq = harmonic * f1
-        y += amplitude * np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*freq*time_axis)
-    
-    # Second set of harmonics: f2, 4f2, 9f2, 16f2
-    harmonics_2 = [1, 4, 9, 16]
-    amplitudes_2 = [0.8, 0.4, 0.25, 0.15]  # Slightly different amplitudes
-    
-    for harmonic, amplitude in zip(harmonics_2, amplitudes_2):
-        freq = harmonic * f2
-        y += amplitude * np.exp(-time_axis/test_time_const) * np.sin(2*np.pi*freq*time_axis)
+    # The noise is added after the response, so it is measurement noise on
+    # the force channel, not force the structure felt.
+    time_data[:,0] = force + noise_level*2*(np.random.rand(N) - 0.5)
     
     y += noise_level*2*(np.random.rand(len(y)) - 0.5)
     

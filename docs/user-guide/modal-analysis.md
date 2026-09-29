@@ -194,7 +194,7 @@ tf_list = dvma.TfDataList([tf_data])
 modal_data = dvma.modal_fit_all_channels(
     tf_list,
     freq_range=[80, 120],       # Hz, around the mode
-    measurement_type='dsp',     # what the output is, per unit of input
+    measurement_type='vel',     # what the output is, per unit of input
 )
 
 print(f"Natural frequency: {modal_data.fn[0]:.2f} Hz")
@@ -204,10 +204,11 @@ print(f"Modal constants: {modal_data.an}")
 
 `measurement_type` says what the transfer function's output is, per unit
 of input force: `'acc'` (acceleration), `'vel'` (velocity) or `'dsp'`
-(displacement). The synthetic response is labelled `m/s`, but its shape,
-`exp(-t/0.1) * sin(2*pi*100*t)`, is a displacement impulse response, so
-it is fitted with `'dsp'`. Pick the type from the physics of the
-measurement, not the unit label.
+(displacement). The synthetic response is the velocity of one mode
+(100 Hz, damping ratio 0.0159, modal constant 1000 /kg) driven by the
+hammer pulse, so it is fitted with `'vel'`, and the fit recovers exactly
+those values with the modal constant's phase at 0°. A phase well away
+from 0° or 180° usually means the wrong `measurement_type`.
 
 The fit is one mode per call, so for several modes call it once for each,
 with `freq_range` around that mode. In the returned `ModalData`, `fn` and
@@ -232,7 +233,7 @@ result = dvma.modal_fit_single_channel(
     tf_data,
     freq_range=[80, 120],     # Hz, around one mode
     channel=0,                # column of tf_data.tf_data
-    measurement_type='dsp',   # 'acc', 'vel' or 'dsp'
+    measurement_type='vel',   # 'acc', 'vel' or 'dsp'
 )
 
 fn, zeta, an, phase, rk, rm = result.x
