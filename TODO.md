@@ -20,12 +20,12 @@ describe today's behaviour and show only calls that work. Three
 self-contained fixes were offered as separate tasks: the file functions
 (positional `filename`, a clear no-Qt error, JW import with no filename
 or on a pydvma `.mat`, `DataSet.save_data` overwrite, `best_match` with
-`freq_range=None`; **LANDED 2026-09-29**, docs workarounds lifted),
-`modal_fit_single_channel` always raising plus the
+`freq_range=None`), `modal_fit_single_channel` always raising plus the
 NaN DC bin from `multiply_by_power_of_iw` at power ≤ −2, and the app's
 **Export Matlab** writing no `*_cal_factors`/`*_units` (Python's does;
-the 2.5.0 CHANGELOG claims both). When each lands, simplify the docs
-workarounds it names. Still open beyond those:
+the 2.5.0 CHANGELOG claims both). **All three LANDED 2026-09-29** and
+their docs workarounds are lifted (the Export Matlab follow-up is W4).
+Still open beyond those:
 
 - **Decisions for Tore:**
   - `signal_generator` silently rescales the whole waveform to the
