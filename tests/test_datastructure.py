@@ -447,3 +447,35 @@ class TestDataSetSubsetSourceTargetsPassthrough:
         sub = ds.subset([0, 1])  # every valid TimeData index
 
         assert m not in list(sub.modal_data_list)
+
+
+class TestWindowDefaults:
+    """Every Python entry point defaults to no window (``window=None``),
+    matching the `analysis` functions. Three wrappers used to default to
+    ``'hann'``, so ``data.calculate_tf_averaged()`` tapered an ensemble of
+    impacts that ``analysis.calculate_tf_averaged`` left untouched."""
+
+    WRAPPERS = [
+        (datastructure.DataSet, 'calculate_fft_set'),
+        (datastructure.DataSet, 'calculate_tf_set'),
+        (datastructure.DataSet, 'calculate_cross_spectrum_matrix_set'),
+        (datastructure.DataSet, 'calculate_tf_averaged'),
+        (datastructure.DataSet, 'calculate_cross_spectra_averaged'),
+        (datastructure.TimeDataList, 'calculate_fft_set'),
+        (datastructure.TimeDataList, 'calculate_tf_set'),
+        (datastructure.TimeDataList, 'calculate_cross_spectrum_matrix_set'),
+        (datastructure.TimeDataList, 'calculate_tf_averaged'),
+        (datastructure.TimeDataList, 'calculate_cross_spectra_averaged'),
+    ]
+
+    @pytest.mark.parametrize('cls,name', WRAPPERS)
+    def test_default_window_is_none(self, cls, name):
+        import inspect
+        assert inspect.signature(getattr(cls, name)).parameters['window'].default is None
+
+    def test_dataset_tf_averaged_matches_the_analysis_default(self):
+        from pydvma import testdata
+        ens = testdata.create_test_impulse_ensemble(N_ensemble=3, noise_level=0.01)
+        ens.calculate_tf_averaged(ch_in=0)
+        ref = analysis.calculate_tf_averaged(ens.time_data_list, ch_in=0)
+        np.testing.assert_array_equal(ens.tf_data_list[0].tf_data, ref.tf_data)

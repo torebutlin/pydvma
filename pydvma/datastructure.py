@@ -512,7 +512,7 @@ class DataSet():
             self.tf_data_list = TfDataList()
             print('No time data found in dataset')
             
-    def calculate_cross_spectrum_matrix_set(self,ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
+    def calculate_cross_spectrum_matrix_set(self,ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
         '''Calculate the cross-spectrum matrix of every measurement, replacing `cross_spec_data_list`.
 
         Runs `analysis.calculate_cross_spectrum_matrix` on each item of
@@ -525,9 +525,9 @@ class DataSet():
             time_range (list or np.ndarray or PlotData, optional):
                 ``[t_start, t_stop]`` in seconds; None (the default) uses
                 each whole record.
-            window (str, optional): A ``scipy.signal.windows`` name.
-                Defaults to ``'hann'`` here, unlike the analysis
-                function; None gives a rectangular window.
+            window (str, optional): A ``scipy.signal.windows`` name,
+                e.g. ``'hann'`` for random excitation. None (the default)
+                applies no window, which suits impacts.
             N_frames (int): Number of averaging frames per measurement
                 (default 1).
             overlap (float): Fractional overlap between frames (default
@@ -541,7 +541,7 @@ class DataSet():
             self.cross_spec_data_list = CrossSpecDataList()
             print('No time data found in dataset')
             
-    def calculate_tf_averaged(self, ch_in=0, time_range=None,window='hann'):
+    def calculate_tf_averaged(self, ch_in=0, time_range=None,window=None):
         '''Calculate one ensemble-averaged TF from all measurements, replacing `tf_data_list`.
 
         Runs `analysis.calculate_tf_averaged` on the whole of
@@ -555,9 +555,9 @@ class DataSet():
             time_range (list or np.ndarray, optional):
                 ``[t_start, t_stop]`` in seconds, applied to every
                 measurement; None (the default) uses each whole record.
-            window (str, optional): A ``scipy.signal.windows`` name.
-                Defaults to ``'hann'`` here, unlike the analysis
-                function; None gives a rectangular window.
+            window (str, optional): A ``scipy.signal.windows`` name,
+                e.g. ``'hann'`` for random excitation. None (the default)
+                applies no window, which suits impacts.
         '''
         if len(self.time_data_list)>0:
             tf_data = self.time_data_list.calculate_tf_averaged(ch_in=ch_in, time_range=time_range ,window=window)
@@ -1002,7 +1002,7 @@ class TimeDataList(list):
         return cross_spec_data_list
     
     
-    def calculate_tf_averaged(self, ch_in=0, time_range=None,window='hann'):
+    def calculate_tf_averaged(self, ch_in=0, time_range=None,window=None):
         '''Calculate one TF averaged across all items with `analysis.calculate_tf_averaged`.
 
         Args:
@@ -1011,9 +1011,9 @@ class TimeDataList(list):
             time_range (list or np.ndarray, optional):
                 ``[t_start, t_stop]`` in seconds, applied to every item;
                 None (the default) uses each whole record.
-            window (str, optional): A ``scipy.signal.windows`` name.
-                Defaults to ``'hann'`` here, unlike the analysis
-                function; None gives a rectangular window.
+            window (str, optional): A ``scipy.signal.windows`` name,
+                e.g. ``'hann'`` for random excitation. None (the default)
+                applies no window, which suits impacts.
 
         Returns:
             tf_data (TfData): The ensemble-averaged transfer functions.
