@@ -138,6 +138,15 @@ def calculate_fft(time_data,time_range=None,window=None):
 
     return freq_data
 
+def _iw_power(freq_axis, power):
+    '''``(i*omega)**power`` as a column, with any 0 Hz bin set to 0 for a negative power.'''
+    iw = 1j*2*np.pi * np.asarray(freq_axis)[:,None]
+    if power<0:
+        # Evaluating at 0 Hz would give inf, or nan+nanj with a warning.
+        return np.power(iw, power, out=np.zeros_like(iw), where=(iw != 0))
+    return iw**power
+
+
 def multiply_by_power_of_iw(data,power,channel_list):
     '''Multiply chosen channels of a spectrum or TF by ``(i*omega)**power``, in place.
 
@@ -154,10 +163,11 @@ def multiply_by_power_of_iw(data,power,channel_list):
     ``power=1`` followed by ``power=-1`` returns the counter to where it
     started.
 
-    For a negative ``power`` the DC bin (``f = 0``) has no finite value
-    and is overwritten: it comes out as 0 for ``power=-1`` and as NaN
-    for ``power=-2`` or below. It is not restored by a later positive
-    power.
+    For a negative ``power`` the bin at 0 Hz (``f = 0``) has no finite
+    value and is set to 0. It is not restored by a later positive
+    power. Only a bin actually at 0 Hz is treated this way, so an axis
+    that does not start at 0 Hz (such as a BLA set's excited bins) is
+    scaled throughout.
 
     Args:
         data (FreqData or TfData): The item to scale.
@@ -173,10 +183,8 @@ def multiply_by_power_of_iw(data,power,channel_list):
     '''
 
     if data.__class__.__name__ == 'TfData':
-        iw = 1j*2*np.pi * data.freq_axis[:,None]
-        if power<0:
-            iw[0]=np.inf
-        data.tf_data[:,channel_list] = (iw**power) * data.tf_data[:,channel_list]
+        iw_power = _iw_power(data.freq_axis, power)
+        data.tf_data[:,channel_list] = iw_power * data.tf_data[:,channel_list]
         # keep track of multiplication powers
         if hasattr(data,'iw_power_counter'):
             data.iw_power_counter[channel_list] += power
@@ -185,10 +193,8 @@ def multiply_by_power_of_iw(data,power,channel_list):
             data.iw_power_counter[channel_list] = power
             
     elif data.__class__.__name__ == 'FreqData':
-        iw = 1j*2*np.pi * data.freq_axis[:,None]
-        if power<0:
-            iw[0]=np.inf
-        data.freq_data[:,channel_list] = (iw**power) * data.freq_data[:,channel_list]
+        iw_power = _iw_power(data.freq_axis, power)
+        data.freq_data[:,channel_list] = iw_power * data.freq_data[:,channel_list]
         if hasattr(data,'iw_power_counter'):
             data.iw_power_counter[channel_list] += power
         else:

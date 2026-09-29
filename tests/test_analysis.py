@@ -11,6 +11,8 @@ output.
 Pure-Python, no hardware required: runs on Mac/Linux/Windows.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 from scipy import signal
@@ -1832,3 +1834,66 @@ def test_best_match_factors_apply_as_calibration_factors():
         for k in range(tf.tf_data.shape[1]):
             np.testing.assert_allclose(
                 tf.tf_data[:, k] * tf.channel_cal_factors[k], ref, rtol=1e-9)
+
+
+# ---------- multiply_by_power_of_iw ----------
+
+def _iw_items():
+    """A 3-channel FreqData and a 2-channel TfData (ch_in=0), both with a
+    nonzero DC bin at freq_axis[0] == 0."""
+    fs, n = 1000, 1024
+    rng = np.random.default_rng(5)
+    td = _make_time_data(rng.standard_normal((n, 3)) + 0.5, fs)
+    return {
+        'freq': (analysis.calculate_fft(td), 'freq_data'),
+        'tf': (analysis.calculate_tf(td, ch_in=0), 'tf_data'),
+    }
+
+
+class TestMultiplyByPowerOfIw:
+
+    @pytest.mark.parametrize('kind', ['freq', 'tf'])
+    @pytest.mark.parametrize('power', [-1, -2, -3])
+    def test_negative_power_zeroes_dc_without_warning(self, kind, power):
+        """Regression: with iw[0] = inf, (inf+0j)**-2 is nan+nanj (plus a
+        RuntimeWarning), so power <= -2 left NaN in the DC bin."""
+        item, attr = _iw_items()[kind]
+        assert item.freq_axis[0] == 0 and getattr(item, attr)[0, 1] != 0
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            analysis.multiply_by_power_of_iw(item, power, [1])
+
+        assert getattr(item, attr)[0, 1] == 0
+
+    @pytest.mark.parametrize('kind', ['freq', 'tf'])
+    @pytest.mark.parametrize('power', [-1, -2, -3])
+    def test_scales_chosen_channels_in_place(self, kind, power):
+        """The argument itself is scaled and returned; other channels and
+        the non-DC bins follow (i*2*pi*f)**power exactly."""
+        item, attr = _iw_items()[kind]
+        before = getattr(item, attr).copy()
+
+        out = analysis.multiply_by_power_of_iw(item, power, [1])
+
+        assert out is item
+        after = getattr(item, attr)
+        iw = 1j * 2 * np.pi * item.freq_axis[1:]
+        np.testing.assert_allclose(after[1:, 1], before[1:, 1] * iw ** power,
+                                   rtol=1e-12)
+        np.testing.assert_array_equal(after[:, 0], before[:, 0])
+        expected_counter = np.zeros(before.shape[1])
+        expected_counter[1] = power
+        np.testing.assert_array_equal(item.iw_power_counter, expected_counter)
+
+    def test_first_bin_off_zero_hz_is_scaled_not_zeroed(self):
+        """A BLA TF holds only its excited bins, so freq_axis[0] need not be
+        0 Hz; only a bin actually at 0 Hz is special."""
+        f = np.array([10.0, 20.0, 30.0])
+        tf = datastructure.TfData(f, np.ones((3, 1), dtype=complex), None,
+                                  options.MySettings(fs=1000, channels=1))
+
+        analysis.multiply_by_power_of_iw(tf, -2, [0])
+
+        np.testing.assert_allclose(tf.tf_data[:, 0], (1j * 2 * np.pi * f) ** -2,
+                                   rtol=1e-12)
