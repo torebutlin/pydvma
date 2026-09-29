@@ -28,13 +28,16 @@ their docs workarounds are lifted (the Export Matlab follow-up is W4).
 Still open beyond those:
 
 - **Decisions for Tore:**
-  - `signal_generator` silently rescales the whole waveform to the
-    output rail (message only in `acquisition.MESSAGE`); raise or warn?
-  - Window defaults differ by entry point: `DataSet` /
-    `TimeDataList.calculate_tf_averaged` and
-    `DataSet.calculate_cross_spectrum_matrix_set` default `'hann'`,
-    the `analysis.*` functions default `None`. Unify, given that
-    impacts want `None`?
+  - ~~`signal_generator` silently rescales to the output rail~~ —
+    DECIDED 2026-09-29: warn. Landed: `OutputRescaledWarning`, relayed
+    to the app as a pinned toast (bridge `warning` frame; the Web Audio
+    generator reports its own scale-down).
+  - ~~Window defaults differ by entry point~~ — DECIDED 2026-09-29:
+    `window=None` everywhere in Python. Landed.
+  - ~~The Qt no-filename dialog~~ — DECIDED 2026-09-29: removed; a
+    missing filename is a TypeError, `parent` stays as a deprecated
+    no-op until 3.0. Landed. **3.0: drop `parent` from the file
+    functions' signatures.**
   - The app's IEPE switch is all-channel (a list in `--settings` is cut
     to its first entry), so mixed IEPE / non-IEPE recording has to go
     through Python. Per-channel IEPE in Setup?

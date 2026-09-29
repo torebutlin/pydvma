@@ -45,6 +45,15 @@ Export Matlab.
   `UNIT_WRAP_VECTORS`. Files written earlier keep the string they were
   written with — it cannot be split back into numerator and denominator
   without guessing.
+- **`signal_generator` warns when it scales a waveform down.** A
+  waveform whose peak is past the output rail is scaled so its peak sits
+  on the rail, which plays it at a fraction of the requested level. That
+  used to be silent (the only trace was `acquisition.MESSAGE`); it now
+  raises `OutputRescaledWarning` (a `UserWarning`, also available as
+  `dvma.OutputRescaledWarning` for filtering) with the percentage left
+  and what to change. The bridge passes it to the app as a pinned toast
+  before the capture, and the browser's own stimulus generator says the
+  same when it scales down.
 
 ### Changed
 
@@ -68,11 +77,37 @@ Export Matlab.
   names an install that can actually record (`pip install
   "pydvma[full]"` — `[serve]` alone has no acquisition backend) and
   links the new Running Locally page.
-- **With no filename and no Qt, the file functions now say what to
-  do.** Leaving out `filename` opens a Qt file dialog, but no pydvma
-  extra has installed Qt since 2.0.0, so a clean install got a bare
-  `ModuleNotFoundError`. It is now an `ImportError` that says to pass
-  `filename='name.dvma'` (or `pip install qtpy PyQt5` for the dialog).
+- **pydvma no longer opens a Qt file dialog.** It was the last Qt code
+  in the package, and no extra has installed Qt since 2.0.0, so on a
+  clean install leaving out `filename` gave a bare `ModuleNotFoundError`.
+  `load_data`, `save_data`, `save_fig`, the three exports and
+  `import_from_matlab_jwlogger` now raise a `TypeError` that names the
+  function and shows a call that works. The `parent` argument stays so
+  no existing call breaks: a string or path there is taken as the
+  filename, and anything else is ignored with a `DeprecationWarning`
+  (it goes in 3.0).
+- **Every Python analysis entry point now defaults to no window.**
+  `DataSet.calculate_tf_averaged`, `TimeDataList.calculate_tf_averaged`
+  and `DataSet.calculate_cross_spectrum_matrix_set` defaulted to
+  `'hann'`, unlike the `analysis` functions and every other wrapper, so
+  `data.calculate_tf_averaged()` tapered an ensemble of hammer hits that
+  `analysis.calculate_tf_averaged` left alone. All now default to
+  `window=None`, which suits impacts; pass `window='hann'` for random
+  excitation. The web app keeps its own Hann, 10-frame defaults.
+- **The synthetic test data is now a physical impact test.**
+  `create_test_impulse_data` wrote the response as
+  `exp(-t/0.1)·sin(2π·100t)` from t = 0, independent of the force pulse
+  (centred at 1 ms) and labelled `m/s`: a displacement shape, 1 ms ahead
+  of the force, so its transfer function carried a spurious +36° and
+  only fitted as `'dsp'`. The response is now the VELOCITY of the mode
+  (100 Hz, 0.1 s decay time constant, modal constant 1000 /kg) driven by
+  the pulse, so it starts with the tap, peaks at about 1 m/s as before,
+  and fits with `measurement_type='vel'` to fn = 100 Hz, damping ratio
+  0.0159 and modal constant 1000 at 0° phase. The ensemble, the
+  random-excitation data, the two-time-constant and the multi-harmonic
+  generators use the same model; `create_test_impulse_data_nonlinear_v2`
+  is genuinely nonlinear and stays a documented free decay. Numbers
+  computed from the old synthetic data will differ.
 - **Importing pydvma's own `.mat` export is refused with a clear
   error.** `export_to_matlab` writes an export-only file, but
   `load_data`, `import_from_matlab_jwlogger` and the web app's Load Data
@@ -99,21 +134,24 @@ Export Matlab.
   before `wrap_unit` exports as `(m/s)/N` from the app and as the
   stored `m/s/N` from Python.
 - **A filename given positionally now works.**
-  `dvma.load_data('measurement.dvma')` passed the name as the Qt dialog
-  `parent`, the first positional argument of every file function, and
-  failed inside the dialog code — a `TypeError`, or
+  `dvma.load_data('measurement.dvma')` passed the name as `parent` (the
+  old Qt dialog's parent), the first positional argument of every file
+  function, and failed inside the dialog code — a `TypeError`, or
   `ModuleNotFoundError` for qtpy on a clean install. `load_data`,
   `save_data`, `save_fig`, `export_to_matlab`,
   `export_to_matlab_jwlogger` and `export_to_csv` now take a string or
   path in that position as the filename. Keyword calls are unchanged.
-- **The file dialog no longer kills the Python process.** Where Qt is
-  installed, opening the dialog with no Qt application running (a plain
-  script, or a notebook without `%gui qt` or `%matplotlib qt`) aborted
-  the process, kernel included; the removed Qt logger used to create
-  that application, and now the dialog does.
-- **`import_from_matlab_jwlogger()` with no filename** always raised
-  `TypeError` (it called `loadmat(None)`); it now asks with a file
-  dialog like the other file functions.
+- **`import_from_matlab_jwlogger()` with no filename** failed inside
+  `scipy.io.loadmat(None)`; it now raises the same clear `TypeError` as
+  the other file functions.
+- **A capture-integrity notice no longer loses the capture in the app.**
+  The bridge sent its notices (input dropped during a capture, USB
+  zero-fill dropouts, a stalled monitor) as `error` frames, which the
+  app treats as a failed request. So a capture with dropped input was
+  reported as "Recording failed", its data arrived afterwards and was
+  held back, and the NEXT capture then showed the previous capture's
+  data. The stall notice was dropped altogether. They are now a separate
+  `warning` frame: a pinned toast, with the capture delivered as normal.
 - **`DataSet.save_data` could not overwrite without asking**, so a
   scripted re-save blocked on the terminal prompt. It now takes
   `overwrite_without_prompt`, passed through to `file.save_data`.
@@ -206,8 +244,7 @@ Export Matlab.
   and the native engine — previously spread across the Web Logger
   overview, *From the Qt logger* and the examples.
 - **Accuracy fixes:** `load_data`/`save_data` examples now pass
-  `filename=` (leaving it out opens a file dialog, which needs Qt, which
-  pydvma no longer installs); settings are passed
+  `filename=` (a positional filename failed then; it works now); settings are passed
   to `MySettings(...)` rather than assigned afterwards (assignment leaves
   derived values such as `output_fs` stale); the browser app has no
   drag-and-drop loading, so the docs no longer promise it; and the
