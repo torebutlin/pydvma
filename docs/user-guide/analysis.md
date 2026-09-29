@@ -343,7 +343,7 @@ tf_list = dvma.TfDataList(
 
 factors = dvma.best_match(
     tf_list,
-    freq_range=[50, 150],   # Hz: always give the range
+    freq_range=[50, 150],   # Hz: a band where the TFs are clean
     set_ref=0,              # reference set
     ch_ref=0,               # reference channel
 )
@@ -351,9 +351,14 @@ factors = dvma.best_match(
 tf_list.set_calibration_factors_all([f.ravel() for f in factors])
 ```
 
-`factors` has one array per set. The last line writes them as the sets'
-`channel_cal_factors`, which **replaces any calibration those channels
-already had**. See
+`factors` has one array per set, shaped `(n_channels, 1)`: each
+channel's factor relative to the reference channel. Leaving out
+`freq_range` matches over the whole frequency axis, where noise at the
+ends can skew the factors or even flip their sign, so give a band where
+the transfer functions are clean.
+
+The last line writes the factors as the sets' `channel_cal_factors`,
+which **replaces any calibration those channels already had**. See
 [Calibration and units](../web-logger/calibration.md) for what that
 multiplier does.
 

@@ -3,9 +3,11 @@
 Save and load whole datasets in pydvma's own format, and export the
 arrays to MATLAB, CSV or pandas.
 
-Always pass `filename=` to these functions. Without one they try to open
-a file dialog, which needs `pip install qtpy` plus a Qt binding such as
-PyQt5. pydvma doesn't install either.
+Give each function a filename, either as `filename=` (as below) or
+positionally, as in `dvma.load_data('my_test.dvma')`. Without one they
+open a file dialog instead, which needs `pip install qtpy` plus a Qt
+binding such as PyQt5. pydvma installs neither, so without them the call
+stops with an error asking for a filename.
 
 The examples start from a synthetic impulse test:
 
@@ -88,8 +90,10 @@ for both time captures and transfer function files:
 jw_data = dvma.load_data(filename='my_jw_capture.mat')
 ```
 
-This importer cannot read the `.mat` files that `export_to_matlab` writes.
-Keep the `.dvma` file for anything you want to reopen.
+The `.mat` files that `export_to_matlab` writes are export-only: loading
+one stops with an error saying so. Keep the `.dvma` file for anything you
+want to reopen. `dvma.import_from_matlab_jwlogger(filename=...)` does the
+same import directly.
 
 For a transfer function file the frequency axis is built from the file's
 `npts` (FFT length) and `freq` (sample rate): `npts/2 + 1` bins, spaced

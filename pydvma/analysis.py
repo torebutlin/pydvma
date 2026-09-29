@@ -224,7 +224,8 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
         freq_range (list, np.ndarray or PlotData, optional): The band to
             match over, ``[f_min, f_max]`` in Hz. A PlotData uses its
             visible x-range. None (the default) uses the reference set's
-            whole frequency axis.
+            whole frequency axis, where noise at the ends can skew the
+            factors, so prefer a band where the TFs are clean.
         set_ref (int, optional): Index of the reference set. Default 0.
         ch_ref (int, optional): Index of the reference channel (TF column)
             in that set. Default 0.

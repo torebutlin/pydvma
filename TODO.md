@@ -20,7 +20,8 @@ describe today's behaviour and show only calls that work. Three
 self-contained fixes were offered as separate tasks: the file functions
 (positional `filename`, a clear no-Qt error, JW import with no filename
 or on a pydvma `.mat`, `DataSet.save_data` overwrite, `best_match` with
-`freq_range=None`), `modal_fit_single_channel` always raising plus the
+`freq_range=None`; **LANDED 2026-09-29**, docs workarounds lifted),
+`modal_fit_single_channel` always raising plus the
 NaN DC bin from `multiply_by_power_of_iw` at power ≤ −2, and the app's
 **Export Matlab** writing no `*_cal_factors`/`*_units` (Python's does;
 the 2.5.0 CHANGELOG claims both). When each lands, simplify the docs
@@ -41,7 +42,10 @@ workarounds it names. Still open beyond those:
   - A `PlotData` passed as `time_range=` to `calculate_tf` (and the
     averaged TF/CSD) is stored in `settings.time_range`, so
     `save_data` then fails with "not JSON serializable".
-  - `best_match` reads `freq_range.tfax`, which `PlotData` lacks.
+  - pydvma's own `export_to_matlab_jwlogger` output does not import
+    back through `import_from_matlab_jwlogger`: a time-only export
+    writes no `freq` (TypeError on import) and a spectral one no `tfun`
+    (KeyError). Genuine JW files carry both. Found 2026-09-29.
   - Plotting mutates data: `plot_tf_data` writes 1 over NaN coherence,
     `plot_sono_data` writes 1e-16 over zeros in `sono_data`.
   - `export_to_matlab` / `export_to_csv` check for an existing file
