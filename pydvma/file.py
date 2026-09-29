@@ -321,6 +321,15 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
     '''
     Exports a DataSet to 'filename.mat' for MATLAB.
 
+    Each kind of data (time, FFT, transfer function) is one block, with
+    every channel of every measurement of that kind as a column, and the
+    measurements interpolated onto one common axis: for time, the highest
+    sample rate over the longest capture; for FFT and TF, the finest
+    spacing up to the highest frequency. A column is zero past the end of
+    a shorter record, so a single measurement keeps exactly its own
+    samples or bins. Coherence, sonograms and cross-spectra are not
+    exported. The web app's Export Matlab writes the same variables.
+
     The file loads directly in MATLAB as a set of arrays. It is
     export-only: pydvma cannot read it back (`load_data` refuses it), so
     keep a `save_data` .dvma alongside it. The filename can be given
@@ -365,13 +374,13 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
             # silently dropped the last measured channel from the export.
             n_time += time_data.time_data.shape[1]
         
-        t=np.arange(0,T,1/fs)
+        t = _time_grid(T, fs)
         time_data_all = np.zeros((len(t),n_time))
         counter = -1
         for time_data in dataset.time_data_list:
             for i in range(time_data.time_data.shape[1]):
                 counter += 1
-                time_data_all[:,counter] = np.interp(t,time_data.time_axis,time_data.time_data[:,i],right=0)
+                time_data_all[:,counter] = _interp_onto(t,time_data.time_axis,time_data.time_data[:,i],0)
                 
         data_matlab['time_axis_all'] = np.transpose(np.atleast_2d(t))
         data_matlab['time_data_all'] = time_data_all
@@ -393,7 +402,7 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
             tf_shape = np.shape(freq_data.freq_data)
             n_tf += tf_shape[1]
         
-        f=np.arange(0,fmax+df,df)
+        f = _spectral_grid(fmax, df)
         npts = 2*(len(f)-1)
         fs_tf = 2*f[-1]
         freq_data_all = np.zeros((len(f),n_tf),dtype=complex)
@@ -402,7 +411,7 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
             freq_shape = np.shape(freq_data.freq_data)
             for i in range(freq_shape[1]):
                 counter += 1
-                freq_data_all[:,counter] = np.interp(f,freq_data.freq_axis,freq_data.freq_data[:,i],right=0)
+                freq_data_all[:,counter] = _interp_onto(f,freq_data.freq_axis,freq_data.freq_data[:,i],0)
         
         data_matlab['freq_axis_all'] = np.transpose(np.atleast_2d(f))
         data_matlab['freq_data_all'] = freq_data_all
@@ -423,7 +432,7 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
             tf_shape = np.shape(tf_data.tf_data)
             n_tf += tf_shape[1]
         
-        f=np.arange(0,fmax+df,df)
+        f = _spectral_grid(fmax, df)
         npts = 2*(len(f)-1)
         fs_tf = 2*f[-1]
         tf_data_all = np.zeros((len(f),n_tf),dtype=complex)
@@ -432,7 +441,7 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
             tf_shape = np.shape(tf_data.tf_data)
             for i in range(tf_shape[1]):
                 counter += 1
-                tf_data_all[:,counter] = np.interp(f,tf_data.freq_axis,tf_data.tf_data[:,i],right=0)
+                tf_data_all[:,counter] = _interp_onto(f,tf_data.freq_axis,tf_data.tf_data[:,i],0)
         
         data_matlab['tf_axis_all'] = np.transpose(np.atleast_2d(f))
         data_matlab['tf_data_all'] = tf_data_all
@@ -722,6 +731,52 @@ def _interp_onto(grid, axis, values, pad):
     rounding = (grid > axis[-1]) & (grid <= axis[-1] + 1e-6 * step)
     return np.interp(np.where(rounding, axis[-1], grid), axis, values,
                      right=pad)
+
+
+def _time_grid(T, fs):
+    '''
+    The common time axis of an `export_to_matlab` time block.
+
+    ``round(T*fs)`` samples at ``fs``, counted rather than stepped:
+    ``np.arange(0, T, 1/fs)`` sometimes admits one sample past the end
+    through float rounding (1000 Hz x 1023 samples, 3000 Hz x 999), which
+    became a spurious trailing row of zeros. The rate is estimated from an
+    axis, so `_clean_rate` strips its float noise first. The browser's
+    Export Matlab (`engine.export_mat`) builds its grid here too, which is
+    how the two files stay identical.
+
+    Args:
+       T (float): The longest capture's duration in seconds, its sample
+           count over its rate.
+       fs (float): The highest sample rate in Hz.
+
+    Returns:
+       t (np.ndarray): The sample times ``k/fs``, starting at 0.
+    '''
+    fs = _clean_rate(fs)
+    return np.arange(int(round(T * fs))) / fs
+
+
+def _spectral_grid(fmax, df):
+    '''
+    The common frequency axis of an `export_to_matlab` FFT or TF block.
+
+    ``round(fmax/df) + 1`` bins at spacing ``df`` from 0, counted rather
+    than stepped: ``np.arange(0, fmax + df, df)`` sometimes admits one bin
+    past ``fmax`` through float rounding (the FFT of 1000 Hz x 1023
+    samples), which became a spurious trailing row of zeros. When the
+    spectra's spacings differ, the grid ends within half a step of
+    ``fmax``. The browser's Export Matlab (`engine.export_mat`) builds its
+    grid here too, which is how the two files stay identical.
+
+    Args:
+       fmax (float): The highest frequency of any spectrum, in Hz.
+       df (float): The finest bin spacing of any spectrum, in Hz.
+
+    Returns:
+       f (np.ndarray): The bin frequencies ``k*df``, starting at 0.
+    '''
+    return np.arange(int(round(fmax / df)) + 1) * df
 
 
 #%% CALIBRATION METADATA FOR THE RAW-DATA EXPORTS

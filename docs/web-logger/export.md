@@ -148,7 +148,9 @@ has the ratio of its output and input factors, as in the CSV below.
 
 Measurements with different sample rates or lengths are interpolated
 onto one common axis: the finest resolution and the widest span, with
-zeros beyond the end of a shorter record. A kind you have not computed
+zeros beyond the end of a shorter record. A single measurement, or
+several with the same rate and length, keeps exactly its own samples
+and bins. A kind you have not computed
 is left out. The first export in the browser can take a few seconds
 while the analysis engine starts.
 

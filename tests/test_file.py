@@ -627,6 +627,71 @@ class TestExportColumnCountFromArray:
         np.testing.assert_allclose(cols[0], [9.0, 1.0, 2.0])
 
 
+def _matlab_export(tmp_path, ds, name='m.mat'):
+    """Export `ds` with `export_to_matlab`; return the loaded .mat dict."""
+    path = str(tmp_path / name)
+    file.export_to_matlab(ds, filename=path, overwrite_without_prompt=True)
+    return sio.loadmat(path)
+
+
+class TestMatlabExportGrid:
+    """`export_to_matlab` lays every set of a kind on one common grid. It
+    built that grid with a float-stop `np.arange`, which at some sizes
+    admits one step too many (a spurious trailing zero row), and padded
+    with `np.interp(..., right=0)`, which zeroes the last sample or top bin
+    when the grid's end lands one ulp past the data's. Each size below is
+    one where a fault bit; the first of each list is a clean control. The
+    app's twin, `engine.export_mat`, is held to the same sizes in
+    `tests/test_engine_export_mat.py`."""
+
+    # 1000 x 1023, 3000 x 999 and 44100 x 999 grew a trailing zero row;
+    # 8533 x 1000 zeroed the last real sample.
+    @pytest.mark.parametrize('fs, n', [(1000, 1024), (1000, 1023),
+                                       (3000, 999), (44100, 999),
+                                       (8533, 1000)])
+    def test_time_block_is_the_capture(self, tmp_path, fs, n):
+        td = _time_data(fs=fs, n=n)
+        m = _matlab_export(tmp_path, _dataset(td))
+        assert m['time_data_all'].shape == td.time_data.shape
+        np.testing.assert_allclose(m['time_axis_all'].ravel(), td.time_axis)
+        np.testing.assert_allclose(m['time_data_all'], td.time_data)
+
+    def test_shorter_capture_is_zero_padded_after_its_end(self, tmp_path):
+        """The pad still applies a whole step past a set's end: only the
+        one-ulp overshoot counts as the end point."""
+        long, short = _time_data(fs=8533, n=1000), _time_data(fs=8533, n=500,
+                                                             seed=1)
+        d = _matlab_export(tmp_path, _dataset(long, short))['time_data_all']
+        assert d.shape == (1000, 4)
+        np.testing.assert_allclose(d[:, :2], long.time_data)
+        np.testing.assert_allclose(d[:500, 2:], short.time_data)
+        np.testing.assert_array_equal(d[500:, 2:], 0)
+
+    # 1000 x 1023 grew an extra zero bin; 1000 x 1060 and 1021 x 996
+    # zeroed the top bin.
+    @pytest.mark.parametrize('fs, n', [(1000, 1024), (1000, 1023),
+                                       (1000, 1060), (1021, 996)])
+    def test_fft_block_is_the_spectrum(self, tmp_path, fs, n):
+        fft = analysis.calculate_fft(_time_data(fs=fs, n=n))
+        m = _matlab_export(tmp_path, _dataset(fft))
+        assert m['freq_data_all'].shape == fft.freq_data.shape
+        np.testing.assert_allclose(m['freq_axis_all'].ravel(), fft.freq_axis)
+        np.testing.assert_allclose(m['freq_data_all'], fft.freq_data)
+
+    # 1000 x 2048 in 4 frames grew an extra zero bin; 1000 x 2056 in 2
+    # frames zeroed the top bin.
+    @pytest.mark.parametrize('fs, n, frames', [(1000, 2048, 1),
+                                               (1000, 2048, 4),
+                                               (1000, 2056, 2)])
+    def test_tf_block_is_the_tf(self, tmp_path, fs, n, frames):
+        tf = analysis.calculate_tf(_time_data(fs=fs, n=n), ch_in=0,
+                                   N_frames=frames, window='hann')
+        m = _matlab_export(tmp_path, _dataset(tf))
+        assert m['tf_data_all'].shape == tf.tf_data.shape
+        np.testing.assert_allclose(m['tf_axis_all'].ravel(), tf.freq_axis)
+        np.testing.assert_allclose(m['tf_data_all'], tf.tf_data)
+
+
 @pytest.fixture
 def no_qt(monkeypatch):
     """Make qtpy unimportable, as on a clean pydvma install (no extra has

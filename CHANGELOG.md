@@ -173,6 +173,24 @@ Export Matlab.
   over ±`tsmax`) and saves the largest absolute sample there. A 3 s
   capture of 10 mV signals opened on a ±3 axis. `tsmax` is now the
   largest absolute value in `indata`. pydvma's import does not read it.
+- **The MATLAB export no longer adds a row of zeros, or zeroes the last
+  value, at some sizes.** `export_to_matlab` and the app's **Export
+  Matlab** put each kind's measurements on one common axis, and float
+  rounding in how that axis was built made it one step too long at some
+  sizes, and at others ended it a hair past the data, so the zero
+  padding replaced the last real value. A 1023-sample capture at
+  1000 Hz exported 1024 rows ending in zeros, and a 1000-sample capture
+  at 8533 Hz exported its last sample as 0. FFTs and transfer functions
+  gained a zero top bin, or lost their top bin to 0, the same way; this
+  included the ordinary case of a TF of 2048 samples at 1000 Hz averaged
+  over 4 frames. The row count of an affected export changes: a single
+  measurement now exports exactly its own samples and bins. Where one
+  kind's measurements differ in rate or spacing, the axis can also end
+  one row sooner than before; that row lay past the end of every
+  measurement and held only zeros. The app and Python build the axis
+  with the same code, so their files still match byte for byte after
+  the header timestamp. `export_to_matlab_jwlogger` had the same faults
+  and was fixed above.
 
 ### Documentation
 

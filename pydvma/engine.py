@@ -1449,9 +1449,12 @@ def calc_bla(time_arrays, run_spec):
 def _common_axis(axes, decimated=False):
     """Common axis for interpolation, matching ``file.export_to_matlab``.
 
-    For frequency/tf: ``arange(0, fmax + df, df)`` with the FINEST ``df`` and
-    the largest ``fmax`` across sets. For time (``decimated=False`` unused here;
-    time uses its own branch). Sets are then ``np.interp``-ed onto this axis and
+    For frequency/tf: ``file._spectral_grid`` — ``round(fmax/df) + 1`` bins
+    at the FINEST ``df``, ending at (or, when the sets' spacings differ,
+    within half a step of) the largest ``fmax`` across sets — the
+    same function Python's exporter calls, so the two grids cannot drift.
+    For time (``decimated=False`` unused here; time uses its own branch).
+    Sets are then ``file._interp_onto``-ed onto this axis and
     column-concatenated.
     """
     df = np.inf
@@ -1464,7 +1467,8 @@ def _common_axis(axes, decimated=False):
         fmax = max(fmax, float(a[-1]))
     if not np.isfinite(df) or df <= 0:
         return np.zeros(0)
-    return np.arange(0, fmax + df, df)
+    from pydvma import file as pfile
+    return pfile._spectral_grid(fmax, df)
 
 
 def _extend_column_calibration(s, cols, cal_factors, units):
@@ -1521,7 +1525,8 @@ def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
     freq_sets = list(freq_sets or [])
     tf_sets = list(tf_sets or [])
 
-    # TIME (real) — common axis arange(0, T, 1/fs) with the max T / max fs.
+    # TIME (real) — common axis file._time_grid(T, fs) with the max T / max
+    # fs, the grid Python's exporter builds.
     if time_sets:
         T = 0.0
         fs = 0.0
@@ -1540,13 +1545,13 @@ def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
                 fs = max(fs, 1.0 / float(np.mean(np.diff(ax))))
             n_time += cols
         if fs > 0 and T > 0:
-            t = np.arange(0, T, 1.0 / fs)
+            t = pfile._time_grid(T, fs)
             all_ = np.zeros((len(t), n_time))
             c = -1
             for ax, dat in parsed:
                 for i in range(dat.shape[1]):
                     c += 1
-                    all_[:, c] = np.interp(t, ax, dat[:, i], right=0)
+                    all_[:, c] = pfile._interp_onto(t, ax, dat[:, i], 0)
             data_matlab['time_axis_all'] = np.transpose(np.atleast_2d(t))
             data_matlab['time_data_all'] = all_
             pfile._attach_matlab_column_calibration(
@@ -1577,7 +1582,7 @@ def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
         for ax, G in parsed:
             for i in range(G.shape[1]):
                 c += 1
-                all_[:, c] = np.interp(f, ax, G[:, i], right=0)
+                all_[:, c] = pfile._interp_onto(f, ax, G[:, i], 0)
         data_matlab['{}_axis_all'.format(key)] = np.transpose(np.atleast_2d(f))
         data_matlab['{}_data_all'.format(key)] = all_
         pfile._attach_matlab_column_calibration(
