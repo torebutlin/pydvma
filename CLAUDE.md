@@ -8,6 +8,40 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-09-29 (Mac, four parallel sessions merged and PUSHED; no
+version bump, all under CHANGELOG `## Unreleased`): **a docs review ran
+every documented example, rewrote the docs to match today's behaviour,
+and spun off three code fixes, all landed.** (1) The Python file
+functions: a path passed positionally (`dvma.load_data('x.dvma')`) is
+the filename, not the Qt dialog `parent` (`file._positional_filename`);
+with no filename and no Qt the dialog path raises an ImportError saying
+to pass `filename=`, and with Qt it now makes a QApplication first (a
+Qt widget without one SIGABRTs the process, notebook kernel included —
+measured); `import_from_matlab_jwlogger()` got the dialog, and refuses
+pydvma's own export-only `.mat` (and any non-JW `.mat`) instead of
+returning an EMPTY DataSet, which also covers the browser via
+`engine.mat_to_dvma`; `DataSet.save_data(overwrite_without_prompt=)`;
+`best_match` works with `freq_range=None` and a PlotData (`plot.ax`,
+not the Qt-era `tfax`). NB whole-band `best_match` on the docs' noisy
+example gives −0.69 instead of ~1, so the docs still recommend a clean
+band. (2) `modal_fit_single_channel` works again and
+`multiply_by_power_of_iw` no longer leaves NaN at 0 Hz. The merge found
+the docs round calling the synthetic impulse a VELOCITY (from its `m/s`
+label) while its shape `exp(-t/0.1)·sin(2π·100t)` is a DISPLACEMENT
+impulse response: the fitted modal-constant phase is +35° for `'dsp'`
+(= the 1 ms pulse-centre delay at 100 Hz) vs −53° for `'vel'`, so both
+modal examples now use `'dsp'`. (3) The app's Export Matlab writes
+`*_cal_factors`/`*_units` like Python's (TODO W4 is the follow-up).
+Found in passing and NOT fixed: `export_to_matlab_jwlogger` output does
+not import back (time-only has no `freq`, spectral no `tfun`) — TODO.
+Suites on the merged tree: pytest 1283/7 skipped, vitest 1202/1, check
+0/0 (190 files), Playwright 89 passed / 23 skipped (all
+BRIDGE_E2E-gated; the `@engine` specs ran, incl. Export Matlab) against
+a rebuilt engine wheel (24 `pydvma/*.py` byte-identical), mkdocs
+--strict clean.
+The engine wheel is gitignored, so `(cd webui && npm run
+vendor:wheels)` is needed before the next release as always.
+
 As of 2026-09-18 (remote Linux session, after the 2.5.0 release):
 **the five calibration-round QUERIES are answered and built (Q1-Q5),
 plus W1. NO version bump — Tore's steer is to accumulate until the
