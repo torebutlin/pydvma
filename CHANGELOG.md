@@ -167,6 +167,12 @@ Export Matlab.
   fails to import with an error naming the missing variable. Files
   written by pydvma 2.5.0 and earlier can lack `freq` or `tfun`:
   export them again, or add the variable in MATLAB.
+- **A JW-logger export now opens at the right scale in the logger.**
+  `export_to_matlab_jwlogger` stored the capture's duration in `tsmax`,
+  but the logger reads `tsmax` as its time plot's y-limit (it plots
+  over ±`tsmax`) and saves the largest absolute sample there. A 3 s
+  capture of 10 mV signals opened on a ±3 axis. `tsmax` is now the
+  largest absolute value in `indata`. pydvma's import does not read it.
 
 ### Documentation
 

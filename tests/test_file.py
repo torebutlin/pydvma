@@ -263,6 +263,16 @@ class TestJwloggerExportRoundTrip:
         np.testing.assert_allclose(back.time_data, td.time_data)
         assert ds.freq_data_list == [] and ds.tf_data_list == []
 
+    def test_tsmax_is_the_amplitude_scale(self, tmp_path):
+        """The logger plots its time window over [-tsmax, tsmax]
+        (tsinit.m) and saves max|indata| there (tsmenu.m). pydvma wrote
+        the capture's duration instead."""
+        td = _time_data(fs=1000, n=3000)
+        td.time_data *= 0.01
+        raw, _ = _jw_round_trip(tmp_path, _dataset(td))
+        assert float(np.ravel(raw['tsmax'])[0]) == pytest.approx(
+            np.max(np.abs(td.time_data)))
+
     # 1021 Hz x 1000: freq = 2*fmax came out as 1020.9999999999999, which
     # MySettings's int() truncated to 1021 - 1. At an odd length 2*fmax is
     # not the sample rate at all: 1000 Hz x 1023 gave 999.02 Hz.

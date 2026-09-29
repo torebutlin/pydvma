@@ -493,7 +493,8 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
 
     - TIME: every channel of every TimeData as a column of ``indata``, at
       the highest sample rate, zero-padded after a shorter capture; with
-      ``buflen`` (the row count) and ``tsmax``.
+      ``buflen`` (the row count) and ``tsmax``, the largest absolute
+      value, which the logger uses as its time plot's y-limit.
     - SPECTRAL: the transfer functions if there are any (``tfun`` = 1,
       coherence not exported), otherwise the FFTs (``tfun`` = 0), as the
       columns of ``yspec``, with ``npts`` (the FFT length). The logger
@@ -559,7 +560,10 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
 
         data_jwlogger['buflen'] = float(np.size(t))
         data_jwlogger['indata'] = time_data_all
-        data_jwlogger['tsmax'] = float(t[-1])
+        # The logger's time-plot y-limit, +/-tsmax (tsinit.m), which its own
+        # save path sets to max|indata| (tsmenu.m) - not a time. Kept
+        # nonzero: MATLAB rejects a zero-height axis.
+        data_jwlogger['tsmax'] = float(np.max(np.abs(time_data_all))) or 1.0
         data_jwlogger['freq'] = float(fs)
         fs_time = fs
     else:
