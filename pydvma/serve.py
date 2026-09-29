@@ -97,7 +97,12 @@ Server → client:
 * ``log_result`` — capture metadata (``nChannels``, ``nSamples``,
   ``fs``, ``testName``, ``byteLength``) immediately followed by the
   ``.dvma`` binary frame.
-* ``error`` — ``{message}`` for any rejected request.
+* ``error`` — ``{message}`` for any rejected request. The client fails
+  whatever request is waiting, so it is never used for a notice.
+* ``warning`` — ``{message}``: a non-fatal notice (input dropped or
+  zero-filled during a capture, a stalled monitor stream, a stimulus
+  scaled down to the output rail). The app pins it as a toast; the
+  capture or stream it describes carries on and is still delivered.
 
 Output / stimulus (Wave C)
 ==========================
@@ -225,7 +230,7 @@ survives as :class:`_MonitorCursor`, the fallback for a recorder
 without the counter (`streams.MockRecorder`, whose window is static).
 
 **Stalls.**  When a counting recorder delivers nothing for
-:data:`MONITOR_STALL_S`, the bridge sends one ``error`` frame saying so
+:data:`MONITOR_STALL_S`, the bridge sends one ``warning`` frame saying so
 (it pins as a toast in the app) — a frozen scope with no explanation
 is exactly what the operator must not be left with — and says nothing
 more until samples flow again.
@@ -270,6 +275,7 @@ import tempfile
 import threading
 import time
 import types
+import warnings
 import webbrowser
 from pathlib import Path
 from typing import Any
@@ -314,7 +320,7 @@ DEFAULT_HOST = '127.0.0.1'
 MONITOR_HZ = 30.0
 
 #: Seconds a counting recorder may deliver nothing before the monitor
-#: tells the client the stream has stalled (one ``error`` frame per
+#: tells the client the stream has stalled (one ``warning`` frame per
 #: stall). Two seconds is far beyond any host's callback jitter and
 #: short enough that a wedged USB interface is reported while the
 #: operator is still looking at the scope.
@@ -1773,6 +1779,12 @@ class _Connection:
     async def _send_error(self, message: str) -> None:
         await self._send_json({'type': 'error', 'message': message})
 
+    async def _send_warning(self, message: str) -> None:
+        # A notice, never an error: the client fails whatever request is
+        # waiting on an `error` frame, which used to reject the very capture
+        # a data-integrity notice described.
+        await self._send_json({'type': 'warning', 'message': message})
+
     def _next_seq(self) -> int:
         seq = self.seq
         self.seq = (self.seq + 1) & 0xFFFFFFFF
@@ -2115,7 +2127,7 @@ class _Connection:
                         quiet_since = now
                     elif not stall_reported and now - quiet_since >= MONITOR_STALL_S:
                         stall_reported = True
-                        await self._send_error(
+                        await self._send_warning(
                             'monitor: the device has delivered no samples for '
                             '%.0f s — the stream has stalled, so the scope is '
                             'paused rather than scrolling. Reconfigure, or '
@@ -2194,13 +2206,23 @@ class _Connection:
             return
 
         # Optional stimulus: build the AO waveform here (validation errors
-        # surface as a clean `error` before the capture starts).
+        # surface as a clean `error` before the capture starts). A waveform
+        # scaled down to the output rail plays quieter than asked, so its
+        # warning goes to the app as a pinned toast too; the capture still
+        # runs.
         try:
-            output_array, _generated = _build_output_signal(
-                settings, msg.get('output'))
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always', acquisition.OutputRescaledWarning)
+                output_array, _generated = _build_output_signal(
+                    settings, msg.get('output'))
         except ValueError as exc:
             await self._send_error(str(exc))
             return
+        for w in caught:
+            if issubclass(w.category, acquisition.OutputRescaledWarning):
+                await self._send_warning(str(w.message))
+            else:   # recording swallowed it: show it as it would have been
+                warnings.showwarning(w.message, w.category, w.filename, w.lineno)
 
         test_name = msg.get('test_name') or msg.get('testName')
 
@@ -2271,13 +2293,13 @@ class _Connection:
             # Data-integrity warning: the acquisition host (PortAudio, or
             # the DAQmx input buffer) dropped input during this capture
             # (see `acquisition.LAST_CAPTURE_OVERFLOWS`).
-            # Sent as an `error` frame because those pin open as toasts
-            # in the browser UI — a gap-riddled capture that LOOKS fine
-            # is exactly the thing the operator must not miss. The
-            # capture itself is still delivered below, warts and all.
+            # Sent as a `warning` frame, which pins open as a toast in the
+            # browser UI — a gap-riddled capture that LOOKS fine is exactly
+            # the thing the operator must not miss. The capture itself is
+            # still delivered below, warts and all.
             overflows = getattr(acquisition, 'LAST_CAPTURE_OVERFLOWS', 0)
             if overflows:
-                await self._send_error(
+                await self._send_warning(
                     'capture integrity: the acquisition host dropped input '
                     '%d time(s) during this capture — the data has gaps, '
                     'and TF/coherence computed from it is not trustworthy. '
@@ -2288,7 +2310,7 @@ class _Connection:
             # `acquisition.exact_zero_dropouts`).
             dropouts = getattr(acquisition, 'LAST_CAPTURE_DROPOUTS', (0, 0.0))
             if dropouts and dropouts[0]:
-                await self._send_error(
+                await self._send_warning(
                     'capture integrity: the device delivered %d stretch(es) '
                     'of exact digital silence totalling %.0f ms during this '
                     'capture — data is missing there, and TF/coherence '

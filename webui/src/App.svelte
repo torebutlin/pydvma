@@ -154,6 +154,9 @@
   // Acquisition store (Plan 2): manages Web Audio device enumeration +
   // recording lifecycle; the liveSource capability gate flips on init.
   const acquire = createAcquireStore();
+  // Non-fatal capture/stream notices (dropped input, USB dropouts, a stalled
+  // monitor, a stimulus scaled to the output rail) pin open until closed.
+  acquire.onWarning((message) => toasts.push(message, { level: 'error' }));
   // Monitor store (Plan 2 Live): real-time oscilloscope feed. Created
   // here and passed to both LiveCard (controls) and OscCanvas (render).
   // Reads device config from the acquire store so Setup configures both.

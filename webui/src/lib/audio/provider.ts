@@ -859,6 +859,13 @@ export interface SourceProvider {
    */
   onConfigured?(cb: (info: ConfiguredInfo) => void): void;
   /**
+   * Register a persistent sink for non-fatal notices about a capture or
+   * stream: on the bridge, the server's `warning` frames (dropped input,
+   * USB dropouts, a stalled monitor, a stimulus scaled to the output rail);
+   * on Web Audio, a stimulus scaled down to full scale.
+   */
+  onWarning?(cb: (message: string) => void): void;
+  /**
    * Bridge-only: container metadata from the most recent logged capture
    * (device driver actually used, calibration, units, test name), or `null`.
    * Web Audio returns `null` (no container to read).
@@ -903,6 +910,8 @@ export class WebAudioProvider implements SourceProvider {
   private config: BridgeConfig = {};
   /** Pretrigger lifecycle sink (armed → triggered/timeout). */
   private statusCb: ((event: LogStatusEvent) => void) | null = null;
+  /** Notice sink (a stimulus scaled down to full scale). */
+  private warningCb: ((message: string) => void) | null = null;
 
   /** Web Audio has no bridge capability document. */
   async capabilities(): Promise<BridgeCaps | null> {
@@ -929,6 +938,11 @@ export class WebAudioProvider implements SourceProvider {
     this.statusCb = cb;
   }
 
+  /** Register the notice sink (a stimulus scaled down to full scale). */
+  onWarning(cb: (message: string) => void): void {
+    this.warningCb = cb;
+  }
+
   /**
    * Capture through `source.ts`, merging the Acquire card's stimulus /
    * pretrigger state ({@link recordExtras}).  A caller-supplied
@@ -937,7 +951,9 @@ export class WebAudioProvider implements SourceProvider {
    * multisine even while the card's stimulus group is on (or off).
    */
   startRecording(cfg: RecordConfig): RecordingHandle {
-    return webStartRecording({ ...cfg, ...this.recordExtras() });
+    return webStartRecording({
+      ...cfg, ...this.recordExtras(), onWarning: cfg.onWarning ?? this.warningCb ?? undefined,
+    });
   }
 
   startMonitor(

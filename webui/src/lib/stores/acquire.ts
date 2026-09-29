@@ -297,6 +297,19 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    */
   let lastRecordingMeta: BridgeRecordingMeta | null = null;
 
+  /** Where the provider's non-fatal notices go (App: a pinned toast). */
+  let warningSink: ((message: string) => void) | null = null;
+
+  /**
+   * Register the sink for non-fatal notices about a capture or stream (see
+   * `SourceProvider.onWarning`): dropped input, USB dropouts, a stalled
+   * monitor, a stimulus scaled down to the output rail.  One sink, kept
+   * across provider swaps.
+   */
+  function onWarning(cb: (message: string) => void): void {
+    warningSink = cb;
+  }
+
   /**
    * Wire the provider's optional sinks: the log-status sink to
    * {@link pretrigStatus} (`armed → triggered/timeout`), and the
@@ -305,6 +318,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    */
   function wireProvider(p: SourceProvider): void {
     p.onLogStatus?.((event) => pretrigStatus.set(event));
+    p.onWarning?.((message) => warningSink?.(message));
     p.onConfigured?.((info: ConfiguredInfo) => {
       // A sub-Hz difference is float noise (an exact honour); anything larger
       // is a real DSA coercion the user must see. Refresh OR clear the note.
@@ -645,6 +659,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     requestPermission,
     record,
     cancel,
+    onWarning,
     patch,
     patchBridge,
     reclampVoltages,

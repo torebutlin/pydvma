@@ -727,3 +727,27 @@ test('a web-audio capture (no bridge meta) carries no unique_id', () => {
   expect(item.meta.unique_id).toBeUndefined();
   expect(item.metaRaw).toBeUndefined();
 });
+
+// ---- non-fatal notices reach the store's warning sink ----
+
+test("the provider's warning notices reach the store's sink, across a provider swap", () => {
+  let providerSink: ((m: string) => void) | null = null;
+  const provider: SourceProvider = {
+    kind: 'bridge',
+    async capabilities() { return null; },
+    async enumerateInputDevices() { return []; },
+    startRecording() { return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 }; },
+    async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
+    onWarning(cb) { providerSink = cb; },
+  };
+  const store = createAcquireStore(provider);
+  const seen: string[] = [];
+  store.onWarning((m) => seen.push(m));
+  providerSink!('capture integrity: dropped input 3 time(s)');
+
+  let swappedSink: ((m: string) => void) | null = null;
+  store.setProvider({ ...provider, onWarning(cb) { swappedSink = cb; } });
+  swappedSink!('monitor: the stream has stalled');
+  expect(seen).toEqual(['capture integrity: dropped input 3 time(s)',
+    'monitor: the stream has stalled']);
+});

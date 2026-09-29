@@ -251,9 +251,14 @@ function nextGaussian(rng: () => number): number {
  * `signal_generator` (see the module docstring for the exact laws and the
  * documented browser divergences).  Returns the time axis `t` (seconds) and
  * the waveform `y` (normalised, |y| ≤ `limit`), both length
- * {@link stimulusLength}`(fs, durationS)`.
+ * {@link stimulusLength}`(fs, durationS)`, plus `scaledTo`: the fraction of
+ * the requested level left after any scale-down to `limit` (1 when none).
+ * A value below 1 means the stimulus plays quieter than asked, which the
+ * caller must say — pydvma raises `OutputRescaledWarning` for the same case.
  */
-export function generateStimulus(spec: StimulusSpec): { t: Float64Array; y: Float64Array } {
+export function generateStimulus(
+  spec: StimulusSpec,
+): { t: Float64Array; y: Float64Array; scaledTo: number } {
   const { type, fs, durationS: T } = spec;
   const amp = spec.amp;
   const limit = spec.limit ?? 1;
@@ -265,6 +270,7 @@ export function generateStimulus(spec: StimulusSpec): { t: Float64Array; y: Floa
 
   let y: Float64Array = new Float64Array(N);
   const band = spec.band ?? null;
+  let scaledTo = 1;
 
   if (type === 'sweep') {
     const f0 = band ? band[0] : 0;
@@ -289,11 +295,14 @@ export function generateStimulus(spec: StimulusSpec): { t: Float64Array; y: Floa
       const r = rms(y);
       if (r > 0) for (let n = 0; n < N; n++) y[n] = (amp * y[n]) / r; // RMS → amp
       const m = maxAbs(y);
-      if (m > limit) for (let n = 0; n < N; n++) y[n] = (limit * y[n]) / m;
+      if (m > limit) {
+        for (let n = 0; n < N; n++) y[n] = (limit * y[n]) / m;
+        scaledTo *= limit / m;
+      }
     }
   } else {
     // Unknown type → silence (pydvma prints and returns zeros).
-    return { t, y };
+    return { t, y, scaledTo };
   }
 
   // Raised-cosine fade in/out.
@@ -302,9 +311,12 @@ export function generateStimulus(spec: StimulusSpec): { t: Float64Array; y: Floa
 
   // Final safety clamp: rescale so the peak never exceeds ±limit.
   const peak = maxAbs(y);
-  if (peak > limit) for (let n = 0; n < N; n++) y[n] = (limit * y[n]) / peak;
+  if (peak > limit) {
+    for (let n = 0; n < N; n++) y[n] = (limit * y[n]) / peak;
+    scaledTo *= limit / peak;
+  }
 
-  return { t, y };
+  return { t, y, scaledTo };
 }
 
 // ---- multisine generator (Schoukens BLA excitation) ----------------------

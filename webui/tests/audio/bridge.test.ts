@@ -1891,3 +1891,61 @@ test('recordingMetaFromDvma leaves uniqueId absent when the container has none',
   expect(meta.uniqueId).toBeUndefined();
   expect(meta.uniqueIdRaw).toBeUndefined();
 });
+
+// ---- non-fatal notices during a log ----
+
+function tinyDvma(fill: number) {
+  const nSamples = 4, nChannels = 2, fs = 8000;
+  const timeAxis = Float64Array.from({ length: nSamples }, (_, i) => i / fs);
+  const data = Float64Array.from({ length: nSamples * nChannels }, () => fill);
+  return { dvma: writeDvma(recordingToDataset({ data, timeAxis, fs, nChannels, nSamples }, 'n')),
+    nSamples, nChannels, fs };
+}
+
+async function logOnce(fake: ReturnType<typeof makeFakeWs>, bp: BridgeProvider,
+  fill: number, notice?: unknown) {
+  const { dvma, nSamples, nChannels, fs } = tinyDvma(fill);
+  const rh = bp.startRecording({ sampleRate: fs, channelCount: nChannels, durationS: 0.5 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs, channels: nChannels });
+  await tick();
+  if (notice) fake.emitJson(notice);
+  fake.emitJson({ type: 'log_result', nChannels, nSamples, fs, byteLength: dvma.length });
+  await tick();
+  fake.emitBinary(containerFrame(dvma, nChannels, nSamples, fs));
+  return rh.promise;
+}
+
+test('a warning frame during a log is a notice: the capture still resolves, and the next one gets its own data', async () => {
+  // Round-12/14 capture-integrity notices, the monitor stall and a stimulus
+  // rescaled to the output rail are all "the data arrived, but know this".
+  // As `error` frames they rejected the in-flight capture, and its container
+  // was then buffered and handed to the NEXT capture.
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const warned: string[] = [];
+  bp.onWarning((m) => warned.push(m));
+  const first = logOnce(fake, bp, 1.0,
+    { type: 'warning', message: 'capture integrity: dropped input 3 time(s)' });
+  fake.open();
+  const rec1 = await first;
+  expect(Array.from(rec1.data).every((v) => v === 1.0)).toBe(true);
+  expect(warned).toEqual(['capture integrity: dropped input 3 time(s)']);
+
+  const rec2 = await logOnce(fake, bp, 2.0);
+  expect(Array.from(rec2.data).every((v) => v === 2.0)).toBe(true);
+});
+
+test('a warning frame with no capture in flight still reaches the sink, and settles no waiter', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const warned: string[] = [];
+  bp.onWarning((m) => warned.push(m));
+  const caps = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'warning', message: 'monitor: the stream has stalled' });
+  fake.emitJson({ type: 'capabilities', ...CAPS });
+  await caps;
+  expect(warned).toEqual(['monitor: the stream has stalled']);
+});

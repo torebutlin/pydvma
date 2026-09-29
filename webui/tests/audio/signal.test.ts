@@ -346,3 +346,24 @@ test('validation: seed must be a finite number', () => {
   expect(() => generateMultisine(baseMultisineSpec({ seed: NaN }), 8000)).toThrow();
   expect(() => generateMultisine(baseMultisineSpec({ seed: Infinity }), 8000)).toThrow();
 });
+
+// ---- rescale to the rail is reported, not silent ----
+
+test('generateStimulus reports scaledTo = 1 when nothing was rescaled', () => {
+  const { scaledTo } = generateStimulus({
+    type: 'sweep', fs: 8000, durationS: 0.5, amp: 0.5, band: [10, 500],
+  });
+  expect(scaledTo).toBe(1);
+});
+
+test('banded noise past the rail is scaled down, and scaledTo says by how much', () => {
+  // RMS 0.8 band-limited Gaussian peaks well past ±1, so the whole waveform
+  // is scaled down (pydvma signal_generator parity) — and now reported.
+  const { y, scaledTo } = generateStimulus({
+    type: 'gaussian', fs: 8000, durationS: 1, amp: 0.8, band: [100, 800],
+    limit: 1, rng: mulberry32(3),
+  });
+  expect(scaledTo).toBeGreaterThan(0);
+  expect(scaledTo).toBeLessThan(1);
+  expect(maxAbs(y)).toBeLessThanOrEqual(1 + 1e-12);
+});

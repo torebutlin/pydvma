@@ -725,10 +725,10 @@ def test_log_returns_loadable_dvma():
     run_async(scenario)
 
 
-def test_log_with_dropped_input_sends_integrity_error(monkeypatch):
+def test_log_with_dropped_input_sends_integrity_warning(monkeypatch):
     """A capture during which the audio host dropped input arrives WITH a
-    loud data-integrity ``error`` frame (which pins open as a toast in
-    the webui) just before its ``log_result`` — never silently. Round-12:
+    loud data-integrity ``warning`` frame (a pinned toast in the
+    webui, and NOT an error: an error frame rejected the capture) just before its ``log_result`` — never silently. Round-12:
     dropped samples time-warp the capture and quietly destroy TF
     coherence, so the operator must be told at capture time.
 
@@ -757,7 +757,7 @@ def test_log_with_dropped_input_sends_integrity_error(monkeypatch):
                 await _recv_json(ws)
                 await _send(ws, type='log', duration=0.1, pretrigger=None)
                 warn = await _recv_json(ws, timeout=10.0)
-                assert warn['type'] == 'error'
+                assert warn['type'] == 'warning'
                 assert 'dropped input 3 time' in warn['message']
                 meta = await _recv_json(ws, timeout=10.0)
                 assert meta['type'] == 'log_result'   # data still delivered
@@ -831,6 +831,37 @@ def test_configure_forwards_output_device_selection():
                 assert s.output_device_driver == 'mock'
                 assert s.output_device_index == 0
                 assert s.output_channels == 2
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_log_with_rescaled_output_warns_before_capturing():
+    """A stimulus that `signal_generator` had to scale down to the output
+    rail plays at a fraction of the level asked for. The bridge passes the
+    OutputRescaledWarning on as a ``warning`` frame (a pinned toast in the
+    app) before the capture, and the capture still goes ahead."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                    'output_channels': 1,
+                })
+                await _recv_json(ws)
+                rail = streams.REC.settings.output_vmax()
+                await _send(ws, type='log', duration=0.1, pretrigger=None,
+                            output={'type': 'sweep', 'amp': 4 * rail,
+                                    'f1': 100, 'f2': 1000},
+                            test_name='too-loud')
+                warn = await _recv_json(ws, timeout=10.0)
+                assert warn['type'] == 'warning'
+                assert 'output rail' in warn['message']
+                assert '25%' in warn['message']
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'
         finally:
             await _stop_server(task)
     run_async(scenario)
@@ -2395,7 +2426,7 @@ def test_configure_with_an_explicit_default_driver_is_unchanged(monkeypatch):
     assert 'deviceNote' not in status
 
 
-def test_log_with_silent_dropouts_sends_integrity_error(monkeypatch):
+def test_log_with_silent_dropouts_sends_integrity_warning(monkeypatch):
     """The twin of the dropped-input toast for gaps the host never
     flagged: stretches of exact digital silence inside the capture (a USB
     audio driver zero-filling lost packets; measured on a 2i2, 2026-09-04,
@@ -2421,7 +2452,7 @@ def test_log_with_silent_dropouts_sends_integrity_error(monkeypatch):
                 await _recv_json(ws)
                 await _send(ws, type='log', duration=0.1, pretrigger=None)
                 warn = await _recv_json(ws, timeout=10.0)
-                assert warn['type'] == 'error'
+                assert warn['type'] == 'warning'
                 assert '2 stretch(es)' in warn['message']
                 assert '190 ms' in warn['message']
                 assert 'USB' in warn['message']
@@ -2530,7 +2561,7 @@ def test_monitor_reports_a_stalled_counting_recorder_once(monkeypatch):
                 rec.deliver(100)
                 assert serve_mod.decode_header(await _recv_binary(ws, timeout=2.0))['nSamples'] == 100
                 msg = await _recv_json(ws, timeout=3.0)
-                assert msg['type'] == 'error'
+                assert msg['type'] == 'warning'
                 assert 'stalled' in msg['message'] and 'no samples' in msg['message']
                 with pytest.raises(TimeoutError):        # said once per stall
                     await _recv_json(ws, timeout=0.6)

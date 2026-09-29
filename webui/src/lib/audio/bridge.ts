@@ -270,6 +270,8 @@ export class BridgeProvider implements SourceProvider {
   private logStatusCb: ((event: LogStatusEvent) => void) | null = null;
   /** Persistent sink for configure round-trips (requested vs resolved fs). */
   private configuredCb: ((info: ConfiguredInfo) => void) | null = null;
+  /** Persistent sink for the server's non-fatal `warning` notices. */
+  private warningCb: ((message: string) => void) | null = null;
   /**
    * Settles the in-flight log with "the server cancelled it".  Set while a
    * `log` is outstanding; calling it also un-parks the `log_result` waiter,
@@ -315,6 +317,17 @@ export class BridgeProvider implements SourceProvider {
    */
   onConfigured(cb: (info: ConfiguredInfo) => void): void {
     this.configuredCb = cb;
+  }
+
+  /**
+   * Register the persistent sink for the server's `warning` frames: input
+   * dropped or zero-filled during a capture, a stalled monitor stream, a
+   * stimulus scaled down to the output rail.  They are notices, not
+   * failures — the capture they describe is still delivered — so they
+   * settle no waiter.
+   */
+  onWarning(cb: (message: string) => void): void {
+    this.warningCb = cb;
   }
 
   /**
@@ -449,6 +462,13 @@ export class BridgeProvider implements SourceProvider {
       if (parsed == null || typeof parsed !== 'object') return;
       msg = parsed as Record<string, unknown>;
     } catch {
+      return;
+    }
+    if (msg.type === 'warning') {
+      // Never routed like `error`: that fails whatever request is waiting,
+      // which rejected the very capture a data-integrity notice described
+      // and left its container buffered for the NEXT capture to consume.
+      this.warningCb?.(String(msg.message ?? ''));
       return;
     }
     if (msg.type === 'error') {

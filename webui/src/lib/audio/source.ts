@@ -161,6 +161,11 @@ export interface RecordConfig {
    * Web-Audio-only; the bridge provider ignores it.  See {@link PretrigRecordOptions}.
    */
   pretrig?: PretrigRecordOptions;
+  /**
+   * Sink for non-fatal notices about this capture: a stimulus scaled down to
+   * full scale, so it plays quieter than asked.  The capture still runs.
+   */
+  onWarning?: (message: string) => void;
 }
 
 /** Pretrigger lifecycle event surfaced during an armed Web Audio capture. */
@@ -489,14 +494,20 @@ function classicStimulusBuffer(
   fs: number,
   captureDurationS: number,
   output: OutputStimulusConfig,
+  onWarning?: (message: string) => void,
 ): AudioBuffer {
   const outDur = output.durationS != null && output.durationS > 0
     ? Math.min(output.durationS, captureDurationS)
     : captureDurationS;
   const amp = Math.min(Math.max(output.amp, 0), 1); // normalised peak, clamp to [0, 1]
-  const { y } = generateStimulus({
+  const { y, scaledTo } = generateStimulus({
     type: output.type, fs, durationS: outDur, amp, band: [output.f1, output.f2], limit: 1,
   });
+  if (scaledTo < 1) {
+    onWarning?.(`stimulus: the ${output.type} waveform's peak went past full scale, so the `
+      + `whole waveform was scaled to ${Math.round(100 * scaledTo)}% of the requested level. `
+      + 'Lower the amplitude to play it as asked.');
+  }
   const y32 = Float32Array.from(y);
   const channels = Math.max(1, Math.floor(output.channels ?? 1));
   const buffer = ctx.createBuffer(channels, Math.max(1, y32.length), fs);
@@ -561,6 +572,7 @@ async function buildStimulusNode(
   fs: number,
   captureDurationS: number,
   output: OutputSpec,
+  onWarning?: (message: string) => void,
 ): Promise<AudioBufferSourceNode> {
   const sink = (ctx as unknown as { setSinkId?: (id: string) => Promise<void> }).setSinkId;
   if (output.deviceId && typeof sink === 'function') {
@@ -568,7 +580,7 @@ async function buildStimulusNode(
   }
   const buffer = output.type === 'multisine'
     ? multisineStimulusBuffer(ctx, fs, output)
-    : classicStimulusBuffer(ctx, fs, captureDurationS, output);
+    : classicStimulusBuffer(ctx, fs, captureDurationS, output, onWarning);
   const node = ctx.createBufferSource();
   node.buffer = buffer;
   node.connect(ctx.destination);
@@ -688,7 +700,7 @@ export function startRecording(cfg: RecordConfig): RecordingHandle {
         scriptNode = ctx.createScriptProcessor(BUFFER_SIZE, actualChannels, actualChannels);
       }
       if (hasOutput) {
-        stimulusNode = await buildStimulusNode(ctx, actualFs, cfg.durationS, outputSpec!);
+        stimulusNode = await buildStimulusNode(ctx, actualFs, cfg.durationS, outputSpec!, cfg.onWarning);
       }
     } catch (e) {
       try { stimulusNode?.disconnect(); } catch { /* */ }
