@@ -137,3 +137,32 @@ class TestFigShowGating:
         monkeypatch.setattr(plotting.plt, 'subplots', lambda *a, **k: (fig, ax))
         plotting.PlotData.__init__(p)
         assert calls == []
+
+
+def test_best_match_takes_its_range_from_a_plotdata():
+    """``best_match(freq_range=<PlotData>)`` read ``plot.tfax``, an axis
+    PlotData does not have (a Qt-logger relic); it now uses the plot's
+    visible x-range, ``plot.ax``."""
+    f = np.linspace(1, 200, 400)
+    w, wn = 2 * np.pi * f, 2 * np.pi * 50.0
+    H = (-w ** 2) / (wn ** 2 - w ** 2 + 2j * 0.02 * wn * w)
+    # A second resonance at 150 Hz in set 1 only, so the factor depends on
+    # which band is matched.
+    w2 = 2 * np.pi * 150.0
+    H2 = H + (-w ** 2) / (w2 ** 2 - w ** 2 + 2j * 0.02 * w2 * w)
+    settings = options.MySettings(fs=1000, channels=2)
+    tfl = datastructure.TfDataList([
+        datastructure.TfData(f, H[:, None], None, settings),
+        datastructure.TfData(f, 2 * H2[:, None], None, settings),
+    ])
+    plot = plotting.PlotData()
+    plot.ax.set_xlim(30, 70)
+    try:
+        from_plot = analysis.best_match(tfl, freq_range=plot)
+    finally:
+        import matplotlib.pyplot as plt
+        plt.close(plot.fig)
+    from_range = analysis.best_match(tfl, freq_range=[30, 70])
+    full_band = analysis.best_match(tfl)
+    np.testing.assert_array_equal(from_plot[1], from_range[1])
+    assert from_plot[1][0, 0] != pytest.approx(full_band[1][0, 0], rel=1e-3)

@@ -1780,3 +1780,55 @@ def test_tf_units_parenthesise_a_compound_numerator():
     td2 = datastructure.TimeData(
         t, rng.standard_normal((n, 2)), settings, units=['N', 'Pa'])
     assert list(analysis.calculate_tf(td2, ch_in=0, window='hann').units) == ['Pa/N']
+
+
+def _sdof_tf_data(f, scales, fn=50.0, zeta=0.02):
+    """TfData whose columns are one SDOF accelerance scaled by `scales`."""
+    w = 2 * np.pi * f
+    wn = 2 * np.pi * fn
+    H = (-w ** 2) / (wn ** 2 - w ** 2 + 2j * zeta * wn * w)
+    settings = options.MySettings(fs=1000, channels=len(scales) + 1)
+    return datastructure.TfData(f, np.column_stack([s * H for s in scales]),
+                                None, settings)
+
+
+def _best_match_pair():
+    f = np.linspace(1, 200, 400)
+    return datastructure.TfDataList([
+        _sdof_tf_data(f, [1.0]),             # reference: set 0, channel 0
+        _sdof_tf_data(f, [3.0, -0.5]),       # 3x larger; half-size and inverted
+    ])
+
+
+def test_best_match_default_freq_range_uses_the_full_band():
+    """``freq_range=None`` (the default) raised ``TypeError: 'NoneType'
+    object is not subscriptable``: the grid line indexed ``freq_range``
+    instead of the resolved ``freq_range_copy``."""
+    factors = analysis.best_match(_best_match_pair())
+    assert len(factors) == 2                        # one entry per set
+    assert factors[0].shape == (1, 1)               # (n_channels, 1)
+    assert factors[1].shape == (2, 1)
+    assert factors[0][0, 0] == pytest.approx(1.0)
+    np.testing.assert_allclose(factors[1][:, 0], [1 / 3, -2.0], rtol=1e-9)
+
+
+def test_best_match_none_equals_the_reference_sets_full_band():
+    tfl = _best_match_pair()
+    f = tfl[0].freq_axis
+    explicit = analysis.best_match(tfl, freq_range=[f[0], f[-1]])
+    default = analysis.best_match(tfl)
+    for a, b in zip(explicit, default):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_best_match_factors_apply_as_calibration_factors():
+    """The documented way to apply the result: every column then overlays
+    the reference column."""
+    tfl = _best_match_pair()
+    factors = analysis.best_match(tfl, freq_range=[20, 120])
+    tfl.set_calibration_factors_all([f.ravel() for f in factors])
+    ref = tfl[0].tf_data[:, 0] * tfl[0].channel_cal_factors[0]
+    for tf in tfl:
+        for k in range(tf.tf_data.shape[1]):
+            np.testing.assert_allclose(
+                tf.tf_data[:, k] * tf.channel_cal_factors[k], ref, rtol=1e-9)

@@ -205,15 +205,41 @@ def multiply_by_power_of_iw(data,power,channel_list):
 
 def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
     '''
+    Scale factors that overlay a family of transfer functions on one reference.
+
+    Every TF column of every set is compared with ONE reference column
+    (set `set_ref`, channel `ch_ref`) over `freq_range`, both interpolated
+    onto a common frequency grid. Each factor is the ratio of their RMS
+    magnitudes, signed by a real least-squares fit, so a column multiplied
+    by its factor lies over the reference; the reference's own factor is 1.
+    Useful for comparing TFs measured at different drive levels or gains.
+
+    To apply them, ``tf_data_list.set_calibration_factors_all([f.ravel()
+    for f in factors])``. That REPLACES each set's ``channel_cal_factors``,
+    including any physical calibration they held, rather than multiplying
+    into them.
+
     Args:
-        tf_data_list (<TfDataList> object): transfer function data
-        freq_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
-        set_ref (int, optional): reference set index, default is 0
-        ch_ref (int, optional): reference channel index, default is 0
+        tf_data_list (TfDataList): The transfer functions to match.
+        freq_range (list, np.ndarray or PlotData, optional): The band to
+            match over, ``[f_min, f_max]`` in Hz. A PlotData uses its
+            visible x-range. None (the default) uses the reference set's
+            whole frequency axis.
+        set_ref (int, optional): Index of the reference set. Default 0.
+        ch_ref (int, optional): Index of the reference channel (TF column)
+            in that set. Default 0.
+
+    Returns:
+        factors (list of np.ndarray): One array per set, in order, of shape
+            ``(n_channels, 1)``: the factor for each of that set's TF
+            columns, relative to set `set_ref`, channel `ch_ref`.
+
+    Raises:
+        ValueError: If `tf_data_list` is not a TfDataList.
     '''
     
     if tf_data_list.__class__.__name__ != 'TfDataList':
-        raise ValueError('Input data needs to be single <TfData> object')
+        raise ValueError('Input data needs to be a <TfDataList> object')
     
 
     if freq_range is None:
@@ -221,15 +247,11 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
         freq_range_copy = tf_data_list[set_ref].freq_axis[[0,-1]]
         
     elif freq_range.__class__.__name__ == 'PlotData':
-        freq_range_copy=freq_range.tfax.get_xbound()
+        freq_range_copy=freq_range.ax.get_xbound()
         
     else:
         freq_range_copy = freq_range
         
-    
-    settings = copy.copy(tf_data_list[0].settings)
-    settings.freq_range = freq_range_copy
-
     
     n_set = len(tf_data_list)
     
@@ -249,7 +271,7 @@ def best_match(tf_data_list,freq_range=None,set_ref=0,ch_ref=0):
         f_sel = tf_data_list[ns].freq_axis[selection]
         N_ref = len(f_ref)
         N_sel = len(f_sel)
-        f_newref = np.linspace(freq_range[0],freq_range[1],np.max([N_ref,N_sel]))
+        f_newref = np.linspace(freq_range_copy[0],freq_range_copy[1],np.max([N_ref,N_sel]))
         
         for nc in range(n_chan):
             # could make more efficient by doing all channels at once

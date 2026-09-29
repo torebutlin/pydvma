@@ -560,10 +560,10 @@ def calc_best_match(sets, freq_range=None, set_ref=0, ch_ref=0):
         tfs.append(datastructure.TfData(fa, G, None, _settings(1.0, ntf + 1)))
     tdl = datastructure.TfDataList(tfs)
     sref = int(set_ref)
-    # A concrete 2-element range is required: analysis.best_match indexes
-    # freq_range[0]/[1] directly (its own linspace). `not freq_range` catches
-    # Python None, a JS-null proxy (JsNull — truthy to `is None`, so it must be
-    # tested with `not`), and an empty range; a real [lo, hi] is truthy.
+    # Pass analysis.best_match a concrete 2-element range. Its own None
+    # fallback cannot see a JS-null proxy (JsNull is not `None`, so it must
+    # be tested with `not`) or an empty/short range; `not freq_range` catches
+    # those and Python None alike, while a real [lo, hi] is truthy.
     if not freq_range or (hasattr(freq_range, '__len__') and len(freq_range) < 2):
         fr = np.asarray(tdl[sref].freq_axis[[0, -1]], dtype=np.float64)
     else:
