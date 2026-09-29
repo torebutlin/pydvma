@@ -23,6 +23,25 @@ from . import datastructure
 from . import options
 
 
+def _positional_filename(parent, filename):
+    """Treat a path passed as the first positional argument as the filename.
+
+    Every function here takes the Qt dialog ``parent`` BEFORE ``filename``
+    (a relic of the removed Qt logger), so ``load_data('x.dvma')`` binds the
+    path to ``parent``. A str or os.PathLike ``parent`` with no ``filename``
+    can only be that, so it is moved across. Anything else passes through
+    untouched, so keyword calls behave exactly as before; a PathLike
+    ``filename`` is converted to str because the callers use str methods.
+
+    Returns a ``(parent, filename)`` pair.
+    """
+    if filename is None and isinstance(parent, (str, os.PathLike)):
+        parent, filename = None, parent
+    if isinstance(filename, os.PathLike):
+        filename = os.fspath(filename)
+    return parent, filename
+
+
 def load_data(parent=None, filename=None):
     '''
     Loads a dataset from `filename`, or displays a file dialog if no
@@ -40,6 +59,7 @@ def load_data(parent=None, filename=None):
       created. `.dvma` files do not have this caveat.
     - ``.mat`` (by extension) — JW-logger imports.
     '''
+    parent, filename = _positional_filename(parent, filename)
     if filename is None:
         from qtpy.QtWidgets import QFileDialog
         filename, _ = QFileDialog.getOpenFileName(
@@ -92,6 +112,7 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
            inclusion rule). `None` (the default) writes `dataset`
            unchanged.
     '''
+    parent, filename = _positional_filename(parent, filename)
     if sets is not None:
         dataset = dataset.subset(sets)
 
@@ -147,6 +168,7 @@ def save_fig(plot, parent=None, figsize=None, filename=None, overwrite_without_p
        filename (str, optional): Output filename, dialog shown if not provided
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
     '''
+    parent, filename = _positional_filename(parent, filename)
     if plot.__class__.__name__ == 'PlotData':
         fig = plot.fig
     elif plot.__class__.__name__ == 'Figure':
@@ -212,6 +234,7 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     '''
+    parent, filename = _positional_filename(parent, filename)
     
     # convert data into dictionary ready for Matlab
     data_matlab = dict()
@@ -358,6 +381,7 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     '''
+    parent, filename = _positional_filename(parent, filename)
 
     # convert data into dictionary ready for Matlab
     data_jwlogger = dict()
@@ -657,6 +681,7 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
        filename (str, optional): Output filename, dialog shown if not provided
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
     '''
+    parent, filename = _positional_filename(parent, filename)
     
     data_list_type = data_list.__class__.__name__
     

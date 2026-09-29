@@ -5,6 +5,8 @@ branch tested `freq_data_all` (the FFT accumulator, which is the int 0
 when no FFT data exists) instead of `tf_data_all`.
 """
 
+import sys
+
 import numpy as np
 import pytest
 from scipy import io as sio
@@ -410,3 +412,87 @@ class TestExportColumnCountFromArray:
         cols = sio.loadmat(path)['indata']
         assert cols.shape[1] == 3
         np.testing.assert_allclose(cols[0], [9.0, 1.0, 2.0])
+
+
+@pytest.fixture
+def no_qt(monkeypatch):
+    """Make qtpy unimportable, as on a clean pydvma install (no extra has
+    installed it since the Qt GUI was removed). Both names are blocked:
+    a cached ``qtpy.QtWidgets`` would otherwise satisfy the import even
+    with the parent package blocked."""
+    monkeypatch.setitem(sys.modules, 'qtpy', None)
+    monkeypatch.setitem(sys.modules, 'qtpy.QtWidgets', None)
+
+
+class TestPositionalFilename:
+    """Every file function takes a Qt dialog ``parent`` BEFORE ``filename``
+    (a relic of the removed Qt logger), so ``dvma.load_data('x.dvma')``
+    bound the path to ``parent`` and went to the dialog: TypeError inside
+    QFileDialog, or ModuleNotFoundError for qtpy on a clean install. A
+    str/PathLike ``parent`` with no ``filename`` is now the filename. The
+    ``no_qt`` fixture makes a regression fail loudly instead of opening a
+    real dialog."""
+
+    def test_load_data_positional_str(self, tmp_path, no_qt):
+        ds = _make_multiset_dataset(n_sets=1)
+        path = file.save_data(ds, filename=str(tmp_path / 'm.dvma'),
+                              overwrite_without_prompt=True)
+        loaded = file.load_data(path)
+        assert len(loaded.time_data_list) == 1
+        assert loaded.time_data_list[0].test_name == 'set0'
+
+    def test_load_data_positional_pathlike(self, tmp_path, no_qt):
+        ds = _make_multiset_dataset(n_sets=1)
+        file.save_data(ds, filename=str(tmp_path / 'm.dvma'),
+                       overwrite_without_prompt=True)
+        loaded = file.load_data(tmp_path / 'm.dvma')
+        assert len(loaded.time_data_list) == 1
+
+    def test_save_data_positional_round_trips(self, tmp_path, no_qt):
+        ds = _make_multiset_dataset(n_sets=2)
+        out = file.save_data(ds, str(tmp_path / 'pos'))
+        assert out == str(tmp_path / 'pos.dvma')
+        loaded = file.load_data(out)
+        assert len(loaded.time_data_list) == 2
+        assert len(loaded.tf_data_list) == 2
+
+    def test_save_data_positional_pathlike(self, tmp_path, no_qt):
+        ds = _make_multiset_dataset(n_sets=1)
+        out = file.save_data(ds, tmp_path / 'pos.dvma')
+        assert out == str(tmp_path / 'pos.dvma')
+        assert len(file.load_data(out).time_data_list) == 1
+
+    def test_export_to_matlab_positional(self, tmp_path, no_qt):
+        ds = _make_multiset_dataset(n_sets=1)
+        out = file.export_to_matlab(ds, str(tmp_path / 'e.mat'))
+        assert sio.loadmat(out)['time_data_all'].shape[1] == 2
+
+    def test_export_to_matlab_jwlogger_positional(self, tmp_path, no_qt):
+        ds = _make_multiset_dataset(n_sets=1)
+        out = file.export_to_matlab_jwlogger(ds, str(tmp_path / 'jw.mat'))
+        assert sio.loadmat(out)['indata'].shape[1] == 2
+
+    def test_export_to_csv_positional(self, tmp_path, no_qt):
+        ds = _make_multiset_dataset(n_sets=1)
+        out = file.export_to_csv(ds.time_data_list, str(tmp_path / 't.csv'))
+        rows = np.loadtxt(out, delimiter=',')
+        assert rows.shape[1] == 3          # axis + two channels
+
+    def test_save_fig_positional(self, tmp_path, no_qt):
+        from matplotlib.figure import Figure
+        fig = Figure()
+        fig.add_subplot().plot([0, 1], [0, 1])
+        out = file.save_fig(fig, str(tmp_path / 'fig'))
+        assert out == str(tmp_path / 'fig.pdf')
+        assert (tmp_path / 'fig.png').is_file()
+        assert (tmp_path / 'fig.pdf').is_file()
+
+    def test_keyword_filename_ignores_parent(self, tmp_path, no_qt):
+        """Keyword calls are unchanged: with ``filename`` given, ``parent``
+        is never consulted, whatever it is."""
+        ds = _make_multiset_dataset(n_sets=1)
+        out = file.save_data(ds, parent=object(),
+                             filename=str(tmp_path / 'kw.dvma'))
+        assert out == str(tmp_path / 'kw.dvma')
+        assert len(file.load_data(parent=object(), filename=out)
+                   .time_data_list) == 1
