@@ -863,12 +863,12 @@ flight (see CHANGELOG.md). Remaining admin, no deadlines:
 - **Better output-signal control** — offset, ramp, and save/reload of
   signal definitions (the web logger covers type / amplitude / band /
   sweep; the BLA multisine spec is save/reload-able via `.bla` meta).
-- **Repo-root cleanup** — the six tracked docs-about-docs files
-  (`DOCS_SETUP_SUMMARY.md`, `MKDOCSTRINGS_INTEGRATION.md`,
-  `DOCUMENTATION.md`, `README_DOCS.md`, `.mkdocs_quickref.md`,
-  `CODE_STRUCTURE.md`) and the personal `logger.yml` conda export —
-  fold anything still true into `docs/` or `CLAUDE.md` and delete the
-  rest.
+- ~~**Repo-root cleanup**~~ — DONE 2026-09-29: the six docs-about-docs
+  files, `docs/README.md` and `logger.yml` are deleted; the repository
+  map and docs-build gate now live in `docs/contributing.md`. Still
+  undecided: the Qt-era notebooks `sample.ipynb`,
+  `pydvma_template_backup.ipynb` and `pydvma_template_demos.ipynb`
+  (unreferenced; the demos one has personal OneDrive paths).
 
 ## Deferred / low-urgency (no blockers)
 
