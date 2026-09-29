@@ -39,7 +39,7 @@ def _derive_full_scale_volts(settings):
     """Full-scale volts implied by ``settings.input_gain_db``, or ``None``.
 
     Resolves the configured soundcard device to a characterised profile
-    in :mod:`pydvma._soundcard_specs` and applies its maximum-input-level
+    in `pydvma._soundcard_specs` and applies its maximum-input-level
     table. When ``input_gain_db`` is None the derivation still succeeds
     for a FIXED-GAIN interface (e.g. the ESI U24 XL): full scale is a
     hardware constant there, so no stated gain is needed. Returns
@@ -77,12 +77,23 @@ class MySettings(object):
     A container for every acquisition setting used by a recording.
 
     A single ``MySettings`` instance configures all acquisition entry
-    points — `acquisition.log_data`, `acquisition.signal_generator`,
-    the `streams` recorders and the Logger GUI. All constructor
-    arguments are keyword-only and have defaults, so override only the
-    few you need; attributes are plain and may also be set after
-    construction (``settings.fs = 12800``). See the Data Acquisition
-    user guide for worked end-to-end examples.
+    points: `acquisition.log_data`, `acquisition.signal_generator`, the
+    `streams` recorders, and the web logger's local bridge
+    (``pydvma-serve`` and `pydvma.launch`). All constructor arguments
+    are keyword-only and have defaults, so override only the few you
+    need. See the Data Acquisition user guide for worked end-to-end
+    examples.
+
+    Pass every setting as a constructor keyword argument. The
+    constructor derives several values from the others, and assigning
+    an attribute afterwards changes only that one attribute:
+    ``settings.fs = 10000`` leaves ``output_fs`` and ``num_chunks`` at
+    the old rate; ``settings.channels = 3`` leaves the per-channel
+    values (``channel_sensitivities``, ``iepe_excit_current_A``) sized
+    for the old count, so plotting and transfer functions later fail
+    with an IndexError; and changing ``device_driver`` leaves the output
+    driver and its voltage rail (``output_vmax()``) as they were. To
+    change a setting, make a new ``MySettings``.
 
     Conventions used throughout:
 
@@ -94,8 +105,9 @@ class MySettings(object):
       value (broadcast to all ``channels``) or a list of length
       ``channels``, indexed in captured-column order — on a cDAQ chassis
       that is slot order (see ``input_channels_spec``).
-    - **The ``output_*`` fields** configure the generation/AO path and
-      default to their input counterparts when left unset.
+    - **The ``output_*`` fields** configure the generation/AO path and,
+      when left unset, are derived from their input counterparts at
+      construction.
 
     Attributes:
         channels (int): Number of input channels (default ``2``). On the
@@ -295,8 +307,10 @@ class MySettings(object):
             ``soundcard`` falls back to the default *output* device
             (a microphone-only input cannot play the stimulus), and
             ``nidaq``/``mock`` to device 0 for cross-driver output.
-        output_channels (int): Number of output (AO) channels
-            (default ``1``).
+        output_channels (int): Number of output (AO) channels; None
+            (the default) means ``1``. Setting it does not generate
+            anything: an output is played only when an ``output=``
+            array is passed to ``log_data``.
         output_channels_spec (str or None): Raw DAQmx physical-channel
             string for the AO task, e.g. ``'cDAQ1Mod2/ao0'``; the output
             analogue of ``input_channels_spec``. nidaqmx backend only.
@@ -313,12 +327,10 @@ class MySettings(object):
             ``False``). Useful for transfer-function tests where the
             excitation should be the reference channel; the prepended
             column passes through with a cal factor of 1.
-        init_view_time (bool): Show the time-domain oscilloscope view on
-            launch (default ``True``).
-        init_view_freq (bool): Show the frequency-domain oscilloscope
-            view on launch (default ``True``).
-        init_view_levels (bool): Show the channel-levels oscilloscope
-            view on launch (default ``True``).
+        init_view_time (bool): Accepted for compatibility with code
+            written for the removed desktop logger, and ignored.
+        init_view_freq (bool): Accepted for compatibility and ignored.
+        init_view_levels (bool): Accepted for compatibility and ignored.
 
     Examples:
         IEPE accelerometers on a cDAQ with per-channel calibration —
@@ -761,10 +773,11 @@ class MySettings(object):
     def input_vmax(self):
         '''Effective full-scale input voltage for the current driver.
 
-        Returns ``VmaxNI`` for ``device_driver='nidaq'`` (the configured
-        AI range), ``VmaxSC`` for ``device_driver='soundcard'`` (the
-        user-supplied jack calibration; defaults to 1.0 = no
-        calibration, treating ±1 normalised samples as ±1 V).
+        Returns:
+            vmax (float): ``VmaxNI`` (the configured AI range) when
+                ``device_driver='nidaq'``; otherwise ``VmaxSC``, the
+                sound card's full-scale voltage (1.0 when uncalibrated,
+                so readings are in full-scale units).
         '''
         return self.VmaxNI if self.device_driver == 'nidaq' else self.VmaxSC
 
@@ -773,6 +786,11 @@ class MySettings(object):
 
         Mirror of `input_vmax` for the AO path, based on
         ``output_device_driver``.
+
+        Returns:
+            vmax (float): ``output_VmaxNI`` when
+                ``output_device_driver='nidaq'``; otherwise
+                ``output_VmaxSC``.
         '''
         return (self.output_VmaxNI
                 if self.output_device_driver == 'nidaq'
@@ -794,41 +812,27 @@ class MySettings(object):
 
 
 class Output_Signal_Settings(object):
-    '''Pre-set values for the Logger GUI's "Generate output" panel.
+    '''Four output-signal fields kept so that existing code still imports.
 
-    A lightweight holder for the four output-generation fields the
-    Logger GUI exposes. Pass an instance to
-    ``gui.Logger(..., output_signal_settings=...)`` to pre-fill that
-    panel; the GUI then feeds the chosen values to
-    `acquisition.signal_generator` when you preview or play the output.
-    It is **only** consumed by the GUI — for scripted output, call
-    `acquisition.signal_generator` / ``log_data(output=...)`` directly
-    (see the Data Acquisition user guide).
+    Nothing in pydvma reads this class any more: it pre-filled the
+    output panel of the desktop logger, which was removed in 2.0.0. It
+    is kept so that scripts which create one keep working. To generate
+    an output, call `acquisition.signal_generator` and pass the result
+    to ``log_data(output=...)`` (see the Data Acquisition user guide).
 
-    The signal **duration is not stored here** — it is a separate field
-    in the GUI panel (and the ``T=`` argument of ``signal_generator``
-    when scripting).
+    Args:
+        type (str): Stored as the `type` attribute.
+        amp (float): Stored as the `amp` attribute.
+        f1 (float): Stored as the `f1` attribute.
+        f2 (float): Stored as the `f2` attribute.
 
     Attributes:
-        type (str): Output waveform, matching the panel's drop-down —
-            one of ``'None'`` (output off; the default), ``'sweep'`` (a
-            linear chirp from ``f1`` to ``f2``), ``'gaussian'``
-            (band-limited Gaussian noise) or ``'uniform'`` (band-limited
-            uniform noise). Maps to ``signal_generator``'s ``sig``.
-        amp (float): Peak amplitude in **volts** (default ``0``). Clamped
-            to ±``settings.output_vmax()`` at generation time.
-        f1 (float): Lower frequency in Hz (default ``0``). For ``'sweep'``
-            the start frequency; for the noise types the lower band-pass
-            corner. Passed through as ``f=[f1, f2]``.
-        f2 (float): Upper frequency in Hz (default ``0``). For ``'sweep'``
-            the end frequency; for noise the upper band-pass corner. The
-            GUI rejects ``max(f1, f2) > fs/2`` (Nyquist).
-
-    Examples:
-        >>> # band-limited noise, 0.1 V, 100-300 Hz, pre-loaded in the GUI
-        >>> oss = dvma.Output_Signal_Settings(type='gaussian',
-        ...                                   amp=0.1, f1=100, f2=300)
-        >>> logger = dvma.Logger(settings, output_signal_settings=oss)
+        type (str): Waveform name: ``'None'`` (the default),
+            ``'sweep'``, ``'gaussian'`` or ``'uniform'``, the values of
+            `signal_generator`'s ``sig``.
+        amp (float): Amplitude in volts (default ``0``).
+        f1 (float): Lower frequency in Hz (default ``0``).
+        f2 (float): Upper frequency in Hz (default ``0``).
     '''
     def __init__(self,type='None',
                  amp = 0,
@@ -842,17 +846,24 @@ class Output_Signal_Settings(object):
     
 
 def set_plot_colours(channels):
-    '''
-    Returns a list of RGB colours depending on the number of channels required.
+    '''Return a palette of RGB colours for plotting a number of lines.
 
-    For a single channel this uses matplotlib's ``tab10`` colormap. For
-    multiple channels it uses seaborn's ``hls_palette`` (evenly-spaced
-    hues) when seaborn is installed. seaborn is not a declared
-    dependency (it was only in the retired ``[qt]`` extra), so on a base
-    install (e.g. pyodide) this falls back to a stdlib
-    ``colorsys``-based reimplementation of the same palette — see the
-    ``except ImportError`` branch below.
+    For one line (or fewer) this returns matplotlib's 10-colour ``tab10``
+    palette. For more it returns ``channels`` evenly spaced hues, from
+    seaborn's ``hls_palette`` when seaborn is installed or an identical
+    standard-library version when it is not.
+
+    Args:
+        channels (int): The number of lines to colour.
+
+    Returns:
+        colours (np.ndarray): Integer RGB values from 0 to 255, one row
+            per colour: shape ``(10, 3)`` for ``channels <= 1``,
+            otherwise ``(channels, 3)``.
     '''
+    # seaborn is not a declared dependency (it was only in the retired
+    # [qt] extra), so a base install (e.g. pyodide) takes the stdlib
+    # colorsys fallback in the `except ImportError` branch below.
     # Lazy import: matplotlib is only needed here, and pulling it (plus
     # seaborn, when present) out of module top-level keeps `import
     # pydvma` fast for script / CLI users who never touch the GUI or

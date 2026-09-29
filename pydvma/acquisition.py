@@ -22,18 +22,18 @@ MESSAGE = ''
 #: capture — i.e. how many times the acquisition host dropped samples before
 #: the callback saw them, leaving gaps in that capture's data. Reset at
 #: the end of every capture (0 = clean). Read by `pydvma.serve` to warn
-#: the browser UI; parked module-globally like :data:`MESSAGE`.
+#: the browser UI; parked module-globally like `MESSAGE`.
 LAST_CAPTURE_OVERFLOWS = 0
 
 #: ``(count, seconds)`` of exact-digital-silence stretches found INSIDE
 #: the most recent `log_data` capture — every channel exactly zero for
-#: at least :data:`DROPOUT_MIN_RUN` consecutive frames, somewhere after
+#: at least `DROPOUT_MIN_RUN` consecutive frames, somewhere after
 #: the first sample. A live analogue input never produces that (its
 #: noise floor keeps the converter busy), so such a stretch is data the
 #: host silently replaced: on a USB sound card the driver zero-filling
 #: lost USB packets (measured on a Scarlett 2i2 4th Gen, 2026-09-04:
 #: runs from 8 frames to 188 ms, PortAudio's overflow flag never set).
-#: The twin of :data:`LAST_CAPTURE_OVERFLOWS` for gaps the host does
+#: The twin of `LAST_CAPTURE_OVERFLOWS` for gaps the host does
 #: not report; reset every capture, ``(0, 0.0)`` = clean. Read by
 #: `pydvma.serve` for the capture-integrity toast.
 LAST_CAPTURE_DROPOUTS = (0, 0.0)
@@ -86,10 +86,9 @@ def exact_zero_dropouts(data, fs, full_scale=1.0, min_run=None,
                         silent_fraction=1e-3):
     '''Count stretches of exact digital silence inside a live capture.
 
-    Returns ``(n_runs, total_seconds)``: the number of runs of at least
-    ``min_run`` (default :data:`DROPOUT_MIN_RUN`) consecutive frames in
-    which EVERY channel of ``data`` (``(samples, channels)``, or 1-D)
-    is exactly zero, and the time they add up to at ``fs`` Hz.
+    Counts the runs of at least ``min_run`` (default `DROPOUT_MIN_RUN`)
+    consecutive frames in which EVERY channel of ``data`` is exactly
+    zero, and the time they add up to at ``fs`` Hz.
 
     Two exclusions keep this honest. A run touching the first sample is
     not counted — leading zeros are the fresh-stream startup shortfall
@@ -108,7 +107,23 @@ def exact_zero_dropouts(data, fs, full_scale=1.0, min_run=None,
     Gen, PortAudio's ``input_overflow`` flag never set). Such a gap
     time-warps the record at each edge, which destroys TF coherence
     the same way a counted overflow does — so `log_data` reports them
-    alongside :data:`LAST_CAPTURE_OVERFLOWS`.
+    alongside `LAST_CAPTURE_OVERFLOWS`.
+
+    Args:
+        data (np.ndarray): The capture, shape ``(samples, channels)`` or
+            1-D.
+        fs (float): Sample rate in Hz.
+        full_scale (float): The input's full-scale value, in the units
+            of ``data`` (default 1.0).
+        min_run (int, optional): Shortest run counted, in frames; None
+            (the default) uses `DROPOUT_MIN_RUN` (8).
+        silent_fraction (float): A record whose peak is below this
+            fraction of ``full_scale`` counts as silent and returns
+            ``(0, 0.0)`` (default 1e-3).
+
+    Returns:
+        n_runs (int): The number of all-zero runs found.
+        total_seconds (float): Their combined duration in seconds.
     '''
     if min_run is None:
         min_run = DROPOUT_MIN_RUN
@@ -163,7 +178,7 @@ def _wait_for_buffer_fill(rec, settings, number_samples, cancel_event=None):
     ~0.1 s / 172 decimated samples on a Scarlett 2i2 at a 3 kHz
     target, 2026-08-20). This tops the dwell up by exactly the
     shortfall: it waits until ``chunks_seen * chunk_size`` covers the
-    window, bounded by :data:`BUFFER_FILL_GRACE`.
+    window, bounded by `BUFFER_FILL_GRACE`.
 
     A recorder without ``chunks_seen`` (mock) returns immediately, as
     does a stream that was already running (`start_stream`'s reuse path
@@ -171,7 +186,7 @@ def _wait_for_buffer_fill(rec, settings, number_samples, cancel_event=None):
     counts chunks too (its DAQmx task has no PortAudio-style startup
     gap, so a fresh task normally satisfies the count at once — this is
     a safety net there, not a wait). Raises
-    :class:`CaptureCancelled` if ``cancel_event`` is set while waiting;
+    `CaptureCancelled` if ``cancel_event`` is set while waiting;
     on grace expiry it prints a warning and returns, so a wedged stream
     degrades to today's behaviour instead of hanging.
     '''
@@ -304,155 +319,115 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
 
     Two call modes depending on ``settings.pretrig_samples``:
 
-    * **No pretrigger** (``pretrig_samples is None``): starts / reuses
-      a stream, waits for ``settings.stored_time`` seconds, and
-      returns the most recent ``stored_time * fs`` samples from the
-      circular buffer. If ``output`` is supplied it is played in
-      parallel (soundcard play is blocking; NI play is non-blocking
-      and synchronized against ``stored_time`` via WaitUntilTaskDone).
+    * **No pretrigger** (``pretrig_samples is None``): starts or reuses
+      a stream, waits ``settings.stored_time`` seconds, and returns the
+      most recent ``stored_time * fs`` samples. If ``output`` is
+      supplied it is played in parallel (soundcard playback blocks
+      until played; NI and mock playback run alongside the wait).
     * **Pretrigger armed** (``pretrig_samples`` set): waits up to
-      ``settings.pretrig_timeout`` seconds for the monitored channel
-      to cross ``settings.pretrig_threshold``, then a further
-      ``stored_time + 5`` seconds for the post-trigger half of the
-      window to fill. The timeout therefore bounds the WAIT FOR THE
-      EVENT only — a long capture cannot expire it. When an ``output``
-      stimulus is supplied the timeout clock starts once the stimulus
-      is actually playing (the ~1 s settle sleep and AO task setup are
-      not counted against it). On trigger, returns a window of
-      ``stored_time * fs`` samples straddling the trigger sample so
-      that ``pretrig_samples`` of pre-trigger data appears at the
-      start of the returned buffer. **On timeout with no trigger** the
-      function does not raise — it falls back to returning the tail of
-      the buffer (same as the no-pretrigger path) with
-      ``trigger_detected = False``.
+      ``settings.pretrig_timeout`` seconds for the channel
+      ``settings.pretrig_channel`` to exceed ``settings.pretrig_threshold``
+      in magnitude, then up to a further ``stored_time + 5`` seconds for
+      the post-trigger part of the window to fill. The timeout
+      therefore bounds the wait for the EVENT only; a long capture
+      cannot expire it. When an ``output`` stimulus is supplied it
+      starts about 1 s after arming, and the timeout clock starts once
+      the stimulus is playing. On trigger, the returned window of
+      ``stored_time * fs`` samples has the first sample above threshold
+      at exactly index ``pretrig_samples``, so samples
+      ``[0, pretrig_samples)`` are pre-trigger context. **On timeout
+      with no trigger** nothing is raised: the most recent
+      ``stored_time * fs`` samples are returned, as in the
+      no-pretrigger mode, and a "not detected" message is printed.
 
-    Parameters
-    ----------
-    settings : MySettings
-        Acquisition configuration. See `pydvma.options.MySettings`.
-    test_name : str or None
-        Stored on the returned `TimeData` for labelling.
-    rec : Recorder-like or None
-        Ignored. Retained for backward compatibility with callers (the
-        GUI's ``LogDataThread``) that still pass a cached recorder.
-        ``log_data`` always calls ``streams.start_stream(settings)``
-        itself so that switching device or backend between calls
-        doesn't leave a stale recorder; a running stream whose
-        signature matches is REUSED (soundcard and NI both), so the
-        call is cheap for back-to-back captures and the buffer already
-        holds real history — a capture never starts with the startup-
-        latency zeros a freshly opened stream begins with. On top of
-        that, the free-run dwell is topped up until the buffer really
-        holds ``stored_time * fs`` delivered samples
-        (`_wait_for_buffer_fill`), covering the fresh-stream case.
-        A capture during which the acquisition host reported dropped input
-        prints a loud warning and sets
-        :data:`LAST_CAPTURE_OVERFLOWS` — gaps in the data are
-        unrecoverable and quietly destroy TF coherence, so they must
-        never pass silently.
-    output : ndarray (N_samples, output_channels) or None
-        Optional playback signal **in volts**. For NI it's passed
-        through as-is (must stay within ±``output_VmaxNI``). For
-        soundcard it's divided by ``output_VmaxSC`` to recover the ±1
-        normalised units sounddevice expects.
-    cancel_event : threading.Event or None
-        Optional cooperative stop. When supplied, every wait in the
-        capture (the free-run dwell, and both phases of the armed wait)
-        polls it every :data:`CANCEL_POLL_INTERVAL` seconds; if it is
-        set, any playing stimulus is stopped and
-        :class:`CaptureCancelled` is raised instead of returning data.
-        ``None`` (the default) is the plain blocking behaviour — the
-        Python API is unchanged. Used by the ``pydvma serve`` bridge,
-        which runs this in a worker thread that cannot be killed from
-        outside. Same-device soundcard playback (through the capture
-        stream's duplex output) polls the event too and stops the
-        stimulus mid-play. The one wait that cannot be interrupted is
-        playback on a SEPARATE output device, which blocks inside
-        ``sd.OutputStream.write``.
+    A stream that is already running with matching settings is reused
+    (soundcard and NI alike), so back-to-back captures are cheap and the
+    buffer already holds real history. A freshly opened stream is given
+    time to deliver a full window of real samples before the data is
+    read, so a capture does not start with the stream's startup zeros.
 
-    Returns
-    -------
-    DataSet
-        A DataSet containing one TimeData **in volts**. If
-        ``settings.use_output_as_ch0`` is True and ``output`` was
-        supplied, the output signal is prepended as an extra channel.
+    **Pretrigger limits.** ``pretrig_samples`` must not exceed
+    ``chunk_size`` (the recorder keeps only one chunk of pre-trigger
+    context; use a larger ``chunk_size`` for a longer pre-trigger
+    window) and must be less than ``stored_time * fs``. The threshold is
+    compared in the units the recorder stores: volts on NI, and on a
+    sound card volts once ``VmaxSC`` is set but full-scale units while
+    it is 1.0 (uncalibrated). Calibrating a sound card therefore changes
+    what a given threshold number means.
 
-    Raises
-    ------
-    CaptureCancelled
-        If ``cancel_event`` is set before the capture finishes.
-    ValueError
-        If ``pretrig_samples`` exceeds ``chunk_size``, or leaves no
-        post-trigger data (``>= stored_time * fs``).
+    **Capture rate and delivered rate.** ``fs`` is the rate of the
+    returned data. The converter may run at a different rate, chosen by
+    ``streams.select_capture_fs``:
 
-    Notes
-    -----
-    A clipping warning is printed when ``|data| > 0.95 * Vmax``
-    anywhere in the capture, where ``Vmax`` is ``VmaxNI`` on the NI
-    path and ``VmaxSC`` on the soundcard path. Both default to
-    behaviour equivalent to the old ±1-normalised check when the user
-    hasn't overridden them.
+    - the device cannot run at ``fs`` (for example any sound card asked
+      for 3 kHz): the capture runs at the lowest rate the device can
+      and is resampled down, even with ``lpf_on`` off, rather than
+      leaving the operating system to resample at unknown quality;
+    - ``lpf_on`` is set: the capture deliberately runs above ``fs``
+      for the anti-alias filter and some noise reduction; how far above
+      is set by ``settings.oversample`` (see
+      ``streams.oversample_strategy``);
+    - ``capture_fs`` is set: that capture rate is used outright.
 
-    Pretrigger positioning (both backends, identical logic)
-    -------------------------------------------------------
-    On a successful trigger, the returned buffer is
-    ``stored_time * fs`` samples long and the first sample exceeding
-    ``pretrig_threshold`` sits at exactly index ``pretrig_samples`` —
-    samples ``[0, pretrig_samples)`` are pre-trigger context. See
-    `streams.Recorder` for the state machine that gives this
-    invariant.
+    In every case the data (pretrigger alignment included) is resampled
+    to ``fs`` with a linear-phase anti-alias filter
+    (``analysis.resample_to_fs``: passband to ``fs/2.56``, 96 dB
+    stopband at ``fs/2``, zero-phase), and the returned settings record
+    the real capture rate as ``lpf_capture_fs``. ``chunk_size`` and
+    ``pretrig_samples`` keep their meaning at ``fs``. The capture falls
+    back to unfiltered logging at ``fs`` (with a printed note) when
+    there is no headroom to oversample into, or when the device refuses
+    to open a stream at the oversampled rate. On a sound card, playback
+    shares the capture clock, so when input and output are the same
+    device (``streams.output_shares_input_clock``) an ``output``
+    stimulus is resampled onto the capture rate.
 
-    ``pretrig_samples`` is capped at ``chunk_size`` (validated at
-    call-time with a ``ValueError``); the recorder only retains that
-    much pre-trigger context. Larger windows require a larger
-    ``chunk_size``. It must also leave room for post-trigger data —
-    ``pretrig_samples >= stored_time * fs`` is rejected the same way.
+    **Warnings.** Progress and warnings are printed and the last one is
+    kept in ``acquisition.MESSAGE``. A clipping warning is printed when
+    any raw sample (before resampling) exceeds 95 % of
+    ``settings.input_vmax()`` (``VmaxNI`` on NI, ``VmaxSC`` otherwise).
+    Input the host reported as dropped is counted into
+    ``acquisition.LAST_CAPTURE_OVERFLOWS``, and stretches of exact
+    all-channel zeros inside the capture into
+    ``acquisition.LAST_CAPTURE_DROPOUTS`` (see `exact_zero_dropouts`);
+    either prints a warning, because the data then has gaps that
+    corrupt TF and coherence results.
 
-    The threshold is compared in the units the recorder stores, which
-    for a soundcard means volts once ``VmaxSC`` is set and full-scale
-    units while it is 1.0 (uncalibrated). Calibrating a device
-    therefore changes what a given threshold number means.
+    Args:
+        settings (MySettings): Acquisition configuration. See
+            `pydvma.options.MySettings`.
+        test_name (str, optional): Stored on the returned `TimeData`
+            for labelling.
+        rec (object, optional): Ignored. Accepted so that older code
+            which passes a cached recorder still runs; the stream is
+            always started (or reused) from ``settings``.
+        output (np.ndarray, optional): Signal to play during the
+            capture, **in volts**, shape ``(N_samples, output_channels)``,
+            for example from `signal_generator`. On NI it is sent as it
+            is and must stay within ``±output_VmaxNI``; on a sound card
+            it is divided by ``output_VmaxSC`` to give the ``±1``
+            normalised samples the device expects.
+        cancel_event (threading.Event, optional): Cooperative stop.
+            Every wait in the capture checks it every
+            ``CANCEL_POLL_INTERVAL`` (0.05 s); once it is set, any
+            playing stimulus is stopped and `CaptureCancelled` is raised
+            instead of returning data. The one wait that cannot be
+            interrupted is playback on a separate soundcard output
+            device. None (the default) is plain blocking behaviour.
 
-    On a **trigger timeout** (``pretrig_timeout`` elapses with nothing
-    above threshold), the function does not raise — it returns the
-    tail of the buffer (same shape as the no-pretrigger path), leaves
-    ``trigger_detected`` False, and prints a "not detected" message.
+    Returns:
+        dataset (DataSet): One `TimeData` in volts (full-scale units on an
+            uncalibrated sound card), with ``channel_cal_factors`` set
+            to ``1 / settings.channel_sensitivities``. If
+            ``settings.use_output_as_ch0`` is True and ``output`` was
+            given, the output signal is prepended as extra leading
+            column(s) with a calibration factor of 1.
 
-    Capture rate vs delivered rate
-    ------------------------------
-    ``fs`` is the rate the returned TimeData is at. The rate the CONVERTER
-    runs at can differ, and ``streams.select_capture_fs`` decides which:
-
-    - **The device cannot run at ``fs``.** Any sound card asked for
-      3 kHz — their ladders start at 44.1 kHz. Captured at the lowest
-      rate it CAN run and resampled down. This happens with ``lpf_on``
-      off, because the alternative is the OS resampling silently at a
-      quality that depends on whatever rate the device was left at
-      (measured as poor as 12 dB of alias rejection).
-    - **``lpf_on``.** Captured above ``fs`` deliberately, for the
-      anti-alias chain and ~10·log10(M) dB of noise process gain. How far
-      above is ``settings.oversample`` — see
-      ``streams.oversample_strategy``.
-    - **``capture_fs``.** Forces a specific capture rate outright.
-
-    In every case the capture — pretrigger window included, whose
-    sample-exact alignment survives the rate change — is resampled to
-    ``fs`` behind a linear-phase anti-alias FIR
-    (``analysis.resample_to_fs``: passband to ``fs/2.56``, 96 dB stopband
-    at ``fs/2``, zero-phase), ``chunk_size`` and ``pretrig_samples`` are
-    scaled to the capture rate internally so their user-facing meaning
-    (at ``fs``) is unchanged, and the returned settings record the real
-    capture rate as ``lpf_capture_fs``.
-
-    The log proceeds unfiltered (with a printed note) when there is no
-    headroom to oversample into, or when the device refuses to OPEN a
-    stream at a rate its capability probe accepted (PortAudio's
-    ``check_input_settings`` can approve rates ``InputStream`` then
-    rejects, e.g. via MME under a remote-desktop session).
-
-    On a sound card, playback shares the capture clock, so a stimulus
-    passed as ``output`` is resampled onto the capture rate when input and
-    output are the same device (``streams.output_shares_input_clock``).
+    Raises:
+        CaptureCancelled: ``cancel_event`` was set before the capture
+            finished.
+        ValueError: ``pretrig_samples`` exceeds ``chunk_size``, or
+            leaves no post-trigger data (``>= stored_time * fs``).
     '''
     global MESSAGE
 
@@ -905,25 +880,39 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
 
 
 def output_signal(settings, output, cancel_event=None):
-    '''Play ``output`` (in volts) on the configured AO device.
+    '''Start playing ``output`` (in volts) on the configured output device.
 
-    For soundcard, divides by ``output_VmaxSC`` to recover the ±1
-    normalised float sounddevice expects, then writes through
-    `streams.setup_output_soundcard` — which plays through the live
-    capture stream itself when input and output are the same device
-    (one full-duplex stream; a second stream there would silence the
-    capture on macOS), or a separate ``sd.OutputStream`` otherwise.
-    Either way the write blocks until the stimulus has been handed to
-    the stream. For NI, the voltage array is passed straight through
-    to `setup_output_NI` (the AO task is configured with
-    ±``output_VmaxNI`` rails).
+    Usually called for you by `log_data` (pass it ``output=``); call it
+    directly only to play a signal without capturing.
 
-    ``cancel_event`` (a `threading.Event` or None) makes the
-    SAME-DEVICE soundcard wait cancellable: the duplex playback wait
-    polls it and stops the stimulus as soon as it is set, regardless of
-    whether the cancel arrives before or during playback. The
-    separate-device path cannot honour it mid-write (a blocking
-    ``sd.OutputStream.write`` is uninterruptible) and ignores it.
+    On a sound card the signal is divided by ``output_VmaxSC`` to give
+    the ``±1`` normalised float32 samples sounddevice expects, then
+    written through `streams.setup_output_soundcard`. When input and
+    output are the same device it plays through the running capture
+    stream itself (one full-duplex stream; a second stream on the same
+    device silences the capture on macOS), otherwise through a separate
+    ``sd.OutputStream``. Either way the write blocks until the stimulus
+    has been handed to the stream. On NI the voltage array is passed
+    straight to `streams.setup_output_NI`, whose AO task runs with
+    ``±output_VmaxNI`` rails, and the task is started without waiting.
+
+    Args:
+        settings (MySettings): Selects the output device
+            (``output_device_driver``, ``output_device_index``) and its
+            full-scale voltage (``output_VmaxSC`` / ``output_VmaxNI``).
+        output (np.ndarray): Signal in volts, shape
+            ``(N_samples, output_channels)``, for example from
+            `signal_generator`.
+        cancel_event (threading.Event, optional): Makes same-device
+            soundcard playback cancellable: the playback wait checks it
+            and stops the stimulus as soon as it is set. Playback on a
+            separate soundcard output device, and NI output, ignore it.
+
+    Returns:
+        stream (object): The started output stream or task, which `log_data`
+            later stops; None (after printing a message) if
+            ``settings.output_device_driver`` is not ``'soundcard'``,
+            ``'nidaq'`` or ``'mock'``.
     '''
     if settings.output_device_driver == 'soundcard':
         s = streams.setup_output_soundcard(settings,
@@ -953,14 +942,52 @@ def output_signal(settings, output, cancel_event=None):
 
 
 def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_channels='all'):
-    """Create an output-ready waveform.
+    """Create an output waveform in volts, ready to pass to `log_data`.
 
-    ``amplitude`` is in **volts** — the generated signal is bounded to
-    ±``amplitude`` and, as a safety ceiling, clipped to
-    ±``settings.output_vmax()`` (i.e. output_VmaxNI on the NI path,
-    output_VmaxSC on the soundcard path). Returns ``(t, y)`` where
-    ``y`` is shape ``(N, output_channels)`` in volts, ready to hand to
-    `log_data(..., output=y)` or `output_signal`.
+    The waveform is ``T`` seconds long at ``settings.output_fs``, with a
+    raised-cosine fade-in and fade-out of ``min(T/10, 0.1)`` seconds at
+    each end. What ``amplitude`` means depends on ``sig``:
+
+    - ``'gaussian'`` (the default): Gaussian white noise whose
+      STANDARD DEVIATION is ``amplitude``, truncated at the output rail
+      (``±settings.output_vmax()``); it is not a peak bound. With ``f``
+      given, the noise is band-pass filtered to ``f`` and rescaled to an
+      rms of ``amplitude``.
+    - ``'uniform'``: uniform white noise between ``±amplitude``. With
+      ``f`` given, it is band-pass filtered and rescaled to an rms of
+      ``amplitude``.
+    - ``'sweep'``: a linear chirp of peak ``amplitude`` from ``f[0]`` to
+      ``f[1]`` over ``T`` seconds; ``f`` defaults to 0 to
+      ``output_fs/2``.
+
+    Any other ``sig`` prints a message and returns zeros. The band-pass
+    filter is a 3rd-order Butterworth, applied forwards and backwards.
+
+    If the finished waveform's peak exceeds the output rail
+    ``settings.output_vmax()`` (``output_VmaxNI`` when
+    ``output_device_driver='nidaq'``, ``output_VmaxSC`` otherwise), the
+    WHOLE waveform is scaled down so its peak equals the rail. Nothing
+    is printed when this happens: the resulting rms is stored as a
+    message in ``acquisition.MESSAGE``.
+
+    Args:
+        settings (MySettings): Supplies ``output_fs``,
+            ``output_channels`` and the output rail.
+        sig (str): ``'gaussian'``, ``'uniform'`` or ``'sweep'``.
+        T (float): Duration in seconds (default 1).
+        amplitude (float): Level in volts (default 0.1); see above for
+            what it means for each ``sig``.
+        f (list[float], optional): ``[f_low, f_high]`` in Hz: the sweep
+            range, or the noise pass band. None gives unfiltered noise,
+            or a sweep from 0 to ``output_fs/2``.
+        selected_channels (str or list[int]): Output columns to fill;
+            the others stay zero. ``'all'`` (the default) fills every
+            one of the ``settings.output_channels`` columns.
+
+    Returns:
+        t (np.ndarray): Sample times in seconds, ``arange(0, T, 1/output_fs)``.
+        y (np.ndarray): The waveform in volts, shape
+            ``(len(t), output_channels)``.
     """
     global MESSAGE
     if selected_channels == 'all':
@@ -1100,28 +1127,36 @@ def multisine_generator(settings, spec):
     per-channel RMS (identical across realisations, keeping the
     excitation class constant); if the resulting peak exceeds
     ``settings.output_vmax()`` a ValueError is raised — lower the
-    level. A ValueError is also raised for a degenerate ``n_exc`` (< 1),
-    a degenerate period count (``t_periods + p_periods < 1``), an ``e``
-    outside ``[0, n_exc)``, or ``n_exc`` exceeding
-    ``settings.output_channels``.
+    level.
 
     Args:
         settings (MySettings): ``output_fs`` (the time axis),
             ``output_channels`` (checked against ``n_exc``) and the
             output voltage rail are consulted.
-        spec (dict): MultisineSpec dict with keys n_samples, k1, k2,
-            p_periods, t_periods, seed, m, e, n_exc, amp_rms. See the
-            web logger's Nonlin-stage guide for the design vocabulary
-            (M realisations, P periods, excited bins k1/k2):
-            https://torebutlin.github.io/pydvma/web-logger/nonlin/.
+        spec (dict): MultisineSpec dict with keys ``n_samples``, ``k1``,
+            ``k2``, ``p_periods``, ``t_periods``, ``seed``, ``m``,
+            ``e``, ``n_exc``, ``amp_rms``. ``t_periods`` transient
+            periods come first, then ``p_periods`` steady-state
+            periods. See the web logger's Nonlin-stage guide for the
+            design vocabulary (M realisations, P periods, excited bins
+            k1/k2): https://torebutlin.github.io/pydvma/web-logger/nonlin/.
 
-    Returns a tuple ``(t, y)`` where ``y`` is a C-contiguous array with
-    shape ``((t_periods + p_periods) * n_samples, n_exc)`` in volts,
-    ready for ``log_data(..., output=y)`` — C-contiguity matters because
-    sounddevice's ``OutputStream.write`` raises ``TypeError`` on a
-    Fortran-ordered buffer, which a naive tile-then-transpose produces
-    whenever ``n_exc >= 2``.
+    Returns:
+        t (np.ndarray): Sample times in seconds at ``settings.output_fs``.
+        y (np.ndarray): The waveform in volts, C-contiguous, shape
+            ``((t_periods + p_periods) * n_samples, n_exc)``, ready for
+            ``log_data(..., output=y)``.
+
+    Raises:
+        ValueError: The bins violate ``1 <= k1 <= k2 <= (N-1)//2``,
+            ``n_exc < 1``, ``t_periods + p_periods < 1``, ``e`` is
+            outside ``[0, n_exc)``, ``n_exc`` exceeds
+            ``settings.output_channels``, or the peak exceeds
+            ``settings.output_vmax()``.
     """
+    # C-contiguity of `y` matters: sounddevice's OutputStream.write raises
+    # TypeError on a Fortran-ordered buffer, which a naive tile-then-
+    # transpose produces whenever n_exc >= 2.
     N = int(spec['n_samples'])
     k1 = int(spec['k1'])
     k2 = int(spec['k2'])
@@ -1181,34 +1216,27 @@ def multisine_generator(settings, spec):
 def stream_snapshot(rec):
     '''Capture the live oscilloscope buffer as a `TimeData`.
 
-    Unlike `log_data`, which blocks for `stored_time` seconds and
-    returns a fresh capture, this is a non-blocking snapshot of the
-    oscilloscope-side circular buffer (`osc_time_data`) — i.e. the
-    most recent `num_chunks * chunk_size` samples already in memory.
-    Useful for "what is the stream doing right now?" diagnostics from
-    a notebook while a stream is running.
+    Unlike `log_data`, which blocks for ``stored_time`` seconds and
+    returns a fresh capture, this is a non-blocking copy of the
+    oscilloscope buffer of the running stream: the most recent
+    ``num_chunks * chunk_size`` samples already in memory. Useful for
+    checking what a running stream is doing from a notebook.
 
-    Parameters
-    ----------
-    rec : Recorder-like
-        Retained for backward compatibility; the actual snapshot is
-        always taken from the module-level `streams.REC`. Callers can
-        pass any value (typically `streams.REC` itself).
-
-    Returns
-    -------
-    TimeData
-        A single `TimeData` instance with `test_name='stream_snapshot'`,
-        carrying the oscilloscope axis and the live buffer. No
-        `channel_cal_factors` or `units` are attached (this is meant
-        as a quick-look tool, not a calibrated capture).
-
-    Notes
-    -----
     Requires a live stream: call `streams.start_stream(settings)`
-    first, or use a function like `log_data` that does so internally.
-    On the soundcard path the buffer holds voltages scaled by
-    `settings.VmaxSC`; on the NI path it holds raw volts.
+    first, or run `log_data`, which starts one. On a sound card the
+    samples are scaled by ``settings.VmaxSC`` (volts once it is set,
+    full-scale units while it is 1.0); on NI they are volts.
+
+    Args:
+        rec (object): Ignored; accepted for compatibility with older
+            code. The snapshot is always taken from the module-level
+            `streams.REC` (the stream most recently started).
+
+    Returns:
+        time_data (TimeData): The oscilloscope time axis and buffer, with
+            ``test_name='stream_snapshot'`` and the stream's settings.
+            No calibration is applied: ``channel_cal_factors`` are all
+            ones and ``units`` is None.
     '''
     time_data_copy = np.copy(streams.REC.osc_time_data)
     time_axis_copy = np.copy(streams.REC.osc_time_axis)

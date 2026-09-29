@@ -55,17 +55,36 @@ def _stamp_source(result, time_data, source_settings):
 
 
 def calculate_fft(time_data,time_range=None,window=None):
-    '''
-    Provenance: the result is stamped with ``source_signature`` (a hash
-    of the source samples, see `pydvma._signature`) and
-    ``source_settings`` — the knobs of this call, with ``time_range``
-    recorded as the EFFECTIVE range used (the whole record when the
-    argument was None).
+    '''Calculate the one-sided FFT of every channel of one TimeData.
+
+    The spectrum is the raw ``np.fft.rfft`` of the (optionally windowed)
+    samples inside ``time_range``: it is not scaled to an amplitude or
+    power spectrum. The frequency resolution is the reciprocal of the
+    selected segment's duration.
+
+    The result is stamped with ``source_signature`` (a hash of the
+    source samples, see `pydvma._signature`) and ``source_settings``
+    (the arguments of this call, with ``time_range`` recorded as the
+    range actually used: the whole record when the argument was None).
 
     Args:
-        time_data (<TimeData> object): time series data
-        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
-        window (str, optional): window function name (e.g., 'hann', 'hamming', 'blackman'), or None for rectangular (boxcar) window
+        time_data (TimeData): The capture to transform.
+        time_range (list or np.ndarray or PlotData, optional):
+            ``[t_start, t_stop]`` in seconds; samples with
+            ``t_start <= t <= t_stop`` are used. A `PlotData` uses its
+            current x-axis limits. None (the default) uses the whole
+            record.
+        window (str, optional): A ``scipy.signal.windows`` name such as
+            ``'hann'``, ``'hamming'`` or ``'blackman'``, or None (the
+            default) for a rectangular (boxcar) window.
+
+    Returns:
+        freq_data (FreqData): The complex spectrum, one column per channel,
+            with the source's `units` and `channel_cal_factors` copied
+            across and `id_link` set to the source's `unique_id`.
+
+    Raises:
+        Exception: ``time_data`` is not a single `TimeData`.
     '''
     
     if time_data.__class__.__name__ != 'TimeData':
@@ -120,7 +139,39 @@ def calculate_fft(time_data,time_range=None,window=None):
     return freq_data
 
 def multiply_by_power_of_iw(data,power,channel_list):
-    
+    '''Multiply chosen channels of a spectrum or TF by ``(i*omega)**power``, in place.
+
+    Converts between displacement, velocity and acceleration: for
+    example ``power=1`` turns a displacement spectrum into velocity and
+    ``power=-2`` turns acceleration into displacement, with
+    ``omega = 2*pi*f`` from the item's own `freq_axis`.
+
+    The argument is MODIFIED IN PLACE (its `freq_data` or `tf_data`
+    columns are overwritten) and the same object is returned, so take a
+    ``copy.deepcopy`` first if the original is still needed. The
+    cumulative power applied to each channel is kept in an
+    ``iw_power_counter`` array on the item (created on first use), so
+    ``power=1`` followed by ``power=-1`` returns the counter to where it
+    started.
+
+    For a negative ``power`` the DC bin (``f = 0``) has no finite value
+    and is overwritten: it comes out as 0 for ``power=-1`` and as NaN
+    for ``power=-2`` or below. It is not restored by a later positive
+    power.
+
+    Args:
+        data (FreqData or TfData): The item to scale.
+        power (int or float): The exponent ``p`` in ``(i*omega)**p``.
+        channel_list (list[int] or np.ndarray): Column indices of
+            `freq_data` / `tf_data` to scale; other columns are left
+            unchanged. Pass a list even for one channel (``[1]``): a
+            bare integer raises a broadcasting ``ValueError``.
+
+    Returns:
+        data (FreqData or TfData): ``data`` itself, after scaling. Any other
+            type is returned unchanged after printing a message.
+    '''
+
     if data.__class__.__name__ == 'TfData':
         iw = 1j*2*np.pi * data.freq_axis[:,None]
         if power<0:
@@ -244,22 +295,37 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
     and ``Cxy`` is a 0/0 ratio. It is returned as 0 in that degenerate case
     rather than NaN; treat it as "no information at DC", not a real coherence.
 
-    Memory: the per-segment windows are built with ``as_strided`` directly at
-    the final ``(N_chans, N_seg, nperseg)`` shape rather than via
-    ``sliding_window_view`` + slicing. The latter materialises an intermediate
-    whose *nominal* size is ``N_chans * (N_samples - nperseg + 1) * nperseg``;
-    on a 32-bit build (pyodide/WASM, ``npy_intp`` = int32) numpy rejects that
-    view with "array is too big" for a large ``nperseg`` on a long, high-rate
-    record, even though it is only a view. The direct stride keeps the nominal
-    size at ``N_chans * N_seg * nperseg`` and is numerically byte-identical.
-
     Args:
-        time_data (<TimeData> object): time series data
-        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
-        window (None or str): window function name; None defaults to 'boxcar'
-        N_frames (int): number of frames to average over
-        overlap (float): frame overlap fraction between 0 and 1
+        time_data (TimeData): The capture to analyse.
+        time_range (list or np.ndarray or PlotData, optional):
+            ``[t_start, t_stop]`` in seconds. A `PlotData` uses its
+            current x-axis limits. None (the default) uses the whole
+            record.
+        window (str, optional): A ``scipy.signal.windows`` name, applied
+            to each segment. None (the default) means ``'boxcar'``.
+        N_frames (int): Number of averaging frames (default 1). The
+            segment length is ``ceil(N / ((N_frames + 1) * (1 - overlap)))``
+            samples for a selection of ``N`` samples, which gives exactly
+            ``N_frames`` segments at the default overlap of 0.5. Must be
+            at least 1.
+        overlap (float): Fractional overlap between segments, from 0 to
+            1 (default 0.5).
+
+    Returns:
+        cross_spec_data (CrossSpecData): ``Pxy`` of shape ``(n_channels,
+            n_channels, n_freq)`` as a power SPECTRUM (``unit**2``; divide
+            by the result's `enbw_hz` for a density), ``Cxy`` of the same
+            shape, and the source's `units` and `channel_cal_factors`.
+
+    Raises:
+        Exception: ``time_data`` is not a single `TimeData`.
+        ValueError: ``N_frames`` makes the segment longer than the
+            selected record.
     '''
+    # Memory note: the per-segment windows are built with `as_strided`
+    # directly at the final (N_chans, N_seg, nperseg) shape rather than via
+    # `sliding_window_view` + slicing — see the comment at the stride below
+    # for why (32-bit pyodide/WASM rejects the larger nominal view).
     # TODO iterate over list of timedata... but need new dataset type?
 
     if window is None:
@@ -422,19 +488,34 @@ def calculate_cross_spectrum_matrix(time_data, time_range=None, window=None, N_f
 
 def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=None):
     '''
-    Calculates cross spectra averaged across ensemble of time_data_list. Note that
-    this expects a <TimeDataList> of <TimeData> objects.
+    Average the cross-spectrum matrix across an ensemble of separate captures.
 
-    Takes each time series as an independent measurement.
+    Each `TimeData` in the list is treated as one independent
+    measurement (one frame, no sub-frame averaging) and its
+    cross-spectrum matrix (`calculate_cross_spectrum_matrix` with
+    ``N_frames=1``) is averaged with equal weight; the coherence is then
+    formed from the averaged matrix. Intended for repeated measurements
+    such as impulse-hammer tests.
 
-    Intended for averaged transfer functions from separate measurements, e.g. impulse hammer tests.
-
-    Does not average data across sub-frames.
+    Every record must give the same frequency bins (same channel count,
+    sample rate and length); this function does not check that.
 
     Args:
-        time_data_list (<TimeDataList> object): a list of time series data
-        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
-        window (None or str): type of window to use, default is None.
+        time_data_list (TimeDataList): The ensemble of captures.
+        time_range (list or np.ndarray, optional):
+            ``[t_start, t_stop]`` in seconds, applied to every record.
+            None (the default) uses the whole of each record.
+        window (str, optional): A ``scipy.signal.windows`` name, or None
+            (the default) for a rectangular window.
+
+    Returns:
+        cross_spec_data (CrossSpecData): The averaged ``Pxy`` and its
+            coherence ``Cxy``, with `units` and `channel_cal_factors` from
+            the first record and `id_link` listing every record's
+            `unique_id`.
+
+    Raises:
+        Exception: ``time_data_list`` is not a `TimeDataList`.
     '''
     
     if time_data_list.__class__.__name__ != 'TimeDataList':
@@ -481,21 +562,43 @@ def calculate_cross_spectra_averaged(time_data_list, time_range=None, window=Non
 
 def calculate_tf(time_data, ch_in=0, time_range=None, window=None, N_frames=1, overlap=0.5):
     '''
-    Transfer function of one <TimeData> capture (H1 estimator).
+    Calculate the transfer functions of one capture (H1 estimator).
 
-    Provenance: the result is stamped with ``source_signature`` (a hash
-    of the source samples, see `pydvma._signature`) and
-    ``source_settings`` — the knobs of this call, with ``time_range``
-    recorded as the EFFECTIVE range used (the whole record when the
-    argument was None).
+    Every channel other than ``ch_in`` is treated as an output, and its
+    TF is ``Pxy[ch_in, ch_out] / Pxy[ch_in, ch_in]`` from
+    `calculate_cross_spectrum_matrix`, with the matching coherence. The
+    calibration carried onto the result is the ratio
+    ``cal[ch_out] / cal[ch_in]`` and the units are ``'<out>/<in>'``
+    (compound units parenthesised by `wrap_unit`).
+
+    The result is stamped with ``source_signature`` (a hash of the
+    source samples, see `pydvma._signature`) and ``source_settings``
+    (the arguments of this call, with ``time_range`` recorded as the
+    range actually used: the whole record when the argument was None).
 
     Args:
-        time_data (<TimeData> object): time series data
-        ch_in (int): index of input channel
-        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
-        window (None or str): apply filter to data before fft or not
-        N_frames (int): number of frames to average over
-        overlap (float): frame overlap fraction between 0 and 1
+        time_data (TimeData): The capture to analyse.
+        ch_in (int): Column index of the input (reference) channel
+            (default 0).
+        time_range (list or np.ndarray, optional):
+            ``[t_start, t_stop]`` in seconds. None (the default) uses the
+            whole record.
+        window (str, optional): A ``scipy.signal.windows`` name applied
+            to each frame before its FFT, or None (the default) for a
+            rectangular window.
+        N_frames (int): Number of averaging frames (default 1); see
+            `calculate_cross_spectrum_matrix`. With 1 frame the
+            coherence is identically 1.
+        overlap (float): Fractional overlap between frames, from 0 to 1
+            (default 0.5).
+
+    Returns:
+        tf_data (TfData): ``tf_data`` and ``tf_coherence`` of shape
+            ``(n_freq, n_channels - 1)``, one column per output channel in
+            ascending channel order (listed in ``settings.ch_out_set``).
+
+    Raises:
+        Exception: ``time_data`` is not a single `TimeData`.
     '''
     if time_data.__class__.__name__ != 'TimeData':
         raise Exception('Input data needs to be single <TimeData> object')
@@ -575,7 +678,7 @@ def wrap_unit(unit):
     TWIN of the browser's `wrapUnit` (`webui/src/lib/model/calibration.ts`),
     which builds the same strings for its own plot labels and export
     headers; the two are pinned by the shared vectors in
-    :data:`UNIT_WRAP_VECTORS`, mirrored in `webui/tests/export/data.test.ts`.
+    `UNIT_WRAP_VECTORS`, mirrored in `webui/tests/export/data.test.ts`.
 
     NB an OLD file keeps whatever it was written with: an unparenthesised
     ``'m/s2/N'`` cannot be split back into numerator and denominator
@@ -659,30 +762,46 @@ def _tf_units_from_source(src_units, ch_in, ch_out_set):
 
 def calculate_tf_averaged(time_data_list, ch_in=0, time_range=None, window=None):
     '''
-    Calculates transfer function averaged across an ensemble of separate
-    measurements. Note that this expects a <TimeDataList> object.
+    Calculate transfer functions averaged across an ensemble of separate captures.
 
-    Takes each time series as an independent measurement: the
-    cross-spectra are averaged across the ensemble, then the H1
-    estimator ``Pxy[ch_in, ch_out] / Pxy[ch_in, ch_in]`` is formed —
-    the same phase convention as `calculate_tf`.
+    Each record is taken as one independent measurement (one frame, no
+    sub-frame averaging): the cross-spectra are averaged across the
+    ensemble, then the H1 estimator ``Pxy[ch_in, ch_out] /
+    Pxy[ch_in, ch_in]`` is formed, with the same phase convention as
+    `calculate_tf`. Intended for repeated measurements such as
+    impulse-hammer tests.
 
-    Intended for averaged transfer functions from separate measurements, e.g. impulse hammer tests.
+    The records must share a channel count and a sample rate (to within
+    `TF_ENSEMBLE_FS_TOLERANCE`, 0.1 %); records of different lengths
+    are all truncated to the shortest, and that length is recorded as
+    ``source_settings['n_samples']``.
 
-    Does not average data across sub-frames.
-
-    Provenance: the result is stamped with ``source_signature`` (hashing
-    every source's samples, concatenated in list order) and
+    The result is stamped with ``source_signature`` (hashing every
+    source's samples, concatenated in list order) and
     ``source_settings``. That settings snapshot records ``time_range``
-    as PASSED — ``None`` meaning "the whole of each record" — whereas
-    `calculate_tf` records the effective range it resolved, because an
-    ensemble of records has no single effective range.
+    as passed (None meaning "the whole of each record"), whereas
+    `calculate_tf` records the range it resolved, because an ensemble of
+    records has no single resolved range.
 
     Args:
-        time_data_list (<TimeDataList> object): a list of time series data
-        ch_in (int): index of input channel
-        time_range (list or np.ndarray, optional): 2x1 numpy array to specify data segment to use
-        window (None or str): type of window to use, default is None.
+        time_data_list (TimeDataList): The ensemble of captures.
+        ch_in (int): Column index of the input (reference) channel
+            (default 0).
+        time_range (list or np.ndarray, optional):
+            ``[t_start, t_stop]`` in seconds, applied to every record.
+            None (the default) uses the whole of each record.
+        window (str, optional): A ``scipy.signal.windows`` name, or None
+            (the default) for a rectangular window.
+
+    Returns:
+        tf_data (TfData): One column per output channel, with calibration
+            ratios and units taken from the first record and `id_link`
+            listing every record's `unique_id`.
+
+    Raises:
+        Exception: ``time_data_list`` is not a `TimeDataList`.
+        ValueError: The list is empty, or its records differ in channel
+            count or sample rate.
     '''
 
     if time_data_list.__class__.__name__ != 'TimeDataList':
@@ -1098,12 +1217,32 @@ def _tf_units_from_source_volts(src_units, ch_out_set):
 
 #%% CLEAN IMPULSE
 def clean_impulse(time_data, ch_impulse=0):
-    '''
-    Sets all data outside of impulse to zero.
-    
-    Pulse width is estimated by assuming half cosine impulse, using width of half peak amplitude.
-    
-    Data before peak is unchanged. Data after estimated end of impulse is ramped to zero using half cosine pulse of width 10x estimated pulse width.
+    '''Taper the tail of a hammer-force channel to zero after the impulse.
+
+    Only channel ``ch_impulse`` is changed. The pulse width ``T`` is
+    estimated from the width of the largest peak at half its amplitude,
+    assuming a half-cosine pulse (``T = 1.5 x`` that width). Samples up
+    to the estimated end of the pulse (peak + ``T/2``) are unchanged;
+    after it the channel is ramped to zero with a half-cosine taper of
+    length ``10 T`` and is zero from then on.
+
+    The result is a deep copy marked ``impulse_cleaned = True``; a
+    `TimeData` already marked that way is returned as it is (the same
+    object), so cleaning twice changes nothing. The outcome is printed
+    and also stored in the module variable ``analysis.MESSAGE``,
+    including a warning when the taper changed any sample by more than
+    10 % of the peak amplitude (a sign of a double hit, or of the wrong
+    channel).
+
+    Args:
+        time_data (TimeData): The capture to clean. If it has no
+            ``impulse_cleaned`` attribute, one is added (set to False).
+        ch_impulse (int): Column index of the force (impulse) channel
+            (default 0).
+
+    Returns:
+        time_data (TimeData): A cleaned deep copy, or ``time_data`` itself
+            if it was already cleaned.
     '''
     global MESSAGE
     if not hasattr(time_data,'impulse_cleaned'):
@@ -1164,11 +1303,12 @@ def _simplest_fraction_between(lo, hi):
     ratio ``limit_denominator(1024)`` can only miss (it returns 1/6).
 
     Args:
-        lo: lower interval edge (``Fraction`` or number), > 0.
-        hi: upper interval edge, >= lo.
+        lo (Fraction or float): lower interval edge, > 0.
+        hi (Fraction or float): upper interval edge, >= lo.
 
     Returns:
-        The ``Fraction`` with the smallest denominator inside [lo, hi].
+        fraction (Fraction): The fraction with the smallest denominator
+            inside [lo, hi].
     '''
     from fractions import Fraction
 
@@ -1185,12 +1325,11 @@ def _simplest_fraction_between(lo, hi):
 
 
 def resample_to_fs(y, fs, fs_new, stopband_db=96.0):
-    '''Band-limited rational resampling to a target sample rate.
+    '''Resample a signal to a new sample rate with a band-limited FIR filter.
 
-    One principled engine for three jobs (round-9): the logger's digital
-    low-pass (oversample at the device maximum, resample DOWN to the
-    chosen fs), the Time view's Resample tool, and "resample to match"
-    across sets. The rate change is rational — ``fs_new/fs`` is
+    Used by `acquisition.log_data`'s digital low-pass (capture above
+    ``fs``, then resample down to it) and by the web logger's Resample
+    tool. The rate change is rational — ``fs_new/fs`` is
     approximated by ``up/down`` (``Fraction.limit_denominator``, refined
     when needed by the simplest fraction within a 1e-9 relative
     tolerance), so a device-coerced capture rate still lands exactly on
@@ -1233,18 +1372,25 @@ def resample_to_fs(y, fs, fs_new, stopband_db=96.0):
     ``k * up/down``.
 
     Args:
-        y: array of shape ``(N,)`` or ``(N, n_channels)`` — time series
-            in columns.
-        fs: current sample rate in Hz.
-        fs_new: target sample rate in Hz (> 0). ``fs_new == fs`` returns
-            the input unchanged.
-        stopband_db: stopband attenuation for the Kaiser design in dB.
+        y (np.ndarray): Shape ``(N,)`` or ``(N, n_channels)``, one time
+            series per column.
+        fs (float): Current sample rate in Hz.
+        fs_new (float): Target sample rate in Hz (> 0). ``fs_new == fs``
+            returns the input unchanged.
+        stopband_db (float): Stopband attenuation of the Kaiser design
+            in dB (default 96).
 
     Returns:
-        Tuple ``(y_out, fs_out, (up, down))`` — the resampled array (same
-        dimensionality as ``y``), the exact output rate ``fs * up/down``
-        (equal to ``fs_new`` whenever the ratio is representable), and the
-        rational factors used.
+        y_out (np.ndarray): The resampled array, with the same number of
+            dimensions as ``y``.
+        fs_out (float): The exact output rate ``fs * up/down``, equal to
+            ``fs_new`` whenever the ratio is representable.
+        factors (tuple[int, int]): The rational factors ``(up, down)``
+            used.
+
+    Raises:
+        ValueError: ``fs`` or ``fs_new`` is not positive, or ``fs_new``
+            is too small relative to ``fs`` to represent.
     '''
     from fractions import Fraction
 
@@ -1611,8 +1757,8 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1, progress_callback=None):
             and must not raise — an exception propagates out of the transform.
 
     Returns:
-        (W, t_idx): ``W`` of shape ``(len(freqs), ceil(N/time_step))`` complex,
-        and ``t_idx`` the sample indices of the kept time columns.
+        W (np.ndarray): Complex, shape ``(len(freqs), ceil(N/time_step))``.
+        t_idx (np.ndarray): The sample indices of the kept time columns.
 
     MEMORY (32-bit WASM): the transform is done ONE SCALE AT A TIME — the only
     full-length temporaries are the signal's FFT and a single inverse-FFT row
@@ -1824,12 +1970,14 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
 
 # define a custom functions for fitting
 def func_real(t, A,B,N):
+    '''Internal curve-fit model: log-amplitude of a decay plus a noise floor.'''
     #ensure exp(A) and exp(N) are positive
     f = np.log(np.exp(A)*np.exp(-B*t) + 1j*np.exp(N))
     f = np.real(f)
     return f
 
 def func_imag(t, W, C):
+    '''Internal curve-fit model: a straight-line phase ``W*t + C``.'''
     f = W*t + C
     return f
 
@@ -2095,8 +2243,7 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
 
     SIZE / MEMORY. The fit image is ``n_freqs x n_columns`` complex, and at full
     rate that is ruinous on a lab-length record: 30 s at 48 kHz over the default
-    band is ~16 GB, which on the 32-bit WASM engine surfaced as numpy's bare
-    "array is too big". Two bounds now apply. (1) The time axis is decimated to
+    band is ~16 GB. Two bounds apply. (1) The time axis is decimated to
     `_cwt_damping_time_step` — the coarsest step the phase unwrap tolerates for
     the band's top frequency, with margin. A DEFAULT-band fit tops out at
     ``0.4*fs`` so its step stays 1 and its numbers are unchanged; ``f_range``
@@ -2109,7 +2256,7 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
     decay.
 
     Args:
-        time_data (<TimeData> object): time series data
+        time_data (TimeData): time series data
         n_chan (int, optional): channel index to analyze, default is 1
         start_time (float, optional): start time (seconds); None infers it from
             the pretrigger (see `_resolve_damping_start_slice`)
@@ -2133,7 +2280,15 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
             one inverse FFT per scale. None (default) is a no-op.
 
     Returns:
-        Same ``(fn, Qn, fit_data)`` triple as `calculate_damping_from_sono`.
+        fn (np.ndarray): Natural frequencies of the fitted modes in Hz.
+        Qn (np.ndarray): Q factors, ``1/(2*zeta)``.
+        fit_data (dict): Plotting data for the fits, with the same keys
+            as `calculate_damping_from_sono` returns.
+
+    Raises:
+        ValueError: ``f_range`` is reversed, or the CWT image would
+            exceed `CWT_MAX_IMAGE_BYTES` (narrow ``f_range`` or shorten
+            the record).
     '''
     fs = time_data.settings.fs
     y = np.asarray(time_data.time_data)
@@ -2241,7 +2396,7 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
     (insufficient decay range above the noise floor) — not an error.
 
     Args:
-        time_data (<TimeData> object): time series data
+        time_data (TimeData): time series data
         n_chan (int, optional): channel index to analyze, default is 1
         bands (str, optional): ``'all'`` (one broadband band over the whole
             ``f_range``), ``'octave'``, ``'third-octave'`` or
@@ -2257,11 +2412,17 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
             (applied forward-backward, so the effective roll-off doubles)
 
     Returns:
-        dict with the ladder arrays (``fc``, ``f_lo``, ``f_hi``, ``EDT``,
-        ``T20``, ``T30``, ``T60``, ``Qn`` — NaN where unfittable),
-        ``start_time`` (the resolved decay start, s) and ``band_data``: one
-        dict per band carrying the plotting payload — the (decimated) EDC
-        ``edc_t`` / ``edc_db`` and the T60 fit window ``fit_t`` / ``fit_db``.
+        result (dict): The per-band arrays ``fc``, ``f_lo``, ``f_hi`` (Hz)
+            and ``EDT``, ``T20``, ``T30``, ``T60`` (s) and ``Qn`` (NaN
+            where unfittable); ``bands`` (the argument);
+            ``start_time`` (the resolved decay start, s); and
+            ``band_data``, one dict per band carrying the plotting
+            payload: the (decimated) EDC ``edc_t`` / ``edc_db`` and the
+            T60 fit window ``fit_t`` / ``fit_db``.
+
+    Raises:
+        ValueError: ``bands`` is not one of the four names above, or
+            fewer than 64 samples follow the decay start.
     '''
     if bands != 'all' and bands not in _BAND_RATIOS:
         raise ValueError(

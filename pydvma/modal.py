@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Aug 19 17:29:30 2019
-
-@author: tb267
-"""
+"""Fit modal parameters to measured transfer functions and rebuild TFs from them."""
 
 
 from . import datastructure
@@ -19,6 +15,7 @@ MESSAGE = ''
 #%% single peak fit
 
 def f_3dB(f,G0):
+    '''Estimate a peak's natural frequency and damping ratio from its half-power bandwidth.'''
     
     ff = np.linspace(f[0],f[-1],np.max([len(f),1000]))
     GG = np.interp(ff,f,np.squeeze(G0))
@@ -47,8 +44,30 @@ def f_3dB(f,G0):
 
 
 def modal_fit_single_channel(tf_data,freq_range=None,channel=0,measurement_type='acc'):
-    '''
-    Fit modal parameters for a single mode to data within specified freq_range
+    '''Fit one mode to one channel of a transfer function.
+
+    Fits the single-mode model (see `f_TF`) to the TF samples strictly
+    inside ``freq_range``, starting from a half-power-bandwidth guess,
+    using ``scipy.optimize.least_squares``. The fitted values are
+    printed, with a warning when the phase exceeds 60 degrees (which
+    suggests the wrong ``measurement_type``). Unlike
+    `modal_fit_all_channels`, the TF is used uncalibrated
+    (`channel_cal_factors` are not applied).
+
+    Args:
+        tf_data (TfData): The transfer function to fit.
+        freq_range (list, optional): ``[f_min, f_max]`` in Hz around one
+            peak. None (the default) uses the whole frequency axis.
+        channel (int): Column of `tf_data.tf_data` to fit (default 0).
+        measurement_type (str): What the TF's output measures:
+            ``'acc'`` (acceleration, the default), ``'vel'`` (velocity)
+            or ``'dsp'`` (displacement).
+
+    Returns:
+        result (scipy.optimize.OptimizeResult): The optimiser's result;
+            ``result.x`` is ``[fn, zn, an, pn, rk, rm]``: natural
+            frequency (Hz), damping ratio, modal-constant amplitude and
+            phase (radians), and the two local residual terms.
     '''
     
     if freq_range is None:
@@ -91,6 +110,7 @@ def modal_fit_single_channel(tf_data,freq_range=None,channel=0,measurement_type=
     
 
 def f_TF(x,f,measurement_type):
+    '''Evaluate the single-mode TF model for parameters ``x = [fn, zn, an, pn, rk, rm]``.'''
 
     fn = x[0]
     zn = x[1]
@@ -119,6 +139,7 @@ def f_TF(x,f,measurement_type):
 
 
 def f_residual(x,f,G0,measurement_type):
+    '''Stacked real and imaginary residual of the single-mode model against data ``G0``.'''
     
     G0 = np.squeeze(G0)
     G = f_TF(x,f,measurement_type)
@@ -134,6 +155,7 @@ def f_residual(x,f,G0,measurement_type):
 
 #%%
 def f_TF_all_channels(x,f,measurement_type):
+    '''Evaluate the one-mode, many-channel TF model for a packed parameter row ``x``.'''
 
     N_tfs = int((len(x)-2)/4)
     
@@ -167,6 +189,7 @@ def f_TF_all_channels(x,f,measurement_type):
 
 
 def f_residual_all_channels(x,f,G0,measurement_type):
+    '''Flattened real and imaginary residual of the many-channel model against data ``G0``.'''
     
     G = f_TF_all_channels(x,f,measurement_type)
         
@@ -179,10 +202,38 @@ def f_residual_all_channels(x,f,G0,measurement_type):
 
 #%% MULTI-CHANNEL MODAL FIT
 def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
-    '''
-    Fit modal parameters for a single mode to data within specified freq_range.
-    
-    Assumes all tf_data in tf_data_list have same frequency axes
+    '''Fit one mode, with shared frequency and damping, to every TF channel.
+
+    Every column of every `TfData` in ``tf_data_list`` that is not a
+    modal reconstruction is fitted at once: the natural frequency and
+    damping ratio are shared, while each column gets its own
+    modal-constant amplitude and phase and its own local residual
+    terms. The TFs are calibrated first (multiplied by their
+    `channel_cal_factors`), so the fitted constants are in engineering
+    units. Only samples strictly inside ``freq_range`` are used, and
+    every TF is assumed to share the first one's frequency axis.
+
+    A summary is printed and kept in ``modal.MESSAGE``, with warnings
+    when any phase exceeds 60 degrees (check ``measurement_type``) or
+    the fit is poor (try another ``freq_range``).
+
+    Args:
+        tf_data_list (TfDataList): The transfer functions to fit.
+        freq_range (list, optional): ``[f_min, f_max]`` in Hz around one
+            peak. None (the default) uses the whole frequency axis.
+        measurement_type (str): What the TFs' outputs measure:
+            ``'acc'`` (acceleration, the default), ``'vel'`` (velocity)
+            or ``'dsp'`` (displacement). It sets the power of
+            ``(i*omega)`` applied to the receptance model.
+
+    Returns:
+        modal_data (ModalData): One mode, with ``M`` of shape
+            ``(1, 2 + 4*n_columns)`` and `id_link` listing the fitted
+            TFs' `id_link` values.
+
+    Raises:
+        ValueError: ``tf_data_list`` holds no TF that is not a modal
+            reconstruction.
     '''
     global MESSAGE
     
@@ -306,6 +357,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     
 #%%% Reconstruction
 def unpack(x):
+    '''Split a packed mode row into ``(fn, zn, an, pn, rk, rm)``.'''
     # unpacks modal parameters into set of variables
     N_tfs = int((len(x)-2)/4)
     
@@ -319,18 +371,31 @@ def unpack(x):
     return fn,zn,an,pn,rk,rm
 
 def unpack_matrix(X):
-    '''
-    Unpack a stacked modal matrix ``X`` (one packed mode per row,
-    ``[fn, zn, an*N, pn*N, rk*N, rm*N]``) into per-parameter arrays.
+    '''Unpack a modal matrix into one array per parameter.
 
-    Robust to an EMPTY model: a ``(0, 2+4*N)`` matrix (every mode deleted)
-    returns zero-length ``fn``/``zn`` and ``(0, N)`` ``an``/``pn``/``rk``/``rm``
-    instead of raising. The channel count is read from the column count
-    (``X.shape[1]``), NOT by indexing row 0 — indexing ``X[0, :]`` on an
-    emptied ``(0, 6)`` matrix is exactly what crashed
-    ``ModalData.delete_mode`` when the last mode was removed (the round-4
-    "Fit -> Reject" IndexError, also on Qt's Reject path).
+    ``X`` holds one packed mode per row,
+    ``[fn, zn, an_0..an_C, pn_0..pn_C, rk_0..rk_C, rm_0..rm_C]`` for
+    N = C+1 channels; the channel count is taken from the column count.
+    An empty ``(0, 2 + 4*N)`` matrix (every mode deleted) is allowed and
+    gives empty arrays.
+
+    Args:
+        X (np.ndarray): The modal matrix, shape ``(n_modes, 2 + 4*N)``,
+            such as `ModalData.M`. A single row may be 1-D.
+
+    Returns:
+        fn (np.ndarray): Natural frequencies in Hz, shape ``(n_modes,)``.
+        zn (np.ndarray): Damping ratios, shape ``(n_modes,)``.
+        an (np.ndarray): Modal-constant amplitudes, shape ``(n_modes, N)``.
+        pn (np.ndarray): Modal-constant phases in radians, shape
+            ``(n_modes, N)``.
+        rk (np.ndarray): Local stiffness-like residual terms, shape
+            ``(n_modes, N)``.
+        rm (np.ndarray): Local mass-like residual terms, shape
+            ``(n_modes, N)``.
     '''
+    # The channel count comes from X.shape[1], not row 0: indexing X[0, :]
+    # on an emptied matrix is what once crashed ModalData.delete_mode.
     X = np.atleast_2d(X)
     N_tfs = int((X.shape[1]-2)/4)
 
@@ -344,16 +409,30 @@ def unpack_matrix(X):
     return fn,zn,an,pn,rk,rm
     
 def pack(fn,zn,an,pn,rk,rm):
+    '''Pack one mode's parameters into a single row ``[fn, zn, an, pn, rk, rm]``.'''
     # packs modal parameters into single variable for optimisation
     x = np.concatenate(([fn],[zn],an,pn,rk,rm))
     return x
     
 
 def reconstruct_transfer_function(modal_data,f,measurement_type='acc'):
-    '''
-    Reconstructs transfer functions from modal_data and returns TfData object.
-    Includes the per-channel local residual terms (rk, rm). Does not modify
-    modal_data.
+    '''Rebuild transfer functions from fitted modes, summing each mode's local fit.
+
+    Each row of `modal_data.M` is evaluated with `f_TF_all_channels`,
+    including its local residual terms (rk, rm), and the modes are
+    summed. ``modal_data`` is not modified.
+
+    Args:
+        modal_data (ModalData): The fitted modes.
+        f (np.ndarray): Frequency axis in Hz on which to evaluate.
+        measurement_type (str): ``'acc'`` (the default), ``'vel'`` or
+            ``'dsp'``, as used for the fit.
+
+    Returns:
+        tf_data (TfData): The reconstruction, one column per channel,
+            with ``flag_modal_TF = True``, no coherence and unit
+            calibration factors (the fitted constants are already in
+            engineering units).
     '''
     G = 0
     for n_row in range(len(modal_data.M[:,0])):
@@ -410,7 +489,7 @@ def _measured_columns(tf_data_list, sel):
 def estimate_global_constants(fn, zn, f, G0, measurement_type='acc'):
     '''
     Re-estimate the COMPLEX modal constants and per-channel GLOBAL residual
-    terms for FIXED poles — the linear half of the global fit (round-7g).
+    terms for FIXED poles — the linear half of the global fit.
 
     With the poles ``{fn, zn}`` held fixed, the modal model is LINEAR in the
     remaining parameters, so they solve in one least-squares with no
@@ -490,21 +569,34 @@ def _evaluate_global_model(fn, zn, A, RH, RL, f, measurement_type='acc'):
 
 def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
                                          tf_data_list=None):
-    '''
-    Reconstructs the GLOBAL (whole-model) transfer functions from modal_data
-    and returns a TfData object. Does not modify modal_data.
+    '''Rebuild transfer functions from all fitted modes together, as one global model.
 
-    With ``tf_data_list`` (the measured TFs) the reconstruction uses the
-    round-7g GLOBAL RE-ESTIMATION: the modal constants (amplitude AND phase,
-    per channel) plus one pair of global residues per channel (``RH`` const +
-    ``RL/w^2``) are re-solved linearly against the measured data over the
-    modes' padded band, with the stored poles held fixed (see
-    `estimate_global_constants` — this removes the double-counting of
-    neighbour interactions that each mode's LOCALLY-fitted phase absorbs).
+    With ``tf_data_list`` (the measured TFs), the modal constants
+    (amplitude and phase, per channel) and one pair of global residual
+    terms per channel (a constant ``RH`` and ``RL/omega**2``) are
+    re-solved linearly against the measured data over the modes' padded
+    band, with the stored natural frequencies and damping ratios held
+    fixed (see `estimate_global_constants`). This avoids counting each
+    mode's neighbours twice, as a sum of separately fitted local modes
+    does.
 
-    Without ``tf_data_list`` (e.g. a ModalData loaded on its own) the legacy
-    behaviour is kept: the stored per-mode rows are summed with their local
-    residual terms (rk, rm) zeroed.
+    Without ``tf_data_list`` (for example a ModalData loaded on its
+    own), or if the channel counts do not match, the stored modes are
+    summed with their local residual terms (rk, rm) set to zero.
+    ``modal_data`` is not modified.
+
+    Args:
+        modal_data (ModalData): The fitted modes.
+        f (np.ndarray): Frequency axis in Hz on which to evaluate.
+        measurement_type (str): ``'acc'`` (the default), ``'vel'`` or
+            ``'dsp'``, as used for the fit.
+        tf_data_list (TfDataList, optional): The measured TFs the modes
+            were fitted to; they are assumed to share one frequency axis.
+
+    Returns:
+        tf_data (TfData): The reconstruction, one column per channel,
+            with ``flag_modal_TF = True``, no coherence and unit
+            calibration factors.
     '''
     M = np.atleast_2d(modal_data.M)
     N_tfs = int((M.shape[1]-2)/4)
@@ -549,46 +641,62 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
 
 
 def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='acc'):
+    '''Refine all fitted modes together against the measured transfer functions.
+
+    Starts from the current fit. The nonlinear search runs over the
+    natural frequencies and damping ratios only (two parameters per
+    mode); at every candidate set of poles the modal constants and one
+    pair of global residual terms per channel are re-solved linearly
+    (`estimate_global_constants`). Like `modal_fit_all_channels`, the
+    measured TFs are calibrated first, so the seed and the result are in
+    the same units.
+
+    The refined rows hold the new poles and the re-estimated constants
+    (``an = |A|``, ``pn = angle(A)``), with the local residual terms
+    (rk, rm) set to zero: after a joint refinement they have no meaning,
+    and `reconstruct_transfer_function_global` estimates its own
+    residual terms from the data.
+
+    Convergence is reported, not enforced: the refined model is returned
+    even when it did not converge, and the caller decides whether to
+    keep it. If the input data make the solve fail (for example a NaN
+    sample), the seed poles are returned with ``converged`` False.
+
+    Args:
+        modal_data (ModalData): The fit to refine; it must hold at least
+            one mode.
+        tf_data_list (TfDataList): The measured TFs; they are assumed to
+            share the first one's frequency axis, and their column count
+            must match the fit's channel count.
+        freq_range (list, optional): ``[f_min, f_max]`` in Hz to refine
+            over. None (the default) uses the modes' natural-frequency
+            span, padded to include each peak's half-power skirts and
+            clamped to the measured axis. A band too narrow to constrain
+            the parameters is widened to the whole axis.
+        measurement_type (str): ``'acc'`` (the default), ``'vel'`` or
+            ``'dsp'``, as used for the fit.
+
+    Returns:
+        modal_data (ModalData): The refined modes, with the same
+            settings, `id_link` and `test_name` provenance as
+            `modal_fit_all_channels` gives.
+        info (dict): ``{'converged': bool, 'cost_before': float,
+            'cost_after': float}``. Both costs are the least-squares cost
+            of the same projected model (at the seed poles and at the
+            refined poles), so they can be compared directly.
+
+    Raises:
+        ValueError: ``modal_data`` has no modes, ``tf_data_list`` holds no
+            measured (non-reconstruction) TF, or the channel counts do not
+            match.
     '''
-    Simultaneously refine ALL modes in ``modal_data`` against the measured
-    transfer functions, seeded from the current fit.
-
-    Round-7g VARIABLE-PROJECTION rebuild: the nonlinear search runs over the
-    POLES ONLY (``[fn, zn]`` per mode — 2N parameters), and at every candidate
-    pole set the modal constants + per-channel GLOBAL residues are re-solved
-    linearly (`estimate_global_constants`). The previous refine optimised the
-    whole packed parameter set including every mode's LOCAL residual terms
-    (rk, rm) — which are mutually redundant in a joint model (one mode's
-    residues can impersonate a neighbour's tail), creating flat directions in
-    the cost surface along which a pole could drift far while the residues
-    compensated, "improving" the residual as it went. Projecting the linear
-    parameters out removes those flat directions and makes the pole search
-    far stiffer on overlapping-mode data (e.g. instrument bodies).
-
-    Like ``modal_fit_all_channels``, the measured TFs are cal-scaled when
-    building the target ``G0``, so the seed and the refined result live in
-    the SAME parameter space. ``freq_range`` defaults to the modes' padded
-    band (see `_modes_band`), clamped to the measured axis.
-
-    The refined ``M`` rows carry the poles plus the GLOBALLY re-estimated
-    constants (``an = |A|``, ``pn = arg A``) with the per-mode local residues
-    ZEROED — after a joint refine the local-window residues are meaningless,
-    and the global reconstruction re-estimates its own residues from the
-    measured data anyway (`reconstruct_transfer_function_global`).
-
-    Convergence / non-convergence is REPORTED, never enforced. Returns
-    ``(ModalData, info)`` with
-    ``info = {'converged': bool, 'cost_before': float, 'cost_after': float}``;
-    both costs are the SAME projected-model cost (linear solve at the seed
-    poles vs at the refined poles), so directly comparable. The refined model
-    and info are returned even when not converged — the CALLER decides
-    whether to keep or revert (the webui auto-reverts on
-    ``converged == False``). On a pathological failure the seed model is
-    handed back unchanged with ``converged == False``.
-
-    Mac-runnable, no hardware. Mirrors ``modal_fit_all_channels`` for
-    ``settings`` / ``id_link`` / ``test_name`` provenance.
-    '''
+    # History: before round 7g the refine optimised the whole packed
+    # parameter set, local residual terms included. Those residues are
+    # mutually redundant in a joint model (one mode's residues can mimic a
+    # neighbour's tail), which left flat directions in the cost surface
+    # along which a pole could drift far while the residues compensated.
+    # Projecting the linear parameters out (variable projection) removes
+    # them. The web app reverts automatically on converged == False.
     if modal_data is None or np.size(np.atleast_2d(modal_data.M)) == 0:
         raise ValueError('modal_refine needs a ModalData with at least one mode.')
 

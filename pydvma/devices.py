@@ -16,21 +16,21 @@ Three problems it exists to solve, all of them observed on real benches:
    deliver a 16-bit word and accept sample rates the hardware cannot
    clock (the audio engine resamples silently), while WDM-KS delivers
    24 bits and refuses. macOS lists each device once, so none of this is
-   visible there. See :func:`preferred_backend`.
+   visible there. See `preferred_backend`.
 
 2. **Indices move.** The WDM-KS block reordered between two enumerations
    minutes apart with no hardware change (2026-08-12), and a Scarlett
    2i2 moved index when another interface was unplugged (2026-08-10).
-   :func:`resolve` selects by name so a script says what it means.
+   `resolve` selects by name so a script says what it means.
 
 3. **"Volts" are not always volts.** For a device in
-   :mod:`pydvma._soundcard_specs` the full-scale voltage is known and
+   `pydvma._soundcard_specs` the full-scale voltage is known and
    ``VmaxSC`` follows in closed form. For any other interface pydvma can
    read channel counts and sample rates from the driver but has no way
    to learn what one full-scale sample is worth in volts, and the
    ``VmaxSC = 1.0`` default is a PLACEHOLDER, not a measurement.
    Reporting both cases identically would let an assumption pass for a
-   fact, so every entry carries an explicit :func:`calibration_status`
+   fact, so every entry carries an explicit `calibration_status`
    and the remedy for it.
 """
 
@@ -95,6 +95,14 @@ def is_alias(name):
     Capture Driver'`` — that forwards to whatever the OS default happens
     to be. They enumerate exactly like hardware but name none, so a
     measurement recorded through one has no reproducible provenance.
+
+    Args:
+        name (str): A device name as enumerated (None is treated as
+            empty).
+
+    Returns:
+        alias (bool): True if the name contains ``'sound mapper'``,
+            ``'primary sound'`` or ``'default'`` (case-insensitive).
     """
     needle = str(name or '').lower()
     return any(token in needle for token in _ALIAS_TOKENS)
@@ -139,6 +147,15 @@ def endpoint_role(name):
     test for 'spdif' flags its ANALOGUE line input as digital. Names
     without brackets (macOS, ALSA) have no role prefix, so the whole
     name is returned.
+
+    Args:
+        name (str): A device name as enumerated (None is treated as
+            empty).
+
+    Returns:
+        role (str): The lowercased text before the first ``(``, with
+            whitespace collapsed; the whole lowercased name when there
+            is no bracket.
     """
     flat = ' '.join(str(name or '').split()).lower()
     head = flat.split('(', 1)[0].strip()
@@ -148,12 +165,20 @@ def endpoint_role(name):
 def is_auxiliary(name):
     """Is this endpoint a digital or internal input rather than a jack?
 
-    Used only to separate otherwise-equal matches in :func:`resolve` —
+    Used only to separate otherwise-equal matches in `resolve` —
     an ESI U24 XL publishes both a line input and an S/PDIF receiver, so
     the natural spec ``'U24XL'`` hits two endpoints and one of them
     cannot carry volts. Judged on the endpoint ROLE (see
-    :func:`endpoint_role`), never the model name. The tie-break is
+    `endpoint_role`), never the model name. The tie-break is
     always reported in the note rather than applied silently.
+
+    Args:
+        name (str): A device name as enumerated.
+
+    Returns:
+        auxiliary (bool): True if the endpoint's role names an S/PDIF
+            receiver, "Stereo Mix", "What U Hear", a loopback or
+            "Wave Out".
     """
     role = endpoint_role(name)
     return any(token in role for token in _AUXILIARY_TOKENS)
@@ -177,11 +202,10 @@ def calibration_status(name, neighbours=None, input_gain_db=None,
             stated, if any.
         input_mode (str): Input mode for the full-scale lookup.
 
-    Returns ``(status, full_scale_volts_or_None, advice)`` where status
-    is one of:
+    The status is one of:
 
     - ``'characterised'`` — the device is in
-      :mod:`pydvma._soundcard_specs` and its full scale is known, either
+      `pydvma._soundcard_specs` and its full scale is known, either
       because it is fixed-gain (nothing to mis-set) or because a gain
       was stated. ``VmaxSC`` is a real voltage.
     - ``'needs_gain'`` — the model is recognised and its maximum input
@@ -192,6 +216,14 @@ def calibration_status(name, neighbours=None, input_gain_db=None,
       the driver reports is still trustworthy; the voltage scale is not
       known and ``VmaxSC = 1.0`` is a placeholder, so readings are
       effectively in full-scale units.
+
+    Returns:
+        status (str): ``'characterised'``, ``'needs_gain'`` or
+            ``'uncalibrated'``, as above.
+        full_scale_volts (float or None): The input voltage at digital
+            full scale, when known.
+        advice (str): One sentence on what the status means for the
+            readings and how to improve it.
     """
     profile = _soundcard_specs.device_profile(name, neighbours=neighbours)
     if profile is None:
@@ -300,7 +332,7 @@ def entry_usable_rates(index, hostapi, channels, default_samplerate,
                        native=None):
     """Rates THIS backend will actually clock, as opposed to accept.
 
-    The device-wide ladder from :func:`streams.native_input_rates` says
+    The device-wide ladder from `streams.native_input_rates` says
     what the converter can do; it does not follow that every host API
     will let you have it. The three cases, measured
     (``dev/2026-08-12-u24xl-windows-bench.md``):
@@ -361,7 +393,7 @@ def entry_usable_rates(index, hostapi, channels, default_samplerate,
 
 
 class _RateProbe(object):
-    """Minimal settings-like object for :func:`streams.native_input_rates`.
+    """Minimal settings-like object for `streams.native_input_rates`.
 
     That function takes a ``MySettings`` but only reads three fields, and
     constructing a real one here would recurse through the very
@@ -389,6 +421,15 @@ def display_name(name, width=58):
     Whitespace is collapsed and over-long names are elided in the
     middle, where the distinguishing part of an audio device name is
     least likely to live.
+
+    Args:
+        name (str): A device name as enumerated (None is treated as
+            empty).
+        width (int): Maximum length of the result (default 58).
+
+    Returns:
+        name (str): The name on one line, at most ``width`` characters,
+            with ``'...'`` replacing the middle when it was longer.
     """
     flat = ' '.join(str(name or '').split())
     if len(flat) <= width:
@@ -416,10 +457,13 @@ def inventory(driver='soundcard', kind='input', rates=True, channels=2):
         rates (bool): Probe genuine rate ladders.
         channels (int): Channel count to probe rates with.
 
-    Returns a list of dicts, each ``{'name', 'profile', 'status',
-    'full_scale_volts', 'advice', 'channel_roles', 'entries'}`` where
-    ``entries`` is that device's per-backend records (see
-    :func:`describe`) sorted best-first.
+    Returns:
+        devices (list[dict]): One dict per physical device, with keys
+            ``'name'``, ``'profile'``, ``'status'``,
+            ``'full_scale_volts'``, ``'advice'``, ``'channel_roles'``
+            and ``'entries'``, the last being that device's per-backend
+            records (see `describe`) sorted best first. Empty when
+            PortAudio (or nidaqmx) is unavailable.
     """
     from . import streams
     if driver == 'nidaq':
@@ -490,7 +534,7 @@ def inventory(driver='soundcard', kind='input', rates=True, channels=2):
 def backend_map(kind='input'):
     """Which enumerated entries are the same box, and which one to use.
 
-    The cheap half of :func:`inventory`: name grouping and backend
+    The cheap half of `inventory`: name grouping and backend
     ranking with NO capability probing, so it is safe to call on every
     bridge handshake. The UI needs exactly this much to stop showing one
     interface seven times.
@@ -554,12 +598,21 @@ def backend_map(kind='input'):
 def preferred_backend(group):
     """The entry of a device group that should be driven, or ``None``.
 
-    Best-ranked host API first (see :data:`HOSTAPI_RANK`). This encodes a
+    Best-ranked host API first (see `HOSTAPI_RANK`). This encodes a
     measurement, not a preference: on Windows the shared-mode APIs both
     truncate the word and accept sample rates the hardware cannot clock,
     so choosing MME — which is what ``sd.default.device`` points at on
     this bench — silently costs 8 bits and can hand back a "96 kHz"
     capture containing nothing above 22 kHz.
+
+    Args:
+        group (dict): One device record from `inventory`, whose
+            ``'entries'`` are already sorted best backend first.
+
+    Returns:
+        entry (dict or None): The first (best-ranked) entry, as
+            described by `describe`, or None when the group has no
+            entries.
     """
     entries = group.get('entries') or []
     return entries[0] if entries else None
@@ -579,13 +632,17 @@ def resolve(spec, driver='soundcard', kind='input', fs=None):
             one that can, rather than being chosen and silently
             resampling.
 
-    Returns ``(index, entry, note)`` — the chosen index, its
-    :func:`describe` record, and a human-readable sentence explaining
-    the choice (which backend and why), suitable for printing.
+    Returns:
+        index (int): The chosen device index.
+        entry (dict): Its `describe` record.
+        note (str): A sentence explaining the choice (which backend and
+            why), suitable for printing.
 
-    Raises ``ValueError`` naming every candidate when the spec matches
-    no device, or more than one PHYSICAL device — guessing between two
-    interfaces is exactly the mistake this function exists to prevent.
+    Raises:
+        ValueError: The spec matches no device, or more than one
+            physical device; the message names every candidate, since
+            guessing between two interfaces is exactly the mistake this
+            function exists to prevent.
     """
     if isinstance(spec, int) or (isinstance(spec, str) and spec.isdigit()):
         index = int(spec)
@@ -725,7 +782,7 @@ def format_inventory(driver=None, kind='input', rates=True, legend=True):
     One block per physical device: what it is, whether its voltage scale
     is KNOWN or merely assumed, and every backend it can be driven
     through with the recommended one marked. Backs
-    :func:`streams.list_available_devices` and ``pydvma-serve
+    `streams.list_available_devices` and ``pydvma-serve
     --list-devices``.
 
     Output is deliberately ASCII: this prints to a Windows console,
@@ -740,6 +797,9 @@ def format_inventory(driver=None, kind='input', rates=True, legend=True):
             round-trips per device).
         legend (bool): Append the explanation of the calibration
             statuses and the ``>>`` marker.
+
+    Returns:
+        report (str): The report text (it is not printed here).
     """
     drivers = [driver] if driver else ['soundcard', 'nidaq']
     lines = []

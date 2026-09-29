@@ -837,6 +837,34 @@ def max_input_fs(settings):
 
 
 def start_stream(settings):
+    '''Start (or reuse) the acquisition stream described by ``settings``.
+
+    Opens a recorder for ``settings.device_driver`` (``'soundcard'``,
+    ``'nidaq'`` or ``'mock'``) and makes it the module-level `REC`, the
+    stream that `acquisition.log_data` and `acquisition.stream_snapshot`
+    read from. A soundcard stream or NI task that is already running
+    with the same hardware settings is reused rather than reopened,
+    which keeps its buffered history and, on NI, avoids repeating the
+    ~2 s IEPE warm-up; a running one that does not match is closed
+    first. `acquisition.log_data` calls this itself, so you only need it
+    to watch a live stream from a notebook.
+
+    ``settings`` may be changed in place: ``device_index`` is updated if
+    the device named by ``settings.device_name`` has moved in the
+    enumeration (with a printed note), a soundcard ``channels`` count
+    above the device's maximum is reduced to it (with a printed
+    warning), and on NI a sample rate or voltage range that the hardware
+    coerced is written back to ``fs`` / ``VmaxNI``.
+
+    Args:
+        settings (MySettings): The acquisition settings.
+
+    Raises:
+        ValueError: ``settings.device_driver`` is not ``'soundcard'``,
+            ``'nidaq'`` or ``'mock'``.
+        RuntimeError: ``device_driver='nidaq'`` and nidaqmx is not
+            installed.
+    '''
     global REC_SC, REC_NI, REC, REC_MOCK
     # Guard the stored index against an enumeration that has reordered
     # since it was chosen (see `resolve_device_index`). The bridge has
@@ -1006,7 +1034,7 @@ def list_available_devices(io='', kind='input', rates=True, raw=False):
     on Windows one interface is listed once per host API (an ESI U24 XL
     fills seven of the 38 rows here) and those entries differ in word
     length and in whether they will resample silently. See
-    :func:`pydvma.devices.format_inventory`.
+    `pydvma.devices.format_inventory`.
 
     Args:
         io (str): Legacy substring filter on device names, kept so
@@ -1018,7 +1046,8 @@ def list_available_devices(io='', kind='input', rates=True, raw=False):
             of the grouped report — useful when you need to see exactly
             what PortAudio returned.
 
-    Returns the printed report as a string.
+    Returns:
+        report (str): The report that was printed.
     """
     if not raw:
         from . import devices as _devices
@@ -1122,6 +1151,13 @@ def get_devices_NI():
 
 
 def get_devices_soundcard():
+    '''List the name of every PortAudio device, in index order.
+
+    Returns:
+        names (list[str] or None): One name per device index, inputs and
+            outputs alike, or None when sounddevice / PortAudio is
+            unavailable.
+    '''
     if sd is None:
         return None
     try:

@@ -71,7 +71,7 @@ def load_data(parent=None, filename=None):
 
 def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=False, sets=None):
     '''
-    Saves a DataSet to 'filename.dvma' (container format v2 — a zip
+    Saves a DataSet to 'filename.dvma' (the .dvma container format, a zip
     of manifest.json + pickle-free .npy arrays; see `container`), or
     provides a dialog if no filename is given.
 

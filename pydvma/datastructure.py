@@ -22,6 +22,24 @@ import copy
 VERSION = '2.5.0' # keep in sync with pyproject.toml (enforced by tests/test_packaging.py)
 
 def update_dataset(dataset):
+    '''Rebuild a DataSet from an older pydvma version in the current layout.
+
+    Copies every item list of ``dataset`` into a fresh `DataSet`, so the
+    result has every list the current version expects, and gives every
+    `TfData` a ``flag_modal_TF`` attribute (False) if it lacks one. The
+    items are shared with ``dataset``, not copied, so that attribute is
+    added to the original items too; if ``dataset`` has no
+    `modal_data_list`, an empty one is added to it.
+
+    Args:
+        dataset (DataSet): The dataset to rebuild. It must have
+            `time_data_list`, `freq_data_list`, `tf_data_list`,
+            `cross_spec_data_list`, `sono_data_list` and
+            `meta_data_list`; `modal_data_list` is optional.
+
+    Returns:
+        dataset_new (DataSet): A new DataSet holding the same items.
+    '''
     dataset_new = DataSet()
     dataset_new.add_to_dataset(dataset.time_data_list)
     dataset_new.add_to_dataset(dataset.freq_data_list)
@@ -64,12 +82,12 @@ def _flatten_link_ids(value):
     `source_targets` entry is an id).
 
     Args:
-        value: An `id_link`-shaped value — `None`, a `str`/`uuid.UUID`,
-            or an arbitrarily nested list/tuple/set of those (or of
-            `{'__uuid__': ...}` tag dicts).
+        value (object): An `id_link`-shaped value — `None`, a
+            `str`/`uuid.UUID`, or an arbitrarily nested list/tuple/set of
+            those (or of `{'__uuid__': ...}` tag dicts).
 
     Yields:
-        str: One id string per scalar leaf found in `value`.
+        leaf (str): One id string per scalar leaf found in `value`.
     '''
     if value is None:
         return
@@ -89,11 +107,11 @@ def _links_intersect(value, wanted):
     '''True if any id flattened out of `value` (see `_flatten_link_ids`) is in `wanted`.
 
     Args:
-        value: An `id_link`-shaped value, per `_flatten_link_ids`.
+        value (object): An `id_link`-shaped value, per `_flatten_link_ids`.
         wanted (set): Id strings to match against.
 
     Returns:
-        bool: Whether any leaf of `value` is a member of `wanted`.
+        found (bool): Whether any leaf of `value` is a member of `wanted`.
     '''
     for leaf in _flatten_link_ids(value):
         if leaf in wanted:
@@ -123,7 +141,7 @@ def _modal_item_in_subset(modal_item, wanted):
         wanted (set): Id strings the chosen `TimeData` items resolve to.
 
     Returns:
-        bool: Whether `modal_item` should ride along with the subset.
+        keep (bool): Whether `modal_item` should ride along with the subset.
     '''
     if _links_intersect(getattr(modal_item, 'id_link', None), wanted):
         return True
@@ -141,6 +159,43 @@ def _modal_item_in_subset(modal_item, wanted):
 
 #%% Data structure
 class DataSet():
+    '''The container for a set of measurements and everything derived from them.
+
+    `log_data`, `load_data` and the `create_test_*` functions all return
+    one. A DataSet holds seven lists, one per kind of data item (see
+    Attributes). Add items with `add_to_dataset`; items are stored by
+    reference, never copied.
+
+    The `calculate_*` methods run the matching `analysis` function over
+    `time_data_list` and REPLACE the corresponding list with the
+    results rather than appending to it, so calling `calculate_fft_set`
+    twice leaves one set of spectra, and `calculate_tf_set` also drops
+    any modal reconstruction held in `tf_data_list`. With no time data
+    they empty that list and print a message. The `plot_*` methods draw
+    one list in a new matplotlib figure and return its `PlotData`.
+    `save_data` writes a ``.dvma`` file, optionally with only some of
+    the measurements (see `subset`).
+
+    Args:
+        data (object, optional): An item, or a homogeneous list of
+            items, to add at construction; see `add_to_dataset`.
+
+    Attributes:
+        time_data_list (TimeDataList): The measurements (`TimeData`).
+        freq_data_list (FreqDataList): Spectra (`FreqData`).
+        cross_spec_data_list (CrossSpecDataList): Cross-spectrum and
+            coherence matrices (`CrossSpecData`).
+        tf_data_list (TfDataList): Transfer functions (`TfData`),
+            including modal reconstructions.
+        modal_data_list (ModalDataList): Modal fits (`ModalData`).
+        sono_data_list (SonoDataList): Sonograms (`SonoData`).
+        meta_data_list (MetaDataList): Legacy dataset-level metadata
+            (`MetaData`).
+        pydvma_version (str): The pydvma version that created the
+            DataSet or, for one loaded from a file, the version that
+            wrote the file (``'unknown (pre-1.4.0)'`` for an old file
+            with no version stamp).
+    '''
     def __init__(self,data=None):#,*,timedata=[],freqdata=[],cspecdata=[],tfdata=[],sonodata=[],metadata=[]):
         ## initialisation function to set up DataSet class
         
@@ -168,30 +223,25 @@ class DataSet():
     )
 
     def __setstate__(self, state):
-        '''Restore a pickled DataSet, forward-normalising older layouts.
+        '''Restore a pickled DataSet, filling in lists older versions lacked.
 
-        Unpickling instantiates the CURRENT class but restores ONLY the
-        attributes that were actually saved, so a DataSet written by an
-        older pydvma is missing any ``*_list`` attribute that postdates it.
-        Historically the lists were added at different times
-        (``cross_spec_data_list`` with multi-channel analysis;
-        ``sono_data_list`` with sonograms; ``modal_data_list`` with modal
-        fitting), so a legacy ``.npy`` pickle can lack one or more of them —
-        e.g. the 2019/4C6-era files lack ``modal_data_list``. The rest of
-        the code (and ``container.save``) assumes every list is present, so
-        loading such a file used to raise ``AttributeError: 'DataSet'
-        object has no attribute 'modal_data_list'``.
+        Unpickling restores only the attributes that were saved, so a
+        DataSet written by an older pydvma can lack a list that was added
+        later (files from 2019, for example, have no `modal_data_list`).
+        Each missing list is created empty, and a file with no version
+        stamp gets ``pydvma_version = 'unknown (pre-1.4.0)'``, so files
+        saved by pydvma 1.4.0 and earlier keep loading. Called only when
+        unpickling, e.g. by `load_data` on a legacy ``.npy`` file.
 
-        We fill in any absent list with an empty instance of the right type
-        (and stamp a placeholder ``pydvma_version`` when the file predates
-        the version field) so files saved by pydvma <= 1.4.0 load forever —
-        the compatibility contract — on BOTH the Qt load path
-        (``file.load_data`` → ``np.load``) and the browser legacy-import
-        path (``glue.legacy_to_dvma`` → ``np.load`` → ``container.save_bytes``).
-        Called only when unpickling; freshly constructed DataSets go through
-        ``__init__`` and never touch this. Newly saved objects already carry
-        every attribute, so this is a no-op for them.
+        Args:
+            state (dict): The unpickled attribute dictionary.
         '''
+        # Both legacy load paths rely on this: `file.load_data` -> `np.load`,
+        # and the browser's legacy import (`glue.legacy_to_dvma` -> `np.load`
+        # -> `container.save_bytes`). The rest of the code, `container.save`
+        # included, assumes every list is present; without this such a file
+        # raised AttributeError: 'DataSet' object has no attribute
+        # 'modal_data_list'.
         self.__dict__.update(state)
         list_classes = {
             'time_data_list': TimeDataList,
@@ -211,6 +261,22 @@ class DataSet():
             self.pydvma_version = 'unknown (pre-1.4.0)'
 
     def add_to_dataset(self,data):
+        '''Append one data item, or a homogeneous list of them, to the matching list.
+
+        The item's class picks the list (a `TimeData` goes to
+        `time_data_list`, and so on). Items are appended by reference,
+        not copied. An object of any other class, and an empty list, are
+        ignored without a message.
+
+        Args:
+            data (object): A `TimeData`, `FreqData`, `CrossSpecData`,
+                `TfData`, `ModalData`, `SonoData` or `MetaData`, or a list
+                (a Python list or one of the ``*DataList`` classes) of
+                items that are all of one of those classes.
+
+        Raises:
+            ValueError: ``data`` is a list of mixed item types.
+        '''
         ## find out what kind of data being added
         ## allow input to be list of single type of data, or unit data class
         if not 'list' in data.__class__.__name__.lower():
@@ -254,6 +320,18 @@ class DataSet():
             pass#print('No data added')
         
     def replace_data_item(self,data,n_set):
+        '''Replace the item at one index of the matching list.
+
+        The list is chosen by the class of ``data``, as in
+        `add_to_dataset`; an object of any other class is ignored.
+
+        Args:
+            data (object): The replacement data item.
+            n_set (int): Index, in that list, of the item to replace.
+
+        Raises:
+            IndexError: ``n_set`` is out of range for that list.
+        '''
         ## replace a specific data item
         ## useful for replacing logged data
         ## useful for replacing reconstructed modal data
@@ -279,6 +357,15 @@ class DataSet():
         
             
     def remove_last_data_item(self,data_class):
+        '''Remove the last item of one list, if the list is not empty.
+
+        Args:
+            data_class (str): Class name of the items whose list to
+                shorten: ``'TimeData'``, ``'FreqData'``,
+                ``'CrossSpecData'``, ``'TfData'``, ``'ModalData'``,
+                ``'SonoData'`` or ``'MetaData'``. Any other value does
+                nothing.
+        '''
         
         if data_class == 'TimeData':
             if len(self.time_data_list) != 0:
@@ -305,6 +392,17 @@ class DataSet():
         #print(self)
                 
     def remove_data_item_by_index(self,data_class,list_index):
+        '''Remove items from one list by index.
+
+        If any index is out of range, nothing is removed and a message is
+        printed.
+
+        Args:
+            data_class (str): Class name of the items whose list to
+                shorten, as for `remove_last_data_item`.
+            list_index (int or list[int] or np.ndarray): Index or indices
+                to remove. A list passed here is sorted in place.
+        '''
         
         if list_index.__class__.__name__ == 'ndarray':
             list_index = list(list_index)
@@ -365,8 +463,18 @@ class DataSet():
         #print(self)
         
     def calculate_fft_set(self,time_range=None,window=None):
-        '''
-        Calls analysis.calculate_fft on each TimeData item in the TimeDataList and adds FreqDataList object to dataset
+        '''Calculate the FFT of every measurement, replacing `freq_data_list`.
+
+        Runs `analysis.calculate_fft` on each item of `time_data_list`.
+        The previous contents of `freq_data_list` are discarded, not
+        appended to.
+
+        Args:
+            time_range (list or np.ndarray or PlotData, optional):
+                ``[t_start, t_stop]`` in seconds, applied to every
+                measurement; None (the default) uses each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name, or
+                None (the default) for a rectangular window.
         '''
         if len(self.time_data_list)>0:
             freq_data_list = self.time_data_list.calculate_fft_set(time_range=time_range,window=window)
@@ -377,8 +485,24 @@ class DataSet():
             print('No time data found in dataset')
             
     def calculate_tf_set(self, ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
-        '''
-        Calls analysis.calculate_tf on each TimeData item in the TimeDataList and adds TfDataList object to dataset
+        '''Calculate the transfer functions of every measurement, replacing `tf_data_list`.
+
+        Runs `analysis.calculate_tf` on each item of `time_data_list`.
+        The previous contents of `tf_data_list`, modal reconstructions
+        included, are discarded.
+
+        Args:
+            ch_in (int): Column index of the input (reference) channel
+                (default 0).
+            time_range (list or np.ndarray, optional):
+                ``[t_start, t_stop]`` in seconds; None (the default) uses
+                each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name, or
+                None (the default) for a rectangular window.
+            N_frames (int): Number of averaging frames per measurement
+                (default 1).
+            overlap (float): Fractional overlap between frames (default
+                0.5).
         '''
         if len(self.time_data_list)>0:
             tf_data_list = self.time_data_list.calculate_tf_set(ch_in=ch_in, time_range=time_range, window=window, N_frames=N_frames, overlap=overlap)
@@ -389,8 +513,25 @@ class DataSet():
             print('No time data found in dataset')
             
     def calculate_cross_spectrum_matrix_set(self,ch_in=0, time_range=None,window='hann',N_frames=1,overlap=0.5):
-        '''
-        Calls analysis.calculate_cross_spectrum_matrix on each TimeData item in the TimeDataList and adds CrossSpecDataList object to dataset
+        '''Calculate the cross-spectrum matrix of every measurement, replacing `cross_spec_data_list`.
+
+        Runs `analysis.calculate_cross_spectrum_matrix` on each item of
+        `time_data_list`. The previous contents of
+        `cross_spec_data_list` are discarded.
+
+        Args:
+            ch_in (int): Accepted for symmetry with `calculate_tf_set`
+                and ignored: the matrix covers every channel pair.
+            time_range (list or np.ndarray or PlotData, optional):
+                ``[t_start, t_stop]`` in seconds; None (the default) uses
+                each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name.
+                Defaults to ``'hann'`` here, unlike the analysis
+                function; None gives a rectangular window.
+            N_frames (int): Number of averaging frames per measurement
+                (default 1).
+            overlap (float): Fractional overlap between frames (default
+                0.5).
         '''
         if len(self.time_data_list)>0:
             cross_spec_data_list = self.time_data_list.calculate_cross_spectrum_matrix_set(ch_in=ch_in, time_range=time_range,window=window,N_frames=N_frames,overlap=overlap)
@@ -401,8 +542,22 @@ class DataSet():
             print('No time data found in dataset')
             
     def calculate_tf_averaged(self, ch_in=0, time_range=None,window='hann'):
-        '''
-        Calls analysis.calculate_tf_averaged on the whole TimeDataList (ensemble average) and adds a single-item TfDataList to dataset
+        '''Calculate one ensemble-averaged TF from all measurements, replacing `tf_data_list`.
+
+        Runs `analysis.calculate_tf_averaged` on the whole of
+        `time_data_list`, treating each measurement as one frame of the
+        average, and sets `tf_data_list` to a one-item list holding the
+        result.
+
+        Args:
+            ch_in (int): Column index of the input (reference) channel
+                (default 0).
+            time_range (list or np.ndarray, optional):
+                ``[t_start, t_stop]`` in seconds, applied to every
+                measurement; None (the default) uses each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name.
+                Defaults to ``'hann'`` here, unlike the analysis
+                function; None gives a rectangular window.
         '''
         if len(self.time_data_list)>0:
             tf_data = self.time_data_list.calculate_tf_averaged(ch_in=ch_in, time_range=time_range ,window=window)
@@ -413,8 +568,18 @@ class DataSet():
             print('No time data found in dataset')
             
     def calculate_cross_spectra_averaged(self, time_range=None,window=None):
-        '''
-        Calls analysis.calculate_cross_spectra_averaged on the whole TimeDataList (ensemble average) and adds a single-item CrossSpecDataList to dataset
+        '''Calculate one ensemble-averaged cross-spectrum matrix, replacing `cross_spec_data_list`.
+
+        Runs `analysis.calculate_cross_spectra_averaged` on the whole of
+        `time_data_list` and sets `cross_spec_data_list` to a one-item
+        list holding the result.
+
+        Args:
+            time_range (list or np.ndarray, optional):
+                ``[t_start, t_stop]`` in seconds, applied to every
+                measurement; None (the default) uses each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name, or
+                None (the default) for a rectangular window.
         '''
         if len(self.time_data_list)>0:
             cross_spec_data = self.time_data_list.calculate_cross_spectra_averaged(time_range=time_range,window=window)
@@ -425,6 +590,16 @@ class DataSet():
             print('No time data found in dataset')
             
     def calculate_sono_set(self, nperseg=None):
+        '''Calculate the sonogram of every measurement, replacing `sono_data_list`.
+
+        Runs `analysis.calculate_sonogram` on each item of
+        `time_data_list`. The previous contents of `sono_data_list` are
+        discarded.
+
+        Args:
+            nperseg (int, optional): STFT segment length in samples;
+                None (the default) uses about 1/50 of each record.
+        '''
         if len(self.time_data_list)>0:
             sono_data_list = self.time_data_list.calculate_sono_set(nperseg=nperseg)
             self.sono_data_list = sono_data_list
@@ -433,10 +608,23 @@ class DataSet():
             print('No time data found in dataset')
             
     def clean_impulse(self,ch_impulse=0):
-        '''
-        Calls analysis.clean_impulse on each TimeData item in the TimeDataList and returns a copy of the new dataset.
-        
-        Note that calling this function *does not* change the data, and just returns a copy.
+        '''Return a copy of the DataSet with the hammer channel of every measurement cleaned.
+
+        Runs `analysis.clean_impulse` on each item of `time_data_list`
+        and returns a deep copy of the DataSet whose measurements are
+        the cleaned versions. This DataSet's data is not changed. The
+        copy's other lists (spectra, TFs, and so on) are copied as they
+        are and are not recomputed from the cleaned data. A measurement
+        that was already cleaned is placed in the copy as the same
+        object, not a copy.
+
+        Args:
+            ch_impulse (int): Column index of the force (impulse)
+                channel in every measurement (default 0).
+
+        Returns:
+            dataset (DataSet or None): The cleaned copy, or None (with a
+                message) when there is no time data.
         '''
         dataset_copy = copy.deepcopy(self)
         dataset_copy.remove_data_item_by_index('TimeData',np.arange(len(dataset_copy.time_data_list)))
@@ -451,76 +639,52 @@ class DataSet():
             return None
             
     def subset(self, sets):
-        '''Return a new `DataSet` holding chosen measurement(s) and everything derived from them.
+        '''Return a new DataSet holding chosen measurements and the results derived from them.
 
-        This is the Python counterpart of the web app's Save
-        "Choose sets…" picker (`subsetDataset` in
-        `webui/src/lib/analysis/actions.ts`) — the same inclusion
-        rule, mirrored here so a notebook workflow and the browser
-        produce the same subset from the same dataset:
+        A spectrum, cross-spectrum, transfer function or sonogram is kept
+        when it was computed from at least one of the chosen
+        measurements, so an ensemble-averaged result comes along if any
+        of its source measurements is chosen. A modal fit is kept when
+        any of the transfer functions it was fitted to came from a chosen
+        measurement. `MetaData`, and derived items whose source is not
+        among the chosen measurements (or is missing from the DataSet
+        altogether), are left out, even when every index is chosen.
 
-        1. the chosen `TimeData` item(s) themselves;
-        2. every `FreqData` / `CrossSpecData` / `TfData` / `SonoData`
-           item whose `id_link` resolves into a chosen item's
-           `unique_id`. A scalar `id_link` (`analysis.calculate_fft`,
-           `analysis.calculate_tf`, `analysis.calculate_cross_spectrum_matrix`,
-           `analysis.calculate_sonogram`/`calculate_cwt`) matches
-           directly; a LIST `id_link` (`analysis.calculate_tf_averaged`,
-           `analysis.calculate_cross_spectra_averaged`,
-           `analysis.calculate_bla` — one entry per source `TimeData`
-           in the ensemble) matches on ANY member, not all — an
-           ensemble result whose sources only partly overlap the pick
-           still rides along;
-        3. a `ModalData` fit when ANY of its links lands in the chosen
-           lineage — see `_modal_item_in_subset` for the exact link
-           shapes checked (own `id_link`, scalar or nested-list, plus
-           a browser-authored `source_targets` extra when present).
-           This is deliberately an ANY rule, not ALL: a fit is worth
-           carrying with any set it describes. **Note the web app's
-           own loader is stricter** — it re-seeds a *live, editable*
-           fit only when EVERY `source_targets` link resolves — so a
-           subset spanning only part of a shared-pole fit still
-           carries the `ModalData` as data (readable, replottable,
-           reloadable) without silently re-seeding a fit session for a
-           model that no longer has all its sources; carrying the
-           modes as DATA is the contract here, not re-seeding a fit.
-        4. `MetaData`, and any derived item whose `id_link` cannot be
-           resolved into the pick (an orphan, or a link to a
-           `TimeData` outside the pick), are excluded — that is the
-           point of a subset.
-
-        **Items are SHARED, not copied.** The returned `DataSet`'s
-        lists hold the SAME objects as `self`'s, so mutating a
-        `TimeData` (or any derived item) reached through either
-        dataset is visible through both — consistent with the rest of
-        this class (`add_to_dataset`, `replace_data_item` never copy
-        either). Take your own `copy.deepcopy` first if independent
-        objects are needed. Lists keep their original relative order.
-
-        Unlike the web app's `subsetDataset`, there is no
-        "picking every set returns the live document" short-circuit:
-        this always builds a fresh `DataSet` (still item-SHARING, per
-        above), so passing every valid index is not the same as
-        "everything" — a genuinely unattributable item (an orphan
-        derived item, `MetaData`) is excluded even then, whereas the
-        web app's "everything" pick keeps such items because it
-        returns the untouched document unchanged.
+        Items are shared, not copied: the new DataSet's lists hold the
+        same objects as this one's, so changing an item through either
+        DataSet changes it in both. Take a ``copy.deepcopy`` first if
+        you need independent objects. Items keep their original order.
 
         Args:
             sets (int or Iterable[int]): Index or indices into
-                `time_data_list` to keep (0-based). Duplicate indices
-                are ignored after the first.
+                `time_data_list` to keep (0-based). A repeated index
+                counts once.
 
         Returns:
-            dataset (DataSet): A new `DataSet`, with `pydvma_version`
-                copied from `self`, containing the chosen measurements
-                and their resolved derived/modal items, sharing objects
-                with `self`.
+            dataset (DataSet): The new DataSet, with `pydvma_version`
+                copied from this one.
 
         Raises:
-            IndexError: `sets` contains an index outside
+            IndexError: ``sets`` contains an index outside
                 ``range(len(self.time_data_list))``.
         '''
+        # Mirrors the web app's Save "Choose sets..." picker (`subsetDataset`
+        # in webui/src/lib/analysis/actions.ts) so a notebook and the browser
+        # build the same subset from the same dataset. Matching is by id_link:
+        # a scalar id_link (calculate_fft / calculate_tf /
+        # calculate_cross_spectrum_matrix / calculate_sonogram / calculate_cwt)
+        # matches directly; a LIST id_link (calculate_tf_averaged /
+        # calculate_cross_spectra_averaged / calculate_bla, one entry per
+        # source) matches on ANY member. ModalData: see `_modal_item_in_subset`
+        # (own id_link, scalar or nested list, plus a browser-authored
+        # `source_targets` extra). ANY rather than ALL is deliberate: a fit is
+        # worth carrying with any set it describes. The web app's own loader
+        # is stricter (it re-seeds a live, editable fit only when EVERY
+        # source_targets link resolves), so a partial subset carries the modes
+        # as data without re-seeding a fit session. Unlike `subsetDataset`
+        # there is no "every set picked returns the live document"
+        # short-circuit: this always builds a fresh DataSet, so orphans and
+        # MetaData are dropped even then.
         n = len(self.time_data_list)
         if isinstance(sets, (int, np.integer)):
             requested = [int(sets)]
@@ -564,31 +728,92 @@ class DataSet():
         return new_dataset
 
     def save_data(self, filename=None, sets=None):
-        '''
-        Saves the whole DataSet via `file.save_data` — writes the
-        .dvma container format by default (legacy pickle format if
-        `filename` explicitly ends in ``.npy``). Shows a save dialog
-        if no filename is given.
+        '''Save the DataSet to a file with `file.save_data`.
+
+        Writes the ``.dvma`` container format, adding ``.dvma`` when the
+        name ends in neither ``.dvma`` nor ``.npy``; a name ending in
+        ``.npy`` writes the legacy pickle format instead. If the file
+        already exists you are asked at the terminal whether to
+        overwrite it (``y`` overwrites; anything else cancels). This
+        method cannot skip that question: for an unattended save call
+        `file.save_data` with ``overwrite_without_prompt=True``.
 
         Args:
-            filename (str, optional): Output filename, dialog shown if not provided.
+            filename (str, optional): Output file name. If omitted, a Qt
+                file dialog is opened, which needs ``qtpy`` and a Qt
+                binding installed separately (pydvma no longer installs
+                them), so pass a name in scripts and notebooks.
             sets (int or Iterable[int], optional): If given, saves
-                `self.subset(sets)` instead of the whole dataset — see
-                `subset` for the exact inclusion rule. `None` (the
-                default) saves everything, unchanged.
+                ``self.subset(sets)`` instead of the whole DataSet; see
+                `subset`. None (the default) saves everything.
+
+        Returns:
+            filename (str or None): The file written, or None if the save
+                was cancelled.
         '''
         savename = file.save_data(self, filename=filename, overwrite_without_prompt=False, sets=sets)
         return savename
     
     def export_to_matlab(self, filename=None, overwrite_without_prompt=False):
+        '''Export the DataSet to a MATLAB ``.mat`` file with `file.export_to_matlab`.
+
+        The data arrays are written raw (in volts), with the time,
+        frequency and TF calibration factors and units alongside; see
+        `file.export_to_matlab` for the variable names.
+
+        Args:
+            filename (str, optional): Output file name (``.mat`` is added
+                if missing). If omitted, a Qt file dialog is opened, which
+                needs ``qtpy`` and a Qt binding installed separately.
+            overwrite_without_prompt (bool): If False (the default), an
+                existing file triggers a y/n question at the terminal.
+
+        Returns:
+            filename (str or None): The file written, or None if the
+                export was cancelled.
+        '''
         savename = file.export_to_matlab(self, filename=filename, overwrite_without_prompt=overwrite_without_prompt)
         return savename
     
     def export_to_matlab_jwlogger(self, filename=None, overwrite_without_prompt=False):
+        '''Export the DataSet in Jim Woodhouse's MATLAB logger format.
+
+        Uses `file.export_to_matlab_jwlogger`; the ``.mat`` file can be
+        opened by that MATLAB logger.
+
+        Args:
+            filename (str, optional): Output file name (``.mat`` is added
+                if missing). If omitted, a Qt file dialog is opened, which
+                needs ``qtpy`` and a Qt binding installed separately.
+            overwrite_without_prompt (bool): If False (the default), an
+                existing file triggers a y/n question at the terminal.
+
+        Returns:
+            filename (str or None): The file written, or None if the
+                export was cancelled.
+        '''
         savename = file.export_to_matlab_jwlogger(self, filename=filename, overwrite_without_prompt=overwrite_without_prompt)
         return savename
     
     def plot_time_data(self,sets='all',channels='all'):
+        '''Plot `time_data_list` in a new matplotlib figure.
+
+        Each channel is multiplied by its `channel_cal_factors`. Lines
+        outside ``sets`` / ``channels`` are drawn faint; clicking a
+        legend entry toggles a line between faint and full.
+
+        Args:
+            sets (str or list[int]): ``'all'`` (the default) or the set
+                indices to highlight.
+            channels (str or list[int]): ``'all'`` (the default) or the
+                channel indices to highlight in every set.
+
+        Returns:
+            plot (PlotData): The plot; ``plot.fig`` and ``plot.ax`` are
+                its matplotlib Figure and Axes. Pass it as ``time_range``
+                to `calculate_fft_set` (or `analysis.calculate_fft`) to
+                analyse the time range currently shown.
+        '''
         from . import plotting
         global pt
         pt = plotting.PlotData(window_title='Time Data')
@@ -596,6 +821,23 @@ class DataSet():
         return pt
 
     def plot_freq_data(self,sets='all',channels='all'):
+        '''Plot `freq_data_list` as calibrated magnitude in dB in a new figure.
+
+        Lines outside ``sets`` / ``channels`` are drawn faint; clicking a
+        legend entry toggles a line. Other views (linear, real,
+        imaginary, phase, Nyquist) are available through
+        `PlotData.update`.
+
+        Args:
+            sets (str or list[int]): ``'all'`` (the default) or the set
+                indices to highlight.
+            channels (str or list[int]): ``'all'`` (the default) or the
+                channel indices to highlight in every set.
+
+        Returns:
+            plot (PlotData): The plot; ``plot.fig`` and ``plot.ax`` are
+                its matplotlib Figure and Axes.
+        '''
         from . import plotting
         global pf
         pf = plotting.PlotData(window_title='Frequency Data')
@@ -603,6 +845,24 @@ class DataSet():
         return pf
 
     def plot_tf_data(self,sets='all',channels='all'):
+        '''Plot `tf_data_list` as calibrated magnitude in dB in a new figure.
+
+        Coherence is drawn dotted on a second y-axis (``plot.ax2``),
+        unless every set's coherence is missing or identically 1. Modal
+        reconstructions are labelled ``fit``. NaN values in a set's
+        ``tf_coherence`` are replaced by 1 in place when plotted.
+
+        Args:
+            sets (str or list[int]): ``'all'`` (the default) or the set
+                indices to highlight.
+            channels (str or list[int]): ``'all'`` (the default) or the
+                channel indices to highlight in every set.
+
+        Returns:
+            plot (PlotData): The plot; ``plot.fig``, ``plot.ax`` and
+                ``plot.ax2`` are its matplotlib Figure, main Axes and
+                coherence Axes.
+        '''
         from . import plotting
         global ptf
         ptf = plotting.PlotData(window_title='Transfer Function Data')
@@ -610,6 +870,23 @@ class DataSet():
         return ptf
 
     def plot_sono_data(self,n_set=0, n_chan=0, db_range=60):
+        '''Plot one channel of one sonogram as a colour map in a new figure.
+
+        The magnitude is shown in dB. Exact zeros in that channel's
+        `sono_data` are replaced by 1e-16 in place, to avoid taking the
+        log of zero.
+
+        Args:
+            n_set (int): Index into `sono_data_list` (default 0).
+            n_chan (int): Channel (plane) index within that sonogram
+                (default 0).
+            db_range (float): Colour-scale range in dB below the maximum
+                (default 60).
+
+        Returns:
+            plot (PlotData): The plot; ``plot.fig`` and ``plot.ax`` are
+                its matplotlib Figure and Axes.
+        '''
         from . import plotting
         global ptf
         ptf = plotting.PlotData(window_title='Sonogram Data')
@@ -634,10 +911,25 @@ class DataSet():
         return text
     
 class TimeDataList(list):
+    '''A list of `TimeData` measurements: a DataSet's `time_data_list`.
+
+    An ordinary Python list with methods that run an analysis over every
+    item, and that read or set the items' calibration factors.
+    '''
     ### This will allow functions to be discovered that can take lists of TimeData is arguments
     def calculate_fft_set(self,time_range=None,window=None):
-        '''
-        Calls analysis.calculate_fft on each item in the list and returns FreqDataList object
+        '''Calculate the FFT of every item.
+
+        Args:
+            time_range (list or np.ndarray or PlotData, optional):
+                ``[t_start, t_stop]`` in seconds; None (the default) uses
+                each whole record. See `analysis.calculate_fft`.
+            window (str, optional): A ``scipy.signal.windows`` name, or
+                None (the default) for a rectangular window.
+
+        Returns:
+            freq_data_list (FreqDataList): One `FreqData` per item, in
+                order.
         '''
         freq_data_list = FreqDataList()
         
@@ -649,8 +941,24 @@ class TimeDataList(list):
     
     
     def calculate_tf_set(self, ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
-        '''
-        Calls analysis.calculate_tf on each item in the list and returns TfDataList object
+        '''Calculate the transfer functions of every item.
+
+        Args:
+            ch_in (int): Column index of the input (reference) channel
+                (default 0).
+            time_range (list or np.ndarray, optional):
+                ``[t_start, t_stop]`` in seconds; None (the default) uses
+                each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name, or
+                None (the default) for a rectangular window.
+            N_frames (int): Number of averaging frames per item (default
+                1).
+            overlap (float): Fractional overlap between frames (default
+                0.5).
+
+        Returns:
+            tf_data_list (TfDataList): One `TfData` per item, in order,
+                from `analysis.calculate_tf`.
         '''
         tf_data_list = TfDataList()
         
@@ -661,8 +969,25 @@ class TimeDataList(list):
         return tf_data_list
     
     def calculate_cross_spectrum_matrix_set(self, ch_in=0, time_range=None,window=None,N_frames=1,overlap=0.5):
-        '''
-        Calls analysis.calculate_tf on each item in the list and returns TfDataList object
+        '''Calculate the cross-spectrum matrix of every item.
+
+        Args:
+            ch_in (int): Accepted for symmetry with `calculate_tf_set`
+                and ignored: the matrix covers every channel pair.
+            time_range (list or np.ndarray or PlotData, optional):
+                ``[t_start, t_stop]`` in seconds; None (the default) uses
+                each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name, or
+                None (the default) for a rectangular window.
+            N_frames (int): Number of averaging frames per item (default
+                1).
+            overlap (float): Fractional overlap between frames (default
+                0.5).
+
+        Returns:
+            cross_spec_data_list (CrossSpecDataList): One `CrossSpecData`
+                per item, in order, from
+                `analysis.calculate_cross_spectrum_matrix`.
         '''
         cross_spec_data_list = CrossSpecDataList()
         
@@ -674,8 +999,20 @@ class TimeDataList(list):
     
     
     def calculate_tf_averaged(self, ch_in=0, time_range=None,window='hann'):
-        '''
-        Calls analysis.calculate_tf_averaged on whole list and returns TfData object
+        '''Calculate one TF averaged across all items with `analysis.calculate_tf_averaged`.
+
+        Args:
+            ch_in (int): Column index of the input (reference) channel
+                (default 0).
+            time_range (list or np.ndarray, optional):
+                ``[t_start, t_stop]`` in seconds, applied to every item;
+                None (the default) uses each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name.
+                Defaults to ``'hann'`` here, unlike the analysis
+                function; None gives a rectangular window.
+
+        Returns:
+            tf_data (TfData): The ensemble-averaged transfer functions.
         '''
         tf_data = analysis.calculate_tf_averaged(self,ch_in=ch_in, time_range=time_range,window=window)
             
@@ -683,16 +1020,34 @@ class TimeDataList(list):
     
     
     def calculate_cross_spectra_averaged(self, time_range=None,window=None):
-        '''
-        Calls analysis.calculate_cross_spectra_averaged on whole list and returns CrossSpecData object
+        '''Calculate one cross-spectrum matrix averaged across all items.
+
+        Uses `analysis.calculate_cross_spectra_averaged`.
+
+        Args:
+            time_range (list or np.ndarray, optional):
+                ``[t_start, t_stop]`` in seconds, applied to every item;
+                None (the default) uses each whole record.
+            window (str, optional): A ``scipy.signal.windows`` name, or
+                None (the default) for a rectangular window.
+
+        Returns:
+            cross_spec_data (CrossSpecData): The ensemble average.
         '''
         cross_spec_data = analysis.calculate_cross_spectra_averaged(self, time_range=time_range,window=window)
             
         return cross_spec_data
     
     def calculate_sono_set(self, nperseg=None):
-        '''
-        Calls analysis.calculate_sonogram on each item in the list and returns SonoDataList object
+        '''Calculate the sonogram of every item.
+
+        Args:
+            nperseg (int, optional): STFT segment length in samples;
+                None (the default) uses about 1/50 of each record.
+
+        Returns:
+            sono_data_list (SonoDataList): One `SonoData` per item, in
+                order, from `analysis.calculate_sonogram`.
         '''
         sono_data_list = SonoDataList()
         
@@ -703,6 +1058,13 @@ class TimeDataList(list):
         return sono_data_list
     
     def get_calibration_factors(self):
+        '''Return every item's `channel_cal_factors`.
+
+        Returns:
+            factors (list): One per-channel array per item, in order.
+                These are the items' own arrays, not copies, so changing
+                an element changes the item.
+        '''
         n_set = len(self)
         factors = []
         for ns in range(n_set):
@@ -711,11 +1073,32 @@ class TimeDataList(list):
         return factors
             
     def set_calibration_factors_all(self,factors):
+        '''Set every item's `channel_cal_factors` at once.
+
+        Args:
+            factors (list): One per-channel array per item, in order, as
+                returned by `get_calibration_factors`. Item ``i`` is given
+                ``factors[i]`` itself (not a copy).
+
+        Raises:
+            IndexError: ``factors`` has fewer entries than the list.
+        '''
         n_set = len(self)
         for ns in range(n_set):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
+        '''Set the calibration factor of one channel of one item, in place.
+
+        Prints a message and changes nothing if the list is empty or an
+        index is out of range.
+
+        Args:
+            factor (float): The new factor (volts to engineering units).
+            n_set (int): Index of the item in the list (default 0).
+            n_chan (int): Channel (column) index within that item
+                (default 0).
+        '''
         if len(self) == 0:
             print('<TimeDataList> is empty. First log data, load data, or create test data.')
         elif n_set >= len(self):
@@ -726,12 +1109,41 @@ class TimeDataList(list):
             self[n_set].channel_cal_factors[n_chan]=factor
     
     def export_to_csv(self, filename=None, overwrite_without_prompt=False):
+        '''Export the time data to a CSV file with `file.export_to_csv`.
+
+        The numbers are written raw (uncalibrated); a ``#``-commented
+        header line carries each column's calibration factor and units.
+        See `file.export_to_csv` for the column layout.
+
+        Args:
+            filename (str, optional): Output file name (``.csv`` is added
+                if missing). If omitted, a Qt file dialog is opened, which
+                needs ``qtpy`` and a Qt binding installed separately.
+            overwrite_without_prompt (bool): If False (the default), an
+                existing file triggers a y/n question at the terminal.
+
+        Returns:
+            filename (str or None): The file written, or None if the
+                export was cancelled.
+        '''
         savename = file.export_to_csv(self,filename=filename,overwrite_without_prompt=overwrite_without_prompt)
         return savename
 
 class FreqDataList(list):
+    '''A list of `FreqData` spectra: a DataSet's `freq_data_list`.
+
+    An ordinary Python list with methods that read or set the items'
+    calibration factors and export them to CSV.
+    '''
     ### This will allow functions to be discovered that can take lists of FreqData is arguments
     def get_calibration_factors(self):
+        '''Return every item's `channel_cal_factors`.
+
+        Returns:
+            factors (list): One per-channel array per item, in order.
+                These are the items' own arrays, not copies, so changing
+                an element changes the item.
+        '''
         n_set = len(self)
         factors = []
         for ns in range(n_set):
@@ -740,11 +1152,32 @@ class FreqDataList(list):
         return factors
     
     def set_calibration_factors_all(self,factors):
+        '''Set every item's `channel_cal_factors` at once.
+
+        Args:
+            factors (list): One per-channel array per item, in order, as
+                returned by `get_calibration_factors`. Item ``i`` is given
+                ``factors[i]`` itself (not a copy).
+
+        Raises:
+            IndexError: ``factors`` has fewer entries than the list.
+        '''
         n_set = len(self)
         for ns in range(n_set):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
+        '''Set the calibration factor of one channel of one item, in place.
+
+        Prints a message and changes nothing if the list is empty or an
+        index is out of range.
+
+        Args:
+            factor (float): The new factor (volts to engineering units).
+            n_set (int): Index of the item in the list (default 0).
+            n_chan (int): Channel (column) index within that item
+                (default 0).
+        '''
         if len(self) == 0:
             print('<FreqDataList> is empty. First calculate FFT.')
         elif n_set >= len(self):
@@ -755,16 +1188,51 @@ class FreqDataList(list):
             self[n_set].channel_cal_factors[n_chan]=factor
             
     def export_to_csv(self, filename=None, overwrite_without_prompt=False):
+        '''Export the spectra to a CSV file with `file.export_to_csv`.
+
+        The numbers are written raw (uncalibrated); a ``#``-commented
+        header line carries each column's calibration factor and units.
+        See `file.export_to_csv` for the column layout.
+
+        Args:
+            filename (str, optional): Output file name (``.csv`` is added
+                if missing). If omitted, a Qt file dialog is opened, which
+                needs ``qtpy`` and a Qt binding installed separately.
+            overwrite_without_prompt (bool): If False (the default), an
+                existing file triggers a y/n question at the terminal.
+
+        Returns:
+            filename (str or None): The file written, or None if the
+                export was cancelled.
+        '''
         savename = file.export_to_csv(self,filename=filename,overwrite_without_prompt=overwrite_without_prompt)
         return savename
 
 class CrossSpecDataList(list):
+    '''A list of `CrossSpecData` items: a DataSet's `cross_spec_data_list`.
+
+    An ordinary Python list; it adds no methods.
+    '''
     ### This will allow functions to be discovered that can take lists of CrossSpecData is arguments
     pass
 
 class TfDataList(list):
+    '''A list of `TfData` transfer functions: a DataSet's `tf_data_list`.
+
+    An ordinary Python list with methods that read or set the items'
+    calibration factors, manage a modal reconstruction and export to
+    CSV. The modal fitting functions in `pydvma.modal` take one.
+    '''
     ### This will allow functions to be discovered that can take lists of TfData is arguments
     def get_calibration_factors(self):
+        '''Return every item's `channel_cal_factors`.
+
+        Returns:
+            factors (list): One per-channel array per item, in order.
+                These are the items' own arrays, not copies, so changing
+                an element changes the item. For a TF each factor is the
+                ratio ``cal[out] / cal[in]``.
+        '''
         n_set = len(self)
         factors = []
         for ns in range(n_set):
@@ -773,11 +1241,34 @@ class TfDataList(list):
         return factors
     
     def set_calibration_factors_all(self,factors):
+        '''Set every item's `channel_cal_factors` at once.
+
+        Args:
+            factors (list): One per-channel array per item, in order, as
+                returned by `get_calibration_factors`. Item ``i`` is given
+                ``factors[i]`` itself (not a copy). For a TF each factor
+                is the ratio ``cal[out] / cal[in]``.
+
+        Raises:
+            IndexError: ``factors`` has fewer entries than the list.
+        '''
         n_set = len(self)
         for ns in range(n_set):
             self[ns].channel_cal_factors=factors[ns]
             
     def set_calibration_factor(self,factor, n_set=0, n_chan=0):
+        '''Set the calibration factor of one channel of one item, in place.
+
+        Prints a message and changes nothing if the list is empty or an
+        index is out of range.
+
+        Args:
+            factor (float): The new factor, the ratio
+                ``cal[out] / cal[in]`` for a TF.
+            n_set (int): Index of the item in the list (default 0).
+            n_chan (int): Channel (column) index within that item
+                (default 0).
+        '''
         if len(self) == 0:
             print('<TfDataList> is empty. First calculate transfer function.')
         elif n_set >= len(self):
@@ -788,6 +1279,19 @@ class TfDataList(list):
             self[n_set].channel_cal_factors[n_chan]=factor
     
     def add_modal_reconstruction(self,tf_data,mode='replace'):
+        '''Add a modal reconstruction TF to the list, or replace the existing one.
+
+        If no item is a reconstruction (``flag_modal_TF`` True),
+        ``tf_data`` is appended. Otherwise ``mode='replace'`` overwrites
+        the LAST item of the list (so the reconstruction is assumed to be
+        last) and ``mode='append'`` appends; any other mode then does
+        nothing.
+
+        Args:
+            tf_data (TfData): The reconstruction, for example from
+                `modal.reconstruct_transfer_function`.
+            mode (str): ``'replace'`` (the default) or ``'append'``.
+        '''
         # identify number of TFs in list that are reconstructions
         N_reconstruction = 0
         for tf in self:
@@ -804,18 +1308,47 @@ class TfDataList(list):
             
         
     def export_to_csv(self, filename=None, overwrite_without_prompt=False):
+        '''Export the transfer functions to a CSV file with `file.export_to_csv`.
+
+        The numbers are written raw (uncalibrated); a ``#``-commented
+        header line carries each column's calibration factor and units.
+        See `file.export_to_csv` for the column layout.
+
+        Args:
+            filename (str, optional): Output file name (``.csv`` is added
+                if missing). If omitted, a Qt file dialog is opened, which
+                needs ``qtpy`` and a Qt binding installed separately.
+            overwrite_without_prompt (bool): If False (the default), an
+                existing file triggers a y/n question at the terminal.
+
+        Returns:
+            filename (str or None): The file written, or None if the
+                export was cancelled.
+        '''
         savename = file.export_to_csv(self,filename=filename,overwrite_without_prompt=overwrite_without_prompt)
         return savename
       
 class ModalDataList(list):
+    '''A list of `ModalData` fits: a DataSet's `modal_data_list`.
+
+    An ordinary Python list; it adds no methods.
+    '''
     ### This will allow functions to be discovered that can take lists of ModalData is arguments
     pass
 
 class SonoDataList(list):
+    '''A list of `SonoData` sonograms: a DataSet's `sono_data_list`.
+
+    An ordinary Python list; it adds no methods.
+    '''
     ### This will allow functions to be discovered that can take lists of SonoData is arguments
     pass
 
 class MetaDataList(list):
+    '''A list of `MetaData` items: a DataSet's `meta_data_list`.
+
+    An ordinary Python list; it adds no methods.
+    '''
     ### This will allow functions to be discovered that can take lists of MetaData is arguments
     pass
 
@@ -898,7 +1431,7 @@ class FreqData():
         id_link (uuid.UUID): `unique_id` of the source TimeData.
         unique_id (uuid.UUID): This item's own identity, minted at
             construction. It is what makes a pull → modify → push round
-            trip through :class:`pydvma.session.Session` REPLACE this
+            trip through `pydvma.session.Session` REPLACE this
             result in place instead of appending a second copy beside
             it. Optional in the container: a file written before
             derived items carried ids restores without the attribute.
@@ -1057,8 +1590,10 @@ class TfData():
         test_name (str or None): Free-form label.
         timestamp (datetime.datetime): When constructed.
         timestring (str): Filesystem-safe rendering of `timestamp`.
-        flag_modal_TF (bool): True after a modal fit has consumed
-            this TfData (avoids double-fitting); used by `modal.py`.
+        flag_modal_TF (bool): True when this TfData is a modal
+            reconstruction (from `modal.reconstruct_transfer_function`
+            or `modal.reconstruct_transfer_function_global`) rather than
+            a measurement. The modal fits skip such items.
         bla_sigma_nl (np.ndarray or None): Nonlinear-distortion standard
             deviation, shape ``(n_freq, n_outputs)``, real, in the same
             linear units as ``abs(tf_data)`` — a std, not a variance, so
@@ -1185,11 +1720,17 @@ class ModalData():
 
 
     def add_mode(self,xn):
-        '''
-        Appends one mode (a packed parameter row as per 'x' in modal.py:
-        [fn, zn, an x N, pn x N, rk x N, rm x N]) to the modal matrix,
-        keeping rows sorted by natural frequency and refreshing the
-        unpacked summary properties (fn, zn, an, pn).
+        '''Add one mode to the modal matrix `M`.
+
+        Rows stay sorted by natural frequency, and the summaries `fn`,
+        `zn`, `an` and `pn` are refreshed. A row whose length does not
+        match the existing rows is rejected with a printed message.
+
+        Args:
+            xn (np.ndarray): One packed mode,
+                ``[fn, zn, an_0..an_C, pn_0..pn_C, rk_0..rk_C,
+                rm_0..rm_C]`` for C+1 channels (the layout of
+                `modal.unpack_matrix`).
         '''
         # Make modal matrix. Each row is modal vector stacked as per 'x' in modal.py
         if len(self.M) == 0:
@@ -1217,18 +1758,20 @@ class ModalData():
         self.pn = pn
 
     def delete_mode(self,mode_number):
-        '''
-        Deletes one or more modes (rows) from the modal matrix by index and
-        refreshes the unpacked summary properties (fn, zn, an, pn).
+        '''Delete one or more modes (rows of `M`) and refresh the summaries.
 
-        Deleting the LAST remaining mode is valid: the matrix becomes an
-        empty ``(0, 2+4*channels)`` and the summaries become zero-length
-        (fn/zn) / ``(0, channels)`` (an/pn). This no longer raises the
-        IndexError that ``modal.unpack_matrix`` used to throw on an emptied
-        matrix (the round-4 "Fit -> Reject" crash, and the same latent crash
-        on Qt's Reject). ``channels`` is preserved — it is encoded in the
-        column count, not the number of mode rows.
+        Deleting the last remaining mode is allowed: `M` becomes an empty
+        ``(0, 2 + 4*channels)`` array, `fn` and `zn` become empty and
+        `an` and `pn` have shape ``(0, channels)``. `channels` is kept,
+        since it comes from the column count.
+
+        Args:
+            mode_number (int or list[int]): Row index or indices of `M` to
+                delete (rows are sorted by `fn`).
         '''
+        # Emptying the matrix used to crash `modal.unpack_matrix` with an
+        # IndexError (the web app's Fit -> Reject); it now reads the channel
+        # count from the column count instead of row 0.
         self.M = np.delete(self.M,mode_number,0)
         self.channels = int((self.M.shape[1] - 2) / 4)
         if self.settings is not None:
@@ -1352,6 +1895,18 @@ class MetaData():
     
     
 def reshape_arrays(a):
+    '''Return a 1-D array as a single column; leave anything else unchanged.
+
+    Used by the data classes so a single channel can be passed as a 1-D
+    array.
+
+    Args:
+        a (np.ndarray): The array.
+
+    Returns:
+        a (np.ndarray): A view of shape ``(N, 1)`` when ``a`` is 1-D of
+            length N, otherwise ``a`` itself.
+    '''
     b = np.shape(a)
     if len(b) == 1:
         a = a[:,None]

@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Aug 28 19:04:14 2018
-
-@author: tb267
-"""
+"""Matplotlib figures for the data in a DataSet, returned by its ``plot_*`` methods."""
 
 
 
@@ -19,6 +15,23 @@ from matplotlib.ticker import AutoLocator
 LINE_ALPHA = 0.9
 
 class PlotSonoData():
+    '''A bare matplotlib figure for one sonogram channel.
+
+    Not used by pydvma itself: `DataSet.plot_sono_data` draws sonograms
+    with `PlotData.update_sonogram`, which adds a dB colour range and
+    axis scaling. Kept for code that creates one directly.
+
+    Args:
+        figsize (tuple): Figure size in inches (default ``(9, 5)``).
+        canvas (object, optional): An existing matplotlib canvas to draw
+            on instead of creating a new figure.
+        fig (matplotlib.figure.Figure, optional): The figure belonging
+            to ``canvas``.
+
+    Attributes:
+        fig (matplotlib.figure.Figure): The figure.
+        ax (matplotlib.axes.Axes): The axes the sonogram is drawn on.
+    '''
     def __init__(self,figsize=(9,5),canvas=None,fig=None):
         if canvas==None:
             self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)#,constrained_layout=True)
@@ -31,6 +44,13 @@ class PlotSonoData():
         self.fig.canvas.draw()
         
     def update(self,sono_data_list,n_set=0,n_chan=0):
+        '''Draw one channel of one sonogram, magnitude in dB.
+
+        Args:
+            sono_data_list (SonoDataList): The sonograms.
+            n_set (int): Index of the sonogram in the list (default 0).
+            n_chan (int): Channel (plane) index within it (default 0).
+        '''
         
         f = sono_data_list[n_set].freq_axis
         t = sono_data_list[n_set].time_axis
@@ -41,6 +61,51 @@ class PlotSonoData():
     
 
 class PlotData():
+    '''A matplotlib figure showing one list of data from a DataSet.
+
+    `DataSet.plot_time_data`, `plot_freq_data`, `plot_tf_data` and
+    `plot_sono_data` each create one and return it. Use its `fig` and
+    `ax` with matplotlib as usual, or call `update` to redraw it with
+    other data or another view.
+
+    Lines are either highlighted or faint. Clicking a line in the legend
+    toggles it, and `get_selected_channels` reports the current state.
+    `auto_x` and `auto_y` scale the axes to the highlighted lines only.
+
+    A PlotData can stand in for a time range: pass it as ``time_range``
+    to `analysis.calculate_fft` or `analysis.calculate_cross_spectrum_matrix`
+    (or `DataSet.calculate_fft_set`) and the range is read from the
+    current x-axis limits (``ax.get_xbound()``), so you can zoom the
+    plot and then analyse what is shown.
+
+    On a desktop (interactive, non-notebook) matplotlib backend the
+    figure window is shown on creation.
+
+    Args:
+        window_title (str, optional): Accepted and ignored.
+        sets (str or list[int]): Accepted and ignored; pass it to
+            `update`.
+        channels (str or list[int]): Accepted and ignored; pass it to
+            `update`.
+        figsize (tuple): Figure size in inches (default ``(9, 5)``).
+        canvas (object, optional): An existing matplotlib canvas to draw
+            on instead of creating a new figure.
+        fig (matplotlib.figure.Figure, optional): The figure belonging
+            to ``canvas``.
+
+    Attributes:
+        fig (matplotlib.figure.Figure): The figure.
+        ax (matplotlib.axes.Axes): The main axes.
+        ax2 (matplotlib.axes.Axes): A twin y-axis for coherence, shown
+            only for transfer functions.
+        legend (matplotlib.legend.Legend): The legend of `ax`, once data
+            has been drawn.
+        line_listbyset (list): For each set, the list of its
+            ``matplotlib`` lines on `ax`, one per channel.
+        data_list (list): The data list last drawn.
+        pcolor_sono (object): The colour mesh of the last sonogram
+            drawn, or None.
+    '''
     def __init__(self,window_title=None,sets='all',channels='all',figsize=(9,5),canvas=None,fig=None):
         if canvas==None:
             self.fig, self.ax = plt.subplots(1,1,figsize=figsize,dpi=100)
@@ -100,6 +165,41 @@ class PlotData():
         self.fig.canvas.draw()
         
     def update(self,data_list,sets='all',channels='all',xlinlog='linear',show_coherence=True,plot_type=None,coherence_plot_type='linear',freq_range=None, auto_xy='xyc'):
+        '''Redraw the figure with a list of time, frequency or TF data.
+
+        Each channel is multiplied by its item's `channel_cal_factors`.
+        Lines outside ``sets`` / ``channels`` are drawn faint. For a
+        `TfDataList`, NaN values in ``tf_coherence`` are replaced by 1 in
+        place.
+
+        Args:
+            data_list (TimeDataList or FreqDataList or TfDataList): The
+                data to draw.
+            sets (str or list[int]): ``'all'`` (the default) or the set
+                indices to highlight.
+            channels (str or list[int]): ``'all'`` (the default) or the
+                channel indices to highlight in every set.
+            xlinlog (str): ``'linear'`` (the default) or ``'log'``
+                frequency axis, for frequency and TF data.
+            show_coherence (bool): Draw TF coherence dotted on `ax2`
+                (default True). It is not drawn when every set's
+                coherence is missing or identically 1.
+            plot_type (str, optional): For frequency and TF data:
+                ``'Amplitude (dB)'`` (the default, also used for None),
+                ``'Amplitude (linear)'``, ``'Real Part'``,
+                ``'Imag Part'``, ``'Phase'`` (degrees) or ``'Nyquist'``
+                (imaginary against real part).
+            coherence_plot_type (str): ``'linear'`` (the default) or
+                ``'log'`` (in dB).
+            freq_range (list, optional): ``[f_min, f_max]`` in Hz. For a
+                Nyquist plot only points strictly inside it are drawn;
+                with ``'f'`` in ``auto_xy`` it sets the x-axis limits.
+            auto_xy (str): Which axes to rescale after drawing, as
+                letters: ``'x'`` and ``'y'`` fit the highlighted lines,
+                ``'c'`` resets the coherence axis to 0..1, and ``'f'``
+                sets the x-axis to ``freq_range`` (which must then be
+                given). Default ``'xyc'``.
+        '''
         global LINE_ALPHA
         
         # when switching back from sonogram, remove all pcolormesh parts of plot
@@ -393,6 +493,17 @@ class PlotData():
         
         
     def update_legend(self,loc='lower right',draggable=False):
+        '''Rebuild the legend and make its entries clickable.
+
+        Called by `update`. Legend entries mirror the opacity of their
+        lines; 10 or more lines are laid out in several columns.
+
+        Args:
+            loc (str): Legend location, as for matplotlib (default
+                ``'lower right'``).
+            draggable (bool): Let the legend be dragged with the mouse
+                (default False).
+        '''
         
         if len(self.data_list) != 0:
             if self.ax.get_legend() is None:
@@ -442,6 +553,11 @@ class PlotData():
     
     
     def auto_x(self):
+        '''Fit the x-axis to the highlighted lines (or a sonogram's time axis).
+
+        On a log frequency axis the fit starts at the first non-zero
+        frequency. A Nyquist plot keeps equal axis scaling.
+        '''
         if self.data_list.__class__.__name__ == 'SonoDataList':
             xlim = self.data_list[self.n_set].time_axis[[0,-1]]
             self.ax.set_xlim(xlim)
@@ -500,6 +616,11 @@ class PlotData():
         
         
     def auto_y(self):
+        '''Fit the y-axis to the highlighted lines within the current x-range.
+
+        For a sonogram the y-axis is set to its frequency axis. For
+        transfer functions the coherence axis is reset to 0..1.
+        '''
         if self.data_list.__class__.__name__ == 'SonoDataList':
             ylim = self.data_list[self.n_set].freq_axis[[0,-1]]
             self.ax.set_ylim(ylim)
@@ -540,6 +661,14 @@ class PlotData():
         self.fig.canvas.draw()
         
     def channel_select(self,event):
+        '''Toggle a line between highlighted and faint when its legend entry is clicked.
+
+        Connected to the figure's pick events automatically; the matching
+        coherence line follows.
+
+        Args:
+            event (matplotlib.backend_bases.PickEvent): The pick event.
+        '''
         selected_line = event.artist
         
         a = selected_line.get_alpha()
@@ -575,6 +704,12 @@ class PlotData():
             self.fig.canvas.draw()
     
     def get_selected_channels(self):
+        '''Report which lines are currently highlighted.
+
+        Returns:
+            selected (list[list[bool]]): For each set, one flag per
+                channel, True where the line is highlighted.
+        '''
         # find the sets and channels higlighted in figure
         
         n_sets = len(self.line_listbyset)
@@ -588,6 +723,13 @@ class PlotData():
         return selected_data
     
     def set_selected_channels(self,s):
+        '''Highlight lines from a list of flags, as returned by `get_selected_channels`.
+
+        Args:
+            s (list[list[bool]]): For each set, one flag per channel;
+                True highlights the line and False makes it faint. Its
+                shape must match the lines drawn.
+        '''
         global LINE_ALPHA
         # relies on all sets of data with same number of channels. Need to make more general.
         for n_set in range(len(s)):
@@ -601,6 +743,21 @@ class PlotData():
         self.fig.canvas.draw()
         
     def update_sonogram(self,sono_data_list,n_set,n_chan,db_range=60,auto_xy='xy'):
+        '''Redraw the figure as a colour map of one sonogram channel.
+
+        The magnitude is shown in dB, using the ``'Blues'`` colour map.
+        Exact zeros in that channel's `sono_data` are replaced by 1e-16 in
+        place, to avoid taking the log of zero.
+
+        Args:
+            sono_data_list (SonoDataList): The sonograms.
+            n_set (int): Index of the sonogram in the list.
+            n_chan (int): Channel (plane) index within it.
+            db_range (float): Colour-scale range in dB below the maximum
+                (default 60).
+            auto_xy (str): ``'x'`` and/or ``'y'`` to fit that axis to the
+                sonogram (default ``'xy'``).
+        '''
         self.data_list = sono_data_list # makes auto_x/y work!
         
         for ch in self.ax.get_children():

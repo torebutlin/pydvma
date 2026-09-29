@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Aug 27 17:08:42 2018
-
-@author: tb267
-"""
+"""Synthetic measurements for trying pydvma without hardware."""
 
 from . import options
 from . import datastructure
@@ -17,8 +13,22 @@ import datetime
 
 #%% Create test data
 def create_test_impulse_data(noise_level=0.0):
-    '''
-    Creates example time domain data simulating impulse hammer test
+    '''Simulate one impulse-hammer test of a single 100 Hz mode.
+
+    The DataSet holds one `TimeData` of 1 s at 10 kHz (10000 samples,
+    two channels, units ``['N', 'm/s']``). Channel 0 is the hammer
+    force: a unit-height raised-cosine pulse, 2 ms long, at the start of
+    the record. Channel 1 is the response,
+    ``exp(-t/0.1) * sin(2*pi*100*t)``: one mode at 100 Hz decaying with
+    a 0.1 s time constant, starting at t = 0.
+
+    Args:
+        noise_level (float): Half-width of uniform random noise added to
+            channel 1 (default 0, no noise).
+
+    Returns:
+        dataset (DataSet): The simulated measurement, with test name
+            ``'Synthesised data'``.
     '''
     settings = options.MySettings(fs=10000)
     N = int(1e4)
@@ -51,8 +61,19 @@ def create_test_impulse_data(noise_level=0.0):
     return dataset
 
 def create_test_impulse_ensemble(N_ensemble=5, noise_level=0.1):
-    '''
-    Creates ensemble of example time domain data simulating impulse hammer tests
+    '''Simulate repeated impulse-hammer tests, for ensemble averaging.
+
+    Calls `create_test_impulse_data` ``N_ensemble`` times, so every
+    measurement is the same 100 Hz mode with fresh random noise on the
+    response channel.
+
+    Args:
+        N_ensemble (int): Number of measurements (default 5).
+        noise_level (float): Half-width of the uniform noise added to
+            each response (default 0.1).
+
+    Returns:
+        dataset (DataSet): ``N_ensemble`` `TimeData` measurements.
     '''
     dataset = datastructure.DataSet()
     for n in range(N_ensemble):
@@ -63,8 +84,21 @@ def create_test_impulse_ensemble(N_ensemble=5, noise_level=0.1):
 
 
 def create_test_noise_data(added_noise_level=0.1):
-    '''
-    Creates example time domain data simulating noise input test
+    '''Simulate a random-excitation test of a single 100 Hz mode.
+
+    The DataSet holds one `TimeData` of 10 s at 10 kHz (100000 samples,
+    two channels, units ``['N', 'm/s']``). Channel 0 is the input:
+    uniform white noise between -0.5 and 0.5. Channel 1 is that input
+    convolved with the impulse response ``exp(-t/0.1) * sin(2*pi*100*t)``
+    (not scaled by the sample interval), plus uniform measurement noise.
+
+    Args:
+        added_noise_level (float): Half-width of the uniform noise added
+            to channel 1 (default 0.1).
+
+    Returns:
+        dataset (DataSet): The simulated measurement, with test name
+            ``'Synthesised data'``.
     '''
     settings = options.MySettings(fs=10000)
     N = int(10*1e4)
@@ -94,9 +128,22 @@ def create_test_noise_data(added_noise_level=0.1):
     
 
 def create_test_impulse_data_nonlinear_v1(noise_level=0):
-    '''
-    Creates example time domain data simulating impulse hammer test
-    with double exponential decay (two time constants)
+    '''Simulate an impulse test whose decay has two time constants.
+
+    The DataSet holds one `TimeData` of 1 s at 10 kHz (10000 samples,
+    two channels, units ``['N', 'm/s']``). Channel 0 is the hammer
+    force: a unit-height raised-cosine pulse, 2 ms long, at the start of
+    the record. Channel 1 is a 100 Hz response whose
+    envelope is ``0.7*exp(-t/0.05) + 0.3*exp(-t/0.2)``: a decay that a
+    single damping ratio cannot describe.
+
+    Args:
+        noise_level (float): Half-width of uniform random noise added to
+            channel 1 (default 0, no noise).
+
+    Returns:
+        dataset (DataSet): The simulated measurement, with test name
+            ``'Synthesised nonlinear data v1'``.
     '''
     settings = options.MySettings(fs=10000)
     N = int(1e4)
@@ -135,9 +182,22 @@ def create_test_impulse_data_nonlinear_v1(noise_level=0):
 
 
 def create_test_impulse_data_nonlinear_v2(noise_level=0):
-    '''
-    Creates example time domain data simulating impulse hammer test
-    with exponential decay and frequency shifting from f2 to f1 using tanh transition
+    '''Simulate an impulse test whose frequency falls as it decays.
+
+    The DataSet holds one `TimeData` of 1 s at 10 kHz (10000 samples,
+    two channels, units ``['N', 'm/s']``). Channel 0 is the hammer
+    force: a unit-height raised-cosine pulse, 2 ms long, at the start of
+    the record. Channel 1 decays as ``exp(-t/0.1)`` while
+    its frequency glides from 200 Hz to 100 Hz along a tanh curve
+    centred at 0.2 s with a 0.4 s time scale.
+
+    Args:
+        noise_level (float): Half-width of uniform random noise added to
+            channel 1 (default 0, no noise).
+
+    Returns:
+        dataset (DataSet): The simulated measurement, with test name
+            ``'Synthesised nonlinear data v2'``.
     '''
     settings = options.MySettings(fs=10000)
     N = int(1e4)
@@ -181,10 +241,25 @@ def create_test_impulse_data_nonlinear_v2(noise_level=0):
     return dataset
 
 def create_test_impulse_data_multi_harmonics(f1=100, noise_level=0.001):
-    '''
-    Creates example time domain data simulating impulse hammer test
-    with response containing harmonics at f1, 4f1, 9f1, 16f1 and f2, 4f2, 9f2, 16f2
-    where f2 = 1.03 * f1
+    '''Simulate an impulse test with two families of closely spaced modes.
+
+    The DataSet holds one `TimeData` of 1 s at 10 kHz (10000 samples,
+    two channels, units ``['N', 'm/s']``). Channel 0 is a raised-cosine
+    force pulse 0.5 ms long (peak about 0.9) at the start of the record.
+    Channel 1 sums decaying sines (time constant 0.1 s) at ``f1``,
+    ``4*f1``, ``9*f1`` and ``16*f1`` (amplitudes 1, 0.5, 0.3, 0.2) and
+    at the same multiples of ``f2 = 1.03*f1`` (amplitudes 0.8, 0.4,
+    0.25, 0.15), so each pair of modes is 3 % apart. Uniform noise is
+    added to both channels.
+
+    Args:
+        f1 (float): Lowest frequency in Hz (default 100).
+        noise_level (float): Half-width of the uniform noise added to
+            both channels (default 0.001).
+
+    Returns:
+        dataset (DataSet): The simulated measurement, with test name
+            ``'Synthesised multi-harmonic data'``.
     '''
     settings = options.MySettings(fs=10000)
     N = int(1e4)
@@ -258,8 +333,9 @@ def _bla_reference_filters(n_exc, n_resp, fs, f_lo, f_hi):
         f_lo (float): Lowest excited frequency in Hz.
         f_hi (float): Highest excited frequency in Hz.
 
-    Returns a list of ``n_exc`` lists of ``n_resp`` ``(b, a)`` digital
-    filter coefficient tuples, indexed ``filters[q][r]``.
+    Returns:
+        filters (list): ``n_exc`` lists of ``n_resp`` ``(b, a)`` digital
+            filter coefficient tuples, indexed ``filters[q][r]``.
     """
     n_pairs = n_exc * n_resp
     filters = []
@@ -335,13 +411,17 @@ def create_test_bla_captures(M=6, n_exc=2, n_resp=2, N=2048, P=4, t_periods=2,
         noise_rms (float): Standard deviation of the additive white
             output noise in volts.
 
-    Returns a tuple ``(time_data_list, run_spec, G_true)``: the list of
-    ``M * n_exc`` `datastructure.TimeData` captures; the BlaRunSpec dict
-    describing the run (measured-x mode, x channels ``0..n_exc-1``,
-    response channels after them); and the exact frequency response of
-    the reference filters at the excited bins, shape
-    ``(n_k, n_resp, n_exc)`` complex, from `scipy.signal.freqz` of the
-    same coefficients.
+    Returns:
+        time_data_list (TimeDataList): The ``M * n_exc`` captures, each
+            ``(t_periods + P) * N`` samples long, with units ``'V'`` for
+            the excitations and ``'m/s/s'`` for the responses.
+        run_spec (dict): The BlaRunSpec describing the run (measured-x
+            mode, x channels ``0..n_exc-1``, response channels after
+            them), ready for `analysis.calculate_bla`.
+        G_true (np.ndarray): The exact frequency response of the
+            reference filters at the excited bins, complex, shape
+            ``(n_k, n_resp, n_exc)`` with ``n_k = k2 - k1 + 1``, from
+            `scipy.signal.freqz` of the same coefficients.
     """
     from . import acquisition            # lazy: keeps import order simple
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The .dvma container file format (format v2).
+"""The .dvma container file format.
 
 A ``.dvma`` file is a zip archive holding ``manifest.json`` plus one
 plain ``.npy`` file (saved with ``allow_pickle=False``) per array
@@ -442,7 +442,7 @@ def _write_dataset(zf, dataset):
 
 
 def save(dataset, filename):
-    """Save a DataSet to `filename` in .dvma container format (v2).
+    """Save a DataSet to `filename` in the .dvma container format.
 
     Writes a zip archive with a JSON manifest and pickle-free .npy
     members (see module docstring for the schema). Unlike the legacy

@@ -4,7 +4,7 @@
 Successor to the removed ``dvma.Logger``. Starts the full
 ``pydvma-serve`` stack — acquisition bridge, native ``/engine`` compute
 host, session journal, embedded web UI — on a background thread INSIDE
-the kernel process, opens the browser, and returns a :class:`Session`
+the kernel process, opens the browser, and returns a `Session`
 handle::
 
     import pydvma as dvma
@@ -14,16 +14,16 @@ handle::
     session.push(dataset)      # hand data back; the app offers to reload
     session.close()
 
-Explicit handoff, not shared mutation: :attr:`Session.data`
+Explicit handoff, not shared mutation: `Session.data`
 materialises fresh pydvma objects from the journal under its lock, and
-:meth:`Session.push` is the only write path — the kernel never holds
+`Session.push` is the only write path — the kernel never holds
 live references the engine is concurrently computing on.
 
 The server runs on ITS OWN daemon thread and event loop, so
-:func:`launch` works identically from a plain script and from inside
+`launch` works identically from a plain script and from inside
 Jupyter (whose kernel already runs an asyncio loop). The notebook is
 optional — ``pydvma-serve --open`` starts the same server with no kernel
-anywhere; the only difference is that no one holds a :class:`Session`.
+anywhere; the only difference is that no one holds a `Session`.
 """
 import asyncio
 import math
@@ -33,7 +33,7 @@ import webbrowser
 from . import container
 from . import datastructure
 
-#: How many times :meth:`Session.push` re-reads and re-merges when the
+#: How many times `Session.push` re-reads and re-merges when the
 #: journal moved under it (a capture landing, or another writer posting)
 #: before giving up. Each retry only loses if something else writes
 #: again in the merge window, so a handful is already generous for a
@@ -41,22 +41,22 @@ from . import datastructure
 #: cannot spin here forever.
 PUSH_MAX_ATTEMPTS = 10
 
-#: Seconds :func:`launch` waits for the background server to bind before
+#: Seconds `launch` waits for the background server to bind before
 #: giving up and raising. Generous: binding a loopback port is instant,
 #: so anything approaching this is a real failure, not slowness.
 STARTUP_TIMEOUT_S = 10.0
 
-#: Seconds :meth:`Session.close` waits for the server thread to finish
+#: Seconds `Session.close` waits for the server thread to finish
 #: after stopping its loop. The thread is a daemon, so even a wedged
 #: shutdown cannot keep the interpreter alive past this.
 SHUTDOWN_TIMEOUT_S = 10.0
 
 #: How often the server thread re-checks whether the listener is up (or
-#: has failed) before signalling :func:`launch`'s startup event.
+#: has failed) before signalling `launch`'s startup event.
 _POLL_INTERVAL_S = 0.005
 
 #: Sentinel distinguishing "attribute absent" from "attribute is None"
-#: in :func:`_settings_to_config_json`.
+#: in `_settings_to_config_json`.
 _MISSING = object()
 
 
@@ -101,7 +101,7 @@ def _merge_dataset(target, source):
 def _count_items(dataset):
     """Total number of data items a DataSet holds, across every kind.
 
-    Used by :meth:`Session.push` to notice that wrapping its argument
+    Used by `Session.push` to notice that wrapping its argument
     produced an EMPTY DataSet — ``DataSet.add_to_dataset`` silently
     ignores anything it does not recognise, so without this an
     unsupported object would post an unchanged document and look like
@@ -115,7 +115,7 @@ def _count_items(dataset):
 
 
 def _json_scalar(value):
-    """Return ``value`` as a JSON-safe scalar, or :data:`_MISSING`.
+    """Return ``value`` as a JSON-safe scalar, or `_MISSING`.
 
     ``bool`` is tested before ``int`` (it is a subclass) so True stays
     a JSON boolean. Non-finite floats are REJECTED rather than passed
@@ -125,7 +125,7 @@ def _json_scalar(value):
     prefill.
 
     Args:
-        value: the candidate value, of any type.
+        value (object): the candidate value, of any type.
     """
     if value is None or isinstance(value, (bool, str)):
         return value
@@ -148,7 +148,7 @@ def _settings_to_config_json(settings):
     settings (``iepe_excit_current_A``, ``channel_sensitivities``) reach
     the UI in the array form it already reads, and anything still
     unrepresentable — a nested array, a resolved device object, a
-    non-finite float (see :func:`_json_scalar`) — is dropped key and
+    non-finite float (see `_json_scalar`) — is dropped key and
     all rather than breaking the document. Constructor arguments that
     MySettings consumes without storing (``device``, the by-name
     selector) are absent from the instance and so absent here too.
@@ -188,7 +188,7 @@ def _shutdown(loop, thread):
     Idempotent and safe on an already-finished thread: a dead thread is
     left alone, and a loop that closed between the liveness check and
     the call raises ``RuntimeError``, which is swallowed. Shared by
-    :func:`launch`'s failure path and :meth:`Session.close`.
+    `launch`'s failure path and `Session.close`.
 
     Args:
         loop (asyncio.AbstractEventLoop): the server's event loop.
@@ -206,14 +206,14 @@ def _shutdown(loop, thread):
 def _serve_forever(server, loop, ready, failure):
     """Run ``server`` on ``loop`` until the loop is stopped.
 
-    The body of :func:`launch`'s daemon thread. Installs ``loop`` as
+    The body of `launch`'s daemon thread. Installs ``loop`` as
     this thread's event loop, schedules ``server.run()``, and polls
-    every :data:`_POLL_INTERVAL_S` until either the listener is up or
+    every `_POLL_INTERVAL_S` until either the listener is up or
     the task has finished — setting ``ready`` in both cases, so a bind
-    failure wakes :func:`launch` immediately instead of stranding it
+    failure wakes `launch` immediately instead of stranding it
     until the startup timeout. On the way out it cancels the task,
     drains it (recording any real exception into ``failure`` for
-    :func:`launch` to chain), shuts down async generators, and closes
+    `launch` to chain), shuts down async generators, and closes
     the loop.
 
     Args:
@@ -260,12 +260,12 @@ def _serve_forever(server, loop, ready, failure):
 class Session(object):
     """A running pydvma session: the served app plus its data.
 
-    Returned by :func:`launch`; not constructed directly. Usable as a
+    Returned by `launch`; not constructed directly. Usable as a
     context manager, which closes the server on exit.
 
     Args:
         server (pydvma.serve.BridgeServer): the running server, whose
-            :attr:`~pydvma.serve.BridgeServer.journal` holds the
+            `pydvma.serve.BridgeServer.journal` holds the
             authoritative session document.
         thread (threading.Thread): the daemon thread running it.
         loop (asyncio.AbstractEventLoop): that thread's event loop.
@@ -299,9 +299,9 @@ class Session(object):
 
         The generation belongs to the same read as the data, so a
         writer can hand it back to
-        :meth:`pydvma.journal.SessionJournal.set_doc` as
+        `pydvma.journal.SessionJournal.set_doc` as
         ``expect_generation`` and be refused if anything changed in
-        between. :attr:`data` is this without the bookkeeping.
+        between. `data` is this without the bookkeeping.
         """
         doc, captures, generation = self._server.journal.state()
         dataset = (container.load_bytes(doc) if doc
@@ -316,25 +316,30 @@ class Session(object):
 
         Materialised from the journal on EVERY access: the posted
         session document, with any captures logged since that post
-        merged in by :func:`_merge_dataset`. Nothing here is shared
+        merged in by `_merge_dataset`. Nothing here is shared
         with the app or the engine — mutating what you pull changes
-        nothing until you :meth:`push` it back, and the ids carried
+        nothing until you `push` it back, and the ids carried
         through the container round-trip are what make that push land
         in place.
 
-        An empty DataSet when the session has no document and no
-        pending captures yet. Still readable after :meth:`close` —
-        pulling your data out of a session you have finished with is
-        the point of the explicit handoff, and the journal outlives
-        the server thread that fed it.
+        Still readable after `close`: pulling your data out of a
+        session you have finished with is the point of the explicit
+        handoff, and the journal outlives the server thread that fed
+        it.
+
+        Returns:
+            dataset (DataSet): A new `DataSet` built from the journal on this
+                access: the posted session document plus any captures
+                logged since it was posted. Empty when the session has
+                no document and no pending captures yet.
         """
         return self._snapshot()[0]
 
     def push(self, data):
         """Hand data to the session; connected apps offer to reload.
 
-        Merges into the CURRENT session data (:attr:`data`) rather than
-        replacing it, by :func:`_merge_dataset`'s id rule — so pushing
+        Merges into the CURRENT session data (`data`) rather than
+        replacing it, by `_merge_dataset`'s id rule — so pushing
         back something you pulled and edited updates that item in
         place, while genuinely new items append.
 
@@ -351,24 +356,27 @@ class Session(object):
         generation counter, so nothing is lost to a race: if a capture
         lands, or the app's autosave posts, between the read and the
         write, the post is REFUSED and this retries from a fresh read
-        (up to :data:`PUSH_MAX_ATTEMPTS` times). Two concurrent pushes
+        (up to `PUSH_MAX_ATTEMPTS` times). Two concurrent pushes
         therefore serialise — one wins, the other re-merges on top of
         the winner's document — instead of one silently overwriting
         the other.
-
-        Raises ``TypeError`` if ``data`` is not a DataSet and is not
-        something ``DataSet.add_to_dataset`` recognises (which would
-        otherwise post an unchanged document and look like success),
-        ``RuntimeError`` if the session is closed, and ``RuntimeError``
-        if the journal kept changing under every attempt.
 
         Args:
             data (pydvma.datastructure.DataSet or a single data item):
                 what to hand over. Anything that is not already a
                 DataSet is wrapped in one, so a lone
-                :class:`~pydvma.datastructure.TimeData` (or any other
-                item ``DataSet.add_to_dataset`` accepts) works
-                directly.
+                `pydvma.datastructure.TimeData` (or any other
+                item ``DataSet.add_to_dataset`` accepts, or a
+                homogeneous list of them) works directly.
+
+        Raises:
+            TypeError: ``data`` is neither a DataSet nor something
+                ``DataSet.add_to_dataset`` recognises (which would
+                otherwise post an unchanged document and look like
+                success).
+            RuntimeError: The session is closed, or the journal kept
+                changing under every one of the `PUSH_MAX_ATTEMPTS`
+                attempts.
         """
         with self._close_lock:
             if self._closed:
@@ -399,12 +407,12 @@ class Session(object):
         A second call — from this thread or another — is a clean no-op
         rather than a second stop injected into a shutdown already in
         progress. Prints a WARNING if the thread has not finished
-        within :data:`SHUTDOWN_TIMEOUT_S`, in which case the port may
+        within `SHUTDOWN_TIMEOUT_S`, in which case the port may
         still be bound; the thread is a daemon, so it cannot keep the
         interpreter alive either way.
 
-        :attr:`data` keeps working afterwards (the journal is plain
-        memory); :meth:`push` does not, since there is no longer an
+        `data` keeps working afterwards (the journal is plain
+        memory); `push` does not, since there is no longer an
         app to notify.
         """
         with self._close_lock:
@@ -432,7 +440,7 @@ class Session(object):
 
 def launch(settings=None, open_browser=True, port=0, ui_dir=None,
            session_dir=None, recover=True):
-    """Start a pydvma session and return its :class:`Session` handle.
+    """Start a pydvma session and return its `Session` handle.
 
     Runs the same server as ``pydvma-serve`` — acquisition bridge,
     native ``/engine`` compute host, session journal, embedded UI — on
@@ -442,31 +450,21 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
 
     The default ``port=0`` takes an ephemeral port, so several sessions
     can run side by side; read the one actually bound from
-    :attr:`Session.url`. Printing that URL is how a session announces
+    `Session.url`. Printing that URL is how a session announces
     itself, matching ``pydvma-serve``'s startup line.
-
-    Raises ``ImportError`` naming ``pip install pydvma[serve]`` when the
-    optional server dependencies are absent — the retired ``dvma.Logger``
-    tombstone sends people straight here, and a base install would
-    otherwise fail deep inside the background thread with an opaque
-    ``RuntimeError`` about the server not starting. Raises
-    ``RuntimeError`` if the server does not bind within
-    :data:`STARTUP_TIMEOUT_S` — chained to the underlying error (an
-    ``OSError`` when an explicit ``port`` is already taken) when there
-    was one.
 
     Args:
         settings (pydvma.options.MySettings or None): acquisition
             settings the app opens with. Prefills Setup via ``/config``
-            (see :func:`_settings_to_config_json`) and supplies the
+            (see `_settings_to_config_json`) and supplies the
             default acquisition driver; ``None`` prefills nothing and
             leaves the driver at ``'auto'`` — a capture that names no
             device then records from the OS default input soundcard
             when there is one, else the mock generator (see
-            :func:`pydvma.serve.resolve_default_device`).
+            `pydvma.serve.resolve_default_device`).
         open_browser (bool): open the app in a browser tab (default
             True). Pass False for a headless or scripted launch — the
-            URL is still printed and on :attr:`Session.url`.
+            URL is still printed and on `Session.url`.
         port (int): TCP port to bind, or 0 (default) for an ephemeral
             one.
         ui_dir (str or pathlib.Path or None): built UI directory to
@@ -477,13 +475,25 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
         session_dir (pathlib.Path or str or None): where the journal's
             spill file lives and previous-run sessions are recovered
             from. Passed through to
-            :class:`~pydvma.serve.BridgeServer`; ``None`` means the
+            `pydvma.serve.BridgeServer`; ``None`` means the
             system temp dir. Tests and advanced users point this at a
             directory they control.
         recover (bool): offer a previous run's spill file for recovery
             in the app (default True). Passed through to
-            :class:`~pydvma.serve.BridgeServer`; False skips the
+            `pydvma.serve.BridgeServer`; False skips the
             startup scan entirely.
+
+    Returns:
+        session (Session): The handle for the running server. Its `url` is the
+            address actually bound.
+
+    Raises:
+        ImportError: The optional server dependencies are missing; the
+            message names ``pip install pydvma[serve]``.
+        RuntimeError: The server did not bind within
+            `STARTUP_TIMEOUT_S`. It is chained to the underlying error
+            when there was one (an ``OSError`` when an explicit ``port``
+            is already taken).
     """
     try:
         import websockets                              # noqa: F401

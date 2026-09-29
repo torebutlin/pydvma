@@ -99,21 +99,25 @@ def _try(callable_):
 def get_device_info(device_name):
     '''Query a live NI device's capabilities via nidaqmx.
 
-    Parameters
-    ----------
-    device_name : str
-        DAQmx device name, e.g. ``'Dev1'`` or ``'cDAQ1Mod1'``.
+    Args:
+        device_name (str): DAQmx device name, e.g. ``'Dev1'`` or
+            ``'cDAQ1Mod1'`` (a module, not the chassis, for a cDAQ).
 
-    Returns
-    -------
-    dict
-        Keys include ``name``, ``product_type``, ``product_category``
-        (as the ProductCategory enum member), ``ai_voltage_ranges`` and
-        ``ao_voltage_ranges`` as ``[(min, max), ...]`` lists,
-        ``ai_max_single_chan_rate`` / ``ai_min_rate`` /
-        ``ao_max_rate`` / ``ao_min_rate`` as floats (or None if the
-        module doesn't support that axis), plus any static notes from
-        the `QUIRKS` table.
+    Returns:
+        info (dict): Keys ``name``, ``product_type``,
+            ``product_category`` (the nidaqmx ``ProductCategory`` member),
+            ``ai_voltage_ranges`` and ``ao_voltage_ranges`` as
+            ``[(min, max), ...]`` lists, ``ai_max_single_chan_rate``,
+            ``ai_min_rate``, ``ao_max_rate`` and ``ao_min_rate`` as
+            floats (None where the device has no AI or no AO), and
+            ``ai_current_int_excit_discrete_vals``, the legal IEPE
+            excitation currents in amps (empty when IEPE is not
+            supported; ``[0.0, 0.002]`` on an NI 9234). Entries from the
+            `QUIRKS` table for this product type (terminal
+            configurations, sampling type, notes) are merged in.
+
+    Raises:
+        RuntimeError: nidaqmx is not installed.
     '''
     if nidaqmx is None:
         raise RuntimeError('nidaqmx is not installed')
@@ -199,28 +203,35 @@ def _pick_vmax(ranges, default):
 
 
 def suggest_ni_settings(device_index):
-    '''Return MySettings kwargs with safe defaults for an NI device.
+    '''Return MySettings keyword arguments with safe defaults for an NI device.
 
-    Picks conservative values that will not trigger DAQmx range /
-    rate errors out of the box: largest symmetric voltage range the
-    device reports, AI terminal config compatible with the module
-    (pseudo-diff for DSA, RSE otherwise), and a sample rate at 1/4 of
-    the lower of AI / AO max-rates.
+    Picks conservative values that will not trigger DAQmx range or rate
+    errors out of the box: the largest symmetric voltage range the
+    device reports (10 V for AI and 5 V for AO if it reports none), a
+    terminal configuration the module accepts (pseudo-differential on
+    the NI 9234, RSE otherwise), and a sample rate of a quarter of the
+    lower of the AI and AO maximum rates, capped at 12.5 kHz, raised to
+    the devices' minimum rates if needed and rounded to 100 Hz. On a
+    cDAQ chassis the first module with AI and the first with AO are
+    used.
 
-    Parameters
-    ----------
-    device_index : int
-        Index into the chassis-collapsed device list returned by
-        `_ni_backend.enumerate_devices`.
+    Args:
+        device_index (int): Index into the NI device list, in which a
+            cDAQ chassis and its modules count as one device (the order
+            shown by `list_available_devices`).
 
-    Returns
-    -------
-    dict
-        Keyword arguments for `MySettings(...)` — ``device_driver``,
-        ``device_index``, ``NI_mode``, ``VmaxNI``, ``output_VmaxNI``,
-        ``fs``, ``output_fs``, plus matching output_device_* fields.
-        Merge your own ``channels=N, stored_time=...,
-        pretrig_samples=...`` as needed.
+    Returns:
+        kwargs (dict): Keyword arguments for ``MySettings(...)``:
+            ``device_driver``, ``device_index``,
+            ``output_device_driver``, ``output_device_index``,
+            ``NI_mode``, ``VmaxNI``, ``output_VmaxNI``, ``fs`` and
+            ``output_fs``. Add your own ``channels=``,
+            ``stored_time=`` and so on when constructing.
+
+    Raises:
+        RuntimeError: nidaqmx is not installed, or no NI device is
+            found.
+        ValueError: ``device_index`` is out of range.
     '''
     if nidaqmx is None:
         raise RuntimeError('nidaqmx is not installed; pip install nidaqmx')

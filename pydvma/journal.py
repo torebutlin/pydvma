@@ -1,27 +1,27 @@
 # -*- coding: utf-8 -*-
 """The serve process's session store (native-engine stage 3).
 
-One :class:`SessionJournal` per :class:`pydvma.serve.BridgeServer`
+One `SessionJournal` per `pydvma.serve.BridgeServer`
 holds the AUTHORITATIVE session document — the same ``.dvma`` bytes the
 browser app autosaves — plus any captures that were born server-side
 since the last document post. Closing the tab therefore loses nothing:
-on reconnect the app asks via the ``journal_get`` op (:meth:`state` is
+on reconnect the app asks via the ``journal_get`` op (`state` is
 the server-side call it resolves to) and offers to restore.
 
 Writers:
 
 * the app's debounced autosave, arriving as a ``journal_set`` op on the
-  ``/engine`` socket (:func:`pydvma.engine_host.handle_connection`);
+  ``/engine`` socket (`pydvma.engine_host.handle_connection`);
 * the serve log path, registering each capture's ``.dvma`` bytes at
-  birth (:meth:`add_capture`) — belt-and-braces for a tab that closes
+  birth (`add_capture`) — belt-and-braces for a tab that closes
   inside the app's 2 s autosave debounce window;
-* :meth:`pydvma.session.Session.push` from a notebook kernel
+* `pydvma.session.Session.push` from a notebook kernel
   (``notify=True`` so connected apps reload).
 
 The clears-pending contract: a document post clears exactly those
 pending captures the document PROVABLY contains. Each capture's
 ``TimeData`` ``unique_id``s are read from its manifest at registration
-(:func:`pydvma.container.manifest_ids` — manifest only, no arrays), the
+(`pydvma.container.manifest_ids` — manifest only, no arrays), the
 posted document's are read the same way, and a pending capture is
 dropped only when its ids are a SUBSET of the document's. Anything the
 document does not contain stays pending.
@@ -42,23 +42,23 @@ that the world moved under them: a post replaces the WHOLE DOCUMENT, so
 a writer which read the journal, spent time
 merging, and then posted would silently discard any capture (or any
 other writer's post) that landed in between. Hence the
-:attr:`~SessionJournal.generation` counter — bumped under the lock by
-every :meth:`~SessionJournal.set_doc` AND every
-:meth:`~SessionJournal.add_capture`, and returned by
-:meth:`~SessionJournal.state` alongside the data it describes. Pass the
+`SessionJournal.generation` counter — bumped under the lock by
+every `SessionJournal.set_doc` AND every
+`SessionJournal.add_capture`, and returned by
+`SessionJournal.state` alongside the data it describes. Pass the
 generation you read back as ``set_doc(..., expect_generation=g)`` and
 the post is REFUSED (returns False, writes nothing, clears nothing) if
 anything changed meanwhile, so the caller can re-read and re-merge —
-see :meth:`pydvma.session.Session.push`. Writers that legitimately own
+see `pydvma.session.Session.push`. Writers that legitimately own
 the whole document (the app's own autosave, which serialises what it
 already holds) simply omit it and post unconditionally.
 
 Pending-captures budget: a document post is what NORMALLY bounds the
 pending list, but nothing forces one to ever land — a client that
 predates journal support (or simply never opens the app after logging)
-would otherwise let :meth:`add_capture` grow the list, and the bytes it
+would otherwise let `add_capture` grow the list, and the bytes it
 holds, without limit for as long as the server runs. So the pending list
-is ALSO capped at :data:`PENDING_CAPTURES_MAX_BYTES` total: every
+is ALSO capped at `PENDING_CAPTURES_MAX_BYTES` total: every
 ``add_capture`` that pushes the running total over the cap evicts
 OLDEST-first until back under it, or the list is empty — including the
 entry just added, if a single capture alone exceeds the whole budget.
@@ -71,8 +71,8 @@ Thread-safe (one lock around all state): writers arrive from the
 asyncio loop's executor threads, the bridge's log worker thread and the
 notebook kernel thread. Listeners are called OUTSIDE the lock, and a
 raising listener never blocks the others. The one exception is the
-``bytes(...)`` coercion of an incoming payload in :meth:`set_doc` /
-:meth:`add_capture`: that copy runs BEFORE the lock is taken, so a large
+``bytes(...)`` coercion of an incoming payload in `set_doc` /
+`add_capture`: that copy runs BEFORE the lock is taken, so a large
 capture's memcpy never blocks another thread's unrelated journal call
 for its duration — only the (cheap) list/dict mutation itself happens
 under the lock.
@@ -80,7 +80,7 @@ under the lock.
 The spill file is best-effort crash insurance only — an ordinary
 ``.dvma`` the user can open by hand if the serve process dies. On the
 NEXT serve start it is offered for recovery in the app
-(:meth:`adopt_recovered`); it is never silently auto-loaded. It mirrors
+(`adopt_recovered`); it is never silently auto-loaded. It mirrors
 the DOCUMENT only, never pending captures — a crash artifact reflects
 the last posted document, and anything captured after that is not in
 it. Those captures are covered once the app's next autosave lands
@@ -90,10 +90,10 @@ Best-effort has a real Windows failure mode: an external scanner
 (Defender real-time protection, the search indexer) transiently holds
 the just-written temp file or the spill target open without delete
 sharing, and ``os.replace`` fails with a sharing violation — measured
-at a 37 % per-replace rate on a loaded bench. :meth:`_spill` therefore
+at a 37 % per-replace rate on a loaded bench. `_spill` therefore
 retries the replace over a short ladder (~0.2 s worst case) before
 giving up, and every spill that STILL fails end-to-end increments
-:attr:`~SessionJournal.spill_failures`, so a stale spill is at least
+`SessionJournal.spill_failures`, so a stale spill is at least
 observable rather than silent.
 """
 import os
@@ -112,7 +112,7 @@ _BYTES_TYPES = (bytes, bytearray, memoryview)
 #: all) to a fixed, modest amount of server memory.
 PENDING_CAPTURES_MAX_BYTES = 256 * 1024 * 1024
 
-#: Sleep after each failed ``os.replace`` attempt in :meth:`_spill`
+#: Sleep after each failed ``os.replace`` attempt in `_spill`
 #: (seconds); one final attempt follows the last sleep. Windows sharing
 #: violations from an external scanner holding the temp file or the
 #: spill target are millisecond-scale transients, so the ladder front-
@@ -130,7 +130,7 @@ def _replace_with_retry(src, dst):
     process holds open without ``FILE_SHARE_DELETE`` fails with a
     sharing-violation ``PermissionError`` — Defender's real-time scan
     of a freshly written temp file does exactly this under load. Each
-    failed attempt sleeps the next :data:`_SPILL_REPLACE_RETRY_DELAYS`
+    failed attempt sleeps the next `_SPILL_REPLACE_RETRY_DELAYS`
     entry and retries; the attempt after the final sleep propagates its
     ``OSError`` to the caller.
 
@@ -181,7 +181,7 @@ class SessionJournal(object):
         spill_path (pathlib.Path or str or None): file to mirror the
             current document into on every update (best-effort; errors
             are swallowed). ``None`` disables spilling; it can be set
-            later with :meth:`set_spill_path` (a server on an
+            later with `set_spill_path` (a server on an
             ephemeral port only knows its identity after binding).
     """
 
@@ -202,21 +202,20 @@ class SessionJournal(object):
 
         Only the captures this document PROVABLY contains are cleared:
         the document's ``unique_id`` set is read from its manifest
-        (:func:`pydvma.container.manifest_ids`) and a pending capture is
+        (`pydvma.container.manifest_ids`) and a pending capture is
         dropped only when its own ids are a subset of it, so a capture
         that landed after the poster serialised its document — or one
         belonging to a different tab — survives the post and is still
-        offered on the next :meth:`state`. A capture with no readable
+        offered on the next `state`. A capture with no readable
         ids is cleared by any post (see the module docstring's
         clears-pending contract).
 
-        Returns True when the document was written, and False only when
-        an ``expect_generation`` was supplied and no longer matches — in
-        which case NOTHING happens: the document is untouched, pending
+        A refused post (``expect_generation`` supplied and no longer
+        matching) does NOTHING: the document is untouched, pending
         captures are untouched, no spill is written and no listener
         fires. Callers that pass ``expect_generation`` must handle the
-        False by re-reading :meth:`state` and re-merging (see
-        :meth:`pydvma.session.Session.push`).
+        False by re-reading `state` and re-merging (see
+        `pydvma.session.Session.push`).
 
         Args:
             doc_bytes (bytes, bytearray, or memoryview): the full
@@ -224,18 +223,23 @@ class SessionJournal(object):
                 ``.dvma`` file).
             notify (bool): also call every registered listener after
                 the replace. Used by
-                :meth:`pydvma.session.Session.push` so connected apps
+                `pydvma.session.Session.push` so connected apps
                 reload; the app's own autosave posts use the default
                 ``False`` (silent — the app already has what it just
                 posted).
             expect_generation (int or None): the
-                :attr:`generation` this document was built from. When
+                `generation` this document was built from. When
                 given, the post is refused unless the journal is still
                 at that generation, so a capture or another writer's
                 post that landed in between can never be silently
                 overwritten (see the module docstring). ``None`` (the
                 default) posts unconditionally — right for a writer
                 that owns the whole document already.
+
+        Returns:
+            written (bool): True when the document was written; False
+                only when ``expect_generation`` was given and no longer
+                matches.
         """
         _check_bytes(doc_bytes, 'doc_bytes')
         # Coerce BEFORE taking the lock: a whole session document can be
@@ -270,9 +274,9 @@ class SessionJournal(object):
         document containing it is posted (module docstring's contract).
 
         The capture's identity — its ``TimeData`` ``unique_id``s, read
-        from the manifest by :func:`pydvma.container.manifest_ids` and
+        from the manifest by `pydvma.container.manifest_ids` and
         stored beside the bytes — is what a later
-        :meth:`set_doc` matches against to decide whether that document
+        `set_doc` matches against to decide whether that document
         already holds this capture. Reading it here, once, keeps the
         cost off every subsequent post.
 
@@ -282,9 +286,9 @@ class SessionJournal(object):
         app's next autosave lands.
 
         If appending pushes the pending list's total size over
-        :data:`PENDING_CAPTURES_MAX_BYTES`, the OLDEST pending entries
+        `PENDING_CAPTURES_MAX_BYTES`, the OLDEST pending entries
         are evicted (silently — there is no error, no truncation
-        signal, just fewer captures on the next :meth:`state`) until
+        signal, just fewer captures on the next `state`) until
         the total is back under the cap or the list is empty. Eviction
         is strictly oldest-first with no special case for the entry
         just appended: a single capture that alone exceeds the whole
@@ -310,16 +314,25 @@ class SessionJournal(object):
             self._generation += 1
 
     def state(self):
-        """Current ``(doc_bytes_or_None, [capture_bytes, ...], generation)``.
+        """Return a consistent snapshot of the journal.
 
-        The list is a fresh list of the capture BYTES (the per-capture
-        id sets kept alongside them are the journal's own bookkeeping
-        and never leave it) — mutating it never touches the journal.
-        The document is returned by reference, but ``bytes`` is
-        immutable so that is equivalent to a copy for callers. The
-        generation describes THIS snapshot: hand it back as
-        :meth:`set_doc`'s ``expect_generation`` to post an update that
-        refuses to clobber anything that landed since.
+        The capture list is a fresh list of the capture BYTES (the
+        per-capture id sets kept alongside them are the journal's own
+        bookkeeping and never leave it), so mutating it never touches
+        the journal. The document is returned by reference, but
+        ``bytes`` is immutable so that is equivalent to a copy for
+        callers.
+
+        Returns:
+            doc (bytes or None): The posted session document, or None if
+                nothing has been posted yet.
+            captures (list[bytes]): The ``.dvma`` bytes of each capture
+                registered since the last post and not yet in a posted
+                document, oldest first.
+            generation (int): The generation this snapshot describes.
+                Hand it back as `set_doc`'s ``expect_generation`` to
+                post an update that refuses to clobber anything that
+                landed since.
         """
         with self._lock:
             return (self._doc, [data for data, _ids in self._captures],
@@ -329,12 +342,15 @@ class SessionJournal(object):
     def generation(self):
         """How many writes this journal has accepted (read-only).
 
-        Starts at 0 and increments on every accepted :meth:`set_doc`
-        and every :meth:`add_capture` — see the module docstring. A
+        Starts at 0 and increments on every accepted `set_doc`
+        and every `add_capture` — see the module docstring. A
         refused ``set_doc`` does not increment it. Read it through
-        :meth:`state` when the value must match the data you read;
+        `state` when the value must match the data you read;
         this property is for tests and diagnostics, where a bare
         counter is enough.
+
+        Returns:
+            generation (int): The number of accepted writes so far.
         """
         with self._lock:
             return self._generation
@@ -342,10 +358,10 @@ class SessionJournal(object):
     def add_listener(self, cb):
         """Register a zero-arg callable invoked on ``notify`` updates.
 
-        Returns an unsubscribe callable. Listener exceptions are
+        Listener exceptions are
         swallowed (one broken listener must not silence the rest). An
         update already in flight when ``unsubscribe()`` returns may
-        still call ``cb`` once more — :meth:`set_doc` snapshots the
+        still call ``cb`` once more — `set_doc` snapshots the
         listener list before releasing the lock, so a race between an
         in-progress notify and a concurrent unsubscribe is possible;
         consumers must tolerate one extra call.
@@ -353,6 +369,10 @@ class SessionJournal(object):
         Args:
             cb (callable): zero-argument callable to invoke on every
                 ``notify=True`` update, until unsubscribed.
+
+        Returns:
+            unsubscribe (callable): A zero-argument function that
+                removes ``cb``; calling it more than once is harmless.
         """
         with self._lock:
             self._listeners.append(cb)
@@ -379,7 +399,12 @@ class SessionJournal(object):
 
     @property
     def spill_path(self):
-        """Where the document is mirrored, or None (read-only)."""
+        """Where the document is mirrored (read-only).
+
+        Returns:
+            spill_path (pathlib.Path or str or None): The spill file, as
+                it was set, or None when spilling is disabled.
+        """
         with self._lock:
             return self._spill_path
 
@@ -388,14 +413,18 @@ class SessionJournal(object):
         """How many spills failed end-to-end and were swallowed
         (read-only).
 
-        Counts every :meth:`_spill` that had a document and a path but
+        Counts every `_spill` that had a document and a path but
         could not land it on disk — temp-file creation, the write, or
         an ``os.replace`` still failing after
-        :func:`_replace_with_retry`'s whole ladder. A non-zero count
-        means the spill file may be STALE relative to :meth:`state`;
+        `_replace_with_retry`'s whole ladder. A non-zero count
+        means the spill file may be STALE relative to `state`;
         the next successful spill overwrites it, but nothing rewinds
         this counter. Disabled spilling (no path) and empty journals
         do not count — those are no-ops, not failures.
+
+        Returns:
+            spill_failures (int): The number of failed spills since
+                construction.
         """
         with self._spill_lock:
             return self._spill_failures
@@ -414,9 +443,9 @@ class SessionJournal(object):
             adopted (bool): True if ``path`` was actually adopted
                 (readable and non-empty), False on the no-op paths
                 above. Callers that try several candidates in order
-                (see :func:`pydvma.serve._adopt_previous_session`) use
+                (see `pydvma.serve._adopt_previous_session`) use
                 this to know whether to keep trying the next one,
-                rather than checking :meth:`recovered` for a change.
+                rather than checking `recovered` for a change.
         """
         try:
             with open(path, 'rb') as fh:
@@ -431,7 +460,13 @@ class SessionJournal(object):
         return True
 
     def recovered(self):
-        """The adopted previous-run document bytes, or None."""
+        """Return the recovery offer adopted by `adopt_recovered`.
+
+        Returns:
+            doc (bytes or None): The previous run's document bytes, or
+                None when nothing was adopted or the offer was
+                discarded.
+        """
         with self._lock:
             return self._recovered
 
@@ -469,15 +504,15 @@ class SessionJournal(object):
         lock, so whichever spill runs last always writes the latest
         doc. The write itself goes to a temporary file in the same
         directory, then ``os.replace``s over ``spill_path`` — the same
-        tempfile-then-rename idiom as :func:`pydvma.container.save` —
+        tempfile-then-rename idiom as `pydvma.container.save` —
         so a crash mid-write can never truncate or tear the previous
-        good copy. The replace runs through :func:`_replace_with_retry`
+        good copy. The replace runs through `_replace_with_retry`
         because on Windows an external scanner transiently holding the
         temp file or the target makes it fail spuriously. Best-effort
         beyond that: any ``OSError`` (including the temp file's own
         creation, e.g. a missing directory) is swallowed after cleaning
         up any partial temp file, and counted in
-        :attr:`spill_failures` so a stale spill is observable.
+        `spill_failures` so a stale spill is observable.
         """
         with self._spill_lock:
             with self._lock:
