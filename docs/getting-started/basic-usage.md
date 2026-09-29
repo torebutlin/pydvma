@@ -98,9 +98,9 @@ The settings you will use most:
 | `stored_time` | length of each recording, s | `2` |
 | `device_driver` | `'soundcard'` or `'nidaq'` | `'soundcard'` |
 | `device` | device name, e.g. `'Scarlett 2i2'` (or `device_index`); `None` means the default input | `None` |
-| `pretrig_samples` | samples kept from before the trigger; `None` records immediately | `None` |
+| `pretrig_samples` | samples kept from before the trigger, at most `chunk_size` (default 100); `None` records immediately | `None` |
 | `pretrig_threshold`, `pretrig_channel` | trigger level and channel | `0.05`, `0` |
-| `output_channels` | generate an output signal on this many channels | `None` |
+| `output_channels` | number of output channels, used when you pass an `output=` signal to `log_data` | `1` |
 
 `dvma.list_available_devices()` shows what you can put in `device`, and
 `dvma.suggest_ni_settings(index)` returns safe settings for an NI device.

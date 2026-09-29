@@ -1,79 +1,94 @@
 # Analysis views
 
-Once you have data — recorded, or loaded from a file — the web logger
-gives you four analysis stages: **Time**, **Frequency**, **TF** and
-**Sonogram**. Each has a small control card and a shared, fully
-interactive plot. The maths is pydvma's own analysis core (running in a
-pyodide worker in the browser, or in the `pydvma serve` process), so
-results match the Python `calculate_*` functions exactly.
+Once you have data, recorded or loaded from a file, the web logger has
+four analysis stages: **Time**, **Frequency**, **TF** and **Sonogram**.
+Each has a small control card above a shared, interactive plot. The
+plot's tray, legend, zoom toolbar and frequency navigator are described in
+[Working with plots](working-with-plots.md).
 
-Most analysis cards start with a **dataset** selector — **All sets** or a
-single set. When *All sets* is selected and the sets disagree on a
-setting, the control shows a `–mixed–` state.
+The calculations are pydvma's own analysis code, so the results match the
+Python `calculate_*` functions. They run in the browser, or in Python on
+your machine when the app is
+[served locally](running-locally.md#where-the-analysis-runs).
 
-While a computation is in flight a small pulsing **computing…** chip
-appears in the header (calc buttons also grey out). The very first
-calculation of a browser session shows **starting engine…** instead
-while the in-browser Python engine boots — that one-off wait is normal.
+Most cards start with a **dataset** selector: **All sets** or a single
+set. When **All sets** is chosen and the sets disagree on a setting, the
+control shows `–mixed–`; the first change you make applies to every set.
+
+While a calculation runs, a **computing…** chip appears in the header.
+The first calculation of a session may show **starting engine…** while
+the analysis engine loads, which happens once.
+
+!!! tip "A typical impact test"
+    1. On **Time**, check the record. If **Clean Impulse** is offered,
+       press it.
+    2. On **TF**, set **in** to the force channel, keep **avg** on
+       *within set*, and press **Calc TF**. Check the coherence.
+    3. On **Fit**, place the frequency window on a peak and press
+       **Fit 1**. See [Modal fitting](modal-fitting.md).
 
 ## Time
 
-The **Time** stage inspects the raw time series.
+The **Time** stage shows the recorded time series.
 
-- **input channel** — the channel used by Clean Impulse.
-- **x-range** — **Full** (fit all data) or **First 0.2 s**.
-- **Clean Impulse** — zeroes the pre-impulse noise and windows the tail
-  of an impact response (the same operation as
-  [`clean_impulse`](../user-guide/analysis.md#impulse-response-cleaning)).
-  It is a **toggle**: the raw recording is kept, so clicking again
-  restores it (and back — the clean is cached, never re-run on its own
-  output). Every result you have already computed (FFT / PSD / TF /
-  sonogram) recomputes to match whichever copy is applied. Saving writes
-  the applied copy; the other copy lives only in the session.
-- **Resample** — change the highlighted set's sample rate after the
-  fact. Pick another set to **match** (the dropdown lists each set with
-  its rate — handy when measurements logged at different rates need a
-  common fs) or enter a **custom** rate. Downsampling uses the same
-  noise-reducing anti-alias filter the logger uses whenever it
-  [resamples a capture](acquisition.md#capture-rate-and-delivered-rate)
-  (96 dB stopband at the new Nyquist, zero-phase); upsampling is
-  band-limited (sinc) interpolation, which — unlike linear
-  interpolation — invents no
-  frequency content above the original band and passes the recorded
-  band untouched. Existing results recompute at the new rate; the
-  success message offers a one-step **Undo**, and saving writes the
-  resampled data.
+- **input channel**: the channel that **Clean Impulse** checks and
+  cleans.
+- **x-range**: **Full** fits all the data; **First 0.2 s** shows the
+  start of the record.
+- **Clean Impulse** keeps the input (force) channel up to just after
+  the hammer pulse and fades it to zero from there, so noise or a second
+  hit on that channel doesn't reach the transfer function. The response
+  channels are not changed. The button appears only when the input
+  channel looks like an impulse, meaning at most 25 % of its energy is in
+  the second half of the record.
+  Otherwise a note says why it is hidden. It is a toggle (**Clean
+  Impulse: on** when applied): the raw recording is kept, so pressing it
+  again restores it. Any FFT, TF or sonogram you have already computed
+  recomputes to match the copy that is showing. **Save Dataset** writes
+  the copy that is showing.
+- **Resample** changes the highlighted set's sample rate. Choose another
+  set to **match** (the list shows each set's rate) or type a custom rate
+  in Hz, then press **Resample**. Going down uses the same anti-alias
+  filter as the logger's
+  [capture-rate conversion](acquisition.md#capture-rate-and-delivered-rate):
+  96 dB stopband at the new Nyquist frequency, zero phase. Going up uses
+  band-limited interpolation, which adds no content above the original
+  band. Results you have computed recompute at the new rate, and the
+  message that follows offers **Undo**.
 
 ## Frequency
 
 The **Frequency** stage computes spectra.
 
-- **quantity** — **FFT**, **Power**, **PSD**, or **CSD**.
-- **window** — **hann** (default), **hamming**, **flattop**, or **none**.
-- **averaging** — shown for **Power**, **PSD** and **CSD** only (a single
-  FFT is not averaged); this is the resolution control described
-  [below](#resolution-and-averaging).
-- **Calc FFT / Calc power / Calc PSD / Calc CSD** computes the result. Once
-  a result exists it recomputes live as you change settings.
+- **quantity**: **FFT**, **Power**, **PSD** or **CSD**.
+- **window**: **hann** (the default), **hamming**, **flattop** or
+  **none**.
+- **averaging**: shown for **Power**, **PSD** and **CSD** (one FFT is not
+  averaged). This is the [resolution control](#resolution-and-averaging).
+- **CSD pair**: for **CSD**, choose channels **X** and **Y**. A set needs
+  at least two channels. Changing the pair redraws without recomputing.
+- **Calc FFT**, **Calc power**, **Calc PSD** or **Calc CSD** computes the
+  result. Once a result exists it recomputes as you change settings.
 
-!!! info "Power vs PSD — which to read"
-    **Power** and **PSD** are the same computation shown as two different
-    quantities, and picking the right one matters.
+!!! info "Power or PSD: which to read"
+    **Power** and **PSD** come from one calculation, shown two ways.
 
-    **Power** is the power **spectrum**: each bin holds the mean-square
-    amplitude in that bin, in `unit²` (scipy's `scaling='spectrum'`), so
-    the axis reads e.g. `Power spectrum ((m/s²)²)`. A discrete tone reads
-    correctly here — a sine of amplitude $A$ peaks at
+    **Power** is the power **spectrum**. Each bin holds the mean-square
+    amplitude in that bin, in `unit²`, so the axis reads for example
+    `Power spectrum ((m/s²)²)`. Read a discrete tone here: a sine of
+    amplitude $A$ peaks at
 
     $$
     \frac{A^{2}}{2}
     $$
 
-    whatever the resolution. Broadband noise does not: its level scales
-    with Δf, because each bin collects a slice of the band.
+    whatever the resolution. Broadband noise does not read correctly
+    here, because its level grows with Δf: each bin collects a slice of
+    the band.
 
-    **PSD** is the power spectral **density**, `unit²/Hz`, obtained by
-    dividing by the analysis window's effective noise bandwidth
+    **PSD** is the power spectral **density**, in `unit²/Hz`. It is the
+    power spectrum divided by the analysis window's effective noise
+    bandwidth
 
     $$
     \mathrm{ENBW} = f_s\,\frac{\sum_k w_k^{2}}{\left(\sum_k w_k\right)^{2}}
@@ -82,263 +97,179 @@ The **Frequency** stage computes spectra.
     S_{xx}(f) = \frac{P_{xx}(f)}{\mathrm{ENBW}}.
     $$
 
-    A broadband floor read off this does **not** move when you change the
-    resolution, which is why noise floors are quoted per hertz. A discrete
-    tone, conversely, has no meaningful density — its apparent level there
-    depends on the window.
+    Read a noise floor here: it does not move when you change the
+    resolution. A discrete tone has no meaningful density, because its
+    apparent level depends on the window.
 
-    (The Live scope's PSD is a third, separate density computed in the
-    browser from the live stream; it has always been a true density.)
+    The Live stage's PSD is a separate density, computed from the live
+    input in its own units and not calibrated (see
+    [Live monitoring](live-monitoring.md)).
 
-    !!! warning "Changed from earlier releases"
-        This view used to offer one mode, called **PSD**, whose axis said
-        `unit²/Hz` but whose numbers were the power **spectrum** — so a
-        noise floor read off it was overstated by the ENBW and moved with
-        the resolution. A saved file that selected that mode reopens on
-        **Power**, which is the quantity it was showing.
+    **CSD** plots the cross-spectrum magnitude `|S_xy|` of the chosen
+    pair, using the convention `S_xy = E[X*·Y]`. It carries
+    `unit_i · unit_j`, so calibration is applied to it. If no auto-power
+    is available the plot falls back to the coherence, which is
+    dimensionless and never calibrated.
 
-    **CSD** plots the cross-spectrum magnitude `|S_xy|` for the selected
-    channel pair, reconstructed as `sqrt(Cxy · Pxx_i · Pxx_j)`. It carries
-    `unit_i · unit_j` and is calibrated accordingly. Where no auto-power is
-    available the view falls back to bare **coherence**, which is a
-    normalised ratio — dimensionless, and deliberately left
-    **uncalibrated**. For the full matrix, use the Python
-    [`calculate_cross_spectrum_matrix`](../user-guide/analysis.md#cross-spectrum-analysis).
-
-## TF — transfer functions
+## TF: transfer functions
 
 The **TF** stage estimates frequency response functions.
 
-- **in** — the input (reference) channel. The transfer function is
-  formed as **output / input**: the input channel is dropped and each
-  remaining channel becomes an `out/in` line. (This is an automatic
-  convention, not a selectable H1/H2 estimator.)
-- **window** — hann (default) / hamming / none.
-- **avg** — **none**, **within set** (frame-average one recording), or
-  **across sets** (ensemble-average several recordings). The
-  [resolution control](#resolution-and-averaging) appears when
-  *within set* is selected.
-- **coherence** — overlay the coherence function (on by default). Its
-  right-hand axis gets its own control in the plot toolbar.
-- **plot type** — **Mag (dB)**, **Phase**, **Bode** (magnitude over
-  phase, stacked), **Real**, **Imag**, or **Nyquist**.
-- **Calc TF** computes; it re-estimates live once a TF exists.
+- **in**: the input (reference) channel. Each other channel becomes an
+  `out/in` line: output divided by input. The estimator is fixed; there
+  is no H1/H2 choice.
+- **window**: **none**, **hann** (the default) or **hamming**.
+- **avg**: **none**, **within set** (the default: average frames of one
+  recording) or **across sets** (average several recordings).
+- **averaging — live**: the [resolution control](#resolution-and-averaging),
+  active when **avg** is *within set*.
+- **coherence**: overlays the coherence function (on by default).
+- **plot type**: **Mag (dB)**, **Phase**, **Bode** (magnitude over
+  phase), **Real**, **Imag** or **Nyquist**.
+- **Calc TF** computes the result. Once a TF exists it re-estimates as
+  you change settings.
 
-Good coherence (near 1) means low noise and a linear, causal response;
-dips flag noise, non-linearity, or a poor reference — the same
-interpretation as in the [Python guide](../user-guide/analysis.md#coherence-function).
-Coherence tells you *that* something other than a clean linear response
-is going on, but not which of noise or nonlinearity it is. To separate
-the two explicitly — and to get a noise floor and a distortion level as
-actual numbers — run a
-[Schoukens best-linear-approximation measurement](nonlin.md) on the
-**Nonlin** stage instead.
+**across sets** averages every set that has time data. The input
+channel, window and sample rate come from the set that has this option
+chosen, and the result appears on the first set that qualifies. Sets with
+one channel, or a different sample rate, are left out, and a note names
+them.
+
+Coherence near 1 means a clean, linear, low-noise response. Dips point to
+noise, nonlinearity or a poor reference, as in the
+[Python guide](../user-guide/analysis.md#coherence-function). Coherence
+needs averaging: with **avg** set to **none** it is exactly 1 and tells
+you nothing. It also cannot tell noise from nonlinearity. To separate the
+two, and to get both as numbers, run a
+[best-linear-approximation measurement](nonlin.md) on the **Nonlin**
+stage.
 
 ### Scaling: x(iω) and Best Match
 
-The TF card carries a small **scaling** group — the web-logger equivalent
-of the old Qt logger's Scaling tool.
+The **scaling** group on the TF card holds two tools.
 
-- **x(iω)^ p** (`p` in −2 … +2) — differentiate or integrate the
-  displayed spectrum by multiplying it by `(iω)^p`: `+1` converts
-  displacement → velocity → acceleration, `−1` integrates back. The axis
-  unit label follows the derivative ladder (`m` → `m/s` → `m/s²`).
+- **x(iω)^**, with a power from −2 to +2, multiplies the displayed
+  spectrum by `(iω)^p`. `+1` turns displacement into velocity and
+  velocity into acceleration; `−1` integrates. The axis unit follows
+  (`m`, `m/s`, `m/s²`).
 
-    This is a **non-destructive, per-set display transform** — it changes
-    only what is plotted, never the stored arrays, so a set that
-    recomputes (or is re-fitted) is unaffected. It differs from Python
-    `multiply_by_power_of_iw`, which mutates the `FreqData`/`TfData` in
-    place. The power applies to the **FFT** view and every **TF** plot
-    type (not the power spectrum or CSD), is saved per set in the `.dvma`
-    file, and does **not** feed the modal fit —
-    [modal fitting](modal-fitting.md) applies its own measurement type
-    instead. (The fit *does* see the channel **calibration**, so its modal
-    constants come back in engineering units; the x(iω) display power is
-    the part it ignores.)
+    This changes only what is plotted. It is applied per set, never
+    alters the stored arrays, and is saved with the set in the `.dvma`
+    file. It applies to the **FFT** view and to every TF plot type, not
+    to **Power**, **PSD** or **CSD**. It does not feed the
+    [modal fit](modal-fitting.md), which uses its own **TF type**.
 
-- **Best match** — pick a **ref ch** (a channel of the focused set) and
-  press **Best match** to rescale every TF so the family best overlays
-  that reference channel over the currently visible frequency window (the
-  Qt `best_match` maths: an RMS-magnitude ratio with a least-squares
-  sign). The factors are written through the ordinary
-  [calibration](calibration.md) path — a per-channel `channel_cal_factors`
-  multiplier — so they persist in the `.dvma` file and show up (and are
-  editable) in the Calibrate dialog afterwards. A toast reports the applied
-  per-set factors.
+- **Best match** rescales every TF so that the sets best overlay one
+  reference channel over the frequency window you are showing. Choose
+  the channel in **ref ch** (a channel of the highlighted set), then
+  press **Best match**. It uses every channel of every set, whether or
+  not the lines are showing. A message reports the factors it applied.
 
-    Because it writes the *same* slot a transducer calibration lives in,
-    Best match **replaces** any calibration those channels already had,
-    while leaving their engineering units untouched. It therefore asks
-    before running, naming the measurements whose calibration would be
-    replaced, and the result toast carries an **Undo** that restores the
-    previous factors and units — see
+    The factors are stored as each channel's calibration, so **Best
+    match** replaces any calibration those channels had, and leaves their
+    units as they were. It therefore asks before it runs, naming the
+    measurements that would lose a calibration, and the message that
+    follows offers **Undo**. See
     [Best match replaces the calibration](calibration.md#best-match-replaces-the-calibration).
 
-    Unlike the [modal fit](modal-fitting.md#choosing-which-lines), Best
-    match always uses **all** channels of each set — it is a calibration
-    operation, not a fit, so hiding a line in the legend or tray does
-    not exclude it.
-
-!!! note "Nyquist and Bode navigation"
-    In **Nyquist** view the card exposes **fmin/fmax** fields linked to
-    the shared TF frequency range, and the plot carries the
-    [frequency navigator](#frequency-navigator) strip — drag its band (or
-    either edge) to scrub the same shared range live, with one undo step
-    per gesture. The stacked **Bode** panes share the frequency axis;
-    each pane has its own y-axis control (the phase pane offers ±180° or
-    auto).
-
-## Frequency navigator
-
-On the **Frequency** and **TF** views, the plot toolbar's navigator button
-(the strip icon) opens a slim strip above the plot: the magnitude of the
-visible lines over the whole measured bandwidth, with a highlighted band
-showing the current frequency window. Drag the band to skim along
-frequency (the plot follows live), drag its edges to resize, drag on empty
-strip to draw a fresh window, or type exact limits in the min–max fields.
-Double-click the strip to reset the window. One drag is one undo step.
-
-When the measurement carries more bandwidth than you care about, click
-**⤢** to **scope** the strip to the current window: the strip re-scales to
-span just that region, and a thin ribbon appears above it showing where the
-scope sits in the full bandwidth. Drag the ribbon's band to move or resize
-the scope.
-
-That button is a **toggle**. Once scoped it becomes **⤡** and lights up;
-click it again to clear the scope and re-expand the strip to the full
-measured bandwidth. (Double-clicking the ribbon does the same.) The scope
-only changes what the strip spans — it never moves the window, feeds any
-calculation, or appears in undo history (like other view settings, it
-lasts for the current session and resets on reload).
-
-The **‹ ›** buttons jump the window to the previous/next spectral peak,
-keeping the window's width (from a wide-open window, the first press
-narrows to a tenth of the strip so the jump is meaningful). Peaks are
-detected on the strip's own curves, so what you see is what it steps
-between.
-
-The navigator opens automatically in the [Fit stage](modal-fitting.md) and
-on the Nyquist view; the toolbar button shows or hides it anywhere else,
-and remembers your choice per view.
+!!! note "Nyquist and Bode plots"
+    On a **Nyquist** plot the card shows **fmin** and **fmax** boxes for
+    the shared frequency window, and the
+    [frequency navigator](working-with-plots.md#frequency-navigator)
+    opens automatically. The two panes of a **Bode** plot share a
+    frequency axis and each has its own y control.
 
 ## Sonogram
 
-The **Sonogram** stage shows how frequency content evolves over time.
-Two methods are available via the **STFT | CWT** switch:
+The **Sonogram** stage shows how frequency content changes over time.
+The **method** switch chooses **STFT** (the default) or **CWT**.
 
-- **STFT** (default) — the classic short-time Fourier transform.
-  **resolution — {nFFT} pt** is a slider (64 to 4096-point window)
-  plus an exact nFFT box: a longer window gives finer frequency
-  resolution and coarser time resolution, and vice versa.
-- **CWT** — a continuous wavelet transform (complex Morlet). Instead
-  of one fixed window it uses log-spaced frequencies whose time/
-  frequency trade-off adapts per band — better at separating close
-  low-frequency modes than any single STFT window. Controls:
-  **wavelet Q (w0)** — a slider (4–64, the exact box accepts up to
-  128) for the wavelet's own bandwidth: higher w0 = more cycles under
-  the envelope = finer *frequency* resolution at the cost of coarser
-  *time* resolution — this is the true resolution knob;
-  **voices/octave** (how densely the log-frequency ladder is sampled) —
-  defaults to **auto**, which keeps the density matched to the wavelet
-  Q (a high-Q wavelet's narrow bands need a comparably dense grid, so
-  auto tracks ≥ 0.6·w0 up the ladder, never below 16); pick an explicit
-  number to pin it, or *auto* to resume following; and an optional
-  **frequency range** (min / max in Hz). Either box works on its own —
-  the side you leave blank keeps its automatic value. The range applies
-  to the **damping fit** as well as the picture, and on a long record
-  that matters: the wavelet fit holds one complex number per frequency
-  per time sample, so a multi-second capture at full rate over the whole
-  band can ask for more memory than the engine allows, and the fit stops
-  with a sizing error naming the remedy. The ceiling depends on which
-  engine answered the calculation — 0.75 GiB on the in-browser (pyodide)
-  engine, which is what Pages and JupyterLite always use; 8 GiB when the
-  app is served by `pydvma-serve` and running the native engine (see
-  [Where the analysis runs](running-locally.md#where-the-analysis-runs)).
-  Narrowing the range is that remedy either way — it drops frequency
-  rows *and* lets the fit thin its time axis. (It is also the honest
-  analysis: a 30-second record has little to say about a 19 kHz mode's
-  decay.) The magnitude
-  scale matches the STFT image, so the two methods read comparably.
-  The heat map is drawn on the wavelet's **native log-spaced grid**, so
-  the frequency axis switches to **log** with the method (see below) to
-  show its full low-frequency detail.
+- **dataset** and **channel**: unlike the other cards there is no **All
+  sets** option. A sonogram is one channel of one set, and the list holds
+  only sets with time data. If there are none, **Calc Sonogram** is
+  disabled with a note.
+- **dynamic range**: the dB span of the colour map, 30 to 120 dB. It is
+  unused, and disabled, when the plot's colour is set to linear.
+- **Calc Sonogram** computes the heat map. Once a sonogram exists it
+  recomputes as you change the channel, method or window settings.
 
-Common controls:
+With **STFT**, **resolution** is a slider (64 to 4096 points) plus an
+exact **nFFT** box. A longer window gives finer frequency resolution
+and coarser time resolution.
 
-- **dataset** and **channel** selectors. Unlike the other cards, the
-  sonogram has **no *All sets* option** — it is a single-set,
-  single-channel view, so you pick exactly one set and one channel. The
-  dropdown lists only **time-bearing** sets: a loaded spectrum or
-  transfer function on its own has no time signal to transform, so those
-  sets are excluded. If nothing time-bearing is loaded, **Calc
-  Sonogram** is disabled with a note explaining why.
-- **dynamic range** — the dB span of the colour map (30–120 dB). It
-  applies to the **dB** colour mode; in **linear** colour mode (below)
-  the heat is normalised 0 → peak instead, so this control is disabled.
-- **frequency axis** and **colour** live on the plot toolbar, not the
-  card. The **y — lin | log** switch draws the frequency axis linearly
-  or on decades; **log** stretches the low-frequency detail and is the
-  natural pairing with the CWT's log grid, so switching **method** sets
-  the matching default (STFT → lin, CWT → log) and your own choice from
-  the toolbar then stands until the next method switch. (The x axis stays
-  time — a log time axis is not meaningful.) The **colour — dB | lin**
-  switch maps the heat by magnitude in dB (default, over the dynamic
-  range span) or by linear magnitude (0 → peak). Both choices persist
-  per view with the rest of the axis state.
-- **Fit damping** — opens the **interactive damping panel** below the
-  sonogram, with two methods on a **peaks | bands** toggle:
+With **CWT**, a complex Morlet wavelet transform, the time and frequency
+resolution adapt across frequency. It separates close low-frequency modes
+better than any single STFT window.
 
-    - **peaks** — finds spectral peaks at the fit's *start time*, fits
-      each band's free decay (damping from the log-magnitude slope,
-      frequency from the phase slope), and draws the decay-fit chart:
-      measured `Re log(S)` as × markers with the fitted line per mode
-      and an `f Hz, Qn=…` legend. The left chart shows the start-slice
-      spectrum with a **draggable threshold line** (also a number field;
-      blank = automatic) — only peaks above it become candidate modes.
-      It works with whichever sonogram method is selected — the CWT
-      variant can resolve close modes the STFT merges. Browser front-end
-      to
-      [`calculate_damping_from_sono`](../user-guide/modal-analysis.md#damping-from-free-decay-sonogram-method)
-      and its CWT counterpart `calculate_damping_from_cwt`.
-    - **bands** — band-passes the decay into standard bands (**all**
-      broadband, **octave**, **1/3 octave** or **1/10 decade**), forms
-      each band's Schroeder energy-decay curve, and fits the acoustic
-      decay metrics: **EDT**, **T20**, **T30**, **T60** (T30-preferred)
-      and the equivalent band-centred **Qn**. The chart overlays each
-      band's EDC with its dashed T60 fit line; a `—` in the table means
-      that band's decay range was too small to fit (not an error).
-      Front-end to `calculate_damping_by_band`.
+- **wavelet Q (w0)**: a slider from 4 to 64, with a box that accepts up
+  to 128. A higher value gives finer frequency resolution and coarser time
+  resolution. This is the main resolution control.
+- **voices / octave**: how densely the log-spaced frequency grid is
+  sampled. The default, **auto**, follows the wavelet Q (at least 0.6 ×
+  w0, and never below 16). Choose a number to fix it.
+- **freq range — Hz**: optional minimum and maximum. Either box works on
+  its own; a blank one stays automatic. The range applies to the damping
+  fit as well as the picture.
 
-    Both methods share the **start (s)** control — a number field
-    (blank = inferred from the pretrigger) *and* a draggable **start
-    line** on the sonogram itself, so you choose where in time the free
-    decay begins. Every control re-fits live.
+The CWT is drawn on its own log-spaced grid, so the frequency axis
+switches to **log** when you choose it. Change the axis with **y lin /
+log** on the plot toolbar; **colour dB / lin** chooses how the heat is
+coloured (see [Working with plots](working-with-plots.md#the-zoom-toolbar)).
 
-    On wide screens the panel sits in a column to the **right** of the
-    sonogram with the charts stacked; click a chart (or its ⤢ button)
-    to **expand it to fill the plot area** and click again to pop it
-    back. On narrow screens the panel docks below the sonogram. Every
-    chart has a **save** button — it exports a PNG styled exactly like
-    the main figures, to the same place (working folder or Downloads) —
-    and the band-metrics table saves as **CSV**.
+!!! note "Long records and memory"
+    A CWT damping fit holds one complex number per frequency per time
+    sample, so a long, full-rate record over the whole band can need more
+    memory than the analysis engine allows. The fit then stops with a
+    message naming the remedies, such as narrowing **freq range**. The limit is 0.75 GiB
+    in the browser and 8 GiB when the app is
+    [served locally](running-locally.md#where-the-analysis-runs).
 
-- **Calc Sonogram** computes the heat-map.
+A sonogram or damping calculation that runs longer than about three
+seconds shows a progress bar with a **Stop** button. **Stop** ends the
+calculation and restarts the analysis engine, which takes a few seconds;
+press **Calc Sonogram** again afterwards.
+
+### Fit damping
+
+**Fit damping** opens the damping panel beside the sonogram (below it on
+a narrow screen). Choose the method with **peaks | bands**.
+
+- **peaks** finds spectral peaks at the fit's start time, fits each
+  peak's free decay, and estimates a damping value **Qn** for each. The
+  left chart shows the spectrum at the start time with a **threshold**
+  line you can drag (or type; blank is automatic): only peaks above it
+  are fitted. The other chart shows the measured decay of each mode with
+  its fitted line and an `f Hz, Qn=…` legend. It works with either
+  sonogram method, and the CWT can separate modes that the STFT merges.
+- **bands** filters the decay into bands (**all (broadband)**,
+  **octave**, **1/3 octave** or **1/10 decade**), forms each band's
+  Schroeder energy-decay curve, and reports **EDT**, **T20**, **T30**
+  and **T60** and the band's **Qn**. A `—` in the table means that band's
+  decay range was too small to fit.
+
+Both methods share **start (s)**, a number box (blank lets pydvma infer
+it from the pretrigger) and a draggable **start line** on the sonogram.
+Together they set where the free decay begins. The fit updates as you
+change any control.
+
+On a wide screen the panel's charts stack in a column beside the
+sonogram. Click a chart, or its **⤢** button, to expand it over the plot
+area, and click again to restore it. Each chart has a **save** button that
+writes a PNG styled like the main figures, delivered the same way as
+**Save Figure**, and the bands table saves as CSV.
 
 ## Resolution and averaging
 
-The **Power**, **PSD**, **CSD** and averaged-**TF** cards share one resolution
-control. It exposes four *coupled* numbers — change any one and the rest
-update — plus a slider:
+The **Power**, **PSD** and **CSD** cards, and the **TF** card with
+*within set* averaging, share one resolution control. Its four numbers
+are linked: change one and the others follow. There is also a slider.
 
-| Field | Meaning |
-| ----- | ------- |
-| **N frames** | number of (50 %-overlapped) averaging frames |
-| **frame s** | length of one frame, in seconds |
-| **nFFT** | samples per FFT |
-| **Δf (Hz)** | frequency resolution |
+- **N frames**: the number of averaging frames, overlapped by 50 %.
+- **frame s**: the length of one frame in seconds.
+- **nFFT**: the samples per FFT.
+- **Δf (Hz)**: the frequency resolution.
 
-They are tied together by the same relations pydvma uses internally
-(50 % overlap):
+They are related by
 
 ```text
 frame_length = duration / (N_frames * 0.5 + 0.5)
@@ -346,77 +277,41 @@ nFFT         = round(frame_length * fs)
 df           = fs / nFFT
 ```
 
-So **more frames -> shorter frames -> coarser Δf but a smoother
-(lower-variance) estimate**, and fewer frames -> finer Δf but a noisier
-estimate. This is the classic Welch trade-off; pick the balance that
-suits your measurement. The slider covers the sensible range for the
-set's sample rate and duration; the boxes accept values beyond it.
+More frames means shorter frames, coarser Δf and a smoother estimate.
+Fewer frames means finer Δf and a noisier estimate. This is the usual
+Welch trade-off. The slider covers the sensible range for the set's
+sample rate and duration, and the boxes accept values beyond it.
 
-## Working with the plot
+## Axis labels and units
 
-The controls below are shared across every analysis view.
+Axis labels show the units of what you are plotting. On a calibrated
+channel they show the engineering unit, for example `Amplitude (m/s²)`,
+`Power spectrum ((m/s²)²)` or `|H| ((m/s²)/N)`. Power quantities carry
+the square of the unit, a CSD carries the product of the two channels'
+units, and a transfer function carries output over input.
 
-### The dataset tray
+An uncalibrated channel shows the units of the stored samples. If the
+capture is genuinely in volts (an NI capture, or a soundcard whose full
+scale is known) the labels read `Amplitude (V)`, `V²`, `V²/Hz` and
+`V/V`. If it is in fractions of full scale, the label has no unit. See
+[What calibration changes](calibration.md#what-calibration-changes).
 
-The **tray** (left, wide layout) lists every dataset with a colour-coded
-channel stack, name, duration and per-channel sparklines.
+## From Python
 
-- **All / None / Solo** show, hide, or isolate lines; **‹ ›** step which
-  set is highlighted (or which channel, when only one set is loaded).
-- With a **subset of lines** selected (some on, some off), **‹ ›**
-  instead shift the *whole selection* one step, wrapping at the ends.
-  Two hand-picked lines stay a pair as they walk the channels, and a
-  measured channel plus its fit line cycle together — a quick way to
-  compare each channel against its fit in turn. Measured sets and fit
-  overlays shift independently: a selected line that is a whole
-  (single-channel) set steps to the next *set*, and a visible fit line
-  rides along rather than being dropped.
-- Each set name is a **tri-state** toggle — click cycles the whole set
-  **on -> faded -> off**; double-click (or **F2**) renames it.
-- Expand a set to toggle individual channels (each channel line is also
-  tri-state: on / faded / off).
-- The channel-index chips across the top toggle a given channel column
-  across *all* sets at once.
-- **cal** (on hover) opens the [calibration dialog](calibration.md); **×**
-  deletes the set.
+Each stage has a Python equivalent, so you can repeat or script any
+calculation. See the [Python analysis guide](../user-guide/analysis.md).
 
-### The legend
+| In the app | In Python |
+| ---------- | --------- |
+| **Clean Impulse** | [`clean_impulse`](../user-guide/analysis.md#impulse-response-cleaning) |
+| **Resample** | `resample_to_fs` in `pydvma.analysis` |
+| **FFT** | `calculate_fft` |
+| **Power**, **PSD**, **CSD** | [`calculate_cross_spectrum_matrix`](../user-guide/analysis.md#cross-spectrum-analysis), or `calculate_cross_spectra_averaged` for the averaged result. The auto-power is `Pxy[i, i]`, and dividing it by `enbw_hz` gives the PSD |
+| **TF** | `calculate_tf`, or `calculate_tf_averaged` for **across sets** |
+| **x(iω)^** | `multiply_by_power_of_iw`, which changes the data in place |
+| **Best match** | `best_match` |
+| **Sonogram** | `calculate_sonogram` (STFT), `calculate_cwt` (CWT) |
+| **Fit damping**, **peaks** and **bands** | [`calculate_damping_from_sono`](../user-guide/modal-analysis.md#damping-from-free-decay-sonogram-method) and `calculate_damping_from_cwt`; `calculate_damping_by_band` |
 
-A draggable **legend** floats over the plot. Clicking a legend row cycles
-that line on -> faded -> off (mirroring the tray); switched-off lines stay
-listed, struck-through, so you can bring them back. Drag it anywhere, or
-dock it via the toolbar. With many lines (more than ten) the legend lays
-itself out in two or three balanced columns, and a small corner button
-(appears on hover) switches to a **compact mode**: a grid of colour-coded
-dots — one row per set, one column per channel — where each dot clicks
-exactly like its full row and the full label shows as a tooltip.
-
-### The zoom toolbar
-
-The toolbar sits in a slim strip **above the plot frame** (it never
-covers the data area).
-
-- **Box zoom** / **Pan** modes; **↶ Undo** / **↷ Redo** step through the
-  view history.
-- **Auto X** / **Auto Y** return that axis to *automatic* fitting — not
-  a one-shot fit: the axis keeps re-fitting as data arrives or lines
-  are toggled, until the next explicit zoom pins it. An automatic y
-  fits only the samples inside the current x window (so a zoomed
-  stretch fills the plot), and only the lines currently visible.
-- Axes re-fit themselves when it makes sense without being asked: new
-  data landing in a view (a capture, a loaded file, a first-time
-  calculation) re-fits y — and x too if the view was empty — and
-  switching a view's units (dB ↔ linear, magnitude ↔ phase,
-  FFT ↔ Power ↔ PSD) drops the stale y range. A zoom you made deliberately is
-  respected otherwise: recomputing an existing result keeps your
-  window, and an x-only box zoom no longer quietly freezes y.
-- Axis-scale toggles appear where they apply: **x lin/log** on frequency
-  and TF views, **y dB/lin** on magnitude / power / PSD views, and on the
-  **Sonogram** a frequency-axis **y lin/log** plus a heat **colour
-  dB/lin** switch (see the Sonogram section).
-- The expander opens a popover with **manual axis limits** (applied live)
-  and **legend placement** (a 2×2 corner grid plus an *Outside* option).
-
-Next: [Noise & nonlinearity separation](nonlin.md),
-[Modal fitting](modal-fitting.md), or
-[saving and exporting](export.md).
+Next: [Noise and nonlinearity separation](nonlin.md),
+[Modal fitting](modal-fitting.md), or [saving and exporting](export.md).

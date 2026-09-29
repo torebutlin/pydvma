@@ -1,176 +1,151 @@
-# National Instruments hardware over the bridge
+# National Instruments Hardware
 
-National Instruments DAQ hardware cannot be reached from a web browser
-directly — there is no browser API for it. The web logger drives NI
-hardware through the local **`pydvma serve` bridge**: a small Python
-process on the lab PC that owns the `nidaqmx` driver and streams data
-to the browser over a WebSocket. See
-[Acquisition and setup](acquisition.md) for how to start it, and
-[Installation](../getting-started/installation.md) for the extras.
+A browser can't reach NI hardware. The web logger drives it through
+pydvma running on the lab PC, where `pydvma-serve` (or `dvma.launch`)
+serves the app and talks to the NI-DAQmx driver for it. The same
+recording code runs when you record from Python, so this page applies to
+both.
 
-This page collects the practical NI details you need when acquiring
-through the bridge. It applies equally to the desktop Python interface
-(the same recorder code runs underneath) — see
-[Data acquisition](../user-guide/acquisition.md) for the scripting API.
+## Getting started
 
-## Requirements
+1. Install the NI-DAQmx driver and pydvma's NI support. NI-DAQmx runs on
+   Windows and Linux only. See
+   [Installation](../getting-started/installation.md#national-instruments-hardware).
+2. Start the app on the lab PC with `pydvma-serve --open`, or
+   `dvma.launch()` from a notebook. See [Running locally](running-locally.md).
+3. In **Setup**, pick your NI device from **input device**. NI devices
+   are listed with any soundcards. Press **Full ▾** to reveal the
+   **NI-DAQ** section, described [below](#ni-daq-controls-in-setup).
 
-- Windows or Linux (NI-DAQmx has **no macOS driver**).
-- The **NI-DAQmx driver** installed from National Instruments.
-- The Python bindings: `pip install "pydvma[ni,serve]"` (or
-  `pydvma[full]`).
-
-Start the bridge with the NI driver and open the app:
-
-```bash
-pydvma-serve --driver nidaq --open
-```
-
-When the bridge reports NI hardware, the app's **Setup** stage shows an
-extra **NI** group with the controls below, and the device picker lists
-your NI devices alongside any soundcards.
+`pydvma-serve --list-devices` shows the NI devices pydvma can see, and
+`pydvma-serve --driver nidaq --open` makes an NI device the app's
+**Default**. From Python, `dvma.list_available_devices()` lists the
+devices, and `dvma.suggest_ni_settings(index)` returns safe settings for
+one.
 
 ## Devices and how they differ
 
-pydvma has been verified end-to-end (over the bridge, on real hardware)
-with three representative devices. They behave differently in ways that
-affect your measurements:
+| Device | Sampling | Analogue output | IEPE | Notes |
+| ------ | -------- | --------------- | ---- | ----- |
+| **USB-6003** | multiplexed | software-timed, up to about 5 kS/s | no | Low cost. One converter scans the channels. No anti-alias filter. |
+| **USB-6212** | multiplexed | hardware-timed | no | One converter scans the channels. No anti-alias filter. |
+| **cDAQ-9174 chassis** | simultaneous | hardware-timed | yes, on the 9234 | Delta-sigma (DSA) modules with a converter for each channel. Examples: the NI 9234 (4 inputs, IEPE, pseudo-differential only, AC coupled with a high-pass near 0.5 Hz) and the NI 9260 (2 BNC outputs, up to ±4.24 V). |
 
-| Device | Sampling | AO timing | IEPE | Notes |
-| ------ | -------- | --------- | ---- | ----- |
-| **USB-6003** | Multiplexed (inter-channel skew) | Software-timed | No | Low-cost; single ADC scans the channel list, so channels are sampled slightly staggered. AO max ~5 kS/s. |
-| **USB-6212** | Multiplexed (inter-channel skew) | Hardware-timed | No | M-series; supports shared-clock AI/AO sync. |
-| **cDAQ-9174 chassis** | **Simultaneous** (DSA) | Hardware-timed | **Yes** (9234) | Delta-sigma modules with per-channel ADCs/DACs: every channel is sampled at the same instant, no skew. Example modules: NI 9234 (4-ch AI, IEPE), NI 9260 (2-ch BNC AO). |
+**Multiplexed or simultaneous** matters for phase-sensitive work such as
+transfer functions and mode shapes. On the multiplexed USB devices the
+channels are sampled one after another, which leaves a small fixed time
+offset between them, and the maximum sample rate is shared between the
+channels you record. A DSA module samples every channel at the same
+instant. It also filters against aliasing in the converter itself, at a
+setting tied to the sample rate, while the USB-6003 and USB-6212 have no
+such filter. The [digital low-pass](acquisition.md#digital-low-pass)
+gives them one.
 
-**Multiplexed vs simultaneous** matters for phase-sensitive work
-(transfer functions, mode shapes): on the multiplexed USB devices there
-is a small, fixed inter-channel time skew; on the DSA chassis there is
-none.
+A cDAQ chassis appears as a single device. Your channel count runs
+across its input modules in slot order, and output-only modules are
+skipped, so 8 channels on a chassis with two 4-channel input modules
+spans both. The
+[Python guide](../user-guide/acquisition.md#cdaq-chassis-with-multiple-modules)
+has the channel table.
 
-### Addressing a cDAQ chassis
+## Sample rate ladders and coercion
 
-A CompactDAQ chassis is addressed as a **single device**, not one per
-module. The requested channel count is consumed across the chassis's AI
-modules in slot order, and AO-only modules in the middle are skipped
-when counting AI channels. So on a chassis with two 4-channel AI
-modules, asking for 8 channels spans both modules automatically, and an
-accelerometer on the second module's `ai1` lands at capture **column 5**
-— the same index used for its IEPE current, sensitivity and units. Full
-details and the channel-mapping table are in the
-[Python acquisition guide](../user-guide/acquisition.md#cdaq-chassis-with-multiple-modules).
+Measurement hardware often runs only a fixed set of sample rates. A DSA
+module such as the 9234 runs at 51.2 kHz divided by a whole number from
+1 to 31, so you can ask for a rate it doesn't have. The USB-6003 and
+USB-6212 divide their clocks finely enough to count as continuous, but
+still round a little: the 6003 runs a 48 kHz request at 48019.2 Hz.
 
-## Sample-rate ladders and coercion
+A DSA module moves an off-ladder request to the nearest rate it has. On
+a 9234, 8000 Hz runs at 8533.33 Hz and 5000 Hz at 5120 Hz. pydvma reads
+back the rate the hardware is really running and uses it for every time
+and frequency axis, so your data is scaled correctly. Setup and Acquire
+show a note such as `device runs at 8533.3 Hz (requested 8000)`.
 
-Discrete rate ladders are the norm in measurement hardware, not an NI
-quirk: an audio interface runs 44.1 kHz and up in fixed steps, and
-delta-sigma modules (like the NI 9234) only run at rates on their
-internal divider ladder. The multiplexed USB devices (6212/6003) are the
-exception — their timebase divides finely enough to treat as continuous,
-though it still coerces slightly (the 6003's 80 MHz timebase turns a
-48 kHz request into 48019.2 Hz).
+The **sample rate** field in Setup takes any rate you type. The arrow
+beside it lists common rates within the device's limits; on a DSA module
+not every one is a rate it runs.
 
-What differs is what happens to an off-ladder request. A DSA module
-**coerces it to the nearest legal value** — requesting 8000 Hz on a 9234
-can yield 8533.33 Hz, and 5000 Hz can yield 5120 Hz. pydvma adopts the
-*true* hardware rate: the recorder reads back the actual sample-clock
-rate and uses it for every time and frequency axis, so your data is
-correctly scaled even when it differs from what you asked for. In the
-app, **Setup** and **Acquire** show a note when the rate has been
-coerced, and the fs picker constrains to the selected device's ladder to
-reduce surprises. The output side is handled the same way: a DSA AO
-module (the NI 9260) coerces `output_fs` onto its own ladder too, so
-the stimulus — generated at the rate you asked for — is **resampled
-onto the rate the AO really runs** before it is played. A 30 s sweep
-requested at 8000 Hz on a 9234/9260 chassis therefore still sweeps its
-band over 30 s at 8533.33 Hz, rather than playing 6.7 % fast and
-stopping 2 s early. A sound card, whose ladder is published, is handled
-the other way round: pydvma captures at a rate the hardware really runs
-and resamples to the rate you asked for — see
-[Capture rate and delivered rate](acquisition.md#capture-rate-and-delivered-rate).
+The output side works the same way. A DSA output module such as the
+9260 also rounds its rate onto its own ladder, so pydvma resamples your
+stimulus onto the rate the module really runs. A 30 s sweep therefore
+still lasts 30 s.
 
 !!! tip
-    Pick a rate from the device's ladder in the first place and the
-    coercion never happens. If you must hit an exact arbitrary rate on NI
-    hardware, a multiplexed device (USB-6212/6003) gets closest.
+    Pick a rate the module runs and nothing is rounded. If you need an
+    exact arbitrary rate, a USB-6212 or USB-6003 gets closest.
 
-## Oversampling: which rule each device follows
+A soundcard is handled the other way round: pydvma captures at a rate
+the hardware runs and resamples to yours. See
+[Capture rate and delivered rate](acquisition.md#capture-rate-and-delivered-rate).
 
-The [digital low-pass](acquisition.md#digital-low-pass) captures above
-your fs and resamples down. How far above depends on whether the
-converter anti-aliases in silicon, which splits the NI devices:
+## NI-DAQ controls in Setup
 
-- The **9234 is delta-sigma**, so its anti-alias filter is inherent and
-  locked to the converter rate. Content above the capture Nyquist is
-  gone before the ADC and capturing faster rejects nothing extra, so it
-  follows the same `'lowest'` rule as an audio interface: the lowest
-  available rate at or above 2.56 × fs.
-- The **USB-6003 and 6212 have no anti-alias filter at all**, so a high
-  capture rate is their only alias protection. They default to
-  `'highest'` — as fast as the device will go. On these multiplexed
-  devices the published maximum is the *aggregate* rate across the
-  channel list, so pydvma divides it by the channel count to get the
-  per-channel ceiling.
+Setup shows these in its **NI-DAQ** section, under **Full ▾**, whenever
+NI hardware is available.
 
-`MySettings(oversample='lowest'|'highest')` overrides the default either
-way — `'highest'` on a 9234 still buys roughly 10·log₁₀(M) dB of
-broadband-noise process gain, at the cost of the data volume.
+- **terminal configuration** offers **default**, **RSE**, **NRSE** and
+  **diff**. **default** is RSE. If the device can't do the mode you
+  choose, pydvma uses one it can and prints a note in the terminal where
+  `pydvma-serve` is running; the app does not show it. A 9234 supports
+  only pseudo-differential, which pydvma then uses, so leave it at
+  **default**.
+- **NI voltage range (±V)** sets the **in** range and the **out** range,
+  both 5 V to start with. Each is limited to the device's real range,
+  shown beside the fields as `rail in ±… out ±… V`. The 9260 tops out at
+  ±4.24 V, below the 5 V start, so its output range is set to that, with
+  a note.
+- **IEPE off** or **IEPE 2 mA**, described [below](#iepe-excitation).
 
-## Terminal configuration
+The input range is the full scale of the input, and a smaller range
+gives finer resolution. The hardware only has certain ranges, though,
+and rounds your request up to one it has: a 9234 is fixed at ±5 V
+whatever you enter, and a USB-6212 asked for ±1 V runs at ±2 V. pydvma
+reads back the range the device is really using, and the level meters
+and the clip warning judge against it.
 
-The **NI** group exposes the input terminal configuration. The legal
-options depend on the module:
+## IEPE excitation
 
-- Multiplexed devices support **RSE** (referenced single-ended,
-  default), **NRSE** and **differential**.
-- **DSA modules (9234) are pseudo-differential only.** If a
-  configuration a module cannot support is requested, pydvma falls back
-  to the module's supported configuration (with a note) rather than
-  crashing — the app surfaces the effective mode.
+A DSA module with built-in excitation, the 9234, can power IEPE/ICP
+accelerometers directly. Choose **IEPE 2 mA** for the sensors, or **IEPE
+off**. Those are the only two currents a 9234 accepts. Switching it on
+puts the inputs into AC coupling and adds about 2 seconds to the first
+capture while the sensors' DC bias settles.
 
-## Voltage ranges and output rails
+!!! warning "The app's IEPE switch applies to every channel"
+    **IEPE 2 mA** powers all the channels you record. Forcing excitation
+    current into a channel that has no IEPE/ICP sensor, such as a
+    charge amplifier's output, a signal generator or a loopback from an
+    output, can damage what is connected. The app has no per-channel switch, and a list given to
+    `dvma.launch` or `pydvma-serve --settings` is cut to its first
+    entry, which then applies to every channel.
 
-- **Input range** (`VmaxNI`, default ±5 V) is the AI full-scale. Pick
-  the smallest range that covers your signal for the best resolution;
-  DAQmx rejects samples outside the range.
-- **Output rail** (`output_VmaxNI`) is the AO full-scale. Some modules
-  have a hard rail **below** the default — the NI 9260, for instance,
-  is limited to ±4.24 V, which is less than the default 5 V. The bridge
-  reports each device's real `ai_vmax` / `ao_vmax`, and the app clamps
-  the input-range and output-amplitude controls to those rails, so you
-  cannot ask for a voltage the hardware will refuse.
+    If some channels carry IEPE sensors and others don't, record from
+    Python with one current for each channel, here IEPE on channels 0
+    and 1 only:
 
-## IEPE / ICP excitation (DSA only)
+    ```python
+    settings = dvma.MySettings(
+        device_driver='nidaq', channels=3,
+        iepe_excit_current_A=[0.002, 0.002, 0.0],
+    )
+    ```
 
-DSA modules with built-in excitation (the 9234) can power IEPE/ICP
-accelerometers directly. In the **NI** group you enable IEPE per
-channel; the 9234 accepts exactly **0 mA (off)** or **2 mA**.
+    Then save the result with `dvma.save_data` and open the file in the
+    app. The
+    [worked example](../user-guide/acquisition.md#worked-example-iepe-accelerometers-on-a-cdaq)
+    goes through a complete recording with calibration.
 
-!!! warning "Only enable IEPE where an ICP/IEPE sensor is wired"
-    Forcing excitation current into a voltage/charge input (a force
-    hammer, a signal generator, or a loopback to an AO output) can
-    damage it. Leave every non-ICP channel **off**. Enabling a channel
-    switches it to AC coupling and adds a ~2 s bias-settle on the first
-    capture while the sensor's DC bias stabilises.
+## Output and trigger
 
-The scripting equivalent and a full worked recipe (IEPE accelerometers
-plus a force hammer on a cDAQ, with per-channel calibration) are in the
-[Python acquisition guide](../user-guide/acquisition.md#iepe-icp-excitation-ni-dsa-modules).
+An output stimulus plays from the device's analogue outputs during the
+capture, and is limited to the output range above. A pretrigger catches
+transients. See [Output stimulus](acquisition.md#output-stimulus) and
+[Pretrigger](acquisition.md#pretrigger).
 
-## Output stimulus and pretrigger
+## If a capture has gaps
 
-Through the bridge the app can play an **output stimulus** (sine sweep,
-white/uniform noise, or Gaussian noise) during a capture and can **arm
-a pretrigger** to catch transients — see
-[Acquisition and setup](acquisition.md). On the DSA chassis the sweep
-plays from the 9260 AO into the structure while the 9234 captures the
-response; a requested stimulus frequency above Nyquist (`fs/2`) is
-rejected with a clear message. Pretrigger crossings land at exactly the
-requested pre-trigger sample count on all verified devices.
-
-## What runs where
-
-Everything on this page needs the **`pydvma serve` bridge**, because it
-needs the native NI driver. The no-install browser modes (the Pages app
-and JupyterLite) can analyse NI data you have already saved, but they
-cannot acquire from NI hardware — only a local Python process can. See
-[the three modes](index.md) for the full picture.
+If the computer falls behind the hardware, the app pins a **capture
+integrity** message after the capture. The data has gaps, and transfer
+functions and coherence computed from it can't be trusted, so record it
+again. See [Capture integrity](../user-guide/acquisition.md#capture-integrity).

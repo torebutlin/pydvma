@@ -51,9 +51,8 @@ covers the install options.
   the quick start, and Python basics
 - **[Web Logger](web-logger/index.md)**: the browser app, stage by stage
 - **[Python Interface](user-guide/acquisition.md)**: acquisition, analysis
-  and modal fitting from code
-- **[API Reference](api/analysis.md)**: every public function and class
-- **[Examples](examples/basic.md)**: complete worked measurements
+  and modal fitting from code, with [worked examples](examples/basic.md)
+- **[API Reference](api/session.md)**: every public function and class
 
 Coming from the old desktop Qt logger? It was removed in 2.0.0; see
 [From the Qt logger](web-logger/migration.md).

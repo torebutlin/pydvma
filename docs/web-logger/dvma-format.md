@@ -1,77 +1,60 @@
 # The `.dvma` file format
 
-`.dvma` is pydvma's native save format (the default since version 1.5).
-Everything the web logger and the Python interface save — time series,
-spectra, transfer functions, sonograms, modal fits, calibration and
-units — round-trips through it. It is a small, documented, language-
-neutral container, which is exactly why the browser app can open and
-write your data without waking the Python engine.
+`.dvma` is pydvma's own save format. Everything the web logger and the
+Python interface save (time series, spectra, transfer functions,
+sonograms, modal fits, calibration and units) goes into it, and it
+reopens in either.
 
-## Why not the old `.npy` pickle?
+It is a plain zip archive that any language can read. Opening one never
+runs code, so `.dvma` files are safe to share and to open in the browser.
 
-Files saved by pydvma ≤ 1.4.0 were a NumPy pickle of the live Python
-objects (`np.save(..., allow_pickle=True)`). That format is:
+## What is inside
 
-- **single-language** — only Python can read it;
-- **unversioned** — no way to detect or migrate a schema change;
-- **a code-execution risk** — unpickling can run arbitrary code, so a
-  file is only safe to open if you trust whoever made it; and
-- **coupled to the code layout** — the pickle stores class module
-  paths, so renaming a module breaks every old file.
-
-`.dvma` fixes all four. Loading a `.dvma` file executes no code, so it
-is safe to share and to open in the browser.
-
-!!! success "Legacy files still load — forever"
-    pydvma still reads legacy `.npy` pickle files saved by version
-    1.4.0 and earlier. Both the Python `load_data()` and the browser
-    app's file loader detect the format automatically. In the browser,
-    a legacy `.npy` is decoded by the pyodide engine (which understands
-    the pickle); a modern `.dvma` is read directly in JavaScript. See
-    [Saving and exporting](export.md) and
-    [From the Qt logger](migration.md).
-
-## What is inside a `.dvma` file
-
-A `.dvma` file is an ordinary **zip archive** containing a
-`manifest.json` plus one plain `.npy` array file (written with
-`allow_pickle=False`) per array attribute:
+A `.dvma` file is an ordinary zip archive with one `manifest.json` and
+one plain NumPy `.npy` file for each array. The members are compressed
+with DEFLATE.
 
 ```text
-manifest.json                    # the schema (below)
-arrays/0000_time_axis.npy        # one member per array attribute
+manifest.json
+arrays/0000_time_axis.npy
 arrays/0000_time_data.npy
 arrays/0001_freq_axis.npy
 arrays/0001_freq_data.npy
 ...
 ```
 
-You can unzip it with any zip tool and read the arrays with any NumPy
-`.npy` parser — no pydvma required. The zip members use DEFLATE
-compression transparently.
+Unzip it with any zip tool and read the arrays with any `.npy` reader.
+No pydvma is needed:
 
-## The manifest schema (format version 1)
+```python
+import io, json, zipfile
+import numpy as np
 
-`manifest.json` — not the Python object graph — is the contract. Its
-top level is:
+with zipfile.ZipFile('session.dvma') as z:
+    manifest = json.loads(z.read('manifest.json'))
+    member = manifest['items'][0]['arrays']['time_data']
+    time_data = np.load(io.BytesIO(z.read(member)))
+```
+
+## The manifest
+
+`manifest.json` describes the file. Its top level is:
 
 ```json
 {
   "format": "dvma-dataset",
   "format_version": 1,
-  "pydvma_version": "<version that wrote the file>",
+  "pydvma_version": "2.5.0",
   "storage": "npy",
   "items": [ ... ]
 }
 ```
 
-- `format` / `format_version` — identify the container; a reader
-  refuses a `format_version` newer than it understands rather than
-  silently misreading it.
-- `pydvma_version` — the version that **wrote** the file (resaving an
-  old file records the new writer).
-- `storage` — `"npy"` today; a versioned extension point reserved for
-  a future chunked/HDF5 backend for very large captures.
+- `format` and `format_version` identify the file. A reader refuses a
+  `format_version` newer than it understands rather than misreading it.
+- `pydvma_version` is the version that wrote the file. Saving an old
+  file again records the newer version.
+- `storage` is `"npy"`: the arrays are `.npy` members.
 
 Each entry in `items` is one data object:
 
@@ -80,81 +63,99 @@ Each entry in `items` is one data object:
   "kind": "TimeData",
   "arrays": { "time_axis": "arrays/0000_time_axis.npy",
               "time_data": "arrays/0000_time_data.npy" },
-  "meta":   { "units": ["g", "N"], "channel_cal_factors": {"__array__": [10.0, 434.78]},
-              "test_name": "impact_01", "timestamp": {"__datetime__": "..."}, ... },
-  "settings": { ... }
+  "meta":   { "units": ["m/s2", "N"],
+              "channel_cal_factors": {"__array__": [10.0, 434.78]},
+              "test_name": "impact_01", ... },
+  "settings": { ... },
+  "ui": { ... }
 }
 ```
 
-- **`kind`** is the class name in `pydvma.datastructure`: one of
-  `TimeData`, `FreqData`, `CrossSpecData`, `TfData`, `SonoData`,
-  `ModalData`, `MetaData`.
-- **`arrays`** maps each array attribute to its zip member. Absent
-  arrays (e.g. a `TfData` with no coherence, or a fresh `ModalData`
-  whose model list is empty) are simply omitted.
-- **`meta`** holds the scalar metadata — including **`units`** and
-  **`channel_cal_factors`**, the calibration state described in
-  [Calibration and units](calibration.md), plus `test_name`,
-  `timestamp`/`timestring`, and traceability ids (`unique_id`,
-  `id_link`).
-- **`settings`** is the item's `MySettings` as a plain dict (or
-  `null`).
+- **`kind`** says what the item is (table below).
+- **`arrays`** maps each array to its zip member. An array an item does
+  not have, such as the coherence of a transfer function, is left out.
+- **`meta`** holds the scalar details: `units`, `channel_cal_factors`
+  (see [Calibration and units](calibration.md)), `test_name`,
+  `timestamp` and `timestring`, and the ids that link a result to the
+  measurement it came from (`unique_id`, `id_link`).
+- **`settings`** is the capture's `MySettings` as a plain dictionary, or
+  `null`. The web logger reads `device_driver` and `VmaxSC` from it to
+  tell whether a capture is in volts.
+- **`ui`** is written only by the web logger: the channel labels
+  (`channel_labels`), the x(iω) display power (`iw_power`), and the
+  window, averaging and other settings of each calculation
+  (`analysis`). Other readers can ignore it. Python keeps it, and any
+  other key it doesn't recognise, when it loads and saves a file, so a
+  round trip through a notebook loses nothing.
 
-### Compute provenance (`source_signature` / `source_settings`)
+### Kinds of item
 
-A derived item — `FreqData`, `TfData`, `SonoData` — may also carry two
-optional `meta` fields describing how it was made:
+| `kind` | Arrays | What they hold |
+| ------ | ------ | -------------- |
+| `TimeData` | `time_axis`, `time_data` | time in seconds; the samples, one column per channel |
+| `FreqData` | `freq_axis`, `freq_data` | frequency in Hz; the complex spectrum, one column per channel |
+| `CrossSpecData` | `freq_axis`, `Pxy`, `Cxy` | the complex cross-spectrum matrix and the real coherence matrix, both channels × channels × frequencies |
+| `TfData` | `freq_axis`, `tf_data`, `tf_coherence`, `bla_sigma_nl`, `bla_sigma_n` | the complex transfer function, one column per output channel (the input channel has none); its coherence; and the uncertainty of a best linear approximation |
+| `SonoData` | `time_axis`, `freq_axis`, `sono_data` | frame times and frequencies; the complex sonogram, frequencies × frames × channels |
+| `ModalData` | `M` | the fitted modes, one row per mode |
+| `MetaData` | none | units, calibration factors and timestamps only |
 
-- **`source_signature`** — 16 hex characters: an FNV-1a-64 hash of the
-  **source samples plus the sample rate**, and nothing else. Recomputing
-  it from the `TimeData` in the file and comparing answers one question:
-  *does this result still belong to the data sitting beside it?* That is
-  what raises the app's **⚠ source changed** badge (see
-  [Saving and exporting](export.md#source-changed)). Settings are
-  deliberately outside the hash: a result computed with a different
-  window is still a valid result *of those settings*.
+Some kinds add to `meta`: `CrossSpecData` has `enbw_hz`, the window's
+effective noise bandwidth in Hz (`Pxy / enbw_hz` is a spectral density);
+`TfData` has `flag_modal_TF` and `bla`, the settings of a best linear
+approximation run; and `ModalData` has `channels`, plus
+`measurement_type` and `source_targets` when the web logger wrote it.
+The [data structures](../api/datastructure.md) describe each field.
 
-    The hashed byte stream is `n_rows`, `n_cols` and `fs` as
-    little-endian float64, then whole selected **rows** of the sample
-    array (every value in a row, so an edit to any channel of a sampled
-    time instant shows). Hashing every sample of a long record is too
-    slow for a save click, so the row selection is capped at **65536
-    hashed values**: up to `65536 // n_cols` rows are taken at an even
-    stride, with the final row always appended. Both languages implement
-    exactly this — `pydvma/_signature.py` is the **normative**
-    description, `webui/src/lib/codec/signature.ts` is its twin, and
-    they are pinned to each other by shared known-answer vectors. One
-    consequence worth knowing: on a reduced (long) record, an edit
-    confined to a few consecutive *unsampled* rows can go unnoticed.
-- **`source_settings`** — the analysis knobs that produced it, with a
+Two points about calibration in these items:
+
+- On a `TfData`, `channel_cal_factors` has one entry for each output
+  column: the ratio of that channel's factor to the input channel's.
+  Its `units` entry is `output/input`, with a compound unit in
+  brackets, such as `(m/s2)/N`.
+- A `SonoData` saved by the web logger holds only the channels you chose
+  at the save prompt. Its `units` and `channel_cal_factors` follow those
+  planes, and `source_settings['channels']` names the measured channel
+  each plane came from.
+
+### Provenance: `source_signature` and `source_settings`
+
+A `FreqData`, `TfData` or `SonoData` item can carry two optional `meta`
+fields that say how it was made:
+
+- **`source_signature`** is 16 hex characters: a hash of the samples the
+  result was computed from, and their sample rate. Recompute it from the
+  file's `TimeData` and compare, and you know whether the result still
+  belongs to those samples. That is what raises the app's **⚠ source
+  changed** badge (see [Saving and exporting](export.md#source-changed)).
+  Settings are not in the hash, because a result computed with a
+  different window is still a valid result of those settings. For a long
+  record only evenly spaced rows are hashed (up to 65,536 values), so
+  an edit to a few neighbouring rows can go unnoticed.
+- **`source_settings`** holds the settings behind the result, with a
   `calc` key naming the calculation (`'fft'`, `'tf'`, `'sonogram'`, …).
+  The web logger writes its own names (`nFft`, `voicesPerOctave`) and
+  Python writes snake_case (`nperseg`, `voices_per_octave`). `calc`, and
+  `method` for sonograms, are the same in both, so read those first.
 
-Both are optional and absent on older files. One honest wrinkle: the
-**key spellings differ by writer**. Results materialised by the web app
-use its own camelCase setting names (`nFft`, `voicesPerOctave`), while
-`pydvma.analysis` stamps snake_case (`nperseg`, `voices_per_octave`).
-`calc` — and, for sonograms, `method` — are spelled the same by both, so
-a reader keys off those and accepts either dialect for the rest.
-Normalising the two is a follow-up.
+The hashing algorithm is written out in `pydvma/_signature.py`.
 
-### Lossless JSON encoding
+## How values are encoded
 
-So the manifest stays strict, parseable JSON (it is written with
-`allow_nan=False`, so `JSON.parse` in a browser never chokes), scalar
-values that JSON cannot represent natively are wrapped in small type
-tags:
+The manifest is strict JSON, with no bare `NaN` or `Infinity`, so
+`JSON.parse` in a browser always works. Values JSON can't hold are
+wrapped in small tags:
 
 | Tag | Meaning |
 | --- | ------- |
-| `{"__uuid__": "..."}` | a UUID (traceability ids) |
+| `{"__uuid__": "..."}` | a UUID (the ids that link items) |
 | `{"__datetime__": "<isoformat>"}` | a timestamp |
-| `{"__array__": [...]}` | a small array embedded in the manifest |
-| `{"__float__": "inf" \| "-inf" \| "nan"}` | a non-finite float |
+| `{"__array__": [...]}` | a small array held in the manifest |
+| `{"__float__": "inf" \| "-inf" \| "nan"}` | a non-finite number |
 
-Type tags are applied recursively (including inside embedded arrays and
-nested dicts), and the larger arrays keep their exact dtype in their
-`.npy` members. A reader ignores manifest keys it does not recognise,
-so newer files degrade gracefully in older readers where the schema
+Tags apply at any depth. The large arrays keep their exact dtype in
+their `.npy` members. A reader skips manifest keys it does not
+recognise, so a file from a newer version still opens where the format
 allows.
 
 ## Reading and writing from Python
@@ -162,22 +163,26 @@ allows.
 ```python
 import pydvma as dvma
 
-# Save — appends .dvma if the name has no recognised extension
-dvma.save_data(dataset, filename='my_measurement')
-
-# Load — format detected from the file's content (zip magic bytes),
-# not its extension, so a renamed file still loads correctly
+dvma.save_data(dataset, filename='my_measurement')       # adds .dvma
 dataset = dvma.load_data(filename='my_measurement.dvma')
 ```
 
-The write is **atomic**: data goes to a temporary file in the same
-directory and is renamed over the target only on success, so a crash
-mid-save can never destroy a pre-existing good file.
+`load_data` recognises the format from the file's content, not its
+extension, so a renamed file still loads. A save writes to a temporary
+file first and renames it over the target only when it has finished, so
+a crash mid-save can't damage an existing file. See
+[Import and export](../user-guide/import-export.md#save-and-load-a-dataset-native-format)
+and the [file functions](../api/file.md).
 
-To deliberately write the legacy pickle format instead, pass a filename
-ending in `.npy` — an escape hatch for workflows that still need it.
+## Older `.npy` files
 
-See also: [Saving and exporting](export.md) for the browser app's Save,
-autosave and export options, and the API reference for
-[`container`](../api/file.md) and the
-[data structures](../api/datastructure.md).
+pydvma 1.4.0 and earlier saved a NumPy pickle of the live Python
+objects. `.dvma` replaced it in 1.5 because the pickle could be read
+only from Python, carried no version, could run arbitrary code when
+opened, and broke whenever pydvma's code was reorganised.
+
+Those files still open. `dvma.load_data()` recognises them from their
+content, and the web logger converts them when you press **Load Data**.
+Only open a `.npy` file from someone you trust, because unpickling can
+run code. To write the old format anyway, give `save_data` a filename
+ending in `.npy`.

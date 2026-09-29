@@ -1,96 +1,104 @@
 # Live monitoring
 
-Before committing to a recording it helps to *see* the incoming signal —
-check levels, watch for clipping, confirm a mode is where you expect.
-The web logger gives you two live views of the input: a **persistent
-mini-monitor** that follows you across every stage, and a full-screen
-**Live** oscilloscope.
+Before you record, it helps to see the incoming signal: check the levels,
+watch for clipping, and confirm a mode is where you expect. The web logger
+gives you two live views of the input: a **monitor** panel that stays with
+you on every stage, and a full-screen **Live** oscilloscope.
 
-Both run against whichever source is active — a browser soundcard or a
-bridged soundcard/NI device — and both compute their spectra **in the
-browser** in real time.
+Both show whichever input is active: a browser soundcard, or a soundcard
+or NI device when the app is [served locally](running-locally.md). The
+Live stage computes its spectrum in the browser as the signal arrives.
 
-## The mini-monitor
+## The monitor panel
 
-In the wide layout a **Monitor** panel is docked at the foot of the
-dataset tray, so it stays visible no matter which stage you are on.
+In the wide layout a **Monitor** panel sits at the foot of the dataset
+tray, so it stays visible on whichever stage you are on.
 
-- When off it shows a **▶ Start** button.
-- When running it shows a compact time trace, per-channel level bars with
-  a latching **CLIP** indicator, an **⤢** button to expand into the full
-  Live stage, a **▾** to collapse the body, and a **Stop** button.
+- When it is off it shows **▶ Start**.
+- When it is running it shows a small time trace, a level bar for each
+  channel with a **CLIP** indicator, **⤢** to open the full Live stage
+  (clicking the trace does the same), **▾** to collapse the panel body,
+  and **Stop**.
 
-The monitor is **persistent** — it is not stopped automatically when you
-change stages. Start it once and it keeps running until you stop it (or
-close the tab).
+It keeps running when you change stage. Start it once and it runs until
+you press **Stop** or close the tab.
 
-!!! note "Narrow layout"
-    On a narrow window the tray collapses to a compact rail and the
-    docked mini-monitor is not shown; use the **Live** stage instead.
+On a narrow window the tray shrinks to a rail. The rail keeps a small
+strip with the level bars and a **C** clip indicator; click it to open the
+Live stage.
 
 ## The Live stage
 
-Open **Live** (or press **⤢** on the mini-monitor) for the full
-oscilloscope. Its controls live in the Live card:
+Open **Live**, or press **⤢** on the monitor, for the full oscilloscope.
+The Live card has these controls:
 
-- **Start Monitor** → **⏸ Pause / ▶ Resume** and **Stop** while running.
-- **display** — **Stacked** (one lane per channel) and **Auto Y**
-  (autoscale the amplitude axis, on by default).
-- **view time** — the time window shown: 50 / 100 / 200 / 500 ms or 1 s,
-  or **custom…** for any window from 20 ms to 5 s.
+- **Start Monitor**, which becomes **⏸ Pause** or **▶ Resume**, and
+  **Stop**, while it runs.
+- **display**: **Stacked** puts each channel in its own lane. **Auto Y**
+  fits the amplitude axis automatically, and is on by default.
+- **view time**: how much time the trace shows. Choose 50, 100, 200 or
+  500 ms, or 1, 2, 5 or 10 s, or choose **custom…** and type a value from
+  0.02 s up to a limit set by memory (at most 30 s, less at high sample
+  rates with many channels).
 
-Inside the plot region a bar of chips toggles the panes:
+Four chips in the plot area show or hide the panes:
 
-- **T time** — the oscilloscope trace.
-- **F freq** — the live spectrum (see below).
-- **L levels** — the per-channel level bars with the CLIP latch.
-- **P pause** — freeze the display.
+- **T time**: the oscilloscope trace.
+- **F freq**: the live spectrum.
+- **L levels**: the level bars and the **CLIP** indicator.
+- **P pause**: freezes the display.
 
-### Live spectrum: FFT or Welch PSD
+### Live spectrum: FFT or PSD
 
-The **F freq** pane has its own controls:
+- **spectrum**: **FFT** shows a per-frame amplitude spectrum. **PSD**
+  shows an averaged Welch power spectral density, in dB/Hz or, on a linear
+  axis, u²/Hz. Both use a Hann window.
+- **fft axes**: magnitude in **dB** or **lin**, and frequency on a **lin
+  f** or **log f** axis.
+- **fft freq**: **Full** shows DC to the Nyquist frequency. **Range** lets
+  you type a minimum and maximum in hertz; a blank box means 0 or Nyquist.
 
-- **spectrum** — **FFT** (a per-frame amplitude spectrum) or **PSD** (an
-  averaged Welch power spectral density).
-- **fft axes** — magnitude **dB / lin**, and frequency **lin f / log f**.
-- **fft freq** — **Full** (DC to Nyquist) or **Range** (enter a min/max
-  band).
+In **PSD** mode two more controls appear:
 
-In **PSD** mode two more controls appear: **averages** (1× to 16×, how
-many overlapping Welch segments to average — steadier but slower to
-respond) and **smoothing** (off / low / high — exponential smoothing
-across frames). PSD is displayed in dB/Hz (or linear u²/Hz).
+- **averages**: 1× to 16× (1, 2, 4, 8 or 16) overlapping segments
+  averaged. More averages give a steadier trace that responds more
+  slowly.
+- **smoothing**: **off**, **low** or **high** exponential smoothing
+  across frames.
 
-The FFT/PSD is a windowed (Hann) transform computed in the browser
-every frame, so it works identically whether the source is Web Audio or
-the bridge.
+The Live spectrum is in the input's own units and is not calibrated. It
+is not the same quantity as the **PSD** on the
+[Frequency stage](analysis.md#frequency).
 
 ### Levels and clipping
 
-The level bars fill green → amber → red with the signal peak. The
-**CLIP** pill **latches** as soon as any channel's peak reaches 0.95 of
-full scale, and stays lit until you click it (or restart the monitor) —
-so you never miss a brief clip that happened while you were looking
-elsewhere. If CLIP trips, reduce the input level or (on NI) widen the
-voltage range before recording.
+Each level bar fills from green through amber to red as the peak rises.
+The **CLIP** indicator lights as soon as any channel's peak reaches 95 %
+of full scale, and stays lit until you click it or restart the monitor,
+so you don't miss a brief clip. If it lights, lower the input level, or on
+NI widen the voltage range, before recording.
 
-**Full scale** is whatever the device's own rail is, not a fixed 1.0.
-On an NI card it is the input range you set (`VmaxNI`, e.g. ±5 V), so a
-3 V peak reads 60 % and does not trip CLIP; on a calibrated audio jack
-it is the full-scale voltage derived from the stated gain; on Web Audio
-and an uncalibrated jack the samples are a bare 0–1 fraction and full
-scale is 1.0. The bridge reports the rail with every configure, so the
-meters and the capture-time clip warning
-(`acquisition.log_data`, which checks against 95 % of the same rail)
-always agree. Hover a bar to see the percentage, and the reading in
-volts where the rail has a voltage meaning.
+Full scale depends on the input:
+
+- an NI card: the input range you set in Setup, for example ±5 V, so a 3 V
+  peak reads 60 % and does not light **CLIP**;
+- a soundcard whose full scale is known: the full-scale voltage from its
+  [calibration](calibration.md#soundcard-input-gain-and-full-scale); and
+- the browser, or a soundcard with no known full scale: 1.0, the top of
+  the converter's range.
+
+Hover a bar to see its percentage, and its reading in volts where full
+scale is a voltage. Setup's **input level** readout
+([Acquisition and setup](acquisition.md#full-controls)) reports the same
+peaks with advice.
 
 ## Tips
 
-- Use Live to set levels first, then switch to **Acquire** to record —
-  the mini-monitor keeps running so you can watch levels during setup.
-- Watch coherence in the [TF stage](analysis.md) *after* recording, but
-  catch gross problems (clipping, dead channels, wrong device) live —
-  it is much cheaper than re-recording.
+- Set your levels on **Live**, then switch to **Acquire** to record. The
+  monitor keeps running, so you can watch the levels while you set up.
+- Catch gross problems here (clipping, a dead channel, the wrong device).
+  It is much cheaper than re-recording. Coherence, on the
+  [TF stage](analysis.md#tf-transfer-functions), tells you about the
+  measurement after the fact.
 
 Next: [Analysis views](analysis.md).

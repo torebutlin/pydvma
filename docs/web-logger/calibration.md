@@ -1,228 +1,177 @@
 # Calibration and units
 
-Captures are always stored in **volts**. To read results in engineering
-units (g, m/s², N, Pa, …) you attach a per-channel **sensitivity** and
-**unit**; the web logger then scales plots, spectra, transfer functions
-and fits at display time. (What makes the stored samples volts in the
-first place is the input's full-scale voltage, fixed at capture time —
-see [Soundcard input gain](#soundcard-input-gain-and-full-scale) for the
-audio-interface case.) Because the stored samples stay in volts,
-calibration is **non-destructive** — you can set or correct it after
-recording without losing anything, and clip detection still works against
-the true voltage.
+Calibration turns the numbers you recorded into engineering units. You
+give each channel a **sensitivity** and a **unit**, and the plots,
+spectra, transfer functions and fits all read in those units (m/s², N,
+Pa, …).
 
-This is the same model as the Python interface
-([Calibration and scaling](../user-guide/acquisition.md#calibration-and-scaling));
-the browser dialog just writes the same `channel_cal_factors` and
-`units` that the file format stores.
+Your recorded samples are never changed. Calibration is a multiplier
+applied when data is displayed or fitted, so you can set it, or correct
+it, after recording. Clip detection still works against the true input
+voltage.
 
-## The calibration dialog
+## What your samples are
 
-Open it from the **cal** button on a dataset's card in the tray (it
-appears on hover). The dialog shows **one row per channel**:
+Before calibration, a capture is in volts or in fractions of full
+scale, depending on the input:
 
-- the channel's **label**;
-- a **sensitivity** value; and
-- a **unit** dropdown — **V**, **m/s²**, **N**, **Pa** (any existing
-  non-standard unit on the channel is preserved as an option).
+| Input | Samples are |
+| ----- | ----------- |
+| An NI-DAQ device | volts, read directly from the device |
+| A soundcard or audio interface whose full scale is known ([below](#soundcard-input-gain-and-full-scale)) | volts |
+| Any other soundcard, or recording in the browser | fractions of full scale, between -1 and 1 |
 
-Enter the sensitivity in **volts per unit** (V/eu). The label next to
-the box reflects the chosen unit (e.g. `V / (m/s²)`). Click **Apply** to
-scale the data, or **Cancel** (or Esc) to dismiss.
+## Calibrate a channel
 
-On a device whose voltage scale pydvma does **not** know, the stored
-samples are not volts but full-scale fractions, and the dialog says so:
-the label reads `FS / (m/s²)` and a note appears above the rows. Enter
-the sensitivity against full scale there, or state the full scale in
-Setup first (below) and work in volts as usual.
+1. In the tray, hover a dataset's card and press **cal**.
+2. In the dialog, each channel has a **sensitivity** box and a unit
+   menu. Enter the sensitivity in **volts per unit**, from the sensor's
+   calibration sheet, and pick the unit: **V**, **m/s²**, **N** or
+   **Pa**. A different unit already on the channel stays in the menu.
+3. Press **Apply**. **Cancel**, or Esc, closes the dialog with no
+   change.
 
-!!! tip "Reading sensitivity off the cal sheet"
-    Manufacturers usually print sensitivity in **mV per unit** — divide
-    by 1000 for the V/unit value here. A 100 mV/g accelerometer is
-    `0.1`; a 10 mV/g one is `0.01`; a 2.3 mV/N force transducer is
-    `0.0023`. A common slip is entering `100` instead of `0.1`, which
-    would scale results by 1000×.
+The label beside each box shows what it means, for example
+`V / (m/s²)`. The dialog also shows a disabled **known-input
+calibration…** button, which is not available.
 
-## How it is applied and stored
+To remove a calibration, set the sensitivity to 1 and the unit to
+**V**. A sensitivity of zero, or one that isn't a number, counts as 1.
 
-Internally the logger stores a **cal factor** = `1 / sensitivity` per
-channel (engineering-units per volt — the multiplier applied to the
-stored volts). A sensitivity of 1 leaves the channel unscaled; a zero or
-non-finite entry falls back to a factor of 1 (no calibration).
+If the label reads `FS / (m/s²)` and a note appears above the rows, the
+samples are fractions of full scale. Either enter each sensitivity as
+full scale per unit, or [state the full scale](#soundcard-input-gain-and-full-scale)
+first and work in volts.
 
-The factor and unit propagate the way they do in pydvma:
+!!! tip "Reading the sensitivity off the calibration sheet"
+    Sheets usually give **millivolts** per unit, so divide by 1000: a
+    2.3 mV/N force transducer is `0.0023`. A common slip is entering
+    `100` for a 100 mV/unit sensor instead of `0.1`, which scales
+    results by 1000.
 
-- **time and FFT** plots multiply each channel by its factor, so axes
-  read in engineering units;
-- the **power spectrum** is a power, so the amplitude factor enters
-  squared (`× factor²`) and the axis reads in `unit²`;
-- the **cross-spectrum** `|S_xy|` of a channel pair carries
-  `unit_i · unit_j`, so it is scaled by `factor_i × factor_j`.
-  **Coherence is not** — it is a normalised ratio, dimensionless, and
-  stays exactly the same however the channels are calibrated;
-- a **transfer function** inherits the calibration *ratio* — its unit is
-  built as `output-unit / input-unit` (e.g. a `g/N` accelerance) — and so
-  do the BLA uncertainty bands drawn with it;
-- the **sonogram** is drawn relative to its own peak, so a constant
-  per-channel factor cancels and the image is unchanged; and
-- a **modal fit** is run on the calibrated transfer function, so its
-  modal constants come back in engineering units and its reconstruction
-  overlays the measured curve at the same level. Natural frequencies,
-  damping ratios and Q are scale-invariant either way.
+    Accelerometers are usually rated in mV/g, and the menu offers m/s²,
+    not g, so divide by 9.81 as well: 100 mV/g is `0.0102` V/(m/s²). To
+    read in g instead, give the channel the unit `g` from Python. The
+    dialog keeps it, and `0.1` is then right for 100 mV/g.
 
-!!! warning "Re-calibrating under an existing fit"
-    Because the fit reads the *calibrated* transfer function, its stored
-    modal constants are in the units that were in force when it ran.
-    Change the calibration afterwards and they are quietly in the old
-    ones — so the logger raises a toast naming the set. Re-fit to bring
-    the constants up to date; the frequencies, damping ratios and Q
-    values are unaffected and need nothing. The fit is never re-run
-    automatically, because that would silently discard rejected modes and
-    refinements you may have made by hand.
+## How it is stored
 
-All of this is saved in the [`.dvma` file](dvma-format.md) as the
-`channel_cal_factors` and `units` fields, so calibrated data reopens
-calibrated — in the web logger, in Python, or in the JupyterLite
-notebook.
+Each channel keeps a **cal factor**, the reciprocal of the sensitivity
+(a 0.1 V/unit sensor has a factor of 10). The
+[`.dvma` file](dvma-format.md) stores the factors and units, so
+calibrated data reopens calibrated, in the browser, served locally, in
+Python and in JupyterLite. CSV and MATLAB exports write the values as
+recorded; see [What each output holds](export.md#what-each-output-holds).
 
-## Calibration and the data exports
+**From Python**, pass `channel_sensitivities` in `MySettings` when you
+record with `dvma.log_data`, or set the factors afterwards. See
+[Setting or correcting calibration after logging](../user-guide/acquisition.md#setting-or-correcting-calibration-after-logging).
 
-**Save Dataset** (`.dvma`) and **figure exports** are calibrated: the
-file carries the factors and units, and a saved figure carries whatever
-its axes showed.
+## What calibration changes
 
-**Export CSV** and **Export Matlab** are different by design — they write
-the **raw stored arrays, in volts, with no calibration applied**, so that
-what you get is the measurement rather than a view of it. To keep that
-honest rather than silent, both now carry the calibration as metadata:
+- **Time and FFT** plots multiply each channel by its factor, so axes
+  read in the channel's unit.
+- **Power** carries the factor squared, and reads in `unit²`.
+- **PSD** is the same power divided by the analysis window's effective
+  noise bandwidth, and reads in `unit²/Hz`.
+- **CSD** shows the cross-spectrum magnitude of a channel pair, scaled
+  by both channels' factors, and reads in `unit_i·unit_j`.
+  **Coherence** is a ratio and never changes with calibration.
+- **Transfer functions** use the ratio of the output and input factors,
+  and read in output unit over input unit, with a compound unit in
+  brackets: `(m/s²)/N`. The BLA uncertainty bands drawn with a transfer
+  function scale the same way.
+- **Sonograms** are drawn relative to their own peak, so calibration
+  leaves them unchanged.
+- **Modal fits** run on the calibrated transfer function, so the modal
+  constants come out in engineering units. Natural frequencies, damping
+  ratios and Q do not depend on the scale.
 
-- the **CSV** begins with a commented header naming the per-column
-  factors and units. It is prefixed `#`, so `np.loadtxt`,
-  `np.genfromtxt` and `pandas.read_csv(..., comment='#')` skip it and
-  the numeric rows are unchanged:
+Axes only show `(V)` where the samples really are volts. For fractions
+of full scale an uncalibrated axis reads just `Amplitude`.
 
-    ```
-    # pydvma export: RAW data, calibration NOT applied.
-    # Column 1 is the shared axis (s); the rest are data columns.
-    # Multiply data column k by cal_factors[k] for engineering units.
-    # cal_factors: 10,0.5
-    # units: m/s2,N
-    ```
-
-- the **Matlab** file gains `time_cal_factors` / `time_units` (and the
-  `freq_` and `tf_` equivalents) alongside the arrays it always wrote.
-  Nothing existing changed, so older scripts keep working.
-
-!!! note "Compound units are parenthesised"
-    A transfer function's unit is built as `output/input`, which is
-    ambiguous when the numerator is itself a ratio: `m/s2/N` reads
-    equally as `(m/s2)/N` (what it means) and `m/(s2·N)` (what it does
-    not). pydvma therefore wraps a compound unit before composing it, so
-    an accelerance comes out as `(m/s2)/N`. Files written before this
-    change keep the string they were written with — it cannot be split
-    back into numerator and denominator without guessing, so it is left
-    alone rather than rewritten.
+!!! warning "Changing a calibration under an existing fit"
+    A fit's modal constants stay in the units that were in force when
+    you fitted. If you change the calibration afterwards, the app names
+    the set in a message. Fit again to update the constants; the
+    frequencies, damping ratios and Q are unaffected. The fit is never
+    re-run for you, because that would discard modes you rejected or
+    refined by hand.
 
 ## Best match replaces the calibration
 
-The TF stage's **Best match** rescales every transfer function onto a
-reference channel — and it stores the result in the *same*
-`channel_cal_factors` slot this dialog writes, because a per-channel
-display multiplier is the only place pydvma has for it. On an
-uncalibrated dataset that is exactly what you want. On a **calibrated**
-one it replaces the transducer calibration with a relative scale, while
-the engineering units stay as they were: the axis goes on saying `m/s²`
-over numbers that have become relative.
+The **TF** stage's **Best match** rescales every transfer function onto
+a reference channel (see
+[Scaling: x(iω) and Best Match](analysis.md#scaling-xi-and-best-match)).
+It stores the result in the same per-channel factors as this dialog, so
+they show up here afterwards.
 
-So Best match asks first, naming the measurements whose calibration
-would be replaced, and the toast it leaves carries an **Undo** that puts
-the previous factors and units back.
+On raw data that is what you want. On a **calibrated** set it replaces
+the sensor calibration with a relative scale, while the units stay as
+they were, so an axis can go on saying `m/s²` over relative numbers. So
+Best match asks first, naming the measurements whose calibration it
+would replace, and its result message has an **Undo** that puts the
+previous factors and units back.
 
 ## Soundcard input gain and full scale
 
-Per-channel sensitivity turns **volts** into engineering units. What
-turns the raw ±1 samples an audio interface delivers into volts in the
-first place is `VmaxSC` — the jack voltage that reads full scale — and
-on an interface that depends on the preamp gain. No audio API exposes
-that gain (it is a front-panel knob), so pydvma cannot read it; you
-state it instead, at capture time:
+An audio interface delivers samples between -1 and 1. To read them as
+volts, pydvma needs the input's **full scale**: the voltage that reads
+as 1. On an interface with a preamp that depends on the gain knob, and
+no software can read the knob. So you state the gain, and pydvma works
+out the full scale from the interface's published maximum input level.
+
+Served locally, open **Setup**, press **Full ▾** and find **levels**.
+What you see depends on the interface:
+
+- **An interface pydvma has a profile for, with a preamp** (a Scarlett
+  2i2 4th Gen, for example): **input gain (for calibrated volts)** in
+  dB, and an input mode (**line**, **inst** or **mic**). Setup shows the
+  full scale that follows as `full scale ≈ … V pk`.
+- **A fixed-gain interface** (the ESI U24 XL): nothing to enter. Setup
+  shows its constant full scale.
+- **Any other interface**: **full scale (for calibrated volts)**, in
+  volts peak. Measure it once with a known source, or take it from the
+  maker's specification. Left blank, captures stay in fractions of full
+  scale.
+
+Setup also shows a note under the device saying whether its full scale
+is known, for example `calibrated: full scale 1.882 V peak`. Full scale
+is fixed when you record, so state it first, and state the new gain if
+you change the gain on the interface. Sensitivities can be changed at
+any time.
+
+Recording in the browser has no gain or full-scale field, because a
+browser can't know the interface's gain. Its captures are fractions of
+full scale, so calibrate them against full scale in the dialog, or
+record locally.
+
+**From Python**, when you record with `dvma.log_data`, give `MySettings`
+the gain. For an interface pydvma has no profile for, give the full
+scale instead, as `VmaxSC=` in volts peak.
 
 ```python
 settings = dvma.MySettings(
     device_driver='soundcard',
-    input_gain_db=9,        # what the front panel / Focusrite Control says
-    input_mode='line',      # 'line' | 'inst' | 'mic'
+    input_gain_db=9,        # what the front panel says
+    input_mode='line',      # 'line', 'inst' or 'mic'
 )
 ```
 
-`VmaxSC` is then derived from the interface's published maximum input
-level `L` (in dBu at minimum gain) and the stated gain `G`:
+A stated gain overrides an explicit `VmaxSC`. `dvma.verify_input_scaling()`
+measures the full scale against a signal generator, and
+`pydvma-serve --list-devices` shows what pydvma knows about each
+interface. The formula, and the interface levels it uses, are in
+[Deriving VmaxSC from the preamp gain](../user-guide/acquisition.md#deriving-vmaxsc-from-the-preamp-gain).
+`dvma.launch` and `pydvma-serve --settings` don't carry these two
+settings into the app, and they don't carry `channel_sensitivities`
+either. Enter the gain or full scale in Setup as above, and the
+sensitivities in the calibration dialog.
+[Pre-filling Setup](running-locally.md#pre-filling-setup) lists what a
+launch does fill in.
 
-    V_fullscale_peak = sqrt(2) * 0.7746 * 10 ** ((L - G) / 20)
+## IEPE accelerometers on NI hardware
 
-On a Scarlett 2i2 4th Gen `L` is 22 dBu on **line**, 12 on **inst** and
-16 on **mic**; the formula was confirmed against hardware to 0.10 dB. A
-stated gain takes precedence over an explicit `VmaxSC`, and only applies
-to interfaces characterised in `pydvma._soundcard_specs` — any other
-device keeps whatever `VmaxSC` you gave it. Note `output_VmaxSC`
-defaults to `VmaxSC`, so a derived value moves the output scaling with
-it (though the Scarlett's front-panel Output knob is an analogue
-control, so output voltage is only repeatable at a marked knob
-position).
-
-This is not a second calibration layer — it *derives* the setting that
-was always there. The chain stays: raw ±1 → ×`VmaxSC` → volts →
-×cal factor (= 1 / sensitivity) → engineering units. The first stage is
-fixed when you record; the second is the per-channel sensitivity above,
-which you can set or correct at any time. Changing the gain on the
-hardware invalidates the first stage, so re-state it when you do.
-
-### Setting it from the app
-
-Open **Setup → full**, section **levels**. What appears depends on what
-pydvma knows about the selected interface:
-
-- a **characterised** interface with a preamp shows **input gain (for
-  calibrated volts)** plus its input mode, and previews the full scale
-  the pair implies;
-- a **fixed-gain** interface (e.g. the ESI U24 XL) has nothing to state,
-  so it shows its constant full scale as a note;
-- an **uncharacterised** interface — no profile, so no published input
-  level to derive from — shows **full scale (for calibrated volts)**,
-  where you enter the measured volts-peak directly. Leave it blank and
-  captures stay in full-scale units; fill it in and the device's
-  calibration line in Setup changes to say so.
-
-Measure that number once with a known source —
-`dvma.verify_input_scaling()` does it against a signal generator — or
-take it from the maker's spec. It can also be set outside the app as
-`VmaxSC` in `MySettings`, or in the JSON you hand to
-`pydvma-serve --settings` (see
-[Pre-filling Setup](running-locally.md#pre-filling-setup)).
-
-## Best Match scaling writes here too
-
-The TF card's **[Best match](analysis.md#scaling-xi-and-best-match)**
-button (relative TF scaling, the Qt `best_match` tool) does not keep its
-own separate factors — it writes the computed scale factors straight into
-these per-channel `channel_cal_factors`. So after a Best Match the factors
-are visible and editable in this dialog, they persist in the `.dvma` file,
-and the scaling is undone by reopening Calibrate and resetting the
-affected channels' sensitivities to 1.
-
-## NI IEPE/ICP sensors
-
-When acquiring IEPE/ICP accelerometers through the bridge, enable the
-excitation in Setup's [NI-DAQ group](acquisition.md#ni-daq-options-bridge-only)
-and set each sensor's sensitivity here (or in `MySettings` at capture
-time). See the worked cDAQ recipe in the
-[Python acquisition guide](../user-guide/acquisition.md#worked-example-iepe-accelerometers-on-a-cdaq).
-
-!!! note "Guided (known-input) calibration"
-    A **known-input calibration** helper (calibrate against a reference
-    signal of known level) is stubbed in the dialog but **not yet
-    enabled** — it is on the roadmap. It is not the only route to a
-    calibrated result, though: enter sensitivities from the sensor's
-    calibration sheet, and on a characterised audio interface state the
-    preamp gain rather than measuring the input full scale
-    ([above](#soundcard-input-gain-and-full-scale)).
+Switch on the excitation in Setup (see
+[IEPE excitation](ni-hardware.md#iepe-excitation)), then enter each
+sensor's sensitivity here.

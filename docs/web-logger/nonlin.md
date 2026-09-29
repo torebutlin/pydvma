@@ -1,374 +1,297 @@
 # Noise & nonlinearity separation (Nonlin stage)
 
-The **Nonlin** stage runs a **Schoukens random-phase multisine**
-measurement: instead of one ordinary transfer function, it takes a
-structured set of captures designed so the result splits cleanly into
-three numbers per frequency line — the **best linear approximation**
-(BLA) of your system's frequency response, how much of the scatter
-around it is **measurement noise**, and how much is **nonlinear
-distortion**. An ordinary TF or coherence measurement cannot tell you
-that split; coherence drops for noise, a bad reference *and*
-nonlinearity alike, with no way to tell which. This stage answers "is
-my structure behaving linearly at this excitation level, and if not,
-where?"
+The **Nonlin** stage measures how linear your structure is. It runs a
+**Schoukens random-phase multisine** measurement: a structured set of
+captures that gives three things at every frequency line: the **best
+linear approximation** (BLA) of the frequency response, the level of the
+**measurement noise**, and the level of the **nonlinear distortion**.
+
+An ordinary transfer function cannot give you that split. Coherence drops
+for noise, for a poor reference and for nonlinearity alike, with no way to
+tell which. The Nonlin stage answers "is my structure behaving linearly at
+this excitation level, and if not, where?"
 
 ## What the method measures
 
 The excitation is a **multisine**: a periodic signal built from many
-sinusoids at once, at random phases, covering your chosen band. A run
-plays **M realisations** (fresh random phases each) and, within every
-realisation, captures **P repeated periods** of the same steady-state
-signal:
+sinusoids at random phases across your band. A run plays **M
+realisations**, each with fresh random phases, and captures **P repeated
+periods** of the steady-state signal in each.
 
-- **Period-to-period scatter** (within one realisation) is pure
-  **measurement noise** — the system's response to an *identical*
-  repeated input can only differ because of noise in the chain.
-- **Realisation-to-realisation scatter** (across the M draws) is
-  **noise + nonlinear distortion** — a new random phase draw applies a
-  different amplitude/phase combination to the input harmonics, and a
-  nonlinear system responds differently to different combinations of
-  the same lines. A perfectly linear system would show no extra
-  scatter here beyond the noise already seen period-to-period.
+- The scatter **between periods** of one realisation is measurement
+  **noise**, because an identical repeated input can only give different
+  outputs through noise.
+- The scatter **between realisations** is noise plus **nonlinear
+  distortion**. A nonlinear system responds differently to different
+  combinations of the same lines; a linear one adds nothing beyond the
+  noise.
 
-Subtracting the (period-averaged) noise variance from the realisation
-variance isolates the nonlinear-distortion variance. The result is
-reported as two extra lines alongside the ordinary transfer function:
-**σ_NL** (nonlinear-distortion level) and **σ_n** (noise level), both
-standard deviations in the same linear units as the transfer function
-itself. See [Reading the results](#reading-the-results) for how to use
-them.
+Subtracting the noise variance from the realisation variance leaves the
+distortion. The result is a transfer function with two extra lines,
+**σ_NL** (nonlinear distortion) and **σ_n** (noise), both standard
+deviations in the same linear units as the transfer function. See
+[Reading the results](#reading-the-results).
 
-SISO and MISO measurements share one code path: **n_exc** driven
-outputs (excitations) against any number of measured responses,
-including non-square systems (e.g. 1 output driving 3 response
-channels).
+The method handles one or several driven outputs against any number of
+measured responses, including non-square systems such as one output
+driving three response channels.
+
+## Run a measurement
+
+1. Wire each output you will drive into an input channel: a loopback
+   cable, or a force gauge on a hammer or shaker rig. This input measures
+   the drive.
+2. Open **Nonlin**. Set the **band (Hz)** to excite and the resolution
+   **Δf**.
+3. Set the **level**, then **M**, **P** and **transient** (see
+   [Design](#design-setting-up-a-run)).
+4. In **excitations**, tick each output to drive, and for each choose
+   **measure on ch N**: the input channel wired to it.
+5. Check the run time shown beside the card's title, then press **Start**.
+6. The view moves to **TF**, showing one BLA line per excitation with
+   dashed σ lines. Read the verdict on the Nonlin card.
 
 ## Getting to the Nonlin stage
 
-Nonlin is a **measurement** stage, not just an analysis view — like
-Acquire, it drives an output and runs its own captures, so it needs a
-live source (a soundcard or NI device, in the browser or through the
-bridge) and stays disabled when you have only loaded a saved file with
-no live device attached. See [the three modes](index.md) for what each
-mode can reach.
+Nonlin drives an output and makes its own captures, like **Acquire**, so
+it needs a live input. It is disabled when you have only loaded a saved
+file. It works in the browser or [served locally](running-locally.md).
 
 ## Design: setting up a run
 
-The **Design** group mirrors the Acquire card's shape, but every field
-here also drives the excitation itself.
+The first row of the Nonlin card holds the design. The card starts with a
+band of 20 to 2000 Hz, Δf of 5 Hz, level 0.1, **M** 6, **P** 4 and
+**transient** 2. The **test** box sets the base name for the run's sets
+(`bla` to start with).
 
 ### Band and resolution
 
-- **band (Hz)** — the frequency range to excite, `f1` to `f2`.
-- **resolution / period** — **Δf** (Hz) and **T** (s) are two boxes for
-  **one** quantity, and you can type into either. They are linked
-  through the multisine's period length in samples, which is what the
-  excitation is really defined in: typing a resolution gives
-  `N = round(fs / Δf)` samples, typing a period gives
-  `N = round(T · fs)`, and the resolved `N` and excited-line count are
-  shown underneath (`N = 4096 samples · 993 lines`). A typed period is
-  quantised to whole samples first, so the Δf box comes back with the
-  resolution you can actually have rather than the one you asked for.
+- **band (Hz)**: the range to excite, from a start to an end frequency.
+- **resolution / period**: **Δf** in hertz and **T** in seconds are two
+  boxes for one quantity, and you can type into either. The multisine's
+  period is a whole number of samples, `N`. Typing a resolution gives
+  `N = round(fs / Δf)`; typing a period gives `N = round(T · fs)`. The
+  card shows the result beneath (`N = 4096 samples · 993 lines`). A typed
+  period is rounded to whole samples, so the Δf box comes back showing the
+  resolution you can actually have.
 
-    The reason both are on the card: they trade off directly, and the
-    period is the one that costs you time. A **finer Δf** (better
-    frequency resolution, closer-spaced excited lines) means a
-    **longer period**, and every realisation/experiment captures
-    several whole periods of it, so halving Δf doubles the whole run.
-    Pick the coarsest Δf that still resolves the features you care
-    about, and watch the [total time](#total-time) as you do.
+A finer Δf needs a longer period, and every realisation captures several
+whole periods, so halving Δf doubles the run. Choose the coarsest Δf that
+still resolves what you care about, and watch the
+[total time](#total-time).
 
 ### Level
 
-**level** sets the **RMS amplitude per excitation** — volts on an NI
-bridge output (clamped to the device's output rail), or a normalised
-fraction of full scale (rail ±1) on the soundcard/browser path, which
-has no calibrated DAC. There is no simple peak limit to enforce on this
-field directly: a random-phase multisine's **crest factor** (peak /
-RMS) is not fixed the way a single sine's `√2` is — it varies from one
-random phase draw to the next, and is typically several times higher
-for a many-line multisine. So pydvma cannot just cap the RMS field
-against a fixed ratio. Instead, **Start** generates every one of the
-run's `M × n_exc` actual waveforms up front and checks each one's real
-peak against the output rail before playing a single sample; if any
-realisation would clip, the run refuses with a message telling you to
-lower the level.
+**level** is the RMS amplitude of each excitation. It is in volts on an NI
+output (up to the output rail), and a fraction of full scale (rail ±1) on
+a soundcard or in the browser.
+
+A random-phase multisine's peak is several times its RMS and varies from
+one phase draw to the next. So **Start** generates every one of the
+`M × n_exc` waveforms first and checks each peak against the output rail
+before playing anything. If any would clip, the run refuses and asks you
+to lower the level.
 
 ### Averaging: M, P, transient
 
-- **M** (default **6**) — realisations. Raise it for a less noisy
-  σ_NL/σ_n split (more realisation-scatter samples), and because the
-  BLA itself keeps improving as `1/√M` — the reported σ values are
-  *per-realisation* levels, not the uncertainty on the plotted line
-  (see [below](#reading-the-results)).
-- **P** (default **4**) — steady-state periods captured per experiment.
-  Raise it to buy a lower noise floor (σ_n): P periods average down
-  the same way an ordinary spectral average does, at the cost of a
-  longer capture.
-- **transient** (default **2**) — periods played and discarded before
-  the analysis window starts, so the structure's response has time to
-  settle into steady state after each fresh phase draw. Raise it for
-  heavily-damped or low-frequency structures that need longer than two
-  periods to settle, and see the [browser-path
-  note](#browser-path-output-latency) below for another reason to raise
-  it there.
+- **M** (realisations, at least 2): raise it for a cleaner split of σ_NL
+  and σ_n. The BLA itself also improves as `1/√M`.
+- **P** (steady-state periods per capture, at least 2): raise it for a
+  lower noise floor σ_n, at the cost of longer captures.
+- **transient**: periods played and discarded before the analysis window
+  starts, so the structure settles after each new phase draw. Raise it for
+  heavily damped or low-frequency structures. In the browser, keep it at
+  2 or more (see [below](#browser-path-output-latency)).
 
 ### Total time {#total-time}
 
-The card's headline number — top left, beside the stage title — is the
-run's **whole wall-clock cost**, live as you edit anything:
+The headline beside the card's title is the run's whole duration, updated
+as you edit:
 
 ```
 ≈ 12.4 s
 12 captures × 1.03 s
 ```
 
-The design row spells out where it comes from (`6 realisations × 2
-excitations × 6 periods (2 transient + 4 steady)`), so if a run is
-going to take longer than you want, you can see which factor to cut.
+In the **responses · run length** group, the readout `6 realisations × 2
+excitations × 6 periods (2 transient + 4 steady)` shows where it comes
+from, so you can see which factor to cut.
 
-Note that **the run sets its own capture length** — one whole
-`(transient + P)`-period window per capture — and says so under the
-responses readout. Your standing **duration** in the Acquire card is
-overridden for the run and restored afterwards; you do not need to set
-it, and you should not be surprised to see it move.
+The run sets its own capture length, one whole window of
+`transient + P` periods per capture, and says so on the card. It
+overrides the **duration** on Acquire while the run is going and restores
+it afterwards.
 
 ### Excitations and responses
 
-The **excitations** table has one row per output channel your device
-can drive (up to a handful of rows — a much larger AO device would need
-a wider UI than a context card comfortably offers). For each row you
-enable:
+The **excitations** table has a row for each output channel the device
+can drive, up to eight, labelled `ao0`, `ao1` and so on. For each row:
 
-- turn the output **on** to drive it during the run, and
-- pick where the analysis reads that excitation's actual drive signal
-  from — its **x-source**.
+- tick it to drive that output during the run; and
+- choose its **x source**, where the analysis reads that excitation's
+  actual drive.
 
-**Every driven output needs its drive measured on an input channel**
-(a loopback wire, or a force gauge on a hammer/shaker rig) — pick
-**measure on ch N** and wire that output's signal into input channel
-`N`. The alternative, **commanded drive**, is described next; it is
-only offered where it is actually valid.
+The rows you tick must start at `ao0` with no gaps. Every input channel
+that is not carrying a measured drive becomes a **response**. The
+`responses:` readout lists them, so you don't assign them yourself.
 
-Every input channel that is *not* carrying a measured drive becomes a
-**response** automatically — the responses readout (`responses: ch 1,
-ch 2`) always reflects the remaining channels, so you don't assign
-those explicitly.
+#### Measuring the drive
 
-#### x-source: measured vs. commanded drive
+Every driven output needs its drive measured on an input channel. Choose
+**measure on ch N** and wire that output into input `N`. This works on
+every device because the drive and the responses share one ADC clock: the
+unknown moment at which the output starts rotates all their spectra by
+the same phase, and that cancels in the analysis.
 
-**Measured** (the default, and the only choice that works everywhere)
-reads the excitation from an input channel wired to the drive. It works
-because the excitation and every response share the **same ADC clock**:
-whatever moment the output happens to start playing at, the unknown
-delay rotates the excitation and the response spectra by the identical
-phase factor, which cancels out in the analysis. A per-capture restart
-of the output is therefore harmless.
+A **commanded drive** option is listed, but it is disabled on every
+device. The output starts at an arbitrary point relative to the capture
+each time, and without measuring the drive that random offset would show
+up as extra scatter, indistinguishable from nonlinear distortion.
 
-**Commanded drive** skips measuring the excitation at all — the
-analysis regenerates the exact waveform it *told the hardware to play*,
-from the same random-phase seed, and uses that directly. This frees up
-an input channel, but it is only offered — the option is disabled
-otherwise, with the reason shown — when the path can **prove** the
-output started at a known sample relative to the input: a **non-chassis
-NI device**, with the input's own AI sample clock routed as the AO
-clock, running both at one matched rate. A cDAQ chassis does **not**
-qualify even though its modules share a chassis timebase: that keeps
-AI and AO **phase-coherent** but not **sample-accurate** — there is no
-routed AI clock to prove a zero start offset. Software-timed-AO NI
-devices (the USB-6003 family) don't qualify either.
+## What the run sets for you
 
-Why this matters: unlike measured-x, the commanded branch assumes **no**
-per-capture start-time jitter. On any path that cannot prove that, real
-jitter in when the output actually starts would show up as extra
-realisation-to-realisation scatter — indistinguishable, in the maths,
-from genuine nonlinear distortion. Measuring the drive sidesteps the
-whole problem, which is why it is the default and the only option on
-the browser and soundcard paths.
+A Nonlin run is stricter than an ordinary log. **Start** checks these
+before it proceeds:
 
-## What the run enforces
-
-Nonlin runs a stricter capture than an ordinary log, and checks (or
-adjusts) three things before Start will proceed:
-
-- **Output rate = sample rate.** The multisine is defined as an exact
-  integer number of samples per period; any mismatch between the drive
-  rate and the capture rate would break that exact periodicity, so
-  unlike an ordinary output stimulus (which pydvma silently reclamps to
-  fit an AO-rate limit) a BLA run refuses outright rather than
-  reclamping quietly.
-- **Digital low-pass off.** In that mode the capture runs oversampled
-  and is resampled down afterwards — which means the recorded period is
-  no longer a whole number of samples, and the resulting leakage would
-  land in the realisation scatter and be misread as nonlinear
+- **Output rate equals sample rate.** The multisine is an exact whole
+  number of samples per period, so a different drive rate would break it.
+  When served locally, a device that limits its output rate below your
+  sample rate blocks the run: lower the sample rate.
+- **Digital low-pass off.** That mode resamples the capture, which makes
+  the period a non-integer number of samples. The leakage would look like
   distortion.
-- **Pretrigger auto-disarmed.** A BLA capture is a fixed-length
-  free-run window — the analysis assumes a known number of transient
-  periods followed by exactly P steady periods, an assumption a
-  threshold-triggered start would break. The run disarms pretrigger for
-  you automatically and notes that it did so; your standing pretrigger
-  setting is restored afterwards.
+- **Pretrigger disarmed.** A run is a fixed-length free-running window, so
+  pretrigger is switched off for it, a note says so, and your setting is
+  restored afterwards.
 
-## Browser-path: output latency {#browser-path-output-latency}
+If **Start** is disabled, the reason appears beside the control it
+concerns: for example a band above the Nyquist frequency, the same input
+channel used as the drive for two excitations, or no response channels
+left.
 
-On the browser (Web Audio) path there is no hardware-synchronised
-start the way an NI shared clock gives you — scheduling the output
-buffer and the audio graph's own output latency both eat into the
-window the run treats as "transient". Keep the **transient** period
-count at its default (2) or higher on this path, so the discarded
-window reliably clears both the structure's own settling time and the
-browser's timing slop before the analysis starts counting steady-state
-periods.
+## Browser: output latency {#browser-path-output-latency}
+
+In the browser there is no hardware-synchronised start. Scheduling the
+output and the browser's own output latency eat into the window that the
+run treats as transient. Keep **transient** at 2 or more so that the
+discarded window clears both the structure's settling and the browser's
+timing slop.
 
 ## Running the measurement
 
-**Start** runs the whole thing: `M × n_exc` ordinary one-shot captures,
-in sequence. When Start is disabled, the reason is shown next to
-whichever control it applies to (an out-of-range band, a duplicated
-measured-x channel, no response channels left, and so on).
+**Start** runs `M × n_exc` ordinary one-shot captures in sequence.
 
 ### Watching it run
 
-Progress is a **grid**: one row per realisation, one cell per
-excitation, so the shape of the grid is the shape of the run. Cells are
-outlines until they run, fill left-to-right while their capture is in
-flight, and go solid when it lands. Beside it, `capture 3/12 · ~9 s
-left` counts captures rather than asking you to multiply realisation
-and experiment indices together.
+Progress is a grid with a row for each realisation and a cell for each
+excitation. Cells are outlines until they run, fill while their capture is
+in flight, and go solid when it lands. Beside it, `capture 3/12 · ~9 s
+left` counts captures.
 
-**stop after this capture** does exactly that: the capture in flight
-completes (a half-played multisine is a useless set) and the run stops
-before the next one. Whatever landed is kept as ordinary time sets, and
-the grid stays on screen so you can see which captures you came away
-with.
+**stop after this capture** lets the capture in flight finish, since a
+half-played multisine is useless, and stops before the next. Whatever
+landed is kept, and the grid stays so you can see what you have.
 
-The individual captures land as ordinary `TimeData` sets, named
-`<test name> r<m>e<e>` — but **hidden by default** in the tray and
-legend, since a typical run's `M × n_exc` captures would otherwise flood
-both. A **show raw captures** button in the results group reveals them
-(and hides them again); they are perfectly normal time sets you can
-inspect, plot or delete like any other.
+The captures land as ordinary time sets named `<test> r<m>e<e>`
+(`bla r1e1`), **hidden** in the tray and legend because there can be many.
+**show raw captures** reveals them, and **hide raw captures** hides them
+again. They are normal sets you can inspect, plot or delete.
 
-Once the run finishes, the analysis runs once (`computing BLA…` — there
-is no progress for this phase, it is a single call) and the view jumps
-to **TF**, now showing one BLA line per excitation. Each result line is
-named after the **response channel** it came from (`resp ch 1`), not a
-bare `ch_1`: a BLA set's columns are only the response channels, so
-their numbering is not the capture's.
+When the captures are done, the analysis runs (**computing BLA…**) and the
+view moves to **TF** with one BLA line per excitation. Each is named after
+the response channel it came from, such as `resp ch 1`.
 
 ### Running again: replace, or keep both {#replace-or-keep}
 
-Once a run has landed, Start grows a **previous run** choice:
+Once a run has landed, a **previous run** choice appears before **Start**.
 
-- **replace previous** (the default) removes the last run's raw
-  captures and BLA sets before the new one begins, so iterating on a
-  design does not silently pile up sets you will never look at again.
-  A toast offers a one-click **Undo** that puts them all back —
-  visibility, channel labels and all — if you did not mean it.
+- **replace previous** (the default) removes the last run's raw captures
+  and BLA sets when the new run starts, so iterating on a design doesn't
+  pile up sets. A message offers **Undo** to bring them all back.
 - **keep both** leaves the last run alone and names the new one apart:
-  `bla#2 r1e1`, `bla#2 BLA q1 (via ch0)`, then `bla#3`, and so on. This
-  is what you want for a [level sweep](#level-sweeps), where the whole
-  point is comparing runs. Renaming the **test** field between runs
-  does the same job and needs no suffix.
+  `bla#2 r1e1`, `bla#2 BLA q1 (via ch0)`, then `bla#3`, and so on. Use it
+  for a [level sweep](#level-sweeps). Changing the **test** name between
+  runs has the same effect.
 
-**new run** clears the run state without deleting anything: the landed
-sets stay in the tray and the raw captures are un-hidden as the card
-lets go of them, so nothing is ever left hidden with no control to
-reveal it.
+**new run** forgets the run state without deleting anything. The landed
+sets stay in the tray, and the raw captures are shown again.
 
 ## Reading the results
 
-Because a BLA result is an ordinary `TfData` object under the hood,
-every other TF-consuming view already works on it with no
-special-casing — Bode, Nyquist, phase, real/imag, figure export, and
-[modal fitting](modal-fitting.md) all apply exactly as they do to any
-other transfer function.
+A BLA result is an ordinary transfer function, so everything that works on
+one works on it: Bode, Nyquist, phase, real and imaginary, figure export
+and [modal fitting](modal-fitting.md).
 
 ### The σ overlay
 
-On the **magnitude** view (including the magnitude pane of Bode), each
-BLA line draws with two extra thin dashed lines on the **same dB
-axis**:
+On the magnitude view (and the magnitude pane of Bode), each BLA line has
+two thin dashed lines on the same dB axis:
 
-- **σ_NL**, in the line's own colour (dimmer) — the nonlinear-distortion
-  level, and
-- **σ_n**, in neutral grey — the measurement-noise level.
+- **σ_NL**, in the line's colour but dimmer: the nonlinear-distortion
+  level.
+- **σ_n**, in grey: the measurement-noise level.
 
-A **σ lines** toggle (on the TF card, and mirrored on the Nonlin card
-itself, since results appear over the TF view while the Nonlin stage
-stays active) hides both. The σ lines carry no entry in the plot legend
-— they annotate a channel rather than being channels of their own — so
-the Nonlin card shows a small **key** beside that toggle with the two
-dash swatches in their real colours, plus a one-line reminder of what
-they are and the `√M` step to the BLA's own error bar.
+The **σ lines** switch, on the TF card and on the Nonlin card, hides both.
+They have no legend entry; the Nonlin card shows a small key beside the
+switch.
 
-A **gap** in the σ_NL line at some frequency does not mean "no
-distortion was measured there" — it means the estimator's floor
-(`max(scatter − noise, 0)`) landed at exactly zero, i.e. **no
-distortion above what this run can resolve at that line**. A run with
-more realisations (M) or periods (P), or a higher excitation level, can
-push that resolution further and reveal distortion a coarser run
+A **gap** in σ_NL does not mean "no distortion". It means the distortion
+was too small for this run to resolve at that line. More realisations,
+more periods or a higher level can reveal distortion that a coarser run
 missed.
 
-Both σ values are **per-realisation** standard deviations — the
-distortion/noise level present in *one* realisation, not the
-uncertainty on the plotted BLA line itself, which is `√M` better
-(`σ_BLA = σ_tot / √M`). That is the classic Schoukens presentation: the
-σ lines answer "how nonlinear is this system at this excitation level",
-and you divide by `√M` yourself to get the BLA's own error bar.
+Both σ values are **per realisation**: the distortion or noise level in
+one realisation, not the uncertainty of the plotted line. That is `√M`
+smaller, `σ_BLA = σ_tot / √M`. So σ shows how nonlinear the system is at
+this level, and you divide by `√M` yourself to get the error bar on the
+BLA.
 
 ### Verdict lines
 
-Each excitation gets a one-line, plain-English verdict, e.g. *"linear
-below 800 Hz; nonlinearity dominates 800–5000 Hz — level-dependent,
-repeat at 2–3 amplitudes"*. Under the hood this splits the excited band
-into a few log-spaced sub-bands and compares the median σ²_NL against
-the median σ²_n in each; a band reads as nonlinearity-dominated once the
-ratio clears a small safety margin above 1 (so the verdict does not
-flip on the estimator's own scatter at low M), and the sentence merges
-neighbouring bands that agree. The verdict for a multi-response
-excitation is judged on its **worst** response channel — a distortion
-that shows on any one response channel is a real distortion.
+Each excitation gets a plain-English verdict, for example *"linear below
+800 Hz; nonlinearity dominates 800–5000 Hz — level-dependent, repeat at
+2–3 amplitudes"*. It summarises which parts of the band have more
+distortion than noise. With several responses it reports the worst one.
 
 ### Level sweeps
 
-Nonlinearity is level-dependent, so one run at one amplitude only tells
-you about that amplitude. Repeat the run at **2–3 different levels**
-(the verdict text says so whenever a band reads nonlinear), switching
-the previous-run choice to **keep both** (or renaming the test field)
-so the runs [coexist](#replace-or-keep) instead of replacing each
-other. Their sets then overlay in the TF view through the ordinary
-tray/legend controls, showing where the distortion grows with level.
-Automated level sweeps are not built yet — see `TODO.md`.
+Nonlinearity depends on level, so one run tells you about one amplitude.
+Repeat the run at two or three levels, with **keep both** (or a different
+**test** name) so the runs [coexist](#replace-or-keep). Their sets then
+overlay on the TF view through the tray and legend, showing where the
+distortion grows with level. Each level is a separate run; there is no
+automatic sweep.
 
 ## Saving and re-analysing in Python
 
-A `.dvma` save carries **everything** the run produced — the (normally
-hidden) raw captures and the BLA result sets alike — so reopening the
-file, in the web logger or in Python, restores the full picture. Each
-BLA `TfData` also carries the exact run specification it was computed
-from (band, Δf, M, P, transient periods, seed, x-mode, channel roles)
-in its `.bla` attribute, which is exactly the `run_spec` argument
-[`calculate_bla`](../api/analysis.md) takes — so a saved run can be
-recomputed (after an analysis-code change, say, or just to verify) with
-no need to remember or re-enter the design:
+**Save Dataset** stores everything the run produced: the raw captures and
+the BLA sets. Each BLA set also carries the run specification it was
+computed from in its `bla` attribute, which is the `run_spec` argument of
+[`calculate_bla`](../api/analysis.md). It holds the multisine settings
+(`n_samples`, `k1`, `k2`, `p_periods`, `t_periods`, `seed`, `amp_rms`,
+`n_exc`, `M`), the x mode, the input channels that carry the drive and the
+response channels, and the sample rate. You can recompute a saved run
+without re-entering the design:
 
 ```python
 import pydvma as dvma
 
-data = dvma.load_data('bench_run.dvma')
-raw = [d for d in data.time_data_list if d.test_name.startswith('bla r')]  # (m, e) order, as recorded
-run_spec = data.tf_data_list[0].bla        # the run spec the web logger saved alongside the result
+data = dvma.load_data(filename='bench_run.dvma')
+raw = [d for d in data.time_data_list if d.test_name.startswith('bla r')]
+run_spec = data.tf_data_list[0].bla     # saved with the result
 tf_list = dvma.calculate_bla(raw, run_spec)
 ```
 
-The excitation waveforms themselves come from `multisine_generator` —
-the same function the web logger's bridge path calls per capture — so a
-fully scripted (no-UI) BLA run is also possible: build a `run_spec`,
-loop `multisine_generator` + `log_data(settings, output=y)` over
-`(m, e)`, and hand the resulting capture list to `calculate_bla` exactly
-as above. See the [Acquisition](../api/acquisition.md) and
-[Analysis](../api/analysis.md) API references for both functions.
+`raw` must be in run order: realisation, then excitation. Runs kept with
+**keep both** have names such as `bla#2 r1e1`, so filter on that prefix
+for them.
+
+You can also run a measurement without the app. Build a `run_spec`, then
+for each realisation and excitation generate the waveform with
+`dvma.multisine_generator(settings, spec)` and record it with
+`dvma.log_data(settings, output=y)`. Pass the list of captures to
+`calculate_bla`. See the [Acquisition](../api/acquisition.md) and
+[Analysis](../api/analysis.md) references.
 
 Next: [Modal fitting](modal-fitting.md), or
 [saving and exporting](export.md).
