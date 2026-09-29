@@ -262,6 +262,45 @@ test('exportMat builds a payload of the computed kinds and returns the bytes', a
   expect((call!.payload.freq_sets as unknown[]).length).toBe(0);   // no FFT
 });
 
+test('exportMat sends each set\'s per-column calibration — the same values the CSV header gets', async () => {
+  // The .mat stays RAW like the CSV, so it has to carry the factors: python's
+  // `export_to_matlab` writes `<kind>_cal_factors` / `<kind>_units`, and the
+  // `export_mat` op can only write them if they are in the payload.
+  const fftResult = () => ({
+    freq_axis: real([2], [0, 1]),
+    freq_data: cplx([2, 2], [1, 0, 2, 0, 3, 0, 4, 0]),
+  });
+  const { actions, sel, calls } = harness((op) => (
+    op === 'calc_tf' ? tfResult()
+      : op === 'calc_fft' ? fftResult()
+        : op === 'export_mat' ? { mat: new Uint8Array([1]) } : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcFft('all');
+  await actions.calcTf('all');
+  const [setId] = get(sel.sets).map((s) => s.id);
+  actions.setCalFactors(setId, [250, 4], ['N', 'm/s2']);
+
+  await actions.exportMat();
+  type SentSet = { cal_factors: number[]; units: string[] };
+  const payload = calls.find((c) => c.op === 'export_mat')!.payload as
+    Record<'time_sets' | 'freq_sets' | 'tf_sets', SentSet[]>;
+  expect(payload.time_sets[0].cal_factors).toEqual([250, 4]);
+  expect(payload.time_sets[0].units).toEqual(['N', 'm/s2']);
+  expect(payload.freq_sets[0].cal_factors).toEqual([250, 4]);
+  expect(payload.freq_sets[0].units).toEqual(['N', 'm/s2']);
+  // TF (ch_in 0): the per-output RATIO cal[out]/cal[in] and its 'out/in' unit.
+  expect(payload.tf_sets[0].cal_factors).toEqual([4 / 250]);
+  expect(payload.tf_sets[0].units).toEqual(['(m/s2)/N']);
+
+  // One resolution for both exports: exactly what `exportArrays` hands the
+  // CSV header, whose byte parity with python is already pinned.
+  for (const kind of ['time', 'freq', 'tf'] as const) {
+    const csv = actions.exportArrays(kind)[0];
+    expect(payload[`${kind}_sets`][0].cal_factors).toEqual(csv.calFactors);
+    expect(payload[`${kind}_sets`][0].units).toEqual(csv.units);
+  }
+});
+
 // ---- Round-7f fit self-awareness flags: phase-significance after a fit,
 // divergence after a refine (both surfaced as toasts; JW-logger heritage —
 // the original printed every fitted mode's phase). ----

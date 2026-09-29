@@ -155,5 +155,16 @@ test.describe('@engine', () => {
     // A real .mat with a time array is comfortably > 100 bytes; a blank/failed
     // export would be near-zero.
     expect(await downloadSize(download)).toBeGreaterThan(100);
+
+    // The data columns are RAW volts, so — like python's `export_to_matlab` —
+    // the file must carry the calibration beside them. `savemat` writes
+    // uncompressed MAT v5, where every variable name is stored as plain ASCII,
+    // so the keys are findable in the bytes. impulse.dvma has all three kinds.
+    const bytes = readFileSync((await download.path())!);
+    for (const kind of ['time', 'freq', 'tf']) {
+      for (const suffix of ['_axis_all', '_data_all', '_cal_factors', '_units']) {
+        expect(bytes.includes(kind + suffix), kind + suffix).toBe(true);
+      }
+    }
   });
 });

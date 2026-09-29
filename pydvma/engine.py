@@ -1467,19 +1467,53 @@ def _common_axis(axes, decimated=False):
     return np.arange(0, fmax + df, df)
 
 
+def _extend_column_calibration(s, cols, cal_factors, units):
+    """Append one export set's per-column calibration to the running lists.
+
+    ``s`` is one ``export_mat`` set; its ``cal_factors`` / ``units`` are the
+    client's per-column values (a JS array crosses the FFI as an iterable
+    JsProxy, so both are read by iteration, never indexed). A missing,
+    short or non-numeric entry pads with ``1.0`` / ``'-'`` — the defaults
+    ``file._column_calibration`` gives absent metadata — so the lists always
+    stay aligned with the data columns.
+    """
+    factors = _get(s, 'cal_factors')
+    names = _get(s, 'units')
+    factors = [] if factors is None else list(factors)
+    names = [] if names is None else list(names)
+    for c in range(cols):
+        f = 1.0
+        if c < len(factors):
+            try:
+                f = float(factors[c])
+            except (TypeError, ValueError):
+                f = 1.0
+        cal_factors.append(f)
+        units.append(str(names[c]) if c < len(names) else '-')
+
+
 def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
     """Build a MATLAB ``.mat`` from the working sets, matching pydvma's schema.
 
     Reproduces ``file.export_to_matlab`` (spec brief §D) WITHOUT reconstructing
-    a full DataSet: each per-kind set arrives as ``{axis, data|re/im, cols}``
-    from ``actions.exportMat`` and is interpolated onto a per-kind common axis
-    (finest resolution, widest span), then column-concatenated. Keys:
-    ``time_axis_all/time_data_all`` (real), ``freq_axis_all/freq_data_all`` and
-    ``tf_axis_all/tf_data_all`` (complex, preserved). No coherence; RAW values
-    (calibration is a display-time transform, not baked into exports). Only
-    kinds with data are included. Returns ``{'mat': <bytes>}`` — a JS
-    ``Uint8Array`` the client saves.
+    a full DataSet: each per-kind set arrives as
+    ``{axis, data|re/im, cols, cal_factors, units}`` from ``actions.exportMat``
+    and is interpolated onto a per-kind common axis (finest resolution, widest
+    span), then column-concatenated. Keys: ``time_axis_all/time_data_all``
+    (real), ``freq_axis_all/freq_data_all`` and ``tf_axis_all/tf_data_all``
+    (complex, preserved), each followed by ``<kind>_cal_factors`` /
+    ``<kind>_units`` written by the same ``file`` helper Python's exporter
+    uses, so given the same per-column values the two files agree byte for
+    byte after the MAT header's timestamp. No coherence. The data values are RAW — calibration is a
+    display-time transform, so the file carries it as metadata instead:
+    ``cal_factors`` / ``units`` are per data column, already resolved by the
+    client (for a TF the ratio cal[out]/cal[in] and its ``(out)/in`` unit),
+    and a set without them exports at the identity with unit ``'-'``, as
+    ``file._column_calibration`` does for absent metadata. Only kinds with
+    data are included. Returns ``{'mat': <bytes>}`` — a JS ``Uint8Array`` the
+    client saves.
     """
+    from pydvma import file as pfile
     from scipy import io as sio
 
     data_matlab = {}
@@ -1493,11 +1527,13 @@ def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
         fs = 0.0
         n_time = 0
         parsed = []
+        cal_factors, units = [], []
         for s in time_sets:
             ax = np.asarray(_get(s, 'axis'), dtype=np.float64)
             cols = int(_get(s, 'cols'))
             dat = np.asarray(_get(s, 'data'), dtype=np.float64).reshape(-1, cols)
             parsed.append((ax, dat))
+            _extend_column_calibration(s, cols, cal_factors, units)
             n = ax.size
             if n > 1:
                 T = max(T, float(ax[-1] * n / (n - 1)))
@@ -1513,6 +1549,8 @@ def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
                     all_[:, c] = np.interp(t, ax, dat[:, i], right=0)
             data_matlab['time_axis_all'] = np.transpose(np.atleast_2d(t))
             data_matlab['time_data_all'] = all_
+            pfile._attach_matlab_column_calibration(
+                data_matlab, 'time', cal_factors, units)
 
     # FFT + TF (complex) share the same interp/concat shape.
     for key, sets in (('freq', freq_sets), ('tf', tf_sets)):
@@ -1520,6 +1558,7 @@ def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
             continue
         parsed = []
         n_cols = 0
+        cal_factors, units = [], []
         for s in sets:
             ax = np.asarray(_get(s, 'axis'), dtype=np.float64)
             cols = int(_get(s, 'cols'))
@@ -1529,6 +1568,7 @@ def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
                   else np.asarray(im_raw, dtype=np.float64).reshape(-1, cols))
             parsed.append((ax, re + 1j * im))
             n_cols += cols
+            _extend_column_calibration(s, cols, cal_factors, units)
         f = _common_axis([ax for ax, _ in parsed])
         if f.size == 0:
             continue
@@ -1540,6 +1580,8 @@ def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
                 all_[:, c] = np.interp(f, ax, G[:, i], right=0)
         data_matlab['{}_axis_all'.format(key)] = np.transpose(np.atleast_2d(f))
         data_matlab['{}_data_all'.format(key)] = all_
+        pfile._attach_matlab_column_calibration(
+            data_matlab, key, cal_factors, units)
 
     buf = io.BytesIO()
     sio.savemat(buf, data_matlab)

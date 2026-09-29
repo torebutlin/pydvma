@@ -3698,6 +3698,48 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
+   * Per-column calibration of one set's export, shared by BOTH data exports
+   * (CSV header, `.mat` `<kind>_cal_factors` / `<kind>_units`). The columns
+   * themselves stay RAW, as pydvma writes them, so this is metadata only:
+   * per-CHANNEL factors/units for time and freq; for a TF the per-output-
+   * column RATIO cal[out]/cal[in] and its 'out/in' unit — matching
+   * `pydvma.file._column_calibration`, which is what makes the app's files
+   * the same as python's (CSV byte-identical; `.mat` identical after the
+   * header timestamp). Missing entries pad to `1` / `'-'`.
+   */
+  function exportColumnCalibration(
+    kind: 'time' | 'freq' | 'tf',
+    setId: number,
+    cols: number,
+  ): { calFactors: number[]; units: string[] } {
+    const cal = getCalibration(setId);
+    const tfSlice = kind === 'tf' ? get(derived)[setId]?.tf : undefined;
+    const tfChIn = tfSlice ? (tfSlice.chIn === undefined ? 0 : tfSlice.chIn) : 0;
+    const srcOf = (c: number): number => (
+      kind !== 'tf' || tfChIn === null ? c : (c < tfChIn ? c : c + 1)
+    );
+    const calFactors: number[] = [];
+    const units: string[] = [];
+    for (let c = 0; c < cols; c++) {
+      const src = srcOf(c);
+      const f = cal.factors[src] ?? 1;
+      const u = cal.units[src] ?? '-';
+      if (kind === 'tf' && tfChIn !== null) {
+        const fin = cal.factors[tfChIn] ?? 1;
+        calFactors.push(fin !== 0 ? f / fin : f);
+        // Parenthesised like python's `analysis.wrap_unit`, so a compound
+        // numerator cannot be misread — `(m/s²)/N`, not `m/s²/N`. The two
+        // exporters write byte-identical files, so the rule has to match.
+        units.push(`${wrapUnit(u)}/${wrapUnit(cal.units[tfChIn] ?? '-')}`);
+      } else {
+        calFactors.push(f);
+        units.push(u);
+      }
+    }
+    return { calFactors, units };
+  }
+
+  /**
    * Raw decoded per-set arrays for the CSV builder (Wave-A shared spine —
    * Agent 2 owns the CSV/preview UI). PURE accessor, no engine call: reads
    * the decoded `derived` slices and splits each into per-channel columns.
@@ -3719,34 +3761,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const { axis, data } = slice;
       const rows = axis.length;
       const cols = data.shape[1] ?? 1;
-      // Header-only calibration (the columns themselves stay RAW, as pydvma
-      // writes them): per-CHANNEL factors/units for time and freq; for a TF
-      // the per-output-column RATIO and its 'out/in' unit, matching
-      // `pydvma.file._column_calibration`.
-      const cal = getCalibration(ws.setId);
-      const tfSlice = kind === 'tf' ? d[ws.setId]?.tf : undefined;
-      const tfChIn = tfSlice ? (tfSlice.chIn === undefined ? 0 : tfSlice.chIn) : 0;
-      const srcOf = (c: number): number => (
-        kind !== 'tf' || tfChIn === null ? c : (c < tfChIn ? c : c + 1)
-      );
-      const calFactors: number[] = [];
-      const units: string[] = [];
-      for (let c = 0; c < cols; c++) {
-        const src = srcOf(c);
-        const f = cal.factors[src] ?? 1;
-        const u = cal.units[src] ?? '-';
-        if (kind === 'tf' && tfChIn !== null) {
-          const fin = cal.factors[tfChIn] ?? 1;
-          calFactors.push(fin !== 0 ? f / fin : f);
-          // Parenthesised like python's `analysis.wrap_unit`, so a compound
-          // numerator cannot be misread — `(m/s²)/N`, not `m/s²/N`. The two
-          // exporters write byte-identical files, so the rule has to match.
-          units.push(`${wrapUnit(u)}/${wrapUnit(cal.units[tfChIn] ?? '-')}`);
-        } else {
-          calFactors.push(f);
-          units.push(u);
-        }
-      }
+      const { calFactors, units } = exportColumnCalibration(kind, ws.setId, cols);
       if (kind === 'time') {
         const columns: Float64Array[] = [];
         for (let c = 0; c < cols; c++) {
@@ -3777,7 +3792,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * set's raw decoded row-major buffers (the `DecodedArray.re`/`im` are
    * already row-major (rows, cols)) to the `export_mat` glue op, which
    * interpolates onto a per-kind common axis, column-concatenates, and
-   * `scipy.io.savemat`s. RAW values (no cal factors); no coherence.
+   * `scipy.io.savemat`s. RAW values; no coherence. Each set also carries its
+   * per-column `cal_factors` / `units` (`exportColumnCalibration`, the same
+   * values the CSV header gets), which the op writes as `<kind>_cal_factors`
+   * / `<kind>_units` exactly as python's `export_to_matlab` does.
    *
    * `setIds` (the "Choose sets…" pick) restricts the export to those
    * measurements; ABSENT means every set, exactly as before.
@@ -3787,15 +3805,28 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const time_sets: unknown[] = [];
     const freq_sets: unknown[] = [];
     const tf_sets: unknown[] = [];
+    const cal = (kind: 'time' | 'freq' | 'tf', setId: number, cols: number) => {
+      const { calFactors, units } = exportColumnCalibration(kind, setId, cols);
+      return { cal_factors: calFactors, units };
+    };
     for (const ws of exportSets(setIds)) {
       const t = d[ws.setId]?.time;
-      if (t) time_sets.push({ axis: t.axis, data: t.data.re, cols: t.data.shape[1] ?? 1 });
+      if (t) {
+        const cols = t.data.shape[1] ?? 1;
+        time_sets.push({ axis: t.axis, data: t.data.re, cols, ...cal('time', ws.setId, cols) });
+      }
       // Complex kinds always carry `im`; include it only when present (never
       // send a JS null — the engine treats a missing key as zero imag).
       const f = d[ws.setId]?.freq;
-      if (f) freq_sets.push({ axis: f.axis, re: f.data.re, ...(f.data.im ? { im: f.data.im } : {}), cols: f.data.shape[1] ?? 1 });
+      if (f) {
+        const cols = f.data.shape[1] ?? 1;
+        freq_sets.push({ axis: f.axis, re: f.data.re, ...(f.data.im ? { im: f.data.im } : {}), cols, ...cal('freq', ws.setId, cols) });
+      }
       const tf = d[ws.setId]?.tf;
-      if (tf) tf_sets.push({ axis: tf.axis, re: tf.data.re, ...(tf.data.im ? { im: tf.data.im } : {}), cols: tf.data.shape[1] ?? 1 });
+      if (tf) {
+        const cols = tf.data.shape[1] ?? 1;
+        tf_sets.push({ axis: tf.axis, re: tf.data.re, ...(tf.data.im ? { im: tf.data.im } : {}), cols, ...cal('tf', ws.setId, cols) });
+      }
     }
     engine.boot();
     const res = await engine.enqueue('export_mat', { time_sets, freq_sets, tf_sets });

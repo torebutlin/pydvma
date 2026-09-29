@@ -719,6 +719,26 @@ def _attach_matlab_calibration(data_matlab, prefix, data_list):
     existing MATLAB scripts keep working and only gain the metadata.
     """
     cal_factors, units = _column_calibration(data_list)
+    _attach_matlab_column_calibration(data_matlab, prefix, cal_factors, units)
+
+
+def _attach_matlab_column_calibration(data_matlab, prefix, cal_factors, units):
+    """Write already-resolved per-column calibration into a Matlab export.
+
+    The half of `_attach_matlab_calibration` that owns the key names and
+    their MATLAB encoding, split out so the browser's Export Matlab (the
+    `pydvma.engine.export_mat` op, which has per-column arrays but no
+    DataSet) writes the SAME keys the same way as `export_to_matlab`.
+    ``<prefix>_cal_factors`` becomes a float column vector and
+    ``<prefix>_units`` a cell array of strings; nothing is written when
+    there are no columns.
+
+    Args:
+        data_matlab (dict): The ``scipy.io.savemat`` dict to add keys to.
+        prefix (str): ``'time'``, ``'freq'`` or ``'tf'``.
+        cal_factors (list of float): One factor per exported data column.
+        units (list of str): One unit per exported data column.
+    """
     if not cal_factors:
         return
     data_matlab[prefix + '_cal_factors'] = np.transpose(
