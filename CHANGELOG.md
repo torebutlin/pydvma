@@ -6,7 +6,8 @@ follows [semantic versioning](https://semver.org/).
 ## Unreleased
 
 Follow-ups from the 2.5.0 calibration review — the questions it left
-open, answered and built.
+open, answered and built — plus fixes to the Python file functions and
+`best_match` that a review of the docs turned up.
 
 ### Added
 
@@ -65,6 +66,46 @@ open, answered and built.
   names an install that can actually record (`pip install
   "pydvma[full]"` — `[serve]` alone has no acquisition backend) and
   links the new Running Locally page.
+- **With no filename and no Qt, the file functions now say what to
+  do.** Leaving out `filename` opens a Qt file dialog, but no pydvma
+  extra has installed Qt since 2.0.0, so a clean install got a bare
+  `ModuleNotFoundError`. It is now an `ImportError` that says to pass
+  `filename='name.dvma'` (or `pip install qtpy PyQt5` for the dialog).
+- **Importing pydvma's own `.mat` export is refused with a clear
+  error.** `export_to_matlab` writes an export-only file, but
+  `load_data`, `import_from_matlab_jwlogger` and the web app's Load Data
+  read it back as a silently EMPTY dataset. They now raise an error
+  saying only JW-logger `.mat` files can be imported; so does any other
+  `.mat` without the logger's `indata` / `yspec` variables.
+
+### Fixed
+
+- **A filename given positionally now works.**
+  `dvma.load_data('measurement.dvma')` passed the name as the Qt dialog
+  `parent`, the first positional argument of every file function, and
+  failed inside the dialog code — a `TypeError`, or
+  `ModuleNotFoundError` for qtpy on a clean install. `load_data`,
+  `save_data`, `save_fig`, `export_to_matlab`,
+  `export_to_matlab_jwlogger` and `export_to_csv` now take a string or
+  path in that position as the filename. Keyword calls are unchanged.
+- **The file dialog no longer kills the Python process.** Where Qt is
+  installed, opening the dialog with no Qt application running (a plain
+  script, or a notebook without `%gui qt` or `%matplotlib qt`) aborted
+  the process, kernel included; the removed Qt logger used to create
+  that application, and now the dialog does.
+- **`import_from_matlab_jwlogger()` with no filename** always raised
+  `TypeError` (it called `loadmat(None)`); it now asks with a file
+  dialog like the other file functions.
+- **`DataSet.save_data` could not overwrite without asking**, so a
+  scripted re-save blocked on the terminal prompt. It now takes
+  `overwrite_without_prompt`, passed through to `file.save_data`.
+- **`best_match` failed with its default `freq_range=None`**
+  (`TypeError: 'NoneType' object is not subscriptable`); it now matches
+  over the reference set's whole band, as documented. Passing a
+  `PlotData` as the range failed too (it read an axis `PlotData` does
+  not have) and now uses the plot's visible x-range. Its docstring now
+  gives the return shape — one `(n_channels, 1)` array per set — and how
+  to apply the factors.
 
 ### Documentation
 
@@ -80,8 +121,8 @@ open, answered and built.
   and the native engine — previously spread across the Web Logger
   overview, *From the Qt logger* and the examples.
 - **Accuracy fixes:** `load_data`/`save_data` examples now pass
-  `filename=` (the first positional argument is a dialog parent, and the
-  dialog needs Qt, which pydvma no longer installs); settings are passed
+  `filename=` (leaving it out opens a file dialog, which needs Qt, which
+  pydvma no longer installs); settings are passed
   to `MySettings(...)` rather than assigned afterwards (assignment leaves
   derived values such as `output_fs` stale); the browser app has no
   drag-and-drop loading, so the docs no longer promise it; and the
