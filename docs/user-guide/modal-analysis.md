@@ -1,81 +1,88 @@
 # Modal Analysis
 
-This guide covers modal analysis capabilities in pydvma.
+This guide covers modal analysis from Python: natural frequency, damping
+and modal constants from impact tests and other transients.
 
 ## Overview
 
-Modal analysis identifies the natural frequencies, damping ratios, and mode shapes of structures. pydvma provides tools for:
+pydvma provides tools for:
 
-- Natural frequency identification
-- Damping estimation from decay measurements
-- Single-degree-of-freedom (SDOF) fitting
-- Mode shape visualization
+- damping from a free decay, from a sonogram or a wavelet transform
+- band decay times (EDT, T20, T30, T60) from the Schroeder integral
+- fitting a single mode to transfer function data, across several channels
+
+The [web logger](../web-logger/modal-fitting.md) uses the same fitter and
+adds multi-mode fitting, refinement and a reconstruction overlay.
+
+The examples start from a synthetic impulse test (channel 0 is the hammer
+force, channel 1 the response). Use your own data in its place:
+
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+import pydvma as dvma
+
+data = dvma.create_test_impulse_data(noise_level=0.001)
+time_data = data.time_data_list[0]
+```
 
 ## Damping from Free Decay (Sonogram Method)
 
 ### Overview
 
-The sonogram-based damping estimation analyzes free decay responses to extract modal parameters. This is particularly useful for impact tests or other transient responses.
+The sonogram method estimates modal parameters from a free decay. It is
+suited to impact tests and other transient responses.
 
 ### Basic Usage
 
 ```python
-import pydvma as dvma
-
-# Load or record time data (e.g., from impact test)
-time_data = dataset.time_data_list[0]
-
-# Calculate damping from sonogram
 fn, Qn, fit_data = dvma.calculate_damping_from_sono(
     time_data,
-    n_chan=0,       # Channel to analyze
-    nperseg=512,    # FFT segment length
-    start_time=None # Auto-detect start, or specify time
+    n_chan=1,        # the response channel (channel 0 here is the force)
+    nperseg=512,     # FFT segment length
+    start_time=None, # see "Start time" below
 )
 
-# Results
 print(f"Natural frequencies: {fn} Hz")
 print(f"Q factors: {Qn}")
-print(f"Damping ratios: {1/(2*Qn)}")
+print(f"Damping ratios: {1 / (2 * Qn)}")
 ```
+
+Choose `n_chan` carefully. It is 1 unless you say otherwise, and on the
+force channel of an impact test the function finds no peaks and returns
+empty arrays.
 
 ### Understanding the Results
 
 The function returns three values:
 
-- **fn**: Natural frequencies in Hz
-- **Qn**: Quality factors (Q = 1/(2ζ) where ζ is damping ratio)
-- **fit_data**: Dictionary containing fit visualization data
+- **fn**: natural frequencies in Hz, one per detected mode
+- **Qn**: quality factors, `Q = 1/(2ζ)` where ζ is the damping ratio
+- **fit_data**: a dictionary of the data behind each fit, for plotting
+
+`fn` is the undamped natural frequency; the fit corrects the frequency it
+measures for damping. To get back the damped frequency:
 
 ```python
-# Calculate damping ratio from Q factor
 zeta = 1 / (2 * Qn)
-
-# Calculate damped natural frequency
 fn_damped = fn * np.sqrt(1 - zeta**2)
 ```
 
 ### Visualization
 
-The fit data can be visualized to assess fit quality:
+`fit_data['fits']` holds one dictionary for each mode, so you can check
+the quality of every fit:
 
 ```python
-import matplotlib.pyplot as plt
-
-# fit_data contains:
-# - 't': time axis
-# - 'fits': list of fit dictionaries
-
 for fit in fit_data['fits']:
     plt.figure()
-    plt.plot(fit['t_fit'], fit['real_data'], 'x',
-             label='Data')
+    plt.plot(fit['t_fit'], fit['real_data'], 'x', label='Data')
     plt.plot(fit['t_fit'], fit['real_fit'], '-',
              label=f"Fit: {fit['f_peak']:.1f} Hz, Q={fit['Qn']:.0f}")
     plt.xlabel('Time (s)')
     plt.ylabel('Log amplitude')
     plt.legend()
-    plt.title('Damping Fit')
+    plt.title('Damping fit')
     plt.show()
 ```
 
@@ -83,223 +90,182 @@ for fit in fit_data['fits']:
 
 The algorithm:
 
-1. Computes a sonogram (short-time Fourier transform)
-2. Identifies frequency peaks in the initial spectrum
-3. Tracks the decay of each peak over time
-4. Fits an exponential decay model to extract damping
-5. Returns natural frequencies and damping ratios
+1. Computes a Hann-window sonogram (a short-time Fourier transform).
+2. Finds frequency peaks in the spectrum at the start time.
+3. Tracks the decay of each peak over time.
+4. Fits an exponential decay, with a noise floor, to the log magnitude,
+   and a straight line to the phase.
+5. Returns natural frequencies and Q factors.
 
 ### Tips for Good Results
 
-**Segment Length Selection**
+**Segment length.** A longer `nperseg` gives better frequency resolution,
+which suits closely spaced modes (try 1024). A shorter one gives better
+time resolution, which suits rapidly decaying signals (try 256).
+
+**Data quality.**
+
+- Ensure a good signal-to-noise ratio.
+- Use a sensor range that avoids clipping.
+- Record several periods of the decay.
+- Minimise background noise.
+
+**Start time.** `start_time=None` starts the analysis just after the
+trigger when the capture used a pretrigger (at `2 * pretrig_samples / fs`).
+Without a pretrigger it starts at the beginning of the record, which for a
+hammer hit includes the impact. For untriggered records, give the time
+after the impact yourself:
+
 ```python
-# Longer segments = better frequency resolution
-nperseg = 1024  # Good for closely spaced modes
-
-# Shorter segments = better time resolution
-nperseg = 256   # Good for rapidly decaying signals
-```
-
-**Data Quality**
-- Ensure good signal-to-noise ratio
-- Use appropriate sensor range to avoid clipping
-- Record sufficient decay duration (several periods)
-- Minimize background noise
-
-**Start Time**
-```python
-# Auto-detect (default)
-fn, Qn, fit_data = dvma.calculate_damping_from_sono(time_data, n_chan=0)
-
-# Specify start time manually
 fn, Qn, fit_data = dvma.calculate_damping_from_sono(
-    time_data,
-    n_chan=0,
-    start_time=0.01  # Start analysis at 0.01 seconds
-)
+    time_data, n_chan=1, start_time=0.01)      # start analysis at 0.01 s
 ```
 
-**Peak Threshold**
-
-Peak picking scans the magnitude spectrum at the start time. The
-threshold is normalised over that slice's min→max range (peakutils
-semantics); by default it is chosen automatically (`10 * median / max`).
-Pass `peak_threshold` to control it directly:
+**Peak threshold.** Peak picking scans the magnitude spectrum at the
+start time. The threshold is a fraction of that slice's minimum to maximum
+range. By default it is chosen automatically (`10 * median / max`). Pass
+`peak_threshold` to control it directly:
 
 ```python
 # Permissive: keep every peak above 5 % of the slice's range
 fn, Qn, fit_data = dvma.calculate_damping_from_sono(
-    time_data, n_chan=0, peak_threshold=0.05)
+    time_data, n_chan=1, peak_threshold=0.05)
 
-# fit_data carries the picking context for plotting/re-fitting:
+# fit_data also carries the picking context, for plotting or re-fitting:
 # 'start_time', 'threshold' (the value actually used), the start-slice
-# spectrum ('slice_freq'/'slice_mag') and the candidate peaks
-# ('peaks_freq'/'peaks_mag'), plus per-mode decay-fit arrays in 'fits'.
+# spectrum ('slice_freq', 'slice_mag') and the candidate peaks
+# ('peaks_freq', 'peaks_mag'), as well as the per-mode fits in 'fits'.
 ```
 
-Both damping functions accept it (`calculate_damping_from_cwt` too).
+### Damping from a wavelet transform
+
+`calculate_damping_from_cwt` does the same fit on a wavelet (CWT) image.
+Its constant-Q resolution separates closely spaced low-frequency modes
+that a fixed sonogram window smears together:
+
+```python
+fn, Qn, fit_data = dvma.calculate_damping_from_cwt(
+    time_data, n_chan=1, f_range=(20, 500))      # Hz; limits the band and the memory used
+```
+
+It takes the same `start_time` and `peak_threshold`. A long, high-rate
+record needs an explicit `f_range`, or the transform is too large.
 
 ### Damping by band (Schroeder decay)
 
-The band alternative to peak fitting — standard room-acoustics style
-decay metrics from a band-pass filter bank and the Schroeder
-backward-integrated energy-decay curve:
+The band alternative to peak fitting gives room-acoustics style decay
+metrics, from a band-pass filter bank and the Schroeder backward-integrated
+energy-decay curve:
 
 ```python
 out = dvma.calculate_damping_by_band(
     time_data,
-    n_chan=0,
-    bands='octave',        # 'all' | 'octave' | 'third-octave' | 'tenth-decade'
-    start_time=None,       # None = inferred from the pretrigger
-    f_range=None,          # None = 4/T .. 0.4*fs
+    n_chan=1,
+    bands='octave',        # 'all', 'octave', 'third-octave' or 'tenth-decade'
+    start_time=None,       # None: as for the sonogram method
+    f_range=None,          # None: 4/T to 0.4*fs
 )
 
-# Ladder arrays (NaN = that band's decay range was too small to fit):
-out['fc']    # band centres (Hz), anchored at 1000 Hz
+# Ladder arrays (NaN where a band's decay range was too small to fit):
+out['fc']    # band centres, Hz, anchored at 1000 Hz
 out['EDT']   # early decay time (0 to -10 dB fit, x6)
 out['T20']   # -5 to -25 dB fit, x3
 out['T30']   # -5 to -35 dB fit, x2
-out['T60']   # reverberation time (T30-preferred, T20 fallback)
-out['Qn']    # equivalent band-centred Q = pi*fc*T60 / (3 ln 10)
+out['T60']   # reverberation time (T30 where it exists, else T20)
+out['Qn']    # band-centred Q = pi*fc*T60 / (3 ln 10)
 
-# out['band_data'][i] carries each band's EDC + T60 fit line for plotting.
+# out['band_data'][i] holds each band's decay curve and T60 fit line, for plotting.
 ```
 
-Use `bands='all'` for a single broadband decay (one overall RT60).
+Use `bands='all'` for a single broadband decay (one overall T60).
 
 ## SDOF Modal Fitting
 
-### Single Channel Modal Fitting
+### Fitting one mode across channels
 
-Fit modal parameters from FRF data for a single channel:
-
-```python
-# Calculate transfer function
-tf_data = dvma.calculate_tf(time_data, ch_in=0)
-
-# Select frequency range around a mode
-freq_range = [180, 220]  # Hz
-
-# Perform single-channel modal fit (returns scipy.optimize.OptimizeResult)
-result = dvma.modal_fit_single_channel(
-    tf_data,
-    freq_range=freq_range,
-    channel=0,
-    measurement_type='acc'  # 'acc', 'vel', or 'dsp'
-)
-
-# Access fitted parameters
-fn, zeta, modal_constant = result.x[0], result.x[1], result.x[2]
-print(f"Natural frequency: {fn:.2f} Hz")
-print(f"Damping ratio: {zeta:.4f}")
-print(f"Modal constant: {modal_constant}")
-```
-
-The optimized parameter vector is ordered as `[fn, zeta, an, phase, Rk, Rm]`.
-
-### Multi-Channel Modal Fitting
-
-For fitting a single mode across all channels from a list of transfer functions:
+`modal_fit_all_channels` fits a single-degree-of-freedom mode to the
+transfer functions in a `TfDataList`. All channels share one natural
+frequency and damping ratio, and each gets its own modal constant:
 
 ```python
-# Fit a single mode for all channels (returns single ModalData object)
+tf_data = dvma.calculate_tf(time_data, ch_in=0, window=None)
+tf_list = dvma.TfDataList([tf_data])
+
 modal_data = dvma.modal_fit_all_channels(
-    tf_data_list,
-    freq_range=[180, 220],
-    measurement_type='acc'  # 'acc', 'vel', or 'dsp'
+    tf_list,
+    freq_range=[80, 120],       # Hz, around the mode
+    measurement_type='vel',     # what the output is, per unit of input
 )
 
-# Review results (fn and zn are arrays, one element per fitted mode)
 print(f"Natural frequency: {modal_data.fn[0]:.2f} Hz")
 print(f"Damping ratio: {modal_data.zn[0]:.4f}")
 print(f"Modal constants: {modal_data.an}")
 ```
 
+`measurement_type` says what the transfer function's output is, per unit
+of input force: `'acc'` (acceleration), `'vel'` (velocity) or `'dsp'`
+(displacement). The synthetic response above is a velocity.
+
+The fit is one mode per call, so for several modes call it once for each,
+with `freq_range` around that mode. In the returned `ModalData`, `fn` and
+`zn` have one element per mode, and `an` has one row per mode with a
+column for each channel. The fit uses each transfer function's calibration
+factors, so the constants come out in engineering units. If the frequency
+range is poor, the function prints "Poor quality fit"; adjust the range and
+try again.
+
 ## Beyond SDOF: not yet built in
 
-Mode-shape extraction, the Modal Assurance Criterion (MAC), and
-Operating Deflection Shape (ODS) plotting are common next steps after
-SDOF fitting. pydvma doesn't ship those as helpers yet — they're on
-the roadmap (see `TODO.md`: "mode-shape plotter", "MAC helper", "ODS
-helper"). Starter recipes that operate on `TfData` / `ModalData`
-output live in `dev/mode-shape-sketches.md`; they're suitable as a
-basis when these are built up into proper APIs.
+Mode-shape extraction, the Modal Assurance Criterion (MAC) and Operating
+Deflection Shape (ODS) plotting are common next steps after SDOF fitting.
+pydvma doesn't provide them as functions yet. You can build them from the
+arrays in `TfData` and `ModalData`: `modal_data.an` holds a modal
+constant for every channel, and these are the ingredients of a mode shape.
 
 ## Experimental Modal Analysis Workflow
 
-### Complete Example
+A complete workflow from a set of hammer hits to modal parameters. It
+uses a synthetic ensemble so it runs as it stands. To use your own hits,
+record them as in
+[Impact test with averaging](../examples/basic.md#impact-test-with-averaging)
+and use that dataset instead of `data`:
 
 ```python
-import pydvma as dvma
-import numpy as np
-import matplotlib.pyplot as plt
-
-# 1. Setup
-settings = dvma.MySettings()
-settings.fs = 10000
-settings.stored_time = 1.0
-settings.pretrig_samples = 1000
-settings.channels = 2  # Force and response
-
-# 2. Acquire data (multiple impacts)
-time_data_list = dvma.TimeDataList()
-n_averages = 5
-
-for i in range(n_averages):
-    input("Press Enter for next impact...")
-    data = dvma.log_data(settings, test_name=f"impact_{i}")
-    time_data_list.append(data.time_data_list[0])
-
-# 3. Calculate averaged FRF
-tf_data = dvma.calculate_tf_averaged(time_data_list, ch_in=0)
-
-# 4. Plot FRF and coherence
-f = tf_data.freq_axis
-H = tf_data.tf_data[:, 0]
-coh = tf_data.tf_coherence[:, 0]
-
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-
-ax1.semilogy(f, np.abs(H))
-ax1.set_ylabel('|H(f)| (m/s²/N)')
-ax1.set_title('Frequency Response Function')
-ax1.grid(True)
-ax1.set_xlim([0, 500])
-
-ax2.plot(f, coh)
-ax2.set_xlabel('Frequency (Hz)')
-ax2.set_ylabel('Coherence')
-ax2.set_ylim([0, 1])
-ax2.grid(True)
-ax2.set_xlim([0, 500])
-
-plt.tight_layout()
-plt.show()
-
-# 5. Identify modes
 from scipy.signal import find_peaks
 
-# Find peaks in FRF
-magnitude = np.abs(H)
-peaks, properties = find_peaks(magnitude, height=np.max(magnitude)*0.1)
+# 1. Five hits (replace with your recorded dataset)
+data = dvma.create_test_impulse_ensemble(N_ensemble=5, noise_level=0.05)
 
-natural_frequencies = f[peaks]
-print("Identified natural frequencies:")
-for fn in natural_frequencies:
-    print(f"  {fn:.2f} Hz")
+# 2. Averaged transfer function, force on channel 0
+tf_data = dvma.calculate_tf_averaged(data.time_data_list, ch_in=0, window=None)
+f = tf_data.freq_axis
+H = tf_data.tf_data[:, 0]
 
-# 6. Extract damping (from time data)
+# 3. Find the resonances below 500 Hz
+below = f < 500
+magnitude = np.abs(H[below])
+peaks, _ = find_peaks(magnitude, height=0.1 * magnitude.max())
+peak_frequencies = f[below][peaks]
+print("Peaks (Hz):", peak_frequencies)
+
+# 4. Fit each mode
+tf_list = dvma.TfDataList([tf_data])
+for f0 in peak_frequencies:
+    modal_data = dvma.modal_fit_all_channels(
+        tf_list, freq_range=[0.8 * f0, 1.2 * f0], measurement_type='vel')
+    print(f"f = {modal_data.fn[0]:.2f} Hz, zeta = {modal_data.zn[0]:.4f}")
+
+# 5. Cross-check the damping from the free decay of the first hit
 fn, Qn, fit_data = dvma.calculate_damping_from_sono(
-    time_data_list[0],
-    n_chan=1,
-    nperseg=512
-)
+    data.time_data_list[0], n_chan=1, nperseg=512)
 
-print("\nDamping analysis:")
+print("Damping from the decay:")
 for i, (freq, Q) in enumerate(zip(fn, Qn)):
-    zeta = 1/(2*Q)
-    print(f"  Mode {i+1}: f={freq:.2f} Hz, ζ={zeta:.4f}, Q={Q:.1f}")
+    print(f"  Mode {i + 1}: f = {freq:.2f} Hz, zeta = {1 / (2 * Q):.4f}, Q = {Q:.1f}")
 ```
+
+For plots of the transfer function and coherence, see
+[Plotting and Visualization](plotting.md#transfer-function).
 
 ## References and Further Reading
 
@@ -310,5 +276,5 @@ for i, (freq, Q) in enumerate(zip(fn, Qn)):
 ## Next Steps
 
 - Learn about [Plotting and Visualization](plotting.md)
-- See complete [Examples](../examples/advanced.md)
-- Check [API Reference](../api/modal.md)
+- See the worked [Examples](../examples/basic.md)
+- Check the [API Reference](../api/modal.md)
