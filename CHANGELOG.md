@@ -9,6 +9,25 @@ Follow-ups from the 2.5.0 calibration review — the questions it left
 open, answered and built — plus fixes to the Python file functions and
 `best_match` that a review of the docs turned up.
 
+### Fixed
+
+- **The web app's Export Matlab now carries the calibration, as 2.5.0
+  said it did.** 2.5.0 added `time_cal_factors` / `time_units` and the
+  `freq_` and `tf_` equivalents to the MATLAB export, but only Python's
+  `export_to_matlab` wrote them. The app's **Export Matlab** builds its
+  file through a separate engine op, which still wrote only the
+  `*_axis_all` / `*_data_all` arrays, so a calibrated set exported raw
+  volts with no record of how to convert them. The op now writes the
+  same keys through the same `pydvma.file` helper, from the per-column
+  factors and units the CSV header already uses. On the same data the
+  app's `.mat` matches Python's key for key and value for value, and
+  byte for byte after the header timestamp. The app and Python still
+  differ where their CSV headers already do: the app builds a transfer
+  function's factor and unit from its source channels, while Python
+  reads the values stored on the TF. So a TF loaded from a file written
+  before `wrap_unit` exports as `(m/s)/N` from the app and as the
+  stored `m/s/N` from Python.
+
 ### Added
 
 - **A genuine power spectral density in the Frequency stage.** The

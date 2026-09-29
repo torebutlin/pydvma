@@ -77,7 +77,8 @@ metadata in the CSV/Matlab exports). It then left five QUERIES for Tore
 and three pieces of scoped WORK. **The queries are answered and built**
 (2026-09-18, second session) — kept below as the record of what was
 decided and why, since each records a design rule worth not
-re-litigating. W1 landed with Q1; W2 and W3 remain open.
+re-litigating. W1 landed with Q1; W2 and W3 remain open, and W4
+was added 2026-09-29.
 
 #### Queries — ANSWERED and DONE
 
@@ -146,6 +147,22 @@ re-litigating. W1 landed with Q1; W2 and W3 remain open.
   (`tests/analysis/bestMatch.test.ts`) and by typecheck, but no
   Playwright spec drives the real dialog. Worth one when the
   freq-nav/bridge specs are next touched.
+- **W4. App and Python resolve a TF's export calibration from different
+  places** (found 2026-09-29, closing the app's missing `.mat` keys).
+  Both data exports (CSV header, `.mat` `tf_cal_factors` / `tf_units`)
+  are identical on the same data. On a TF loaded from a file, though,
+  the app builds the factor and unit from the SOURCE channels, while
+  Python's `file._column_calibration` reads the values STORED on the
+  TfData. Seen on the webui's own `impulse.dvma`, which predates
+  `wrap_unit`: the app writes `(m/s)/N`, Python the stored `m/s/N`.
+  Aligning that one string gives byte-identical `.mat` files after the
+  header timestamp. So Q5's "no display path reads a stored TF unit
+  string" holds for display but not for Python's exports. The same
+  split would show in the factor if a TF's stored ratio ever disagreed
+  with its source channels. Options: accept and document it; or have
+  Python's exporters derive the ratio from the `id_link`ed TimeData when
+  it is present, falling back to the stored values. Low stakes: the
+  numbers agree and only the old unit string's wrapping differs.
 
 - ~~**Native engine, stages 3–4**~~ — **DONE** 2026-08-18/19
   (`dev/2026-08-18-session-journal-round.md`; plan
