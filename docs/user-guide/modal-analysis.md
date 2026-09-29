@@ -194,7 +194,7 @@ tf_list = dvma.TfDataList([tf_data])
 modal_data = dvma.modal_fit_all_channels(
     tf_list,
     freq_range=[80, 120],       # Hz, around the mode
-    measurement_type='vel',     # what the output is, per unit of input
+    measurement_type='dsp',     # what the output is, per unit of input
 )
 
 print(f"Natural frequency: {modal_data.fn[0]:.2f} Hz")
@@ -204,7 +204,10 @@ print(f"Modal constants: {modal_data.an}")
 
 `measurement_type` says what the transfer function's output is, per unit
 of input force: `'acc'` (acceleration), `'vel'` (velocity) or `'dsp'`
-(displacement). The synthetic response above is a velocity.
+(displacement). The synthetic response is labelled `m/s`, but its shape,
+`exp(-t/0.1) * sin(2*pi*100*t)`, is a displacement impulse response, so
+it is fitted with `'dsp'`. Pick the type from the physics of the
+measurement, not the unit label.
 
 The fit is one mode per call, so for several modes call it once for each,
 with `freq_range` around that mode. In the returned `ModalData`, `fn` and
@@ -213,6 +216,35 @@ column for each channel. The fit uses each transfer function's calibration
 factors, so the constants come out in engineering units. If the frequency
 range is poor, the function prints "Poor quality fit"; adjust the range and
 try again.
+
+### Fitting one channel
+
+`modal_fit_single_channel` fits one mode to one column of a transfer
+function and returns the optimiser's result:
+
+```python
+import pydvma as dvma
+
+data = dvma.create_test_impulse_data()   # channel 0 force, channel 1 response
+tf_data = dvma.calculate_tf(data.time_data_list[0], ch_in=0)
+
+result = dvma.modal_fit_single_channel(
+    tf_data,
+    freq_range=[80, 120],     # Hz, around one mode
+    channel=0,                # column of tf_data.tf_data
+    measurement_type='dsp',   # 'acc', 'vel' or 'dsp'
+)
+
+fn, zeta, an, phase, rk, rm = result.x
+print(f"Natural frequency: {fn:.2f} Hz")
+print(f"Damping ratio: {zeta:.4f}")
+```
+
+`result.x` is ordered `[fn, zeta, an, phase, rk, rm]`: the modal
+constant's amplitude and phase (radians) follow the natural frequency
+and damping ratio, then the two local residual terms. Unlike
+`modal_fit_all_channels` above, the fit ignores the transfer function's
+calibration factors.
 
 ## Beyond SDOF: not yet built in
 
