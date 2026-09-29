@@ -8,6 +8,40 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-09-29, later (Mac): **v2.6.0 is CUT and pushed; the twine
+upload is Tore's, then tag `v2.6.0` at the cut commit and publish the
+GitHub release (Zenodo auto-archives) — tag/release AFTER the upload.**
+Tore's decisions this round, all landed: (1) **no Qt at all** — the
+file functions' no-filename dialog is gone; a missing filename is a
+TypeError naming the function; `parent` stays as a deprecated no-op
+(DeprecationWarning for a non-path value), drop it in 3.0 (TODO);
+(2) **`window=None` is the default at every Python entry point** (three
+wrappers defaulted to 'hann'); (3) **`signal_generator` warns**
+(`OutputRescaledWarning`) when it scales to the output rail; (4) **the
+synthetic data is physical**: the response is the analytic VELOCITY
+impulse response (100 Hz, tau 0.1 s, modal constant 1000 /kg) convolved
+with the force pulse, trapezoid first sample, so a 'vel' fit returns
+fn 100.000, zeta 0.01592, an 1000 at 0.0 deg exactly (the old
+exp·sin started 1 ms ahead of the pulse centre: +36 deg, 'dsp'-shaped).
+Found and FIXED on the way, the serious one: **the bridge's
+capture-integrity notices were `error` frames, and the web client fails
+the waiting request on an error frame** — a capture with dropped
+input/USB dropouts was reported "Recording failed" and its container,
+arriving after, was handed to the NEXT capture (demonstrated in vitest:
+second capture read the first's data). Live since round 12; the stall
+notice was dropped entirely. Now a `warning` frame -> provider
+`onWarning` sink -> acquire store -> pinned toast; the stimulus-rescale
+warning rides the same path (and the Web Audio generator reports its
+own scale-down via `generateStimulus().scaledTo`). The JW-export
+round-trip gap is fixed too (its own session, 668f939/55cb72c), and so
+is the Matlab export's float-edge grid (e03f9de, another session).
+Suites at the cut (engine wheel 2.6.0, byte-identical): pytest 1346/7
+skipped (test_acquisition_cancel's two-phase test failed once under
+concurrent Playwright load, 3/3 alone — the known load sensitivity),
+vitest 1207/1, check 0/0, Playwright WITH BRIDGE_E2E 112/112, mkdocs
+--strict clean. Every `claude/*` branch and the old remote ones were deleted as
+redundant (tips listed in the session; recoverable by SHA).
+
 As of 2026-09-29 (Mac, four parallel sessions merged and PUSHED; no
 version bump, all under CHANGELOG `## Unreleased`): **a docs review ran
 every documented example, rewrote the docs to match today's behaviour,
