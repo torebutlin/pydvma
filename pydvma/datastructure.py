@@ -739,10 +739,8 @@ class DataSet():
         needs.
 
         Args:
-            filename (str, optional): Output file name. If omitted, a Qt
-                file dialog is opened, which needs ``qtpy`` and a Qt
-                binding installed separately (pydvma no longer installs
-                them), so pass a name in scripts and notebooks.
+            filename (str): Output file name. Required: leaving it out
+                raises TypeError, since pydvma has no file dialog.
             sets (int or Iterable[int], optional): If given, saves
                 ``self.subset(sets)`` instead of the whole DataSet; see
                 `subset`. None (the default) saves everything.
@@ -766,9 +764,9 @@ class DataSet():
         `file.export_to_matlab` for the variable names.
 
         Args:
-            filename (str, optional): Output file name (``.mat`` is added
-                if missing). If omitted, a Qt file dialog is opened, which
-                needs ``qtpy`` and a Qt binding installed separately.
+            filename (str): Output file name (``.mat`` is added if
+                missing). Required: leaving it out raises TypeError,
+                since pydvma has no file dialog.
             overwrite_without_prompt (bool): If False (the default), an
                 existing file triggers a y/n question at the terminal.
 
@@ -786,9 +784,9 @@ class DataSet():
         opened by that MATLAB logger.
 
         Args:
-            filename (str, optional): Output file name (``.mat`` is added
-                if missing). If omitted, a Qt file dialog is opened, which
-                needs ``qtpy`` and a Qt binding installed separately.
+            filename (str): Output file name (``.mat`` is added if
+                missing). Required: leaving it out raises TypeError,
+                since pydvma has no file dialog.
             overwrite_without_prompt (bool): If False (the default), an
                 existing file triggers a y/n question at the terminal.
 
@@ -1120,9 +1118,9 @@ class TimeDataList(list):
         See `file.export_to_csv` for the column layout.
 
         Args:
-            filename (str, optional): Output file name (``.csv`` is added
-                if missing). If omitted, a Qt file dialog is opened, which
-                needs ``qtpy`` and a Qt binding installed separately.
+            filename (str): Output file name (``.csv`` is added if
+                missing). Required: leaving it out raises TypeError,
+                since pydvma has no file dialog.
             overwrite_without_prompt (bool): If False (the default), an
                 existing file triggers a y/n question at the terminal.
 
@@ -1199,9 +1197,9 @@ class FreqDataList(list):
         See `file.export_to_csv` for the column layout.
 
         Args:
-            filename (str, optional): Output file name (``.csv`` is added
-                if missing). If omitted, a Qt file dialog is opened, which
-                needs ``qtpy`` and a Qt binding installed separately.
+            filename (str): Output file name (``.csv`` is added if
+                missing). Required: leaving it out raises TypeError,
+                since pydvma has no file dialog.
             overwrite_without_prompt (bool): If False (the default), an
                 existing file triggers a y/n question at the terminal.
 
@@ -1319,9 +1317,9 @@ class TfDataList(list):
         See `file.export_to_csv` for the column layout.
 
         Args:
-            filename (str, optional): Output file name (``.csv`` is added
-                if missing). If omitted, a Qt file dialog is opened, which
-                needs ``qtpy`` and a Qt binding installed separately.
+            filename (str): Output file name (``.csv`` is added if
+                missing). Required: leaving it out raises TypeError,
+                since pydvma has no file dialog.
             overwrite_without_prompt (bool): If False (the default), an
                 existing file triggers a y/n question at the terminal.
 

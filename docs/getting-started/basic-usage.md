@@ -114,11 +114,9 @@ dvma.save_data(data, filename='my_test.dvma')
 data = dvma.load_data(filename='my_test.dvma')
 ```
 
-Always give a filename, as `filename=` or as the first argument after the
-data (`dvma.load_data('my_test.dvma')` works too). Without one these
-functions open a file dialog, which needs a Qt installation that pydvma no
-longer provides, and without Qt they stop with an error asking for a
-filename.
+The filename can also be the first argument after the data
+(`dvma.load_data('my_test.dvma')`). It is always required: pydvma has no
+file dialog.
 
 `.dvma` is pydvma's own format: a zip of plain arrays and JSON that
 opens in the browser app, in any Python with pydvma, and in other tools.

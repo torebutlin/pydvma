@@ -4,10 +4,8 @@ Save and load whole datasets in pydvma's own format, and export the
 arrays to MATLAB, CSV or pandas.
 
 Give each function a filename, either as `filename=` (as below) or
-positionally, as in `dvma.load_data('my_test.dvma')`. Without one they
-open a file dialog instead, which needs `pip install qtpy` plus a Qt
-binding such as PyQt5. pydvma installs neither, so without them the call
-stops with an error asking for a filename.
+positionally, as in `dvma.load_data('my_test.dvma')`. It is required:
+pydvma has no file dialog.
 
 The examples start from a synthetic impulse test:
 

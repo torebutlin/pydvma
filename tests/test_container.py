@@ -605,23 +605,6 @@ def test_save_data_overwrite_prompt_on_normalised_name(tmp_path, monkeypatch):
     assert (tmp_path / 'mytest.dvma').read_bytes() == before
 
 
-def test_save_data_dialog_path_appends_extension(tmp_path, monkeypatch):
-    # a user typing a bare name in the file-picker save dialog must
-    # still get a .dvma file (the dialog path bypasses the explicit-
-    # filename normalisation branch). file.py's no-filename fallback
-    # pops a QFileDialog, which needs qtpy; that is no longer a declared
-    # dependency (the Qt logger was removed at tag qt-final), so skip
-    # gracefully on a base install where qtpy is absent.
-    qw = pytest.importorskip('qtpy.QtWidgets')
-    data = _make_full_dataset()
-    target = str(tmp_path / 'typed_name')
-    monkeypatch.setattr(qw.QFileDialog, 'getSaveFileName',
-                        staticmethod(lambda *a, **k: (target, '')))
-    out = dvma.save_data(data)
-    assert out == target + '.dvma'
-    assert (tmp_path / 'typed_name.dvma').is_file()
-
-
 FIXTURE_DVMA = (pathlib.Path(__file__).resolve().parent.parent
                 / 'webui' / 'tests' / 'fixtures' / 'impulse.dvma')
 

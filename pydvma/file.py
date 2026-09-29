@@ -10,79 +10,47 @@ import warnings
 import zipfile
 import numpy as np
 import scipy.io as io
-# Qt is only needed when a function is called with no filename and
-# has to ask for one with a file dialog. It is imported inside
-# `_ask_filename`, so callers that pass `filename=` never load it. No
-# pydvma extra installs qtpy since the Qt logger was removed (tag
-# qt-final), so without it `_ask_filename` raises an ImportError that
-# says to pass a filename.
 from . import container
 from . import datastructure
 from . import options
 
 
-def _positional_filename(parent, filename):
-    """Treat a path passed as the first positional argument as the filename.
+def _resolve_filename(parent, filename, func, example):
+    """The filename a file function was given, positionally or by keyword.
 
-    Every function here takes the Qt dialog ``parent`` BEFORE ``filename``
-    (a relic of the removed Qt logger), so ``load_data('x.dvma')`` binds the
-    path to ``parent``. A str or os.PathLike ``parent`` with no ``filename``
-    can only be that, so it is moved across. Anything else passes through
-    untouched, so keyword calls behave exactly as before; a PathLike
-    ``filename`` is converted to str because the callers use str methods.
+    Every function here takes a ``parent`` BEFORE ``filename``: the Qt
+    dialog parent of the removed Qt logger. So ``load_data('x.dvma')``
+    binds the path to ``parent``, and a str or os.PathLike ``parent`` with
+    no ``filename`` is taken as the filename. Any other ``parent`` is
+    ignored with a DeprecationWarning (the parameter goes in 3.0), since
+    pydvma no longer opens a file dialog. A PathLike filename comes back
+    as str, because the callers use str methods.
 
-    Returns a ``(parent, filename)`` pair.
+    Args:
+        parent: The function's ``parent`` argument.
+        filename: The function's ``filename`` argument.
+        func (str): The function's name, for the messages.
+        example (str): A call to show when the filename is missing.
+
+    Returns the filename as a str.
+
+    Raises:
+        TypeError: If no filename was given either way.
     """
     if filename is None and isinstance(parent, (str, os.PathLike)):
         parent, filename = None, parent
+    if parent is not None:
+        warnings.warn(
+            '{}(): `parent` is ignored and will be removed in pydvma 3.0; '
+            'pydvma no longer opens a file dialog.'.format(func),
+            DeprecationWarning, stacklevel=3)
+    if filename is None:
+        raise TypeError(
+            '{}() needs a filename, e.g. {}. pydvma no longer opens a file '
+            'dialog.'.format(func, example))
     if isinstance(filename, os.PathLike):
         filename = os.fspath(filename)
-    return parent, filename
-
-
-_NO_QT_MESSAGE = (
-    "No filename given, and the file dialog needs Qt, which pydvma no "
-    "longer installs. Pass filename='{example}' (or pip install qtpy "
-    "PyQt5 for the dialog).")
-
-# The QApplication `_ask_filename` makes when there is none, kept here so
-# it is not garbage-collected out from under later dialogs.
-_QT_APP = None
-
-
-def _ask_filename(mode, parent, caption, file_filter, example):
-    """Ask for a filename with a Qt file dialog.
-
-    Qt is imported here, not at module level, and a QApplication is made if
-    none exists yet: a Qt widget without one aborts the whole process (a
-    notebook kernel with it), and the removed Qt logger used to provide it.
-
-    Args:
-        mode: ``'open'`` for an open dialog, ``'save'`` for a save dialog.
-        parent: Parent widget for the dialog, or None.
-        caption: Dialog title.
-        file_filter: Qt name filter, e.g. ``'*.dvma'``; ``''`` for none.
-        example: Filename suggested in the error when Qt is missing.
-
-    Returns the chosen filename, or None if the dialog was cancelled.
-
-    Raises:
-        ImportError: If qtpy or a Qt binding is not installed. The message
-            says to pass a filename instead.
-    """
-    global _QT_APP
-    try:
-        from qtpy.QtWidgets import QApplication, QFileDialog
-    except ImportError as e:
-        # qtpy's own "no binding" error is an ImportError subclass too.
-        raise ImportError(_NO_QT_MESSAGE.format(example=example)) from e
-    if QApplication.instance() is None:
-        _QT_APP = QApplication([])
-    if mode == 'open':
-        filename, _ = QFileDialog.getOpenFileName(parent, caption, '', file_filter)
-    else:
-        filename, _ = QFileDialog.getSaveFileName(parent, caption, '', file_filter)
-    return filename or None
+    return filename
 
 
 def load_data(parent=None, filename=None):
@@ -90,9 +58,7 @@ def load_data(parent=None, filename=None):
     Loads a dataset from `filename`.
 
     The filename can be given positionally, ``load_data('name.dvma')``,
-    or as ``filename=``. With no filename a Qt file dialog asks for one;
-    that needs ``qtpy`` and a Qt binding, which pydvma no longer
-    installs.
+    or as ``filename=``, and is required: there is no file dialog.
 
     Container detection is by content (zip magic bytes); ``.mat`` and
     legacy ``.npy`` fall back to extension:
@@ -109,29 +75,24 @@ def load_data(parent=None, filename=None):
       writes is export-only and raises ValueError.
 
     Args:
-       parent (optional): Qt parent widget for the file dialog, used
-           only when no filename is given. A str or path here is taken
-           as the filename.
-       filename (str or os.PathLike, optional): File to load. If
-           omitted, a file dialog is shown (needs Qt).
+       parent (optional): Deprecated and ignored, and going in pydvma
+           3.0 (it was the Qt file dialog's parent). A str or path here
+           is taken as the filename.
+       filename (str or os.PathLike): File to load, given positionally or
+           as ``filename=``.
 
     Returns:
-       dataset (DataSet or None): The loaded data, or None if the dialog
-           was cancelled or the extension is not .dvma, .npy or .mat.
+       dataset (DataSet or None): The loaded data, or None if the
+           extension is not .dvma, .npy or .mat.
 
     Raises:
        FileNotFoundError: If `filename` does not exist.
        ValueError: If a ``.dvma`` file is not a valid container, or a
            ``.mat`` file is not a JW-logger file.
-       ImportError: If no filename is given and Qt is not installed.
+       TypeError: If no filename is given.
     '''
-    parent, filename = _positional_filename(parent, filename)
-    if filename is None:
-        filename = _ask_filename('open', parent, 'Open data file',
-                                 '*.dvma *.npy *.mat', 'data.dvma')
-        if filename is None:
-            return None
-
+    filename = _resolve_filename(parent, filename, 'load_data',
+                                 "load_data('data.dvma')")
     if not os.path.isfile(filename):
         raise FileNotFoundError(
             'No such data file: {!r}'.format(filename))
@@ -163,9 +124,8 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
     'name.dvma')``, or as ``filename=``; ``.dvma`` is added when it ends
     in neither ``.dvma`` nor ``.npy``. If that file already exists you
     are asked at the terminal whether to overwrite it, unless
-    `overwrite_without_prompt` is True. With no filename a Qt file
-    dialog asks for one (and confirms any overwrite itself); that needs
-    ``qtpy`` and a Qt binding, which pydvma no longer installs.
+    `overwrite_without_prompt` is True. The filename is required: there
+    is no file dialog.
 
     Legacy escape hatch: an explicit filename ending in ``.npy``
     writes the pre-1.5.0 pickle format instead, for workflows that
@@ -174,11 +134,11 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
 
     Args:
        dataset (DataSet): An object of the class DataSet
-       parent (optional): Qt parent widget for the file dialog, used
-           only when no filename is given. A str or path here is taken
-           as the filename.
-       filename (str or os.PathLike, optional): Output filename. If
-           omitted, a file dialog is shown (needs Qt).
+       parent (optional): Deprecated and ignored, and going in pydvma
+           3.0 (it was the Qt file dialog's parent). A str or path here
+           is taken as the filename.
+       filename (str or os.PathLike): Output filename, given positionally or
+           as ``filename=``.
        overwrite_without_prompt (bool, optional): If True, overwrite an
            existing file without asking.
        sets (int or Iterable[int], optional): If given, writes
@@ -189,36 +149,23 @@ def save_data(dataset, parent=None, filename=None, overwrite_without_prompt=Fals
            unchanged.
 
     Returns:
-       filename (str or None): The file written, or None if the dialog
-           was cancelled or the overwrite was declined.
+       filename (str or None): The file written, or None if the
+           overwrite was declined.
 
     Raises:
-       ImportError: If no filename is given and Qt is not installed.
+       TypeError: If no filename is given.
     '''
-    parent, filename = _positional_filename(parent, filename)
+    filename = _resolve_filename(parent, filename, 'save_data',
+                                 "save_data(dataset, 'data.dvma')")
     if sets is not None:
         dataset = dataset.subset(sets)
 
-    # If filename not specified, provide dialog
-    from_dialog = filename is None
-    if from_dialog:
-        filename = _ask_filename('save', parent, 'Save dataset',
-                                 '*.dvma', 'data.dvma')
-        if filename is None:
-            print('Save cancelled')
-            return None
-
-    # Normalise the extension FIRST, so both the dialog and explicit
-    # paths write a real extension and the overwrite prompt below
-    # checks the same filename we're about to write.
+    # Normalise the extension FIRST, so the overwrite prompt below checks
+    # the same filename we're about to write.
     if not filename.endswith('.npy') and not filename.endswith('.dvma'):
         filename += '.dvma'
 
-    # Explicit-filename path only: terminal overwrite prompt. The
-    # dialog path keeps Qt's own replace-file confirmation and must
-    # never block on terminal input().
-    if (not from_dialog and os.path.isfile(filename)
-            and not overwrite_without_prompt):
+    if os.path.isfile(filename) and not overwrite_without_prompt:
         answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
         if answer != 'y':
             print('Save cancelled')
@@ -244,46 +191,37 @@ def save_fig(plot, parent=None, figsize=None, filename=None, overwrite_without_p
 
     Any extension on the filename is replaced, so both files are always
     written. The filename can be given positionally, ``save_fig(plot,
-    'name')``, or as ``filename=``. With no filename a Qt file dialog
-    asks for one; that needs ``qtpy`` and a Qt binding, which pydvma no
-    longer installs.
+    'name')``, or as ``filename=``, and is required: there is no file
+    dialog.
 
     Args:
        plot (PlotData or Figure): A PlotData object or matplotlib Figure object
-       parent (optional): Qt parent widget for the file dialog, used
-           only when no filename is given. A str or path here is taken
-           as the filename.
+       parent (optional): Deprecated and ignored, and going in pydvma
+           3.0 (it was the Qt file dialog's parent). A str or path here
+           is taken as the filename.
        figsize (tuple, optional): Size in inches for the saved files; the
            figure is restored to its own size afterwards.
-       filename (str or os.PathLike, optional): Output filename. If
-           omitted, a file dialog is shown (needs Qt).
+       filename (str or os.PathLike): Output filename, given positionally or
+           as ``filename=``.
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     Returns:
        filename (str or None): The PDF written (the PNG is beside it), or
-           None if the dialog was cancelled or the overwrite was declined.
+           None if the overwrite was declined.
 
     Raises:
-       ImportError: If no filename is given and Qt is not installed.
+       TypeError: If no filename is given.
     '''
-    parent, filename = _positional_filename(parent, filename)
+    filename = _resolve_filename(parent, filename, 'save_fig',
+                                 "save_fig(plot, 'figure')")
     if plot.__class__.__name__ == 'PlotData':
         fig = plot.fig
     elif plot.__class__.__name__ == 'Figure':
         fig = plot
 
-    # If filename not specified, provide dialog
-    if filename is None:
-        filename = _ask_filename('save', parent, 'Save figure', '', 'figure')
-        if filename is None:
-            # No filename chosen, give up on saving
-            print('Save cancelled')
-            return None
-
-
     # If it exists, check if we should overwrite it (unless
     # overwrite_without_prompt is True)
-    elif os.path.isfile(filename) and not overwrite_without_prompt:
+    if os.path.isfile(filename) and not overwrite_without_prompt:
         answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
         if answer != 'y':
             print('Save cancelled')
@@ -334,27 +272,27 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
     export-only: pydvma cannot read it back (`load_data` refuses it), so
     keep a `save_data` .dvma alongside it. The filename can be given
     positionally, ``export_to_matlab(dataset, 'name.mat')``, or as
-    ``filename=``; ``.mat`` is added if missing. With no filename a Qt file
-    dialog asks for one; that needs ``qtpy`` and a Qt binding, which
-    pydvma no longer installs.
+    ``filename=``; ``.mat`` is added if missing. The filename is
+    required: there is no file dialog.
 
     Args:
        dataset (DataSet): An object of the class DataSet
-       parent (optional): Qt parent widget for the file dialog, used
-           only when no filename is given. A str or path here is taken
-           as the filename.
-       filename (str or os.PathLike, optional): Output filename. If
-           omitted, a file dialog is shown (needs Qt).
+       parent (optional): Deprecated and ignored, and going in pydvma
+           3.0 (it was the Qt file dialog's parent). A str or path here
+           is taken as the filename.
+       filename (str or os.PathLike): Output filename, given positionally or
+           as ``filename=``.
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     Returns:
-       filename (str or None): The file written, or None if the dialog
-           was cancelled or the overwrite was declined.
+       filename (str or None): The file written, or None if the
+           overwrite was declined.
 
     Raises:
-       ImportError: If no filename is given and Qt is not installed.
+       TypeError: If no filename is given.
     '''
-    parent, filename = _positional_filename(parent, filename)
+    filename = _resolve_filename(parent, filename, 'export_to_matlab',
+                                 "export_to_matlab(dataset, 'data.mat')")
     
     # convert data into dictionary ready for Matlab
     data_matlab = dict()
@@ -455,19 +393,9 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
 
     #%% SAVE
 
-    # If filename not specified, provide dialog
-    if filename is None:
-        filename = _ask_filename('save', parent, 'Save dataset',
-                                 '*.mat', 'data.mat')
-        if filename is None:
-            # No filename chosen, give up on saving
-            print('Save cancelled')
-            return None
-
-
     # If it exists, check if we should overwrite it (unless
     # overwrite_without_prompt is True)
-    elif os.path.isfile(filename) and not overwrite_without_prompt:
+    if os.path.isfile(filename) and not overwrite_without_prompt:
         answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
         if answer != 'y':
             print('Save cancelled')
@@ -494,9 +422,8 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
     Saved file is compatible with Jim Woodhouse logger file format, and
     `import_from_matlab_jwlogger` reads it back. The filename can be
     given positionally, ``export_to_matlab_jwlogger(dataset, 'name.mat')``,
-    or as ``filename=``; ``.mat`` is added if missing. With no filename a
-    Qt file dialog asks for one; that needs ``qtpy`` and a Qt binding,
-    which pydvma no longer installs.
+    or as ``filename=``; ``.mat`` is added if missing. The filename is
+    required: there is no file dialog.
 
     The file holds up to two blocks, each resampled onto one grid:
 
@@ -522,21 +449,22 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
 
     Args:
        dataset (DataSet): An object of the class DataSet
-       parent (optional): Qt parent widget for the file dialog, used
-           only when no filename is given. A str or path here is taken
-           as the filename.
-       filename (str or os.PathLike, optional): Output filename. If
-           omitted, a file dialog is shown (needs Qt).
+       parent (optional): Deprecated and ignored, and going in pydvma
+           3.0 (it was the Qt file dialog's parent). A str or path here
+           is taken as the filename.
+       filename (str or os.PathLike): Output filename, given positionally or
+           as ``filename=``.
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     Returns:
-       filename (str or None): The file written, or None if the dialog
-           was cancelled or the overwrite was declined.
+       filename (str or None): The file written, or None if the
+           overwrite was declined.
 
     Raises:
-       ImportError: If no filename is given and Qt is not installed.
+       TypeError: If no filename is given.
     '''
-    parent, filename = _positional_filename(parent, filename)
+    filename = _resolve_filename(parent, filename, 'export_to_matlab_jwlogger',
+                                 "export_to_matlab_jwlogger(dataset, 'data.mat')")
 
     # convert data into dictionary ready for Matlab
     data_jwlogger = dict()
@@ -601,19 +529,9 @@ def export_to_matlab_jwlogger(dataset, parent=None, filename=None, overwrite_wit
 
     # SAVE
 
-    # If filename not specified, provide dialog
-    if filename is None:
-        filename = _ask_filename('save', parent, 'Save dataset',
-                                 '*.mat', 'data.mat')
-        if filename is None:
-            # No filename chosen, give up on saving
-            print('Save cancelled')
-            return None
-
-
     # If it exists, check if we should overwrite it (unless
     # overwrite_without_prompt is True)
-    elif os.path.isfile(filename) and not overwrite_without_prompt:
+    if os.path.isfile(filename) and not overwrite_without_prompt:
         answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
         if answer != 'y':
             print('Save cancelled')
@@ -944,28 +862,28 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
     raw (calibration NOT applied); a ``#`` comment header gives each
     column's calibration factor and unit. The filename can be given
     positionally, ``export_to_csv(data_list, 'name.csv')``, or as
-    ``filename=``; ``.csv`` is added if missing. With no filename a Qt file
-    dialog asks for one; that needs ``qtpy`` and a Qt binding, which
-    pydvma no longer installs.
+    ``filename=``; ``.csv`` is added if missing. The filename is
+    required: there is no file dialog.
 
     Args:
        data_list (TimeDataList, FreqDataList, or TfDataList): Data list to export
-       parent (optional): Qt parent widget for the file dialog, used
-           only when no filename is given. A str or path here is taken
-           as the filename.
-       filename (str or os.PathLike, optional): Output filename. If
-           omitted, a file dialog is shown (needs Qt).
+       parent (optional): Deprecated and ignored, and going in pydvma
+           3.0 (it was the Qt file dialog's parent). A str or path here
+           is taken as the filename.
+       filename (str or os.PathLike): Output filename, given positionally or
+           as ``filename=``.
        overwrite_without_prompt (bool, optional): If True, overwrite without asking
 
     Returns:
-       filename (str or None): The file written, or None if the dialog
-           was cancelled, the overwrite was declined, or `data_list` is
-           not one of the three list types.
+       filename (str or None): The file written, or None if the
+           overwrite was declined or `data_list` is not one of the three
+           list types.
 
     Raises:
-       ImportError: If no filename is given and Qt is not installed.
+       TypeError: If no filename is given.
     '''
-    parent, filename = _positional_filename(parent, filename)
+    filename = _resolve_filename(parent, filename, 'export_to_csv',
+                                 "export_to_csv(data_list, 'data.csv')")
     
     data_list_type = data_list.__class__.__name__
     
@@ -992,19 +910,9 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
     
     # SAVE
 
-    # If filename not specified, provide dialog
-    if filename is None:
-        filename = _ask_filename('save', parent, 'Save dataset',
-                                 '*.csv', 'data.csv')
-        if filename is None:
-            # No filename chosen, give up on saving
-            print('Save cancelled')
-            return None
-
-
     # If it exists, check if we should overwrite it (unless
     # overwrite_without_prompt is True)
-    elif os.path.isfile(filename) and not overwrite_without_prompt:
+    if os.path.isfile(filename) and not overwrite_without_prompt:
         answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
         if answer != 'y':
             print('Save cancelled')
@@ -1067,9 +975,8 @@ def import_from_matlab_jwlogger(filename=None):
     Only JW-logger files can be imported. The .mat that pydvma's own
     `export_to_matlab` writes is export-only and is refused with a
     ValueError, as is any other .mat with neither of the logger's
-    ``indata`` / ``yspec`` variables. With no filename a Qt file dialog
-    asks for one; that needs ``qtpy`` and a Qt binding, which pydvma no
-    longer installs.
+    ``indata`` / ``yspec`` variables. The filename is required: there is
+    no file dialog.
 
     The conventions below were confirmed against the recovered MATLAB source
     ("Data logger V2.9a": ``specmenu.m`` save path, ``avtflogpars.m``
@@ -1109,25 +1016,21 @@ def import_from_matlab_jwlogger(filename=None):
     channel — nothing is dropped).
 
     Args:
-       filename (str or os.PathLike, optional): File to import. If
-           omitted, a file dialog is shown (needs Qt).
+       filename (str or os.PathLike): File to import, given positionally or
+           as ``filename=``.
 
     Returns:
-       dataset (DataSet or None): The imported data, or None if the
-           dialog was cancelled.
+       dataset (DataSet): The imported data.
 
     Raises:
        ValueError: If the file is not a JW-logger .mat file, including a
            .mat written by `export_to_matlab`; if it lacks ``freq``, or
            has ``yspec`` without ``npts`` or ``tfun``; or if ``tfun`` is
            neither 0 nor 1.
-       ImportError: If no filename is given and Qt is not installed.
+       TypeError: If no filename is given.
     '''
-    if filename is None:
-        filename = _ask_filename('open', None, 'Open JW-logger file',
-                                 '*.mat', 'data.mat')
-        if filename is None:
-            return None
+    filename = _resolve_filename(None, filename, 'import_from_matlab_jwlogger',
+                                 "import_from_matlab_jwlogger('capture.mat')")
 
     d = io.loadmat(filename)
     if 'indata' not in d and 'yspec' not in d:

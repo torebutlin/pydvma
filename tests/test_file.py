@@ -6,6 +6,7 @@ when no FFT data exists) instead of `tf_data_all`.
 """
 
 import sys
+import warnings
 
 import numpy as np
 import pytest
@@ -694,10 +695,11 @@ class TestMatlabExportGrid:
 
 @pytest.fixture
 def no_qt(monkeypatch):
-    """Make qtpy unimportable, as on a clean pydvma install (no extra has
-    installed it since the Qt GUI was removed). Both names are blocked:
-    a cached ``qtpy.QtWidgets`` would otherwise satisfy the import even
-    with the parent package blocked."""
+    """Make qtpy unimportable, as on a clean pydvma install. The file
+    functions no longer touch Qt at all; with this in place, any code path
+    that still tried would fail with ModuleNotFoundError instead of passing.
+    Both names are blocked: a cached ``qtpy.QtWidgets`` would otherwise
+    satisfy the import even with the parent package blocked."""
     monkeypatch.setitem(sys.modules, 'qtpy', None)
     monkeypatch.setitem(sys.modules, 'qtpy.QtWidgets', None)
 
@@ -707,9 +709,7 @@ class TestPositionalFilename:
     (a relic of the removed Qt logger), so ``dvma.load_data('x.dvma')``
     bound the path to ``parent`` and went to the dialog: TypeError inside
     QFileDialog, or ModuleNotFoundError for qtpy on a clean install. A
-    str/PathLike ``parent`` with no ``filename`` is now the filename. The
-    ``no_qt`` fixture makes a regression fail loudly instead of opening a
-    real dialog."""
+    str/PathLike ``parent`` with no ``filename`` is now the filename."""
 
     def test_load_data_positional_str(self, tmp_path, no_qt):
         ds = _make_multiset_dataset(n_sets=1)
@@ -766,18 +766,27 @@ class TestPositionalFilename:
         assert (tmp_path / 'fig.pdf').is_file()
 
     def test_keyword_filename_ignores_parent(self, tmp_path, no_qt):
-        """Keyword calls are unchanged: with ``filename`` given, ``parent``
-        is never consulted, whatever it is."""
+        """Keyword calls still work whatever ``parent`` is: it is ignored,
+        with a DeprecationWarning, since there is no dialog for it."""
         ds = _make_multiset_dataset(n_sets=1)
-        out = file.save_data(ds, parent=object(),
-                             filename=str(tmp_path / 'kw.dvma'))
+        with pytest.warns(DeprecationWarning, match='parent'):
+            out = file.save_data(ds, parent=object(),
+                                 filename=str(tmp_path / 'kw.dvma'))
         assert out == str(tmp_path / 'kw.dvma')
-        assert len(file.load_data(parent=object(), filename=out)
-                   .time_data_list) == 1
+        with pytest.warns(DeprecationWarning, match='parent'):
+            loaded = file.load_data(parent=object(), filename=out)
+        assert len(loaded.time_data_list) == 1
+
+    def test_an_explicit_none_parent_is_silent(self, tmp_path, no_qt):
+        ds = _make_multiset_dataset(n_sets=1)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            out = file.save_data(ds, None, str(tmp_path / 'none.dvma'))
+        assert out == str(tmp_path / 'none.dvma')
 
 
 def _file_calls(tmp_path):
-    """One no-filename call per dialog-capable function, keyed by name."""
+    """One no-filename call per file function, keyed by name."""
     from matplotlib.figure import Figure
     ds = _make_multiset_dataset(n_sets=1)
     fig = Figure()
@@ -789,133 +798,46 @@ def _file_calls(tmp_path):
         'export_to_matlab_jwlogger': lambda: file.export_to_matlab_jwlogger(ds),
         'export_to_csv': lambda: file.export_to_csv(ds.time_data_list),
         'save_fig': lambda: file.save_fig(fig),
+        'import_from_matlab_jwlogger': lambda: file.import_from_matlab_jwlogger(),
     }
 
 
-class _FakeQt:
-    """Stand-in ``qtpy`` / ``qtpy.QtWidgets`` pair: a real dialog cannot be
-    driven headlessly, so this records what the dialog was asked and
-    answers with a preset filename ('' = cancelled)."""
-
-    def __init__(self, monkeypatch, answer):
-        import types
-        calls = self.calls = []
-        created = self.created_apps = []
-
-        class QApplication:
-            _instance = None
-
-            def __init__(self, argv):
-                created.append(argv)
-                QApplication._instance = self
-
-            @classmethod
-            def instance(cls):
-                return cls._instance
-
-        class QFileDialog:
-            @staticmethod
-            def getOpenFileName(parent, caption, directory, file_filter):
-                calls.append(('open', parent, file_filter))
-                return answer, file_filter
-
-            @staticmethod
-            def getSaveFileName(parent, caption, directory, file_filter=''):
-                calls.append(('save', parent, file_filter))
-                return answer, file_filter
-
-        widgets = types.ModuleType('qtpy.QtWidgets')
-        widgets.QApplication = QApplication
-        widgets.QFileDialog = QFileDialog
-        qtpy = types.ModuleType('qtpy')
-        qtpy.QtWidgets = widgets
-        monkeypatch.setitem(sys.modules, 'qtpy', qtpy)
-        monkeypatch.setitem(sys.modules, 'qtpy.QtWidgets', widgets)
-
-
-class TestNoFilenameDialog:
-    """With no filename the functions fall back to a Qt file dialog, but no
-    pydvma extra has installed qtpy since the Qt GUI was removed in 2.0.0.
-    A clean install must get an error that says what to do, and an install
-    that DOES have Qt must still get its dialog."""
+class TestNoFilename:
+    """pydvma no longer opens a Qt file dialog (Tore, 2026-09-29: the Qt
+    GUI went in 2.0.0 and nothing else uses Qt). A call with no filename is
+    a TypeError that names the function and shows a call that works, and no
+    code path imports Qt (``no_qt`` would turn that into a
+    ModuleNotFoundError)."""
 
     @pytest.mark.parametrize('name', [
-        'load_data', 'save_data', 'export_to_matlab',
-        'export_to_matlab_jwlogger', 'export_to_csv', 'save_fig'])
-    def test_without_qt_the_error_says_pass_a_filename(self, tmp_path, no_qt, name):
-        call = _file_calls(tmp_path)[name]
-        with pytest.raises(ImportError) as info:
-            call()
-        msg = str(info.value)
-        assert 'No filename given' in msg
-        assert "filename='" in msg
-        assert 'pip install qtpy PyQt5' in msg
-        assert isinstance(info.value.__cause__, ImportError)   # chained
+        'load_data', 'save_data', 'export_to_matlab', 'export_to_matlab_jwlogger',
+        'export_to_csv', 'save_fig', 'import_from_matlab_jwlogger'])
+    def test_no_filename_is_a_typeerror_naming_the_function(self, tmp_path, no_qt, name):
+        with pytest.raises(TypeError, match=r'%s\(\) needs a filename, e\.g\. %s\(' % (name, name)):
+            _file_calls(tmp_path)[name]()
 
-    def test_error_suggests_the_functions_own_extension(self, tmp_path, no_qt):
+    def test_the_error_says_there_is_no_dialog(self, tmp_path, no_qt):
+        with pytest.raises(TypeError, match='no longer opens a file dialog'):
+            file.load_data()
+
+    def test_nothing_is_written_when_the_filename_is_missing(self, tmp_path, no_qt, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         calls = _file_calls(tmp_path)
-        for name, ext in [('load_data', '.dvma'), ('save_data', '.dvma'),
-                          ('export_to_matlab', '.mat'),
-                          ('export_to_csv', '.csv')]:
-            with pytest.raises(ImportError, match=r"filename='[^']*\%s'" % ext):
+        for name in ('save_data', 'export_to_matlab', 'export_to_csv', 'save_fig'):
+            with pytest.raises(TypeError):
                 calls[name]()
-
-    def test_with_qt_save_uses_the_dialog_and_its_parent(self, tmp_path, monkeypatch):
-        target = str(tmp_path / 'picked.dvma')
-        qt = _FakeQt(monkeypatch, answer=target)
-        parent = object()
-        ds = _make_multiset_dataset(n_sets=1)
-        out = file.save_data(ds, parent=parent)
-        assert out == target
-        assert qt.calls == [('save', parent, '*.dvma')]
-        assert len(file.load_data(target).time_data_list) == 1
-
-    def test_with_qt_load_uses_the_dialog(self, tmp_path, monkeypatch):
-        ds = _make_multiset_dataset(n_sets=1)
-        target = file.save_data(ds, filename=str(tmp_path / 'm.dvma'))
-        qt = _FakeQt(monkeypatch, answer=target)
-        loaded = file.load_data()
-        assert qt.calls == [('open', None, '*.dvma *.npy *.mat')]
-        assert len(loaded.time_data_list) == 1
-
-    def test_with_qt_a_qapplication_is_made_when_none_exists(self, tmp_path, monkeypatch):
-        """A Qt widget with no QApplication aborts the whole process — a
-        notebook kernel with it. The removed Qt logger used to make one."""
-        qt = _FakeQt(monkeypatch, answer='')
-        file.load_data()
-        file.load_data()
-        assert len(qt.created_apps) == 1        # made once, then reused
-
-    @pytest.mark.parametrize('name', [
-        'load_data', 'save_data', 'export_to_matlab',
-        'export_to_matlab_jwlogger', 'export_to_csv', 'save_fig'])
-    def test_with_qt_a_cancelled_dialog_returns_none(self, tmp_path, monkeypatch, name):
-        _FakeQt(monkeypatch, answer='')
-        assert _file_calls(tmp_path)[name]() is None
         assert list(tmp_path.iterdir()) == []
+
+    def test_no_qt_left_in_the_module(self):
+        import inspect
+        src = inspect.getsource(file)
+        assert 'qtpy' not in src and 'QFileDialog' not in src
 
 
 class TestImportFromMatlabJwloggerFileChecks:
-    """`import_from_matlab_jwlogger` with no filename called
-    ``io.loadmat(None)`` and raised TypeError whatever its docstring said;
-    and a .mat written by pydvma's own `export_to_matlab` (no ``indata``,
-    no ``yspec``) imported as a silently EMPTY DataSet."""
-
-    def test_no_filename_without_qt_says_pass_a_filename(self, no_qt):
-        with pytest.raises(ImportError, match=r"filename='[^']*\.mat'"):
-            file.import_from_matlab_jwlogger()
-
-    def test_no_filename_with_qt_uses_the_dialog(self, tmp_path, monkeypatch):
-        y = np.column_stack([np.sin(np.arange(64) / 5.0), np.ones(64)])
-        path = TestImportFromMatlabJwloggerTime._jw_time_mat(tmp_path, y, fs=1000)
-        qt = _FakeQt(monkeypatch, answer=path)
-        loaded = file.import_from_matlab_jwlogger()
-        assert qt.calls == [('open', None, '*.mat')]
-        np.testing.assert_allclose(loaded.time_data_list[0].time_data, y)
-
-    def test_no_filename_cancelled_dialog_returns_none(self, monkeypatch):
-        _FakeQt(monkeypatch, answer='')
-        assert file.import_from_matlab_jwlogger() is None
+    """A .mat written by pydvma's own `export_to_matlab` (no ``indata``,
+    no ``yspec``) imported as a silently EMPTY DataSet. (Its no-filename
+    case is in `TestNoFilename`.)"""
 
     def test_pydvma_export_is_refused_as_export_only(self, tmp_path):
         ds = _make_multiset_dataset(n_sets=1)
