@@ -83,13 +83,23 @@ def modal_fit_single_channel(tf_data,freq_range=None,channel=0,measurement_type=
     G0 = tf_data.tf_data[selected_range,channel]
     
     fn0,zn0 = f_3dB(f,G0)
+    fn0i = np.argmin(np.abs(f - fn0))
     
-    
-    
-    an0 = np.max(np.abs(G0))*(2*np.pi*fn0)**2 * 2*zn0
+    # The seed modal_fit_all_channels uses for one channel (a test pins the
+    # two fits together). The amplitude must carry the (i*omega)**p of the
+    # measurement type: a 'dsp'-scaled seed sends an 'acc' fit to a wrong
+    # peak with its phase on the bound.
+    if measurement_type == 'acc':
+        p = 2
+    elif measurement_type == 'vel':
+        p = 1
+    elif measurement_type == 'dsp':
+        p = 0
+    an0 = np.max(np.abs(G0))*(2*np.pi*fn0)**(2-p) * 2*zn0
+    an0 = an0 * np.sign(-np.imag(np.ravel(G0)[fn0i] / ((1j)**p)))
     pn0 = 0
-    Rk0 = np.max(np.abs(G0))/1e3
-    Rm0 = np.max(np.abs(G0))*((2*np.pi*fn0)**2)/1e3
+    Rk0 = np.max(np.abs(G0))/1e6
+    Rm0 = np.max(np.abs(G0))*((2*np.pi*fn0)**2)/1e6
     
     
     # The one-channel packed row [fn, zn, an, pn, rk, rm] that f_TF reads.

@@ -178,6 +178,33 @@ class TestModalFitSingleChannel:
         assert abs(r.x[0] - fn_true) < 0.1  # Hz
         assert abs(r.x[1] - zn_true) / zn_true < 0.05
 
+    def test_default_measurement_type_recovers_test_impulse_mode(self):
+        """The documented call, with the default measurement_type='acc'.
+        A seed amplitude scaled for 'dsp' whatever the measurement type
+        left the 'acc' fit at fn ≈ 98.4 Hz with its phase on the -90°
+        bound."""
+        tf, fn_true, zn_true = _test_impulse_tf_and_truth()
+
+        r = modal.modal_fit_single_channel(tf, freq_range=[80, 120])
+
+        assert abs(r.x[0] - fn_true) < 0.1  # Hz
+        assert abs(r.x[1] - zn_true) / zn_true < 0.05
+
+    @pytest.mark.parametrize('measurement_type', ['acc', 'vel', 'dsp'])
+    def test_agrees_with_all_channels_fit_on_one_channel(self, measurement_type):
+        """On one channel with unit calibration, the single-channel fit is
+        the same problem as modal_fit_all_channels and must give the same
+        answer."""
+        tf, _, _ = _test_impulse_tf_and_truth()
+
+        r = modal.modal_fit_single_channel(
+            tf, freq_range=[80, 120], measurement_type=measurement_type)
+        m = modal.modal_fit_all_channels(
+            datastructure.TfDataList([tf]), freq_range=[80, 120],
+            measurement_type=measurement_type)
+
+        np.testing.assert_allclose(r.x, np.ravel(m.M), rtol=1e-6)
+
 
 # ---------- simultaneous multi-mode refinement (modal_refine) ----------
 
