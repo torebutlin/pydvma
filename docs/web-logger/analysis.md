@@ -253,7 +253,7 @@ Two methods are available via the **STFT | CWT** switch:
   engine answered the calculation — 0.75 GiB on the in-browser (pyodide)
   engine, which is what Pages and JupyterLite always use; 8 GiB when the
   app is served by `pydvma-serve` and running the native engine (see
-  [The web logger](index.md#2-local-bridge-real-hardware-from-the-same-ui)).
+  [Where the analysis runs](running-locally.md#where-the-analysis-runs)).
   Narrowing the range is that remedy either way — it drops frequency
   rows *and* lets the fit thin its time axis. (It is also the honest
   analysis: a 30-second record has little to say about a 19 kHz mode's

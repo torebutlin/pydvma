@@ -1,217 +1,144 @@
-# Basic Usage
+# Python Basics
 
-This page covers fundamental concepts and common usage patterns in pydvma.
+The ideas behind the Python interface: where your data lives, how
+settings work, and how to save it. The [Quick Start](quickstart.md)
+shows them in use; the [Python Interface](../user-guide/acquisition.md)
+guides go into each area in depth.
 
-## Core Concepts
+## The DataSet
 
-### Data Structure Hierarchy
-
-pydvma uses a hierarchical data structure:
-
-- **DataSet**: Top-level container holding all data
-- **TimeData**: Time-domain measurements
-- **FreqData**: Frequency-domain data (from FFT)
-- **TfData**: Transfer function data
-- **SonoData**: Sonogram/spectrogram data
-
-Each data type includes:
-- The data itself
-- Axis information (time/frequency)
-- Settings and metadata
-- Unique identifiers for traceability
-
-### Settings Object
-
-The `MySettings()` object controls acquisition and analysis parameters:
+Every recording, loaded file and `session.data` is a **`DataSet`**: a
+set of lists, one per kind of data.
 
 ```python
-settings = dvma.MySettings()
+>>> data = dvma.create_test_impulse_data()
+>>> data
+<DataSet> class:
 
-# Acquisition settings
-settings.fs = 10000          # Sampling frequency (Hz)
-settings.stored_time = 2.0   # Duration (seconds)
-settings.channels = 2        # Number of channels
-settings.pretrig_samples = 1000  # Pre-trigger samples
-
-# Device settings
-settings.device_driver = 'soundcard'  # or 'nidaq'
-settings.device_index = None  # None for default device
+          time_data_list: [<TimeData>]
+          freq_data_list: []
+    cross_spec_data_list: []
+            tf_data_list: []
+         modal_data_list: []
+          sono_data_list: []
+          meta_data_list: []
 ```
 
-## Working with Different Data Types
+Each capture adds one `TimeData` to `time_data_list`, and the analyses
+fill the other lists:
 
-### Time Data
+| Object | Made by | Main arrays |
+| ------ | ------- | ----------- |
+| `TimeData` | recording, `log_data` | `time_axis` (s); `time_data`, shape (samples, channels) |
+| `FreqData` | `calculate_fft` | `freq_axis` (Hz); `freq_data`, complex, (frequencies, channels) |
+| `TfData` | `calculate_tf` | `freq_axis`; `tf_data`, complex, (frequencies, outputs); `tf_coherence`, same shape |
+| `CrossSpecData` | `calculate_cross_spectrum_matrix` | cross-spectra and coherence between every channel pair |
+| `SonoData` | `calculate_sonogram` | `freq_axis`, `time_axis`; `sono_data`, (frequencies, times, channels) |
+| `ModalData` | modal fitting | natural frequencies `fn`, damping `zn`, modal constants `an` |
+
+Every object also carries the `settings` it was recorded with, a
+`test_name`, and per-channel `units` and `channel_cal_factors`
+(see [calibration](#units-and-calibration) below).
 
 ```python
-# Access time data from dataset
-time_data = dataset.time_data_list[0]
-
-# Data components
-t = time_data.time_axis        # Time vector
-y = time_data.time_data        # Signal data (samples x channels)
-fs = time_data.settings.fs     # Sampling frequency
-
-# Channel indexing
-channel_0 = y[:, 0]  # First channel
-channel_1 = y[:, 1]  # Second channel
+td = data.time_data_list[0]
+t, y = td.time_axis, td.time_data     # y[:, 0] is the first channel
+fs = td.settings.fs
 ```
 
-### Frequency Data
+## Two ways to compute
+
+**On the whole DataSet.** The `*_set` methods process every `TimeData`
+in the set and store the results in the DataSet, replacing whatever that
+list held before. This is the quickest route and what the plotting
+methods expect:
 
 ```python
-# Calculate FFT
-freq_data = dvma.calculate_fft(time_data, window='hann')
-
-# Data components
-f = freq_data.freq_axis        # Frequency vector
-Y = freq_data.freq_data        # Complex frequency data
-magnitude = np.abs(Y)          # Magnitude spectrum
-phase = np.angle(Y)            # Phase spectrum
+data.calculate_fft_set(window='hann')           # fills data.freq_data_list
+data.calculate_tf_set(ch_in=0, window='hann')   # fills data.tf_data_list
+data.plot_freq_data()
+data.plot_tf_data()
 ```
 
-### Transfer Function Data
+**On one object.** The functions in `dvma.` take a single `TimeData` and
+return a new result without touching the DataSet, for when you want
+control over what goes where:
 
 ```python
-# Calculate transfer function (input on channel 0)
-tf_data = dvma.calculate_tf(time_data, ch_in=0, window='hann')
-
-# Data components
-f = tf_data.freq_axis              # Frequency vector
-H = tf_data.tf_data               # Complex transfer function
-coherence = tf_data.tf_coherence  # Coherence function
-
-# Plot FRF
-magnitude = np.abs(H[:, 0])
-plt.loglog(f, magnitude)
+freq = dvma.calculate_fft(td, window='hann')
+tf = dvma.calculate_tf(td, ch_in=0, window='hann', N_frames=8, overlap=0.5)
 ```
 
-## Windowing
+The [Data Analysis guide](../user-guide/analysis.md) covers windows,
+averaging, time ranges, integration and scaling.
 
-Windows reduce spectral leakage in FFT analysis:
+## Settings
+
+`MySettings` holds everything about how to record: channels, sample
+rate, duration, device, pretrigger and output. **Pass values as keyword
+arguments when you create it:**
 
 ```python
-# No window (rectangular)
-freq_data = dvma.calculate_fft(time_data, window=None)
-
-# Hann window (good general purpose)
-freq_data = dvma.calculate_fft(time_data, window='hann')
-
-# Blackman window (better frequency resolution)
-freq_data = dvma.calculate_fft(time_data, window='blackman')
+settings = dvma.MySettings(channels=2, fs=8000, stored_time=2.0,
+                           pretrig_samples=100)
 ```
 
-Common windows:
-- `None` or `'boxcar'`: Rectangular (no window)
-- `'hann'`: Good general purpose
-- `'hamming'`: Similar to Hann
-- `'blackman'`: Better frequency resolution, more smoothing
+!!! warning "Don't change settings by assignment"
+    Some settings are worked out from others when `MySettings` is
+    created. Assigning afterwards (`settings.fs = 10000`) changes only
+    that one value and leaves the others stale; for example, the output
+    sample rate stays at the old `fs`. Make a new `MySettings` instead.
 
-## Averaging
+The settings you will use most:
 
-### Frame Averaging for Better SNR
+| Setting | Meaning | Default |
+| ------- | ------- | ------- |
+| `channels` | number of input channels | `2` |
+| `fs` | sample rate, Hz | `44100` |
+| `stored_time` | length of each recording, s | `2` |
+| `device_driver` | `'soundcard'` or `'nidaq'` | `'soundcard'` |
+| `device` | device name, e.g. `'Scarlett 2i2'` (or `device_index`); `None` means the default input | `None` |
+| `pretrig_samples` | samples kept from before the trigger; `None` records immediately | `None` |
+| `pretrig_threshold`, `pretrig_channel` | trigger level and channel | `0.05`, `0` |
+| `output_channels` | generate an output signal on this many channels | `None` |
+
+`dvma.list_available_devices()` shows what you can put in `device`, and
+`dvma.suggest_ni_settings(index)` returns safe settings for an NI device.
+The [Data Acquisition guide](../user-guide/acquisition.md) covers the
+rest, including NI voltage ranges and IEPE sensors.
+
+## Saving and loading
 
 ```python
-# Calculate transfer function with averaging
-tf_data = dvma.calculate_tf(
-    time_data,
-    ch_in=0,
-    window='hann',
-    N_frames=8,      # Average over 8 frames
-    overlap=0.5      # 50% overlap between frames
-)
+dvma.save_data(data, filename='my_test.dvma')
+data = dvma.load_data(filename='my_test.dvma')
 ```
 
-### Ensemble Averaging
+Always pass `filename=`. Without one these functions try to open a file
+dialog, which needs a Qt installation that pydvma no longer provides.
 
-For repeated measurements (e.g., impact hammer tests):
+`.dvma` is pydvma's own format: a zip of plain arrays and JSON that
+opens in the browser app, in any Python with pydvma, and in other tools.
+`load_data` also opens `.npy` files saved by pydvma 1.4 and earlier (but
+only open those if you trust where they came from, since the old format
+can run code when loaded) and `.mat` files from the older MATLAB logger.
+
+To use your data elsewhere:
 
 ```python
-# Create list of measurements
-time_data_list = dvma.TimeDataList()
-for i in range(10):
-    # Record 10 impacts
-    data = dvma.log_data(settings, test_name=f"impact_{i}")
-    time_data_list.append(data.time_data_list[0])
-
-# Calculate averaged transfer function
-tf_data_avg = dvma.calculate_tf_averaged(
-    time_data_list,
-    ch_in=0,
-    window='hann'
-)
+dvma.export_to_matlab(data, filename='my_test.mat')
+dvma.export_to_csv(data.time_data_list, filename='my_test.csv')
 ```
 
-## Integration and Differentiation
+See [Import and Export](../user-guide/import-export.md) for what each
+format contains.
 
-Convert between acceleration, velocity, and displacement:
+## Units and calibration
 
-```python
-# Start with acceleration data
-freq_data = dvma.calculate_fft(time_data_accel)
-
-# Integrate to velocity (multiply by 1/(iω))
-freq_data_vel = dvma.multiply_by_power_of_iw(
-    freq_data,
-    power=-1,
-    channel_list=[0, 1]  # Channels to process
-)
-
-# Integrate again to displacement (multiply by 1/(iω)²)
-freq_data_disp = dvma.multiply_by_power_of_iw(
-    freq_data,
-    power=-2,
-    channel_list=[0, 1]
-)
-
-# Differentiate (multiply by iω)
-freq_data_diff = dvma.multiply_by_power_of_iw(
-    freq_data,
-    power=1,
-    channel_list=[0, 1]
-)
-```
-
-## Time Range Selection
-
-Analyze specific portions of your data:
-
-```python
-# Define time range
-time_range = np.array([0.5, 1.5])  # From 0.5s to 1.5s
-
-# Calculate FFT for selected range
-freq_data = dvma.calculate_fft(time_data, time_range=time_range)
-
-# Works for transfer functions too
-tf_data = dvma.calculate_tf(time_data, ch_in=0, time_range=time_range)
-```
-
-## Best Match Scaling
-
-When comparing multiple datasets, automatically scale them to match:
-
-```python
-# Create list of transfer functions
-tf_list = dvma.TfDataList()
-tf_list.append(tf_data_1)
-tf_list.append(tf_data_2)
-tf_list.append(tf_data_3)
-
-# Get scale factors (relative to set 0, channel 0)
-factors = dvma.best_match(
-    tf_list,
-    freq_range=[100, 500],  # Frequency range for matching
-    set_ref=0,              # Reference dataset
-    ch_ref=0                # Reference channel
-)
-
-# Apply scaling
-for i, factor in enumerate(factors):
-    tf_list[i].tf_data *= factor[:, None]
-```
-
-## Next Steps
-
-- Learn about specific tasks in the [User Guide](../user-guide/acquisition.md)
-- Explore [Examples](../examples/basic.md) for complete workflows
-- Dive into the [API Reference](../api/analysis.md) for detailed function documentation
+Recorded data is stored in **volts** from NI hardware and from
+soundcards whose full scale pydvma knows. For other soundcards it is in
+**full-scale units**, where ±1 is the loudest signal the input accepts.
+Calibration never changes the stored numbers: each channel's
+`channel_cal_factors` is a multiplier applied when plotting, and `units`
+names the result (for example `'m/s²'`). See
+[Calibration & Units](../web-logger/calibration.md).

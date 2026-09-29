@@ -198,7 +198,7 @@ Measure that number once with a known source —
 take it from the maker's spec. It can also be set outside the app as
 `VmaxSC` in `MySettings`, or in the JSON you hand to
 `pydvma-serve --settings` (see
-[From the Qt logger](migration.md#pre-seeding-settings-with-settings)).
+[Pre-filling Setup](running-locally.md#pre-filling-setup)).
 
 ## Best Match scaling writes here too
 

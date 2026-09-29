@@ -61,6 +61,35 @@ open, answered and built.
   rather than re-fitting, because an automatic re-fit would discard
   rejected modes and hand refinements without being asked. A Best match
   run raises one warning for the whole run, and its Undo raises none.
+- **The error for the removed `dvma.Logger` / `dvma.Oscilloscope`** now
+  names an install that can actually record (`pip install
+  "pydvma[full]"` — `[serve]` alone has no acquisition backend) and
+  links the new Running Locally page.
+
+### Documentation
+
+- **Getting Started rewritten.** One Quick Start with four routes
+  (browser app, `dvma.launch` from a notebook, `pydvma-serve`, plain
+  Python) replaces the three overlapping quick starts on the home page,
+  the installation page and the old quick start. Installation is now
+  install-only, and *Basic Usage* became *Python Basics*: the data
+  model, settings and saving, without the analysis examples that
+  duplicated the Data Analysis guide.
+- **New *Running Locally* page** is the one place for `pydvma-serve`,
+  `dvma.launch`, the `Session` handle, `--settings`, the session journal
+  and the native engine — previously spread across the Web Logger
+  overview, *From the Qt logger* and the examples.
+- **Accuracy fixes:** `load_data`/`save_data` examples now pass
+  `filename=` (the first positional argument is a dialog parent, and the
+  dialog needs Qt, which pydvma no longer installs); settings are passed
+  to `MySettings(...)` rather than assigned afterwards (assignment leaves
+  derived values such as `output_fs` stale); the browser app has no
+  drag-and-drop loading, so the docs no longer promise it; and the
+  template notebook, which still called the removed `Oscilloscope` and
+  `Logger`, now uses `dvma.launch`.
+- **Removed the `polyfill.io` script** from the docs site. That domain
+  was taken over in 2024 and has served malicious code; MathJax 3 does
+  not need it.
 
 ## 2.5.0 — 2026-09-18
 

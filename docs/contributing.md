@@ -85,6 +85,30 @@ Update documentation when adding features:
 - Update relevant user guide pages
 - Add examples if appropriate
 
+## Building a release wheel
+
+The published wheel carries the built web app (in `pydvma/_webui`) and,
+inside that, a lean "engine" wheel that the browser loads. Both are
+build artefacts that git ignores, so a wheel built without refreshing
+them boots happily while serving an out-of-date app. Build in this
+order, on the machine that makes the release:
+
+```bash
+(cd webui && npm ci && npm run vendor)   # pyodide + the engine wheel for THIS version
+python scripts/stage_webui.py            # builds the app, copies it to pydvma/_webui
+python -m build --sdist --wheel          # both flags: a bare build gives a lean wheel
+```
+
+Then check the result with `python scripts/verify_release.py <version>`:
+the wheel must embed the engine wheel for this version, the bundled app
+must name that same file, and every `pydvma/*.py` must match the source
+tree. A version
+bump touches five places: `pyproject.toml`, `pydvma/datastructure.py`,
+`CITATION.cff`, `CHANGELOG.md` and `ENGINE_WHEELS` in
+`webui/src/lib/stores/engine.ts`. Test a release by installing the
+built wheel into a clean virtual environment, never from the editable
+checkout.
+
 ## Pull Request Guidelines
 
 A good pull request:

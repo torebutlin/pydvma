@@ -80,7 +80,6 @@ markdown_extensions:
 
 extra_javascript:
   - javascripts/mathjax.js
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
@@ -88,9 +87,10 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
-      - Basic Usage: getting-started/basic-usage.md
+      - Python Basics: getting-started/basic-usage.md
   - Web Logger:
       - Overview: web-logger/index.md
+      - Running Locally: web-logger/running-locally.md
       - Acquisition & Setup: web-logger/acquisition.md
       - Live Monitoring: web-logger/live-monitoring.md
       - Analysis Views: web-logger/analysis.md

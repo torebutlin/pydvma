@@ -1,250 +1,111 @@
 # Installation
 
-## Which pydvma do I need?
+!!! tip "You may not need to install anything"
+    The **[browser app](https://torebutlin.github.io/pydvma/app/)**
+    analyses saved files and records from your computer's soundcard, and
+    **[JupyterLite](https://torebutlin.github.io/pydvma/lite/)** runs
+    pydvma in a browser notebook. Neither needs an install. Install
+    pydvma when you want lab hardware (an audio interface or NI-DAQ),
+    `dvma.launch` from a notebook, or Python on your own machine.
 
-How you install pydvma depends on what you want to do. The
-[web logger](../web-logger/index.md) runs in three modes, and two of
-them need **no installation at all**:
+## Install
 
-| I want to... | What to use | Install |
-| ------------ | ----------- | ------- |
-| **Analyse saved data** (or capture from a soundcard) with nothing to install | Open the **Pages app** at [`torebutlin.github.io/pydvma/app/`](https://torebutlin.github.io/pydvma/app/) | **None** |
-| **Script analysis in a notebook**, no install | Open the **[JupyterLite site](https://torebutlin.github.io/pydvma/lite/)** and `import pydvma` | **None** |
-| **Acquire from real hardware in the browser** (soundcard or **NI-DAQ**) | Run the **local bridge**: `pydvma-serve` | `pip install "pydvma[serve,soundcard]"` (`[ni]` for NI) |
-| **Log in the browser, analyse in a notebook** — both at once | `session = dvma.launch(settings)` — the [notebook front door](../web-logger/migration.md#the-notebook-front-door-dvmalaunch) | `pip install "pydvma[serve,soundcard]"` (`[ni]` for NI) |
-| **Work in Python / Jupyter on your own machine** | `import pydvma as dvma` | `pip install pydvma` (add extras below) |
-| **Run the old desktop Qt logger** (removed) | See the [`qt-final` git tag](../web-logger/migration.md) | `git checkout qt-final` |
-
-If you only need to analyse data or record from a soundcard, **you can
-stop here** — open the [Pages app](https://torebutlin.github.io/pydvma/app/).
-The rest of this page covers installing pydvma on your own machine.
-
-## Requirements
-
-- Python 3.11 or later (Python 3.13 recommended)
-- Anaconda or Miniconda (recommended for managing dependencies)
-
-## Step 1: Install Anaconda
-
-If you don't already have Anaconda installed, download it from:
-
-**[Download Anaconda](https://www.anaconda.com/download)**
-
-Follow the installer instructions for your operating system.
-
-## Step 2: Install pydvma
-
-### Option A: Quick Installation (Recommended)
-
-Open the **Anaconda Prompt** (Windows) or terminal (Mac/Linux) and run:
+pydvma needs Python 3.11 or later. If you don't have Python yet,
+install [Anaconda](https://www.anaconda.com/download) (or Miniconda).
+Then open **Anaconda Prompt** (Windows) or a terminal (macOS, Linux) and
+run:
 
 ```bash
-conda install numpy scipy jupyter matplotlib ipympl ipywidgets jupyterlab
-pip install "pydvma[full]"
+conda create -n pydvma python=3.13
+conda activate pydvma
+pip install "pydvma[full]" jupyterlab ipympl
 ```
 
-`pydvma[full]` pulls in both acquisition backends (`sounddevice` for
-soundcards, `nidaqmx` for National Instruments hardware) and the
-`pydvma-serve` bridge for the browser app — everything you need for lab
-use. See [Installation options](#installation-options) below if you only
-need a subset.
+This gives you everything for lab use: soundcard and NI acquisition, the
+`pydvma-serve` browser bridge, and JupyterLab with interactive plots.
+Every new terminal needs `conda activate pydvma` first. To install into
+an environment you already have instead, run only the last line.
 
-### Option B: Installation in a Dedicated Environment
-
-Creating a separate environment keeps pydvma and its dependencies isolated from other projects:
+To upgrade later:
 
 ```bash
-# Create a new environment
-conda create --name pydvma-env python=3.13
-
-# Activate the environment
-conda activate pydvma-env
-
-# Install dependencies and pydvma
-conda install numpy scipy jupyter matplotlib ipympl ipywidgets jupyterlab
-pip install "pydvma[full]"
+pip install --upgrade "pydvma[full]"
 ```
 
-!!! tip "Activating your environment"
-    Each time you open a new Anaconda Prompt, you'll need to activate your environment with `conda activate pydvma-env` before using pydvma.
+Keep the quotes around `"pydvma[full]"`: without them, zsh (the macOS
+default shell) reports `no matches found`.
 
-## Installation options
+### Choosing extras
 
-pydvma is split into a small analysis-only core plus optional
-"extras" for each acquisition backend and the browser-app bridge, so
-you only pull in what you need:
+`pydvma[full]` is the simple choice. If you want a smaller install, the
+pieces are separate:
 
-| Extra | Install command | What it adds |
-| ----- | --------------- | ------------ |
-| *(none)* | `pip install pydvma` | Analysis-only core: data structures, FFT/TF/modal analysis, file I/O. No Qt, no hardware drivers — runs anywhere, including in-browser. |
-| `soundcard` | `pip install "pydvma[soundcard]"` | Soundcard acquisition (`sounddevice`). |
-| `ni` | `pip install "pydvma[ni]"` | National Instruments acquisition backend (`nidaqmx`). Windows/Linux only — see below. |
-| `serve` | `pip install "pydvma[serve]"` | The `pydvma-serve` bridge (`websockets` only) — serves the browser app locally and drives real hardware from it. See [Running the browser app locally](#running-the-browser-app-locally-pydvma-serve). |
-| `full` | `pip install "pydvma[full]"` | Everything: `soundcard` + `ni` + `serve`. Recommended for a full lab install. |
+| Install | What it adds |
+| ------- | ------------ |
+| `pip install pydvma` | The analysis core: data structures, FFT/TF/modal analysis, plotting, file I/O. No hardware drivers; runs anywhere, including in the browser. |
+| `pip install "pydvma[soundcard]"` | Soundcard and audio-interface acquisition (`sounddevice`). |
+| `pip install "pydvma[ni]"` | National Instruments acquisition (`nidaqmx`); also needs the NI-DAQmx driver, [below](#national-instruments-hardware). |
+| `pip install "pydvma[serve]"` | The `pydvma-serve` bridge and `dvma.launch` (`websockets`). |
+| `pip install "pydvma[full]"` | All of the above. |
 
-!!! note "The `qt` extra was removed"
-    The desktop Qt logger has been retired now that the browser
-    [web logger](../web-logger/index.md) has full parity, so there is no
-    longer a `qt` extra (`pip install "pydvma[qt]"` errors on an unknown
-    extra). The last version that shipped the Qt GUI is the
-    [`qt-final` git tag](../web-logger/migration.md).
+Extras combine, for example `pip install "pydvma[serve,soundcard]"`.
+The bridge on its own records nothing: pair `serve` with the backend
+you use. A backend that is not installed is skipped **without any
+error**; it simply doesn't appear in the device list. If a device is
+missing, check its extra first.
 
-Extras combine, so pick what your mode needs — e.g.
-`pip install "pydvma[serve,ni]"` for the browser app driving NI hardware
-through the local bridge. The rest of this page uses `pydvma[full]`
-throughout, but swap in whichever extra matches what you need.
+## National Instruments hardware
 
-## Running the browser app locally (`pydvma-serve`)
+NI hardware needs NI's own driver as well as the Python package. It is
+available for Windows and Linux only; there is no NI-DAQmx for macOS,
+where soundcard acquisition and all the analysis still work.
 
-pydvma also has a browser-based app (analysis plus live acquisition) that
-you can run straight from a `pip` install — no Node.js, no repo checkout,
-no build step. The built UI is bundled inside the wheel and served by a
-tiny local bridge that also drives your real hardware.
+1. Install the **[NI-DAQmx driver](https://www.ni.com/en/support/downloads/drivers/download.ni-daq-mx.html)**
+   (the latest version for your OS).
+2. Install the Python package, if `pydvma[full]` didn't already:
+   `pip install "pydvma[ni]"`.
+
+## Check it works
 
 ```bash
-pip install "pydvma[serve,soundcard]"   # or pydvma[full]
-pydvma-serve --open                     # serves the app and opens your browser
+pydvma-serve --list-devices
 ```
 
-The `serve` extra is the bridge alone. Pair it with the acquisition
-backend you actually use — `soundcard` for an audio interface, `ni` for
-National Instruments — because a backend that is not installed is
-skipped silently rather than reported.
+This lists every input device pydvma can see, grouped by physical
+device, with the recommended backend marked and whether its voltage
+scale is known. If a whole driver's devices are missing, its extra (or,
+for NI, the NI-DAQmx driver) is not installed. The same listing is
+available from Python as `dvma.list_available_devices()`.
 
-`pydvma-serve` listens on `http://127.0.0.1:8760` (loopback only). Pick a
-data source with `--driver`:
-
-```bash
-pydvma-serve --driver mock       # demo signal generator, no hardware
-pydvma-serve --driver soundcard  # needs pydvma[soundcard]
-pydvma-serve --driver nidaq      # needs pydvma[ni] + NI-DAQmx (Win/Linux)
-```
-
-Useful flags: `--port` (change the port), `--ui-dir` (serve a UI directory
-you built yourself instead of the bundled one), `--open` (open a browser
-on start). Run `pydvma-serve --help` for the full list.
-
-!!! note "Which UI is served"
-    `pydvma-serve` serves, in order of preference: an explicit `--ui-dir`;
-    the freshly built `webui/dist` if you are running from a source
-    checkout; otherwise the UI bundled in the installed wheel. If none is
-    available it shows a short help page with the WebSocket bridge still
-    live at `/ws`.
-
-!!! info "Maintainers: bundling the UI into the wheel"
-    The bundled UI lives at `pydvma/_webui` and is a build artefact (not
-    committed). To produce a release wheel that contains it:
-
-    ```bash
-    cd webui && npm ci && npm run vendor   # fetch pyodide + build engine wheels
-    cd .. && python scripts/stage_webui.py # runs `npm run build`, mirrors dist -> pydvma/_webui
-    python -m build --wheel                # fat wheel: contains pydvma/_webui
-    ```
-
-    The separate lean "engine" wheel that the browser loads via pyodide is
-    built by `webui/scripts/build-wheels.sh` with `PYDVMA_LEAN_WHEEL=1`,
-    which the in-tree build backend honours by excluding `pydvma/_webui`.
-    Source distributions never contain the staged UI, so build the fat
-    wheel directly from the staged tree (not from an sdist).
-
-## Step 3: Download the Template Notebook
-
-Download the template notebook to get started quickly:
-
-**[Download pydvma_template.ipynb](https://raw.githubusercontent.com/torebutlin/pydvma/master/pydvma_template.ipynb)** (right-click and "Save link as...")
-
-Save it to a folder on your computer where you want to work with your data.
-
-## Step 4: Run Jupyter Notebook
-
-Open the **Anaconda Prompt** and run:
-
-```bash
-jupyter notebook --notebook-dir="C:\path\to\your\folder"
-```
-
-Replace `C:\path\to\your\folder` with the path to the folder where you saved the template notebook. This will open Jupyter in your browser where you can open and run the template.
-
-!!! tip "Quick navigation"
-    Alternatively, you can simply run `jupyter notebook` and navigate to your folder using the Jupyter file browser.
-
-## Optional: National Instruments DAQ Support
-
-For National Instruments hardware (Windows or Linux — NI-DAQmx is not
-available on macOS):
-
-1. **Download and install the NI-DAQmx driver**:
-
-   **[Download NI-DAQmx](https://www.ni.com/en/support/downloads/drivers/download.ni-daq-mx.html)**
-
-   Use the latest version that supports your OS. The `nidaqmx` Python
-   wrapper tracks NI-DAQmx ABI changes and will print a clear error
-   on mismatch.
-
-2. **Install the Python bindings** (already included if you installed
-   `pydvma[full]` above; use this if you started from plain `pydvma`):
-
-   ```bash
-   pip install "pydvma[ni]"
-   ```
-
-!!! note "macOS"
-    NI-DAQmx has no macOS driver, so the NI path is unavailable on
-    Mac. Soundcard acquisition still works on all platforms; analysis
-    functions are pure-Python and run anywhere.
-
-## Verifying Installation
-
-To verify your installation, open a Python console or Jupyter notebook and try:
-
-```python
-import pydvma as dvma
-print("pydvma installed successfully!")
-```
-
-If no errors occur, you're ready to go!
+Then carry on with the **[Quick Start](quickstart.md)**.
 
 ## Troubleshooting
 
-### Common Issues
+**`No module named 'pydvma'`**: pydvma is installed in a different
+environment from the one you are running. Run `conda activate pydvma`
+(or select that environment as your notebook kernel) and try again.
 
-**Import Error: No module named 'pydvma'**
+**Plots don't appear in Jupyter**: `%matplotlib widget` needs `ipympl`
+installed in the same environment as the kernel. Install it, then
+restart the kernel.
 
-Make sure pydvma is installed in the correct Python environment. If using a dedicated environment, ensure you've activated it with `conda activate pydvma-env`.
+**A device is missing, or `pydvma-serve` records a test signal instead
+of your device**: run `pydvma-serve --list-devices` and check the
+[extras](#choosing-extras). With no usable soundcard, `pydvma-serve`
+falls back to a built-in test-signal generator.
 
-**Matplotlib Backend Issues**
+**`pip install "pydvma[qt]"` fails**: the desktop Qt logger was removed
+in 2.0.0, and the web logger replaces it. See
+[From the Qt logger](../web-logger/migration.md).
 
-If plots don't display correctly in Jupyter, add this to the first cell of your notebook:
+## Installing from source
 
-```python
-%matplotlib widget
-```
-
-**Soundcard Not Detected**
-
-Ensure the soundcard extra is installed and your audio device is properly connected:
-
-```bash
-pip install "pydvma[soundcard]"
-```
-
-You can list available audio devices with:
-
-```python
-import sounddevice as sd
-print(sd.query_devices())
-```
-
-## Installation from Source
-
-For development or to get the latest changes:
+To work on pydvma itself:
 
 ```bash
 git clone https://github.com/torebutlin/pydvma.git
 cd pydvma
-pip install -e .
+pip install -e ".[full]"
 ```
 
-## Next Steps
-
-Once installation is complete, proceed to the [Quick Start](quickstart.md) guide to begin using pydvma.
+See [Contributing](../contributing.md) for the development workflow.

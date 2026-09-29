@@ -1,158 +1,145 @@
 # Quick Start
 
-This guide will help you get started with the **Python interface** to
-pydvma quickly — scripting acquisition and analysis in a notebook.
+There are four ways in. Pick the one that matches what you want to do;
+each takes a few minutes.
 
-!!! tip "Prefer a point-and-click interface?"
-    For interactive work, use the **[web logger](../web-logger/index.md)** —
-    including a **no-install** browser app at
-    [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/).
-    You can also have both at once: `session = dvma.launch(settings)`
-    starts the web logger from a notebook and hands captures back as
-    Python objects (`session.data`) — see
-    [the notebook front door](../web-logger/migration.md#the-notebook-front-door-dvmalaunch).
-    The web logger replaced the old desktop **Qt Logger**, which has
-    been **removed** (its last version is the `qt-final` git tag) — see
-    [From the Qt logger](../web-logger/migration.md).
+1. [In the browser, nothing installed](#1-in-the-browser-nothing-installed):
+   analyse a saved file, or measure with your computer's soundcard.
+2. [From a Jupyter notebook](#2-from-a-jupyter-notebook-dvmalaunch):
+   record in the web logger, analyse in Python. The usual lab route.
+3. [On a lab PC, without a notebook](#3-on-a-lab-pc-without-a-notebook):
+   the web logger with direct access to lab hardware.
+4. [Scripting in Python](#4-scripting-in-python): record and analyse
+   entirely from code.
 
-## Opening the Template
+Routes 2 to 4 need pydvma [installed](installation.md) on your machine.
 
-The easiest way to get started is to use the provided Jupyter notebook template:
+## 1. In the browser, nothing installed
 
-1. Navigate to your pydvma installation directory
-2. Open `pydvma_template.ipynb` in Jupyter
+1. Open **[torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/)**.
+2. **To analyse a saved file**, press **Load Data** and pick a `.dvma`,
+   `.npy` or `.mat` file.<br>
+   **To measure**, open **Setup**, choose your input, sample rate,
+   channels and duration, then press **Log Data** on **Acquire**. The
+   browser asks for microphone permission the first time.
+3. Look at the results in the **Time**, **Frequency**, **TF** and
+   **Sonogram** stages, and fit modes in **Fit**.
+4. Press **Save Dataset** to keep a `.dvma` file you can reopen anywhere.
 
-Alternatively, you can start from scratch in any Jupyter notebook or Python script.
+Everything runs inside your browser, and your files never leave your
+machine. The browser can't reach NI hardware and may process the
+soundcard signal, so use route 2 or 3 for calibrated or NI
+measurements. The [Web Logger guide](../web-logger/index.md) covers
+every stage.
 
-## Basic Setup
+## 2. From a Jupyter notebook: `dvma.launch`
 
-### Import and Configure
+`dvma.launch` opens the web logger from your notebook. You record
+point-and-click in the browser, and every capture is available back in
+Python.
+
+1. **Start Jupyter** in the folder where you want to keep your data:
+
+    ```bash
+    conda activate pydvma
+    cd path/to/your/folder
+    jupyter lab
+    ```
+
+2. **Launch the web logger** from a notebook cell:
+
+    ```python
+    import pydvma as dvma
+    %matplotlib widget
+
+    settings = dvma.MySettings(channels=2, fs=8000, stored_time=2.0)
+    session = dvma.launch(settings)
+    ```
+
+    A browser tab opens on the web logger with **Setup** already filled
+    in from `settings` (the address is also printed, in case the tab
+    doesn't open). The notebook stays usable while it runs.
+
+3. **Record in the browser.** Check your signals on **Live**, then press
+   **Log Data** on **Acquire**, as many times as you need. Each capture
+   reaches the session as soon as it is taken; you don't need to save
+   first.
+
+4. **Pull the captures into the notebook** whenever you like:
+
+    ```python
+    data = session.data                 # a DataSet with every capture so far
+    data.calculate_tf_set(ch_in=0, window='hann')
+    data.plot_tf_data()
+    ```
+
+5. **Save**, and **close** the session when you have finished:
+
+    ```python
+    dvma.save_data(data, filename='my_test.dvma')
+    session.close()
+    ```
+
+`settings` only pre-fills Setup; you can change anything there in the
+browser. With no `device` given, pydvma records from your computer's
+default input. For NI hardware, let pydvma suggest safe settings for the
+device (index 0 here; `dvma.list_available_devices()` shows the
+options):
+
+```python
+settings = dvma.MySettings(channels=4, stored_time=2.0,
+                           **dvma.suggest_ni_settings(0))
+```
+
+The **[template notebook](https://raw.githubusercontent.com/torebutlin/pydvma/master/pydvma_template.ipynb)**
+(right-click, *Save link as…*) has these cells ready to run.
+[Running locally](../web-logger/running-locally.md) explains the session
+in full, including sending data back to the app with `session.push`.
+
+## 3. On a lab PC, without a notebook
+
+From a terminal:
+
+```bash
+pydvma-serve --open
+```
+
+This serves the same web logger on your own machine and opens it in your
+browser, with direct access to soundcards, audio interfaces and NI
+hardware. Everything then works as in route 1. Useful options:
+
+- `pydvma-serve --list-devices` shows what is plugged in, then exits.
+- `pydvma-serve --driver nidaq --open` makes NI the default device.
+- `pydvma-serve --settings lab.json --open` pre-fills Setup from a file.
+
+See [Running locally](../web-logger/running-locally.md) for the details.
+
+## 4. Scripting in Python
 
 ```python
 import pydvma as dvma
-import matplotlib.pyplot as plt
-import numpy as np
 
-# For interactive plots in Jupyter
-%matplotlib widget
+settings = dvma.MySettings(channels=2, fs=8000, stored_time=2.0)
+data = dvma.log_data(settings)      # records for stored_time seconds
+
+data.calculate_fft_set(window='hann')
+data.calculate_tf_set(ch_in=0, window='hann')
+data.plot_time_data()
+data.plot_tf_data()
+
+dvma.save_data(data, filename='my_test.dvma')
 ```
 
-### Create Settings
+`log_data` records from your default soundcard and returns a `DataSet`.
+To reopen a saved file, use `data = dvma.load_data(filename='my_test.dvma')`.
+No hardware to hand? `data = dvma.create_test_impulse_data()` gives you
+a synthetic impulse test to practise on. The same code runs with nothing
+installed in [JupyterLite](https://torebutlin.github.io/pydvma/lite/)
+(analysis only, no recording).
 
-```python
-# Create default settings
-settings = dvma.MySettings()
+## Next steps
 
-# Customize as needed
-settings.fs = 10000  # Sampling frequency in Hz
-settings.stored_time = 2.0  # Duration in seconds
-settings.channels = 2  # Number of channels
-```
-
-### Record data
-
-Record straight from Python with `log_data`. For a point-and-click
-interface — live monitoring, view switching, modal fitting — use the
-**[web logger](../web-logger/index.md)** instead; this guide covers the
-scripting path.
-
-```python
-# Record a dataset using the settings above
-dataset = dvma.log_data(settings, test_name="recording_01")
-```
-
-`dataset` is a `DataSet` you can analyse, plot, save, and export.
-
-## Your First Measurement
-
-### Programmatic Recording
-
-Record data programmatically:
-
-```python
-# Record data
-dataset = dvma.log_data(settings, test_name="test_01")
-
-# Access the recorded data
-time_data = dataset.time_data_list[0]
-t = time_data.time_axis
-y = time_data.time_data
-
-# Plot
-plt.plot(t, y)
-plt.xlabel('Time (s)')
-plt.ylabel('Amplitude')
-plt.show()
-```
-
-## Basic Analysis
-
-### Compute FFT
-
-```python
-# Calculate FFT
-freq_data = dvma.calculate_fft(time_data, window='hann')
-
-# Plot
-plt.figure()
-plt.plot(freq_data.freq_axis, np.abs(freq_data.freq_data))
-plt.xlabel('Frequency (Hz)')
-plt.ylabel('Magnitude')
-plt.xlim([0, 1000])
-plt.yscale('log')
-plt.show()
-```
-
-### Calculate Transfer Function
-
-```python
-# For multi-channel data, calculate transfer function
-# Channel 0 is input, others are outputs
-tf_data = dvma.calculate_tf(time_data, ch_in=0, window='hann')
-
-# Plot magnitude
-plt.figure()
-plt.plot(tf_data.freq_axis, np.abs(tf_data.tf_data[:, 0]))
-plt.xlabel('Frequency (Hz)')
-plt.ylabel('|H(f)|')
-plt.yscale('log')
-plt.show()
-```
-
-### Generate Sonogram
-
-```python
-# Calculate sonogram (spectrogram)
-sono_data = dvma.calculate_sonogram(time_data)
-
-# Plot
-plt.figure()
-plt.pcolormesh(sono_data.time_axis, sono_data.freq_axis,
-               20*np.log10(np.abs(sono_data.sono_data[:, :, 0])))
-plt.ylabel('Frequency (Hz)')
-plt.xlabel('Time (s)')
-plt.colorbar(label='Magnitude (dB)')
-plt.show()
-```
-
-## Saving and Loading Data
-
-### Export to Matlab
-
-```python
-# Export dataset to Matlab format
-dvma.export_to_matlab(dataset)
-```
-
-### Export to CSV
-
-```python
-# Export time data to CSV
-dvma.export_to_csv(dataset.time_data_list)
-```
-
-## Next Steps
-
-- Explore the [User Guide](../user-guide/acquisition.md) for more detailed information
-- Check out [Examples](../examples/basic.md) for common use cases
-- Review the [API Reference](../api/analysis.md) for function details
+- [Python basics](basic-usage.md): the data model and settings behind
+  the code above.
+- [Web Logger](../web-logger/index.md): each stage of the app in detail.
+- [Examples](../examples/basic.md): complete worked measurements.

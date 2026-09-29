@@ -1,101 +1,55 @@
 # pydvma
 
-A Python package for dynamics and vibration measurements and analysis.
-
 [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://torebutlin.github.io/pydvma/)
 [![PyPI version](https://img.shields.io/pypi/v/pydvma)](https://pypi.org/project/pydvma/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21888383.svg)](https://doi.org/10.5281/zenodo.21888383)
 
-## About
+**pydvma** measures and analyses dynamics and vibration data: impulse
+(hammer) tests, transfer functions, spectra, sonograms and modal fits,
+recorded with a soundcard or with National Instruments DAQ hardware. It
+is developed at the University of Cambridge Department of Engineering
+for student laboratories and research.
 
-pydvma is a modular library for data measurement and analysis in the context of dynamics and vibration, developed at the University of Cambridge Department of Engineering. It's designed for use in student laboratory experiments and research projects.
+It has a point-and-click **web logger** that runs in your browser, and a
+**Python interface** (`import pydvma as dvma`) for scripting. The two
+work together: `dvma.launch()` opens the web logger from a Jupyter
+notebook and hands every capture back to Python.
 
-**Key features:**
+## Getting started
 
-- Data acquisition via soundcards or National Instruments DAQs
-- Pre-trigger recording and PC-generated output stimulus for impulse/transfer-function measurements
-- FFT, transfer functions, coherence, and spectrograms (STFT and CWT)
-- Modal analysis tools (mode-fitting, damping estimation)
-- A browser-based **web logger** with a live oscilloscope, analysis and modal-fitting views
-- Export to `.dvma`, MATLAB and CSV; theme-invariant figure export (PNG/PDF)
+| I want to… | Use | Install |
+| ---------- | --- | ------- |
+| Analyse a saved file, or measure with my computer's soundcard | the [browser app](https://torebutlin.github.io/pydvma/app/) | nothing |
+| Measure with lab hardware (an audio interface or NI-DAQ) | `pydvma-serve --open` | `pip install "pydvma[full]"` |
+| Measure in the browser **and** analyse in a Jupyter notebook | `session = dvma.launch(settings)` | `pip install "pydvma[full]"` |
+| Script acquisition and analysis in Python | `import pydvma as dvma` | `pip install "pydvma[full]"` |
 
-## The web logger — the recommended interface
-
-The interactive interface is now the **[web logger](https://torebutlin.github.io/pydvma/web-logger/)**, which runs in three modes over one shared analysis engine:
-
-| Mode | Open it | Install |
-| ---- | ------- | ------- |
-| **Pages app** — analysis of saved files + soundcard capture | [torebutlin.github.io/pydvma/app/](https://torebutlin.github.io/pydvma/app/) | none |
-| **Local bridge** — the same app driving real hardware (soundcard or NI-DAQ) | `pydvma-serve --open` | `pip install "pydvma[serve,soundcard]"` |
-| **JupyterLite** — `import pydvma` in a browser notebook | [torebutlin.github.io/pydvma/lite/](https://torebutlin.github.io/pydvma/lite/) | none |
-
-> The earlier desktop **Qt logger** GUI has been **removed** now that the web logger has full parity (its last version is the `qt-final` git tag).
-
-## Quick Start
-
-Analyse or measure in the browser with **no install** — open the
-[Pages app](https://torebutlin.github.io/pydvma/app/) and drag in a
-`.dvma`, `.npy` or `.mat` file, or capture from a soundcard.
-
-To drive real hardware (soundcard or NI-DAQ) from the same app on your
-own machine:
-
-```bash
-pip install "pydvma[serve,soundcard]"   # add [ni] for National Instruments
-pydvma-serve --open                     # serves the app + bridge, opens a browser
-```
-
-`[serve]` on its own installs only the bridge itself — name the
-backends you need alongside it (`soundcard`, `ni`), or use
-`pydvma[full]` for both.
-
-To script analysis and acquisition in Python:
-
-```python
-import pydvma as dvma
-
-dataset = dvma.load_data('measurement.dvma')   # or record with log_data
-freq = dvma.calculate_fft(dataset.time_data_list[0])
-```
-
-Plain `pip install pydvma` installs the analysis-only core (data
-structures, FFT/TF/modal analysis, file I/O) with no hardware
-dependencies — it runs anywhere, including in-browser under pyodide.
-Native data format is `.dvma` (safe, pickle-free); `.npy` files saved
-by older versions still load.
+The [Quick Start](https://torebutlin.github.io/pydvma/getting-started/quickstart/)
+takes each of these in a few steps.
 
 ## Documentation
 
-**Full documentation: [torebutlin.github.io/pydvma](https://torebutlin.github.io/pydvma/)**
-
-- [Installation Guide](https://torebutlin.github.io/pydvma/getting-started/installation/) - Detailed setup instructions
-- [Quick Start](https://torebutlin.github.io/pydvma/getting-started/quickstart/) - Get up and running quickly
-- [User Guide](https://torebutlin.github.io/pydvma/user-guide/acquisition/) - Comprehensive usage guides
-- [API Reference](https://torebutlin.github.io/pydvma/api/analysis/) - Detailed API documentation
+**[torebutlin.github.io/pydvma](https://torebutlin.github.io/pydvma/)**:
+installation, the quick start, a guide to every stage of the web logger,
+the Python interface, and the API reference.
 
 ## Contributing
 
-Contributions are welcomed:
+Bug reports and pull requests are welcome via
+[GitHub Issues](https://github.com/torebutlin/pydvma/issues); for larger
+changes, please get in touch first. See the
+[Contributing guide](https://torebutlin.github.io/pydvma/contributing/).
 
-- Report bugs via [GitHub Issues](https://github.com/torebutlin/pydvma/issues)
-- Submit pull requests for bug fixes and improvements
-- Contact us for significant changes or new features
+## Citing and supporting pydvma
 
-See the [Contributing Guide](https://torebutlin.github.io/pydvma/contributing/) for details.
-
-## Support & citation
-
-pydvma is **free and open for everyone** — no features are gated. If it
-supports your teaching or research, the most valuable thing you can do is
-**cite it**. This repository includes a
-[`CITATION.cff`](CITATION.cff) file, so GitHub's "Cite this repository"
-button and most reference managers can import the citation directly.
-
-If your institution would like to support continued development, or you
-would simply like to tell us how you use pydvma, get in touch:
-**tb267@cam.ac.uk**. See the
-[Support & citation page](https://torebutlin.github.io/pydvma/about/support/)
-for details (a DOI will follow via Zenodo once a release is archived).
+pydvma is free and open for everyone. If it supports your teaching or
+research, please **cite it**: GitHub's "Cite this repository" button
+reads [`CITATION.cff`](https://github.com/torebutlin/pydvma/blob/master/CITATION.cff), and every release is archived on
+[Zenodo](https://doi.org/10.5281/zenodo.21888383). To support continued
+development, or to tell us how you use pydvma, email
+**tb267@cam.ac.uk**. More on the
+[Support & citation page](https://torebutlin.github.io/pydvma/about/support/).
 
 ## License
 
-BSD 3-Clause License - see [LICENSE](LICENSE) for details.
+BSD 3-Clause License. See [LICENSE](https://github.com/torebutlin/pydvma/blob/master/LICENSE).

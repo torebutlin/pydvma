@@ -116,7 +116,7 @@ When the app is served by `pydvma-serve`, each autosave is *also* posted
 to the server, which keeps the authoritative session — so the restore
 offer on the next open comes from there rather than from browser storage,
 and a session survives the tab closing or the serve process crashing. See
-[the session journal](index.md#the-session-lives-in-pydvma-serve).
+[the session journal](running-locally.md#your-session-is-kept-safe).
 
 ## Export data
 
