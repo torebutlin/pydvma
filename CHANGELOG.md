@@ -107,6 +107,31 @@ open, answered and built — plus fixes to the Python file functions and
   gives the return shape — one `(n_channels, 1)` array per set — and how
   to apply the factors.
 
+### Fixed
+
+- **`modal_fit_single_channel` works again.** It raised `ValueError:
+  all the input arrays must have same number of dimensions` on every
+  call, because its initial guess was built with `np.concatenate` over
+  scalars. Behind that sat a second fault. The seed amplitude was scaled
+  for displacement whatever the `measurement_type`, so the default
+  `'acc'` fit of the synthetic impulse test converged to 98.4 Hz, not
+  100.0 Hz, with its phase stuck at −90°. It now uses the seed that
+  `modal_fit_all_channels` uses for one channel, and on uncalibrated
+  data the two give the same answer. `result.x` is still
+  `[fn, zn, an, pn, rk, rm]`. The web app uses `modal_fit_all_channels`
+  and was never affected.
+- **`multiply_by_power_of_iw` no longer leaves NaN at 0 Hz.** For a
+  negative power the DC bin was forced to infinity before raising to
+  the power, which gives 0 for `power=-1` but `nan+nanj`, with a
+  `RuntimeWarning`, for `-2` and below (acceleration to displacement).
+  The 0 Hz bin is now 0 for every negative power, with no warning. Only
+  a bin actually at 0 Hz is treated this way, where before it was
+  whichever bin came first. A BLA transfer function stores only its
+  excited bins, so its first excited bin used to come out NaN. The
+  function still modifies its argument in place and returns it, as
+  before; deep-copy first to keep the original. The web app's x(iω)^p
+  display is separate and was not affected.
+
 ### Documentation
 
 - **Getting Started rewritten.** One Quick Start with four routes
