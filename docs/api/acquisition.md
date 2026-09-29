@@ -30,6 +30,8 @@ The full per-attribute reference is below; for worked end-to-end recipes
 
 ::: pydvma.acquisition.signal_generator
 
+::: pydvma.acquisition.OutputRescaledWarning
+
 ::: pydvma.acquisition.multisine_generator
 
 ## Stream Monitoring

@@ -15,6 +15,7 @@ import scipy.stats as stats
 import copy
 import datetime
 import time
+import warnings
 
 MESSAGE = ''
 
@@ -941,6 +942,35 @@ def output_signal(settings, output, cancel_event=None):
         return None
 
 
+class OutputRescaledWarning(UserWarning):
+    """Warned when `signal_generator` scales a waveform down to the output rail.
+
+    A class of its own so a script can filter it, and so ``pydvma-serve``
+    can pass it on to the browser app as a toast.
+    """
+
+
+def _scale_to_rail(y, limit, sig, amplitude):
+    """Scale ``y`` so its peak sits on ``limit``, and warn that it did.
+
+    Also records the new rms in ``MESSAGE``, as before the warning existed.
+    Returns the scaled waveform.
+    """
+    global MESSAGE
+    peak = float(np.max(np.abs(y)))
+    y = limit * y / peak
+    rms = float(np.sqrt(np.mean(y ** 2)))
+    MESSAGE = 'Actual rms output after scaling to avoid clipping is {0:1.3f}'.format(rms)
+    warnings.warn(
+        "signal_generator: the {!r} waveform's peak ({:.3g} V) is beyond the "
+        "output rail (+/-{:.3g} V), so the whole waveform was scaled to {:.0%} "
+        "of the requested level (rms now {:.3g} V). Lower `amplitude` (asked "
+        "{:.3g} V), or raise the rail (output_VmaxNI / output_VmaxSC) if the "
+        "hardware allows.".format(sig, peak, limit, limit / peak, rms, amplitude),
+        OutputRescaledWarning, stacklevel=3)
+    return y
+
+
 def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_channels='all'):
     """Create an output waveform in volts, ready to pass to `log_data`.
 
@@ -966,9 +996,10 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
     If the finished waveform's peak exceeds the output rail
     ``settings.output_vmax()`` (``output_VmaxNI`` when
     ``output_device_driver='nidaq'``, ``output_VmaxSC`` otherwise), the
-    WHOLE waveform is scaled down so its peak equals the rail. Nothing
-    is printed when this happens: the resulting rms is stored as a
-    message in ``acquisition.MESSAGE``.
+    WHOLE waveform is scaled down so its peak equals the rail, and an
+    `OutputRescaledWarning` says so (the new rms is also stored in
+    ``acquisition.MESSAGE``). Plain Gaussian noise never triggers this:
+    it is a truncated normal, so it already stays inside the rail.
 
     Args:
         settings (MySettings): Supplies ``output_fs``,
@@ -988,6 +1019,10 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
         t (np.ndarray): Sample times in seconds, ``arange(0, T, 1/output_fs)``.
         y (np.ndarray): The waveform in volts, shape
             ``(len(t), output_channels)``.
+
+    Warns:
+        OutputRescaledWarning: If the waveform was scaled down to fit the
+            output rail, so it plays at less than the requested level.
     """
     global MESSAGE
     if selected_channels == 'all':
@@ -1017,8 +1052,7 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
             y = signal.filtfilt(b,a,y,axis=0,padtype=None)
             y = amplitude * y / np.sqrt(np.mean(y**2))
             if np.max(np.abs(y)) > limit:
-                y = limit * y / np.max(np.abs(y))
-                MESSAGE = 'Actual rms output after scaling to avoid clipping is {0:1.3f}'.format(np.sqrt(np.mean(y**2)))
+                y = _scale_to_rail(y, limit, sig, amplitude)
             else:
                 MESSAGE = 'Actual rms output is {0:1.3f}'.format(np.sqrt(np.mean(y**2)))
                 
@@ -1052,8 +1086,7 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
     
     # Final safety clamp to ±limit (= output full-scale in volts).
     if np.max(np.abs(y)) > limit:
-        y = limit * y / np.max(np.abs(y))
-        MESSAGE = 'Actual rms output after scaling to avoid clipping is {0:1.3f}'.format(np.sqrt(np.mean(y**2)))
+        y = _scale_to_rail(y, limit, sig, amplitude)
 
     return t,y
 
