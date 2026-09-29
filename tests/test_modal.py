@@ -12,7 +12,7 @@ Pure-Python, no hardware required.
 import numpy as np
 import pytest
 
-from pydvma import analysis, datastructure, modal, options
+from pydvma import analysis, datastructure, modal, options, testdata
 
 
 # ---------- helpers ----------
@@ -142,6 +142,41 @@ class TestModalFitRoundTrip:
         assert an[0] > 0
         assert abs(pn[0]) < np.deg2rad(15)
         assert m.channels == 1
+
+
+# ---------- single-channel fit (modal_fit_single_channel) ----------
+
+def _test_impulse_tf_and_truth():
+    """The TF of `testdata.create_test_impulse_data` and its known mode.
+
+    That function synthesises h(t) = exp(-t/tau)·sin(2π·f0·t) with
+    f0 = 100 Hz and tau = 0.1 s (constants local to it, restated here),
+    whose TF has a constant numerator: the 'dsp' form of `modal.f_TF`.
+    The true natural frequency sits slightly above f0, since
+    wn = sqrt(σ² + wd²) with σ = 1/tau and wd = 2π·f0.
+    """
+    f0, tau = 100.0, 0.1
+    sigma = 1.0 / tau
+    wn = np.sqrt(sigma ** 2 + (2 * np.pi * f0) ** 2)
+    time_data = testdata.create_test_impulse_data().time_data_list[0]
+    tf = analysis.calculate_tf(time_data, ch_in=0)
+    return tf, wn / (2 * np.pi), sigma / wn
+
+
+class TestModalFitSingleChannel:
+
+    def test_recovers_test_impulse_mode(self):
+        """Regression: building the initial guess with np.concatenate over
+        scalars raised 'all the input arrays must have same number of
+        dimensions' on every call."""
+        tf, fn_true, zn_true = _test_impulse_tf_and_truth()
+
+        r = modal.modal_fit_single_channel(
+            tf, freq_range=[80, 120], measurement_type='dsp')
+
+        assert r.x.shape == (6,)            # [fn, zn, an, pn, rk, rm]
+        assert abs(r.x[0] - fn_true) < 0.1  # Hz
+        assert abs(r.x[1] - zn_true) / zn_true < 0.05
 
 
 # ---------- simultaneous multi-mode refinement (modal_refine) ----------
