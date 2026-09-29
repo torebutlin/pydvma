@@ -117,9 +117,9 @@ _PUBLIC_SURFACE = [
 # hatch back to the last Qt version.
 _TOMBSTONE_PHRASES = [
     'was removed',
-    'pip install pydvma[serve]',
+    'pip install "pydvma[full]"',
     'pydvma-serve --open',
-    'https://torebutlin.github.io/pydvma/web-logger/',
+    'https://torebutlin.github.io/pydvma/web-logger/running-locally/',
     'qt-final',
 ]
 

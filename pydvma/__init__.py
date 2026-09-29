@@ -84,8 +84,9 @@ _REMOVED_MESSAGE = (
     "(the web logger opens in your browser; captures accumulate in the "
     "session — pull them back with session.data, hand data over with "
     "session.push).\n"
-    "From a terminal: pip install pydvma[serve] && pydvma-serve --open\n"
-    "(docs: https://torebutlin.github.io/pydvma/web-logger/).\n"
+    "From a terminal, pydvma-serve --open starts the same app. "
+    "Install with: pip install \"pydvma[full]\"\n"
+    "(docs: https://torebutlin.github.io/pydvma/web-logger/running-locally/).\n"
     "To run the old Qt GUI, check out the 'qt-final' git tag."
 )
 
