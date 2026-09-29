@@ -19,7 +19,7 @@ import uuid
 import copy
 
 #%% version
-VERSION = '2.5.0' # keep in sync with pyproject.toml (enforced by tests/test_packaging.py)
+VERSION = '2.6.0' # keep in sync with pyproject.toml (enforced by tests/test_packaging.py)
 
 def update_dataset(dataset):
     '''Rebuild a DataSet from an older pydvma version in the current layout.

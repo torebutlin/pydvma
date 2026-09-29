@@ -3,13 +3,27 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.6.0 — 2026-09-29
 
 Follow-ups from the 2.5.0 calibration review — the questions it left
-open, answered and built — plus the fixes that a review of the docs
-turned up: the Python file functions, `best_match`,
-`modal_fit_single_channel`, `multiply_by_power_of_iw`, and the app's
-Export Matlab.
+open, answered and built — and the fixes and decisions from a review
+that ran every documented example. Minor rather than patch: there are
+new public names (`OutputRescaledWarning`, `CrossSpecData.enbw_hz`,
+`analysis.wrap_unit`, a density mode in the app), three defaults change
+(no window everywhere in Python, no Qt file dialog, physical synthetic
+test data), and the bridge protocol gains a `warning` frame. Nothing
+that worked stops working: `parent` is deprecated, not removed.
+
+Worth knowing when upgrading:
+
+- **A file function called without a filename is now a `TypeError`**;
+  there is no Qt file dialog. A path as the first argument works.
+- **`DataSet.calculate_tf_averaged()` and
+  `DataSet.calculate_cross_spectrum_matrix_set()` no longer apply a
+  Hann window by default.** Pass `window='hann'` for random excitation.
+- **Numbers from `create_test_impulse_data` and its siblings change**:
+  the response is now the physical velocity, fitted with
+  `measurement_type='vel'`.
 
 ### Added
 
