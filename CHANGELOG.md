@@ -6,27 +6,10 @@ follows [semantic versioning](https://semver.org/).
 ## Unreleased
 
 Follow-ups from the 2.5.0 calibration review — the questions it left
-open, answered and built — plus fixes to the Python file functions and
-`best_match` that a review of the docs turned up.
-
-### Fixed
-
-- **The web app's Export Matlab now carries the calibration, as 2.5.0
-  said it did.** 2.5.0 added `time_cal_factors` / `time_units` and the
-  `freq_` and `tf_` equivalents to the MATLAB export, but only Python's
-  `export_to_matlab` wrote them. The app's **Export Matlab** builds its
-  file through a separate engine op, which still wrote only the
-  `*_axis_all` / `*_data_all` arrays, so a calibrated set exported raw
-  volts with no record of how to convert them. The op now writes the
-  same keys through the same `pydvma.file` helper, from the per-column
-  factors and units the CSV header already uses. On the same data the
-  app's `.mat` matches Python's key for key and value for value, and
-  byte for byte after the header timestamp. The app and Python still
-  differ where their CSV headers already do: the app builds a transfer
-  function's factor and unit from its source channels, while Python
-  reads the values stored on the TF. So a TF loaded from a file written
-  before `wrap_unit` exports as `(m/s)/N` from the app and as the
-  stored `m/s/N` from Python.
+open, answered and built — plus the fixes that a review of the docs
+turned up: the Python file functions, `best_match`,
+`modal_fit_single_channel`, `multiply_by_power_of_iw`, and the app's
+Export Matlab.
 
 ### Added
 
@@ -99,6 +82,22 @@ open, answered and built — plus fixes to the Python file functions and
 
 ### Fixed
 
+- **The web app's Export Matlab now carries the calibration, as 2.5.0
+  said it did.** 2.5.0 added `time_cal_factors` / `time_units` and the
+  `freq_` and `tf_` equivalents to the MATLAB export, but only Python's
+  `export_to_matlab` wrote them. The app's **Export Matlab** builds its
+  file through a separate engine op, which still wrote only the
+  `*_axis_all` / `*_data_all` arrays, so a calibrated set exported raw
+  volts with no record of how to convert them. The op now writes the
+  same keys through the same `pydvma.file` helper, from the per-column
+  factors and units the CSV header already uses. On the same data the
+  app's `.mat` matches Python's key for key and value for value, and
+  byte for byte after the header timestamp. The app and Python still
+  differ where their CSV headers already do: the app builds a transfer
+  function's factor and unit from its source channels, while Python
+  reads the values stored on the TF. So a TF loaded from a file written
+  before `wrap_unit` exports as `(m/s)/N` from the app and as the
+  stored `m/s/N` from Python.
 - **A filename given positionally now works.**
   `dvma.load_data('measurement.dvma')` passed the name as the Qt dialog
   `parent`, the first positional argument of every file function, and
@@ -125,9 +124,6 @@ open, answered and built — plus fixes to the Python file functions and
   not have) and now uses the plot's visible x-range. Its docstring now
   gives the return shape — one `(n_channels, 1)` array per set — and how
   to apply the factors.
-
-### Fixed
-
 - **`modal_fit_single_channel` works again.** It raised `ValueError:
   all the input arrays must have same number of dimensions` on every
   call, because its initial guess was built with `np.concatenate` over
