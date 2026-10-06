@@ -222,10 +222,14 @@ Press **Load Data** in the header. The web logger opens:
 
 - **`.dvma`** files, read directly;
 - older **`.npy`** files saved by pydvma 1.4.0 and earlier (see
-  [older files](dvma-format.md#older-npy-files)); and
+  [older files](dvma-format.md#older-npy-files));
 - **`.mat`** files from the original JW logger: spectra and transfer
   functions, with coherence columns recognised automatically, and time
-  captures. See [From the Qt logger](migration.md#files-carry-over).
+  captures (see [From the Qt logger](migration.md#files-carry-over)); and
+- **`.csv`** files saved by the Vibration Apps' **Transfer function**
+  app (3C6): one transfer function set per measurement, H1 with its
+  coherence (see
+  [Import Vibration Apps transfer functions](../user-guide/import-export.md#import-vibration-apps-transfer-functions)).
 
 The `.mat` and `.csv` files written by **Export Matlab** and **Export
 CSV** cannot be reopened. Use `.dvma` to keep a session you want to

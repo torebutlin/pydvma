@@ -33,3 +33,5 @@ engineering units. The web logger's exports are described in
 ## Import Functions
 
 ::: pydvma.file.import_from_matlab_jwlogger
+
+::: pydvma.file.import_from_vibration_apps_csv

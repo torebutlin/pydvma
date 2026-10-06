@@ -8,6 +8,23 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-10-06 (Mac): **the Vibration Apps' transfer-function CSV
+imports** (3C6 Transfer function app, format `vibration-apps-tf-csv 1`;
+the spec came from the vibration_apps session as
+`dev/2026-10-06-vibration-apps-csv-import.md`, which that session kept
+updating mid-round). `file.import_from_vibration_apps_csv`, `load_data`
+sniffing the first line, and the webui's Load Data via the engine op
+`vibration_csv_to_dvma` (one Python parser for both; engine wheel
+rebuilt, same 2.6.0 name). Tore's calls: **H1 only** (H2 and the app's
+newer `H_power` are TODO decisions, and the import must change when
+they land); one-frame coherence None; app keys + notes in
+`source_settings['vibration_apps']`; timestamp kept tz-aware UTC
+(a naive local time would be UTC under pyodide). Found and only
+TODO'd/docs-warned: **`modal_fit_all_channels` silently mis-indexes
+sets on different frequency axes** (Python only; the app aligns), and
+`export_to_csv` writes `(re+imj)` cells incl. the axis and crashes on
+unequal set lengths. No version bump (CHANGELOG `## Unreleased`).
+
 As of 2026-09-29, later (Mac): **v2.6.0 is CUT and pushed; the twine
 upload is Tore's, then tag `v2.6.0` at the cut commit and publish the
 GitHub release (Zenodo auto-archives) — tag/release AFTER the upload.**

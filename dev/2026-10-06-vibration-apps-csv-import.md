@@ -236,3 +236,38 @@ m3 sine 20 pts · 100 Hz–5 kHz | f 100.0 … 5000.7 | n 20 | |H| max dB -4.9 |
 m4 noise 2 s · 100 Hz–5 kHz | f 100.3 … 4999.9 | n 13380 | |H| max dB 0.1 | coherence none | fs 48000 | N_frames 1 | view shown
 m5 noise 10 s · 100 Hz–5 kHz + mass | f 105.5 … 4998.0 | n 836 | |H| max dB -0.5 | coherence 0.999 | fs 48000 | N_frames 120 | view hidden
 ```
+
+## Update from the app, 6 Oct afternoon (after 4936795)
+
+Written from the vibration_apps side; nothing in pydvma's code was touched.
+`import_from_vibration_apps_csv` as committed reads the new files unchanged
+(checked: the five sets of the refreshed example, axes 836 / 13380 / 20 /
+13380 / 836, coherence None for the one-frame set).
+
+- **Each measurement has its own frequency axis.** Rows are grouped by
+  `measurement` and each group's `f_Hz` is that TfData's `freq_axis`: noise
+  in frames of N has the FFT bins k·fs/N in the band, a sweep its repeat's
+  padded length, a whole-record frame that record's, and a stepped sine
+  only its points (log-spaced, not a grid). Do not put them onto a common
+  grid on import. The committed importer already does this; worth a test
+  that says so (the first set starts at 105.47 Hz, the second at 100.34 Hz).
+- **New column `H_power`** (last, after `H2_im`): |H| from the powers alone,
+  √((S_yy − S_nn)/S_xx), with S_nn the room's noise per frame, heard before
+  the chirp arrived, taken off. A magnitude with no phase. In the app it is
+  the "power" option, the one to try where the loop delay is suspect
+  (Bluetooth, AirPlay: a delay that wanders spoils H₁, by 10 dB or more in
+  long frames, and leaves H_power alone). Empty for a stepped sine, and in
+  a bin where the noise is all there is. If pydvma wants it: a second,
+  magnitude-only TfData (zero phase, flagged so the phase plot and the
+  modal fits leave it alone), or a field beside `tf_data`.
+- **New key `file_start_s`**: for `kind=file`, where in the audio file the
+  stretch played began, in seconds from its beginning (0: its first sound).
+- The refreshed example, with both: `dev/2026-10-06-vibration-apps-example.csv`
+  (`tests/data/vibration_apps_example.csv` is the earlier one, without them).
+
+**pydvma side, after the update:** the refreshed example (with `H_power`
+and `file_start_s`) is now the test fixture,
+`tests/data/vibration_apps_example.csv`, replacing the earlier one; the
+`dev/` copy was moved there. A test pins that each measurement keeps its
+own axis (105.47 Hz and 100.34 Hz starts). `H_power` is not imported yet:
+it sits in TODO.md beside H2 as a decision for Tore.

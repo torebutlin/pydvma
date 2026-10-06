@@ -105,6 +105,43 @@ For a transfer function file the frequency axis is built from the file's
 modal fit. JW admittance measurements are velocity over force, so fit them
 with `measurement_type='vel'`.
 
+## Import Vibration Apps transfer functions
+
+The **Transfer function** app in the
+[Vibration Apps](https://torebutlin.github.io/vibration_apps/apps/frf/)
+(used in 3C6) measures speaker to microphone in a browser and saves every
+measurement it holds as one CSV. `load_data` recognises that file by its
+first line, whatever it is named, and gives one transfer function per
+measurement:
+
+```python
+va = dvma.load_data(filename='measurements.csv')
+for tf in va.tf_data_list:
+    print(tf.test_name, len(tf.freq_axis))
+```
+
+- Each `TfData` is named `m<no> <name>` with the app's card number, and
+  keeps its own frequencies. A noise test's are its FFT bins within the
+  band; a stepped sine's are its points, which are not evenly spaced.
+- `tf_data` is H1, uncalibrated (microphone full scale per speaker full
+  scale), with the loop delay the app found already out of the phase.
+  The file's H2 columns are not imported.
+- `tf_coherence` is None for a result of one frame, where the app leaves
+  it empty (it is 1 by definition).
+- `timestamp` is when the measurement was made (UTC), and
+  `source_settings['vibration_apps']` keeps every setting the app wrote
+  plus its notes (test signal, loop delay, quality figures), so they
+  survive saving as `.dvma`.
+
+A measurement the app was hiding when it saved is imported all the same.
+Any other CSV, including one written by `export_to_csv`, stops with an
+error. `dvma.import_from_vibration_apps_csv(filename=...)` does the same
+import directly.
+
+Each measurement has its own frequency axis, so fit them one at a time
+in Python: see the warning under
+[Fitting one mode across channels](modal-analysis.md#fitting-one-mode-across-channels).
+
 ## Working with many files
 
 Load each file and analyse it in a loop:

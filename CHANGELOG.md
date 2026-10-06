@@ -3,6 +3,21 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Import the Vibration Apps' transfer-function CSV.** The CSV that the
+  3C6 **Transfer function** app saves (format `vibration-apps-tf-csv 1`)
+  loads with `load_data`, which recognises it by its first line, or with
+  the new `import_from_vibration_apps_csv`, and through **Load Data** in
+  the web app (the same Python parser, via the engine). One `TfData` per
+  measurement, on its own frequencies: H1, its coherence (None for a
+  result of one frame), the measurement time, and the app's settings and
+  notes in `source_settings['vibration_apps']`. The file's H2 columns are
+  not imported. Any other CSV, including pydvma's own `export_to_csv`
+  output, is refused with a message saying so.
+
 ## 2.6.0 — 2026-09-29
 
 Follow-ups from the 2.5.0 calibration review — the questions it left

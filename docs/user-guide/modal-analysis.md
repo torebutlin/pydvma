@@ -218,6 +218,16 @@ factors, so the constants come out in engineering units. If the frequency
 range is poor, the function prints "Poor quality fit"; adjust the range and
 try again.
 
+!!! warning "Every transfer function in the list must share one frequency axis"
+    `modal_fit_all_channels` picks the samples inside `freq_range` from the
+    FIRST transfer function's axis and takes the same rows from every
+    other one. Transfer functions on different axes (captures at different
+    sample rates or frame lengths, or the separate measurements of a
+    [Vibration Apps CSV](import-export.md#import-vibration-apps-transfer-functions))
+    then give a wrong fit with no error. Fit those one at a time. The web
+    app's **Fit** stage does align them, by interpolating every set onto
+    the first set's frequencies.
+
 ### Fitting one channel
 
 `modal_fit_single_channel` fits one mode to one column of a transfer

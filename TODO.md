@@ -13,6 +13,54 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+### Vibration Apps CSV import follow-ups (2026-10-06)
+
+`import_from_vibration_apps_csv` (the 3C6 Transfer function app's CSV,
+format `vibration-apps-tf-csv 1`; note in
+`dev/2026-10-06-vibration-apps-csv-import.md`) landed with H1 only, by
+Tore's choice. Open:
+
+- **H2 handling in pydvma** (not now, Tore 2026-10-06). `TfData` has no
+  field for an H2 estimate, and nothing in pydvma computes one. Options:
+  a field beside `tf_data` (container + webui codec + plots), or a second
+  `TfData` per measurement flagged as H2. **This import is affected when
+  it lands**: `file._vibration_apps_dataset` reads only `H1_re`/`H1_im`
+  and ignores the file's `H2_re`/`H2_im`, so it should start reading them
+  into whatever H2 becomes, with a test on the example fixture.
+- **`H_power` from the app** (decision for Tore). A newer column in the
+  same format: |H| from powers alone, sqrt((Syy - Snn)/Sxx) with the
+  room's noise taken off, no phase, empty for a stepped sine. The app's
+  answer where a wandering loop delay (Bluetooth, AirPlay) spoils H1.
+  Ignored by the import today. If wanted: a magnitude-only `TfData`
+  flagged so phase plots and modal fits leave it alone, or a field. Same
+  shape of decision as H2, so decide them together.
+- **Python joint modal fit silently mis-indexes sets on different
+  frequency axes** (bug, found 2026-10-06). `modal.modal_fit_all_channels`
+  takes the `freq_range` row indices from the FIRST TfData's axis and
+  applies them to every set. Fitting m1 + m2 of the example at 120-200 Hz
+  read m2's rows at 101-106 Hz as if they were 123-193 Hz: no error, a
+  wrong fn/zeta. Pre-existing, but this import makes mixed axes common.
+  The webui path aligns first (`engine._align_fit_list`, interpolating onto
+  the first set's axis), which is right but poor when the first set is
+  coarse (a 20-point stepped sine). Docs now warn. Fix options: share the
+  alignment helper so Python matches the app, or (better) fit each set
+  on its own points with a concatenated residual.
+- **`export_to_csv` problems** (found 2026-10-06). TF/FFT files are
+  written in numpy's complex form, `(re+imj)` in every cell including the
+  frequency column, which Excel/pandas/MATLAB read as text; and exporting
+  sets of different lengths crashes inside `np.append`. Tore asked why
+  pydvma cannot load its own CSV: no reader was ever written (CSV and
+  .mat were one-way exports, `.dvma` the round trip), and today's file
+  could not be read back faithfully anyway (no set boundaries, fs,
+  ch_in, names, timestamps or coherence, and FFT vs TF is ambiguous).
+  Fixing the export first (re/im columns, a header naming kind and set
+  per column) would make a reader straightforward.
+- **TF card shows meaningless estimator fields for sets with no time
+  data** (cosmetic, pre-existing). An imported TF (Vibration Apps CSV,
+  JW .mat, any orphan TF) shows "frame 0.00 s, nFFT 2, Δf = fs/2" in the
+  TF stage card. Grey out or hide the estimator group when the selected
+  set has no time series.
+
 ### Found by the docs review (2026-09-29)
 
 Running every documented example turned up code issues. The docs now
