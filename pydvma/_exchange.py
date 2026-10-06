@@ -18,7 +18,8 @@ the rows and its other axes flattened (C order) into columns, so a TF table
 reads ``freq_axis, tf_data[0].re, tf_data[0].im, tf_coherence[0]``. Complex
 arrays become ``.re``/``.im`` column pairs. Floats are written as the
 shortest text that reads back to the same float64 (Python's ``repr``:
-``0.1``, ``nan``, ``-inf``), so every array comes back bit-identical;
+``0.1``, ``nan``, ``-inf``, ``-0.0``), so every array comes back with the
+same values, dtype and shape (a NaN's payload bits aside);
 the manifest's ``csv_tables`` key records each array's place, shape and
 dtype, and the reader needs nothing else.
 
@@ -68,7 +69,10 @@ def _as_columns(arr, row_axis):
     if arr.ndim == 0:
         block = arr.reshape(1, 1)
     else:
-        block = np.moveaxis(arr, row_axis, 0).reshape(arr.shape[row_axis], -1)
+        rows = arr.shape[row_axis]
+        cols = arr.size // rows if rows else int(np.prod(
+            [n for k, n in enumerate(arr.shape) if k != row_axis], dtype=int))
+        block = np.moveaxis(arr, row_axis, 0).reshape(rows, cols)
     if np.iscomplexobj(block):
         out = np.empty((block.shape[0], 2 * block.shape[1]))
         out[:, 0::2] = block.real
@@ -199,7 +203,9 @@ def dataset_to_csv_text(dataset):
 
 def _read_table(body, rows, n_columns, k, name):
     """One table's data rows as a (rows, n_columns) float64 array."""
-    if rows == 0 or n_columns == 0 or not body.strip():
+    if n_columns == 0:
+        data = np.zeros((rows, 0))         # no columns, so no lines: rows from the manifest
+    elif rows == 0 or not body.strip():
         data = np.zeros((0, n_columns))
     else:
         try:
@@ -220,7 +226,12 @@ def _read_table(body, rows, n_columns, k, name):
 def _array_from_columns(data, spec):
     cols = data[:, spec['first_column']:spec['first_column'] + spec['n_columns']]
     if spec['complex']:
-        cols = cols[:, 0::2] + 1j * cols[:, 1::2]
+        # part by part: `re + 1j*im` is a complex multiply, which turns
+        # 1+nanj into nan+nanj and an imaginary -0.0 into +0.0
+        z = np.empty((cols.shape[0], cols.shape[1] // 2), dtype=complex)
+        z.real = cols[:, 0::2]
+        z.imag = cols[:, 1::2]
+        cols = z
     shape = tuple(spec['shape'])
     if spec['row_axis'] is None:
         arr = cols.reshape(shape)

@@ -83,4 +83,18 @@ def assert_same_dataset(a, b):
         x, y = arr_a[member], arr_b[member]
         assert x.dtype == y.dtype, (member, x.dtype, y.dtype)
         assert x.shape == y.shape, (member, x.shape, y.shape)
-        np.testing.assert_array_equal(x, y, err_msg=member)
+        _assert_identical_values(x, y, member)
+
+
+def _assert_identical_values(x, y, member):
+    """Equal values part by part: a complex value's real and imaginary
+    parts each, NaN where NaN, and the sign of every zero and infinity
+    (assert_array_equal alone counts 1+nanj equal to nan+nanj, and -0.0
+    equal to 0.0). Only a NaN's payload bits are not compared: text and
+    MATLAB keep "nan", not which NaN."""
+    parts = ((x.real, y.real), (x.imag, y.imag)) if np.iscomplexobj(x) else ((x, y),)
+    for a, b in parts:
+        np.testing.assert_array_equal(a, b, err_msg=member)
+        if a.dtype.kind == 'f':
+            np.testing.assert_array_equal(np.signbit(a) | np.isnan(a),
+                                          np.signbit(b) | np.isnan(b), err_msg=member)

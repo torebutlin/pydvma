@@ -123,3 +123,10 @@ def test_file_to_dvma_keeps_only_the_base_name(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="evil.csv is not a CSV"):
         engine.file_to_dvma(b'a,b\n', '../../evil.csv')
     assert not (tmp_path.parent / 'evil.csv').exists()
+
+
+@pytest.mark.parametrize('name', ['..', '.', ''])
+def test_file_to_dvma_odd_names_are_a_clear_refusal(tmp_path, monkeypatch, name):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match='not a file pydvma can load'):
+        engine.file_to_dvma(b'hello', name)

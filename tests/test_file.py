@@ -821,3 +821,11 @@ class TestImportFromMatlabJwloggerFileChecks:
         with pytest.raises(ValueError,
                            match='Only JW-logger .mat files can be imported'):
             file.import_from_matlab_jwlogger(path)
+
+
+def test_load_data_extensions_are_case_insensitive(tmp_path):
+    """The web app sends `GUITAR.MAT` as named; it must load as a .mat."""
+    path = str(tmp_path / 'GUITAR.MAT')
+    sio.savemat(path, {'indata': np.ones((8, 1)), 'buflen': 8.0, 'freq': 4.0,
+                       'dt2': np.array([[1.0, 0.0, 0.0]]), 'tsmax': 1.0})
+    assert len(file.load_data(path).time_data_list) == 1

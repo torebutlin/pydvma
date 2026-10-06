@@ -32,5 +32,5 @@ def test_an_empty_document_is_refused():
     from pydvma import datastructure
     empty = container.save_bytes(datastructure.DataSet())
     for op in (engine.dvma_to_csv, engine.dvma_to_mat):
-        with pytest.raises(ValueError, match='nothing to export'):
+        with pytest.raises(ValueError, match=r'^Export (CSV|Matlab): there is nothing to export'):
             op(empty)

@@ -62,8 +62,8 @@
     /** Whether any dataset is loaded (gates Save Figure + data export). */
     hasData?: boolean;
     /**
-     * Data-export accessor (the analysis `actions`, which satisfies this
-     * minimal surface). Absent → Matlab/CSV stay disabled with a tooltip.
+     * Data-export accessor (built in App from Save's document). Absent →
+     * Matlab/CSV stay disabled with a tooltip.
      */
     exporter?: Exporter;
     /** Dataset name for the exported `.mat` / `.csv` base (else 'logged_data'). */
@@ -246,7 +246,7 @@
               class="btn"
               disabled={busy || !hasData || !exporter}
               title={exporter
-                ? 'Export all data as a Matlab .mat file'
+                ? 'Export everything Save Dataset holds as one .mat (loads back)'
                 : 'Data export unavailable — engine not connected'}
               onclick={() => exportMatlab()}>Export Matlab</button>
             <button
@@ -262,7 +262,7 @@
               class="btn"
               disabled={busy || !hasData || !exporter}
               title={exporter
-                ? 'Export data as CSV (one file per kind: time / freq / tf)'
+                ? 'Export everything Save Dataset holds as one CSV (loads back)'
                 : 'Data export unavailable — engine not connected'}
               onclick={() => exportCsv()}>Export CSV</button>
             <button

@@ -263,6 +263,23 @@ def _format1_from(v2_path, out_path):
     return str(out_path)
 
 
+class TestMalformed:
+    def test_rows_shorter_than_the_column_names_are_refused(self, tmp_path):
+        path = _small_csv(tmp_path / 'short.csv', ['# m1: test_name=a; fs=48000'],
+                          COLUMNS, ['1,100,1', '1,110,1'])
+        with pytest.raises(ValueError, match='columns'):
+            file.import_from_vibration_apps_csv(path)
+
+    def test_time_data_without_a_sample_rate_is_refused(self, tmp_path):
+        path = _small_csv(
+            tmp_path / 'nofs.csv', ['# m1: test_name=a; time_rows=2'], COLUMNS,
+            ['1,1,1,0.5,0,0,0.9,1,0', '# section: time', 'measurement,t_s,x,y',
+             '1,0,0.1,0.2', '1,0.25,0.3,0.4'],
+            first_line='# Vibration Apps transfer functions (vibration-apps-tf-csv 2)')
+        with pytest.raises(ValueError, match='fs'):
+            file.import_from_vibration_apps_csv(path)
+
+
 class TestCrossSpectra:
     """Gxx and Gyy (one-sided densities, full scale^2/Hz) become a
     CrossSpecData per measurement, in pydvma's convention: Pxy a one-sided

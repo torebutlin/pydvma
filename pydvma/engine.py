@@ -650,7 +650,10 @@ def file_to_dvma(data, name):
             names the file).
     """
     from pydvma import file as pfile
-    base = os.path.basename(str(name).replace('\\', '/')) or 'file'
+    base = os.path.basename(str(name).replace('\\', '/'))
+    if base in ('', '.', '..'):
+        raise ValueError('%r is not a file pydvma can load: Load Data reads '
+                         '.dvma, legacy .npy, .mat and .csv files.' % str(name))
     with tempfile.TemporaryDirectory() as tmpdir:
         path = os.path.join(tmpdir, base)
         with open(path, 'wb') as f:

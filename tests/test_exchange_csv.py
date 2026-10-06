@@ -111,3 +111,27 @@ def test_two_million_values_in_seconds():
     assert time.perf_counter() - t0 < 20
     np.testing.assert_array_equal(back.time_data_list[0].time_data,
                                   ds.time_data_list[0].time_data)
+
+
+def test_complex_parts_come_back_exactly():
+    # 1+nanj must not become nan+nanj, nor an imaginary -0.0 (conj() at a
+    # real bin) become +0.0: each part is restored on its own.
+    z = np.array([1 + 1j * np.nan, np.inf + 1j * np.nan, complex(-0.0, -0.0),
+                  complex(2.0, -0.0), complex(-np.inf, 0.0)])[:, None]
+    ds = datastructure.DataSet()
+    ds.add_to_dataset(datastructure.TfData(np.arange(5.0), z, None,
+                                           options.MySettings(channels=2, fs=10)))
+    back = _exchange.dataset_from_csv_text(_exchange.dataset_to_csv_text(ds), 'z')
+    assert_same_dataset(back, ds)
+
+
+def test_empty_arrays_round_trip():
+    ds = datastructure.DataSet()
+    empty = datastructure.TimeData(np.zeros(1), np.zeros((1, 2)),
+                                   options.MySettings(channels=2, fs=10))
+    empty.time_axis, empty.time_data = np.zeros(0), np.zeros((0, 2))   # as a file could hold
+    ds.add_to_dataset(empty)
+    ds.add_to_dataset(datastructure.FreqData(
+        np.arange(4.0), np.zeros((4, 0), dtype=complex), options.MySettings(channels=1, fs=10)))
+    back = _exchange.dataset_from_csv_text(_exchange.dataset_to_csv_text(ds), 'e')
+    assert_same_dataset(back, ds)

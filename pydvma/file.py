@@ -139,16 +139,16 @@ def load_data(parent=None, filename=None):
             dataset = _exchange.dataset_from_csv_text(fh.read(), name)
     elif _is_vibration_apps_csv(filename):
         dataset = import_from_vibration_apps_csv(filename=filename)
-    elif filename.endswith('.mat'):
+    elif filename.lower().endswith('.mat'):
         d = io.loadmat(filename, simplify_cells=True)
         if _exchange.is_pydvma_mat(d):
             dataset = _exchange.dataset_from_mat_dict(d, name)
         else:
             dataset = import_from_matlab_jwlogger(filename=filename)
-    elif filename.endswith('.npy'):
+    elif filename.lower().endswith('.npy'):
         d = np.load(filename, allow_pickle=True, fix_imports=True)
         dataset = d[0]
-    elif filename.endswith('.dvma'):
+    elif filename.lower().endswith('.dvma'):
         raise ValueError(
             '{!r} has the .dvma extension but is not a valid container '
             '— empty, truncated, or corrupted?'.format(filename))
@@ -323,14 +323,14 @@ def _as_dataset(data, func):
             dataset.add_to_dataset(item)
     else:
         raise TypeError(
-            '{}() needs a DataSet or a data list (TimeDataList, TfDataList, '
+            '{} needs a DataSet or a data list (TimeDataList, TfDataList, '
             '...); got {}.'.format(func, type(data).__name__))
     lists = (dataset.time_data_list, dataset.freq_data_list,
              dataset.cross_spec_data_list, dataset.tf_data_list,
              dataset.modal_data_list, dataset.sono_data_list,
              dataset.meta_data_list)
     if not any(len(lst) for lst in lists):
-        raise ValueError('{}(): there is nothing to export (no data).'.format(func))
+        raise ValueError('{}: there is nothing to export (no data).'.format(func))
     return dataset
 
 
@@ -396,7 +396,7 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
     '''
     filename = _resolve_filename(parent, filename, 'export_to_matlab',
                                  "export_to_matlab(dataset, 'data.mat')")
-    variables = _exchange.dataset_to_mat_dict(_as_dataset(dataset, 'export_to_matlab'))
+    variables = _exchange.dataset_to_mat_dict(_as_dataset(dataset, 'export_to_matlab()'))
     filename = _export_target(filename, '.mat', overwrite_without_prompt)
     if filename is None:
         return None
@@ -694,8 +694,10 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
 
     - a few ``#`` lines saying what the file is, then every item's
       metadata and settings as JSON on one ``# manifest:`` line;
-    - one table per item: a ``# table`` heading line (kind, name, units,
-      calibration), a line of column names, then the rows. The rows run
+    - one table per item (and one of its own for an array that cannot
+      share the item's rows, such as a sonogram's frequency axis): a
+      ``# table`` heading line (kind, name, units, calibration), a line
+      of column names, then the rows. The rows run
       along the item's axis, so a TF table reads ``freq_axis,
       tf_data[0].re, tf_data[0].im, tf_coherence[0]``; complex values are
       ``.re``/``.im`` column pairs; each measurement keeps its own length.
@@ -733,7 +735,7 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
     '''
     filename = _resolve_filename(parent, filename, 'export_to_csv',
                                  "export_to_csv(dataset, 'data.csv')")
-    text = _exchange.dataset_to_csv_text(_as_dataset(data_list, 'export_to_csv'))
+    text = _exchange.dataset_to_csv_text(_as_dataset(data_list, 'export_to_csv()'))
     filename = _export_target(filename, '.csv', overwrite_without_prompt)
     if filename is None:
         return None
@@ -1023,6 +1025,10 @@ def _va_table(lines, name, need, what):
     except ValueError as e:
         raise ValueError('%s: the %s rows cannot be read (%s).'
                          % (name, what, e)) from e
+    if data.shape[1] < len(names):
+        raise ValueError('%s: its %s rows have %d columns but its column names '
+                         'list %d; the file looks edited or cut short.'
+                         % (name, what, data.shape[1], len(names)))
     return {c: data[:, i] for i, c in enumerate(names) if c}
 
 
@@ -1126,6 +1132,10 @@ def _vibration_apps_dataset(text, name):
         # rebuilt exactly from fs.
         link = uuid.uuid4()
         n_time = int(_va_num(md.get('time_rows')) or 0)
+        if n_time and not fs:
+            raise ValueError(
+                "%s: measurement %d has time data but no fs= in its '# m%d:' "
+                "line, so its time axis cannot be built." % (name, no, no))
         if n_time:
             tsel = (timecol['measurement'] == no) if timecol is not None else np.zeros(0, bool)
             if int(np.count_nonzero(tsel)) != n_time:

@@ -86,3 +86,18 @@ def test_boolean_arrays_come_back_boolean(tmp_path):
     assert_same_dataset(back, ds)
     assert _exchange.dataset_from_csv_text(_exchange.dataset_to_csv_text(ds), 'b') \
         .time_data_list[0].time_data.dtype == bool
+
+
+def test_complex_parts_and_empty_arrays_round_trip(tmp_path):
+    z = np.array([1 + 1j * np.nan, complex(-0.0, -0.0), complex(2.0, -0.0)])[:, None]
+    ds = datastructure.DataSet()
+    ds.add_to_dataset(datastructure.TfData(np.arange(3.0), z, None,
+                                           options.MySettings(channels=2, fs=10)))
+    empty = datastructure.TimeData(np.zeros(1), np.zeros((1, 2)),
+                                   options.MySettings(channels=2, fs=10))
+    empty.time_axis, empty.time_data = np.zeros(0), np.zeros((0, 2))   # as a file could hold
+    ds.add_to_dataset(empty)
+    path = tmp_path / 'z.mat'
+    scipy.io.savemat(path, _exchange.dataset_to_mat_dict(ds), oned_as='column')
+    back = _exchange.dataset_from_mat_dict(scipy.io.loadmat(path, simplify_cells=True), 'z')
+    assert_same_dataset(back, ds)
