@@ -26,8 +26,9 @@ import os
 import tempfile
 
 import numpy as np
+import scipy.io
 import pydvma as dvma
-from pydvma import analysis, container, datastructure, modal
+from pydvma import _exchange, analysis, container, datastructure, modal
 
 try:
     import peakutils as _pu
@@ -628,46 +629,66 @@ def _normalise_legacy_dataset(ds):
     return ds
 
 
-def mat_to_dvma(mat_bytes):
-    """Import a JW-logger MATLAB ``.mat`` file and return ``.dvma`` bytes.
+def file_to_dvma(data, name):
+    """Load any file Load Data accepts (other than a ``.dvma``) and return
+    ``.dvma`` bytes.
 
-    ``mat_bytes`` (a JS ``Uint8Array``) is written into a fresh
-    ``tempfile.TemporaryDirectory`` (in-memory under pyodide, a real
-    per-call temp dir on the native CPython host; removed again once the
-    dataset has been read out of it) because
-    ``pydvma.file.import_from_matlab_jwlogger`` reads from a FILENAME
-    (signature ``(filename=None)``) — the hop is for the ``.mat`` INPUT
-    (``scipy.io.loadmat`` wants a path), not for the container write.
-    The resulting dataset is serialised straight to bytes with
-    ``container.save_bytes`` (no second temp file) and returned as
-    ``{'dvma': <bytes>}`` — marshalled to a JS ``Uint8Array`` for
-    ``readDvma``, same as ``legacy_to_dvma``.
+    The browser's Load Data sends a ``.mat`` or ``.csv`` here (``data`` a JS
+    ``Uint8Array``): pydvma's own CSV and MATLAB exports, a JW-logger
+    ``.mat``, or the Vibration Apps' transfer-function CSV. The bytes are
+    written, under their own file name, into a fresh
+    ``tempfile.TemporaryDirectory`` (in-memory under pyodide, a real per-call
+    temp dir on the native host, removed again afterwards) and read with
+    ``pydvma.file.load_data`` itself, so the web app accepts exactly what
+    Python does and refuses the rest with the same messages. Only the base of
+    ``name`` is used: it is a file name from the browser, never a path. The
+    dataset is serialised with ``container.save_bytes`` and returned as
+    ``{'dvma': <bytes>}`` for ``readDvma``.
+
+    Raises:
+        ValueError: The file is not one ``load_data`` reads (its message
+            names the file).
     """
     from pydvma import file as pfile
+    base = os.path.basename(str(name).replace('\\', '/')) or 'file'
     with tempfile.TemporaryDirectory() as tmpdir:
-        mat_path = os.path.join(tmpdir, 'import.mat')
-        with open(mat_path, 'wb') as f:
-            f.write(bytes(mat_bytes))
-        ds = pfile.import_from_matlab_jwlogger(filename=mat_path)
+        path = os.path.join(tmpdir, base)
+        with open(path, 'wb') as f:
+            f.write(bytes(data))
+        ds = pfile.load_data(path)
+    if ds is None:
+        raise ValueError('%s is not a file pydvma can load: Load Data reads '
+                         '.dvma, legacy .npy, .mat and .csv files.' % base)
     return {'dvma': container.save_bytes(ds)}
 
 
-def vibration_csv_to_dvma(csv_bytes, name=None):
-    """Import a Vibration Apps transfer-function CSV and return ``.dvma`` bytes.
+def dvma_to_csv(dvma_bytes):
+    """The web app's Export CSV: the document Save builds (``.dvma`` bytes)
+    as the text of ``pydvma.file.export_to_csv``'s file, UTF-8, returned as
+    ``{'csv': <bytes>}``. One writer for Python and the app.
 
-    The browser's Load Data sends a ``.csv`` here (a JS ``Uint8Array``)
-    when its first line names ``vibration-apps-tf-csv``. The text is
-    parsed by the same code as ``pydvma.file.import_from_vibration_apps_csv``
-    (per measurement a TfData, plus its TimeData and CrossSpecData when the
-    file has them), straight from memory with no temp file,
-    and the dataset is returned as ``{'dvma': <bytes>}`` for ``readDvma``,
-    as ``mat_to_dvma`` does. ``name`` is the file's name, for the error
-    message if the file is refused.
+    Raises:
+        ValueError: The document holds no data.
     """
     from pydvma import file as pfile
-    text = bytes(csv_bytes).decode('utf-8-sig')
-    ds = pfile._vibration_apps_dataset(text, name or 'the file')
-    return {'dvma': container.save_bytes(ds)}
+    ds = pfile._as_dataset(container.load_bytes(bytes(dvma_bytes)), 'Export CSV')
+    return {'csv': _exchange.dataset_to_csv_text(ds).encode('utf-8')}
+
+
+def dvma_to_mat(dvma_bytes):
+    """The web app's Export Matlab: the document Save builds (``.dvma``
+    bytes) as the file ``pydvma.file.export_to_matlab`` writes, returned as
+    ``{'mat': <bytes>}``. One writer for Python and the app.
+
+    Raises:
+        ValueError: The document holds no data.
+    """
+    from pydvma import file as pfile
+    ds = pfile._as_dataset(container.load_bytes(bytes(dvma_bytes)), 'Export Matlab')
+    buf = io.BytesIO()
+    scipy.io.savemat(buf, _exchange.dataset_to_mat_dict(ds), oned_as='column',
+                     do_compression=True)
+    return {'mat': buf.getvalue()}
 
 
 def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):
@@ -1440,154 +1461,3 @@ def calc_bla(time_arrays, run_spec):
         }
         for tf in tf_list
     ]
-
-
-# --------------------------------------------------------------------------- #
-# Matlab export (Wave-A shared spine — Agent 2 calls this)
-# --------------------------------------------------------------------------- #
-
-def _common_axis(axes, decimated=False):
-    """Common axis for interpolation, matching ``file.export_to_matlab``.
-
-    For frequency/tf: ``file._spectral_grid`` — ``round(fmax/df) + 1`` bins
-    at the FINEST ``df``, ending at (or, when the sets' spacings differ,
-    within half a step of) the largest ``fmax`` across sets — the
-    same function Python's exporter calls, so the two grids cannot drift.
-    For time (``decimated=False`` unused here; time uses its own branch).
-    Sets are then ``file._interp_onto``-ed onto this axis and
-    column-concatenated.
-    """
-    df = np.inf
-    fmax = 0.0
-    for ax in axes:
-        a = np.asarray(ax, dtype=np.float64)
-        if a.size < 2:
-            continue
-        df = min(df, float(np.mean(np.diff(a))))
-        fmax = max(fmax, float(a[-1]))
-    if not np.isfinite(df) or df <= 0:
-        return np.zeros(0)
-    from pydvma import file as pfile
-    return pfile._spectral_grid(fmax, df)
-
-
-def _extend_column_calibration(s, cols, cal_factors, units):
-    """Append one export set's per-column calibration to the running lists.
-
-    ``s`` is one ``export_mat`` set; its ``cal_factors`` / ``units`` are the
-    client's per-column values (a JS array crosses the FFI as an iterable
-    JsProxy, so both are read by iteration, never indexed). A missing,
-    short or non-numeric entry pads with ``1.0`` / ``'-'`` — the defaults
-    ``file._column_calibration`` gives absent metadata — so the lists always
-    stay aligned with the data columns.
-    """
-    factors = _get(s, 'cal_factors')
-    names = _get(s, 'units')
-    factors = [] if factors is None else list(factors)
-    names = [] if names is None else list(names)
-    for c in range(cols):
-        f = 1.0
-        if c < len(factors):
-            try:
-                f = float(factors[c])
-            except (TypeError, ValueError):
-                f = 1.0
-        cal_factors.append(f)
-        units.append(str(names[c]) if c < len(names) else '-')
-
-
-def export_mat(time_sets=None, freq_sets=None, tf_sets=None):
-    """Build a MATLAB ``.mat`` from the working sets, matching pydvma's schema.
-
-    Reproduces ``file.export_to_matlab`` (spec brief §D) WITHOUT reconstructing
-    a full DataSet: each per-kind set arrives as
-    ``{axis, data|re/im, cols, cal_factors, units}`` from ``actions.exportMat``
-    and is interpolated onto a per-kind common axis (finest resolution, widest
-    span), then column-concatenated. Keys: ``time_axis_all/time_data_all``
-    (real), ``freq_axis_all/freq_data_all`` and ``tf_axis_all/tf_data_all``
-    (complex, preserved), each followed by ``<kind>_cal_factors`` /
-    ``<kind>_units`` written by the same ``file`` helper Python's exporter
-    uses, so given the same per-column values the two files agree byte for
-    byte after the MAT header's timestamp. No coherence. The data values are RAW — calibration is a
-    display-time transform, so the file carries it as metadata instead:
-    ``cal_factors`` / ``units`` are per data column, already resolved by the
-    client (for a TF the ratio cal[out]/cal[in] and its ``(out)/in`` unit),
-    and a set without them exports at the identity with unit ``'-'``, as
-    ``file._column_calibration`` does for absent metadata. Only kinds with
-    data are included. Returns ``{'mat': <bytes>}`` — a JS ``Uint8Array`` the
-    client saves.
-    """
-    from pydvma import file as pfile
-    from scipy import io as sio
-
-    data_matlab = {}
-    time_sets = list(time_sets or [])
-    freq_sets = list(freq_sets or [])
-    tf_sets = list(tf_sets or [])
-
-    # TIME (real) — common axis file._time_grid(T, fs) with the max T / max
-    # fs, the grid Python's exporter builds.
-    if time_sets:
-        T = 0.0
-        fs = 0.0
-        n_time = 0
-        parsed = []
-        cal_factors, units = [], []
-        for s in time_sets:
-            ax = np.asarray(_get(s, 'axis'), dtype=np.float64)
-            cols = int(_get(s, 'cols'))
-            dat = np.asarray(_get(s, 'data'), dtype=np.float64).reshape(-1, cols)
-            parsed.append((ax, dat))
-            _extend_column_calibration(s, cols, cal_factors, units)
-            n = ax.size
-            if n > 1:
-                T = max(T, float(ax[-1] * n / (n - 1)))
-                fs = max(fs, 1.0 / float(np.mean(np.diff(ax))))
-            n_time += cols
-        if fs > 0 and T > 0:
-            t = pfile._time_grid(T, fs)
-            all_ = np.zeros((len(t), n_time))
-            c = -1
-            for ax, dat in parsed:
-                for i in range(dat.shape[1]):
-                    c += 1
-                    all_[:, c] = pfile._interp_onto(t, ax, dat[:, i], 0)
-            data_matlab['time_axis_all'] = np.transpose(np.atleast_2d(t))
-            data_matlab['time_data_all'] = all_
-            pfile._attach_matlab_column_calibration(
-                data_matlab, 'time', cal_factors, units)
-
-    # FFT + TF (complex) share the same interp/concat shape.
-    for key, sets in (('freq', freq_sets), ('tf', tf_sets)):
-        if not sets:
-            continue
-        parsed = []
-        n_cols = 0
-        cal_factors, units = [], []
-        for s in sets:
-            ax = np.asarray(_get(s, 'axis'), dtype=np.float64)
-            cols = int(_get(s, 'cols'))
-            re = np.asarray(_get(s, 're'), dtype=np.float64).reshape(-1, cols)
-            im_raw = _get(s, 'im')
-            im = (np.zeros_like(re) if im_raw is None
-                  else np.asarray(im_raw, dtype=np.float64).reshape(-1, cols))
-            parsed.append((ax, re + 1j * im))
-            n_cols += cols
-            _extend_column_calibration(s, cols, cal_factors, units)
-        f = _common_axis([ax for ax, _ in parsed])
-        if f.size == 0:
-            continue
-        all_ = np.zeros((len(f), n_cols), dtype=complex)
-        c = -1
-        for ax, G in parsed:
-            for i in range(G.shape[1]):
-                c += 1
-                all_[:, c] = pfile._interp_onto(f, ax, G[:, i], 0)
-        data_matlab['{}_axis_all'.format(key)] = np.transpose(np.atleast_2d(f))
-        data_matlab['{}_data_all'.format(key)] = all_
-        pfile._attach_matlab_column_calibration(
-            data_matlab, key, cal_factors, units)
-
-    buf = io.BytesIO()
-    sio.savemat(buf, data_matlab)
-    return {'mat': buf.getvalue()}

@@ -172,7 +172,7 @@ class TestLoadData:
         ds = file.load_data(str(path))
         assert len(ds.tf_data_list) == 5
 
-    def test_any_other_csv_is_refused_with_a_reason(self, tmp_path):
+    def test_pydvma_csv_loads_and_any_other_csv_is_refused(self, tmp_path):
         # pydvma's own CSV export is the obvious other CSV to try.
         tf = datastructure.TfData(np.linspace(0, 100, 11),
                                   np.ones((11, 1), dtype=complex), None,
@@ -181,10 +181,15 @@ class TestLoadData:
         tfl.append(tf)
         path = file.export_to_csv(tfl, filename=str(tmp_path / 'own.csv'),
                                   overwrite_without_prompt=True)
-        with pytest.raises(ValueError, match='vibration-apps-tf-csv'):
-            file.load_data(path)
+        # load_data reads it (pydvma's own export); this importer refuses it
+        assert len(file.load_data(path).tf_data_list) == 1
         with pytest.raises(ValueError, match='vibration-apps-tf-csv'):
             file.import_from_vibration_apps_csv(path)
+        # and a CSV that is neither is refused by load_data, with the reason
+        other = tmp_path / 'other.csv'
+        other.write_text('a,b\n1,2\n')
+        with pytest.raises(ValueError, match='not a CSV pydvma can load'):
+            file.load_data(str(other))
 
 
 class TestFormatTolerance:

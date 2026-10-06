@@ -15,6 +15,7 @@ import zipfile
 import numpy as np
 import scipy.io as io
 from scipy import signal
+from . import _exchange
 from . import container
 from . import datastructure
 from . import options
@@ -58,6 +59,22 @@ def _resolve_filename(parent, filename, func, example):
     return filename
 
 
+_OLD_CSV_EXPORT_LINE = '# pydvma export: RAW data'
+_OLD_EXPORT_MESSAGE = (
+    "%s was exported by pydvma 2.6 or earlier, whose %s export could not be "
+    "read back (every set on one axis, with no record of what the columns "
+    "were). Load the .dvma it was exported from, or export it again with "
+    "this pydvma.")
+
+
+def _first_line(filename):
+    """The first line of `filename` as text (BOM dropped), from at most 256
+    bytes; '' for an empty or binary file."""
+    with open(filename, 'rb') as fh:
+        head = fh.read(256).decode('utf-8-sig', errors='replace')
+    return head.splitlines()[0] if head else ''
+
+
 def load_data(parent=None, filename=None):
     '''
     Loads a dataset from `filename`.
@@ -65,9 +82,9 @@ def load_data(parent=None, filename=None):
     The filename can be given positionally, ``load_data('name.dvma')``,
     or as ``filename=``, and is required: there is no file dialog.
 
-    Detection is by content for ``.dvma`` (zip magic bytes) and the
-    Vibration Apps CSV (its first line); ``.mat`` and legacy ``.npy``
-    fall back to extension:
+    Detection is by content for ``.dvma`` (zip magic bytes) and CSV (the
+    first line names the format); ``.mat`` and legacy ``.npy`` fall back
+    to extension:
 
     - ``.dvma`` container files (zip magic bytes) — the default
       format since 1.5.0; safe, pickle-free (see `container`).
@@ -76,13 +93,16 @@ def load_data(parent=None, filename=None):
       ``np.load(allow_pickle=True)``, and unpickling can execute
       arbitrary code, so only open legacy .npy files you or your lab
       created. `.dvma` files do not have this caveat.
-    - ``.mat`` (by extension) — JW-logger imports only, via
-      `import_from_matlab_jwlogger`. The .mat that `export_to_matlab`
-      writes is export-only and raises ValueError.
+    - pydvma's own CSV and MATLAB exports (`export_to_csv`,
+      `export_to_matlab`, and the web app's Export CSV / Export Matlab):
+      they hold what a .dvma holds and load back exactly. Exports from
+      pydvma 2.6 and earlier could not be read back and raise ValueError.
+    - ``.mat`` files from Jim Woodhouse's MATLAB logger, via
+      `import_from_matlab_jwlogger`.
     - the CSV that the Vibration Apps' Transfer function app saves
       (first line names ``vibration-apps-tf-csv``), via
       `import_from_vibration_apps_csv`. Any other ``.csv`` raises
-      ValueError, including pydvma's own `export_to_csv` files.
+      ValueError.
 
     Args:
        parent (optional): Deprecated and ignored, and going in pydvma
@@ -98,8 +118,10 @@ def load_data(parent=None, filename=None):
     Raises:
        FileNotFoundError: If `filename` does not exist.
        ValueError: If a ``.dvma`` file is not a valid container, a
-           ``.mat`` file is not a JW-logger file, or a ``.csv`` file is not
-           a Vibration Apps CSV this version reads.
+           ``.mat`` file is neither a pydvma export nor a JW-logger file,
+           a ``.csv`` file is neither a pydvma export nor a Vibration Apps
+           CSV this version reads, or an export was changed after it was
+           written or comes from pydvma 2.6 or earlier.
        TypeError: If no filename is given.
     '''
     filename = _resolve_filename(parent, filename, 'load_data',
@@ -109,11 +131,20 @@ def load_data(parent=None, filename=None):
             'No such data file: {!r}'.format(filename))
 
     if zipfile.is_zipfile(filename):
-        dataset = container.load(filename)
+        return container.load(filename)
+    first = _first_line(filename)
+    name = os.path.basename(filename)
+    if _exchange.is_pydvma_csv_line(first):
+        with open(filename, encoding='utf-8-sig', newline='') as fh:
+            dataset = _exchange.dataset_from_csv_text(fh.read(), name)
     elif _is_vibration_apps_csv(filename):
         dataset = import_from_vibration_apps_csv(filename=filename)
     elif filename.endswith('.mat'):
-        dataset = import_from_matlab_jwlogger(filename=filename)
+        d = io.loadmat(filename, simplify_cells=True)
+        if _exchange.is_pydvma_mat(d):
+            dataset = _exchange.dataset_from_mat_dict(d, name)
+        else:
+            dataset = import_from_matlab_jwlogger(filename=filename)
     elif filename.endswith('.npy'):
         d = np.load(filename, allow_pickle=True, fix_imports=True)
         dataset = d[0]
@@ -122,9 +153,15 @@ def load_data(parent=None, filename=None):
             '{!r} has the .dvma extension but is not a valid container '
             '— empty, truncated, or corrupted?'.format(filename))
     elif filename.lower().endswith('.csv'):
-        raise _not_vibration_apps_csv(os.path.basename(filename))
+        if first.startswith(_OLD_CSV_EXPORT_LINE):
+            raise ValueError(_OLD_EXPORT_MESSAGE % (name, 'CSV'))
+        raise ValueError(
+            "%s is not a CSV pydvma can load. load_data reads pydvma's own "
+            "CSV exports (first line '# pydvma dataset (pydvma-csv 1)') and "
+            "the Vibration Apps' Transfer function CSV (first line naming "
+            "'vibration-apps-tf-csv')." % name)
     else:
-        print('Expecting file to be .dvma, .npy, .mat or a Vibration Apps .csv')
+        print('Expecting file to be .dvma, .npy, .mat or .csv')
         return None
 
     return dataset
@@ -269,29 +306,78 @@ def save_fig(plot, parent=None, figsize=None, filename=None, overwrite_without_p
 
 
 
+#%% EXPORT: SHARED HELPERS
+_DATA_LIST_CLASSES = ('TimeDataList', 'FreqDataList', 'CrossSpecDataList',
+                      'TfDataList', 'ModalDataList', 'SonoDataList',
+                      'MetaDataList')
+
+
+def _as_dataset(data, func):
+    """`data` as a DataSet: a DataSet as it is, a data list's items in a new
+    one. Raises TypeError for anything else, ValueError when it is empty."""
+    if isinstance(data, datastructure.DataSet):
+        dataset = data
+    elif data.__class__.__name__ in _DATA_LIST_CLASSES:
+        dataset = datastructure.DataSet()
+        for item in data:
+            dataset.add_to_dataset(item)
+    else:
+        raise TypeError(
+            '{}() needs a DataSet or a data list (TimeDataList, TfDataList, '
+            '...); got {}.'.format(func, type(data).__name__))
+    lists = (dataset.time_data_list, dataset.freq_data_list,
+             dataset.cross_spec_data_list, dataset.tf_data_list,
+             dataset.modal_data_list, dataset.sono_data_list,
+             dataset.meta_data_list)
+    if not any(len(lst) for lst in lists):
+        raise ValueError('{}(): there is nothing to export (no data).'.format(func))
+    return dataset
+
+
+def _export_target(filename, ext, overwrite_without_prompt):
+    """`filename` with `ext` added if missing, or None if the user declined
+    to overwrite an existing file."""
+    if not filename.endswith(ext):
+        filename += ext
+    if os.path.isfile(filename) and not overwrite_without_prompt:
+        answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
+        if answer != 'y':
+            print('Save cancelled')
+            return None
+        print('Will overwrite existing file')
+    return filename
+
+
 #%% EXPORT TO MATLAB
 def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prompt=False):
     '''
-    Exports a DataSet to 'filename.mat' for MATLAB.
+    Exports data to a MATLAB .mat file that `load_data` reads back.
 
-    Each kind of data (time, FFT, transfer function) is one block, with
-    every channel of every measurement of that kind as a column, and the
-    measurements interpolated onto one common axis: for time, the highest
-    sample rate over the longest capture; for FFT and TF, the finest
-    spacing up to the highest frequency. A column is zero past the end of
-    a shorter record, so a single measurement keeps exactly its own
-    samples or bins. Coherence, sonograms and cross-spectra are not
-    exported. The web app's Export Matlab writes the same variables.
+    The file holds exactly what a `save_data` .dvma holds (format
+    ``pydvma-mat 1``), laid out for MATLAB:
 
-    The file loads directly in MATLAB as a set of arrays. It is
-    export-only: pydvma cannot read it back (`load_data` refuses it), so
-    keep a `save_data` .dvma alongside it. The filename can be given
-    positionally, ``export_to_matlab(dataset, 'name.mat')``, or as
-    ``filename=``; ``.mat`` is added if missing. The filename is
-    required: there is no file dialog.
+    - ``pydvma_items``: a cell array with one struct per item, in order:
+      ``kind``, ``test_name``, ``units``, ``fs``, ``timestamp`` (ISO text),
+      ``channel_cal_factors``, and each array under its own name at its
+      exact shape (``time_axis``, ``time_data``, ``freq_axis``, ``tf_data``,
+      ``tf_coherence``, ``Pxy``, ``sono_data``, ``M``, ...). In MATLAB,
+      ``d = load('x.mat'); d.pydvma_items{2}.tf_data``.
+    - ``pydvma_manifest``: every item's metadata and settings as JSON text
+      (``jsondecode(d.pydvma_manifest)`` in MATLAB).
+    - ``pydvma_format``: ``'pydvma-mat 1'``.
+
+    Values are RAW (volts for a capture): multiply by the item's
+    ``channel_cal_factors`` for engineering units. Each measurement keeps
+    its own axis; nothing is interpolated. (pydvma 2.6 and earlier wrote
+    ``time_data_all`` / ``freq_data_all`` / ``tf_data_all`` on one common
+    grid instead, and could not read the file back.) The filename can be
+    given positionally, ``export_to_matlab(dataset, 'name.mat')``, or as
+    ``filename=``; ``.mat`` is added if missing. The filename is required:
+    there is no file dialog.
 
     Args:
-       dataset (DataSet): An object of the class DataSet
+       dataset (DataSet or data list): The data: a whole DataSet, or one
+           data list (``dataset.tf_data_list``, ...).
        parent (optional): Deprecated and ignored, and going in pydvma
            3.0 (it was the Qt file dialog's parent). A str or path here
            is taken as the filename.
@@ -304,127 +390,18 @@ def export_to_matlab(dataset, parent=None, filename=None, overwrite_without_prom
            overwrite was declined.
 
     Raises:
-       TypeError: If no filename is given.
+       TypeError: If no filename is given, or `dataset` is neither a
+           DataSet nor a data list.
+       ValueError: If there is no data to export.
     '''
     filename = _resolve_filename(parent, filename, 'export_to_matlab',
                                  "export_to_matlab(dataset, 'data.mat')")
-    
-    # convert data into dictionary ready for Matlab
-    data_matlab = dict()
-    
-    #%% TIME
-    if len(dataset.time_data_list) > 0:
-        T=0
-        fs=0
-        n_time=0
-        for time_data in dataset.time_data_list:
-            N = len(time_data.time_axis)
-            T = np.max([time_data.time_axis[-1]*N/(N-1),T])
-            fs = np.max([1/np.mean(np.diff(time_data.time_axis)),fs])
-            # COLUMN COUNT COMES FROM THE ARRAY, never settings.channels:
-            # `use_output_as_ch0` PREPENDS the drive column to `time_data`
-            # without bumping `settings.channels`, so trusting the setting
-            # silently dropped the last measured channel from the export.
-            n_time += time_data.time_data.shape[1]
-        
-        t = _time_grid(T, fs)
-        time_data_all = np.zeros((len(t),n_time))
-        counter = -1
-        for time_data in dataset.time_data_list:
-            for i in range(time_data.time_data.shape[1]):
-                counter += 1
-                time_data_all[:,counter] = _interp_onto(t,time_data.time_axis,time_data.time_data[:,i],0)
-                
-        data_matlab['time_axis_all'] = np.transpose(np.atleast_2d(t))
-        data_matlab['time_data_all'] = time_data_all
-        # The columns above are RAW (volts); these say how to calibrate them.
-        _attach_matlab_calibration(data_matlab, 'time', dataset.time_data_list)
-
-    
-
-
-    #%% FFT - doesn't export coherence
-    if len(dataset.freq_data_list) > 0:
-        df=np.inf
-        fmax=0
-        n_tf=0
-        for freq_data in dataset.freq_data_list:
-            df_check = np.mean(np.diff(freq_data.freq_axis))
-            df = np.min([df,df_check])
-            fmax = np.max([freq_data.freq_axis[-1],fmax])
-            tf_shape = np.shape(freq_data.freq_data)
-            n_tf += tf_shape[1]
-        
-        f = _spectral_grid(fmax, df)
-        npts = 2*(len(f)-1)
-        fs_tf = 2*f[-1]
-        freq_data_all = np.zeros((len(f),n_tf),dtype=complex)
-        counter = -1
-        for freq_data in dataset.freq_data_list:
-            freq_shape = np.shape(freq_data.freq_data)
-            for i in range(freq_shape[1]):
-                counter += 1
-                freq_data_all[:,counter] = _interp_onto(f,freq_data.freq_axis,freq_data.freq_data[:,i],0)
-        
-        data_matlab['freq_axis_all'] = np.transpose(np.atleast_2d(f))
-        data_matlab['freq_data_all'] = freq_data_all
-        _attach_matlab_calibration(data_matlab, 'freq', dataset.freq_data_list)
-        
- 
-
-
-    #%% Transfer Function - doesn't export coherence
-    if len(dataset.tf_data_list) > 0:
-        df=np.inf
-        fmax=0
-        n_tf=0
-        for tf_data in dataset.tf_data_list:
-            df_check = np.mean(np.diff(tf_data.freq_axis))
-            df = np.min([df,df_check])
-            fmax = np.max([tf_data.freq_axis[-1],fmax])
-            tf_shape = np.shape(tf_data.tf_data)
-            n_tf += tf_shape[1]
-        
-        f = _spectral_grid(fmax, df)
-        npts = 2*(len(f)-1)
-        fs_tf = 2*f[-1]
-        tf_data_all = np.zeros((len(f),n_tf),dtype=complex)
-        counter = -1
-        for tf_data in dataset.tf_data_list:
-            tf_shape = np.shape(tf_data.tf_data)
-            for i in range(tf_shape[1]):
-                counter += 1
-                tf_data_all[:,counter] = _interp_onto(f,tf_data.freq_axis,tf_data.tf_data[:,i],0)
-        
-        data_matlab['tf_axis_all'] = np.transpose(np.atleast_2d(f))
-        data_matlab['tf_data_all'] = tf_data_all
-        # TF factors are the cal RATIO cal[out]/cal[in] per output column,
-        # and the units the matching 'out/in' strings.
-        _attach_matlab_calibration(data_matlab, 'tf', dataset.tf_data_list)
-        
-
-    
-
-
-    #%% SAVE
-
-    # If it exists, check if we should overwrite it (unless
-    # overwrite_without_prompt is True)
-    if os.path.isfile(filename) and not overwrite_without_prompt:
-        answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
-        if answer != 'y':
-            print('Save cancelled')
-            return None
-        print('Will overwrite existing file')
-        
-    # Make sure it ends with .npy
-    if not filename.endswith('.mat'):
-        filename += '.mat'
-        
-    # Actually save!
-    io.savemat(filename,data_matlab)
+    variables = _exchange.dataset_to_mat_dict(_as_dataset(dataset, 'export_to_matlab'))
+    filename = _export_target(filename, '.mat', overwrite_without_prompt)
+    if filename is None:
+        return None
+    io.savemat(filename, variables, oned_as='column', do_compression=True)
     print("Data saved as %s" % filename)
-
     return filename
 
 
@@ -666,154 +643,17 @@ def _interp_onto(grid, axis, values, pad):
                      right=pad)
 
 
-def _time_grid(T, fs):
-    '''
-    The common time axis of an `export_to_matlab` time block.
-
-    ``round(T*fs)`` samples at ``fs``, counted rather than stepped:
-    ``np.arange(0, T, 1/fs)`` sometimes admits one sample past the end
-    through float rounding (1000 Hz x 1023 samples, 3000 Hz x 999), which
-    became a spurious trailing row of zeros. The rate is estimated from an
-    axis, so `_clean_rate` strips its float noise first. The browser's
-    Export Matlab (`engine.export_mat`) builds its grid here too, which is
-    how the two files stay identical.
-
-    Args:
-       T (float): The longest capture's duration in seconds, its sample
-           count over its rate.
-       fs (float): The highest sample rate in Hz.
-
-    Returns:
-       t (np.ndarray): The sample times ``k/fs``, starting at 0.
-    '''
-    fs = _clean_rate(fs)
-    return np.arange(int(round(T * fs))) / fs
-
-
-def _spectral_grid(fmax, df):
-    '''
-    The common frequency axis of an `export_to_matlab` FFT or TF block.
-
-    ``round(fmax/df) + 1`` bins at spacing ``df`` from 0, counted rather
-    than stepped: ``np.arange(0, fmax + df, df)`` sometimes admits one bin
-    past ``fmax`` through float rounding (the FFT of 1000 Hz x 1023
-    samples), which became a spurious trailing row of zeros. When the
-    spectra's spacings differ, the grid ends within half a step of
-    ``fmax``. The browser's Export Matlab (`engine.export_mat`) builds its
-    grid here too, which is how the two files stay identical.
-
-    Args:
-       fmax (float): The highest frequency of any spectrum, in Hz.
-       df (float): The finest bin spacing of any spectrum, in Hz.
-
-    Returns:
-       f (np.ndarray): The bin frequencies ``k*df``, starting at 0.
-    '''
-    return np.arange(int(round(fmax / df)) + 1) * df
-
-
-#%% CALIBRATION METADATA FOR THE RAW-DATA EXPORTS
-def _column_calibration(data_list):
-    """Per-column calibration factors and units for a CSV/Matlab export.
-
-    The CSV and Matlab exporters write the stored arrays VERBATIM — in volts,
-    with no calibration applied — which is the right default for a raw-data
-    export but leaves the file unable to say so. This returns what the header
-    needs to close that gap: one ``(cal_factor, unit)`` pair per exported
-    column, in the same order the exporters emit them, so a reader can
-    recover engineering units by multiplying column *k* by ``cal_factors[k]``.
-
-    The AXIS column is not included — it is time in seconds or frequency in
-    hertz and carries no calibration.
-
-    Column counts come from each item's ARRAY, never ``settings.channels``:
-    ``use_output_as_ch0`` prepends the drive column without bumping the
-    setting. A short or absent ``channel_cal_factors`` pads with 1.0 (the
-    identity, matching every constructor's default) and an absent unit
-    renders as ``'-'`` rather than asserting a unit nobody stated.
-
-    Args:
-        data_list: A TimeDataList, FreqDataList or TfDataList.
-
-    Returns a ``(cal_factors, units)`` pair of equal-length lists.
-    """
-    attr = {'TimeDataList': 'time_data',
-            'FreqDataList': 'freq_data',
-            'TfDataList': 'tf_data'}.get(data_list.__class__.__name__)
-    cal_factors = []
-    units = []
-    if attr is None:
-        return cal_factors, units
-    for item in data_list:
-        n_cols = np.shape(getattr(item, attr))[1]
-        factors = getattr(item, 'channel_cal_factors', None)
-        item_units = getattr(item, 'units', None)
-        for c in range(n_cols):
-            f = 1.0
-            if factors is not None and c < len(factors):
-                try:
-                    f = float(factors[c])
-                except (TypeError, ValueError):
-                    f = 1.0
-            cal_factors.append(f)
-            u = '-'
-            if item_units is not None and c < len(item_units):
-                u = str(item_units[c])
-            units.append(u)
-    return cal_factors, units
-
-
-def _attach_matlab_calibration(data_matlab, prefix, data_list):
-    """Add ``<prefix>_cal_factors`` / ``<prefix>_units`` to a Matlab export.
-
-    The exported arrays are the stored ones — RAW, in volts, with no
-    calibration applied — so the file needs somewhere to state the factor
-    that turns each column into engineering units. These two extra keys are
-    that place: ``<prefix>_cal_factors`` is a column vector aligned with the
-    data columns of ``<prefix>_data_all``, and ``<prefix>_units`` the
-    matching cell array of unit strings (``'-'`` where none was recorded).
-
-    Purely ADDITIVE — every key the exporter already wrote is untouched, so
-    existing MATLAB scripts keep working and only gain the metadata.
-    """
-    cal_factors, units = _column_calibration(data_list)
-    _attach_matlab_column_calibration(data_matlab, prefix, cal_factors, units)
-
-
-def _attach_matlab_column_calibration(data_matlab, prefix, cal_factors, units):
-    """Write already-resolved per-column calibration into a Matlab export.
-
-    The half of `_attach_matlab_calibration` that owns the key names and
-    their MATLAB encoding, split out so the browser's Export Matlab (the
-    `pydvma.engine.export_mat` op, which has per-column arrays but no
-    DataSet) writes the SAME keys the same way as `export_to_matlab`.
-    ``<prefix>_cal_factors`` becomes a float column vector and
-    ``<prefix>_units`` a cell array of strings; nothing is written when
-    there are no columns.
-
-    Args:
-        data_matlab (dict): The ``scipy.io.savemat`` dict to add keys to.
-        prefix (str): ``'time'``, ``'freq'`` or ``'tf'``.
-        cal_factors (list of float): One factor per exported data column.
-        units (list of str): One unit per exported data column.
-    """
-    if not cal_factors:
-        return
-    data_matlab[prefix + '_cal_factors'] = np.transpose(
-        np.atleast_2d(np.asarray(cal_factors, dtype=float)))
-    data_matlab[prefix + '_units'] = np.array(units, dtype=object)
-
-
+#%% CALIBRATION FACTOR TEXT
 def format_cal_factor(value):
-    """Render one calibration factor for a CSV header, as ``'%.12g'``.
+    """Render one calibration factor as text, as ``'%.12g'``.
 
-    Shared format, not a local choice: the browser UI writes byte-identical
-    CSVs (``webui/src/lib/export/data.ts``), so both sides must render these
-    numbers the same way. ``%.12g`` is short enough to read, round-trips every
-    realistic factor, and its C semantics (exponential below 1e-4 or at/above
-    12 significant digits, trailing zeros stripped) are reproducible in
-    JavaScript — the JS twin is ``fmtCalFactor``, pinned against this one by
-    the known-answer vectors in ``CAL_FACTOR_FORMAT_VECTORS``.
+    The form pydvma's CSV table headings use for an item's calibration
+    (the exact factors travel in the file's manifest). ``%.12g`` is short
+    enough to read, round-trips every realistic factor, and its C
+    semantics (exponential below 1e-4 or at/above 12 significant digits,
+    trailing zeros stripped) are pinned by the known-answer vectors in
+    ``CAL_FACTOR_FORMAT_VECTORS``. Public since 2.5.0, when the web app's
+    CSV writer had a JavaScript twin of it; that writer is gone.
 
     A non-finite factor renders as ``'1'``: the identity, matching how every
     consumer already treats an unusable factor, rather than writing a ``nan``
@@ -825,9 +665,7 @@ def format_cal_factor(value):
     return '{:.12g}'.format(v)
 
 
-#: Known-answer vectors pinning `format_cal_factor` and its JavaScript twin
-#: `fmtCalFactor` to the same output. Mirrored verbatim in
-#: `webui/tests/export/data.test.ts`; a change here must change both.
+#: Known-answer vectors pinning `format_cal_factor`'s output.
 CAL_FACTOR_FORMAT_VECTORS = (
     (1.0, '1'),
     (10.0, '10'),
@@ -846,42 +684,37 @@ CAL_FACTOR_FORMAT_VECTORS = (
 )
 
 
-def _csv_header(data_list):
-    """The comment block `export_to_csv` prefixes to its data rows.
-
-    Written through ``np.savetxt(header=...)``, so every line comes out
-    prefixed with ``'# '`` and the numeric rows below are byte-identical to
-    what the exporter has always produced — ``np.loadtxt`` / ``np.genfromtxt``
-    skip it by default, and ``pandas.read_csv(..., comment='#')`` does too.
-
-    It states three things the bare numbers could not: that the values are
-    RAW (uncalibrated), the per-column factor that converts each to
-    engineering units, and the unit that factor lands in.
-    """
-    cal_factors, units = _column_calibration(data_list)
-    axis_unit = 's' if data_list.__class__.__name__ == 'TimeDataList' else 'Hz'
-    return '\n'.join([
-        'pydvma export: RAW data, calibration NOT applied.',
-        'Column 1 is the shared axis ({}); the rest are data columns.'.format(axis_unit),
-        'Multiply data column k by cal_factors[k] for engineering units.',
-        'cal_factors: ' + ','.join(format_cal_factor(f) for f in cal_factors),
-        'units: ' + ','.join(units),
-    ])
-
-
+#%% EXPORT TO CSV
 def export_to_csv(data_list, parent=None, filename=None, overwrite_without_prompt=False):
     '''
-    Exports a TimeDataList, FreqDataList or TfDataList to 'filename.csv'.
+    Exports data to one CSV file that `load_data` reads back.
 
-    The first column is the shared axis and the rest are the data columns,
-    raw (calibration NOT applied); a ``#`` comment header gives each
-    column's calibration factor and unit. The filename can be given
-    positionally, ``export_to_csv(data_list, 'name.csv')``, or as
-    ``filename=``; ``.csv`` is added if missing. The filename is
-    required: there is no file dialog.
+    The file holds exactly what a `save_data` .dvma holds (format
+    ``pydvma-csv 1``), laid out as tables a spreadsheet or pandas can read:
+
+    - a few ``#`` lines saying what the file is, then every item's
+      metadata and settings as JSON on one ``# manifest:`` line;
+    - one table per item: a ``# table`` heading line (kind, name, units,
+      calibration), a line of column names, then the rows. The rows run
+      along the item's axis, so a TF table reads ``freq_axis,
+      tf_data[0].re, tf_data[0].im, tf_coherence[0]``; complex values are
+      ``.re``/``.im`` column pairs; each measurement keeps its own length.
+
+    Values are RAW (volts for a capture): multiply by the item's
+    ``channel_cal_factors`` for engineering units. Numbers are written as
+    the shortest text that reads back to the same value, so nothing is
+    lost. To read one table with pandas, pass it the lines between its
+    ``# table`` line and the next (``pd.read_csv(io.StringIO(...))``).
+    (pydvma 2.6 and earlier wrote one kind per file on the first set's
+    axis, which could not be read back.)
+
+    The filename can be given positionally, ``export_to_csv(dataset,
+    'name.csv')``, or as ``filename=``; ``.csv`` is added if missing. The
+    filename is required: there is no file dialog.
 
     Args:
-       data_list (TimeDataList, FreqDataList, or TfDataList): Data list to export
+       data_list (DataSet or data list): The data: a whole DataSet, or one
+           data list (``dataset.time_data_list``, ...).
        parent (optional): Deprecated and ignored, and going in pydvma
            3.0 (it was the Qt file dialog's parent). A str or path here
            is taken as the filename.
@@ -891,66 +724,29 @@ def export_to_csv(data_list, parent=None, filename=None, overwrite_without_promp
 
     Returns:
        filename (str or None): The file written, or None if the
-           overwrite was declined or `data_list` is not one of the three
-           list types.
+           overwrite was declined.
 
     Raises:
-       TypeError: If no filename is given.
+       TypeError: If no filename is given, or `data_list` is neither a
+           DataSet nor a data list.
+       ValueError: If there is no data to export.
     '''
     filename = _resolve_filename(parent, filename, 'export_to_csv',
-                                 "export_to_csv(data_list, 'data.csv')")
-    
-    data_list_type = data_list.__class__.__name__
-    
-    if data_list_type == 'TimeDataList':
-        darray = np.transpose(np.atleast_2d(data_list[0].time_axis))
-        for time_data in data_list:
-            darray = np.append(darray,time_data.time_data,axis=1)
-        
-            
-            
-    elif data_list_type == 'FreqDataList':
-        darray = np.transpose(np.atleast_2d(data_list[0].freq_axis))
-        for freq_data in data_list:
-            darray = np.append(darray,freq_data.freq_data,axis=1)
-        
-    elif data_list_type == 'TfDataList':
-        darray = np.transpose(np.atleast_2d(data_list[0].freq_axis))
-        for tf_data in data_list:
-            darray = np.append(darray,tf_data.tf_data,axis=1)
-        
-    else:
-        print('Expecting input to be one of TimeDataList, FreqDataList, or TfDataList')
+                                 "export_to_csv(dataset, 'data.csv')")
+    text = _exchange.dataset_to_csv_text(_as_dataset(data_list, 'export_to_csv'))
+    filename = _export_target(filename, '.csv', overwrite_without_prompt)
+    if filename is None:
         return None
-    
-    # SAVE
-
-    # If it exists, check if we should overwrite it (unless
-    # overwrite_without_prompt is True)
-    if os.path.isfile(filename) and not overwrite_without_prompt:
-        answer = input('File %r already exists. Overwrite? [y/n]: ' % filename)
-        if answer != 'y':
-            print('Save cancelled')
-            return None
-        print('Will overwrite existing file')
-        
-    # Make sure it ends with .csv
-    if not filename.endswith('.csv'):
-        filename += '.csv'
-        
-    # Actually save! The header names the per-column calibration the data
-    # rows deliberately do NOT carry (see `_csv_header`); numpy prefixes it
-    # with '# ', so the numeric rows are unchanged and every standard reader
-    # skips it.
-    np.savetxt(filename, darray, delimiter=",", header=_csv_header(data_list))
+    with open(filename, 'w', encoding='utf-8', newline='') as fh:
+        fh.write(text)
     print("Data saved as %s" % filename)
-
     return filename
 
 
 
 #%% IMPORT FROM MATLAB JWLOGGER
-# Variables only `export_to_matlab` writes: they mark pydvma's own export.
+# Variables only pydvma 2.6's (and earlier) `export_to_matlab` wrote: they
+# mark one of its exports, which cannot be read back.
 _PYDVMA_MATLAB_KEYS = ('time_data_all', 'freq_data_all', 'tf_data_all')
 
 
@@ -987,11 +783,11 @@ def import_from_matlab_jwlogger(filename=None):
     '''
     Imports a JW-logger .mat file (Jim Woodhouse's MATLAB data logger).
 
-    Only JW-logger files can be imported. The .mat that pydvma's own
-    `export_to_matlab` writes is export-only and is refused with a
-    ValueError, as is any other .mat with neither of the logger's
-    ``indata`` / ``yspec`` variables. The filename is required: there is
-    no file dialog.
+    Only JW-logger files can be imported here. pydvma's own MATLAB exports
+    are refused with a ValueError saying to use `load_data` (which reads
+    them; those from pydvma 2.6 and earlier cannot be read at all), as is
+    any other .mat with neither of the logger's ``indata`` / ``yspec``
+    variables. The filename is required: there is no file dialog.
 
     The conventions below were confirmed against the recovered MATLAB source
     ("Data logger V2.9a": ``specmenu.m`` save path, ``avtflogpars.m``
@@ -1051,18 +847,19 @@ def import_from_matlab_jwlogger(filename=None):
     if 'indata' not in d and 'yspec' not in d:
         # Without these the branches below all skip and the result is an
         # EMPTY DataSet, silently. The browser's .mat import
-        # (`engine.mat_to_dvma`) comes through here too.
-        if any(k in d for k in _PYDVMA_MATLAB_KEYS):
+        # (`engine.file_to_dvma`, via `load_data`) comes through here too.
+        if _exchange.is_pydvma_mat(d):
             raise ValueError(
-                "This .mat file was written by pydvma's export_to_matlab, "
-                "which is export-only (for MATLAB): pydvma cannot read it "
-                "back. Only JW-logger .mat files can be imported. To reload "
-                "the data, load a .dvma written by save_data instead.")
+                "This .mat file is pydvma's own export (export_to_matlab), "
+                "not a JW-logger file: load it with load_data.")
+        if any(k in d for k in _PYDVMA_MATLAB_KEYS):
+            raise ValueError(_OLD_EXPORT_MESSAGE % (
+                os.path.basename(filename), 'MATLAB'))
         raise ValueError(
             "Not a JW-logger .mat file: it has no 'indata' (time) or "
             "'yspec' (spectrum or TF) variable. Only JW-logger .mat files "
-            "can be imported; the .mat that pydvma's export_to_matlab "
-            "writes is export-only.")
+            "can be imported here; load_data also reads pydvma's own "
+            ".mat exports.")
     dataset = datastructure.DataSet()
 
     # Every axis is built from `freq` (the sample rate), and a spectrum's
@@ -1170,9 +967,8 @@ def _not_vibration_apps_csv(name):
     return ValueError(
         "%s is not a CSV saved by the Vibration Apps' Transfer function "
         "app: its first line does not name the format "
-        "'vibration-apps-tf-csv'. That is the only CSV pydvma can load. "
-        "pydvma's own export_to_csv files cannot be loaded back: to reopen "
-        "pydvma data, save it with save_data (.dvma)." % name)
+        "'vibration-apps-tf-csv'. (load_data also reads pydvma's own CSV "
+        "exports.)" % name)
 
 
 def _is_vibration_apps_csv(filename):
@@ -1263,7 +1059,7 @@ def _vibration_apps_dataset(text, name):
 
     The body of `import_from_vibration_apps_csv`, which see; `name` is
     only used in error messages. The browser's import
-    (`engine.vibration_csv_to_dvma`) comes through here too.
+    (`engine.file_to_dvma`, via `load_data`) comes through here too.
     """
     text = text.lstrip('﻿').replace('\r\n', '\n')
     first = text.partition('\n')[0]

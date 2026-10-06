@@ -5,6 +5,7 @@ branch tested `freq_data_all` (the FFT accumulator, which is the int 0
 when no FFT data exists) instead of `tf_data_all`.
 """
 
+import os
 import sys
 import warnings
 
@@ -520,63 +521,27 @@ class TestExportCalibrationMetadata:
         ds.add_to_dataset(analysis.calculate_tf(td, ch_in=1))
         return ds
 
-    def test_csv_header_names_the_factors_and_units(self, tmp_path):
+    def test_calibration_travels_with_the_exports(self, tmp_path):
+        """CSV and MATLAB hold the RAW values plus each item's own
+        calibration and units, exactly as a .dvma does."""
         ds = self._calibrated_dataset()
-        path = str(tmp_path / 'out.csv')
-        file.export_to_csv(ds.time_data_list, filename=path,
-                           overwrite_without_prompt=True)
+        for name, export in (('out.csv', file.export_to_csv),
+                             ('out.mat', file.export_to_matlab)):
+            back = file.load_data(export(ds, str(tmp_path / name),
+                                         overwrite_without_prompt=True))
+            td, tf = back.time_data_list[0], back.tf_data_list[0]
+            np.testing.assert_array_equal(td.time_data, ds.time_data_list[0].time_data)
+            np.testing.assert_allclose(td.channel_cal_factors, [10.0, 0.5])
+            assert list(td.units) == ['m/s2', 'N']
+            np.testing.assert_allclose(tf.channel_cal_factors, [20.0])
+            assert list(tf.units) == ['(m/s2)/N']
+
+    def test_the_csv_heading_shows_the_calibration(self, tmp_path):
+        ds = self._calibrated_dataset()
+        path = file.export_to_csv(ds, str(tmp_path / 'out.csv'))
         text = open(path, encoding='utf-8').read()
-        assert '# pydvma export: RAW data, calibration NOT applied.' in text
-        assert '# cal_factors: 10,0.5' in text
-        assert '# units: m/s2,N' in text
-
-    def test_csv_header_does_not_disturb_the_data_rows(self, tmp_path):
-        """np.loadtxt and friends skip '#' lines, so the numbers a reader
-        gets back are exactly what they always were."""
-        ds = self._calibrated_dataset()
-        path = str(tmp_path / 'out.csv')
-        file.export_to_csv(ds.time_data_list, filename=path,
-                           overwrite_without_prompt=True)
-        loaded = np.loadtxt(path, delimiter=',')
-        td = ds.time_data_list[0]
-        assert loaded.shape == (len(td.time_axis), 3)
-        np.testing.assert_allclose(loaded[:, 1:], td.time_data)   # RAW, uncalibrated
-
-    def test_csv_tf_header_carries_the_ratio_and_out_over_in_unit(self, tmp_path):
-        ds = self._calibrated_dataset()
-        path = str(tmp_path / 'tf.csv')
-        file.export_to_csv(ds.tf_data_list, filename=path,
-                           overwrite_without_prompt=True)
-        text = open(path, encoding='utf-8').read()
-        assert '(Hz)' in text                       # axis unit follows the kind
-        assert '# cal_factors: 20' in text          # cal[out]/cal[in] = 10/0.5
-        # Parenthesised so the ratio cannot be read as m/(s2*N) —
-        # `analysis.wrap_unit`, matched byte-for-byte by the browser.
-        assert '# units: (m/s2)/N' in text
-
-    def test_matlab_export_carries_cal_factors_and_units(self, tmp_path):
-        ds = self._calibrated_dataset()
-        path = str(tmp_path / 'out.mat')
-        file.export_to_matlab(ds, filename=path, overwrite_without_prompt=True)
-        m = sio.loadmat(path)
-        # Additive: every key the exporter always wrote is still there.
-        assert 'time_data_all' in m and 'time_axis_all' in m
-        np.testing.assert_allclose(m['time_cal_factors'].ravel(), [10.0, 0.5])
-        assert [str(u[0]) for u in m['time_units'].ravel()] == ['m/s2', 'N']
-        np.testing.assert_allclose(m['tf_cal_factors'].ravel(), [20.0])
-
-    def test_absent_calibration_renders_as_identity_not_blank(self, tmp_path):
-        settings = options.MySettings(fs=100, channels=2)
-        td = datastructure.TimeData(
-            np.arange(8) / 100, np.zeros((8, 2)), settings)   # no units given
-        ds = datastructure.DataSet()
-        ds.add_to_dataset(td)
-        path = str(tmp_path / 'plain.csv')
-        file.export_to_csv(ds.time_data_list, filename=path,
-                           overwrite_without_prompt=True)
-        text = open(path, encoding='utf-8').read()
-        assert '# cal_factors: 1,1' in text
-        assert '# units: -,-' in text
+        assert '# Values are RAW, calibration NOT applied' in text
+        assert 'TimeData; units m/s2, N; cal_factors 10, 0.5' in text
 
     def test_format_cal_factor_matches_its_pinned_vectors(self):
         """These vectors are mirrored in `webui/tests/export/data.test.ts`,
@@ -612,9 +577,8 @@ class TestExportColumnCountFromArray:
 
     def test_matlab_export_keeps_every_stored_column(self, tmp_path):
         ds = self._output_ch0_dataset()
-        path = str(tmp_path / 'o.mat')
-        file.export_to_matlab(ds, filename=path, overwrite_without_prompt=True)
-        cols = sio.loadmat(path)['time_data_all']
+        path = file.export_to_matlab(ds, str(tmp_path / 'o.mat'))
+        cols = file.load_data(path).time_data_list[0].time_data
         assert cols.shape[1] == 3                  # was 2: ch1 was dropped
         np.testing.assert_allclose(cols[0], [9.0, 1.0, 2.0])
 
@@ -628,69 +592,74 @@ class TestExportColumnCountFromArray:
         np.testing.assert_allclose(cols[0], [9.0, 1.0, 2.0])
 
 
-def _matlab_export(tmp_path, ds, name='m.mat'):
-    """Export `ds` with `export_to_matlab`; return the loaded .mat dict."""
-    path = str(tmp_path / name)
-    file.export_to_matlab(ds, filename=path, overwrite_without_prompt=True)
-    return sio.loadmat(path)
+class TestExportsLoadBack:
+    """CSV and MATLAB exports carry what a .dvma holds and `load_data`
+    reads them back (the lossless-export round, 2026-10-06)."""
 
+    @pytest.mark.parametrize('ext, export', [('csv', file.export_to_csv),
+                                             ('mat', file.export_to_matlab)])
+    def test_a_dataset_comes_back_as_a_dvma_would(self, tmp_path, ext, export):
+        from _rich_dataset import assert_same_dataset, rich_dataset
+        ds = rich_dataset()
+        out = export(ds, str(tmp_path / ('x.' + ext)))
+        dvma = file.save_data(ds, str(tmp_path / 'x.dvma'))
+        assert_same_dataset(file.load_data(out), file.load_data(dvma))
 
-class TestMatlabExportGrid:
-    """`export_to_matlab` lays every set of a kind on one common grid. It
-    built that grid with a float-stop `np.arange`, which at some sizes
-    admits one step too many (a spurious trailing zero row), and padded
-    with `np.interp(..., right=0)`, which zeroes the last sample or top bin
-    when the grid's end lands one ulp past the data's. Each size below is
-    one where a fault bit; the first of each list is a clean control. The
-    app's twin, `engine.export_mat`, is held to the same sizes in
-    `tests/test_engine_export_mat.py`."""
+    @pytest.mark.parametrize('ext, export', [('csv', file.export_to_csv),
+                                             ('mat', file.export_to_matlab)])
+    def test_a_bare_data_list_exports(self, tmp_path, ext, export):
+        ds = _make_multiset_dataset(n_sets=2)
+        back = file.load_data(export(ds.tf_data_list, str(tmp_path / ('t.' + ext))))
+        assert len(back.tf_data_list) == 2 and len(back.time_data_list) == 0
+        np.testing.assert_array_equal(back.tf_data_list[1].tf_data,
+                                      ds.tf_data_list[1].tf_data)
 
-    # 1000 x 1023, 3000 x 999 and 44100 x 999 grew a trailing zero row;
-    # 8533 x 1000 zeroed the last real sample.
-    @pytest.mark.parametrize('fs, n', [(1000, 1024), (1000, 1023),
-                                       (3000, 999), (44100, 999),
-                                       (8533, 1000)])
-    def test_time_block_is_the_capture(self, tmp_path, fs, n):
-        td = _time_data(fs=fs, n=n)
-        m = _matlab_export(tmp_path, _dataset(td))
-        assert m['time_data_all'].shape == td.time_data.shape
-        np.testing.assert_allclose(m['time_axis_all'].ravel(), td.time_axis)
-        np.testing.assert_allclose(m['time_data_all'], td.time_data)
+    @pytest.mark.parametrize('ext, export', [('csv', file.export_to_csv),
+                                             ('mat', file.export_to_matlab)])
+    def test_sets_of_different_lengths_export(self, tmp_path, ext, export):
+        """Today's CSV crashed in np.append, and the .mat interpolated them
+        onto one grid; each now keeps its own axis."""
+        a, b = _time_data(fs=1000, n=64), _time_data(fs=3000, n=100, seed=1)
+        back = file.load_data(export(_dataset(a, b), str(tmp_path / ('d.' + ext))))
+        np.testing.assert_array_equal(back.time_data_list[0].time_axis, a.time_axis)
+        np.testing.assert_array_equal(back.time_data_list[1].time_data, b.time_data)
 
-    def test_shorter_capture_is_zero_padded_after_its_end(self, tmp_path):
-        """The pad still applies a whole step past a set's end: only the
-        one-ulp overshoot counts as the end point."""
-        long, short = _time_data(fs=8533, n=1000), _time_data(fs=8533, n=500,
-                                                             seed=1)
-        d = _matlab_export(tmp_path, _dataset(long, short))['time_data_all']
-        assert d.shape == (1000, 4)
-        np.testing.assert_allclose(d[:, :2], long.time_data)
-        np.testing.assert_allclose(d[:500, 2:], short.time_data)
-        np.testing.assert_array_equal(d[500:, 2:], 0)
+    @pytest.mark.parametrize('export', [file.export_to_csv, file.export_to_matlab])
+    def test_an_empty_export_is_refused(self, tmp_path, export):
+        with pytest.raises(ValueError, match='nothing to export'):
+            export(datastructure.DataSet(), str(tmp_path / 'empty.x'))
+        assert not list(tmp_path.iterdir())
 
-    # 1000 x 1023 grew an extra zero bin; 1000 x 1060 and 1021 x 996
-    # zeroed the top bin.
-    @pytest.mark.parametrize('fs, n', [(1000, 1024), (1000, 1023),
-                                       (1000, 1060), (1021, 996)])
-    def test_fft_block_is_the_spectrum(self, tmp_path, fs, n):
-        fft = analysis.calculate_fft(_time_data(fs=fs, n=n))
-        m = _matlab_export(tmp_path, _dataset(fft))
-        assert m['freq_data_all'].shape == fft.freq_data.shape
-        np.testing.assert_allclose(m['freq_axis_all'].ravel(), fft.freq_axis)
-        np.testing.assert_allclose(m['freq_data_all'], fft.freq_data)
+    def test_something_else_is_a_typeerror(self, tmp_path):
+        with pytest.raises(TypeError, match='DataSet or a data list'):
+            file.export_to_csv(np.zeros(3), str(tmp_path / 'z.csv'))
 
-    # 1000 x 2048 in 4 frames grew an extra zero bin; 1000 x 2056 in 2
-    # frames zeroed the top bin.
-    @pytest.mark.parametrize('fs, n, frames', [(1000, 2048, 1),
-                                               (1000, 2048, 4),
-                                               (1000, 2056, 2)])
-    def test_tf_block_is_the_tf(self, tmp_path, fs, n, frames):
-        tf = analysis.calculate_tf(_time_data(fs=fs, n=n), ch_in=0,
-                                   N_frames=frames, window='hann')
-        m = _matlab_export(tmp_path, _dataset(tf))
-        assert m['tf_data_all'].shape == tf.tf_data.shape
-        np.testing.assert_allclose(m['tf_axis_all'].ravel(), tf.freq_axis)
-        np.testing.assert_allclose(m['tf_data_all'], tf.tf_data)
+    def test_an_old_csv_export_is_refused_with_the_reason(self, tmp_path):
+        path = tmp_path / 'old.csv'
+        path.write_text('# pydvma export: RAW data, calibration NOT applied.\n'
+                        '# Column 1 is the shared axis (s); the rest are data columns.\n'
+                        '0,1\n1,2\n')
+        with pytest.raises(ValueError, match='pydvma 2.6 or earlier'):
+            file.load_data(str(path))
+
+    def test_an_old_matlab_export_is_refused_with_the_reason(self, tmp_path):
+        path = str(tmp_path / 'old.mat')
+        sio.savemat(path, {'time_axis_all': np.arange(3.0)[:, None],
+                           'time_data_all': np.ones((3, 2))})
+        for load in (file.load_data, file.import_from_matlab_jwlogger):
+            with pytest.raises(ValueError, match='pydvma 2.6 or earlier'):
+                load(path)
+
+    def test_a_vibration_apps_import_exports_and_comes_back(self, tmp_path):
+        import warnings
+        from _rich_dataset import assert_same_dataset
+        v2 = os.path.join(os.path.dirname(__file__), 'data',
+                          'vibration_apps_example_v2_time.csv')
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            ds = file.load_data(v2)
+        for ext, export in (('csv', file.export_to_csv), ('mat', file.export_to_matlab)):
+            assert_same_dataset(file.load_data(export(ds, str(tmp_path / ('va.' + ext)))), ds)
 
 
 @pytest.fixture
@@ -743,7 +712,7 @@ class TestPositionalFilename:
     def test_export_to_matlab_positional(self, tmp_path, no_qt):
         ds = _make_multiset_dataset(n_sets=1)
         out = file.export_to_matlab(ds, str(tmp_path / 'e.mat'))
-        assert sio.loadmat(out)['time_data_all'].shape[1] == 2
+        assert file.load_data(out).time_data_list[0].time_data.shape[1] == 2
 
     def test_export_to_matlab_jwlogger_positional(self, tmp_path, no_qt):
         ds = _make_multiset_dataset(n_sets=1)
@@ -753,8 +722,8 @@ class TestPositionalFilename:
     def test_export_to_csv_positional(self, tmp_path, no_qt):
         ds = _make_multiset_dataset(n_sets=1)
         out = file.export_to_csv(ds.time_data_list, str(tmp_path / 't.csv'))
-        rows = np.loadtxt(out, delimiter=',')
-        assert rows.shape[1] == 3          # axis + two channels
+        assert out == str(tmp_path / 't.csv')
+        assert file.load_data(out).time_data_list[0].time_data.shape[1] == 2
 
     def test_save_fig_positional(self, tmp_path, no_qt):
         from matplotlib.figure import Figure
@@ -835,22 +804,16 @@ class TestNoFilename:
 
 
 class TestImportFromMatlabJwloggerFileChecks:
-    """A .mat written by pydvma's own `export_to_matlab` (no ``indata``,
-    no ``yspec``) imported as a silently EMPTY DataSet. (Its no-filename
-    case is in `TestNoFilename`.)"""
+    """A .mat with neither of the logger's variables imported as a
+    silently EMPTY DataSet. (Its no-filename case is in `TestNoFilename`;
+    pydvma 2.6's own exports are refused in `TestExportsLoadBack`.)"""
 
-    def test_pydvma_export_is_refused_as_export_only(self, tmp_path):
+    def test_a_pydvma_export_is_sent_to_load_data(self, tmp_path):
         ds = _make_multiset_dataset(n_sets=1)
         path = file.export_to_matlab(ds, filename=str(tmp_path / 'own.mat'))
-        with pytest.raises(ValueError, match='export-only') as info:
+        with pytest.raises(ValueError, match='load it with load_data'):
             file.import_from_matlab_jwlogger(path)
-        assert 'Only JW-logger .mat files can be imported' in str(info.value)
-
-    def test_load_data_refuses_a_pydvma_export_too(self, tmp_path):
-        ds = _make_multiset_dataset(n_sets=1)
-        path = file.export_to_matlab(ds, filename=str(tmp_path / 'own.mat'))
-        with pytest.raises(ValueError, match='export-only'):
-            file.load_data(path)
+        assert len(file.load_data(path).time_data_list) == 1
 
     def test_unrelated_mat_is_refused(self, tmp_path):
         path = str(tmp_path / 'other.mat')

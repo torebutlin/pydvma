@@ -1,31 +1,14 @@
 # -*- coding: utf-8 -*-
-"""pydvma.engine legacy/mat import ops — native-host safety (no fixed /tmp).
+"""pydvma.engine import ops: legacy ``.npy`` and ``file_to_dvma``.
 
-``mat_to_dvma`` round-trips its ``.mat`` INPUT through a file path
-(``import_from_matlab_jwlogger`` takes a FILENAME, not a buffer). In
-pyodide that path is an in-memory FS, so a hard-coded ``/tmp/...`` name
-was harmless; under the native CPython host it is a real filesystem
-write, and a fixed ``/tmp`` path is unsafe cross-platform (absent on
-Windows, and a fixed name collides between concurrent connections).
-``legacy_to_dvma`` has no such need at all — it serialises its
-``.dvma`` output straight to bytes via ``container.save_bytes`` — so
-only ``mat_to_dvma`` still exercises the tempfile-safety story below;
-its test is kept here alongside a plain bytes-in/bytes-out correctness
-check for ``legacy_to_dvma``.
-
-NOTE on what `monkeypatch.chdir` does and does not prove: it only
-changes the CWD, so it cannot itself catch a regression to an ABSOLUTE
-`/tmp/...` path (that would still resolve the same way regardless of
-CWD) — these tests do not claim otherwise (see names below). What they
-verify is the actual end-to-end behaviour of the ops: the returned
-`.dvma` bytes load back with `container.load` into the same data that
-went in (fs, sample count, item count), from a CWD that is NOT `/tmp`.
-For `mat_to_dvma` that is real coverage of the tempfile mechanism, and
-it is the regression net for a fixed-path bug on a system where `/tmp`
-is simply absent (e.g. Windows) — such a system fails at the `open()`
-call itself, which no CWD trick is needed to catch. They are expected
-to ALREADY PASS on macOS/Linux (where `/tmp` exists) even before the
-tempfile fix landed; their job is to keep passing once it did.
+``file_to_dvma`` takes the bytes of any file Load Data accepts other than a
+``.dvma`` (pydvma's own CSV and MATLAB exports, a JW-logger ``.mat``, the
+Vibration Apps' CSV) and returns ``.dvma`` bytes, through
+``pydvma.file.load_data`` itself, so the web app accepts exactly what
+Python does. Its input goes through a per-call temporary directory (a real
+filesystem write under the native host, so never a fixed ``/tmp`` path);
+``legacy_to_dvma`` unpickles from memory. Each test runs from a CWD that is
+not ``/tmp`` and checks the returned bytes load back with ``container.load``.
 """
 import io
 
@@ -82,7 +65,7 @@ def test_legacy_to_dvma_roundtrips(tmp_path, monkeypatch):
     assert td.time_data.shape[0] == 100  # np.arange(0, 1, 1/100.0) -> 100 samples
 
 
-def test_mat_to_dvma_roundtrips(tmp_path, monkeypatch):
+def test_file_to_dvma_reads_a_jw_logger_mat(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     fs = 100.0
     n = 200
@@ -91,10 +74,7 @@ def test_mat_to_dvma_roundtrips(tmp_path, monkeypatch):
     scipy.io.savemat(buf, {'indata': np.sin(2 * np.pi * 5 * t)[:, None],
                            'buflen': float(n), 'freq': fs,
                            'dt2': np.array([[1.0, 0.0, 0.0]]), 'tsmax': 1.0})
-    out = engine.mat_to_dvma(buf.getvalue())
-    assert isinstance(out['dvma'], (bytes, bytearray))
-    assert len(out['dvma']) > 0
-
+    out = engine.file_to_dvma(buf.getvalue(), 'capture.mat')
     ds = _load_dvma_bytes(tmp_path, out['dvma'], 'mat_roundtrip.dvma')
     assert len(ds.time_data_list) == 1
     td = ds.time_data_list[0]
@@ -102,43 +82,44 @@ def test_mat_to_dvma_roundtrips(tmp_path, monkeypatch):
     assert td.time_data.shape[0] == n
 
 
-def test_mat_to_dvma_refuses_a_pydvma_export(tmp_path, monkeypatch):
-    """The browser's .mat import goes through the same
-    ``import_from_matlab_jwlogger``, so a .mat written by pydvma's own
-    ``export_to_matlab`` is refused there too — not converted into an
-    empty .dvma that loads as nothing."""
-    from pydvma import datastructure, file, options
+@pytest.mark.parametrize('ext, export', [('csv', 'export_to_csv'),
+                                         ('mat', 'export_to_matlab')])
+def test_file_to_dvma_reads_pydvmas_own_exports(tmp_path, monkeypatch, ext, export):
+    from pydvma import file
+    from _rich_dataset import assert_same_dataset, rich_dataset
     monkeypatch.chdir(tmp_path)
-    fs, n = 100.0, 64
-    td = datastructure.TimeData(np.arange(n) / fs, np.ones((n, 1)),
-                                options.MySettings(fs=fs, channels=1))
-    ds = datastructure.DataSet()
-    ds.add_to_dataset(td)
-    path = file.export_to_matlab(ds, filename=str(tmp_path / 'own.mat'))
+    ds = rich_dataset()
+    path = getattr(file, export)(ds, str(tmp_path / ('x.' + ext)))
     with open(path, 'rb') as f:
-        mat_bytes = f.read()
-    with pytest.raises(ValueError, match='export-only'):
-        engine.mat_to_dvma(mat_bytes)
+        out = engine.file_to_dvma(f.read(), 'x.' + ext)
+    assert_same_dataset(_load_dvma_bytes(tmp_path, out['dvma'], 'x.dvma'), ds)
 
 
-def test_vibration_csv_to_dvma_roundtrips(tmp_path, monkeypatch):
-    """The browser's Load Data sends a Vibration Apps CSV through
-    ``engine.vibration_csv_to_dvma``: bytes in, ``.dvma`` bytes out, one
-    TfData per measurement, by the same parser as ``load_data``."""
+def test_file_to_dvma_reads_a_vibration_apps_csv(tmp_path, monkeypatch):
     import os
     monkeypatch.chdir(tmp_path)
     example = os.path.join(os.path.dirname(__file__), 'data',
                            'vibration_apps_example.csv')
     with open(example, 'rb') as f:
-        csv_bytes = f.read()
-    out = engine.vibration_csv_to_dvma(csv_bytes)
+        out = engine.file_to_dvma(f.read(), 'measurements.csv')
     ds = _load_dvma_bytes(tmp_path, out['dvma'], 'va_roundtrip.dvma')
     assert [len(t.freq_axis) for t in ds.tf_data_list] == [836, 13380, 20, 13380, 836]
     assert ds.tf_data_list[3].tf_coherence is None
-    assert ds.tf_data_list[0].test_name == 'm1 noise 10 s · 100 Hz–5 kHz'
 
 
-def test_vibration_csv_to_dvma_refuses_other_csv_by_name(tmp_path, monkeypatch):
+def test_file_to_dvma_refuses_other_files_by_name(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(ValueError, match="mine.csv is not a CSV saved by the Vibration Apps"):
-        engine.vibration_csv_to_dvma(b'# pydvma export\n1,2\n', name='mine.csv')
+    with pytest.raises(ValueError, match="mine.csv is not a CSV pydvma can load"):
+        engine.file_to_dvma(b'a,b\n1,2\n', 'mine.csv')
+    with pytest.raises(ValueError, match="pydvma 2.6 or earlier"):
+        engine.file_to_dvma(b'# pydvma export: RAW data, calibration NOT applied.\n0,1\n', 'old.csv')
+    with pytest.raises(ValueError, match="notes.txt"):
+        engine.file_to_dvma(b'hello', 'notes.txt')
+
+
+def test_file_to_dvma_keeps_only_the_base_name(tmp_path, monkeypatch):
+    # a name from the browser is a file name, never a path to write to
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="evil.csv is not a CSV"):
+        engine.file_to_dvma(b'a,b\n', '../../evil.csv')
+    assert not (tmp_path.parent / 'evil.csv').exists()
