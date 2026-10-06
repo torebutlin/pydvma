@@ -210,6 +210,117 @@ def f_residual_all_channels(x,f,G0,measurement_type):
     
     return e
 
+#%% PER-SET FREQUENCY BLOCKS
+# A shared-pole fit over several TfData must read every set on ITS OWN
+# frequency axis: two sets captured at different sample rates or frame
+# lengths (or a stepped sine beside a noise test) share no rows. The
+# helpers below gather the measured columns into blocks, one per distinct
+# in-band axis, each block holding the columns of every set on that axis
+# in list order. When every set shares one axis there is exactly one
+# block holding every column in list order, and the fit is the same
+# computation, to the bit, as when one shared axis was assumed.
+
+def _union_span(measured):
+    '''``[lowest first frequency, highest last frequency]`` over the sets in
+    ``measured`` (a list of ``(list_index, TfData)`` pairs), as floats.'''
+    lo = min(float(tf.freq_axis[0]) for _, tf in measured)
+    hi = max(float(tf.freq_axis[-1]) for _, tf in measured)
+    return [lo, hi]
+
+
+def _band_rows(measured, freq_range, as_float64=True):
+    '''Each set's row indices strictly inside ``freq_range``, on its own axis.'''
+    rows = []
+    for _, tf in measured:
+        f_axis = np.asarray(tf.freq_axis, dtype=np.float64) if as_float64 \
+            else np.asarray(tf.freq_axis)
+        rows.append(np.where((f_axis > freq_range[0]) & (f_axis < freq_range[1]))[0])
+    return rows
+
+
+def _raise_if_set_misses_band(measured, rows, freq_range, caller):
+    '''Raise a ValueError naming the first set with no rows in the band:
+    its position in the list (from 0), its `test_name` when it has one, and
+    the span of its axis, which identifies it when it has no name.'''
+    for (i, tf), sel in zip(measured, rows):
+        if sel.size == 0:
+            f_axis = np.asarray(tf.freq_axis)
+            name = getattr(tf, 'test_name', None)
+            label = 'tf_data_list[{}]'.format(i)
+            if name:
+                label += " ('{}')".format(name)
+            raise ValueError(
+                '{}: {} has no frequency points inside the band {:.6g} to '
+                '{:.6g} Hz: its {} points run from {:.6g} to {:.6g} Hz. Widen '
+                'the band, or leave that transfer function out.'.format(
+                    caller, label, float(freq_range[0]), float(freq_range[1]),
+                    f_axis.size, float(f_axis[0]), float(f_axis[-1])))
+
+
+def _measured_blocks(measured, rows, as_float64=True):
+    '''Gather the cal-scaled measured columns into blocks sharing one axis.
+
+    ``measured`` is a list of ``(list_index, TfData)`` pairs and ``rows``
+    the matching row indices (each set's own band). Columns are numbered
+    in list order, set by set, as in the packed modal row. Sets whose
+    selected frequencies are identical share a block.
+
+    Returns ``(blocks, n_points)``: ``blocks`` is a list of
+    ``(f_b, G_b, cols_b)`` with ``f_b`` the block's frequencies, ``G_b``
+    complex ``(len(f_b), len(cols_b))`` and ``cols_b`` the global column
+    numbers of its columns; ``n_points`` gives each column's number of
+    rows, in column order.'''
+    groups = []          # [f_b, [columns], [column numbers]]
+    n_points = []
+    c = 0
+    for (_, tf), sel in zip(measured, rows):
+        f_axis = np.asarray(tf.freq_axis, dtype=np.float64) if as_float64 \
+            else np.asarray(tf.freq_axis)
+        f_s = f_axis[sel]
+        n_ch = tf.tf_data.shape[1]
+        cols = [tf.tf_data[sel, ch] * tf.channel_cal_factors[ch] for ch in range(n_ch)]
+        numbers = list(range(c, c + n_ch))
+        c += n_ch
+        n_points += [sel.size] * n_ch
+        for group in groups:
+            if group[0].shape == f_s.shape and np.array_equal(group[0], f_s):
+                group[1].extend(cols)
+                group[2].extend(numbers)
+                break
+        else:
+            groups.append([f_s, cols, numbers])
+    blocks = []
+    for f_s, cols, numbers in groups:
+        G = np.zeros((f_s.size, len(cols)), dtype=complex)
+        for j, col in enumerate(cols):
+            G[:, j] = col
+        blocks.append((f_s, G, np.asarray(numbers, dtype=int)))
+    return blocks, np.asarray(n_points, dtype=np.float64)
+
+
+def _column_weights(n_points):
+    '''Per-column residual weights ``sqrt(n_ref / n_c)`` (``n_ref`` the most
+    points any column has), so that every column counts equally however
+    many points it has in the band. All exactly 1.0 when the counts agree.'''
+    return np.sqrt(np.max(n_points) / n_points)
+
+
+def _f_residual_blocks(x, blocks, weights, measurement_type):
+    '''Weighted real/imag residual of the many-channel model over the blocks.
+
+    Each block is evaluated on its own frequencies with its own columns'
+    parameters (the poles are shared), and every column's residual is
+    scaled by its weight. With one block and unit weights this is
+    `f_residual_all_channels` exactly.'''
+    fn, zn, an, pn, rk, rm = unpack(x)
+    parts = []
+    for f_b, G_b, cols_b in blocks:
+        x_b = pack(fn, zn, an[cols_b], pn[cols_b], rk[cols_b], rm[cols_b])
+        e = f_TF_all_channels(x_b, f_b, measurement_type) - G_b
+        e = np.concatenate((np.real(e), np.imag(e))) * weights[cols_b]
+        parts.append(e.reshape(np.size(e)))
+    return np.concatenate(parts)
+
 #%% MULTI-CHANNEL MODAL FIT
 def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     '''Fit one mode, with shared frequency and damping, to every TF channel.
@@ -220,17 +331,30 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     modal-constant amplitude and phase and its own local residual
     terms. The TFs are calibrated first (multiplied by their
     `channel_cal_factors`), so the fitted constants are in engineering
-    units. Only samples strictly inside ``freq_range`` are used, and
-    every TF is assumed to share the first one's frequency axis.
+    units.
+
+    The TFs need not share a frequency axis. Each is fitted on its own
+    frequency points strictly inside ``freq_range``, so captures at
+    different sample rates or frame lengths, a stepped sine beside a
+    noise test, or the separate measurements of a Vibration Apps CSV
+    can be fitted together. Each column counts equally in the fit,
+    however many points it has in the band: its residual is weighted by
+    ``sqrt(n_ref / n_c)``, where ``n_c`` is its number of points and
+    ``n_ref`` the most any column has (so all weights are 1 when the
+    axes agree). The starting guess is taken from each column on its
+    own axis too.
 
     A summary is printed and kept in ``modal.MESSAGE``, with warnings
     when any phase exceeds 60 degrees (check ``measurement_type``) or
-    the fit is poor (try another ``freq_range``).
+    the fit is poor (try another ``freq_range``). The fit quality is
+    judged with the same equal weighting of the columns.
 
     Args:
-        tf_data_list (TfDataList): The transfer functions to fit.
+        tf_data_list (TfDataList): The transfer functions to fit. A list
+            of one fits one set on its own.
         freq_range (list, optional): ``[f_min, f_max]`` in Hz around one
-            peak. None (the default) uses the whole frequency axis.
+            peak. None (the default) spans every TF in the list, from the
+            lowest first frequency to the highest last one.
         measurement_type (str): What the TFs' outputs measure:
             ``'acc'`` (acceleration, the default), ``'vel'`` (velocity)
             or ``'dsp'`` (displacement). It sets the power of
@@ -238,12 +362,14 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
 
     Returns:
         modal_data (ModalData): One mode, with ``M`` of shape
-            ``(1, 2 + 4*n_columns)`` and `id_link` listing the fitted
-            TFs' `id_link` values.
+            ``(1, 2 + 4*n_columns)`` (columns in list order, set by set)
+            and `id_link` listing the fitted TFs' `id_link` values.
 
     Raises:
         ValueError: ``tf_data_list`` holds no TF that is not a modal
-            reconstruction.
+            reconstruction, or one of its TFs has no frequency points
+            inside ``freq_range`` (the message names it by its index in
+            the list and its `test_name`).
     '''
     global MESSAGE
     
@@ -254,11 +380,12 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     elif measurement_type == 'dsp':
         p = 0
     
-    # Find out how many TFs in dataset
+    # The measured TFs (not reconstructions), with their list positions
+    measured = [(i, tf_data) for i, tf_data in enumerate(tf_data_list)
+                if tf_data.flag_modal_TF == False]
     N_tfs = 0
-    for tf_data in tf_data_list:
-        if tf_data.flag_modal_TF == False:
-            N_tfs += len(tf_data.tf_data[0,:])
+    for _, tf_data in measured:
+        N_tfs += len(tf_data.tf_data[0,:])
 
     if N_tfs == 0:
         raise ValueError(
@@ -268,31 +395,26 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
         )
 
     if freq_range is None:
-        freq_range = tf_data_list[0].freq_axis[[0,-1]]
+        freq_range = _union_span(measured)
     
-    # get selected frequency axis
-    f = tf_data_list[0].freq_axis
-    selected_range = np.where((f > freq_range[0]) & (f < freq_range[1]))
+    # each set's own frequency points inside the band, gathered into blocks
+    # of columns sharing one axis (one block when every set shares it)
+    rows = _band_rows(measured, freq_range, as_float64=False)
+    _raise_if_set_misses_band(measured, rows, freq_range, 'modal_fit_all_channels')
+    blocks, n_points = _measured_blocks(measured, rows, as_float64=False)
+    weights = _column_weights(n_points)
     
-    f = f[selected_range]
-    
-    # compile transfer functions into single array, and get initial guesses
-    G0 = np.zeros((len(f),N_tfs),dtype=complex)
+    # initial guesses for each column, on its own axis
     fn0 = np.zeros(N_tfs)
     zn0 = np.zeros(N_tfs)
-    counter = -1
-    for tf_data in tf_data_list:
-        if tf_data.flag_modal_TF == False:
-            for n_chan in range(len(tf_data.tf_data[0,:])):
-                counter += 1
-                G0[:,counter] = tf_data.tf_data[selected_range,n_chan] * tf_data.channel_cal_factors[n_chan]
-                fn0[counter],zn0[counter] = f_3dB(f,G0[:,counter])
+    for f_b, G_b, cols_b in blocks:
+        for j, counter in enumerate(cols_b):
+            fn0[counter],zn0[counter] = f_3dB(f_b,G_b[:,j])
             
 
     # initial global guess for fn0,zn0 discarding any outliers
     fn0 = np.median(fn0)
     zn0 = np.median(zn0)
-    fn0i = np.argmin(np.abs(f - fn0))
     
     
     # initial guesses for each channel
@@ -300,20 +422,16 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     pn0 = np.zeros(N_tfs)
     Rk0 = np.zeros(N_tfs)
     Rm0 = np.zeros(N_tfs)
-    id_link = []
-    counter = -1
-    for tf_data in tf_data_list:
-        if tf_data.flag_modal_TF == False:
-            id_link += [tf_data.id_link]
-            for n_chan in range(len(tf_data.tf_data[0,:])):
-                counter += 1
-                an0[counter] = np.max(np.abs(G0[:,counter]))*(2*np.pi*fn0)**(2-p) * 2*zn0
-    #            an0[counter] = an0[counter] * np.sign(np.real(G0[fn0i,counter] / ((2j*np.pi*fn0)**p)))
-                an0[counter] = an0[counter] * np.sign(-np.imag(G0[fn0i,counter] / ((1j)**p)))
-                
-                pn0[counter] = 0
-                Rk0[counter] = np.max(np.abs(G0[:,counter]))/1e6
-                Rm0[counter] = np.max(np.abs(G0[:,counter]))*((2*np.pi*fn0)**2)/1e6
+    id_link = [tf_data.id_link for _, tf_data in measured]
+    for f_b, G_b, cols_b in blocks:
+        fn0i = np.argmin(np.abs(f_b - fn0))
+        for j, counter in enumerate(cols_b):
+            an0[counter] = np.max(np.abs(G_b[:,j]))*(2*np.pi*fn0)**(2-p) * 2*zn0
+            an0[counter] = an0[counter] * np.sign(-np.imag(G_b[fn0i,j] / ((1j)**p)))
+            
+            pn0[counter] = 0
+            Rk0[counter] = np.max(np.abs(G_b[:,j]))/1e6
+            Rm0[counter] = np.max(np.abs(G_b[:,j]))*((2*np.pi*fn0)**2)/1e6
     
     x0 = np.concatenate(([fn0],[zn0],an0,pn0,Rk0,Rm0))
     
@@ -337,7 +455,7 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
     
     bounds = (lower_bounds,upper_bounds)
     
-    r = optimize.least_squares(f_residual_all_channels,x0, bounds=bounds, max_nfev=1000, args=(f,G0,measurement_type))
+    r = optimize.least_squares(_f_residual_blocks,x0, bounds=bounds, max_nfev=1000, args=(blocks,weights,measurement_type))
     
     settings = tf_data_list[0].settings
     test_name = tf_data_list[0].test_name
@@ -354,9 +472,10 @@ def modal_fit_all_channels(tf_data_list,freq_range=None,measurement_type='acc'):
         MESSAGE += '\nPhase is significant, check ''TF type'' setting is correct.\n'
         print(MESSAGE)
         
-    # Check quality of fit
-    e = f_residual_all_channels(r.x,f,G0,measurement_type)
-    G0rms = np.mean(np.abs(G0)**2)
+    # Check quality of fit, every column weighted as in the fit
+    e = _f_residual_blocks(r.x,blocks,weights,measurement_type)
+    G0rms = np.mean(np.concatenate(
+        [(np.abs(G_b)**2 * weights[cols_b]**2).ravel() for _, G_b, cols_b in blocks]))
     erms = np.mean(np.abs(e)**2)
     e_rel = erms/G0rms
     if e_rel > 0.1:
@@ -467,7 +586,8 @@ def _measurement_power(measurement_type):
 def _modes_band(M, f_axis):
     '''Default estimation/refinement band: the modes' fn span padded so each
     peak's half-power skirts are included (the `modal_refine` convention),
-    clamped to the measured axis. Returns ``[lo, hi]`` in Hz.'''
+    clamped to ``[f_axis[0], f_axis[-1]]`` — an axis, or the ``[lo, hi]``
+    span of every measured set's axis. Returns ``[lo, hi]`` in Hz.'''
     fn_fit = M[:, 0]
     zn_fit = M[:, 1]
     lo_fn, hi_fn = float(np.min(fn_fit)), float(np.max(fn_fit))
@@ -478,22 +598,32 @@ def _modes_band(M, f_axis):
             min(float(f_axis[-1]), hi_fn + pad)]
 
 
-def _measured_columns(tf_data_list, sel):
-    '''Stack every measured (non-reconstruction) TF column over the ``sel``
-    frequency indices, cal-scaled — the `modal_fit_all_channels` /
-    `modal_refine` G0 assembly, shared. Returns ``(len(sel), n_cols)``.
+def _measured_sets(tf_data_list):
+    '''The measured (non-reconstruction) TFs of ``tf_data_list`` as
+    ``(list_index, TfData)`` pairs — what `modal_refine` and
+    `reconstruct_transfer_function_global` estimate against.'''
+    return [(i, tf) for i, tf in enumerate(tf_data_list)
+            if not getattr(tf, 'flag_modal_TF', False)]
 
-    NB the shared-pole machinery assumes every set shares ONE frequency axis
-    (``tf_data_list[0].freq_axis``) — the same assumption the fitters make.'''
-    cols = []
-    for tf_data in tf_data_list:
-        if getattr(tf_data, 'flag_modal_TF', False):
-            continue
-        for n_chan in range(tf_data.tf_data.shape[1]):
-            cols.append(tf_data.tf_data[sel, n_chan] * tf_data.channel_cal_factors[n_chan])
-    if len(cols) == 0:
-        raise ValueError('needs at least one measured (non-reconstruction) TF.')
-    return np.array(cols, dtype=complex).T
+
+def _estimate_global_constants_blocks(fn, zn, blocks, n_cols, measurement_type='acc'):
+    '''`estimate_global_constants` over per-axis blocks.
+
+    With the poles fixed, each column's constants are a linear solve of
+    their own, so each block is solved on its own frequencies and the
+    results are put back in column order. Returns ``(A, RH, RL)`` with
+    ``A`` complex ``(len(fn), n_cols)`` and ``RH``, ``RL`` complex
+    ``(n_cols,)``. With one block this is `estimate_global_constants`.'''
+    n_modes = np.atleast_1d(fn).size
+    A = np.zeros((n_modes, n_cols), dtype=complex)
+    RH = np.zeros(n_cols, dtype=complex)
+    RL = np.zeros(n_cols, dtype=complex)
+    for f_b, G_b, cols_b in blocks:
+        A_b, RH_b, RL_b, _ = estimate_global_constants(fn, zn, f_b, G_b, measurement_type)
+        A[:, cols_b] = A_b
+        RH[cols_b] = RH_b
+        RL[cols_b] = RL_b
+    return A, RH, RL
 
 
 def estimate_global_constants(fn, zn, f, G0, measurement_type='acc'):
@@ -518,6 +648,11 @@ def estimate_global_constants(fn, zn, f, G0, measurement_type='acc'):
     ones: neighbour interaction is explained by the neighbours themselves,
     so any remaining phase in ``A`` is genuine mode complexity, not
     circle-rotation leakage from nearby modes.
+
+    Every column of ``G0`` is sampled on the one axis ``f``. Columns from
+    sets on different axes are solved set by set (each column's solve is
+    independent of the others once the poles are fixed); `modal_refine`
+    and `reconstruct_transfer_function_global` do that for you.
 
     Args:
         fn (array_like): pole natural frequencies (Hz), length N — held
@@ -588,20 +723,24 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
     band, with the stored natural frequencies and damping ratios held
     fixed (see `estimate_global_constants`). This avoids counting each
     mode's neighbours twice, as a sum of separately fitted local modes
-    does.
+    does. Each TF's columns are solved on that TF's own frequency points
+    inside the band, so the TFs need not share an axis; a TF with too
+    few points in the band to determine its constants (fewer than
+    ``max(4, n_modes + 2)``) uses its whole axis instead.
 
     Without ``tf_data_list`` (for example a ModalData loaded on its
-    own), or if the channel counts do not match, the stored modes are
-    summed with their local residual terms (rk, rm) set to zero.
-    ``modal_data`` is not modified.
+    own), if it holds no measured TF, or if the channel counts do not
+    match, the stored modes are summed with their local residual terms
+    (rk, rm) set to zero. ``modal_data`` is not modified.
 
     Args:
         modal_data (ModalData): The fitted modes.
-        f (np.ndarray): Frequency axis in Hz on which to evaluate.
+        f (np.ndarray): Frequency axis in Hz on which to evaluate. It
+            need not be any TF's own axis.
         measurement_type (str): ``'acc'`` (the default), ``'vel'`` or
             ``'dsp'``, as used for the fit.
         tf_data_list (TfDataList, optional): The measured TFs the modes
-            were fitted to; they are assumed to share one frequency axis.
+            were fitted to, in the fit's column order.
 
     Returns:
         tf_data (TfData): The reconstruction, one column per channel,
@@ -611,16 +750,22 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
     M = np.atleast_2d(modal_data.M)
     N_tfs = int((M.shape[1]-2)/4)
 
-    if tf_data_list is not None:
-        f_axis = np.asarray(tf_data_list[0].freq_axis, dtype=np.float64)
-        band = _modes_band(M, f_axis)
-        sel = np.where((f_axis > band[0]) & (f_axis < band[1]))[0]
-        if sel.size < max(4, M.shape[0] + 2):
-            sel = np.arange(f_axis.size)
-        G0 = _measured_columns(tf_data_list, sel)
-        if G0.shape[1] == N_tfs:
-            A, RH, RL, _ = estimate_global_constants(
-                M[:, 0], M[:, 1], f_axis[sel], G0, measurement_type)
+    measured = _measured_sets(tf_data_list) if tf_data_list is not None else []
+    if measured:
+        band = _modes_band(M, _union_span(measured))
+        # Each set on its own points in the band. The constants are solved
+        # column by column, so a set too sparse there to determine its own
+        # falls back to its whole axis without affecting any other set.
+        need = max(4, M.shape[0] + 2)
+        rows = []
+        for sel, (_, tf) in zip(_band_rows(measured, band), measured):
+            if sel.size < need:
+                sel = np.arange(np.asarray(tf.freq_axis).size)
+            rows.append(sel)
+        blocks, n_points = _measured_blocks(measured, rows)
+        if n_points.size == N_tfs:
+            A, RH, RL = _estimate_global_constants_blocks(
+                M[:, 0], M[:, 1], blocks, N_tfs, measurement_type)
             G = _evaluate_global_model(M[:, 0], M[:, 1], A, RH, RL, f,
                                        measurement_type)
             settings = copy.copy(modal_data.settings)
@@ -667,6 +812,13 @@ def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='ac
     and `reconstruct_transfer_function_global` estimates its own
     residual terms from the data.
 
+    The TFs need not share a frequency axis. As in
+    `modal_fit_all_channels`, each is used on its own frequency points
+    inside the band, the poles are shared, and each column counts
+    equally however many points it has there (its residual is weighted
+    by ``sqrt(n_ref / n_c)``; the costs reported are of this weighted
+    residual).
+
     Convergence is reported, not enforced: the refined model is returned
     even when it did not converge, and the caller decides whether to
     keep it. If the input data make the solve fail (for example a NaN
@@ -675,14 +827,16 @@ def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='ac
     Args:
         modal_data (ModalData): The fit to refine; it must hold at least
             one mode.
-        tf_data_list (TfDataList): The measured TFs; they are assumed to
-            share the first one's frequency axis, and their column count
-            must match the fit's channel count.
+        tf_data_list (TfDataList): The measured TFs, in the fit's column
+            order; their total column count must match the fit's channel
+            count.
         freq_range (list, optional): ``[f_min, f_max]`` in Hz to refine
-            over. None (the default) uses the modes' natural-frequency
-            span, padded to include each peak's half-power skirts and
-            clamped to the measured axis. A band too narrow to constrain
-            the parameters is widened to the whole axis.
+            over, clamped to the span of the TFs' axes. None (the
+            default) uses the modes' natural-frequency span, padded to
+            include each peak's half-power skirts. A band too narrow to
+            constrain the parameters (every TF has fewer than
+            ``max(4, 2*n_modes + 2)`` points in it) is widened to every
+            TF's whole axis.
         measurement_type (str): ``'acc'`` (the default), ``'vel'`` or
             ``'dsp'``, as used for the fit.
 
@@ -697,8 +851,9 @@ def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='ac
 
     Raises:
         ValueError: ``modal_data`` has no modes, ``tf_data_list`` holds no
-            measured (non-reconstruction) TF, or the channel counts do not
-            match.
+            measured (non-reconstruction) TF, the channel counts do not
+            match, or one TF has no frequency points inside the band while
+            another has enough (the message names it).
     '''
     # History: before round 7g the refine optimised the whole packed
     # parameter set, local residual terms included. Those residues are
@@ -714,46 +869,53 @@ def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='ac
     n_modes, row_len = M.shape
     N_tfs = int((row_len - 2) / 4)
 
-    f_axis = np.asarray(tf_data_list[0].freq_axis, dtype=np.float64)
+    measured = _measured_sets(tf_data_list)
+    if not measured:
+        raise ValueError('modal_refine needs at least one measured (non-reconstruction) TF.')
+    span = _union_span(measured)
 
     # default window: the modes' band, padded by the widest half-power skirt
     if freq_range is None:
-        freq_range = _modes_band(M, f_axis)
-    freq_range = [max(float(f_axis[0]), float(freq_range[0])),
-                  min(float(f_axis[-1]), float(freq_range[1]))]
+        freq_range = _modes_band(M, span)
+    freq_range = [max(span[0], float(freq_range[0])),
+                  min(span[1], float(freq_range[1]))]
 
-    sel = np.where((f_axis > freq_range[0]) & (f_axis < freq_range[1]))[0]
-    if sel.size < max(4, 2 * n_modes + 2):
-        # too narrow to constrain the parameters — refine over the full axis
-        sel = np.arange(f_axis.size)
-    f = f_axis[sel]
+    # each set on its own points in the band
+    rows = _band_rows(measured, freq_range)
+    if max(sel.size for sel in rows) < max(4, 2 * n_modes + 2):
+        # too narrow to constrain the parameters — refine over the full axes
+        rows = [np.arange(np.asarray(tf.freq_axis).size) for _, tf in measured]
+    else:
+        _raise_if_set_misses_band(measured, rows, freq_range, 'modal_refine')
 
-    # compile the measured TFs (cal-scaled) into G0, as modal_fit_all_channels does
-    try:
-        G0 = _measured_columns(tf_data_list, sel)
-    except ValueError:
-        raise ValueError('modal_refine needs at least one measured (non-reconstruction) TF.')
-    if G0.shape[1] != N_tfs:
+    # compile the measured TFs (cal-scaled), as modal_fit_all_channels does
+    blocks, n_points = _measured_blocks(measured, rows)
+    if n_points.size != N_tfs:
         raise ValueError(
             'modal_refine: measured TF channel count ({}) does not match the '
-            'modal model channel count ({}).'.format(G0.shape[1], N_tfs))
+            'modal model channel count ({}).'.format(n_points.size, N_tfs))
+    weights = _column_weights(n_points)
 
     # ---- variable projection: poles nonlinear, constants/residues linear ----
     def residual(x):
         fn = x[0::2]
         zn = x[1::2]
-        A, RH, RL, _ = estimate_global_constants(fn, zn, f, G0, measurement_type)
-        model = _evaluate_global_model(fn, zn, A, RH, RL, f, measurement_type)
-        e = model - G0
-        return np.concatenate((np.real(e), np.imag(e))).reshape(-1)
+        parts = []
+        for f_b, G_b, cols_b in blocks:
+            A, RH, RL, _ = estimate_global_constants(fn, zn, f_b, G_b, measurement_type)
+            model = _evaluate_global_model(fn, zn, A, RH, RL, f_b, measurement_type)
+            e = model - G_b
+            e = np.concatenate((np.real(e), np.imag(e))) * weights[cols_b]
+            parts.append(e.reshape(-1))
+        return np.concatenate(parts)
 
     x0 = np.empty(2 * n_modes)
     x0[0::2] = M[:, 0]
     x0[1::2] = M[:, 1]
     lower = np.empty_like(x0)
     upper = np.empty_like(x0)
-    lower[0::2] = f_axis[0]
-    upper[0::2] = f_axis[-1]
+    lower[0::2] = span[0]
+    upper[0::2] = span[1]
     lower[1::2] = 0.0
     upper[1::2] = 1.0
     x0 = np.clip(x0, lower, upper)
@@ -793,14 +955,14 @@ def modal_refine(modal_data, tf_data_list, freq_range=None, measurement_type='ac
     fn_ref = x_ref[0::2]
     zn_ref = x_ref[1::2]
     try:
-        A, RH, RL, _ = estimate_global_constants(fn_ref, zn_ref, f, G0, measurement_type)
+        A, RH, RL = _estimate_global_constants_blocks(
+            fn_ref, zn_ref, blocks, N_tfs, measurement_type)
     except Exception:
         A = (M[:, 2:2 + N_tfs] * np.exp(1j * M[:, 2 + N_tfs:2 + 2 * N_tfs]))
 
     settings = tf_data_list[0].settings
     test_name = tf_data_list[0].test_name
-    id_link = [tf.id_link for tf in tf_data_list
-               if not getattr(tf, 'flag_modal_TF', False)]
+    id_link = [tf.id_link for _, tf in measured]
     m_ref = datastructure.ModalData(settings=settings, id_link=id_link, test_name=test_name)
     A = np.atleast_2d(A)
     for i in range(n_modes):

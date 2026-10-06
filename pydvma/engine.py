@@ -875,7 +875,10 @@ def _global_recon_slice(md, f, measurement_type, mute, off, ncols, tf_list=None)
     so ``reconstruct_transfer_function_global`` yields ``(Nf, total_cols)`` and
     each set's lines are the contiguous block starting at its cumulative column
     offset. For the single-set case ``off == 0`` and ``ncols`` is the set's TF
-    column count (identical to the pre-item-7 behaviour). Returns
+    column count (identical to the pre-item-7 behaviour). ``tf_list`` holds
+    every set on its own axis; the re-estimated constants of each set's
+    columns come from that set's own points, so ``f`` (this set's axis) need
+    not match any other set's. Returns
     ``(freq_axis_arr, tf_data_arr)`` marshalled — empty when the filtered model
     has no surviving modes.
     """
@@ -944,38 +947,6 @@ def _build_fit_specs(freq_axis, tf_data, n_tf, ch_in, n_channels, fs, sets):
     return specs
 
 
-def _align_fit_list(tf_list):
-    """Return ``tf_list`` on ONE common frequency axis for the joint fitter.
-
-    ``modal_fit_all_channels`` selects the fit window from ``tf_data_list[0]``'s
-    axis and applies that SAME index mask to every set, so a shared-pole fit
-    across sets with differing axes (e.g. different fs) needs them aligned. If
-    all sets already share an identical axis (the common hammer-test case — one
-    fs, one Δf) the list is returned untouched (byte-identical fit to today).
-    Otherwise each later set's complex columns are ``np.interp``-ed (real/imag
-    separately) onto the first set's axis. Reconstruction still runs on each
-    set's OWN axis (the caller keeps the un-aligned specs), so this alignment
-    only ever touches the fit target ``G0``, never the returned recon.
-    """
-    if len(tf_list) <= 1:
-        return tf_list
-    f0 = tf_list[0].freq_axis
-    if all(t.freq_axis.shape == f0.shape and np.allclose(t.freq_axis, f0)
-           for t in tf_list):
-        return tf_list
-    aligned = [tf_list[0]]
-    for t in tf_list[1:]:
-        G = t.tf_data
-        Gi = np.empty((f0.size, G.shape[1]), dtype=complex)
-        for c in range(G.shape[1]):
-            Gi[:, c] = (np.interp(f0, t.freq_axis, G[:, c].real)
-                        + 1j * np.interp(f0, t.freq_axis, G[:, c].imag))
-        ta = datastructure.TfData(f0, Gi, None, t.settings)
-        ta.flag_modal_TF = False
-        aligned.append(ta)
-    return aligned
-
-
 def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=None,
              fs=None, sets=None, M=None, freq_range=None, measurement_type='acc',
              action='fit', n_modes=1, index=None, mute=None):
@@ -1000,7 +971,13 @@ def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=Non
     - Multiple sets (``sets`` is a LIST of ``{freq_axis, tf_data, n_tf, ch_in,
       n_channels, fs}`` payloads): the sets are jointly fitted with SHARED poles;
       the reconstruction columns concatenate every set's columns in list order
-      and are returned SLICED per set (see ``slices``).
+      and are returned SLICED per set (see ``slices``). The sets may be on
+      different frequency axes (other fs or Δf, a stepped sine): each is fitted
+      on its OWN points inside the window, every column weighted equally
+      whatever its resolution (``modal_fit_all_channels``), and nothing is
+      interpolated. A set with no point inside the fit window raises the
+      fitter's ``ValueError`` naming it (the store shows it as a toast).
+      ``freq_range`` defaults to the span of every set's axis.
 
     ACTIONS (identical for one or many sets):
     - ``'fit'``  — fit ``n_modes`` mode(s) over ``freq_range``
@@ -1026,18 +1003,23 @@ def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=Non
     slice back to its set's lines. ``refine`` also carries
     ``converged``/``cost_before``/``cost_after``. All arrays via ``_arr``; recon
     TFs are complex ``(Nf, n_cols)`` matching that set's measured columns 1:1
-    (empty for a reject / a model that ends empty).
+    (empty for a reject / a model that ends empty); a set's global overlay is
+    on that set's own axis.
     """
     specs = _build_fit_specs(freq_axis, tf_data, n_tf, ch_in, n_channels, fs, sets)
+    # Every set keeps its OWN frequency axis: the fitters read each set on
+    # its own points (shared poles, columns weighted equally), so nothing is
+    # interpolated onto set 0's axis.
     tf_list = [sp['tf'] for sp in specs]
-    fit_list = _align_fit_list(tf_list)          # common axis for the joint fit
-    fit_settings = fit_list[0].settings
-    fit_test_name = fit_list[0].test_name
-    f = fit_list[0].freq_axis
+    fit_settings = tf_list[0].settings
+    fit_test_name = tf_list[0].test_name
+    f = tf_list[0].freq_axis
     # `not freq_range` catches None, a JS-null proxy, and an empty range; a
-    # real [lo, hi] (Python list or JS array proxy) is truthy.
+    # real [lo, hi] (Python list or JS array proxy) is truthy. The default
+    # spans every set's axis, as modal_fit_all_channels' own default does.
     if not freq_range:
-        freq_range = [float(f[0]), float(f[-1])]
+        freq_range = [min(float(t.freq_axis[0]) for t in tf_list),
+                      max(float(t.freq_axis[-1]) for t in tf_list)]
     else:
         freq_range = [float(freq_range[0]), float(freq_range[1])]
 
@@ -1054,11 +1036,11 @@ def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=Non
     refine_info = None
 
     if action == 'fit':
-        mag = (np.abs(fit_list[0].tf_data[:, 0])
-               if fit_list[0].tf_data.shape[1] > 0 else np.abs(f) * 0)
+        mag = (np.abs(tf_list[0].tf_data[:, 0])
+               if tf_list[0].tf_data.shape[1] > 0 else np.abs(f) * 0)
         for lo, hi in _fit_subranges(f, mag, freq_range, int(n_modes)):
             m = modal.modal_fit_all_channels(
-                datastructure.TfDataList(list(fit_list)), freq_range=[lo, hi],
+                datastructure.TfDataList(list(tf_list)), freq_range=[lo, hi],
                 measurement_type=measurement_type)
             new_modes.append(np.asarray(m.M[0, :], dtype=np.float64))
         message = modal.MESSAGE
@@ -1096,7 +1078,7 @@ def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=Non
         # every set's columns (shared poles).
         if md is not None and np.atleast_2d(md.M).shape[0] >= 1:
             md_refined, refine_info = modal.modal_refine(
-                md, datastructure.TfDataList(list(fit_list)),
+                md, datastructure.TfDataList(list(tf_list)),
                 freq_range=None, measurement_type=measurement_type)
             md = md_refined
             message = ('Refined {} mode(s).'.format(np.atleast_2d(md.M).shape[0])
@@ -1136,7 +1118,7 @@ def calc_fit(freq_axis=None, tf_data=None, n_tf=None, ch_in=None, n_channels=Non
             loc_data = _arr(np.zeros((0, ncols), dtype=complex))
         g_axis, g_data = _global_recon_slice(
             md, sp['tf'].freq_axis, measurement_type, mute, off_i, ncols,
-            tf_list=fit_list)
+            tf_list=tf_list)
         slices.append({'recon_freq_axis': loc_axis, 'recon_tf_data': loc_data,
                        'global_freq_axis': g_axis, 'global_tf_data': g_data,
                        'n_cols': ncols})
