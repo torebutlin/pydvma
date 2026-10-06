@@ -5,8 +5,8 @@ tools:
 
 - **Save Dataset** writes a `.dvma` file, which reopens with your data,
   calibration and results as you left them;
-- **Export Matlab** and **Export CSV** write your data for use
-  elsewhere; and
+- **Export Matlab** and **Export CSV** write the same session for
+  MATLAB, spreadsheets and other tools, and reopen like a `.dvma`; and
 - **Export**, with the figure options, writes the current plot as a PNG
   or PDF.
 
@@ -16,30 +16,29 @@ files.
 
 ## What each output holds
 
-| | `.dvma` | `.mat` | `.csv` |
-| - | ------- | ------ | ------ |
-| Time series | yes | yes | yes |
-| FFT and transfer functions you have computed | yes | yes | yes |
-| Coherence | yes | no | no |
-| Power, PSD and CSD | no | no | no |
-| Sonograms | if you choose | no | no |
-| Modal fit | yes | no | no |
-| Channel labels and analysis settings | yes | no | no |
-| Calibration factors and units | yes | as extra variables | in a `#` header |
-| Opens again in the web logger | yes | no | no |
+The three files hold the same information: an export is the document
+**Save Dataset** writes, laid out for another tool.
+
+| | `.dvma`, `.mat` and `.csv` |
+| - | ------- |
+| Time series | yes |
+| FFT and transfer functions you have computed, with coherence | yes |
+| Power, PSD and CSD you computed in the app | no |
+| Sonograms | if you choose |
+| Modal fit | yes |
+| Channel labels and analysis settings | yes |
+| Calibration factors and units | yes |
+| Opens again in the web logger and in Python | yes |
 
 Spectra and transfer functions are included only if you have computed
 them, so press **Calc FFT** or **Calc TF** first. The table describes
-what the app writes; a `.dvma` file made from Python can also hold
-cross-spectra.
+what the app writes; a file made from Python can also hold
+cross-spectra (an imported Vibration Apps file does).
 
 **Export Matlab** and **Export CSV** write the values as recorded, not
 as plotted, so they differ from the screen by each channel's
-[calibration factor](calibration.md). Both files record the factors
-beside the values: the CSV in its header, and the `.mat` as
-`time_cal_factors` and `time_units`, with `freq_` and `tf_` equivalents.
-The app and Python's `export_to_matlab` write the same variables. A
-`.dvma` file stores the factors with the data.
+[calibration factor](calibration.md). Each measurement carries its own
+factors and units beside its values, as in a `.dvma`.
 
 ## Save the session
 
@@ -129,64 +128,87 @@ after a closed tab or a crash. See
 
 ## Export data
 
+**Export Matlab** and **Export CSV** each write one file,
+`logged_data.mat` or `logged_data.csv`, holding what **Save Dataset**
+would: your results are materialised first and, if you computed a
+sonogram, you are asked whether to include it, exactly as for a save
+([above](#your-results-are-saved-too)). The **▾** beside each exports a
+chosen subset. **Load Data** reads either file back. The first export in
+the browser can take a few seconds while the analysis engine starts.
+
+Every measurement keeps its own axis, at its own sample rate and length;
+nothing is interpolated. The values are raw: multiply by the item's
+calibration factors for engineering units.
+
 ### Export Matlab
 
-**Export Matlab** writes `logged_data.mat` with these variables, one
-column per channel, with every measurement's columns side by side:
+The `.mat` file (format `pydvma-mat 1`) holds three variables:
 
 | Variable | Contents |
 | -------- | -------- |
-| `time_axis_all`, `time_data_all` | time in seconds, and the time series |
-| `freq_axis_all`, `freq_data_all` | frequency in Hz, and the complex FFTs |
-| `tf_axis_all`, `tf_data_all` | frequency in Hz, and the complex transfer functions |
-| `time_cal_factors`, `time_units` (and `freq_`, `tf_`) | each data column's calibration factor and unit |
+| `pydvma_items` | a cell array with one struct per item: `kind`, `test_name`, `units`, `fs`, `timestamp`, `channel_cal_factors`, and each array under its own name (`time_axis`, `time_data`, `freq_axis`, `tf_data`, `tf_coherence`, `Pxy`, `sono_data`, `M`, ...) |
+| `pydvma_manifest` | every item's metadata and settings, as JSON text |
+| `pydvma_format` | `'pydvma-mat 1'` |
 
-The data values are raw. To get engineering units, multiply column *k*
-of `time_data_all` by `time_cal_factors(k)`, and likewise for the other
-kinds. A channel with no unit shows `-`, and a transfer function column
-has the ratio of its output and input factors, as in the CSV below.
+In MATLAB:
 
-Measurements with different sample rates or lengths are interpolated
-onto one common axis: the finest resolution and the widest span, with
-zeros beyond the end of a shorter record. A single measurement, or
-several with the same rate and length, keeps exactly its own samples
-and bins. A kind you have not computed
-is left out. The first export in the browser can take a few seconds
-while the analysis engine starts.
+```matlab
+d = load('logged_data.mat');
+d.pydvma_items{1}.kind           % 'TimeData'
+t = d.pydvma_items{1}.time_axis;
+x = d.pydvma_items{1}.time_data; % one column per channel, raw
+meta = jsondecode(d.pydvma_manifest);
+```
+
+Files written by pydvma 2.6 and earlier held `time_data_all`,
+`tf_data_all` and so on, every measurement interpolated onto one common
+axis. They cannot be read back.
 
 ### Export CSV
 
-**Export CSV** writes one file for each kind of data present:
-`logged_data-time.csv`, `logged_data-freq.csv` and `logged_data-tf.csv`.
+The `.csv` file (format `pydvma-csv 1`) is one text file with a table
+for each item:
 
-- The first column is the axis (seconds, or hertz), then one column per
-  channel, with every measurement's columns side by side. All
-  measurements of a kind must have the same number of samples, or the
-  export stops with an error.
-- Time values are real numbers. In the frequency and transfer function
-  files every cell, the axis included, is a complex number written as
-  `(re+imj)`. Read them with `np.loadtxt(file, delimiter=',', dtype=complex)`.
-- The file starts with `#` comment lines giving each data column's
-  calibration factor and unit. To get engineering units, multiply data
-  column *k* (counting from 0 after the axis column) by `cal_factors[k]`.
-  `np.loadtxt`, `np.genfromtxt` and `pandas.read_csv(..., comment='#')`
-  skip these lines:
+```
+# pydvma dataset (pydvma-csv 1)
+# Written by pydvma 2.6.0. Load it back with pydvma.load_data, or Load Data in the web app.
+# Values are RAW, calibration NOT applied: multiply a column by its item's channel_cal_factors.
+# Each '# table' line below starts one table: its column names, then its rows.
+# manifest: {"format": "dvma-dataset", ... }
+# table 0: item 0, TimeData 'impulse'; units N, m/s2; cal_factors 1, 10 (time_axis, time_data)
+time_axis,time_data[0],time_data[1]
+0,0.0012,-0.0003
+...
+# table 1: item 1, TfData 'impulse'; units (m/s2)/N; cal_factors 10 (freq_axis, tf_data, tf_coherence)
+freq_axis,tf_data[0].re,tf_data[0].im,tf_coherence[0]
+...
+```
 
+- Each table's rows run along the item's axis. Complex values are
+  `.re` and `.im` column pairs, and a cross-spectrum's or sonogram's
+  extra dimensions spread across numbered columns (`Pxy[0][1].re`).
+- Numbers are written as the shortest text that reads back to the same
+  value, so nothing is lost.
+- The `# manifest:` line holds the metadata and settings that let the
+  file load back. A spreadsheet that re-saves the file and changes a
+  table's size makes it unreadable; the error says which table.
+- To read one table with pandas, give it the lines between its
+  `# table` line and the next:
+
+    ```python
+    import io, pandas as pd
+    lines = open('logged_data.csv').read().split('\n')
+    start = next(i for i, l in enumerate(lines) if l.startswith('# table 1:'))
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('# table')), len(lines))
+    tf = pd.read_csv(io.StringIO('\n'.join(lines[start + 1:end])))
     ```
-    # pydvma export: RAW data, calibration NOT applied.
-    # Column 1 is the shared axis (s); the rest are data columns.
-    # Multiply data column k by cal_factors[k] for engineering units.
-    # cal_factors: 10,0.5
-    # units: m/s2,N
-    ```
 
-  A channel with no unit shows `-`. A transfer function column has the
-  ratio of its output and input factors, and a unit such as `(m/s2)/N`.
+Files written by pydvma 2.6 and earlier (one file per kind, starting
+`# pydvma export: RAW data`) cannot be read back.
 
-**From Python**, use `dvma.export_to_matlab(dataset, filename='data')`
-and `dvma.export_to_csv(dataset.time_data_list, filename='time')`. For
-the same data the CSV is identical to the app's, and so is the `.mat`,
-apart from the creation time in its header. See
+**From Python**, `dvma.export_to_matlab(data, filename='data')` and
+`dvma.export_to_csv(data, filename='data')` write the same files, from
+a whole dataset or one list (`data.tf_data_list`). See
 [Import and export](../user-guide/import-export.md).
 
 ## Export figures
@@ -221,6 +243,8 @@ download each file through the browser instead.
 Press **Load Data** in the header. The web logger opens:
 
 - **`.dvma`** files, read directly;
+- **`.mat`** and **`.csv`** files written by **Export Matlab** and
+  **Export CSV**, or by Python's `export_to_matlab` and `export_to_csv`;
 - older **`.npy`** files saved by pydvma 1.4.0 and earlier (see
   [older files](dvma-format.md#older-npy-files));
 - **`.mat`** files from the original JW logger: spectra and transfer
@@ -231,10 +255,6 @@ Press **Load Data** in the header. The web logger opens:
   with its coherence), its cross-spectrum and, when the file has it, its
   time data (see
   [Import Vibration Apps transfer functions](../user-guide/import-export.md#import-vibration-apps-transfer-functions)).
-
-The `.mat` and `.csv` files written by **Export Matlab** and **Export
-CSV** cannot be reopened. Use `.dvma` to keep a session you want to
-come back to.
 
 **Loading adds; it does not replace.** With data already loaded, a new
 file's measurements appear alongside the current ones, in the tray and

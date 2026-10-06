@@ -39,36 +39,13 @@ Tore's choice. Open:
   points (poles shared, columns weighted equally), and the app no longer
   interpolates onto the first set's axis (`_align_fit_list` deleted).
   Tests in `tests/test_modal_mixed_axes.py`.
-- **`export_to_csv` problems** (found 2026-10-06). TF/FFT files are
-  written in numpy's complex form, `(re+imj)` in every cell including the
-  frequency column, which Excel/pandas/MATLAB read as text; and exporting
-  sets of different lengths crashes inside `np.append`. Tore asked why
-  pydvma cannot load its own CSV: no reader was ever written (CSV and
-  .mat were one-way exports, `.dvma` the round trip), and today's file
-  could not be read back faithfully anyway (no set boundaries, fs,
-  ch_in, names, timestamps or coherence, and FFT vs TF is ambiguous).
-  Fixing the export first (re/im columns, a header naming kind and set
-  per column) would make a reader straightforward.
-- **Minimum-phase reconstruction for a magnitude-only |H|** (Tore,
-  2026-10-06). The Vibration Apps can produce an |H| with no phase (from
-  the powers alone); the import flags it (`(|H| only, no phase)` in the
-  name, `source_settings['magnitude_only']`). Offer a minimum-phase
-  reconstruction (phase from the Hilbert transform of log|H|) as an
-  explicit, labelled option, so such a set can be fitted at all; never
-  silently.
-- **Fit mode: poles shared across sets vs each set separately** (Tore,
-  2026-10-06, design wanted). The app holds ONE modal model whose poles
-  are shared across every line visible at Fit (right for 4C6: many hammer
-  points on one structure). In 3C6 the measurements differ physically
-  (the shaker adds mass, the hammer does not), so each set should keep
-  its own poles. Today a fit on a different line set starts a fresh model
-  and replaces the old one. Proposal: a Fit-card switch, "Poles: shared
-  across sets | each set separately"; in the second, one Fit press fits
-  the window on every visible set independently and each set keeps its
-  own model, fit card and Refine, saved as one `ModalData` per set (the
-  `.dvma` already holds a list). Python already does this (one
-  `modal_fit_all_channels` call per set). Needs its own design round: it
-  restructures the modal store from one model to several.
+- ~~**`export_to_csv` problems**~~ — DONE 2026-10-06 (lossless-export
+  round, `dev/plans/2026-10-06-lossless-export-design.md`): CSV and MATLAB
+  exports carry the `.dvma` manifest and every array, and `load_data` /
+  Load Data read them back exactly. Follow-up worth having: a `.mat`
+  renamed without its extension is not recognised (MATLAB v5 files start
+  with a `MATLAB 5.0 MAT-file` text header that `sniffFormat` and
+  `load_data` could check, as they check the zip magic for `.dvma`).
 - **TF card shows meaningless estimator fields for sets with no time
   data** (cosmetic, pre-existing). An imported TF (Vibration Apps CSV,
   JW .mat, any orphan TF) shows "frame 0.00 s, nFFT 2, Δf = fs/2" in the

@@ -8,6 +8,30 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-10-06, later (Mac): **CSV and MATLAB exports are lossless
+and load back** (spec + plan `dev/plans/2026-10-06-lossless-export-*`,
+Tore-approved). `container.dataset_manifest` / `dataset_from_manifest`
+split the manifest from the zip (.dvma bytes byte-identical, checked
+against HEAD's code); `pydvma/_exchange.py` lays that manifest + every
+array out as `pydvma-csv 1` (one `# manifest:` line, a readable table
+per item, floats as shortest round-trip `repr`) and `pydvma-mat 1`
+(`pydvma_items` structs + `pydvma_manifest` JSON; the `*_all` matrices
+are GONE, Tore's call). `load_data` reads both; pydvma 2.6's exports are
+refused with the reason. Web app: Export CSV / Matlab build Save's
+document (`App.buildDocument`, shared with Save, incl. the sonogram
+question and the journal post) and the engine's `dvma_to_csv` /
+`dvma_to_mat` write it; Load Data sends every `.mat`/`.csv` to
+`file_to_dvma` (python's `load_data`), replacing `mat_to_dvma`,
+`vibration_csv_to_dvma` and `export_mat`; the TS CSV writer and its
+`fmtCalFactor` twin are deleted. Also this day: Vibration Apps format 2
+(time data → linked TimeData; Gxx/Gyy → CrossSpecData; one card per
+measurement via a shared `id_link`), the loaded-CrossSpecData CSD view
+fix, and the joint modal fit fitting every set on its own axis
+(subagent, `e77de56`). NO version bump (CHANGELOG `## Unreleased`, which
+says the next release must be at least minor). Open for Tore: the
+shared-vs-per-set poles fit mode (TODO, design wanted), H2/H_power,
+minimum phase.
+
 As of 2026-10-06 (Mac): **the Vibration Apps' transfer-function CSV
 imports** (3C6 Transfer function app, format `vibration-apps-tf-csv 1`;
 the spec came from the vibration_apps session as

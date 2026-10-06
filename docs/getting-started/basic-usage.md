@@ -128,11 +128,12 @@ To use your data elsewhere:
 
 ```python
 dvma.export_to_matlab(data, filename='my_test.mat')
-dvma.export_to_csv(data.time_data_list, filename='my_test.csv')
+dvma.export_to_csv(data, filename='my_test.csv')
 ```
 
-See [Import and Export](../user-guide/import-export.md) for what each
-format contains.
+Both hold everything the `.dvma` holds, and `load_data` reads them back.
+See [Import and Export](../user-guide/import-export.md) for their
+layouts.
 
 ## Units and calibration
 

@@ -5,6 +5,33 @@ follows [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+Both data exports change format, so scripts that read pydvma's CSV or
+`.mat` files need updating; the next release should be at least a minor
+version.
+
+### Changed
+
+- **CSV and MATLAB exports now hold everything a `.dvma` holds, and load
+  back.** `export_to_csv` and `export_to_matlab` (and the web app's
+  Export CSV / Export Matlab) write one file each: format `pydvma-csv 1`,
+  a readable table per item (axis rows, `.re`/`.im` column pairs,
+  coherence beside the TF) plus the `.dvma` manifest on one `#` line; and
+  format `pydvma-mat 1`, `pydvma_items` (one struct per item with its
+  exact arrays, `d.pydvma_items{2}.tf_data` in MATLAB) plus
+  `pydvma_manifest` as JSON. `load_data` and the web app's Load Data read
+  both back, giving exactly what a `.dvma` save/load gives: calibration,
+  units, names, timestamps, links between sets, coherence,
+  cross-spectra, sonograms, modal fits and the app's own state. Every
+  measurement keeps its own axis. **Removed:** the one-file-per-kind CSV
+  (every set on the first set's axis, complex values as `(re+imj)` text,
+  a crash on sets of different lengths), and the `.mat`'s interpolated
+  `time_data_all` / `freq_data_all` / `tf_data_all` matrices with their
+  `*_cal_factors` / `*_units`. Files written that way by pydvma 2.6 and
+  earlier cannot be read back, and `load_data` says so. Both functions
+  take a `DataSet` or any data list. The web app's exports run the same
+  Python writers in the engine, so Export CSV now starts the engine as
+  Export Matlab already did, and both ask Save's sonogram question.
+
 ### Added
 
 - **Import the Vibration Apps' transfer-function CSV.** The CSV that the

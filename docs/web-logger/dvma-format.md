@@ -56,6 +56,13 @@ with zipfile.ZipFile('session.dvma') as z:
   file again records the newer version.
 - `storage` is `"npy"`: the arrays are `.npy` members.
 
+The CSV and MATLAB exports carry this same manifest (as a `# manifest:`
+line, or the `pydvma_manifest` variable) with `storage` set to `"csv"` or
+`"mat"`, and each array in a table or a struct instead of a `.npy`
+member; a `csv_tables` or `mat_arrays` key says where each array is.
+They load back through the same reader, so all three formats hold the
+same information. See [Export data](export.md#export-data).
+
 Each entry in `items` is one data object:
 
 ```json

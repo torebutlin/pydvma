@@ -1,7 +1,7 @@
 # Import and Export
 
-Save and load whole datasets in pydvma's own format, and export the
-arrays to MATLAB, CSV or pandas.
+Save and load whole datasets in pydvma's own format, export them to
+MATLAB or CSV (both load back), and hand arrays to pandas.
 
 Give each function a filename, either as `filename=` (as below) or
 positionally, as in `dvma.load_data('my_test.dvma')`. It is required:
@@ -47,18 +47,30 @@ dvma.save_data(data, filename='first.dvma', sets=[0], overwrite_without_prompt=T
 subset = data.subset([0])     # the same selection, kept in memory (shared, not copied)
 ```
 
-## Export to MATLAB
+## Export to MATLAB and CSV
+
+Both write one file holding exactly what a `.dvma` holds, laid out for
+another tool, and `load_data` reads either back:
 
 ```python
 dvma.export_to_matlab(data, filename='my_test.mat', overwrite_without_prompt=True)
+dvma.export_to_csv(data, filename='my_test.csv', overwrite_without_prompt=True)
+
+again = dvma.load_data(filename='my_test.csv')   # or 'my_test.mat'
 ```
 
-The `.mat` file holds the time, frequency and transfer function arrays.
-Values are the raw stored numbers, with no calibration applied; the
-calibration travels with them as `time_cal_factors`, `time_units` and the
-`freq_` and `tf_` equivalents. See
-[What each output holds](../web-logger/export.md#what-each-output-holds)
-for the full list of variables.
+Pass a whole dataset, or one list (`data.tf_data_list`) to export only
+those items. Every measurement keeps its own axis, and the values are the
+raw stored numbers: each item carries its own calibration factors and
+units. In MATLAB, `d = load('my_test.mat'); d.pydvma_items{3}.tf_data`
+is the third item's transfer function. The CSV has a readable table per
+item (`freq_axis, tf_data[0].re, tf_data[0].im, tf_coherence[0]`). The
+[export page](../web-logger/export.md#export-data) describes both
+layouts, and how to read one CSV table with pandas.
+
+Exports from pydvma 2.6 and earlier (one CSV per kind, or a `.mat` of
+`time_data_all`-style matrices on one common axis) cannot be read back:
+`load_data` says so.
 
 `dvma.export_to_matlab_jwlogger(data, filename='my_test.mat')` writes the
 layout of Jim Woodhouse's MATLAB logger instead, and
@@ -66,22 +78,6 @@ layout of Jim Woodhouse's MATLAB logger instead, and
 spectral block and one sample rate: transfer functions are written in
 preference to FFTs, and in a file holding time data too the spectra are
 put on the time data's frequency grid.
-
-## Export to CSV
-
-Each call writes one file for one kind of data:
-
-```python
-dvma.export_to_csv(data.time_data_list, filename='my_time.csv', overwrite_without_prompt=True)
-dvma.export_to_csv(data.freq_data_list, filename='my_freq.csv', overwrite_without_prompt=True)
-dvma.export_to_csv(data.tf_data_list, filename='my_tf.csv', overwrite_without_prompt=True)
-```
-
-The file starts with `#` comment lines giving each column's calibration
-factor and unit, and the values are raw. In the frequency and transfer
-function files every cell is a complex number, so read them with
-`np.loadtxt('my_tf.csv', delimiter=',', dtype=complex)`. The
-[export page](../web-logger/export.md#export-csv) describes the layout.
 
 ## Import JW logger files
 
@@ -92,10 +88,9 @@ for both time captures and transfer function files:
 jw_data = dvma.load_data(filename='my_jw_capture.mat')
 ```
 
-The `.mat` files that `export_to_matlab` writes are export-only: loading
-one stops with an error saying so. Keep the `.dvma` file for anything you
-want to reopen. `dvma.import_from_matlab_jwlogger(filename=...)` does the
-same import directly.
+`dvma.import_from_matlab_jwlogger(filename=...)` does the same import
+directly; it refuses pydvma's own `.mat` exports, which `load_data`
+reads.
 
 For a transfer function file the frequency axis is built from the file's
 `npts` (FFT length) and `freq` (sample rate): `npts/2 + 1` bins, spaced
