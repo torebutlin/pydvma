@@ -652,6 +652,23 @@ def mat_to_dvma(mat_bytes):
     return {'dvma': container.save_bytes(ds)}
 
 
+def vibration_csv_to_dvma(csv_bytes, name=None):
+    """Import a Vibration Apps transfer-function CSV and return ``.dvma`` bytes.
+
+    The browser's Load Data sends a ``.csv`` here (a JS ``Uint8Array``)
+    when its first line names ``vibration-apps-tf-csv``. The text is
+    parsed by the same code as ``pydvma.file.import_from_vibration_apps_csv``
+    (one TfData per measurement), straight from memory with no temp file,
+    and the dataset is returned as ``{'dvma': <bytes>}`` for ``readDvma``,
+    as ``mat_to_dvma`` does. ``name`` is the file's name, for the error
+    message if the file is refused.
+    """
+    from pydvma import file as pfile
+    text = bytes(csv_bytes).decode('utf-8-sig')
+    ds = pfile._vibration_apps_dataset(text, name or 'the file')
+    return {'dvma': container.save_bytes(ds)}
+
+
 def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):
     """Zero the noise floor around an impulse on channel ``ch_impulse``.
 

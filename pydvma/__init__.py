@@ -1,5 +1,5 @@
 from .options import MySettings, Output_Signal_Settings ,set_plot_colours
-from .file import load_data, save_data, save_fig, export_to_matlab_jwlogger, export_to_matlab, export_to_csv, import_from_matlab_jwlogger
+from .file import load_data, save_data, save_fig, export_to_matlab_jwlogger, export_to_matlab, export_to_csv, import_from_matlab_jwlogger, import_from_vibration_apps_csv
 from .acquisition import log_data, output_signal, signal_generator, multisine_generator, stream_snapshot, CaptureCancelled, OutputRescaledWarning
 from .datastructure import (
     DataSet,

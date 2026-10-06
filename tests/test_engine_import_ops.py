@@ -119,3 +119,26 @@ def test_mat_to_dvma_refuses_a_pydvma_export(tmp_path, monkeypatch):
         mat_bytes = f.read()
     with pytest.raises(ValueError, match='export-only'):
         engine.mat_to_dvma(mat_bytes)
+
+
+def test_vibration_csv_to_dvma_roundtrips(tmp_path, monkeypatch):
+    """The browser's Load Data sends a Vibration Apps CSV through
+    ``engine.vibration_csv_to_dvma``: bytes in, ``.dvma`` bytes out, one
+    TfData per measurement, by the same parser as ``load_data``."""
+    import os
+    monkeypatch.chdir(tmp_path)
+    example = os.path.join(os.path.dirname(__file__), 'data',
+                           'vibration_apps_example.csv')
+    with open(example, 'rb') as f:
+        csv_bytes = f.read()
+    out = engine.vibration_csv_to_dvma(csv_bytes)
+    ds = _load_dvma_bytes(tmp_path, out['dvma'], 'va_roundtrip.dvma')
+    assert [len(t.freq_axis) for t in ds.tf_data_list] == [836, 13380, 20, 13380, 836]
+    assert ds.tf_data_list[3].tf_coherence is None
+    assert ds.tf_data_list[0].test_name == 'm1 noise 10 s · 100 Hz–5 kHz'
+
+
+def test_vibration_csv_to_dvma_refuses_other_csv_by_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="mine.csv is not a CSV saved by the Vibration Apps"):
+        engine.vibration_csv_to_dvma(b'# pydvma export\n1,2\n', name='mine.csv')

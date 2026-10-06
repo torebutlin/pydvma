@@ -5,7 +5,9 @@ Created on Mon Aug 27 14:32:35 2018
 @author: tb267
 """
 
+import datetime
 import os.path
+import re
 import warnings
 import zipfile
 import numpy as np
@@ -60,8 +62,9 @@ def load_data(parent=None, filename=None):
     The filename can be given positionally, ``load_data('name.dvma')``,
     or as ``filename=``, and is required: there is no file dialog.
 
-    Container detection is by content (zip magic bytes); ``.mat`` and
-    legacy ``.npy`` fall back to extension:
+    Detection is by content for ``.dvma`` (zip magic bytes) and the
+    Vibration Apps CSV (its first line); ``.mat`` and legacy ``.npy``
+    fall back to extension:
 
     - ``.dvma`` container files (zip magic bytes) — the default
       format since 1.5.0; safe, pickle-free (see `container`).
@@ -73,6 +76,10 @@ def load_data(parent=None, filename=None):
     - ``.mat`` (by extension) — JW-logger imports only, via
       `import_from_matlab_jwlogger`. The .mat that `export_to_matlab`
       writes is export-only and raises ValueError.
+    - the CSV that the Vibration Apps' Transfer function app saves
+      (first line names ``vibration-apps-tf-csv``), via
+      `import_from_vibration_apps_csv`. Any other ``.csv`` raises
+      ValueError, including pydvma's own `export_to_csv` files.
 
     Args:
        parent (optional): Deprecated and ignored, and going in pydvma
@@ -82,13 +89,14 @@ def load_data(parent=None, filename=None):
            as ``filename=``.
 
     Returns:
-       dataset (DataSet or None): The loaded data, or None if the
-           extension is not .dvma, .npy or .mat.
+       dataset (DataSet or None): The loaded data, or None if the file
+           is none of the above and its extension is not .csv.
 
     Raises:
        FileNotFoundError: If `filename` does not exist.
-       ValueError: If a ``.dvma`` file is not a valid container, or a
-           ``.mat`` file is not a JW-logger file.
+       ValueError: If a ``.dvma`` file is not a valid container, a
+           ``.mat`` file is not a JW-logger file, or a ``.csv`` file is not
+           a Vibration Apps CSV this version reads.
        TypeError: If no filename is given.
     '''
     filename = _resolve_filename(parent, filename, 'load_data',
@@ -99,6 +107,8 @@ def load_data(parent=None, filename=None):
 
     if zipfile.is_zipfile(filename):
         dataset = container.load(filename)
+    elif _is_vibration_apps_csv(filename):
+        dataset = import_from_vibration_apps_csv(filename=filename)
     elif filename.endswith('.mat'):
         dataset = import_from_matlab_jwlogger(filename=filename)
     elif filename.endswith('.npy'):
@@ -108,8 +118,10 @@ def load_data(parent=None, filename=None):
         raise ValueError(
             '{!r} has the .dvma extension but is not a valid container '
             '— empty, truncated, or corrupted?'.format(filename))
+    elif filename.lower().endswith('.csv'):
+        raise _not_vibration_apps_csv(os.path.basename(filename))
     else:
-        print('Expecting file to be .dvma, .npy or .mat')
+        print('Expecting file to be .dvma, .npy, .mat or a Vibration Apps .csv')
         return None
 
     return dataset
@@ -1139,3 +1151,206 @@ def import_from_matlab_jwlogger(filename=None):
         dataset.add_to_dataset(tf_data)
 
     return dataset
+
+#%% IMPORT FROM THE VIBRATION APPS (TRANSFER FUNCTION CSV)
+VIBRATION_APPS_CSV_FORMAT = 'vibration-apps-tf-csv 1'
+_VA_FORMAT_RE = re.compile(r'vibration-apps-tf-csv ([^\s)]+)')
+_VA_MEASUREMENT_RE = re.compile(r'#\s*m(\d+)( notes)?:\s?(.*)$')
+_VA_COLUMNS = ('measurement', 'f_Hz', 'H1_re', 'H1_im', 'coherence')
+
+
+def _not_vibration_apps_csv(name):
+    """The ValueError for a CSV that the Vibration Apps did not save."""
+    return ValueError(
+        "%s is not a CSV saved by the Vibration Apps' Transfer function "
+        "app: its first line does not name the format '%s'. That is the "
+        "only CSV pydvma can load. pydvma's own export_to_csv files cannot "
+        "be loaded back: to reopen pydvma data, save it with save_data "
+        "(.dvma)." % (name, VIBRATION_APPS_CSV_FORMAT))
+
+
+def _is_vibration_apps_csv(filename):
+    """True if `filename`'s first line names the Vibration Apps TF CSV format
+    (any version, so that a newer one is refused with a reason, not as
+    an unknown file)."""
+    with open(filename, 'rb') as fh:
+        head = fh.read(256).decode('utf-8-sig', errors='replace')
+    first = head.splitlines()[0] if head else ''
+    return first.startswith('#') and _VA_FORMAT_RE.search(first) is not None
+
+
+def _va_num(text):
+    """A header value as a float, or None if it is empty or not a number."""
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return None
+
+
+def _va_timestamp(text):
+    """The app's ISO 8601 UTC time as an aware datetime, or None."""
+    try:
+        t = datetime.datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo is not None else t.replace(tzinfo=datetime.timezone.utc)
+
+
+def _vibration_apps_dataset(text, name):
+    """Parse the text of a Vibration Apps TF CSV into a DataSet.
+
+    The body of `import_from_vibration_apps_csv`, which see; `name` is
+    only used in error messages. The browser's import
+    (`engine.vibration_csv_to_dvma`) comes through here too.
+    """
+    lines = text.lstrip('﻿').splitlines()
+    first = lines[0] if lines else ''
+    found = _VA_FORMAT_RE.search(first) if first.startswith('#') else None
+    if found is None:
+        raise _not_vibration_apps_csv(name)
+    if found.group(0) != VIBRATION_APPS_CSV_FORMAT:
+        raise ValueError(
+            "%s is format '%s', and this pydvma reads '%s' only. Update "
+            "pydvma (pip install --upgrade pydvma) to load it."
+            % (name, found.group(0), VIBRATION_APPS_CSV_FORMAT))
+
+    # The '#' block: one line of key=value pairs and one of notes per
+    # measurement, in the order the app lists them; other lines describe
+    # the file and are not needed here.
+    meta, notes, at = {}, {}, 0
+    while at < len(lines) and lines[at].startswith('#'):
+        m = _VA_MEASUREMENT_RE.match(lines[at])
+        if m and m.group(2):
+            notes[int(m.group(1))] = [s for s in m.group(3).split(' | ') if s]
+        elif m:
+            pairs = (kv.partition('=') for kv in m.group(3).split('; '))
+            meta[int(m.group(1))] = {k.strip(): v.strip()
+                                     for k, _, v in pairs if k.strip()}
+        at += 1
+
+    names = [c.strip() for c in lines[at].split(',')] if at < len(lines) else []
+    missing = [c for c in _VA_COLUMNS if c not in names]
+    if missing:
+        raise ValueError('%s has no %s column, so it cannot be imported.'
+                         % (name, ', '.join(missing)))
+    rows = [ln for ln in lines[at + 1:] if ln.strip()]
+    if not rows:
+        raise ValueError('%s has no data rows.' % name)
+    try:
+        # Empty fields (a one-frame result's coherence) read as NaN.
+        data = np.atleast_2d(np.genfromtxt(rows, delimiter=',', dtype=float))
+    except ValueError as e:
+        raise ValueError('%s: the data rows cannot be read (%s).'
+                         % (name, e)) from e
+    col = {c: data[:, names.index(c)] for c in _VA_COLUMNS}
+
+    numbers = col['measurement']
+    unlisted = sorted(set(numbers[~np.isnan(numbers)].astype(int)) - set(meta))
+    if unlisted:
+        raise ValueError(
+            "%s: measurement %d has rows but no '# m%d:' line; the file "
+            "looks edited or cut short." % (name, unlisted[0], unlisted[0]))
+
+    dataset = datastructure.DataSet()
+    for no, md in meta.items():
+        sel = numbers == no
+        if not sel.any():
+            raise ValueError(
+                "%s: measurement %d has a '# m%d:' line but no rows; the "
+                "file looks edited or cut short." % (name, no, no))
+        n_out = int(_va_num(md.get('channels')) or 1)
+        fs = _va_num(md.get('fs'))
+        settings = (options.MySettings(channels=n_out + 1, fs=fs) if fs
+                    else options.MySettings(channels=n_out + 1))
+        settings.ch_in = int(_va_num(md.get('ch_in')) or 0)
+        settings.ch_out_set = np.setxor1d(np.arange(n_out + 1), settings.ch_in)
+        if md.get('device_name'):
+            settings.device_name = md['device_name']
+
+        coh = col['coherence'][sel]
+        tf = datastructure.TfData(
+            col['f_Hz'][sel], (col['H1_re'][sel] + 1j * col['H1_im'][sel])[:, None],
+            None if np.all(np.isnan(coh)) else coh[:, None], settings,
+            units=[md.get('units') or '-'],
+            channel_cal_factors=np.array([_va_num(md.get('channel_cal_factors')) or 1.0]),
+            test_name=('m%d %s' % (no, md.get('test_name', ''))).strip())
+
+        t = _va_timestamp(md.get('timestamp'))
+        if t is not None:
+            tf.timestamp = t
+            lt = t.astimezone()
+            tf.timestring = '_%d_%d_%d_at_%d_%d_%d' % (
+                lt.year, lt.month, lt.day, lt.hour, lt.minute, lt.second)
+
+        nperseg = _va_num(md.get('nperseg'))
+        tf.source_settings = {
+            'calc': 'vibration_apps_' + md.get('kind', ''),
+            'window': md.get('window') or None,
+            'N_frames': int(_va_num(md.get('N_frames')) or 1),
+            'overlap': _va_num(md.get('overlap')),
+            'nperseg': None if nperseg is None else int(nperseg),
+            'ch_in': settings.ch_in,
+            'vibration_apps': dict(md, notes=notes.get(no, [])),
+        }
+        dataset.add_to_dataset(tf)
+    return dataset
+
+
+def import_from_vibration_apps_csv(filename=None):
+    '''
+    Imports the CSV that the Vibration Apps' Transfer function app saves.
+
+    The app (https://torebutlin.github.io/vibration_apps/apps/frf/, used
+    in 3C6) measures speaker to microphone in a browser and saves every
+    measurement it holds as one CSV, format ``vibration-apps-tf-csv 1``.
+    Each measurement becomes one `TfData`, in the file's order, named
+    ``m<no> <the app's name>`` with the app's card number. `load_data`
+    recognises the file by its first line, so ``load_data('x.csv')``
+    comes here too.
+
+    What each `TfData` holds:
+
+    - ``freq_axis``: the measurement's own frequencies. These differ
+      between measurements and need not be a uniform grid (a stepped
+      sine's points).
+    - ``tf_data``: H1 = S_xy/S_xx, one column, x what was played (or the
+      app's reference channel), y the microphone. The loop delay the app
+      found is already out of the phase. The file's H2 columns are not
+      imported.
+    - ``tf_coherence``: one column, or None for a result of one frame
+      (the app leaves its coherence empty: it is 1 by definition).
+    - ``units`` ``['-']`` and ``channel_cal_factors`` ``[1]``:
+      uncalibrated, microphone full scale per speaker full scale.
+    - ``settings``: ``fs``, ``channels`` (outputs + 1), ``ch_in``,
+      ``device_name`` (the microphone, when the browser named it).
+    - ``timestamp``: when it was measured, a timezone-aware UTC datetime.
+    - ``source_settings``: ``calc`` (``'vibration_apps_'`` + the kind:
+      ``noise``, ``sweep``, ``sine``, ``file``), ``window``, ``N_frames``,
+      ``overlap``, ``nperseg``, ``ch_in``, and ``vibration_apps``, every
+      key=value of the app's as a string plus its ``notes`` (a list), so
+      the test signal, loop delay and quality figures survive a .dvma
+      round trip. There is no ``source_signature``: no time data lies
+      behind these.
+
+    A measurement the app was hiding when it saved is imported all the
+    same. Keys and columns this version does not know are ignored.
+
+    Args:
+       filename (str or os.PathLike): File to import, given positionally or
+           as ``filename=``.
+
+    Returns:
+       dataset (DataSet): One `TfData` per measurement.
+
+    Raises:
+       ValueError: If the file's first line does not name the format,
+           including pydvma's own `export_to_csv` files; if it names
+           another version of it; or if columns, rows or a measurement's
+           header line are missing.
+       TypeError: If no filename is given.
+    '''
+    filename = _resolve_filename(None, filename, 'import_from_vibration_apps_csv',
+                                 "import_from_vibration_apps_csv('measurements.csv')")
+    with open(filename, encoding='utf-8-sig') as fh:
+        text = fh.read()
+    return _vibration_apps_dataset(text, os.path.basename(filename))
