@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - CSV first line exactly `# pydvma dataset (pydvma-csv 1)`; MATLAB variable `pydvma_format = 'pydvma-mat 1'`.
-- Floats `%.17g`, ints `%d`, booleans `0`/`1`, `nan`, `inf`, `-inf`; every array comes back bit-identical (dtype and shape too).
+- Floats as the shortest text that reads back to the same float64 (Python `repr`; first drafted as `%.17g`, which writes `0.1` as `0.10000000000000001`), ints `%d`, booleans `0`/`1`, `nan`, `inf`, `-inf`; every array comes back bit-identical (dtype and shape too).
 - `.dvma` bytes unchanged by the container refactor.
 - `.mat`: no `*_all`, `*_cal_factors`, `*_units` variables any more.
 - `export_to_csv` / `export_to_matlab`: first argument a `DataSet` or any data list; `parent` (deprecated) stays where it is; positional filename keeps working.

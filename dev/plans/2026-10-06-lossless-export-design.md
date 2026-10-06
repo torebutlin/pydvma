@@ -95,7 +95,8 @@ freq_axis,tf_data[0].re,tf_data[0].im,tf_coherence[0]
   axes flattened, C order, into columns. An array with no axis of that
   length (a sonogram's `time_axis`, a `ModalData`'s `M`) gets its own
   table. Complex arrays become `.re` / `.im` column pairs.
-- **Numbers**: floats `%.17g` (round-trips every float64 exactly),
+- **Numbers**: floats as the shortest text that reads back to the same
+  float64 (Python's `repr`: `0.1`, not `%.17g`'s `0.10000000000000001`),
   integers `%d`, booleans 0/1, `nan`, `inf`, `-inf`. dtypes restore
   from the manifest. Every array comes back **bit-identical**.
 - Reading: split at the `# table` lines, `np.loadtxt` each table in one
