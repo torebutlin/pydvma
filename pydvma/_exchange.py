@@ -284,3 +284,110 @@ def dataset_from_csv_text(text, name):
             arrays[spec['member']] = _array_from_columns(data, spec)
         pos = body_end - 1
     return container.dataset_from_manifest(manifest, arrays.__getitem__, name)
+
+
+# ---------------------------------------------------------------------------
+# MATLAB
+
+MAT_FORMAT = 'pydvma-mat 1'
+_MAT_FORMAT_RE = re.compile(r'pydvma-mat ([^\s)]+)')
+
+
+def is_pydvma_mat(d):
+    """True if the loaded MATLAB variables `d` are a pydvma export (any
+    version): they hold ``pydvma_manifest``."""
+    return 'pydvma_manifest' in d
+
+
+def _mat_text(value):
+    return '' if value is None else str(value)
+
+
+def dataset_to_mat_dict(dataset):
+    """`dataset` as the variables of a ``pydvma-mat 1`` file, for
+    ``scipy.io.savemat(..., oned_as='column')``.
+
+    - ``pydvma_format``: ``'pydvma-mat 1'``.
+    - ``pydvma_manifest``: the ``.dvma`` manifest as JSON text (MATLAB's
+      ``jsondecode`` reads it); its ``mat_arrays`` key gives each array's
+      item, field, shape and dtype, which is all the reader needs.
+    - ``pydvma_items``: a cell array with one struct per item, in order:
+      ``kind``, ``test_name``, ``units`` (a cell of text), ``fs``,
+      ``timestamp`` (ISO text), ``channel_cal_factors``, and each array
+      under its own field name at its exact shape (1-D arrays as column
+      vectors). In MATLAB, ``d = load('x.mat'); d.pydvma_items{2}.tf_data``.
+    """
+    manifest, arrays = container.dataset_manifest(dataset)
+    manifest['storage'] = 'mat'
+    manifest['mat_arrays'] = {}
+    items = np.empty((len(manifest['items']),), dtype=object)
+    for index, entry in enumerate(manifest['items']):
+        meta = entry.get('meta') or {}
+        settings = entry.get('settings') or {}
+        struct = {'kind': entry['kind'],
+                  'test_name': _mat_text(meta.get('test_name'))}
+        units = meta.get('units')
+        if isinstance(units, list):
+            struct['units'] = np.array([_mat_text(u) for u in units], dtype=object)
+        fs = settings.get('fs')
+        if isinstance(fs, (int, float)):
+            struct['fs'] = float(fs)
+        stamp = meta.get('timestamp')
+        if isinstance(stamp, dict) and '__datetime__' in stamp:
+            struct['timestamp'] = stamp['__datetime__']
+        cal = meta.get('channel_cal_factors')
+        if isinstance(cal, dict) and isinstance(cal.get('__array__'), list):
+            try:
+                struct['channel_cal_factors'] = np.asarray(cal['__array__'], dtype=float)
+            except (TypeError, ValueError):
+                pass                     # tagged non-finite entries: in the manifest
+        for field, member in (entry.get('arrays') or {}).items():
+            arr = arrays[member]
+            struct[field] = arr
+            manifest['mat_arrays'][member] = {
+                'item': index, 'field': field, 'shape': list(arr.shape),
+                'dtype': arr.dtype.str}
+        items[index] = struct
+    return {'pydvma_format': MAT_FORMAT,
+            'pydvma_manifest': json.dumps(manifest, allow_nan=False, ensure_ascii=True),
+            'pydvma_items': items}
+
+
+def dataset_from_mat_dict(d, name):
+    """Rebuild a DataSet from the variables of a ``pydvma-mat`` file.
+
+    Args:
+        d (dict): The variables, as ``scipy.io.loadmat(path,
+            simplify_cells=True)`` returns them.
+        name (str): What to call the file in error messages.
+
+    Returns:
+        dataset (DataSet): Exactly what was exported.
+
+    Raises:
+        ValueError: If `d` is another version of the format, or an array
+            is missing or no longer has its exported size.
+    """
+    fmt = str(d.get('pydvma_format', ''))
+    found = _MAT_FORMAT_RE.search(fmt)
+    if found is None or found.group(0) != MAT_FORMAT:
+        raise ValueError("%s is format '%s', and this pydvma reads '%s'; update "
+                         'pydvma (pip install --upgrade pydvma) to load it.'
+                         % (name, fmt or 'unknown', MAT_FORMAT))
+    manifest = json.loads(str(d['pydvma_manifest']))
+    items = d.get('pydvma_items')
+    if isinstance(items, dict):          # a one-element cell comes back as its struct
+        items = [items]
+    elif items is None:
+        items = []
+    arrays = {}
+    for member, spec in (manifest.get('mat_arrays') or {}).items():
+        try:
+            raw = np.asarray(items[spec['item']][spec['field']])
+            arr = raw.reshape(spec['shape']).astype(np.dtype(spec['dtype']))
+        except (IndexError, KeyError, ValueError, TypeError) as e:
+            raise ValueError('%s: item %d has no %s of the exported size %s; '
+                             'the file was changed after it was exported.'
+                             % (name, spec['item'], spec['field'], spec['shape'])) from e
+        arrays[member] = np.ascontiguousarray(arr)
+    return container.dataset_from_manifest(manifest, arrays.__getitem__, name)
