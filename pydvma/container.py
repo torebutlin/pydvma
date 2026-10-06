@@ -383,11 +383,23 @@ def _read_array(zf, member):
     return np.load(io.BytesIO(zf.read(member)), allow_pickle=False)
 
 
-def _write_dataset(zf, dataset):
-    """Write every item in `dataset` plus `manifest.json` into the
-    already-open `zf`. The one writer shared by `save` and
-    `save_bytes` — the manifest schema and member layout are defined
-    here, once (see module docstring)."""
+def dataset_manifest(dataset):
+    """The manifest and arrays a ``.dvma`` save of `dataset` holds.
+
+    The one place the manifest schema and member layout are defined (see
+    the module docstring). `save` / `save_bytes` zip the result; the CSV
+    and MATLAB exports (`pydvma._exchange`) carry the same manifest and
+    arrays in their own layouts, so all three hold exactly the same
+    information.
+
+    Args:
+        dataset (DataSet): The data to describe.
+
+    Returns:
+        A tuple ``(manifest, arrays)``: the manifest dict (strict-JSON
+        encodable) and a dict ``{member_name: ndarray}`` of every array it
+        references, in item and field order.
+    """
     manifest = {
         'format': FORMAT_NAME,
         'format_version': FORMAT_VERSION,
@@ -395,6 +407,7 @@ def _write_dataset(zf, dataset):
         'storage': 'npy',
         'items': [],
     }
+    arrays = {}
     data_lists = [dataset.time_data_list, dataset.freq_data_list,
                   dataset.cross_spec_data_list, dataset.tf_data_list,
                   dataset.modal_data_list, dataset.sono_data_list,
@@ -415,7 +428,7 @@ def _write_dataset(zf, dataset):
                 if kind == 'ModalData' and len(arr) == 0:
                     continue         # fresh ModalData has M == []
                 member = 'arrays/{:04d}_{}.npy'.format(index, field)
-                _write_array(zf, member, arr)
+                arrays[member] = np.asarray(arr)
                 entry['arrays'][field] = member
             for field in _META_FIELDS[kind]:
                 entry['meta'][field] = _encode_field(
@@ -437,6 +450,16 @@ def _write_dataset(zf, dataset):
             _apply_item_extra(item, entry)
             manifest['items'].append(entry)
             index += 1
+    return manifest, arrays
+
+
+def _write_dataset(zf, dataset):
+    """Write `dataset`'s arrays and then its ``manifest.json`` into the
+    already-open `zf` — the zip carrier shared by `save` and `save_bytes`
+    (the content comes from `dataset_manifest`)."""
+    manifest, arrays = dataset_manifest(dataset)
+    for member, arr in arrays.items():
+        _write_array(zf, member, arr)
     zf.writestr('manifest.json',
                 json.dumps(manifest, indent=1, allow_nan=False))
 
@@ -528,49 +551,74 @@ def load(filename, _source_name=None):
                 '{!r} is a zip file but not a dvma-dataset '
                 '(manifest format={!r})'.format(source,
                                                  manifest.get('format')))
-        file_version = manifest.get('format_version')
-        if not isinstance(file_version, int) or file_version > FORMAT_VERSION:
+        return dataset_from_manifest(
+            manifest, lambda member: _read_array(zf, member), source)
+
+
+def dataset_from_manifest(manifest, get_array, source):
+    """Rebuild a DataSet from a ``.dvma`` manifest and its arrays.
+
+    The reader `load` uses, apart from the zip: the CSV and MATLAB
+    exports (`pydvma._exchange`) rebuild their datasets through it too.
+    Objects are rebuilt attribute by attribute (no constructors run), and
+    unknown manifest keys are kept for the next save (see `load`).
+
+    Args:
+        manifest (dict): The decoded manifest.
+        get_array (callable): Returns the ndarray for a member name (a
+            value of an item's ``arrays`` dict).
+        source: What to call the file in error messages.
+
+    Returns:
+        dataset (DataSet): The rebuilt data.
+
+    Raises:
+        ValueError: If the manifest's ``format_version`` is newer than
+            this reader supports, or an item's ``kind`` is unknown.
+    """
+    file_version = manifest.get('format_version')
+    if not isinstance(file_version, int) or file_version > FORMAT_VERSION:
+        raise ValueError(
+            '{!r} uses dvma-dataset format_version {!r}, but this '
+            'pydvma reads up to {}. Update pydvma to open this file '
+            '(pip install --upgrade pydvma).'.format(
+                source, file_version, FORMAT_VERSION))
+    dataset = datastructure.DataSet()
+    for entry in manifest['items']:
+        kind = entry['kind']
+        cls = _KIND_CLASSES.get(kind)
+        if cls is None:
             raise ValueError(
-                '{!r} uses dvma-dataset format_version {!r}, but this '
-                'pydvma reads up to {}. Update pydvma to open this file '
-                '(pip install --upgrade pydvma).'.format(
-                    source, file_version, FORMAT_VERSION))
-        dataset = datastructure.DataSet()
-        for entry in manifest['items']:
-            kind = entry['kind']
-            cls = _KIND_CLASSES.get(kind)
-            if cls is None:
-                raise ValueError(
-                    '{!r} contains unknown data kind {!r} — written by '
-                    'a newer pydvma?'.format(source, kind))
-            item = cls.__new__(cls)
-            arrays = entry.get('arrays', {})
-            meta = entry.get('meta', {})
-            for field in _ARRAY_FIELDS[kind]:
-                member = arrays.get(field)
-                setattr(item, field, _read_array(zf, member)
-                        if member is not None else None)
-            if kind == 'ModalData' and 'M' not in arrays:
-                item.M = []                  # matches fresh ModalData
-            for field in _META_FIELDS[kind]:
-                setattr(item, field, _decode_value(meta.get(field)))
-            for field in _OPTIONAL_META.get(kind, ()):
-                # restore only when present: absent must stay absent so
-                # downstream hasattr() guards keep working
-                if meta.get(field) is not None:
-                    setattr(item, field, _decode_value(meta[field]))
-            item.settings = _settings_from_dict(entry.get('settings'))
-            extra = _collect_item_extra(entry, kind)
-            if extra:
-                setattr(item, _ITEM_EXTRA_ATTR, extra)
-            if kind == 'ModalData' and 'M' in arrays:
-                # rebuild the derived per-mode summary arrays
-                from . import modal
-                fn, zn, an, pn, rk, rm = modal.unpack_matrix(item.M)
-                item.fn, item.zn, item.an, item.pn = fn, zn, an, pn
-            dataset.add_to_dataset(item)
-        dataset.pydvma_version = manifest.get('pydvma_version',
-                                               dataset.pydvma_version)
+                '{!r} contains unknown data kind {!r} — written by '
+                'a newer pydvma?'.format(source, kind))
+        item = cls.__new__(cls)
+        arrays = entry.get('arrays', {})
+        meta = entry.get('meta', {})
+        for field in _ARRAY_FIELDS[kind]:
+            member = arrays.get(field)
+            setattr(item, field, get_array(member)
+                    if member is not None else None)
+        if kind == 'ModalData' and 'M' not in arrays:
+            item.M = []                  # matches fresh ModalData
+        for field in _META_FIELDS[kind]:
+            setattr(item, field, _decode_value(meta.get(field)))
+        for field in _OPTIONAL_META.get(kind, ()):
+            # restore only when present: absent must stay absent so
+            # downstream hasattr() guards keep working
+            if meta.get(field) is not None:
+                setattr(item, field, _decode_value(meta[field]))
+        item.settings = _settings_from_dict(entry.get('settings'))
+        extra = _collect_item_extra(entry, kind)
+        if extra:
+            setattr(item, _ITEM_EXTRA_ATTR, extra)
+        if kind == 'ModalData' and 'M' in arrays:
+            # rebuild the derived per-mode summary arrays
+            from . import modal
+            fn, zn, an, pn, rk, rm = modal.unpack_matrix(item.M)
+            item.fn, item.zn, item.an, item.pn = fn, zn, an, pn
+        dataset.add_to_dataset(item)
+    dataset.pydvma_version = manifest.get('pydvma_version',
+                                           dataset.pydvma_version)
     return dataset
 
 

@@ -955,3 +955,40 @@ class TestDerivedItemUniqueId:
         container.save(data, str(path))
         loaded = container.load(str(path))
         assert loaded.freq_data_list[0].unique_id == fd.unique_id
+
+
+# ---- the manifest + arrays, apart from the zip (lossless-export round) ----
+# CSV and MATLAB exports carry exactly what a .dvma holds by reusing these
+# two halves; the .dvma itself must be what it always was.
+from _rich_dataset import assert_same_dataset, rich_dataset  # noqa: E402
+
+
+def test_the_zip_holds_exactly_the_manifest_and_arrays():
+    ds = rich_dataset()
+    manifest, arrays = container.dataset_manifest(ds)
+    with zipfile.ZipFile(io.BytesIO(container.save_bytes(ds))) as zf:
+        names = zf.namelist()
+        assert names[-1] == 'manifest.json'
+        assert names[:-1] == list(arrays)            # same members, same order
+        assert json.loads(zf.read('manifest.json')) == manifest
+        assert zf.read('manifest.json').decode() == json.dumps(
+            manifest, indent=1, allow_nan=False)
+        for member, arr in arrays.items():
+            back = np.load(io.BytesIO(zf.read(member)), allow_pickle=False)
+            assert back.dtype == arr.dtype and back.shape == arr.shape
+            np.testing.assert_array_equal(back, arr)
+
+
+def test_dataset_from_manifest_rebuilds_what_load_does():
+    ds = rich_dataset()
+    manifest, arrays = container.dataset_manifest(ds)
+    rebuilt = container.dataset_from_manifest(manifest, arrays.__getitem__, 'test')
+    assert_same_dataset(rebuilt, container.load_bytes(container.save_bytes(ds)))
+    assert_same_dataset(rebuilt, ds)
+
+
+def test_dataset_from_manifest_checks_the_format_and_version():
+    manifest, arrays = container.dataset_manifest(rich_dataset())
+    manifest['format_version'] = container.FORMAT_VERSION + 1
+    with pytest.raises(ValueError, match="'thing.csv' uses dvma-dataset format_version"):
+        container.dataset_from_manifest(manifest, arrays.__getitem__, 'thing.csv')
