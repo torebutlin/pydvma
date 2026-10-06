@@ -31,6 +31,22 @@ follows [semantic versioning](https://semver.org/).
   the `|S_xy|` label, and PSD showed nothing. The loader now seeds the
   auto-powers and `enbw_hz` too, as a computed one has.
 
+### Fixed
+
+- **A joint modal fit across transfer functions on different frequency
+  axes read the wrong rows of every set after the first.**
+  `modal_fit_all_channels` took the in-band rows from the first set's
+  axis and read the same rows of the others, so a set at another sample
+  rate or frame length gave a silently wrong fn and zeta (or an
+  IndexError when it was shorter); `modal_refine` and
+  `reconstruct_transfer_function_global` had the same assumption. Each
+  set is now fitted on its own points inside the band, with the poles
+  shared and each column weighted equally whatever its resolution. When
+  every set shares one axis the results are unchanged, to the bit. A set
+  with no points in the band raises an error naming it, and
+  `freq_range=None` now spans every set's axis. The web app's Fit stage
+  no longer interpolates the sets onto the first one's axis.
+
 ## 2.6.0 — 2026-09-29
 
 Follow-ups from the 2.5.0 calibration review — the questions it left
