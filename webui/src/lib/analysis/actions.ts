@@ -27,11 +27,10 @@
  *
  * Modal fit (Task A1): `calcFit` runs the STATELESS `calc_fit` engine op and
  * pushes the decoded result into the injected `modal` store (which owns the
- * accumulated modal matrix and re-sends it). `exportMat` / `exportArrays` are
- * shared-spine accessors the Export card (a sibling agent) consumes; both,
- * plus `subsetDataset` for Save, take the Export card's optional
- * "Choose sets…" pick (`choosableSets` supplies its rows) — absent always
- * means EVERY measurement, exactly as before the picker existed.
+ * accumulated modal matrix and re-sends it). `subsetDataset`, which Save and
+ * the data exports share (App's `buildDocument`), takes the Export card's
+ * optional "Choose sets…" pick (`choosableSets` supplies its rows) — absent
+ * always means EVERY measurement, exactly as before the picker existed.
  *
  * Concurrency: live slider re-issues are debounced (150 ms) and each
  * action kind carries a PER-KIND stale seq (keyed 'fft'/'psd'/'tf'/
@@ -95,21 +94,6 @@ const emptyErrors = (): Record<Kind, string> =>
 
 /** Measurement type for the modal fit (Qt's "TF type" combo). */
 export type MeasurementType = 'acc' | 'vel' | 'dsp';
-
-/** A per-set export accessor slice (raw decoded columns for the CSV builder). */
-export interface ExportSetArrays {
-  setId: number;
-  axis: Float64Array;
-  columns: Float64Array[] | { re: Float64Array; im: Float64Array }[];
-  /**
-   * Per-column calibration factors and units for the CSV header. The COLUMNS
-   * stay raw — pydvma's data exports are deliberately uncalibrated — these
-   * only let the file say what the factor would be. Structurally the same as
-   * `export/data.ts`'s `ExportSet`, which consumes them.
-   */
-  calFactors?: readonly number[];
-  units?: readonly string[];
-}
 
 /** A worker array crosses either as a plain object or a toJs Map. */
 function mval(v: unknown, k: string): unknown {
@@ -3618,13 +3602,6 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     };
   }
 
-  /** The working sets an export's optional subset pick names (absent ⇒ all). */
-  function exportSets(setIds?: readonly number[]): WorkingSet[] {
-    if (!setIds) return working;
-    const chosen = new Set(setIds);
-    return working.filter((w) => chosen.has(w.setId));
-  }
-
   /**
    * The measurements a subset pick can choose between — one row per source
    * set in `working`, in load order, each with its display NAME (read fresh,
@@ -3719,143 +3696,6 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     };
   }
 
-  /**
-   * Per-column calibration of one set's export, shared by BOTH data exports
-   * (CSV header, `.mat` `<kind>_cal_factors` / `<kind>_units`). The columns
-   * themselves stay RAW, as pydvma writes them, so this is metadata only:
-   * per-CHANNEL factors/units for time and freq; for a TF the per-output-
-   * column RATIO cal[out]/cal[in] and its 'out/in' unit — matching
-   * `pydvma.file._column_calibration`, which is what makes the app's files
-   * the same as python's (CSV byte-identical; `.mat` identical after the
-   * header timestamp). Missing entries pad to `1` / `'-'`.
-   */
-  function exportColumnCalibration(
-    kind: 'time' | 'freq' | 'tf',
-    setId: number,
-    cols: number,
-  ): { calFactors: number[]; units: string[] } {
-    const cal = getCalibration(setId);
-    const tfSlice = kind === 'tf' ? get(derived)[setId]?.tf : undefined;
-    const tfChIn = tfSlice ? (tfSlice.chIn === undefined ? 0 : tfSlice.chIn) : 0;
-    const srcOf = (c: number): number => (
-      kind !== 'tf' || tfChIn === null ? c : (c < tfChIn ? c : c + 1)
-    );
-    const calFactors: number[] = [];
-    const units: string[] = [];
-    for (let c = 0; c < cols; c++) {
-      const src = srcOf(c);
-      const f = cal.factors[src] ?? 1;
-      const u = cal.units[src] ?? '-';
-      if (kind === 'tf' && tfChIn !== null) {
-        const fin = cal.factors[tfChIn] ?? 1;
-        calFactors.push(fin !== 0 ? f / fin : f);
-        // Parenthesised like python's `analysis.wrap_unit`, so a compound
-        // numerator cannot be misread — `(m/s²)/N`, not `m/s²/N`. The two
-        // exporters write byte-identical files, so the rule has to match.
-        units.push(`${wrapUnit(u)}/${wrapUnit(cal.units[tfChIn] ?? '-')}`);
-      } else {
-        calFactors.push(f);
-        units.push(u);
-      }
-    }
-    return { calFactors, units };
-  }
-
-  /**
-   * Raw decoded per-set arrays for the CSV builder (Wave-A shared spine —
-   * Agent 2 owns the CSV/preview UI). PURE accessor, no engine call: reads
-   * the decoded `derived` slices and splits each into per-channel columns.
-   * `'time'` returns real `Float64Array` columns; `'freq'`/`'tf'` return
-   * complex `{re, im}` columns. Sets without the requested kind are skipped.
-   *
-   * `setIds` (the "Choose sets…" pick) restricts the export to those
-   * measurements; ABSENT means every set, exactly as before. An EMPTY list
-   * is an empty pick, not "no filter" — it exports nothing.
-   */
-  function exportArrays(kind: 'time' | 'freq' | 'tf', setIds?: readonly number[]): ExportSetArrays[] {
-    const d = get(derived);
-    const out: ExportSetArrays[] = [];
-    for (const ws of exportSets(setIds)) {
-      const slice = kind === 'time' ? d[ws.setId]?.time
-        : kind === 'freq' ? d[ws.setId]?.freq
-          : d[ws.setId]?.tf;
-      if (!slice) continue;
-      const { axis, data } = slice;
-      const rows = axis.length;
-      const cols = data.shape[1] ?? 1;
-      const { calFactors, units } = exportColumnCalibration(kind, ws.setId, cols);
-      if (kind === 'time') {
-        const columns: Float64Array[] = [];
-        for (let c = 0; c < cols; c++) {
-          const col = new Float64Array(rows);
-          for (let r = 0; r < rows; r++) col[r] = data.re[r * cols + c];
-          columns.push(col);
-        }
-        out.push({ setId: ws.setId, axis, columns, calFactors, units });
-      } else {
-        const columns: { re: Float64Array; im: Float64Array }[] = [];
-        for (let c = 0; c < cols; c++) {
-          const cre = new Float64Array(rows), cim = new Float64Array(rows);
-          for (let r = 0; r < rows; r++) {
-            const idx = r * cols + c;
-            cre[r] = data.re[idx]; cim[r] = data.im ? data.im[idx] : 0;
-          }
-          columns.push({ re: cre, im: cim });
-        }
-        out.push({ setId: ws.setId, axis, columns, calFactors, units });
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Build a MATLAB `.mat` of every computed kind and return its bytes
-   * (Wave-A shared spine — Agent 2's Export card calls this). Sends each
-   * set's raw decoded row-major buffers (the `DecodedArray.re`/`im` are
-   * already row-major (rows, cols)) to the `export_mat` glue op, which
-   * interpolates onto a per-kind common axis, column-concatenates, and
-   * `scipy.io.savemat`s. RAW values; no coherence. Each set also carries its
-   * per-column `cal_factors` / `units` (`exportColumnCalibration`, the same
-   * values the CSV header gets), which the op writes as `<kind>_cal_factors`
-   * / `<kind>_units` exactly as python's `export_to_matlab` does.
-   *
-   * `setIds` (the "Choose sets…" pick) restricts the export to those
-   * measurements; ABSENT means every set, exactly as before.
-   */
-  async function exportMat(setIds?: readonly number[]): Promise<Uint8Array> {
-    const d = get(derived);
-    const time_sets: unknown[] = [];
-    const freq_sets: unknown[] = [];
-    const tf_sets: unknown[] = [];
-    const cal = (kind: 'time' | 'freq' | 'tf', setId: number, cols: number) => {
-      const { calFactors, units } = exportColumnCalibration(kind, setId, cols);
-      return { cal_factors: calFactors, units };
-    };
-    for (const ws of exportSets(setIds)) {
-      const t = d[ws.setId]?.time;
-      if (t) {
-        const cols = t.data.shape[1] ?? 1;
-        time_sets.push({ axis: t.axis, data: t.data.re, cols, ...cal('time', ws.setId, cols) });
-      }
-      // Complex kinds always carry `im`; include it only when present (never
-      // send a JS null — the engine treats a missing key as zero imag).
-      const f = d[ws.setId]?.freq;
-      if (f) {
-        const cols = f.data.shape[1] ?? 1;
-        freq_sets.push({ axis: f.axis, re: f.data.re, ...(f.data.im ? { im: f.data.im } : {}), cols, ...cal('freq', ws.setId, cols) });
-      }
-      const tf = d[ws.setId]?.tf;
-      if (tf) {
-        const cols = tf.data.shape[1] ?? 1;
-        tf_sets.push({ axis: tf.axis, re: tf.data.re, ...(tf.data.im ? { im: tf.data.im } : {}), cols, ...cal('tf', ws.setId, cols) });
-      }
-    }
-    engine.boot();
-    const res = await engine.enqueue('export_mat', { time_sets, freq_sets, tf_sets });
-    const mat = mval(res, 'mat');
-    return mat instanceof Uint8Array ? mat : Uint8Array.from(mat as ArrayLike<number>);
-  }
-
   return {
     dataset, derived, computeErrors, busy, modal,
     loadDataset, addRecordedSet, addBlaSets, removeBlaRun, undoRemoveBlaRun, stampUiState,
@@ -3866,7 +3706,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     staleChains,
     calcFft, calcPsd, calcTf, calcSono, lastSonoChannel, cleanImpulse, cleanedSets, hasComputed,
     resampleTime, undoResample,
-    calcFit, fitLineSummary, calcDamping, calcDampingBands, exportArrays, exportMat, setCsdPair,
+    calcFit, fitLineSummary, calcDamping, calcDampingBands, setCsdPair,
     /** Subset Save/Export (round-12 "Choose sets…") — see each function's doc. */
     choosableSets, subsetDataset,
     getCalibration, setCalFactors,

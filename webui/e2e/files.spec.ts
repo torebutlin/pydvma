@@ -95,7 +95,7 @@ test('autosave persists and the restore banner repopulates on reload', async ({ 
   await expect(page.getByTestId('tray-card-0')).toBeVisible();
 });
 
-// .mat (JW-logger) import, end to end through the engine's mat_to_dvma
+// .mat (JW-logger) import, end to end through the engine's file_to_dvma
 // (round-7e). The fixture is a synthetic JW TF file — one complex FRF column
 // plus one COHERENCE column (real, in [0,1]), the layout of Jim Woodhouse's
 // admittance measurements. The import must attach the coherence as the TF's
@@ -159,7 +159,7 @@ test('loading a second file APPENDS its sets to the tray', async ({ page }) => {
 // The Vibration Apps' Transfer function app (3C6) saves every measurement it
 // holds as ONE csv (format vibration-apps-tf-csv 1), each on its own
 // frequencies. Load Data sniffs the first line and converts it through the
-// engine's vibration_csv_to_dvma, the same parser as python's load_data. The
+// engine's file_to_dvma, which runs python's load_data itself. The
 // file is the python suite's fixture: five measurements, the fourth a single
 // frame (no coherence), the fifth hidden in the app when saved.
 test('csv import (Vibration Apps): one TF set per measurement', async ({ page }) => {
@@ -196,15 +196,15 @@ test('csv import (Vibration Apps, format 2): time data, one card per measurement
   await expect(page.getByTestId('toast').filter({ hasText: /failed|could not/i })).toHaveCount(0);
 });
 
-// Any other csv — pydvma's own export is the likely one — is refused before the
-// engine, with the reason, rather than as an unrecognised file.
-test('csv import: a csv the Vibration Apps did not save is refused with why', async ({ page }, info) => {
-  const own = info.outputPath('own.csv');
-  writeFileSync(own, '# pydvma export: RAW data, calibration NOT applied.\n1,2\n');
+test('csv import: a csv pydvma cannot read is refused with why', async ({ page }, info) => {
+  // pydvma 2.6's own CSV export (one table, no record of its columns) is the
+  // likely one; python's load_data says why, through the engine.
+  const old = info.outputPath('old.csv');
+  writeFileSync(old, '# pydvma export: RAW data, calibration NOT applied.\n1,2\n');
   await page.goto('/');
-  await loadViaFallback(page, own);
+  await loadViaFallback(page, old);
   await expect(
-    page.getByTestId('toast').filter({ hasText: "not a CSV saved by the Vibration Apps" }),
-  ).toBeVisible();
+    page.getByTestId('toast').filter({ hasText: 'pydvma 2.6 or earlier' }),
+  ).toBeVisible({ timeout: 200_000 });
   await expect(page.getByTestId('tray-card-0')).toHaveCount(0);
 });

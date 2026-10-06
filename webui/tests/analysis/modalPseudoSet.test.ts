@@ -105,7 +105,7 @@ test('a fit registers a role:fit pseudo-set with a recon tf slice, excluded from
   // EXCLUSIONS: not in dataSetsView, not in workingSets, not an export target.
   expect(get(sel.dataSetsView).some((s) => s.id === fit.id)).toBe(false);
   expect(actions.workingSets().some((w) => w.setId === fit.id)).toBe(false);
-  expect(actions.exportArrays('tf')).toHaveLength(1);   // only the measured set
+  expect(actions.choosableSets().some((c) => c.setId === fit.id)).toBe(false);
 });
 
 test('the fit adds a ModalData item to the dataset (M + id_link + measurement_type)', async () => {

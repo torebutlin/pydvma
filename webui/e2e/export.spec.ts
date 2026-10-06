@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { expect, test, type Download, type Page } from '@playwright/test';
+import { expect, test, type Download, type Page, type TestInfo } from '@playwright/test';
 
 /**
  * Task 14 (figure export) e2e — the FALLBACK download path (Playwright's
@@ -78,93 +78,71 @@ test('the top-bar Save Figure opens the Export stage from any view', async ({ pa
 });
 
 /**
- * Data export (Task A3): CSV (pure TS) + Matlab (engine `scipy.io.savemat`).
- *
- * These need the `exporter` accessor wired into the card
- * (`ContextCard` passing `exporter={actions}`, a one-line Wave-A integration
- * step). Until that lands the Matlab/CSV buttons are DISABLED by design, so
- * each test skips itself when the button is disabled rather than failing —
- * they activate automatically once the wiring + `actions.exportArrays` /
- * `actions.exportMat` are in place. The card's execute buttons are scoped to
- * the Export region so the ribbon's own "Export" stage button never matches.
+ * Data export (lossless-export round, 2026-10-06): Export CSV and Export
+ * Matlab write the very document Save writes, converted by the engine's
+ * python writers (`dvma_to_csv` / `dvma_to_mat`), so each is ONE file holding
+ * what the .dvma holds — and Load Data reads it back. Both boot the engine.
+ * The card's buttons are scoped to the Export region so the ribbon's own
+ * "Export" stage button never matches.
  */
-test('Export stage → Export CSV downloads a raw-values .csv (calibration header + real %.18e rows)', async ({
-  page,
-}) => {
+
+/** Click Load Data and answer the fallback file chooser with `path`. */
+async function loadViaFallback(page: Page, path: string): Promise<void> {
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Load Data' }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles(path);
+}
+
+/** Export with `button`, then load the download back: the sets double. */
+async function exportAndReload(
+  page: Page, info: TestInfo, button: string, ext: string,
+): Promise<string> {
   await openExport(page);
   const region = page.getByRole('region', { name: 'Export stage controls' });
-  const csvBtn = region.getByRole('button', { name: 'Export CSV' });
-  await expect(csvBtn).toBeVisible();
-  test.skip(
-    await csvBtn.isDisabled(),
-    'exporter not wired yet — ContextCard must pass exporter={actions}',
-  );
+  const btn = region.getByRole('button', { name: button });
+  await expect(btn).toBeEnabled();
+  const before = await page.getByTestId(/^tray-card-\d+$/).count();
 
-  // fixture=1 (impulse.dvma) carries Time + FFT + TF, and loading now seeds
-  // the derived views (round-4 bug 3), so an all-kinds CSV export writes one
-  // file per kind: <base>-time.csv, <base>-freq.csv, <base>-tf.csv. Collect
-  // every download the single click fires.
   const downloads: Download[] = [];
   page.on('download', (d) => downloads.push(d));
-  await csvBtn.click();
-  await expect.poll(() => downloads.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(3);
-  const names = downloads.map((d) => d.suggestedFilename());
-  expect(names.some((n) => /-time\.csv$/.test(n))).toBe(true);
-  expect(names.some((n) => /-freq\.csv$/.test(n))).toBe(true);
-  expect(names.some((n) => /-tf\.csv$/.test(n))).toBe(true);
+  await btn.click();
+  // The first export boots pyodide — allow the full boot.
+  await expect.poll(() => downloads.length, { timeout: 200_000 }).toBe(1);
+  await page.waitForTimeout(500);
+  expect(downloads).toHaveLength(1);                     // ONE file, not one per kind
+  expect(downloads[0].suggestedFilename()).toMatch(new RegExp(`\\.${ext}$`));
+  // Keep the file's own name: a .mat is recognised by its extension.
+  const path = info.outputPath(downloads[0].suggestedFilename());
+  await downloads[0].saveAs(path);
 
-  // The time CSV opens with the CALIBRATION HEADER: these exports are raw
-  // (uncalibrated) volts by design, so the file has to say so and carry the
-  // per-column factor that converts to engineering units. Every header line is
-  // '#'-prefixed exactly as np.savetxt writes it, so np.loadtxt and
-  // pandas.read_csv(comment='#') skip it — see `buildCsvHeader`.
-  const timeDl = downloads.find((d) => /-time\.csv$/.test(d.suggestedFilename()))!;
-  const text = readFileSync((await timeDl.path())!, 'utf8');
-  const lines = text.split('\n');
-  expect(lines[0]).toBe('# pydvma export: RAW data, calibration NOT applied.');
-  const header = lines.filter((l) => l.startsWith('#'));
-  expect(header.some((l) => l.startsWith('# cal_factors: '))).toBe(true);
-  expect(header.some((l) => l.startsWith('# units: '))).toBe(true);
-
-  // The DATA rows are unchanged: axis starts at 0, every cell numpy's %.18e
-  // (no complex parens). This is the byte-for-byte contract with
-  // `pydvma.file.export_to_csv`, which the header must not disturb.
-  const dataLines = lines.filter((l) => l && !l.startsWith('#'));
-  expect(dataLines[0].startsWith('0.000000000000000000e+00,')).toBe(true);
-  expect(dataLines[0]).toMatch(/^-?\d\.\d{18}e[+-]\d{2}(,-?\d\.\d{18}e[+-]\d{2})+$/);
-});
+  // Load Data APPENDS: the exported sets come back beside the originals.
+  await loadViaFallback(page, path);
+  await expect(page.getByTestId(/^tray-card-\d+$/)).toHaveCount(2 * before, { timeout: 200_000 });
+  await expect(page.getByTestId('toast').filter({ hasText: /failed|could not/i })).toHaveCount(0);
+  // impulse.dvma carries a TF, and it came back too.
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeAttached();
+  return path;
+}
 
 test.describe('@engine', () => {
-  test.setTimeout(240_000);
+  test.setTimeout(400_000);
 
-  test('Export stage → Export Matlab downloads a non-empty .mat', async ({ page }) => {
-    await openExport(page);
-    const region = page.getByRole('region', { name: 'Export stage controls' });
-    const matBtn = region.getByRole('button', { name: 'Export Matlab' });
-    await expect(matBtn).toBeVisible();
-    test.skip(
-      await matBtn.isDisabled(),
-      'exporter not wired yet — ContextCard must pass exporter={actions}',
-    );
+  test('Export CSV writes one pydvma CSV that Load Data reads back', async ({ page }, info) => {
+    const path = await exportAndReload(page, info, 'Export CSV', 'csv');
+    const lines = readFileSync(path, 'utf8').split('\n');
+    expect(lines[0]).toBe('# pydvma dataset (pydvma-csv 1)');
+    expect(lines.some((l) => l.startsWith('# manifest: {'))).toBe(true);
+    // a readable table per item: heading, column names, rows
+    const t = lines.findIndex((l) => l.startsWith('# table 0: item 0, TimeData'));
+    expect(t).toBeGreaterThan(0);
+    expect(lines[t + 1].startsWith('time_axis,time_data[0]')).toBe(true);
+    expect(lines.some((l) => /^freq_axis,tf_data\[0\]\.re,tf_data\[0\]\.im/.test(l))).toBe(true);
+  });
 
-    // First .mat export boots pyodide (scipy.io.savemat) — allow the full boot.
-    const downloadPromise = page.waitForEvent('download', { timeout: 200_000 });
-    await matBtn.click();
-    const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/\.mat$/);
-    // A real .mat with a time array is comfortably > 100 bytes; a blank/failed
-    // export would be near-zero.
-    expect(await downloadSize(download)).toBeGreaterThan(100);
-
-    // The data columns are RAW volts, so — like python's `export_to_matlab` —
-    // the file must carry the calibration beside them. `savemat` writes
-    // uncompressed MAT v5, where every variable name is stored as plain ASCII,
-    // so the keys are findable in the bytes. impulse.dvma has all three kinds.
-    const bytes = readFileSync((await download.path())!);
-    for (const kind of ['time', 'freq', 'tf']) {
-      for (const suffix of ['_axis_all', '_data_all', '_cal_factors', '_units']) {
-        expect(bytes.includes(kind + suffix), kind + suffix).toBe(true);
-      }
-    }
+  test('Export Matlab writes one pydvma .mat that Load Data reads back', async ({ page }, info) => {
+    const path = await exportAndReload(page, info, 'Export Matlab', 'mat');
+    expect(statSync(path).size).toBeGreaterThan(100);
   });
 });

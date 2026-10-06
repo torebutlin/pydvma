@@ -6,14 +6,18 @@
 // single stable magic worth sniffing here). Content wins over extension
 // for the two formats that DO carry a magic (zip, numpy), so the
 // pipeline routes them correctly regardless of what the user named them.
-// The Vibration Apps' transfer-function CSV is recognised the same way, by
-// the format it names on its first line.
+// A CSV pydvma reads is recognised the same way, by the format it names on
+// its first line.
 
 /** The routes the load pipeline understands. */
-export type FileFormat = 'dvma' | 'npy' | 'mat' | 'vacsv' | 'csv' | 'unknown';
+export type FileFormat = 'dvma' | 'npy' | 'mat' | 'csv' | 'unknown';
 
-/** The Vibration Apps' transfer-function CSV names its format on line 1. */
-const VACSV_MARK = 'vibration-apps-tf-csv';
+/**
+ * The CSVs pydvma reads name their format on line 1: its own export
+ * (`pydvma-csv`) and the Vibration Apps' transfer functions
+ * (`vibration-apps-tf-csv`).
+ */
+const CSV_MARKS = ['pydvma-csv', 'vibration-apps-tf-csv'];
 
 /** The file's first line (BOM dropped), read from at most 256 bytes. */
 function firstLine(bytes: Uint8Array): string {
@@ -28,13 +32,17 @@ function firstLine(bytes: Uint8Array): string {
  * - `PK` (0x50 0x4b) — a zip local-file header → a `.dvma` container.
  * - `\x93N` (0x93 0x4e) — the start of the numpy `\x93NUMPY` magic → a
  *   legacy pickle `.npy` (pydvma <=1.4.0 saved a pickled DataSet array).
- * - a first line `# … (vibration-apps-tf-csv N)` → the CSV the Vibration
- *   Apps' Transfer function app saves (any version N: pydvma's importer
- *   refuses one it does not read, by name).
- * - otherwise a name ending in `.mat` → a MATLAB import (JW logger).
- * - otherwise a name ending in `.csv` → `csv`, any other CSV (e.g. pydvma's
- *   own export), which the caller refuses with the reason.
+ * - a first line `# … (pydvma-csv N)` or `# … (vibration-apps-tf-csv N)`
+ *   → `csv`, whatever the file is called (any version N: python refuses
+ *   one it does not read, by name).
+ * - otherwise a name ending in `.mat` → `mat`: pydvma's own MATLAB export or
+ *   a JW-logger file (python tells them apart).
+ * - otherwise a name ending in `.csv` → `csv`, so python's load_data can say
+ *   why it is refused.
  * - anything else → `unknown` (the caller shows an error toast).
+ *
+ * Every route but `dvma` goes to the engine (`legacy_to_dvma` for `npy`,
+ * `file_to_dvma` for the rest).
  *
  * Content beats extension: a `.dvma` renamed `.npy` still sniffs `dvma`,
  * because the zip magic is checked before the extension fallback.
@@ -43,7 +51,7 @@ export function sniffFormat(bytes: Uint8Array, name: string): FileFormat {
   if (bytes[0] === 0x50 && bytes[1] === 0x4b) return 'dvma'; // PK (zip)
   if (bytes[0] === 0x93 && bytes[1] === 0x4e) return 'npy'; // \x93NUMPY
   const line = firstLine(bytes);
-  if (line.startsWith('#') && line.includes(VACSV_MARK)) return 'vacsv';
+  if (line.startsWith('#') && CSV_MARKS.some((m) => line.includes(m))) return 'csv';
   const lower = name.toLowerCase();
   if (lower.endsWith('.mat')) return 'mat';
   if (lower.endsWith('.csv')) return 'csv';

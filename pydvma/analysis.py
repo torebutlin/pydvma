@@ -705,9 +705,9 @@ def wrap_unit(unit):
     returned unchanged, so composing twice does not nest.
 
     TWIN of the browser's `wrapUnit` (`webui/src/lib/model/calibration.ts`),
-    which builds the same strings for its own plot labels and export
-    headers; the two are pinned by the shared vectors in
-    `UNIT_WRAP_VECTORS`, mirrored in `webui/tests/export/data.test.ts`.
+    which builds the same strings for its own plot labels; the two are
+    pinned by the shared vectors in
+    `UNIT_WRAP_VECTORS`, mirrored in `webui/tests/model/wrapUnit.test.ts`.
 
     NB an OLD file keeps whatever it was written with: an unparenthesised
     ``'m/s2/N'`` cannot be split back into numerator and denominator
@@ -751,7 +751,7 @@ def _is_wrapped(text):
 
 #: Known-answer vectors pinning `wrap_unit` and its JavaScript twin
 #: `wrapUnit` to the same output. Mirrored verbatim in
-#: `webui/tests/export/data.test.ts`; a change here must change both.
+#: `webui/tests/model/wrapUnit.test.ts`; a change here must change both.
 UNIT_WRAP_VECTORS = (
     ('', ''),
     ('N', 'N'),

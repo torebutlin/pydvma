@@ -53,6 +53,7 @@
   import { dataExtent, type PlotModel } from './lib/plot/build';
   import { readDvma, writeDvma } from './lib/codec/dvma';
   import { legendOverlaySvg } from './lib/export/legendOverlay';
+  import { exportBytes, type Exporter } from './lib/export/data';
   import { sniffFormat } from './lib/files/sniff';
   import { fallbackDir, pickWorkDir, restoreWorkDir, type WorkDir } from './lib/files/workdir';
   import {
@@ -745,29 +746,25 @@
 
   /**
    * Convert loaded file bytes to a DvmaDataset by format. `.dvma` reads
-   * directly; legacy `.npy`, JW-logger `.mat` and the Vibration Apps'
-   * transfer-function CSV go through the engine (pydvma.engine converts them
-   * to a .dvma container which `readDvma` then parses). The engine call boots
-   * pyodide lazily on first use. Any other `.csv` is refused here, with why.
+   * directly; legacy `.npy`, `.mat` (pydvma's export or a JW-logger file)
+   * and `.csv` (pydvma's export or the Vibration Apps' transfer functions)
+   * go through the engine (pydvma.engine converts them to a .dvma container
+   * which `readDvma` then parses). The engine call boots pyodide lazily on
+   * first use.
    */
   async function toDataset(bytes: Uint8Array, name: string): Promise<DvmaDataset> {
     const fmt = sniffFormat(bytes, name);
     if (fmt === 'dvma') return readDvma(bytes);
-    if (fmt === 'csv') {
-      throw new Error(
-        `${name} is not a CSV saved by the Vibration Apps' Transfer function app, ` +
-          `the only CSV pydvma can load. pydvma's own CSV exports cannot be loaded ` +
-          `back: Save Dataset (.dvma) to reopen data.`,
-      );
-    }
-    if (fmt === 'npy' || fmt === 'mat' || fmt === 'vacsv') {
+    if (fmt === 'npy' || fmt === 'mat' || fmt === 'csv') {
       engine.boot(); // idempotent; the conversion op needs a live engine
+      // `file_to_dvma` runs python's own load_data on the bytes, so the app
+      // reads exactly what python does (pydvma's CSV / MATLAB exports, a
+      // JW-logger .mat, the Vibration Apps CSV) and refuses the rest with
+      // python's messages.
       const { op, payload } =
         fmt === 'npy'
           ? { op: 'legacy_to_dvma', payload: { npy_bytes: bytes } }
-          : fmt === 'mat'
-            ? { op: 'mat_to_dvma', payload: { mat_bytes: bytes } }
-            : { op: 'vibration_csv_to_dvma', payload: { csv_bytes: bytes, name } };
+          : { op: 'file_to_dvma', payload: { data: bytes, name } };
       // A cold-engine conversion pays the full pyodide boot (seconds of
       // silence) — show a transient "Converting…" toast so the wait doesn't
       // read as a hang, and clear it once the conversion settles.
@@ -780,9 +777,7 @@
         toasts.dismiss(convertingId);
       }
     }
-    throw new Error(
-      `unrecognised file "${name}" (not a .dvma, legacy .npy, .mat, or Vibration Apps .csv)`,
-    );
+    throw new Error(`unrecognised file "${name}" (not a .dvma, legacy .npy, .mat or .csv)`);
   }
 
   /** Load Data: open a file via the working dir (or fallback), parse, load. */
@@ -870,6 +865,54 @@
   }
 
   /**
+   * The document a Save (or an export) writes: the computed FFT/TF views
+   * materialised into real document items, the sonogram question asked, the
+   * UI state stamped, then the "Choose sets…" subset (`setIds`, absent ⇒
+   * everything). Materialisation and stamping run on the whole live document
+   * first, so the chosen sets' derived items exist and are annotated before
+   * `subsetDataset` selects them; the unchosen sets' items stay in the live
+   * document and ride the next autosave.
+   */
+  async function buildDocument(setIds?: readonly number[]): Promise<DvmaDataset> {
+    // Materialise BEFORE stamping: the new items are part of the document
+    // `stampUiState` then annotates and `writeDvma` serializes.
+    actions.materializeDerived();
+    // The sonogram is NOT automatic — it needs a save-time recompute to be
+    // an honest SonoData, so the user is asked (Task 5b). The dialog is
+    // raised only when there is a sonogram in the chosen sets to store, and
+    // a dismissal reads as "don't include": this await can delay a save but
+    // never abandons one. Failures (a CWT memory refusal, say) are reported
+    // and the save carries on without that sonogram.
+    const sono = await actions.includeSonograms(askSonoChoice, setIds);
+    for (const why of sono.failures) {
+      toasts.push(`Sonogram not included — ${why}`, { level: 'error' });
+    }
+    actions.stampUiState();        // persist channel labels + analysis settings
+    return actions.subsetDataset(setIds);
+  }
+
+  /**
+   * The Export card's accessor: Export CSV / Export Matlab write the very
+   * document Save writes ({@link buildDocument}), converted by the engine's
+   * python writers (`dvma_to_csv` / `dvma_to_mat`), so the files hold what
+   * the .dvma holds and Load Data reads them back. Like Save, an export
+   * posts the materialised live document to the session journal (see the
+   * comment in `onsave`).
+   */
+  const exporter: Exporter = {
+    async exportFile(format, setIds) {
+      const ds = $datasetStore;
+      if (!ds) throw new Error('nothing to export yet — load or acquire data first');
+      const doc = await buildDocument(setIds);
+      const bytes = writeDvma(doc);
+      journalPost(doc === ds ? bytes : writeDvma(ds));
+      engine.boot(); // idempotent; the writers run in the engine
+      return exportBytes(engine.enqueue, bytes, format);
+    },
+    choosableSets: () => actions.choosableSets(),
+  };
+
+  /**
    * Save Dataset: prompt a name, write the .dvma, persist via the working dir.
    *
    * `setIds` is the Export card's optional "Choose sets…" pick — ABSENT (the
@@ -891,22 +934,7 @@
     if (!name) return; // cancelled
     const filename = name.toLowerCase().endsWith('.dvma') ? name : `${name}.dvma`;
     try {
-      // Materialise the computed FFT/TF views into real document items
-      // BEFORE stamping: the new items are part of the document `stampUiState`
-      // then annotates and `writeDvma` serializes.
-      actions.materializeDerived();
-      // The sonogram is NOT automatic — it needs a save-time recompute to be
-      // an honest SonoData, so the user is asked (Task 5b). The dialog is
-      // raised only when there is a sonogram in the chosen sets to store, and
-      // a dismissal reads as "don't include": this await can delay a save but
-      // never abandons one. Failures (a CWT memory refusal, say) are reported
-      // and the save carries on without that sonogram.
-      const sono = await actions.includeSonograms(askSonoChoice, setIds);
-      for (const why of sono.failures) {
-        toasts.push(`Sonogram not included — ${why}`, { level: 'error' });
-      }
-      actions.stampUiState();        // persist channel labels + analysis settings
-      const doc = actions.subsetDataset(setIds);
+      const doc = await buildDocument(setIds);
       const bytes = writeDvma(doc);
       const dir = workdir ?? fallbackDir();
       await dir.save(filename, bytes);
@@ -1488,6 +1516,7 @@
     {viewState}
     {selection}
     {actions}
+    {exporter}
     {analysisSettings}
     {acquire}
     {monitor}

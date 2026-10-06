@@ -17,10 +17,11 @@
    *     autosave switch finally gets a UI.
    *
    * Matlab / CSV data export are enabled when an `exporter` accessor is wired
-   * (the analysis `actions`): Matlab downloads engine-built `.mat` bytes
-   * (`scipy.io.savemat`), CSV serialises the raw arrays in pure TS
-   * (src/lib/export/data.ts). When no exporter is provided they fall back to
-   * DISABLED with an honest tooltip.
+   * (built in App): both write the very document Save writes, converted by
+   * the engine's python writers into the `.mat` / `.csv` that python's
+   * `export_to_matlab` / `export_to_csv` write, which hold what the `.dvma`
+   * holds and Load Data reads back (src/lib/export/data.ts). When no
+   * exporter is provided they fall back to DISABLED with an honest tooltip.
    *
    * SUBSET PICKING (derived-data round, Task 5): each of the three dataset
    * buttons is a SPLIT control — the primary button is unchanged and always
@@ -30,7 +31,7 @@
    * never derived from what is visible on the plot.
    */
   import { exportPdf, exportPng, type BackgroundMode } from '../../lib/export/figure';
-  import { buildCsvFiles, type ChoosableSet, type Exporter } from '../../lib/export/data';
+  import type { ChoosableSet, ExportFormat, Exporter } from '../../lib/export/data';
   import ChooseSetsPopover from '../ChooseSetsPopover.svelte';
   import { cancelAutosave } from '../../lib/files/autosave';
   import type { WorkDir } from '../../lib/files/workdir';
@@ -198,49 +199,27 @@
   }
 
   /**
-   * Export Matlab: the engine builds the `.mat` (scipy.io.savemat, schema
-   * matching pydvma export_to_matlab); this only downloads the bytes.
+   * Export Matlab / Export CSV: the bytes of the file the engine writes from
+   * Save's document, saved as `<name>.mat` / `<name>.csv` (one file each).
    * `setIds` is the optional "Choose sets…" pick (absent ⇒ everything).
    */
-  async function exportMatlab(setIds?: readonly number[]): Promise<void> {
+  async function exportData(format: ExportFormat, setIds?: readonly number[]): Promise<void> {
     if (!exporter) return;
+    const label = format === 'mat' ? 'Matlab' : 'CSV';
     busy = true;
     try {
-      const bytes = await exporter.exportMat(setIds);
-      await write(`${dataBaseName()}.mat`, bytes);
-      toasts.push('Exported Matlab (.mat)', { level: 'success' });
+      const bytes = await exporter.exportFile(format, setIds);
+      await write(`${dataBaseName()}.${format}`, bytes);
+      toasts.push(`Exported ${label} (.${format})`, { level: 'success' });
     } catch (e) {
-      toasts.push(`Matlab export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+      toasts.push(`${label} export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
     } finally {
       busy = false;
     }
   }
 
-  /**
-   * Export CSV: one raw-values file per data kind present (time / freq / tf),
-   * mirroring the "save the whole dataset" theme of Save Dataset + Matlab.
-   * Built in pure TS to reproduce pydvma export_to_csv exactly.
-   * `setIds` is the optional "Choose sets…" pick (absent ⇒ everything).
-   */
-  async function exportCsv(setIds?: readonly number[]): Promise<void> {
-    if (!exporter) return;
-    busy = true;
-    try {
-      const files = buildCsvFiles(exporter, dataBaseName(), setIds);
-      if (files.length === 0) {
-        toasts.push('No data to export yet.', { level: 'info' });
-        return;
-      }
-      const enc = new TextEncoder();
-      for (const f of files) await write(f.name, enc.encode(f.text));
-      const kinds = files.map((f) => f.name.replace(/^.*-(\w+)\.csv$/, '$1')).join(' + ');
-      toasts.push(`Exported CSV (${kinds})`, { level: 'success' });
-    } catch (e) {
-      toasts.push(`CSV export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
-    } finally {
-      busy = false;
-    }
-  }
+  const exportMatlab = (setIds?: readonly number[]) => exportData('mat', setIds);
+  const exportCsv = (setIds?: readonly number[]) => exportData('csv', setIds);
 </script>
 
 <section class="ctx-card card-controls" aria-label="Export stage controls">

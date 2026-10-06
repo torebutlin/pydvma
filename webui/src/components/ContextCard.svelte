@@ -16,6 +16,7 @@
   import type { ViewState } from '../lib/stores/viewstate';
   import type { Selection } from '../lib/stores/selection';
   import type { Actions } from '../lib/analysis/actions';
+  import type { Exporter } from '../lib/export/data';
   import type { AnalysisSettings } from '../lib/stores/analysisSettings';
   import type { AcquireStore } from '../lib/stores/acquire';
   import type { MonitorStore } from '../lib/stores/monitor';
@@ -40,6 +41,7 @@
     viewState,
     selection,
     actions,
+    exporter = undefined,
     analysisSettings,
     acquire,
     monitor,
@@ -58,6 +60,8 @@
     viewState: ViewState;
     selection: Selection;
     actions: Actions;
+    /** Export CSV / Export Matlab accessor (built in App from Save's document). */
+    exporter?: Exporter;
     /** Per-set analysis settings + shared target (Task R1). */
     analysisSettings: AnalysisSettings;
     /** Acquisition store (Plan 2 Web Audio). */
@@ -112,7 +116,7 @@
   {:else if $activeStage === 'fit'}
     <FitCard {actions} {analysisSettings} {selection} {viewState} {modal} />
   {:else if $activeStage === 'export'}
-    <ExportCard {getSvg} {workdir} {onsave} {toasts} {hasData} exporter={actions} bind:autosaveEnabled />
+    <ExportCard {getSvg} {workdir} {onsave} {toasts} {hasData} {exporter} bind:autosaveEnabled />
   {:else}
     <section class="ctx-card card-controls" aria-label="stage controls">
       <div class="ctx-name">

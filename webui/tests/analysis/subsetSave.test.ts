@@ -1,6 +1,6 @@
 /**
  * Subset Save / Export (derived-data round, Task 5): the "Choose sets…"
- * picker's data side — `exportArrays` / `exportMat` filtered to a chosen
+ * picker's data side — `subsetDataset` filtered to a chosen
  * subset of measurements, `subsetDataset` building a FILTERED document for
  * `writeDvma`, and `choosableSets` feeding the picker's rows.
  *
@@ -117,46 +117,6 @@ const kinds = (ds: DvmaDataset) => ds.items.map((i) => i.kind);
 const names = (ds: DvmaDataset) => ds.items.map((i) => i.meta.test_name);
 
 // ---------------------------------------------------------------- exports
-
-test('exportArrays filtered to a subset returns only those sets; no filter is unchanged', async () => {
-  const { actions, sel } = harness();
-  actions.loadDataset(twoSetDataset());
-  const [a, b] = get(sel.sets).map((s) => s.id);
-  await actions.calcFft('all');
-
-  // Full-export snapshot: what today's callers get, and what an all-sets
-  // filter must reproduce exactly.
-  const full = actions.exportArrays('time');
-  expect(full.map((s) => s.setId)).toEqual([a, b]);
-  expect(actions.exportArrays('time', [a, b])).toEqual(full);
-
-  const justB = actions.exportArrays('time', [b]);
-  expect(justB.map((s) => s.setId)).toEqual([b]);
-  expect(Array.from(justB[0].columns[0] as Float64Array)).toEqual([101, 103, 105]);
-
-  // The filter applies to every kind, not just time.
-  expect(actions.exportArrays('freq', [a]).map((s) => s.setId)).toEqual([a]);
-  // An empty pick exports nothing (it is not "no filter").
-  expect(actions.exportArrays('time', [])).toEqual([]);
-});
-
-test('exportMat filtered to a subset sends only those sets to the engine', async () => {
-  const { actions, sel, calls } = harness();
-  actions.loadDataset(twoSetDataset());
-  const [, b] = get(sel.sets).map((s) => s.id);
-  await actions.calcFft('all');
-
-  await actions.exportMat([b]);
-  const payload = calls.find((c) => c.op === 'export_mat')!.payload;
-  expect((payload.time_sets as unknown[]).length).toBe(1);
-  expect((payload.freq_sets as unknown[]).length).toBe(1);
-  expect(Array.from((payload.time_sets as { data: Float64Array }[])[0].data))
-    .toEqual([101, 102, 103, 104, 105, 106]);
-
-  await actions.exportMat();
-  const all = calls.filter((c) => c.op === 'export_mat')[1].payload;
-  expect((all.time_sets as unknown[]).length).toBe(2);
-});
 
 // ------------------------------------------------------- choosable rows
 
