@@ -30,9 +30,6 @@ follows [semantic versioning](https://semver.org/).
   seeded only its coherence, so the view fell back to plotting it under
   the `|S_xy|` label, and PSD showed nothing. The loader now seeds the
   auto-powers and `enbw_hz` too, as a computed one has.
-
-### Fixed
-
 - **A joint modal fit across transfer functions on different frequency
   axes read the wrong rows of every set after the first.**
   `modal_fit_all_channels` took the in-band rows from the first set's

@@ -150,9 +150,12 @@ saved is imported all the same. Any other CSV, including one written by
 `dvma.import_from_vibration_apps_csv(filename=...)` does the same import
 directly.
 
-Each measurement has its own frequency axis, so fit them one at a time
-in Python: see the warning under
+Each measurement has its own frequency axis. They can still be fitted
+together (one list): each is fitted on its own points, with the poles
+shared; see
 [Fitting one mode across channels](modal-analysis.md#fitting-one-mode-across-channels).
+Fit them one at a time when the poles should differ (a measurement with
+an added mass, say).
 
 ## Working with many files
 

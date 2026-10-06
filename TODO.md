@@ -34,17 +34,11 @@ Tore's choice. Open:
   Ignored by the import today. If wanted: a magnitude-only `TfData`
   flagged so phase plots and modal fits leave it alone, or a field. Same
   shape of decision as H2, so decide them together.
-- **Python joint modal fit silently mis-indexes sets on different
-  frequency axes** (bug, found 2026-10-06). `modal.modal_fit_all_channels`
-  takes the `freq_range` row indices from the FIRST TfData's axis and
-  applies them to every set. Fitting m1 + m2 of the example at 120-200 Hz
-  read m2's rows at 101-106 Hz as if they were 123-193 Hz: no error, a
-  wrong fn/zeta. Pre-existing, but this import makes mixed axes common.
-  The webui path aligns first (`engine._align_fit_list`, interpolating onto
-  the first set's axis), which is right but poor when the first set is
-  coarse (a 20-point stepped sine). Docs now warn. Fix options: share the
-  alignment helper so Python matches the app, or (better) fit each set
-  on its own points with a concatenated residual.
+- ~~**Python joint modal fit silently mis-indexes sets on different
+  frequency axes**~~ — FIXED 2026-10-06: every set is fitted on its own
+  points (poles shared, columns weighted equally), and the app no longer
+  interpolates onto the first set's axis (`_align_fit_list` deleted).
+  Tests in `tests/test_modal_mixed_axes.py`.
 - **`export_to_csv` problems** (found 2026-10-06). TF/FFT files are
   written in numpy's complex form, `(re+imj)` in every cell including the
   frequency column, which Excel/pandas/MATLAB read as text; and exporting
