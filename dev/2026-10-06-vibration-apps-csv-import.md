@@ -271,3 +271,94 @@ and `file_start_s`) is now the test fixture,
 `dev/` copy was moved there. A test pins that each measurement keeps its
 own axis (105.47 Hz and 100.34 Hz starts). `H_power` is not imported yet:
 it sits in TODO.md beside H2 as a decision for Tore.
+
+## Update 2 from the app, 6 Oct: time data (format 2) and the auto-spectra
+
+Written from the vibration_apps side (its commit 81a8d39); nothing in
+pydvma's code was touched. The committed importer reads every format-1 file
+the app now writes (checked) and refuses format 2 with its clear message.
+
+**In every file (still format 1):**
+
+- Two more columns at the end of the transfer-function table, **`Gxx`** and
+  **`Gyy`**: the auto-spectra of x and y as one-sided densities, full scale²
+  per Hz, averaged over the frames as H₁ is (2·Σ|X|² / (frames · fs · Σw²);
+  a Hann frame, a sweep's rectangular repeat, or the whole record). Checked
+  against `scipy.signal.welch` on the exported time data: 0.000 dB. Empty
+  for a stepped sine. With H₁ and γ² they give the whole cross-spectral
+  matrix: G_xy = H₁·G_xx, so a `CrossSpecData` (P_xx, P_xy, P_yy, C_xy) per
+  measurement is possible if pydvma wants one.
+- A line `# section: tf` now comes just before the column names. It is a
+  `#` line, so a reader that skips them (as the importer does) is unaffected.
+
+**Format 2: `vibration-apps-tf-csv 2`**, written when the app's "time data"
+box is ticked beside Save CSV. Everything in format 1, then a second table:
+
+```
+# section: time
+measurement,t_s,x,y
+1,0.000000,0.01093,0.0002101
+…
+```
+
+- One block of rows per measurement that has time data: those with
+  `time_rows=<n>` in their `# m<no>:` line. A stepped sine never has any
+  (it comes in as its transfer function only).
+- `t_s`: 0 where the test signal began as played, in steps of 1/fs.
+- `x`: what was played (`time_x=played`), or the reference channel where
+  there was one (`time_x=reference`). `y`: the microphone, moved earlier by
+  the loop delay to the nearest sample, so x and y line up as the app
+  analysed them. The fraction of a sample left in y is
+  `time_delay_left_samples` (within ±0.5). H₁ in the file has it taken out
+  of its phase; H₁ worked out from the time data carries an extra
+  2π·f·left/fs (at most 19° at 5 kHz and 48 kHz).
+- Checked: H₁ from the time data with scipy (Hann 8192, half overlap)
+  matches the file's H₁ to 0.000 dB in magnitude, and in phase to the
+  fraction above (median 1.7° there).
+- Size: tens of MB (10 s of noise and four 1 s sweeps at 48 kHz: 26.7 MB),
+  so read it line by line rather than with one `genfromtxt` over the file;
+  split at the `# section: time` line.
+
+**Mapping, for an importer of format 2**, beside each TfData:
+`TimeData(time_axis=t_s, time_data=np.column_stack([x, y]), settings)` with
+`settings.fs = fs`, `settings.channels = 2`, channel 0 the input (x) and
+channel 1 the microphone (y), units `['-', '-']`, cal factors 1, the same
+`test_name` and `timestamp`; and the TfData's `id_link` set to that
+TimeData's `unique_id`, so pydvma's own `calculate_tf` / `calculate_tf_averaged`
+on it (ch_in = 0) can be compared with the app's result.
+
+Example: `dev/2026-10-06-vibration-apps-example-v2-time.csv` (5.5 MB: noise
+1 s in frames of 4096, a sweep of 0.5 s ×2, a 20-point stepped sine; time
+rows 67 200 and 86 400; the sine has none). Its first lines, cut at 160 characters here:
+
+```
+# Vibration Apps transfer functions (vibration-apps-tf-csv 2)
+# exported 2026-10-06T10:44:40.293Z from https://torebutlin.github.io/vibration_apps/apps/frf/ (3C6 slides 3.2-3.6)
+# H1 = Sxy/Sxx, H2 = Syy/Syx, coherence = |Sxy|^2/(Sxx Syy): x what was played (or the reference channel where reference_channel=1), y the microphone
+# H_power = sqrt((Syy - Snn)/Sxx), |H| from the powers alone with the room noise Snn (heard before the chirp) taken off: no phase, so a wandering delay cannot s
+# units: H in microphone full scale per speaker full scale (uncalibrated, cal_factor 1); f in Hz; phase in degrees; time UTC
+# Gxx, Gyy: the auto-spectra of x and y as one-sided densities, full scale^2 per Hz (averaged over the frames as H1 is); empty for a stepped sine
+# time data: after the transfer functions, a line "# section: time", its column names, then rows measurement,t_s,x,y for each measurement with time_rows in its 
+# measurements: 1,2,3
+# columns: measurement,f_Hz,H1_re,H1_im,H1_dB,H1_phase_deg,coherence,H2_re,H2_im,H_power,Gxx,Gyy
+# m1: test_name=noise 1 s · 100 Hz–5 kHz; timestamp=2026-10-06T10:44:35.111Z; kind=noise; source=demo; fs=48000; channels=1; ch_in=0; units=-; channel_cal_fa
+# m1 notes: delay through the measurement: steady to within 0.002 ms (2 of 2 pieces of 0.5 s found; played); 0.015 ms from the chirp's | frames: 23 of 24 found 
+# m2: test_name=sweep 0.5 s ×2 · 100 Hz–5 kHz; timestamp=2026-10-06T10:44:36.079Z; kind=sweep; source=demo; fs=48000; channels=1; ch_in=0; units=-; channel_
+```
+
+**pydvma side, after update 2:** formats 1 and 2 both import. Format 2's
+time data becomes a `TimeData` per measurement (x channel 0, y channel 1,
+the axis rebuilt exactly from fs since `t_s` is rounded to the
+microsecond), and `Gxx`/`Gyy` with H1 and γ² a `CrossSpecData` (pydvma's
+convention: a one-sided power spectrum, the density times `enbw_hz` from
+the stated window and `nperseg`; checked against `scipy.signal.welch` on
+the imported time data). A measurement's items share one `id_link` (the
+TimeData's id, or one minted for it), so the web app shows each
+measurement as one card. An H1 with no phase anywhere is flagged
+(`(|H| only, no phase)` in its name, `source_settings['magnitude_only']`,
+a warning); a minimum-phase reconstruction is a TODO. The v2 example now
+lives at `tests/data/vibration_apps_example_v2_time.csv`. NB `f_Hz` is
+written to about 8 significant figures (1019.5313 for 1019.53125), so it
+is not exactly the FFT bin; harmless, but a reader matching bins by value
+must round.
+

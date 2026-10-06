@@ -176,6 +176,26 @@ test('csv import (Vibration Apps): one TF set per measurement', async ({ page })
   await expect(page.getByTestId('toast').filter({ hasText: /failed|could not/i })).toHaveCount(0);
 });
 
+// Format 2 (the app's "time data" box): each measurement's time series comes
+// too, and with its TF and cross-spectrum it is ONE set — so the file's three
+// measurements are three cards, the first two carrying a time series (the
+// stepped sine never has one).
+test('csv import (Vibration Apps, format 2): time data, one card per measurement', async ({ page }) => {
+  const v2 = fileURLToPath(new URL('../../tests/data/vibration_apps_example_v2_time.csv', import.meta.url));
+  await page.goto('/');
+  await loadViaFallback(page, v2);
+  await expect(page.getByTestId('tray-card-2')).toBeVisible({ timeout: 200_000 });
+  await expect(page.getByTestId('tray-card-3')).toHaveCount(0);
+  await expect(page.getByTestId('tray-card-0')).toContainText('m1 noise 1 s');
+  await expect(page.getByTestId('tray-card-2')).toContainText('m3 sine 20 pts');
+
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Time' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeAttached();
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeAttached();
+  await expect(page.getByTestId('toast').filter({ hasText: /failed|could not/i })).toHaveCount(0);
+});
+
 // Any other csv — pydvma's own export is the likely one — is refused before the
 // engine, with the reason, rather than as an unrecognised file.
 test('csv import: a csv the Vibration Apps did not save is refused with why', async ({ page }, info) => {

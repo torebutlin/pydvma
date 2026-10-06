@@ -55,6 +55,26 @@ Tore's choice. Open:
   ch_in, names, timestamps or coherence, and FFT vs TF is ambiguous).
   Fixing the export first (re/im columns, a header naming kind and set
   per column) would make a reader straightforward.
+- **Minimum-phase reconstruction for a magnitude-only |H|** (Tore,
+  2026-10-06). The Vibration Apps can produce an |H| with no phase (from
+  the powers alone); the import flags it (`(|H| only, no phase)` in the
+  name, `source_settings['magnitude_only']`). Offer a minimum-phase
+  reconstruction (phase from the Hilbert transform of log|H|) as an
+  explicit, labelled option, so such a set can be fitted at all; never
+  silently.
+- **Fit mode: poles shared across sets vs each set separately** (Tore,
+  2026-10-06, design wanted). The app holds ONE modal model whose poles
+  are shared across every line visible at Fit (right for 4C6: many hammer
+  points on one structure). In 3C6 the measurements differ physically
+  (the shaker adds mass, the hammer does not), so each set should keep
+  its own poles. Today a fit on a different line set starts a fresh model
+  and replaces the old one. Proposal: a Fit-card switch, "Poles: shared
+  across sets | each set separately"; in the second, one Fit press fits
+  the window on every visible set independently and each set keeps its
+  own model, fit card and Refine, saved as one `ModalData` per set (the
+  `.dvma` already holds a list). Python already does this (one
+  `modal_fit_all_channels` call per set). Needs its own design round: it
+  restructures the modal store from one model to several.
 - **TF card shows meaningless estimator fields for sets with no time
   data** (cosmetic, pre-existing). An imported TF (Vibration Apps CSV,
   JW .mat, any orphan TF) shows "frame 0.00 s, nFFT 2, Δf = fs/2" in the

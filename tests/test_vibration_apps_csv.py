@@ -17,14 +17,23 @@ It carries an ``H_power`` column that this importer does not read.
 """
 import datetime
 import os
+import re
+import uuid
+import warnings
 
 import numpy as np
 import pytest
+import scipy.signal
 
 from pydvma import container, datastructure, file, options
 
 EXAMPLE = os.path.join(os.path.dirname(__file__), 'data',
                        'vibration_apps_example.csv')
+# Format 2: the same, plus each measurement's time data (the app's "time
+# data" box). Noise 1 s in frames of 4096, a sweep 0.5 s x2, and a 20-point
+# stepped sine, which never has time data.
+EXAMPLE_V2 = os.path.join(os.path.dirname(__file__), 'data',
+                          'vibration_apps_example_v2_time.csv')
 
 UTC = datetime.timezone.utc
 
@@ -105,7 +114,8 @@ class TestExampleFile:
             assert tf.settings.ch_in == 0
             assert list(tf.units) == ['-']
             np.testing.assert_array_equal(tf.channel_cal_factors, [1.0])
-            assert tf.id_link is None              # no time data behind it
+            # no time data behind it: a link id of its own (see TestCrossSpectra)
+            assert isinstance(tf.id_link, uuid.UUID)
 
     def test_timestamp_is_when_it_was_measured(self, example):
         tf = example.tf_data_list[0]
@@ -183,8 +193,8 @@ class TestFormatTolerance:
             tmp_path / 'v2.csv', ['# m1: test_name=a; fs=48000'], COLUMNS,
             ['1,100,1,0,0,0,0.9,1,0'],
             first_line='# Vibration Apps transfer functions '
-                       '(vibration-apps-tf-csv 2)')
-        with pytest.raises(ValueError, match='vibration-apps-tf-csv 2'):
+                       '(vibration-apps-tf-csv 3)')
+        with pytest.raises(ValueError, match='vibration-apps-tf-csv 3'):
             file.import_from_vibration_apps_csv(path)
 
     def test_unknown_keys_and_columns_are_ignored(self, tmp_path):
@@ -211,8 +221,8 @@ class TestFormatTolerance:
              '# m2: test_name=b; fs=48000', '# m2 notes: x | y',
              '# m7: test_name=g; fs=48000'],
             COLUMNS,
-            ['2,100,1,0,0,0,0.9,1,0', '2,110,1,0,0,0,0.9,1,0',
-             '7,300,2,0,0,0,,2,0'])
+            ['2,100,1,0.1,0,0,0.9,1,0', '2,110,1,0.1,0,0,0.9,1,0',
+             '7,300,2,0.1,0,0,,2,0'])
         ds = file.import_from_vibration_apps_csv(path)
         assert [t.test_name for t in ds.tf_data_list] == ['m2 b', 'm7 g']
         assert len(ds.tf_data_list[0].freq_axis) == 2
@@ -223,7 +233,7 @@ class TestFormatTolerance:
         # A file opened and saved again on Windows (Excel) can gain both.
         path = _small_csv(
             tmp_path / 'crlf.csv', ['# m1: test_name=a; fs=48000'], COLUMNS,
-            ['1,100,1,0,0,0,0.9,1,0'], newline='\r\n', bom=True)
+            ['1,100,1,0.1,0,0,0.9,1,0'], newline='\r\n', bom=True)
         assert len(file.load_data(path).tf_data_list) == 1
 
     def test_rows_without_a_header_line_are_refused(self, tmp_path):
@@ -234,3 +244,164 @@ class TestFormatTolerance:
             ['1,100,1,0,0,0,0.9,1,0', '3,100,1,0,0,0,0.9,1,0'])
         with pytest.raises(ValueError, match='measurement 3'):
             file.import_from_vibration_apps_csv(path)
+
+
+def _format1_from(v2_path, out_path):
+    """The format-1 file the app writes for the same measurements: format 2
+    without its time section and the time_* keys that point into it (see
+    the note: format 2 is "everything in format 1, then a second table")."""
+    text = open(v2_path, encoding='utf-8').read().split('\n# section: time\n')[0] + '\n'
+    text = text.replace('(vibration-apps-tf-csv 2)', '(vibration-apps-tf-csv 1)', 1)
+    text = re.sub(r'; time_[a-z_]+=[^;\n]*', '', text)
+    with open(out_path, 'w', encoding='utf-8') as fh:
+        fh.write(text)
+    return str(out_path)
+
+
+class TestCrossSpectra:
+    """Gxx and Gyy (one-sided densities, full scale^2/Hz) become a
+    CrossSpecData per measurement, in pydvma's convention: Pxy a one-sided
+    power SPECTRUM, density = Pxy / enbw_hz."""
+
+    @pytest.fixture(scope='class')
+    def v2(self):
+        return file.import_from_vibration_apps_csv(EXAMPLE_V2)
+
+    def test_one_per_measurement_with_auto_spectra(self, v2):
+        # The stepped sine (m3) has no Gxx/Gyy, so no cross-spectrum.
+        assert [c.test_name for c in v2.cross_spec_data_list] == [
+            'm1 noise 1 s · 100 Hz–5 kHz', 'm2 sweep 0.5 s ×2 · 100 Hz–5 kHz']
+
+    def test_none_from_a_file_without_the_columns(self, example):
+        # The earlier format-1 example predates Gxx/Gyy.
+        assert len(example.cross_spec_data_list) == 0
+
+    def test_it_holds_the_files_spectra_and_h1(self, v2):
+        tf = v2.tf_data_list[0]
+        cs = v2.cross_spec_data_list[0]
+        np.testing.assert_array_equal(cs.freq_axis, tf.freq_axis)
+        assert cs.Pxy.shape == (2, 2, 418)
+        w = scipy.signal.get_window('hann', 4096)
+        assert cs.enbw_hz == pytest.approx(48000 * np.sum(w ** 2) / np.sum(w) ** 2, rel=1e-12)
+        # the app's density back, and H1 = Pxy[in, out] / Pxy[in, in]
+        assert np.real(cs.Pxy[0, 0, 0]) / cs.enbw_hz == pytest.approx(1.70675e-06, rel=1e-12)
+        np.testing.assert_allclose(cs.Pxy[0, 1] / cs.Pxy[0, 0], tf.tf_data[:, 0], rtol=1e-12)
+        np.testing.assert_allclose(cs.Pxy[1, 0], np.conj(cs.Pxy[0, 1]))
+        np.testing.assert_allclose(cs.Cxy[0, 1], tf.tf_coherence[:, 0])
+        np.testing.assert_allclose(cs.Cxy[0, 0], 1.0)
+        # a sweep's repeat is rectangular, over its own length
+        assert v2.cross_spec_data_list[1].enbw_hz == pytest.approx(48000 / 65536, rel=1e-12)
+
+    def test_a_one_frame_result_has_coherence_one(self, tmp_path):
+        path = _small_csv(
+            tmp_path / 'one.csv',
+            ['# m1: test_name=a; fs=8; window=hann; nperseg=8; N_frames=1'],
+            COLUMNS + ',H_power,Gxx,Gyy',
+            ['1,1,1,0.5,0,0,,1,0,,2,2', '1,2,1,0.5,0,0,,1,0,,3,3'])
+        cs = file.import_from_vibration_apps_csv(path).cross_spec_data_list[0]
+        np.testing.assert_allclose(cs.Cxy[0, 1], 1.0)
+
+    def test_without_time_data_a_measurement_is_still_one_card(self, tmp_path):
+        # The TF and the cross-spectrum share a link id of their own, so the
+        # web app shows them as ONE set; each measurement has a different one.
+        ds = file.import_from_vibration_apps_csv(
+            _format1_from(EXAMPLE_V2, tmp_path / 'v1.csv'))
+        assert len(ds.time_data_list) == 0
+        links = [tf.id_link for tf in ds.tf_data_list]
+        assert all(isinstance(k, uuid.UUID) for k in links)
+        assert len(set(links)) == 3
+        assert [c.id_link for c in ds.cross_spec_data_list] == links[:2]
+
+    def test_round_trips_through_dvma(self, v2, tmp_path):
+        path = str(tmp_path / 'cs.dvma')
+        file.save_data(v2, filename=path, overwrite_without_prompt=True)
+        back = file.load_data(path)
+        a, b = v2.cross_spec_data_list[0], back.cross_spec_data_list[0]
+        np.testing.assert_array_equal(a.Pxy, b.Pxy)
+        assert b.enbw_hz == a.enbw_hz
+        assert b.id_link == back.tf_data_list[0].id_link
+
+
+class TestFormat2TimeData:
+    @pytest.fixture(scope='class')
+    def v2(self):
+        return file.import_from_vibration_apps_csv(EXAMPLE_V2)
+
+    def test_time_data_for_the_measurements_that_have_it(self, v2):
+        assert [len(t.freq_axis) for t in v2.tf_data_list] == [418, 6690, 20]
+        assert [t.test_name for t in v2.time_data_list] == [
+            'm1 noise 1 s · 100 Hz–5 kHz', 'm2 sweep 0.5 s ×2 · 100 Hz–5 kHz']
+        assert [t.time_data.shape for t in v2.time_data_list] == [(67200, 2), (86400, 2)]
+
+    def test_time_axis_is_exact_from_fs(self, v2):
+        td = v2.time_data_list[0]
+        # the file rounds t_s to the microsecond; the axis is rebuilt from fs
+        np.testing.assert_array_equal(td.time_axis, np.arange(67200) / 48000)
+        assert td.settings.fs == 48000
+        assert td.settings.channels == 2
+        assert list(td.units) == ['-', '-']
+        np.testing.assert_array_equal(td.channel_cal_factors, [1.0, 1.0])
+        assert td.time_data[1, 0] == -1.559042e-9   # x, what was played
+        assert td.time_data[1, 1] == 0.00139905     # y, the microphone
+        assert td.timestamp == v2.tf_data_list[0].timestamp
+
+    def test_tf_and_cross_spectrum_link_to_their_time_data(self, v2):
+        for td, tf, cs in zip(v2.time_data_list, v2.tf_data_list,
+                              v2.cross_spec_data_list):
+            assert tf.id_link == td.unique_id
+            assert cs.id_link == td.unique_id
+        # the stepped sine has no time data and no cross-spectrum
+        assert len(v2.cross_spec_data_list) == 2
+        assert v2.tf_data_list[2].id_link not in \
+            [td.unique_id for td in v2.time_data_list]
+
+    def test_cross_spectrum_matches_welch_on_the_time_data(self, v2):
+        # The app averages frames of 4096 with half overlap: pydvma's Pxx is
+        # scipy's one-sided power SPECTRUM of x over the same frames.
+        x = v2.time_data_list[0].time_data[:, 0]
+        f, Pxx = scipy.signal.welch(x, 48000, 'hann', 4096, 2048, scaling='spectrum')
+        cs = v2.cross_spec_data_list[0]
+        k = np.rint(cs.freq_axis / (48000 / 4096)).astype(int)   # f is rounded in the file
+        np.testing.assert_allclose(np.real(cs.Pxy[0, 0]), Pxx[k], rtol=1e-3)
+
+    def test_the_time_section_is_not_read_as_tf_rows(self, v2):
+        # every one of the file's 7128 TF rows, and nothing from the time table
+        assert sum(len(t.freq_axis) for t in v2.tf_data_list) == 7128
+
+    def test_round_trips_through_dvma(self, v2, tmp_path):
+        path = str(tmp_path / 'v2.dvma')
+        file.save_data(v2, filename=path, overwrite_without_prompt=True)
+        back = file.load_data(path)
+        np.testing.assert_array_equal(back.time_data_list[1].time_data,
+                                      v2.time_data_list[1].time_data)
+        assert back.tf_data_list[1].id_link == back.time_data_list[1].unique_id
+
+    def test_time_rows_that_disagree_with_the_header_are_refused(self, tmp_path):
+        path = _small_csv(
+            tmp_path / 'short.csv',
+            ['# m1: test_name=a; fs=4; time_rows=3'], COLUMNS,
+            ['1,1,1,0,0,0,0.9,1,0', '# section: time', 'measurement,t_s,x,y',
+             '1,0,0.1,0.2', '1,0.25,0.3,0.4'],
+            first_line='# Vibration Apps transfer functions '
+                       '(vibration-apps-tf-csv 2)')
+        with pytest.raises(ValueError, match='measurement 1 .*2 time rows.*3'):
+            file.import_from_vibration_apps_csv(path)
+
+
+class TestNoPhase:
+    def test_an_h1_without_phase_is_flagged(self, tmp_path):
+        # An |H| from the powers alone, written as H1 with zero phase: its
+        # phase, and so any modal fit, means nothing. Say so on the set.
+        path = _small_csv(
+            tmp_path / 'mag.csv', ['# m1: test_name=a; fs=48000'], COLUMNS,
+            ['1,100,0.5,0,0,0,0.9,0.5,0', '1,110,0.7,0,0,0,0.9,0.7,0'])
+        with pytest.warns(UserWarning, match='no phase'):
+            tf = file.import_from_vibration_apps_csv(path).tf_data_list[0]
+        assert tf.test_name == 'm1 a (|H| only, no phase)'
+        assert tf.source_settings['magnitude_only'] is True
+
+    def test_an_ordinary_h1_is_not(self, example):
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            ds = file.import_from_vibration_apps_csv(EXAMPLE)
+        assert 'magnitude_only' not in ds.tf_data_list[0].source_settings

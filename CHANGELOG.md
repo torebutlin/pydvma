@@ -16,7 +16,20 @@ follows [semantic versioning](https://semver.org/).
   result of one frame), the measurement time, and the app's settings and
   notes in `source_settings['vibration_apps']`. The file's H2 columns are
   not imported. Any other CSV, including pydvma's own `export_to_csv`
-  output, is refused with a message saying so.
+  output, is refused with a message saying so. Format 2 (the app's "time
+  data" box) brings each measurement's time series as a `TimeData`, and
+  the app's auto-spectra `Gxx`/`Gyy` come in as a `CrossSpecData`; a
+  measurement's items share one `id_link`, so the web app shows each as
+  one set. An H1 with no phase anywhere is flagged in its name and warned
+  about.
+
+### Fixed
+
+- **A stored cross-spectrum showed its coherence in the web app's CSD
+  view.** Loading a `.dvma` (or an import) holding a `CrossSpecData`
+  seeded only its coherence, so the view fell back to plotting it under
+  the `|S_xy|` label, and PSD showed nothing. The loader now seeds the
+  auto-powers and `enbw_hz` too, as a computed one has.
 
 ## 2.6.0 — 2026-09-29
 

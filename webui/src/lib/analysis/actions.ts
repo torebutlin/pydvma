@@ -406,9 +406,31 @@ function sliceForLoadedItem(
           sigmaN: A.bla_sigma_n ? decodeNpy(A.bla_sigma_n) : undefined,
         },
       };
-    case 'CrossSpecData':
+    case 'CrossSpecData': {
       if (!A.freq_axis || !A.Cxy) return null;
-      return { csd: { axis: Float64Array.from(A.freq_axis.data), data: decodeNpy(A.Cxy) } };
+      const axis = Float64Array.from(A.freq_axis.data);
+      const slice: Partial<SetArrays> = { csd: { axis, data: decodeNpy(A.Cxy) } };
+      // The CSD view plots |S_xy| = sqrt(Cxy·Pxx_i·Pxx_j), so it needs the
+      // auto-powers too — the (Nc, Nf) real diagonal of Pxy, the same `psd`
+      // slice calc_psd fills — and `enbw_hz` for the density. Without them it
+      // falls back to showing the coherence.
+      if (A.Pxy) {
+        const P = decodeNpy(A.Pxy);
+        const [nc, , nf] = P.shape;
+        if (P.shape.length === 3 && nc > 0 && nf > 0) {
+          const diag = new Float64Array(nc * nf);
+          for (let i = 0; i < nc; i++) {
+            for (let f = 0; f < nf; f++) diag[i * nf + f] = P.re[(i * nc + i) * nf + f];
+          }
+          const enbw = Number(item.meta.enbw_hz);
+          slice.psd = {
+            axis, data: { shape: [nc, nf], re: diag },
+            enbw: Number.isFinite(enbw) && enbw > 0 ? enbw : undefined,
+          };
+        }
+      }
+      return slice;
+    }
     case 'SonoData': {
       if (!A.time_axis || !A.freq_axis || !A.sono_data) return null;
       const data = sonoSliceFromCube(A.sono_data);

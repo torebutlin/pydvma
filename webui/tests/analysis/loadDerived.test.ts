@@ -245,3 +245,33 @@ test('round-5 item 3 end-to-end: a real orphan-TF .dvma → 3 chips + 3 distinct
   expect(model.lines).toHaveLength(3);
   expect(model.lines.map((l) => l.color)).toEqual(set.colors);
 });
+
+// A stored CrossSpecData carries the whole matrix, so the CSD view needs its
+// AUTO-POWERS too (|S_xy| = sqrt(Cxy·Pxx_i·Pxx_j)), exactly as a computed one
+// gets them from calc_psd. Seeding only Cxy left the view on its coherence
+// fallback under a "CSD |S_xy|" label — first visible with the Vibration Apps
+// import, the first file to carry real cross-spectra.
+test('a loaded CrossSpecData seeds the auto-powers and ENBW beside its coherence', () => {
+  const { a } = actions();
+  // (2, 2, Nf=2) complex Pxy, row-major [i][j][f], interleaved [re, im].
+  const Pxy = cplxArr([2, 2, 2], [
+    4, 0, 5, 0,     // P00(f0), P00(f1)
+    1, 1, 2, 2,     // P01
+    1, -1, 2, -2,   // P10
+    9, 0, 16, 0,    // P11
+  ]);
+  const Cxy = realArr([2, 2, 2], [1, 1, 0.5, 0.25, 0.5, 0.25, 1, 1]);
+  const cs: DvmaItem = {
+    kind: 'CrossSpecData',
+    arrays: { freq_axis: realArr([2], [10, 20]), Pxy, Cxy },
+    meta: { test_name: 'cs', timestring: 't0', id_link: 'u1', enbw_hz: 3 },
+    settings: { fs: 2 },
+  };
+  a.loadDataset({ formatVersion: 1, pydvmaVersion: '2.6.0', items: [timeItem('u1'), cs] });
+  const set = Object.values(get(a.derived))[0];
+  expect(set.csd?.data.shape).toEqual([2, 2, 2]);
+  expect(Array.from(set.psd!.axis)).toEqual([10, 20]);
+  expect(set.psd!.data.shape).toEqual([2, 2]);                 // (Nc, Nf), as calc_psd
+  expect(Array.from(set.psd!.data.re)).toEqual([4, 5, 9, 16]); // real diagonal
+  expect(set.psd!.enbw).toBe(3);
+});

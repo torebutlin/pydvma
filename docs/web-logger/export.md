@@ -227,8 +227,9 @@ Press **Load Data** in the header. The web logger opens:
   functions, with coherence columns recognised automatically, and time
   captures (see [From the Qt logger](migration.md#files-carry-over)); and
 - **`.csv`** files saved by the Vibration Apps' **Transfer function**
-  app (3C6): one transfer function set per measurement, H1 with its
-  coherence (see
+  app (3C6): one set per measurement, holding its transfer function (H1
+  with its coherence), its cross-spectrum and, when the file has it, its
+  time data (see
   [Import Vibration Apps transfer functions](../user-guide/import-export.md#import-vibration-apps-transfer-functions)).
 
 The `.mat` and `.csv` files written by **Export Matlab** and **Export

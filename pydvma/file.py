@@ -6,12 +6,15 @@ Created on Mon Aug 27 14:32:35 2018
 """
 
 import datetime
+import io as io_text
 import os.path
 import re
+import uuid
 import warnings
 import zipfile
 import numpy as np
 import scipy.io as io
+from scipy import signal
 from . import container
 from . import datastructure
 from . import options
@@ -1153,20 +1156,23 @@ def import_from_matlab_jwlogger(filename=None):
     return dataset
 
 #%% IMPORT FROM THE VIBRATION APPS (TRANSFER FUNCTION CSV)
-VIBRATION_APPS_CSV_FORMAT = 'vibration-apps-tf-csv 1'
+VIBRATION_APPS_CSV_FORMATS = ('vibration-apps-tf-csv 1', 'vibration-apps-tf-csv 2')
 _VA_FORMAT_RE = re.compile(r'vibration-apps-tf-csv ([^\s)]+)')
 _VA_MEASUREMENT_RE = re.compile(r'#\s*m(\d+)( notes)?:\s?(.*)$')
 _VA_COLUMNS = ('measurement', 'f_Hz', 'H1_re', 'H1_im', 'coherence')
+_VA_TIME_COLUMNS = ('measurement', 't_s', 'x', 'y')
+_VA_TIME_SECTION = '\n# section: time\n'
+_VA_WINDOWS = {'hann': 'hann', 'rect': 'boxcar'}
 
 
 def _not_vibration_apps_csv(name):
     """The ValueError for a CSV that the Vibration Apps did not save."""
     return ValueError(
         "%s is not a CSV saved by the Vibration Apps' Transfer function "
-        "app: its first line does not name the format '%s'. That is the "
-        "only CSV pydvma can load. pydvma's own export_to_csv files cannot "
-        "be loaded back: to reopen pydvma data, save it with save_data "
-        "(.dvma)." % (name, VIBRATION_APPS_CSV_FORMAT))
+        "app: its first line does not name the format "
+        "'vibration-apps-tf-csv'. That is the only CSV pydvma can load. "
+        "pydvma's own export_to_csv files cannot be loaded back: to reopen "
+        "pydvma data, save it with save_data (.dvma)." % name)
 
 
 def _is_vibration_apps_csv(filename):
@@ -1196,6 +1202,62 @@ def _va_timestamp(text):
     return t if t.tzinfo is not None else t.replace(tzinfo=datetime.timezone.utc)
 
 
+def _va_stamp(item, t):
+    """Give `item` the measurement time `t` and its local-time timestring."""
+    item.timestamp = t
+    lt = t.astimezone()
+    item.timestring = '_%d_%d_%d_at_%d_%d_%d' % (
+        lt.year, lt.month, lt.day, lt.hour, lt.minute, lt.second)
+
+
+def _va_table(lines, name, need, what):
+    """Column names (first line) and rows (the rest) of one CSV table, read
+    by name: returns ``{column: array}`` for the `need` columns, empty
+    fields as NaN."""
+    names = [c.strip() for c in lines[0].split(',')] if lines else []
+    missing = [c for c in need if c not in names]
+    if missing:
+        raise ValueError('%s has no %s column in its %s table, so it cannot '
+                         'be imported.' % (name, ', '.join(missing), what))
+    rows = [ln for ln in lines[1:] if ln.strip() and not ln.startswith('#')]
+    if not rows:
+        raise ValueError('%s has no %s rows.' % (name, what))
+    try:
+        data = np.atleast_2d(np.genfromtxt(rows, delimiter=',', dtype=float))
+    except ValueError as e:
+        raise ValueError('%s: the %s rows cannot be read (%s).'
+                         % (name, what, e)) from e
+    return {c: data[:, i] for i, c in enumerate(names) if c}
+
+
+def _va_time_table(text, name):
+    """The time table (format 2) read in one pass: ``{column: array}``."""
+    head, _, body = text.partition('\n')
+    names = [c.strip() for c in head.split(',')]
+    missing = [c for c in _VA_TIME_COLUMNS if c not in names]
+    if missing:
+        raise ValueError('%s has no %s column in its time table, so it cannot '
+                         'be imported.' % (name, ', '.join(missing)))
+    try:
+        data = np.atleast_2d(np.loadtxt(io_text.StringIO(body), delimiter=',',
+                                        usecols=[names.index(c) for c in _VA_TIME_COLUMNS],
+                                        ndmin=2))
+    except ValueError as e:
+        raise ValueError('%s: the time rows cannot be read (%s).' % (name, e)) from e
+    return dict(zip(_VA_TIME_COLUMNS, data.T))
+
+
+def _va_enbw(md, fs):
+    """Effective noise bandwidth (Hz) of the app's window for a measurement,
+    or None when its window or frame length is not stated."""
+    win = _VA_WINDOWS.get(md.get('window', ''))
+    nperseg = _va_num(md.get('nperseg'))
+    if win is None or not nperseg or not fs:
+        return None
+    w = signal.get_window(win, int(nperseg))
+    return float(fs * np.sum(w ** 2) / np.sum(w) ** 2)
+
+
 def _vibration_apps_dataset(text, name):
     """Parse the text of a Vibration Apps TF CSV into a DataSet.
 
@@ -1203,16 +1265,21 @@ def _vibration_apps_dataset(text, name):
     only used in error messages. The browser's import
     (`engine.vibration_csv_to_dvma`) comes through here too.
     """
-    lines = text.lstrip('﻿').splitlines()
-    first = lines[0] if lines else ''
+    text = text.lstrip('﻿').replace('\r\n', '\n')
+    first = text.partition('\n')[0]
     found = _VA_FORMAT_RE.search(first) if first.startswith('#') else None
     if found is None:
         raise _not_vibration_apps_csv(name)
-    if found.group(0) != VIBRATION_APPS_CSV_FORMAT:
+    if found.group(0) not in VIBRATION_APPS_CSV_FORMATS:
         raise ValueError(
             "%s is format '%s', and this pydvma reads '%s' only. Update "
             "pydvma (pip install --upgrade pydvma) to load it."
-            % (name, found.group(0), VIBRATION_APPS_CSV_FORMAT))
+            % (name, found.group(0), "' and '".join(VIBRATION_APPS_CSV_FORMATS)))
+
+    # Format 2 puts a time table after the TF table; split there first, so
+    # the (large) time rows are read in one pass and never line by line.
+    tf_text, has_time, time_text = text.partition(_VA_TIME_SECTION)
+    lines = tf_text.splitlines()
 
     # The '#' block: one line of key=value pairs and one of notes per
     # measurement, in the order the app lists them; other lines describe
@@ -1227,22 +1294,8 @@ def _vibration_apps_dataset(text, name):
             meta[int(m.group(1))] = {k.strip(): v.strip()
                                      for k, _, v in pairs if k.strip()}
         at += 1
-
-    names = [c.strip() for c in lines[at].split(',')] if at < len(lines) else []
-    missing = [c for c in _VA_COLUMNS if c not in names]
-    if missing:
-        raise ValueError('%s has no %s column, so it cannot be imported.'
-                         % (name, ', '.join(missing)))
-    rows = [ln for ln in lines[at + 1:] if ln.strip()]
-    if not rows:
-        raise ValueError('%s has no data rows.' % name)
-    try:
-        # Empty fields (a one-frame result's coherence) read as NaN.
-        data = np.atleast_2d(np.genfromtxt(rows, delimiter=',', dtype=float))
-    except ValueError as e:
-        raise ValueError('%s: the data rows cannot be read (%s).'
-                         % (name, e)) from e
-    col = {c: data[:, names.index(c)] for c in _VA_COLUMNS}
+    col = _va_table(lines[at:], name, _VA_COLUMNS, 'transfer function')
+    timecol = _va_time_table(time_text, name) if has_time else None
 
     numbers = col['measurement']
     unlisted = sorted(set(numbers[~np.isnan(numbers)].astype(int)) - set(meta))
@@ -1260,28 +1313,66 @@ def _vibration_apps_dataset(text, name):
                 "file looks edited or cut short." % (name, no, no))
         n_out = int(_va_num(md.get('channels')) or 1)
         fs = _va_num(md.get('fs'))
-        settings = (options.MySettings(channels=n_out + 1, fs=fs) if fs
-                    else options.MySettings(channels=n_out + 1))
-        settings.ch_in = int(_va_num(md.get('ch_in')) or 0)
-        settings.ch_out_set = np.setxor1d(np.arange(n_out + 1), settings.ch_in)
-        if md.get('device_name'):
-            settings.device_name = md['device_name']
-
-        coh = col['coherence'][sel]
-        tf = datastructure.TfData(
-            col['f_Hz'][sel], (col['H1_re'][sel] + 1j * col['H1_im'][sel])[:, None],
-            None if np.all(np.isnan(coh)) else coh[:, None], settings,
-            units=[md.get('units') or '-'],
-            channel_cal_factors=np.array([_va_num(md.get('channel_cal_factors')) or 1.0]),
-            test_name=('m%d %s' % (no, md.get('test_name', ''))).strip())
-
         t = _va_timestamp(md.get('timestamp'))
-        if t is not None:
-            tf.timestamp = t
-            lt = t.astimezone()
-            tf.timestring = '_%d_%d_%d_at_%d_%d_%d' % (
-                lt.year, lt.month, lt.day, lt.hour, lt.minute, lt.second)
+        test_name = ('m%d %s' % (no, md.get('test_name', ''))).strip()
 
+        def settings_for(channels):
+            s = (options.MySettings(channels=channels, fs=fs) if fs
+                 else options.MySettings(channels=channels))
+            if md.get('device_name'):
+                s.device_name = md['device_name']
+            return s
+
+        # The measurement's time data (format 2, `time_rows=` in its line):
+        # channel 0 x (what was played, or the reference channel), channel 1
+        # y (the microphone, moved earlier by the loop delay to the nearest
+        # sample). The file rounds t_s to the microsecond, so the axis is
+        # rebuilt exactly from fs.
+        link = uuid.uuid4()
+        n_time = int(_va_num(md.get('time_rows')) or 0)
+        if n_time:
+            tsel = (timecol['measurement'] == no) if timecol is not None else np.zeros(0, bool)
+            if int(np.count_nonzero(tsel)) != n_time:
+                raise ValueError(
+                    "%s: measurement %d has %d time rows, but its header says "
+                    "time_rows=%d; the file looks edited or cut short."
+                    % (name, no, int(np.count_nonzero(tsel)), n_time))
+            t0 = timecol['t_s'][tsel][0]
+            td = datastructure.TimeData(
+                t0 + np.arange(n_time) / fs,
+                np.column_stack([timecol['x'][tsel], timecol['y'][tsel]]),
+                settings_for(2), units=['-', '-'],
+                channel_cal_factors=np.ones(2), test_name=test_name)
+            if t is not None:
+                _va_stamp(td, t)
+            dataset.add_to_dataset(td)
+            link = td.unique_id
+
+        f = col['f_Hz'][sel]
+        H1 = col['H1_re'][sel] + 1j * col['H1_im'][sel]
+        coh = col['coherence'][sel]
+
+        # An |H| with no phase (from the powers alone): its phase, and any
+        # modal fit to it, mean nothing, so the set says so in its name.
+        magnitude_only = (md.get('estimator', 'H1') not in ('H1', '')
+                          or not np.any(col['H1_im'][sel][np.isfinite(H1)]))
+        if magnitude_only:
+            test_name += ' (|H| only, no phase)'
+            warnings.warn(
+                '%s: measurement %d has an |H| with no phase (zero '
+                'everywhere); its phase and any modal fit to it are not '
+                'meaningful.' % (name, no), UserWarning, stacklevel=3)
+
+        tf_settings = settings_for(n_out + 1)
+        tf_settings.ch_in = int(_va_num(md.get('ch_in')) or 0)
+        tf_settings.ch_out_set = np.setxor1d(np.arange(n_out + 1), tf_settings.ch_in)
+        tf = datastructure.TfData(
+            f, H1[:, None], None if np.all(np.isnan(coh)) else coh[:, None],
+            tf_settings, units=[md.get('units') or '-'],
+            channel_cal_factors=np.array([_va_num(md.get('channel_cal_factors')) or 1.0]),
+            id_link=link, test_name=test_name)
+        if t is not None:
+            _va_stamp(tf, t)
         nperseg = _va_num(md.get('nperseg'))
         tf.source_settings = {
             'calc': 'vibration_apps_' + md.get('kind', ''),
@@ -1289,9 +1380,38 @@ def _vibration_apps_dataset(text, name):
             'N_frames': int(_va_num(md.get('N_frames')) or 1),
             'overlap': _va_num(md.get('overlap')),
             'nperseg': None if nperseg is None else int(nperseg),
-            'ch_in': settings.ch_in,
+            'ch_in': tf_settings.ch_in,
             'vibration_apps': dict(md, notes=notes.get(no, [])),
         }
+        if magnitude_only:
+            tf.source_settings['magnitude_only'] = True
+
+        # Gxx, Gyy (one-sided densities) with H1 and the coherence give the
+        # whole 2x2 cross-spectral matrix, in pydvma's convention a one-sided
+        # power SPECTRUM: P = G * enbw_hz (see `CrossSpecData.enbw_hz`).
+        # Gxy = H1 * Gxx; a one-frame result's coherence is 1 by definition.
+        enbw = _va_enbw(md, fs)
+        if 'Gxx' in col and 'Gyy' in col and enbw is not None:
+            Gxx, Gyy = col['Gxx'][sel], col['Gyy'][sel]
+            if np.all(np.isfinite(Gxx)) and np.all(np.isfinite(Gyy)) and not magnitude_only:
+                Pxy = np.empty((2, 2, f.size), dtype=complex)
+                Pxy[0, 0] = Gxx * enbw
+                Pxy[1, 1] = Gyy * enbw
+                Pxy[0, 1] = H1 * Gxx * enbw
+                Pxy[1, 0] = np.conj(Pxy[0, 1])
+                gamma2 = np.where(np.isnan(coh), 1.0, coh)
+                Cxy = np.ones((2, 2, f.size))
+                Cxy[0, 1] = Cxy[1, 0] = gamma2
+                cs_settings = settings_for(2)
+                cs_settings.window = _VA_WINDOWS[md['window']]
+                cs = datastructure.CrossSpecData(
+                    f.copy(), Pxy, Cxy, cs_settings, units=['-', '-'],
+                    channel_cal_factors=np.ones(2), id_link=link,
+                    test_name=('m%d %s' % (no, md.get('test_name', ''))).strip(),
+                    enbw_hz=enbw)
+                if t is not None:
+                    _va_stamp(cs, t)
+                dataset.add_to_dataset(cs)
         dataset.add_to_dataset(tf)
     return dataset
 
@@ -1302,51 +1422,70 @@ def import_from_vibration_apps_csv(filename=None):
 
     The app (https://torebutlin.github.io/vibration_apps/apps/frf/, used
     in 3C6) measures speaker to microphone in a browser and saves every
-    measurement it holds as one CSV, format ``vibration-apps-tf-csv 1``.
-    Each measurement becomes one `TfData`, in the file's order, named
-    ``m<no> <the app's name>`` with the app's card number. `load_data`
-    recognises the file by its first line, so ``load_data('x.csv')``
-    comes here too.
+    measurement it holds as one CSV: format ``vibration-apps-tf-csv 1``,
+    or ``vibration-apps-tf-csv 2`` when its "time data" box is ticked,
+    which adds each measurement's time series after the transfer
+    functions. `load_data` recognises the file by its first line, so
+    ``load_data('x.csv')`` comes here too.
 
-    What each `TfData` holds:
+    Each measurement gives, in the file's order and all named
+    ``m<no> <the app's name>`` with the app's card number:
 
-    - ``freq_axis``: the measurement's own frequencies. These differ
-      between measurements and need not be a uniform grid (a stepped
-      sine's points).
-    - ``tf_data``: H1 = S_xy/S_xx, one column, x what was played (or the
-      app's reference channel), y the microphone. The loop delay the app
-      found is already out of the phase. The file's H2 columns are not
-      imported.
-    - ``tf_coherence``: one column, or None for a result of one frame
-      (the app leaves its coherence empty: it is 1 by definition).
-    - ``units`` ``['-']`` and ``channel_cal_factors`` ``[1]``:
-      uncalibrated, microphone full scale per speaker full scale.
-    - ``settings``: ``fs``, ``channels`` (outputs + 1), ``ch_in``,
-      ``device_name`` (the microphone, when the browser named it).
-    - ``timestamp``: when it was measured, a timezone-aware UTC datetime.
-    - ``source_settings``: ``calc`` (``'vibration_apps_'`` + the kind:
-      ``noise``, ``sweep``, ``sine``, ``file``), ``window``, ``N_frames``,
-      ``overlap``, ``nperseg``, ``ch_in``, and ``vibration_apps``, every
-      key=value of the app's as a string plus its ``notes`` (a list), so
-      the test signal, loop delay and quality figures survive a .dvma
-      round trip. There is no ``source_signature``: no time data lies
-      behind these.
+    - a `TimeData` (format 2, when the measurement has time data; never
+      for a stepped sine): channel 0 x, what was played (or the app's
+      reference channel), channel 1 y, the microphone, moved earlier by
+      the app's loop delay to the nearest sample so the two line up as
+      the app analysed them. The time axis is rebuilt exactly from fs.
+    - a `TfData`: ``freq_axis`` the measurement's own frequencies (they
+      differ between measurements and need not be a uniform grid: a
+      stepped sine's points); ``tf_data`` H1 = S_xy/S_xx, one column,
+      with the loop delay already out of its phase; ``tf_coherence`` one
+      column, or None for a result of one frame (the app leaves it empty:
+      it is 1 by definition).
+    - a `CrossSpecData`, when the file has the ``Gxx`` / ``Gyy`` columns
+      (not for a stepped sine): the 2x2 cross-spectral matrix from the
+      auto-spectra, H1 and the coherence, in pydvma's convention (``Pxy``
+      a one-sided power spectrum, the app's density times ``enbw_hz``, the
+      effective noise bandwidth of the app's window and frame length).
 
-    A measurement the app was hiding when it saved is imported all the
-    same. Keys and columns this version does not know are ignored.
+    The items of one measurement share one ``id_link``: the `TimeData`'s
+    ``unique_id`` when there is time data, otherwise an id of their own,
+    so the web app shows each measurement as one set.
+
+    All are uncalibrated, microphone full scale per speaker full scale
+    (``units`` ``'-'``, ``channel_cal_factors`` 1). ``settings`` carry
+    ``fs`` and ``device_name`` (the microphone, when the browser named
+    it); the TF's carry ``channels`` (outputs + 1) and ``ch_in``.
+    ``timestamp`` is when the measurement was made, a timezone-aware UTC
+    datetime. The TF's ``source_settings`` hold ``calc``
+    (``'vibration_apps_'`` + the kind: ``noise``, ``sweep``, ``sine``,
+    ``file``), ``window``, ``N_frames``, ``overlap``, ``nperseg``,
+    ``ch_in``, and ``vibration_apps``, every key=value of the app's as a
+    string plus its ``notes`` (a list), so the test signal, loop delay and
+    quality figures survive a .dvma round trip. There is no
+    ``source_signature``: pydvma did not compute these.
+
+    An H1 with no phase anywhere (an |H| from the powers alone) is
+    imported with ``' (|H| only, no phase)'`` added to its name,
+    ``source_settings['magnitude_only']`` True, no cross-spectrum, and a
+    UserWarning: its phase and any modal fit to it are not meaningful.
+    The file's H2 and H_power columns are not imported. A measurement the
+    app was hiding when it saved is imported all the same. Keys and
+    columns this version does not know are ignored.
 
     Args:
        filename (str or os.PathLike): File to import, given positionally or
            as ``filename=``.
 
     Returns:
-       dataset (DataSet): One `TfData` per measurement.
+       dataset (DataSet): The measurements' TimeData, CrossSpecData and
+           TfData.
 
     Raises:
        ValueError: If the file's first line does not name the format,
            including pydvma's own `export_to_csv` files; if it names
-           another version of it; or if columns, rows or a measurement's
-           header line are missing.
+           another version of it; or if columns, rows, time rows or a
+           measurement's header line are missing.
        TypeError: If no filename is given.
     '''
     filename = _resolve_filename(None, filename, 'import_from_vibration_apps_csv',

@@ -110,9 +110,9 @@ with `measurement_type='vel'`.
 The **Transfer function** app in the
 [Vibration Apps](https://torebutlin.github.io/vibration_apps/apps/frf/)
 (used in 3C6) measures speaker to microphone in a browser and saves every
-measurement it holds as one CSV. `load_data` recognises that file by its
-first line, whatever it is named, and gives one transfer function per
-measurement:
+measurement it holds as one CSV, with each measurement's time data too
+when its "time data" box is ticked. `load_data` recognises that file by
+its first line, whatever it is named:
 
 ```python
 va = dvma.load_data(filename='measurements.csv')
@@ -120,23 +120,35 @@ for tf in va.tf_data_list:
     print(tf.test_name, len(tf.freq_axis))
 ```
 
-- Each `TfData` is named `m<no> <name>` with the app's card number, and
-  keeps its own frequencies. A noise test's are its FFT bins within the
-  band; a stepped sine's are its points, which are not evenly spaced.
-- `tf_data` is H1, uncalibrated (microphone full scale per speaker full
-  scale), with the loop delay the app found already out of the phase.
-  The file's H2 columns are not imported.
-- `tf_coherence` is None for a result of one frame, where the app leaves
-  it empty (it is 1 by definition).
-- `timestamp` is when the measurement was made (UTC), and
-  `source_settings['vibration_apps']` keeps every setting the app wrote
-  plus its notes (test signal, loop delay, quality figures), so they
-  survive saving as `.dvma`.
+Each measurement, named `m<no> <name>` with the app's card number, gives:
 
-A measurement the app was hiding when it saved is imported all the same.
-Any other CSV, including one written by `export_to_csv`, stops with an
-error. `dvma.import_from_vibration_apps_csv(filename=...)` does the same
-import directly.
+- a **`TimeData`**, when the file has its time data (never for a stepped
+  sine): channel 0 is what was played, channel 1 the microphone, already
+  lined up for the loop delay as the app analysed them. pydvma's own
+  analysis can be run on it and compared with the app's result.
+- a **`TfData`**: H1 on the measurement's own frequencies (a noise test's
+  FFT bins within the band; a stepped sine's points, not evenly spaced),
+  uncalibrated (microphone full scale per speaker full scale), with the
+  loop delay already out of the phase. Its `tf_coherence` is None for a
+  result of one frame, where the app leaves it empty (it is 1 by
+  definition). The file's H2 and H_power columns are not imported.
+- a **`CrossSpecData`**, from the app's auto-spectra (`Gxx`, `Gyy`) with
+  H1 and the coherence, in pydvma's convention: a power spectrum, with
+  `enbw_hz` to turn it into a density (the app's numbers).
+
+The three share one `id_link`, so the web app shows each measurement as
+one set. `timestamp` is when the measurement was made (UTC), and the TF's
+`source_settings['vibration_apps']` keeps every setting the app wrote
+plus its notes (test signal, loop delay, quality figures), so they
+survive saving as `.dvma`.
+
+An H1 with no phase anywhere (a magnitude from the powers alone) gets
+`(|H| only, no phase)` added to its name and a warning: its phase and any
+modal fit to it mean nothing. A measurement the app was hiding when it
+saved is imported all the same. Any other CSV, including one written by
+`export_to_csv`, stops with an error.
+`dvma.import_from_vibration_apps_csv(filename=...)` does the same import
+directly.
 
 Each measurement has its own frequency axis, so fit them one at a time
 in Python: see the warning under
