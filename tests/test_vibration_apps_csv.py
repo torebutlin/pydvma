@@ -13,6 +13,7 @@ up in ``dev/2026-10-06-vibration-apps-csv-import.md``.
 demo system): five measurements, a noise test in frames of 8192, a sweep
 x4, a 20-point stepped sine, one frame of 2 s of noise (so no coherence),
 and the noise test again with an added mass, hidden in the app when saved.
+It carries an ``H_power`` column that this importer does not read.
 """
 import datetime
 import os
@@ -71,12 +72,21 @@ class TestExampleFile:
         tf = example.tf_data_list[0]
         assert tf.freq_axis[0] == 105.46875
         assert tf.tf_data.shape == (836, 1)
-        assert tf.tf_data[0, 0] == complex(-0.0331715, 0.000979455)
+        assert tf.tf_data[0, 0] == complex(-0.0332106, 0.00111427)
         assert tf.tf_coherence.shape == (836, 1)
-        assert tf.tf_coherence[0, 0] == 0.97966
+        assert tf.tf_coherence[0, 0] == 0.97815
         # The stepped sine's points are not a uniform grid, and are kept so.
         f3 = example.tf_data_list[2].freq_axis
         assert not np.allclose(np.diff(f3), np.diff(f3)[0])
+
+    def test_each_measurement_keeps_its_own_frequencies(self, example):
+        # Not put onto a common grid: frames of 8192 start at the bin
+        # 18*48000/8192, a sweep's repeat at its own padded length's bin.
+        f1, f2 = example.tf_data_list[0].freq_axis, example.tf_data_list[1].freq_axis
+        assert f1[0] == 105.46875
+        assert f2[0] == 100.3418
+        # (the app writes f to about 8 significant figures)
+        np.testing.assert_allclose(np.diff(f1), 48000 / 8192, rtol=2e-5)
 
     def test_a_one_frame_result_has_no_coherence(self, example):
         # m4 is one frame of 2 s: its coherence column is empty (it is 1 by
@@ -99,8 +109,8 @@ class TestExampleFile:
 
     def test_timestamp_is_when_it_was_measured(self, example):
         tf = example.tf_data_list[0]
-        assert tf.timestamp == datetime.datetime(2026, 10, 6, 10, 1, 46,
-                                                 523000, tzinfo=UTC)
+        assert tf.timestamp == datetime.datetime(2026, 10, 6, 10, 31, 19,
+                                                 223000, tzinfo=UTC)
         t = tf.timestamp.astimezone()
         assert tf.timestring == '_%d_%d_%d_at_%d_%d_%d' % (
             t.year, t.month, t.day, t.hour, t.minute, t.second)
@@ -113,7 +123,7 @@ class TestExampleFile:
         assert ss['overlap'] == 0.5
         assert ss['nperseg'] == 8192
         va = ss['vibration_apps']
-        assert va['delay_s'] == '0.04241788'
+        assert va['delay_s'] == '0.03848005'
         assert va['estimator'] == 'H1'
         assert len(va['notes']) == 3
         assert va['notes'][0].startswith('delay through the measurement')

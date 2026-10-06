@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
@@ -153,4 +154,37 @@ test('loading a second file APPENDS its sets to the tray', async ({ page }) => {
   await expect(page.getByTestId('plot-line').first()).toBeVisible();
   await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Time' }).click();
   await expect(page.getByTestId('plot-line').first()).toBeAttached();
+});
+
+// The Vibration Apps' Transfer function app (3C6) saves every measurement it
+// holds as ONE csv (format vibration-apps-tf-csv 1), each on its own
+// frequencies. Load Data sniffs the first line and converts it through the
+// engine's vibration_csv_to_dvma, the same parser as python's load_data. The
+// file is the python suite's fixture: five measurements, the fourth a single
+// frame (no coherence), the fifth hidden in the app when saved.
+test('csv import (Vibration Apps): one TF set per measurement', async ({ page }) => {
+  const example = fileURLToPath(new URL('../../tests/data/vibration_apps_example.csv', import.meta.url));
+  await page.goto('/');
+  await loadViaFallback(page, example);
+  await expect(page.getByTestId('tray-card-4')).toBeVisible({ timeout: 200_000 });
+  await expect(page.getByTestId('tray-card-5')).toHaveCount(0);
+  await expect(page.getByTestId('tray-card-0')).toContainText('m1 noise 10 s');
+  await expect(page.getByTestId('tray-card-4')).toContainText('+ mass');
+
+  await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+  await expect(page.getByTestId('plot-line').first()).toBeAttached();
+  await expect(page.getByTestId('toast').filter({ hasText: /failed|could not/i })).toHaveCount(0);
+});
+
+// Any other csv — pydvma's own export is the likely one — is refused before the
+// engine, with the reason, rather than as an unrecognised file.
+test('csv import: a csv the Vibration Apps did not save is refused with why', async ({ page }, info) => {
+  const own = info.outputPath('own.csv');
+  writeFileSync(own, '# pydvma export: RAW data, calibration NOT applied.\n1,2\n');
+  await page.goto('/');
+  await loadViaFallback(page, own);
+  await expect(
+    page.getByTestId('toast').filter({ hasText: "not a CSV saved by the Vibration Apps" }),
+  ).toBeVisible();
+  await expect(page.getByTestId('tray-card-0')).toHaveCount(0);
 });

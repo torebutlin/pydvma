@@ -745,32 +745,44 @@
 
   /**
    * Convert loaded file bytes to a DvmaDataset by format. `.dvma` reads
-   * directly; legacy `.npy` and JW-logger `.mat` go through the engine
-   * (pydvma.engine converts them to a .dvma container which `readDvma` then
-   * parses). The engine call boots pyodide lazily on first use.
+   * directly; legacy `.npy`, JW-logger `.mat` and the Vibration Apps'
+   * transfer-function CSV go through the engine (pydvma.engine converts them
+   * to a .dvma container which `readDvma` then parses). The engine call boots
+   * pyodide lazily on first use. Any other `.csv` is refused here, with why.
    */
   async function toDataset(bytes: Uint8Array, name: string): Promise<DvmaDataset> {
     const fmt = sniffFormat(bytes, name);
     if (fmt === 'dvma') return readDvma(bytes);
-    if (fmt === 'npy' || fmt === 'mat') {
+    if (fmt === 'csv') {
+      throw new Error(
+        `${name} is not a CSV saved by the Vibration Apps' Transfer function app, ` +
+          `the only CSV pydvma can load. pydvma's own CSV exports cannot be loaded ` +
+          `back: Save Dataset (.dvma) to reopen data.`,
+      );
+    }
+    if (fmt === 'npy' || fmt === 'mat' || fmt === 'vacsv') {
       engine.boot(); // idempotent; the conversion op needs a live engine
-      const op = fmt === 'npy' ? 'legacy_to_dvma' : 'mat_to_dvma';
-      const payloadKey = fmt === 'npy' ? 'npy_bytes' : 'mat_bytes';
+      const { op, payload } =
+        fmt === 'npy'
+          ? { op: 'legacy_to_dvma', payload: { npy_bytes: bytes } }
+          : fmt === 'mat'
+            ? { op: 'mat_to_dvma', payload: { mat_bytes: bytes } }
+            : { op: 'vibration_csv_to_dvma', payload: { csv_bytes: bytes, name } };
       // A cold-engine conversion pays the full pyodide boot (seconds of
       // silence) — show a transient "Converting…" toast so the wait doesn't
       // read as a hang, and clear it once the conversion settles.
       const convertingId = toasts.push(`Converting ${name}…`, { level: 'info', timeout: 600_000 });
       try {
-        const res = await engine.enqueue<{ dvma: Uint8Array } | Map<string, Uint8Array>>(op, {
-          [payloadKey]: bytes,
-        });
+        const res = await engine.enqueue<{ dvma: Uint8Array } | Map<string, Uint8Array>>(op, payload);
         const dvma = res instanceof Map ? res.get('dvma')! : res.dvma;
         return readDvma(dvma instanceof Uint8Array ? dvma : new Uint8Array(dvma));
       } finally {
         toasts.dismiss(convertingId);
       }
     }
-    throw new Error(`unrecognised file "${name}" (not a .dvma, legacy .npy, or .mat)`);
+    throw new Error(
+      `unrecognised file "${name}" (not a .dvma, legacy .npy, .mat, or Vibration Apps .csv)`,
+    );
   }
 
   /** Load Data: open a file via the working dir (or fallback), parse, load. */

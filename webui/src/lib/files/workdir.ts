@@ -138,7 +138,7 @@ export function wrap(handle: FileSystemDirectoryHandle): WorkDir {
           types: [
             {
               description: 'pydvma datasets',
-              accept: { 'application/octet-stream': ['.dvma', '.npy', '.mat'] },
+              accept: { 'application/octet-stream': ['.dvma', '.npy', '.mat', '.csv'] },
             },
           ],
           multiple: false,
@@ -182,7 +182,7 @@ export function fallbackDir(): WorkDir {
       return new Promise((resolve) => {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.dvma,.npy,.mat';
+        input.accept = '.dvma,.npy,.mat,.csv';
         // Exposed for the e2e: Playwright targets this input via a testid
         // (or the filechooser event) to drive the fallback load path.
         input.setAttribute('data-testid', 'file-input');
