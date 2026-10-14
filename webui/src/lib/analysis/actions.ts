@@ -60,7 +60,10 @@ import type {
   BandLadder, DampingBand, DampingBandsResult, DampingModeFit, DampingPeaksResult,
 } from '../stores/damping';
 import type { Toasts } from '../stores/toast';
-import { capturedInVolts, isIdentity, normalizeFactors, normalizeUnits, wrapUnit } from '../model/calibration';
+import {
+  capturedInVolts, composeTfUnit, isIdentity, normalizeFactors, normalizeTfCal, normalizeUnits,
+  splitTfUnit, tfCalLine, tfCalToUi, wrapUnit, type TfCal, type TfCalLine,
+} from '../model/calibration';
 import type { ChoosableKind, ChoosableSet } from '../export/data';
 import { calibrationController } from '../stores/calibrationController';
 import { tfColumn } from '../plot/tfChannels';
@@ -199,13 +202,14 @@ export type SonoSaveChoice = 'channel' | 'all' | 'none';
 /**
  * What the Best Match confirm prompt is told about the action it is gating.
  *
- * Best Match writes its relative scaling factors into the same
- * `channel_cal_factors` slot a transducer calibration lives in, and leaves the
- * engineering `units` untouched — so a calibrated set keeps saying `m/s²`
- * while its numbers become relative to the reference. `calibrated` names the
- * sets that actually have something to lose (any non-identity factor today);
- * it is a SUBSET of `names`, and empty when every set is still raw, which is
- * the ordinary case where the prompt is a formality.
+ * Best Match writes its relative scaling into each set's TRANSFER-FUNCTION
+ * calibration (`TfCal`), replacing whatever TF factor the set displayed
+ * before — a free-mass calibration, an earlier Best Match, or the ratio its
+ * channel calibration implied. The channel (transducer) calibrations are
+ * never touched. `calibrated` names the sets that actually have something to
+ * lose — any TF line whose displayed factor is not 1 today; it is a SUBSET of
+ * `names`, and empty when every set is still raw, which is the ordinary case
+ * where the prompt is a formality.
  */
 export interface BestMatchInfo {
   /** Display names of every set Best Match will rescale. */
@@ -213,6 +217,43 @@ export interface BestMatchInfo {
   /** Those of `names` whose calibration is non-identity and will be replaced. */
   calibrated: string[];
 }
+
+/**
+ * One transfer-function line as the Calibrate dialog shows it
+ * (`getTfCalibration`).
+ */
+export interface TfCalRowInfo {
+  /** SOURCE channel of the line (the output channel; the column for an orphan). */
+  ch: number;
+  /**
+   * The factor the CHANNEL calibration implies, `cal[out]/cal[in]` — or, for
+   * an orphan TF (a TF-only file), its own stored factor, which is all the
+   * calibration such a set has.
+   */
+  ratio: number;
+  /** The TF calibration set on this line, or `null` (the ratio applies). */
+  override: TfCalLine | null;
+  /** The line's unit as numerator over denominator, as raw stored strings. */
+  num: string;
+  den: string;
+}
+
+/** A set's transfer-function calibration as the Calibrate dialog needs it. */
+export interface TfCalibrationInfo {
+  /** The TF's input channel; `null` for an orphan TF. */
+  chIn: number | null;
+  /**
+   * A TF-only set: its stored `channel_cal_factors` ARE the TF factors, so a
+   * TF calibration is written there (where python reads it) rather than as an
+   * override on top of a channel calibration it does not have.
+   */
+  orphan: boolean;
+  /** One row per TF line, in column order. */
+  rows: TfCalRowInfo[];
+}
+
+/** Relative tolerance for "this stored TF factor is just the channel ratio". */
+const TF_RATIO_RTOL = 1e-9;
 
 /** fs from a TimeData item: prefer settings.fs, else infer from the axis. */
 function sampleRate(item: DvmaItem): number {
@@ -894,6 +935,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         unitsAreVolts: capturedInVolts(item.settings),
         // x(iω) display power (round-6 Qt-parity Scaling tool), persisted in ui.
         iwPower: normalizeIwPower(item.ui?.iw_power),
+        // Transfer-function calibration, persisted in ui — but a linked
+        // TfData in the same file outranks it (pass 2, `storedTfCal`).
+        tfCal: normalizeTfCal(item.ui?.tf_cal, nCh) ?? undefined,
       };
 
       // Restore persisted UI state (Plan 2 persistence).
@@ -950,6 +994,14 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const srcWs = working.find((w) => w.setId === linkedSet)!;
         const slice = sliceForLoadedItem(item, srcWs.nChannels);
         if (slice) seed[linkedSet] = { ...seed[linkedSet], ...slice, setId: linkedSet };
+        // A saved TfData's own factors are where python keeps a TF's
+        // calibration (`TfDataList.set_calibration_factor`), and the app
+        // writes them on every save — so when the file has one, it is the
+        // current truth and outranks the ui state.
+        if (item.kind === 'TfData' && slice?.tf) {
+          const stored = storedTfCal(item, srcWs, slice.tf.chIn === undefined ? 0 : slice.tf.chIn);
+          if (stored !== false) seed[linkedSet] = { ...seed[linkedSet], tfCal: stored ?? undefined };
+        }
         const dKind = derivedKindOf(item.kind);
         if (dKind) {
           // Adopt the item for replace-by-lineage: a later Save that
@@ -1090,6 +1142,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const iwP = get(derived)[ws.setId]?.iwPower ?? 0;
       if (iwP) ui.iw_power = iwP;
 
+      // Transfer-function calibration: persist only when set.
+      const tfCal = get(derived)[ws.setId]?.tfCal;
+      if (tfCal) ui.tf_cal = tfCalToUi(tfCal);
+      syncStoredTfCal(ws);
+
       // Per-set analysis settings (full snapshot per view).
       if (settings) {
         const freq = settings.get(ws.setId, 'freq');
@@ -1116,6 +1173,28 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // objects in the manifest for sets with all-default state).
       ws.time.ui = Object.keys(ui).length > 0 ? ui : undefined;
     }
+  }
+
+  /**
+   * Keep a set's stored TfData calibrated as displayed.
+   *
+   * A TfData that came off disk is not rewritten by `materializeDerived` (its
+   * arrays are the file's truth), but its `channel_cal_factors` / `units` are
+   * the TF calibration python reads AND the one `loadDataset` trusts over the
+   * ui state — so a calibration set since must reach it before the document
+   * is written, or a reload would quietly undo it. Run on every
+   * serialization (`stampUiState`); a no-op for a set with no stored TfData,
+   * and for one whose stored columns do not line up with the set's channels.
+   */
+  function syncStoredTfCal(ws: WorkingSet): void {
+    const item = materializedItems.get(lineageKey(ws.setId, 'tf'));
+    const slice = get(derived)[ws.setId]?.tf;
+    if (!item || !slice || slice.chIn === null) return;
+    const cal = tfCalibration(ws.setId, slice.chIn ?? 0, slice.nChannels ?? ws.nChannels,
+      slice.data.shape[1] ?? 0);
+    if (!cal.factors) return;
+    setItemMeta(item, 'channel_cal_factors', cal.factors);
+    setItemMeta(item, 'units', cal.units);
   }
 
   /**
@@ -1153,8 +1232,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   /**
    * Per-output-channel calibration + units for a materialised TF, following
    * `analysis.calculate_tf`'s convention: the OUTPUT channels are every
-   * source channel except `chIn`, in ascending order, each carrying the cal
-   * RATIO `cal[out]/cal[in]` and the unit `"<out>/<in>"`. Returns `null`s
+   * source channel except `chIn`, in ascending order, each carrying the
+   * factor the line DISPLAYS with — its TF calibration where one is set, else
+   * the cal RATIO `cal[out]/cal[in]` — and its unit `"(<out>)/<in>"`,
+   * compound units bracketed exactly as python's `_tf_units_from_source`
+   * writes them (`composeTfUnit`). Returns `null`s
    * when the geometry does not line up with the stored columns (an
    * 'across' ensemble whose column count came from a different set, say) —
    * an absent field is honest, a mis-indexed one is not.
@@ -1169,9 +1251,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       || outs.some((c) => c >= cal.factors.length)) {
       return { factors: null, units: null };
     }
+    const states = outs.map((c) => tfLineState(setId, c, chIn));
     return {
-      factors: outs.map((c) => cal.factors[c] / cal.factors[chIn]),
-      units: outs.map((c) => `${cal.units[c]}/${cal.units[chIn]}`),
+      factors: states.map((st) => (st.override ? st.override.factor : st.ratio)),
+      units: states.map((st) => (st.num && st.den ? composeTfUnit(st.num, st.den) : '')),
     };
   }
 
@@ -2508,6 +2591,146 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
+   * The TF calibration a loaded, linked `TfData` carries: every column whose
+   * stored `channel_cal_factors` entry is not just the ratio its source's
+   * channel calibration implies (`cal[out]/cal[in]`, to {@link TF_RATIO_RTOL})
+   * becomes a TF calibration line, with its unit split back from the stored
+   * string (`splitTfUnit`) or, failing that, the channels' own units.
+   *
+   * Returns `null` when the stored factors are all just the channel ratio (no
+   * TF calibration — which also CLEARS a stale ui-state one: python
+   * recomputed or reset the TF), and `false` when the item has no usable
+   * factors at all, so the caller keeps whatever the ui state said.
+   */
+  function storedTfCal(item: DvmaItem, src: WorkingSet, chIn: number | null): TfCal | null | false {
+    const raw = item.meta.channel_cal_factors as ArrayLike<number> | null | undefined;
+    if (!raw || typeof raw !== 'object' || typeof raw.length !== 'number' || chIn === null) return false;
+    const nCh = src.nChannels;
+    const cal = normalizeFactors(src.time.meta.channel_cal_factors, nCh);
+    const units = normalizeUnits(src.time.meta.units, nCh);
+    const stUnits = Array.isArray(item.meta.units) ? item.meta.units as unknown[] : [];
+    const lines: (TfCalLine | null)[] = new Array(nCh).fill(null);
+    for (let col = 0; col < raw.length; col++) {
+      const ch = sourceOfColumn(col, chIn, nCh);
+      if (ch >= nCh || chIn >= nCh) return false;
+      const f = Number(raw[col]);
+      if (!Number.isFinite(f) || f === 0) continue;
+      const ratio = cal[ch] / cal[chIn];
+      if (Math.abs(f - ratio) <= TF_RATIO_RTOL * Math.abs(ratio)) continue;
+      const pair = splitTfUnit(stUnits[col]) ?? { num: units[ch], den: units[chIn] };
+      lines[ch] = { factor: f, num: pair.num, den: pair.den };
+    }
+    return normalizeTfCal({ chIn, lines }, nCh);
+  }
+
+  /**
+   * One TF line's calibration state: the channel-implied `ratio`, the TF
+   * calibration `override` (when one applies to this input channel), and the
+   * unit the line displays in, as raw strings. The single place the
+   * precedence lives, so the dialog, the fit, Best Match and the saved TfData
+   * can never disagree with the plot (`plot/model.ts` `calRatio`).
+   */
+  function tfLineState(
+    setId: number, ch: number, chIn: number | null,
+  ): { ratio: number; override: TfCalLine | null; num: string; den: string } {
+    const cal = getCalibration(setId);
+    const f = (c: number) => cal.factors[c] ?? 1;
+    const u = (c: number) => cal.units[c] ?? 'V';
+    if (chIn === null) {
+      // Orphan: the stored factor and unit ARE the TF's.
+      const pair = splitTfUnit(u(ch)) ?? { num: 'V', den: 'V' };
+      return { ratio: f(ch), override: null, ...pair };
+    }
+    const override = tfCalLine(get(derived)[setId]?.tfCal, ch, chIn);
+    const ratio = f(ch) / f(chIn);
+    return override
+      ? { ratio, override, num: override.num, den: override.den }
+      : { ratio, override: null, num: u(ch), den: u(chIn) };
+  }
+
+  /** The factor a TF line DISPLAYS with: its TF calibration, else the ratio. */
+  function tfLineFactor(setId: number, ch: number, chIn: number | null): number {
+    const st = tfLineState(setId, ch, chIn);
+    return st.override ? st.override.factor : st.ratio;
+  }
+
+  /**
+   * Read a set's transfer-function calibration for the Calibrate dialog: one
+   * row per TF line with the channel-implied ratio, any TF calibration set on
+   * it, and its unit. `null` when the set has no TF to calibrate.
+   */
+  function getTfCalibration(setId: number): TfCalibrationInfo | null {
+    const ws = working.find((w) => w.setId === setId);
+    const slice = get(derived)[setId]?.tf;
+    const nCols = slice?.data.shape[1] ?? 0;
+    if (!ws || !slice || nCols === 0) return null;
+    const chIn = slice.chIn === undefined ? 0 : slice.chIn;
+    const nChannels = slice.nChannels ?? nCols + 1;
+    const rows: TfCalRowInfo[] = [];
+    for (let col = 0; col < nCols; col++) {
+      const ch = sourceOfColumn(col, chIn, nChannels);
+      rows.push({ ch, ...tfLineState(setId, ch, chIn) });
+    }
+    return { chIn, orphan: chIn === null, rows };
+  }
+
+  /**
+   * Set a set's transfer-function calibration: a factor on the TF RATIO, for
+   * when the TF can be calibrated but the transducers cannot (3C6's free
+   * mass, `|a/F| = 1/m`).
+   *
+   * `lines` is indexed by SOURCE channel (the input channel's slot ignored);
+   * a `null` line means "use the channel calibration", so all-null clears it.
+   * The factor REPLACES `cal[out]/cal[in]` for that line in the TF view, the
+   * modal fit, Best Match and the saved TfData; the channel calibration, and
+   * so the time and spectrum views, are left exactly as they were.
+   *
+   * An ORPHAN TF set (a TF-only file) has no channel calibration underneath:
+   * its stored factors already are the TF's, so the line is written THERE
+   * (factor, and unit as `"(num)/den"`) through `setCalFactors` — the field
+   * python reads — and a `null` line leaves that column as it is.
+   *
+   * Persisted in the set's ui state on every autosave/save (`stampUiState`),
+   * and into the saved TfData's `channel_cal_factors` / `units`.
+   */
+  function setTfCalibration(
+    setId: number, lines: readonly (TfCalLine | null)[], opts: { warnFit?: boolean } = {},
+  ): void {
+    const ws = working.find((w) => w.setId === setId);
+    const info = getTfCalibration(setId);
+    if (!ws || !info) return;
+    if (info.orphan) {
+      const cal = getCalibration(setId);
+      const factors = cal.factors.slice();
+      const units = cal.units.slice();
+      for (const r of info.rows) {
+        const l = lines[r.ch];
+        if (!l || !Number.isFinite(l.factor) || l.factor === 0) continue;
+        factors[r.ch] = l.factor;
+        if (l.num && l.den) units[r.ch] = composeTfUnit(l.num, l.den);
+      }
+      setCalFactors(setId, factors, units, opts);
+      return;
+    }
+    applyTfCal(setId, normalizeTfCal({ chIn: info.chIn, lines }, ws.nChannels), opts);
+  }
+
+  /**
+   * Install a (normalised) TF calibration on a set and reflect it everywhere:
+   * the derived slice the plot reads, the fit overlay's units, the autosave,
+   * and the stale-fit warning. `null` clears it.
+   */
+  function applyTfCal(setId: number, next: TfCal | null, opts: { warnFit?: boolean } = {}): void {
+    const prev = get(derived)[setId]?.tfCal ?? null;
+    setDerived(setId, { tfCal: next ?? undefined });
+    notify?.unitsChanged(['tf']);
+    dataset.update((d) => d);            // re-emit so autosave persists the edit
+    mirrorUnitsToFitSet(setId);
+    const changed = JSON.stringify(prev) !== JSON.stringify(next);
+    if (changed && opts.warnFit !== false) warnStaleFit([setId]);
+  }
+
+  /**
    * Read a set's persisted calibration for the Calibrate dialog (Task A2):
    * the per-channel `channel_cal_factors` multipliers and engineering `units`,
    * both normalised to the set's channel count (defaults: factor `1`, unit
@@ -2614,7 +2837,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   // Publish the calibration API so the tray's Calibrate dialog can reach it
   // without a prop thread through App.svelte (see `calibrationController`).
-  calibrationController.set({ getCalibration, setCalFactors });
+  calibrationController.set({ getCalibration, setCalFactors, getTfCalibration, setTfCalibration });
 
   // --------------------------------------------------------------------- //
   // Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match
@@ -2656,30 +2879,36 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * + `set_calibration_factors_all`). Rescales EVERY TF-bearing set's output
    * columns to best match ONE reference column of set `refSetId` over
    * `freqRange` (the committed shared frequency window; `null` = each set's full
-   * band), then folds the resulting factor into the SOURCE channel's
-   * `channel_cal_factors` through the EXISTING calibration path — so the scaling
-   * is display-time, `.dvma`-persisted, Undo-able (re-open Calibrate + reset),
-   * and visible/editable in the Calibrate dialog afterwards.
+   * band), and stores the result as each line's TRANSFER-FUNCTION calibration
+   * (`setTfCalibration`) — display-time, `.dvma`-persisted, Undo-able, and
+   * visible/editable in the Calibrate dialog's transfer-function section.
    *
    * `refChannel` is a SOURCE channel of the reference set; it maps to its TF
-   * output column (falling back to column 0 if it names the input channel). The
-   * reference column gets factor ~1 (matches itself, times its current cal
-   * factor); every other set/column is scaled relative to it. Toasts the applied
-   * per-set factors; no-ops (with a toast) when no TF exists yet.
+   * output column (falling back to column 0 if it names the input channel).
+   * The match is against the reference AS DISPLAYED: each line's new factor is
+   * `refFactor × f`, where `refFactor` is the factor the reference line shows
+   * with (its own TF calibration — 3C6's free-mass factor on the hammer set —
+   * or else its `cal[out]/cal[in]`) and `f` is the engine's raw-on-raw match,
+   * so every set lands on the reference's calibrated level. The matched lines
+   * also take the reference line's UNIT: their numbers are now in it.
    *
-   * IT OVERWRITES CALIBRATION, SO IT ASKS FIRST. Relative scaling and a
-   * transducer calibration are different quantities sharing one storage slot:
-   * a channel calibrated to m/s² that is then Best-Matched keeps its `m/s²`
-   * unit label while its numbers become relative. That is destructive in a way
-   * the button does not suggest, so `confirm` is given the sets involved (and
-   * which of them carry a real, non-identity calibration today) and can refuse.
-   * `confirm` is INJECTED rather than imported so this layer stays UI-free and
-   * headless callers keep working; omitting it proceeds, as before.
+   * It never touches a channel (transducer) calibration — those keep
+   * describing the sensors, and the time and spectrum views keep using them.
+   * (Before the TF calibration existed it folded the factor into the output
+   * channel's `channel_cal_factors`, which both replaced a sensor calibration
+   * and aimed at the reference's output-channel factor rather than its
+   * displayed ratio.) An orphan TF set (TF-only file) has no channel
+   * calibration under its TF factors, so `setTfCalibration` writes those.
    *
-   * Every overwritten set's previous factors AND units are snapshotted, and the
-   * result toast carries an Undo that puts all of them back — so an accidental
-   * Best Match over a real calibration is one click to reverse rather than a
-   * retyping job in the Calibrate dialog.
+   * IT REPLACES WHAT EACH SET DISPLAYED, SO IT ASKS FIRST: `confirm` is given
+   * the sets involved and which of them show a non-identity TF factor today
+   * (`BestMatchInfo`), and can refuse. `confirm` is INJECTED rather than
+   * imported so this layer stays UI-free and headless callers keep working;
+   * omitting it proceeds, as before.
+   *
+   * Every rescaled set's previous TF calibration (and, for an orphan, its
+   * stored factors and units) is snapshotted, and the result toast carries an
+   * Undo that puts all of them back.
    */
   async function calcBestMatch(
     refSetId: number, refChannel: number, freqRange: [number, number] | null = null,
@@ -2695,15 +2924,18 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const refSpec = specs[refIdx];
     // Reference OUTPUT column from the chosen source channel (input → column 0).
     const refCol = tfColumn(refChannel, refSpec.chIn, refSpec.nChannels) ?? 0;
-    const refCal = getCalibration(refSpec.ws.setId).factors[refChannel] ?? 1;
+    // ...and what that line DISPLAYS: the level and unit every match lands on.
+    const refState = tfLineState(
+      refSpec.ws.setId, sourceOfColumn(refCol, refSpec.chIn, refSpec.nChannels), refSpec.chIn);
+    const refFactor = refState.override ? refState.override.factor : refState.ratio;
 
     if (confirm) {
       // Named BEFORE the engine call so a refusal costs nothing. "Calibrated"
-      // = any non-identity factor, i.e. a set whose displayed numbers are not
-      // raw volts today — those are the ones with something to lose.
+      // = any TF line whose displayed factor is not 1 today — those are the
+      // ones with something to lose.
       const names = specs.map((s) => nameOf(s.ws.setId));
       const calibrated = specs
-        .filter((s) => !isIdentity(getCalibration(s.ws.setId).factors))
+        .filter((s) => !isIdentity(s.chans.map((ch) => tfLineFactor(s.ws.setId, ch, s.chIn))))
         .map((s) => nameOf(s.ws.setId));
       if (!(await confirm({ names, calibrated }))) return;
     }
@@ -2713,10 +2945,10 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     busy.set(true);
     try {
       // RAW columns deliberately (no `fitCalRatios`, unlike `calcFit`): the
-      // factors this returns are WRITTEN BACK as cal factors below, so reading
+      // factors this returns are WRITTEN BACK as TF factors below, so reading
       // already-calibrated data would fold the existing cal in twice. Matching
-      // raw curves and storing `refCal × f` lands every set at the reference's
-      // displayed level, which is the intent.
+      // raw curves and storing `refFactor × f` lands every set at the
+      // reference's displayed level, which is the intent.
       const payload: Record<string, unknown> = {
         sets: specs.map((s) => ({
           freq_axis: s.slice.axis, tf_data: interleaveTf(s.slice, s.cols), n_tf: s.nCols,
@@ -2733,26 +2965,31 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         ? (raw as unknown[]).map((a) => axisData(a))
         : [];
       const summary: string[] = [];
-      // Snapshot BEFORE any write, so Undo restores the exact prior state —
-      // factors AND units, since a Best Match leaves the units in place and a
-      // partial restore would be its own kind of wrong.
-      const before: { setId: number; factors: number[]; units: string[] }[] = [];
+      // Snapshot BEFORE any write, so Undo restores the exact prior state:
+      // the TF calibration, and for an orphan TF set (whose TF factors live
+      // in its stored channel factors) those factors AND units.
+      const before: { setId: number; factors: number[]; units: string[]; tfCal: TfCal | null }[] = [];
       specs.forEach((s, i) => {
         const facs = factorList[i];
         if (!facs) return;
         const cur = getCalibration(s.ws.setId);
-        const next = cur.factors.slice();
+        const lines: (TfCalLine | null)[] = new Array(s.ws.nChannels).fill(null);
+        // Keep any TF calibration on lines this run does not rescale.
+        const prev = get(derived)[s.ws.setId]?.tfCal ?? null;
+        if (prev && prev.chIn === s.chIn) prev.lines.forEach((l, ch) => { lines[ch] = l; });
         for (let c = 0; c < s.nCols; c++) {
           const sc = sourceOfColumn(c, s.chIn, s.nChannels);
           const f = facs[c];
-          if (sc >= 0 && sc < next.length && Number.isFinite(f) && f !== 0) {
-            next[sc] = refCal * f;
+          if (sc >= 0 && sc < lines.length && Number.isFinite(f) && f !== 0) {
+            lines[sc] = { factor: refFactor * f, num: refState.num, den: refState.den };
           }
         }
-        before.push({ setId: s.ws.setId, factors: cur.factors.slice(), units: cur.units.slice() });
+        before.push({
+          setId: s.ws.setId, factors: cur.factors.slice(), units: cur.units.slice(), tfCal: prev,
+        });
         // `warnFit: false` — a Best Match touches every set at once, so the
         // stale-fit warning is raised ONCE below rather than per set.
-        setCalFactors(s.ws.setId, next, cur.units, { warnFit: false });
+        setTfCalibration(s.ws.setId, lines, { warnFit: false });
         // Report the reference column's factor per set as the headline number.
         const head = facs[Math.min(refCol, facs.length - 1)];
         summary.push(`${nameOf(s.ws.setId)} ×${Number.isFinite(head) ? head.toPrecision(3) : '1'}`);
@@ -2768,7 +3005,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
                 // Restoring the previous calibration puts any fit back in the
                 // units it was made in, so it needs no warning either.
                 for (const b of before) {
-                  setCalFactors(b.setId, b.factors, b.units, { warnFit: false });
+                  if (getTfCalibration(b.setId)?.orphan) {
+                    setCalFactors(b.setId, b.factors, b.units, { warnFit: false });
+                  } else {
+                    applyTfCal(b.setId, b.tfCal, { warnFit: false });
+                  }
                 }
               },
             }]
@@ -2924,23 +3165,42 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *
    * The axis unit is the agreement of EVERY visible line, so a recon line
    * carrying none would blank the label exactly where the fit is shown — the
-   * Fit stage. The pseudo-set's channels mirror the source's (same `chIn`,
-   * same `nChannels`), so one array indexes both; a SUBSET fit reads as an
-   * orphan TF and takes no ratio unit either way, which is harmless.
+   * Fit stage. A whole-set fit's channels mirror the source's (same `chIn`,
+   * same `nChannels`), so one array indexes both. A SUBSET fit draws as an
+   * orphan TF whose channel `c` is the source's `chans[c]`, and an orphan's
+   * unit is its whole TF ratio (`plot/model.ts` `tfLineUnits`), so each line
+   * gets its source line's composed `"(num)/den"` instead — mirroring the
+   * source's per-channel units there would both mis-index them and read a
+   * channel unit like `m/s²` as the ratio `m` over `s²`.
    *
    * Units ONLY: the pseudo-set deliberately carries no `calFactors`, because
    * the recon data already has the calibration ratio baked in
    * (`fitCalRatios`) and a second factor would double-apply it.
    *
-   * Called from `syncModal` (a new or re-fitted pseudo-set) and from
-   * `setCalFactors` (the units changed under an existing one — the recon
+   * Called from `syncModal` (a new or re-fitted pseudo-set), `setCalFactors`
+   * and `applyTfCal` (the units changed under an existing one — the recon
    * slice does not change, so nothing else would pick it up).
    */
   function mirrorUnitsToFitSet(srcId: number): void {
     const rec = fitSets.get(srcId);
     if (!rec) return;
     const src = get(derived)[srcId];
-    setDerived(rec.id, { units: src?.units, unitsAreVolts: src?.unitsAreVolts });
+    if (rec.chansKey !== 'all') {
+      const chIn = src?.tf?.chIn === undefined ? 0 : src.tf.chIn;
+      const units = rec.chansKey.split(',').map(Number).map((ch) => {
+        const st = tfLineState(srcId, ch, chIn);
+        return st.num && st.den ? composeTfUnit(st.num, st.den) : '';
+      });
+      setDerived(rec.id, { units, unitsAreVolts: src?.unitsAreVolts, tfCal: undefined });
+      return;
+    }
+    // The TF calibration's UNITS go across too (a calibrated line's label is
+    // its own, not the channels'), but with every factor at 1: the recon
+    // already carries the factor (`fitCalRatios`), like `calFactors` above.
+    const tfCal = src?.tfCal
+      ? { chIn: src.tfCal.chIn, lines: src.tfCal.lines.map((l) => (l ? { ...l, factor: 1 } : null)) }
+      : undefined;
+    setDerived(rec.id, { units: src?.units, unitsAreVolts: src?.unitsAreVolts, tfCal });
   }
 
   /** Remove ONE source set's fit pseudo-set from selection + derived. */
@@ -3234,9 +3494,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * matching `calRatio`'s divisor-of-1 rule.
    */
   function fitCalRatios(s: FitSpec): number[] {
-    const cal = getCalibration(s.ws.setId).factors;
-    const denom = s.chIn === null ? 1 : (cal[s.chIn] ?? 1);
-    return s.chans.map((ch) => (cal[ch] ?? 1) / denom);
+    return s.chans.map((ch) => tfLineFactor(s.ws.setId, ch, s.chIn));
   }
 
   /** Actions that change the mode set (get a one-level undo snapshot). */
@@ -3709,7 +3967,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     calcFit, fitLineSummary, calcDamping, calcDampingBands, setCsdPair,
     /** Subset Save/Export (round-12 "Choose sets…") — see each function's doc. */
     choosableSets, subsetDataset,
-    getCalibration, setCalFactors,
+    getCalibration, setCalFactors, getTfCalibration, setTfCalibration,
     /**
      * Report a UNITS/quantity change on `views` to the injected
      * `ViewNotifier` (round-11 P5) — for the cards that change what a view

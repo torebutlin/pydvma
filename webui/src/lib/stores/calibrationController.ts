@@ -16,6 +16,8 @@
  * bypass this store entirely.
  */
 import { writable } from 'svelte/store';
+import type { TfCalibrationInfo } from '../analysis/actions';
+import type { TfCalLine } from '../model/calibration';
 
 /** The calibration operations the tray needs — a subset of the actions API. */
 export interface CalibrationController {
@@ -27,6 +29,12 @@ export interface CalibrationController {
   };
   /** Persist a set's cal factors (plus optional per-channel units). */
   setCalFactors: (setId: number, factors: number[], units?: readonly string[]) => void;
+  /** A set's transfer-function calibration (one row per TF line), or `null`
+   *  when it has no TF. Optional so a channels-only host keeps working. */
+  getTfCalibration?: (setId: number) => TfCalibrationInfo | null;
+  /** Set a set's transfer-function calibration, indexed by SOURCE channel;
+   *  a `null` line means "use the channel calibration". */
+  setTfCalibration?: (setId: number, lines: readonly (TfCalLine | null)[]) => void;
 }
 
 /** Current app's calibration API, or `null` before any actions instance boots. */

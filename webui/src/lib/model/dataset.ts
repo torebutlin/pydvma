@@ -24,6 +24,14 @@ export type DataKind = 'TimeData' | 'FreqData' | 'CrossSpecData' | 'TfData'
 export interface DvmaItemUi {
   channel_labels?: Record<string, string>;
   iw_power?: number;
+  /** Transfer-function calibration (a factor on the TF ratio itself), see
+   *  `lib/model/calibration.ts` `TfCal`; written by `tfCalToUi`, read by
+   *  `normalizeTfCal`. A stored linked `TfData`'s own `channel_cal_factors`
+   *  outrank this on load — see `actions.loadDataset`. */
+  tf_cal?: {
+    ch_in: number | null;
+    lines: ({ factor: number; num: string; den: string } | null)[];
+  };
   analysis?: {
     /** `mode` accepts the legacy `'psd'` (pre power/density split); it is
      *  migrated to `'power'` on load by `migrateFreqMode`. */

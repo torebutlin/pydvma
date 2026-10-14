@@ -16,7 +16,7 @@
 import { dataExtent, DB_FLOOR, type PlotLine, type PlotModel } from './build';
 import type { TfPlotType } from '../stores/viewstate';
 import { tfColumn } from './tfChannels';
-import { wrapUnit } from '../model/calibration';
+import { splitTfUnit, tfCalLine, wrapUnit, type TfCal } from '../model/calibration';
 
 /** The flat `{shape, data, complex}` dict every worker array crosses as. */
 export interface MarshalledArray {
@@ -205,6 +205,17 @@ export interface SetArrays {
    */
   calFactors?: number[];
   /**
+   * TRANSFER-FUNCTION CALIBRATION: a factor on the RATIO itself, for when a
+   * TF can be calibrated (a free mass, `|a/F| = 1/m`) but neither transducer
+   * can. Where a line is set (and was set against this TF's input channel —
+   * `tfCalLine`), its `factor` REPLACES `cal[out]/cal[in]` for that TF line
+   * and its `num`/`den` replace the channel units in the axis label. Every
+   * other view (time, FFT, PSD, CSD) keeps `calFactors`: this calibrates the
+   * ratio, not either sensor. Absent ⇒ the channel ratio, unchanged. See
+   * `lib/model/calibration.ts` `TfCal`.
+   */
+  tfCal?: TfCal;
+  /**
    * Per-SOURCE-CHANNEL engineering unit string (round-4 item 6), used ONLY to
    * annotate plot axis labels — never to transform data. Indexed by source
    * channel like `calFactors`. Sourced from the `.dvma`/`.npy` `units` meta
@@ -355,9 +366,37 @@ function commonUnit(byId: Map<number, SetArrays>, visible: VisibleLine[], applyI
 }
 
 /**
- * The TF ratio unit `out/in` when determinable: all visible OUTPUT channels
- * share one meaningful unit AND all their input channels share one meaningful
- * unit. Otherwise `null` (label keeps `|H|`). e.g. an accel-over-force TF →
+ * One TF line's unit as numerator over denominator, each `null` when it says
+ * nothing (absent, or the uncalibrated placeholder — `meaningfulUnit`).
+ *
+ * Resolution order:
+ *   1. the set's TF calibration line, when one applies (`tfCalLine`) — the
+ *      user stated what the calibrated ratio is, and the channel units
+ *      describe numbers this line no longer shows;
+ *   2. an ORPHAN TF (`chIn === null`, a TF-only file) has no input channel to
+ *      build a ratio from, but its stored unit IS the ratio (python's
+ *      `"(m/s²)/N"`), so it is split back (`splitTfUnit`);
+ *   3. otherwise the output and input channels' own units.
+ */
+function tfLineUnits(
+  set: SetArrays | undefined, ch: number, chIn: number | null,
+): { num: string | null; den: string | null } {
+  const volts = set?.unitsAreVolts;
+  const line = tfCalLine(set?.tfCal, ch, chIn);
+  if (line) return { num: meaningfulUnit(line.num, volts), den: meaningfulUnit(line.den, volts) };
+  if (chIn === null) {
+    const r = splitTfUnit(set?.units?.[ch]);
+    return r
+      ? { num: meaningfulUnit(r.num, volts), den: meaningfulUnit(r.den, volts) }
+      : { num: null, den: null };
+  }
+  return { num: meaningfulUnit(set?.units?.[ch], volts), den: meaningfulUnit(set?.units?.[chIn], volts) };
+}
+
+/**
+ * The TF ratio unit `out/in` when determinable: every visible line has a
+ * meaningful numerator and denominator (`tfLineUnits`), and they all agree.
+ * Otherwise `null` (label keeps `|H|`). e.g. an accel-over-force TF →
  * `(m/s²)/N`.
  */
 function tfRatioUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): string | null {
@@ -366,9 +405,9 @@ function tfRatioUnit(byId: Map<number, SetArrays>, visible: VisibleLine[]): stri
     const set = byId.get(v.setId);
     const t = set?.tf;
     if (!t) continue;                    // no TF for this line → contributes nothing
-    if (t.chIn === null) return null;    // orphan TF: no input channel → no ratio unit
-    let o = meaningfulUnit(set?.units?.[v.ch], set?.unitsAreVolts);
-    const i = meaningfulUnit(set?.units?.[t.chIn ?? 0], set?.unitsAreVolts);
+    const lu = tfLineUnits(set, v.ch, t.chIn === undefined ? 0 : t.chIn);
+    let o = lu.num;
+    const i = lu.den;
     if (!o || !i) return null;
     // x(iω) power multiplies the whole TF (a ratio), shifting the NUMERATOR's
     // derivative order — (m/s²)/N integrated once reads (m/s)/N.
@@ -386,13 +425,17 @@ function calOf(set: SetArrays | undefined, ch: number): number {
 }
 
 /**
- * TF display cal RATIO for output channel `out` against input `chIn`:
- * `cal[out]/cal[in]` (Qt's `TfData.channel_cal_factors` semantics). Default
- * 1 when either factor is absent. An ORPHAN TF (`chIn === null`) has no input
- * channel to normalise against, so the ratio is just `cal[out]` (divisor 1).
+ * TF display cal RATIO for output channel `out` against input `chIn`: the
+ * set's TF calibration for that line when one applies (`SetArrays.tfCal`),
+ * else `cal[out]/cal[in]` (Qt's `TfData.channel_cal_factors` semantics).
+ * Default 1 when either factor is absent. An ORPHAN TF (`chIn === null`) has
+ * no input channel to normalise against, so the ratio is just `cal[out]`
+ * (divisor 1) — which for a TF-only file IS its stored TF factor.
  * Applied to the complex TF column before the plot-type transform.
  */
 function calRatio(set: SetArrays | undefined, out: number, chIn: number | null): number {
+  const line = tfCalLine(set?.tfCal, out, chIn);
+  if (line) return line.factor;
   return calOf(set, out) / (chIn === null ? 1 : calOf(set, chIn));
 }
 

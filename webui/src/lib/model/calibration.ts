@@ -27,13 +27,15 @@
  */
 
 /**
- * The engineering-unit options the Calibrate dialog offers, EXACTLY as the
- * round-2 mockup shows them (`round2-bench.html:694`). `'V'` = uncalibrated
+ * The engineering-unit options the Calibrate dialog offers: the round-2
+ * mockup's four (`round2-bench.html:694`) plus the displacement and velocity
+ * rungs of the `m → m/s → m/s²` ladder, which a velocity-output pickup (3C6's
+ * charge amp) and the x(iω) display transform both need. `'V'` = uncalibrated
  * (the channel stays in volts). A channel whose STORED unit is none of these
- * (e.g. `'m/s'` from a legacy capture) is preserved by the dialog as an extra
- * option rather than silently rewritten — see `CalibrateDialog`.
+ * (e.g. `'g'`) is preserved by the dialog as an extra option rather than
+ * silently rewritten — see `CalibrateDialog`.
  */
-export const CAL_UNITS = ['V', 'm/s²', 'N', 'Pa'] as const;
+export const CAL_UNITS = ['V', 'm', 'm/s', 'm/s²', 'N', 'Pa'] as const;
 export type CalUnit = (typeof CAL_UNITS)[number];
 
 /** Fallback engineering unit for an uncalibrated channel (volts). */
@@ -184,4 +186,145 @@ function isWrapped(text: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Split a stored transfer-function unit back into its numerator and
+ * denominator, the inverse of {@link composeTfUnit}.
+ *
+ * The split is at the LAST `/` outside brackets, and one matched outer pair
+ * is stripped from each side: `'(m/s²)/N'` → `m/s²` over `N`. pydvma before
+ * 2.5 wrote no brackets (`'m/s²/N'`), which is strictly ambiguous; reading the
+ * last slash as the ratio is right whenever the denominator is a single unit,
+ * which for a transfer function — response over a force or a volt — it
+ * practically always is. Anything that is not a ratio (`'N'`, an empty
+ * string, a bracketed whole) gives `null`.
+ *
+ * Used to read a TF unit that python stored (a notebook's
+ * `TfDataList.set_calibration_factor(..., units=...)`, or `analysis.calculate_tf`)
+ * so the x(iω) display transform can still move the numerator along the
+ * derivative ladder.
+ */
+export function splitTfUnit(unit: unknown): { num: string; den: string } | null {
+  if (typeof unit !== 'string') return null;
+  const u = unit.trim();
+  let depth = 0;
+  let at = -1;
+  for (let i = 0; i < u.length; i++) {
+    const c = u[i];
+    if (c === '(') depth += 1;
+    else if (c === ')') depth -= 1;
+    else if (c === '/' && depth === 0) at = i;
+  }
+  if (at < 0) return null;
+  const unwrap = (t: string) => (isWrapped(t) ? t.slice(1, -1).trim() : t);
+  const num = unwrap(u.slice(0, at).trim());
+  const den = unwrap(u.slice(at + 1).trim());
+  return num && den ? { num, den } : null;
+}
+
+/**
+ * A transfer function's unit from its numerator and denominator, each
+ * bracketed when compound: `('m/s²', 'N')` → `'(m/s²)/N'`. The same string
+ * python's `analysis._tf_units_from_source` stores, so a TF the browser saves
+ * reads identically in a notebook.
+ */
+export function composeTfUnit(num: string, den: string): string {
+  return `${wrapUnit(num)}/${wrapUnit(den)}`;
+}
+
+/**
+ * One calibrated transfer-function line: the multiplier applied to the
+ * MEASURED ratio, and the unit of the result as numerator over denominator.
+ *
+ * The factor is a plain multiplier — "the factor by which the measured TF
+ * must be multiplied to give the actual values" — not a sensitivity. The unit
+ * is kept as a pair, not a string, so the x(iω) transform can move the
+ * numerator along `m → m/s → m/s²`. An empty `num`/`den` means "no unit
+ * stated": the axis then keeps its plain `|H|`.
+ */
+export interface TfCalLine {
+  factor: number;
+  num: string;
+  den: string;
+}
+
+/**
+ * A set's transfer-function calibration: a factor on the RATIO, for when the
+ * TF can be calibrated but the two transducers cannot — 3C6's free mass,
+ * where `|a/F| = 1/m` is known though neither the accelerometer's nor the
+ * hammer's sensitivity is.
+ *
+ * When a line is set it REPLACES `cal[out]/cal[in]` (the ratio the channel
+ * calibration implies) for that TF line — in the TF view, the modal fit,
+ * Best Match and the saved `TfData` — while the time and spectrum views keep
+ * the channel calibration: it calibrates the ratio, not either sensor.
+ *
+ * `lines` is indexed by SOURCE channel, like `calFactors`; the input
+ * channel's slot is always `null` (it has no TF line). `chIn` records the
+ * input the factors were set against: the same numbers against another input
+ * would be a different ratio, so they do not apply there (`tfCalLine`).
+ */
+export interface TfCal {
+  chIn: number | null;
+  lines: (TfCalLine | null)[];
+}
+
+/**
+ * Coerce a stored TF calibration into a clean {@link TfCal} for a set of
+ * `nCh` source channels, or `null` when there is nothing usable in it.
+ *
+ * Accepts the persisted form (`{ ch_in, lines }`, see {@link tfCalToUi}) or
+ * the in-memory one (`{ chIn, lines }`). A line survives only with a finite,
+ * non-zero `factor`; missing units become `''`. `lines` is padded or
+ * truncated to `nCh`, the input channel's slot is cleared, and an input
+ * channel the set does not have voids the whole thing.
+ */
+export function normalizeTfCal(raw: unknown, nCh: number): TfCal | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const ci = r.ch_in !== undefined ? r.ch_in : r.chIn;
+  let chIn: number | null;
+  if (ci === null || ci === undefined) chIn = null;
+  else if (typeof ci === 'number' && Number.isInteger(ci) && ci >= 0 && ci < nCh) chIn = ci;
+  else return null;
+  const src = Array.isArray(r.lines) ? r.lines : [];
+  const lines: (TfCalLine | null)[] = new Array(Math.max(0, nCh)).fill(null);
+  let any = false;
+  for (let ch = 0; ch < lines.length; ch++) {
+    if (ch === chIn) continue;
+    const l = src[ch] as Record<string, unknown> | null | undefined;
+    if (!l || typeof l !== 'object') continue;
+    const factor = Number(l.factor);
+    if (l.factor === null || l.factor === undefined || !Number.isFinite(factor) || factor === 0) continue;
+    lines[ch] = {
+      factor,
+      num: typeof l.num === 'string' ? l.num : '',
+      den: typeof l.den === 'string' ? l.den : '',
+    };
+    any = true;
+  }
+  return any ? { chIn, lines } : null;
+}
+
+/** The persisted (`.dvma` ui-state, snake_case) form of a {@link TfCal}. */
+export function tfCalToUi(c: TfCal): {
+  ch_in: number | null; lines: ({ factor: number; num: string; den: string } | null)[];
+} {
+  return {
+    ch_in: c.chIn,
+    lines: c.lines.map((l) => (l ? { factor: l.factor, num: l.num, den: l.den } : null)),
+  };
+}
+
+/**
+ * The TF calibration line that applies to source channel `ch` of a transfer
+ * function whose input is `chIn`, or `null` — none set, or set against a
+ * different input channel (whose ratio this is not).
+ */
+export function tfCalLine(
+  c: TfCal | null | undefined, ch: number, chIn: number | null,
+): TfCalLine | null {
+  if (!c || c.chIn !== chIn) return null;
+  return c.lines[ch] ?? null;
 }

@@ -1,13 +1,14 @@
 /**
  * Best Match's calibration guard rails (F1).
  *
- * Best Match stores relative scaling factors in `channel_cal_factors` — the
- * same slot a transducer calibration lives in — and leaves the engineering
- * `units` alone, so running it over a calibrated set replaces a physical
- * calibration with a relative one while the axis keeps saying `m/s²`. These
- * tests pin the two things that make that survivable: it ASKS first (and the
- * prompt is told which sets actually have a calibration to lose), and the
- * result toast carries an Undo that restores the previous factors AND units.
+ * Best Match stores its relative scaling as each set's TRANSFER-FUNCTION
+ * calibration, replacing whatever TF factor the set displayed before; the
+ * channel (transducer) calibrations are never touched. These tests pin the
+ * guard rails: it ASKS first (and the prompt is told which sets actually
+ * display a calibrated TF), and the result toast carries an Undo that
+ * restores what was there. The TF-calibration semantics themselves (aiming at
+ * the reference as displayed, orphans, persistence) are in
+ * `tfCalibration.test.ts`.
  */
 import { get, writable } from 'svelte/store';
 import { expect, test } from 'vitest';
@@ -104,7 +105,7 @@ test('the prompt names the sets whose calibration is at risk', async () => {
   expect(info!.calibrated).toEqual(info!.names);
 });
 
-test('confirming applies the factors; Undo restores the previous cal AND units', async () => {
+test('confirming applies the factors as TF calibration; Undo restores what was there', async () => {
   const { actions, toasts } = harness();
   actions.loadDataset(makeDataset());
   await actions.calcTf('all');
@@ -113,16 +114,17 @@ test('confirming applies the factors; Undo restores the previous cal AND units',
 
   await actions.calcBestMatch(setId, 1, null, () => true);
 
-  // refCal (ch1 = 4) × the engine's factor (3) lands on the output channel.
-  const after = actions.getCalibration(setId);
-  expect(after.factors[1]).toBeCloseTo(12, 12);
-  // Units are deliberately left alone by Best Match — the reason it needs a
-  // prompt at all. Pinned so the behaviour cannot drift unnoticed.
-  expect(after.units).toEqual(['m/s²', 'N']);
-
-  clickUndo(toasts);
+  // The reference line displayed cal[1]/cal[0] = 0.4; × the engine's 3.
+  const line = actions.getTfCalibration(setId)!.rows[0];
+  expect(line.override?.factor).toBeCloseTo(1.2, 12);
+  expect([line.num, line.den]).toEqual(['N', 'm/s²']);
+  // The transducer calibration is not Best Match's to change.
   expect(actions.getCalibration(setId).factors).toEqual([10, 4]);
   expect(actions.getCalibration(setId).units).toEqual(['m/s²', 'N']);
+
+  clickUndo(toasts);
+  expect(actions.getTfCalibration(setId)!.rows[0].override).toBeNull();
+  expect(actions.getCalibration(setId).factors).toEqual([10, 4]);
 });
 
 test('omitting the confirm callback keeps the old headless behaviour', async () => {
@@ -132,5 +134,5 @@ test('omitting the confirm callback keeps the old headless behaviour', async () 
   const setId = actions.workingSets()[0].setId;
 
   await actions.calcBestMatch(setId, 1, null);
-  expect(actions.getCalibration(setId).factors[1]).toBeCloseTo(3, 12);
+  expect(actions.getTfCalibration(setId)!.rows[0].override?.factor).toBeCloseTo(3, 12);
 });
