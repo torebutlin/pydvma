@@ -114,11 +114,12 @@ test('getTfCalibration reports the channel ratio until a TF factor is set', asyn
   const before = actions.getTfCalibration(id)!;
   expect(before.chIn).toBe(0);
   expect(before.orphan).toBe(false);
-  expect(before.rows).toEqual([{ ch: 1, ratio: 2.5, override: null, num: 'm/s²', den: 'N' }]);
+  const chan = { chanNum: 'm/s²', chanDen: 'N' };
+  expect(before.rows).toEqual([{ ch: 1, ratio: 2.5, override: null, num: 'm/s²', den: 'N', ...chan }]);
 
   actions.setTfCalibration(id, [null, line(7)]);
   const after = actions.getTfCalibration(id)!;
-  expect(after.rows).toEqual([{ ch: 1, ratio: 2.5, override: line(7), num: 'm/s', den: 'N' }]);
+  expect(after.rows).toEqual([{ ch: 1, ratio: 2.5, override: line(7), num: 'm/s', den: 'N', ...chan }]);
 });
 
 test('a TF factor reaches the plot but leaves the channel calibration alone', async () => {
@@ -155,14 +156,15 @@ test('an orphan TF set calibrates its own stored factors, which python reads', (
   const info = actions.getTfCalibration(id)!;
   expect(info.orphan).toBe(true);
   expect(info.chIn).toBeNull();
-  expect(info.rows).toEqual([{ ch: 0, ratio: 1, override: null, num: 'V', den: 'V' }]);
+  expect(info.rows).toEqual(
+    [{ ch: 0, ratio: 1, override: null, num: 'V', den: 'V', chanNum: 'V', chanDen: 'V' }]);
 
   actions.setTfCalibration(id, [line(0.5, 'm/s²', 'N')]);
   expect(actions.getCalibration(id).factors).toEqual([0.5]);
   expect(actions.getCalibration(id).units).toEqual(['(m/s²)/N']);
   expect(get(actions.derived)[id].tfCal).toBeUndefined();
   expect(actions.getTfCalibration(id)!.rows[0]).toEqual(
-    { ch: 0, ratio: 0.5, override: null, num: 'm/s²', den: 'N' });
+    { ch: 0, ratio: 0.5, override: null, num: 'm/s²', den: 'N', chanNum: 'm/s²', chanDen: 'N' });
 });
 
 // ── fit ───────────────────────────────────────────────────────────────────── //

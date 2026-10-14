@@ -43,7 +43,10 @@
   import type { ModalStore } from '../lib/stores/modal';
   import type { DerivedKind } from '../lib/analysis/actions';
   import { summariseColumn, type ColumnState } from '../lib/stores/channelSummary';
-  import { factorToSensitivity, sensitivityToFactor, type CalRow } from '../lib/model/calibration';
+  import {
+    factorToSensitivity, sensitivityToFactor, type CalRow, type TfCalLine, type TfCalRow,
+  } from '../lib/model/calibration';
+  import { tfLineLabel } from '../lib/plot/tfChannels';
   import { calibrationController } from '../lib/stores/calibrationController';
   import TrayCard from './TrayCard.svelte';
   import CalibrateDialog from './CalibrateDialog.svelte';
@@ -122,6 +125,10 @@
   let calRows = $state<CalRow[]>([]);
   /** Numerator of the sensitivity the dialog collects — 'V' or 'FS'. */
   let calSourceUnit = $state<'V' | 'FS'>('V');
+  /** The set's TF lines for the dialog's transfer-function section. */
+  let calTfRows = $state<TfCalRow[] | null>(null);
+  let calTfOrphan = $state(false);
+  let calTfPending = $state(false);
 
   function openCalibrate(setId: number) {
     if (!readCal) return;
@@ -141,6 +148,17 @@
       sensitivity: factorToSensitivity(factors[ch] ?? 1),
       unit: units[ch] ?? 'V',
     }));
+    // Transfer-function calibration (a factor on the ratio itself), when the
+    // set has a TF. Labelled like the legend (`ch_1/ch_0`).
+    const tfInfo = controller?.getTfCalibration?.(setId) ?? null;
+    calTfOrphan = !!tfInfo?.orphan;
+    calTfRows = tfInfo
+      ? tfInfo.rows.map((r) => ({
+        ...r,
+        label: tfInfo.chIn === null ? label(setId, r.ch) : tfLineLabel(setId, r.ch, tfInfo.chIn, label),
+      }))
+      : null;
+    calTfPending = !tfInfo && set.nChannels >= 2 && !!controller?.setTfCalibration;
     calName = set.name;
     calSetId = setId;
   }
@@ -149,11 +167,23 @@
     calSetId = null;
   }
 
-  function commitCalibrate(results: { sensitivity: number; unit: string }[]) {
+  function commitCalibrate(
+    results: { sensitivity: number; unit: string }[] | null,
+    tf: { ch: number; line: TfCalLine | null }[] | null,
+  ) {
     if (calSetId === null || !writeCal) return;
-    const factors = results.map((r) => sensitivityToFactor(r.sensitivity));
-    const units = results.map((r) => r.unit);
-    writeCal(calSetId, factors, units);
+    // Channels first: a TF line left blank follows the ratio they imply.
+    if (results) {
+      const factors = results.map((r) => sensitivityToFactor(r.sensitivity));
+      const units = results.map((r) => r.unit);
+      writeCal(calSetId, factors, units);
+    }
+    const writeTf = controller?.setTfCalibration;
+    if (tf && writeTf) {
+      const lines: (TfCalLine | null)[] = [];
+      for (const t of tf) lines[t.ch] = t.line;
+      writeTf(calSetId, Array.from(lines, (l) => l ?? null));
+    }
     calSetId = null;
   }
 
@@ -295,6 +325,9 @@
     <CalibrateDialog
       setName={calName}
       rows={calRows}
+      tfRows={calTfRows}
+      tfOrphan={calTfOrphan}
+      tfPending={calTfPending}
       sourceUnit={calSourceUnit}
       onApply={commitCalibrate}
       onCancel={closeCalibrate}

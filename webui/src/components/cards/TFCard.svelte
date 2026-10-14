@@ -177,8 +177,8 @@
 
   function bestMatch() {
     if (repId == null) return;
-    // Gated: Best Match overwrites `channel_cal_factors`, which is where a
-    // transducer calibration lives too — see `calcBestMatch`.
+    // Gated: Best Match replaces each set's transfer-function calibration
+    // (whatever factor its TF displayed with) — see `calcBestMatch`.
     actions.calcBestMatch(repId, refCh, $sharedFreq ?? null, askBestMatch);
   }
 </script>

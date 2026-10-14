@@ -236,6 +236,9 @@ export interface TfCalRowInfo {
   /** The line's unit as numerator over denominator, as raw stored strings. */
   num: string;
   den: string;
+  /** The unit the line reads in WITHOUT a TF calibration (the channels'). */
+  chanNum: string;
+  chanDen: string;
 }
 
 /** A set's transfer-function calibration as the Calibrate dialog needs it. */
@@ -2630,22 +2633,21 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * precedence lives, so the dialog, the fit, Best Match and the saved TfData
    * can never disagree with the plot (`plot/model.ts` `calRatio`).
    */
-  function tfLineState(
-    setId: number, ch: number, chIn: number | null,
-  ): { ratio: number; override: TfCalLine | null; num: string; den: string } {
+  function tfLineState(setId: number, ch: number, chIn: number | null): Omit<TfCalRowInfo, 'ch'> {
     const cal = getCalibration(setId);
     const f = (c: number) => cal.factors[c] ?? 1;
     const u = (c: number) => cal.units[c] ?? 'V';
     if (chIn === null) {
       // Orphan: the stored factor and unit ARE the TF's.
       const pair = splitTfUnit(u(ch)) ?? { num: 'V', den: 'V' };
-      return { ratio: f(ch), override: null, ...pair };
+      return { ratio: f(ch), override: null, ...pair, chanNum: pair.num, chanDen: pair.den };
     }
     const override = tfCalLine(get(derived)[setId]?.tfCal, ch, chIn);
     const ratio = f(ch) / f(chIn);
+    const chan = { chanNum: u(ch), chanDen: u(chIn) };
     return override
-      ? { ratio, override, num: override.num, den: override.den }
-      : { ratio, override: null, num: u(ch), den: u(chIn) };
+      ? { ratio, override, num: override.num, den: override.den, ...chan }
+      : { ratio, override: null, num: u(ch), den: u(chIn), ...chan };
   }
 
   /** The factor a TF line DISPLAYS with: its TF calibration, else the ratio. */

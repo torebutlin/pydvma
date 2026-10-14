@@ -115,6 +115,25 @@ export interface CalRow {
 }
 
 /**
+ * One transfer-function line's initial state for the Calibrate dialog's
+ * "Transfer function" section: its display `label` (`ch_1/ch_0`), the factor
+ * the channel calibration implies (`ratio`), any TF calibration already set
+ * on it (`override`), and the unit the line currently reads in. Built by the
+ * tray from `actions.getTfCalibration`.
+ */
+export interface TfCalRow {
+  ch: number;
+  label: string;
+  ratio: number;
+  override: TfCalLine | null;
+  num: string;
+  den: string;
+  /** The unit the line reads in without a TF calibration — what ↺ restores. */
+  chanNum: string;
+  chanDen: string;
+}
+
+/**
  * Whether a set's samples are true VOLTS, judged from the capture settings
  * pydvma stored with it.
  *

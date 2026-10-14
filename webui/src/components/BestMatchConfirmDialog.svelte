@@ -1,16 +1,15 @@
 <script lang="ts">
   /**
-   * "Best match will replace calibration factors" — the confirm prompt in
+   * "Best match rescales the transfer functions" — the confirm prompt in
    * front of `actions.calcBestMatch`.
    *
-   * WHY IT EXISTS. Best Match is relative scaling: it stores, per channel, the
-   * factor that brings each TF onto the reference's level. pydvma has exactly
-   * one place to put a per-channel display multiplier — `channel_cal_factors`
-   * — and that is the same slot the Calibrate dialog fills with a transducer
-   * sensitivity. So a Best Match over a calibrated set REPLACES a physical
-   * calibration with a relative one, while the engineering `units` stay as
-   * they were: the axis goes on saying `m/s²` over numbers that no longer are.
-   * Nothing in the toolbar button suggests that, hence this.
+   * WHY IT EXISTS. Best Match is relative scaling: it stores, per TF line, the
+   * factor that brings each TF onto the reference's displayed level, as that
+   * line's TRANSFER-FUNCTION calibration (Calibrate's "Transfer function"
+   * section). The sensor calibrations are untouched, but whatever TF factor a
+   * set showed before — a free-mass calibration, an earlier Best Match, or the
+   * ratio its channel calibration implied — is replaced. Nothing in the
+   * toolbar button suggests that, hence this.
    *
    * The wording adapts to what is actually at stake. With `calibrated` empty
    * every set is still raw, nothing is lost and this reads as a plain
@@ -65,37 +64,37 @@
   data-testid="best-match-confirm-overlay"
   role="dialog"
   aria-modal="true"
-  aria-label="Best match will change calibration factors"
+  aria-label="Best match rescales the transfer functions"
   tabindex="-1"
   onclick={(e) => { if (e.target === e.currentTarget) onchoose(false); }}
 >
   <div class="modal">
-    <div class="modal-title">Best match changes calibration factors</div>
+    <div class="modal-title">Best match rescales the transfer functions</div>
 
     <p class="body">
       Best match rescales {names.length === 1 ? 'this measurement' : `these ${names.length} measurements`}
-      onto the reference, and stores the result <em>as the calibration
-      factors</em> — the same values the Calibrate dialog sets.
+      onto the reference, and stores the result <em>as each transfer
+      function's calibration factor</em> — the one in Calibrate's
+      Transfer function section. Sensor calibrations are not changed.
     </p>
 
     {#if atRisk}
       <p class="body warn" data-testid="best-match-confirm-risk">
-        {many ? 'These are' : 'This is'} calibrated now, so {many ? 'their' : 'its'}
-        current calibration will be replaced:
+        {many ? 'These show' : 'This shows'} a calibrated transfer function now,
+        so {many ? 'their' : 'its'} current factor will be replaced:
         <span class="names">{calibrated.join(', ')}</span>.
-        The engineering units stay as they are, so the axis will keep its unit
-        label over numbers that have become relative.
+        The rescaled lines take the reference's units.
       </p>
     {:else}
       <p class="note" data-testid="best-match-confirm-norisk">
-        Nothing here is calibrated yet, so there is no transducer calibration
-        to lose.
+        No transfer function here is calibrated yet, so there is nothing to
+        lose.
       </p>
     {/if}
 
     <p class="note">
       You can put {atRisk ? 'the old values' : 'this'} back with Undo on the
-      toast, or by editing the factors in Calibrate.
+      toast, or by editing the transfer function in Calibrate.
     </p>
 
     <div class="mrow end">

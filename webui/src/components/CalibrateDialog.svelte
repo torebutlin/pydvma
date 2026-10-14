@@ -16,26 +16,47 @@
    * applied at display time. So a factor of 10 (sensitivity 0.1) plots a 0.5 V
    * sample as 5 units.
    *
+   * TRANSFER FUNCTION section (when the set has a TF, `tfRows`): a factor on
+   * the measured RATIO itself, for when the TF can be calibrated but the
+   * sensors cannot — 3C6's free mass, `|a/F| = 1/m`. Each line takes a plain
+   * MULTIPLIER ("the factor by which the measured TF must be multiplied"), not
+   * a sensitivity, and its unit as numerator / denominator. Left blank, a line
+   * follows the channel calibration (its ratio is shown as the placeholder,
+   * and the unit pickers show the channel units, disabled); a factor typed in
+   * overrides it, and ↺ goes back. For a TF-ONLY set (`tfOrphan`) there is no
+   * channel calibration underneath: the channel rows are hidden and the TF
+   * rows edit the set's own stored factors, so every line always has one.
+   *
    * The "known-input calibration…" button is disabled (a guided
    * reference-signal flow is a later stage) — kept, not removed, because it is
    * in the mockup and signposts the roadmap.
    *
-   * DUMB component: it receives the initial per-channel `rows`, edits LOCAL
-   * copies, and emits the edited sensitivity+unit on Apply; the parent owns the
-   * sensitivity→factor conversion, persistence, and any toast. It is mounted
-   * only while open (keyed by setId), so local state seeds cleanly per open.
+   * DUMB component: it receives the initial per-channel `rows` (and `tfRows`),
+   * edits LOCAL copies, and emits the edited values on Apply; the parent owns
+   * the sensitivity→factor conversion, persistence, and any toast. It is
+   * mounted only while open (keyed by setId), so local state seeds cleanly per
+   * open.
    */
-  import { CAL_UNITS, type CalRow } from '../lib/model/calibration';
+  import { CAL_UNITS, type CalRow, type TfCalLine, type TfCalRow } from '../lib/model/calibration';
 
   let {
     setName,
     rows,
+    tfRows = null,
+    tfOrphan = false,
+    tfPending = false,
     sourceUnit = 'V',
     onApply,
     onCancel,
   }: {
     setName: string;
     rows: CalRow[];
+    /** The set's TF lines, or `null` when it has no transfer function. */
+    tfRows?: TfCalRow[] | null;
+    /** A TF-only set: no channel rows, and every TF line carries a factor. */
+    tfOrphan?: boolean;
+    /** No TF yet on a set that could have one: say how to get the section. */
+    tfPending?: boolean;
     /**
      * What the STORED samples are, and so what a sensitivity is measured
      * against: `'V'` on a card that delivers volts (an NI task, or a
@@ -45,8 +66,15 @@
      * full scale — so the label says which. Defaults to `'V'`.
      */
     sourceUnit?: 'V' | 'FS';
-    /** Per-channel edited values, index-aligned to `rows`. */
-    onApply: (results: { sensitivity: number; unit: string }[]) => void;
+    /**
+     * Per-channel edited values, index-aligned to `rows` (`null` for a TF-only
+     * set, which shows no channel rows), and the TF lines (`null` when there
+     * is no TF section): `line: null` = follow the channel calibration.
+     */
+    onApply: (
+      results: { sensitivity: number; unit: string }[] | null,
+      tf: { ch: number; line: TfCalLine | null }[] | null,
+    ) => void;
     onCancel: () => void;
   } = $props();
 
@@ -58,6 +86,44 @@
   // svelte-ignore state_referenced_locally
   let units = $state<string[]>(rows.map((r) => r.unit));
 
+  // TF section, seeded the same way. The factor is edited as TEXT so a blank
+  // ("follow the channels") and a typo can be told apart from a number.
+  /** A factor as a HINT (placeholder, tooltip): up to 6 significant figures. */
+  function fmt(x: number): string {
+    return Number.isFinite(x) ? String(Number(x.toPrecision(6))) : '';
+  }
+  // A stored factor seeds the field at FULL precision (`String` is the
+  // shortest exact round trip), so Apply on an untouched row writes back
+  // exactly what was there rather than a rounded copy.
+  // svelte-ignore state_referenced_locally
+  let tfFactor = $state<string[]>((tfRows ?? []).map((r) =>
+    r.override ? String(r.override.factor) : tfOrphan ? String(r.ratio) : ''));
+  // svelte-ignore state_referenced_locally
+  let tfNum = $state<string[]>((tfRows ?? []).map((r) => r.num));
+  // svelte-ignore state_referenced_locally
+  let tfDen = $state<string[]>((tfRows ?? []).map((r) => r.den));
+
+  /** A field's factor: a number, `null` for blank, `NaN` for something else. */
+  function parseFactor(text: string): number | null {
+    const t = text.trim();
+    if (t === '') return null;
+    const v = Number(t);
+    return Number.isFinite(v) && v !== 0 ? v : NaN;
+  }
+  /** Blank is allowed only where a line can fall back on the channels. */
+  function factorInvalid(i: number): boolean {
+    const v = parseFactor(tfFactor[i] ?? '');
+    return Number.isNaN(v) || (tfOrphan && v === null);
+  }
+  const anyInvalid = $derived(tfFactor.some((_, i) => factorInvalid(i)));
+
+  /** Back to the channel calibration: blank factor, channel units shown. */
+  function resetTf(i: number) {
+    const r = tfRows![i];
+    tfFactor[i] = '';
+    tfNum[i] = r.chanNum;
+    tfDen[i] = r.chanDen;
+  }
   /**
    * The unit options for a row: the mockup's four presets, plus the row's
    * CURRENT unit when it is non-standard (e.g. a legacy `'m/s'`), so opening
@@ -80,7 +146,17 @@
   }
 
   function apply() {
-    onApply(rows.map((_, i) => ({ sensitivity: Number(sens[i]), unit: units[i] })));
+    if (anyInvalid) return;
+    const tf = tfRows
+      ? tfRows.map((r, i) => {
+        const v = parseFactor(tfFactor[i]);
+        return { ch: r.ch, line: v === null ? null : { factor: v, num: tfNum[i], den: tfDen[i] } };
+      })
+      : null;
+    onApply(
+      tfOrphan ? null : rows.map((_, i) => ({ sensitivity: Number(sens[i]), unit: units[i] })),
+      tf,
+    );
   }
 
   // Close on Esc / backdrop click (mirrors the mockup's overlay dismiss).
@@ -111,6 +187,7 @@
       </p>
     {/if}
 
+    {#if !tfOrphan}
     {#each rows as row, i (row.ch)}
       <div class="mrow" data-testid={`cal-row-${row.ch}`}>
         <label for={`cal-sens-${row.ch}`} class="ch-name mono">{row.label}</label>
@@ -134,6 +211,79 @@
         </select>
       </div>
     {/each}
+    {/if}
+
+    {#if tfRows && tfRows.length}
+      <div class="tf-section" data-testid="cal-tf-section">
+        <div class="section-title">Transfer function</div>
+        <p class="src-note">
+          {#if tfOrphan}
+            This set is a transfer function only, so its calibration is the
+            factor each line is multiplied by.
+          {:else}
+            Calibrate the transfer function directly — for example from a known
+            mass — when the individual sensors are not calibrated. A factor here
+            multiplies the measured ratio and replaces the one the channels
+            imply; leave it blank to follow them.
+          {/if}
+        </p>
+        {#each tfRows as row, i (row.ch)}
+          {@const set = parseFactor(tfFactor[i]) !== null}
+          <div class="mrow" data-testid={`cal-tf-row-${row.ch}`}>
+            <label for={`cal-tf-factor-${row.ch}`} class="ch-name mono">{row.label}</label>
+            <span class="ml">×</span>
+            <input
+              id={`cal-tf-factor-${row.ch}`}
+              type="text"
+              inputmode="decimal"
+              class:invalid={factorInvalid(i)}
+              data-testid={`cal-tf-factor-${row.ch}`}
+              placeholder={tfOrphan ? '' : fmt(row.ratio)}
+              title={tfOrphan ? 'multiplier on the stored TF' : `channels give ×${fmt(row.ratio)}`}
+              bind:value={tfFactor[i]}
+              style="width:80px"
+            />
+            <select
+              class="tf-unit"
+              data-testid={`cal-tf-num-${row.ch}`}
+              bind:value={tfNum[i]}
+              disabled={!set}
+              aria-label={`Response unit for ${row.label}`}
+            >
+              {#each unitOptions(tfNum[i]) as u (u)}
+                <option value={u}>{u}</option>
+              {/each}
+            </select>
+            <span class="ml">/</span>
+            <select
+              class="tf-unit"
+              data-testid={`cal-tf-den-${row.ch}`}
+              bind:value={tfDen[i]}
+              disabled={!set}
+              aria-label={`Reference unit for ${row.label}`}
+            >
+              {#each unitOptions(tfDen[i]) as u (u)}
+                <option value={u}>{u}</option>
+              {/each}
+            </select>
+            {#if !tfOrphan}
+              <button
+                class="icon-btn"
+                data-testid={`cal-tf-reset-${row.ch}`}
+                title="use the channel calibration"
+                aria-label={`Use the channel calibration for ${row.label}`}
+                disabled={!set}
+                onclick={() => resetTf(i)}
+              >↺</button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {:else if tfPending}
+      <p class="src-note" data-testid="cal-tf-pending">
+        To calibrate the transfer function directly, calculate it first (Calc TF).
+      </p>
+    {/if}
 
     <div class="mrow">
       <button class="btn" disabled title="guided calibration arrives later">
@@ -143,7 +293,7 @@
 
     <div class="mrow end">
       <button class="btn" data-testid="cal-cancel" onclick={onCancel}>Cancel</button>
-      <button class="btn indigo" data-testid="cal-apply" onclick={apply}>Apply</button>
+      <button class="btn indigo" data-testid="cal-apply" disabled={anyInvalid} onclick={apply}>Apply</button>
     </div>
   </div>
 </div>
@@ -154,6 +304,41 @@
     line-height: 1.4;
     color: var(--muted);
     margin: 0 0 10px;
+  }
+  .tf-section {
+    border-top: 1px solid var(--border);
+    margin-top: 14px;
+    padding-top: 10px;
+  }
+  .section-title {
+    font-weight: 600;
+    font-size: 12.5px;
+    margin-bottom: 6px;
+  }
+  .tf-section select.tf-unit {
+    margin-left: 0;
+  }
+  .tf-section select.tf-unit:disabled {
+    opacity: 0.55;
+  }
+  input.invalid {
+    border-color: var(--danger, #dc2626);
+  }
+  .icon-btn {
+    border: 1px solid var(--border);
+    background: var(--control-bg);
+    color: var(--text);
+    border-radius: 6px;
+    height: 26px;
+    width: 26px;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+    margin-left: auto;
+  }
+  .icon-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
   /* Ported verbatim from round2-bench.html (.overlay/.modal/.mrow/.ml/.btn). */
   .overlay {
@@ -166,7 +351,8 @@
     justify-content: center;
   }
   .modal {
-    width: 380px;
+    width: 440px;
+    max-width: calc(100vw - 32px);
     background: var(--surface);
     border-radius: 12px;
     padding: 16px 18px 14px;
@@ -205,6 +391,7 @@
     white-space: nowrap;
   }
   input[type='number'],
+  input[type='text'],
   select {
     height: 26px;
     border: 1px solid var(--border);
