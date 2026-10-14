@@ -171,7 +171,7 @@ for each item:
 
 ```
 # pydvma dataset (pydvma-csv 1)
-# Written by pydvma 2.6.0. Load it back with pydvma.load_data, or Load Data in the web app.
+# Written by pydvma 2.7.0. Load it back with pydvma.load_data, or Load Data in the web app.
 # Values are RAW, calibration NOT applied: multiply a column by its item's channel_cal_factors.
 # Each '# table' line below starts one table: its column names, then its rows.
 # manifest: {"format": "dvma-dataset", ... }

@@ -3,11 +3,15 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.7.0 — 2026-10-14
 
-Both data exports change format, so scripts that read pydvma's CSV or
-`.mat` files need updating; the next release should be at least a minor
-version.
+Lossless data exports, transfer-function calibration in the web app, and
+the Vibration Apps' CSV import. Minor rather than patch: both data
+exports change format, so scripts that read pydvma's CSV or `.mat` files
+need updating, and files written by 2.6 and earlier cannot be read back;
+there are also new public names (`import_from_vibration_apps_csv`,
+`set_calibration_factor(units=)`), and Best Match in the web app now
+stores its factors on the transfer functions instead of the channels.
 
 ### Changed
 

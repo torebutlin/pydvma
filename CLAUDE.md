@@ -8,6 +8,28 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-10-14, later (Mac): **v2.7.0 is CUT and pushed; the twine
+upload is Tore's, then tag `v2.7.0` at the cut commit and publish the
+GitHub release from `dist/RELEASE_NOTES_2.7.0.md` (Zenodo auto-archives)
+— tag/release AFTER the upload.** MINOR, not the patch Tore first asked
+for: Unreleased already held the incompatible CSV/MATLAB export change
+(2.6 files cannot be read back), which the CHANGELOG said needed at least
+minor; Tore chose 2.7.0. Five sites bumped; the docs' example CSV header
+said "Written by pydvma 2.6.0" for a format 2.6.0 cannot write, now
+2.7.0. Built on the Mac in the documented order (vendor:wheels →
+stage_webui → build --sdist --wheel); `scripts/verify_release.py 2.7.0`
+passes both traps (embedded `pydvma-2.7.0` engine wheel referenced by the
+bundled `index-CO-xYPPj.js`; 25 `pydvma/*.py` byte-identical); `twine
+check` passes; a CLEAN venv install (imported with `-I` from outside the
+repo — a plain `python -c` in the repo root picks up the checkout instead)
+served its own embedded UI with the `/engine` greeting
+`{v:1, pydvma:'2.7.0', journal:true}`. Suites at the cut: pytest
+1423/7 skipped, vitest 1227/1, check 0/0, mkdocs --strict clean,
+Playwright 95 passed / 23 skipped (BRIDGE_E2E) incl. @engine — run ALONE:
+under a concurrent full pytest two @engine specs (fit, damping narrow)
+timed out and passed alone, the known load sensitivity. Trap 3 (re-check
+the DOWNLOADED wheel) is still to do after the upload.
+
 As of 2026-10-14 (Mac): **transfer-function calibration in the web app**
 (Tore-approved in-chat design; for the 3C6 notebook update, whose cal
 step measures a mass on a spring: |a/F| = 1/m calibrates the TF with
