@@ -102,6 +102,14 @@ stores its factors on the transfer functions instead of the channels.
   `freq_range=None` now spans every set's axis. The web app's Fit stage
   no longer interpolates the sets onto the first one's axis.
 
+### Security
+
+- Web app dependency updates for seven Dependabot advisories, lockfile
+  only: dompurify 3.4.16 (two low-severity DOM XSS advisories in its
+  `IN_PLACE` mode; it ships inside the PDF-export library but the app
+  never calls it), devalue 5.9.3 and source-map-js 1.2.2 (build tools
+  only, not shipped).
+
 ## 2.6.0 — 2026-09-29
 
 Follow-ups from the 2.5.0 calibration review — the questions it left

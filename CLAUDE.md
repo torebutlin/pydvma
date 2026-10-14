@@ -9,7 +9,9 @@ sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
 As of 2026-10-14, later (Mac): **v2.7.0 is CUT and pushed; the twine
-upload is Tore's, then tag `v2.7.0` at the cut commit and publish the
+upload is Tore's, then tag `v2.7.0` at the cut commit (the `deps:`
+commit right after `release: v2.7.0` — the Dependabot clean-up below
+moved the cut) and publish the
 GitHub release from `dist/RELEASE_NOTES_2.7.0.md` (Zenodo auto-archives)
 — tag/release AFTER the upload.** MINOR, not the patch Tore first asked
 for: Unreleased already held the incompatible CSV/MATLAB export change
@@ -19,7 +21,7 @@ said "Written by pydvma 2.6.0" for a format 2.6.0 cannot write, now
 2.7.0. Built on the Mac in the documented order (vendor:wheels →
 stage_webui → build --sdist --wheel); `scripts/verify_release.py 2.7.0`
 passes both traps (embedded `pydvma-2.7.0` engine wheel referenced by the
-bundled `index-CO-xYPPj.js`; 25 `pydvma/*.py` byte-identical); `twine
+bundled `index-CQa-ky-m.js`; 25 `pydvma/*.py` byte-identical); `twine
 check` passes; a CLEAN venv install (imported with `-I` from outside the
 repo — a plain `python -c` in the repo root picks up the checkout instead)
 served its own embedded UI with the `/engine` greeting
@@ -28,7 +30,18 @@ served its own embedded UI with the `/engine` greeting
 Playwright 95 passed / 23 skipped (BRIDGE_E2E) incl. @engine — run ALONE:
 under a concurrent full pytest two @engine specs (fit, damping narrow)
 timed out and passed alone, the known load sensitivity. Trap 3 (re-check
-the DOWNLOADED wheel) is still to do after the upload.
+the DOWNLOADED wheel) is still to do after the upload. **Before the
+upload, all seven open Dependabot alerts were cleared** (lockfile only,
+package.json untouched — pinned via temporary `overrides`, then removed,
+which npm keeps since the versions satisfy the parents' ranges):
+dompurify 3.4.13 → 3.4.16 (runtime, in jspdf; app never calls it; 3.4.17
+skipped as two days old), devalue 5.9.2 → 5.9.3 and source-map-js 1.2.1 →
+1.2.2 (dev only). Lockfile integrity matches the registry; `npm audit` 0;
+the rebuilt bundle differs from the first 2.7.0 build ONLY in the
+dompurify chunk's content (other chunks only renamed references,
+checked with hashes normalised), so the fat wheel was rebuilt.
+NB this Mac's `node_modules` had drifted from the lockfile (devalue
+5.8.1 installed vs 5.9.2 locked) — `npm ci` before a release build.
 
 As of 2026-10-14 (Mac): **transfer-function calibration in the web app**
 (Tore-approved in-chat design; for the 3C6 notebook update, whose cal
