@@ -37,14 +37,16 @@ you **script** (`MySettings`, `log_data`, the `calculate_*` functions,
 | **Generate output** panel | output signal on the **Acquire** stage |
 | Save, load, export | **Load Data** / **Save Dataset** in the header, and the **Export** stage |
 | Per-channel calibration | **Calibrate** dialog (sensitivities and units) |
+| `tf_data_list.set_calibration_factor` | the **Calibrate** dialog's [Transfer function](calibration.md#calibrate-a-transfer-function-directly) section (the Python method still works) |
 | **Scaling** tool (Best Match, x(iω)) | the TF card's [scaling](analysis.md#scaling-xi-and-best-match) controls |
 
 !!! note "x(iω) no longer changes your data"
     The Qt **x(iω)** button multiplied the stored spectra in place. In
     the web logger, **x(iω)^p** changes only what is plotted, so the
     measured values are never altered and a modal fit always uses them.
-    **Best Match** works as before, by setting the channels' calibration
-    factors.
+    **Best Match** matches as before, but stores its factors as each
+    transfer function's own factor, and no longer changes the channels'
+    calibration.
 
 ## Files carry over
 

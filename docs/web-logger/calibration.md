@@ -3,7 +3,9 @@
 Calibration turns the numbers you recorded into engineering units. You
 give each channel a **sensitivity** and a **unit**, and the plots,
 spectra, transfer functions and fits all read in those units (m/s², N,
-Pa, …).
+Pa, …). When you know a transfer function's true level but not the
+sensors', you can instead
+[calibrate the transfer function directly](#calibrate-a-transfer-function-directly).
 
 Your recorded samples are never changed. Calibration is a multiplier
 applied when data is displayed or fitted, so you can set it, or correct
@@ -26,8 +28,9 @@ scale, depending on the input:
 1. In the tray, hover a dataset's card and press **cal**.
 2. In the dialog, each channel has a **sensitivity** box and a unit
    menu. Enter the sensitivity in **volts per unit**, from the sensor's
-   calibration sheet, and pick the unit: **V**, **m/s²**, **N** or
-   **Pa**. A different unit already on the channel stays in the menu.
+   calibration sheet, and pick the unit: **V**, **m**, **m/s**,
+   **m/s²**, **N** or **Pa**. A different unit already on the channel
+   stays in the menu.
 3. Press **Apply**. **Cancel**, or Esc, closes the dialog with no
    change.
 
@@ -54,6 +57,70 @@ first and work in volts.
     read in g instead, give the channel the unit `g` from Python. The
     dialog keeps it, and `0.1` is then right for 100 mV/g.
 
+## Calibrate a transfer function directly
+
+Sometimes the transfer function's true level is known when neither
+sensor's sensitivity is. A mass on a soft spring is the classic case:
+above its bounce frequency it behaves as a free mass, so its accelerance
+(acceleration over force) is exactly `1/m`. Measuring it gives the one
+factor that calibrates the whole measurement chain, and every transfer
+function measured with the same sensors and settings can then be
+multiplied by it.
+
+The calibrate dialog takes this factor directly:
+
+1. Record the measurement and press **Calc TF**.
+2. Hover the dataset's card in the tray and press **cal**. Below the
+   channel rows, a **Transfer function** section has one row per line,
+   labelled like the legend (`ch_1/ch_0`).
+3. Type the **factor** to multiply the measured transfer function by, and
+   pick its unit as response over reference, for example **m/s** over
+   **N**.
+4. Press **Apply**.
+
+The factor is a plain multiplier, not a sensitivity: it is the number
+the measured transfer function must be multiplied by to give the actual
+values. Enter the unit of the transfer function as measured, before any
+[x(iω)](analysis.md#scaling-xi-and-best-match) scaling, because the
+axis moves the response unit along `m`, `m/s`, `m/s²` by itself as you
+change the power.
+
+A blank factor follows the channel calibration. The box then shows, in
+grey, the factor the channels give, and the unit menus show the
+channels' units. **↺** clears a factor you set. If the set has no
+transfer function yet, the dialog says to calculate one first.
+
+!!! example "Working out the factor from a free mass"
+    Measure the mass's transfer function and view it as acceleration over
+    force. If you measured velocity, set **x(iω)^** to `1`. Above the
+    bounce frequency the magnitude is a near-flat line. Read its level,
+    say −28 dB, and convert it back to linear: 10^(−28/20) = 0.0398.
+    For a 0.3 kg mass the true value is 1/0.3 = 3.33 kg⁻¹, so the factor
+    is 3.33 / 0.0398 = 83.7.
+
+    The factor is the true value divided by the measured one, not the
+    level of the flat line itself.
+
+A transfer function factor changes the **transfer function view**, the
+[modal fit](modal-fitting.md) and [Best match](#best-match-sets-the-transfer-function-calibration).
+The time, FFT, power, PSD and CSD views keep using the channel
+calibration, because the factor calibrates the ratio, not either sensor.
+A factor is tied to the transfer function's input channel: if you change
+**in** on the TF card, it no longer applies until you change it back.
+
+To calibrate other measurements with the same factor, open each one's
+dialog and enter it there.
+
+!!! note "A transfer function averaged across sets"
+    An **across sets** transfer function is drawn on the first set that
+    qualifies, so set its factor on that set's card. Transfer functions
+    averaged across sets are not stored in the `.dvma` file, so Python
+    does not see this one.
+
+A dataset that holds only a transfer function, with no time data, has
+no channel calibration underneath. Its dialog shows only the
+**Transfer function** section, and every line always has a factor.
+
 ## How it is stored
 
 Each channel keeps a **cal factor**, the reciprocal of the sensitivity
@@ -64,9 +131,17 @@ Python and in JupyterLite. CSV and MATLAB exports, from the app or from
 Python, write the values as recorded and the factors and units beside
 them; see [What each output holds](export.md#what-each-output-holds).
 
+A transfer function factor is saved with the set, and is written into
+the saved transfer function's own factors and units, which is where
+Python keeps them. `data.tf_data_list` therefore comes out calibrated in
+a notebook, and so do the CSV and MATLAB exports.
+
 **From Python**, pass `channel_sensitivities` in `MySettings` when you
 record with `dvma.log_data`, or set the factors afterwards. See
 [Setting or correcting calibration after logging](../user-guide/acquisition.md#setting-or-correcting-calibration-after-logging).
+A transfer function factor set in Python with
+`data.tf_data_list.set_calibration_factor` shows in the dialog when the
+file is opened in the web logger.
 
 ## What calibration changes
 
@@ -80,8 +155,10 @@ record with `dvma.log_data`, or set the factors afterwards. See
   **Coherence** is a ratio and never changes with calibration.
 - **Transfer functions** use the ratio of the output and input factors,
   and read in output unit over input unit, with a compound unit in
-  brackets: `(m/s²)/N`. The BLA uncertainty bands drawn with a transfer
-  function scale the same way.
+  brackets: `(m/s²)/N`. A
+  [transfer function factor](#calibrate-a-transfer-function-directly)
+  replaces that ratio, with its own unit. The BLA uncertainty bands
+  drawn with a transfer function scale the same way.
 - **Sonograms** are drawn relative to their own peak, so calibration
   leaves them unchanged.
 - **Modal fits** run on the calibrated transfer function, so the modal
@@ -99,20 +176,26 @@ of full scale an uncalibrated axis reads just `Amplitude`.
     re-run for you, because that would discard modes you rejected or
     refined by hand.
 
-## Best match replaces the calibration
+## Best match sets the transfer function calibration
 
 The **TF** stage's **Best match** rescales every transfer function onto
 a reference channel (see
 [Scaling: x(iω) and Best Match](analysis.md#scaling-xi-and-best-match)).
-It stores the result in the same per-channel factors as this dialog, so
-they show up here afterwards.
+It matches the reference as displayed, including any transfer function
+factor, so other measurements land on a calibrated reference's level.
+Calibrate one measurement directly, choose it as the reference, and Best
+match brings the rest onto it.
 
-On raw data that is what you want. On a **calibrated** set it replaces
-the sensor calibration with a relative scale, while the units stay as
-they were, so an axis can go on saying `m/s²` over relative numbers. So
-Best match asks first, naming the measurements whose calibration it
-would replace, and its result message has an **Undo** that puts the
-previous factors and units back.
+The results are stored as each line's
+[transfer function factor](#calibrate-a-transfer-function-directly), so
+they show in this dialog afterwards, and each rescaled line takes the
+reference's unit. Channel calibrations are never changed, so time and
+spectrum views stay as they were.
+
+A transfer function that already reads at a calibrated level, from a
+factor or from its channels, has that level replaced. So Best match
+asks first, naming those measurements, and its result message has an
+**Undo** that puts the previous factors back.
 
 ## Soundcard input gain and full scale
 

@@ -105,6 +105,32 @@ Still open beyond those:
   still installs `seaborn`, which pydvma no longer needs. The Qt-era
   root notebooks are under Housekeeping.
 
+### Transfer-function calibration follow-ups (2026-10-14)
+
+The Calibrate dialog's **Transfer function** section landed (a factor on
+the TF ratio itself, for 3C6's free-mass calibration; Best Match now
+writes it instead of the channel factors). Found on the way, left open:
+
+- **An adopted (from disk) `FreqData` keeps its stored
+  `channel_cal_factors` when the app's channel calibration changes.**
+  `syncStoredTfCal` keeps a stored TfData in step on every
+  serialization, because the loader trusts it; a stored FreqData is not
+  synced, so a notebook reading `freq_data_list` after an in-app
+  recalibration of a loaded file sees the old factors until the FFT is
+  recomputed and re-saved. Same fix shape, but it would overwrite a
+  FreqData factor someone set deliberately in python (which the app does
+  not honour today either) — decide whether the app should honour a
+  python-set FreqData factor the way it now honours a TfData one.
+- **An "across sets" TF's calibration is not saved for python** — it
+  rides the owning set's ui state only, because the ensemble TF itself is
+  not materialised (see "Ensemble TF materialisation" below). For 3C6
+  this matters only if a calibrated averaged TF is wanted in a notebook.
+- **A loaded linked TfData is always drawn with `chIn = 0`** (pre-existing
+  `sliceForLoadedItem` convention), whatever its `settings.ch_in`. A TF
+  calibration read from such a file is keyed to that same `chIn`, so it
+  is consistent, but a python TF computed with `ch_in=1` displays wrong
+  regardless.
+
 ### Calibration round follow-ups (2026-09-18)
 
 The calibration assessment of 2026-09-18 landed nine fixes (CSD

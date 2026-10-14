@@ -165,12 +165,13 @@ The **scaling** group on the TF card holds two tools.
   press **Best match**. It uses every channel of every set, whether or
   not the lines are showing. A message reports the factors it applied.
 
-    The factors are stored as each channel's calibration, so **Best
-    match** replaces any calibration those channels had, and leaves their
-    units as they were. It therefore asks before it runs, naming the
-    measurements that would lose a calibration, and the message that
-    follows offers **Undo**. See
-    [Best match replaces the calibration](calibration.md#best-match-replaces-the-calibration).
+    It matches the reference as displayed, calibration included, and
+    stores each result as that line's
+    [transfer function factor](calibration.md#calibrate-a-transfer-function-directly),
+    with the reference's unit. Channel calibrations are left alone. It
+    asks before it runs, naming the measurements whose calibrated level
+    it would replace, and the message that follows offers **Undo**. See
+    [Best match sets the transfer function calibration](calibration.md#best-match-sets-the-transfer-function-calibration).
 
 !!! note "Nyquist and Bode plots"
     On a **Nyquist** plot the card shows **fmin** and **fmax** boxes for

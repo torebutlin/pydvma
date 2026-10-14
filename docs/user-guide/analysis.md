@@ -357,9 +357,13 @@ channel's factor relative to the reference channel. Leaving out
 ends can skew the factors or even flip their sign, so give a band where
 the transfer functions are clean.
 
-The last line writes the factors as the sets' `channel_cal_factors`,
-which **replaces any calibration those channels already had**. See
-[Calibration and units](../web-logger/calibration.md) for what that
+The last line writes the factors as the transfer functions' own
+`channel_cal_factors`, which **replaces whatever factor each had**, from
+the channels or
+[set directly](acquisition.md#calibrating-a-transfer-function-directly).
+The factors are relative to the reference's raw level: to match a
+calibrated reference, multiply them by the reference's own factor first.
+See [Calibration and units](../web-logger/calibration.md) for what that
 multiplier does.
 
 ## Working with Time Data

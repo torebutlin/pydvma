@@ -31,6 +31,18 @@ version.
   take a `DataSet` or any data list. The web app's exports run the same
   Python writers in the engine, so Export CSV now starts the engine as
   Export Matlab already did, and both ask Save's sonogram question.
+- **Best Match stores its factors as each transfer function's factor,
+  not in the channel calibration.** Channel (sensor) calibrations are no
+  longer overwritten, and the time and spectrum views no longer move. It
+  now matches the reference as displayed, so the other sets land on a
+  calibrated reference's level and take its unit. Previously it aimed at
+  the reference's output-channel factor, which was wrong whenever the
+  reference's input channel was calibrated too.
+- **The web app writes a saved transfer function's unit with brackets,**
+  `(m/s²)/N` as Python does, instead of `m/s²/N`.
+- **A transfer-function-only dataset labels its axis with its own unit,**
+  and a modal fit of some of a set's lines labels each with its transfer
+  function's unit instead of the channel units.
 
 ### Added
 
@@ -49,6 +61,21 @@ version.
   measurement's items share one `id_link`, so the web app shows each as
   one set. An H1 with no phase anywhere is flagged in its name and warned
   about.
+- **Calibrate a transfer function directly in the web app.** The
+  Calibrate dialog gains a **Transfer function** section: a factor per
+  line that multiplies the measured transfer function, with its unit as
+  response over reference. Use it when the transfer function's true
+  level is known but the sensors' sensitivities are not, as for a free
+  mass, whose accelerance is `1/m`. It replaces the ratio of the channel
+  factors in the transfer function view, the modal fit and Best Match,
+  leaves the time and spectrum views on the channel calibration, and is
+  saved into the stored `TfData`'s own factors and units. A factor set
+  in Python with `tf_data_list.set_calibration_factor` now shows when the
+  file is opened in the web app; it used to be ignored. The dialog's unit
+  menus gain **m** and **m/s**.
+- **`TfDataList.set_calibration_factor(..., units=...)`** sets the
+  calibrated unit with the factor, as a string (`'(m/s)/N'`) or a
+  `(response, reference)` pair, bracketed as `calculate_tf` writes it.
 
 ### Fixed
 

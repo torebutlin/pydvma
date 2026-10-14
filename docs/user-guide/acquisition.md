@@ -781,6 +781,28 @@ spectrum or transfer function copies the factors when it is computed, so
 after changing a time data list, recompute them (or set the factors on
 their lists too).
 
+#### Calibrating a transfer function directly
+
+A transfer function's factor is its own. `calculate_tf` starts it at the
+ratio of the output and input channels' factors, and you can replace it
+when you know the transfer function's true level but not the sensors'.
+For a free mass, accelerance is exactly `1/m`, so a measured level gives
+the factor. `units` takes the calibrated unit, either as a string or as
+a (response, reference) pair:
+
+```python
+data.tf_data_list.set_calibration_factor(83.7, n_set=0, n_chan=0, units=('m/s', 'N'))
+data.tf_data_list[0].units          # ['(m/s)/N']
+```
+
+`n_chan` counts the transfer function's columns, which are the output
+channels in order with the input left out. The time data's factors are
+not changed. Saving keeps the factor, and the
+[web logger](../web-logger/calibration.md#calibrate-a-transfer-function-directly)
+shows it in its calibrate dialog when it opens the file.
+Recalculating the transfer function starts again from the channel
+ratio, so set the factor again afterwards.
+
 ### Engineering-unit labels
 
 `TimeData.units` is a list with one string per channel. It passes through

@@ -100,6 +100,65 @@ class TestSetCalibrationFactor:
         np.testing.assert_allclose(fdl[0].channel_cal_factors, [1.0, 1.0])
 
 
+    def _tfl(self, n_chans=2, units=None):
+        td = _make_time_data(n_chans=n_chans)
+        td.units = units
+        return datastructure.TfDataList([analysis.calculate_tf(td, ch_in=0)])
+
+    def test_tfdatalist_sets_the_tf_ratio_factor(self):
+        # A TF's factor is its own (cal[out]/cal[in] when calculated), so it
+        # can be set directly: 3C6's free-mass calibration knows the TF, not
+        # the two sensors.
+        tfl = self._tfl()
+        tfl.set_calibration_factor(7.0)
+        np.testing.assert_allclose(tfl[0].channel_cal_factors, [7.0])
+
+    def test_tfdatalist_units_string_labels_that_column(self):
+        tfl = self._tfl(n_chans=3, units=['V', 'V', 'V'])
+        tfl.set_calibration_factor(7.0, n_chan=1, units='(m/s)/N')
+        np.testing.assert_allclose(tfl[0].channel_cal_factors, [1.0, 7.0])
+        assert tfl[0].units == ['V/V', '(m/s)/N']
+
+    def test_tfdatalist_units_pair_is_bracketed_like_calculate_tf(self):
+        tfl = self._tfl(units=['V', 'V'])
+        tfl.set_calibration_factor(0.25, units=('m/s²', 'N'))
+        assert tfl[0].units == ['(m/s²)/N']
+
+    def test_tfdatalist_units_on_a_tf_without_units(self):
+        tfl = self._tfl(n_chans=3, units=None)
+        assert tfl[0].units is None
+        tfl.set_calibration_factor(2.0, n_chan=0, units='(m/s)/N')
+        assert tfl[0].units == ['(m/s)/N', None]
+
+    def test_tfdatalist_without_units_leaves_them(self):
+        tfl = self._tfl(units=['N', 'm/s'])
+        tfl.set_calibration_factor(7.0)
+        assert tfl[0].units == ['(m/s)/N']
+
+    def test_tfdatalist_out_of_range_changes_nothing(self):
+        tfl = self._tfl(units=['V', 'V'])
+        tfl.set_calibration_factor(7.0, n_chan=3, units='(m/s)/N')  # prints
+        np.testing.assert_allclose(tfl[0].channel_cal_factors, [1.0])
+        assert tfl[0].units == ['V/V']
+
+    def test_tfdatalist_rejects_a_malformed_units_pair(self):
+        tfl = self._tfl()
+        with pytest.raises(ValueError):
+            tfl.set_calibration_factor(7.0, units=('m/s',))
+
+    def test_tfdatalist_factor_and_units_survive_a_save(self, tmp_path):
+        ds = datastructure.DataSet()
+        td = _make_time_data()
+        ds.add_to_dataset(td)
+        ds.add_to_dataset(analysis.calculate_tf(td, ch_in=0))
+        ds.tf_data_list.set_calibration_factor(7.0, units=('m/s', 'N'))
+        path = tmp_path / 'cal.dvma'
+        container.save(ds, path)
+        back = container.load(path)
+        np.testing.assert_allclose(back.tf_data_list[0].channel_cal_factors, [7.0])
+        assert back.tf_data_list[0].units == ['(m/s)/N']
+
+
 # ---------- DataSet.remove_data_item_by_index ----------
 
 class TestRemoveModalDataByIndex:

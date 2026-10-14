@@ -8,6 +8,35 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-10-14 (Mac): **transfer-function calibration in the web app**
+(Tore-approved in-chat design; for the 3C6 notebook update, whose cal
+step measures a mass on a spring: |a/F| = 1/m calibrates the TF with
+neither sensor known). A per-set `TfCal` (`lib/model/calibration.ts`:
+factor + unit as num/den per TF line, keyed to the TF's `chIn`) REPLACES
+`cal[out]/cal[in]` in the TF view, modal fit, Best Match and the saved
+TfData; time/FFT/PSD/CSD stay on the channel factors. Calibrate dialog
+gains a "Transfer function" section (blank = follow channels, ↺ resets;
+a TF-only set shows only that section and edits its own stored factors).
+Persisted in ui `tf_cal` AND the saved TfData's own
+`channel_cal_factors`/`units` (python's storage); on load a linked
+TfData whose factor differs from the channel ratio OUTRANKS ui state, so
+a notebook `tf_data_list.set_calibration_factor` is honoured (it was
+silently ignored before); adopted TfData items are re-synced on every
+serialization (`syncStoredTfCal` in `stampUiState`). **Best Match now
+writes TF factors, never channel factors** (Tore's call), aimed at the
+reference AS DISPLAYED (`refFactor × f`; the old `refCal` used the
+reference's output-channel factor, wrong when its input was calibrated)
+and copying the reference's unit. Python: `set_calibration_factor(...,
+units=)` (string or (num, den) pair). Also: CAL_UNITS gains m, m/s; the
+app's saved TF units are bracketed like python's; an orphan TF labels its
+axis from its own unit; a subset fit's pseudo-set gets per-line TF units
+(it got mis-indexed channel units). Follow-ups in TODO.md
+("Transfer-function calibration follow-ups"). Suites: pytest 1423/7
+skipped, vitest 1227/1,
+check 0/0, Playwright 95/23 skipped (BRIDGE_E2E) incl. @engine, mkdocs
+--strict clean; engine wheel rebuilt (same 2.6.0 name, 25 `pydvma/*.py`
+byte-identical). No version bump (CHANGELOG `## Unreleased`).
+
 As of 2026-10-06, later (Mac): **CSV and MATLAB exports are lossless
 and load back** (spec + plan `dev/plans/2026-10-06-lossless-export-*`,
 Tore-approved). `container.dataset_manifest` / `dataset_from_manifest`

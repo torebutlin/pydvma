@@ -1258,19 +1258,50 @@ class TfDataList(list):
         for ns in range(n_set):
             self[ns].channel_cal_factors=factors[ns]
             
-    def set_calibration_factor(self,factor, n_set=0, n_chan=0):
-        '''Set the calibration factor of one channel of one item, in place.
+    def set_calibration_factor(self,factor, n_set=0, n_chan=0, units=None):
+        '''Set the calibration factor of one transfer function, in place.
+
+        A TF's factor is its own: `analysis.calculate_tf` starts it at the
+        ratio ``cal[out] / cal[in]`` of the source channels, and setting it
+        here replaces that ratio. This is how a TF is calibrated DIRECTLY,
+        without knowing either transducer — e.g. from a free mass, whose
+        accelerance is exactly ``1/m``: the factor is the one the measured
+        TF must be multiplied by to give the actual values. The time data's
+        own channel factors are not touched.
+
+        The web logger reads a factor set here back as the set's
+        transfer-function calibration (Calibrate dialog, "Transfer
+        function" section) when the saved file is reopened. Recalculating
+        the TF with `analysis.calculate_tf` starts again from the channel
+        ratio.
 
         Prints a message and changes nothing if the list is empty or an
         index is out of range.
 
         Args:
-            factor (float): The new factor, the ratio
-                ``cal[out] / cal[in]`` for a TF.
+            factor (float): The multiplier for the measured TF.
             n_set (int): Index of the item in the list (default 0).
-            n_chan (int): Channel (column) index within that item
-                (default 0).
+            n_chan (int): TF column within that item (default 0) — the
+                output channels in ascending order, input left out.
+            units (str or tuple or None): The calibrated TF's unit for that
+                column. Either the whole string (``'(m/s)/N'``) or a
+                ``(numerator, denominator)`` pair (``('m/s', 'N')``), which
+                is composed with compound units bracketed exactly as
+                `analysis.calculate_tf` writes them. None (the default)
+                leaves the units as they are.
+
+        Raises:
+            ValueError: ``units`` is a sequence that is not a pair.
         '''
+        if units is not None and not isinstance(units, str):
+            pair = tuple(units)
+            if len(pair) != 2:
+                raise ValueError(
+                    'units must be a string such as "(m/s)/N" or a '
+                    '(numerator, denominator) pair such as ("m/s", "N"); '
+                    'got {!r}'.format(units))
+            units = '{}/{}'.format(analysis.wrap_unit(str(pair[0])),
+                                   analysis.wrap_unit(str(pair[1])))
         if len(self) == 0:
             print('<TfDataList> is empty. First calculate transfer function.')
         elif n_set >= len(self):
@@ -1278,7 +1309,14 @@ class TfDataList(list):
         elif n_chan >= len(self[n_set].tf_data[0,:]):
             print('<TfDataList>[{}] has {} channel(s). Channel requested (index={}) exceeds number of channels. Note indexing starts at 0.'.format(n_set,len(self[n_set].tf_data[0,:]),n_chan))
         else:
-            self[n_set].channel_cal_factors[n_chan]=factor
+            tf = self[n_set]
+            tf.channel_cal_factors[n_chan]=factor
+            if units is not None:
+                n_cols = len(tf.tf_data[0,:])
+                current = list(tf.units) if tf.units is not None else [None] * n_cols
+                current += [None] * (n_cols - len(current))
+                current[n_chan] = units
+                tf.units = current
     
     def add_modal_reconstruction(self,tf_data,mode='replace'):
         '''Add a modal reconstruction TF to the list, or replace the existing one.
@@ -1566,11 +1604,14 @@ class TfData():
     excited bins rather than a full rfft grid. `bla` is non-None exactly
     on those sets.
 
-    Calibration: `channel_cal_factors[k]` holds the **ratio**
-    ``cal[out_k] / cal[in]`` — i.e. multiplying `tf_data[:, k] *
-    channel_cal_factors[k]` at display time gives the TF in
-    engineering units. Units are constructed as
-    ``"<out_unit>/<in_unit>"`` per output channel.
+    Calibration: `channel_cal_factors[k]` is the factor for column ``k``
+    — multiplying `tf_data[:, k] * channel_cal_factors[k]` at display time
+    gives the TF in engineering units. When calculated it holds the
+    **ratio** ``cal[out_k] / cal[in]`` of the source channels, and units are
+    constructed as ``"<out_unit>/<in_unit>"`` per output channel (compound
+    units bracketed, ``"(m/s²)/N"``). It may instead be set directly, with
+    `TfDataList.set_calibration_factor`, to calibrate the TF without
+    knowing either transducer (a free mass: ``|a/F| = 1/m``).
 
     Attributes:
         freq_axis (np.ndarray): One-sided frequency bins in Hz.
@@ -1582,9 +1623,12 @@ class TfData():
             `tf_data`'s second axis).
         units (list[str] or None): Per-output-channel unit strings
             (e.g. ``['m/s/N', 'g/N']``).
-        channel_cal_factors (np.ndarray): Per-output cal *ratios*
-            (cal[out] / cal[in]). A manual override here overwrites
-            the inherited ratio.
+        channel_cal_factors (np.ndarray): Per-output cal factors, set to
+            the ratio cal[out] / cal[in] when calculated. A manual override
+            here (`TfDataList.set_calibration_factor`) replaces that ratio
+            — calibrating the TF directly, as from a known mass — and the
+            web logger reads such a factor back as the set's
+            transfer-function calibration.
         id_link: `unique_id` of the source TimeData (or list when averaged).
         unique_id (uuid.UUID): This item's own identity, minted at
             construction — see `FreqData.unique_id` for why a derived
