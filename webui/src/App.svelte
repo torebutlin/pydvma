@@ -66,7 +66,9 @@
   import { createBlaStore } from './lib/stores/bla';
   import { initTheme } from './lib/stores/theme';
   import { selectProvider, fetchServeConfig } from './lib/audio/provider';
-  import { mapServeConfig } from './lib/audio/serveConfig';
+  import {
+    describeServePatch, mapServeConfig, pushedSettingsRefusal, type ServeConfigPatch,
+  } from './lib/audio/serveConfig';
   import MiniMonitor from './components/MiniMonitor.svelte';
   import LiveScope from './components/LiveScope.svelte';
   import FitChip from './components/FitChip.svelte';
@@ -168,6 +170,29 @@
   // because it spans acquire + actions + engine + selection, and jumps the
   // plot to TF when a run finishes.
   const bla = createBlaStore({ acquire, actions, engine, selection, viewState });
+  // Settings pushed from Python (`Session.apply_settings`): applied exactly as
+  // the boot prefill applies `/config`, unless this tab is mid-capture or
+  // mid-Nonlin-run, in which case it refuses and the notebook says why.
+  // The newest document pushed into THIS tab. A push can land while the tab
+  // is still booting — after its socket opened, before the boot prefill has
+  // fetched and applied `/config` — and that fetch can return the document
+  // the push replaces. The prefill applies this instead when it is set: it is
+  // newer, and re-applying it once devices are enumerated also resolves a
+  // device the early push could not yet match.
+  let latestPushedDoc: Record<string, unknown> | null = null;
+  acquire.onApplySettings((doc) => {
+    const why = pushedSettingsRefusal({
+      acquireStatus: get(acquire.status), blaPhase: get(bla.state).phase,
+    });
+    if (why) return { ok: false, reason: why };
+    latestPushedDoc = doc;
+    const patch = applyServeDocument(doc);
+    const what = patch ? describeServePatch(patch) : '';
+    toasts.push(what ? `Settings from the notebook: ${what}` : 'Settings from the notebook applied',
+      { level: 'info' });
+    for (const note of patch?.notes ?? []) toasts.push(note, { level: 'error' });
+    return { ok: true, notes: patch?.notes ?? [] };
+  });
 
   // Monitor lifecycle (round-2 redesign): the monitor is a PERSISTENT
   // bottom-left mini-oscilloscope that lives across all stages, with its
@@ -518,22 +543,44 @@
   });
 
   /**
-   * Launch-config prefill (round-6): fetch the `/config` MySettings JSON that
-   * `pydvma serve --settings` publishes and apply it to the Acquire settings +
-   * bridge config ONCE at boot. `mapServeConfig` resolves `device_driver` /
-   * `device_index` against the already-enumerated device list; unknown / bad
-   * fields are skipped. A short toast confirms a non-empty load. Best-effort —
-   * a missing / static `/config` (returns null) is a silent no-op.
+   * Apply a served settings document to the Setup / Acquire stores and the
+   * capture analysis defaults — the ONE mapping shared by the boot prefill
+   * (`applyServeConfig`) and settings pushed from Python, so `pydvma-serve
+   * --settings`, `dvma.launch(settings)` and `Session.apply_settings` cannot
+   * drift apart. `mapServeConfig` resolves `device_driver` / `device_index`
+   * against the enumerated device list; a present `null` clears a field and an
+   * absent key leaves it. Returns the patch, or null when nothing applied.
+   */
+  function applyServeDocument(doc: unknown): ServeConfigPatch | null {
+    const patch = mapServeConfig(doc, get(acquire.devices));
+    if (!patch) return null;
+    if (Object.keys(patch.bridge).length) acquire.patchBridge(patch.bridge);
+    if (Object.keys(patch.settings).length) acquire.patch(patch.settings);
+    if (Object.keys(patch.analysis).length) analysisSettings.setCaptureDefaults(patch.analysis);
+    return patch;
+  }
+
+  /**
+   * Launch-config prefill (round-6): fetch the `/config` document that
+   * `pydvma-serve --settings` or `dvma.launch(settings)` publishes and apply
+   * it ONCE at boot (`applyServeDocument`). A short toast confirms a
+   * non-empty load. Best-effort — a missing / static `/config` (returns null)
+   * is a silent no-op.
    */
   async function applyServeConfig(): Promise<void> {
     try {
       const config = await fetchServeConfig();
+      if (latestPushedDoc) {
+        // Pushed while booting: newer than whatever /config said (see
+        // `latestPushedDoc`). Re-apply quietly; the push already toasted.
+        applyServeDocument(latestPushedDoc);
+        return;
+      }
       if (!config) return;
-      const patch = mapServeConfig(config, get(acquire.devices));
+      const patch = applyServeDocument(config);
       if (!patch) return;
-      if (Object.keys(patch.bridge).length) acquire.patchBridge(patch.bridge);
-      if (Object.keys(patch.settings).length) acquire.patch(patch.settings);
-      toasts.push('Settings loaded from pydvma-serve --settings', { level: 'info' });
+      toasts.push('Setup filled in from the settings pydvma was started with', { level: 'info' });
+      for (const note of patch.notes) toasts.push(note, { level: 'error' });
     } catch (e) {
       console.warn('[serve-config] prefill failed:', e);
     }

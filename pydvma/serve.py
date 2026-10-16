@@ -60,6 +60,9 @@ Client → server (``{"type": ...}``):
                  and "Cancelling" below.
 ``cancel``       stop the in-flight log, or (if none) the monitor —
                  see "Cancelling" below
+``settings_applied``  ``{id, ok, reason?, notes?}`` — the tab's answer to
+                 an ``apply_settings`` push (see "Settings pushed from
+                 Python" below)
 ===============  ==================================================
 
 Server → client:
@@ -103,6 +106,28 @@ Server → client:
   zero-filled during a capture, a stalled monitor stream, a stimulus
   scaled down to the output rail). The app pins it as a toast; the
   capture or stream it describes carries on and is still delivered.
+* ``apply_settings`` — ``{id, settings, source}``: settings pushed from
+  Python (see "Settings pushed from Python" below).
+
+Settings pushed from Python
+===========================
+
+`pydvma.session.Session.apply_settings` changes the acquisition
+settings of an app that is already open. The server
+(:meth:`BridgeServer.apply_settings`) first refuses outright, changing
+nothing, while any tab's ``log`` is in flight (logging, or armed and
+waiting for its trigger). Otherwise it sends every connected tab
+``{"type": "apply_settings", "id": n, "settings": {...}, "source":
+"notebook"}``, where ``settings`` is a whole ``/config`` document, and
+waits up to `APPLY_SETTINGS_ANSWER_TIMEOUT_S` for each tab's
+``{"type": "settings_applied", "id": n, "ok": true, "notes": [...]}``,
+or ``"ok": false`` with a ``reason`` when the tab is busy in a way only
+it can see (a Nonlin run between captures). A tab applies the document
+exactly as it applies ``/config`` at boot, so a ``null`` value clears
+that setting. Unless every tab that answered refused, the document also
+becomes the new ``/config``, so a tab opened later starts from it. An
+app build predating this frame ignores it and is counted as not
+answering.
 
 Output / stimulus (Wave C)
 ==========================
@@ -1431,6 +1456,13 @@ class _QuietMalformedHandshakes(logging.Filter):
 _WS_LOGGER = logging.getLogger('pydvma.serve.websockets')
 _WS_LOGGER.addFilter(_QuietMalformedHandshakes())
 
+#: Seconds :meth:`BridgeServer.apply_settings` waits for each connected
+#: tab to answer an ``apply_settings`` push. Applying is a few store
+#: writes, so a live tab answers in milliseconds; this bounds the wait
+#: on a tab that never will (an app build predating the frame, or a tab
+#: frozen in the background).
+APPLY_SETTINGS_ANSWER_TIMEOUT_S = 5.0
+
 
 def _port_is_live(port, host=DEFAULT_HOST):
     """True when something is listening on ``host:port`` right now.
@@ -1660,6 +1692,10 @@ class BridgeServer:
         self.session_dir = (Path(session_dir) if session_dir is not None
                             else Path(tempfile.gettempdir()))
         self.journal = journal_mod.SessionJournal()
+        # One `_Connection` per open app tab (its /ws socket), for
+        # `apply_settings` to reach them all. Touched only on the loop.
+        self._connections = set()
+        self._apply_seq = 0
         self.recovered_session_path = None
         if recover:
             self.recovered_session_path = _adopt_previous_session(
@@ -1746,6 +1782,7 @@ class BridgeServer:
             await engine_host.handle_connection(websocket, journal=self.journal)
             return
         conn = _Connection(websocket, journal=self.journal)
+        self._connections.add(conn)
         try:
             async for raw in websocket:
                 if isinstance(raw, (bytes, bytearray)):
@@ -1753,7 +1790,69 @@ class BridgeServer:
                     continue
                 await conn.dispatch(raw, self)
         finally:
+            self._connections.discard(conn)
             await conn.close()
+
+    async def apply_settings(self, doc, default_driver=None,
+                             answer_timeout=APPLY_SETTINGS_ANSWER_TIMEOUT_S):
+        """Push a settings document to every open app tab.
+
+        The server half of `pydvma.session.Session.apply_settings`;
+        must run on this server's event loop. Refuses outright, sending
+        nothing and changing nothing, while any tab's capture is in
+        flight (logging, or armed and waiting for its trigger: a
+        settings change then could not apply to that capture, and
+        reopening the stream under it would wreck it). Otherwise sends
+        each tab an ``apply_settings`` frame and gathers the answers
+        concurrently, giving each up to ``answer_timeout`` seconds.
+
+        Unless every tab that answered refused, ``doc`` then replaces
+        :attr:`settings_json` (served at ``/config``), so a tab opened
+        or reloaded later starts from it — including when no tab is
+        open at all — and ``default_driver``, when given, replaces
+        :attr:`default_driver`, as if the server had been started with
+        these settings.
+
+        Args:
+            doc (dict): the complete ``/config`` document to apply.
+            default_driver (str or None): the acquisition driver a
+                ``configure`` naming no device falls back to, or None to
+                keep the current one.
+            answer_timeout (float): seconds to wait for each tab.
+
+        Returns:
+            result (dict): ``busy`` (True when refused for a capture in
+                flight), ``tabs`` (how many tabs were open), ``applied``
+                (how many applied it), ``refused`` (each refusing tab's
+                reason), ``silent`` (tabs that did not answer, or closed
+                before they could), ``notes`` (what applying tabs
+                reported, e.g. a device they do not list), and
+                ``changed`` (whether ``/config`` was replaced).
+        """
+        conns = list(self._connections)
+        result = {'busy': False, 'tabs': len(conns), 'applied': 0,
+                  'refused': [], 'silent': 0, 'notes': [], 'changed': False}
+        if any(c.capture_in_flight for c in conns):
+            result['busy'] = True
+            return result
+        self._apply_seq += 1
+        answers = await asyncio.gather(*(
+            c.offer_settings(self._apply_seq, doc, answer_timeout)
+            for c in conns))
+        for answer in answers:
+            if answer['outcome'] == 'applied':
+                result['applied'] += 1
+                result['notes'].extend(answer.get('notes', []))
+            elif answer['outcome'] == 'refused':
+                result['refused'].append(answer['reason'])
+            else:
+                result['silent'] += 1
+        if result['applied'] or not result['refused']:
+            self.settings_json = dict(doc)
+            if default_driver is not None:
+                self.default_driver = default_driver
+            result['changed'] = True
+        return result
 
     async def run(self):
         """Start listening and serve forever (until cancelled).
@@ -1824,6 +1923,49 @@ class _Connection:
         # threading.Event the worker polls to stop cooperatively.
         self._log_task: asyncio.Task | None = None
         self._log_cancel: threading.Event | None = None
+        # `apply_settings` pushes awaiting this tab's answer, by id.
+        self._settings_waiters: dict[int, asyncio.Future] = {}
+
+    @property
+    def capture_in_flight(self) -> bool:
+        """True while this tab's ``log`` is running, armed or not."""
+        return self._log_task is not None and not self._log_task.done()
+
+    async def offer_settings(self, apply_id: int, doc: dict,
+                             timeout: float) -> dict:
+        """Send one ``apply_settings`` push and wait for the answer.
+
+        Returns ``{'outcome': 'applied', 'notes': [...]}``,
+        ``{'outcome': 'refused', 'reason': str}``, ``{'outcome':
+        'silent'}`` when no answer came within ``timeout`` seconds, or
+        ``{'outcome': 'gone'}`` when the socket closed first. Never
+        raises: one bad tab must not sink the push to the others.
+        """
+        fut = asyncio.get_running_loop().create_future()
+        self._settings_waiters[apply_id] = fut
+        try:
+            await self._send_json({'type': 'apply_settings', 'id': apply_id,
+                                   'settings': doc, 'source': 'notebook'})
+            return await asyncio.wait_for(fut, timeout)
+        except asyncio.TimeoutError:
+            return {'outcome': 'silent'}
+        except Exception:
+            return {'outcome': 'gone'}
+        finally:
+            self._settings_waiters.pop(apply_id, None)
+
+    def _on_settings_applied(self, msg: dict) -> None:
+        """Settle the waiting `offer_settings` with the tab's answer."""
+        fut = self._settings_waiters.get(msg.get('id'))
+        if fut is None or fut.done():
+            return  # late (timed out) or unknown: nothing waits on it
+        if msg.get('ok') is True:
+            notes = msg.get('notes')
+            notes = [str(n) for n in notes] if isinstance(notes, list) else []
+            fut.set_result({'outcome': 'applied', 'notes': notes})
+        else:
+            fut.set_result({'outcome': 'refused',
+                            'reason': str(msg.get('reason') or 'refused')})
 
     # -- helpers --
 
@@ -1877,6 +2019,8 @@ class _Connection:
                 await self._start_log(msg)
             elif mtype == 'cancel':
                 await self._on_cancel()
+            elif mtype == 'settings_applied':
+                self._on_settings_applied(msg)
             else:
                 await self._send_error('unknown message type %r' % (mtype,))
         except Exception as exc:  # never let one bad request kill the socket
@@ -2533,8 +2677,13 @@ class _Connection:
         mid-capture would otherwise leave it holding the process-global
         recorder and writing to a dead socket.  Cancel it the same
         cooperative way ``cancel`` does, bounded by
-        :data:`CANCEL_JOIN_TIMEOUT`.
+        :data:`CANCEL_JOIN_TIMEOUT`. A settings push still waiting on
+        this tab is answered ``gone`` at once rather than left to time
+        out.
         """
+        for fut in list(self._settings_waiters.values()):
+            if not fut.done():
+                fut.set_result({'outcome': 'gone'})
         await self._stop_monitor()
         task = self._log_task
         if task is not None and not task.done():

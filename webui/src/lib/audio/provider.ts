@@ -866,6 +866,14 @@ export interface SourceProvider {
    */
   onWarning?(cb: (message: string) => void): void;
   /**
+   * Bridge-only: register the handler for settings pushed from Python
+   * (`Session.apply_settings` → an `apply_settings` frame).  It gets the
+   * whole `/config`-shaped document and returns the tab's answer, which the
+   * provider sends back as `settings_applied`.  Web Audio has no server to
+   * push anything, so it has no such method.
+   */
+  onApplySettings?(cb: (doc: Record<string, unknown>) => AppliedSettingsAnswer): void;
+  /**
    * Bridge-only: container metadata from the most recent logged capture
    * (device driver actually used, calibration, units, test name), or `null`.
    * Web Audio returns `null` (no container to read).
@@ -876,6 +884,15 @@ export interface SourceProvider {
 }
 
 // ---- Web Audio provider (wraps source.ts + browser output/pretrigger) ----
+
+/**
+ * A tab's answer to settings pushed from Python: applied (with any notes, e.g.
+ * a device it does not list), or refused with the reason (a capture or a
+ * Nonlin run in progress).  Sent back as the `settings_applied` frame.
+ */
+export type AppliedSettingsAnswer =
+  | { ok: true; notes?: string[] }
+  | { ok: false; reason: string };
 
 /**
  * Default browser output-stimulus amplitude when the user flips output on

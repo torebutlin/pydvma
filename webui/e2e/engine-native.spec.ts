@@ -47,6 +47,7 @@ const PYTHON = process.env.PYDVMA_PYTHON ?? 'python3';
 //   8766  engine-native.spec.ts (this file, ENGINE_PORT)
 //   8767  session-journal.spec.ts (JOURNAL_PORT — one fresh serve per test)
 //   8768  derived-save.spec.ts  (DERIVED_SAVE_PORT — one fresh serve per test)
+//   8769  notebook-settings.spec.ts (NOTEBOOK_PORT — a dvma.launch session)
 // A collision is NASTIER than a bind error here: a mock `pydvma serve`
 // answers both /ws and /engine, so the loser's tests can silently run
 // against the winner's server instead of failing to start.

@@ -3,7 +3,8 @@
 The notebook front door. `dvma.launch(settings)` starts the whole
 logger — acquisition bridge, native compute engine, session journal and
 embedded web UI — on a background thread inside the calling kernel, and
-returns a `Session` handle for pulling data out and pushing data back.
+returns a `Session` handle for pulling data out, pushing data back, and
+changing the open app's acquisition settings (`Session.apply_settings`).
 It is the successor to the removed `dvma.Logger`.
 
 The server process, not the browser tab, owns the session document, so

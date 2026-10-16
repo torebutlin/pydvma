@@ -63,13 +63,76 @@ it works the same from a plain script.
 `launch` takes a few optional arguments: `open_browser=False` starts
 without opening a tab, and `port=8760` uses a fixed port (for a
 bookmark) instead of a free one chosen for you. Called with no settings,
-`dvma.launch()` opens with the app's defaults.
+`dvma.launch()` opens with the app's defaults. `window=` and
+`tf_averaging=` set the analysis defaults for captures, as described
+under [changing settings](#changing-settings-from-the-notebook) below.
 
 ### 2. Record in the browser
 
 Use the app as usual: check signals on **Live**, then press **Log Data**
 on **Acquire**. Each capture reaches the session as soon as it is taken,
 so the notebook can see it without you saving anything.
+
+### Changing settings from the notebook
+
+A lab often needs different settings as it goes on: a short noise
+capture, then a long one, then the hammer with the trigger armed. Keep
+the app open and change its settings from the notebook:
+
+```python
+settings = dvma.MySettings(channels=2, fs=3000, stored_time=6,
+                           pretrig_samples=100, pretrig_threshold=0.25,
+                           device_driver='nidaq')
+session.apply_settings(settings, window=None, tf_averaging='across')
+```
+
+```text
+logger settings: 3000 Hz, 2 ch, 6 s, trigger armed on ch 0 at 0.25 V, window none, TF averaging across (applied in 1 app tab)
+```
+
+Every open app tab fills in **Setup** and the trigger from `settings`,
+the same way `launch` does at the start, and shows a note saying the
+settings came from the notebook. A tab you open or reload later starts
+from them too. If no tab is open, the line says so and the settings
+apply when you open one.
+
+- **The new settings replace the old ones whole.** A setting left at
+  `None` clears that setting in the app. `pretrig_samples` defaults to
+  `None`, so going back from the hammer settings to a noise capture
+  disarms the trigger with no extra step:
+
+    ```python
+    session.apply_settings(dvma.MySettings(channels=2, fs=3000, stored_time=30,
+                                           device_driver='nidaq'),
+                           window='hann', tf_averaging='within')
+    ```
+
+- **Nothing changes during a capture.** While the app is logging, armed
+  and waiting for a trigger, or part way through a **Nonlin** run, the
+  call raises an error and the app keeps its settings. Let the capture
+  finish, or press **Stop**, and run the cell again.
+- **The input stream is reopened when it needs to be**, as it is after
+  you edit Setup by hand: a new sample rate, channel count, device or NI
+  range takes effect at the next capture, or when you next start the
+  live monitor.
+- **`window`** sets the analysis window on both the **Frequency** and
+  **TF** cards: `'hann'`, `'hamming'`, or `None` for no window (as
+  everywhere in pydvma; `'none'` works too). **`tf_averaging`** sets the
+  TF averaging: `'within'` averages frames inside each capture (for
+  noise), `'across'` averages across the captures in the app (for
+  repeated hammer hits), and `'none'` uses a single frame. Both apply to
+  the captures you take from then on, and to loaded data that records no
+  analysis settings, such as a file written from Python. Data already in
+  the app keeps its own, and so does a file saved from the app, which
+  always records its window and averaging: it reopens exactly as it was
+  saved, and an *across sets* default never pulls it into an average.
+  Leave either out and the app keeps its current choice;
+  `session.apply_settings(window='hann')`, with no settings, changes only
+  the window.
+
+`pretrig_threshold=None`, the default, means 5 % of the input's full
+scale: 0.25 V on a ±5 V NI range. That is also the app's default, and
+the default when Python records with `log_data`.
 
 ### 3. Pull the data into Python
 
@@ -169,6 +232,23 @@ full scale (`input_gain_db`, `VmaxSC`) and channel sensitivities, which
 you set in Setup and the Calibrate dialog. The file is read once when
 the app opens and only fills in starting values; anything you change in
 Setup afterwards stays changed.
+
+A setting the file leaves out keeps the app's own value. A setting
+written as `null` clears it to the app's default (`"pretrig_samples":
+null` leaves the trigger disarmed, `"pretrig_threshold": null` uses 5 %
+of full scale). `dvma.launch` always sends every setting, including the
+ones that are `None`, which is how `session.apply_settings` can disarm a
+trigger.
+
+Two more keys set the analysis defaults for captures, as `window=` and
+`tf_averaging=` do in Python:
+
+```json
+{
+  "analysis_window": "none",
+  "tf_averaging": "across"
+}
+```
 
 A JSON file can also pre-fill the output signal, which `MySettings` has
 no fields for:

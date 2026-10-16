@@ -32,6 +32,7 @@ import {
   effectiveFullScaleVolts,
 } from './provider';
 import type {
+  AppliedSettingsAnswer,
   AudioInputDevice,
   BridgeCaps,
   BridgeConfig,
@@ -272,6 +273,8 @@ export class BridgeProvider implements SourceProvider {
   private configuredCb: ((info: ConfiguredInfo) => void) | null = null;
   /** Persistent sink for the server's non-fatal `warning` notices. */
   private warningCb: ((message: string) => void) | null = null;
+  /** Handler for settings pushed from Python (`apply_settings` frames). */
+  private applySettingsCb: ((doc: Record<string, unknown>) => AppliedSettingsAnswer) | null = null;
   /**
    * Settles the in-flight log with "the server cancelled it".  Set while a
    * `log` is outstanding; calling it also un-parks the `log_result` waiter,
@@ -328,6 +331,39 @@ export class BridgeProvider implements SourceProvider {
    */
   onWarning(cb: (message: string) => void): void {
     this.warningCb = cb;
+  }
+
+  /**
+   * Register the handler for settings pushed from Python
+   * (`Session.apply_settings`).  The server sends `apply_settings` frames to
+   * every open tab and waits for each `settings_applied` answer, so a tab with
+   * no handler yet still answers — refusing — instead of leaving the notebook
+   * waiting out the timeout.
+   */
+  onApplySettings(cb: (doc: Record<string, unknown>) => AppliedSettingsAnswer): void {
+    this.applySettingsCb = cb;
+  }
+
+  /** Apply one pushed document and send the answer back. */
+  private answerApplySettings(msg: Record<string, unknown>): void {
+    const doc = msg.settings;
+    let answer: AppliedSettingsAnswer;
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+      answer = { ok: false, reason: 'the settings document was not an object' };
+    } else if (!this.applySettingsCb) {
+      answer = { ok: false, reason: 'the app has not finished starting' };
+    } else {
+      try {
+        answer = this.applySettingsCb(doc as Record<string, unknown>);
+      } catch (e) {
+        answer = { ok: false, reason: `the app could not apply them: ${msgOf(e)}` };
+      }
+    }
+    try {
+      this.sendJson({ type: 'settings_applied', id: msg.id, ...answer });
+    } catch {
+      // Socket gone: the server counts this tab as not answering.
+    }
   }
 
   /**
@@ -469,6 +505,12 @@ export class BridgeProvider implements SourceProvider {
       // which rejected the very capture a data-integrity notice described
       // and left its container buffered for the NEXT capture to consume.
       this.warningCb?.(String(msg.message ?? ''));
+      return;
+    }
+    if (msg.type === 'apply_settings') {
+      // Settings pushed from Python — never a reply to anything this tab
+      // asked, so it must not reach the request FIFO below.
+      this.answerApplySettings(msg);
       return;
     }
     if (msg.type === 'error') {

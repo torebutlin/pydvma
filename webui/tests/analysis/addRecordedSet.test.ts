@@ -145,3 +145,33 @@ test('recordingToItem without bridge meta still writes the four classic keys', (
     stored_time: rec.nSamples / rec.fs, device_driver: 'web_audio',
   });
 });
+
+test('a capture, or a loaded set with no recorded settings, gets the window / TF averaging set from Python', async () => {
+  const { createAnalysisSettings } = await import('../../src/lib/stores/analysisSettings');
+  const sel = createSelection();
+  const settings = createAnalysisSettings(sel);
+  const actions = createActions(createEngineStore(stubClient), sel, settings);
+  settings.setCaptureDefaults({ window: 'none', tfAveraging: 'across' });
+
+  const captured = actions.addRecordedSet(recordingToItem(fakeRecording(), 'hit_1'));
+  expect(settings.get(captured, 'freq').window).toBe('none');
+  expect(settings.get(captured, 'tf')).toMatchObject({ window: 'none', averaging: 'across' });
+
+  // A loaded set that recorded its settings keeps them; one that recorded
+  // none (a Python-written file) takes the defaults like a capture.
+  const saved = recordingToItem(fakeRecording(), 'saved_by_app');
+  saved.ui = { analysis: { freq: { window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1 },
+    tf: { chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 } } };
+  actions.loadDataset({ formatVersion: 2, pydvmaVersion: 'test', items: [
+    saved, recordingToItem(fakeRecording(), 'from_python'),
+  ] }, { append: true });
+  const byName = (n: string) => get(sel.sets).find((s) => s.name === n)!.id;
+  expect(settings.get(byName('saved_by_app'), 'freq').window).toBe('hann');
+  expect(settings.get(byName('saved_by_app'), 'tf').averaging).toBe('within');
+  expect(settings.get(byName('from_python'), 'freq').window).toBe('none');
+  expect(settings.get(byName('from_python'), 'tf').averaging).toBe('across');
+
+  // A Nonlin run's hidden raw capture never takes them.
+  const raw = actions.addRecordedSet(recordingToItem(fakeRecording(), 'bla_raw'), { hidden: true });
+  expect(settings.get(raw, 'tf').averaging).toBe('within');
+});

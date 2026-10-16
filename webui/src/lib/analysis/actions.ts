@@ -945,6 +945,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
       // Restore persisted UI state (Plan 2 persistence).
       const ui = item.ui;
+      // A set whose file recorded no analysis settings (written by Python, or
+      // by an app before they were always written) takes the capture defaults
+      // a notebook set (window / TF averaging); one that recorded them keeps
+      // exactly those, applied below over the app defaults it was seeded with.
+      if (settings && !ui?.analysis) settings.applyCaptureDefaults(setId);
       if (ui) {
         // Channel labels — sparse map keyed by stringified channel index.
         if (ui.channel_labels) {
@@ -1156,24 +1161,22 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const tf = settings.get(ws.setId, 'tf');
         const sono = settings.get(ws.setId, 'sono');
         const d = defaults();
-        // Only include views that differ from defaults (keep files lean),
-        // but always include all if ANY field was customised.
-        const freqChanged = freq.window !== d.freq.window || freq.mode !== d.freq.mode || freq.nFrames !== d.freq.nFrames;
-        const tfChanged = tf.chIn !== d.tf.chIn || tf.window !== d.tf.window || tf.averaging !== d.tf.averaging || tf.nFrames !== d.tf.nFrames;
+        // Frequency and TF are ALWAYS written, defaults included: a set that
+        // carries `ui.analysis` keeps exactly these settings when reloaded,
+        // while one that carries none (written by Python, or before this) takes
+        // the capture defaults set from a notebook (`loadDataset`). Omitting
+        // defaults made "saved at hann/within" indistinguishable from "no
+        // settings". Sono only when customised (it has no notebook default).
         const sonoChanged = sono.nFft !== d.sono.nFft || sono.dynRangeDb !== d.sono.dynRangeDb
           || sono.method !== d.sono.method || sono.voicesPerOctave !== d.sono.voicesPerOctave
           || sono.voicesAuto !== d.sono.voicesAuto
           || sono.w0 !== d.sono.w0 || sono.fMin !== d.sono.fMin || sono.fMax !== d.sono.fMax;
-        if (freqChanged || tfChanged || sonoChanged) {
-          ui.analysis = {};
-          if (freqChanged) ui.analysis.freq = { ...freq };
-          if (tfChanged) ui.analysis.tf = { ...tf };
-          if (sonoChanged) ui.analysis.sono = { ...sono };
-        }
+        ui.analysis = { freq: { ...freq }, tf: { ...tf } };
+        if (sonoChanged) ui.analysis.sono = { ...sono };
       }
 
-      // Only set `ui` when there's something to persist (avoids empty
-      // objects in the manifest for sets with all-default state).
+      // Only set `ui` when there's something to persist (with the analysis
+      // settings above, that is whenever an analysis-settings store exists).
       ws.time.ui = Object.keys(ui).length > 0 ? ui : undefined;
     }
   }
@@ -2288,6 +2291,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       { name, nChannels: nCh, durationS: dur, timestamp },
       { hidden: !!opts.hidden },
     );
+    // The window / TF averaging set from Python for captures (adding the set
+    // seeded its record with the app defaults just now, synchronously). Not
+    // for a Nonlin run's hidden raw captures: they feed the BLA solve only,
+    // and an 'across' default must not make them TF ensemble members.
+    if (!opts.hidden) settings?.applyCaptureDefaults(setId);
     const ws: WorkingSet = { setId, time: item, fs: sampleRate(item), durationS: dur, nChannels: nCh };
     working.push(ws);
 

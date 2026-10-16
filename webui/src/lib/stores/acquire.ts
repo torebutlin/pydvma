@@ -27,6 +27,7 @@ import {
   clampVoltage,
   isCancelled,
   PYDVMA_DEFAULT_VMAX,
+  type AppliedSettingsAnswer,
   type SourceProvider,
   type BridgeCaps,
   type BridgeConfig,
@@ -138,7 +139,11 @@ export type AcquireStore = ReturnType<typeof createAcquireStore>;
 
 // ---- defaults ----
 
-const DEFAULT_SETTINGS: AcquireSettings = {
+/**
+ * The Setup values a fresh app starts with.  Exported so a served settings
+ * document can CLEAR a field back to them (`serveConfig.mapServeConfig`).
+ */
+export const DEFAULT_SETTINGS: AcquireSettings = {
   deviceId: '',
   sampleRate: 44100,
   channelCount: 1,
@@ -310,6 +315,18 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     warningSink = cb;
   }
 
+  /** Where settings pushed from Python go (App applies them to the stores). */
+  let applySettingsSink: ((doc: Record<string, unknown>) => AppliedSettingsAnswer) | null = null;
+
+  /**
+   * Register the handler for settings pushed from Python
+   * (`SourceProvider.onApplySettings`; bridge only).  One handler, kept across
+   * provider swaps.  With none registered the bridge answers with a refusal.
+   */
+  function onApplySettings(cb: (doc: Record<string, unknown>) => AppliedSettingsAnswer): void {
+    applySettingsSink = cb;
+  }
+
   /**
    * Wire the provider's optional sinks: the log-status sink to
    * {@link pretrigStatus} (`armed → triggered/timeout`), and the
@@ -319,6 +336,9 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
   function wireProvider(p: SourceProvider): void {
     p.onLogStatus?.((event) => pretrigStatus.set(event));
     p.onWarning?.((message) => warningSink?.(message));
+    p.onApplySettings?.((doc) => applySettingsSink
+      ? applySettingsSink(doc)
+      : { ok: false, reason: 'the app has not finished starting' });
     p.onConfigured?.((info: ConfiguredInfo) => {
       // A sub-Hz difference is float noise (an exact honour); anything larger
       // is a real DSA coercion the user must see. Refresh OR clear the note.
@@ -666,6 +686,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     record,
     cancel,
     onWarning,
+    onApplySettings,
     patch,
     patchBridge,
     reclampVoltages,

@@ -1949,3 +1949,53 @@ test('a warning frame with no capture in flight still reaches the sink, and sett
   await caps;
   expect(warned).toEqual(['monitor: the stream has stalled']);
 });
+
+// ---- settings pushed from Python (Session.apply_settings) ----
+
+test('an apply_settings frame reaches the handler and its answer goes back with the id', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const docs: Record<string, unknown>[] = [];
+  bp.onApplySettings((doc) => { docs.push(doc); return { ok: true, notes: ['a note'] }; });
+  const caps = bp.capabilities();
+  fake.open();
+  await tick();
+  // Arrives while `hello` waits for `capabilities`: it must not settle that.
+  fake.emitJson({ type: 'apply_settings', id: 7, settings: { fs: 3000 }, source: 'notebook' });
+  fake.emitJson({ type: 'capabilities', ...CAPS });
+  await caps;
+  expect(docs).toEqual([{ fs: 3000 }]);
+  expect(fake.sentJson().at(-1)).toEqual({ type: 'settings_applied', id: 7, ok: true, notes: ['a note'] });
+});
+
+test('a refusal goes back as ok:false with the reason', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  bp.onApplySettings(() => ({ ok: false, reason: 'a Nonlin run is in progress in the app' }));
+  const caps = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'capabilities', ...CAPS });
+  await caps;
+  fake.emitJson({ type: 'apply_settings', id: 2, settings: {} });
+  expect(fake.sentJson().at(-1)).toEqual(
+    { type: 'settings_applied', id: 2, ok: false, reason: 'a Nonlin run is in progress in the app' });
+});
+
+test('with no handler, or a handler that throws, the tab still answers (refusing)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const caps = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({ type: 'capabilities', ...CAPS });
+  await caps;
+  fake.emitJson({ type: 'apply_settings', id: 1, settings: { fs: 1 } });
+  expect(fake.sentJson().at(-1)).toMatchObject({ id: 1, ok: false, reason: 'the app has not finished starting' });
+  bp.onApplySettings(() => { throw new Error('boom'); });
+  fake.emitJson({ type: 'apply_settings', id: 3, settings: { fs: 1 } });
+  expect(fake.sentJson().at(-1)).toMatchObject({ id: 3, ok: false });
+  expect(fake.sentJson().at(-1).reason).toMatch(/boom/);
+  fake.emitJson({ type: 'apply_settings', id: 4, settings: [1, 2] });
+  expect(fake.sentJson().at(-1)).toMatchObject({ id: 4, ok: false });
+});

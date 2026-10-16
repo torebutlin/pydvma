@@ -110,6 +110,13 @@ export function defaults(): PerSetSettings {
   };
 }
 
+/**
+ * Analysis defaults for captures, from the served settings document: the
+ * window for both the Frequency and TF cards, and the TF averaging mode.
+ * An absent key means the app's own default.
+ */
+export interface CaptureDefaults { window?: string; tfAveraging?: TfSettings['averaging']; }
+
 /** `analysisTarget` value: every set, or one specific set by id. */
 export type AnalysisTarget = 'all' | number;
 
@@ -251,9 +258,58 @@ export function createAnalysisSettings(selection: Selection) {
     });
   }
 
+  /**
+   * Analysis defaults for CAPTURES, set from Python (`dvma.launch(...,
+   * window=, tf_averaging=)`, `Session.apply_settings`, or a `pydvma-serve
+   * --settings` file) through the served settings document.  Empty = the app's
+   * own {@link defaults}.  Applied by {@link applyCaptureDefaults} to each set
+   * the app captures, and to a loaded set whose file recorded no analysis
+   * settings (written by Python, or by an older app).  A loaded set that
+   * recorded them keeps exactly those — the app now always writes its
+   * Frequency and TF settings on save, defaults included, so the two cases
+   * can be told apart.
+   */
+  const captureDefaults = writable<CaptureDefaults>({});
+
+  /**
+   * Update the capture defaults: a key given as a value sets it, `null` clears
+   * it back to the app's own default, and an absent key is left alone — the
+   * served document's own rule (`serveConfig.mapServeConfig`).
+   */
+  function setCaptureDefaults(d: { window?: string | null; tfAveraging?: TfSettings['averaging'] | null }) {
+    captureDefaults.update((cur) => {
+      const next = { ...cur };
+      if (d.window !== undefined) {
+        if (d.window === null) delete next.window; else next.window = d.window;
+      }
+      if (d.tfAveraging !== undefined) {
+        if (d.tfAveraging === null) delete next.tfAveraging; else next.tfAveraging = d.tfAveraging;
+      }
+      return next;
+    });
+  }
+
+  /**
+   * Give a just-captured set the capture defaults: the window on both its
+   * Frequency and TF settings, and the TF averaging mode.  A no-op when none
+   * are set, or for a set with no settings record.
+   */
+  function applyCaptureDefaults(setId: number) {
+    const d = get(captureDefaults);
+    if (d.window !== undefined) {
+      patch(setId, 'freq', { window: d.window });
+      patch(setId, 'tf', { window: d.window });
+    }
+    if (d.tfAveraging !== undefined) patch(setId, 'tf', { averaging: d.tfAveraging });
+  }
+
   return {
     /** Read-only settings map (subscribe to react to patches). */
     map: { subscribe: map.subscribe },
+    /** Analysis defaults for captures (see `setCaptureDefaults`). */
+    captureDefaults: { subscribe: captureDefaults.subscribe },
+    setCaptureDefaults,
+    applyCaptureDefaults,
     /** Shared analysis target: read to bind the "Dataset ▾" dropdown. */
     analysisTarget,
     /**

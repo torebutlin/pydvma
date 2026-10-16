@@ -185,3 +185,25 @@ test('no ping-pong: setTarget then a tray echo does not flip the target back', (
   expect(flips).toBe(1);
   expect(get(settings.analysisTarget)).toBe(a);
 });
+
+// --- Capture defaults from Python (window / TF averaging) ------------------
+
+test('capture defaults: applied to a captured set, set by value, cleared by null', () => {
+  const a = sel.addSet({ name: 'a', nChannels: 2, durationS: 1, timestamp: '' });
+  settings.setCaptureDefaults({ window: 'none', tfAveraging: 'across' });
+  // An existing set is untouched until applied (captures only).
+  expect(settings.get(a, 'freq').window).toBe('hann');
+  const b = sel.addSet({ name: 'b', nChannels: 2, durationS: 1, timestamp: '' });
+  settings.applyCaptureDefaults(b);
+  expect(settings.get(b, 'freq').window).toBe('none');
+  expect(settings.get(b, 'tf')).toMatchObject({ window: 'none', averaging: 'across' });
+  expect(settings.get(a, 'tf')).toMatchObject({ window: 'hann', averaging: 'within' });
+  // An absent key leaves the default; null clears it back to the app's own.
+  settings.setCaptureDefaults({ tfAveraging: null });
+  expect(get(settings.captureDefaults)).toEqual({ window: 'none' });
+  const c = sel.addSet({ name: 'c', nChannels: 2, durationS: 1, timestamp: '' });
+  settings.applyCaptureDefaults(c);
+  expect(settings.get(c, 'tf')).toMatchObject({ window: 'none', averaging: 'within' });
+  settings.setCaptureDefaults({ window: null });
+  expect(get(settings.captureDefaults)).toEqual({});
+});

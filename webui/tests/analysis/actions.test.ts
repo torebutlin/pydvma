@@ -2,7 +2,7 @@ import { get, writable } from 'svelte/store';
 import { expect, test } from 'vitest';
 import { createActions } from '../../src/lib/analysis/actions';
 import { createSelection } from '../../src/lib/stores/selection';
-import { createAnalysisSettings } from '../../src/lib/stores/analysisSettings';
+import { createAnalysisSettings, defaults } from '../../src/lib/stores/analysisSettings';
 import type { EngineStore } from '../../src/lib/stores/engine';
 import type { DvmaDataset, DvmaItem } from '../../src/lib/model/dataset';
 import { readDvma, writeDvma } from '../../src/lib/codec/dvma';
@@ -1213,17 +1213,18 @@ test('stampUiState writes labels and settings onto DvmaItems', () => {
   expect(item.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'power', nFrames: 25, csdX: 0, csdY: 1 });
 });
 
-test('stampUiState omits ui when labels and settings are all defaults', () => {
+test('stampUiState always writes the Frequency + TF settings, defaults included', () => {
+  // So a reload can tell "saved at hann / within" from "no settings at all"
+  // (a Python-written file), which takes the notebook's capture defaults.
   const { engine } = fakeEngine(async () => ({}));
   const { actions } = harness(engine);
   actions.loadDataset(makeDataset(1));
-
-  // No custom labels, all default settings — stamp should clear ui.
   actions.stampUiState();
 
   const ds = get(actions.dataset)!;
   const item = ds.items.find(i => i.kind === 'TimeData')!;
-  expect(item.ui).toBeUndefined();
+  expect(item.ui).toEqual({ analysis: { freq: defaults().freq, tf: defaults().tf } });
+  expect(item.ui!.channel_labels).toBeUndefined();
 });
 
 test('full round-trip: stamp → writeDvma → readDvma → loadDataset restores labels + settings', () => {

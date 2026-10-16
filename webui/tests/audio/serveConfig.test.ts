@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
-import { mapServeConfig } from '../../src/lib/audio/serveConfig';
+import { describeServePatch, mapServeConfig, pushedSettingsRefusal } from '../../src/lib/audio/serveConfig';
+import { DEFAULT_SETTINGS } from '../../src/lib/stores/acquire';
 import type { AudioInputDevice } from '../../src/lib/audio/provider';
 
 /** A minimal enumerated device list (mock + one NI). */
@@ -67,11 +68,12 @@ test('a device the bridge does not expose is skipped (no phantom selection)', ()
   expect(p.settings.sampleRate).toBe(8000);
 });
 
-test('pretrig_samples null / "None" does not arm', () => {
-  expect(mapServeConfig({ pretrig_samples: null, fs: 8000 }, devices)!.bridge.pretrigArmed)
-    .toBeUndefined();
-  expect(mapServeConfig({ pretrig_samples: 'None', fs: 8000 }, devices)!.bridge.pretrigArmed)
-    .toBeUndefined();
+test('pretrig_samples null / "None" DISARMS (present-null clears)', () => {
+  for (const v of [null, 'None']) {
+    const p = mapServeConfig({ pretrig_samples: v, fs: 8000 }, devices)!;
+    expect(p.bridge.pretrigArmed).toBe(false);
+    expect(p.bridge.pretrigSamples).toBeNull();
+  }
 });
 
 test('iepe as a per-channel array takes the first element', () => {
@@ -129,4 +131,93 @@ test('a negative served threshold is ignored (the recorder compares |x|)', () =>
   // …while an explicit zero is kept: it is a stated value, not an absent one.
   const q = mapServeConfig({ fs: 8000, pretrig_threshold: 0 }, devices)!;
   expect(q.bridge.pretrigThreshold).toBe(0);
+});
+
+// ---- present-null clears, absent leaves alone (Session.apply_settings) ----
+
+test('an absent key leaves the app value alone: no patch key at all', () => {
+  const p = mapServeConfig({ fs: 8000 }, devices)!;
+  expect('pretrigArmed' in p.bridge).toBe(false);
+  expect('pretrigThreshold' in p.bridge).toBe(false);
+  expect('vmaxNI' in p.bridge).toBe(false);
+  expect('channelCount' in p.settings).toBe(false);
+});
+
+test('a null threshold CLEARS to the app default, never a threshold of 0', () => {
+  // Number(null) is 0: a careless parse turned "use the default" into
+  // "trigger on the noise floor".
+  const p = mapServeConfig({ pretrig_samples: 100, pretrig_threshold: null }, devices)!;
+  expect('pretrigThreshold' in p.bridge).toBe(true);
+  expect(p.bridge.pretrigThreshold).toBeUndefined();
+  expect(p.bridge.pretrigArmed).toBe(true);
+});
+
+test('null channel / timeout / NI fields clear to undefined (app defaults)', () => {
+  const p = mapServeConfig({
+    pretrig_channel: null, pretrig_timeout: null, VmaxNI: null, output_VmaxNI: null,
+    NI_mode: null, input_channels_spec: null, iepe_excit_current_A: [null, null],
+  }, devices)!;
+  for (const k of ['pretrigChannel', 'pretrigTimeout', 'vmaxNI', 'outputVmaxNI',
+    'niMode', 'inputChannelsSpec', 'iepeExcitCurrentA'] as const) {
+    expect(k in p.bridge, k).toBe(true);
+    expect(p.bridge[k], k).toBeUndefined();
+  }
+});
+
+test('null core fields return Setup to its defaults; a null driver picks Default', () => {
+  const p = mapServeConfig({ fs: null, channels: null, stored_time: null, device_driver: null }, devices)!;
+  expect(p.settings).toEqual({
+    sampleRate: DEFAULT_SETTINGS.sampleRate, channelCount: DEFAULT_SETTINGS.channelCount,
+    durationS: DEFAULT_SETTINGS.durationS, deviceId: '',
+  });
+});
+
+test('empty strings and booleans are not numbers', () => {
+  const p = mapServeConfig({ fs: '', channels: true, pretrig_threshold: '' }, devices);
+  expect(p).toBeNull();
+});
+
+test('the hammer → noise round trip: arm, then a null count disarms', () => {
+  const hammer = mapServeConfig({ fs: 3000, channels: 2, stored_time: 6,
+    pretrig_samples: 100, pretrig_threshold: 0.25 }, devices)!;
+  expect(hammer.bridge).toMatchObject({ pretrigArmed: true, pretrigSamples: 100, pretrigThreshold: 0.25 });
+  const noise = mapServeConfig({ fs: 3000, channels: 2, stored_time: 30,
+    pretrig_samples: null, pretrig_threshold: null }, devices)!;
+  expect(noise.bridge.pretrigArmed).toBe(false);
+  expect(noise.settings.durationS).toBe(30);
+});
+
+test('output: null disables the stimulus; a lone null field does not enable it', () => {
+  expect(mapServeConfig({ output: null }, devices)!.bridge.outputEnabled).toBe(false);
+  const p = mapServeConfig({ output_amp: null }, devices)!;
+  expect('outputEnabled' in p.bridge).toBe(false);
+  expect(p.bridge.outputAmp).toBeUndefined();
+});
+
+test('analysis defaults: window + TF averaging, null clears, junk ignored', () => {
+  expect(mapServeConfig({ analysis_window: 'none', tf_averaging: 'across' }, devices)!.analysis)
+    .toEqual({ window: 'none', tfAveraging: 'across' });
+  expect(mapServeConfig({ analysis_window: null, tf_averaging: null }, devices)!.analysis)
+    .toEqual({ window: null, tfAveraging: null });
+  expect(mapServeConfig({ analysis_window: 'flattop', tf_averaging: 'sideways' }, devices)).toBeNull();
+});
+
+test('a driver this server does not list is named in notes', () => {
+  const p = mapServeConfig({ device_driver: 'nidaq', device_index: 9, fs: 8000 }, devices)!;
+  expect(p.notes).toEqual(['nidaq device 9 is not listed by this server, so Setup kept its input device.']);
+  expect(mapServeConfig({ fs: 8000 }, devices)!.notes).toEqual([]);
+});
+
+test('describeServePatch summarises the headline fields for the toast', () => {
+  const p = mapServeConfig({ fs: 3000, channels: 2, stored_time: 6, pretrig_samples: 100,
+    analysis_window: 'none' }, devices)!;
+  expect(describeServePatch(p)).toBe('3000 Hz · 2 ch · 6 s · trigger armed · window none');
+});
+
+test('pushedSettingsRefusal: busy while recording or during a Nonlin run', () => {
+  expect(pushedSettingsRefusal({ acquireStatus: 'idle', blaPhase: 'idle' })).toBeNull();
+  expect(pushedSettingsRefusal({ acquireStatus: 'done', blaPhase: 'done' })).toBeNull();
+  expect(pushedSettingsRefusal({ acquireStatus: 'recording', blaPhase: 'idle' })).toMatch(/capture is in progress/);
+  expect(pushedSettingsRefusal({ acquireStatus: 'idle', blaPhase: 'running' })).toMatch(/Nonlin run/);
+  expect(pushedSettingsRefusal({ acquireStatus: 'idle', blaPhase: 'analysing' })).toMatch(/Nonlin run/);
 });

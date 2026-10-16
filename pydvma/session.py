@@ -12,6 +12,11 @@ handle::
                                           fs=3000, channels=2))
     session.data               # live view of the session document
     session.push(dataset)      # hand data back; the app offers to reload
+    session.apply_settings(dvma.MySettings(device_driver='nidaq',
+                                           fs=3000, channels=2,
+                                           stored_time=6,
+                                           pretrig_samples=100),
+                           window=None)   # change Setup in the open app
     session.close()
 
 Explicit handoff, not shared mutation: `Session.data`
@@ -58,6 +63,34 @@ _POLL_INTERVAL_S = 0.005
 #: Sentinel distinguishing "attribute absent" from "attribute is None"
 #: in `_settings_to_config_json`.
 _MISSING = object()
+
+#: Sentinel default for `Session.apply_settings`' and `launch`'s
+#: ``window`` / ``tf_averaging``: "not given, leave the app's choice
+#: alone". A plain None cannot mean that, because ``window=None`` is
+#: pydvma's spelling of "no window" everywhere else.
+_UNSET = object()
+
+#: Window names `Session.apply_settings` and `launch` accept: the ones
+#: BOTH the web app's Frequency and TF cards offer (the Frequency card's
+#: ``flattop`` has no TF equivalent). ``None`` is accepted as ``'none'``.
+APP_WINDOWS = ('none', 'hann', 'hamming')
+
+#: The web app's TF averaging modes: ``'within'`` averages frames inside
+#: each capture (noise excitation), ``'across'`` averages across the
+#: captures in the tray (repeated hammer hits), ``'none'`` is one frame.
+TF_AVERAGING_MODES = ('none', 'within', 'across')
+
+#: ``/config`` keys carrying the analysis defaults for new sets. Not
+#: MySettings fields: the app reads them alongside the acquisition
+#: settings, and a hand-written ``pydvma-serve --settings`` file may
+#: carry them too.
+_ANALYSIS_KEYS = ('analysis_window', 'tf_averaging')
+
+#: Why a push is refused while a capture runs — the same words the web app
+#: answers with (``pushedSettingsRefusal`` in ``webui/src/lib/audio/
+#: serveConfig.ts``), so the notebook reads the same whichever side noticed.
+_CAPTURE_BUSY = ('a capture is in progress in the app (logging, or armed and '
+                 'waiting for its trigger)')
 
 
 def _merge_dataset(target, source):
@@ -153,6 +186,14 @@ def _settings_to_config_json(settings):
     MySettings consumes without storing (``device``, the by-name
     selector) are absent from the instance and so absent here too.
 
+    A setting that is None is kept, as JSON ``null``, because the app
+    reads a present ``null`` as "clear this setting":
+    ``pretrig_samples=None`` disarms the trigger, and
+    ``pretrig_threshold=None`` falls back to the app's 5 %-of-full-scale
+    default. Keys that are absent from the document (only possible in a
+    hand-written ``pydvma-serve --settings`` file) leave the app's value
+    alone.
+
     Returns an empty dict when ``settings`` is None.
 
     Args:
@@ -180,6 +221,130 @@ def _settings_to_config_json(settings):
         if scalar is not _MISSING:
             out[name] = scalar
     return out
+
+
+def _analysis_config(window, tf_averaging):
+    """Validate the analysis keywords and return their ``/config`` keys.
+
+    Shared by `launch` and `Session.apply_settings`. A keyword left at
+    `_UNSET` contributes nothing.
+
+    Args:
+        window (str or None or _UNSET): one of `APP_WINDOWS`, or None
+            for no window.
+        tf_averaging (str or _UNSET): one of `TF_AVERAGING_MODES`.
+
+    Raises:
+        ValueError: an unknown window or averaging mode.
+    """
+    out = {}
+    if window is not _UNSET:
+        name = 'none' if window is None else str(window).lower()
+        if name not in APP_WINDOWS:
+            raise ValueError(
+                'window must be one of %s or None (no window), got %r. '
+                'The app\'s flattop window is on the Frequency card only, '
+                'so it cannot be a default for both cards.'
+                % (', '.join(repr(w) for w in APP_WINDOWS), window))
+        out['analysis_window'] = name
+    if tf_averaging is not _UNSET:
+        mode = str(tf_averaging).lower() if tf_averaging is not None else None
+        if mode not in TF_AVERAGING_MODES:
+            raise ValueError(
+                'tf_averaging must be one of %s, got %r'
+                % (', '.join(repr(m) for m in TF_AVERAGING_MODES),
+                   tf_averaging))
+        out['tf_averaging'] = mode
+    return out
+
+
+def _merge_config(current, acquisition, analysis):
+    """The ``/config`` document a settings push leaves behind.
+
+    ``acquisition`` (a `_settings_to_config_json` document) replaces the
+    acquisition part whole, or None keeps ``current``'s. The analysis
+    defaults (`_ANALYSIS_KEYS`) carry over from ``current`` unless
+    ``analysis`` sets them, so a later push that does not mention the
+    window does not quietly drop it for tabs opened afterwards.
+
+    Args:
+        current (dict): the document served now.
+        acquisition (dict or None): the new acquisition settings.
+        analysis (dict): the analysis keys to set (`_analysis_config`).
+    """
+    if acquisition is None:
+        doc = {k: v for k, v in current.items() if k not in _ANALYSIS_KEYS}
+    else:
+        doc = dict(acquisition)
+    for key in _ANALYSIS_KEYS:
+        if key in analysis:
+            doc[key] = analysis[key]
+        elif key in current:
+            doc[key] = current[key]
+    return doc
+
+
+def _settings_summary(doc):
+    """One-line description of a ``/config`` document, for the notebook.
+
+    Reads the document rather than a MySettings, so it describes
+    exactly what was sent (including a push that kept the previous
+    acquisition settings). The trigger level is shown in volts when the
+    capture is in volts (NI, or a soundcard with ``VmaxSC`` set — the
+    rule `pydvma.serve._input_scale_fields` reports to the app),
+    otherwise as a fraction of full scale, and an unset threshold is
+    resolved the way the app and `pydvma.options.pretrig_level`
+    resolve it.
+
+    Args:
+        doc (dict): the document, as `_merge_config` built it.
+    """
+    from . import options
+    parts = []
+    fs = doc.get('fs')
+    if fs is not None:
+        parts.append('%g Hz' % fs)
+    channels = doc.get('channels')
+    if channels is not None:
+        parts.append('%d ch' % channels)
+    stored = doc.get('stored_time')
+    if stored is not None:
+        parts.append('%g s' % stored)
+    if 'pretrig_samples' in doc or 'fs' in doc:
+        if doc.get('pretrig_samples') is None:
+            parts.append('trigger off')
+        else:
+            probe = options.MySettings.__new__(options.MySettings)
+            probe.device_driver = doc.get('device_driver')
+            probe.VmaxNI = doc.get('VmaxNI', 5.0)
+            probe.VmaxSC = doc.get('VmaxSC', 1.0)
+            probe.pretrig_threshold = doc.get('pretrig_threshold')
+            level = options.pretrig_level(probe)
+            volts = (probe.device_driver == 'nidaq'
+                     or abs(float(probe.VmaxSC or 1.0) - 1.0) > 1e-9)
+            unit = ' V' if volts else ' × full scale'
+            parts.append('trigger armed on ch %d at %g%s'
+                         % (doc.get('pretrig_channel') or 0, level, unit))
+    if 'analysis_window' in doc:
+        parts.append('window %s' % doc['analysis_window'])
+    if 'tf_averaging' in doc:
+        parts.append('TF averaging %s' % doc['tf_averaging'])
+    return ', '.join(parts)
+
+
+async def _apply_on_loop(server, acquisition, analysis, default_driver,
+                         answer_timeout):
+    """Build the new document and push it, on the server's own loop.
+
+    Reading the current ``/config`` and replacing it happen in one
+    coroutine on the loop that serves ``/config``, so nothing can slip
+    in between. Returns ``(doc, result)``, the document pushed and
+    `pydvma.serve.BridgeServer.apply_settings`' result.
+    """
+    doc = _merge_config(server.settings_json, acquisition, analysis)
+    result = await server.apply_settings(
+        doc, default_driver=default_driver, answer_timeout=answer_timeout)
+    return doc, result
 
 
 def _shutdown(loop, thread):
@@ -401,6 +566,108 @@ class Session(object):
         raise RuntimeError(
             'session changed repeatedly during push — retry')
 
+    def apply_settings(self, settings=None, *, window=_UNSET,
+                       tf_averaging=_UNSET):
+        """Change the acquisition settings of the app that is already open.
+
+        Every connected app tab applies ``settings`` to Setup and to the
+        Acquire trigger exactly as it applies the ``launch`` settings at
+        start-up, and shows a toast saying they came from the notebook.
+        The served ``/config`` is replaced too, so a tab opened or
+        reloaded later starts from these settings; with no tab open the
+        call says so and the settings apply when one opens. Prints a
+        one-line confirmation::
+
+            logger settings: 3000 Hz, 2 ch, 6 s, trigger armed on ch 0 at 0.25 V (applied in 1 app tab)
+
+        The settings replace the previous ones whole: a setting that is
+        None CLEARS that setting in the app rather than leaving it.
+        ``pretrig_samples=None`` (the MySettings default) disarms the
+        trigger, so moving from hammer settings back to a noise capture
+        needs no extra step, and ``pretrig_threshold=None`` (also the
+        default) is 5 % of the input's full scale, as in the app.
+
+        Nothing changes while a capture is in progress — logging, armed
+        and waiting for its trigger, or a Nonlin run between its
+        captures: the call raises and the app is left as it was. Let the
+        capture finish, or press Stop, and run it again.
+
+        A change that needs the live stream reopened (sample rate,
+        channels, device, NI range) takes effect the way a Setup edit
+        does: at the next capture, or when the live monitor is next
+        started.
+
+        Args:
+            settings (pydvma.options.MySettings or None): the new
+                acquisition settings. None keeps the current ones, for a
+                change of ``window`` or ``tf_averaging`` alone.
+            window (str or None): analysis window for both the Frequency
+                and TF cards: one of `APP_WINDOWS`, or None for no window
+                (pydvma's usual spelling). Applies to the captures taken
+                from now on, and to loaded data that records no analysis
+                settings (a file written from Python). Data already in
+                the app keeps its own, and so does a file saved from the
+                app, which records its settings and reopens exactly as
+                saved. Omit to leave the app's choice (it starts at
+                ``'hann'``).
+            tf_averaging (str): TF averaging, applied like ``window``:
+                ``'within'`` (frames within each capture, for noise),
+                ``'across'`` (one average over the sets that are on
+                ``'across'``, for repeated hammer hits; a set on another
+                mode is never pulled in) or ``'none'``. Omit to leave the
+                app's choice (it starts at ``'within'``).
+
+        Raises:
+            RuntimeError: The session is closed; a capture is in
+                progress (nothing was changed); or a tab refused the
+                change (the message gives its reason).
+            ValueError: An unknown ``window`` or ``tf_averaging``.
+        """
+        with self._close_lock:
+            if self._closed or not self._thread.is_alive():
+                raise RuntimeError('session is closed')
+        analysis = _analysis_config(window, tf_averaging)
+        acquisition = (None if settings is None
+                       else _settings_to_config_json(settings))
+        driver = (None if settings is None
+                  else getattr(settings, 'device_driver', None) or 'auto')
+        from . import serve
+        timeout = serve.APPLY_SETTINGS_ANSWER_TIMEOUT_S
+        future = asyncio.run_coroutine_threadsafe(
+            _apply_on_loop(self._server, acquisition, analysis, driver,
+                           timeout), self._loop)
+        doc, result = future.result(timeout=timeout + STARTUP_TIMEOUT_S)
+        applied, refused, silent = (result['applied'], result['refused'],
+                                    result['silent'])
+        if result['busy']:
+            # Seen by the server (its log is running) or, a moment earlier
+            # or between a Nonlin run's captures, by the tab itself: worded
+            # the same either way.
+            refused = [_CAPTURE_BUSY]
+        if refused and not applied:
+            raise RuntimeError(
+                '%s, so nothing was changed. Let it finish or press Stop, '
+                'then run this again.' % '; '.join(sorted(set(refused))))
+        if refused:
+            raise RuntimeError(
+                'applied in %d app tab%s, but %s in %d other%s, which kept '
+                'its settings. Run this again when it has finished.'
+                % (applied, 's' * (applied != 1),
+                   '; '.join(sorted(set(refused))), len(refused),
+                   's' * (len(refused) != 1)))
+        summary = 'logger settings: ' + _settings_summary(doc)
+        if result['tabs'] == 0:
+            status = 'no app tab is open; they apply when one opens at %s' % self.url
+        else:
+            status = 'applied in %d app tab%s' % (applied, 's' * (applied != 1))
+            if silent:
+                status += ('; %d tab%s did not answer, reload %s'
+                           % (silent, 's' * (silent != 1),
+                              'them' if silent != 1 else 'it'))
+        print('%s (%s)' % (summary, status))
+        for note in result['notes']:
+            print('  ' + note)
+
     def close(self):
         """Stop the server and its thread. Idempotent and thread-safe.
 
@@ -439,7 +706,8 @@ class Session(object):
 
 
 def launch(settings=None, open_browser=True, port=0, ui_dir=None,
-           session_dir=None, recover=True):
+           session_dir=None, recover=True, *, window=_UNSET,
+           tf_averaging=_UNSET):
     """Start a pydvma session and return its `Session` handle.
 
     Runs the same server as ``pydvma-serve`` — acquisition bridge,
@@ -482,12 +750,19 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
             in the app (default True). Passed through to
             `pydvma.serve.BridgeServer`; False skips the
             startup scan entirely.
+        window (str or None): analysis window the app gives new data
+            sets on both the Frequency and TF cards, as in
+            `Session.apply_settings`. Omit for the app's own default.
+        tf_averaging (str): TF averaging mode for new data sets, as in
+            `Session.apply_settings`. Omit for the app's own default.
 
     Returns:
         session (Session): The handle for the running server. Its `url` is the
-            address actually bound.
+            address actually bound. Change the settings later with
+            `Session.apply_settings`.
 
     Raises:
+        ValueError: An unknown ``window`` or ``tf_averaging``.
         ImportError: The optional server dependencies are missing; the
             message names ``pip install pydvma[serve]``.
         RuntimeError: The server did not bind within
@@ -495,6 +770,7 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
             when there was one (an ``OSError`` when an explicit ``port``
             is already taken).
     """
+    analysis = _analysis_config(window, tf_averaging)
     try:
         import websockets                              # noqa: F401
     except ImportError as e:
@@ -521,7 +797,8 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
     resolved_ui_dir = serve._resolve_ui_dir(ui_dir)
     server = serve.BridgeServer(
         port=port, ui_dir=resolved_ui_dir,
-        settings_json=_settings_to_config_json(settings),
+        settings_json=_merge_config({}, _settings_to_config_json(settings),
+                                    analysis),
         default_driver=driver, session_dir=session_dir, recover=recover)
 
     ready = threading.Event()
