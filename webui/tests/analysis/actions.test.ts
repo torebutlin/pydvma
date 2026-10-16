@@ -1227,6 +1227,60 @@ test('stampUiState always writes the Frequency + TF settings, defaults included'
   expect(item.ui!.channel_labels).toBeUndefined();
 });
 
+test('3C6 flow: files loaded after apply_settings keep their settings; across takes only across sets', async () => {
+  // 3.4: the notebook set window=None, tf_averaging='across' for captures.
+  // The student then clears the tray and loads three files: the calibrated
+  // hammer file (saved as across), the noise file (saved as hann, within, 7
+  // frames, with its TF) and a stepped-sine TF written from Python.
+  const { engine, calls } = fakeEngine(async (op) =>
+    (op === 'calc_tf' || op === 'calc_tf_averaged' ? tfResult() : {}));
+  const { sel, settings, actions } = harness(engine);
+  settings.setCaptureDefaults({ window: 'none', tfAveraging: 'across' });
+  const timeItem = (name: string, data: number[], ui: DvmaItem['ui']): DvmaItem => ({
+    kind: 'TimeData',
+    arrays: {
+      time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+      time_data: { shape: [3, 2], isComplex: false, data: Float64Array.from(data) },
+    },
+    meta: { test_name: name, timestring: name, unique_id: `${name}-link` },
+    settings: { fs: 2 },
+    ui,
+  });
+  const hammer = timeItem('hammer', [1, 2, 3, 4, 5, 6], { analysis: {
+    freq: { ...defaults().freq, window: 'none' },
+    tf: { chIn: 0, window: 'none', averaging: 'across', nFrames: 10 } } });
+  const noise = timeItem('noise', [10, 11, 12, 13, 14, 15], { analysis: {
+    freq: defaults().freq, tf: { chIn: 0, window: 'hann', averaging: 'within', nFrames: 7 } } });
+  const noiseTf: DvmaItem = { ...orphanTfItem(1), meta: { test_name: 'noise', timestring: 'noise', id_link: 'noise-link' } };
+  const stepped: DvmaItem = { ...orphanTfItem(1), meta: { test_name: 'stepped', timestring: 'st' } };
+  actions.loadDataset({ formatVersion: 2, pydvmaVersion: '2.7.0', items: [hammer, noise, noiseTf, stepped] });
+
+  const id = (name: string) => get(sel.sets).find((s) => s.name === name)!.id;
+  // Loading computes nothing: stored TFs show as saved.
+  expect(calls).toHaveLength(0);
+  expect(get(actions.derived)[id('noise')].tf).toBeDefined();
+  expect(get(actions.derived)[id('stepped')].tf).toBeDefined();
+  // Each file keeps what it recorded — not the notebook's window=None.
+  expect(settings.get(id('noise'), 'tf')).toEqual({ chIn: 0, window: 'hann', averaging: 'within', nFrames: 7 });
+  expect(settings.get(id('noise'), 'freq').window).toBe('hann');
+  expect(settings.get(id('hammer'), 'tf')).toMatchObject({ window: 'none', averaging: 'across' });
+  // The Python-written TF-only file has no time data for a window or an
+  // averaging mode to act on: it just shows its stored TF.
+  expect(settings.get(id('stepped'), 'tf')).toEqual(defaults().tf);
+
+  // Calc TF on everything: the ensemble is the hammer alone; the noise set
+  // is computed on its own with its own window and frames.
+  await actions.calcTf('all');
+  const ensemble = calls.filter((c) => c.op === 'calc_tf_averaged');
+  expect(ensemble).toHaveLength(1);
+  const members = ensemble[0].payload.sets as { time_data: Float64Array }[];
+  expect(members.map((m) => Array.from(m.time_data))).toEqual([[1, 2, 3, 4, 5, 6]]);
+  const perSet = calls.filter((c) => c.op === 'calc_tf');
+  expect(perSet).toHaveLength(1);
+  expect(perSet[0].payload).toMatchObject({ window: 'hann', n_frames: 7 });
+  expect(Array.from(perSet[0].payload.time_data as Float64Array)).toEqual([10, 11, 12, 13, 14, 15]);
+});
+
 test('full round-trip: stamp → writeDvma → readDvma → loadDataset restores labels + settings', () => {
   const { engine } = fakeEngine(async () => ({}));
   const { sel, settings, actions } = harness(engine);

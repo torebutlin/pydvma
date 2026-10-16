@@ -129,11 +129,14 @@ The **TF** stage estimates frequency response functions.
 - **Calc TF** computes the result. Once a TF exists it re-estimates as
   you change settings.
 
-**across sets** averages every set that has time data. The input
-channel, window and sample rate come from the set that has this option
-chosen, and the result appears on the first set that qualifies. Sets with
-one channel, or a different sample rate, are left out, and a note names
-them.
+**across sets** averages the sets whose own **avg** is *across sets*;
+choose it with **Dataset** on *all* to average every recording. A set on
+*within set* or *none* is never pulled in: it gets its own TF from the
+same **Calc TF**, so a noise recording loaded beside a set of hammer hits
+is not mixed into their average. The input channel, window and sample
+rate come from the first set with this option, and the result appears on
+the first set that qualifies. Sets with one channel, or a different
+sample rate, are left out, and a note names them.
 
 Coherence near 1 means a clean, linear, low-noise response. Dips point to
 noise, nonlinearity or a poor reference, as in the

@@ -1830,17 +1830,21 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * chIn / window / averaging / nFrames from `settings`. Per set:
    * - 'none'   → calc_tf with n_frames = 1
    * - 'within' → calc_tf with the set's n_frames
-   * - 'across' → one calc_tf_averaged over ALL working sets' time_data
-   *   (an ensemble op — inherently multi-set; it uses the target set's
-   *   chIn/window, attaches the single averaged curve to the first set,
-   *   and ignores the per-set loop). `target === 'all'` runs every set.
+   * - 'across' → ONE calc_tf_averaged over the working sets whose OWN
+   *   averaging is 'across' (an ensemble op; it uses the first targeted
+   *   'across' set's chIn/window and attaches the single averaged curve to
+   *   the first member). A set on 'within' or 'none' is never pulled in:
+   *   the 3C6 lab loads a hammer file saved as 'across' beside a noise file
+   *   saved as 'within', and their records must not be averaged together.
+   *   The other targeted sets are then computed per set as usual.
+   * `target === 'all'` runs every set.
    */
   function calcTf(target: AnalysisTarget = 'all') {
     const my = bump('tf');
     return guarded('tf', async () => {
       const sets = timeBearing(target, 'Transfer function');
       // P5 data-add rule — see `calcFft`.
-      const wasEmpty = !viewPopulated(get(derived), 'tf');
+      let wasEmpty = !viewPopulated(get(derived), 'tf');
       let added = false;
       // A transfer function maps ONE input channel to the remaining OUTPUT
       // channels, so `calculate_tf` returns tf_data of shape (Nf, N−1). A
@@ -1851,26 +1855,26 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // message via `computeErrors.tf` instead of issuing a meaningless worker
       // call. `< 2` channels ⇒ no output.
       const acrossSet = sets.find((ws) => tfSettings(ws.setId).averaging === 'across');
+      // Notes for sets that produced nothing, thrown together at the end so
+      // every set that CAN be computed is drawn first.
+      const notes: string[] = [];
+      let perSet = sets;
       if (acrossSet) {
-        // 'across' is an ensemble over ALL sets; the target set names the
-        // chIn/window to use. The averaged curve attaches to the FIRST set,
-        // so that set must have an output channel too.
-        // Round 15 (3C6 lab, 2026-09-10): the ensemble is the COMPATIBLE
-        // working sets — those with an output channel and the target's
-        // sample rate (to 0.1 %, the tolerance `analysis.calculate_tf_averaged`
-        // applies; record LENGTHS it truncates itself). A 30 s single-
-        // channel set logged alongside five 6 s impulse taps used to be
-        // swept in as `first` and refuse the whole ensemble, leaving the
-        // stale per-set lines (single frame, coherence ≡ 1) on screen.
-        const timed = working.filter((ws) => hasTimeData(ws.time));
+        // The ensemble is the COMPATIBLE sets that chose 'across' — those
+        // with an output channel and the target's sample rate (to 0.1 %, the
+        // tolerance `analysis.calculate_tf_averaged` applies; record LENGTHS
+        // it truncates itself). Round 15 (3C6 lab, 2026-09-10): a 30 s
+        // single-channel set logged alongside five 6 s impulse taps used to
+        // be swept in as `first` and refuse the whole ensemble.
         const fsRef = acrossSet.fs;
+        const chosen = acrossMembers();
         const compatible = (ws: WorkingSet) =>
           ws.nChannels >= 2 && Math.abs(ws.fs - fsRef) <= 1e-3 * fsRef;
-        const members = timed.filter(compatible);
-        const leftOut = timed.filter((ws) => !compatible(ws));
+        const members = chosen.filter(compatible);
+        const leftOut = chosen.filter((ws) => !compatible(ws));
         const first = members[0];
         if (!first) {
-          throw new Error(tfNoOutputMessage(timed.map((ws) => nameOf(ws.setId))));
+          throw new Error(tfNoOutputMessage(chosen.map((ws) => nameOf(ws.setId))));
         }
         const { chIn, window } = tfSettings(acrossSet.setId);
         const ensemble = members.map(ws => {
@@ -1892,24 +1896,26 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         // provenance and an edit to any other member would never flip the
         // staleness flag. Deferred — see `materializeDerived`'s doc.
         maybeRestoreModalRecon([first.setId]);          // deferred modal recon
+        // Announce the ensemble now, so a per-set failure below cannot
+        // swallow it; the per-set part then announces its own lines.
         if (added) notify?.linesAdded('tf', { viewWasEmpty: wasEmpty });
-        // The ensemble is drawn; now say which sets it could not include
-        // (routes to `computeErrors.tf` via `guarded`, like the per-set
-        // single-channel note below).
+        wasEmpty = !viewPopulated(get(derived), 'tf');
+        added = false;
+        // Say which 'across' sets the ensemble could not include.
         if (leftOut.length > 0) {
-          throw new Error(tfEnsembleLeftOutMessage(
+          notes.push(tfEnsembleLeftOutMessage(
             members.length,
             leftOut.map((ws) => ws.nChannels < 2
               ? `${nameOf(ws.setId)} (one channel)`
               : `${nameOf(ws.setId)} (${ws.fs} Hz, ensemble at ${fsRef} Hz)`),
           ));
         }
-        return;
+        perSet = sets.filter((ws) => tfSettings(ws.setId).averaging !== 'across');
       }
       // Per-set: run only the sets that HAVE an output channel; collect the
       // single-channel ones so we can explain why they produced no TF.
-      const runnable = sets.filter((ws) => ws.nChannels >= 2);
-      const skipped = sets.filter((ws) => ws.nChannels < 2);
+      const runnable = perSet.filter((ws) => ws.nChannels >= 2);
+      const skipped = perSet.filter((ws) => ws.nChannels < 2);
       for (const ws of runnable) {
         const { chIn, window, averaging, nFrames } = tfSettings(ws.setId);
         const frames = averaging === 'none' ? 1 : nFrames;
@@ -1934,10 +1940,18 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // tell the user why (routes to `computeErrors.tf` via `guarded`, shown
       // on the TF card + under the plot). A pure single-channel target
       // computes nothing and shows only this message.
-      if (skipped.length > 0) {
-        throw new Error(tfNoOutputMessage(skipped.map((ws) => nameOf(ws.setId))));
-      }
+      if (skipped.length > 0) notes.unshift(tfNoOutputMessage(skipped.map((ws) => nameOf(ws.setId))));
+      if (notes.length > 0) throw new Error(notes.join(' '));
     });
+  }
+
+  /**
+   * The time-bearing working sets whose OWN TF averaging is 'across', in
+   * tray order: the candidates for the ensemble TF (`calcTf` then keeps the
+   * compatible ones). Never a set on 'within' or 'none'.
+   */
+  function acrossMembers(): WorkingSet[] {
+    return working.filter((ws) => hasTimeData(ws.time) && tfSettings(ws.setId).averaging === 'across');
   }
 
   /**
@@ -2034,30 +2048,23 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * only via a loaded `CrossSpecData`) is left alone: recomputing it would
    * fabricate a PSD the user never asked for.
    *
-   * TF ensemble nuance: an 'across' TF is computed from ALL working sets'
-   * time data (so the cleaned set ALWAYS feeds it) and attaches to the
-   * FIRST working set. It is detected the same way `calcTf` resolves the
-   * mode — some set's tf settings say 'across' — combined with the first
-   * set carrying a TF slice; the recompute dispatches via the across-
-   * owning set (whose chIn/window drive the ensemble). The cleaned set's
-   * own TF dispatch is then skipped when it would just re-run that same
-   * ensemble (its slice IS the ensemble result, or its own settings
-   * resolve to the ensemble op).
+   * TF ensemble nuance: an 'across' TF is computed from the time data of
+   * the sets whose own averaging is 'across' (`acrossMembers`) and attaches
+   * to the first of them. When the changed set is one of those members and
+   * that first member carries a TF slice, the ensemble is recomputed (via
+   * the changed set, whose chIn/window then drive it, as `calcTf` would);
+   * a set that is not a member never touches the ensemble, and is
+   * recomputed per set as usual.
    */
   async function recomputeExisting(ws: WorkingSet): Promise<void> {
     if (hasComputed(ws.setId, 'freq')) await calcFft(ws.setId);
     if (hasComputed(ws.setId, 'psd')) await calcPsd(ws.setId);
 
-    const first = working[0];
-    const acrossOwner = working.find((w) => tfSettings(w.setId).averaging === 'across');
-    let ensembleRecomputed = false;
-    if (acrossOwner && first && hasComputed(first.setId, 'tf')) {
-      await calcTf(acrossOwner.setId);
-      ensembleRecomputed = true;
-    }
-    const resolvesToEnsemble = ensembleRecomputed
-      && (ws.setId === first.setId || tfSettings(ws.setId).averaging === 'across');
-    if (hasComputed(ws.setId, 'tf') && !resolvesToEnsemble) await calcTf(ws.setId);
+    // `calcTf(ws.setId)` resolves the mode itself: a member re-runs the
+    // ensemble, anything else its own per-set TF.
+    const members = acrossMembers();
+    const ensembleShown = members.includes(ws) && hasComputed(members[0].setId, 'tf');
+    if (ensembleShown || hasComputed(ws.setId, 'tf')) await calcTf(ws.setId);
 
     if (hasComputed(ws.setId, 'sono')) {
       await calcSono(ws.setId, lastSonoCh.get(ws.setId) ?? 0);
