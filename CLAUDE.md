@@ -8,6 +8,42 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-10-16, later (Mac): **the 2.7.0 cut moved AGAIN, to
+`35ae762` (release: v2.7.0 gains Session.apply_settings...) — still
+unreleased, version unchanged (Tore's call); tag `v2.7.0` THERE.** New
+this round, for the 3C6 notebook (which keeps one `dvma.launch` open all
+lab): **`Session.apply_settings(settings=None, *, window=_UNSET,
+tf_averaging=_UNSET)`** pushes a whole `/config` document to every open
+tab over `/ws` (`apply_settings` frame → `settings_applied` answer;
+`BridgeServer.apply_settings`, `_Connection.offer_settings`), replaces
+`/config`, refuses while a capture logs/arms (server sees `_log_task`) or
+a Nonlin run is between captures (the tab answers ok:false), prints
+`logger settings: ... (applied in N app tab)`. `launch` takes the same
+two keywords; a `--settings` file the same as `analysis_window` /
+`tf_averaging`. `mapServeConfig`: a present null CLEARS (null
+`pretrig_samples` disarms), absent leaves; number parsing no longer reads
+null/"" as 0 (a cleared threshold would have become 0). Capture defaults
+(window/averaging) apply to captures and to loaded sets with no recorded
+`ui.analysis`; the app now ALWAYS stamps freq+tf settings on save so a
+saved file reopens exactly as saved. **Across-sets TF averages only the
+sets whose own averaging is 'across'** (it took every compatible set —
+a loaded noise file would have joined a hammer ensemble); Calc TF on all
+then computes the others per set. Also: `MySettings(pretrig_threshold=
+None)` default = 5 % of `input_vmax()` via `options.pretrig_level`
+(Python matches the app, 0.25 V on ±5 V NI); `_port_is_live` sends a GET
+and serve hands websockets a logger that reports malformed handshakes at
+DEBUG (no red traceback on a second launch, or from a launcher's HEAD
+probe). A boot race was found and fixed: a push landing mid-boot was
+undone by the prefill's stale `/config` (tab keeps `latestPushedDoc`;
+deterministic e2e intercepts the 2nd `/config` fetch). Suites: pytest
+1450/7, vitest 1246/1, check 0/0, Playwright 95/27 + BRIDGE_E2E 30/30
+(new `e2e/notebook-settings.spec.ts`, port 8769), mkdocs --strict clean.
+`dist/` rebuilt (`index-ZrS5bZpt.js`), verify_release both traps, twine
+check, clean-venv smoke incl. apply_settings and the `/engine` greeting
+2.7.0; `dist/RELEASE_NOTES_2.7.0.md` regenerated from the CHANGELOG.
+Follow-ups in TODO.md (served mapping skips VmaxSC/gain/lpf; monitor not
+restarted on a settings change).
+
 As of 2026-10-16 (Mac): **the 2.7.0 cut moved again, to `b0eb40a`
 (feat(webui): open on Setup) — the version is unchanged because 2.7.0 was
 never uploaded (Tore's call); tag `v2.7.0` THERE, not at the `deps:`
