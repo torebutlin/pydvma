@@ -8,6 +8,20 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+**v2.7.0 IS RELEASED END TO END (2026-10-16, Mac).** Tore uploaded
+`dist/` with twine; PyPI's wheel and sdist are byte-identical to the
+verified build (sha256 6425aae7… / 07b080d1…); tag `v2.7.0` is at the cut
+`35ae762` (lightweight, like v2.6.0) and pushed; the GitHub release
+"v2.7.0" carries the full CHANGELOG body and both files, so Zenodo
+archives it. Trap 3 re-checked on the DOWNLOADED wheel: embedded
+`pydvma-2.7.0` engine wheel referenced by the bundled `index-ZrS5bZpt.js`,
+all 25 `pydvma/*.py` byte-identical to tag v2.7.0 in both the fat and the
+engine wheel. A clean venv installing `pydvma[serve]==2.7.0` from PyPI
+serves its own UI (engine wheel fetched 200), greets
+`{v:1, pydvma:'2.7.0', journal:true}`, and `apply_settings` works. Lab
+install: `pip install --upgrade "pydvma[serve,soundcard]"`. Nothing is
+pending on the release side.
+
 As of 2026-10-16, later (Mac): **the 2.7.0 cut moved AGAIN, to
 `35ae762` (release: v2.7.0 gains Session.apply_settings...) — still
 unreleased, version unchanged (Tore's call); tag `v2.7.0` THERE.** New
