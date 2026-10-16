@@ -264,6 +264,7 @@ import importlib.resources
 import inspect
 import io
 import json
+import logging
 import math
 import mimetypes
 import os
@@ -1397,6 +1398,40 @@ _SESSION_PRUNE_AGE_S = 7 * 24 * 60 * 60
 _LIVENESS_PROBE_TIMEOUT_S = 0.2
 
 
+class _QuietMalformedHandshakes(logging.Filter):
+    """Report a connection that never sent a valid request at DEBUG.
+
+    websockets logs every failed opening handshake as an ERROR with a
+    full traceback. On this loopback server the commonest cause is
+    harmless: something connected and hung up without a request (another
+    pydvma's liveness probe, a port scanner) or sent a ``HEAD`` (an
+    editor's or launcher's health check). In a notebook kernel running
+    `pydvma.session.launch` that traceback prints red under whatever
+    cell runs next. Only that case — ``InvalidMessage``, "did not
+    receive a valid HTTP request" — is downgraded to a one-line DEBUG
+    record; any other handshake failure, such as an error in
+    :meth:`BridgeServer._process_request`, still logs as an ERROR.
+    """
+
+    def filter(self, record):
+        exc = record.exc_info[1] if record.exc_info else None
+        if exc is not None and record.getMessage() == 'opening handshake failed':
+            from websockets.exceptions import InvalidMessage
+            if isinstance(exc, InvalidMessage):
+                record.levelno, record.levelname = logging.DEBUG, 'DEBUG'
+                record.msg = 'opening handshake failed: %s'
+                record.args = (exc,)
+                record.exc_info = record.exc_text = None
+        return True
+
+
+#: The logger `BridgeServer` hands websockets: its own records propagate
+#: as usual, minus the malformed-handshake noise (see
+#: `_QuietMalformedHandshakes`).
+_WS_LOGGER = logging.getLogger('pydvma.serve.websockets')
+_WS_LOGGER.addFilter(_QuietMalformedHandshakes())
+
+
 def _port_is_live(port, host=DEFAULT_HOST):
     """True when something is listening on ``host:port`` right now.
 
@@ -1414,6 +1449,15 @@ def _port_is_live(port, host=DEFAULT_HOST):
     goes through the ordinary adopt/prune path instead of being
     protected as someone's live spill.
 
+    Once connected, the probe asks for ``/config`` and reads the start
+    of the reply before closing. A bare connect-and-close made a live
+    serve's websockets layer log "opening handshake failed" with a
+    traceback — in a notebook running two `pydvma.session.launch`
+    sessions, a red error in the very kernel that started the first.
+    A plain GET is answered like any page request, so nothing is
+    logged; whether a reply arrives does not change the verdict, which
+    is still just "something accepted the connection".
+
     Args:
         port: TCP port to probe.
         host: address to probe (loopback in normal use — this module
@@ -1425,7 +1469,16 @@ def _port_is_live(port, host=DEFAULT_HOST):
         return False
     try:
         sock.settimeout(_LIVENESS_PROBE_TIMEOUT_S)
-        return sock.connect_ex((host, port)) == 0
+        if sock.connect_ex((host, port)) != 0:
+            return False
+        try:
+            sock.sendall(('GET /config HTTP/1.1\r\nHost: %s:%d\r\n'
+                          'Connection: close\r\n\r\n' % (host, port))
+                         .encode('ascii'))
+            sock.recv(64)
+        except OSError:
+            pass  # connected is the verdict; the reply is only courtesy
+        return True
     except (OSError, OverflowError):
         return False
     finally:
@@ -1724,6 +1777,7 @@ class BridgeServer:
             # worth keeping even in this loopback-only, lab-local trust
             # model. 256 MiB clears any realistic capture frame.
             max_size=256 * 1024 * 1024,
+            logger=_WS_LOGGER,
         ) as server:
             self._server = server
             port = server.sockets[0].getsockname()[1]
