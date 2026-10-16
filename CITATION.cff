@@ -10,7 +10,7 @@ message: "If you use this software, please cite it using the metadata from this 
 title: "pydvma: a Python package for dynamics and vibration measurement and analysis"
 type: software
 version: 2.7.0
-date-released: 2026-10-14
+date-released: 2026-10-16
 authors:
   - family-names: "Butlin"
     given-names: "Tore"

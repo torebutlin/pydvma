@@ -3,17 +3,47 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## 2.7.0 — 2026-10-14
+## 2.7.0 — 2026-10-16
 
-Lossless data exports, transfer-function calibration in the web app, and
-the Vibration Apps' CSV import. Minor rather than patch: both data
-exports change format, so scripts that read pydvma's CSV or `.mat` files
-need updating, and files written by 2.6 and earlier cannot be read back;
-there are also new public names (`import_from_vibration_apps_csv`,
-`set_calibration_factor(units=)`), and Best Match in the web app now
-stores its factors on the transfer functions instead of the channels.
+Lossless data exports, transfer-function calibration in the web app,
+the Vibration Apps' CSV import, and changing the open app's settings from
+a notebook. Minor rather than patch: both data exports change format, so
+scripts that read pydvma's CSV or `.mat` files need updating, and files
+written by 2.6 and earlier cannot be read back; there are also new public
+names (`import_from_vibration_apps_csv`, `set_calibration_factor(units=)`,
+`Session.apply_settings`, `options.pretrig_level`), the default trigger
+level is now 5 % of full scale, and Best Match in the web app now stores
+its factors on the transfer functions instead of the channels.
 
 ### Changed
+
+- **The default trigger level is 5 % of the input's full scale, in Python
+  as in the web app.** `MySettings(pretrig_threshold=...)` now defaults to
+  `None`, which `log_data` resolves when the capture runs: 0.25 V on a
+  ±5 V NI range (it was an absolute 0.05 V), and unchanged at 0.05 on an
+  uncalibrated soundcard. The new `options.pretrig_level` gives the level
+  a capture will use. Before, a `dvma.launch(settings)` that never set a
+  threshold also sent 0.05 to the app, overriding the app's own
+  5 %-of-full-scale default. A threshold you set is used as before.
+- **An *across sets* TF in the web app averages only the sets set to
+  *across sets*.** It averaged every compatible set with time data, so a
+  noise recording loaded beside hammer hits saved as *across sets* was
+  mixed into their average by Calc TF, or by a recompute such as Clean
+  Impulse. Choosing *across sets* with **Dataset** on *all* still averages
+  every recording; a set on *within set* or *none* now gets its own TF
+  from the same Calc TF instead of none.
+- **The web app always saves each set's Frequency and TF settings,**
+  defaults included (it saved only changed ones), so a reopened file
+  keeps exactly the window and averaging it was saved with, and a file
+  with none recorded can be told apart.
+- **A settings document's `null` now clears that setting in the web
+  app.** `/config` (from `dvma.launch` or `pydvma-serve --settings`)
+  with `"pretrig_samples": null` disarms the trigger, and a `null`
+  threshold, channel, timeout or NI field returns to the app's default; a
+  key the document leaves out still leaves the app's value alone. At
+  start-up the app holds its defaults, so a launch fills in Setup exactly
+  as before. Number fields no longer read `null`, `""` or `true` as
+  numbers.
 
 - **CSV and MATLAB exports now hold everything a `.dvma` holds, and load
   back.** `export_to_csv` and `export_to_matlab` (and the web app's
@@ -54,6 +84,30 @@ stores its factors on the transfer functions instead of the channels.
 
 ### Added
 
+- **Change the open app's settings from the notebook:
+  `session.apply_settings(settings, window=..., tf_averaging=...)`.**
+  For a lab that moves from noise captures to the hammer without closing
+  the app. Every open tab fills in Setup and the trigger as `launch` does
+  at start-up and shows where the settings came from; `/config` is
+  replaced too, so a tab opened or reloaded later starts from them, and
+  with no tab open the call says so. The settings replace the previous
+  ones whole, so `pretrig_samples=None` disarms the trigger. While a
+  capture is logging, armed and waiting, or part way through a Nonlin
+  run, the call raises and nothing changes. A new rate, channel count,
+  device or NI range takes effect at the next capture, as after a Setup
+  edit. It prints a one-line confirmation, e.g. `logger settings:
+  3000 Hz, 2 ch, 6 s, trigger armed on ch 0 at 0.25 V (applied in 1 app
+  tab)`. `window` (`'hann'`, `'hamming'`, or `None` for none) sets the
+  Frequency and TF cards' window, and `tf_averaging` (`'within'`,
+  `'across'`, `'none'`) the TF averaging, for the captures taken from then
+  on and for loaded data that records no analysis settings (a file
+  written from Python); data already in the app, and files saved from the
+  app, keep their own.
+  `dvma.launch` takes the same two keywords, and a `pydvma-serve
+  --settings` file the same as `analysis_window` / `tf_averaging` keys.
+  The server sends tabs a new `apply_settings` frame and each answers
+  `settings_applied`; an app build without it is reported as not
+  answering.
 - **Import the Vibration Apps' transfer-function CSV.** The CSV that the
   3C6 **Transfer function** app saves (format `vibration-apps-tf-csv 1`)
   loads with `load_data`, which recognises it by its first line, or with
@@ -87,6 +141,11 @@ stores its factors on the transfer functions instead of the channels.
 
 ### Fixed
 
+- **A second `dvma.launch` while one was open printed a red "opening
+  handshake failed" traceback.** Its recovery scan checks whether the
+  first session's port is still live, and the check connected and hung
+  up without a request, which the live server logged as an error. It now
+  asks for `/config` like any page request, so nothing is logged.
 - **A stored cross-spectrum showed its coherence in the web app's CSD
   view.** Loading a `.dvma` (or an import) holding a `CrossSpecData`
   seeded only its coherence, so the view fell back to plotting it under

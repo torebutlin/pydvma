@@ -13,6 +13,26 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+### `dvma.launch` / `Session.apply_settings` follow-ups (2026-10-16)
+
+The untouched-`pretrig_threshold` item is DONE (`MySettings` defaults to
+`None` = 5 % of full scale, `options.pretrig_level`, in 2.7.0), and so
+is the second-launch handshake traceback. Still open:
+
+- **The served-settings mapping skips several Setup fields.**
+  `serveConfig.mapServeConfig` (shared by the boot prefill and
+  `apply_settings`) ignores `VmaxSC`, `input_gain_db`, `input_mode`,
+  `oversample`, `capture_fs`, `lpf_on` and `channel_sensitivities`, all
+  of which Setup can hold, so a soundcard lab cannot set its full scale
+  or gain from the notebook. Mapping them is mechanical, but each needs
+  the same present-null-clears rule and a vitest, and `VmaxSC` /
+  `input_gain_db` must not be sent together (Setup's own rule).
+- **A running live monitor keeps its stream after a settings change.**
+  Same as a Setup edit by hand: a new rate or channel count reaches the
+  hardware at the next capture or monitor start, so the mini monitor
+  shows the old geometry until restarted. Restarting it automatically
+  when a stream-affecting field changes would suit both paths.
+
 ### Vibration Apps CSV import follow-ups (2026-10-06)
 
 `import_from_vibration_apps_csv` (the 3C6 Transfer function app's CSV,
