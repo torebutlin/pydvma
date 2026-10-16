@@ -6,6 +6,7 @@ Created on Mon Aug 27 17:08:42 2018
 """
 
 from . import datastructure
+from . import options
 from . import streams
 from . import analysis
 
@@ -716,7 +717,11 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
             # hardware-verified sample-exact on NI; only the flag that
             # freezes the buffer changed name (2026-09-10).
             trigger_check = stored_time_data_copy[(settings.chunk_size):(2*settings.chunk_size),settings.pretrig_channel]
-            hits = np.where(np.abs(trigger_check) > settings.pretrig_threshold)[0]
+            # The recorder detected against ITS settings' level (a coerced
+            # NI range moves the 5 %-of-full-scale default), so slice with
+            # the same one.
+            level = options.pretrig_level(getattr(streams.REC, 'settings', settings))
+            hits = np.where(np.abs(trigger_check) > level)[0]
             if len(hits) == 0:
                 # Timeout expired with no trigger detected — return the tail of
                 # the buffer rather than crashing with IndexError.

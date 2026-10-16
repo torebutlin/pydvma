@@ -2196,7 +2196,10 @@ class _Connection:
             samples = pretrigger.get('samples')
             settings.pretrig_samples = None if samples is None else int(samples)
             if 'threshold' in pretrigger:
-                settings.pretrig_threshold = float(pretrigger['threshold'])
+                # null = the 5 %-of-full-scale default (options.pretrig_level).
+                threshold = pretrigger['threshold']
+                settings.pretrig_threshold = (None if threshold is None
+                                              else float(threshold))
             if 'channel' in pretrigger:
                 settings.pretrig_channel = int(pretrigger['channel'])
             if 'timeout' in pretrigger:

@@ -1,4 +1,5 @@
 from . import acquisition
+from . import options
 from . import _ni_backend
 from . import _coreaudio
 from . import _win_audio
@@ -1553,7 +1554,7 @@ class Recorder(object):
                 return
             hits = np.nonzero(
                 np.abs(self.osc_data_chunk[:, self.settings.pretrig_channel])
-                > self.settings.pretrig_threshold)[0]
+                > options.pretrig_level(self.settings))[0]
             if len(hits) == 0:
                 return
             self.trigger_detected = True
@@ -2490,7 +2491,7 @@ class Recorder_NI_nidaqmx(object):
         # `log_data` reset it (3C6 lab, PCI-6220).
         trigger_first_detected = np.any(
             np.abs(self.osc_data_chunk[:, self.settings.pretrig_channel])
-            > self.settings.pretrig_threshold
+            > options.pretrig_level(self.settings)
         )
         if armed and trigger_first_detected and not self.trigger_detected:
             self.trigger_detected = True
@@ -2515,7 +2516,7 @@ class Recorder_NI_nidaqmx(object):
         start = (self._stored_pos + chunk) % self._stored_ring.shape[0]
         trigger_check = self._stored_ring[start:start + chunk,
                                           self.settings.pretrig_channel]
-        if np.any(np.abs(trigger_check) > self.settings.pretrig_threshold):
+        if np.any(np.abs(trigger_check) > options.pretrig_level(self.settings)):
             self.trigger_detected = True
             self.capture_complete = True
 

@@ -339,10 +339,13 @@ create `MySettings` or when you call `log_data`.
 
 `pretrig_threshold` is a magnitude in the units the recorder stores. On
 NI that is volts. On a soundcard it is volts **once `VmaxSC` is set**,
-and full-scale units while it is left at its default of 1.0. So the
-default threshold of 0.05 means "5% of full scale" on an uncalibrated
-device but 50 mV on a calibrated one, which may sit close to the noise
-floor. Set it to a sensible fraction of the signal you expect.
+and full-scale units while it is left at its default of 1.0. The default,
+`None`, means 5 % of the input's full scale, rounded to two significant
+figures: 0.25 V on a ±5 V NI range, 0.05 on an uncalibrated soundcard.
+It is the web app's default too, and it is worked out when the capture
+runs, so it follows an NI range the hardware rounded up. If 5 % sits
+close to your noise floor, set a sensible fraction of the signal you
+expect.
 
 ### Capture integrity
 

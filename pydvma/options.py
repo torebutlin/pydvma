@@ -72,6 +72,49 @@ def _derive_full_scale_volts(settings):
         name, gain, settings.input_mode, neighbours=neighbours)
 
 
+#: Fraction of the input's full scale that ``pretrig_threshold=None``
+#: stands for — the web app's default trigger level too
+#: (``PRETRIG_THRESHOLD_FS_FRACTION`` in ``webui/src/lib/audio/provider.ts``).
+PRETRIG_THRESHOLD_FS_FRACTION = 0.05
+
+
+def pretrig_level(settings):
+    """The trigger level a capture compares against, in stored units.
+
+    ``settings.pretrig_threshold`` when one is set; otherwise
+    `PRETRIG_THRESHOLD_FS_FRACTION` of the input's full scale
+    (``VmaxNI`` on NI, ``VmaxSC`` on a soundcard), rounded to two
+    significant figures exactly as the web app rounds its default, so
+    the two agree to the digit (0.25 V on a ±5 V NI range, 0.05 on an
+    uncalibrated soundcard). Resolved at capture time, so an NI range
+    the hardware coerced upward moves the default with it.
+
+    Reads attributes with ``getattr`` rather than calling
+    `MySettings.input_vmax`, so it also accepts the light stand-in
+    settings objects the recorders are sometimes driven with.
+
+    Args:
+        settings (MySettings): the capture's settings.
+
+    Returns:
+        level (float): the threshold magnitude.
+    """
+    threshold = getattr(settings, 'pretrig_threshold', None)
+    if threshold is not None:
+        return float(threshold)
+    if getattr(settings, 'device_driver', None) == 'nidaq':
+        vmax = getattr(settings, 'VmaxNI', 1.0)
+    else:
+        vmax = getattr(settings, 'VmaxSC', 1.0)
+    try:
+        vmax = float(vmax)
+    except (TypeError, ValueError):
+        vmax = 1.0
+    if not np.isfinite(vmax) or vmax <= 0:
+        vmax = 1.0
+    return float('%.2g' % (PRETRIG_THRESHOLD_FS_FRACTION * vmax))
+
+
 class MySettings(object):
     '''
     A container for every acquisition setting used by a recording.
@@ -139,16 +182,19 @@ class MySettings(object):
             only one chunk of pre-trigger context), and must be less
             than ``stored_time * fs`` — otherwise there would be no
             post-trigger data left to record.
-        pretrig_threshold (float): Trigger level, as a magnitude, in the
-            units the recorder stores (default ``0.05``). On NI that is
+        pretrig_threshold (float or None): Trigger level, as a
+            magnitude, in the units the recorder stores. On NI that is
             volts. On a soundcard it is volts **once ``VmaxSC`` is set**
             and full-scale units while it is left at 1.0 (uncalibrated)
             — the samples are scaled by ``VmaxSC`` on the way in, and
-            the threshold is compared after that scaling. The 0.05
-            default was chosen as "5% of full scale" for an
-            uncalibrated device; on a characterised interface it means
-            50 mV, which can sit close to the noise floor, so raise it
-            to a sensible fraction of the expected signal.
+            the threshold is compared after that scaling. ``None``
+            (default) means 5 % of the input's full scale
+            (`input_vmax`), rounded to two significant figures: 0.25 V
+            on a ±5 V NI range, 0.05 on an uncalibrated soundcard. That
+            is the web app's default too, and it is resolved when the
+            capture runs (`pretrig_level`), so it follows a range the
+            hardware coerced. Raise it to a sensible fraction of the
+            expected signal when 5 % sits near the noise floor.
         pretrig_channel (int): Channel index monitored for the trigger
             (default ``0``).
         pretrig_timeout (float): Seconds to wait **for the trigger
@@ -372,7 +418,7 @@ class MySettings(object):
                  viewed_time=0.3,
                  stored_time=2,
                  pretrig_samples=None,
-                 pretrig_threshold=0.05,
+                 pretrig_threshold=None,
                  pretrig_channel=0,
                  pretrig_timeout=20,
                  lpf_on=False,
@@ -413,7 +459,8 @@ class MySettings(object):
         else:
             self.pretrig_samples=int(pretrig_samples)
         
-        self.pretrig_threshold=float(pretrig_threshold)
+        self.pretrig_threshold=(None if pretrig_threshold is None
+                                else float(pretrig_threshold))
         self.pretrig_channel=int(pretrig_channel)
         self.pretrig_timeout=float(pretrig_timeout)
 

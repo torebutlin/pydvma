@@ -99,7 +99,7 @@ The settings you will use most:
 | `device_driver` | `'soundcard'` or `'nidaq'` | `'soundcard'` |
 | `device` | device name, e.g. `'Scarlett 2i2'` (or `device_index`); `None` means the default input | `None` |
 | `pretrig_samples` | samples kept from before the trigger, at most `chunk_size` (default 100); `None` records immediately | `None` |
-| `pretrig_threshold`, `pretrig_channel` | trigger level and channel | `0.05`, `0` |
+| `pretrig_threshold`, `pretrig_channel` | trigger level and channel; `None` means 5 % of full scale | `None`, `0` |
 | `output_channels` | number of output channels, used when you pass an `output=` signal to `log_data` | `1` |
 
 `dvma.list_available_devices()` shows what you can put in `device`, and

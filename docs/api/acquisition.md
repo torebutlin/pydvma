@@ -20,6 +20,8 @@ The full per-attribute reference is below; for worked end-to-end recipes
 
 ::: pydvma.options.MySettings.output_vmax
 
+::: pydvma.options.pretrig_level
+
 ## Main Acquisition Function
 
 ::: pydvma.acquisition.log_data
