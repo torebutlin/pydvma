@@ -751,3 +751,38 @@ test("the provider's warning notices reach the store's sink, across a provider s
   expect(seen).toEqual(['capture integrity: dropped input 3 time(s)',
     'monitor: the stream has stalled']);
 });
+
+// ---- a device scan from a swapped-out provider is stale ----
+
+test('a device scan that resolves after a provider swap does not overwrite the new list', async () => {
+  // The app opens on Setup, whose card enumerates on mount — while the Web
+  // Audio provider is still active, before App swaps in the bridge. That
+  // scan must not land on top of the bridge's devices, nor enable the live
+  // stages when the bridge itself turned out to be dead.
+  let releaseWeb!: () => void;
+  const webGate = new Promise<void>((r) => { releaseWeb = r; });
+  vi.mocked(navigator.mediaDevices.enumerateDevices).mockImplementation(async () => {
+    await webGate;
+    return [
+      { deviceId: 'mic-1', label: 'Test Mic', groupId: 'g1', kind: 'audioinput', toJSON: () => ({}) },
+    ] as MediaDeviceInfo[];
+  });
+  const store = createAcquireStore();
+  const web = store.refreshDevices();          // Web Audio scan, parked
+  store.setProvider({
+    kind: 'bridge',
+    async capabilities() { return null; },     // a dead bridge
+    async enumerateInputDevices() {
+      return [{ deviceId: 'mock:0', label: 'Mock', groupId: 'mock', hasLabel: true }];
+    },
+    startRecording() { throw new Error('unused'); },
+    async startMonitor() { throw new Error('unused'); },
+  } as SourceProvider);
+  await store.refreshDevices();
+  expect(get(store.devices).map((d) => d.label)).toEqual(['Mock']);
+  capabilities.set({ liveSource: false, fitEngine: false });
+  releaseWeb();
+  await web;
+  expect(get(store.devices).map((d) => d.label)).toEqual(['Mock']);
+  expect(get(capabilities).liveSource).toBe(false);
+});

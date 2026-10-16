@@ -421,11 +421,17 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
 
   /**
    * Refresh the device list.  Call after a user gesture to get real
-   * labels (browsers hide labels until permission is granted).
+   * labels (browsers hide labels until permission is granted).  A scan
+   * whose provider was swapped out while it ran is dropped: Setup, the
+   * opening stage, enumerates on mount while the Web Audio provider is
+   * still active, and that late answer must neither replace the bridge's
+   * devices nor enable the live stages for a bridge that did not answer.
    */
   async function refreshDevices(): Promise<void> {
+    const scanned = provider;
     try {
-      const list = await provider.enumerateInputDevices();
+      const list = await scanned.enumerateInputDevices();
+      if (scanned !== provider) return;
       devices.set(list);
       // Flip the liveSource capability so Setup/Acquire tabs enable.
       if (list.length > 0) {
