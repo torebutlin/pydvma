@@ -8,10 +8,29 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-10-16 (Mac): **the 2.7.0 cut moved again, to `b0eb40a`
+(feat(webui): open on Setup) — the version is unchanged because 2.7.0 was
+never uploaded (Tore's call); tag `v2.7.0` THERE, not at the `deps:`
+commit.** The app now opens on the Setup stage (Time when there is no
+live input; a load from Setup/Live jumps to the data). Opening on Setup
+exposed a boot race, fixed in `7091dd2`: SetupCard enumerates on mount
+while the Web Audio provider is still active, and that late scan
+overwrote the bridge's device list (and would enable the live stages for
+a dead bridge); `refreshDevices` now drops a scan whose provider was
+swapped out. The BRIDGE_E2E specs caught it — the 2.7.0 cut had skipped
+them. `dist/` rebuilt after `npm ci` (bundle `index-CpeH-Kuu.js`),
+`verify_release.py 2.7.0` passes both traps, `twine check` passes, a
+clean-venv install opens on Setup with the bridge's devices and greets
+`{v:1, pydvma:'2.7.0', journal:true}`; `dist/RELEASE_NOTES_2.7.0.md`
+carries the new CHANGELOG line. Suites: vitest 1229/1, check 0/0,
+Playwright 94 + fit.spec alone (load-sensitive, as below) and BRIDGE_E2E
+26/26 — bla.spec's bridge half on `BLA_BRIDGE_PORT=8769`, because a
+stray `python3 -m http.server 8765` (not this session's) held 8765 and
+the spec's `waitForPort` happily accepts any listener.
+
 As of 2026-10-14, later (Mac): **v2.7.0 is CUT and pushed; the twine
-upload is Tore's, then tag `v2.7.0` at the cut commit (the `deps:`
-commit right after `release: v2.7.0` — the Dependabot clean-up below
-moved the cut) and publish the
+upload is Tore's, then tag `v2.7.0` at the cut commit (superseded above:
+now `b0eb40a`) and publish the
 GitHub release from `dist/RELEASE_NOTES_2.7.0.md` (Zenodo auto-archives)
 — tag/release AFTER the upload.** MINOR, not the patch Tore first asked
 for: Unreleased already held the incompatible CSV/MATLAB export change
