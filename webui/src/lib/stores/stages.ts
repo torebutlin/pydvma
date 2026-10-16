@@ -39,7 +39,14 @@ export const STAGES: StageDef[] = [
  * render greyed and non-clickable.
  */
 export const capabilities = writable({ liveSource: false, fitEngine: false }); // Plan 1: both off
-export const activeStage = writable<StageDef['id']>('time');
+/**
+ * The ribbon's selected stage. The app OPENS on Setup, the first stage of
+ * the measurement workflow (Setup → Acquire → … → Export), so a new user
+ * starts where a measurement starts. Two things move it off Setup without a
+ * click: App falls back to Time once boot finds no live source (Setup would
+ * stay gated), and loading a file from Setup or Live jumps to its data.
+ */
+export const activeStage = writable<StageDef['id']>('setup');
 /**
  * Stages annotated with their current `enabled` flag: `none`-gated
  * stages are always enabled; the rest follow their capability gate.

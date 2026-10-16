@@ -52,7 +52,9 @@ The app is a row of **stages** you move through. Your datasets sit in the
 8. **[Export](export.md)**: save `.dvma`, export MATLAB, CSV and figures.
 
 Setup, Acquire, Live and Nonlin are enabled only when a live input is
-available, and Fit once there is a transfer function to fit.
+available, and Fit once there is a transfer function to fit. The app
+opens on **Setup**, or on **Time** when there is no live input; loading
+a file from Setup takes you to the stage that shows its data.
 [Calibration and units](calibration.md) apply throughout, and
 everything saves to the [`.dvma` format](dvma-format.md).
 

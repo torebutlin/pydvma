@@ -4,10 +4,15 @@
  */
 import { get } from 'svelte/store';
 import { expect, test, beforeEach } from 'vitest';
-import { STAGES, capabilities, enabledStages } from '../../src/lib/stores/stages';
+import { STAGES, activeStage, capabilities, enabledStages } from '../../src/lib/stores/stages';
 
 beforeEach(() => {
   capabilities.set({ liveSource: false, fitEngine: false });
+});
+
+test('the app opens on Setup, the first stage of the workflow', () => {
+  expect(get(activeStage)).toBe('setup');
+  expect(STAGES[0].id).toBe('setup');
 });
 
 test('Live stage exists between Acquire and Time', () => {

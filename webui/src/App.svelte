@@ -456,6 +456,12 @@
         console.warn('[bridge] provider selection failed, using Web Audio:', e);
       }
       await acquire.init();
+      // The app opens on Setup (stages.ts). With no live source — no
+      // getUserMedia, or a bridge that did not answer — Setup stays gated,
+      // so fall back to Time unless the user has already moved on.
+      if (!get(capabilities).liveSource && get(activeStage) === 'setup') {
+        activeStage.set('time');
+      }
       // Launch-config prefill (round-6): when opened through `pydvma serve
       // --settings`, map the served MySettings JSON onto the Setup/Acquire
       // stores ONCE at boot (after device enumeration, so device_driver+index
@@ -733,14 +739,20 @@
    * sono). If the current view already has data we keep it; otherwise we
    * switch to the first populated view — so a TF-only file lands on TF, a
    * frequency-only file on Frequency, etc. Both the plot view and the
-   * ribbon stage move together so the context card follows. Shared by every
-   * load entry point (Load Data, fixture, session restore).
+   * ribbon stage move together so the context card follows. A load made
+   * from Setup or Live (the app opens on Setup) also leaves for the data's
+   * stage, keeping the current view when it has data. Shared by every load
+   * entry point (Load Data, fixture, session restore).
    */
   function loadAndFocus(ds: DvmaDataset, opts: { append?: boolean } = {}): void {
     const views = actions.loadDataset(ds, opts);
-    if (views.length && !views.includes(get(active) as ViewId)) {
-      viewState.activate(views[0]);
-      activeStage.set(views[0]);
+    if (!views.length) return;
+    const current = get(active) as ViewId;
+    const preMeasure = get(activeStage) === 'setup' || get(activeStage) === 'live';
+    if (!views.includes(current) || preMeasure) {
+      const target = views.includes(current) ? current : views[0];
+      viewState.activate(target);
+      activeStage.set(target);
     }
   }
 

@@ -47,6 +47,10 @@ stores its factors on the transfer functions instead of the channels.
 - **A transfer-function-only dataset labels its axis with its own unit,**
   and a modal fit of some of a set's lines labels each with its transfer
   function's unit instead of the channel units.
+- **The web app opens on Setup,** the first stage of a measurement,
+  instead of Time. With no live input (no browser microphone support, or
+  a bridge that does not answer) it opens on Time as before, and loading
+  a file from Setup or Live moves to the stage that shows its data.
 
 ### Added
 
