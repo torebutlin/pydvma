@@ -47,6 +47,28 @@ Undo and so sat there. `window.__toasts` joins `__viewState` behind
 `?fixture=1`; new `e2e/toast.spec.ts`. Suites: vitest 1249/1, Playwright
 73 passed (same six engine-only `files.spec` failures) + BRIDGE_E2E
 session-journal/derived-save 8/8 (needed `pip install -e ".[serve]"` here).
+Third ask: **STFT/CWT each remember their sono freq axis**
+(`viewState.switchSonoMethod`, `sonoMethodAxes` memo of y window + lin/log;
+time shared; no history), and **log frequency axes open three decades
+below their top** (Tore chose /1000 over his /100: /100 hid everything
+below ~240 Hz at 48 kHz). One rule, two twins: `analysis.LOG_FREQ_DECADES`
+sets the CWT's AUTOMATIC band (`max(4·max(1,w0/6)/T, f_max/1000)`, a lone
+f_max moves it; Python default changes, CHANGELOG says so; a 30 s 3 kHz CWT
+0.13 → 1.2 Hz) and `webui/src/lib/plot/logFloor.ts` opens the plot builder's
+log-x, the sono log-y, the live scope and the navigator strip (which was
+LINEAR under a log plot whenever data started at 0 Hz). A committed
+positive lower limit always stands; gesture guardrails use the true first
+positive bin so a pan still reaches below the floor (also fixes log-x pans
+being stuck at the current lower bound). The old "30 s at 48 kHz ~16 GB"
+docstring figure was wrong (6.4 GB; now 3.7 GB). **Useful here: with
+`pip install -e ".[serve]"`, `pydvma-serve --port 8790` plus a temporary
+Playwright config pointing baseURL at it runs the `@engine` specs through
+the NATIVE engine, sidestepping the blocked pyodide CDN** (only pyodide-
+probe, subpath and browser-autosave-restore specs then fail, by design).
+Suites: pytest 1439 (6 env failures: 5 `sounddevice`, 1 websockets-17
+logging test that fails at HEAD too), vitest 1257/1, check 0/0, Playwright
+preview 73 + served 93 (all failures accounted), mkdocs --strict clean.
+CI rebuilds the engine wheel for Pages, so no local wheel rebuild needed.
 
 As of 2026-10-16, later (Mac): **the 2.7.0 cut moved AGAIN, to
 `35ae762` (release: v2.7.0 gains Session.apply_settings...) — still

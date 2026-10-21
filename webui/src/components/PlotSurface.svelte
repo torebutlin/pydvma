@@ -59,6 +59,7 @@
    */
   import { buildPlot, dataExtent, type PlotModel } from '../lib/plot/build';
   import { fmtTick } from '../lib/plot/scales';
+  import { minPositiveX } from '../lib/plot/logFloor';
   import { rubberBandToRange, clampToData, panBy, boxTouchesAxis, panTouchesAxis } from '../lib/plot/zoom';
   import { CHROME } from '../lib/plot/chrome';
   import type { ViewState } from '../lib/stores/viewstate';
@@ -256,12 +257,19 @@
   });
   /**
    * The clamp guardrail extent in GESTURE space. For a log axis the raw
-   * data extent can reach the DC (f=0) bin, which has no log; use the built
-   * domain's clamped-positive lower bound so the guardrail stays finite.
+   * data extent can reach the DC (f=0) bin, which has no log, so the lower
+   * bound is the first positive frequency the lines hold — the real bottom
+   * of the data, below the three-decade floor an automatic log axis opens at
+   * (`logFreqFloor`), so a pan or zoom-out can still reach it. The built
+   * domain's lower bound is the last resort (no positive x at all).
    */
+  const firstPositiveX = $derived(logX ? minPositiveX(model.lines) : undefined);
+  const logXGuard = $derived(fullExtent.x[0] > 0
+    ? fullExtent.x[0] : (firstPositiveX ?? built?.xDomain[0] ?? fullExtent.x[0]));
   const gestureExtent = $derived({
-    x: [tx(logX ? (built?.xDomain[0] ?? fullExtent.x[0]) : fullExtent.x[0]), tx(fullExtent.x[1])] as [number, number],
-    y: [ty(logYg ? (built?.yDomain[0] ?? fullExtent.y[0]) : fullExtent.y[0]), ty(fullExtent.y[1])] as [number, number],
+    x: [tx(logX ? logXGuard : fullExtent.x[0]), tx(fullExtent.x[1])] as [number, number],
+    y: [ty(logYg ? (fullExtent.y[0] > 0 ? fullExtent.y[0] : (built?.yDomain[0] ?? fullExtent.y[0]))
+      : fullExtent.y[0]), ty(fullExtent.y[1])] as [number, number],
   });
 
   // Pan-gesture bookkeeping (not reactive state — plain closures).

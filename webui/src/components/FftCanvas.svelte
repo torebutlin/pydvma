@@ -27,6 +27,7 @@
   import type { MonitorStore } from '../lib/stores/monitor';
   import { magnitudeSpectrum, welchPsd } from '../lib/audio/fft';
   import { canvasColors } from '../lib/plot/canvasTheme';
+  import { logFreqFloor } from '../lib/plot/logFloor';
   import { theme } from '../lib/stores/theme';
 
   const PALETTE = [
@@ -173,10 +174,12 @@
     // Display frequency span: clamp the configured max to Nyquist.
     let fMaxDisplay = fMaxCfg == null ? nyquist : Math.min(fMaxCfg, nyquist);
     if (!(fMaxDisplay > 0)) fMaxDisplay = nyquist;
-    // Low edge of the display band: DC (linear) / first bin (log), raised to a
-    // configured `fMinCfg` when set. Guard against an inverted/degenerate band.
+    // Low edge of the display band: DC (linear) / three decades below the top
+    // on log, never below the first bin or 1 Hz (`logFreqFloor`, the rule every
+    // log frequency axis opens with), raised to a configured `fMinCfg` when
+    // set. Guard against an inverted/degenerate band.
     const df0 = freqsByCh[0][1] - freqsByCh[0][0] || nyquist;
-    const naturalLow = xLog ? Math.max(df0, 1) : 0;
+    const naturalLow = xLog ? logFreqFloor(fMaxDisplay, Math.max(df0, 1)) : 0;
     let fMinDisplay = fMinCfg == null ? naturalLow : Math.max(naturalLow, fMinCfg);
     if (!(fMinDisplay < fMaxDisplay)) fMinDisplay = naturalLow;
 

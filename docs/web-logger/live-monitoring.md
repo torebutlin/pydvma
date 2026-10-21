@@ -54,7 +54,7 @@ Four chips in the plot area show or hide the panes:
   shows an averaged Welch power spectral density, in dB/Hz or, on a linear
   axis, u²/Hz. Both use a Hann window.
 - **fft axes**: magnitude in **dB** or **lin**, and frequency on a **lin
-  f** or **log f** axis.
+  f** or **log f** axis. A log axis opens three decades below its top.
 - **fft freq**: **Full** shows DC to the Nyquist frequency. **Range** lets
   you type a minimum and maximum in hertz; a blank box means 0 or Nyquist.
 

@@ -148,8 +148,11 @@ fn, Qn, fit_data = dvma.calculate_damping_from_cwt(
     time_data, n_chan=1, f_range=(20, 500))      # Hz; limits the band and the memory used
 ```
 
-It takes the same `start_time` and `peak_threshold`. A long, high-rate
-record needs an explicit `f_range`, or the transform is too large.
+It takes the same `start_time` and `peak_threshold`. With
+`f_range=None` the band runs from three decades below its top up to
+0.4 × `fs` (raised on a short record, so the lowest wavelet fits in it). A
+long, high-rate record may still need a narrower `f_range`, or the
+transform is too large.
 
 ### Damping by band (Schroeder decay)
 

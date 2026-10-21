@@ -6,6 +6,7 @@
  * `tests/plot/perf.test.ts`.
  */
 import { niceTicks, scaleLinear, scaleLog, decadeTicks, logDomain } from './scales';
+import { logFreqFloor, minPositiveX } from './logFloor';
 import { minMaxDecimate } from './decimate';
 
 /**
@@ -148,23 +149,6 @@ export function dataExtent(
 }
 
 /**
- * Smallest finite POSITIVE x value across `lines`, or `undefined` when
- * none exists. Used to clamp a log-x domain's lower bound to the first
- * plottable frequency when autoscale (or the committed range) reaches
- * down to the DC (f=0) bin.
- */
-function minPositiveX(lines: PlotLine[]): number | undefined {
-  let lo = Infinity;
-  for (const l of lines) {
-    for (let i = 0; i < l.x.length; i++) {
-      const v = l.x[i];
-      if (Number.isFinite(v) && v > 0 && v < lo) lo = v;
-    }
-  }
-  return lo === Infinity ? undefined : lo;
-}
-
-/**
  * Smallest finite POSITIVE y value across `lines`, or `undefined` when none
  * exists (e.g. the sonogram's empty-lines axis model — the caller then supplies
  * an already-positive `yRange[0]`). The y-axis analogue of `minPositiveX`, used
@@ -246,11 +230,17 @@ export function buildPlot(model: PlotModel, width: number, height: number): Buil
     yDomain = [yc - span / 2, yc + span / 2];
   }
 
-  // Log-x (R3): clamp a non-positive lower bound (DC bin, or an
-  // over-panned range) to the first positive frequency, then map through
-  // log10. Never applies to Nyquist (its x is Real(H), not frequency).
+  // Log-x (R3): an AUTOMATIC x range, or a committed one whose lower bound
+  // is not positive (the DC bin, an over-panned range), opens three decades
+  // below its top (`logFreqFloor`), never below the first positive frequency;
+  // a committed positive lower bound stands. Then map through log10. Never
+  // applies to Nyquist (its x is Real(H), not frequency).
   const logX = model.xScale === 'log' && !model.squareAspect;
-  if (logX) xDomain = logDomain(xDomain, minPositiveX(model.lines));
+  if (logX) {
+    const floor = logFreqFloor(xDomain[1], minPositiveX(model.lines));
+    xDomain = model.xRange ? logDomain(xDomain, floor) : [Math.max(xDomain[0], floor), xDomain[1]];
+    if (!(xDomain[1] > xDomain[0])) xDomain = [floor, Math.max(xDomain[1], floor * 10)];
+  }
 
   // Log-y (sonogram frequency axis): mirror the log-x path on the y axis —
   // clamp a non-positive lower bound (DC bin) to the first positive datum, map

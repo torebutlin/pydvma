@@ -1678,53 +1678,67 @@ def _morlet_daughter_fourier(omega, scale, w0):
     return psi
 
 
+#: How far below the top of an AUTOMATIC log-frequency range its bottom sits,
+#: in decades: ``f_min = f_max / 10**LOG_FREQ_DECADES``. Three decades (as a
+#: 20 Hz - 20 kHz audio axis) keeps the low modes of a high-rate capture in
+#: view (24 Hz at fs = 48 kHz) without spending the axis, or the CWT's rows,
+#: on the fraction-of-a-hertz bins a long record resolves. The web logger's
+#: log frequency axes open with the same rule (``LOG_FREQ_DECADES`` in
+#: ``webui/src/lib/plot/logFloor.ts``).
+LOG_FREQ_DECADES = 3
+
+
 def _cwt_default_frequencies(fs, N, f_range, voices_per_octave, w0=6.0):
     '''Log-spaced (constant-Q) analysis frequencies for the Morlet CWT.
 
-    With ``f_range=None`` the band spans ``4*max(1, w0/6)/T`` up to ``0.4*fs``
-    where ``T = N/fs`` is the record length:
+    With ``f_range=None`` the band runs up to ``f_max = 0.4*fs`` and down to
+    the HIGHER of two floors, where ``T = N/fs`` is the record length:
 
-    - LOW end ``4*max(1, w0/6)/T``: the binding constraint is the lowest
-      wavelet's e-folding time ``sqrt(2)*s = sqrt(2)*w0/(2*pi*f)``, which must
-      stay below ``T/2`` or the row is dominated by edge (cone-of-influence)
+    - ``f_max / 10**LOG_FREQ_DECADES`` (three decades below the top): a long
+      record can resolve fractions of a hertz, but rows down there are rarely
+      wanted and cost as much memory and time as any other row, so the band
+      stops three decades down — the same rule the web logger's log axes
+      open with. 0.13 Hz becomes 1.2 Hz for a 30 s record at 3 kHz.
+    - ``4*max(1, w0/6)/T`` (the shortest record's limit): the lowest
+      wavelet's e-folding time ``sqrt(2)*s = sqrt(2)*w0/(2*pi*f)`` must stay
+      below ``T/2`` or the row is dominated by edge (cone-of-influence)
       effects and by the FFT convolution's circular wrap. That time grows
-      LINEARLY with the wavelet Q, so the low end must track ``w0``: the plain
+      LINEARLY with the wavelet Q, so this floor tracks ``w0``: the plain
       ``4/T`` of the ``w0=6`` default (also "at least four oscillations of the
       lowest wavelet fit in the record") leaves the e-folding time at
       ``0.34*T`` — but at ``w0=64`` the same bound would put it at ``3.6*T``.
-      Scaling by ``w0/6`` pins the ratio at ``0.34*T`` for every ``w0 >= 6``
-      and leaves the ``w0=6`` band bit-for-bit unchanged.
-    - HIGH end ``0.4*fs`` (= ``0.8 * Nyquist``): a safe margin below Nyquist so
-      the highest wavelet is adequately sampled.
+      Scaling by ``w0/6`` pins the ratio at ``0.34*T`` for every ``w0 >= 6``.
+
+    ``0.4*fs`` (= ``0.8 * Nyquist``) is a safe margin below Nyquist so the
+    highest wavelet is adequately sampled.
 
     Frequencies are geometrically spaced at ``voices_per_octave`` samples per
     octave (default 16), the natural constant-Q ladder of a wavelet transform.
 
     An explicit ``f_range=(f_min, f_max)`` in Hz overrides the default band
     (clamped to ``(0, ~Nyquist)``). EITHER side may be ``None`` to keep that
-    side's automatic value, so a lone lower bound is meaningful. A reversed,
-    zero-width, non-positive or entirely super-Nyquist band raises
-    ``ValueError`` rather than being silently substituted — the old
-    ``f_max = 2*f_min`` fallback turned a typo into a plausible-looking
-    analysis over a band nobody asked for. (The AUTOMATIC band keeps that
-    fallback: it can only collapse on a pathologically short record.)
+    side's automatic value, so a lone bound is meaningful; a lone ``f_max``
+    moves the three-decade floor with it. A reversed, zero-width,
+    non-positive or entirely super-Nyquist band raises ``ValueError`` rather
+    than being silently substituted — the old ``f_max = 2*f_min`` fallback
+    turned a typo into a plausible-looking analysis over a band nobody asked
+    for. (The AUTOMATIC band keeps that fallback: it can only collapse on a
+    pathologically short record.)
     '''
     T = N / float(fs)
-    auto_min = 4.0 * max(1.0, float(w0) / 6.0) / T
-    auto_max = 0.4 * fs
-    if f_range is None:
-        f_min, f_max = auto_min, auto_max
-    else:
-        lo, hi = f_range[0], f_range[1]
-        f_min = auto_min if lo is None else float(lo)
-        f_max = auto_max if hi is None else float(hi)
-        if not (f_max > f_min > 0.0):
-            raise ValueError(
-                'f_range must be an increasing, positive (f_min, f_max) band '
-                'in Hz — got ({:g}, {:g}). Pass None for either side to keep '
-                'its automatic bound.'.format(f_min, f_max))
+    lo, hi = (None, None) if f_range is None else (f_range[0], f_range[1])
+    f_max = 0.4 * fs if hi is None else float(hi)
+    top = min(f_max, 0.5 * fs * 0.999)
+    auto_min = max(4.0 * max(1.0, float(w0) / 6.0) / T,
+                   top / 10.0 ** LOG_FREQ_DECADES)
+    f_min = auto_min if lo is None else float(lo)
+    if f_range is not None and not (f_max > f_min > 0.0):
+        raise ValueError(
+            'f_range must be an increasing, positive (f_min, f_max) band '
+            'in Hz — got ({:g}, {:g}). Pass None for either side to keep '
+            'its automatic bound.'.format(f_min, f_max))
     f_min = max(f_min, 1e-9)
-    f_max = min(f_max, 0.5 * fs * 0.999)
+    f_max = top
     if f_max <= f_min:
         if f_range is not None:
             raise ValueError(
@@ -1793,9 +1807,9 @@ def _morlet_cwt_1d(y, fs, freqs, w0=6.0, time_step=1, progress_callback=None):
     full-length temporaries are the signal's FFT and a single inverse-FFT row
     (each ``N`` complex). The returned ``W`` is ``len(freqs) x N_out`` complex;
     at full time resolution (``time_step=1``) a 2 s, 44.1 kHz record over the
-    default ~211-frequency band costs ``211 * 88200 * 16 B ~= 0.30 GB``, but a
+    default 161-frequency band costs ``161 * 88200 * 16 B ~= 0.23 GB``, but a
     LAB-length record blows straight past the 32-bit ``2**31-1`` byte ceiling
-    (30 s at 48 kHz over the default band is ~16 GB). The image size is
+    (30 s at 48 kHz over the default band is ~3.7 GB). The image size is
     therefore CHECKED against `CWT_MAX_IMAGE_BYTES` before allocating and an
     over-size request raises a ``ValueError`` naming the record, the grid and
     the remedies — numpy's own bare "array is too big" must never reach the
@@ -2436,7 +2450,7 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
             it from the pretrigger (see `_resolve_damping_start_slice`), with
             t=0 as the fallback
         f_range (tuple, optional): ``(f_min, f_max)`` Hz analysis range; None
-            uses ``4/T .. 0.4*fs`` (the CWT's ``w0=6`` default convention)
+            uses ``4/T .. 0.4*fs``, where ``T`` is the decay's length
         filter_order (int, optional): Butterworth section order, default 4
             (applied forward-backward, so the effective roll-off doubles)
 

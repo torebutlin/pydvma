@@ -1175,7 +1175,8 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
     restrict the FITTED band exactly as they restrict the sonogram, and they
     are what makes the CWT fit possible on a lab-length record: the wavelet
     image is ``n_freqs x n_columns`` complex, so 30 s at 48 kHz over the whole
-    default band asks for ~16 GB and pydvma refuses it with a sizing error.
+    default band asks for ~3.7 GB, and pydvma refuses anything past the
+    engine's ceiling (`analysis.CWT_MAX_IMAGE_BYTES`) with a sizing error.
     Narrowing the band drops rows AND lets the fit decimate its time axis. The
     card's two boxes are independent (``_f_range``).
 

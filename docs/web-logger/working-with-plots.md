@@ -63,6 +63,11 @@ The toolbar sits above the plot, so it never covers your data.
   the FFT, Power and PSD views and on the TF **Mag (dB)** and **Bode**
   plots. On the Sonogram, **y lin / log** sets the frequency axis and
   **colour dB / lin** sets how the heat map is coloured.
+- A **log** frequency axis cannot start at 0 Hz, so it opens three
+  decades below its top: 1.5 Hz to 1.5 kHz for a 3 kHz capture, 24 Hz to
+  24 kHz at 48 kHz. If the data's lowest frequency is higher, it starts
+  there instead. To see further down, type a lower **x min** (or **y
+  min** on the Sonogram), or pan down.
 - The **frequency navigator** button (the strip icon) shows or hides the
   [navigator](#frequency-navigator).
 - The chevron at the right end of the toolbar opens a panel when you

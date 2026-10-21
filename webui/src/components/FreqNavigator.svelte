@@ -57,6 +57,7 @@
    * decimated to ~2 samples per pixel before the path is built.
    */
   import { fmtTick } from '../lib/plot/scales';
+  import { logFreqFloor, minPositiveX } from '../lib/plot/logFloor';
   import { detectPeaks, stepWindow } from '../lib/plot/peaks';
 
   interface StripLine { x: ArrayLike<number>; y: ArrayLike<number>; color: string; }
@@ -112,8 +113,22 @@
   const innerW = $derived(Math.max(1, width - PAD_L - PAD_R));
   const plotH = $derived(H - TOP - BOT);
 
+  /**
+   * A frequency interval made drawable on the requested scale. On a log axis
+   * an interval reaching 0 Hz (the usual full extent: the DC bin) has no log,
+   * so it opens three decades below its top, never below the lines' first
+   * positive frequency (`logFreqFloor`) — the same rule as the main plot.
+   * Without it the strip fell back to a LINEAR axis under a log plot.
+   */
+  const firstPositive = $derived(minPositiveX(lines));
+  function drawable(d: [number, number]): [number, number] {
+    if (xScale !== 'log' || d[0] > 0 || !(d[1] > 0)) return d;
+    const lo = logFreqFloor(d[1], firstPositive);
+    return lo < d[1] ? [lo, d[1]] : d;
+  }
+
   /** The interval the strip spans: the scope, else the full extent. */
-  const domain = $derived<[number, number]>(scope ?? fullExtent);
+  const domain = $derived<[number, number]>(drawable(scope ?? fullExtent));
 
   // Log-x mapping (matches the plot) when requested and the domain is positive.
   const log = $derived(xScale === 'log' && domain[0] > 0 && domain[1] > 0);
@@ -360,19 +375,21 @@
   const RT = 18;                     // ribbon track row height (px); the track spans y 1..RT-1
   const RF = 10;                     // funnel row below the track, joining the scope band to the strip
   const RH = RT + RF;                // ribbon svg height (px)
-  const rLog = $derived(xScale === 'log' && fullExtent[0] > 0 && fullExtent[1] > 0);
-  const rlMin = $derived(rLog ? Math.log10(fullExtent[0]) : 0);
-  const rlMax = $derived(rLog ? Math.log10(fullExtent[1]) : 1);
+  /** The ribbon's span: the full extent, drawable on the strip's scale. */
+  const ribbonExtent = $derived<[number, number]>(drawable(fullExtent));
+  const rLog = $derived(xScale === 'log' && ribbonExtent[0] > 0 && ribbonExtent[1] > 0);
+  const rlMin = $derived(rLog ? Math.log10(ribbonExtent[0]) : 0);
+  const rlMax = $derived(rLog ? Math.log10(ribbonExtent[1]) : 1);
 
   function toPxR(f: number): number {
-    const [fmin, fmax] = fullExtent;
+    const [fmin, fmax] = ribbonExtent;
     const t = rLog
       ? (Math.log10(Math.max(f, fmin)) - rlMin) / (rlMax - rlMin || 1)
       : (f - fmin) / (fmax - fmin || 1);
     return PAD_L + Math.min(1, Math.max(0, t)) * innerW;
   }
   function toFR(px: number): number {
-    const [fmin, fmax] = fullExtent;
+    const [fmin, fmax] = ribbonExtent;
     const t = Math.min(1, Math.max(0, (px - PAD_L) / (innerW || 1)));
     const f = rLog ? 10 ** (rlMin + t * (rlMax - rlMin)) : fmin + t * (fmax - fmin);
     return Math.min(fmax, Math.max(fmin, f));
@@ -386,9 +403,11 @@
    */
   const ribbonPaths = $derived.by<{ d: string; color: string }[]>(() => {
     if (!scope || innerW <= 0) return [];
+    const [f0, f1] = ribbonExtent;              // a log ribbon starts above 0 Hz
     let lo = Infinity, hi = -Infinity;
     for (const l of lines) {
       for (let i = 0; i < l.y.length; i++) {
+        if (l.x[i] < f0 || l.x[i] > f1) continue;
         const v = l.y[i];
         if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
       }
@@ -403,7 +422,7 @@
       let d = '';
       for (let i = 0; i < n; i += step) {
         const v = l.y[i];
-        if (!Number.isFinite(v)) continue;
+        if (!Number.isFinite(v) || l.x[i] < f0 || l.x[i] > f1) continue;
         const X = toPxR(l.x[i]);
         const Y = y0 + (1 - (v - lo) / (hi - lo)) * yh;
         if (!Number.isFinite(X)) continue;
@@ -422,7 +441,7 @@
   let rbPreview = $state<[number, number] | null>(null);
   let rbHover = $state<RbZone>(null);
 
-  const shownScope = $derived<[number, number]>(rbPreview ?? (scope ?? fullExtent));
+  const shownScope = $derived<[number, number]>(rbPreview ?? (scope ?? ribbonExtent));
   const rLoPx = $derived(toPxR(shownScope[0]));
   const rHiPx = $derived(toPxR(shownScope[1]));
 
@@ -469,7 +488,7 @@
     if (e.pointerId !== rbPointer) return;
     const px = rbLocalX(e);
     const f = toFR(px);
-    const [fmin, fmax] = fullExtent;
+    const [fmin, fmax] = ribbonExtent;
     let lo = rbBaseLo, hi = rbBaseHi;
     if (rbMode === 'resize-lo') lo = Math.min(f, rbBaseHi);
     else if (rbMode === 'resize-hi') hi = Math.max(f, rbBaseLo);
@@ -573,7 +592,7 @@
       height={RH}
       data-testid="freq-nav-ribbon"
       style="cursor: {ribbonCursor}"
-      aria-label="Full range {fullExtent[0].toFixed(1)}–{fullExtent[1].toFixed(1)} Hz; the strip shows {shownScope[0].toFixed(1)} to {shownScope[1].toFixed(1)} Hz"
+      aria-label="Full range {ribbonExtent[0].toFixed(1)}–{ribbonExtent[1].toFixed(1)} Hz; the strip shows {shownScope[0].toFixed(1)} to {shownScope[1].toFixed(1)} Hz"
       onpointerdown={rbDown}
       onpointermove={rbMove}
       onpointerup={rbUp}
@@ -594,8 +613,8 @@
       <path class="funnel" d="M{rLoPx},{RT - 1} L{rHiPx},{RT - 1} L{PAD_L + innerW},{RH} L{PAD_L},{RH} Z" />
       <line class="funnel-edge" x1={rLoPx} y1={RT - 1} x2={PAD_L} y2={RH} />
       <line class="funnel-edge" x1={rHiPx} y1={RT - 1} x2={PAD_L + innerW} y2={RH} />
-      <text class="redge" x={PAD_L + 4} y={RT / 2 + 3} text-anchor="start">{fmtTick(fullExtent[0], fullExtent[1] - fullExtent[0])}</text>
-      <text class="redge" x={PAD_L + innerW - 4} y={RT / 2 + 3} text-anchor="end">{fmtTick(fullExtent[1], fullExtent[1] - fullExtent[0])}</text>
+      <text class="redge" x={PAD_L + 4} y={RT / 2 + 3} text-anchor="start">{fmtTick(ribbonExtent[0], ribbonExtent[1] - ribbonExtent[0])}</text>
+      <text class="redge" x={PAD_L + innerW - 4} y={RT / 2 + 3} text-anchor="end">{fmtTick(ribbonExtent[1], ribbonExtent[1] - ribbonExtent[0])}</text>
     </svg>
   {/if}
   {#if width > 0}

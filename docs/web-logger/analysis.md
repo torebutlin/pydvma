@@ -212,8 +212,11 @@ better than any single STFT window.
   sampled. The default, **auto**, follows the wavelet Q (at least 0.6 ×
   w0, and never below 16). Choose a number to fix it.
 - **freq range — Hz**: optional minimum and maximum. Either box works on
-  its own; a blank one stays automatic. The range applies to the damping
-  fit as well as the picture.
+  its own; a blank one stays automatic. Automatic runs from three decades
+  below the top up to 0.4 × the sample rate, so 1.2 Hz to 1.2 kHz at
+  3 kHz; a short record starts a little higher, so that the lowest
+  wavelet fits in it. The range applies to the damping fit as well as the
+  picture.
 
 The CWT is drawn on its own log-spaced grid, so the frequency axis
 switches to **log** the first time you choose it. Change the axis with

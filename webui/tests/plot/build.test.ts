@@ -142,6 +142,27 @@ test('xScale "log": a DC (x=0) sample is dropped, not thrown, and domain clamps 
   for (const X of xs) { expect(X).toBeGreaterThanOrEqual(-0.5); expect(X).toBeLessThanOrEqual(300.5); }
 });
 
+test('xScale "log": an automatic axis opens three decades below its top (lab feedback, 2026-10)', () => {
+  // A long record's first positive bin is a fraction of a hertz; opening the
+  // axis there spent most of it on decades nobody looks at. 0..1500 Hz at a
+  // 0.05 Hz spacing (a 20 s record at 3 kHz) now opens at 1.5 Hz.
+  const n = 30001;
+  const x = Float64Array.from({ length: n }, (_, i) => i * 0.05);
+  const y = Float64Array.from({ length: n }, () => 1);
+  const mk = (xRange: [number, number] | null) => buildPlot({
+    lines: [{ x, y, color: '#000', opacity: 1, width: 1, dashed: false, yAxis: 'left', xMonotonic: true }],
+    xLabel: 'Frequency (Hz)', yLabel: '|H|', xScale: 'log', xRange, yRange: [0, 2],
+  }, 300, 300);
+  expect(mk(null).xDomain[0]).toBeCloseTo(1.5, 9);
+  expect(mk(null).xDomain[1]).toBeCloseTo(1500, 9);
+  // A committed window starting at 0 Hz (e.g. set on a linear axis) gets the
+  // same floor, relative to ITS top…
+  expect(mk([0, 500]).xDomain).toEqual([0.5, 500]);
+  // …while a committed positive lower bound stands, even below the floor:
+  // typing a lower limit is how to see further down.
+  expect(mk([0.2, 1500]).xDomain).toEqual([0.2, 1500]);
+});
+
 test('yLogAxis true: y ticks are decades and the y mapping is log10 (sono log-freq axis)', () => {
   // Empty-lines axis model (as the sonogram uses): the caller supplies an
   // already-positive yRange, so log-y ticks/mapping come straight from it.

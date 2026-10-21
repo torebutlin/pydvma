@@ -929,9 +929,37 @@ class TestCwtBandResolution:
         np.testing.assert_allclose(
             f, analysis._cwt_default_frequencies(fs, N, None, 16))
 
+    def test_long_record_stops_three_decades_below_the_top(self):
+        """A long record resolves fractions of a hertz, but the automatic band
+        stops LOG_FREQ_DECADES (3) below its top, the same rule the web
+        logger's log axes open with (lab feedback, 2026-10): a 30 s record at
+        3 kHz used to start at 4/T = 0.13 Hz and spend a quarter of its rows
+        below 1.2 Hz."""
+        assert analysis.LOG_FREQ_DECADES == 3
+        fs, N = 3000, 3000 * 30
+        f = analysis._cwt_default_frequencies(fs, N, None, 16)
+        assert f[-1] == pytest.approx(0.4 * fs)
+        assert f[0] == pytest.approx(0.4 * fs / 1000)
+        # A lone upper bound moves the floor with it…
+        hi_only = analysis._cwt_default_frequencies(fs, N, (None, 300.0), 16)
+        assert hi_only[0] == pytest.approx(0.3)
+        # …and an explicit lower bound is still taken as given, however low.
+        lo_only = analysis._cwt_default_frequencies(fs, N, (0.5, None), 16)
+        assert lo_only[0] == pytest.approx(0.5)
+
+    def test_short_record_keeps_the_wavelet_floor(self):
+        """When the record is short, 4*max(1, w0/6)/T is the higher floor and
+        still wins, so the lowest wavelet stays inside the record."""
+        fs, N = 10000, 10000              # T = 1 s: 4 Hz vs 4000/1000 = 4 Hz
+        assert analysis._cwt_default_frequencies(fs, N, None, 16)[0] == pytest.approx(4.0)
+        f = analysis._cwt_default_frequencies(fs, N, None, 16, w0=24.0)
+        assert f[0] == pytest.approx(16.0)
+
     def test_one_sided_f_range_keeps_the_other_side_automatic(self):
         """A LONE bound is meaningful (the web UI's freq-range boxes are
-        independent): the missing side keeps its automatic value."""
+        independent): the missing side keeps its automatic value. (On this
+        short record the wavelet floor binds, so a lone upper bound leaves
+        the low end exactly where it was.)"""
         fs, N = 2000, 8000
         auto = analysis._cwt_default_frequencies(fs, N, None, 16)
         lo_only = analysis._cwt_default_frequencies(fs, N, (100.0, None), 16)

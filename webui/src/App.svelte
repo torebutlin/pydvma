@@ -51,6 +51,7 @@
   import type { LegendEntry } from './lib/stores/selection';
   import { readable, get } from 'svelte/store';
   import { dataExtent, type PlotModel } from './lib/plot/build';
+  import { logFreqFloor } from './lib/plot/logFloor';
   import { readDvma, writeDvma } from './lib/codec/dvma';
   import { legendOverlaySvg } from './lib/export/legendOverlay';
   import { exportBytes, type Exporter } from './lib/export/data';
@@ -1437,23 +1438,35 @@
   /**
    * The displayed sono window (round-7 item 2): the committed `range`
    * (toolbar limit fields / box-zoom / pan), else the full extent. On a
-   * log-y axis the lower frequency bound clamps to the first positive bin
-   * (the DC-row guard), and a committed window that would collapse under
-   * that clamp (hi ≤ lo) falls back to the full span rather than a
-   * degenerate axis. BOTH the heat painter and `sonoAxisModel` read THIS,
-   * so the pixels and the ticks can never disagree.
+   * log-y axis an AUTOMATIC lower bound, or a committed one that is not
+   * positive, opens three decades below the top (`logFreqFloor`), never below
+   * the first positive bin (the DC-row guard); a committed positive lower
+   * bound is clamped only to that first bin. A window that would collapse
+   * (hi ≤ lo) falls back to the full span rather than a degenerate axis. BOTH
+   * the heat painter and `sonoAxisModel` read THIS, so the pixels and the
+   * ticks can never disagree.
    */
   const sonoWindow = $derived.by(() => {
     if (!sono || !sonoExtent) return null;
     const x = range.x ?? sonoExtent.x;
     let y = range.y ?? sonoExtent.y;
     if (sonoLogY) {
-      const floor = firstPositiveFreq(sono.freqAxis);
-      const lo = Math.max(y[0], floor);
-      y = y[1] > lo ? [lo, y[1]] : [floor, sonoExtent.y[1]];
+      const first = firstPositiveFreq(sono.freqAxis);
+      const lo = range.y === null || y[0] <= 0 ? logFreqFloor(y[1], first) : Math.max(y[0], first);
+      y = y[1] > lo ? [lo, y[1]] : [logFreqFloor(sonoExtent.y[1], first), sonoExtent.y[1]];
     }
     return { x, y };
   });
+
+  /**
+   * Gesture guardrail for the sono plot: the full extent, with a log-y
+   * lower bound at the first positive bin (log has no 0 Hz). Deliberately
+   * NOT the automatic three-decade floor, so a pan or zoom-out can still
+   * reach the rows below where the axis first opens.
+   */
+  const sonoGuardExtent = $derived(sono && sonoExtent && sonoLogY
+    ? { x: sonoExtent.x, y: [firstPositiveFreq(sono.freqAxis), sonoExtent.y[1]] as [number, number] }
+    : sonoExtent);
 
   /**
    * Paint the viridis heat map. Each OUTPUT pixel ROW is mapped through the
@@ -1672,7 +1685,7 @@
                    axis to the full extent before rendering — without it the
                    first gesture would pin the other axis (round-11 P5). -->
               <PlotSurface bind:this={plotRef} model={sonoAxisModel} {mode} {viewState} overlay
-                extentOverride={sonoExtent ?? undefined}
+                extentOverride={sonoGuardExtent ?? undefined}
                 priorRangeOverride={{ x: range.x, y: range.y }} />
               {#if $damping.open && sonoWindow && $damping.startTime !== null}
                 <DampingStartLine window={sonoWindow} value={$damping.startTime}

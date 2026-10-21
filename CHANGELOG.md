@@ -21,6 +21,21 @@ follows [semantic versioning](https://semver.org/).
   method's default every time. Each method now gets back the range and
   scale it last had; a method shown for the first time still opens on its
   default (linear for STFT, log for CWT). The time range is shared.
+- **Log frequency axes open three decades below their top.** A log axis
+  cannot reach 0 Hz, so it used to start at the first frequency bin, which
+  on a long record is a fraction of a hertz: a 30 s capture at 3 kHz
+  opened at 0.03 Hz, with most of the axis empty. The Frequency, TF,
+  Sonogram and live-scope log axes now open at the top divided by 1000
+  (1.5 Hz at 3 kHz, 24 Hz at 48 kHz), or at the first bin if that is
+  higher; a typed lower limit still wins. The frequency navigator now
+  follows a log axis too: it had stayed linear unless zoomed.
+- **The CWT's automatic band stops three decades below its top**, by the
+  same rule, in the web app and in Python (`calculate_cwt`,
+  `calculate_damping_from_cwt` with `f_range=None`; the rule is
+  `analysis.LOG_FREQ_DECADES`). It started at about 4/T, so long records
+  computed many rows below 1 Hz. A 30 s capture at 3 kHz now runs from
+  1.2 Hz, not 0.13 Hz, with a quarter fewer rows, and a full-resolution
+  CWT of 30 s at 48 kHz needs 3.7 GB instead of 6.4 GB. A short record keeps its old band.
 
 ### Fixed
 
