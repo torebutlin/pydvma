@@ -39,6 +39,14 @@ dark, narrow. Suites here: check 0/0, vitest 1246/1, Playwright 71 passed
 with the known engine-only failures (`@engine` and six `files.spec`
 imports, which now run through `file_to_dvma` — CDN blocked in this
 container), mkdocs --strict clean. Pure webui, no engine wheel rebuild.
+Same day, second ask: **actionable toasts (Undo etc.) get a × close**
+(`ToastOptions.closable`, default true; the four restore/reload offers
+pass `closable: false` because their own Dismiss deletes or means
+something). Tore's trigger was Refine's far-move warning, which only had
+Undo and so sat there. `window.__toasts` joins `__viewState` behind
+`?fixture=1`; new `e2e/toast.spec.ts`. Suites: vitest 1249/1, Playwright
+73 passed (same six engine-only `files.spec` failures) + BRIDGE_E2E
+session-journal/derived-save 8/8 (needed `pip install -e ".[serve]"` here).
 
 As of 2026-10-16, later (Mac): **the 2.7.0 cut moved AGAIN, to
 `35ae762` (release: v2.7.0 gains Session.apply_settings...) — still

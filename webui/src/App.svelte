@@ -384,12 +384,14 @@
   // (two worker subprocesses server-side) and, on the fallback path, two
   // pyodide workers. The probe's session is a diagnostic, not a work session.
   const engineProbeRequested = params.get('engine') === '1';
-  // `?fixture=1` also opens a read-only e2e test hook: `window.__viewState`
-  // exposes the live view-state store so Playwright can assert on the
-  // active view's range and zoom-history length without brittle DOM
-  // scraping. Gated on the fixture flag so it never exists in normal runs.
+  // `?fixture=1` also opens e2e test hooks: `window.__viewState` exposes
+  // the live view-state store so Playwright can assert on the active view's
+  // range and zoom-history length without brittle DOM scraping, and
+  // `window.__toasts` lets a spec raise a toast without the engine. Gated on
+  // the fixture flag so they never exist in normal runs.
   if (typeof window !== 'undefined' && fixtureRequested) {
     (window as unknown as { __viewState?: typeof viewState }).__viewState = viewState;
+    (window as unknown as { __toasts?: typeof toasts }).__toasts = toasts;
   }
 
   let mediaNarrow = $state(false);
@@ -667,6 +669,7 @@
       const { doc, captures } = state;
       toasts.push('Restore session from pydvma-serve?', {
         level: 'info',
+        closable: false,                // its own Dismiss says what closing means
         actions: [
           { label: 'Restore', run: () => restoreFromJournal(doc, captures) },
           // Dismiss is client-side only: the journal stays authoritative
@@ -683,6 +686,7 @@
       const recovered = state.recovered;
       toasts.push('Recover session from a previous pydvma-serve run?', {
         level: 'info',
+        closable: false,                // Dismiss deletes the spill file; a × must not look like it
         actions: [
           { label: 'Restore', run: () => restoreFromJournal(recovered, []) },
           {
@@ -724,6 +728,7 @@
     }
     toasts.push('pydvma session updated from a notebook — reload?', {
       level: 'info',
+      closable: false,
       actions: [
         { label: 'Reload', run: () => restoreFromJournal(doc, captures) },
         { label: 'Dismiss', run: () => {} },
@@ -761,6 +766,7 @@
     const bytes = saved;
     toasts.push('Restore last session?', {
       level: 'info',
+      closable: false,                  // Dismiss clears the autosave; a × must not look like it
       actions: [
         {
           label: 'Restore',

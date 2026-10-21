@@ -86,7 +86,8 @@ plot itself; the plot and the navigator share one window.
   well-behaved. If the result is no better it reverts automatically, so
   Refine never makes a fit worse. If it improves the fit but moves a mode
   by more than 10 % (and more than 2 Hz), a warning names the mode and
-  offers **Undo**, so inspect the fit lines before trusting it.
+  offers **Undo**, so inspect the fit lines before trusting it. Close the
+  warning with its **×** to keep the refined fit.
 - **↶ Undo** reverses the last fit, reject or refine (one level).
 
 Each mode is fitted with a frequency, a damping ratio, and an amplitude

@@ -41,3 +41,32 @@ test('actionable toasts pin open and close after their action runs', () => {
   expect(ran).toBe(true);
   expect(get(t.toasts)).toHaveLength(0);
 });
+
+test('actionable toasts carry a × by default, and closing runs no action', () => {
+  // Lab feedback (2026-10): Refine's "moved far from the fitted peak" warning
+  // carried only Undo, so the only way to accept the result was to leave it.
+  const t = createToasts();
+  let undone = false;
+  const id = t.push('Refine moved 1 mode(s) far from their fitted peaks', {
+    actions: [{ label: 'Undo', run: () => { undone = true; } }],
+  });
+  expect(get(t.toasts)[0].closable).toBe(true);
+  t.dismiss(id);                                  // the × button's path
+  expect(get(t.toasts)).toHaveLength(0);
+  expect(undone).toBe(false);
+});
+
+test('closable: false leaves an offer with only its own buttons', () => {
+  const t = createToasts();
+  t.push('Restore last session?', {
+    closable: false,
+    actions: [{ label: 'Restore', run: () => {} }, { label: 'Dismiss', run: () => {} }],
+  });
+  expect(get(t.toasts)[0].closable).toBe(false);
+});
+
+test('plain toasts are closable', () => {
+  const t = createToasts();
+  t.push('Load failed', { level: 'error' });
+  expect(get(t.toasts)[0].closable).toBe(true);
+});

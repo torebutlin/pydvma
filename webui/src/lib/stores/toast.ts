@@ -5,7 +5,7 @@
 // shared, dependency-free toast store the shell renders through
 // `ToastHost.svelte`. Toasts are either plain (auto-dismiss after a
 // timeout) or ACTIONABLE (carry labelled buttons, e.g. Restore / Dismiss,
-// and stay until the user acts or explicitly dismisses).
+// and stay until the user acts or closes them with ×).
 import { writable } from 'svelte/store';
 
 /** One button on an actionable toast. `run` fires, then the toast closes. */
@@ -23,13 +23,22 @@ export interface Toast {
   message: string;
   level: ToastLevel;
   actions?: ToastAction[];
+  /** Show a × that closes the toast without running any action. */
+  closable: boolean;
 }
 
-/** Options for `push`. `timeout` (ms) applies only to non-actionable toasts. */
+/**
+ * Options for `push`. `timeout` (ms) applies only to non-actionable toasts.
+ * `closable` (default true) gives the toast a × close button; pass false
+ * only when an action already says what closing means (an offer whose own
+ * Dismiss button discards something), so the card never shows two ways to
+ * close that do different things.
+ */
 export interface ToastOptions {
   level?: ToastLevel;
   actions?: ToastAction[];
   timeout?: number;
+  closable?: boolean;
 }
 
 let nextId = 1;
@@ -38,11 +47,13 @@ let nextId = 1;
  * Create a toast store. `push` enqueues a toast and returns its id;
  * `dismiss` removes a toast by id. Info/success toasts auto-dismiss
  * after `timeout` ms (default 4000); toasts that carry actions pin open
- * until acted on, and **error toasts pin open until the user closes
- * them** (round-10, JW's feedback: an error vanished before he could
- * read or copy it) — pass an explicit `timeout` to make an error
+ * until acted on or closed, and **error toasts pin open until the user
+ * closes them** (round-10, JW's feedback: an error vanished before he
+ * could read or copy it) — pass an explicit `timeout` to make an error
  * transient. Actionable toasts self-dismiss after their action's `run`
- * completes.
+ * completes, and also carry a × unless `closable: false` (lab feedback,
+ * 2026-10: an Undo toast such as Refine's warning had no way to say "fine,
+ * keep it", so it sat there until the next reload).
  */
 export function createToasts() {
   const toasts = writable<Toast[]>([]);
@@ -65,7 +76,8 @@ export function createToasts() {
         }
       },
     }));
-    toasts.update((list) => [...list, { id, message, level, actions }]);
+    const closable = opts.closable ?? true;
+    toasts.update((list) => [...list, { id, message, level, actions, closable }]);
     if (!actions) {
       // Errors stay until dismissed via × (unless the caller passes an
       // explicit timeout) so they can be read and copied.

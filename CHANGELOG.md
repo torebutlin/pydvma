@@ -11,6 +11,11 @@ follows [semantic versioning](https://semver.org/).
   ‹ › ⤢ ⤡ glyphs did not say what they did; they now read **‹ peak**,
   **peak ›** and **zoom to band**, which stays lit while the strip is
   zoomed and shows the full range again when clicked.
+- **Messages that offer Undo can now be closed.** A message with a button,
+  such as Refine's warning that a mode moved far from its peak, or
+  *Modal fit cleared*, had no close button and stayed on screen until you
+  used its button or reloaded the page. It now has a **×**, which closes it and keeps the
+  result. The session-restore offers keep their own **Dismiss** instead.
 
 ### Fixed
 

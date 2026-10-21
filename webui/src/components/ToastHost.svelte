@@ -3,9 +3,11 @@
    * Bottom-right toast stack (Task 13). Renders the `toasts` store as a
    * fixed column of cards: plain toasts auto-dismiss (handled by the
    * store), actionable ones show labelled buttons (Restore / Dismiss,
-   * Set folder, …) and stay until the user acts. `level` tints the left
-   * accent bar (info / error / success). Each toast exposes a testid so
-   * the e2e can target the restore banner and its buttons.
+   * Undo, …) and stay until the user acts or closes them. A × closes any
+   * toast whose `closable` is set (every toast except the offers whose
+   * own Dismiss button means something). `level` tints the left accent
+   * bar (info / error / success). Each toast exposes a testid so the e2e
+   * can target the restore banner and its buttons.
    */
   import type { Toasts } from '../lib/stores/toast';
 
@@ -23,8 +25,10 @@
             <button class="action" onclick={a.run}>{a.label}</button>
           {/each}
         </div>
-      {:else}
-        <button class="close" aria-label="Dismiss" onclick={() => store.dismiss(t.id)}>×</button>
+      {/if}
+      {#if t.closable}
+        <button class="close" data-testid="toast-close" aria-label="Dismiss" title="Dismiss"
+          onclick={() => store.dismiss(t.id)}>×</button>
       {/if}
     </div>
   {/each}
