@@ -5,8 +5,9 @@ import { expect, test, type Page } from '@playwright/test';
  * NON-ENGINE: `?fixture=1` seeds a TfData on load (several evenly-spaced
  * resonances), so the TF view has real lines without booting pyodide.
  * Covers: the toolbar toggle; band-drag → live re-window + ONE history
- * entry; ⤢ scope + ribbon + double-click clear (via the `freqScope` store
- * hook); peak-step keep-width; Fit-stage auto-open.
+ * entry; "zoom to band" scope + ribbon + double-click clear (via the
+ * `freqScope` store hook); the ribbon's full-range track actually visible;
+ * peak-step keep-width; Fit-stage auto-open.
  */
 
 /** Read {range.x, historyLen} of the tf slice via the ?fixture=1 hook. */
@@ -35,6 +36,31 @@ async function freqScope(page: Page): Promise<[number, number] | null> {
     vs.freqScope.subscribe((v) => { raw = v as typeof raw; })();
     return raw;
   });
+}
+
+/**
+ * Fraction of the PNG's pixels that differ (any channel by > 12) from `rgb`,
+ * decoded through a canvas in the page. Measures what is visibly drawn: the
+ * pre-fix ribbon passed every attribute check while its track composited to
+ * within a few levels of the card's background.
+ */
+function inkFraction(page: Page, png: Buffer, rgb: [number, number, number]): Promise<number> {
+  const url = 'data:image/png;base64,' + png.toString('base64');
+  return page.evaluate(async ([u, ref]) => {
+    const im = await new Promise<HTMLImageElement>((res, rej) => {
+      const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = u as string;
+    });
+    const cv = document.createElement('canvas');
+    cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+    const ctx = cv.getContext('2d')!; ctx.drawImage(im, 0, 0);
+    const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    const [r, g, b] = ref as [number, number, number];
+    let ink = 0;
+    for (let k = 0; k < d.length; k += 4) {
+      if (Math.abs(d[k] - r) > 12 || Math.abs(d[k + 1] - g) > 12 || Math.abs(d[k + 2] - b) > 12) ink++;
+    }
+    return ink / (d.length / 4);
+  }, [url, rgb] as const);
 }
 
 /** Load the fixture and switch to the TF stage (tf-mag plot, no engine). */
@@ -81,7 +107,7 @@ test('hidden by default on TF-mag; toggle shows it; band drag = one undo entry',
   await expect(page.getByTestId('freq-nav')).not.toBeAttached();
 });
 
-test('scope: ⤢ scopes to the window, ribbon appears; double-click clears', async ({ page }) => {
+test('scope: zoom to band scopes to the window, ribbon appears; double-click clears', async ({ page }) => {
   await openTf(page);
   await page.getByTestId('freq-nav-toggle').click();
   await setWindow(page, 250, 750);
@@ -115,6 +141,49 @@ test('scope: the head button is a toggle, so a scoped strip can be re-expanded',
   await expect(page.getByTestId('freq-nav-ribbon')).not.toBeAttached();
   await expect(btn).toHaveAttribute('aria-pressed', 'false');
   expect(await freqScope(page)).toBeNull();
+});
+
+test('scope: the ribbon shows the full range, not a lone band', async ({ page }) => {
+  // Lab feedback (2026-10): zooming to a band left what looked like a stray
+  // blue box above the strip. The ribbon's full-range track composited to
+  // within a few levels of the card background, so only the scope band
+  // showed. Now the track is outlined, carries a faint magnitude trace and
+  // its end labels, and a funnel joins the band to the strip below.
+  await openTf(page);
+  await page.getByTestId('freq-nav-toggle').click();
+  await setWindow(page, 250, 750);
+  await page.getByTestId('freq-nav-scope-btn').click();
+  const ribbon = page.getByTestId('freq-nav-ribbon');
+  await expect(ribbon).toBeVisible();
+  await expect(ribbon.locator('text')).toHaveText(['0', '5000']);   // the fixture's full extent
+
+  // Visible pixels in the track to the RIGHT of the scope band (outside it):
+  // the outline, trace and end label must actually show there. Park the
+  // pointer first: hovering the toolbar's navigator toggle pops the axis
+  // panel over this very region.
+  await page.mouse.move(1, 1);
+  await expect(page.getByTestId('axis-popover')).toBeHidden();
+  const rb = (await ribbon.boundingBox())!;
+  const band = (await page.getByTestId('freq-nav-ribbon-band').boundingBox())!;
+  const x0 = band.x + band.width + 4;
+  const png = await page.screenshot({
+    clip: { x: x0, y: rb.y, width: rb.x + rb.width - x0, height: band.height + 2 },
+  });
+  const bg = await page.getByTestId('freq-nav').evaluate((el) => {
+    const m = getComputedStyle(el).backgroundColor.match(/\d+/g)!.map(Number);
+    return [m[0], m[1], m[2]] as [number, number, number];
+  });
+  expect(await inkFraction(page, png, bg)).toBeGreaterThan(0.05);   // pre-fix: 0.00; fixed: ~0.18
+});
+
+test('head controls are worded, with distinct names', async ({ page }) => {
+  // Lab feedback (2026-10): the bare ‹ › ⤢ glyphs did not say what they did.
+  await openTf(page);
+  await page.getByTestId('freq-nav-toggle').click();
+  const nav = page.getByTestId('freq-nav');
+  await expect(nav.getByRole('button', { name: 'previous peak' })).toHaveText('‹ peak');
+  await expect(nav.getByRole('button', { name: 'next peak' })).toHaveText('peak ›');
+  await expect(nav.getByRole('button', { name: 'zoom to band' })).toBeVisible();
 });
 
 test('peak-step › keeps the window width and moves it forward', async ({ page }) => {

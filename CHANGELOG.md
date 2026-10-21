@@ -3,6 +3,24 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- **The frequency navigator's buttons are labelled in words.** The bare
+  ‹ › ⤢ ⤡ glyphs did not say what they did; they now read **‹ peak**,
+  **peak ›** and **zoom to band**, which stays lit while the strip is
+  zoomed and shows the full range again when clicked.
+
+### Fixed
+
+- **Zooming the frequency navigator to a band left a stray blue box above
+  the strip.** The box was the full-range miniature, whose track drew
+  almost exactly in the card's background colour, so only the zoomed
+  part showed, with nothing to say what it was. The miniature now has an
+  outlined track, a faint trace of the spectrum, its end frequencies, and
+  a shaded funnel joining the zoomed part to the strip below.
+
 ## 2.7.0 — 2026-10-16
 
 Lossless data exports, transfer-function calibration in the web app,

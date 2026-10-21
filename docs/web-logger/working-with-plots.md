@@ -96,20 +96,22 @@ the same window that **Calc** and **Fit** use.
 
 Each drag is one undo step.
 
-The **‹ ›** buttons jump the window to the previous or next spectral
-peak, keeping its width. Peaks are found on the curves you see in the
+The **‹ peak** and **peak ›** buttons jump the window to the previous or
+next spectral peak, keeping its width. Peaks are found on the curves you see in the
 strip. From a window that spans nearly the whole strip, the first press
 narrows it to a tenth of the strip so the jump is meaningful. Once you
 have [fitted modes](modal-fitting.md), each one is marked with a small
 triangle on the strip, so the unmarked peaks are the ones still to fit.
 
-**⤢** narrows the strip itself to the current window, which helps when
-the measurement covers much more bandwidth than you care about. A thin
-ribbon then appears above the strip showing where the scope sits in the
-full range; drag the ribbon's band to move or resize the scope. The
-button becomes **⤡**: click it, or double-click the ribbon, to clear the
-scope. The scope changes only what the strip shows. It never moves the
-window or affects a calculation, and it is not saved with your data.
+**zoom to band** zooms the strip itself in to the current window, which
+helps when the measurement covers much more bandwidth than you care
+about, or when you want to pick a narrow window precisely. A miniature of
+the full range then appears above the strip, with the zoomed part
+highlighted and joined to the strip below; drag that highlight to move or
+resize the zoomed part. The button stays lit while the strip is zoomed:
+click it again, or double-click the miniature, to show the full range.
+Zooming changes only what the strip shows. It never moves the window or
+affects a calculation, and it is not saved with your data.
 
 The navigator opens by itself in the **Fit** stage and on the **Nyquist**
 plot. Elsewhere, use the toolbar button to show or hide it. The choice is

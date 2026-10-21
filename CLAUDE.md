@@ -22,6 +22,24 @@ serves its own UI (engine wheel fetched 200), greets
 install: `pip install --upgrade "pydvma[serve,soundcard]"`. Nothing is
 pending on the release side.
 
+As of 2026-10-21 (remote Linux session, CHANGELOG `## Unreleased`, no
+version bump): **the frequency navigator's zoom miniature is legible and
+its buttons are worded.** Tore saw a "weird blue box" above the strip
+after ⤢ in the Fit stage: the scope ribbon's track composited to within
+~4 levels of the card background (light AND dark), so only the scope
+band showed. The ribbon now has an outlined track, a faint full-range
+trace, end labels and a funnel down to the strip; the head reads
+**‹ peak / peak › / zoom to band** (stable label, lit while zoomed;
+`aria-label`s "previous/next peak" since both would otherwise be named
+"peak"); the head row wraps below ~430 px. New e2e in `freq-nav.spec.ts`
+checks VISIBLE pixels right of the ribbon band (pre-fix 0.00 ink,
+fixed ~0.18; park the pointer first, or the toolbar's axis popover lands
+on the clip). Checked by screenshot: Fit/TF/log-x/Nyquist/Bode, light,
+dark, narrow. Suites here: check 0/0, vitest 1246/1, Playwright 71 passed
+with the known engine-only failures (`@engine` and six `files.spec`
+imports, which now run through `file_to_dvma` — CDN blocked in this
+container), mkdocs --strict clean. Pure webui, no engine wheel rebuild.
+
 As of 2026-10-16, later (Mac): **the 2.7.0 cut moved AGAIN, to
 `35ae762` (release: v2.7.0 gains Session.apply_settings...) — still
 unreleased, version unchanged (Tore's call); tag `v2.7.0` THERE.** New

@@ -20,22 +20,27 @@
    *     when unscoped) — the parent's `onhome` decides;
    *   - the two numeric fields in the head → type an exact min/max (Hz),
    *     committed on change / Enter;
-   *   - the ‹ › head buttons → STEP the window to the previous/next detected
-   *     magnitude peak (keeping its width; disabled when there is none that
-   *     way — see lib/plot/peaks).
+   *   - the "‹ peak" / "peak ›" head buttons → STEP the window to the
+   *     previous/next detected magnitude peak (keeping its width; disabled
+   *     when there is none that way — see lib/plot/peaks).
    * Fitted-mode fn markers (the `modeTicks` prop) are drawn as small triangles
    * along the strip so it doubles as a mode map (dimmed for muted modes).
    *
    * SCOPE (bandwidth-of-interest): when a `scope` is set the strip zooms to
-   * span it, and a thin context ribbon appears above — the full extent in
-   * miniature with the scope as its own draggable band. The head button is a
-   * TOGGLE: ⤢ scopes the strip to the current window, and once scoped it
-   * becomes ⤡ which clears the scope and re-expands to the full extent
-   * (double-clicking the ribbon does the same, but a thin ribbon is not
-   * somewhere anyone thinks to look — lab feedback, 2026-09). When the window
-   * lies wholly outside the scoped strip an off-scope arrow points toward it.
-   * Scope changes are NOT undoable, so the ribbon needs no transient
-   * protocol — `onscope` fires once on release.
+   * span it, and a context ribbon appears above — the full extent in
+   * miniature (its own faint magnitude trace, end labels and an outlined
+   * track) with the scope as a draggable band, joined to the strip below by
+   * a shaded funnel so the strip reads as a magnified view of that band. The
+   * ribbon used to be a bare 14 px band over an unmarked track, which on
+   * screen was just a floating blue box (lab feedback, 2026-10). The head
+   * button "zoom to band" is a TOGGLE (lit while zoomed): pressed again it
+   * clears the scope and re-expands to the full extent (double-clicking the
+   * ribbon does the same, but a thin ribbon is not somewhere anyone thinks to
+   * look — lab feedback, 2026-09). The head controls are words, not glyphs:
+   * ‹ › ⤢ ⤡ alone did not say what they did (lab feedback, 2026-10). When the
+   * window lies wholly outside the scoped strip an off-scope arrow points
+   * toward it. Scope changes are NOT undoable, so the ribbon needs no
+   * transient protocol — `onscope` fires once on release.
    *
    * v2 LIVE re-windowing (round-6 item 6): a drag no longer waits for release.
    * While the pointer moves the strip emits `onpreview` (throttled to one
@@ -352,7 +357,9 @@
   }
 
   // ── scope ribbon (full-extent miniature; only rendered when scoped) ──
-  const RH = 14;                     // ribbon height (px)
+  const RT = 18;                     // ribbon track row height (px); the track spans y 1..RT-1
+  const RF = 10;                     // funnel row below the track, joining the scope band to the strip
+  const RH = RT + RF;                // ribbon svg height (px)
   const rLog = $derived(xScale === 'log' && fullExtent[0] > 0 && fullExtent[1] > 0);
   const rlMin = $derived(rLog ? Math.log10(fullExtent[0]) : 0);
   const rlMax = $derived(rLog ? Math.log10(fullExtent[1]) : 1);
@@ -370,6 +377,42 @@
     const f = rLog ? 10 ** (rlMin + t * (rlMax - rlMin)) : fmin + t * (fmax - fmin);
     return Math.min(fmax, Math.max(fmin, f));
   }
+
+  /**
+   * Faint full-extent magnitude trace for the ribbon track, so it reads as the
+   * whole spectrum in miniature rather than an empty bar. Same decimation as
+   * the strip; y auto-scaled over the full extent. Reads only lines / extent /
+   * width, so a band drag never rebuilds it.
+   */
+  const ribbonPaths = $derived.by<{ d: string; color: string }[]>(() => {
+    if (!scope || innerW <= 0) return [];
+    let lo = Infinity, hi = -Infinity;
+    for (const l of lines) {
+      for (let i = 0; i < l.y.length; i++) {
+        const v = l.y[i];
+        if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      }
+    }
+    if (lo === Infinity) return [];
+    if (lo === hi) { lo -= 1; hi += 1; }
+    const y0 = 3, yh = RT - 6;                  // inset inside the track outline
+    const out: { d: string; color: string }[] = [];
+    for (const l of lines) {
+      const n = l.x.length;
+      const step = Math.max(1, Math.floor(n / Math.max(64, Math.floor(innerW * 2))));
+      let d = '';
+      for (let i = 0; i < n; i += step) {
+        const v = l.y[i];
+        if (!Number.isFinite(v)) continue;
+        const X = toPxR(l.x[i]);
+        const Y = y0 + (1 - (v - lo) / (hi - lo)) * yh;
+        if (!Number.isFinite(X)) continue;
+        d += (d ? 'L' : 'M') + X.toFixed(1) + ',' + Y.toFixed(1);
+      }
+      if (d) out.push({ d, color: l.color });
+    }
+    return out;
+  });
 
   type RbZone = 'move' | 'resize-lo' | 'resize-hi' | null;
   let rbMode = $state<RbZone>(null);
@@ -405,8 +448,13 @@
     const sx = r.width ? width / r.width : 1;
     return (e.clientX - r.left) * sx;
   }
+  /** True when the pointer is on the ribbon's track row (the funnel below it is decoration only). */
+  function rbOnTrack(e: PointerEvent): boolean {
+    const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+    return e.clientY - r.top <= RT;
+  }
   function rbDown(e: PointerEvent) {
-    if (e.button !== 0 || !scope) return;
+    if (e.button !== 0 || !scope || !rbOnTrack(e)) return;
     const px = rbLocalX(e);
     const z = rbZoneAt(px);
     if (!z) return;
@@ -417,7 +465,7 @@
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
   }
   function rbMove(e: PointerEvent) {
-    if (rbMode === null) { rbHover = rbZoneAt(rbLocalX(e)); return; }
+    if (rbMode === null) { rbHover = rbOnTrack(e) ? rbZoneAt(rbLocalX(e)) : null; return; }
     if (e.pointerId !== rbPointer) return;
     const px = rbLocalX(e);
     const f = toFR(px);
@@ -459,18 +507,20 @@
         class="nbtn"
         type="button"
         data-testid="freq-nav-prev"
-        title="Previous peak (window keeps its width)"
+        aria-label="previous peak"
+        title="Move the band to the previous peak, keeping its width"
         disabled={!prevTarget}
         onclick={() => prevTarget && onchange(prevTarget[0], prevTarget[1])}
-      >‹</button>
+      ><span class="arr" aria-hidden="true">‹</span> peak</button>
       <button
         class="nbtn"
         type="button"
         data-testid="freq-nav-next"
-        title="Next peak (window keeps its width)"
+        aria-label="next peak"
+        title="Move the band to the next peak, keeping its width"
         disabled={!nextTarget}
         onclick={() => nextTarget && onchange(nextTarget[0], nextTarget[1])}
-      >›</button>
+      >peak <span class="arr" aria-hidden="true">›</span></button>
       <button
         class="nbtn"
         class:on={scope != null}
@@ -478,10 +528,10 @@
         data-testid="freq-nav-scope-btn"
         aria-pressed={scope != null}
         title={scope != null
-          ? 'Clear the scope — show the full frequency range again'
-          : 'Scope the strip to the current window'}
+          ? 'This strip is zoomed to a band of the full range. Click to show the full range again.'
+          : 'Zoom this strip in to the current band, for finer selection within it'}
         onclick={() => onscope(scope != null ? null : [band[0], band[1]])}
-      >{scope != null ? '⤡' : '⤢'}</button>
+      >zoom to band</button>
     </span>
     <span class="brush-fields">
       <input
@@ -511,10 +561,11 @@
     </span>
   </div>
   {#if scope && width > 0}
-    <!-- Context ribbon: full extent in miniature, the scope highlighted. Body
-         drag translates, edge drag resizes, double-click clears the scope.
-         Local preview only; onscope fires once on release (scope is not
-         undoable, so no transient protocol needed). -->
+    <!-- Context ribbon: full extent in miniature (outlined track, faint
+         magnitude trace, end labels), the scope highlighted and joined to the
+         strip below by a funnel. Body drag translates, edge drag resizes,
+         double-click clears the scope. Local preview only; onscope fires once
+         on release (scope is not undoable, so no transient protocol needed). -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <svg
       class="ribbon"
@@ -522,7 +573,7 @@
       height={RH}
       data-testid="freq-nav-ribbon"
       style="cursor: {ribbonCursor}"
-      aria-label="Scope: {shownScope[0].toFixed(1)} to {shownScope[1].toFixed(1)} Hz of {fullExtent[0].toFixed(1)}–{fullExtent[1].toFixed(1)} Hz"
+      aria-label="Full range {fullExtent[0].toFixed(1)}–{fullExtent[1].toFixed(1)} Hz; the strip shows {shownScope[0].toFixed(1)} to {shownScope[1].toFixed(1)} Hz"
       onpointerdown={rbDown}
       onpointermove={rbMove}
       onpointerup={rbUp}
@@ -530,11 +581,21 @@
       onlostpointercapture={rbCancel}
       ondblclick={() => onscope(null)}
     >
-      <rect class="strip-bg" x={PAD_L} y={1} width={innerW} height={RH - 2} />
-      <rect class="mask" x={PAD_L} y={1} width={Math.max(0, rLoPx - PAD_L)} height={RH - 2} />
-      <rect class="mask" x={rHiPx} y={1} width={Math.max(0, PAD_L + innerW - rHiPx)} height={RH - 2} />
+      <title>Full range. The strip below is zoomed to the highlighted part: drag it to move or resize, double-click to show the full range again.</title>
+      <rect class="rtrack" data-testid="freq-nav-ribbon-track" x={PAD_L} y={1} width={innerW} height={RT - 2} rx="2" />
+      {#each ribbonPaths as p, i (i)}
+        <path class="rmag" d={p.d} stroke={p.color} />
+      {/each}
+      <rect class="rmask" x={PAD_L} y={1} width={Math.max(0, rLoPx - PAD_L)} height={RT - 2} />
+      <rect class="rmask" x={rHiPx} y={1} width={Math.max(0, PAD_L + innerW - rHiPx)} height={RT - 2} />
       <rect class="rband" data-testid="freq-nav-ribbon-band"
-        x={rLoPx} y={1} width={Math.max(1, rHiPx - rLoPx)} height={RH - 2} />
+        x={rLoPx} y={1} width={Math.max(1, rHiPx - rLoPx)} height={RT - 2} />
+      <!-- Funnel: the scope band opening out to the strip's full width. -->
+      <path class="funnel" d="M{rLoPx},{RT - 1} L{rHiPx},{RT - 1} L{PAD_L + innerW},{RH} L{PAD_L},{RH} Z" />
+      <line class="funnel-edge" x1={rLoPx} y1={RT - 1} x2={PAD_L} y2={RH} />
+      <line class="funnel-edge" x1={rHiPx} y1={RT - 1} x2={PAD_L + innerW} y2={RH} />
+      <text class="redge" x={PAD_L + 4} y={RT / 2 + 3} text-anchor="start">{fmtTick(fullExtent[0], fullExtent[1] - fullExtent[0])}</text>
+      <text class="redge" x={PAD_L + innerW - 4} y={RT / 2 + 3} text-anchor="end">{fmtTick(fullExtent[1], fullExtent[1] - fullExtent[0])}</text>
     </svg>
   {/if}
   {#if width > 0}
@@ -608,11 +669,14 @@
     padding: 5px 8px 2px;
     margin-bottom: 6px;
   }
+  /* Wraps rather than overflows: the worded buttons make the row ~430 px at
+     its narrowest, so on a phone-width plot the fields drop to a second line. */
   .brush-head {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 4px 8px;
     padding: 0 2px 3px;
   }
   .brush-lab {
@@ -700,17 +764,19 @@
     font: 10px var(--font-mono, ui-monospace, Menlo, monospace);
     pointer-events: none;
   }
-  .nav-btns { display: inline-flex; align-items: center; gap: 2px; }
+  .nav-btns { display: inline-flex; align-items: center; gap: 4px; }
   .nbtn {
-    width: 22px; height: 20px;
+    height: 22px;
     border: 1px solid var(--border, #e3e6eb);
     border-radius: 5px;
     background: var(--control-bg, #fff);
     color: var(--muted, #66708a);
-    font: 12px/1 var(--font-body, system-ui, sans-serif);
+    font: 500 11px/1 var(--font-body, system-ui, sans-serif);
+    white-space: nowrap;
     cursor: pointer;
-    padding: 0;
+    padding: 0 8px;
   }
+  .nbtn .arr { font-size: 13px; }
   .nbtn:hover:not(:disabled) { color: var(--text, #1b2437); border-color: var(--accent-soft-border, #c7d2fe); }
   .nbtn:disabled { opacity: 0.35; cursor: default; }
   /* Scoped state: the toggle is lit so "the strip is clipped to a band, and
@@ -720,13 +786,51 @@
     border-color: var(--indigo, #4f46e5);
     background: var(--accent-soft, #eef2ff);
   }
-  .ribbon { display: block; width: 100%; touch-action: none; margin-bottom: 2px; }
+  /* The funnel row runs into the strip's own top inset (TOP), so its lower
+     corners meet the strip track's corners. */
+  .ribbon { display: block; width: 100%; touch-action: none; margin-bottom: -4px; }
+  .rtrack {
+    fill: var(--surface-2);
+    stroke: var(--border, #e3e6eb);
+    stroke-width: 1;
+  }
+  .rmag {
+    fill: none;
+    stroke-width: 1;
+    opacity: 0.55;
+    pointer-events: none;
+  }
+  .rmask {
+    fill: var(--surface, #fff);
+    opacity: 0.45;
+    pointer-events: none;
+  }
   .rband {
     fill: var(--indigo, #4f46e5);
-    fill-opacity: 0.22;
+    fill-opacity: 0.16;
     stroke: var(--indigo, #4f46e5);
-    stroke-opacity: 0.7;
+    stroke-opacity: 0.8;
     stroke-width: 1;
+  }
+  .funnel {
+    fill: var(--indigo, #4f46e5);
+    fill-opacity: 0.07;
+    pointer-events: none;
+  }
+  .funnel-edge {
+    stroke: var(--indigo, #4f46e5);
+    stroke-opacity: 0.4;
+    stroke-width: 1;
+    pointer-events: none;
+  }
+  .redge {
+    fill: var(--muted, #66708a);
+    font: 9px var(--font-mono, ui-monospace, Menlo, monospace);
+    paint-order: stroke;
+    stroke: var(--surface-2);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+    pointer-events: none;
   }
   .offscope { fill: var(--indigo, #4f46e5); opacity: 0.8; pointer-events: none; }
   .mtick { fill: var(--indigo, #4f46e5); opacity: 0.85; pointer-events: none; }

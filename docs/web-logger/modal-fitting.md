@@ -65,10 +65,10 @@ Fitting works on the frequency window you are showing. The
 [frequency navigator](working-with-plots.md#frequency-navigator) opens
 automatically on this stage, so the quickest loop is:
 
-1. Put the window on a peak: drag the navigator's band, or press **›** to
-   jump to the next detected peak.
+1. Put the window on a peak: drag the navigator's band, or press
+   **peak ›** to jump to the next detected peak.
 2. Press **Fit 1**.
-3. Press **›** again, and repeat.
+3. Press **peak ›** again, and repeat.
 
 Each fitted mode is marked with a small triangle on the navigator strip,
 so the unmarked peaks are the ones still to fit. You can also zoom the
