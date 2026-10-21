@@ -216,9 +216,12 @@ better than any single STFT window.
   fit as well as the picture.
 
 The CWT is drawn on its own log-spaced grid, so the frequency axis
-switches to **log** when you choose it. Change the axis with **y lin /
-log** on the plot toolbar; **colour dB / lin** chooses how the heat is
-coloured (see [Working with plots](working-with-plots.md#the-zoom-toolbar)).
+switches to **log** the first time you choose it. Change the axis with
+**y lin / log** on the plot toolbar; **colour dB / lin** chooses how the
+heat is coloured (see [Working with plots](working-with-plots.md#the-zoom-toolbar)).
+STFT and CWT each remember their own frequency axis, so a frequency range
+and lin/log set up for one are back when you switch to it again. The time
+range is shared by both.
 
 !!! note "Long records and memory"
     A CWT damping fit holds one complex number per frequency per time

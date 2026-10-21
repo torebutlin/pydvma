@@ -16,6 +16,11 @@ follows [semantic versioning](https://semver.org/).
   *Modal fit cleared*, had no close button and stayed on screen until you
   used its button or reloaded the page. It now has a **×**, which closes it and keeps the
   result. The session-restore offers keep their own **Dismiss** instead.
+- **The sonogram remembers a frequency axis for each method.** Switching
+  between STFT and CWT reset the frequency range and lin/log to that
+  method's default every time. Each method now gets back the range and
+  scale it last had; a method shown for the first time still opens on its
+  default (linear for STFT, log for CWT). The time range is shared.
 
 ### Fixed
 

@@ -159,16 +159,18 @@
   // Switching method re-runs live (gated on an existing sonogram) so the heat
   // map updates immediately when toggling STFT ↔ CWT.
   //
-  // The toggle also sets the frequency axis each transform wants
-  // (`sonoFreqScaleFor`: CWT → log, STFT → lin). RULE, deliberately simple:
-  // every method toggle sets that default, and a manual choice from the plot
-  // toolbar afterwards stands until the NEXT toggle. Without it the CWT's
-  // native log ladder was drawn on a linear axis by default, which crushes its
-  // low-frequency rows into a blocky band — the detail the wavelet was chosen
-  // for — and every user had to find the toolbar's lin/log control to see it.
+  // The toggle also swaps the frequency axis: each method keeps the y window
+  // and lin/log scale it last had (`switchSonoMethod`), so an axis set up for
+  // the STFT and another for the CWT both survive switching back and forth
+  // (lab feedback, 2026-10). A method shown for the first time opens on the
+  // axis its transform wants (`sonoFreqScaleFor`: CWT → log, STFT → lin).
+  // Without that default the CWT's native log ladder was drawn on a linear
+  // axis, which crushes its low-frequency rows into a blocky band — the
+  // detail the wavelet was chosen for.
   function onMethod(m: 'stft' | 'cwt') {
+    const from = method;
     patch({ method: m });
-    viewState.setSonoFreqScale(sonoFreqScaleFor(m));
+    viewState.switchSonoMethod(from, m, sonoFreqScaleFor(m));
     bandError = '';                 // the band boxes only exist for the CWT
     live.schedule();
   }

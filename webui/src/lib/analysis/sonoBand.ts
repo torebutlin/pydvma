@@ -64,9 +64,9 @@ export function editSonoBand(which: SonoBandKey, raw: string, current: SonoBand)
  * chosen for — the CWT image looks blocky next to a smooth STFT one. The STFT's
  * uniform bins want the linear axis they have always had.
  *
- * SonoCard applies this on each method TOGGLE (see its `onMethod`), which is
- * the whole rule: a manual choice from the plot toolbar afterwards stands
- * until the next toggle.
+ * SonoCard applies this when a method TOGGLE shows a method for the first
+ * time (see its `onMethod` and `viewState.switchSonoMethod`); after that each
+ * method keeps the axis it last had, including a manual lin/log choice.
  */
 export function sonoFreqScaleFor(method: 'stft' | 'cwt'): AxisScale {
   return method === 'cwt' ? 'log' : 'lin';

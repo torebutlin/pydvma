@@ -239,6 +239,72 @@ test('sono scales round-trip through serialize/restore and default over a stale 
   expect(get(vs3.current).sonoColour).toBe('db');
 });
 
+// ---- per-method sono frequency axis (lab feedback, 2026-10) ----
+
+test('switchSonoMethod: each method keeps its own freq axis; time window shared; no history', () => {
+  const vs = createViewState();
+  vs.activate('sono');
+  // STFT set up by hand: a time window, a freq window, log scale.
+  vs.setSonoFreqScale('log');
+  vs.setRange('sono', { x: [0.5, 2], y: [20, 800] });
+  const hist = get(vs.current).history.length;
+
+  // First visit to the CWT: auto freq window and its default scale; time kept.
+  vs.switchSonoMethod('stft', 'cwt', 'log');
+  expect(get(vs.current).range).toEqual({ x: [0.5, 2], y: null });
+  expect(get(vs.current).sonoFreqScale).toBe('log');
+
+  // Set the CWT up differently, including a manual lin.
+  vs.setSonoFreqScale('lin');
+  vs.setRange('sono', { x: [0.5, 2], y: [5, 300] });
+
+  // Back to the STFT: its own axis returns.
+  vs.switchSonoMethod('cwt', 'stft', 'lin');
+  expect(get(vs.current).range.y).toEqual([20, 800]);
+  expect(get(vs.current).sonoFreqScale).toBe('log');
+  // …and to the CWT again: its own axis, not the default.
+  vs.switchSonoMethod('stft', 'cwt', 'log');
+  expect(get(vs.current).range.y).toEqual([5, 300]);
+  expect(get(vs.current).sonoFreqScale).toBe('lin');
+
+  // The switches themselves added no undo steps (only the two setRange calls did).
+  expect(get(vs.current).history.length).toBe(hist + 1);
+});
+
+test('switchSonoMethod: an untouched method opens on its default; same-method is a no-op', () => {
+  const vs = createViewState();
+  vs.activate('sono');
+  vs.switchSonoMethod('stft', 'cwt', 'log');           // nothing set up on either
+  expect(get(vs.current).sonoFreqScale).toBe('log');
+  expect(get(vs.current).range.y).toBeNull();
+  vs.switchSonoMethod('cwt', 'stft', 'lin');
+  expect(get(vs.current).sonoFreqScale).toBe('lin');   // the STFT memo is its untouched default
+  const before = get(vs.current);
+  vs.switchSonoMethod('stft', 'stft', 'log');
+  expect(get(vs.current)).toBe(before);                // not even a write
+});
+
+test('sono method memos round-trip through serialize/restore; malformed ones are dropped', () => {
+  const vs = createViewState();
+  vs.activate('sono');
+  vs.setRange('sono', { x: null, y: [20, 800] });
+  vs.switchSonoMethod('stft', 'cwt', 'log');
+  const vs2 = createViewState();
+  vs2.restore(JSON.parse(JSON.stringify(vs.serialize())));
+  vs2.activate('sono');
+  expect(get(vs2.current).sonoMethodAxes).toEqual({ stft: { y: [20, 800], scale: 'lin' }, cwt: null });
+
+  const snap = JSON.parse(JSON.stringify(vs.serialize()));
+  snap.views.sono.sonoMethodAxes = { stft: { y: [800, 20], scale: 'lin' }, cwt: { scale: 'dB' } };
+  delete snap.views.time.sonoMethodAxes;               // an older snapshot without the field
+  const vs3 = createViewState();
+  vs3.restore(snap);
+  vs3.activate('sono');
+  expect(get(vs3.current).sonoMethodAxes).toEqual({ stft: { y: null, scale: 'lin' }, cwt: null });
+  vs3.activate('time');
+  expect(get(vs3.current).sonoMethodAxes).toEqual({ stft: null, cwt: null });
+});
+
 // ---- round-5 axis-nav: Nyquist real/imag, Bode phase, coherence ----
 
 test('aux-range defaults: nyquist auto, phase ±180 lock, coherence fixed', () => {

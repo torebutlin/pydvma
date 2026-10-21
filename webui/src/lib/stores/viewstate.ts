@@ -13,6 +13,15 @@ export type AxisScale = 'lin' | 'log';
 /** Sonogram heat colour mapping: dB (log magnitude) or linear magnitude. */
 export type SonoColour = 'db' | 'lin';
 
+/** The two sonogram transforms (mirrors the Sono card's method toggle). */
+export type SonoMethod = 'stft' | 'cwt';
+
+/**
+ * One sonogram method's remembered FREQUENCY axis: its y window (`null` =
+ * auto) and its lin/log scale. See `ViewSlice.sonoMethodAxes`.
+ */
+export interface SonoAxisMemo { y: [number, number] | null; scale: AxisScale; }
+
 /**
  * A navigable-state snapshot pushed onto the undo/redo stacks. The tf view
  * is special: its Nyquist projection (Real/Imag axes) and its Bode phase
@@ -64,6 +73,13 @@ export interface RangeSnapshot { range: Range; nyquistRange: Range; phaseRange: 
  * - `sonoColour` — the heat COLOUR mapping: `'db'` (default) colours by
  *   magnitude in dB over the Sono card's dynamic-range span; `'lin'` colours by
  *   linear magnitude 0→peak. The dB-ness here is the COLOUR, not the y-axis.
+ * - `sonoMethodAxes` — the frequency axis each sonogram METHOD last had (its
+ *   y window and lin/log scale), so toggling STFT ↔ CWT hands each method back
+ *   the axis the user set up for it (lab feedback, 2026-10). `null` for a
+ *   method not yet left, which then opens on its own default (see
+ *   `switchSonoMethod`). The time axis is NOT per method: both transforms
+ *   share it, so a time window set on one is kept when comparing with the
+ *   other.
  *
  * `navigator` is the frequency-navigator visibility OVERRIDE for this view:
  * `null` (default) = auto — App resolves auto to open in the Fit stage and on
@@ -94,6 +110,7 @@ export interface ViewSlice {
   // ── sono-only display scales (own defaults, distinct from xScale/yScale) ──
   sonoFreqScale: AxisScale;          // sono: FREQUENCY y-axis lin (default) ↔ log10
   sonoColour: SonoColour;            // sono: heat COLOUR dB (default) ↔ linear magnitude
+  sonoMethodAxes: Record<SonoMethod, SonoAxisMemo | null>;   // sono: each method's last freq axis
   // ── frequency navigator (2026-07-11 design) ──
   navigator: boolean | null;         // freq-navigator visibility override; null = auto
 }
@@ -120,8 +137,20 @@ const fresh = (): ViewSlice => ({
   // ladder (see `sonoFreqScaleFor`), and a manual toolbar choice then stands
   // until the next toggle.
   sonoFreqScale: 'lin', sonoColour: 'db',
+  sonoMethodAxes: { stft: null, cwt: null },
   navigator: null,
 });
+
+/** A stored `SonoAxisMemo`, or null when the value is missing or malformed. */
+function toSonoAxisMemo(e: unknown): SonoAxisMemo | null {
+  if (!e || typeof e !== 'object') return null;
+  const o = e as Record<string, unknown>;
+  if (o.scale !== 'lin' && o.scale !== 'log') return null;
+  const y = o.y;
+  const yOk = Array.isArray(y) && y.length === 2
+    && Number.isFinite(y[0]) && Number.isFinite(y[1]) && (y[1] as number) > (y[0] as number);
+  return { y: yOk ? [y[0] as number, y[1] as number] : null, scale: o.scale };
+}
 
 /** Pull the three navigable ranges of a slice into a history snapshot. */
 const snapOf = (v: ViewSlice): RangeSnapshot =>
@@ -394,6 +423,32 @@ export function createViewState() {
   }
 
   /**
+   * Switch the sono view's frequency axis from method `from` to method `to`
+   * (the Sono card's STFT ↔ CWT toggle). The axis `from` has now — its y
+   * window and lin/log scale, whether the user set them or not — is stored
+   * as that method's memo, and `to` gets its own memo back. A method with no
+   * memo yet (never left) opens with an auto y window and `defaultScale`,
+   * the scale its transform wants (`sonoFreqScaleFor` in the card: CWT log,
+   * STFT lin). The time window (`range.x`) is shared and left alone.
+   *
+   * A mode switch, not a zoom, so it records NO history entry (as
+   * `setSonoFreqScale`). Switching to the same method is a no-op.
+   */
+  function switchSonoMethod(from: SonoMethod, to: SonoMethod, defaultScale: AxisScale) {
+    if (from === to) return;
+    patch('sono', v => {
+      const memos = { ...v.sonoMethodAxes, [from]: { y: v.range.y, scale: v.sonoFreqScale } };
+      const back = memos[to];
+      return {
+        ...v,
+        sonoMethodAxes: memos,
+        sonoFreqScale: back?.scale ?? defaultScale,
+        range: { x: v.range.x, y: back?.y ?? null },
+      };
+    });
+  }
+
+  /**
    * Set the sono view's heat COLOUR mapping (`'db'` = magnitude in dB over the
    * card's dynamic-range span; `'lin'` = linear magnitude 0→peak). Scoped to
    * the 'sono' slice. A display mode, NOT recorded in history. The dB-ness here
@@ -457,6 +512,10 @@ export function createViewState() {
       // saved placement but restores `compact: false` (never undefined).
       slice.legend = { ...fresh().legend,
         ...(slice.legend && typeof slice.legend === 'object' ? slice.legend : {}) };
+      // Same for the per-method sono axis memos: keep the valid ones only.
+      const memos = (slice.sonoMethodAxes && typeof slice.sonoMethodAxes === 'object'
+        ? slice.sonoMethodAxes : {}) as Partial<Record<SonoMethod, unknown>>;
+      slice.sonoMethodAxes = { stft: toSonoAxisMemo(memos.stft), cwt: toSonoAxisMemo(memos.cwt) };
       merged[id] = slice;
     }
     views.set(merged);
@@ -481,7 +540,7 @@ export function createViewState() {
     beginTransient, setRangeLive, commitTransient, cancelTransient,
     setNyquistRange, setPhaseRange, setBodePhaseRange, setCoherenceAuto,
     setPlotType, setCoherence, setBlaSigma, setXScale, setYScale,
-    setSonoFreqScale, setSonoColour, setLegend, setFreqScope, setNavigator,
+    setSonoFreqScale, switchSonoMethod, setSonoColour, setLegend, setFreqScope, setNavigator,
     serialize, restore,
   };
 }
