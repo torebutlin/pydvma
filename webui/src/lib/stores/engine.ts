@@ -351,7 +351,7 @@ export async function filesRead(path: string): Promise<{ name: string; path: str
 }
 
 /** Wheel filenames the worker micropip-installs (served from /pypi/). */
-export const ENGINE_WHEELS = ['pydvma-2.7.1-py3-none-any.whl', 'PeakUtils-1.3.5-py3-none-any.whl'];
+export const ENGINE_WHEELS = ['pydvma-2.8.0-py3-none-any.whl', 'PeakUtils-1.3.5-py3-none-any.whl'];
 
 /**
  * Parse the pydvma release a wheel filename embeds

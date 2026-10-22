@@ -3,7 +3,16 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.8.0 — 2026-10-22
+
+Saving to a working folder on disk when the app is served locally, Clean
+Impulse and Resample across all sets, modal constants on the fit chip,
+and a global fit line that no longer runs off the axis ends. Minor
+rather than patch: there are new public names (`launch(save_dir=...)`,
+`Session.save_dir`, `pydvma-serve --save-dir`, `pydvma.savefolder`), and
+`modal.reconstruct_transfer_function_global` now fades its residual
+terms by default (`fade_residues=False` restores the old line). Upgrade
+with `pip install --upgrade "pydvma[serve,soundcard]"`.
 
 ### Added
 

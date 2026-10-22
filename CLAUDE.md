@@ -8,6 +8,36 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+**v2.8.0 IS CUT (2026-10-22, Mac, after a restart) — the twine upload is
+Tore's, then tag `v2.8.0` at the cut commit and publish the GitHub release
+from `dist/RELEASE_NOTES_2.8.0.md` (Zenodo auto-archives) — tag/release
+AFTER the upload, then re-check trap 3 on the DOWNLOADED wheel.** MINOR:
+carries the cloud session's lab-feedback round that missed 2.7.1 (working
+folder `launch(save_dir=)` / `Session.save_dir` / `--save-dir` /
+`pydvma.savefolder`; Clean Impulse/Resample over all sets; fit chip
+An/φn; narrow rail chip × and drawer close; global fit residues fade,
+`fade_residues=True` a new Python default). The cloud session had already
+merged its branch to master itself (`18950f1`, chip × wired to
+`onDeleteSet`) before this session's own merge finished — that local
+merge was aborted and master fast-forwarded; this session's extra
+(`a6e3bb3`: `window.__dataset` hook, the rail-chip test now checks the
+document empties, the orphaned-engine-worker TODO) sits on top. Built
+after `npm ci` in the documented order; `verify_release.py 2.8.0` passes
+both traps (engine wheel `pydvma-2.8.0` referenced by the bundled
+`index-rcc8MliI.js`; 26 `pydvma/*.py` byte-identical, `savefolder.py`
+new); `twine check` passes; a CLEAN venv install serves its own UI
+(engine wheel 200), greets `{v:1, pydvma:'2.8.0', journal:true,
+files:true}` to a same-origin client (`files:false` to another origin,
+the guard), honours `launch(save_dir=)`, and `apply_settings` works.
+Suites at the cut: pytest 1482/7, vitest 1277/1, check 0/0,
+Playwright 131 passed incl. BRIDGE_E2E and @engine (after a test-only
+fix: `server-files.spec.ts`'s Choose-location test read the disk the
+instant the dialog closed, before the server had written the file; it
+lost that race mid-suite, and its closing page abandoned the write so
+the next test found no run2.dvma — it now waits for the Saved toast like
+its sibling), mkdocs --strict clean. Each full BRIDGE_E2E run here still
+leaves ~18 orphaned `/engine` workers (TODO).
+
 **v2.7.1 IS RELEASED END TO END (2026-10-22, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
 (sha256 cd59d6c6… / 60c47043…); tag `v2.7.1` is at the cut `cbdff53`
@@ -27,9 +57,7 @@ passed incl. BRIDGE_E2E and @engine, mkdocs --strict clean.
 **NOT in 2.7.1: the cloud session's five commits** (working-folder
 save/load on disk `aac8e3a`, Clean Impulse/Resample per set `cad63a6`,
 global-fit residues fade `e4223e0`, fit chip An/phi_n `c8c99f9`, narrow
-rail chip delete `eb126de`). They are now merged to master after the
-cut, under CHANGELOG `## Unreleased`, with the chip × wired to
-`onDeleteSet` (`actions.removeSet`); see the note below.
+rail chip delete `eb126de`); they ship in 2.8.0, above.
 `npm audit` shows 3 DEV-ONLY advisories not in the GitHub alert list
 (vite 6.4.3 dev server/launch-editor, high; vitest's @vitest/mocker,
 moderate): the shipped bundle has none of it, but the fix needs the
