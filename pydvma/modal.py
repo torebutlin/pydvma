@@ -598,6 +598,18 @@ def _modes_band(M, f_axis):
             min(float(f_axis[-1]), hi_fn + pad)]
 
 
+def _nearest_rows(f_axis, band, n):
+    '''The ``n`` rows of ``f_axis`` (above 0 Hz) nearest the band
+    ``[lo, hi]``, in axis order: those inside it first, then outwards. For a
+    set too sparse in the band to solve its constants there, this keeps the
+    solve local; its whole axis would let noise far from the modes set the
+    residues.'''
+    f = np.asarray(f_axis, dtype=np.float64)
+    idx = np.flatnonzero(f > 0)
+    dist = np.maximum(np.maximum(band[0] - f[idx], f[idx] - band[1]), 0.0)
+    return np.sort(idx[np.argsort(dist, kind='stable')[:int(n)]])
+
+
 def _measured_sets(tf_data_list):
     '''The measured (non-reconstruction) TFs of ``tf_data_list`` as
     ``(list_index, TfData)`` pairs — what `modal_refine` and
@@ -606,12 +618,15 @@ def _measured_sets(tf_data_list):
             if not getattr(tf, 'flag_modal_TF', False)]
 
 
-def _estimate_global_constants_blocks(fn, zn, blocks, n_cols, measurement_type='acc'):
+def _estimate_global_constants_blocks(fn, zn, blocks, n_cols, measurement_type='acc',
+                                      min_points_for_residues=0):
     '''`estimate_global_constants` over per-axis blocks.
 
     With the poles fixed, each column's constants are a linear solve of
     their own, so each block is solved on its own frequencies and the
-    results are put back in column order. Returns ``(A, RH, RL)`` with
+    results are put back in column order. A block with fewer than
+    ``min_points_for_residues`` points above 0 Hz gets no residual terms
+    (its ``RH`` and ``RL`` are zero). Returns ``(A, RH, RL)`` with
     ``A`` complex ``(len(fn), n_cols)`` and ``RH``, ``RL`` complex
     ``(n_cols,)``. With one block this is `estimate_global_constants`.'''
     n_modes = np.atleast_1d(fn).size
@@ -619,14 +634,16 @@ def _estimate_global_constants_blocks(fn, zn, blocks, n_cols, measurement_type='
     RH = np.zeros(n_cols, dtype=complex)
     RL = np.zeros(n_cols, dtype=complex)
     for f_b, G_b, cols_b in blocks:
-        A_b, RH_b, RL_b, _ = estimate_global_constants(fn, zn, f_b, G_b, measurement_type)
+        with_res = np.count_nonzero(np.asarray(f_b) > 0) >= min_points_for_residues
+        A_b, RH_b, RL_b, _ = estimate_global_constants(fn, zn, f_b, G_b, measurement_type,
+                                                       residues=with_res)
         A[:, cols_b] = A_b
         RH[cols_b] = RH_b
         RL[cols_b] = RL_b
     return A, RH, RL
 
 
-def estimate_global_constants(fn, zn, f, G0, measurement_type='acc'):
+def estimate_global_constants(fn, zn, f, G0, measurement_type='acc', residues=True):
     '''
     Re-estimate the COMPLEX modal constants and per-channel GLOBAL residual
     terms for FIXED poles — the linear half of the global fit.
@@ -665,6 +682,9 @@ def estimate_global_constants(fn, zn, f, G0, measurement_type='acc'):
             ``(len(f), n_cols)``, cal-scaled
         measurement_type (str): 'acc' | 'vel' | 'dsp' (the ``(jw)^p``
             convention)
+        residues (bool): solve the residual terms too (default True);
+            False solves the modal constants alone and returns ``RH`` and
+            ``RL`` as zeros
 
     Returns ``(A, RH, RL, cost)``: ``A`` complex ``(N, n_cols)``, ``RH`` and
     ``RL`` complex ``(n_cols,)``, and ``cost = 0.5*sum(|model - G0|^2)`` over
@@ -683,23 +703,33 @@ def estimate_global_constants(fn, zn, f, G0, measurement_type='acc'):
 
     wn = (2.0 * np.pi * fn).reshape(1, -1)
     phi = 1.0 / (wn ** 2 + 2j * wn * zn.reshape(1, -1) * w - w ** 2)
-    B = np.hstack([phi, np.ones_like(w, dtype=complex), -1.0 / w ** 2])
+    if residues:
+        B = np.hstack([phi, np.ones_like(w, dtype=complex), -1.0 / w ** 2])
+    else:
+        B = phi
 
     x, *_ = np.linalg.lstsq(B, y, rcond=None)
     A = x[:len(fn), :]
-    RH = x[len(fn), :]
-    RL = x[len(fn) + 1, :]
+    if residues:
+        RH = x[len(fn), :]
+        RL = x[len(fn) + 1, :]
+    else:
+        RH = np.zeros(y.shape[1], dtype=complex)
+        RL = np.zeros(y.shape[1], dtype=complex)
 
     model = (B @ x) * ((1j * w) ** p)
     cost = 0.5 * float(np.sum(np.abs(model - G0[mask, :]) ** 2))
     return A, RH, RL, cost
 
 
-def _evaluate_global_model(fn, zn, A, RH, RL, f, measurement_type='acc'):
+def _evaluate_global_model(fn, zn, A, RH, RL, f, measurement_type='acc',
+                           residue_weight=None):
     '''Evaluate the re-estimated global model on axis ``f`` (any axis — the
     reconstruction axis need not match the estimation axis). Guards the
     ``w = 0`` singularity the way ``f_TF_all_channels`` does (first bin
-    borrows the second bin's frequency).'''
+    borrows the second bin's frequency). ``residue_weight``, an array
+    broadcastable to ``(len(f), n_cols)``, scales the ``RH - RL/w**2`` term
+    point by point (see `_residue_fade`); None applies it in full.'''
     fn = np.atleast_1d(np.asarray(fn, dtype=np.float64))
     zn = np.atleast_1d(np.asarray(zn, dtype=np.float64))
     p = _measurement_power(measurement_type)
@@ -708,12 +738,68 @@ def _evaluate_global_model(fn, zn, A, RH, RL, f, measurement_type='acc'):
         w[0] = w[1] if w.size > 1 else 1.0
     wn = (2.0 * np.pi * fn).reshape(1, -1)
     phi = 1.0 / (wn ** 2 + 2j * wn * zn.reshape(1, -1) * w - w ** 2)
-    G = phi @ np.atleast_2d(A) + RH.reshape(1, -1) - RL.reshape(1, -1) / w ** 2
+    residues = RH.reshape(1, -1) - RL.reshape(1, -1) / w ** 2
+    if residue_weight is not None:
+        residues = residues * residue_weight
+    G = phi @ np.atleast_2d(A) + residues
     return G * ((1j * w) ** p)
 
 
+#: `reconstruct_transfer_function_global` solves a TF's residual terms only
+#: when its band holds at least this many points per complex unknown
+#: (``n_modes + 2``: the modal constants and the two residues). With fewer,
+#: the residues would take up the noise, which they then carry out of the
+#: band; the constants are solved for the modes alone instead.
+RESIDUE_MIN_POINTS_PER_UNKNOWN = 2
+
+#: Width, in octaves, over which `reconstruct_transfer_function_global`
+#: (with ``fade_residues=True``) fades the residual terms out beyond each
+#: edge of the band they were solved on.
+RESIDUE_FADE_OCTAVES = 1.0
+
+
+def _block_spans(blocks, n_cols):
+    '''Each column's estimation span ``(lo, hi)`` in Hz: the lowest positive
+    and the highest frequency of its block (the rows its constants were
+    solved on; `estimate_global_constants` skips ``f <= 0``).'''
+    lo = np.zeros(n_cols)
+    hi = np.full(n_cols, np.inf)
+    for f_b, _, cols_b in blocks:
+        pos = np.asarray(f_b, dtype=np.float64)
+        pos = pos[pos > 0]
+        if pos.size:
+            lo[cols_b] = pos.min()
+            hi[cols_b] = pos.max()
+    return lo, hi
+
+
+def _residue_fade(f, lo, hi, octaves=None):
+    '''Residue weight ``(len(f), n_cols)``: 1 inside each column's band
+    ``[lo, hi]`` and, outside it, ``(f/lo)**2`` below or ``(hi/f)**2``
+    above times a raised cosine in log frequency that falls to 0 at
+    ``octaves`` (default `RESIDUE_FADE_OCTAVES`) beyond the edge; 0 further
+    out and at 0 Hz. Relative to the modes the residues grow as the square
+    of the distance from the band (``RL/w**2`` against a mode's constant
+    receptance below it, a constant ``RH`` against a mode's ``1/w**2``
+    above it); the squared factor cancels that growth, so they never
+    exceed their band-edge size, and the cosine then takes them out: the
+    line has no step and no runaway.'''
+    octaves = RESIDUE_FADE_OCTAVES if octaves is None else float(octaves)
+    f = np.asarray(f, dtype=np.float64).reshape(-1, 1)
+    lo = np.asarray(lo, dtype=np.float64).reshape(1, -1)
+    hi = np.asarray(hi, dtype=np.float64).reshape(1, -1)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        below = np.log2(lo / f)
+        above = np.log2(f / hi)
+    d = np.fmax(below, above) / octaves     # fade widths outside the band
+    d = np.where(np.isnan(d), np.inf, d)    # f = 0 with lo = 0
+    cosine = 0.5 * (1.0 + np.cos(np.pi * np.clip(d, 0.0, 1.0)))
+    square = 4.0 ** (-np.clip(d, 0.0, 1.0) * octaves)
+    return np.where(d <= 0, 1.0, np.where(d >= 1, 0.0, cosine * square))
+
+
 def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
-                                         tf_data_list=None):
+                                         tf_data_list=None, fade_residues=True):
     '''Rebuild transfer functions from all fitted modes together, as one global model.
 
     With ``tf_data_list`` (the measured TFs), the modal constants
@@ -726,12 +812,33 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
     does. Each TF's columns are solved on that TF's own frequency points
     inside the band, so the TFs need not share an axis; a TF with too
     few points in the band to determine its constants (fewer than
-    ``max(4, n_modes + 2)``) uses its whole axis instead.
+    ``max(4, n_modes + 2)``, as on a coarse frame-averaged axis) uses
+    that many of its points nearest the band instead. A TF with fewer
+    than ``2*(n_modes + 2)`` points there
+    (`RESIDUE_MIN_POINTS_PER_UNKNOWN`) gets no residual terms: so few
+    points would let the residues take up the noise.
+
+    The residual terms stand for modes outside that band, so they hold
+    only near it. Evaluated far from it they run away: ``RL/omega**2``
+    grows without limit towards 0 Hz, and ``RH`` grows as ``omega**p``
+    once the ``(j*omega)**p`` of an ``'acc'`` or ``'vel'`` TF is applied,
+    while the modes fall away. On a clean single-mode mobility fitted with
+    the right TF type, the residues that a little noise leaves put the
+    reconstruction some 75 dB off at the ends of a 0-1000 Hz axis. So by
+    default (``fade_residues=True``) each column's residues apply in full
+    inside the band its constants were solved on, and fade smoothly to
+    zero over the octave beyond each edge (`RESIDUE_FADE_OCTAVES`), never
+    exceeding their band-edge size on the way. Far from the modes the
+    reconstruction is then the modes alone, with no step at the band
+    edges. The web app's global fit lines are drawn this way.
+    ``fade_residues=False`` applies them on the whole of ``f``, as
+    before.
 
     Without ``tf_data_list`` (for example a ModalData loaded on its
     own), if it holds no measured TF, or if the channel counts do not
     match, the stored modes are summed with their local residual terms
-    (rk, rm) set to zero. ``modal_data`` is not modified.
+    (rk, rm) set to zero, over the whole of ``f``. ``modal_data`` is not
+    modified.
 
     Args:
         modal_data (ModalData): The fitted modes.
@@ -741,6 +848,9 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
             ``'dsp'``, as used for the fit.
         tf_data_list (TfDataList, optional): The measured TFs the modes
             were fitted to, in the fit's column order.
+        fade_residues (bool): With ``tf_data_list``, fade the residual
+            terms out beyond the band they were solved on (default True);
+            False applies them on the whole of ``f``.
 
     Returns:
         tf_data (TfData): The reconstruction, one column per channel,
@@ -755,19 +865,23 @@ def reconstruct_transfer_function_global(modal_data,f,measurement_type='acc',
         band = _modes_band(M, _union_span(measured))
         # Each set on its own points in the band. The constants are solved
         # column by column, so a set too sparse there to determine its own
-        # falls back to its whole axis without affecting any other set.
+        # widens to its nearest points without affecting any other set, and
+        # a set with too few points to pin the residues down gets none.
         need = max(4, M.shape[0] + 2)
         rows = []
         for sel, (_, tf) in zip(_band_rows(measured, band), measured):
             if sel.size < need:
-                sel = np.arange(np.asarray(tf.freq_axis).size)
+                sel = _nearest_rows(tf.freq_axis, band, need)
             rows.append(sel)
         blocks, n_points = _measured_blocks(measured, rows)
         if n_points.size == N_tfs:
             A, RH, RL = _estimate_global_constants_blocks(
-                M[:, 0], M[:, 1], blocks, N_tfs, measurement_type)
+                M[:, 0], M[:, 1], blocks, N_tfs, measurement_type,
+                min_points_for_residues=RESIDUE_MIN_POINTS_PER_UNKNOWN * (M.shape[0] + 2))
+            weight = (_residue_fade(f, *_block_spans(blocks, N_tfs))
+                      if fade_residues else None)
             G = _evaluate_global_model(M[:, 0], M[:, 1], A, RH, RL, f,
-                                       measurement_type)
+                                       measurement_type, residue_weight=weight)
             settings = copy.copy(modal_data.settings)
             settings.channels = modal_data.channels
             tf_data = datastructure.TfData(f,G,None,settings,units=modal_data.units,channel_cal_factors=None,id_link=modal_data.id_link,test_name=modal_data.test_name)

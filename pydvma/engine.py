@@ -884,8 +884,13 @@ def _modal_summary(md):
 
 
 def _global_recon_slice(md, f, measurement_type, mute, off, ncols, tf_list=None):
-    """GLOBAL (residual-free) reconstruction of ``md`` over ``f``, EXCLUDING
-    muted modes, sliced to columns ``[off : off+ncols]``.
+    """GLOBAL reconstruction of ``md``, EXCLUDING muted modes, sliced to
+    columns ``[off : off+ncols]``, over ``f``. With ``tf_list`` the
+    constants and the global residues are re-solved against the measured
+    TFs, and the residues fade out beyond the band they were solved on
+    (``fade_residues``): extrapolated they run away (lab feedback 2026-10,
+    a single-mode fit's line climbing off both ends of the axis). Without
+    it the modes are summed with no residues.
 
     ``mute`` is the list of mode-row indices the user has muted in the chip
     (round-4 item 9 — a muted mode stays in ``M`` and in the summary, but is
@@ -926,7 +931,8 @@ def _global_recon_slice(md, f, measurement_type, mute, off, ncols, tf_list=None)
         try:
             rg = modal.reconstruct_transfer_function_global(
                 md_vis, f, measurement_type,
-                tf_data_list=datastructure.TfDataList(list(tf_list)))
+                tf_data_list=datastructure.TfDataList(list(tf_list)),
+                fade_residues=True)
         except TypeError:
             rg = modal.reconstruct_transfer_function_global(md_vis, f, measurement_type)
     else:

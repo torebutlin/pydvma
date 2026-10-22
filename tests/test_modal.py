@@ -372,6 +372,84 @@ class TestGlobalReestimation:
         assert err_reest < 0.05 * err_legacy
         assert bool(reest.flag_modal_TF) is True
 
+    def test_fade_residues_stops_the_runaway_without_a_step(self):
+        """Lab feedback 2026-10: a single-mode fit's global line climbed off
+        both ends of the axis. The residues a little noise leaves, solved on
+        the narrow band round the mode, run away when evaluated far from it
+        (``RL/w**2`` towards 0 Hz, ``RH*(jw)**p`` upwards). With
+        ``fade_residues`` they apply in full inside the band and fade out
+        over the octave beyond it, so the line is the mode alone far away
+        and is continuous at the band edges."""
+        f = np.linspace(0.0, 1000.0, 4001)
+        rng = np.random.default_rng(1)
+        for mt in ('vel', 'acc'):
+            tf_meas, _ = _measured_tf_from_modes([_modal_row(60.0, 0.03, 1.0)], f,
+                                                 measurement_type=mt)
+            clean = tf_meas.tf_data[:, 0].copy()
+            noise = rng.standard_normal(f.size) + 1j * rng.standard_normal(f.size)
+            tf_meas.tf_data[:, 0] = clean + 0.02 * np.abs(clean) * noise
+            tfl = datastructure.TfDataList([tf_meas])
+            md = modal.modal_fit_all_channels(tfl, freq_range=[45, 75], measurement_type=mt)
+
+            whole = modal.reconstruct_transfer_function_global(md, f, mt, tf_data_list=tfl,
+                                                               fade_residues=False)
+            pos = f > 0
+            err = lambda g: np.abs(20 * np.log10(np.abs(g[pos, 0]) / np.abs(clean[pos])))
+            assert err(whole.tf_data).max() > 20, mt      # the runaway, without the fade
+
+            faded = modal.reconstruct_transfer_function_global(md, f, mt, tf_data_list=tfl)
+            np.testing.assert_array_equal(faded.freq_axis, f)
+            assert err(faded.tf_data).max() < 0.5, (mt, err(faded.tf_data).max())
+            # In the band the residues apply in full: the two agree there.
+            lo, hi = modal._modes_band(np.atleast_2d(md.M), f[[0, -1]])
+            band = (f >= lo) & (f <= hi)
+            np.testing.assert_allclose(faded.tf_data[band], whole.tf_data[band])
+            # No step anywhere: point to point the line moves as the data does.
+            slope = lambda g: np.diff(20 * np.log10(np.abs(g[pos])))
+            assert np.abs(slope(faded.tf_data[:, 0]) - slope(clean)).max() < 0.05
+
+    def test_sparse_band_solves_on_the_nearest_points_not_the_whole_axis(self):
+        """A coarse, frame-averaged axis (5 Hz here) can leave fewer than 4
+        points in a light mode's band. Solving that set's residues on its
+        whole axis let the noise far from the mode set them, and left no band
+        to fade beyond (seen in the app: a flat line ~15 dB over the data
+        above the mode). It now widens to the nearest points."""
+        f = np.arange(0.0, 1000.0, 5.0)
+        tf_meas, _ = _measured_tf_from_modes([_modal_row(100.0, 0.005, 1.0)], f,
+                                             measurement_type='vel')
+        clean = tf_meas.tf_data[:, 0].copy()
+        rng = np.random.default_rng(3)
+        floor = 0.05 * np.abs(clean).max()           # a noise floor, as above a lone mode
+        tf_meas.tf_data[:, 0] = clean + floor * (rng.standard_normal(f.size)
+                                                 + 1j * rng.standard_normal(f.size))
+        md = datastructure.ModalData(_modal_row(100.0, 0.005, 1.0),
+                                     settings=options.MySettings(fs=2000, channels=1))
+        lo, hi = modal._modes_band(np.atleast_2d(md.M), f[[0, -1]])
+        assert np.count_nonzero((f > lo) & (f < hi)) < 4
+        rows = modal._nearest_rows(f, [lo, hi], 4)
+        np.testing.assert_array_equal(f[rows], [90.0, 95.0, 100.0, 105.0])
+
+        g = modal.reconstruct_transfer_function_global(
+            md, f, 'vel', tf_data_list=datastructure.TfDataList([tf_meas])).tf_data[:, 0]
+        # Four points cannot pin the residues down: there are none, and the
+        # line is the mode alone everywhere (no humps through the fade).
+        pos = f > 0
+        err = np.abs(20 * np.log10(np.abs(g[pos]) / np.abs(clean[pos])))
+        assert err.max() < 1.0, err.max()
+        bare = modal.reconstruct_transfer_function_global(
+            md, f, 'vel', tf_data_list=datastructure.TfDataList([tf_meas]),
+            fade_residues=False).tf_data[:, 0]
+        np.testing.assert_allclose(g, bare)
+
+    def test_residue_fade_weights(self):
+        f = np.array([0.0, 25.0, 35.0, 50.0, 75.0, 100.0, 141.4, 200.0, 400.0])
+        w = modal._residue_fade(f, [50.0], [100.0])[:, 0]
+        np.testing.assert_allclose(w[[3, 4, 5]], 1.0)          # inside the band
+        np.testing.assert_allclose(w[[0, 1, 7, 8]], 0.0, atol=1e-12)  # an octave out, and 0 Hz
+        # Half way through the fade: cosine 0.5 times the square 0.5.
+        np.testing.assert_allclose(w[6], 0.25, atol=0.01)
+        assert 0 < w[2] < 1
+
     def test_refine_recovers_poles_despite_polluted_local_rows(self):
         """The flat-direction scenario the varpro rebuild targets: a seed
         whose local rows carry junk constants/phases/residues must still
