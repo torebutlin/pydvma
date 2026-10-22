@@ -3,7 +3,17 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.7.1 — 2026-10-22
+
+Fixes saves in the web app collecting every set deleted before them
+(found in the 3C6 lab), plus smaller web-app fixes and a clearer
+frequency navigator, sonogram and log axes. Upgrade with
+`pip install --upgrade "pydvma[serve,soundcard]"`. A patch, though
+borderline: nothing is removed and nothing needs changing to keep
+working, but the CWT's automatic band in Python
+(`calculate_cwt` / `calculate_damping_from_cwt` with `f_range=None`)
+now starts higher on long records, and `analysis.LOG_FREQ_DECADES` is a
+new public name.
 
 ### Changed
 

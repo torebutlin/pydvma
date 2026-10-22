@@ -8,6 +8,27 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+**v2.7.1 IS CUT (2026-10-22, Mac) — the twine upload is Tore's, then tag
+`v2.7.1` at the cut commit and publish the GitHub release from
+`dist/RELEASE_NOTES_2.7.1.md` (Zenodo auto-archives) — tag/release AFTER
+the upload, then re-check trap 3 on the DOWNLOADED wheel.** Patch, Tore's
+call (borderline, said in the CHANGELOG: the CWT's automatic band moves in
+Python and `analysis.LOG_FREQ_DECADES` is new). Carries the tray-× fix
+below for the 3C6 lab PCs plus the 2026-10-21 cloud round. Built in the
+documented order after `npm ci`; `verify_release.py 2.7.1` passes both
+traps (embedded `pydvma-2.7.1` engine wheel referenced by the bundled
+`index-wus7F1cz.js`, 25 `pydvma/*.py` byte-identical); `twine check`
+passes; a CLEAN venv install (run with `-I` from outside the repo) serves
+its own UI, fetches the engine wheel 200, greets
+`{v:1, pydvma:'2.7.1', journal:true}`, and `apply_settings` works.
+Suites at the cut: pytest 1452/7 skipped, vitest 1266/1, check 0/0,
+Playwright 127 passed incl. BRIDGE_E2E and @engine, mkdocs --strict clean.
+`npm audit` shows 3 DEV-ONLY advisories not in the GitHub alert list
+(vite 6.4.3 dev server/launch-editor, high; vitest's @vitest/mocker,
+moderate): the shipped bundle has none of it, but the fix needs the
+EXACT `"vite": "6.4.3"` pin moved (6.4.5) and vitest 4.1.12 — left for
+after this patch.
+
 **v2.7.0 IS RELEASED END TO END (2026-10-16, Mac).** Tore uploaded
 `dist/` with twine; PyPI's wheel and sdist are byte-identical to the
 verified build (sha256 6425aae7… / 07b080d1…); tag `v2.7.0` is at the cut
@@ -22,8 +43,7 @@ serves its own UI (engine wheel fetched 200), greets
 install: `pip install --upgrade "pydvma[serve,soundcard]"`. Nothing is
 pending on the release side.
 
-As of 2026-10-22 (Mac, CHANGELOG `## Unreleased`, no version bump yet —
-Tore floated one after this round): **the tray × now removes a set from
+As of 2026-10-22 (Mac, released as 2.7.1, above): **the tray × now removes a set from
 the saved data.** 3C6 lab report: "log, save, delete, log again — the
 next save has the old data too", and the coupled-beam prediction failed.
 Root cause: the data set card's × called `selection.removeSet`, which
@@ -37,9 +57,13 @@ the lab sequence through a real serve and FAILS without the fix (second
 file time/freq/tf = 2). In divc_labs, `lab_3c6.coupled_TF` took each
 beam file's FIRST TF, i.e. the session's 2 s noise TF from both files
 on 2.7.0; it now takes each file's NEWEST measurement (`beam_tf`) and
-prints which, so 2.7.0 lab files still work (`950e03f`). Tore's ten lab
-files sit in the RDP app's temp folder, which macOS blocks from every
-tool here — the diagnosis is from the code, not from those files.
+prints which, so 2.7.0 lab files still work (`950e03f`). Tore's lab
+files are in `data/not-working-examples/2026-10-22-3c6-set3/` and
+confirm it: time sets grow 1→16 across the session's saves, and
+`coupled_prediction.dvma` holds the 10:55 2 s noise TF twice; the new
+`coupled_TF` on the 11:27/11:28 files uses the two 9001-point hammer
+TFs. (Files dropped from the RDP client sit in its app container, which
+macOS blocks from every tool — ask for a copy into the repo.)
 Follow-ups in TODO.md ("Tray-delete follow-ups").
 
 As of 2026-10-21 (remote Linux session, CHANGELOG `## Unreleased`, no
