@@ -1,4 +1,4 @@
-import { expect, test, type Download, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -126,8 +126,11 @@ function portIsLive(port: number): Promise<boolean> {
   });
 }
 
-/** Spawn `pydvma serve --driver mock` on `port`, serving the built dist. */
-async function startServe(port: number, sessionDir: string): Promise<void> {
+/**
+ * Spawn `pydvma serve --driver mock` on `port`, serving the built dist, with
+ * `saveDir` as its working folder (where Save writes and Load Data opens).
+ */
+async function startServe(port: number, sessionDir: string, saveDir: string): Promise<void> {
   // Bind only once the port is demonstrably FREE, so a straggler from the
   // previous test cannot answer this test's `waitForPort`.
   await expect.poll(() => portIsLive(port), { timeout: 30_000 }).toBe(false);
@@ -135,7 +138,7 @@ async function startServe(port: number, sessionDir: string): Promise<void> {
   const output: string[] = [];
   const proc = spawn(PYTHON, [
     '-m', 'pydvma.serve', '--driver', 'mock', '--port', String(port),
-    '--session-dir', sessionDir,
+    '--session-dir', sessionDir, '--save-dir', saveDir,
   ], { cwd: REPO_ROOT, stdio: 'pipe' });
   live = { proc, output };            // BEFORE anything that can throw
   const ingest = (chunk: Buffer | string) => {
@@ -185,18 +188,21 @@ async function teardown(): Promise<void> {
 
 /**
  * Run `body` against a freshly spawned serve with an empty scratch session
- * dir. `outDir` is a scratch directory for the `.dvma` files a test saves and
- * re-loads; it lives inside the session dir so teardown takes it too.
+ * dir. `outDir` is the serve's working folder, where the `.dvma` files a test
+ * saves land and where Load Data opens; it lives inside the session dir so
+ * teardown takes it too.
  */
 async function withServe(
   body: (ctx: { sessionDir: string; outDir: string }) => Promise<void>,
 ): Promise<void> {
-  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pydvma-e2e-derived-'));
+  // Real path: the server reports its working folder resolved (macOS /var
+  // is a symlink), and the dialog's folder is compared against this.
+  const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pydvma-e2e-derived-')));
   liveDir = sessionDir;                       // teardown owns it from here
   const outDir = path.join(sessionDir, 'files');
   fs.mkdirSync(outDir);
   try {
-    await startServe(PORT, sessionDir);
+    await startServe(PORT, sessionDir, outDir);
     await body({ sessionDir, outDir });
   } finally {
     await teardown();
@@ -298,43 +304,46 @@ function sonoPaintFrac(page: Page): Promise<number> {
   });
 }
 
-/** Click Load Data and answer the fallback file chooser with `file`. */
-async function loadViaFallback(page: Page, file: string): Promise<void> {
-  const chooserPromise = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: 'Load Data' }).click();
-  const chooser = await chooserPromise;
-  await chooser.setFiles(file);
-}
-
 /**
- * Answer the ONE `window.prompt` the save handler raises for the filename.
- *
- * Playwright's default dialog handling DISMISSES, which returns null and makes
- * `onsave` return before it writes anything — a save armed without this fails
- * as a download that never arrives, with nothing on screen to explain it.
+ * Click Load Data and pick `file` in the served app's file dialog, which
+ * opens on the working folder (`outDir`, where every file here lives).
  */
-function armSaveName(page: Page, name: string): void {
-  page.once('dialog', (d) => { void d.accept(name); });
+async function loadViaFallback(page: Page, file: string): Promise<void> {
+  await page.getByRole('button', { name: 'Load Data' }).click();
+  const dialog = page.getByTestId('file-dialog');
+  await expect(dialog).toHaveAttribute('data-mode', 'open');
+  await expect(page.getByTestId('file-dialog-path')).toHaveValue(path.dirname(file));
+  await page.getByTestId('file-dialog-file')
+    .filter({ hasText: new RegExp(`^${path.basename(file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) })
+    .click();
+  await page.getByTestId('file-dialog-confirm').click();
+  await expect(dialog).toHaveCount(0);
 }
 
 /**
- * Run one Save to `dest`: arm the name prompt, click (the header button by
- * default), optionally answer a mid-flight dialog, and keep the download.
+ * Run one Save to `dest` in the working folder: click (the header button by
+ * default), name the file in the served app's save dialog, optionally answer
+ * a mid-flight dialog, and wait for the file and its "Saved" message.
  *
- * `midway` runs BETWEEN the click and the download landing — the only place
- * the "Include sonogram data?" dialog can be answered, since the save awaits
- * that answer before it serialises anything.
+ * `midway` runs BETWEEN the dialog and the file landing — the only place the
+ * "Include sonogram data?" dialog can be answered, since the save awaits that
+ * answer before it serialises anything.
  */
 async function saveDataset(
   page: Page,
   dest: string,
-  opts: { click?: () => Promise<void>; midway?: (dl: Promise<Download>) => Promise<void> } = {},
+  opts: { click?: () => Promise<void>; midway?: () => Promise<void> } = {},
 ): Promise<void> {
-  armSaveName(page, path.basename(dest));
-  const dl = page.waitForEvent('download', { timeout: 180_000 });
   await (opts.click ?? (() => saveBtn(page).click()))();
-  if (opts.midway) await opts.midway(dl);
-  await (await dl).saveAs(dest);
+  const dialog = page.getByTestId('file-dialog');
+  await expect(dialog).toHaveAttribute('data-mode', 'save');
+  await expect(page.getByTestId('file-dialog-target')).toHaveText(path.dirname(dest));
+  await page.getByTestId('file-dialog-name').fill(path.basename(dest));
+  await page.getByTestId('file-dialog-confirm').click();
+  await expect(dialog).toHaveCount(0);
+  if (opts.midway) await opts.midway();
+  await expect(page.getByTestId('toast').filter({ hasText: `Saved ${dest}` }).first())
+    .toBeVisible({ timeout: 180_000 });
   expect(fs.statSync(dest).size).toBeGreaterThan(0);
 }
 
