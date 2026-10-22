@@ -8,6 +8,33 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+**v2.7.1 IS RELEASED END TO END (2026-10-22, Mac).** Tore uploaded with
+twine; PyPI's wheel and sdist are byte-identical to the verified build
+(sha256 cd59d6c6… / 60c47043…); tag `v2.7.1` is at the cut `cbdff53`
+(lightweight) and pushed; the GitHub release "v2.7.1" carries the full
+CHANGELOG body and both files, so Zenodo archives it. Trap 3 re-checked on
+the DOWNLOADED wheel: embedded `pydvma-2.7.1` engine wheel referenced by
+the bundled `index-wus7F1cz.js`, all 25 `pydvma/*.py` byte-identical to
+`cbdff53` in both the fat and the engine wheel. A clean venv installing
+`pydvma[serve]==2.7.1` from PyPI serves its own UI (engine wheel 200),
+greets `{v:1, pydvma:'2.7.1', journal:true}`, and `apply_settings`
+works. Lab install: `pip install --upgrade "pydvma[serve,soundcard]"`.
+Patch, Tore's call (borderline, said in the CHANGELOG: the CWT's
+automatic band moves in Python and `analysis.LOG_FREQ_DECADES` is new).
+Carries the tray-× fix below plus the 2026-10-21 cloud round. Suites at
+the cut: pytest 1452/7 skipped, vitest 1266/1, check 0/0, Playwright 127
+passed incl. BRIDGE_E2E and @engine, mkdocs --strict clean.
+**NOT in 2.7.1: the cloud session's five commits** (working-folder
+save/load on disk `aac8e3a`, Clean Impulse/Resample per set `cad63a6`,
+global-fit residues fade `e4223e0`, fit chip An/phi_n `c8c99f9`, narrow
+rail chip delete `eb126de`). They are now merged to master after the
+cut, under CHANGELOG `## Unreleased`, with the chip × wired to
+`onDeleteSet` (`actions.removeSet`); see the note below.
+`npm audit` shows 3 DEV-ONLY advisories not in the GitHub alert list
+(vite 6.4.3 dev server/launch-editor, high; vitest's @vitest/mocker,
+moderate): the shipped bundle has none of it, but the fix needs the
+EXACT `"vite": "6.4.3"` pin moved (6.4.5) and vitest 4.1.12.
+
 **v2.7.0 IS RELEASED END TO END (2026-10-16, Mac).** Tore uploaded
 `dist/` with twine; PyPI's wheel and sdist are byte-identical to the
 verified build (sha256 6425aae7… / 07b080d1…); tag `v2.7.0` is at the cut
@@ -22,9 +49,9 @@ serves its own UI (engine wheel fetched 200), greets
 install: `pip install --upgrade "pydvma[serve,soundcard]"`. Nothing is
 pending on the release side.
 
-As of 2026-10-22, later (remote Linux session, merged with the Mac
-session's tray-delete fix above; CHANGELOG `## Unreleased`, no version
-bump): **four lab-feedback items.** (1) **The served app saves and loads
+As of 2026-10-22, later (remote Linux session; merged to master AFTER
+the 2.7.1 cut, so NOT in 2.7.1: CHANGELOG `## Unreleased` above it, no
+version bump): **four lab-feedback items.** (1) **The served app saves and loads
 in a WORKING FOLDER on disk** (`pydvma/savefolder.py`, `/engine` ops
 `files_info/list/set_dir/save/read`, guarded by `is_local_app_request`:
 Origin netloc == Host and a loopback host, so another site and DNS
@@ -56,7 +83,9 @@ mode's `An` and `φn` (per line when several; `constantsFromMatrix`,
 `fitColumnLabels`). (4) **Narrow rail chips have a corner ×**
 (`onDeleteSet`, i.e. `actions.removeSet`) **and the tray drawer a close
 ×** (`tray-close`); a tray card's hover-only × shows on touch screens.
-Merged with master's tray fix: `derived-save.spec.ts` now saves and
+Merged with master's tray fix and the 2.7.1 release (the rail chip's ×
+goes through `onDeleteSet`, so it does not bring the accumulating-save
+bug back): `derived-save.spec.ts` now saves and
 loads through the working-folder dialog (each serve gets `--save-dir`),
 5/5 incl. master's lab-sequence spec. **NB the served-config trick for
 `@engine` specs now meets the working-folder dialog wherever a spec
@@ -70,8 +99,7 @@ runtime here), served Clean Impulse + Resample specs green. Engine
 wheel not rebuilt here (modal.py/engine.py changed; CI rebuilds it for
 Pages; `vendor:wheels` before any release as always).
 
-As of 2026-10-22 (Mac, CHANGELOG `## Unreleased`, no version bump yet —
-Tore floated one after this round): **the tray × now removes a set from
+As of 2026-10-22 (Mac, released as 2.7.1, above): **the tray × now removes a set from
 the saved data.** 3C6 lab report: "log, save, delete, log again — the
 next save has the old data too", and the coupled-beam prediction failed.
 Root cause: the data set card's × called `selection.removeSet`, which
@@ -85,9 +113,13 @@ the lab sequence through a real serve and FAILS without the fix (second
 file time/freq/tf = 2). In divc_labs, `lab_3c6.coupled_TF` took each
 beam file's FIRST TF, i.e. the session's 2 s noise TF from both files
 on 2.7.0; it now takes each file's NEWEST measurement (`beam_tf`) and
-prints which, so 2.7.0 lab files still work (`950e03f`). Tore's ten lab
-files sit in the RDP app's temp folder, which macOS blocks from every
-tool here — the diagnosis is from the code, not from those files.
+prints which, so 2.7.0 lab files still work (`950e03f`). Tore's lab
+files are in `data/not-working-examples/2026-10-22-3c6-set3/` and
+confirm it: time sets grow 1→16 across the session's saves, and
+`coupled_prediction.dvma` holds the 10:55 2 s noise TF twice; the new
+`coupled_TF` on the 11:27/11:28 files uses the two 9001-point hammer
+TFs. (Files dropped from the RDP client sit in its app container, which
+macOS blocks from every tool — ask for a copy into the repo.)
 Follow-ups in TODO.md ("Tray-delete follow-ups").
 
 As of 2026-10-21 (remote Linux session, CHANGELOG `## Unreleased`, no

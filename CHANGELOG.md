@@ -22,6 +22,56 @@ follows [semantic versioning](https://semver.org/).
 
 ### Changed
 
+- **Clean Impulse and Resample act on every set by default.** They used
+  to act only on the highlighted set, or the first set if none was, with
+  no way to tell which. The Time stage now has the same **dataset** choice
+  as the other stages: **All sets** (the default) cleans or resamples
+  every set with time data, and picking one set acts on that set alone.
+  Clean Impulse leaves out, and names, any set whose input channel does
+  not look like an impulse; a resample of several sets has one **Undo**.
+- **On a narrow window, each rail chip has a ×, and the tray drawer has a
+  close button.** Deleting a set meant opening the drawer and hovering
+  over its card, and the drawer closed only on Esc or a click outside.
+  The chip's **×** deletes the set (or clears a modal fit, with Undo),
+  and a **×** on the drawer's edge closes it. On a touch screen a tray
+  card's **×** now shows all the time; it needed a hover before.
+- **The fit chip shows each mode's modal constant An and its phase φn**,
+  as well as fn, ζ and Q: one line under the mode, or one per line when
+  the fit spans several, labelled as in the legend.
+
+### Fixed
+
+- **A modal fit's global line ran off both ends of the axis.** The two
+  residual terms that stand for modes outside the fitted band were solved
+  on the band round the fitted modes and then drawn across the whole
+  axis, where they grow without limit: towards 0 Hz, and upwards once an
+  acceleration or velocity TF's power of iω is applied. A clean
+  single-mode TF fitted with the right TF type came out about 75 dB off
+  at the ends of a 0–1000 Hz axis, from residues set by a little noise.
+  They now fade out over the octave beyond the band, so far from the
+  modes the line is the modes alone. A TF whose band holds too few points
+  to pin them down (fewer than two per unknown) gets none, and one too
+  sparse even for the modal constants now widens to its nearest points,
+  not its whole axis, where noise set the residues. In Python,
+  `modal.reconstruct_transfer_function_global` fades them by default
+  (`fade_residues=False` restores the old line). If the line far from the
+  peak now sits away from the data, check the **TF type**: the residues
+  used to cover for a wrong one near the peak.
+
+## 2.7.1 — 2026-10-22
+
+Fixes saves in the web app collecting every set deleted before them
+(found in the 3C6 lab), plus smaller web-app fixes and a clearer
+frequency navigator, sonogram and log axes. Upgrade with
+`pip install --upgrade "pydvma[serve,soundcard]"`. A patch, though
+borderline: nothing is removed and nothing needs changing to keep
+working, but the CWT's automatic band in Python
+(`calculate_cwt` / `calculate_damping_from_cwt` with `f_range=None`)
+now starts higher on long records, and `analysis.LOG_FREQ_DECADES` is a
+new public name.
+
+### Changed
+
 - **The frequency navigator's buttons are labelled in words.** The bare
   ‹ › ⤢ ⤡ glyphs did not say what they did; they now read **‹ peak**,
   **peak ›** and **zoom to band**, which stays lit while the strip is
@@ -51,22 +101,6 @@ follows [semantic versioning](https://semver.org/).
   computed many rows below 1 Hz. A 30 s capture at 3 kHz now runs from
   1.2 Hz, not 0.13 Hz, with a quarter fewer rows, and a full-resolution
   CWT of 30 s at 48 kHz needs 3.7 GB instead of 6.4 GB. A short record keeps its old band.
-- **Clean Impulse and Resample act on every set by default.** They used
-  to act only on the highlighted set, or the first set if none was, with
-  no way to tell which. The Time stage now has the same **dataset** choice
-  as the other stages: **All sets** (the default) cleans or resamples
-  every set with time data, and picking one set acts on that set alone.
-  Clean Impulse leaves out, and names, any set whose input channel does
-  not look like an impulse; a resample of several sets has one **Undo**.
-- **On a narrow window, each rail chip has a ×, and the tray drawer has a
-  close button.** Deleting a set meant opening the drawer and hovering
-  over its card, and the drawer closed only on Esc or a click outside.
-  The chip's **×** deletes the set (or clears a modal fit, with Undo),
-  and a **×** on the drawer's edge closes it. On a touch screen a tray
-  card's **×** now shows all the time; it needed a hover before.
-- **The fit chip shows each mode's modal constant An and its phase φn**,
-  as well as fn, ζ and Q: one line under the mode, or one per line when
-  the fit spans several, labelled as in the legend.
 
 ### Fixed
 
@@ -80,22 +114,6 @@ follows [semantic versioning](https://semver.org/).
   so the coupled-beam prediction read the wrong transfer function. Files
   already saved this way still load with every set they hold; delete the
   extra ones and save again.
-- **A modal fit's global line ran off both ends of the axis.** The two
-  residual terms that stand for modes outside the fitted band were solved
-  on the band round the fitted modes and then drawn across the whole
-  axis, where they grow without limit: towards 0 Hz, and upwards once an
-  acceleration or velocity TF's power of iω is applied. A clean
-  single-mode TF fitted with the right TF type came out about 75 dB off
-  at the ends of a 0–1000 Hz axis, from residues set by a little noise.
-  They now fade out over the octave beyond the band, so far from the
-  modes the line is the modes alone. A TF whose band holds too few points
-  to pin them down (fewer than two per unknown) gets none, and one too
-  sparse even for the modal constants now widens to its nearest points,
-  not its whole axis, where noise set the residues. In Python,
-  `modal.reconstruct_transfer_function_global` fades them by default
-  (`fade_residues=False` restores the old line). If the line far from the
-  peak now sits away from the data, check the **TF type**: the residues
-  used to cover for a wrong one near the peak.
 - **A modal fit made with x(iω) already set drew its fit lines without
   it.** The data was plotted with the x(iω) power but the fit lines were
   not, so with a power of −1 they sat about 56 dB above a 100 Hz mode.
