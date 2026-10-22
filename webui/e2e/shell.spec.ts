@@ -35,6 +35,24 @@ test('narrow: rail with word-label ribbon and flyover tray', async ({ page }) =>
   await expect(page.getByTestId('tray')).toBeHidden();
 });
 
+test('narrow: a rail chip deletes its set; the drawer has a close ×', async ({ page }) => {
+  // Lab feedback 2026-10: deleting a set meant opening the drawer and
+  // hovering a card, and the drawer had no visible way out but a scrim click.
+  await page.goto('/?fixture=1&narrow=1');
+  await expect(page.getByTestId('narrow-rail')).toBeVisible();
+  await page.getByTestId('rail-more').click();
+  await expect(page.getByTestId('tray')).toBeVisible();
+  await expect(page.getByTestId('tray-card-0')).toBeVisible();
+  await page.getByTestId('tray-close').click();
+  await expect(page.getByTestId('tray')).toBeHidden();
+  await expect(page.getByTestId('rail-more')).toBeFocused();   // focus goes back to ⋯
+
+  await expect(page.getByTestId('rail-del')).toHaveCount(1);
+  await page.getByTestId('rail-del').click();
+  await expect(page.getByTestId('rail-del')).toHaveCount(0);
+  await expect(page.getByTestId('narrow-rail')).toContainText('No data');
+});
+
 test('tray matrix ops (fixture-loaded set)', async ({ page }) => {
   await page.goto('/?fixture=1');
   const card0 = page.getByTestId('tray-card-0');

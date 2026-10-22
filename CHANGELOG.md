@@ -58,6 +58,12 @@ follows [semantic versioning](https://semver.org/).
   every set with time data, and picking one set acts on that set alone.
   Clean Impulse leaves out, and names, any set whose input channel does
   not look like an impulse; a resample of several sets has one **Undo**.
+- **On a narrow window, each rail chip has a ×, and the tray drawer has a
+  close button.** Deleting a set meant opening the drawer and hovering
+  over its card, and the drawer closed only on Esc or a click outside.
+  The chip's **×** deletes the set (or clears a modal fit, with Undo),
+  and a **×** on the drawer's edge closes it. On a touch screen a tray
+  card's **×** now shows all the time; it needed a hover before.
 - **The fit chip shows each mode's modal constant An and its phase φn**,
   as well as fn, ζ and Q: one line under the mode, or one per line when
   the fit spans several, labelled as in the legend.

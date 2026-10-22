@@ -9,7 +9,10 @@ page describes all four, so the stage pages ([Analysis](analysis.md),
 ## The dataset tray
 
 The tray lists every dataset with its name, duration and a stack of its
-channels. It is on the left in the wide layout.
+channels. It is on the left in the wide layout. On a narrow window it
+shrinks to a rail of numbered chips: click a chip to cycle its set, or
+its corner **×** to delete it (or clear the fit). **⋯** opens the full
+tray as a drawer; close it with its **×**, **Esc**, or a click outside.
 
 - **All** and **None** show or hide every line. **Solo** shows only the
   highlighted set, or only the highlighted channel when one set is
@@ -29,7 +32,8 @@ channels. It is on the left in the wide layout.
   faded and off in **all** sets at once.
 - **cal** (shown on hover) opens the [calibration dialog](calibration.md).
   **×** deletes the set. On the **Modal fit** card the **×** clears the
-  fit, and a message offers **Undo**.
+  fit, and a message offers **Undo**. On a touch screen, which cannot
+  hover, the **×** shows all the time.
 - **⚠ source changed** appears on a set whose saved FFT or transfer
   function was computed from earlier time data. Click it to recompute.
 

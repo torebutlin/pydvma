@@ -611,6 +611,13 @@
   .set-card:hover .xdel {
     display: inline-flex;
   }
+  /* No hover on a touch screen: show the × there all the time, or a set
+     could never be deleted. */
+  @media (hover: none) {
+    .xdel {
+      display: inline-flex;
+    }
+  }
   .xdel:hover {
     background: var(--danger-soft);
   }

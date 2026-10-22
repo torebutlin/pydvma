@@ -6,9 +6,12 @@
    *
    * It iterates `selection.setsView` (may be empty — a hint is shown
    * when there are no sets); clicking a set chip calls
-   * `selection.cycleSet(setId)`. The `⋯` control
-   * (`data-testid="rail-more"`) opens the full data tray as a flyover
-   * drawer over a scrim; Escape (or a scrim click) closes it.
+   * `selection.cycleSet(setId)`, and its corner `×` deletes the set (for
+   * the modal-fit card, clears the fit with Undo) exactly as the tray
+   * card's `×` does, so deleting needs no trip into the drawer. The `⋯`
+   * control (`data-testid="rail-more"`) opens the full data tray as a
+   * flyover drawer over a scrim; its `×` (`data-testid="tray-close"`),
+   * Escape or a scrim click closes it.
    *
    * The flyover drawer is the codebase's first modal dialog and sets the
    * a11y precedent: on open, focus moves into the drawer (which is
@@ -132,17 +135,26 @@
       <span class="rail-hint">No data</span>
     {:else}
       {#each $setsView as set (set.id)}
-        <button
-          class="rail-set"
-          class:off={set.allOff}
-          title={set.name}
-          onclick={() => selection.cycleSet(set.id)}
-        >
-          <span class="rs-swatches">
-            {#each set.colors as c}<i style="background:{c}"></i>{/each}
-          </span>
-          <span class="rs-idx">{set.index + 1}</span>
-        </button>
+        <div class="rail-set-wrap">
+          <button
+            class="rail-set"
+            class:off={set.allOff}
+            title={set.name}
+            onclick={() => selection.cycleSet(set.id)}
+          >
+            <span class="rs-swatches">
+              {#each set.colors as c}<i style="background:{c}"></i>{/each}
+            </span>
+            <span class="rs-idx">{set.index + 1}</span>
+          </button>
+          <button
+            class="rail-del"
+            data-testid="rail-del"
+            title={set.role === 'fit' ? 'Clear modal fit' : `Delete ${set.name}`}
+            aria-label={set.role === 'fit' ? 'Clear modal fit' : `Delete ${set.name}`}
+            onclick={() => (set.role === 'fit' && onDeleteFit ? onDeleteFit() : selection.removeSet(set.id))}
+          >×</button>
+        </div>
       {/each}
     {/if}
   </div>
@@ -192,6 +204,15 @@
     onkeydown={onDrawerKeydown}
   >
     <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {staleChains} {onRederive} {tfChIn} />
+    <!-- Sits on the drawer's outer edge, over the scrim, so it never crowds
+         the tray's own header; inside the dialog so the focus trap reaches it. -->
+    <button
+      class="flyover-close"
+      data-testid="tray-close"
+      title="Close the data tray (Esc)"
+      aria-label="Close data tray"
+      onclick={() => (open = false)}
+    >×</button>
   </div>
 {/if}
 
@@ -217,6 +238,8 @@
     flex: 0 1 auto;
     min-height: 0;
     width: 100%;
+    /* Room for each chip's corner × inside the scroll box, which clips. */
+    padding-top: 6px;
   }
   .rail-hint {
     font-size: 10.5px;
@@ -224,8 +247,36 @@
     text-align: center;
     padding: 6px 0;
   }
+  .rail-set-wrap {
+    position: relative;
+    flex: 0 0 auto;
+  }
+  /* Delete badge on the chip's top-right corner: always shown (the rail is
+     the narrow, often touch, layout, where nothing hovers). */
+  .rail-del {
+    position: absolute;
+    top: -6px;
+    right: -5px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .rail-del:hover {
+    color: var(--danger, #dc2626);
+    border-color: var(--danger, #dc2626);
+  }
   .rail-set {
-    width: 60px;
+    width: 54px;
     border: 2px solid var(--border);
     border-radius: 10px;
     background: var(--control-bg);
@@ -260,7 +311,7 @@
     border: 1px dashed var(--border-strong);
     background: var(--control-bg);
     border-radius: 8px;
-    width: 60px;
+    width: 54px;
     height: 24px;
     cursor: pointer;
     color: var(--muted);
@@ -327,5 +378,27 @@
   }
   .flyover:focus {
     outline: none;
+  }
+  .flyover-close {
+    position: absolute;
+    top: 10px;
+    left: calc(100% + 8px);
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+  }
+  .flyover-close:hover {
+    background: var(--hover-bg);
   }
 </style>
