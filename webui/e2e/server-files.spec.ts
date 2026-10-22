@@ -170,6 +170,12 @@ test.describe('served app: the working folder', () => {
   test('Choose location saves one file elsewhere without moving the working folder', async ({ page }) => {
     await open(page);
     await saveAs(page, 'run2', 'sub');
+    // The dialog closes before the server has written the file: wait for the
+    // Saved message, as the first test does. Reading the disk at once lost the
+    // race mid-suite, and the failed test's closing page then abandoned the
+    // write, so the next test found no run2.dvma to load.
+    await expect(page.getByTestId('toast').filter({ hasText: 'Saved' }))
+      .toContainText(path.join(notebookDir, 'sub', 'run2.dvma'));
     expect(fs.existsSync(path.join(notebookDir, 'sub', 'run2.dvma'))).toBe(true);
     await expect(page.getByTestId('workdir-chip')).toContainText(path.basename(notebookDir));
     expect(await notebookSaveDir()).toBe(notebookDir);
