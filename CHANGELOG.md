@@ -52,6 +52,11 @@ follows [semantic versioning](https://semver.org/).
   part showed, with nothing to say what it was. The miniature now has an
   outlined track, a faint trace of the spectrum, its end frequencies, and
   a shaded funnel joining the zoomed part to the strip below.
+- **Opening an NI stream no longer prints the recorder object.** A
+  leftover debug `print` in `streams.start_stream` put
+  `<pydvma.streams.Recorder_NI_nidaqmx object at 0x…>` into notebook
+  output (the 3C6 stepped-sine widget's, for one) each time it opened
+  or rebuilt the NI task.
 
 ## 2.7.0 — 2026-10-16
 

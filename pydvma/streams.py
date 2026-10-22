@@ -1018,7 +1018,6 @@ def start_stream(settings):
         REC_NI.__init__(settings)
         REC_NI.init_stream(settings)
         REC = REC_NI
-        print(REC)
     else:
         raise ValueError('Unknown driver: %r' % settings.device_driver)
         
