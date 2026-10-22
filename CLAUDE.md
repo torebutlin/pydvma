@@ -8,10 +8,22 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
-**v2.8.0 IS CUT (2026-10-22, Mac, after a restart) — the twine upload is
-Tore's, then tag `v2.8.0` at the cut commit and publish the GitHub release
-from `dist/RELEASE_NOTES_2.8.0.md` (Zenodo auto-archives) — tag/release
-AFTER the upload, then re-check trap 3 on the DOWNLOADED wheel.** MINOR:
+**v2.8.0 IS RELEASED END TO END (2026-10-22, Mac).** Tore uploaded with
+twine; PyPI's wheel and sdist are byte-identical to the verified build
+(sha256 9d76013b… / f6137be4…); tag `v2.8.0` is at the cut `4aeba45`
+(lightweight) and pushed; the GitHub release "v2.8.0" (Latest) carries
+the full CHANGELOG body and both files, so Zenodo archives it. Trap 3
+re-checked on the DOWNLOADED wheel: embedded `pydvma-2.8.0` engine wheel
+referenced by the bundled `index-rcc8MliI.js`, all 26 `pydvma/*.py`
+byte-identical to `4aeba45` in both the fat and the engine wheel. A clean
+venv installing `pydvma[serve]==2.8.0` from PyPI serves its own UI
+(engine wheel 200), greets `{v:1, pydvma:'2.8.0', journal:true}`, honours
+`launch(save_dir=)`, and `apply_settings` works. NB right after the
+upload pip saw no 2.8.0 for a minute (a stale CDN edge of the JSON simple
+index; `/pypi/pydvma/json`'s top-level "latest" also still said 2.7.1) —
+retry, or check the per-version JSON, before suspecting the upload. Lab
+install: `pip install --upgrade "pydvma[serve,soundcard]"`. Nothing is
+pending on the release side. MINOR:
 carries the cloud session's lab-feedback round that missed 2.7.1 (working
 folder `launch(save_dir=)` / `Session.save_dir` / `--save-dir` /
 `pydvma.savefolder`; Clean Impulse/Resample over all sets; fit chip
