@@ -38,6 +38,7 @@ This starts the server and opens the app in your browser at
 | `--driver {auto,soundcard,nidaq,mock}` | the device the app's **Default** entry records from. `auto` (the default) uses your computer's default input, or a built-in test signal if there is none; `mock` always uses the test signal |
 | `--settings FILE` | pre-fill Setup from a JSON file ([below](#pre-filling-setup)) |
 | `--port N` | listen on another port (default `8760`) |
+| `--save-dir DIR` | the app's starting [working folder](export.md#where-files-go), where Save and Load open (default: the folder you run the command in) |
 | `--session-dir DIR` | where the session file is kept (default: the system temp folder) |
 
 The server only accepts connections from your own machine. Run
@@ -59,6 +60,10 @@ A browser tab opens on the app with **Setup** filled in from `settings`.
 The address is printed and is also `session.url`. The server runs in the
 background inside your Python process, so the notebook stays usable and
 it works the same from a plain script.
+
+Saves from the app go into the notebook's own folder by default; see
+[where files go](export.md#where-files-go). `session.save_dir` is that
+folder, and `launch(save_dir=...)` starts somewhere else.
 
 `launch` takes a few optional arguments: `open_browser=False` starts
 without opening a tab, and `port=8760` uses a fixed port (for a

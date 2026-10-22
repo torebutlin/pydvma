@@ -468,7 +468,44 @@ class EngineWorker:
 PROGRESS_MIN_INTERVAL_S = 0.1
 
 
-async def handle_connection(websocket, journal=None):
+#: The working-folder ops (`pydvma.savefolder.SaveFolder`), answered inline
+#: like the journal ops when the server has a folder and the page is the
+#: served app itself.
+FILE_OPS = ('files_info', 'files_list', 'files_set_dir', 'files_save',
+            'files_read')
+
+
+def _request_header(websocket, name):
+    """A header of the websocket's opening request, or None (bare harness)."""
+    request = getattr(websocket, 'request', None)
+    headers = getattr(request, 'headers', None)
+    if headers is None:
+        return None
+    try:
+        return headers.get(name)
+    except Exception:
+        return None
+
+
+def _file_op(folder, op, payload):
+    """Run one working-folder op against ``folder``; returns its result dict.
+
+    Raises ``ValueError`` (with a user-facing message) for a refused or
+    failed op; the caller turns that into an ``ok: False`` reply.
+    """
+    if op == 'files_info':
+        return folder.info()
+    if op == 'files_list':
+        return folder.listing(payload.get('dir') or None)
+    if op == 'files_set_dir':
+        return folder.set_dir(str(payload.get('dir') or ''))
+    if op == 'files_save':
+        return folder.save(payload.get('name'), payload.get('data'),
+                           overwrite=bool(payload.get('overwrite')))
+    return folder.read(str(payload.get('path') or ''))
+
+
+async def handle_connection(websocket, journal=None, save_folder=None):
     """Serve one /engine connection: greeting, then serial op frames.
 
     ``journal`` is the serve process's :class:`pydvma.journal.
@@ -485,6 +522,14 @@ async def handle_connection(websocket, journal=None):
     present at all is advertised in the greeting as ``journal`` (see the
     ``engine_ready`` send below), which is how the app decides whether to
     use the journal ops without ever opening the ``/ws`` bridge socket.
+
+    ``save_folder`` is the server's `pydvma.savefolder.SaveFolder` (the
+    app's working folder) -- when given AND the page is the served app
+    itself (`pydvma.savefolder.is_local_app_request` on this request's
+    ``Origin`` and ``Host``), the `FILE_OPS` are answered inline too, and
+    the greeting says ``files: true``. Otherwise they get an ``ok: False``
+    reply, so a page from another site cannot read or write files even if
+    it opens this socket.
 
     One :class:`EngineWorker` per connection (one app tab is the expected
     client). Closing the socket is the client's Stop -- and, crucially,
@@ -528,6 +573,9 @@ async def handle_connection(websocket, journal=None):
     # Hoisted out of the try (rather than set as its first statement) so a
     # future early raise there can never leave the finally's read unbound.
     unsubscribe_journal = None
+    from pydvma.savefolder import is_local_app_request
+    files_ok = save_folder is not None and is_local_app_request(
+        _request_header(websocket, 'Origin'), _request_header(websocket, 'Host'))
     try:
         try:
             await websocket.send(json.dumps({
@@ -545,6 +593,10 @@ async def handle_connection(websocket, journal=None):
                 # (worker/socketClient.ts) reads anything but ``true`` as
                 # "no journal here" and never sends a journal op.
                 'journal': journal is not None,
+                # Working-folder capability (pydvma.savefolder): true only
+                # for the served app itself, so the app reads anything else
+                # as "use browser downloads".
+                'files': files_ok,
             }))
         except ConnectionClosed:
             return  # closed before the greeting landed -- nothing to serve
@@ -625,6 +677,26 @@ async def handle_connection(websocket, journal=None):
                     reply = {'id': rid, 'ok': True,
                              'result': {'doc': doc, 'captures': captures,
                                         'recovered': journal.recovered()}}
+                try:
+                    await websocket.send(encode_frame(reply))
+                except ConnectionClosed:
+                    break
+                continue
+
+            # Working-folder ops -- host-state ops too, answered here.
+            if op in FILE_OPS:
+                if not files_ok:
+                    reply = {'id': rid, 'ok': False,
+                             'error': 'file access is not available to this page'}
+                else:
+                    try:
+                        # Disk I/O, off the loop (same reasoning as the
+                        # journal's spill above).
+                        result = await loop.run_in_executor(
+                            None, _file_op, save_folder, op, payload)
+                        reply = {'id': rid, 'ok': True, 'result': result}
+                    except ValueError as e:
+                        reply = {'id': rid, 'ok': False, 'error': str(e)}
                 try:
                     await websocket.send(encode_frame(reply))
                 except ConnectionClosed:

@@ -30,6 +30,7 @@
   import EngineProbe from './components/EngineProbe.svelte';
   import ToastHost from './components/ToastHost.svelte';
   import SonoIncludeDialog from './components/SonoIncludeDialog.svelte';
+  import FileDialog from './components/FileDialog.svelte';
   import { activeStage, capabilities } from './lib/stores/stages';
   import { createViewState, type ViewId } from './lib/stores/viewstate';
   import { createSelection } from './lib/stores/selection';
@@ -37,6 +38,8 @@
   import {
     createEngineStore, journalAvailable, journalDiscardRecovered, journalGet,
     journalSet, onJournalUpdate, type JournalState,
+    filesAvailable, filesInfo, filesList, filesRead, filesSave, filesSetDir,
+    type FolderInfo,
   } from './lib/stores/engine';
   import { willUseNativeEngine } from './lib/worker/selectEngine';
   import { createToasts } from './lib/stores/toast';
@@ -56,7 +59,7 @@
   import { legendOverlaySvg } from './lib/export/legendOverlay';
   import { exportBytes, type Exporter } from './lib/export/data';
   import { sniffFormat } from './lib/files/sniff';
-  import { fallbackDir, pickWorkDir, restoreWorkDir, type WorkDir } from './lib/files/workdir';
+  import { fallbackDir, pickWorkDir, restoreWorkDir, serverDir, type WorkDir } from './lib/files/workdir';
   import {
     autosave, clearAutosave, journalPost, restoreOffer,
     setJournalOverflowNotice, setJournalSink,
@@ -150,7 +153,7 @@
    * path Save Figure uses, so a chart PNG / band CSV lands next to the
    * figures and datasets.
    */
-  const saveDampingFile = (name: string, bytes: Uint8Array): Promise<void> =>
+  const saveDampingFile = (name: string, bytes: Uint8Array): Promise<string | null> =>
     (workdir ?? fallbackDir()).save(name, bytes);
   const notifyDamping = (message: string, level: 'success' | 'error'): void => {
     toasts.push(message, { level });
@@ -211,6 +214,7 @@
   // Null until restored/picked → the pipeline falls back to download/upload.
   let workdir = $state<WorkDir | null>(null);
   const workdirName = $derived(workdir?.name ?? 'Downloads');
+  const workdirPath = $derived(workdir?.path ?? null);
   // Autosave defaults ON; every dataset mutation schedules a debounced write.
   let autosaveEnabled = $state(true);
   // The current dataset (subscribed below to drive autosave).
@@ -514,6 +518,10 @@
     // Both are best-effort and never block the shell. Skipped under
     // ?fixture=1 so the e2e fixture load is not clobbered by a restore.
     if (!fixtureRequested) void bootFileRestore();
+    // Served by pydvma-serve / dvma.launch: the server's working folder (the
+    // notebook's folder, by default) wins over any browser folder. Not a
+    // restore, so it runs under ?fixture=1 too.
+    void adoptServerFolder().catch((e) => console.warn('[workdir] server folder unavailable:', e));
 
     // Autosave: on every dataset mutation, schedule a debounced write. Pass a
     // THUNK, not bytes — writeDvma (a full zip serialize) then runs once when
@@ -747,10 +755,11 @@
   async function bootFileRestore(): Promise<void> {
     try {
       const dir = await restoreWorkDir();
-      if (dir) workdir = dir;
+      if (dir && workdir?.kind !== 'server') workdir = dir;
     } catch (e) {
       console.warn('[workdir] restore failed:', e);
     }
+
     // The server copy wins when there is one (see offerJournalRestore).
     try {
       if (await offerJournalRestore()) return;
@@ -923,6 +932,70 @@
     return new Promise<SonoSaveChoice>((resolve) => { sonoAsk = { names, resolve }; });
   }
 
+  /**
+   * The pending file dialog (served mode only), or `null`: what it is for,
+   * and the resolver the awaiting save / load / folder pick continues with.
+   * Set only by {@link askFile}; every exit (confirm, cancel, Escape, a
+   * backdrop click) clears it and resolves.
+   */
+  let fileAsk = $state<{
+    mode: 'save' | 'open' | 'folder'; title: string; suggested: string;
+    resolve: (path: string | null) => void;
+  } | null>(null);
+  /** The server's working folder, as the dialog opens on it. */
+  let serverFolder = $state<FolderInfo | null>(null);
+
+  /** Raise the file dialog; resolves the chosen absolute path, or null. */
+  function askFile(mode: 'save' | 'open' | 'folder', title: string, suggested = ''): Promise<string | null> {
+    fileAsk?.resolve(null);       // never strand an earlier caller (cf. askSonoChoice)
+    return new Promise((resolve) => { fileAsk = { mode, title, suggested, resolve }; });
+  }
+
+  /**
+   * Write `bytes` to `target` on the serving machine, asking before
+   * replacing an existing file. Resolves the full path written, or null when
+   * the user declined to replace.
+   */
+  async function serverWrite(target: string, bytes: Uint8Array): Promise<string | null> {
+    let r = await filesSave(target, bytes, false);
+    if (!r.saved && r.exists) {
+      if (!window.confirm(`${r.path} already exists. Replace it?`)) return null;
+      r = await filesSave(target, bytes, true);
+    }
+    return r.path;
+  }
+
+  /** The working folder as the app's WorkDir (Save/Load/exports/figures). */
+  function makeServerDir(info: FolderInfo): WorkDir {
+    serverFolder = info;
+    return serverDir({
+      info,
+      save: filesSave,
+      read: filesRead,
+      askSave: (suggested) => askFile('save', 'Save file', suggested),
+      askOpen: () => askFile('open', 'Load data'),
+      confirmReplace: (path) => window.confirm(`${path} already exists. Replace it?`),
+    });
+  }
+
+  /**
+   * Use the server's working folder when the app is served by a
+   * `pydvma-serve` / `dvma.launch` that offers it (native engine, greeting
+   * `files: true`). Same gating as {@link offerJournalRestore}: nothing is
+   * booted unless this session would be native anyway.
+   */
+  async function adoptServerFolder(): Promise<void> {
+    if (engineProbeRequested) return;
+    if (!(await willUseNativeEngine())) return;
+    engine.boot();
+    if (await engine.whenResolved() !== 'native') return;
+    if (!filesAvailable()) return;
+    // Wins over a browser folder `bootFileRestore` may restore meanwhile:
+    // whichever finishes last would otherwise decide, so the restore below
+    // checks for a server folder before it applies its own.
+    workdir = makeServerDir(await filesInfo());
+  }
+
   /** Default save filename: pydvma_YYYY-MM-DD_HHMM.dvma from the clock. */
   function defaultSaveName(now: Date): string {
     const p = (n: number) => String(n).padStart(2, '0');
@@ -996,14 +1069,26 @@
       return;
     }
     const suggested = defaultSaveName(new Date());
-    const name = window.prompt('Save dataset as…', suggested);
+    // Served mode: the file dialog (name, working folder, Choose location…)
+    // instead of the browser's bare prompt; the path it returns is absolute.
+    const server = workdir?.kind === 'server';
+    const name = server
+      ? await askFile('save', 'Save dataset', suggested)
+      : window.prompt('Save dataset as…', suggested);
     if (!name) return; // cancelled
     const filename = name.toLowerCase().endsWith('.dvma') ? name : `${name}.dvma`;
     try {
       const doc = await buildDocument(setIds);
       const bytes = writeDvma(doc);
-      const dir = workdir ?? fallbackDir();
-      await dir.save(filename, bytes);
+      let savedAs: string = filename;
+      if (server) {
+        const where = await serverWrite(filename, bytes);
+        if (where === null) return;   // declined to replace: nothing saved
+        savedAs = where;
+      } else {
+        const dir = workdir ?? fallbackDir();
+        await dir.save(filename, bytes);
+      }
       // A SUBSET save is not the whole session, so it must not supersede the
       // autosave that still holds it (only a full save does).
       const partial = doc !== ds;
@@ -1024,7 +1109,7 @@
       if (!partial) await clearAutosave();
       const total = partial ? actions.choosableSets().length : 0;
       toasts.push(
-        partial ? `Saved ${filename} (${setIds?.length ?? 0} of ${total} sets)` : `Saved ${filename}`,
+        partial ? `Saved ${savedAs} (${setIds?.length ?? 0} of ${total} sets)` : `Saved ${savedAs}`,
         { level: 'success' },
       );
     } catch (e) {
@@ -1032,8 +1117,23 @@
     }
   };
 
-  /** Working-dir chip: (re)pick a folder (or fall back to download mode). */
+  /**
+   * Working-dir chip: (re)pick a folder (or fall back to download mode). In
+   * served mode it chooses the server's working folder — the only control
+   * that moves it (the Save / Load dialogs browse without moving it).
+   */
   const onpickdir = async () => {
+    if (workdir?.kind === 'server') {
+      const dir = await askFile('folder', 'Working folder');
+      if (!dir) return;
+      try {
+        workdir = makeServerDir(await filesSetDir(dir));
+        toasts.push(`Working folder: ${workdir.path}`, { level: 'success' });
+      } catch (e) {
+        toasts.push(`Could not use that folder: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+      }
+      return;
+    }
     workdir = await pickWorkDir();
     if (workdir.kind === 'fsaccess') {
       toasts.push(`Working folder: ${workdir.name}`, { level: 'success' });
@@ -1579,6 +1679,7 @@
   <Header
     summary={hasData ? `${setArrays.length} set${setArrays.length === 1 ? '' : 's'}` : 'no data'}
     {workdirName}
+    {workdirPath}
     {onload}
     {onsave}
     onsavefigure={() => activeStage.set('export')}
@@ -1776,6 +1877,21 @@
       setNames={sonoAsk.names}
       onchoose={(choice) => { const a = sonoAsk!; sonoAsk = null; a.resolve(choice); }}
     />
+  {/if}
+
+  <!-- The served app's file dialog (Save / Load / working folder). -->
+  {#if fileAsk && serverFolder}
+    {#key fileAsk}
+      <FileDialog
+        mode={fileAsk.mode}
+        title={fileAsk.title}
+        suggested={fileAsk.suggested}
+        workingDir={serverFolder}
+        list={filesList}
+        onconfirm={(path) => { const a = fileAsk!; fileAsk = null; a.resolve(path); }}
+        oncancel={() => { const a = fileAsk!; fileAsk = null; a.resolve(null); }}
+      />
+    {/key}
   {/if}
 
   <ToastHost {toasts} />

@@ -314,6 +314,7 @@ from . import container
 from . import datastructure
 from . import engine_host
 from . import journal as journal_mod
+from . import savefolder as savefolder_mod
 from . import options
 from . import streams
 from . import _ni_backend
@@ -1659,6 +1660,10 @@ class BridgeServer:
             the startup scan entirely — for tests that construct many
             short-lived servers against a shared ``session_dir`` and
             don't want one run adopting another's leftovers.
+        save_dir: the app's starting WORKING FOLDER — where Save and Load
+            open, see :mod:`pydvma.savefolder` — or ``None`` for the
+            current working directory (for `pydvma.launch`, the
+            notebook's folder). Must exist.
 
     Attributes:
         journal: this process's :class:`pydvma.journal.SessionJournal`
@@ -1673,6 +1678,8 @@ class BridgeServer:
             argument (see above) — where the spill file is written
             (:meth:`run`) and where recovery is scanned from
             (:func:`_adopt_previous_session`).
+        save_folder: the :class:`pydvma.savefolder.SaveFolder` holding the
+            app's working folder, shared by every ``/engine`` connection.
         recovered_session_path: the :class:`pathlib.Path` adopted for
             recovery at startup, or ``None`` — the return value of
             :func:`_adopt_previous_session`, kept so callers (``main``)
@@ -1682,7 +1689,8 @@ class BridgeServer:
     def __init__(self, *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                  ui_dir: Path | None = None, settings_json: dict | None = None,
                  default_driver: str = 'mock',
-                 session_dir: Path | str | None = None, recover: bool = True):
+                 session_dir: Path | str | None = None, recover: bool = True,
+                 save_dir: Path | str | None = None):
         self.host = host
         self.port = port
         self.ui_dir = ui_dir
@@ -1692,6 +1700,7 @@ class BridgeServer:
         self.session_dir = (Path(session_dir) if session_dir is not None
                             else Path(tempfile.gettempdir()))
         self.journal = journal_mod.SessionJournal()
+        self.save_folder = savefolder_mod.SaveFolder(save_dir)
         # One `_Connection` per open app tab (its /ws socket), for
         # `apply_settings` to reach them all. Touched only on the loop.
         self._connections = set()
@@ -1779,7 +1788,8 @@ class BridgeServer:
         """
         path = websocket.request.path.split('?', 1)[0]
         if path == '/engine':
-            await engine_host.handle_connection(websocket, journal=self.journal)
+            await engine_host.handle_connection(
+                websocket, journal=self.journal, save_folder=self.save_folder)
             return
         conn = _Connection(websocket, journal=self.journal)
         self._connections.add(conn)
@@ -2740,6 +2750,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              '(default: the system temp dir). Mainly for '
                              'tests/e2e, to isolate a run\'s spill files '
                              'from a real serve session\'s.')
+    parser.add_argument('--save-dir', default=None,
+                        help='the app\'s starting working folder, where Save '
+                             'and Load open (default: the folder this '
+                             'command is run from)')
     parser.add_argument('--driver', default='auto',
                         choices=['auto', 'mock', 'soundcard', 'nidaq'],
                         help="device_driver for configure messages that omit "
@@ -2781,11 +2795,14 @@ def main(argv=None) -> int:
 
     settings_json = _load_settings_file(args.settings) if args.settings else {}
 
-    server = BridgeServer(
-        host=args.host, port=args.port, ui_dir=ui_dir,
-        settings_json=settings_json, default_driver=args.driver,
-        session_dir=args.session_dir,
-    )
+    try:
+        server = BridgeServer(
+            host=args.host, port=args.port, ui_dir=ui_dir,
+            settings_json=settings_json, default_driver=args.driver,
+            session_dir=args.session_dir, save_dir=args.save_dir,
+        )
+    except ValueError as exc:                # a --save-dir that is not a folder
+        raise SystemExit(str(exc))
 
     url = 'http://%s:%d/' % (args.host, args.port)
     print('pydvma serve listening on %s (ws at %s/ws, driver=%s)'
@@ -2795,6 +2812,8 @@ def main(argv=None) -> int:
               'Build webui/dist or pass --ui-dir.', file=sys.stderr)
     else:
         print('  serving UI from %s' % ui_dir, file=sys.stderr)
+    print('  working folder (Save and Load): %s' % server.save_folder.path,
+          file=sys.stderr)
     if server.recovered_session_path is not None:
         # Adopted at BridgeServer construction time, well before bind --
         # the app's recovery flow is where the operator actually acts on

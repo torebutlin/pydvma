@@ -232,11 +232,31 @@ of a Bode plot; and the heat map of a sonogram.
 
 ## Where files go
 
-The folder button in the header names your working folder, or reads
-**Downloads**. Click it to choose a folder. In Chrome, Edge and other
-Chromium-based browsers the app then writes saves, exports, figures and
-the autosave into that folder. Other browsers, or no folder chosen,
-download each file through the browser instead.
+The folder button in the header names your **working folder**: where
+saves, exports and figures go, and where **Load Data** looks.
+
+**Served locally** ([`pydvma-serve` or `dvma.launch`](running-locally.md)),
+the working folder is a real folder on your computer. It starts as the
+folder you started from: for `dvma.launch`, the notebook's own folder, so
+saved files sit next to the notebook and load back by name; for
+`pydvma-serve`, the folder you ran it in. Saving opens a dialog with the
+file name and the working folder:
+
+- **Save** writes into the working folder;
+- **Choose location…** browses to another folder for this one file. The
+  working folder stays where it is.
+
+The app asks before replacing an existing file. **Load Data** opens the
+same browser in the working folder, listing the data files there.
+Click the folder button to change the working folder itself; in a
+notebook, `session.save_dir` reads it (and sets it).
+
+**In the browser-only app**, the folder button reads **Downloads**.
+Click it to choose a folder: in Chrome, Edge and other Chromium-based
+browsers the app then writes saves, exports, figures and the autosave
+into that folder. Other browsers, or no folder chosen, download each file
+through the browser instead, where your browser's own download settings
+decide the folder.
 
 ## Opening files
 

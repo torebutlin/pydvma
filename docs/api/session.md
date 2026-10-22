@@ -27,3 +27,15 @@ the `/engine` socket. Normally used through `Session` rather than
 directly.
 
 ::: pydvma.journal.SessionJournal
+
+## The Working Folder
+
+Where the served app saves and loads by default: the folder the server
+started in, which for `dvma.launch` is the notebook's own folder. Held
+by `pydvma.serve.BridgeServer`; the app reads, lists and writes it over
+the `/engine` socket, and `Session.save_dir` reads and sets it from the
+notebook.
+
+::: pydvma.savefolder.SaveFolder
+
+::: pydvma.savefolder.is_local_app_request

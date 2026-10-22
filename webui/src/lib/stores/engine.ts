@@ -275,6 +275,81 @@ export function onJournalUpdate(cb: () => void): (() => void) | null {
   return journalClient?.onJournalUpdate?.(cb) ?? null;
 }
 
+// --- working folder (pydvma.savefolder) --------------------------------------
+
+/**
+ * The live engine client whose server offers its WORKING FOLDER to this page
+ * (greeting `files: true`: a native `pydvma-serve` / `dvma.launch` host, and
+ * this page is the served app itself), or null. Registered by `boot()` beside
+ * `journalClient`, for the same module-level reasons.
+ */
+let filesClient: EngineClient | null = null;
+
+/** The server's working folder, as `files_info` reports it. */
+export interface FolderInfo {
+  /** Absolute path. */
+  dir: string;
+  /** Its last part (or the whole path at a root) — the header pill's label. */
+  name: string;
+  /** The serving system's path separator. */
+  sep: string;
+}
+
+/** One folder's contents, as `files_list` reports it. */
+export interface FolderListing {
+  dir: string;
+  /** The parent folder, or null at a drive/filesystem root. */
+  parent: string | null;
+  folders: string[];
+  /** Loadable data files there (.dvma/.mat/.csv/.npy). */
+  files: string[];
+}
+
+/** What `files_save` did. `saved: false` + `exists: true` means "ask first". */
+export interface SaveResult { path: string; saved: boolean; exists: boolean; }
+
+/** True when the server's working folder is available to this page. */
+export function filesAvailable(): boolean {
+  return filesClient !== null;
+}
+
+function requireFiles(): EngineClient {
+  if (!filesClient) throw new Error('no working folder on this engine');
+  return filesClient;
+}
+
+/** The working folder (`files_info`). */
+export async function filesInfo(): Promise<FolderInfo> {
+  return await requireFiles().call<FolderInfo>('files_info');
+}
+
+/** List a folder (default: the working folder) without changing anything. */
+export async function filesList(dir?: string): Promise<FolderListing> {
+  return await requireFiles().call<FolderListing>('files_list', dir ? { dir } : {});
+}
+
+/** Make `dir` the working folder (the header pill); resolves the new folder. */
+export async function filesSetDir(dir: string): Promise<FolderInfo> {
+  return await requireFiles().call<FolderInfo>('files_set_dir', { dir });
+}
+
+/**
+ * Write `bytes` as `name` — a file name in the working folder, or a path
+ * relative to it, or an absolute path (a one-off location). Never replaces
+ * an existing file unless `overwrite`; check `exists`/`saved`.
+ */
+export async function filesSave(name: string, bytes: Uint8Array, overwrite = false): Promise<SaveResult> {
+  return await requireFiles().call<SaveResult>('files_save', { name, data: bytes, overwrite });
+}
+
+/** Read a loadable data file (absolute, or relative to the working folder). */
+export async function filesRead(path: string): Promise<{ name: string; path: string; bytes: Uint8Array }> {
+  const res = await requireFiles().call<Record<string, unknown>>('files_read', { path });
+  const bytes = asBytes(res?.data);
+  if (!bytes) throw new Error(`could not read ${path}`);
+  return { name: String(res?.name ?? path), path: String(res?.path ?? path), bytes };
+}
+
 /** Wheel filenames the worker micropip-installs (served from /pypi/). */
 export const ENGINE_WHEELS = ['pydvma-2.7.0-py3-none-any.whl', 'PeakUtils-1.3.5-py3-none-any.whl'];
 
@@ -529,6 +604,7 @@ export function createEngineStore(
         // `host.set` below, whose subscribers (`whenResolved`) read it the
         // moment they wake.
         journalClient = (resolved.host === 'native' && resolved.journal) ? client : null;
+        filesClient = (resolved.host === 'native' && resolved.files) ? client : null;
         host.set(resolved.host);
         hostNote.set(resolved.note ?? null);
         pydvmaVersion.set(resolved.pydvmaVersion ?? null);

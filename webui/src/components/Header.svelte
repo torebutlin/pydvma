@@ -20,6 +20,7 @@
   let {
     summary = 'no data',
     workdirName = 'Downloads',
+    workdirPath = null,
     onload = () => {},
     onsave = () => {},
     onsavefigure = () => {},
@@ -33,6 +34,8 @@
     summary?: string;
     /** Working-directory chip label: folder name, or "Downloads" (fallback). */
     workdirName?: string;
+    /** The working folder's full path when known (served mode) — the chip's tooltip. */
+    workdirPath?: string | null;
     /** Fired by the Load Data button (App wires the load pipeline). */
     onload?: () => void;
     /**
@@ -74,7 +77,9 @@
   <button
     class="chipbtn dir"
     data-testid="workdir-chip"
-    title="Working folder — where Save Dataset writes and autosave persists. Click to choose."
+    title={workdirPath
+      ? `Working folder: ${workdirPath}\nSave and Load open here. Click to choose another.`
+      : 'Working folder — where Save Dataset writes and autosave persists. Click to choose.'}
     onclick={onpickdir}
   ><span class="dir-ico" aria-hidden="true">▾</span>{workdirName}</button>
 

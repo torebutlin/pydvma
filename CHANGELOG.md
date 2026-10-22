@@ -5,6 +5,21 @@ follows [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- **Served locally, the app saves and loads in a working folder on your
+  computer.** With `dvma.launch` or `pydvma-serve`, Save Dataset, the
+  exports and Save Figure used to hand the browser a download, which Edge
+  put in Downloads without asking. They now open a save dialog on the
+  **working folder**, which starts as the notebook's folder for
+  `dvma.launch` and the current folder for `pydvma-serve`. **Choose
+  location…** saves one file elsewhere without moving it, an existing
+  file is never replaced without asking, and Load Data opens in the same
+  folder. The header's folder button moves the working folder. New:
+  `launch(save_dir=...)`, `Session.save_dir`, `pydvma-serve --save-dir`,
+  and `pydvma.savefolder`. Only the served app itself can use the folder:
+  another web page open in the same browser is refused.
+
 ### Changed
 
 - **The frequency navigator's buttons are labelled in words.** The bare

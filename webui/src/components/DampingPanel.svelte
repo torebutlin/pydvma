@@ -65,7 +65,8 @@
     /** Wide-screen layout: right-hand column with stacked, expandable charts. */
     side?: boolean;
     /** Deliver a saved file (workdir or download — App wires the same path Save Figure uses). */
-    onsavefile: (name: string, bytes: Uint8Array) => Promise<void>;
+    /** Resolves where the file went, or null when the user cancelled the save. */
+    onsavefile: (name: string, bytes: Uint8Array) => Promise<string | null | void>;
     /** Toast feedback for saves. */
     notify: (message: string, level: 'success' | 'error') => void;
   } = $props();
@@ -199,8 +200,8 @@
       // Figure opens with; the charts' CHROME-hex chrome restyles identically.
       const blob = await exportPng(svg.outerHTML, 'white');
       const name = `damping-${id}_${stamp()}.png`;
-      await onsavefile(name, new Uint8Array(await blob.arrayBuffer()));
-      notify(`Saved ${name}`, 'success');
+      const where = await onsavefile(name, new Uint8Array(await blob.arrayBuffer()));
+      if (where !== null) notify(`Saved ${where ?? name}`, 'success');
     } catch (e) {
       notify(`Chart save failed: ${e instanceof Error ? e.message : e}`, 'error');
     } finally {
@@ -223,8 +224,8 @@
     saving = true;
     try {
       const name = `damping-bands_${stamp()}.csv`;
-      await onsavefile(name, new TextEncoder().encode(bandsCsv(dmp.bands)));
-      notify(`Saved ${name}`, 'success');
+      const where = await onsavefile(name, new TextEncoder().encode(bandsCsv(dmp.bands)));
+      if (where !== null) notify(`Saved ${where ?? name}`, 'success');
     } catch (e) {
       notify(`CSV save failed: ${e instanceof Error ? e.message : e}`, 'error');
     } finally {

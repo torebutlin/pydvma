@@ -452,6 +452,24 @@ class Session(object):
         self._closed = False
         self._close_lock = threading.Lock()
 
+    @property
+    def save_dir(self):
+        """The app's working folder, where Save and Load open.
+
+        Starts as `launch`'s ``save_dir`` (by default the notebook's
+        folder) and follows the folder pill in the app, so after a save
+        ``dvma.load_data(session.save_dir / name)`` finds the file.
+
+        Returns:
+            save_dir (pathlib.Path): the absolute folder path.
+        """
+        return self._server.save_folder.path
+
+    @save_dir.setter
+    def save_dir(self, path):
+        """Set the working folder from the notebook (it must exist)."""
+        self._server.save_folder.set_dir(path)
+
     def __repr__(self):
         """Notebook-facing summary: URL, driver, and open/closed."""
         state = 'closed' if (self._closed or not self._thread.is_alive()) \
@@ -707,7 +725,7 @@ class Session(object):
 
 def launch(settings=None, open_browser=True, port=0, ui_dir=None,
            session_dir=None, recover=True, *, window=_UNSET,
-           tf_averaging=_UNSET):
+           tf_averaging=_UNSET, save_dir=None):
     """Start a pydvma session and return its `Session` handle.
 
     Runs the same server as ``pydvma-serve`` — acquisition bridge,
@@ -755,6 +773,11 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
             `Session.apply_settings`. Omit for the app's own default.
         tf_averaging (str): TF averaging mode for new data sets, as in
             `Session.apply_settings`. Omit for the app's own default.
+        save_dir (str or pathlib.Path or None): the app's starting working
+            folder, where Save and Load open. ``None`` (default) is the
+            current working directory, which in Jupyter is the notebook's
+            own folder, so saved files sit beside the notebook. The app's
+            folder pill changes it; read it back with `Session.save_dir`.
 
     Returns:
         session (Session): The handle for the running server. Its `url` is the
@@ -762,7 +785,8 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
             `Session.apply_settings`.
 
     Raises:
-        ValueError: An unknown ``window`` or ``tf_averaging``.
+        ValueError: An unknown ``window`` or ``tf_averaging``, or a
+            ``save_dir`` that is not an existing folder.
         ImportError: The optional server dependencies are missing; the
             message names ``pip install pydvma[serve]``.
         RuntimeError: The server did not bind within
@@ -799,7 +823,8 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
         port=port, ui_dir=resolved_ui_dir,
         settings_json=_merge_config({}, _settings_to_config_json(settings),
                                     analysis),
-        default_driver=driver, session_dir=session_dir, recover=recover)
+        default_driver=driver, session_dir=session_dir, recover=recover,
+        save_dir=save_dir)
 
     ready = threading.Event()
     failure = []
@@ -829,6 +854,7 @@ def launch(settings=None, open_browser=True, port=0, ui_dir=None,
           % (url, url.rstrip('/'), shown))
     if default_note:
         print('  ' + default_note)
+    print('  working folder (Save and Load): %s' % server.save_folder.path)
     if resolved_ui_dir is None:
         print('  no built UI found; serving the bridge + a help page. '
               'Build webui/dist or pass ui_dir=...')

@@ -62,6 +62,13 @@ export interface ResolvedEngine {
    * behaves exactly as it did before stage 3 (IndexedDB autosave only).
    */
   journal?: boolean;
+  /**
+   * Whether the native host offers its WORKING FOLDER to this page
+   * (`SocketEngineClient.filesSupported`, the greeting's `files` field) —
+   * saving and loading on the serving machine's disk. `undefined` on the
+   * pyodide path.
+   */
+  files?: boolean;
 }
 
 /**
@@ -213,6 +220,7 @@ async function tryNative(url: string): Promise<ResolvedEngine | null> {
       host: 'native',
       pydvmaVersion: client.pydvmaVersion ?? undefined,
       journal: client.journalSupported,
+      files: client.filesSupported,
     };
   } catch (e) {
     console.warn('[engine-socket] native engine probe failed:', e);

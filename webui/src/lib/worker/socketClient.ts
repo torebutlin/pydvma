@@ -94,6 +94,8 @@ interface Pending { op: string; resolve: (v: any) => void; reject: (e: any) => v
 export interface SocketEngineClient extends EngineClient {
   readonly pydvmaVersion: string | null;
   readonly journalSupported: boolean;
+  /** Whether the greeted server answers the working-folder `files_*` ops. */
+  readonly filesSupported: boolean;
   onJournalUpdate(cb: () => void): () => void;
 }
 
@@ -125,6 +127,10 @@ export function createSocketEngineClient(
   // reconnect to a DIFFERENT server (a serve restarted without the journal)
   // cannot leave a stale `true` behind.
   let journalSupported = false;
+  // Whether this page may use the server's working folder (`files_*` ops,
+  // pydvma.savefolder) -- the greeting's `files`, true only for the served
+  // app itself. Re-read on every greeting, like `journalSupported`.
+  let filesSupported = false;
   /**
    * Subscribers to server-initiated journal updates (`{"type":"journal"}`
    * text frames — a notebook `Session.push`). Per-INSTANCE, not module-level:
@@ -361,6 +367,7 @@ export function createSocketEngineClient(
         // exactly what a pre-journal serve of the same protocol version
         // sends. See SocketEngineClient's docstring.
         journalSupported = msg.journal === true;
+        filesSupported = msg.files === true;
         if (pydvmaVersion) console.info('[engine-socket] native engine: pydvma ' + pydvmaVersion);
         // Steady-state handlers take over only now that init is done.
         sock.onmessage = (ev: { data: unknown }) => handleMessage(ev.data);
@@ -381,6 +388,9 @@ export function createSocketEngineClient(
 
     /** Whether the greeted server answers journal ops (false pre-greeting). */
     get journalSupported(): boolean { return journalSupported; },
+
+    /** Whether the greeted server answers working-folder ops (false pre-greeting). */
+    get filesSupported(): boolean { return filesSupported; },
 
     onJournalUpdate(cb: () => void): () => void {
       journalSubs.add(cb);

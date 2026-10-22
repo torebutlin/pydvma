@@ -141,11 +141,12 @@
   /**
    * Write `bytes` as `name` via the working dir, or fall back to a browser
    * download when no folder is set. Mirrors App.svelte's save path so a
-   * figure lands in the same place as a dataset.
+   * figure lands in the same place as a dataset. Resolves where it went, or
+   * null when the user cancelled (the served app's Save dialog).
    */
-  async function write(name: string, bytes: Uint8Array): Promise<void> {
+  async function write(name: string, bytes: Uint8Array): Promise<string | null> {
     if (workdir) {
-      await workdir.save(name, bytes);
+      return await workdir.save(name, bytes);
     } else {
       // Fallback download (no working folder / no File System Access API).
       const blob = new Blob([bytes.slice()], { type: 'application/octet-stream' });
@@ -158,6 +159,7 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 0);
+      return name;
     }
   }
 
@@ -176,16 +178,20 @@
     const base = baseName();
     busy = true;
     try {
+      const saved: string[] = [];
       if (png) {
         const blob = await exportPng(svgText, bg);
-        await write(`${base}.png`, new Uint8Array(await blob.arrayBuffer()));
+        const where = await write(`${base}.png`, new Uint8Array(await blob.arrayBuffer()));
+        if (where === null) return;               // cancelled: skip the rest too
+        saved.push(where);
       }
       if (pdf) {
         const blob = await exportPdf(svgText, bg);
-        await write(`${base}.pdf`, new Uint8Array(await blob.arrayBuffer()));
+        const where = await write(`${base}.pdf`, new Uint8Array(await blob.arrayBuffer()));
+        if (where === null) return;
+        saved.push(where);
       }
-      const what = [png && 'PNG', pdf && 'PDF'].filter(Boolean).join(' + ');
-      toasts.push(`Saved figure (${what})`, { level: 'success' });
+      toasts.push(`Saved ${saved.join(' and ')}`, { level: 'success' });
     } catch (e) {
       toasts.push(`Figure export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
     } finally {
@@ -209,8 +215,8 @@
     busy = true;
     try {
       const bytes = await exporter.exportFile(format, setIds);
-      await write(`${dataBaseName()}.${format}`, bytes);
-      toasts.push(`Exported ${label} (.${format})`, { level: 'success' });
+      const where = await write(`${dataBaseName()}.${format}`, bytes);
+      if (where !== null) toasts.push(`Exported ${label}: ${where}`, { level: 'success' });
     } catch (e) {
       toasts.push(`${label} export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
     } finally {
