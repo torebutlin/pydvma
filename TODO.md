@@ -13,6 +13,28 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+### Working folder / fit-line follow-ups (2026-10-22)
+
+- **`/ws` and `/engine` accept any Origin.** The working-folder file ops
+  are gated per connection by `savefolder.is_local_app_request` (Origin
+  netloc == Host, loopback host), but the sockets themselves are not, so
+  any page open in the same browser can drive acquisition or compute on
+  a running `pydvma-serve`. Pre-existing. Suggested rule: refuse the
+  upgrade (403 in `process_request`) unless Origin is absent (Python
+  clients) or a loopback origin on any port, which keeps `?enginehost=`
+  from a local vite server working (`engine-native.spec.ts`).
+- **Refine still falls back to the WHOLE axis on a sparse band**
+  (`modal_refine`, fewer than `max(4, 2·n_modes + 2)` points), the
+  fallback the global reconstruction dropped in favour of the nearest
+  points. On a coarse averaged TF its poles and constants are then set by
+  noise far from the modes. Same fix (`_nearest_rows`) likely applies.
+- **The fade made a wrong TF type visible.** With the residues no longer
+  extrapolated, a fit made as Acceleration on a mobility shows its true
+  (wrong) shape away from the peak, and the ⚠ phase warning does not
+  always fire (5.7° on the webui fixture). Consider suggesting the TF
+  type whose fit leaves the smallest residual, or warning when the
+  modes-only line disagrees with the data just outside the band.
+
 ### Tray-delete follow-ups (2026-10-22)
 
 The tray × now removes a set from the document (`actions.removeSet`),

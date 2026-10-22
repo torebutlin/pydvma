@@ -22,6 +22,54 @@ serves its own UI (engine wheel fetched 200), greets
 install: `pip install --upgrade "pydvma[serve,soundcard]"`. Nothing is
 pending on the release side.
 
+As of 2026-10-22, later (remote Linux session, merged with the Mac
+session's tray-delete fix above; CHANGELOG `## Unreleased`, no version
+bump): **four lab-feedback items.** (1) **The served app saves and loads
+in a WORKING FOLDER on disk** (`pydvma/savefolder.py`, `/engine` ops
+`files_info/list/set_dir/save/read`, guarded by `is_local_app_request`:
+Origin netloc == Host and a loopback host, so another site and DNS
+rebinding are refused; extension whitelists). Defaults to the notebook's
+folder for `dvma.launch` (`save_dir=`, `Session.save_dir`) and the cwd
+for `pydvma-serve` (`--save-dir`); the header pill moves it; Save opens
+`FileDialog.svelte` on it, whose **Choose location…** saves ONE file
+elsewhere without moving it; nothing is replaced without asking. Edge
+had put every save in Downloads. e2e `server-files.spec.ts` (port 8770).
+NB `/ws` and `/engine` still accept any Origin (pre-existing; the
+`?enginehost=` e2e relies on it). (2) **Clean Impulse and Resample
+follow the shared dataset dropdown** (All sets by default;
+`actions.setImpulseClean`, `actions.resampleSets` with ONE Undo); they
+acted on the highlighted-or-first set. (3) **The global fit line no
+longer runs off the axis ends**: its two residues (RH, RL/w²), solved on
+the modes' padded band, were drawn over the whole axis (~75 dB off on a
+clean SDOF). `reconstruct_transfer_function_global(fade_residues=True)`
+(Python default too) applies them in full in the band and fades them
+over one octave beyond (`_residue_fade`, growth-compensated, no step);
+a band with < `max(4, N+2)` points widens to its NEAREST points
+(`_nearest_rows`) instead of the whole noisy axis, and one with
+< 2·(N+2) points gets no residues (`RESIDUE_MIN_POINTS_PER_UNKNOWN`).
+Clipping the line to the band was tried first and rejected: for a light
+mode the band is ±5 % of fn (a 2-point line on a coarse axis), and a
+modes-only extension steps up to 20 dB where residues matter. The fade
+exposed a WRONG TF TYPE that the residues used to hide near the peak, so
+the CHANGELOG tells users to check it. The fit chip also shows each
+mode's `An` and `φn` (per line when several; `constantsFromMatrix`,
+`fitColumnLabels`). (4) **Narrow rail chips have a corner ×**
+(`onDeleteSet`, i.e. `actions.removeSet`) **and the tray drawer a close
+×** (`tray-close`); a tray card's hover-only × shows on touch screens.
+Merged with master's tray fix: `derived-save.spec.ts` now saves and
+loads through the working-folder dialog (each serve gets `--save-dir`),
+5/5 incl. master's lab-sequence spec. **NB the served-config trick for
+`@engine` specs now meets the working-folder dialog wherever a spec
+waits for a `download` or `filechooser` (e.g. the damping CSV, multiset
+loads): those time out there by design, as the IndexedDB-autosave
+checks always did.** Suites: pytest 1469 (same 6 env failures), vitest
+1277/1, check 0/0, mkdocs --strict clean, Playwright preview with
+BRIDGE_E2E 102 passed / 9 env failures (six `files.spec` imports, two
+pyodide-forced `engine-native`, the BLA bridge analysis: no pyodide
+runtime here), served Clean Impulse + Resample specs green. Engine
+wheel not rebuilt here (modal.py/engine.py changed; CI rebuilds it for
+Pages; `vendor:wheels` before any release as always).
+
 As of 2026-10-22 (Mac, CHANGELOG `## Unreleased`, no version bump yet —
 Tore floated one after this round): **the tray × now removes a set from
 the saved data.** 3C6 lab report: "log, save, delete, log again — the
