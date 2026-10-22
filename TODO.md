@@ -69,6 +69,16 @@ is the second-launch handshake traceback. Still open:
   or gain from the notebook. Mapping them is mechanical, but each needs
   the same present-null-clears rule and a vitest, and `VmaxSC` /
   `input_gain_db` must not be sent together (Setup's own rule).
+- **A killed serve leaves its `/engine` workers running.** After a day
+  of e2e runs on the Mac (2026-10-22) there were 114 orphaned
+  `multiprocessing` processes (parent launchd, cwd the repo, numpy
+  loaded): the per-connection engine workers and their resource trackers
+  of `pydvma-serve` processes the specs' teardown had killed. Idle, but
+  each holds memory. Check what a lab kernel restart or a closed
+  notebook does to `dvma.launch`'s workers: memory pressure on the lab
+  PCs is what corrupted the 2i2 captures (hardware-lessons-learnt §5).
+  Workers could watch their parent (exit when the pipe closes or the
+  parent pid changes), and the e2e teardown could kill the process group.
 - **A running live monitor keeps its stream after a settings change.**
   Same as a Setup edit by hand: a new rate or channel count reaches the
   hardware at the next capture or monitor start, so the mini monitor

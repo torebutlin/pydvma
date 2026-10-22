@@ -47,10 +47,22 @@ test('narrow: a rail chip deletes its set; the drawer has a close ×', async ({ 
   await expect(page.getByTestId('tray')).toBeHidden();
   await expect(page.getByTestId('rail-more')).toBeFocused();   // focus goes back to ⋯
 
+  /** How many items the live document (what Save writes) holds. */
+  const docItems = () => page.evaluate(() => {
+    type Store = { subscribe(fn: (d: { items: unknown[] } | null) => void): () => void };
+    let n = -1;
+    (window as unknown as { __dataset: Store }).__dataset.subscribe((d) => { n = d?.items.length ?? 0; })();
+    return n;
+  });
+  expect(await docItems()).toBeGreaterThan(0);
+
   await expect(page.getByTestId('rail-del')).toHaveCount(1);
   await page.getByTestId('rail-del').click();
   await expect(page.getByTestId('rail-del')).toHaveCount(0);
   await expect(page.getByTestId('narrow-rail')).toContainText('No data');
+  // The set left the DATA too, as the tray card's × does (3C6 lab, 2026-10-22:
+  // a × that only took the card away let every later Save carry the set).
+  expect(await docItems()).toBe(0);
 });
 
 test('tray matrix ops (fixture-loaded set)', async ({ page }) => {

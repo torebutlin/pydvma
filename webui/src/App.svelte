@@ -391,12 +391,15 @@
   const engineProbeRequested = params.get('engine') === '1';
   // `?fixture=1` also opens e2e test hooks: `window.__viewState` exposes
   // the live view-state store so Playwright can assert on the active view's
-  // range and zoom-history length without brittle DOM scraping, and
-  // `window.__toasts` lets a spec raise a toast without the engine. Gated on
-  // the fixture flag so they never exist in normal runs.
+  // range and zoom-history length without brittle DOM scraping,
+  // `window.__toasts` lets a spec raise a toast without the engine, and
+  // `window.__dataset` is the live document a Save would write, so a spec can
+  // tell a set taken out of the data from one only taken off the screen.
+  // Gated on the fixture flag so they never exist in normal runs.
   if (typeof window !== 'undefined' && fixtureRequested) {
     (window as unknown as { __viewState?: typeof viewState }).__viewState = viewState;
     (window as unknown as { __toasts?: typeof toasts }).__toasts = toasts;
+    (window as unknown as { __dataset?: typeof datasetStore }).__dataset = datasetStore;
   }
 
   let mediaNarrow = $state(false);
