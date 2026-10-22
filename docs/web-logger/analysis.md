@@ -31,6 +31,10 @@ the analysis engine loads, which happens once.
 
 The **Time** stage shows the recorded time series.
 
+- **dataset**: which set **Clean Impulse** and **Resample** act on.
+  **All sets** (the default) acts on every set that has time data; pick
+  one set to act on that set only. It is the same choice as the other
+  stages' dataset dropdowns and follows the tray.
 - **input channel**: the channel that **Clean Impulse** checks and
   cleans.
 - **x-range**: **Full** fits all the data; **First 0.2 s** shows the
@@ -41,14 +45,18 @@ The **Time** stage shows the recorded time series.
   channels are not changed. The button appears only when the input
   channel looks like an impulse, meaning at most 25 % of its energy is in
   the second half of the record.
-  Otherwise a note says why it is hidden. It is a toggle (**Clean
-  Impulse: on** when applied): the raw recording is kept, so pressing it
-  again restores it. Any FFT, TF or sonogram you have already computed
+  Otherwise a note says why it is hidden. With **All sets**, every set
+  whose input channel looks like an impulse is cleaned, and a note names
+  any set left out. It is a toggle (**Clean Impulse: on** when applied,
+  **1 of 2 on** when only some sets are): the raw recording is kept, so
+  pressing it again restores it. Any FFT, TF or sonogram you have already computed
   recomputes to match the copy that is showing. **Save Dataset** writes
   the copy that is showing.
-- **Resample** changes the highlighted set's sample rate. Choose another
-  set to **match** (the list shows each set's rate) or type a custom rate
-  in Hz, then press **Resample**. Going down uses the same anti-alias
+- **Resample** changes the sample rate of the set(s) in **dataset**.
+  Choose another set to **match** (the list shows each set's rate) or
+  type a custom rate in Hz, then press **Resample**. With **All sets**,
+  every set not already at that rate is resampled, and one **Undo**
+  reverts them all. Resampling turns **Clean Impulse** off for that set. Going down uses the same anti-alias
   filter as the logger's
   [capture-rate conversion](acquisition.md#capture-rate-and-delivered-rate):
   96 dB stopband at the new Nyquist frequency, zero phase. Going up uses

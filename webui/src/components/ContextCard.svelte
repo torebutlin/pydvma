@@ -104,7 +104,7 @@
   {:else if $activeStage === 'live'}
     <LiveCard {monitor} />
   {:else if $activeStage === 'time'}
-    <TimeCard {viewState} {selection} {actions} />
+    <TimeCard {viewState} {selection} {actions} {analysisSettings} />
   {:else if $activeStage === 'frequency'}
     <FrequencyCard {actions} {selection} {analysisSettings} />
   {:else if $activeStage === 'tf'}

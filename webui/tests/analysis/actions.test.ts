@@ -3,6 +3,8 @@ import { expect, test } from 'vitest';
 import { createActions } from '../../src/lib/analysis/actions';
 import { createSelection } from '../../src/lib/stores/selection';
 import { createAnalysisSettings, defaults } from '../../src/lib/stores/analysisSettings';
+import { createModalStore } from '../../src/lib/stores/modal';
+import { createToasts } from '../../src/lib/stores/toast';
 import type { EngineStore } from '../../src/lib/stores/engine';
 import type { DvmaDataset, DvmaItem } from '../../src/lib/model/dataset';
 import { readDvma, writeDvma } from '../../src/lib/codec/dvma';
@@ -387,6 +389,66 @@ test('a different impulse channel re-cleans from the RAW stash, never from clean
   expect(cleans).toHaveLength(2);
   expect(cleans[1].payload.ch_impulse).toBe(1);
   expect(Array.from(cleans[1].payload.time_data as Float64Array)).toEqual(raw);
+});
+
+// ---- The Time card's dataset choice: 'All sets' cleans / resamples every
+// time-bearing set, each with its own stash and one Undo for the lot. ----
+
+test('setImpulseClean turns every listed set on, skips ones already there, then off', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'clean_impulse') return cleanResult();
+    return {};
+  });
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(3));
+  const ids = get(sel.sets).map((s) => s.id);
+  await actions.cleanImpulse(ids[1], 0);              // one set already on
+
+  await actions.setImpulseClean(ids, 0, true);
+  expect(ids.map((id) => get(actions.cleanedSets)[id])).toEqual([true, true, true]);
+  expect(calls.filter((c) => c.op === 'clean_impulse'),
+    'the set already on is not cleaned again').toHaveLength(3);
+  for (const it of get(actions.dataset)!.items) {
+    expect(Array.from(it.arrays.time_data.data)).toEqual([0, 0, 3, 4, 0, 0]);
+  }
+
+  await actions.setImpulseClean(ids, 0, false);
+  expect(ids.map((id) => get(actions.cleanedSets)[id])).toEqual([false, false, false]);
+  for (const it of get(actions.dataset)!.items) {
+    expect(Array.from(it.arrays.time_data.data)).toEqual([1, 2, 3, 4, 5, 6]);
+  }
+  expect(calls.filter((c) => c.op === 'clean_impulse')).toHaveLength(3);
+  await actions.setImpulseClean([999], 0, true);      // unknown id: nothing
+  expect(calls.filter((c) => c.op === 'clean_impulse')).toHaveLength(3);
+});
+
+test('resampleSets resamples every listed set and one toast Undo reverts them all', async () => {
+  const { engine, calls } = fakeEngine(async (op) => {
+    if (op === 'resample_time') return resampleResult();
+    return {};
+  });
+  const sel = createSelection();
+  const settings = createAnalysisSettings(sel);
+  const toasts = createToasts();
+  const actions = createActions(engine, sel, settings, createModalStore(), toasts);
+  actions.loadDataset(makeDataset(2));
+  const ids = get(sel.sets).map((s) => s.id);
+
+  expect(await actions.resampleSets(ids, 4, { notify: true })).toEqual(ids);
+  expect(get(actions.dataset)!.items.map((it) => it.settings!.fs)).toEqual([4, 4]);
+  expect(calls.filter((c) => c.op === 'resample_time')).toHaveLength(2);
+  const live = get(toasts.toasts);
+  expect(live).toHaveLength(1);
+  expect(live[0].message).toContain('Resampled 2 sets to 4 Hz');
+
+  // Already at the rate: skipped, no toast.
+  expect(await actions.resampleSets(ids, 4, { notify: true })).toEqual([]);
+  expect(get(toasts.toasts)).toHaveLength(1);
+
+  live[0].actions![0].run();
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(get(actions.dataset)!.items.map((it) => it.settings!.fs)).toEqual([2, 2]);
 });
 
 test('loadDataset resets the clean toggle state (stashes belong to the old sets)', async () => {

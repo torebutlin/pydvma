@@ -51,6 +51,13 @@ follows [semantic versioning](https://semver.org/).
   computed many rows below 1 Hz. A 30 s capture at 3 kHz now runs from
   1.2 Hz, not 0.13 Hz, with a quarter fewer rows, and a full-resolution
   CWT of 30 s at 48 kHz needs 3.7 GB instead of 6.4 GB. A short record keeps its old band.
+- **Clean Impulse and Resample act on every set by default.** They used
+  to act only on the highlighted set, or the first set if none was, with
+  no way to tell which. The Time stage now has the same **dataset** choice
+  as the other stages: **All sets** (the default) cleans or resamples
+  every set with time data, and picking one set acts on that set alone.
+  Clean Impulse leaves out, and names, any set whose input channel does
+  not look like an impulse; a resample of several sets has one **Undo**.
 
 ### Fixed
 

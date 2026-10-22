@@ -2169,6 +2169,22 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     });
   }
 
+  /**
+   * Set the Clean Impulse toggle of every set in `setIds` to `on`, on input
+   * channel `chImpulse` — the Time card's "dataset" choice, where 'All sets'
+   * cleans every eligible set at once. Sets already in the asked state are
+   * left alone (no engine op, no recompute); the rest go through
+   * `cleanImpulse`, one after another, so each keeps its own raw stash and
+   * cached clean. Unknown ids are skipped.
+   */
+  async function setImpulseClean(setIds: number[], chImpulse: number, on: boolean): Promise<void> {
+    for (const id of setIds) {
+      if (!working.some((w) => w.setId === id)) continue;
+      if (!!get(cleanedSets)[id] === on) continue;
+      await cleanImpulse(id, chImpulse);
+    }
+  }
+
   /** One-level resample undo stash per set (round-9). */
   const resampleUndo = new Map<number, { td: NpyArray; ax: NpyArray; fs: number }>();
 
@@ -2227,15 +2243,51 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       await recomputeExisting(ws);
       achieved = fsOut;
       if (opts.notify) {
-        const fromTxt = prev.fs >= 1000 ? `${(prev.fs / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz` : `${prev.fs.toFixed(6).replace(/\.?0+$/, '')} Hz`;
-        const toTxt = fsOut >= 1000 ? `${(fsOut / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz` : `${fsOut.toFixed(6).replace(/\.?0+$/, '')} Hz`;
-        toasts?.push(`Resampled ${fromTxt} → ${toTxt}. Saved data will carry the new rate.`, {
+        toasts?.push(`Resampled ${fmtRate(prev.fs)} → ${fmtRate(fsOut)}. Saved data will carry the new rate.`, {
           level: 'success',
           actions: [{ label: '↶ Undo', run: () => void undoResample(ws.setId) }],
         });
       }
     });
     return achieved;
+  }
+
+  /** A sample rate for a toast: '5 kHz', '8.533 kHz', '440 Hz'. */
+  function fmtRate(fs: number): string {
+    return fs >= 1000
+      ? `${(fs / 1000).toFixed(3).replace(/\.?0+$/, '')} kHz`
+      : `${fs.toFixed(6).replace(/\.?0+$/, '')} Hz`;
+  }
+
+  /**
+   * Resample every set in `setIds` to `fsNew` — the Time card's Resample
+   * when its dataset choice is 'All sets' (one set id behaves exactly like
+   * `resampleTime`). Sets already at `fsNew`, and unknown or time-less
+   * ones, are skipped. With `notify`, ONE success toast whose Undo reverts
+   * every set this call resampled. Returns the ids actually resampled.
+   */
+  async function resampleSets(
+    setIds: number[],
+    fsNew: number,
+    opts: { notify?: boolean } = {},
+  ): Promise<number[]> {
+    if (setIds.length === 1) {
+      return (await resampleTime(setIds[0], fsNew, opts)) === null ? [] : [setIds[0]];
+    }
+    const done: number[] = [];
+    let achieved: number | null = null;
+    for (const id of setIds) {
+      const got = await resampleTime(id, fsNew);
+      if (got !== null) { done.push(id); achieved ??= got; }
+    }
+    if (opts.notify && done.length && achieved !== null) {
+      const what = done.length === 1 ? '1 set' : `${done.length} sets`;
+      toasts?.push(`Resampled ${what} to ${fmtRate(achieved)}. Saved data will carry the new rate.`, {
+        level: 'success',
+        actions: [{ label: '↶ Undo', run: () => { void (async () => { for (const id of done) await undoResample(id); })(); } }],
+      });
+    }
+    return done;
   }
 
   /**
@@ -3991,8 +4043,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     sonoPromptNeeded, includeSonograms,
     /** Broken-chain flag store — see its doc. Read by `TrayCard`'s badge. */
     staleChains,
-    calcFft, calcPsd, calcTf, calcSono, lastSonoChannel, cleanImpulse, cleanedSets, hasComputed,
-    resampleTime, undoResample,
+    calcFft, calcPsd, calcTf, calcSono, lastSonoChannel, cleanImpulse, setImpulseClean, cleanedSets,
+    hasComputed, resampleTime, resampleSets, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, setCsdPair,
     /** Subset Save/Export (round-12 "Choose sets…") — see each function's doc. */
     choosableSets, subsetDataset,
