@@ -1821,7 +1821,7 @@
             <div class="plot-area">
               <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
               <Legend {selection} {viewState} entriesOverride={legendOverride} />
-              {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
+              {#if $activeStage === 'fit'}<FitChip {modal} {actions} {selection} />{/if}
             </div>
           </div>
         </div>
@@ -1858,7 +1858,7 @@
           <div class="plot-area">
             <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
             <Legend {selection} {viewState} entriesOverride={legendOverride} />
-            {#if $activeStage === 'fit'}<FitChip {modal} {actions} />{/if}
+            {#if $activeStage === 'fit'}<FitChip {modal} {actions} {selection} />{/if}
           </div>
         </div>
       {/if}

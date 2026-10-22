@@ -58,9 +58,28 @@ follows [semantic versioning](https://semver.org/).
   every set with time data, and picking one set acts on that set alone.
   Clean Impulse leaves out, and names, any set whose input channel does
   not look like an impulse; a resample of several sets has one **Undo**.
+- **The fit chip shows each mode's modal constant An and its phase φn**,
+  as well as fn, ζ and Q: one line under the mode, or one per line when
+  the fit spans several, labelled as in the legend.
 
 ### Fixed
 
+- **A modal fit's global line ran off both ends of the axis.** The two
+  residual terms that stand for modes outside the fitted band were solved
+  on the band round the fitted modes and then drawn across the whole
+  axis, where they grow without limit: towards 0 Hz, and upwards once an
+  acceleration or velocity TF's power of iω is applied. A clean
+  single-mode TF fitted with the right TF type came out about 75 dB off
+  at the ends of a 0–1000 Hz axis, from residues set by a little noise.
+  They now fade out over the octave beyond the band, so far from the
+  modes the line is the modes alone. A TF whose band holds too few points
+  to pin them down (fewer than two per unknown) gets none, and one too
+  sparse even for the modal constants now widens to its nearest points,
+  not its whole axis, where noise set the residues. In Python,
+  `modal.reconstruct_transfer_function_global` fades them by default
+  (`fade_residues=False` restores the old line). If the line far from the
+  peak now sits away from the data, check the **TF type**: the residues
+  used to cover for a wrong one near the peak.
 - **A modal fit made with x(iω) already set drew its fit lines without
   it.** The data was plotted with the x(iω) power but the fit lines were
   not, so with a power of −1 they sat about 56 dB above a 100 Hz mode.

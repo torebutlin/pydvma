@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { get } from 'svelte/store';
-import { createModalStore } from '../../src/lib/stores/modal';
+import { constantsFromMatrix, createModalStore, fitColumnLabels } from '../../src/lib/stores/modal';
 
 /** A marshalled real array. */
 const real = (shape: number[], data: number[]) =>
@@ -188,4 +188,36 @@ test('mute: toggleMute flips flags, mutedIndices reports them, preserved across 
     global_freq_axis: real([2], [0, 500]), global_tf_data: cplx([2, 1], [0.5, 0, 0.5, 0]),
   }, [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
   expect(get(m).muted).toEqual([false]);
+});
+
+test('modes carry each column\'s modal constant an and phase in degrees', () => {
+  // Two columns: rows [fn, zn, an0, an1, pn0, pn1, rk0, rk1, rm0, rm1].
+  const M = real([2, 10], [
+    80, 0.02, -1368.6, 2.5, 0.1, -Math.PI / 2, 0, 0, 0, 0,
+    220, 0.015, 0.6, 3, Math.PI, 0, 0, 0, 0, 0,
+  ]);
+  expect(constantsFromMatrix(M)).toEqual([
+    { an: [-1368.6, 2.5], pnDeg: [0.1 * 180 / Math.PI, -90] },
+    { an: [0.6, 3], pnDeg: [180, 0] },
+  ]);
+  const m = createModalStore();
+  m.seedFromMatrix(M, [{ setId: 7, chIn: 0, nChannels: 3, nCols: 2 }], 'vel');
+  expect(get(m).modes[0].an).toEqual([-1368.6, 2.5]);
+  expect(get(m).modes[1].pnDeg).toEqual([180, 0]);
+  m.applyResult(fitResult(), [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
+  expect(get(m).modes.map((x) => x.an)).toEqual([[1], [0.6]]);
+  expect(constantsFromMatrix(null)).toEqual([]);
+});
+
+test('fitColumnLabels names each column as the legend does', () => {
+  const lab = (_id: number, ch: number) => `ch_${ch}`;
+  const name = (id: number) => `set${id}`;
+  // Full set, input ch_1 of 3: columns are ch_0 and ch_2.
+  expect(fitColumnLabels([{ setId: 1, chIn: 1, nCols: 2, chans: null }], lab, name))
+    .toEqual(['ch_0/ch_1', 'ch_2/ch_1']);
+  // A subset fit and an orphan TF, together: set names prefix the lines.
+  expect(fitColumnLabels([
+    { setId: 1, chIn: 0, nCols: 1, chans: [2] },
+    { setId: 4, chIn: null, nCols: 2, chans: null },
+  ], lab, name)).toEqual(['set1 · ch_2/ch_0', 'set4 · ch_0', 'set4 · ch_1']);
 });

@@ -112,7 +112,12 @@ like any other set. The **fit lines** switch chooses what they show.
   amplitude and phase for each channel against the measured data, and adds
   a pair of residual terms per channel for modes above and below the
   band. This removes the double counting of neighbouring modes that a
-  single local fit absorbs into its phase.
+  single local fit absorbs into its phase. The band is the fitted modes'
+  frequency span with a margin round each peak. The residual terms only
+  mean something near it, so they fade out over the octave beyond each
+  edge, and far from the modes the line is the modes alone. A band with
+  too few points to pin the residual terms down (fewer than two per
+  unknown, as on a coarse averaged TF) gets none.
 - **local** shows only the modes you have just fitted, over the fit
   window. It is transient feedback: any other recompute (Refine, mute, a
   reloaded fit) clears it until your next **Fit**.
@@ -127,9 +132,24 @@ A floating chip over the plot lists every fitted mode:
 
 ```text
 mode 1   fn = 187.4 Hz · ζ = 0.0032 · Q = 156
+           An = 2.315e4 · φn = 3.1°
 ```
 
-`Q = 1/(2ζ)`, and shows ∞ if the fit returns non-positive damping. Each
+`Q = 1/(2ζ)`, and shows ∞ if the fit returns non-positive damping. Under
+each mode, `An` is its modal constant and `φn` that constant's phase, the
+numerator of the mode's term in
+
+$$
+\frac{H(\omega)}{(i\omega)^{p}} \approx \sum_{n}
+\frac{A_n\,e^{i\varphi_n}}{\omega_n^{2} - \omega^{2} + 2i\,\zeta_n\,\omega_n\,\omega},
+$$
+
+where $\omega_n = 2\pi f_n$ and $p = 2$, 1 or 0 for an **Acceleration**,
+**Velocity** or **Displacement** TF. For a calibrated TF per newton, `An`
+is in 1/kg. These are the values the model stores (`ModalData.an` and
+`.pn` in Python; `An` can be negative, which is the same as adding 180°
+to `φn`). When the fit spans several lines, each line gets its own `An`
+and `φn`, labelled as in the legend. Each
 row has a **mute** toggle (🔊/🔇), which keeps the mode in the model but
 leaves it out of the global reconstruction so you can see what it
 contributes, and a **×** to delete the mode. **↶ Undo** appears in the

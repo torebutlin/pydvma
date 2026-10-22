@@ -23,13 +23,42 @@
    * Round 8: the chip is draggable (grab the header strip) and minimisable
    * (chevron, MiniMonitor idiom) so it can be parked out of the way of the
    * data. The drag is clamped to the plot area.
+   *
+   * Each mode also shows its modal constant `An` and phase `φn` (lab
+   * feedback, 2026-10): one line under the mode when the model fits one
+   * line, else one per fitted line, labelled as in the legend.
    */
-  import { PHASE_DEV_WARN_DEG, type ModalStore } from '../lib/stores/modal';
+  import {
+    PHASE_DEV_WARN_DEG, fitColumnLabels, type ModalStore,
+  } from '../lib/stores/modal';
   import type { Actions } from '../lib/analysis/actions';
+  import type { Selection } from '../lib/stores/selection';
 
-  let { modal, actions }: { modal: ModalStore; actions: Actions } = $props();
+  let { modal, actions, selection }: { modal: ModalStore; actions: Actions; selection: Selection } = $props();
   const modalState = $derived(modal);
   const busy = $derived(actions.busy);
+  const channelLabel = $derived(selection.channelLabel);
+  const setsView = $derived(selection.setsView);
+
+  /** The legend label of each model column (line), in column order. */
+  const colLabels = $derived(fitColumnLabels(
+    $modalState.targets,
+    $channelLabel,
+    (id) => $setsView.find((s) => s.id === id)?.name ?? `set ${id}`,
+  ));
+
+  /** A modal constant to 4 significant figures, with a true minus sign. */
+  function fmtAn(a: number): string {
+    if (!Number.isFinite(a)) return String(a);
+    const m = Math.abs(a);
+    const txt = m !== 0 && (m >= 1e5 || m < 1e-3)
+      ? a.toExponential(3).replace('e+', 'e')
+      : String(Number(a.toPrecision(4)));
+    return txt.replace('-', '−');
+  }
+  /** A phase in degrees to 0.1°, with a true minus sign. */
+  const fmtDeg = (d: number): string => `${d.toFixed(1).replace('-', '−')}°`;
+  const AN_TITLE = 'Modal constant An and its phase φn: the mode adds An·e^{iφn} / (ωn² − ω² + 2i·ζn·ωn·ω) to H/(iω)^p, with p = 2, 1, 0 for acceleration, velocity, displacement. In 1/kg for a calibrated TF per newton.';
 
   let chipEl = $state<HTMLDivElement | undefined>();
   let dragging = $state(false);
@@ -150,6 +179,15 @@
             <span class="phase-warn" data-testid="mode-phase-warning"
               title="Fitted modal phase is {m.phaseDevDeg.toFixed(0)}° from real (0/180°) — check the TF type (Acceleration / Velocity / Displacement)">⚠</span>
           {/if}
+          {#if m.an.length === 1}
+            <span class="an-line" data-testid="mode-an" title={AN_TITLE}
+              >An = {fmtAn(m.an[0])} · φn = {fmtDeg(m.pnDeg[0])}</span>
+          {:else}
+            {#each m.an as a, k (k)}
+              <span class="an-line" data-testid="mode-an" title={AN_TITLE}
+                ><span class="an-lab">{colLabels[k] ?? `line ${k + 1}`}</span> An = {fmtAn(a)} · φn = {fmtDeg(m.pnDeg[k])}</span>
+            {/each}
+          {/if}
         </span>
         <button
           class="mrow-btn"
@@ -243,7 +281,7 @@
   }
   .mode-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;   /* buttons stay level with the fn line */
     gap: 6px;
   }
   .mode-row.muted .mode-txt {
@@ -252,6 +290,18 @@
   }
   .mode-txt b {
     color: var(--indigo);
+  }
+  .an-line {
+    display: block;
+    padding-left: 1.2em;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+    pointer-events: auto; /* hoverable for the explanatory title */
+  }
+  .an-lab {
+    color: var(--text, #222);
+    margin-right: 0.4em;
   }
   .phase-warn {
     pointer-events: auto; /* hoverable for the explanatory title */

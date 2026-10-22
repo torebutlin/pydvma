@@ -57,7 +57,66 @@ import type { MeasurementType } from '../analysis/actions';
  * significantly complex — the classic sign the TF type (acc/vel/dsp) is
  * wrong for the data, the old logger's "phase too significant" warning.
  */
-export interface ModalMode { fn: number; zn: number; Q: number; phaseDevDeg: number; }
+export interface ModalMode {
+  fn: number; zn: number; Q: number; phaseDevDeg: number;
+  /**
+   * The modal constant of each fitted column (line), in column order: the
+   * numerator `an` of the mode's term and its phase `pnDeg` in degrees, as
+   * stored in the model (`ModalData.an` / `.pn` in Python; `an` may be
+   * negative). The term is `an·e^{i·pn} / (ωn² − ω² + 2i·ζn·ωn·ω)`, times
+   * `(iω)^p` for the TF type.
+   */
+  an: number[];
+  pnDeg: number[];
+}
+
+/**
+ * Per-mode modal constants from the packed modal matrix (rows
+ * `[fn, zn, an*N, pn*N, rk*N, rm*N]`): each mode's `an` and phase in
+ * degrees, one entry per column. Pure; tolerant of an empty matrix.
+ */
+export function constantsFromMatrix(matrix: MarshalledArray | null): { an: number[]; pnDeg: number[] }[] {
+  if (!matrix || (matrix.shape[0] ?? 0) === 0) return [];
+  const [rows, cols] = matrix.shape;
+  if (!(cols >= 6)) return Array.from({ length: rows }, () => ({ an: [], pnDeg: [] }));
+  const nCh = Math.floor((cols - 2) / 4);
+  const data = matrix.data instanceof Float64Array ? matrix.data : Float64Array.from(matrix.data);
+  const out: { an: number[]; pnDeg: number[] }[] = [];
+  for (let r = 0; r < rows; r++) {
+    const an: number[] = [];
+    const pnDeg: number[] = [];
+    for (let k = 0; k < nCh; k++) {
+      an.push(data[r * cols + 2 + k]);
+      pnDeg.push((data[r * cols + 2 + nCh + k] * 180) / Math.PI);
+    }
+    out.push({ an, pnDeg });
+  }
+  return out;
+}
+
+/**
+ * A label for each column of the model, in column order: the TF line it
+ * fits (`ch_1/ch_0`, or the channel alone for an orphan TF), prefixed with
+ * the set's name when the model spans several sets. `label` names a
+ * (set, channel) pair and `setName` a set, as the legend does.
+ */
+export function fitColumnLabels(
+  targets: Pick<FitTarget, 'setId' | 'chIn' | 'nCols' | 'chans'>[],
+  label: (setId: number, ch: number) => string,
+  setName: (setId: number) => string,
+): string[] {
+  const out: string[] = [];
+  const multi = targets.length > 1;
+  for (const t of targets) {
+    const prefix = multi ? `${setName(t.setId)} · ` : '';
+    const chans = t.chans ?? Array.from({ length: t.nCols },
+      (_, k) => (t.chIn === null || k < t.chIn ? k : k + 1));
+    for (const ch of chans) {
+      out.push(prefix + (t.chIn === null ? label(t.setId, ch) : `${label(t.setId, ch)}/${label(t.setId, t.chIn)}`));
+    }
+  }
+  return out;
+}
 
 /**
  * Threshold (degrees) above which a mode's fitted phase counts as
@@ -271,10 +330,14 @@ export function createModalStore() {
     const matrixRaw = asMarshalled(mval(result, 'M'));
     const matrix = (matrixRaw.shape[0] ?? 0) > 0 ? matrixRaw : null;
     const pdev = phaseDevDegFromMatrix(matrix);
+    const consts = constantsFromMatrix(matrix);
     const modes: ModalMode[] = [];
     for (let i = 0; i < fn.length; i++) {
       const z = zn[i];
-      modes.push({ fn: fn[i], zn: z, Q: z > 0 ? 1 / (2 * z) : Infinity, phaseDevDeg: pdev[i] ?? 0 });
+      modes.push({
+        fn: fn[i], zn: z, Q: z > 0 ? 1 / (2 * z) : Infinity, phaseDevDeg: pdev[i] ?? 0,
+        an: consts[i]?.an ?? [], pnDeg: consts[i]?.pnDeg ?? [],
+      });
     }
     const slices = sliceList(result);
     const targets: FitTarget[] = contexts.map((ctx, i) => {
@@ -330,11 +393,15 @@ export function createModalStore() {
     const cols = matrix.shape[1] ?? 0;
     const data = matrix.data instanceof Float64Array ? matrix.data : Float64Array.from(matrix.data);
     const pdev = phaseDevDegFromMatrix(matrix);
+    const consts = constantsFromMatrix(matrix);
     const modes: ModalMode[] = [];
     for (let r = 0; r < rows; r++) {
       const fn = data[r * cols + 0];
       const zn = data[r * cols + 1];
-      modes.push({ fn, zn, Q: zn > 0 ? 1 / (2 * zn) : Infinity, phaseDevDeg: pdev[r] ?? 0 });
+      modes.push({
+        fn, zn, Q: zn > 0 ? 1 / (2 * zn) : Infinity, phaseDevDeg: pdev[r] ?? 0,
+        an: consts[r]?.an ?? [], pnDeg: consts[r]?.pnDeg ?? [],
+      });
     }
     // Recon slices stay null until a 'recon' calc recomputes them (deferred
     // until each target's TF is present — actions.maybeRestoreModalRecon).
