@@ -22,6 +22,26 @@ serves its own UI (engine wheel fetched 200), greets
 install: `pip install --upgrade "pydvma[serve,soundcard]"`. Nothing is
 pending on the release side.
 
+As of 2026-10-22 (Mac, CHANGELOG `## Unreleased`, no version bump yet —
+Tore floated one after this round): **the tray × now removes a set from
+the saved data.** 3C6 lab report: "log, save, delete, log again — the
+next save has the old data too", and the coupled-beam prediction failed.
+Root cause: the data set card's × called `selection.removeSet`, which
+removed only the CARD; the item stayed in the document, `working` and
+`derived`, so every later Save/export/autosave/journal post/restore
+carried every deleted set (and Save re-materialised its FFT/TF). Now
+`actions.removeSet` → `detachSets` (the removal core `removeBlaRun`
+already had), which also sweeps other items linked to the set's lineage
+unless a staying set shares it. e2e in `derived-save.spec.ts` replays
+the lab sequence through a real serve and FAILS without the fix (second
+file time/freq/tf = 2). In divc_labs, `lab_3c6.coupled_TF` took each
+beam file's FIRST TF, i.e. the session's 2 s noise TF from both files
+on 2.7.0; it now takes each file's NEWEST measurement (`beam_tf`) and
+prints which, so 2.7.0 lab files still work (`950e03f`). Tore's ten lab
+files sit in the RDP app's temp folder, which macOS blocks from every
+tool here — the diagnosis is from the code, not from those files.
+Follow-ups in TODO.md ("Tray-delete follow-ups").
+
 As of 2026-10-21 (remote Linux session, CHANGELOG `## Unreleased`, no
 version bump): **the frequency navigator's zoom miniature is legible and
 its buttons are worded.** Tore saw a "weird blue box" above the strip
