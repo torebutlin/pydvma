@@ -39,6 +39,8 @@
      */
     monitor,
     onDeleteFit,
+    /** Forwarded to the hosted Tray: a data set's × (`actions.removeSet`). */
+    onDeleteSet,
     /** Forwarded to the hosted Tray for the stale-chain badge (Task 4). */
     staleChains,
     onRederive,
@@ -50,6 +52,7 @@
     modal?: import('../lib/stores/modal').ModalStore;
     monitor?: MonitorStore;
     onDeleteFit?: () => void;
+    onDeleteSet?: (setId: number) => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
     tfChIn?: (setId: number) => number | null | undefined;
@@ -191,7 +194,7 @@
     data-testid="tray"
     onkeydown={onDrawerKeydown}
   >
-    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {staleChains} {onRederive} {tfChIn} />
+    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {onDeleteSet} {staleChains} {onRederive} {tfChIn} />
   </div>
 {/if}
 

@@ -13,6 +13,26 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+### Tray-delete follow-ups (2026-10-22)
+
+The tray × now removes a set from the document (`actions.removeSet`),
+not just the card, so a later Save no longer writes deleted sets (the
+3C6 lab's accumulating files). Two edges remain:
+
+- **A capture deleted within the 2 s autosave debounce returns in the
+  session.** The serve journal registers each capture at birth as
+  pending and clears it only when a posted document provably contains
+  it. Delete the capture before the first post that would have held it,
+  and no post ever does, so it stays pending: `session.data` and a
+  Restore bring it back. Rare in practice (it needs a delete within 2 s
+  of the capture landing). A fix: the app tells the journal which ids
+  it dropped, or the posted document lists them.
+- **Deleting a fitted set keeps its Modal fit card.** As before the fix,
+  the fit is its own card, cleared by its own ×. Its `ModalData` then
+  links to a set the document no longer holds, and Refine on that fit is
+  a silent no-op (its spec lookup finds no set). Decide whether a set's
+  × should clear a fit that spans it, with the fit's Undo.
+
 ### `dvma.launch` / `Session.apply_settings` follow-ups (2026-10-16)
 
 The untouched-`pretrig_threshold` item is DONE (`MySettings` defaults to

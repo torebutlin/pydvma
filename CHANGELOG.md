@@ -39,6 +39,16 @@ follows [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **Deleting a set with its tray × now takes it out of the saved data.**
+  The × removed the card from the tray but left the measurement in the
+  session, so every later Save still wrote every set deleted before it,
+  with its FFT and transfer function. Log, save, delete, log again, and
+  the second file held both measurements. The same applied to exports,
+  the autosave, a restored session and a notebook's `session.data`.
+  In the 3C6 lab, each "one beam per file" save held the whole session,
+  so the coupled-beam prediction read the wrong transfer function. Files
+  already saved this way still load with every set they hold; delete the
+  extra ones and save again.
 - **A modal fit made with x(iω) already set drew its fit lines without
   it.** The data was plotted with the x(iω) power but the fit lines were
   not, so with a power of −1 they sat about 56 dB above a 100 Hz mode.
