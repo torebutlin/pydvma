@@ -21,9 +21,15 @@ venv installing `pydvma[serve]==2.8.0` from PyPI serves its own UI
 `launch(save_dir=)`, and `apply_settings` works. NB right after the
 upload pip saw no 2.8.0 for a minute (a stale CDN edge of the JSON simple
 index; `/pypi/pydvma/json`'s top-level "latest" also still said 2.7.1) —
-retry, or check the per-version JSON, before suspecting the upload. Lab
-install: `pip install --upgrade "pydvma[serve,soundcard]"`. Nothing is
-pending on the release side. MINOR:
+retry, or check the per-version JSON, before suspecting the upload.
+**The 3C6 lab PCs upgrade by re-running `Setup_3C6_PC.bat` as
+administrator** (divc_labs `3C6/LAB_bat_files`: `pip install --upgrade
+pydvma[full] ...` into the shared `C:\ProgramData\anaconda3\envs\pydvma`,
+then prints the version). NOT a user-prompt `pip install`: that lands in
+the roaming user site, which `Start_3C6.bat` ignores
+(`PYTHONNOUSERSITE=1`); `Start_3C6.bat` itself never upgrades pydvma, it
+only refreshes the notebook and `lab_3c6.py`. Nothing is pending on the
+release side. MINOR:
 carries the cloud session's lab-feedback round that missed 2.7.1 (working
 folder `launch(save_dir=)` / `Session.save_dir` / `--save-dir` /
 `pydvma.savefolder`; Clean Impulse/Resample over all sets; fit chip
