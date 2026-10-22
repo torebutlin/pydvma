@@ -68,6 +68,11 @@
      *  clears the modal model with one-level undo (see `actions.clearFit`).
      *  Falls back to `selection.removeSet` if absent. */
     onDeleteFit,
+    /** Delete handler for a DATA set's × — `actions.removeSet`, which takes
+     *  the measurement out of the document as well as the tray, so a later
+     *  Save no longer writes it. Falls back to `selection.removeSet` (the
+     *  card only) if absent, as in component tests with no actions layer. */
+    onDeleteSet,
     /** Broken-chain flag store (Task 4 — `actions.staleChains`). Absent →
      *  no card ever shows the stale badge. */
     staleChains,
@@ -88,6 +93,7 @@
     };
     applyCalibration?: (setId: number, factors: number[], units: string[]) => void;
     onDeleteFit?: () => void;
+    onDeleteSet?: (setId: number) => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
     tfChIn?: (setId: number) => number | null | undefined;
@@ -307,7 +313,7 @@
           <TrayCard
             {selection}
             {set}
-            onDeleteSet={selection.removeSet}
+            onDeleteSet={onDeleteSet ?? selection.removeSet}
             onCalibrate={canCalibrate ? openCalibrate : undefined}
             channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
             staleKinds={staleMap[set.id]}

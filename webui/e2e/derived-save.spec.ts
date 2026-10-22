@@ -515,6 +515,47 @@ test.describe('derived-data save', () => {
     });
   });
 
+  test('log, save, delete, log again: the second file and the session hold only the new set', async ({ page, context }) => {
+    // The 3C6 lab's 2026-10-22 report, step for step: the tray's × used to
+    // take only the CARD away, so every later save carried every set deleted
+    // before it (each "one beam per file" save held the whole lab).
+    await withServe(async ({ outDir }) => {
+      /** Calc FFT + TF on what is loaded, then Save to `name`. */
+      const calcAndSave = async (name: string): Promise<DvmaSummary> => {
+        await ribbon(page).getByRole('button', { name: 'Frequency' }).click();
+        await page.getByRole('button', { name: 'Calc FFT' }).click();
+        await expect(page.getByTestId('plot-line').first()).toBeAttached({ timeout: 60_000 });
+        await ribbon(page).getByRole('button', { name: 'TF' }).click();
+        await page.getByRole('button', { name: 'Calc TF' }).click();
+        await expect(page.getByTestId('plot-line').first()).toBeAttached({ timeout: 60_000 });
+        const file = path.join(outDir, name);
+        await saveDataset(page, file);
+        return inspectDvma(file);
+      };
+
+      await openApp(page);
+      await logOnce(page, { channels: 2 });
+      expect(await calcAndSave('lower.dvma')).toMatchObject({ time: 1, freq: 1, tf: 1 });
+
+      const card = page.locator('[data-testid^="tray-card-"]').first();
+      await card.hover();
+      await card.getByRole('button', { name: 'Delete set' }).click();
+      await expect(page.locator('[data-testid^="tray-card-"]')).toHaveCount(0);
+
+      await logOnce(page, { channels: 2 });
+      expect(await calcAndSave('upper.dvma')).toMatchObject({ time: 1, freq: 1, tf: 1 });
+
+      // The session journal (what a restore and a notebook's `session.data`
+      // read) holds the one set too, not the deleted one beside it.
+      await page.close();
+      const restored = await context.newPage();
+      await openApp(restored);
+      await expect(journalToast(restored)).toBeVisible({ timeout: 60_000 });
+      await journalToast(restored).getByRole('button', { name: 'Restore' }).click();
+      await expect(restored.locator('[data-testid^="tray-card-"]')).toHaveCount(1);
+    });
+  });
+
   test('a source edited after stamping loads flagged; the badge rederives it', async ({ page, context }) => {
     await withServe(async ({ outDir }) => {
       await openApp(page);

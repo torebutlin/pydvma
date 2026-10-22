@@ -2500,6 +2500,13 @@ export function createActions(engine: EngineStore, selection: Selection, setting
      * reloading the file as a phantom orphan tray set.
      */
     derivedItems: { kind: DerivedKind; item: DvmaItem; index: number }[];
+    /**
+     * Any OTHER items linked to the set (`id_link` naming its lineage) that
+     * the lineage index does not track — a python-written file can carry
+     * several spectra of one measurement, of which the app adopts only the
+     * last. They are the set's data too, so they leave and come back with it.
+     */
+    linkedItems: { item: DvmaItem; index: number }[];
     /** Which kinds were marked computed-this-session, so undo can re-mark. */
     computedKinds: DerivedKind[];
     /**
@@ -2509,8 +2516,126 @@ export function createActions(engine: EngineStore, selection: Selection, setting
      * rather than silently falling back to channel 0.
      */
     sonoCh: number | undefined;
+    /** The set's broken-chain flags (`staleChains`), re-flagged by undo. */
+    staleKinds: DerivedKind[] | undefined;
   }
   let blaRunUndo: RemovedSet[] = [];
+
+  /**
+   * Take sets out of the session ENTIRELY — the four places a set lives (the
+   * dataset items, `working`, the derived map, the selection tray) plus its
+   * per-set caches — and return what was removed, for an undo.
+   *
+   * The set's derived items leave with it: the FFT/TF/sonogram the lineage
+   * index tracks, and any other item linked to the set's lineage id (see
+   * `RemovedSet.linkedItems`), unless a set that STAYS shares that lineage
+   * (the same file loaded twice), whose views those items still back. A
+   * `ModalData` is not swept: the fit is its own tray card, cleared by its own
+   * × (`clearFit`), and the modal layer owns that item.
+   *
+   * Unknown ids are skipped; nothing is emitted when nothing was removed.
+   */
+  function detachSets(ids: readonly number[]): RemovedSet[] {
+    const ds = get(dataset);
+    const stateOf = get(selection.state);
+    const removed: RemovedSet[] = [];
+    const batch = new Set(ids);
+    // Lineage ids of the sets that stay, and the items that are their sources.
+    const lineageOf = (ws: WorkingSet): string[] => ['unique_id', 'id_link']
+      .map((k) => ws.time.meta[k])
+      .filter((v): v is string => typeof v === 'string' && !!v);
+    const staying = working.filter((w) => !batch.has(w.setId));
+    const keptLinks = new Set(staying.flatMap(lineageOf));
+    const keptSources = new Set(staying.map((w) => w.time));
+    // Indices are read against the PRISTINE item list and the items dropped in
+    // one pass at the end. Splicing per set would renumber the list under the
+    // remaining lookups, and every subsequent set would stash index 0 — which
+    // restores the run backwards.
+    const drop = new Set<DvmaItem>();
+    for (const id of ids) {
+      const record = get(selection.sets).find((s) => s.id === id);
+      if (!record) continue;
+      const ws = working.find((w) => w.setId === id) ?? null;
+      const item = ws?.time ?? null;
+      // This set's materialised FFT/TF/sonogram leave WITH it — derived from
+      // the very item being removed, and the lineage/computed keys would
+      // otherwise linger and be re-used by a future set (see `RemovedSet`).
+      const derivedItems: RemovedSet['derivedItems'] = [];
+      const computedKinds: DerivedKind[] = [];
+      for (const kind of DERIVED_KINDS) {
+        const key = lineageKey(id, kind);
+        const mat = materializedItems.get(key);
+        const at = mat && ds ? ds.items.indexOf(mat) : -1;
+        if (mat && at >= 0 && !drop.has(mat)) {
+          derivedItems.push({ kind, item: mat, index: at });
+          drop.add(mat);
+        }
+        materializedItems.delete(key);
+        if (computedThisSession.delete(key)) computedKinds.push(kind);
+      }
+      if (item) drop.add(item);
+      const linkedItems: RemovedSet['linkedItems'] = [];
+      const links = ws ? lineageOf(ws).filter((l) => !keptLinks.has(l)) : [];
+      if (ds && links.length) {
+        ds.items.forEach((it, index) => {
+          const link = it.meta.id_link;
+          if (typeof link !== 'string' || !links.includes(link)) return;
+          if (it.kind === 'TimeData' || it.kind === 'ModalData') return;
+          if (drop.has(it) || keptSources.has(it)) return;
+          linkedItems.push({ item: it, index });
+          drop.add(it);
+        });
+      }
+      removed.push({
+        item,
+        index: ds && item ? ds.items.indexOf(item) : -1,
+        record: { ...record, colors: record.colors.slice() },
+        states: Array.from({ length: record.nChannels }, (_, c) => stateOf(id, c)),
+        labels: selection.getLabelsForSet(id),
+        ws,
+        slice: get(derived)[id],
+        derivedItems,
+        linkedItems,
+        computedKinds,
+        sonoCh: lastSonoCh.get(id),
+        staleKinds: get(staleChains)[id],
+      });
+      working = working.filter((w) => w.setId !== id);
+      derived.update((d) => { const n = { ...d }; delete n[id]; return n; });
+      // Per-set caches are keyed by the id that is going away.
+      cleanCache.delete(id);
+      cleanedSets.update((m) => { const n = { ...m }; delete n[id]; return n; });
+      resampleUndo.delete(id);
+      lastSonoCh.delete(id);            // stashed above; ids are never reused
+      staleChains.update((m) => {
+        if (!(id in m)) return m;
+        const n = { ...m }; delete n[id]; return n;
+      });
+      // `analysisSettings` prunes itself off `selection.setsView`, so removing
+      // the tray set is enough to drop its per-set settings record.
+      selection.removeSet(id);
+    }
+    if (removed.length && ds) {
+      if (drop.size) ds.items = ds.items.filter((i) => !drop.has(i));
+      dataset.set(ds);
+    }
+    return removed;
+  }
+
+  /**
+   * Delete one data set — the tray card's ×. Removes the measurement from the
+   * DOCUMENT as well as the tray (see {@link detachSets}), so the next Save,
+   * export, autosave and session-journal post no longer carry it. No toast and
+   * no undo, as the × has always been.
+   *
+   * The × used to call `selection.removeSet`, which took only the card away:
+   * every deleted set stayed in the document and came back in every later
+   * Save (3C6 lab, 2026-10-22: "log, save, delete, log again — the next save
+   * has the old data too").
+   */
+  function removeSet(id: number): void {
+    detachSets([id]);
+  }
 
   /**
    * Remove a previous BLA run's sets — raw captures AND result sets — from the
@@ -2536,61 +2661,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * @returns How many sets were actually removed (`0` ⇒ no toast was raised).
    */
   function removeBlaRun(ids: readonly number[], opts: { label?: string } = {}): number {
-    const ds = get(dataset);
-    const stateOf = get(selection.state);
-    const removed: RemovedSet[] = [];
-    // Indices are read against the PRISTINE item list and the items dropped in
-    // one pass at the end. Splicing per set would renumber the list under the
-    // remaining lookups, and every subsequent set would stash index 0 — which
-    // restores the run backwards.
-    const drop = new Set<DvmaItem>();
-    for (const id of ids) {
-      const record = get(selection.sets).find((s) => s.id === id);
-      if (!record) continue;
-      const ws = working.find((w) => w.setId === id) ?? null;
-      const item = ws?.time ?? null;
-      // This set's materialised FFT/TF/sonogram leave WITH it — derived from
-      // the very item being removed, and the lineage/computed keys would
-      // otherwise linger and be re-used by a future set (see `RemovedSet`).
-      const derivedItems: RemovedSet['derivedItems'] = [];
-      const computedKinds: DerivedKind[] = [];
-      for (const kind of DERIVED_KINDS) {
-        const key = lineageKey(id, kind);
-        const mat = materializedItems.get(key);
-        const at = mat && ds ? ds.items.indexOf(mat) : -1;
-        if (mat && at >= 0) { derivedItems.push({ kind, item: mat, index: at }); drop.add(mat); }
-        materializedItems.delete(key);
-        if (computedThisSession.delete(key)) computedKinds.push(kind);
-      }
-      removed.push({
-        item,
-        index: ds && item ? ds.items.indexOf(item) : -1,
-        record: { ...record, colors: record.colors.slice() },
-        states: Array.from({ length: record.nChannels }, (_, c) => stateOf(id, c)),
-        labels: selection.getLabelsForSet(id),
-        ws,
-        slice: get(derived)[id],
-        derivedItems,
-        computedKinds,
-        sonoCh: lastSonoCh.get(id),
-      });
-      if (item) drop.add(item);
-      working = working.filter((w) => w.setId !== id);
-      derived.update((d) => { const n = { ...d }; delete n[id]; return n; });
-      // Per-set caches are keyed by the id that is going away.
-      cleanCache.delete(id);
-      cleanedSets.update((m) => { const n = { ...m }; delete n[id]; return n; });
-      resampleUndo.delete(id);
-      lastSonoCh.delete(id);            // stashed above; ids are never reused
-      // `analysisSettings` prunes itself off `selection.setsView`, so removing
-      // the tray set is enough to drop its per-set settings record.
-      selection.removeSet(id);
-    }
+    const removed = detachSets(ids);
     if (!removed.length) return 0;
-    if (ds) {
-      if (drop.size) ds.items = ds.items.filter((i) => !drop.has(i));
-      dataset.set(ds);
-    }
     blaRunUndo = removed;
     const n = removed.length;
     const what = opts.label ?? 'previous BLA run';
@@ -2651,6 +2723,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         ds.items.splice(at, 0, dItem.item);
         materializedItems.set(lineageKey(id, dItem.kind), dItem.item);
       }
+      for (const lItem of r.linkedItems) {
+        const at = lItem.index >= 0 && lItem.index <= ds.items.length ? lItem.index : ds.items.length;
+        ds.items.splice(at, 0, lItem.item);
+      }
+      for (const kind of r.staleKinds ?? []) markStale(id, kind);
       for (const kind of r.computedKinds) computedThisSession.add(lineageKey(id, kind));
       // The sonogram channel goes back with the set: "This channel" at the
       // next save prompt must still mean the channel that was on screen.
@@ -4037,7 +4114,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   return {
     dataset, derived, computeErrors, busy, modal,
-    loadDataset, addRecordedSet, addBlaSets, removeBlaRun, undoRemoveBlaRun, stampUiState,
+    loadDataset, addRecordedSet, addBlaSets, removeSet, removeBlaRun, undoRemoveBlaRun, stampUiState,
     materializeDerived,
     /** The "Include sonogram?" save prompt (Task 5b) — see each function. */
     sonoPromptNeeded, includeSonograms,

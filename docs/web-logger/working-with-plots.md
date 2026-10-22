@@ -31,7 +31,8 @@ tray as a drawer; close it with its **×**, **Esc**, or a click outside.
 - The channel numbers across the top cycle that channel through on,
   faded and off in **all** sets at once.
 - **cal** (shown on hover) opens the [calibration dialog](calibration.md).
-  **×** deletes the set. On the **Modal fit** card the **×** clears the
+  **×** deletes the set, with its FFT and transfer function, so the next
+  **Save Dataset** no longer writes it. On the **Modal fit** card the **×** clears the
   fit, and a message offers **Undo**. On a touch screen, which cannot
   hover, the **×** shows all the time.
 - **⚠ source changed** appears on a set whose saved FFT or transfer

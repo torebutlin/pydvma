@@ -6,9 +6,11 @@
    *
    * It iterates `selection.setsView` (may be empty — a hint is shown
    * when there are no sets); clicking a set chip calls
-   * `selection.cycleSet(setId)`, and its corner `×` deletes the set (for
-   * the modal-fit card, clears the fit with Undo) exactly as the tray
-   * card's `×` does, so deleting needs no trip into the drawer. The `⋯`
+   * `selection.cycleSet(setId)`, and its corner `×` deletes the set
+   * (`onDeleteSet`, i.e. `actions.removeSet`, so it leaves the saved data
+   * too; for the modal-fit card, `onDeleteFit` clears the fit with Undo)
+   * exactly as the tray card's `×` does, so deleting needs no trip into
+   * the drawer. The `⋯`
    * control (`data-testid="rail-more"`) opens the full data tray as a
    * flyover drawer over a scrim; its `×` (`data-testid="tray-close"`),
    * Escape or a scrim click closes it.
@@ -42,6 +44,8 @@
      */
     monitor,
     onDeleteFit,
+    /** Forwarded to the hosted Tray: a data set's × (`actions.removeSet`). */
+    onDeleteSet,
     /** Forwarded to the hosted Tray for the stale-chain badge (Task 4). */
     staleChains,
     onRederive,
@@ -53,6 +57,7 @@
     modal?: import('../lib/stores/modal').ModalStore;
     monitor?: MonitorStore;
     onDeleteFit?: () => void;
+    onDeleteSet?: (setId: number) => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
     tfChIn?: (setId: number) => number | null | undefined;
@@ -152,7 +157,9 @@
             data-testid="rail-del"
             title={set.role === 'fit' ? 'Clear modal fit' : `Delete ${set.name}`}
             aria-label={set.role === 'fit' ? 'Clear modal fit' : `Delete ${set.name}`}
-            onclick={() => (set.role === 'fit' && onDeleteFit ? onDeleteFit() : selection.removeSet(set.id))}
+            onclick={() => (set.role === 'fit' && onDeleteFit
+              ? onDeleteFit()
+              : (onDeleteSet ?? selection.removeSet)(set.id))}
           >×</button>
         </div>
       {/each}
@@ -203,7 +210,7 @@
     data-testid="tray"
     onkeydown={onDrawerKeydown}
   >
-    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {staleChains} {onRederive} {tfChIn} />
+    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {onDeleteSet} {staleChains} {onRederive} {tfChIn} />
     <!-- Sits on the drawer's outer edge, over the scrim, so it never crowds
          the tray's own header; inside the dialog so the focus trap reaches it. -->
     <button

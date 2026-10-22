@@ -70,6 +70,16 @@ follows [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **Deleting a set with its tray × now takes it out of the saved data.**
+  The × removed the card from the tray but left the measurement in the
+  session, so every later Save still wrote every set deleted before it,
+  with its FFT and transfer function. Log, save, delete, log again, and
+  the second file held both measurements. The same applied to exports,
+  the autosave, a restored session and a notebook's `session.data`.
+  In the 3C6 lab, each "one beam per file" save held the whole session,
+  so the coupled-beam prediction read the wrong transfer function. Files
+  already saved this way still load with every set they hold; delete the
+  extra ones and save again.
 - **A modal fit's global line ran off both ends of the axis.** The two
   residual terms that stand for modes outside the fitted band were solved
   on the band round the fitted modes and then drawn across the whole
@@ -99,6 +109,11 @@ follows [semantic versioning](https://semver.org/).
   part showed, with nothing to say what it was. The miniature now has an
   outlined track, a faint trace of the spectrum, its end frequencies, and
   a shaded funnel joining the zoomed part to the strip below.
+- **Opening an NI stream no longer prints the recorder object.** A
+  leftover debug `print` in `streams.start_stream` put
+  `<pydvma.streams.Recorder_NI_nidaqmx object at 0x…>` into notebook
+  output (the 3C6 stepped-sine widget's, for one) each time it opened
+  or rebuilt the NI task.
 
 ## 2.7.0 — 2026-10-16
 

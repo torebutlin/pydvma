@@ -1714,6 +1714,7 @@
   <main class="main">
     {#if narrow}
       <NarrowRail {selection} {modal} {monitor} {channelSeries} onDeleteFit={actions.clearFit}
+        onDeleteSet={actions.removeSet}
         staleChains={actions.staleChains} onRederive={rederiveStale}
         tfChIn={view === 'tf' ? tfChInFor : undefined} />
     {:else}
@@ -1724,7 +1725,7 @@
           <Tray {selection} {modal} channelData={channelSeries}
             getCalibration={actions.getCalibration}
             applyCalibration={actions.setCalFactors}
-            onDeleteFit={actions.clearFit}
+            onDeleteFit={actions.clearFit} onDeleteSet={actions.removeSet}
             staleChains={actions.staleChains} onRederive={rederiveStale}
             tfChIn={view === 'tf' ? tfChInFor : undefined} />
         </div>
