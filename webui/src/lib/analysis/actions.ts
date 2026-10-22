@@ -2873,9 +2873,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * integrates — the stored arrays are NEVER mutated, so a set that recomputes
    * stays correct. Persisted per-set in `.dvma` UI state (`iw_power`, via
    * `stampUiState`) and autosaved. Any modal-fit pseudo-set overlaying the set
-   * inherits the same power so its reconstruction stays visually locked to the
-   * (transformed) measured line. The display power does NOT feed the modal fit
-   * (that reads the raw TF + its own measurement_type).
+   * carries the same power (here for an existing card, in `syncModal` for one
+   * built later) so its reconstruction stays visually locked to the
+   * (transformed) measured line. The display power does NOT feed the modal
+   * fit itself, which reads the measured TF with its own measurement_type, so
+   * fn, ζ and the modal constants never depend on a display choice.
    */
   function setIwPower(setId: number, power: number): void {
     const ws = working.find((w) => w.setId === setId);
@@ -3336,11 +3338,21 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       }
       mirrorUnitsToFitSet(t.setId);
       const s = chosenSlice(t, mode)!;
-      if (lastSliceBySet.get(t.setId) !== s) {
+      // The recon is drawn with the SOURCE set's x(iω) display power, so it
+      // overlays the measured line as plotted. `setIwPower` keeps an existing
+      // card in step; this covers a card built while a power was already set
+      // (a fit made after choosing x(iω), or a loaded file), which used to
+      // draw the untransformed recon over the transformed data.
+      const srcPower = get(derived)[t.setId]?.iwPower ?? 0;
+      const sliceChanged = lastSliceBySet.get(t.setId) !== s;
+      if (sliceChanged || (get(derived)[rec.id]?.iwPower ?? 0) !== srcPower) {
         setDerived(rec.id, {
-          tf: subset
-            ? { axis: s.axis, data: s.data, chIn: null, nChannels: lineCount }
-            : { axis: s.axis, data: s.data, chIn: t.chIn, nChannels: t.nChannels },
+          ...(sliceChanged ? {
+            tf: subset
+              ? { axis: s.axis, data: s.data, chIn: null, nChannels: lineCount }
+              : { axis: s.axis, data: s.data, chIn: t.chIn, nChannels: t.nChannels },
+          } : {}),
+          iwPower: srcPower,
         });
         lastSliceBySet.set(t.setId, s);
       }

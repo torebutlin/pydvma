@@ -18,7 +18,10 @@ carries over, and the Fit card has its own **view** selector to change it:
 card's **TF type** selector, **Acceleration**, **Velocity** or
 **Displacement**, tells the fit what your transfer function measures. It
 sets the `(iω)` power in the model, like the `measurement_type` argument
-of the Python fitter.
+of the Python fitter. Set it to what was measured, before any
+[x(iω)](analysis.md#scaling-xi-and-best-match) scaling: the fit lines
+follow that scaling by themselves, so they always overlay the data as
+plotted.
 
 ## Choosing what to fit
 

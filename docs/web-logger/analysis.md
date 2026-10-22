@@ -159,8 +159,11 @@ The **scaling** group on the TF card holds two tools.
     This changes only what is plotted. It is applied per set, never
     alters the stored arrays, and is saved with the set in the `.dvma`
     file. It applies to the **FFT** view and to every TF plot type, not
-    to **Power**, **PSD** or **CSD**. It does not feed the
-    [modal fit](modal-fitting.md), which uses its own **TF type**.
+    to **Power**, **PSD** or **CSD**. The
+    [modal fit](modal-fitting.md) draws its fit lines with the same
+    power, so they overlay the data as plotted, but the fit itself uses
+    the measured values and its own **TF type**: the fitted frequencies,
+    damping and modal constants do not depend on the power you view.
 
 - **Best match** rescales every TF so that the sets best overlay one
   reference channel over the frequency window you are showing. Choose

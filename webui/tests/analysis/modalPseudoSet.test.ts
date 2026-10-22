@@ -683,3 +683,40 @@ test('the fit pseudo-set mirrors its source set units, and follows a re-calibrat
   await flush();
   expect(get(actions.derived)[fitId].units).toEqual(['N', 'Pa']);
 });
+
+// ── x(iω) display power (lab feedback, 2026-10) ────────────────────────────
+
+test('a fit made while x(iω) is set draws its recon with that power', async () => {
+  // The pseudo-set used to inherit the power only when it changed AFTER the
+  // fit, so a fit made with x(iω) already chosen drew the untransformed recon
+  // over the transformed measured line.
+  const { actions, sel } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  const src = get(sel.dataSetsView)[0].id;
+  actions.setIwPower(src, -1);
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  const fit = get(sel.setsView).find((s) => s.role === 'fit')!;
+  expect(get(actions.derived)[fit.id]?.iwPower).toBe(-1);
+
+  // …and a later change follows, both ways.
+  actions.setIwPower(src, 2);
+  expect(get(actions.derived)[fit.id]?.iwPower).toBe(2);
+  actions.setIwPower(src, 0);
+  expect(get(actions.derived)[fit.id]?.iwPower).toBe(0);
+});
+
+test('the fit itself never sees the display power', async () => {
+  // fn, ζ and the modal constants come from the measured TF and its TF type,
+  // so the engine request is identical whatever x(iω) shows.
+  const run = async (power: number) => {
+    const { actions, sel, calls } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+    actions.loadDataset(makeDataset());
+    await actions.calcTf('all');
+    actions.setIwPower(get(sel.dataSetsView)[0].id, power);
+    await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+    return JSON.stringify(calls.filter((c) => c.op === 'calc_fit').map((c) => c.payload), (_k, v) =>
+      (v instanceof Float64Array ? Array.from(v) : v));
+  };
+  expect(await run(1)).toBe(await run(0));
+});

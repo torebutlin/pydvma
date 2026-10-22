@@ -39,6 +39,13 @@ follows [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **A modal fit made with x(iω) already set drew its fit lines without
+  it.** The data was plotted with the x(iω) power but the fit lines were
+  not, so with a power of −1 they sat about 56 dB above a 100 Hz mode.
+  The fit lines took the power only when it was changed after fitting;
+  they now follow it whenever they are drawn, including after loading a
+  file. The fit itself is unchanged: it uses the measured values and the
+  **TF type**, so its results never depended on the display power.
 - **Zooming the frequency navigator to a band left a stray blue box above
   the strip.** The box was the full-range miniature, whose track drew
   almost exactly in the card's background colour, so only the zoomed
