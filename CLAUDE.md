@@ -8,26 +8,35 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
-**v2.7.1 IS CUT (2026-10-22, Mac) — the twine upload is Tore's, then tag
-`v2.7.1` at the cut commit and publish the GitHub release from
-`dist/RELEASE_NOTES_2.7.1.md` (Zenodo auto-archives) — tag/release AFTER
-the upload, then re-check trap 3 on the DOWNLOADED wheel.** Patch, Tore's
-call (borderline, said in the CHANGELOG: the CWT's automatic band moves in
-Python and `analysis.LOG_FREQ_DECADES` is new). Carries the tray-× fix
-below for the 3C6 lab PCs plus the 2026-10-21 cloud round. Built in the
-documented order after `npm ci`; `verify_release.py 2.7.1` passes both
-traps (embedded `pydvma-2.7.1` engine wheel referenced by the bundled
-`index-wus7F1cz.js`, 25 `pydvma/*.py` byte-identical); `twine check`
-passes; a CLEAN venv install (run with `-I` from outside the repo) serves
-its own UI, fetches the engine wheel 200, greets
-`{v:1, pydvma:'2.7.1', journal:true}`, and `apply_settings` works.
-Suites at the cut: pytest 1452/7 skipped, vitest 1266/1, check 0/0,
-Playwright 127 passed incl. BRIDGE_E2E and @engine, mkdocs --strict clean.
+**v2.7.1 IS RELEASED END TO END (2026-10-22, Mac).** Tore uploaded with
+twine; PyPI's wheel and sdist are byte-identical to the verified build
+(sha256 cd59d6c6… / 60c47043…); tag `v2.7.1` is at the cut `cbdff53`
+(lightweight) and pushed; the GitHub release "v2.7.1" carries the full
+CHANGELOG body and both files, so Zenodo archives it. Trap 3 re-checked on
+the DOWNLOADED wheel: embedded `pydvma-2.7.1` engine wheel referenced by
+the bundled `index-wus7F1cz.js`, all 25 `pydvma/*.py` byte-identical to
+`cbdff53` in both the fat and the engine wheel. A clean venv installing
+`pydvma[serve]==2.7.1` from PyPI serves its own UI (engine wheel 200),
+greets `{v:1, pydvma:'2.7.1', journal:true}`, and `apply_settings`
+works. Lab install: `pip install --upgrade "pydvma[serve,soundcard]"`.
+Patch, Tore's call (borderline, said in the CHANGELOG: the CWT's
+automatic band moves in Python and `analysis.LOG_FREQ_DECADES` is new).
+Carries the tray-× fix below plus the 2026-10-21 cloud round. Suites at
+the cut: pytest 1452/7 skipped, vitest 1266/1, check 0/0, Playwright 127
+passed incl. BRIDGE_E2E and @engine, mkdocs --strict clean.
+**NOT in 2.7.1: five commits the cloud session pushed to
+`claude/wizardly-pasteur-blxbnv` at 10:56 UTC that day** (working-folder
+save/load on disk `aac8e3a`, Clean Impulse/Resample per set `cad63a6`,
+global-fit residues fade `e4223e0`, fit chip An/phi_n `c8c99f9`, narrow
+rail chip delete `eb126de`) — on the branch, never on master. A trial
+merge conflicts in CHANGELOG, `working-with-plots.md` and
+`NarrowRail.svelte`, and `eb126de`'s chip × calls `selection.removeSet`
+DIRECTLY: merging it as is brings the accumulating-save bug back on the
+narrow layout — wire it to `onDeleteSet` (`actions.removeSet`).
 `npm audit` shows 3 DEV-ONLY advisories not in the GitHub alert list
 (vite 6.4.3 dev server/launch-editor, high; vitest's @vitest/mocker,
 moderate): the shipped bundle has none of it, but the fix needs the
-EXACT `"vite": "6.4.3"` pin moved (6.4.5) and vitest 4.1.12 — left for
-after this patch.
+EXACT `"vite": "6.4.3"` pin moved (6.4.5) and vitest 4.1.12.
 
 **v2.7.0 IS RELEASED END TO END (2026-10-16, Mac).** Tore uploaded
 `dist/` with twine; PyPI's wheel and sdist are byte-identical to the
