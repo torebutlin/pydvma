@@ -3,7 +3,11 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.8.1 — 2026-10-26
+
+Two fixes to saving in the app, from the 3C6 lab, and a security update
+to a library bundled in the app (DOMPurify 3.4.17, which the app does not
+call). Upgrade with `pip install --upgrade "pydvma[serve,soundcard]"`.
 
 ### Fixed
 
