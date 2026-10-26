@@ -8,31 +8,38 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
-**v2.8.1 IS CUT (2026-10-26, Mac), NOT YET UPLOADED.** Cut `3eac206`
-(release commit; master not pushed yet). Patch: two 3C6 lab fixes in the
-served app. (1) The Save dialog's name kept only the last typed letter:
-FileDialog's focus/select `$effect` read `name`, so each keystroke re-ran
-it and re-selected; now `untrack`ed, selects once. The e2e had typed with
-`fill` (whole value at once), which can never show it; the new served
-test types key by key (`pressSequentially`). (2) The header's Save Figure
-only switched to the Export stage ("nothing happens"): it now runs App's
-`saveFigure` from any stage through the served Save dialog (a prompt
-elsewhere), using the shared `figureOptions` store (lib/export/
-figureSave.ts; the Export card unmounts with its stage). One dialog for
-PNG+PDF; a typed `.pdf`/`.png` picks the format (FileDialog `extensions`)
-instead of `name.pdf.png`. Also dompurify 3.4.16 -> 3.4.17 (lockfile only;
-runtime audit 0; vite/vitest dev advisories still open). Built after
-`npm ci` in the documented order: `verify_release.py 2.8.1` passes both
-traps (`index-DLGkpFLZ.js`, 26 `pydvma/*.py` byte-identical), `twine
-check` passes, sha256 wheel 7a62f84f… / sdist ae91613c…; a CLEAN venv's
-`dvma.launch` serves its own UI (native engine 2.8.1), and typing
-`run1` key by key + header Save Figure wrote `run1.dvma` and `fig.png`
-into the notebook folder. Suites: pytest 1482/7, vitest 1283/1, check
-0/0, Playwright 132 passed incl. BRIDGE_E2E and @engine, mkdocs --strict
-clean. `dist/RELEASE_NOTES_2.8.1.md` written. **Next: Tore's twine upload
-of the two named files; then push master, tag `v2.8.1` at `3eac206`, the
-GitHub release, trap 3 on the downloaded wheel, and the lab PCs re-run
-`Setup_3C6_PC.bat` as administrator.**
+**v2.8.1 IS RELEASED END TO END (2026-10-26, Mac).** Tore uploaded with
+twine; PyPI's wheel and sdist are byte-identical to the verified build
+(sha256 7a62f84f… / ae91613c…); tag `v2.8.1` is at the cut `3eac206`
+(lightweight) and pushed; the GitHub release "v2.8.1" (Latest) carries
+the full CHANGELOG body and both files, so Zenodo archives it. Trap 3
+re-checked on the DOWNLOADED wheel: embedded `pydvma-2.8.1` engine wheel
+referenced by the bundled `index-DLGkpFLZ.js`, all 26 `pydvma/*.py`
+byte-identical to `v2.8.1` in both the fat and the engine wheel. A clean
+venv installing `pydvma[serve]==2.8.1` from PyPI serves its own UI
+(engine wheel 200), greets `{v:1, pydvma:'2.8.1', journal:true,
+files:true}` same-origin (`files:false` to another origin), honours the
+notebook folder as `save_dir`, and `apply_settings(MySettings(...))`
+works (it takes a MySettings, not a dict: a dict prints an empty
+summary). **The 3C6 lab PCs upgrade by re-running `Setup_3C6_PC.bat` as
+administrator** (see the 2.8.0 block). Nothing is pending on the release
+side. Patch, two 3C6 lab fixes in the served app: (1) the Save dialog's
+name kept only the last typed letter: FileDialog's focus/select
+`$effect` read `name`, so each keystroke re-ran it and re-selected; now
+`untrack`ed, selects once. The e2e had typed with `fill` (whole value at
+once), which can never show it; the new served test types key by key
+(`pressSequentially`). (2) The header's Save Figure only switched to the
+Export stage ("nothing happens"): it now runs App's `saveFigure` from
+any stage through the served Save dialog (a prompt elsewhere), using the
+shared `figureOptions` store (lib/export/figureSave.ts; the Export card
+unmounts with its stage). One dialog for PNG+PDF; a typed `.pdf`/`.png`
+picks the format (FileDialog `extensions`) instead of `name.pdf.png`.
+Also dompurify 3.4.16 -> 3.4.17 (lockfile only; runtime audit 0; the
+vite/vitest dev advisories are still open). Suites at the cut: pytest
+1482/7, vitest 1283/1, check 0/0, Playwright 132 passed incl.
+BRIDGE_E2E and @engine, mkdocs --strict clean. NB the Browser pane, when
+hidden, delays a PNG figure save (rAF-bound rasteriser) by seconds:
+53 ms when visible.
 
 **v2.8.0 IS RELEASED END TO END (2026-10-22, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
