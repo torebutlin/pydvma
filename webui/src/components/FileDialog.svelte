@@ -20,6 +20,7 @@
    * (absolute) through `onconfirm`; writing, reading, replace confirmation
    * and moving the working folder belong to the caller (App / `serverDir`).
    */
+  import { untrack } from 'svelte';
   import type { FolderListing } from '../lib/stores/engine';
   import { extensionOf, joinPath, withExtension } from '../lib/files/workdir';
 
@@ -28,6 +29,7 @@
     title,
     workingDir,
     suggested = '',
+    extensions = undefined,
     list,
     onconfirm,
     oncancel,
@@ -38,6 +40,13 @@
     workingDir: { dir: string; name: string; sep: string };
     /** Save mode: the proposed file name (its extension is kept if dropped). */
     suggested?: string;
+    /**
+     * Save mode: the extensions a typed name may carry as it is (e.g.
+     * ['.png', '.pdf'] for a figure, so `beam.pdf` stays `beam.pdf`); a name
+     * with none of them gets the suggested name's extension. Default: just
+     * the suggested name's own.
+     */
+    extensions?: string[];
     /** List a folder (absolute path; omitted = the working folder). */
     list: (dir?: string) => Promise<FolderListing>;
     /** The chosen absolute path: a file (save/open) or a folder (folder). */
@@ -65,8 +74,13 @@
   const targetDir = $derived(browsing && listing ? listing.dir : workingDir.dir);
   const inWorkingDir = $derived(targetDir === workingDir.dir);
 
+  const accepted = $derived(extensions ?? (ext ? [ext] : []));
+  /** The accepted extension `n` already ends with ('' when none). */
+  function typedExtension(n: string): string {
+    return accepted.find((e) => n.toLowerCase().endsWith(e.toLowerCase())) ?? '';
+  }
   /** Save: the file name as it will be written (extension restored). */
-  const finalName = $derived(withExtension(name.trim(), ext));
+  const finalName = $derived(typedExtension(name.trim()) ? name.trim() : withExtension(name.trim(), ext));
   /** Save: whether that name is already a file in the target folder. */
   const willReplace = $derived(
     mode === 'save' && !!listing && listing.dir === targetDir
@@ -112,7 +126,7 @@
   }
 
   const canConfirm = $derived(
-    mode === 'save' ? finalName.length > 0 && finalName !== ext
+    mode === 'save' ? finalName.length > typedExtension(finalName).length
       : mode === 'open' ? !!selectedFile && !!listing
         : !!listing,
   );
@@ -131,12 +145,17 @@
   const confirmLabel = $derived(mode === 'save' ? 'Save' : mode === 'open' ? 'Load' : 'Use this folder');
 
   let nameInput = $state<HTMLInputElement>();
+  // Focus the name and select its stem ONCE, when the box appears, so typing
+  // replaces the proposed name but keeps the extension. `name` is read
+  // untracked: tracked, every keystroke re-ran this and re-selected what was
+  // typed, so each letter replaced the one before (lab report, 2026-10-26).
   $effect(() => {
     if (mode !== 'save' || !nameInput) return;
-    nameInput.focus();
-    // Select the stem so typing replaces the name but keeps the extension.
-    const stop = ext && name.toLowerCase().endsWith(ext.toLowerCase()) ? name.length - ext.length : name.length;
-    nameInput.setSelectionRange(0, stop);
+    const el = nameInput;
+    untrack(() => {
+      el.focus();
+      el.setSelectionRange(0, name.length - typedExtension(name).length);
+    });
   });
 </script>
 

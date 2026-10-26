@@ -49,7 +49,7 @@
     damping,
     bla,
     onFitDamping,
-    getSvg,
+    onsavefigure,
     workdir,
     onsave,
     toasts,
@@ -76,9 +76,9 @@
     bla: BlaStore;
     /** Run/refresh the damping fit with the damping store's current knobs. */
     onFitDamping: () => void;
-    /** Active plot's <svg> accessor (Export card figure source). */
-    getSvg: () => SVGSVGElement | undefined;
-    /** Working directory for Save Figure / Save Dataset. */
+    /** App's Save Figure, handed the Export card's filename (the figure source and dialogs live in App). */
+    onsavefigure: (base: string) => Promise<void>;
+    /** Working directory for the Export card's data exports. */
     workdir: WorkDir | null;
     /** Header's Save Dataset handler (reused by the Export card, which can
      *  hand it a "Choose sets…" subset pick; absent ⇒ the whole document). */
@@ -116,7 +116,7 @@
   {:else if $activeStage === 'fit'}
     <FitCard {actions} {analysisSettings} {selection} {viewState} {modal} />
   {:else if $activeStage === 'export'}
-    <ExportCard {getSvg} {workdir} {onsave} {toasts} {hasData} {exporter} bind:autosaveEnabled />
+    <ExportCard {onsavefigure} {workdir} {onsave} {toasts} {hasData} {exporter} bind:autosaveEnabled />
   {:else}
     <section class="ctx-card card-controls" aria-label="stage controls">
       <div class="ctx-name">

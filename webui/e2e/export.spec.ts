@@ -68,13 +68,26 @@ test('Export stage → PDF only → Export downloads a .pdf', async ({ page }) =
   expect(await downloadSize(download)).toBeGreaterThan(1000);
 });
 
-test('the top-bar Save Figure opens the Export stage from any view', async ({ page }) => {
+test('the top-bar Save Figure asks for a name and saves the current plot', async ({ page }) => {
   await page.goto('/?fixture=1');
   await expect(page.getByTestId('tray-card-0')).toBeVisible();
-  // Save Figure now lives in the top bar (works from every view); Time is the
-  // default view. Clicking it jumps to the Export stage.
+  await expect(page.getByTestId('plot-line').first()).toBeVisible();
+  // Save Figure lives in the top bar (works from every view). Like Save
+  // Dataset it asks for a name first (the served app's Save dialog; a prompt
+  // here), then saves with the Export stage's choices (PNG by default) —
+  // without leaving the current view (2026-10-26: it used to only switch to
+  // the Export stage, which read as "nothing happens").
+  page.once('dialog', (d) => {
+    expect(d.message()).toContain('Save figure');
+    expect(d.defaultValue()).toMatch(/^pydvma_figure_.*\.png$/);
+    void d.accept('topbar');
+  });
+  const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Save Figure' }).click();
-  await expect(page.getByRole('region', { name: 'Export stage controls' })).toBeVisible();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('topbar.png');
+  expect(await downloadSize(download)).toBeGreaterThan(1000);
+  await expect(page.getByRole('region', { name: 'Export stage controls' })).toHaveCount(0);
 });
 
 /**

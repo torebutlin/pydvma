@@ -58,6 +58,10 @@
   import { readDvma, writeDvma } from './lib/codec/dvma';
   import { legendOverlaySvg } from './lib/export/legendOverlay';
   import { exportBytes, type Exporter } from './lib/export/data';
+  import { exportPdf, exportPng } from './lib/export/figure';
+  import {
+    FIGURE_EXTENSIONS, defaultFigureName, figureFormats, figureOptions, figureTargets,
+  } from './lib/export/figureSave';
   import { sniffFormat } from './lib/files/sniff';
   import { fallbackDir, pickWorkDir, restoreWorkDir, serverDir, type WorkDir } from './lib/files/workdir';
   import {
@@ -943,15 +947,22 @@
    */
   let fileAsk = $state<{
     mode: 'save' | 'open' | 'folder'; title: string; suggested: string;
+    extensions?: string[];
     resolve: (path: string | null) => void;
   } | null>(null);
   /** The server's working folder, as the dialog opens on it. */
   let serverFolder = $state<FolderInfo | null>(null);
 
-  /** Raise the file dialog; resolves the chosen absolute path, or null. */
-  function askFile(mode: 'save' | 'open' | 'folder', title: string, suggested = ''): Promise<string | null> {
+  /**
+   * Raise the file dialog; resolves the chosen absolute path, or null.
+   * `extensions` (save mode): the extensions a typed name keeps as it is
+   * (see FileDialog); default, just `suggested`'s own.
+   */
+  function askFile(
+    mode: 'save' | 'open' | 'folder', title: string, suggested = '', extensions?: string[],
+  ): Promise<string | null> {
     fileAsk?.resolve(null);       // never strand an earlier caller (cf. askSonoChoice)
-    return new Promise((resolve) => { fileAsk = { mode, title, suggested, resolve }; });
+    return new Promise((resolve) => { fileAsk = { mode, title, suggested, extensions, resolve }; });
   }
 
   /**
@@ -1117,6 +1128,57 @@
       );
     } catch (e) {
       toasts.push(`Save failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+    }
+  };
+
+  /**
+   * Save Figure: the active plot as PNG and/or PDF, with the Export stage's
+   * format and background choices (`figureOptions`). Shared by the top bar's
+   * button (`base` null: ask for a name, as Save Dataset does) and the Export
+   * card's Export (`base`: the card's filename field).
+   *
+   * In the served app the Save dialog always asks where, opening in the
+   * working folder — ONE dialog even with both formats ticked (the two files
+   * land side by side, see `figureTargets`). Elsewhere the top bar prompts
+   * for a name and the card uses its field; then the browser folder, or a
+   * download. The top bar used to only switch to the Export stage, which
+   * read as "nothing happens" (lab report, 2026-10-26).
+   */
+  const saveFigure = async (base: string | null): Promise<void> => {
+    const el = getSvg();
+    if (!el) {
+      toasts.push('No plot to export yet — load data and pick a view first.', { level: 'info' });
+      return;
+    }
+    const opts = get(figureOptions);
+    const formats = figureFormats(opts);
+    if (formats.length === 0) {
+      toasts.push('Pick at least one figure format (PNG or PDF) in the Export stage.', { level: 'info' });
+      return;
+    }
+    // Serialise NOW: the plot can change while a dialog is open.
+    const svgText = el.outerHTML;
+    const suggested = `${base ?? defaultFigureName(new Date())}.${formats[0]}`;
+    const server = workdir?.kind === 'server';
+    const name = server
+      ? await askFile('save', 'Save figure', suggested, FIGURE_EXTENSIONS)
+      : base === null ? window.prompt('Save figure as…', suggested) : suggested;
+    if (!name?.trim()) return; // cancelled
+    try {
+      const saved: string[] = [];
+      for (const target of figureTargets(name.trim(), formats)) {
+        const blob = target.format === 'png'
+          ? await exportPng(svgText, opts.bg) : await exportPdf(svgText, opts.bg);
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const where = server
+          ? await serverWrite(target.name, bytes)
+          : await (workdir ?? fallbackDir()).save(target.name, bytes);
+        if (where === null) break;    // declined to replace: skip the rest too
+        saved.push(where);
+      }
+      if (saved.length) toasts.push(`Saved ${saved.join(' and ')}`, { level: 'success' });
+    } catch (e) {
+      toasts.push(`Figure export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
     }
   };
 
@@ -1685,7 +1747,7 @@
     {workdirPath}
     {onload}
     {onsave}
-    onsavefigure={() => activeStage.set('export')}
+    onsavefigure={() => saveFigure(null)}
     canSaveFigure={hasData}
     {onpickdir}
     busy={$actionsBusy || $damping.busy || $engineStatus === 'loading'}
@@ -1706,7 +1768,7 @@
     {damping}
     {bla}
     onFitDamping={refitDamping}
-    {getSvg}
+    onsavefigure={saveFigure}
     {workdir}
     {onsave}
     {toasts}
@@ -1890,6 +1952,7 @@
         mode={fileAsk.mode}
         title={fileAsk.title}
         suggested={fileAsk.suggested}
+        extensions={fileAsk.extensions}
         workingDir={serverFolder}
         list={filesList}
         onconfirm={(path) => { const a = fileAsk!; fileAsk = null; a.resolve(path); }}

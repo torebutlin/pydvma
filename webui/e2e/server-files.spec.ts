@@ -186,6 +186,54 @@ test.describe('served app: the working folder', () => {
     await page.getByTestId('file-dialog-cancel').click();
   });
 
+  test('the name takes typing key by key; Save Figure saves through the same dialog', async ({ page }) => {
+    await open(page);
+    const nameBox = page.getByTestId('file-dialog-name');
+
+    // Lab report (2026-10-26): each typed letter replaced the one before
+    // (the dialog re-selected the name on every keystroke). `fill` sets the
+    // whole value at once, so type key by key the way a person does.
+    await page.getByRole('button', { name: 'Save Dataset' }).first().click();
+    await nameBox.pressSequentially('beam');
+    await expect(nameBox).toHaveValue('beam.dvma');
+    await page.getByTestId('file-dialog-cancel').click();
+
+    // The top bar's Save Figure opens the same dialog, on the working folder,
+    // and stays on the current view (it used to switch to the Export stage).
+    await page.getByRole('button', { name: 'Save Figure' }).click();
+    await expect(dialog(page)).toHaveAttribute('data-mode', 'save');
+    await expect(page.getByTestId('file-dialog-target')).toHaveText(notebookDir);
+    await expect(nameBox).toHaveValue(/^pydvma_figure_.*\.png$/);
+    await nameBox.pressSequentially('fig1');
+    await expect(nameBox).toHaveValue('fig1.png');
+    await page.getByTestId('file-dialog-confirm').click();
+    await expect(page.getByTestId('toast').filter({ hasText: 'fig1.png' }))
+      .toContainText(path.join(notebookDir, 'fig1.png'), { timeout: 20000 });
+    expect(fs.readFileSync(path.join(notebookDir, 'fig1.png')).subarray(1, 4).toString()).toBe('PNG');
+    await expect(page.getByRole('region', { name: 'Export stage controls' })).toHaveCount(0);
+
+    // A typed .pdf saves a PDF (not fig2.pdf.png).
+    await page.getByRole('button', { name: 'Save Figure' }).click();
+    await nameBox.fill('fig2.pdf');
+    await page.getByTestId('file-dialog-confirm').click();
+    await expect(page.getByTestId('toast').filter({ hasText: 'fig2.pdf' }))
+      .toContainText(path.join(notebookDir, 'fig2.pdf'), { timeout: 20000 });
+    expect(fs.readFileSync(path.join(notebookDir, 'fig2.pdf')).subarray(0, 4).toString()).toBe('%PDF');
+
+    // PNG and PDF both ticked in the Export stage: ONE dialog, two files.
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Export' }).click();
+    await page.getByRole('checkbox', { name: 'PDF' }).check();
+    await page.getByRole('region', { name: 'Export stage controls' })
+      .getByRole('button', { name: 'Export', exact: true }).click();
+    await nameBox.fill('fig3');
+    await page.getByTestId('file-dialog-confirm').click();
+    await expect(page.getByTestId('toast').filter({ hasText: 'fig3.pdf' }))
+      .toContainText(path.join(notebookDir, 'fig3.png'), { timeout: 20000 });
+    await expect(dialog(page)).toHaveCount(0);
+    expect(fs.existsSync(path.join(notebookDir, 'fig3.png'))).toBe(true);
+    expect(fs.existsSync(path.join(notebookDir, 'fig3.pdf'))).toBe(true);
+  });
+
   test('the pill moves the working folder; Load and Export open there', async ({ page }) => {
     await open(page);
     await page.getByTestId('workdir-chip').click();

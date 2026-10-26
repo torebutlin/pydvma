@@ -9,9 +9,11 @@
    *     with a white / transparent / dark background, to the working dir
    *     (or a browser download in fallback mode). PNG and PDF are
    *     independent checkboxes: tick both and BOTH files are written (no
-   *     silent two-for-one). The figure SVG comes from the active
-   *     PlotSurface via the `getSvg` accessor; the restyle + rasterise /
-   *     vectorise lives in src/lib/export/figure.ts.
+   *     silent two-for-one). The choices live in the shared `figureOptions`
+   *     store (the top bar's Save Figure uses them too, and this card
+   *     unmounts with its stage); the write is App's `saveFigure`
+   *     (`onsavefigure`), handed this card's filename. The restyle +
+   *     rasterise / vectorise lives in src/lib/export/figure.ts.
    *   - Autosave — a toggle bound to the app's `autosaveEnabled` $state
    *     (threaded down as a bindable prop). This is where Task 13a's
    *     autosave switch finally gets a UI.
@@ -30,7 +32,7 @@
    * measurements. The pick is per-invocation and starts all-ticked; it is
    * never derived from what is visible on the plot.
    */
-  import { exportPdf, exportPng, type BackgroundMode } from '../../lib/export/figure';
+  import { defaultFigureName, figureOptions } from '../../lib/export/figureSave';
   import type { ChoosableSet, ExportFormat, Exporter } from '../../lib/export/data';
   import ChooseSetsPopover from '../ChooseSetsPopover.svelte';
   import { cancelAutosave } from '../../lib/files/autosave';
@@ -38,7 +40,7 @@
   import type { Toasts } from '../../lib/stores/toast';
 
   let {
-    getSvg,
+    onsavefigure,
     workdir,
     onsave,
     toasts,
@@ -47,9 +49,12 @@
     datasetName = undefined,
     autosaveEnabled = $bindable(true),
   }: {
-    /** Accessor for the active plot's root <svg> (null when no plot mounted). */
-    getSvg: () => SVGSVGElement | undefined;
-    /** Working directory to write into (null → browser download fallback). */
+    /**
+     * App's Save Figure: saves the active plot with `figureOptions`, handed
+     * this card's filename (without extension). Resolves when done.
+     */
+    onsavefigure: (base: string) => Promise<void>;
+    /** Working directory for the data exports (null → browser download fallback). */
     workdir: WorkDir | null;
     /**
      * The header's Save Dataset handler (single .dvma write path). Takes the
@@ -72,10 +77,8 @@
     autosaveEnabled?: boolean;
   } = $props();
 
-  // Save Figure dialog state.
-  let png = $state(true);
-  let pdf = $state(false);
-  let bg = $state<BackgroundMode>('white');
+  // Save Figure: the filename field (the formats and background are the
+  // shared `figureOptions`).
   let filename = $state(defaultFigureName(new Date()));
   let busy = $state(false);
 
@@ -125,13 +128,6 @@
     if (!autosaveEnabled) cancelAutosave();
   }
 
-  /** Default figure name: pydvma_figure_YYYY-MM-DD_HHMM (no extension). */
-  function defaultFigureName(now: Date): string {
-    const p = (n: number) => String(n).padStart(2, '0');
-    const stamp = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}`;
-    return `pydvma_figure_${stamp}`;
-  }
-
   /** Strip any user-typed extension so we control .png/.pdf ourselves. */
   function baseName(): string {
     const n = filename.trim() || defaultFigureName(new Date());
@@ -140,8 +136,8 @@
 
   /**
    * Write `bytes` as `name` via the working dir, or fall back to a browser
-   * download when no folder is set. Mirrors App.svelte's save path so a
-   * figure lands in the same place as a dataset. Resolves where it went, or
+   * download when no folder is set. Mirrors App.svelte's save path so an
+   * export lands in the same place as a dataset. Resolves where it went, or
    * null when the user cancelled (the served app's Save dialog).
    */
   async function write(name: string, bytes: Uint8Array): Promise<string | null> {
@@ -163,37 +159,11 @@
     }
   }
 
-  /** Save Figure: serialise the active plot and write each ticked format. */
+  /** Export: save the active plot as this card's filename, with the ticked formats. */
   async function saveFigure(): Promise<void> {
-    const el = getSvg();
-    if (!el) {
-      toasts.push('No plot to export yet — load data and pick a view first.', { level: 'info' });
-      return;
-    }
-    if (!png && !pdf) {
-      toasts.push('Pick at least one format (PNG or PDF).', { level: 'info' });
-      return;
-    }
-    const svgText = el.outerHTML;
-    const base = baseName();
     busy = true;
     try {
-      const saved: string[] = [];
-      if (png) {
-        const blob = await exportPng(svgText, bg);
-        const where = await write(`${base}.png`, new Uint8Array(await blob.arrayBuffer()));
-        if (where === null) return;               // cancelled: skip the rest too
-        saved.push(where);
-      }
-      if (pdf) {
-        const blob = await exportPdf(svgText, bg);
-        const where = await write(`${base}.pdf`, new Uint8Array(await blob.arrayBuffer()));
-        if (where === null) return;
-        saved.push(where);
-      }
-      toasts.push(`Saved ${saved.join(' and ')}`, { level: 'success' });
-    } catch (e) {
-      toasts.push(`Figure export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+      await onsavefigure(baseName());
     } finally {
       busy = false;
     }
@@ -301,16 +271,16 @@
       <div class="grp">
         <span class="grp-lab">figure format</span>
         <div class="grp-ctl">
-          <label class="chk"><input type="checkbox" bind:checked={png} aria-label="PNG" /> PNG</label>
-          <label class="chk"><input type="checkbox" bind:checked={pdf} aria-label="PDF" /> PDF</label>
+          <label class="chk"><input type="checkbox" bind:checked={$figureOptions.png} aria-label="PNG" /> PNG</label>
+          <label class="chk"><input type="checkbox" bind:checked={$figureOptions.pdf} aria-label="PDF" /> PDF</label>
         </div>
       </div>
       <div class="grp">
         <span class="grp-lab">background</span>
         <div class="grp-ctl">
-          <label class="chk"><input type="radio" name="figbg" value="white" bind:group={bg} /> white</label>
-          <label class="chk"><input type="radio" name="figbg" value="transparent" bind:group={bg} /> transparent</label>
-          <label class="chk"><input type="radio" name="figbg" value="dark" bind:group={bg} /> dark</label>
+          <label class="chk"><input type="radio" name="figbg" value="white" bind:group={$figureOptions.bg} /> white</label>
+          <label class="chk"><input type="radio" name="figbg" value="transparent" bind:group={$figureOptions.bg} /> transparent</label>
+          <label class="chk"><input type="radio" name="figbg" value="dark" bind:group={$figureOptions.bg} /> dark</label>
         </div>
       </div>
       <div class="grp">
@@ -333,8 +303,9 @@
     </div>
   </div>
   <div class="ctx-primary">
-    <!-- The execute verb — the top bar's "Save Figure" opens this stage; this
-         button writes the ticked formats. Distinct label avoids two identical
+    <!-- The execute verb: writes the ticked formats under this card's
+         filename. The top bar's "Save Figure" saves the same way from any
+         view (asking for a name); the distinct label avoids two identical
          "Save Figure" buttons on screen at once. -->
     <button class="btn indigo" disabled={busy || !hasData} onclick={saveFigure}>Export</button>
   </div>

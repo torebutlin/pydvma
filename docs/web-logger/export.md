@@ -10,9 +10,10 @@ tools:
 - **Export**, with the figure options, writes the current plot as a PNG
   or PDF.
 
-**Save Dataset** and **Save Figure** are also in the header. **Save
-Figure** opens this stage. **Load Data**, also in the header, opens
-files.
+**Save Dataset** and **Save Figure** are also in the header, and work
+from any stage. **Save Figure** asks for a name and saves the plot you
+are looking at, with this stage's figure options. **Load Data**, also in
+the header, opens files.
 
 ## What each output holds
 
@@ -225,10 +226,16 @@ The **Export** stage writes the plot you are looking at. Set:
 - **filename**: by default `pydvma_figure_` followed by the date and
   time.
 
-Then press **Export**. The figure shows what the plot shows: the legend,
-when it is on, at its place on screen and without hidden lines; the
-coherence overlay and its right-hand axis, when they are on; both panes
-of a Bode plot; and the heat map of a sonogram.
+Then press **Export**, or press **Save Figure** in the header from any
+stage: it asks for a name and uses the same format and background. In
+the served app's save dialog, typing a name ending in `.pdf` or `.png`
+saves that format; with both formats ticked, one name saves both files
+side by side.
+
+The figure shows what the plot shows: the legend, when it is on, at its
+place on screen and without hidden lines; the coherence overlay and its
+right-hand axis, when they are on; both panes of a Bode plot; and the
+heat map of a sonogram.
 
 ## Where files go
 

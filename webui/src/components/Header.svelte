@@ -44,7 +44,7 @@
      * subset pick lives on the Export card's split control.
      */
     onsave?: () => void;
-    /** Fired by Save Figure — opens the export flow for the ACTIVE view. */
+    /** Fired by Save Figure — saves the ACTIVE view's plot (asks for a name first). */
     onsavefigure?: () => void;
     /** Fired by the working-dir chip to (re)pick a folder. */
     onpickdir?: () => void;

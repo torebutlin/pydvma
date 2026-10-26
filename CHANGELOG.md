@@ -3,6 +3,27 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **Typing a name in the Save dialog kept only the last letter.** The
+  served app's save dialog selects the proposed name so that typing
+  replaces it, but it selected it again after every keystroke, so each
+  letter replaced the one before. It now selects the name once, when the
+  dialog opens.
+- **Save Figure in the header seemed to do nothing.** It only switched to
+  the Export stage, where a second button saved the figure. It now saves
+  the plot you are looking at, from any stage, asking for a name first:
+  in the served app through the same save dialog as Save Dataset
+  (working folder, **Choose location…**), elsewhere through the
+  browser's prompt. It uses the Export stage's format and background
+  (PNG on white unless you change them), which now stay set when you
+  leave that stage. In the dialog, a name ending in `.pdf` or `.png`
+  saves that format, where it used to become `name.pdf.png`, and with
+  PNG and PDF both ticked one dialog saves both files, where each file
+  had its own dialog.
+
 ## 2.8.0 — 2026-10-22
 
 Saving to a working folder on disk when the app is served locally, Clean
