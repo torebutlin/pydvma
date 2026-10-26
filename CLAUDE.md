@@ -8,6 +8,32 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+**v2.8.1 IS CUT (2026-10-26, Mac), NOT YET UPLOADED.** Cut `3eac206`
+(release commit; master not pushed yet). Patch: two 3C6 lab fixes in the
+served app. (1) The Save dialog's name kept only the last typed letter:
+FileDialog's focus/select `$effect` read `name`, so each keystroke re-ran
+it and re-selected; now `untrack`ed, selects once. The e2e had typed with
+`fill` (whole value at once), which can never show it; the new served
+test types key by key (`pressSequentially`). (2) The header's Save Figure
+only switched to the Export stage ("nothing happens"): it now runs App's
+`saveFigure` from any stage through the served Save dialog (a prompt
+elsewhere), using the shared `figureOptions` store (lib/export/
+figureSave.ts; the Export card unmounts with its stage). One dialog for
+PNG+PDF; a typed `.pdf`/`.png` picks the format (FileDialog `extensions`)
+instead of `name.pdf.png`. Also dompurify 3.4.16 -> 3.4.17 (lockfile only;
+runtime audit 0; vite/vitest dev advisories still open). Built after
+`npm ci` in the documented order: `verify_release.py 2.8.1` passes both
+traps (`index-DLGkpFLZ.js`, 26 `pydvma/*.py` byte-identical), `twine
+check` passes, sha256 wheel 7a62f84f… / sdist ae91613c…; a CLEAN venv's
+`dvma.launch` serves its own UI (native engine 2.8.1), and typing
+`run1` key by key + header Save Figure wrote `run1.dvma` and `fig.png`
+into the notebook folder. Suites: pytest 1482/7, vitest 1283/1, check
+0/0, Playwright 132 passed incl. BRIDGE_E2E and @engine, mkdocs --strict
+clean. `dist/RELEASE_NOTES_2.8.1.md` written. **Next: Tore's twine upload
+of the two named files; then push master, tag `v2.8.1` at `3eac206`, the
+GitHub release, trap 3 on the downloaded wheel, and the lab PCs re-run
+`Setup_3C6_PC.bat` as administrator.**
+
 **v2.8.0 IS RELEASED END TO END (2026-10-22, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
 (sha256 9d76013b… / f6137be4…); tag `v2.8.0` is at the cut `4aeba45`
