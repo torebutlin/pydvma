@@ -26,6 +26,10 @@ tray as a drawer; close it with its **×**, **Esc**, or a click outside.
   channel with its fit in turn.
 - Click a set's name to cycle the whole set: **on**, **faded** (drawn
   dimmed), **off**. Double-click the name, or press **F2**, to rename it.
+  The new name is the set's `test_name` in the data, and its spectra and
+  transfer functions take it too, so it is saved, comes back when the
+  session is restored or the file loaded, and is what `session.data`
+  shows in a notebook.
 - Expand a set to switch individual channels on, faded or off. Double-click
   a channel name to rename it.
 - The channel numbers across the top cycle that channel through on,

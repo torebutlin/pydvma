@@ -255,6 +255,21 @@ test('retargeting the fit to a different set rebuilds the pseudo-set (name follo
   expect(md.meta.id_link).toBe('B');
 });
 
+test('renaming a set renames its Modal fit card and the saved model', async () => {
+  const { actions, sel } = harness((op) => (op === 'calc_tf' ? tfResult() : op === 'calc_fit' ? fitResult() : {}));
+  actions.loadDataset(makeDataset());
+  await actions.calcTf('all');
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  const [src] = actions.workingSets();
+
+  actions.renameSet(src.setId, 'point 7');
+
+  const fit = get(sel.setsView).find((s) => s.role === 'fit')!;
+  expect(fit.name).toMatch(/\(point 7\)$/);
+  const md = get(actions.dataset)!.items.find((it) => it.kind === 'ModalData')!;
+  expect(md.meta.test_name).toBe('modal_point 7');
+});
+
 /** A 2-set, 2-channel TimeData dataset (both sets get a 1-column TF). */
 function twoSetDataset(): DvmaDataset {
   return {

@@ -73,6 +73,8 @@
     selection,
     set,
     onDeleteSet,
+    onRenameSet,
+    onRenameChannel,
     onCalibrate,
     channelData,
     fit,
@@ -83,6 +85,14 @@
     selection: Selection;
     set: SetView;
     onDeleteSet: (id: number) => void;
+    /** Commit a set-name rename: `actions.renameSet`, which renames the set's
+     *  items in the document too, so the name is saved and survives a reload.
+     *  Absent → `selection.rename` (the card only), as in component tests. */
+    onRenameSet?: (id: number, name: string) => void;
+    /** Commit a channel-label edit: `actions.renameChannel`, which also lets
+     *  the autosave and session journal know. Absent →
+     *  `selection.renameChannel` (the tray only). */
+    onRenameChannel?: (id: number, ch: number, label: string) => void;
     /** Open the per-set calibration dialog (Task A2). Absent → no cal button. */
     onCalibrate?: (id: number) => void;
     channelData?: (ch: number) => Float64Array | undefined;
@@ -130,7 +140,7 @@
     if (!editing) return;
     editing = false;
     const name = draft.trim();
-    if (name && name !== set.name) selection.rename(set.id, name);
+    if (name && name !== set.name) (onRenameSet ?? selection.rename)(set.id, name);
   }
   function cancelRename() {
     editing = false;
@@ -156,7 +166,7 @@
     editingCh = null;
     // renameChannel trims and treats blank as "reset to default", so we
     // can hand it the raw draft — including an emptied field (reset).
-    selection.renameChannel(set.id, ch, chDraft);
+    (onRenameChannel ?? selection.renameChannel)(set.id, ch, chDraft);
   }
   function cancelChRename() {
     editingCh = null;

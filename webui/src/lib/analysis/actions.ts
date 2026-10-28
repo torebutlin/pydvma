@@ -2535,15 +2535,21 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *
    * Unknown ids are skipped; nothing is emitted when nothing was removed.
    */
+  /**
+   * The lineage ids a set's derived items link to (`id_link`): its source
+   * item's own `unique_id`, and its `id_link` when the source is itself a
+   * derived item (an orphan TF set).
+   */
+  const lineageOf = (ws: WorkingSet): string[] => ['unique_id', 'id_link']
+    .map((k) => ws.time.meta[k])
+    .filter((v): v is string => typeof v === 'string' && !!v);
+
   function detachSets(ids: readonly number[]): RemovedSet[] {
     const ds = get(dataset);
     const stateOf = get(selection.state);
     const removed: RemovedSet[] = [];
     const batch = new Set(ids);
     // Lineage ids of the sets that stay, and the items that are their sources.
-    const lineageOf = (ws: WorkingSet): string[] => ['unique_id', 'id_link']
-      .map((k) => ws.time.meta[k])
-      .filter((v): v is string => typeof v === 'string' && !!v);
     const staying = working.filter((w) => !batch.has(w.setId));
     const keptLinks = new Set(staying.flatMap(lineageOf));
     const keptSources = new Set(staying.map((w) => w.time));
@@ -2635,6 +2641,70 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    */
   function removeSet(id: number): void {
     detachSets([id]);
+  }
+
+  /**
+   * Rename one set — the tray card's double-click / F2. Renames the card AND
+   * the document: the set's source item's `test_name` (what `loadDataset`
+   * names a tray set from, so the name survives a session restore and Load
+   * Data) and every derived item of the set (its FFT/TF/sonogram, and any
+   * other item linked to its lineage, so a reloaded TF that nothing
+   * recomputes still saves under the new name). The document then re-emits,
+   * so the autosave and the session journal pick the rename up.
+   *
+   * Items linked to a lineage another set shares (the same file loaded
+   * twice) keep their name: they also back the twin's views. The set's Modal
+   * fit card is renamed with it, and so is the `ModalData` item when the set
+   * is the model's first (the one it is named after). A blank or unchanged
+   * name is ignored, as the tray's own editor ignores one.
+   *
+   * The tray used to call `selection.rename`, which renamed only the card, so
+   * a restored session or a reloaded file came back with the capture names
+   * (`set_<timestring>`), and a reloaded TF kept its old name.
+   */
+  function renameSet(id: number, name: string): void {
+    const trimmed = name.trim();
+    const record = get(selection.sets).find((s) => s.id === id);
+    if (!record || !trimmed || trimmed === record.name) return;
+    selection.rename(id, trimmed);
+    const fit = fitSets.get(id);
+    if (fit) selection.rename(fit.id, fitSetName(id, fit.mode));
+    const ws = working.find((w) => w.setId === id);
+    const ds = get(dataset);
+    if (!ws || !ds) return;
+    const renamed = new Set<DvmaItem>([ws.time]);
+    for (const kind of DERIVED_KINDS) {
+      const mat = materializedItems.get(lineageKey(id, kind));
+      if (mat) renamed.add(mat);
+    }
+    const shared = new Set(working.filter((w) => w.setId !== id).flatMap(lineageOf));
+    const links = lineageOf(ws).filter((l) => !shared.has(l));
+    for (const it of ds.items) {
+      const link = it.meta.id_link;
+      if (typeof link !== 'string' || !links.includes(link)) continue;
+      if (it.kind === 'TimeData' || it.kind === 'ModalData') continue;
+      if (working.some((w) => w.time === it && w.setId !== id)) continue;
+      renamed.add(it);
+    }
+    for (const it of renamed) setItemMeta(it, 'test_name', trimmed);
+    if (modalItem && modal?.get().targets[0]?.setId === id) {
+      setItemMeta(modalItem, 'test_name', `modal_${trimmed}`);
+    }
+    dataset.update((d) => d);            // re-emit so autosave persists the rename
+  }
+
+  /**
+   * Relabel one line of a set — the tray's channel-name editor. A blank label
+   * resets it (`selection.renameChannel`). Labels reach the document when it
+   * is written (`stampUiState`), so a DATA set's document re-emits here: that
+   * is what schedules the autosave and the session-journal post, which
+   * otherwise waited for the next unrelated change.
+   */
+  function renameChannel(setId: number, ch: number, label: string): void {
+    const before = selection.getLabelsForSet(setId)?.[String(ch)];
+    selection.renameChannel(setId, ch, label);
+    if (selection.getLabelsForSet(setId)?.[String(ch)] === before) return;
+    if (working.some((w) => w.setId === setId)) dataset.update((d) => d);
   }
 
   /**
@@ -4114,7 +4184,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   return {
     dataset, derived, computeErrors, busy, modal,
-    loadDataset, addRecordedSet, addBlaSets, removeSet, removeBlaRun, undoRemoveBlaRun, stampUiState,
+    loadDataset, addRecordedSet, addBlaSets, removeSet, renameSet, renameChannel, removeBlaRun, undoRemoveBlaRun, stampUiState,
     materializeDerived,
     /** The "Include sonogram?" save prompt (Task 5b) — see each function. */
     sonoPromptNeeded, includeSonograms,

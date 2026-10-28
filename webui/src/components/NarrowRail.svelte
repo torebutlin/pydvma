@@ -46,6 +46,10 @@
     onDeleteFit,
     /** Forwarded to the hosted Tray: a data set's × (`actions.removeSet`). */
     onDeleteSet,
+    /** Forwarded to the hosted Tray: a data set's rename (`actions.renameSet`). */
+    onRenameSet,
+    /** Forwarded to the hosted Tray: a channel-label edit (`actions.renameChannel`). */
+    onRenameChannel,
     /** Forwarded to the hosted Tray for the stale-chain badge (Task 4). */
     staleChains,
     onRederive,
@@ -58,6 +62,8 @@
     monitor?: MonitorStore;
     onDeleteFit?: () => void;
     onDeleteSet?: (setId: number) => void;
+    onRenameSet?: (setId: number, name: string) => void;
+    onRenameChannel?: (setId: number, ch: number, label: string) => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
     tfChIn?: (setId: number) => number | null | undefined;
@@ -210,7 +216,7 @@
     data-testid="tray"
     onkeydown={onDrawerKeydown}
   >
-    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {onDeleteSet} {staleChains} {onRederive} {tfChIn} />
+    <Tray {selection} {modal} channelData={channelSeries} {onDeleteFit} {onDeleteSet} {onRenameSet} {onRenameChannel} {staleChains} {onRederive} {tfChIn} />
     <!-- Sits on the drawer's outer edge, over the scrim, so it never crowds
          the tray's own header; inside the dialog so the focus trap reaches it. -->
     <button

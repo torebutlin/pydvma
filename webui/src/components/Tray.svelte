@@ -73,6 +73,15 @@
      *  Save no longer writes it. Falls back to `selection.removeSet` (the
      *  card only) if absent, as in component tests with no actions layer. */
     onDeleteSet,
+    /** Rename handler for a DATA set — `actions.renameSet`, which renames the
+     *  set's items in the document as well as its card, so the name is saved
+     *  and comes back on a restore or Load Data. Falls back to
+     *  `selection.rename` (the card only) if absent. */
+    onRenameSet,
+    /** Channel-label handler for a DATA set — `actions.renameChannel`, which
+     *  lets the autosave and session journal know. Falls back to
+     *  `selection.renameChannel` if absent. */
+    onRenameChannel,
     /** Broken-chain flag store (Task 4 — `actions.staleChains`). Absent →
      *  no card ever shows the stale badge. */
     staleChains,
@@ -94,6 +103,8 @@
     applyCalibration?: (setId: number, factors: number[], units: string[]) => void;
     onDeleteFit?: () => void;
     onDeleteSet?: (setId: number) => void;
+    onRenameSet?: (setId: number, name: string) => void;
+    onRenameChannel?: (setId: number, ch: number, label: string) => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
     tfChIn?: (setId: number) => number | null | undefined;
@@ -314,6 +325,8 @@
             {selection}
             {set}
             onDeleteSet={onDeleteSet ?? selection.removeSet}
+            {onRenameSet}
+            {onRenameChannel}
             onCalibrate={canCalibrate ? openCalibrate : undefined}
             channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
             staleKinds={staleMap[set.id]}
