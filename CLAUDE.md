@@ -8,8 +8,20 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
-**v2.8.2 IS CUT (2026-10-28, Mac), NOT YET UPLOADED.** Cut `79085fe`
-(release commit; master pushed with it). Patch: 4C6 modal-lab fixes in
+**v2.8.2 IS RELEASED END TO END (2026-10-28, Mac).** Tore uploaded with
+twine; PyPI's wheel and sdist are byte-identical to the verified build
+(sha256 a2da37d2… / c601d2d0…); tag `v2.8.2` is at the cut `79085fe`
+(lightweight) and pushed; the GitHub release "v2.8.2" (Latest) carries
+the full CHANGELOG body and both files, so Zenodo archives it. Trap 3
+re-checked on the DOWNLOADED wheel: embedded `pydvma-2.8.2` engine wheel
+referenced by the bundled `index-M7TDzGqR.js`, all 26 `pydvma/*.py`
+byte-identical to `v2.8.2` in both the fat and the engine wheel. A clean
+venv installing `pydvma[serve]==2.8.2` from PyPI serves its own UI
+(engine wheel 200) and greets `{v:1, pydvma:'2.8.2', journal:true,
+files:true}` same-origin (`files:false` to another origin). **The lab PCs
+upgrade by re-running their Setup bat as administrator** (see the 2.8.0
+block). Nothing is pending on the release side. The cut, as recorded
+before the upload: Patch: 4C6 modal-lab fixes in
 the served app, found by the divc_labs 4C6 notebook session with the mock
 driver. (1) A tray rename changed only the card (`selection.rename`), so
 a restore or Load Data brought `set_<time>` back: `actions.renameSet` now
@@ -37,10 +49,7 @@ venv serves its own UI (engine wheel 200), greets `{v:1, pydvma:'2.8.2',
 journal:true, files:true}`, and rename / hidden-line Fit / typed band all
 behave live. Suites: pytest 1483/7, vitest 1303/1, check 0/0, Playwright
 133 passed incl. BRIDGE_E2E and @engine, mkdocs --strict clean.
-`dist/RELEASE_NOTES_2.8.2.md` written. **Next: Tore's twine upload of the
-two named files; then tag `v2.8.2` at `79085fe`, the GitHub release, trap
-3 on the downloaded wheel, and the lab PCs re-run their Setup bat as
-administrator.**
+`dist/RELEASE_NOTES_2.8.2.md` written.
 
 **v2.8.1 IS RELEASED END TO END (2026-10-26, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
