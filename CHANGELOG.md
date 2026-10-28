@@ -3,6 +3,43 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## 2.8.2 — 2026-10-28
+
+Fixes to the app from testing the 4C6 modal-analysis lab: renamed sets
+keep their names, and a modal fit no longer loses modes when lines are
+hidden. Upgrade with `pip install --upgrade "pydvma[serve,soundcard]"`.
+
+### Fixed
+
+- **A renamed set got its old name back.** Renaming a set in the tray
+  changed only the tray card: the data kept the capture's name
+  (`set_<time>`), so restoring the session, or loading the saved file,
+  showed the old names again, and a notebook's `session.data` never saw
+  the new ones. The rename now reaches the data at once: the set's
+  `test_name`, and that of its spectra and transfer functions (also ones
+  loaded from a file and not recomputed), so it is saved, restored and
+  posted to the notebook session. The set's Modal fit card takes the new
+  name too, where it kept the old one until the next fit.
+- **A renamed channel reached `session.data` late.** It was always saved,
+  but the notebook session (and the copy the server keeps for a closed
+  tab) only saw it at the next change to the data. It now gets it at once.
+- **A modal fit with some lines hidden lost the modes fitted before.**
+  Once a model had modes, pressing **Fit** with a set or channel hidden
+  (the usual way to compare a fit with one measurement) started a new
+  model on the lines left showing, with no warning and no Undo. Further
+  fits now add to the model over the lines it was fitted on, shown or
+  not, and the Fit card says so (`all 4 lines (model)`). The lines left
+  showing choose the lines for the first fit; **×** on the Modal fit
+  card starts again. A fit that does start a new model over existing
+  modes (another set chosen under **sets**) says so and offers **Undo**.
+- **Typing a frequency band could leave the fields showing a band that
+  was not the one used.** With the band at 100–140 Hz, typing 290 into
+  the minimum was refused but stayed in the field, so typing 330 into the
+  maximum then gave 100–330 Hz under fields reading 290–330, and **Fit**
+  fitted the peak at 120 Hz. An edge typed past the other one now moves
+  the band there, keeping its width (290–330 Hz here), and a number that
+  cannot be used is replaced by the band's own value.
+
 ## 2.8.1 — 2026-10-26
 
 Two fixes to saving in the app, from the 3C6 lab, and a security update
