@@ -253,6 +253,36 @@ class TestSessionData:
             names = [t.test_name for t in s.data.time_data_list]
         assert names == ['cap']
 
+    def test_data_sees_an_app_post_as_soon_as_it_is_acknowledged(
+            self, tmp_path):
+        # The app's Save posts the saved document over /engine
+        # (`journal_set`) and the serve answers only once the journal
+        # holds it, so `session.data` read straight after is the saved
+        # session — no lag to wait out. (A 4C6 test run once seemed to
+        # show `logger.data` stuck at the push for a minute after a Save;
+        # its checks had been run by a leftover second session.)
+        from websockets.asyncio.client import connect
+
+        from pydvma import engine_host
+        saved = _dataset_with_derived()
+
+        async def app_save(port):
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as ws:
+                await ws.recv()                              # greeting
+                await ws.send(engine_host.encode_frame(
+                    {'id': 1, 'op': 'journal_set',
+                     'payload': {'doc': container.save_bytes(saved)}}))
+                return engine_host.decode_frame(await ws.recv())
+
+        with _launch(tmp_path) as s:
+            s.push(_tiny_dataset())
+            port = int(s.url.rstrip('/').rsplit(':', 1)[1])
+            reply = asyncio.run(app_save(port))
+            assert reply['ok'] is True
+            assert _counts(s.data) == _counts(saved)
+            assert _all_ids(s.data) == _all_ids(saved)
+
     def test_data_returns_fresh_objects(self, tmp_path):
         # explicit handoff: mutating a pulled object does NOT change
         # the session until pushed back.
