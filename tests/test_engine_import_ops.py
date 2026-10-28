@@ -20,7 +20,7 @@ from pydvma import container, datastructure, options
 from pydvma import engine
 
 
-def _legacy_npy_bytes():
+def _legacy_npy_bytes(settings_format=None):
     # `legacy_to_dvma` unpickles a length-1 OBJECT ndarray holding one
     # DataSet (`np.array([DataSet(...)])`) — the exact shape pre-1.4.0
     # pydvma pickled. A plain numeric array would skip the real
@@ -30,6 +30,8 @@ def _legacy_npy_bytes():
     t = np.arange(0, 1, 1 / fs)
     sig = np.sin(2 * np.pi * 5 * t)[:, None]
     settings = options.MySettings(channels=1, fs=fs)
+    if settings_format is not None:
+        settings.format = settings_format
     time_data = datastructure.TimeData(t, sig, settings)
     ds = datastructure.DataSet()
     ds.add_to_dataset(time_data)
@@ -63,6 +65,16 @@ def test_legacy_to_dvma_roundtrips(tmp_path, monkeypatch):
     td = ds.time_data_list[0]
     assert td.settings.fs == 100
     assert td.time_data.shape[0] == 100  # np.arange(0, 1, 1/100.0) -> 100 samples
+
+
+def test_legacy_to_dvma_takes_a_settings_format_type(tmp_path):
+    # Older pydvma pickled `settings.format` as the numpy type itself
+    # (numpy.int16), which the JSON manifest cannot hold: the web app's
+    # Load Data of the 4C6 beam files (Oct 2022) failed with "Object of
+    # type type is not JSON serializable".
+    out = engine.legacy_to_dvma(_legacy_npy_bytes(settings_format=np.int16))
+    ds = _load_dvma_bytes(tmp_path, out['dvma'], 'legacy_format.dvma')
+    assert ds.time_data_list[0].settings.format == 'int16'
 
 
 def test_file_to_dvma_reads_a_jw_logger_mat(tmp_path, monkeypatch):

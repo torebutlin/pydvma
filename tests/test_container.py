@@ -104,6 +104,28 @@ def test_prelist_legacy_pickle_normalises_all_missing_lists(tmp_path):
     container.save(d, str(tmp_path / 'ok.dvma'))
 
 
+def test_legacy_settings_format_type_saves_as_dvma(tmp_path):
+    """Settings pickled by older pydvma (the 4C6 beam files of Oct 2022
+    among them) hold ``format`` as the numpy scalar type itself,
+    ``numpy.int16``. The .dvma manifest is JSON and cannot hold a type, so
+    such a file loaded but would not convert: ``TypeError: Object of type
+    type is not JSON serializable`` from ``save_data`` to .dvma and from
+    the web app's Load Data. It comes back as the type's name."""
+    path = tmp_path / 'legacy_format_type.npy'
+    _write_prelist_legacy_npy(path, missing=[])
+    d = np.load(path, allow_pickle=True)[0]
+    d.time_data_list[0].settings.format = np.int16
+    np.save(path, np.array([d]))
+
+    d = dvma.load_data(filename=str(path))
+    assert d.time_data_list[0].settings.format == 'int16'
+    out = tmp_path / 'converted.dvma'
+    container.save(d, str(out))
+    d2 = container.load(str(out))
+    assert d2.time_data_list[0].settings.format == 'int16'
+    assert d2.time_data_list[0].settings.fs == 200.0
+
+
 def _make_full_dataset():
     # create_test_impulse_data returns a populated DataSet
     data = dvma.create_test_impulse_data(noise_level=0)

@@ -844,6 +844,28 @@ class MySettings(object):
                 else self.output_VmaxSC)
 
 
+    def __setstate__(self, state):
+        '''Restore pickled settings, keeping a type in an old file by its name.
+
+        Settings pickled by older pydvma hold ``format`` as the numpy
+        scalar type itself (``numpy.int16``; the 4C6 beam files of
+        October 2022, for example). The ``.dvma`` manifest is JSON and
+        cannot hold a type, so such a legacy ``.npy`` loaded but could
+        not be saved as ``.dvma``, and the web app's Load Data, which
+        converts it so, failed with ``TypeError: Object of type type is
+        not JSON serializable``. Any attribute holding a type comes back
+        as the type's name (``'int16'``); nothing reads ``format`` now.
+        Called only when unpickling (or copying).
+
+        Args:
+            state (dict): The unpickled attribute dictionary.
+        '''
+        self.__dict__.update(state)
+        for name, value in state.items():
+            if isinstance(value, type):
+                setattr(self, name, value.__name__)
+
+
     def __repr__(self):
         template = "{:>24}: {}" # column widths: 8, 10, 15, 7, 10
         #print template.format("CLASSID", "DEPT", "COURSE NUMBER", "AREA", "TITLE") # header
