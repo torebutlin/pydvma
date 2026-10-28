@@ -3,6 +3,21 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## 2.8.3 — 2026-10-28
+
+A fix for old data files: some `.npy` files from 2022 would not open in
+the app. Upgrade with `pip install --upgrade "pydvma[serve,soundcard]"`.
+
+### Fixed
+
+- **Some old `.npy` files would not open in the app.** Files saved by
+  older pydvma whose settings recorded the sample format as a numpy type
+  (the 4C6 beam recordings of October 2022 among them) loaded in Python
+  with `load_data`, but **Load Data** in the app failed with `TypeError:
+  Object of type type is not JSON serializable`, and Python could not
+  save them as `.dvma` either. They now open and save, with that setting
+  kept by its name (`'int16'`).
+
 ## 2.8.2 — 2026-10-28
 
 Fixes to the app from testing the 4C6 modal-analysis lab: renamed sets
