@@ -8,6 +8,40 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+**v2.8.2 IS CUT (2026-10-28, Mac), NOT YET UPLOADED.** Cut `79085fe`
+(release commit; master pushed with it). Patch: 4C6 modal-lab fixes in
+the served app, found by the divc_labs 4C6 notebook session with the mock
+driver. (1) A tray rename changed only the card (`selection.rename`), so
+a restore or Load Data brought `set_<time>` back: `actions.renameSet` now
+renames the source item's `test_name` (setItemMeta), the set's derived
+items (materialised + lineage-linked, not a twin's), its Modal fit card
+and the ModalData name, then re-emits; `actions.renameChannel` re-emits
+for channel labels (both wired like onDeleteSet). (2) A shared-pole Fit
+with lines hidden started a new model and silently dropped every mode:
+Tore chose "fit into the model" — once a model has modes, Fit uses the
+model's lines hidden or not (`modelFitSpecs`); visible lines choose only
+a first fit; a Fit that still replaces modes (another set under 'sets')
+pushes Undo + toast; Fit card note `all N lines (model)`. (3) The freq
+navigator's min field kept a refused number (min typed above max), so the
+next edit committed against the hidden old edge: `lib/plot/bandEdit.
+typedBand` moves the band keeping its width (ratio on log) and the field
+resets when nothing commits. The reported "`logger.data` lags a Save" was
+NOT a bug: the notebook session's first harness script lacked a
+`__main__` guard, so the macOS-spawned engine worker re-ran it and left an
+orphan serve polling the same `cmd_*.py` folder, which answered the
+checks from its own journal; pinned anyway by a Session.data pytest.
+Built after `npm ci` in the documented order: `verify_release.py 2.8.2`
+passes both traps (`index-M7TDzGqR.js`, 26 `pydvma/*.py` byte-identical),
+`twine check` passes, sha256 wheel a2da37d2… / sdist c601d2d0…; a CLEAN
+venv serves its own UI (engine wheel 200), greets `{v:1, pydvma:'2.8.2',
+journal:true, files:true}`, and rename / hidden-line Fit / typed band all
+behave live. Suites: pytest 1483/7, vitest 1303/1, check 0/0, Playwright
+133 passed incl. BRIDGE_E2E and @engine, mkdocs --strict clean.
+`dist/RELEASE_NOTES_2.8.2.md` written. **Next: Tore's twine upload of the
+two named files; then tag `v2.8.2` at `79085fe`, the GitHub release, trap
+3 on the downloaded wheel, and the lab PCs re-run their Setup bat as
+administrator.**
+
 **v2.8.1 IS RELEASED END TO END (2026-10-26, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
 (sha256 7a62f84f… / ae91613c…); tag `v2.8.1` is at the cut `3eac206`
