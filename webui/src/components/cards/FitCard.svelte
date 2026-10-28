@@ -126,13 +126,16 @@
 
   const nModes = $derived($modalState.modes.length);
 
-  // What a Fit would use RIGHT NOW (round-7h): the fit takes the LINES LEFT
-  // VISIBLE in the legend/tray — hide or solo lines there to choose exactly
-  // which line(s) are fitted. Re-derived on tri-state changes via the
-  // legendEntries subscription (the summary itself is a pure actions read).
+  // What a Fit would use RIGHT NOW: a FIRST fit takes the LINES LEFT VISIBLE
+  // in the legend/tray (round-7h) — hide or solo lines there to choose which
+  // line(s) are fitted. Once the model has modes, a Fit adds to it over the
+  // model's own lines, hidden or not, so hiding lines to compare the fit can
+  // never lose a mode (× on the Modal fit card starts again). Re-derived on
+  // tri-state and model changes (the summary itself is a pure actions read).
   const legendEntriesStore = $derived(selection.legendEntries);
   const fitLines = $derived.by(() => {
     void $legendEntriesStore;
+    void $modalState;
     return actions.fitLineSummary(fitTarget);
   });
 
@@ -183,10 +186,12 @@
             title="Fit three modes in the visible window (split at detected peaks)">Fit 3</button>
           {#if fitLines.total > 0}
             <span class="note" data-testid="fit-lines-note"
-              title="A Fit uses the lines left visible — hide or solo lines in the legend/tray to choose exactly which line(s) are fitted">
+              title={fitLines.model
+                ? 'A Fit adds to the modal model, over its lines, hidden or not — × on the Modal fit card starts again with the lines left visible'
+                : 'A first Fit uses the lines left visible — hide or solo lines in the legend/tray to choose exactly which line(s) are fitted'}>
               {fitLines.fitted === fitLines.total
-                ? `all ${fitLines.total} line${fitLines.total === 1 ? '' : 's'}`
-                : `${fitLines.fitted} of ${fitLines.total} lines (visible only)`}
+                ? `all ${fitLines.total} line${fitLines.total === 1 ? '' : 's'}${fitLines.model ? ' (model)' : ''}`
+                : `${fitLines.fitted} of ${fitLines.total} lines (${fitLines.model ? 'model' : 'visible only'})`}
             </span>
           {/if}
         </div>

@@ -371,7 +371,7 @@ test('hiding a line excludes its TF column from the fit (chans recorded)', async
   expect(get(modal).targets[0].chans).toEqual([2]);
 });
 
-test('a visibility change starts a FRESH model on the next fit (no stale M)', async () => {
+test('a visibility change after the first fit keeps the model\'s lines (M re-sent)', async () => {
   const { actions, sel, calls } = harness((op) =>
     (op === 'calc_tf' ? tfResult2col() : op === 'calc_fit' ? fitResult() : {}));
   actions.loadDataset(makeDataset3ch());
@@ -379,11 +379,13 @@ test('a visibility change starts a FRESH model on the next fit (no stale M)', as
   await actions.calcTf('all');
   await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);   // both lines
   sel.cycleLine(id, 1); sel.cycleLine(id, 1);                 // ch 1 → off
-  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);   // subset fit
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
   const fits = calls.filter((c) => c.op === 'calc_fit');
   expect(fits).toHaveLength(2);
-  // Mixed column geometries cannot merge: the second fit starts fresh.
-  expect('M' in fits[1].payload).toBe(false);
+  // The model has modes, so the fit adds to it over BOTH its lines — hiding a
+  // line to compare the fit must not start a new model (fitIntoModel.test.ts).
+  expect(fits[1].payload.n_tf).toBe(2);
+  expect('M' in fits[1].payload).toBe(true);
 });
 
 test('every line hidden → no engine call, explanatory toast', async () => {
@@ -403,9 +405,9 @@ test('fitLineSummary counts visible vs total lines for the Fit-card hint', async
   actions.loadDataset(makeDataset3ch());
   const id = get(sel.sets)[0].id;
   await actions.calcTf('all');
-  expect(actions.fitLineSummary('all')).toEqual({ fitted: 2, total: 2 });
+  expect(actions.fitLineSummary('all')).toEqual({ fitted: 2, total: 2, model: false });
   sel.cycleLine(id, 2); sel.cycleLine(id, 2);     // channel 2 → off
-  expect(actions.fitLineSummary('all')).toEqual({ fitted: 1, total: 2 });
+  expect(actions.fitLineSummary('all')).toEqual({ fitted: 1, total: 2, model: false });
 });
 
 // ── Calibrated fit (F11) ───────────────────────────────────────────────────

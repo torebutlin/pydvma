@@ -43,11 +43,19 @@ set on its own".
 
 ### Choosing which lines
 
-Within the chosen sets, a fit uses the lines you have left showing. Hide
-a line in the [legend or tray](working-with-plots.md) to exclude it, or
-solo one line to fit it alone. The Fit card says what the next fit will
-use: `all N lines`, or `2 of 3 lines (visible only)`. If every line is
-hidden, **Fit** refuses with a message.
+Within the chosen sets, the first fit uses the lines you have left
+showing. Hide a line in the [legend or tray](working-with-plots.md) to
+exclude it, or solo one line to fit it alone. If every line is hidden,
+**Fit** refuses with a message.
+
+Once the model has modes, each further **Fit** adds to it over the lines
+the model was fitted on, whether they are showing or not. You can hide
+lines to compare the fit with one measurement at a time, and the next
+**Fit** still uses them all. To fit a different selection of lines,
+remove the model with **×** on its Modal fit card (it offers **Undo**),
+then **Fit** again. The Fit card says what the next fit will use: `all N
+lines` or `2 of 3 lines (visible only)` before the first fit, and `all N
+lines (model)` or `3 of 4 lines (model)` after it.
 
 This matters for a file that holds several unrelated measurements, for
 example the admittances of three different instruments. A joint fit across
@@ -57,10 +65,11 @@ poles.
 The fit's dashed reconstruction lines cover exactly the lines that were
 fitted, with matching colours and labels.
 
-Choosing a different set, or a different selection of lines, starts a
-fresh model at the next **Fit**. **Reject**, **Refine** and the per-mode
-actions always work on the existing model and keep the sets and lines it
-was fitted on, whatever you show or hide afterwards.
+Choosing a different named set starts a fresh model at the next **Fit**.
+It replaces the modes fitted so far, so the app says so and offers
+**Undo**. **Reject**, **Refine** and the per-mode actions always work on
+the existing model and keep the sets and lines it was fitted on, whatever
+you show or hide afterwards.
 
 ## Fitting modes
 

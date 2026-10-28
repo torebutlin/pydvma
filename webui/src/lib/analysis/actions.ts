@@ -3643,7 +3643,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *  Preserves an orphan TF's null chIn (columns are the lines — round-5 item 3);
    *  `chIn === undefined` (no chIn recorded) collapses to 0 as before.
    *
-   *  `visibleOnly` (round-7h — the modal fit): keep only the columns whose
+   *  `visibleOnly` (round-7h — a FIRST modal fit; later fits keep the model's
+   *  lines, see `modelFitSpecs`): keep only the columns whose
    *  LINE is left visible in the legend/tray (tri-state on/fade; 'off' lines
    *  are excluded) — the legend is the fit's line selector, so a multi-
    *  instrument set (e.g. a composited JW file) can fit one line at a time
@@ -3672,6 +3673,66 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     if (cols.length === 0) return null;
     return { ws, slice, chIn, nChannels, nCols: cols.length, cols, chans,
              allCols: cols.length === totalCols };
+  }
+
+  /**
+   * `ws`'s full fit spec subset to the fitted `chans` a model stored for it
+   * (null = the whole set). Null when the set has no TF, or a stored
+   * channel's column is gone.
+   */
+  function specForChans(ws: WorkingSet, want: number[] | null): FitSpec | null {
+    const s = tfSpecOf(ws);
+    if (!s || !want) return s;
+    const cols: number[] = [];
+    const chans: number[] = [];
+    for (let k = 0; k < s.chans.length; k++) {
+      if (want.includes(s.chans[k])) { cols.push(s.cols[k]); chans.push(s.chans[k]); }
+    }
+    if (chans.length !== want.length) return null;
+    return { ...s, cols, chans, nCols: cols.length, allCols: cols.length === s.cols.length };
+  }
+
+  /**
+   * The modal model's own lines — every set AND fitted channel it spans, in
+   * its order, whatever is visible now — or null when there is no model, or
+   * one of its sets' TF or channels is gone (a partial set of lines could not
+   * carry the model's columns).
+   */
+  function modelSpecs(): FitSpec[] | null {
+    const targets = modal?.get().targets ?? [];
+    if (targets.length === 0) return null;
+    const specs: FitSpec[] = [];
+    for (const t of targets) {
+      const ws = working.find((w) => w.setId === t.setId);
+      const spec = ws ? specForChans(ws, t.chans ?? null) : null;
+      if (!spec) return null;
+      specs.push(spec);
+    }
+    return specs;
+  }
+
+  /**
+   * The lines a Fit on `target` adds to when a model with modes already
+   * exists — the model's own (`modelSpecs`) — or null when the Fit starts a
+   * model from the lines left visible instead.
+   *
+   * Once a model has modes, hiding lines no longer changes what a Fit fits:
+   * hiding is how a fit is compared with its measurement (None, show one set
+   * and its Modal fit card, step with ›), and a Fit pressed in that state used
+   * to start a new model on the visible lines and silently drop every mode
+   * fitted before (4C6 lab, 2026-10-27). The visible lines choose the lines
+   * for a FIRST fit; × on the Modal fit card starts again. `'shared'` adds to
+   * whatever model exists; one set adds to a model of that set alone, and any
+   * other set starts a new model (which `calcFit` makes undoable).
+   */
+  function modelFitSpecs(target: FitTargetSel): FitSpec[] | null {
+    const cur = modal?.get();
+    if (!cur || cur.modes.length === 0 || cur.targets.length === 0) return null;
+    if (target !== 'shared') {
+      const ws = fitSet(target);
+      if (!ws || cur.targets.length !== 1 || cur.targets[0].setId !== ws.setId) return null;
+    }
+    return modelSpecs();
   }
 
   /**
@@ -3761,7 +3822,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * fn/zn per mode (per-set amplitudes); a setId (or `'all'`) fits ONE set. Any
    * action OTHER than `'fit'` operates on the EXISTING model and reuses its
    * exact spanned-set composition (so a shared-pole model stays coherent across
-   * follow-ups) — it no-ops if any spanned set's TF is missing.
+   * follow-ups) — it no-ops if any spanned set's TF is missing. A `'fit'` on a
+   * model that already has modes adds to it over the model's own lines,
+   * hidden or not (`modelFitSpecs`); only a first fit takes the visible lines.
    *
    * Destructive actions push a one-level undo snapshot BEFORE the round-trip.
    * The mute list is sent for `'recon'` only (after fit/delete the mode rows
@@ -3769,7 +3832,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *
    * The store's matrix is re-sent only when THIS call's set composition matches
    * the stored model's (same sets, same order), so switching target sets starts
-   * a fresh model rather than mixing incompatible column geometries.
+   * a fresh model rather than mixing incompatible column geometries. A fresh
+   * model that replaces modes is undoable: the old model goes in the undo slot
+   * and a toast says so, with an Undo.
    */
   function calcFit(
     target: FitTargetSel = 'all',
@@ -3786,38 +3851,25 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     modal.setMt(mt);
     const cur = modal.get();
 
-    // Subset an all-columns spec to a target's STORED fitted channels (null =
-    // the full set). Returns null when a stored channel's column is gone.
-    const specForTarget = (ws: WorkingSet, want: number[] | null): FitSpec | null => {
-      const s = tfSpecOf(ws);
-      if (!s || !want) return s;
-      const cols: number[] = [];
-      const chans: number[] = [];
-      for (let k = 0; k < s.chans.length; k++) {
-        if (want.includes(s.chans[k])) { cols.push(s.cols[k]); chans.push(s.chans[k]); }
-      }
-      if (chans.length !== want.length) return null;
-      return { ...s, cols, chans, nCols: cols.length, allCols: cols.length === s.cols.length };
-    };
-
     // Resolve the ordered set list this call operates on.
     let specs: FitSpec[];
+    const intoModel = action === 'fit' ? modelFitSpecs(target) : null;
     if (action !== 'fit' && cur.targets.length > 0) {
       // Reuse the model's EXACT composition — sets AND fitted channels — so
       // the shared-pole model stays coherent across reject / delete / refine
       // / recon (the model's columns are fixed; visibility changes since the
       // fit must NOT reshuffle them). No-op (rather than a partial/
       // mismatched model) if any spanned set's TF or channel is missing.
-      specs = [];
-      for (const t of cur.targets) {
-        const ws = working.find((w) => w.setId === t.setId);
-        const spec = ws ? specForTarget(ws, t.chans ?? null) : null;
-        if (spec) specs.push(spec);
-      }
-      if (specs.length !== cur.targets.length) return Promise.resolve();
+      const own = modelSpecs();
+      if (!own) return Promise.resolve();
+      specs = own;
+    } else if (intoModel) {
+      // A fit on a model with modes adds to it, over the model's lines —
+      // hidden ones included (see `modelFitSpecs`).
+      specs = intoModel;
     } else if (target === 'shared') {
-      // Round-7h: a FIT uses the lines left VISIBLE (legend/tray) — the
-      // legend is the fit's line selector. Hidden-line sets drop out.
+      // Round-7h: a FIRST fit uses the lines left VISIBLE (legend/tray) —
+      // the legend is its line selector. Hidden-line sets drop out.
       specs = working.map((w) => tfSpecOf(w, true)).filter((s): s is FitSpec => s !== null);
     } else {
       const ws = fitSet(target);
@@ -3848,9 +3900,13 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     };
     const sameComposition = cur.targets.length === specs.length
       && cur.targets.every((t, i) => t.setId === specs[i].ws.setId && chansMatch(t, specs[i]));
+    // A fit that starts a new model over one holding modes (another set
+    // picked in the Fit card, or a model whose sets have gone) replaces them:
+    // keep them in the undo slot and say so.
+    const replaced = action === 'fit' && !sameComposition ? cur.modes.length : 0;
 
     const my = bump('fit');
-    if (DESTRUCTIVE.has(action)) modal.pushUndo();       // undo / auto-revert snapshot
+    if (DESTRUCTIVE.has(action) || replaced) modal.pushUndo();   // undo / auto-revert snapshot
     return guarded('fit', async () => {
       const payload: Record<string, unknown> = {
         measurement_type: mt, action, n_modes: nModes,
@@ -3889,6 +3945,12 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const res = await engine.enqueue('calc_fit', payload);
       if (stale('fit', my)) return;                      // a newer fit won
       modal.applyResult(res, contexts);
+      if (replaced) {
+        const what = specs.length === 1 ? nameOf(specs[0].ws.setId) : `${specs.length} sets`;
+        toasts?.push(
+          `New modal fit on ${what} — it replaced the ${replaced} mode${replaced === 1 ? '' : 's'} fitted before.`,
+          { level: 'info', actions: [{ label: 'Undo', run: () => modal.undo() }] });
+      }
       // Phase-significance flag (round-7f; JW-logger heritage — the original
       // printed every fitted mode's phase): a fresh fit whose modal phase
       // lands far from a REAL mode's 0/180° usually means the TF type
@@ -3937,28 +3999,33 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
-   * What a Fit would use RIGHT NOW for `target` (round-7h): visible
-   * (fittable) TF lines vs total TF lines across the spanned set(s). Pure
-   * read for the Fit card's "N of M lines" hint; recompute on legend/tray
-   * tri-state changes (the caller subscribes to `selection.legendEntries`).
+   * What a Fit would use RIGHT NOW for `target`: the TF lines it would fit vs
+   * the total TF lines across the spanned set(s). Pure read for the Fit card's
+   * "N of M lines" hint; recompute on legend/tray tri-state changes (the
+   * caller subscribes to `selection.legendEntries`). `model` is true when the
+   * Fit adds to an existing model, whose own lines it fits, hidden or not
+   * (`modelFitSpecs`); otherwise `fitted` counts the lines left visible
+   * (round-7h).
    */
-  function fitLineSummary(target: FitTargetSel): { fitted: number; total: number } {
+  function fitLineSummary(target: FitTargetSel): { fitted: number; total: number; model: boolean } {
     let pool: WorkingSet[];
     if (target === 'shared') pool = working;
     else {
       const ws = fitSet(target);
       pool = ws ? [ws] : [];
     }
-    let fitted = 0;
+    const into = modelFitSpecs(target);
+    let fitted = into ? into.reduce((n, s) => n + s.nCols, 0) : 0;
     let total = 0;
     for (const ws of pool) {
       const all = tfSpecOf(ws);
       if (!all) continue;
       total += all.nCols;
+      if (into) continue;
       const vis = tfSpecOf(ws, true);
       fitted += vis ? vis.nCols : 0;
     }
-    return { fitted, total };
+    return { fitted, total, model: into !== null };
   }
 
   /** Resolve the damping target set (both damping ops share this). */
