@@ -8,6 +8,20 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+**ON MASTER, NOT IN 2.8.2: `c84beed` (2026-10-28, from a vibration_apps
+session on Tore's ask).** Old `.npy` files whose settings were pickled
+with `format` as the numpy type (`numpy.int16`; the 4C6 `beam_data*.npy`
+of Oct 2022, copied into every year's Demos) failed the app's Load Data,
+"Object of type type is not JSON serializable": load_data read them but
+the JSON manifest cannot hold a type. `MySettings.__setstate__` now keeps
+a type by its name. Live on Pages (deployed c84beed); the served app needs
+a release. The next CHANGELOG's Fixed wants a line for it. All 518 `.npy`
+on Tore's teaching OneDrive were scanned through `legacy_to_dvma`: 492
+datasets convert, 27 failed before (all the beam files), 25 in
+`Python/pydvma_backup*` are pre-pydvma pickles (`measurement`,
+`oscilloscope`, `data_saver_trial`, `pydvma.logdata`) that cannot be
+unpickled at all.
+
 **v2.8.2 IS RELEASED END TO END (2026-10-28, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
 (sha256 a2da37d2… / c601d2d0…); tag `v2.8.2` is at the cut `79085fe`
