@@ -8,9 +8,21 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
-**v2.8.3 IS CUT (2026-10-28, Mac), NOT YET UPLOADED.** Cut `486412b`
-(release commit; master pushed with it), cut from a vibration_apps
-session on Tore's ask. Patch, one fix (`c84beed`): old `.npy` files whose
+**v2.8.3 IS RELEASED END TO END (2026-10-28, Mac).** Tore uploaded with
+twine; PyPI's wheel and sdist are byte-identical to the verified build
+(sha256 9b2c706c… / d44bcae0…); tag `v2.8.3` is at the cut `486412b`
+(lightweight) and pushed; the GitHub release "v2.8.3" (Latest) carries
+the full CHANGELOG body and both files, so Zenodo archives it. Trap 3
+re-checked on the DOWNLOADED wheel: embedded `pydvma-2.8.3` engine wheel
+referenced by the bundled `index-DkrW93Zv.js`, all 26 `pydvma/*.py`
+byte-identical to `v2.8.3` in both the fat and the engine wheel. A clean
+venv installing `pydvma[serve]==2.8.3` from PyPI serves its own UI
+(engine wheel 200), greets `{v:1, pydvma:'2.8.3', journal:true,
+files:true}` same-origin (`files:false` to another origin), and converts
+`beam_data_TF.npy`. **The lab PCs upgrade by re-running their Setup bat
+as administrator** (see the 2.8.0 block). Nothing is pending on the
+release side. The cut, as recorded before the upload (`486412b`, from a
+vibration_apps session on Tore's ask). Patch, one fix (`c84beed`): old `.npy` files whose
 settings were pickled with `format` as the numpy type (`numpy.int16`; the
 4C6 `beam_data*.npy` of Oct 2022, copied into every year's Demos) failed
 the app's Load Data, "Object of type type is not JSON serializable":
@@ -29,9 +41,6 @@ files:true}`, and its Load Data opens `beam_data_TF.npy` from the working
 folder (one 20 s set, its TF on the TF tab). Suites: pytest 1485/7,
 vitest 1303/1, check 0/0, Playwright 133 passed incl. BRIDGE_E2E and
 @engine, mkdocs --strict clean. `dist/RELEASE_NOTES_2.8.3.md` written.
-**Next: Tore's twine upload of the two named files; then tag `v2.8.3` at
-`486412b`, the GitHub release, trap 3 on the downloaded wheel, and the
-lab PCs re-run their Setup bat as administrator.**
 
 **v2.8.2 IS RELEASED END TO END (2026-10-28, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
