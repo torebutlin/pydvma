@@ -186,6 +186,25 @@ test('head controls are worded, with distinct names', async ({ page }) => {
   await expect(nav.getByRole('button', { name: 'zoom to band' })).toBeVisible();
 });
 
+test('a minimum typed above the maximum moves the band, and the fields show it', async ({ page }) => {
+  // 4C6 lab test (2026-10-27): the refused minimum stayed in its field, so the
+  // fields read "290 – 330" over a 100–330 Hz band and Fit 1 found 120 Hz.
+  await openTf(page);
+  await page.getByTestId('freq-nav-toggle').click();
+  await setWindow(page, 100, 140);
+  await page.getByTestId('freq-nav-min').fill('290');
+  await page.getByTestId('freq-nav-min').press('Enter');
+  const after = await tfRange(page);
+  expect(after.x![0]).toBeCloseTo(290, 6);
+  expect(after.x![1]).toBeCloseTo(330, 6);
+  await expect(page.getByTestId('freq-nav-min')).toHaveValue('290');
+  await expect(page.getByTestId('freq-nav-max')).toHaveValue('330');
+  // Text that is not a band puts the shown value back.
+  await page.getByTestId('freq-nav-max').fill('');
+  await page.getByTestId('freq-nav-max').press('Enter');
+  await expect(page.getByTestId('freq-nav-max')).toHaveValue('330');
+});
+
 test('peak-step › keeps the window width and moves it forward', async ({ page }) => {
   await openTf(page);
   await page.getByTestId('freq-nav-toggle').click();

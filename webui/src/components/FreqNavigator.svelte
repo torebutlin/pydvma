@@ -59,6 +59,7 @@
   import { fmtTick } from '../lib/plot/scales';
   import { logFreqFloor, minPositiveX } from '../lib/plot/logFloor';
   import { detectPeaks, stepWindow } from '../lib/plot/peaks';
+  import { typedBand } from '../lib/plot/bandEdit';
 
   interface StripLine { x: ArrayLike<number>; y: ArrayLike<number>; color: string; }
 
@@ -354,19 +355,17 @@
     return v.toFixed(2);
   }
 
-  /** Clamp + validate a typed [lo, hi] against the strip's domain, then commit once. */
-  function commitFields(rawLo: string, rawHi: string) {
-    let lo = parseFloat(rawLo), hi = parseFloat(rawHi);
-    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;   // ignore garbage input
-    const [fmin, fmax] = domain;
-    lo = Math.min(Math.max(lo, fmin), fmax);
-    hi = Math.min(Math.max(hi, fmin), fmax);
-    if (!(hi > lo)) return;                                      // reject a degenerate/inverted band
-    if (lo === band[0] && hi === band[1]) return;               // no change
-    onchange(lo, hi);
+  /**
+   * Commit a typed band edge once (`typedBand`: clamped to the domain, and an
+   * edge typed past the other one MOVES the band). When there is nothing to
+   * commit, the field shows the current band again — a refused number left
+   * in it would read as the band.
+   */
+  function commitEdge(edge: 'lo' | 'hi', input: HTMLInputElement) {
+    const next = typedBand(edge, input.value, band, domain, log);
+    if (next) onchange(next[0], next[1]);
+    else input.value = fmtNum(shownBand[edge === 'lo' ? 0 : 1]);
   }
-  const commitLo = (raw: string) => commitFields(raw, String(band[1]));
-  const commitHi = (raw: string) => commitFields(String(band[0]), raw);
   function onFieldKey(e: KeyboardEvent) {
     if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();  // blur → change → commit
   }
@@ -561,7 +560,7 @@
         data-testid="freq-nav-min"
         aria-label="Frequency band min"
         value={fmtNum(shownBand[0])}
-        onchange={(e) => commitLo(e.currentTarget.value)}
+        onchange={(e) => commitEdge('lo', e.currentTarget)}
         onkeydown={onFieldKey}
       />
       <span class="dash">–</span>
@@ -573,7 +572,7 @@
         data-testid="freq-nav-max"
         aria-label="Frequency band max"
         value={fmtNum(shownBand[1])}
-        onchange={(e) => commitHi(e.currentTarget.value)}
+        onchange={(e) => commitEdge('hi', e.currentTarget)}
         onkeydown={onFieldKey}
       />
       <span class="unit">Hz</span>

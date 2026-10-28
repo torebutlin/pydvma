@@ -104,7 +104,9 @@ the same window that **Calc** and **Fit** use.
 - Drag the band to move along frequency. The plot follows as you drag.
 - Drag either edge of the band to resize it.
 - Drag on empty strip to draw a new window.
-- Type exact limits in the **min** and **max** boxes, in hertz.
+- Type exact limits in the **min** and **max** boxes, in hertz. A minimum
+  above the current maximum (or a maximum below the minimum) moves the
+  window there and keeps its width.
 - Double-click the strip to reset the window to the scope, or to the full
   range when the strip is not scoped.
 
