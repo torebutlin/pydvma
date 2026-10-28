@@ -8,19 +8,30 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
-**ON MASTER, NOT IN 2.8.2: `c84beed` (2026-10-28, from a vibration_apps
-session on Tore's ask).** Old `.npy` files whose settings were pickled
-with `format` as the numpy type (`numpy.int16`; the 4C6 `beam_data*.npy`
-of Oct 2022, copied into every year's Demos) failed the app's Load Data,
-"Object of type type is not JSON serializable": load_data read them but
-the JSON manifest cannot hold a type. `MySettings.__setstate__` now keeps
-a type by its name. Live on Pages (deployed c84beed); the served app needs
-a release. The next CHANGELOG's Fixed wants a line for it. All 518 `.npy`
-on Tore's teaching OneDrive were scanned through `legacy_to_dvma`: 492
+**v2.8.3 IS CUT (2026-10-28, Mac), NOT YET UPLOADED.** Cut `486412b`
+(release commit; master pushed with it), cut from a vibration_apps
+session on Tore's ask. Patch, one fix (`c84beed`): old `.npy` files whose
+settings were pickled with `format` as the numpy type (`numpy.int16`; the
+4C6 `beam_data*.npy` of Oct 2022, copied into every year's Demos) failed
+the app's Load Data, "Object of type type is not JSON serializable":
+load_data read them but the JSON manifest cannot hold a type.
+`MySettings.__setstate__` now keeps a type by its name. All 518 `.npy` on
+Tore's teaching OneDrive were scanned through `legacy_to_dvma`: 492
 datasets convert, 27 failed before (all the beam files), 25 in
 `Python/pydvma_backup*` are pre-pydvma pickles (`measurement`,
 `oscilloscope`, `data_saver_trial`, `pydvma.logdata`) that cannot be
-unpickled at all.
+unpickled at all. Built after `npm ci` in the documented order:
+`verify_release.py 2.8.3` passes both traps (`index-DkrW93Zv.js`, 26
+`pydvma/*.py` byte-identical), `twine check` passes, runtime audit 0,
+sha256 wheel 9b2c706c… / sdist d44bcae0…; a CLEAN venv serves its own UI
+(engine wheel 200), greets `{v:1, pydvma:'2.8.3', journal:true,
+files:true}`, and its Load Data opens `beam_data_TF.npy` from the working
+folder (one 20 s set, its TF on the TF tab). Suites: pytest 1485/7,
+vitest 1303/1, check 0/0, Playwright 133 passed incl. BRIDGE_E2E and
+@engine, mkdocs --strict clean. `dist/RELEASE_NOTES_2.8.3.md` written.
+**Next: Tore's twine upload of the two named files; then tag `v2.8.3` at
+`486412b`, the GitHub release, trap 3 on the downloaded wheel, and the
+lab PCs re-run their Setup bat as administrator.**
 
 **v2.8.2 IS RELEASED END TO END (2026-10-28, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
