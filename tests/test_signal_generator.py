@@ -1,4 +1,5 @@
-"""`acquisition.signal_generator` warns when it rescales to the output rail.
+"""`acquisition.signal_generator` warns when it rescales to the output rail,
+and makes ``ceil(T * output_fs)`` samples (the last two tests).
 
 When the finished waveform's peak exceeds ``settings.output_vmax()`` the
 whole waveform is scaled down so its peak sits on the rail. That used to
@@ -68,3 +69,29 @@ def test_unbanded_gaussian_is_truncated_not_rescaled():
 
 def test_the_warning_is_a_userwarning():
     assert issubclass(acquisition.OutputRescaledWarning, UserWarning)
+
+
+@pytest.mark.parametrize('fs,T,n', [
+    (1000, 8.05, 8050),           # arange(0, T, 1/fs) made 8051
+    (1000, 16.01, 16010),         # ... and 16011
+    (8000, 1.0, 8000),            # exact T*fs stays exact
+    (8000, 0.05, 400),
+    (44100, 2.0, 88200),
+    (20e6 / 6667, 1.0, 3000),     # an NI-coerced rate rounds up
+])
+def test_sample_count_is_ceil_of_T_times_fs(fs, T, n):
+    # The browser generator's `stimulusLength` counts the same way
+    # (webui/tests/audio/signal.test.ts pins the last three).
+    s = options.MySettings(fs=int(fs), output_fs=int(fs), output_channels=1)
+    s.output_fs = fs   # MySettings stores an int; a coerced rate is assigned
+    t, y = acquisition.signal_generator(s, sig='sweep', T=T,
+                                        amplitude=0.1, f=[10, 200])
+    assert y.shape == (n, 1)
+    assert len(t) == n
+    assert t[-1] < T
+    np.testing.assert_allclose(t, np.arange(n) / fs)
+
+
+def test_old_float_step_did_overshoot():
+    # Guards the first case above: it is a real arange overshoot.
+    assert len(np.arange(0, 8.05, 1 / 1000)) == 8051

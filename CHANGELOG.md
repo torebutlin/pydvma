@@ -3,6 +3,21 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **`calculate_fft` on a `stream_snapshot` could fail on NI hardware.**
+  The live stream's time axis could be one sample longer than its data
+  at some sample rates, mostly the ones NI hardware runs at instead of
+  the rate you asked for (3 kHz from a 20 MHz timebase runs at 2999.85
+  Hz). The FFT of a snapshot then failed with `IndexError: boolean index
+  did not match indexed array`. Only Python code that calls
+  `stream_snapshot` was affected; the app and `log_data` were not.
+- **`signal_generator` no longer adds a sample at `t = T`** for some
+  durations (8.05 s at 1 kHz made 8051 samples). It now makes
+  `ceil(T * output_fs)` samples, the same as the app's generator.
+
 ## 2.8.3 — 2026-10-28
 
 A fix for old data files: some `.npy` files from 2022 would not open in

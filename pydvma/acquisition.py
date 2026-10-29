@@ -1021,7 +1021,8 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
             one of the ``settings.output_channels`` columns.
 
     Returns:
-        t (np.ndarray): Sample times in seconds, ``arange(0, T, 1/output_fs)``.
+        t (np.ndarray): Sample times in seconds, ``arange(N) / output_fs``
+            with ``N = ceil(T * output_fs)``, so every time is below ``T``.
         y (np.ndarray): The waveform in volts, shape
             ``(len(t), output_channels)``.
 
@@ -1034,8 +1035,12 @@ def signal_generator(settings,sig='gaussian',T=1,amplitude=0.1,f=None,selected_c
         selected_channels = np.arange(0,settings.output_channels)
 
     # initiate variables
-    t = np.arange(0,T,1/settings.output_fs)
-    N_per_channel = np.size(t)
+    # A sample COUNT, not np.arange(0, T, 1/fs): that float step adds a
+    # sample at t = T for some (T, fs), e.g. 8051 for 8.05 s at 1 kHz.
+    # The epsilon keeps an exact T*fs from rounding up; the browser's
+    # generator (webui stimulusLength) counts the same way.
+    N_per_channel = max(0, int(np.ceil(settings.output_fs*T - 1e-9)))
+    t = np.arange(N_per_channel)/settings.output_fs
     y = np.zeros((N_per_channel,settings.output_channels))
     win = np.ones((N_per_channel,1))
     T_ramp = np.min([T/10,0.1])
