@@ -1367,7 +1367,11 @@ class Recorder(object):
         self._awaiting_first_signal = getattr(self, '_awaiting_first_signal',
                                               False)
         self._startup_zero_chunks = getattr(self, '_startup_zero_chunks', 0)
-        self.osc_time_axis=np.arange(0,(self.settings.num_chunks*self.settings.chunk_size)/self.settings.fs,1/self.settings.fs)
+        # A sample COUNT, not np.arange(0, N/fs, 1/fs): that float stop
+        # gives N+1 samples at some rates (an NI-coerced 2999.85 Hz,
+        # 48 kHz x 10240), one more than the buffer.
+        self.osc_time_axis = (np.arange(self.settings.num_chunks*self.settings.chunk_size)
+                              / self.settings.fs)
         self.osc_freq_axis=np.fft.rfftfreq(len(self.osc_time_axis),1/self.settings.fs)
 
         # Both capture buffers are CIRCULAR: the callback writes each
@@ -2286,11 +2290,11 @@ class Recorder_NI_nidaqmx(object):
         requested rate (see the coercion note there).
         '''
         settings = self.settings
-        self.osc_time_axis = np.arange(
-            0,
-            (settings.num_chunks * settings.chunk_size) / settings.fs,
-            1 / settings.fs,
-        )
+        # A sample COUNT, not np.arange(0, N/fs, 1/fs): that float stop
+        # gives N+1 samples at some coerced rates (2999.85 Hz for 3 kHz
+        # on a 20 MHz timebase), one more than the buffer.
+        self.osc_time_axis = (np.arange(settings.num_chunks * settings.chunk_size)
+                              / settings.fs)
         self.osc_freq_axis = np.fft.rfftfreq(len(self.osc_time_axis), 1 / settings.fs)
         # Both buffers are CIRCULAR rings, exactly as on the soundcard
         # `Recorder` (round-12). The previous shift design moved the
@@ -3267,11 +3271,9 @@ class MockRecorder(object):
         self.trigger_detected = False
         self.trigger_first_detected_message = False
 
-        self.osc_time_axis = np.arange(
-            0,
-            (settings.num_chunks * settings.chunk_size) / settings.fs,
-            1 / settings.fs,
-        )
+        # A sample count, like the hardware recorders (see Recorder).
+        self.osc_time_axis = (np.arange(settings.num_chunks * settings.chunk_size)
+                              / settings.fs)
         self.osc_freq_axis = np.fft.rfftfreq(
             len(self.osc_time_axis), 1 / settings.fs,
         )
