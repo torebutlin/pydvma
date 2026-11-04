@@ -11,8 +11,11 @@
 //      — deps:false keeps install fully offline (no PyPI index lookups)
 //   4. pyimport('pydvma.engine') — the ops module ships INSIDE the pydvma
 //      wheel installed above, so no separate fetch/write is needed
-// Thereafter every `{op, payload}` calls `glue[op](**payload)` and marshals
-// the returned dict (arrays -> {shape, data, complex}) back across postMessage.
+// Thereafter every `{op, payload}` calls `glue._call_packed(op, json, bufs)`:
+// the payload as JSON text plus the raw bytes of its typed arrays (pack.ts:
+// Safari's JIT corrupts JS numbers converted into Python one by one), which
+// Python unpacks into the op's keyword arguments. The returned dict (arrays
+// -> {shape, data, complex}) is marshalled back across postMessage.
 //
 // Protocol (mirrors client.ts):
 //   in : { id, op: 'init', payload: { baseUrl, wheels } }
@@ -27,6 +30,7 @@
 //
 import { loadPyodide, type PyodideInterface } from 'pyodide';
 import { createProgressPoster, type ProgressMessage } from './progress';
+import { packPayload } from './pack';
 
 interface InitPayload {
   baseUrl: string;
@@ -116,8 +120,10 @@ async function boot({ baseUrl, wheels, pyodideVersion }: InitPayload): Promise<v
 }
 
 /**
- * Run one compute op. `glue[op]` is a PyProxy callable; we invoke it with the
- * payload's values as keyword args via `callKwargs`, then `toJs` the result so
+ * Run one compute op. The payload is packed (`packPayload`) and handed to
+ * `glue._call_packed`, which calls `glue[op]` with it as keyword args (or,
+ * for a wheel without `_call_packed`, `glue[op]` is called directly with
+ * `callKwargs`); then we `toJs` the result so
  * nested dicts become plain objects and numpy arrays become Float64Array.
  * `create_proxies: false` guarantees no lingering PyProxy leaks; we destroy
  * the top-level result proxy explicitly.
@@ -126,11 +132,25 @@ function run(op: string, payload: Record<string, unknown>): unknown {
   if (!pyodide || !glue) throw new Error('engine not initialised');
   const fn = glue[op];
   if (fn == null) throw new Error(`unknown op: ${op}`);
-  // fn's try/finally wraps the callKwargs too: a Python op that RAISES throws
-  // out of callKwargs, so if it sat outside the try the fn proxy would leak.
+  // The payload goes over as JSON text plus raw array bytes (pack.ts says
+  // why: Safari's JIT corrupts JS numbers converted one by one). A wheel
+  // without `_call_packed` (an HTTP-cached older engine) takes the old path.
+  const packed = glue._call_packed;
+  // fn's try/finally wraps the call too: a Python op that RAISES throws out
+  // of the call, so if it sat outside the try the fn proxy would leak.
   try {
-    // Pass kwargs: callKwargs takes (...positional, kwargsObject).
-    const resultProxy = fn.callKwargs(payload);
+    let resultProxy;
+    if (packed) {
+      try {
+        const { json, bufs } = packPayload(payload);
+        resultProxy = packed(op, json, bufs);
+      } finally {
+        if (typeof packed.destroy === 'function') packed.destroy();
+      }
+    } else {
+      // Pass kwargs: callKwargs takes (...positional, kwargsObject).
+      resultProxy = fn.callKwargs(payload);
+    }
     try {
       return resultProxy.toJs({
         dict_converter: Object.fromEntries,

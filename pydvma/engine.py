@@ -21,6 +21,7 @@ JS side has one uniform decoder for both. Maths always runs here in pydvma —
 never reimplemented in JS.
 """
 import inspect
+import json
 import io
 import os
 import tempfile
@@ -113,6 +114,76 @@ def _progress_kw(fn):
     if _progress_hook is None or not _accepts_kw(fn, 'progress_callback'):
         return {}
     return {'progress_callback': _progress_hook}
+
+
+# --- packed calls from the browser worker ------------------------------------
+#
+# The pyodide worker does not hand an op its payload as JS objects any more:
+# it sends the payload as JSON text plus the raw bytes of every typed array
+# (``webui/src/lib/worker/pack.ts``), and `_call_packed` rebuilds the keyword
+# arguments here. pyodide converts each JS number with one JS function, which
+# Safari 27.2's JIT miscompiles once it is hot: from then on a double crosses
+# as the low 32 bits of its bit pattern (246.82 -> 1889785610, 10000.0 -> 0).
+# ``np.asarray`` on a typed-array proxy calls it once per element, so the
+# first big call poisoned it and every later array and scalar was garbage
+# (4C6 lab, 2026-11). JSON text is parsed by Python and the arrays are a
+# single byte copy, so no JS number is converted at all.
+
+_BUF_KEY = '__pydvma_buf__'
+_NUM_KEY = '__pydvma_num__'
+_NON_FINITE = {'nan': float('nan'), 'inf': float('inf'), '-inf': float('-inf')}
+
+
+def _unpack_payload(obj, bufs):
+    """Rebuild a payload packed by the worker's ``packPayload``.
+
+    ``obj`` is the parsed JSON. A ``{"__pydvma_buf__": k, "dtype": d,
+    "length": n}`` placeholder becomes a writable 1-D numpy array of dtype
+    ``d`` read from ``bufs[k]``, an object with a ``to_bytes()`` method (a
+    pyodide ``JsProxy`` of a ``Uint8Array``) or a bytes-like object; a
+    ``{"__pydvma_num__": ...}`` placeholder becomes NaN or ±inf. Dicts and
+    lists are rebuilt recursively; other values are returned as they are.
+
+    Raises:
+        ValueError: a buffer's byte length does not match its declared
+            length and dtype.
+    """
+    if isinstance(obj, dict):
+        if _BUF_KEY in obj:
+            buf = bufs[int(obj[_BUF_KEY])]
+            raw = buf.to_bytes() if hasattr(buf, 'to_bytes') else bytes(buf)
+            dtype = np.dtype(obj['dtype'])
+            n = int(obj['length'])
+            if len(raw) != n * dtype.itemsize:
+                raise ValueError('packed buffer {} holds {} bytes; {} x {} expected'.format(
+                    obj[_BUF_KEY], len(raw), n, dtype))
+            # bytearray: a writable copy, as np.asarray used to give the ops.
+            return np.frombuffer(bytearray(raw), dtype=dtype)
+        if _NUM_KEY in obj and len(obj) == 1:
+            return _NON_FINITE[obj[_NUM_KEY]]
+        return {k: _unpack_payload(v, bufs) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_unpack_payload(v, bufs) for v in obj]
+    return obj
+
+
+def _call_packed(op, payload_json, bufs):
+    """Run engine op ``op`` on a payload packed by the browser worker.
+
+    ``payload_json`` is the keyword arguments as JSON text with
+    placeholders for the arrays, and ``bufs`` their bytes (see
+    `_unpack_payload`). Returns what the op returns.
+
+    Raises:
+        AttributeError: ``op`` is not a public function of this module.
+    """
+    if not isinstance(op, str) or op.startswith('_'):
+        raise AttributeError('not an engine op: {!r}'.format(op))
+    fn = globals().get(op)
+    if not (inspect.isfunction(fn) and fn.__module__ == __name__):
+        raise AttributeError('not an engine op: {!r}'.format(op))
+    kwargs = _unpack_payload(json.loads(payload_json), bufs)
+    return fn(**kwargs)
 
 
 def _arr(a):

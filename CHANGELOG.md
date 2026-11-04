@@ -7,6 +7,25 @@ follows [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **In Safari, the web app's results turned to garbage after loading a
+  large file.** Loading the 4C6 beam data (24 sets with a 6-mode fit)
+  into the browser app in Safari 27.2 gave fit lines at 10⁹ Hz and a
+  ruined TF view, and **Calc TF** then failed with `ZeroDivisionError`.
+  Safari's JavaScript engine has a bug: once a function has run many
+  thousands of times it can treat a decimal number as if it were a whole
+  number, and read only half of its bits. The in-browser engine passed
+  every number of every array to Python through one such function, and
+  the first large calculation was enough to set the bug off, after which
+  every number the engine received was wrong (246.82 Hz arrived as
+  1889785610). Arrays now go to the engine as raw bytes and the other
+  settings as text, so no number goes through that function. Measured
+  data was never changed, but a file saved from Safari once this had
+  happened holds a corrupted modal fit (natural frequencies that are
+  huge whole numbers): delete its Modal fit card and fit again, or go
+  back to a copy saved before. Chrome, Edge and
+  Firefox were not affected, nor was the app run through `pydvma-serve`
+  or `dvma.launch`, which computes in Python on your computer. Large
+  calculations also start a little faster in every browser.
 - **The app's plot legend could cover the frequency navigator.** With
   many lines (the 4C6 beam files: 23 sets and their fit lines, about 70
   rows) in a short plot, the legend grew past the top of the plot, over

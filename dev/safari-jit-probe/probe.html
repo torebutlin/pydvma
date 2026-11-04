@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>pyodide Float64Array probe</title>
+<style>body { font: 13px ui-monospace, monospace; margin: 16px; } pre { white-space: pre-wrap; }</style>
+<h3>pydvma: Safari pyodide array probe</h3>
+<p>Runs by itself (about a minute). Results are sent back automatically; you can close this tab once it says <b>done</b>.</p>
+<pre id="out">starting…</pre>
+<script type="module">
+  const out = document.getElementById('out');
+  out.textContent = '';
+  const w = new Worker('/probe-worker.mjs?t=' + Date.now() + '&' + location.search.slice(1), { type: 'module' });
+  w.onmessage = (e) => { out.textContent += e.data.stage + ': ' + JSON.stringify(e.data.data) + '\n\n'; };
+  w.onerror = (e) => { out.textContent += 'worker error: ' + e.message + '\n'; };
+  w.postMessage({ cloned: new Float64Array([246.82, 0.0011, 5.0, -0.25, 1370.36, 3.0e-7]) });
+</script>
