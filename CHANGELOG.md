@@ -3,7 +3,13 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.8.4 — 2026-11-04
+
+Fixes to modal fitting from the 4C6 lab: the global fit lines no longer
+go wrong once the fitted modes span a wide band, **Refine** is fast
+again, and the fit summary stays inside the plot with a full table of the
+modal constants. Upgrade with `pip install --upgrade
+"pydvma[serve,soundcard]"`.
 
 ### Fixed
 
@@ -31,7 +37,6 @@ follows [semantic versioning](https://semver.org/).
   fn, ζ, Q, `An` and `φn` per line, with **Copy** for a spreadsheet. The
   chip never grows taller than the plot; its mode list scrolls under the
   header.
-
 - **`calculate_fft` on a `stream_snapshot` could fail on NI hardware.**
   The live stream's time axis could be one sample longer than its data
   at some sample rates, mostly the ones NI hardware runs at instead of
