@@ -8,6 +8,24 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-11-04 (Mac; committed, NOT pushed, CHANGELOG `## Unreleased`,
+no version bump): **4C6 modal-fit round, two fixes from Tore's student
+files** (`data/4c6_examples_problems/`, untracked, 128 MB). (1) Global
+fit lines went 10-1000x off once the modes spanned ~250 Hz-1.4 kHz, and
+Refine ran for minutes: `estimate_global_constants` solved in RECEPTANCE
+(1/w^4 weighting for 'acc') and `_modes_band`'s quarter-of-span pad
+reached 0 Hz, where the 1/w^2-amplified noise set every constant. Now
+solved in measured units (columns unit-scaled) and the band pads each end
+by its own mode (5*fn*zn, >= 5 % fn), which also keeps unfitted
+neighbours out. Since round 7g (July); the local fit was never wrong.
+(2) The fit chip with 20+ lines covered the plot and lost its ▾: compact
+past 3 lines, ⊞ opens `FitTableDialog` (Copy = TSV), chip capped to the
+plot with a scrolling list. Suites: pytest 1508/7, vitest 1304/1, check
+0/0, fit.spec 2/2 @engine (engine wheel rebuilt, modal.py byte-identical),
+mkdocs --strict clean. NB running two CPU-heavy numpy scripts beside the
+app's native engine worker oversubscribes BLAS threads: a 1 s fit took
+3+ minutes, which looked like a hang.
+
 **v2.8.3 IS RELEASED END TO END (2026-10-28, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
 (sha256 9b2c706c… / d44bcae0…); tag `v2.8.3` is at the cut `486412b`
