@@ -7,6 +7,22 @@ follows [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **Modal fit lines went wrong once the fitted modes spanned a wide band.**
+  On the 4C6 beam data, modes fitted one by one up to about 1 kHz were
+  drawn well; fitting the next one up (1370 Hz on one file, 1575 Hz on
+  another) turned every global fit line 10 to 1000 times off the data,
+  the earlier modes included, and **Refine** ran for minutes. The
+  global constants and residues were solved on the TF divided by
+  `(iω)²`, which weights low frequencies by `1/ω⁴`, and once the band
+  round the modes reached down to 0 Hz the noise there, amplified by
+  `1/ω²`, set every constant. They are now solved in the TF's own units,
+  as the fit and **Refine** measure it, and the band runs from the lowest
+  to the highest fitted mode with each end padded by 5 % of that mode's
+  frequency (it was padded by a quarter of the whole span as well, which
+  reached 0 Hz and modes not yet fitted). The single-mode fit itself was
+  not affected. In Python this changes the results of
+  `estimate_global_constants`, `reconstruct_transfer_function_global`
+  (with `tf_data_list`) and `modal_refine`.
 - **`calculate_fft` on a `stream_snapshot` could fail on NI hardware.**
   The live stream's time axis could be one sample longer than its data
   at some sample rates, mostly the ones NI hardware runs at instead of

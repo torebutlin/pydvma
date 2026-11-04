@@ -584,18 +584,27 @@ def _measurement_power(measurement_type):
 
 
 def _modes_band(M, f_axis):
-    '''Default estimation/refinement band: the modes' fn span padded so each
-    peak's half-power skirts are included (the `modal_refine` convention),
-    clamped to ``[f_axis[0], f_axis[-1]]`` — an axis, or the ``[lo, hi]``
-    span of every measured set's axis. Returns ``[lo, hi]`` in Hz.'''
-    fn_fit = M[:, 0]
-    zn_fit = M[:, 1]
-    lo_fn, hi_fn = float(np.min(fn_fit)), float(np.max(fn_fit))
-    span = hi_fn - lo_fn
-    bw = float(np.max(fn_fit * np.clip(zn_fit, 0.0, None))) if fn_fit.size else 0.0
-    pad = max(0.25 * span, 5.0 * bw, 0.05 * max(hi_fn, 1.0))
-    return [max(float(f_axis[0]), lo_fn - pad),
-            min(float(f_axis[-1]), hi_fn + pad)]
+    '''Default estimation/refinement band: from the lowest to the highest
+    fitted natural frequency, each end padded by its own mode's skirt (five
+    half-power bandwidths ``5*fn*zn``, and at least 5 % of that mode's
+    ``fn``), clamped to ``[f_axis[0], f_axis[-1]]`` — an axis, or the
+    ``[lo, hi]`` span of every measured set's axis. Returns ``[lo, hi]`` in
+    Hz.
+
+    The band is where the global constants and residues are solved, so it
+    should hold the fitted modes and little else. It used to be padded by a
+    quarter of the whole span as well: with modes from 250 Hz to 1.4 kHz
+    that reached 0 Hz below and a strong mode not yet fitted above, and the
+    constants and residues bent to explain what the model does not hold
+    (4C6 lab, 2026-11).'''
+    fn_fit = np.asarray(M[:, 0], dtype=np.float64)
+    zn_fit = np.clip(np.asarray(M[:, 1], dtype=np.float64), 0.0, None)
+    i_lo, i_hi = int(np.argmin(fn_fit)), int(np.argmax(fn_fit))
+    lo_fn, hi_fn = float(fn_fit[i_lo]), float(fn_fit[i_hi])
+    pad_lo = max(5.0 * lo_fn * zn_fit[i_lo], 0.05 * max(lo_fn, 1.0))
+    pad_hi = max(5.0 * hi_fn * zn_fit[i_hi], 0.05 * max(hi_fn, 1.0))
+    return [max(float(f_axis[0]), lo_fn - pad_lo),
+            min(float(f_axis[-1]), hi_fn + pad_hi)]
 
 
 def _nearest_rows(f_axis, band, n):
@@ -650,12 +659,16 @@ def estimate_global_constants(fn, zn, f, G0, measurement_type='acc', residues=Tr
 
     With the poles ``{fn, zn}`` held fixed, the modal model is LINEAR in the
     remaining parameters, so they solve in one least-squares with no
-    convergence risk. In receptance space (measured columns divided by
-    ``(jw)^p``):
+    convergence risk. The model is the receptance form times ``(jw)^p``:
 
-        ``G0_c/(jw)^p  ~=  sum_n A_nc * phi_n(w)  +  RH_c  -  RL_c/w^2``
+        ``G0_c  ~=  (jw)^p * (sum_n A_nc * phi_n(w)  +  RH_c  -  RL_c/w^2)``
 
-    with ``phi_n = 1/(wn^2 + 2j*wn*zn*w - w^2)``. ``RH`` (stiffness-like
+    with ``phi_n = 1/(wn^2 + 2j*wn*zn*w - w^2)``, and the least squares
+    minimises the error in the MEASURED units, as the local fit and
+    `modal_refine` do. (Solving the receptance form ``G0_c/(jw)^p`` instead
+    would weight each point by ``1/w^(2p)``: for an ``'acc'`` TF the noise
+    near 0 Hz, amplified by ``1/w^2``, would outweigh the modes.)
+    ``RH`` (stiffness-like
     constant) and ``RL/w^2`` (mass-like) are ONE pair of GLOBAL residues per
     channel, standing for above-band and below-band modes respectively —
     unlike the local fits' per-mode ``rk``/``rm``, which are mutually
@@ -699,7 +712,7 @@ def estimate_global_constants(fn, zn, f, G0, measurement_type='acc', residues=Tr
 
     mask = f > 0
     w = (2.0 * np.pi * f[mask]).reshape(-1, 1)
-    y = G0[mask, :] / ((1j * w) ** p)
+    y = G0[mask, :]
 
     wn = (2.0 * np.pi * fn).reshape(1, -1)
     phi = 1.0 / (wn ** 2 + 2j * wn * zn.reshape(1, -1) * w - w ** 2)
@@ -707,8 +720,20 @@ def estimate_global_constants(fn, zn, f, G0, measurement_type='acc', residues=Tr
         B = np.hstack([phi, np.ones_like(w, dtype=complex), -1.0 / w ** 2])
     else:
         B = phi
-
-    x, *_ = np.linalg.lstsq(B, y, rcond=None)
+    # The model is written in receptance, but it is SOLVED in measured units:
+    # each row times (jw)^p. Solving the receptance form directly weights each
+    # point by 1/w^(2p) relative to what is plotted and fitted, so for an
+    # 'acc' TF the lowest frequencies count (f_hi/f_lo)^4 times more than the
+    # highest, and a band reaching down near 0 Hz lets the noise floor there,
+    # amplified by 1/w^2, set every constant (4C6 lab, 2026-11: every global
+    # line ten to a thousand times off once the modes spanned 250 Hz-1.4 kHz).
+    # The columns are scaled to unit norm for the solve: (jw)^p spans many
+    # decades across them.
+    Bm = B * ((1j * w) ** p)
+    scale = np.linalg.norm(Bm, axis=0)
+    scale[scale == 0] = 1.0
+    x, *_ = np.linalg.lstsq(Bm / scale, y, rcond=None)
+    x = x / scale.reshape(-1, 1)
     A = x[:len(fn), :]
     if residues:
         RH = x[len(fn), :]
@@ -717,8 +742,7 @@ def estimate_global_constants(fn, zn, f, G0, measurement_type='acc', residues=Tr
         RH = np.zeros(y.shape[1], dtype=complex)
         RL = np.zeros(y.shape[1], dtype=complex)
 
-    model = (B @ x) * ((1j * w) ** p)
-    cost = 0.5 * float(np.sum(np.abs(model - G0[mask, :]) ** 2))
+    cost = 0.5 * float(np.sum(np.abs(Bm @ x - y) ** 2))
     return A, RH, RL, cost
 
 

@@ -372,6 +372,65 @@ class TestGlobalReestimation:
         assert err_reest < 0.05 * err_legacy
         assert bool(reest.flag_modal_TF) is True
 
+    def test_wide_mode_span_with_a_noise_floor_stays_accurate(self):
+        """4C6 lab, 2026-11: students fitted a beam's modes one by one up to
+        ~1 kHz, then every global line went wrong (10 to 1000 times the data)
+        on the next mode up. Adding it stretched the modes' span until the
+        padded solve band reached 0 Hz, and the constants were solved in
+        receptance space, where the TF is divided by (i*omega)**2: the noise
+        floor near 0 Hz, amplified by 1/omega**2, then outweighed the modes.
+        Five clean, well-separated light modes over a small accelerance
+        noise floor must come back accurately at every peak."""
+        f = np.arange(0.0, 5000.0, 0.5)
+        modes = [(250.0, 1.0), (500.0, -1.0), (800.0, 1.0), (1000.0, -1.0),
+                 (1400.0, 1.0)]
+        rows = [_modal_row(fn, 0.001, 1.0e3 * s) for fn, s in modes]
+        tf_meas, truth = _measured_tf_from_modes(rows, f)
+        clean = tf_meas.tf_data[:, 0].copy()
+        rng = np.random.default_rng(7)
+        floor = 1e-3 * np.abs(clean).max()
+        tf_meas.tf_data[:, 0] = clean + floor * (rng.standard_normal(f.size)
+                                                 + 1j * rng.standard_normal(f.size))
+        g = modal.reconstruct_transfer_function_global(
+            truth, f, 'acc', tf_data_list=datastructure.TfDataList([tf_meas])).tf_data[:, 0]
+        for fn, _ in modes:
+            near = (f > 0.99 * fn) & (f < 1.01 * fn)
+            rel = np.linalg.norm(g[near] - clean[near]) / np.linalg.norm(clean[near])
+            assert rel < 0.02, (fn, rel)
+
+    def test_band_stops_short_of_an_unfitted_neighbour(self):
+        """The solve band pads the lowest and highest fitted modes by their
+        own skirts (5 % of fn at least), not by a quarter of the whole span:
+        that reached a strong mode not yet fitted just above the top one (and
+        0 Hz below), and the constants and residues bent to explain it, most
+        of all at the top mode the student had just fitted."""
+        f = np.arange(0.0, 2000.0, 0.25)
+        fitted = [(200.0, 1.0), (400.0, -1.0), (600.0, 1.0), (800.0, -1.0)]
+        rows = [_modal_row(fn, 0.002, 1.0e3 * s) for fn, s in fitted]
+        tf_meas, _ = _measured_tf_from_modes(rows + [_modal_row(900.0, 0.002, 3.0e3)], f)
+        clean = tf_meas.tf_data[:, 0].copy()
+        model = datastructure.ModalData(rows[0], settings=options.MySettings(fs=4000, channels=1))
+        for r in rows[1:]:
+            model.add_mode(r)
+
+        lo, hi = modal._modes_band(np.atleast_2d(model.M), f[[0, -1]])
+        np.testing.assert_allclose([lo, hi], [190.0, 840.0])
+
+        g = modal.reconstruct_transfer_function_global(
+            model, f, 'acc', tf_data_list=datastructure.TfDataList([tf_meas])).tf_data[:, 0]
+        for fn, _ in fitted:
+            near = (f > 0.99 * fn) & (f < 1.01 * fn)
+            rel = np.linalg.norm(g[near] - clean[near]) / np.linalg.norm(clean[near])
+            assert rel < 0.03, (fn, rel)
+
+    def test_band_pads_each_end_by_its_own_skirt(self):
+        # A heavily damped top mode needs five half-power bandwidths (more
+        # than 5 % of fn); the light bottom one keeps 5 % of its own fn.
+        M = np.array([_modal_row(100.0, 0.001, 1.0), _modal_row(1000.0, 0.02, 1.0)])
+        np.testing.assert_allclose(modal._modes_band(M, [0.0, 5000.0]), [95.0, 1100.0])
+        # Clamped to the axis.
+        np.testing.assert_allclose(modal._modes_band(M, [98.0, 1050.0]), [98.0, 1050.0])
+
     def test_fade_residues_stops_the_runaway_without_a_step(self):
         """Lab feedback 2026-10: a single-mode fit's global line climbed off
         both ends of the axis. The residues a little noise leaves, solved on

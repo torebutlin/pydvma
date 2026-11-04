@@ -121,8 +121,12 @@ like any other set. The **fit lines** switch chooses what they show.
   amplitude and phase for each channel against the measured data, and adds
   a pair of residual terms per channel for modes above and below the
   band. This removes the double counting of neighbouring modes that a
-  single local fit absorbs into its phase. The band is the fitted modes'
-  frequency span with a margin round each peak. The residual terms only
+  single local fit absorbs into its phase. The band runs from the lowest
+  fitted mode to the highest, each end padded by 5 % of that mode's
+  frequency (more for a heavily damped one), so modes you have not fitted
+  yet beyond either end stay out of it. The solve weights every frequency
+  as the TF is plotted, so a peak at 2 kHz counts as much as one at
+  200 Hz. The residual terms only
   mean something near it, so they fade out over the octave beyond each
   edge, and far from the modes the line is the modes alone. A band with
   too few points to pin the residual terms down (fewer than two per
