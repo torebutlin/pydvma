@@ -161,8 +161,15 @@ where $\omega_n = 2\pi f_n$ and $p = 2$, 1 or 0 for an **Acceleration**,
 **Velocity** or **Displacement** TF. For a calibrated TF per newton, `An`
 is in 1/kg. These are the values the model stores (`ModalData.an` and
 `.pn` in Python; `An` can be negative, which is the same as adding 180°
-to `φn`). When the fit spans several lines, each line gets its own `An`
-and `φn`, labelled as in the legend. Each
+to `φn`). When the fit spans two or three lines, each line gets its own
+`An` and `φn` under the mode, labelled as in the legend. On more lines
+(a beam tested at many points, say) the chip keeps one row per mode, and
+**⊞** in its header opens the full table: a pair of columns (`An`, `φn`)
+per mode, with its fn, ζ and Q above, and a row per line, so a mode shape
+reads down a column. **Copy** puts the table on the clipboard as
+tab-separated text, at full precision, to paste into a spreadsheet (where
+the browser blocks the clipboard, it selects the table for Ctrl+C or ⌘C
+instead). Each
 row has a **mute** toggle (🔊/🔇), which keeps the mode in the model but
 leaves it out of the global reconstruction so you can see what it
 contributes, and a **×** to delete the mode. **↶ Undo** appears in the
@@ -170,7 +177,9 @@ chip after a mute or delete.
 
 Drag the chip by its header to move it out of the way, or minimise it
 with **▾** (double-clicking the header does the same). A minimised chip
-still shows a one-line `fit · N modes` summary. Its position and state are
+still shows a one-line `fit · N modes` summary. The chip never grows
+taller than the plot: past that, its mode list scrolls under the header,
+so **▾** and **⊞** stay in reach. Its position and state are
 kept until you reload the page.
 
 ## Calibration and units

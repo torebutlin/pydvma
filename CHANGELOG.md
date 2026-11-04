@@ -23,6 +23,15 @@ follows [semantic versioning](https://semver.org/).
   not affected. In Python this changes the results of
   `estimate_global_constants`, `reconstruct_transfer_function_global`
   (with `tf_data_list`) and `modal_refine`.
+- **The app's fit summary could cover the plot and lose its minimise
+  button.** With a model on many lines (20+ measurement points) it
+  listed every line's `An` and `φn` under every mode, grew past the top
+  of the plot and took its **▾** with it. On more than three lines it now
+  keeps one row per mode, and **⊞** opens a full table of every mode's
+  fn, ζ, Q, `An` and `φn` per line, with **Copy** for a spreadsheet. The
+  chip never grows taller than the plot; its mode list scrolls under the
+  header.
+
 - **`calculate_fft` on a `stream_snapshot` could fail on NI hardware.**
   The live stream's time axis could be one sample longer than its data
   at some sample rates, mostly the ones NI hardware runs at instead of

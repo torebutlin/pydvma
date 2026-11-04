@@ -26,13 +26,24 @@
    *
    * Each mode also shows its modal constant `An` and phase `φn` (lab
    * feedback, 2026-10): one line under the mode when the model fits one
-   * line, else one per fitted line, labelled as in the legend.
+   * line, else one per fitted line, labelled as in the legend — up to
+   * `DETAIL_MAX_LINES` lines. Beyond that (4C6 lab, 2026-11: a beam tested at
+   * 20+ points listed 20+ constants under every mode, and the chip grew over
+   * the whole plot and pushed its own minimise button off the top) each mode
+   * is one line, and the constants are in the full table (⊞, `FitTableDialog`).
+   * The chip is also capped to the plot's height with its mode list scrolling
+   * under the header, so the header's buttons can never leave the plot.
    */
   import {
     PHASE_DEV_WARN_DEG, fitColumnLabels, type ModalStore,
   } from '../lib/stores/modal';
   import type { Actions } from '../lib/analysis/actions';
   import type { Selection } from '../lib/stores/selection';
+  import FitTableDialog from './FitTableDialog.svelte';
+
+  /** Most lines whose constants the chip lists under each mode; a model on
+   *  more lines shows them in the full table only. */
+  const DETAIL_MAX_LINES = 3;
 
   let { modal, actions, selection }: { modal: ModalStore; actions: Actions; selection: Selection } = $props();
   const modalState = $derived(modal);
@@ -60,7 +71,26 @@
   const fmtDeg = (d: number): string => `${d.toFixed(1).replace('-', '−')}°`;
   const AN_TITLE = 'Modal constant An and its phase φn: the mode adds An·e^{iφn} / (ωn² − ω² + 2i·ζn·ωn·ω) to H/(iω)^p, with p = 2, 1, 0 for acceleration, velocity, displacement. In 1/kg for a calibrated TF per newton.';
 
+  /** The number of lines the model fits (every mode has one An per line). */
+  const nLines = $derived($modalState.modes[0]?.an.length ?? 0);
+  /** List each line's An under its mode (few lines), or leave them to the table. */
+  const detailed = $derived(nLines <= DETAIL_MAX_LINES);
+
+  let tableOpen = $state(false);
+
+  /** Mount a node on `document.body`: the chip's drag transform would
+   *  otherwise make it the containing block of the dialog's fixed overlay. */
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return { destroy() { node.remove(); } };
+  }
+
   let chipEl = $state<HTMLDivElement | undefined>();
+  let listEl = $state<HTMLDivElement | undefined>();
+  let bodyEl = $state<HTMLDivElement | undefined>();
+  /** The mode list overflows its capped height: the body then takes the
+   *  pointer (wheel and scrollbar), which it otherwise leaves to the plot. */
+  let scrolls = $state(false);
   let dragging = $state(false);
   let dragStart = { x: 0, y: 0, dx: 0, dy: 0 };
 
@@ -90,13 +120,24 @@
     chipUi.dy = Math.min(Math.max(chipUi.dy, minDy), maxDy);
   }
 
-  // Re-clamp when the chip's size changes: collapse/expand, mode rows coming
-  // and going, and on (re)mount (which also catches resizes while unmounted).
+  /** Whether the mode list is taller than the body it scrolls in. */
+  function measureScroll() {
+    scrolls = !!bodyEl && bodyEl.scrollHeight > bodyEl.clientHeight + 1;
+  }
+
+  // Re-clamp and re-measure whenever the chip, its list or the plot changes
+  // size: collapse/expand, mode rows coming and going, a plot resize, and on
+  // (re)mount (which also catches resizes while unmounted). The list is
+  // observed as well as the chip because a capped chip keeps its size while
+  // its list grows underneath.
   $effect(() => {
-    void chipUi.collapsed;
-    void $modalState.modes.length;
-    void $modalState.undo;
-    clampToParent();
+    const el = chipEl;
+    if (!el) return;
+    const ro = new ResizeObserver(() => { clampToParent(); measureScroll(); });
+    ro.observe(el);
+    if (listEl) ro.observe(listEl);
+    if (el.offsetParent) ro.observe(el.offsetParent);
+    return () => ro.disconnect();
   });
 
   function onDragDown(e: PointerEvent) {
@@ -158,7 +199,16 @@
     ondblclick={toggleCollapse}
   >
     <span class="grip" aria-hidden="true">⠿</span>
-    <span class="chip-title">fit{$modalState.modes.length ? ` · ${$modalState.modes.length} mode${$modalState.modes.length === 1 ? '' : 's'}` : ''}</span>
+    <span class="chip-title">fit{$modalState.modes.length ? ` · ${$modalState.modes.length} mode${$modalState.modes.length === 1 ? '' : 's'}` : ''}{$modalState.modes.length && nLines > 1 ? ` · ${nLines} lines` : ''}</span>
+    {#if $modalState.modes.length}
+      <button
+        class="chip-min chip-table"
+        onpointerdown={(e) => e.stopPropagation()}
+        onclick={() => { tableOpen = true; }}
+        title="Show every mode's fn, ζ, Q and its An, φn on every line, in a table"
+        aria-label="open fit table"
+      >⊞</button>
+    {/if}
     <button
       class="chip-min"
       onpointerdown={(e) => e.stopPropagation()}
@@ -168,6 +218,8 @@
     >{chipUi.collapsed ? '▸' : '▾'}</button>
   </div>
   {#if !chipUi.collapsed}
+  <div class="chip-body" class:scrolls bind:this={bodyEl} onscroll={measureScroll}>
+  <div bind:this={listEl}>
   {#if $modalState.modes.length}
     {#each $modalState.modes as m, i (i)}
       <div class="mode-row" class:muted={$modalState.muted[i]}>
@@ -179,7 +231,9 @@
             <span class="phase-warn" data-testid="mode-phase-warning"
               title="Fitted modal phase is {m.phaseDevDeg.toFixed(0)}° from real (0/180°) — check the TF type (Acceleration / Velocity / Displacement)">⚠</span>
           {/if}
-          {#if m.an.length === 1}
+          {#if !detailed}
+            <!-- Many lines: their constants are in the full table (⊞). -->
+          {:else if m.an.length === 1}
             <span class="an-line" data-testid="mode-an" title={AN_TITLE}
               >An = {fmtAn(m.an[0])} · φn = {fmtDeg(m.pnDeg[0])}</span>
           {:else}
@@ -206,16 +260,35 @@
         >×</button>
       </div>
     {/each}
-    {#if $modalState.undo}
-      <div class="chip-foot">
-        <button class="undo-btn" disabled={$busy} onclick={undo} title="Undo the last modal change">↶ Undo</button>
+    {#if !detailed}
+      <div class="chip-note">
+        An, φn on {nLines} lines:
+        <button class="table-link" onclick={() => { tableOpen = true; }}>⊞ table</button>
       </div>
     {/if}
   {:else}
     <div class="mode-row"><span class="mode-txt">No fit — choose Fit 1 / 2 / 3</span></div>
   {/if}
+  </div>
+  </div>
+  {#if $modalState.modes.length && $modalState.undo}
+    <div class="chip-foot">
+      <button class="undo-btn" disabled={$busy} onclick={undo} title="Undo the last modal change">↶ Undo</button>
+    </div>
+  {/if}
   {/if}
 </div>
+
+{#if tableOpen && $modalState.modes.length}
+  <div use:portal>
+    <FitTableDialog
+      modes={$modalState.modes}
+      muted={$modalState.muted}
+      labels={colLabels}
+      onclose={() => { tableOpen = false; }}
+    />
+  </div>
+{/if}
 
 <style>
   .fit-chip {
@@ -237,6 +310,42 @@
        interactive buttons (and the drag header) opt back in individually. */
     pointer-events: none;
     max-width: 60%;
+    /* Never taller than the plot (its offsetParent) above the anchor: the
+       header stays in view and the mode list scrolls beneath it. */
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100% - 60px);
+    box-sizing: border-box;
+  }
+  .chip-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    margin-right: -6px;
+    padding-right: 6px;
+  }
+  .chip-body.scrolls {
+    pointer-events: auto; /* wheel + scrollbar, only when there is a list to scroll */
+  }
+  .chip-note {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .table-link {
+    pointer-events: auto;
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: var(--indigo);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .chip-min.chip-table {
+    font-size: 12px;
   }
   .fit-chip.dragging {
     opacity: 0.92;

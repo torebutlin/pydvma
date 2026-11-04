@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { get } from 'svelte/store';
-import { constantsFromMatrix, createModalStore, fitColumnLabels } from '../../src/lib/stores/modal';
+import { constantsFromMatrix, createModalStore, fitColumnLabels, fitTableTsv } from '../../src/lib/stores/modal';
 
 /** A marshalled real array. */
 const real = (shape: number[], data: number[]) =>
@@ -207,6 +207,24 @@ test('modes carry each column\'s modal constant an and phase in degrees', () => 
   m.applyResult(fitResult(), [{ setId: 3, chIn: 0, nChannels: 2, nCols: 1 }]);
   expect(get(m).modes.map((x) => x.an)).toEqual([[1], [0.6]]);
   expect(constantsFromMatrix(null)).toEqual([]);
+});
+
+test('fitTableTsv lays out modes as column pairs and lines as rows', () => {
+  const modes = [
+    { fn: 246.8, zn: 0.0011, Q: 454.5, an: [0.5, -0.25], pnDeg: [1.5, -2] },
+    { fn: 458.7, zn: 0.0004, Q: Infinity, an: [0.125, 2], pnDeg: [0, 180] },
+  ];
+  const rows = fitTableTsv(modes, [false, true], ['ch_1/ch_0']).split('\n').map((r) => r.split('\t'));
+  expect(rows).toEqual([
+    ['', 'mode 1', '', 'mode 2 (muted)', ''],
+    ['fn (Hz)', '246.8', '', '458.7', ''],
+    ['zeta', '0.0011', '', '0.0004', ''],
+    ['Q', '454.5', '', '', ''],          // an infinite Q (zeta 0) is left blank
+    ['line', 'An', 'phase (deg)', 'An', 'phase (deg)'],
+    ['ch_1/ch_0', '0.5', '1.5', '0.125', '0'],
+    ['line 2', '-0.25', '-2', '2', '180'],  // no label: numbered
+  ]);
+  expect(fitTableTsv([], [], [])).toBe('');
 });
 
 test('fitColumnLabels names each column as the legend does', () => {

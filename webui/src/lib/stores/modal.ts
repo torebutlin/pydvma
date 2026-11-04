@@ -119,6 +119,35 @@ export function fitColumnLabels(
 }
 
 /**
+ * The fit summary as tab-separated text, for pasting into a spreadsheet: one
+ * pair of columns per mode (An, φn), the mode's fn / ζ / Q on the rows above,
+ * then one row per fitted line. The same grid the full-table view shows, at
+ * full precision. A muted mode says so in its heading.
+ */
+export function fitTableTsv(
+  modes: Pick<ModalMode, 'fn' | 'zn' | 'Q' | 'an' | 'pnDeg'>[],
+  muted: readonly boolean[],
+  labels: readonly string[],
+): string {
+  if (modes.length === 0) return '';
+  const num = (v: number) => (Number.isFinite(v) ? String(v) : '');
+  const pair = (a: string, b = '') => [a, b];
+  const rows: string[][] = [
+    ['', ...modes.flatMap((_, i) => pair(`mode ${i + 1}${muted[i] ? ' (muted)' : ''}`))],
+    ['fn (Hz)', ...modes.flatMap((m) => pair(num(m.fn)))],
+    ['zeta', ...modes.flatMap((m) => pair(num(m.zn)))],
+    ['Q', ...modes.flatMap((m) => pair(num(m.Q)))],
+    ['line', ...modes.flatMap(() => pair('An', 'phase (deg)'))],
+  ];
+  const nLines = modes.reduce((n, m) => Math.max(n, m.an.length), 0);
+  for (let k = 0; k < nLines; k++) {
+    rows.push([labels[k] ?? `line ${k + 1}`,
+      ...modes.flatMap((m) => pair(num(m.an[k]), num(m.pnDeg[k])))]);
+  }
+  return rows.map((r) => r.join('\t')).join('\n');
+}
+
+/**
  * Threshold (degrees) above which a mode's fitted phase counts as
  * SIGNIFICANT — i.e. too far from a real mode's 0°/180° to trust the
  * chosen TF type. 30° passes normal light-damping fits comfortably while

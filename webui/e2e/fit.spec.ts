@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 
 /**
@@ -197,5 +198,67 @@ test.describe('@engine', () => {
     // recon produces only a GLOBAL slice (a 'recon' recompute has no just-fitted
     // modes) and the mode defaults to 'global', so the card carries that name.
     await expect(page.getByText(/Modal fit global/).first()).toBeVisible({ timeout: 200_000 });
+  });
+
+  test('a model on many lines: compact chip, full table, header always in reach', async ({ page }) => {
+    // 4C6 lab, 2026-11: a beam tested at 20+ points listed 20+ constants
+    // under every mode; the chip grew over the plot and its minimise button
+    // went off the top. Two copies of the 3-channel fixture give a
+    // shared-pole model on 4 lines, past the chip's 3-line detail limit.
+    await page.goto('/?fixture=3ch');
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+    const chooser = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Load Data' }).click();
+    await (await chooser).setFiles(
+      fileURLToPath(new URL('../tests/fixtures/impulse3ch.dvma', import.meta.url)));
+    await expect(page.getByTestId('tray-card-1')).toBeVisible();
+
+    const stages = page.getByRole('navigation', { name: 'stages' });
+    await stages.getByRole('button', { name: 'TF' }).click();
+    await page.getByRole('button', { name: 'Calc TF' }).click();
+    await expect(page.getByTestId('plot-line').first()).toBeVisible({ timeout: 200_000 });
+    await stages.getByRole('button', { name: 'Fit', exact: true }).click();
+    await page.evaluate(() => {
+      (window as unknown as { __viewState: { setRange: (id: string, r: unknown) => void } })
+        .__viewState.setRange('tf', { x: [900, 1700], y: null });
+    });
+    await page.getByRole('button', { name: 'Fit 2' }).click();
+
+    // Compact: one line per mode, no per-line constants, a pointer to the table.
+    const chip = page.getByLabel('fitted modes');
+    await expect(chip).toContainText('mode 2', { timeout: 60_000 });
+    await expect(chip).toContainText('4 lines');
+    await expect(chip.getByTestId('mode-an')).toHaveCount(0);
+    await expect(chip).toContainText('An, φn on 4 lines');
+
+    // The full table: a column pair per mode, a row per line; Escape closes.
+    await chip.getByRole('button', { name: 'open fit table' }).click();
+    const table = page.getByTestId('fit-table');
+    await expect(table).toBeVisible();
+    await expect(table.locator('thead tr').first()).toContainText('mode 1');
+    await expect(table.locator('thead tr').first()).toContainText('mode 2');
+    await expect(table.locator('tbody tr')).toHaveCount(4);
+    await expect(table.locator('tbody tr').first()).toContainText('ch_1/ch_0');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('fit-table-overlay')).toHaveCount(0);
+
+    // A plot shorter than the chip: the chip is capped inside the plot, its
+    // header (and minimise) stays in reach, and the list scrolls under it.
+    await page.setViewportSize({ width: 1100, height: 470 });
+    const geom = await chip.evaluate(async (el) => {
+      await new Promise((r) => setTimeout(r, 300));
+      const plot = (el as HTMLElement).offsetParent!.getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      const body = el.querySelector('.chip-body') as HTMLElement;
+      return { top: box.top, bottom: box.bottom, plotTop: plot.top, plotBottom: plot.bottom,
+               scrolls: body.scrollHeight > body.clientHeight };
+    });
+    expect(geom.top).toBeGreaterThanOrEqual(geom.plotTop);
+    expect(geom.bottom).toBeLessThanOrEqual(geom.plotBottom);
+    expect(geom.scrolls).toBe(true);
+    await chip.getByRole('button', { name: 'minimise fit summary' }).click();
+    await expect(chip).not.toContainText('mode 1');
+    await chip.getByRole('button', { name: 'expand fit summary' }).click();
+    await expect(chip).toContainText('mode 1');
   });
 });
