@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
 /**
@@ -392,5 +393,167 @@ test.describe('plot legend gestures', () => {
     expect(out.inlineLeft).toBe('auto');
     expect(out.rightPx).toBeLessThan(0);           // past the right edge
     expect(out.rightPx).toBeLessThan(ne.rightPx);  // further right than NE
+  });
+
+  test('many lines in a short plot: the legend stays inside it, the toolbar and navigator stay usable', async ({ page }) => {
+    // 4C6 lab, 2026-11: a file with 23 sets (+ their fit pseudo-sets) gave a
+    // ~69-row legend; in a short TF plot (window ~1100x560) the card grew up
+    // over the frequency navigator and hid its controls. 23 copies of a
+    // 3-column TF fixture give the same 69 rows (3 wrapped columns of 23); a
+    // loaded TF draws without the engine.
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await page.goto('/');
+    const file = fileURLToPath(new URL('../tests/fixtures/orphan_tf_3col.dvma', import.meta.url));
+    for (let i = 0; i < 23; i++) {
+      const chooser = page.waitForEvent('filechooser');
+      await page.getByRole('button', { name: 'Load Data' }).click();
+      await (await chooser).setFiles(file);
+      await expect(page.getByTestId(`tray-card-${i}`)).toBeVisible();
+    }
+    // Each load left an "Added … alongside" toast stacked over the toolbar.
+    const toasts = page.getByTestId('toast');
+    while (await toasts.count()) await toasts.first().getByRole('button', { name: 'Dismiss' }).click();
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+    await expect(page.getByTestId('plot-line').first()).toBeAttached();
+    if (!(await page.getByTestId('freq-nav').count())) await page.getByTestId('freq-nav-toggle').click();
+    await expect(page.getByTestId('freq-nav')).toBeVisible();
+    const card = page.getByTestId('legend');
+    await expect(page.getByTestId('legend-entry')).toHaveCount(69);
+
+    /** The card's box against its plot area (offsetParent), after a settle,
+     *  and whether its entry list scrolls. */
+    const geometry = () => card.evaluate(async (el) => {
+      await new Promise((r) => setTimeout(r, 300));
+      const plot = (el as HTMLElement).offsetParent!.getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      const body = el.querySelector('[data-testid="legend-body"]') as HTMLElement | null;
+      return {
+        top: box.top, bottom: box.bottom, left: box.left, right: box.right,
+        plotTop: plot.top, plotBottom: plot.bottom, plotLeft: plot.left, plotRight: plot.right,
+        scrolls: !!body && body.scrollHeight > body.clientHeight,
+      };
+    });
+    const expectInside = (g: Awaited<ReturnType<typeof geometry>>) => {
+      expect(g.top).toBeGreaterThanOrEqual(g.plotTop - 0.5);
+      expect(g.bottom).toBeLessThanOrEqual(g.plotBottom + 0.5);
+      expect(g.left).toBeGreaterThanOrEqual(g.plotLeft - 0.5);
+      expect(g.right).toBeLessThanOrEqual(g.plotRight + 0.5);
+    };
+    /** Every zoom-toolbar and navigator control takes the pointer at its
+     *  own centre (and what covers it, on failure). The pointer is parked
+     *  first: hovering the toolbar opens its axis popover over the navigator. */
+    const controlsHittable = async () => {
+      await page.mouse.move(1, 1);
+      await expect(page.getByTestId('axis-popover')).toHaveCount(0);
+      await page.waitForTimeout(300);
+      return page.evaluate(() =>
+        [...document.querySelectorAll(
+          '[data-testid="zoom-toolbar"] button, [data-testid="freq-nav"] button, [data-testid="freq-nav"] input')]
+          .filter((b) => (b as HTMLElement).offsetParent !== null)
+          .map((b) => {
+            const r = b.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return {
+              name: b.getAttribute('aria-label') ?? b.getAttribute('title') ?? b.getAttribute('data-testid'),
+              ok: !!hit && b.contains(hit),
+              hit: hit ? `${hit.tagName}.${hit.className}` : null,
+            };
+          }));
+    };
+
+    // The reported window: the TF plot under the navigator is ~120 px. No
+    // toolbar or navigator control is covered; the card is capped inside the
+    // plot (default SE corner, growing upward) and its rows scroll.
+    await page.setViewportSize({ width: 1100, height: 560 });
+    let hits = await controlsHittable();
+    expect(hits.length).toBeGreaterThan(8);
+    expect(hits.filter((h) => !h.ok)).toEqual([]);
+    let g = await geometry();
+    expect(g.plotBottom - g.plotTop).toBeLessThan(220);
+    expectInside(g);
+    expect(g.scrolls).toBe(true);
+
+    // The last row is reachable by scrolling the list, and still cycles.
+    const last = page.getByTestId('legend-entry').last();
+    await last.scrollIntoViewIfNeeded();
+    await last.click();
+    await expect(last).toHaveClass(/fade/);
+    expectInside(await geometry()); // scrolling the list never moved the card
+
+    // Compact dot grid (one row per set), capped the same way.
+    await card.hover();
+    await page.getByTestId('legend-compact-toggle').click();
+    await expect(page.getByTestId('legend-dots')).toBeVisible();
+    expectInside(await geometry());
+    await card.hover();
+    await page.getByTestId('legend-compact-toggle').click();
+    await expect(page.getByTestId('legend-dots')).toHaveCount(0);
+
+    // In a taller window, drag the card left (a press inside it, nudged to
+    // start the drag, as the existing drag test does) ...
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await geometry();
+    const b0 = await card.boundingBox();
+    if (!b0) throw new Error('legend card has no box');
+    await page.mouse.move(b0.x + 20, b0.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(b0.x + 28, b0.y + 20, { steps: 2 });
+    await expect(card).toHaveClass(/dragging/);
+    await page.mouse.move(b0.x - 300, b0.y + 20, { steps: 8 });
+    await page.mouse.up();
+    g = await geometry();
+    expect(g.left).toBeLessThan(b0.x - 250);
+    expectInside(g);
+    // ... then shrink the window under it: the card is re-clamped inside
+    // the smaller plot, and still covers no control.
+    await page.setViewportSize({ width: 900, height: 560 });
+    expectInside(await geometry());
+    hits = await controlsHittable();
+    expect(hits.filter((h) => !h.ok)).toEqual([]);
+  });
+
+  test('a dragged legend stays where it is dropped, in any quarter of the plot', async ({ page }) => {
+    // The card anchors its right/bottom edge once its stored x/y passes 0.5,
+    // and a drag stored its TOP-LEFT: a drop in the lower half jumped up by
+    // the card's own height on release. The drop now stores the edge it is
+    // anchored by, in both axes.
+    await openFixture(page);
+    await legendToSW(page);
+    const card = page.getByTestId('legend');
+    const host = await card.evaluate((el) => {
+      const r = (el.offsetParent as HTMLElement).getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    });
+    /** Drag by (dx, dy), returning the box just before and after release. */
+    const dragBy = async (dx: number, dy: number) => {
+      const b = await card.boundingBox();
+      if (!b) throw new Error('legend card has no box');
+      await page.mouse.move(b.x + 12, b.y + 12);
+      await page.mouse.down();
+      await page.mouse.move(b.x + 20, b.y + 12, { steps: 2 });
+      await expect(card).toHaveClass(/dragging/);
+      await page.mouse.move(b.x + 12 + dx, b.y + 12 + dy, { steps: 8 });
+      const held = (await card.boundingBox())!;
+      await page.mouse.up();
+      await expect(card).not.toHaveClass(/dragging/);
+      return { held, dropped: (await card.boundingBox())! };
+    };
+    const expectSame = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+      expect(Math.abs(a.x - b.x)).toBeLessThan(1);
+      expect(Math.abs(a.y - b.y)).toBeLessThan(1);
+    };
+    // Lower left, lifted a little: still in the lower half.
+    let r = await dragBy(30, -30);
+    expect(r.held.y + r.held.height / 2).toBeGreaterThan(host.y + host.h / 2);
+    expectSame(r.held, r.dropped);
+    // Lower right.
+    r = await dragBy(host.w * 0.5, 0);
+    expect(r.held.x + r.held.width / 2).toBeGreaterThan(host.x + host.w / 2);
+    expectSame(r.held, r.dropped);
+    // Upper right, then upper left.
+    r = await dragBy(0, -host.h * 0.5);
+    expectSame(r.held, r.dropped);
+    r = await dragBy(-host.w * 0.4, 0);
+    expectSame(r.held, r.dropped);
   });
 });

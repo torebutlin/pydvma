@@ -28,9 +28,11 @@ export const presetToXY = (p: LegendPreset) => ({ ...PRESETS[p] });
 
 /**
  * Clamp a free-dragged fractional position so the legend card stays
- * reachable: `x` in `[0, 1.05]` (a little slack past the right axis so
- * the card can nudge just outside, matching `outside-right`), `y` in
- * `[0, 1.0]`. Points already in range pass through unchanged.
+ * reachable: `x` in `[0, 1.05]` (the same slack past the right axis as
+ * the `outside-right` preset), `y` in `[0, 1.0]`. Points already in range
+ * pass through unchanged. `Legend.svelte` also clamps the card's measured
+ * box inside the plot on screen and commits a drop as the fraction of the
+ * edges it is anchored by, so a drag itself now commits `x <= 1`.
  */
 export const clampLegend = (pos: { x: number; y: number }) => ({
   x: Math.min(1.05, Math.max(0, pos.x)),

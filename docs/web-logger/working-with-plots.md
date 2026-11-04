@@ -53,7 +53,9 @@ Drag the legend anywhere, or choose a corner in
 ten lines it flows into two or three columns. A small button in its
 corner (visible on hover) switches to a **compact** view: a grid of
 coloured dots with one row per set and one column per channel. Each dot
-works like its full row, and hovering shows the full label.
+works like its full row, and hovering shows the full label. The legend
+never grows past the plot: when its lines do not fit, they scroll inside
+it, and when the plot gets smaller the legend moves back inside it.
 
 ## The zoom toolbar
 

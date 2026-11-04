@@ -51,13 +51,30 @@
    * → `setLegend(active, { …legend, x, y, preset: null })`. Dragging
    * ALWAYS clears the preset and NEVER snaps (spec §6). Moves update
    * live (legend position is not history-tracked) but are rAF-coalesced
-   * for smoothness; the final position also commits on pointerup.
+   * for smoothness. On pointerup the card commits WHERE IT SITS, as the
+   * fraction of its nearer edges (`settledPos`), so the anchor flip below
+   * leaves it in place instead of moving it by its own size.
+   *
+   * NEVER OUTGROWS THE PLOT (4C6 lab, 2026-11: a file with 23 sets and
+   * their fit pseudo-sets gave ~69 rows, and in a short plot the card grew
+   * up past the plot over the frequency navigator and hid its controls;
+   * the zoom toolbar's strip stacks above it). The card is a flex column capped at the plot area's height
+   * (its offsetParent); its rows or dots scroll inside it, the list taking
+   * touch pans only when it actually scrolls. Its measured size clamps its
+   * placement inside the plot area, 4 px clear of its edges (CSS `clamp()`
+   * against the host's own %, the size re-measured by a ResizeObserver on
+   * the card, its list and the host), so a plot resize, more lines or a
+   * mode switch pull it back into view. Only
+   * the `outside-right` preset may still overhang the right edge (by up to
+   * 5 %, `clampLegend`'s slack). The fraction stored in viewState is left
+   * as placed: the clamp is visual, so growing the plot back restores it.
    */
   import type { LegendEntry, Selection } from '../lib/stores/selection';
   import type { ViewState } from '../lib/stores/viewstate';
   import { clampLegend } from '../lib/plot/legendPos';
   import { legendGrid, legendWrapColumns } from '../lib/plot/legendGrid';
   import { get, type Readable } from 'svelte/store';
+  import { flushSync } from 'svelte';
 
   let {
     selection,
@@ -128,15 +145,96 @@
   const placement = $derived.by(() => {
     const anchorRight = !dragging && legend.x > 0.5;
     const anchorBottom = !dragging && legend.y > 0.5;
-    const xPct = `${legend.x * 100}%`;
-    const yPct = `${legend.y * 100}%`;
+    // Each offset is clamped so the card's MEASURED box stays inside the
+    // host, INSET px clear of its edges: between `lo` and
+    // `100% − size − INSET` (`max()` keeps that bound at or above `lo`; the
+    // max-height/max-width caps make the card fit anyway). Only a
+    // right-anchored card may overhang the right edge (the outside-right
+    // preset). A left-anchored one gets no slack: an overhang would narrow
+    // its shrink-to-fit width, which would raise the bound, and so on.
+    const within = (pct: number, size: number, lo = `${INSET}px`) =>
+      `clamp(${lo}, ${pct * 100}%, max(${lo}, calc(100% - ${size + INSET}px)))`;
     return {
-      left: anchorRight ? 'auto' : xPct,
-      right: anchorRight ? `${(1 - legend.x) * 100}%` : 'auto',
-      top: anchorBottom ? 'auto' : yPct,
-      bottom: anchorBottom ? `${(1 - legend.y) * 100}%` : 'auto',
+      left: anchorRight ? 'auto' : within(legend.x, cardW),
+      right: anchorRight ? within(1 - legend.x, cardW, `${-RIGHT_SLACK * 100}%`) : 'auto',
+      top: anchorBottom ? 'auto' : within(legend.y, cardH),
+      bottom: anchorBottom ? within(1 - legend.y, cardH) : 'auto',
     };
   });
+
+  /** How far past the right edge a right-anchored card may sit (fraction
+   *  of the plot width): `clampLegend`'s slack for the outside-right preset. */
+  const RIGHT_SLACK = 0.05;
+  /** The clamp's gap to the plot's edges, px: keep in lockstep with the
+   *  .legend max-height. Presets (2 %) sit further in on plots over 200 px. */
+  const INSET = 4;
+
+  // ---- In-plot cap and clamp (see the header) ----
+  let bodyEl: HTMLDivElement | undefined = $state();
+  let listEl: HTMLDivElement | undefined = $state();
+  /** The card's measured border box, for the placement clamp. */
+  let cardW = $state(0);
+  let cardH = $state(0);
+  /** The capped card's list overflows: it scrolls, and takes touch pans. */
+  let scrolls = $state(false);
+
+  /** Re-measure the card (sub-pixel: it carries no transform) and whether
+   *  its list scrolls. */
+  function measure() {
+    if (!card) return;
+    const r = card.getBoundingClientRect();
+    if (r.width !== cardW) cardW = r.width;
+    if (r.height !== cardH) cardH = r.height;
+    scrolls = !!bodyEl && bodyEl.scrollHeight > bodyEl.clientHeight + 1;
+  }
+
+  // Re-measure whenever the card, its list or the plot changes size: lines
+  // coming and going, compact ↔ full, a plot resize. The list is observed
+  // as well as the card because a capped card keeps its size while its
+  // list grows underneath; the host because a resize that leaves the card
+  // its size still changes whether the list fits.
+  $effect(() => {
+    const el = card;
+    if (!el) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (listEl) ro.observe(listEl);
+    if (el.offsetParent) ro.observe(el.offsetParent);
+    return () => ro.disconnect();
+  });
+
+  /**
+   * The card's committed position as it sits now: per axis, the fraction of
+   * its LEFT/TOP edge when its centre is in the first half of the plot, else
+   * of its RIGHT/BOTTOM edge. That is the edge `placement` anchors for that
+   * fraction (x > 0.5 → right), so committing it leaves the card in place.
+   */
+  function settledPos(): { x: number; y: number } | null {
+    const host = hostOf();
+    if (!card || !host) return null;
+    // Rects, not the integer offset* values, so the card lands to the
+    // sub-pixel. The host's padding box is what the % offsets resolve on.
+    const hr = host.getBoundingClientRect();
+    const cr = card.getBoundingClientRect();
+    const W = hr.width - (host.offsetWidth - host.clientWidth);
+    const H = hr.height - (host.offsetHeight - host.clientHeight);
+    if (W <= 0 || H <= 0) return null;
+    const l = cr.left - hr.left - host.clientLeft, t = cr.top - hr.top - host.clientTop;
+    const w = cr.width, h = cr.height;
+    return {
+      x: l + w / 2 > W / 2 ? (l + w) / W : l / W,
+      y: t + h / 2 > H / 2 ? (t + h) / H : t / H,
+    };
+  }
+
+  /** Whether a press is on the scrolling list's scrollbar (the list itself,
+   *  not a row, in its right gutter), which must scroll, not drag. */
+  function onScrollbar(e: PointerEvent): boolean {
+    if (!scrolls || !bodyEl || e.target !== bodyEl) return false;
+    const r = bodyEl.getBoundingClientRect();
+    const bar = Math.max(bodyEl.offsetWidth - bodyEl.clientWidth, 12);
+    return e.clientX >= r.right - bar;
+  }
 
   // ---- Free drag (pointer capture + rAF coalescing) ----
   //
@@ -180,7 +278,7 @@
   }
 
   function onPointerDown(e: PointerEvent) {
-    if (e.button !== 0 || !card) return;
+    if (e.button !== 0 || !card || onScrollbar(e)) return;
     const host = hostOf();
     if (!host) return;
     hostRect = host.getBoundingClientRect();
@@ -244,7 +342,15 @@
     if (e.pointerId !== activePointer) return;
     // A press that never crossed the threshold was a click: let the
     // row button's own onclick fire; we do nothing but disarm.
-    if (dragging && pendingPos) commit(pendingPos);
+    if (dragging) {
+      // Apply the last move, then commit where the (clamped) card sits as
+      // the fraction of its nearer edges, so ending the drag (which turns
+      // the anchor flip back on) does not move it.
+      if (pendingPos) commit(pendingPos);
+      flushSync();
+      const settled = settledPos();
+      if (settled) commit(settled);
+    }
     endGesture(e.pointerId);
   }
 
@@ -264,6 +370,7 @@
     class="legend"
     class:dragging
     class:compact={legend.compact}
+    class:scrolls
     data-testid="legend"
     style:left={placement.left}
     style:right={placement.right}
@@ -295,9 +402,12 @@
         <circle cx="7" cy="7" r="1.6" fill="currentColor" />
       </svg>
     </button>
+    <!-- The list scrolls inside the capped card (see the header). -->
+    <div class="legend-body" class:scrolls bind:this={bodyEl} data-testid="legend-body">
     {#if legend.compact}
       <!-- Compact: one dot per line; row = set, column = channel. -->
       <div
+        bind:this={listEl}
         class="dots"
         data-testid="legend-dots"
         style:grid-template-rows={`repeat(${Math.max(1, grid.nRows)}, auto)`}
@@ -328,6 +438,7 @@
       <!-- Full: labelled rows; >10 entries wrap into balanced columns
            reading top-to-bottom then across (grid-auto-flow: column). -->
       <div
+        bind:this={listEl}
         class="rows"
         class:multi={wrapCols > 1}
         style:grid-template-rows={wrapCols > 1 ? `repeat(${wrapRows}, auto)` : undefined}
@@ -348,6 +459,7 @@
         {/each}
       </div>
     {/if}
+    </div>
   </div>
 {/if}
 
@@ -356,6 +468,11 @@
     position: absolute;
     z-index: 5;
     max-width: 46%;
+    /* Never taller than the plot area (its offsetParent), 4 px (INSET)
+       clear of each edge: the rows scroll in .legend-body instead (see the
+       header). */
+    max-height: calc(100% - 8px);
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 1px;
@@ -373,9 +490,26 @@
     box-shadow: 0 6px 20px rgba(16, 24, 40, 0.22);
   }
   /* Compact cards are small; reserve a right gutter so the corner
-     toggle never covers the first row's last dot. */
-  .legend.compact {
+     toggle never covers the first row's last dot. A scrolling list gets
+     the same gutter, so the toggle never covers its scrollbar. */
+  .legend.compact,
+  .legend.scrolls {
     padding-right: 24px;
+  }
+  /* The entry list: it fills the capped card and scrolls when the entries
+     do not fit. A touch pan scrolls it only when it scrolls: otherwise a
+     touch drag anywhere on the card moves the card (the card's own
+     touch-action stops at this scroll container, hence the explicit none). */
+  .legend-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: none;
+  }
+  .legend-body.scrolls {
+    touch-action: pan-y;
   }
   /* Hover-revealed mode toggle pinned to the card's top-right corner.
      `pointer-events: none` while hidden so it can never intercept a

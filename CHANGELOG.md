@@ -3,6 +3,21 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **The app's plot legend could cover the frequency navigator.** With
+  many lines (the 4C6 beam files: 23 sets and their fit lines, about 70
+  rows) in a short plot, the legend grew past the top of the plot, over
+  the navigator, and hid its band fields and **zoom to band** button;
+  dragged to the top instead, it hung below the plot with its last rows
+  out of reach. It is now capped to the plot, its rows (or the compact
+  dot grid) scroll inside it, and it is kept inside the plot when the
+  window or the plot changes size. A dragged legend also stays where it
+  is dropped: dropped in the lower half of the plot, it used to jump up
+  by its own height on release.
+
 ## 2.8.4 — 2026-11-04
 
 Fixes to modal fitting from the 4C6 lab: the global fit lines no longer
