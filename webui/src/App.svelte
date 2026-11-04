@@ -1273,8 +1273,18 @@
   const viewEntries = $derived<LegendEntry[]>(
     view === 'tf'
       ? tfTransformEntries($legendEntries, tfChInFor, $channelLabel)
-      : $legendEntries,
+      : dropFitSets($legendEntries),
   );
+
+  /**
+   * The modal-fit pseudo-sets hold only TF reconstructions, so only the TF
+   * views (TF, Bode, Nyquist, the Fit stage) list them. In the time,
+   * frequency and sonogram legends they named a line per channel that
+   * nothing draws (4C6 lab, 2026-11: 23 fit sets doubling the time legend).
+   */
+  function dropFitSets(es: LegendEntry[]): LegendEntry[] {
+    return fitSetIds.size === 0 ? es : es.filter((e) => !fitSetIds.has(e.setId));
+  }
 
   /**
    * A store wrapper so `Legend` can take the TF entries as an override.
@@ -1311,12 +1321,18 @@
    */
   const csdLegend = $derived(
     view === 'frequency' && freqMode === 'csd'
-      ? readable(csdPairEntries($legendRows, csdPairFor, $channelLabel))
+      ? readable(csdPairEntries(dropFitSets($legendRows), csdPairFor, $channelLabel))
       : undefined,
   );
 
-  /** The active view's legend override (TF out/in, or CSD pair), else none. */
-  const legendOverride = $derived(tfLegend ?? csdLegend);
+  /** Every other non-TF view: the plain rows, without the fit sets. */
+  const plainLegend = $derived(
+    view !== 'tf' && fitSetIds.size > 0 ? readable(dropFitSets($legendRows)) : undefined,
+  );
+
+  /** The active view's legend override (TF out/in, CSD pair, or the plain
+   *  rows without the fit sets), else none. */
+  const legendOverride = $derived(tfLegend ?? csdLegend ?? plainLegend);
 
   /**
    * Visible (on/fade) lines fed to the plot model, derived from the SAME

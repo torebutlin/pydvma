@@ -242,6 +242,19 @@ test.describe('@engine', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('fit-table-overlay')).toHaveCount(0);
 
+    // The fit sets are TF reconstructions: only the TF views list them
+    // (4C6 lab, 2026-11: they doubled the Time legend with lines nothing drew).
+    const fitRows = page.getByTestId('legend-entry').filter({ hasText: 'Modal fit' });
+    for (const stage of ['Time', 'Frequency']) {
+      await stages.getByRole('button', { name: stage, exact: true }).click();
+      await expect(page.getByTestId('legend-entry').first()).toBeAttached();
+      await expect(fitRows).toHaveCount(0);
+    }
+    await stages.getByRole('button', { name: 'TF', exact: true }).click();
+    await expect(fitRows.first()).toBeAttached();
+    await stages.getByRole('button', { name: 'Fit', exact: true }).click();
+    await expect(fitRows.first()).toBeAttached();
+
     // A plot shorter than the chip: the chip is capped inside the plot, its
     // header (and minimise) stays in reach, and the list scrolls under it.
     await page.setViewportSize({ width: 1100, height: 470 });

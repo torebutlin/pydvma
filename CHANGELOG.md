@@ -26,6 +26,12 @@ follows [semantic versioning](https://semver.org/).
   Firefox were not affected, nor was the app run through `pydvma-serve`
   or `dvma.launch`, which computes in Python on your computer. Large
   calculations also start a little faster in every browser.
+- **The modal fit's lines no longer clutter the Time, Frequency and
+  Sonogram legends.** The fit holds only transfer-function
+  reconstructions, but every view's legend listed a "Modal fit global"
+  row per channel, lines that nothing drew there (on the 4C6 beam files
+  the Time legend doubled in length). Only the TF views (TF, Bode,
+  Nyquist and the Fit stage) list them now.
 - **The app's plot legend could cover the frequency navigator.** With
   many lines (the 4C6 beam files: 23 sets and their fit lines, about 70
   rows) in a short plot, the legend grew past the top of the plot, over
