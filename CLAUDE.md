@@ -8,9 +8,28 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
-As of 2026-11-04 (Mac; committed, NOT pushed, CHANGELOG `## Unreleased`,
-no version bump): **4C6 modal-fit round, two fixes from Tore's student
-files** (`data/4c6_examples_problems/`, untracked, 128 MB). (1) Global
+**v2.8.4 IS CUT AND PUSHED (2026-11-04, Mac); the twine upload is
+Tore's, then tag `v2.8.4` at the cut `92b1db8` and publish the GitHub
+release from `dist/RELEASE_NOTES_2.8.4.md` (Zenodo archives it), then
+re-check trap 3 on the DOWNLOADED wheel.** Built in a clean detached
+worktree at the cut (another session was editing the shared checkout),
+after `npm ci` + `fetch-pyodide.sh` + `vendor:wheels`: `verify_release.py
+2.8.4` passes both traps (`index-BptLG-io.js`, 26 `pydvma/*.py`
+byte-identical), `twine check` passes, runtime audit 0, the wheel's 59
+files match 2.8.3's, sha256 wheel 703a7ebf… / sdist 7c840af7…; a CLEAN
+venv serves its own UI (engine wheel 200), greets `{v:1, pydvma:'2.8.4',
+journal:true, files:true}` (`files:false` cross-origin), and its engine
+replays the student 1370 Hz fit correctly. Suites at the cut: pytest
+1508/7, vitest 1304/1, check 0/0, Playwright 134 passed incl. BRIDGE_E2E
+and @engine (run from the worktree with `PYTHONPATH` at it, so spawned
+serves use the release package), mkdocs --strict clean. The push deployed
+Pages: the live app serves the same `index-BptLG-io.js` and its engine
+wheel's `pydvma/*.py` are byte-identical to the cut, so students can fit
+in the browser app before the lab PCs upgrade (Setup bat as admin, after
+the upload). Contents, from the round below:
+
+As of 2026-11-04 (Mac; released as 2.8.4, above): **4C6 modal-fit round,
+two fixes from Tore's student files** (`data/4c6_examples_problems/`, untracked, 128 MB). (1) Global
 fit lines went 10-1000x off once the modes spanned ~250 Hz-1.4 kHz, and
 Refine ran for minutes: `estimate_global_constants` solved in RECEPTANCE
 (1/w^4 weighting for 'acc') and `_modes_band`'s quarter-of-span pad
