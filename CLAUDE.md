@@ -8,10 +8,20 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
-**v2.8.4 IS CUT AND PUSHED (2026-11-04, Mac); the twine upload is
-Tore's, then tag `v2.8.4` at the cut `92b1db8` and publish the GitHub
-release from `dist/RELEASE_NOTES_2.8.4.md` (Zenodo archives it), then
-re-check trap 3 on the DOWNLOADED wheel.** Built in a clean detached
+**v2.8.4 IS RELEASED END TO END (2026-11-04, Mac).** Tore uploaded with
+twine; PyPI's wheel and sdist are byte-identical to the verified build
+(sha256 703a7ebf… / 7c840af7…); tag `v2.8.4` is at the cut `92b1db8`
+(lightweight) and pushed; the GitHub release "v2.8.4" (Latest) carries
+the full CHANGELOG body and both files, so Zenodo archives it. Trap 3
+re-checked on the DOWNLOADED wheel: embedded `pydvma-2.8.4` engine wheel
+referenced by the bundled `index-BptLG-io.js`, all 26 `pydvma/*.py`
+byte-identical to `v2.8.4` in both the fat and the engine wheel. A clean
+venv installing `pydvma[serve]==2.8.4` from PyPI serves its own UI
+(engine wheel 200), greets `{v:1, pydvma:'2.8.4', journal:true,
+files:true}` (`files:false` cross-origin) and replays the student 1370 Hz
+fit correctly. **The lab PCs upgrade by re-running their Setup bat as
+administrator.** Nothing is pending on the release side. The cut, as
+recorded before the upload: Built in a clean detached
 worktree at the cut (another session was editing the shared checkout),
 after `npm ci` + `fetch-pyodide.sh` + `vendor:wheels`: `verify_release.py
 2.8.4` passes both traps (`index-BptLG-io.js`, 26 `pydvma/*.py`
