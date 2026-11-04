@@ -8,6 +8,22 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-11-04, late (Mac; `55bb514`, CHANGELOG `## Unreleased`, no
+version bump): **Safari 27.2 JIT bug corrupted the in-browser engine.**
+pyodide converts each JS number with one function (`isSafeInteger ?
+PyLong : PyFloat`); once hot (~11-13 k calls) Safari's JIT reads a double
+as a boxed int32 (its low 32 bits: 246.82 -> 1889785610, 10000.0 -> 0).
+`np.asarray` on a typed-array JsProxy converts per element (JsProxy has
+no buffer interface), so the 4C6 restore poisoned it at once: fit lines
+at 10^9 Hz, Calc TF ZeroDivisionError. Fixed by packing payloads (JSON
+text + raw bytes, `lib/worker/pack.ts` -> `engine._call_packed`); proved in
+Tore's real Safari with `dev/safari-jit-probe` and an app-worker driver
+(v2.8.4 reproduces his symptoms exactly; the fix is exact, even with the
+JIT poisoned first). Playwright's WebKit 26.5 does NOT reproduce it:
+`open -a Safari <local page>` + a page that POSTs results to a local
+logger is the way to test in real Safari. Native engine never affected.
+**Never let bulk JS numbers cross into pyodide one by one again.**
+
 **v2.8.4 IS RELEASED END TO END (2026-11-04, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
 (sha256 703a7ebf… / 7c840af7…); tag `v2.8.4` is at the cut `92b1db8`
