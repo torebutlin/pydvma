@@ -84,7 +84,15 @@ Each entry in `items` is one data object:
 - **`meta`** holds the scalar details: `units`, `channel_cal_factors`
   (see [Calibration and units](calibration.md)), `test_name`,
   `timestamp` and `timestring`, and the ids that link a result to the
-  measurement it came from (`unique_id`, `id_link`).
+  measurement it came from (`unique_id`, `id_link`). A `TimeData` may
+  also carry `channel_calibration`, which says how each channel's
+  calibration was obtained: a list with one entry per channel, each
+  `null` or a dictionary with `method` (`sensitivity` or
+  `reference_tone`), `date` (ISO 8601), `sensitivity`, `unit`,
+  `reference` (`null`, or `level`, `level_unit` and `freq` of the
+  tone), the stated `gain_db`, `input_mode` and `pad`, `device`, a free
+  text `note` and `carried` (true when copied from an earlier set).
+  Files saved without it load without it.
 - **`settings`** is the capture's `MySettings` as a plain dictionary, or
   `null`. The web logger reads `device_driver` and `VmaxSC` from it to
   tell whether a capture is in volts.

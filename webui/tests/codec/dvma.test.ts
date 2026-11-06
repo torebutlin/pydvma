@@ -270,3 +270,17 @@ test('ui with both labels and analysis round-trips together', () => {
   expect(td2.ui!.analysis!.tf).toBeUndefined();
   expect(td2.ui!.analysis!.sono).toBeUndefined();
 });
+
+test('channel_calibration meta (provenance, with null entries) survives write/read', () => {
+  const ds = readDvma(bytes);
+  const td = ds.items.find(i => i.kind === 'TimeData')!;
+  const cc = [{
+    method: 'reference_tone', date: '2026-11-06T10:00:00.000Z', sensitivity: 0.05, unit: 'Pa',
+    reference: { level: 94, level_unit: 'dB SPL', freq: 1000 }, gain_db: null, input_mode: null,
+    pad: null, device: null, note: '', carried: false,
+  }, null];
+  setItemMeta(td, 'channel_calibration', cc);
+  const td2 = readDvma(writeDvma(ds)).items.find(i => i.kind === 'TimeData')!;
+  expect(td2.metaRaw!.channel_calibration).toEqual(cc);
+  expect(td2.meta.channel_calibration).toEqual(cc);
+});

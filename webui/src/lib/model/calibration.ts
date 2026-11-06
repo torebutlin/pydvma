@@ -177,16 +177,79 @@ export function capturedInVolts(settings: unknown, channel?: number): boolean {
   if (!settings || typeof settings !== 'object') return false;
   const s = settings as Record<string, unknown>;
   if (s.device_driver === 'nidaq') return true;
-  let vmax: unknown = s.VmaxSC;
-  if (vmax && typeof vmax === 'object' && !Array.isArray(vmax) && '__array__' in vmax) {
-    vmax = (vmax as { __array__: unknown }).__array__;
-  }
+  const vmax: unknown = unwrapArrayTag(s.VmaxSC);
   if (Array.isArray(vmax)) {
     if (channel != null) return isRealFullScale(vmax[channel]);
     return vmax.length > 0 && vmax.every(isRealFullScale);
   }
   const vmaxSc = Number(vmax);
   return Number.isFinite(vmaxSc) && vmaxSc > 0 && vmaxSc !== 1;
+}
+
+/**
+ * Unwrap python's `{__array__: [...]}` tag (an ndarray setting, which
+ * `readDvma` passes through verbatim); anything else is returned unchanged.
+ */
+function unwrapArrayTag(v: unknown): unknown {
+  if (v && typeof v === 'object' && !Array.isArray(v) && '__array__' in v) {
+    return (v as { __array__: unknown }).__array__;
+  }
+  return v;
+}
+
+/**
+ * How one channel's engineering-unit calibration was obtained, saved with the
+ * data as `channel_calibration` (one entry per channel, `null` = nothing
+ * recorded). Python reads it back as the same plain dicts.
+ */
+export type ChannelCalibration = {
+  method: 'sensitivity' | 'reference_tone';
+  /** ISO 8601 timestamp of when the calibration was made. */
+  date: string;
+  sensitivity: number;
+  unit: string;
+  reference: { level: number; level_unit: string; freq: number } | null;
+  gain_db: number | null;
+  input_mode: string | null;
+  pad: boolean | null;
+  device: string | null;
+  note: string;
+  /** True when copied from an earlier set rather than measured on this one. */
+  carried: boolean;
+};
+
+/** Element `ch` of a per-channel setting (list or tag); a scalar covers all. */
+function perChannel(v: unknown, ch: number): unknown {
+  const u = unwrapArrayTag(v);
+  if (Array.isArray(u)) return ch >= 0 && ch < u.length ? u[ch] : null;
+  return u ?? null;
+}
+
+/**
+ * The stated hardware context of channel `ch` of a stored capture, for the
+ * calibration provenance: `input_gain_db`, `input_mode` and `input_pad`
+ * (each a scalar for every channel, or one per channel as a list or python's
+ * `{__array__}` tag) and the `device_name` a capture records when it has one.
+ * Anything absent, non-finite or of the wrong type reads as `null`, so the
+ * result is always plain finite JSON.
+ *
+ * @param settings The item's `settings` block, as loaded.
+ * @param ch Zero-based channel.
+ */
+export function provenanceFromSet(
+  settings: unknown, ch: number,
+): Pick<ChannelCalibration, 'gain_db' | 'input_mode' | 'pad' | 'device'> {
+  const s = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
+  const gain = perChannel(s.input_gain_db, ch);
+  const mode = perChannel(s.input_mode, ch);
+  const pad = perChannel(s.input_pad, ch);
+  const dev = s.device_name;
+  return {
+    gain_db: typeof gain === 'number' && Number.isFinite(gain) ? gain : null,
+    input_mode: typeof mode === 'string' ? mode : null,
+    pad: typeof pad === 'boolean' ? pad : null,
+    device: typeof dev === 'string' && dev !== '' ? dev : null,
+  };
 }
 
 /**

@@ -225,3 +225,18 @@ test('a TF factor scales the TF line without touching the time view', async ({ p
   await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Time' }).click();
   await expect.poll(() => yTickMaxAbs(page), { timeout: 5_000 }).toBe(timeBefore);
 });
+
+// ---- Calibration provenance ---------------------------------------------- //
+
+test('the dialog offers a calibration note field', async ({ page }) => {
+  await page.goto('/?fixture=1');
+  const card = card0(page);
+  await expect(card).toBeVisible();
+  await card.hover();
+  await card.getByTestId('cal-open').click();
+  const overlay = page.getByTestId('cal-overlay');
+  await overlay.getByTestId('cal-note').fill('spec sheet');
+  await overlay.getByTestId('cal-sens-0').fill('0.1');
+  await overlay.getByTestId('cal-apply').click();
+  await expect(overlay).toBeHidden();
+});

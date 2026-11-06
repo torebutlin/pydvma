@@ -1420,6 +1420,18 @@ class TimeData():
         test_name (str or None): Free-form label, displayed in plots.
         unique_id (uuid.UUID): Generated at construction; used by derived
             objects to link back to their source via `id_link`.
+        channel_calibration (list): Optional, absent unless a calibration was
+            recorded (set after construction; files saved before it existed
+            load without it). A list with one entry per channel; each entry
+            is None (nothing recorded) or a dict saying how that channel's
+            `channel_cal_factors` / `units` were obtained: `method`
+            ('sensitivity' for a spec-sheet value, 'reference_tone' for a
+            measured one), `date` (ISO 8601), `sensitivity` and `unit`,
+            `reference` (None, or `level`, `level_unit` and `freq` of the
+            reference tone), the stated `gain_db`, `input_mode` and `pad`
+            (each None when unknown), `device` (name, or None), a free-text
+            `note`, and `carried` (True when copied from an earlier set
+            rather than measured on this one).
     '''
 
     def __init__(self,time_axis,time_data,settings,timestamp=None,timestring=None,units=None,channel_cal_factors=None,id_link=None,test_name=None):

@@ -70,10 +70,13 @@
      * Per-channel edited values, index-aligned to `rows` (`null` for a TF-only
      * set, which shows no channel rows), and the TF lines (`null` when there
      * is no TF section): `line: null` = follow the channel calibration.
+     * `note` is the free-text calibration note ('' when empty); the parent
+     * saves it with the provenance of each channel that changed.
      */
     onApply: (
       results: { sensitivity: number; unit: string }[] | null,
       tf: { ch: number; line: TfCalLine | null }[] | null,
+      note: string,
     ) => void;
     onCancel: () => void;
   } = $props();
@@ -85,6 +88,8 @@
   let sens = $state<number[]>(rows.map((r) => r.sensitivity));
   // svelte-ignore state_referenced_locally
   let units = $state<string[]>(rows.map((r) => r.unit));
+  /** Free-text note saved with the calibration provenance of changed channels. */
+  let note = $state('');
 
   // TF section, seeded the same way. The factor is edited as TEXT so a blank
   // ("follow the channels") and a typo can be told apart from a number.
@@ -156,6 +161,7 @@
     onApply(
       tfOrphan ? null : rows.map((_, i) => ({ sensitivity: Number(sens[i]), unit: units[i] })),
       tf,
+      note.trim(),
     );
   }
 
@@ -211,6 +217,20 @@
         </select>
       </div>
     {/each}
+    {/if}
+
+    {#if !tfOrphan}
+      <div class="mrow">
+        <label for="cal-note" class="ch-name">Note</label>
+        <input
+          id="cal-note"
+          type="text"
+          data-testid="cal-note"
+          bind:value={note}
+          placeholder="how this calibration was obtained (optional)"
+          style="flex:1"
+        />
+      </div>
     {/if}
 
     {#if tfRows && tfRows.length}

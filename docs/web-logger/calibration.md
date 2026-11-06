@@ -131,6 +131,13 @@ Python and in JupyterLite. CSV and MATLAB exports, from the app or from
 Python, write the values as recorded and the factors and units beside
 them; see [What each output holds](export.md#what-each-output-holds).
 
+Applying the Calibrate dialog also records **how** each changed channel
+was calibrated, as `channel_calibration` in the file: the method, the
+date, the sensitivity and unit, the gain, pad and input mode the capture
+stated, and the optional **Note** field of the dialog. In Python it is
+`data.time_data_list[0].channel_calibration`, a list with one entry per
+channel (`None` for a channel nobody calibrated).
+
 A transfer function factor is saved with the set, and is written into
 the saved transfer function's own factors and units, which is where
 Python keeps them. `data.tf_data_list` therefore comes out calibrated in

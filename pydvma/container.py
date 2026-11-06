@@ -139,7 +139,7 @@ _META_FIELDS = {
 # in `_META_FIELDS`: it has always had one, and its absence would be a
 # corrupt file rather than an old one.
 _OPTIONAL_META = {
-    'TimeData': ['impulse_cleaned'],
+    'TimeData': ['impulse_cleaned', 'channel_calibration'],
     'FreqData': ['unique_id', 'iw_power_counter',
                  'source_signature', 'source_settings'],
     'CrossSpecData': ['unique_id'],

@@ -44,7 +44,7 @@
   import type { DerivedKind } from '../lib/analysis/actions';
   import { summariseColumn, type ColumnState } from '../lib/stores/channelSummary';
   import {
-    factorToSensitivity, sensitivityToFactor, type CalRow, type TfCalLine, type TfCalRow,
+    factorToSensitivity, provenanceFromSet, sensitivityToFactor, type CalRow, type ChannelCalibration, type TfCalLine, type TfCalRow,
   } from '../lib/model/calibration';
   import { tfLineLabel } from '../lib/plot/tfChannels';
   import { calibrationController } from '../lib/stores/calibrationController';
@@ -100,7 +100,10 @@
     getCalibration?: (setId: number) => {
       factors: number[]; units: string[]; sourceIsVolts?: boolean;
     };
-    applyCalibration?: (setId: number, factors: number[], units: string[]) => void;
+    applyCalibration?: (
+      setId: number, factors: number[], units: string[],
+      opts?: { provenance?: (ChannelCalibration | null | undefined)[] },
+    ) => void;
     onDeleteFit?: () => void;
     onDeleteSet?: (setId: number) => void;
     onRenameSet?: (setId: number, name: string) => void;
@@ -140,6 +143,8 @@
   let calSetId = $state<number | null>(null);
   let calName = $state('');
   let calRows = $state<CalRow[]>([]);
+  /** The set's stored capture settings, for the provenance's gain/pad/mode. */
+  let calSettings: unknown = null;
   /** Numerator of the sensitivity the dialog collects — 'V' or 'FS'. */
   let calSourceUnit = $state<'V' | 'FS'>('V');
   /** The set's TF lines for the dialog's transfer-function section. */
@@ -152,6 +157,7 @@
     const set = $setsView.find((s) => s.id === setId);
     if (!set) return;
     const { factors, units, sourceIsVolts } = readCal(setId);
+    calSettings = controller?.getCalibrationSettings?.(setId) ?? null;
     // What a sensitivity is measured AGAINST: volts on a card that delivers
     // them, otherwise full-scale units. Naming it wrong is silent — the
     // numbers just come out scaled by the (unknown) full scale.
@@ -187,13 +193,25 @@
   function commitCalibrate(
     results: { sensitivity: number; unit: string }[] | null,
     tf: { ch: number; line: TfCalLine | null }[] | null,
+    note = '',
   ) {
     if (calSetId === null || !writeCal) return;
     // Channels first: a TF line left blank follows the ratio they imply.
     if (results) {
       const factors = results.map((r) => sensitivityToFactor(r.sensitivity));
       const units = results.map((r) => r.unit);
-      writeCal(calSetId, factors, units);
+      // Provenance for each channel whose sensitivity or unit was edited;
+      // untouched channels keep whatever the file already recorded.
+      const date = new Date().toISOString();
+      const provenance = results.map((r, ch): ChannelCalibration | undefined => {
+        const was = calRows[ch];
+        if (was && was.sensitivity === r.sensitivity && was.unit === r.unit) return undefined;
+        return {
+          method: 'sensitivity', date, sensitivity: r.sensitivity, unit: r.unit,
+          reference: null, ...provenanceFromSet(calSettings, ch), note, carried: false,
+        };
+      });
+      writeCal(calSetId, factors, units, { provenance });
     }
     const writeTf = controller?.setTfCalibration;
     if (tf && writeTf) {

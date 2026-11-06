@@ -62,7 +62,7 @@ import type {
 import type { Toasts } from '../stores/toast';
 import {
   capturedInVolts, composeTfUnit, isIdentity, normalizeFactors, normalizeTfCal, normalizeUnits,
-  splitTfUnit, tfCalLine, tfCalToUi, wrapUnit, type TfCal, type TfCalLine,
+  splitTfUnit, tfCalLine, tfCalToUi, wrapUnit, type ChannelCalibration, type TfCal, type TfCalLine,
 } from '../model/calibration';
 import type { ChoosableKind, ChoosableSet } from '../export/data';
 import { calibrationController } from '../stores/calibrationController';
@@ -2973,6 +2973,15 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
+   * A set's stored capture settings, for the calibration provenance (the
+   * stated gain, pad, input mode and device of each channel). `null` for an
+   * unknown set.
+   */
+  function getCalibrationSettings(setId: number): unknown {
+    return working.find((w) => w.setId === setId)?.time.settings ?? null;
+  }
+
+  /**
    * Persist a set's calibration and reflect it in the live plot (Task A2).
    *
    * `factors` are pydvma's plain `channel_cal_factors` multipliers (the dialog
@@ -2985,12 +2994,16 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * manifest fields both codecs round-trip — NOT the `ui` blob), patches the
    * derived `calFactors` slice so `buildPlotModel` re-scales at once, and
    * re-emits the `dataset` store so the autosave subscription captures it.
+   *
+   * `opts.provenance` (one `ChannelCalibration | null` per channel) is saved
+   * as the set's `channel_calibration`; a channel whose entry is `undefined`
+   * keeps what the file already said.
    */
   function setCalFactors(
     setId: number,
     factors: number[],
     units?: readonly string[],
-    opts: { warnFit?: boolean } = {},
+    opts: { warnFit?: boolean; provenance?: (ChannelCalibration | null | undefined)[] } = {},
   ): void {
     const ws = working.find((w) => w.setId === setId);
     if (!ws) return;
@@ -3001,6 +3014,16 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     setItemMeta(ws.time, 'channel_cal_factors', norm);
     if (units !== undefined) {
       setItemMeta(ws.time, 'units', normalizeUnits(units, ws.nChannels));
+    }
+    if (opts.provenance) {
+      // Channels whose entry is `undefined` keep what the file had.
+      const prev = ws.time.meta.channel_calibration;
+      const merged = Array.from({ length: ws.nChannels }, (_, ch) => {
+        const p = opts.provenance![ch];
+        if (p !== undefined) return p;
+        return Array.isArray(prev) ? (prev[ch] ?? null) : null;
+      });
+      setItemMeta(ws.time, 'channel_calibration', merged);
     }
     setDerived(setId, {
       calFactors: norm,
@@ -3053,7 +3076,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   // Publish the calibration API so the tray's Calibrate dialog can reach it
   // without a prop thread through App.svelte (see `calibrationController`).
-  calibrationController.set({ getCalibration, setCalFactors, getTfCalibration, setTfCalibration });
+  calibrationController.set({ getCalibration, getCalibrationSettings, setCalFactors, getTfCalibration, setTfCalibration });
 
   // --------------------------------------------------------------------- //
   // Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match
@@ -4262,7 +4285,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     calcFit, fitLineSummary, calcDamping, calcDampingBands, setCsdPair,
     /** Subset Save/Export (round-12 "Choose sets…") — see each function's doc. */
     choosableSets, subsetDataset,
-    getCalibration, setCalFactors, getTfCalibration, setTfCalibration,
+    getCalibration, getCalibrationSettings, setCalFactors, getTfCalibration, setTfCalibration,
     /**
      * Report a UNITS/quantity change on `views` to the injected
      * `ViewNotifier` (round-11 P5) — for the cards that change what a view

@@ -368,6 +368,22 @@ def test_v2_optional_analysis_attrs_roundtrip(tmp_path):
     assert td1.impulse_cleaned is True
 
 
+def test_v2_channel_calibration_roundtrip(tmp_path):
+    # Per-channel calibration provenance: None entries and dicts both
+    # survive, equal to what was written.
+    data = dvma.create_test_impulse_data(noise_level=0)
+    cal = [{'method': 'reference_tone', 'date': '2026-11-06T10:00:00+00:00',
+            'sensitivity': 0.05, 'unit': 'Pa',
+            'reference': {'level': 94.0, 'level_unit': 'dB SPL', 'freq': 1000.0},
+            'gain_db': 30.0, 'input_mode': 'mic', 'pad': False,
+            'device': None, 'note': 'in the lab', 'carried': False}, None]
+    data.time_data_list[0].channel_calibration = cal
+    path = tmp_path / 'cal.dvma'
+    container.save(data, str(path))
+    loaded = container.load(str(path))
+    assert loaded.time_data_list[0].channel_calibration == cal
+
+
 def test_v2_optional_attrs_absent_stay_absent(tmp_path):
     # hasattr-guards downstream rely on absence — a round-trip must
     # not invent the attributes (not even as None).
@@ -377,6 +393,7 @@ def test_v2_optional_attrs_absent_stay_absent(tmp_path):
     container.save(data, str(path))
     loaded = container.load(str(path))
     assert not hasattr(loaded.time_data_list[0], 'impulse_cleaned')
+    assert not hasattr(loaded.time_data_list[0], 'channel_calibration')
     assert not hasattr(loaded.freq_data_list[0], 'iw_power_counter')
 
 
