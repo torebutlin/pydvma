@@ -5,6 +5,13 @@ follows [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- **`pydvma.acoustics`**: IEC 61672-1 A/C weighting, IEC 61260 base-10
+  octave / third-octave band powers (from a density), tone level and
+  `reference_tone_calibration` for an acoustic calibrator, with a TypeScript
+  twin in the web app.
+
 ### Fixed
 
 - **In Safari, the web app's results turned to garbage after loading a

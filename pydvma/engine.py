@@ -779,6 +779,26 @@ def clean_impulse(time_axis, time_data, n_channels, fs, ch_impulse):
     return {'time_axis': _arr(cleaned.time_axis), 'time_data': _arr(cleaned.time_data)}
 
 
+def reference_tone_calibration(time_axis, time_data, n_channels, fs, channel, ref_rms,
+                               freq, vmax=None):
+    """Sensitivity of ``channel`` from an acoustic calibrator's reference tone.
+
+    Rebuilds a ``TimeData`` and runs `pydvma.acoustics.reference_tone_calibration`
+    (middle 80 % of the record). ``vmax`` is the channel's input rail in stored
+    units for the clip check (``None`` skips it). Returns the result dict with
+    plain Python floats, bools and a list of warning strings.
+    """
+    from pydvma import acoustics
+    td = _time_data(time_axis, time_data, n_channels, fs)
+    rail = _opt_float(vmax)
+    if rail is not None:
+        td.settings.VmaxSC = rail
+        td.settings.device_driver = 'mock'
+    out = acoustics.reference_tone_calibration(td, int(channel), float(ref_rms), float(freq))
+    return {k: ([str(w) for w in v] if k == 'warnings' else
+                bool(v) if k == 'clipped' else float(v)) for k, v in out.items()}
+
+
 def resample_time(time_data, n_channels, fs, fs_new):
     """Band-limited resample of a raw capture to a new sample rate.
 

@@ -41,6 +41,7 @@ import time
 import numpy as np
 import scipy.signal as signal
 
+from . import acoustics
 from . import acquisition
 
 try:
@@ -208,53 +209,8 @@ class RigolDG1022Z:
         return False
 
 
-def _measure_tone_vrms(x, fs, freq, bin_neighbours=2):
-    """Robust RMS amplitude of a single tone in ``x``, via a windowed
-    periodogram, largely immune to broadband noise and other tones.
-
-    Windows ``x`` with a periodic Hann window, computes the rFFT, and
-    sums POWER over the ``2 * bin_neighbours + 1`` bins around the
-    tone's expected bin — capturing spectral leakage from a tone that
-    doesn't land exactly on a bin centre, without needing the capture
-    to be an exact integer number of periods. The result is converted
-    back to an RMS voltage via Parseval's theorem, normalising by
-    ``sum(window**2)`` (the window's power gain): for ANY window and
-    ANY tone frequency, the true windowed signal ENERGY equals
-    ``(1/N) * (bin sum, with the doubling one-sided rfft implies)``, so
-    dividing out the window's own power contribution recovers the
-    tone's mean-square value exactly once (nearly) all of its leaked
-    energy sits inside the summed neighbourhood — which a handful of
-    bins either side comfortably covers for a Hann window's fast-decaying
-    sidelobes. Because only a few bins around the tone are summed,
-    broadband noise (spread over ALL bins) and any other tone more than
-    ``bin_neighbours`` bins away contribute a negligible fraction of the
-    total noise/other-tone power to the estimate.
-
-    Args:
-        x (np.ndarray): 1D real time-domain samples, in volts.
-        fs (float): Sample rate of ``x`` in Hz.
-        freq (float): Expected tone frequency in Hz.
-        bin_neighbours (int): Bins summed either side of the tone's
-            nearest bin (default 2, i.e. a 5-bin neighbourhood).
-
-    Returns the estimated RMS amplitude of the tone at ``freq``, in the
-    same units as ``x`` (volts).
-    """
-    x = np.asarray(x, dtype=float).ravel()
-    N = x.shape[0]
-    w = signal.windows.get_window('hann', N)
-    X = np.fft.rfft(w * x)
-
-    k0 = int(round(float(freq) * N / float(fs)))
-    lo = max(k0 - int(bin_neighbours), 1)
-    hi = min(k0 + int(bin_neighbours), len(X) - 2)
-    if hi < lo:
-        # Degenerate (N tiny relative to bin_neighbours); fall back to
-        # whatever single bin is in range rather than raising.
-        lo = hi = max(1, min(k0, len(X) - 2))
-
-    tone_energy = (2.0 / N) * np.sum(np.abs(X[lo:hi + 1]) ** 2)
-    return float(np.sqrt(tone_energy / np.sum(w ** 2)))
+_measure_tone_vrms = acoustics.tone_rms
+"""Alias kept for `acoustics.tone_rms`, where the tone estimator now lives."""
 
 
 def _verdict(channel, measured_vrms, expected_vrms, tol):

@@ -25,6 +25,7 @@ from .analysis import calculate_tf, calculate_tf_averaged, calculate_bla, multip
 from .analysis import calculate_cwt, calculate_damping_from_cwt, calculate_damping_by_band
 from .streams import Recorder, Recorder_NI, start_stream, REC, setup_output_NI, setup_output_soundcard, list_available_devices, get_devices_NI, get_devices_soundcard
 from . import devices
+from . import acoustics
 from .devices import resolve_device_spec
 from ._ni_device_specs import suggest_ni_settings, get_device_info
 from .modal import modal_fit_single_channel, modal_fit_all_channels

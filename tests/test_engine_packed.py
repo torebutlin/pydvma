@@ -102,3 +102,17 @@ def test_a_packed_fit_matches_a_direct_call_exactly():
     np.testing.assert_array_equal(np.asarray(packed['global_tf_data']['data']),
                                   np.asarray(direct['global_tf_data']['data']))
     assert abs(packed['fn']['data'][0] - 250.0) < 0.01
+
+
+def test_a_packed_reference_tone_calibration_matches_a_direct_call():
+    fs = 48000.0
+    t = np.arange(int(fs)) / fs
+    x = 0.0335 * np.sqrt(2) * np.sin(2 * np.pi * 1000 * t)
+    payload = {'time_axis': t, 'time_data': x, 'n_channels': 1, 'fs': fs, 'channel': 0,
+               'ref_rms': 1.0, 'freq': 1000.0, 'vmax': 1.0}
+    direct = engine.reference_tone_calibration(**payload)
+    text, bufs = _pack(payload)
+    packed = engine._call_packed('reference_tone_calibration', text, bufs)
+    assert packed == direct
+    assert abs(direct['sensitivity'] - 0.0335) < 1e-4 and direct['warnings'] == []
+    json.dumps(direct)
