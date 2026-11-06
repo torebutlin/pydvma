@@ -56,6 +56,33 @@ def _soundcard_identity(settings):
     return name, neighbours
 
 
+class _LazyIdentity(object):
+    """`_soundcard_identity` of one settings object, looked up on first use.
+
+    ``MySettings.__init__`` may need the device in three places (the
+    scalar derivation, the per-channel derivation and the
+    ``output_VmaxSC`` default); this asks PortAudio at most once, and
+    not at all when nothing needs it.
+    """
+
+    def __init__(self, settings):
+        self._settings = settings
+        self._value = None
+
+    def get(self):
+        """The ``(name, neighbours)`` pair, ``(None, None)`` if unknown."""
+        if self._value is None:
+            self._value = _soundcard_identity(self._settings)
+        return self._value
+
+    def per_channel_gain(self):
+        """True when the device's profile has a gain per channel (iD44)."""
+        from . import _soundcard_specs
+        name, neighbours = self.get()
+        return bool(name) and _soundcard_specs.per_channel_gain(
+            name, neighbours=neighbours)
+
+
 def _full_scale_from_profile(name, neighbours, gain_db, input_mode, pad):
     """Full-scale volts of one channel of device ``name``, or ``None``.
 
@@ -73,7 +100,7 @@ def _full_scale_from_profile(name, neighbours, gain_db, input_mode, pad):
         name, gain_db, input_mode, neighbours=neighbours, pad=pad)
 
 
-def _derive_full_scale_volts(settings):
+def _derive_full_scale_volts(settings, identity=None):
     """Full-scale volts implied by a SCALAR ``settings.input_gain_db``, or ``None``.
 
     Resolves the configured soundcard device to a characterised profile
@@ -88,10 +115,14 @@ def _derive_full_scale_volts(settings):
     plugged in yet, PortAudio absent). A bad ``input_mode``, an
     out-of-range gain or a pad on a device without one still raises,
     because those are mistakes in what the operator asked for rather
-    than missing information. Per-channel settings are derived channel
+    than missing information. Per-channel settings, and every setting
+    on a device with a gain per channel (the iD44), are derived channel
     by channel in ``MySettings.__init__`` through the same helpers.
+    ``identity`` (a `_LazyIdentity`) reuses a lookup already made.
     """
-    name, neighbours = _soundcard_identity(settings)
+    if identity is None:
+        identity = _LazyIdentity(settings)
+    name, neighbours = identity.get()
     if not name:
         return None
     return _full_scale_from_profile(
@@ -483,12 +514,22 @@ class MySettings(object):
             channel's ``VmaxSC`` as it is (1.0, full-scale units, unless
             given). A scalar is the same gain on every channel, as
             before. Stays a scalar when given as one, else is stored as
-            a list.
+            a list. On a device whose profile has a gain per channel
+            (the iD44) even a scalar gain is applied channel by
+            channel: its ``'optical'`` (ADAT) and ``'loopback'``
+            channels take no rail from it (their ``VmaxSC`` is 1.0
+            unless given per channel), so ``VmaxSC`` becomes an array
+            once such channels are recorded. The 2i2 and U24 XL keep
+            one rail for every channel, loopback included.
         input_mode (str or sequence): Which input the signal is on —
             ``'line'`` (default), ``'inst'`` or ``'mic'``, or a list
             with one per channel. Sets the maximum input level used with
             ``input_gain_db``; on a Scarlett 2i2 these are 22, 12 and
-            16 dBu at minimum gain respectively.
+            16 dBu at minimum gain respectively. Where a gain is derived
+            on a device with per-channel inputs, the mode must be one
+            that input offers (`pydvma._soundcard_specs.channel_input_modes`:
+            the iD44's ``'inst'`` is on inputs 1-2 only), or
+            ``ValueError`` names the channel.
         input_pad (bool or sequence): Whether the interface's input pad
             is engaged (default ``False``), or a list with one per
             channel. A pad lowers the signal before the preamp, so it
@@ -563,10 +604,15 @@ class MySettings(object):
         output_VmaxSC (float or None): Full-scale output voltage for the
             soundcard AO path — the jack voltage corresponding to a ±1
             sounddevice sample. Always one number. Defaults to
-            ``VmaxSC`` when that is one number (every channel equal);
-            with a per-channel ``VmaxSC`` it defaults to ``1.0``, i.e.
-            the generated output is in normalised ±1 units until you set
-            it.
+            ``VmaxSC`` when that is one number (every channel equal),
+            as on the Scarlett 2i2 and ESI U24 XL. It defaults to
+            ``1.0`` instead, i.e. the generated output is in normalised
+            ±1 units until you set it, with a per-channel ``VmaxSC`` and
+            on any device whose profile has a gain per channel (the
+            Audient iD44), whatever its input gains: there the input
+            rail is a mic preamp's millivolts, and an output scaled to
+            it would play a stimulus some 40 dB too hot. An explicit
+            value is always kept.
         use_output_as_ch0 (bool): When ``True`` and an ``output`` array
             is passed to ``log_data``, the generated drive signal is
             prepended as channel 0 of the recorded data (default
@@ -851,11 +897,20 @@ class MySettings(object):
         # front panel was set to, which is the only defence against a
         # calibration silently going stale when someone turns the knob.
         # An interface with a preamp per channel (the Audient iD44)
-        # takes any of the four as a per-channel sequence instead.
+        # takes any of the four as a per-channel sequence instead, and
+        # derives even a one-number gain channel by channel (its optical
+        # and loopback inputs take no rail from a preamp gain). The device
+        # is looked up only where a derivation could happen, as before.
+        identity = _LazyIdentity(self)
         if any(_is_per_channel(v)
                for v in (VmaxSC, input_gain_db, input_mode, input_pad)):
             self._init_per_channel_scale(VmaxSC, input_gain_db,
-                                         input_mode, input_pad)
+                                         input_mode, input_pad, identity)
+        elif ((((input_gain_db is not None) and (input_gain_db != 'None'))
+               or float(VmaxSC) == 1.0)
+              and identity.per_channel_gain()):
+            self._init_per_channel_scale(VmaxSC, input_gain_db,
+                                         input_mode, input_pad, identity)
         else:
             self.VmaxSC = float(VmaxSC)
             self.input_mode = str(input_mode).lower()
@@ -868,14 +923,14 @@ class MySettings(object):
                     # calibration needs no stated gain. Only the untouched
                     # default is replaced — an explicit VmaxSC is the
                     # operator's own calibration and wins.
-                    derived = _derive_full_scale_volts(self)
+                    derived = _derive_full_scale_volts(self, identity)
                     if derived is not None:
                         self.VmaxSC = derived
                         print('note: fixed-gain interface recognised; VmaxSC '
                               'set to %.3g V (full-scale peak).' % derived)
             else:
                 self.input_gain_db = float(input_gain_db)
-                derived = _derive_full_scale_volts(self)
+                derived = _derive_full_scale_volts(self, identity)
                 if derived is not None:
                     # An explicit VmaxSC would be a second, conflicting
                     # answer to the same question, so the stated gain wins
@@ -895,11 +950,17 @@ class MySettings(object):
             self.output_VmaxNI = float(output_VmaxNI)
 
         if output_VmaxSC is None:
-            # Follows a one-number input full scale, as it always has. A
-            # per-channel input rail says nothing about the output jack,
-            # so the output then stays at its uncalibrated 1.0.
-            self.output_VmaxSC = (self.VmaxSC if np.ndim(self.VmaxSC) == 0
-                                  else 1.0)
+            # Follows a one-number input full scale, as it always has (the
+            # 2i2, the U24 XL). A per-channel input rail says nothing about
+            # the output jack, and on a device with a preamp per channel
+            # the input rail is a mic preamp's: an output scaled to 8.7 mV
+            # would play a stimulus ~40 dB too hot. Both stay at 1.0.
+            if np.ndim(self.VmaxSC) != 0:
+                self.output_VmaxSC = 1.0
+            elif self.VmaxSC != 1.0 and identity.per_channel_gain():
+                self.output_VmaxSC = 1.0
+            else:
+                self.output_VmaxSC = self.VmaxSC
         else:
             self.output_VmaxSC = float(output_VmaxSC)
 
@@ -1060,17 +1121,32 @@ class MySettings(object):
         return arr
 
     def _init_per_channel_scale(self, VmaxSC, input_gain_db, input_mode,
-                                input_pad):
-        '''Set ``VmaxSC`` and the gain fields when any is per-channel.
+                                input_pad, identity=None):
+        '''Set ``VmaxSC`` and the gain fields channel by channel.
 
-        The per-channel twin of the scalar block in ``__init__``, with
-        the same rules applied channel by channel: a stated gain on a
-        characterised soundcard derives that channel's full scale (and
-        overrides an explicit ``VmaxSC`` for it); an unstated gain
-        leaves an explicit ``VmaxSC`` alone and derives only on a
-        fixed-gain interface, and only where ``VmaxSC`` is the untouched
-        1.0; anything else keeps the given value. The device is looked
-        up once, and only if some channel needs it.
+        Used when any of the four is per-channel, and for every setting
+        on a device whose profile has a gain per channel (the Audient
+        iD44). The scalar block's rules apply channel by channel: a
+        stated gain on a characterised soundcard derives that channel's
+        full scale (and overrides an explicit ``VmaxSC`` for it); an
+        unstated gain leaves an explicit ``VmaxSC`` alone and derives
+        only on a fixed-gain interface, and only where ``VmaxSC`` is the
+        untouched 1.0; anything else keeps the given value. The device
+        is looked up once, and only if some channel needs it.
+
+        Two rules from the device profile on top:
+
+        - On a device with a gain per channel, an ``'optical'`` or
+          ``'loopback'`` channel (`pydvma._soundcard_specs.channel_roles`)
+          takes no rail from a stated gain, since no preamp of this
+          device sits in front of it: its ``VmaxSC`` is 1.0 (full-scale
+          units), or the value given for that channel when ``VmaxSC`` is
+          a per-channel sequence. A ``VmaxSC`` given as one number with
+          no stated gain is not a derivation and stays on every channel.
+        - Where a stated gain is derived on an ``'analogue'`` channel,
+          the channel's mode must be one that input has
+          (`pydvma._soundcard_specs.channel_input_modes`: the iD44's
+          ``'inst'`` exists on inputs 1-2 only).
 
         Each of the four fields stays scalar when it was given as one
         and becomes a list of length ``channels`` otherwise. ``VmaxSC``
@@ -1083,14 +1159,19 @@ class MySettings(object):
                 argument; a sequence may hold None per channel.
             input_mode (str or sequence): The constructor argument.
             input_pad (bool or sequence): The constructor argument.
+            identity (_LazyIdentity or None): The device lookup to
+                share; None makes a fresh one.
 
         Raises:
             ValueError: A sequence of the wrong length, a per-channel
-                ``VmaxSC`` that is not finite and positive, or a gain,
-                mode or pad the device does not have.
+                ``VmaxSC`` that is not finite and positive, a mode an
+                analogue input does not have (naming the channel,
+                one-based), or a gain or pad the device does not have.
         '''
+        from . import _soundcard_specs
+        vmax_per_channel = _is_per_channel(VmaxSC)
         vmax = self._broadcast_per_channel(VmaxSC, 'VmaxSC')
-        if not np.all(np.isfinite(vmax) & (vmax > 0)):
+        if vmax_per_channel and not np.all(np.isfinite(vmax) & (vmax > 0)):
             raise ValueError(
                 'VmaxSC must be a finite positive full-scale value on '
                 'every channel (got {!r}).'.format(vmax.tolist()))
@@ -1100,16 +1181,41 @@ class MySettings(object):
                                             convert=lambda m: str(m).lower())
         pads = self._broadcast_per_channel(input_pad, 'input_pad',
                                            convert=_as_bool)
-        identity = None
+        if identity is None:
+            identity = _LazyIdentity(self)
+        roles = None
+        no_rail = set()
         fixed = []
         for ch in range(self.channels):
             if gains[ch] is None and vmax[ch] != 1.0:
                 continue                 # the operator's own calibration
-            if identity is None:
-                identity = _soundcard_identity(self)
-            name, neighbours = identity
+            name, neighbours = identity.get()
             if not name:
                 break                    # nothing can be derived
+            if roles is None:
+                roles = (_soundcard_specs.channel_roles(
+                    name, self.channels, neighbours=neighbours)
+                    or ['analogue'] * self.channels)
+                if identity.per_channel_gain():
+                    no_rail = {i for i, role in enumerate(roles)
+                               if role in ('optical', 'loopback')}
+            if ch in no_rail:
+                # No preamp of this device in front of it: a stated gain
+                # gives it no rail, and it overrides a one-number VmaxSC.
+                if gains[ch] is not None and not vmax_per_channel:
+                    vmax[ch] = 1.0
+                continue
+            if gains[ch] is not None and roles[ch] == 'analogue':
+                allowed = _soundcard_specs.channel_input_modes(
+                    name, ch, neighbours=neighbours)
+                if allowed and modes[ch] not in allowed:
+                    label = _soundcard_specs.device_profile(
+                        name, neighbours)['label']
+                    raise ValueError(
+                        'input_mode {!r} is not available on channel {} of '
+                        'the {} (channel index {}); that input offers {}.'
+                        .format(modes[ch], ch + 1, label, ch,
+                                ', '.join(allowed)))
             derived = _full_scale_from_profile(name, neighbours, gains[ch],
                                                modes[ch], pads[ch])
             if derived is not None:
@@ -1195,8 +1301,10 @@ class MySettings(object):
         stated gain on a characterised device, a fixed-gain device's
         automatic derivation, or an explicit ``VmaxSC`` all do; False
         where the channel's data are full-scale units (no gain stated
-        on a variable-gain device, an uncharacterised device, or the
-        device could not be identified). The same rule as the web
+        on a variable-gain device, an uncharacterised device, the
+        device could not be identified, or an optical or loopback
+        input of a device with a gain per channel, which a stated gain
+        does not calibrate). The same rule as the web
         app's volts test and ``pydvma.serve``'s ``inputVmaxIsVolts``,
         applied per channel.
 

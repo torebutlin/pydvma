@@ -127,8 +127,8 @@ class TestScalarSettingsUnchanged:
         assert s.VmaxSC == expected
         assert s.input_gain_db == 60.0
         assert s.input_mode == 'mic'
-        # Existing semantics: the output rail follows a scalar VmaxSC.
-        assert s.output_VmaxSC == expected
+        # Never the mic rail: see test_id44_output_vmax_defaults_to_one.
+        assert s.output_VmaxSC == 1.0
 
     def test_scalar_pad_adds_ten_db(self, monkeypatch):
         s = _soundcard_settings(monkeypatch, channels=2, input_gain_db=60,
@@ -175,7 +175,7 @@ class TestPerChannelDerivation:
         assert isinstance(s.VmaxSC, float)
         assert s.VmaxSC == pytest.approx(specs.full_scale_volts(ID44, 60, 'mic'))
         assert s.input_gain_db == [60.0, 60.0]
-        assert s.output_VmaxSC == s.VmaxSC
+        assert s.output_VmaxSC == 1.0
 
     def test_per_channel_mode(self, monkeypatch):
         s = _soundcard_settings(monkeypatch, channels=2, input_gain_db=10,
@@ -232,6 +232,96 @@ class TestPerChannelDerivation:
                                 input_gain_db=['None', 60], input_mode='mic')
         assert s.input_gain_db == [None, 60.0]
         assert s.VmaxSC[0] == 1.0
+
+    def test_optical_and_loopback_take_no_rail(self, monkeypatch):
+        """The iD44's 16 ADAT inputs and 2 DAW loopbacks have no preamp
+        of the iD44 in front of them, so a stated gain gives them no
+        volts: a one-number gain becomes a per-channel rail."""
+        s = _soundcard_settings(monkeypatch, channels=22, input_gain_db=60,
+                                input_mode='mic')
+        in_volts = s.channels_in_volts()
+        assert in_volts[:4].tolist() == [True] * 4
+        assert in_volts[4:].tolist() == [False] * 18
+        assert isinstance(s.VmaxSC, np.ndarray)
+        assert s.VmaxSC[0] == pytest.approx(
+            specs.full_scale_volts(ID44, 60, 'mic'))
+        assert s.VmaxSC[4] == 1.0
+        assert s.VmaxSC[20] == 1.0
+        assert s.input_gain_db == 60.0               # scalar stays scalar
+        assert s.input_mode == 'mic'
+
+    def test_per_channel_gain_on_optical_gives_no_rail(self, monkeypatch):
+        s = _soundcard_settings(monkeypatch, channels=6,
+                                input_gain_db=[60, None, None, None, 60, 60],
+                                input_mode='mic')
+        assert s.VmaxSC[0] == pytest.approx(
+            specs.full_scale_volts(ID44, 60, 'mic'))
+        np.testing.assert_array_equal(s.VmaxSC[1:], [1.0] * 5)
+        assert s.channels_in_volts().tolist() == [True] + [False] * 5
+
+    def test_explicit_vmax_on_optical_is_kept(self, monkeypatch):
+        """An ADAT expander's own full scale, given per channel, is the
+        operator's calibration of that channel and stands."""
+        s = _soundcard_settings(monkeypatch, channels=6, input_gain_db=60,
+                                input_mode='mic',
+                                VmaxSC=[1.0, 1.0, 1.0, 1.0, 2.0, 1.0])
+        assert s.VmaxSC[4] == 2.0
+        assert s.VmaxSC[5] == 1.0
+        assert s.VmaxSC[0] == pytest.approx(
+            specs.full_scale_volts(ID44, 60, 'mic'))
+        assert s.channels_in_volts().tolist() == [True] * 5 + [False]
+
+    def test_inst_on_channel_without_di_raises(self, monkeypatch):
+        """The iD44's D.I. input is on inputs 1-2 only."""
+        with pytest.raises(ValueError, match='channel 3') as err:
+            _soundcard_settings(monkeypatch, channels=4, input_gain_db=20,
+                                input_mode=['mic', 'mic', 'inst', 'mic'])
+        assert 'line, mic' in str(err.value)
+        # 'inst' where it exists is fine, and an unstated channel is not
+        # checked (nothing is derived there).
+        s = _soundcard_settings(monkeypatch, channels=4,
+                                input_gain_db=[20, 20, None, None],
+                                input_mode=['inst', 'inst', 'inst', 'mic'])
+        assert s.VmaxSC[0] == pytest.approx(
+            specs.full_scale_volts(ID44, 20, 'inst'))
+        with pytest.raises(ValueError, match='channel 3'):
+            _soundcard_settings(monkeypatch, channels=4, input_gain_db=20,
+                                input_mode='inst')
+
+    def test_id44_output_vmax_defaults_to_one(self, monkeypatch):
+        """Equal mic gains collapse VmaxSC to one float (8.7 mV); the
+        output rail must not follow it, or a stimulus would play some
+        40 dB too hot into the speakers."""
+        s = _soundcard_settings(monkeypatch, channels=4,
+                                input_gain_db=[60, 60, 60, 60],
+                                input_mode='mic')
+        assert isinstance(s.VmaxSC, float)
+        assert s.output_VmaxSC == 1.0
+        explicit = _soundcard_settings(monkeypatch, channels=4,
+                                       input_gain_db=[60, 60, 60, 60],
+                                       input_mode='mic', output_VmaxSC=2.0)
+        assert explicit.output_VmaxSC == 2.0
+        # An explicit one-number input VmaxSC does not set it either.
+        plain = _soundcard_settings(monkeypatch, channels=4, VmaxSC=2.5)
+        assert plain.VmaxSC == 2.5
+        assert plain.output_VmaxSC == 1.0
+
+    def test_2i2_unchanged(self, monkeypatch):
+        """Regression pin: one rail on every channel of a 2i2, its
+        loopback inputs 3-4 included, and the output follows it."""
+        s = _soundcard_settings(monkeypatch, name=SCARLETT, channels=4,
+                                input_gain_db=9, input_mode='line')
+        expected = specs.full_scale_volts(SCARLETT, 9, 'line')
+        assert isinstance(s.VmaxSC, float)
+        assert s.VmaxSC == expected
+        assert s.VmaxSC == pytest.approx(4.8932, abs=1e-3)
+        assert s.output_VmaxSC == s.VmaxSC
+        assert s.channels_in_volts().tolist() == [True] * 4
+        # The U24 XL likewise.
+        u24 = _soundcard_settings(monkeypatch, name='U24XL with SPDIF I/O',
+                                  channels=2)
+        assert isinstance(u24.VmaxSC, float)
+        assert u24.output_VmaxSC == u24.VmaxSC
 
     def test_nidaq_ignores_per_channel_soundcard_gain(self):
         s = options.MySettings(device_driver='nidaq', channels=2, VmaxNI=5,

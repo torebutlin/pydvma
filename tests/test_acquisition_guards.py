@@ -147,7 +147,14 @@ class TestVmaxHelpers:
         assert s.input_vmax() == 5.0
         assert s.output_vmax() == 1.7
 
-    def test_output_vmax_defaults_to_input(self):
+    def test_output_vmax_defaults_to_input(self, monkeypatch):
+        # Isolated from the machine's default input, like the test
+        # above: on a device with a gain per channel (an Audient iD44 is
+        # the Mac's default input, 2026-11-06) the output rail
+        # deliberately defaults to 1.0 instead — see
+        # tests/test_per_channel_scale.py.
+        from pydvma import streams
+        monkeypatch.setattr(streams, 'soundcard_device_name', lambda s: None)
         s = dvma.MySettings(device_driver='soundcard', VmaxSC=2.0)
         # output_VmaxSC not given -> defaults to VmaxSC
         assert s.output_vmax() == 2.0
