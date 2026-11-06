@@ -178,8 +178,10 @@ def _settings_to_config_json(settings):
     ``--settings`` CLI path accept exactly the same set, and every
     value is coerced to what a hand-written settings JSON could carry:
     numpy arrays and scalars go through ``tolist()``, so the per-channel
-    settings (``iepe_excit_current_A``, ``channel_sensitivities``) reach
-    the UI in the array form it already reads, and anything still
+    settings (``iepe_excit_current_A``, ``channel_sensitivities``, and a
+    per-channel ``VmaxSC``, ``input_gain_db``, ``input_mode`` or
+    ``input_pad``) reach the UI in the array form it already reads (an
+    unstated channel's gain as ``null``), and anything still
     unrepresentable — a nested array, a resolved device object, a
     non-finite float (see `_json_scalar`) — is dropped key and
     all rather than breaking the document. Constructor arguments that
@@ -290,11 +292,13 @@ def _settings_summary(doc):
     Reads the document rather than a MySettings, so it describes
     exactly what was sent (including a push that kept the previous
     acquisition settings). The trigger level is shown in volts when the
-    capture is in volts (NI, or a soundcard with ``VmaxSC`` set — the
-    rule `pydvma.serve._input_scale_fields` reports to the app),
-    otherwise as a fraction of full scale, and an unset threshold is
-    resolved the way the app and `pydvma.options.pretrig_level`
-    resolve it.
+    trigger channel is in volts (NI, or a soundcard whose ``VmaxSC``
+    for that channel is set — the rule
+    `pydvma.serve._input_scale_fields` reports to the app), otherwise
+    as a fraction of full scale, and an unset threshold is resolved the
+    way the app and `pydvma.options.pretrig_level` resolve it, from the
+    trigger channel's full scale. A per-channel ``VmaxSC`` arrives as a
+    list.
 
     Args:
         doc (dict): the document, as `_merge_config` built it.
@@ -314,17 +318,22 @@ def _settings_summary(doc):
         if doc.get('pretrig_samples') is None:
             parts.append('trigger off')
         else:
+            channel = doc.get('pretrig_channel') or 0
             probe = options.MySettings.__new__(options.MySettings)
             probe.device_driver = doc.get('device_driver')
             probe.VmaxNI = doc.get('VmaxNI', 5.0)
             probe.VmaxSC = doc.get('VmaxSC', 1.0)
             probe.pretrig_threshold = doc.get('pretrig_threshold')
+            probe.pretrig_channel = channel
             level = options.pretrig_level(probe)
+            # The trigger channel's own full scale: with a per-channel
+            # VmaxSC one channel can be in volts and the next not.
             volts = (probe.device_driver == 'nidaq'
-                     or abs(float(probe.VmaxSC or 1.0) - 1.0) > 1e-9)
+                     or abs(options._channel_rail(probe, channel) - 1.0)
+                     > 1e-9)
             unit = ' V' if volts else ' × full scale'
             parts.append('trigger armed on ch %d at %g%s'
-                         % (doc.get('pretrig_channel') or 0, level, unit))
+                         % (channel, level, unit))
     if 'analysis_window' in doc:
         parts.append('window %s' % doc['analysis_window'])
     if 'tf_averaging' in doc:

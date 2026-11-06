@@ -152,6 +152,42 @@ class TestVmaxHelpers:
         # output_VmaxSC not given -> defaults to VmaxSC
         assert s.output_vmax() == 2.0
 
+    def test_input_vmax_per_channel(self):
+        """A per-channel VmaxSC: input_vmax(ch) is that channel's rail,
+        input_vmax() the largest (no sample can exceed it)."""
+        s = dvma.MySettings(device_driver='mock', channels=3,
+                            VmaxSC=[1.0, 0.01, 4.0])
+        assert s.input_vmax() == 4.0
+        assert s.input_vmax(1) == 0.01
+        assert s.input_vmax(0) == 1.0
+        assert s.input_vmax_channels().tolist() == [1.0, 0.01, 4.0]
+        assert s.channels_in_volts().tolist() == [False, True, True]
+
+    def test_input_vmax_per_channel_on_nidaq_is_vmaxni(self):
+        s = dvma.MySettings(device_driver='nidaq', channels=3, VmaxNI=10,
+                            VmaxSC=[1.0, 0.01, 4.0])
+        assert s.input_vmax() == 10.0
+        assert s.input_vmax(1) == 10.0
+        assert s.channels_in_volts().tolist() == [True, True, True]
+
+    def test_output_vmax_with_per_channel_input_is_unity(self):
+        """A per-channel input rail says nothing about the output jack,
+        so an unset output_VmaxSC stays at its uncalibrated 1.0."""
+        s = dvma.MySettings(device_driver='mock', channels=2,
+                            VmaxSC=[1.0, 0.01])
+        assert s.output_VmaxSC == 1.0
+        explicit = dvma.MySettings(device_driver='mock', channels=2,
+                                   VmaxSC=[1.0, 0.01], output_VmaxSC=3.0)
+        assert explicit.output_VmaxSC == 3.0
+
+    def test_per_channel_vmax_must_be_finite_and_positive(self):
+        with pytest.raises(ValueError, match='finite positive'):
+            dvma.MySettings(device_driver='mock', channels=2,
+                            VmaxSC=[1.0, float('nan')])
+        with pytest.raises(ValueError, match='finite positive'):
+            dvma.MySettings(device_driver='mock', channels=2,
+                            VmaxSC=[1.0, 0.0])
+
 
 class TestOutputDeviceFallback:
     """When `sd.default` is unavailable, `MySettings` falls back to a

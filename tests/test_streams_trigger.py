@@ -249,6 +249,46 @@ class TestThresholdUnits:
         assert self._run(self.VMAX, 0.05 * self.VMAX, 0.10) is True
 
 
+class TestPerChannelScale:
+    """A per-channel VmaxSC (one preamp per channel, the Audient iD44):
+    each column is scaled by its own channel's full scale, and the
+    default trigger level is 5 % of the TRIGGER channel's full scale."""
+
+    RAILS = [1.0, 0.01]                      # a line channel, a 60 dB mic
+
+    def _run(self, monkeypatch, normalised_on_ch1, threshold=None):
+        from pydvma import streams as _streams
+        monkeypatch.setattr(_streams, 'soundcard_device_name', lambda s: None)
+        s = _settings(channels=2, VmaxSC=self.RAILS, pretrig_channel=1,
+                      pretrig_threshold=threshold)
+        rec = streams.Recorder(s)
+        for _ in range(3):
+            _feed(rec, np.zeros((s.chunk_size, 2), dtype='float32'))
+        chunk = np.zeros((s.chunk_size, 2), dtype='float32')
+        chunk[:, 0] = 0.04                   # 0.04 V on the 1 V channel
+        chunk[:, 1] = normalised_on_ch1
+        _feed(rec, chunk)
+        return rec
+
+    def test_each_column_is_scaled_by_its_own_rail(self, monkeypatch):
+        rec = self._run(monkeypatch, 0.1)
+        np.testing.assert_allclose(rec.osc_data_chunk[:, 0], 0.04, rtol=1e-6)
+        np.testing.assert_allclose(rec.osc_data_chunk[:, 1], 0.001, rtol=1e-6)
+
+    def test_default_level_follows_the_trigger_channel(self, monkeypatch):
+        """5 % of 0.01 V is 0.5 mV: 1 mV trips it, 0.4 mV does not. A
+        level taken from channel 0's 1 V rail (50 mV) would miss both."""
+        assert self._run(monkeypatch, 0.1).trigger_detected is True
+        assert self._run(monkeypatch, 0.04).trigger_detected is False
+
+    def test_explicit_threshold_is_in_the_trigger_channels_volts(
+            self, monkeypatch):
+        assert self._run(monkeypatch, 0.1, threshold=0.002).trigger_detected \
+            is False
+        assert self._run(monkeypatch, 0.3, threshold=0.002).trigger_detected \
+            is True
+
+
 class TestPretriggerSettingsGuards:
 
     def test_pretrig_samples_beyond_capture_length_is_rejected(self):

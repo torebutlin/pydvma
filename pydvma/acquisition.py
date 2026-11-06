@@ -99,6 +99,10 @@ def exact_zero_dropouts(data, fs, full_scale=1.0, min_run=None,
     ``full_scale`` returns ``(0, 0.0)`` outright: with nothing plugged
     in, a 16-bit host (MME) legitimately delivers long exact-zero runs,
     and there is no coherence in a silent record to protect anyway.
+    With a per-channel ``full_scale`` the record is silent only when
+    every channel's peak is below that fraction of its OWN full scale,
+    so a high-gain channel (a few millivolts full scale) is not judged
+    against a line-level neighbour's rail.
 
     Why exact zeros are a fault signature at all: a connected analogue
     input never produces eight consecutive all-channel zeros — dither
@@ -115,8 +119,9 @@ def exact_zero_dropouts(data, fs, full_scale=1.0, min_run=None,
         data (np.ndarray): The capture, shape ``(samples, channels)`` or
             1-D.
         fs (float): Sample rate in Hz.
-        full_scale (float): The input's full-scale value, in the units
-            of ``data`` (default 1.0).
+        full_scale (float or sequence): The input's full-scale value,
+            in the units of ``data`` (default 1.0), or one per channel
+            (truncated or padded with 1.0 to the number of columns).
         min_run (int, optional): Shortest run counted, in frames; None
             (the default) uses `DROPOUT_MIN_RUN` (8).
         silent_fraction (float): A record whose peak is below this
@@ -134,8 +139,13 @@ def exact_zero_dropouts(data, fs, full_scale=1.0, min_run=None,
         y = y[:, None]
     if y.size == 0:
         return 0, 0.0
-    if float(np.max(np.abs(y))) < silent_fraction * float(full_scale):
-        return 0, 0.0
+    if np.ndim(full_scale) == 0:
+        if float(np.max(np.abs(y))) < silent_fraction * float(full_scale):
+            return 0, 0.0
+    else:
+        rails = _fit_rails(full_scale, y.shape[1])
+        if np.all(np.max(np.abs(y), axis=0) < silent_fraction * rails):
+            return 0, 0.0
     silent = np.all(y == 0, axis=1)
     if not silent.any():
         return 0, 0.0
@@ -145,6 +155,56 @@ def exact_zero_dropouts(data, fs, full_scale=1.0, min_run=None,
     lengths = ends - starts
     keep = (lengths >= int(min_run)) & (starts > 0)
     return int(keep.sum()), float(lengths[keep].sum()) / float(fs)
+
+
+def _fit_rails(rails, n):
+    '''Per-channel full scales as a float array of exactly ``n`` entries.
+
+    A scalar broadcasts; a sequence is truncated, or padded with 1.0
+    (full-scale units) for a column it has no entry for.
+    '''
+    arr = np.asarray(rails, dtype=float).ravel()
+    if arr.size == 1:
+        return np.full(n, float(arr[0]))
+    fitted = np.ones(n)
+    m = min(n, arr.size)
+    fitted[:m] = arr[:m]
+    return fitted
+
+
+#: Fraction of a channel's full scale above which a capture is reported
+#: as possibly clipped.
+CLIP_FRACTION = 0.95
+
+
+def _clipped_channels(peaks, rails, fraction=CLIP_FRACTION):
+    '''Zero-based channels whose peak exceeds ``fraction`` of their rail.
+
+    Args:
+        peaks (np.ndarray): Each input channel's raw absolute peak.
+        rails (float or np.ndarray): Each channel's full scale (a scalar
+            means every channel), in the same units as ``peaks``.
+        fraction (float): Share of full scale that counts as clipped
+            (default `CLIP_FRACTION`, 0.95).
+
+    Returns:
+        channels (list of int): The clipped channels, ascending.
+    '''
+    peaks = np.atleast_1d(np.asarray(peaks, dtype=float))
+    limits = fraction * _fit_rails(rails, peaks.size)
+    return [int(ch) for ch in np.flatnonzero(peaks > limits)]
+
+
+def _clip_message(channels):
+    '''The clipping warning, naming each channel by its front-panel input
+    number (one-based, as the hardware labels it) and its zero-based
+    index (as ``pretrig_channel`` and the data columns count it).'''
+    inputs = ', '.join(str(ch + 1) for ch in channels)
+    indices = ', '.join(str(ch) for ch in channels)
+    plural = len(channels) > 1
+    return ('WARNING: Data may be clipped on input{} {} (channel ind{} {})\n'
+            .format('s' if plural else '', inputs,
+                    'ices' if plural else 'ex', indices))
 
 
 def _wait(duration, cancel_event=None, poll=CANCEL_POLL_INTERVAL):
@@ -386,8 +446,11 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
 
     **Warnings.** Progress and warnings are printed and the last one is
     kept in ``acquisition.MESSAGE``. A clipping warning is printed when
-    any raw sample (before resampling) exceeds 95 % of
-    ``settings.input_vmax()`` (``VmaxNI`` on NI, ``VmaxSC`` otherwise).
+    any raw sample (before resampling) of an input channel exceeds 95 %
+    of that channel's full scale (``settings.input_vmax_channels()``:
+    ``VmaxNI`` on NI, the channel's ``VmaxSC`` otherwise), naming the
+    channels; a drive column prepended by ``use_output_as_ch0`` is not
+    checked.
     Input the host reported as dropped is counted into
     ``acquisition.LAST_CAPTURE_OVERFLOWS``, and stretches of exact
     all-channel zeros inside the capture into
@@ -775,8 +838,12 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
     # inside the window (see `exact_zero_dropouts`). Checked on the
     # capture-rate data, before any resample smears the edges.
     global LAST_CAPTURE_DROPOUTS
+    # Each channel judged against its own full scale: the input columns
+    # only (any drive column is prepended further down).
+    n_inputs = stored_time_data_copy.shape[1]
+    input_rails = _fit_rails(settings.input_vmax_channels(), n_inputs)
     LAST_CAPTURE_DROPOUTS = exact_zero_dropouts(
-        stored_time_data_copy, float(settings.fs), settings.input_vmax())
+        stored_time_data_copy, float(settings.fs), input_rails)
     if LAST_CAPTURE_DROPOUTS[0] > 0:
         MESSAGE = ('WARNING: the device delivered {} stretch(es) of exact '
                    'digital silence totalling {:.0f} ms during this capture '
@@ -788,10 +855,13 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
                            1000.0 * LAST_CAPTURE_DROPOUTS[1]))
         print(MESSAGE)
 
-    # Clipping is an ADC-domain property — take the raw peak BEFORE any
+    # Clipping is an ADC-domain property — take the raw peaks BEFORE any
     # digital filtering, or the anti-alias FIR below would smear rail hits
-    # under the clip threshold.
-    raw_peak = float(np.max(np.abs(stored_time_data_copy))) if stored_time_data_copy.size else 0.0
+    # under the clip threshold. One per input channel, taken before the
+    # drive column of `use_output_as_ch0` is prepended, so each is judged
+    # against its own channel's full scale.
+    raw_peaks = (np.max(np.abs(stored_time_data_copy), axis=0)
+                 if stored_time_data_copy.size else np.zeros(n_inputs))
 
     # ---- Digital low-pass (round-9): resample down to the target fs ------
     # The window (pretrigger alignment included) was assembled at the
@@ -858,13 +928,14 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
     dataset  = datastructure.DataSet()
     dataset.add_to_dataset(timedata)
 
-    # Check for clipping. Data is now in volts, so compare against the
-    # effective full-scale (VmaxNI for nidaq, VmaxSC for soundcard). Any
-    # sample within 5 % of the rail gets flagged. Uses the RAW peak taken
-    # before the optional low-pass, so filtering can't hide a rail hit.
-    clip_threshold = 0.95 * settings.input_vmax()
-    if raw_peak > clip_threshold:
-        MESSAGE += 'WARNING: Data may be clipped'
+    # Check for clipping. Data is now in volts, so compare each input
+    # channel against its own full scale (VmaxNI for nidaq, the
+    # channel's VmaxSC for soundcard). Any sample within 5 % of the rail
+    # gets flagged. Uses the RAW peaks taken before the optional
+    # low-pass, so filtering can't hide a rail hit.
+    clipped = _clipped_channels(raw_peaks, input_rails)
+    if clipped:
+        MESSAGE += _clip_message(clipped)
         print(MESSAGE)
     
     

@@ -18,6 +18,10 @@ The full per-attribute reference is below; for worked end-to-end recipes
 
 ::: pydvma.options.MySettings.input_vmax
 
+::: pydvma.options.MySettings.input_vmax_channels
+
+::: pydvma.options.MySettings.channels_in_volts
+
 ::: pydvma.options.MySettings.output_vmax
 
 ::: pydvma.options.pretrig_level

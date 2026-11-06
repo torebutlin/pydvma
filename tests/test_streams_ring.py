@@ -161,6 +161,29 @@ class TestRingBuffers:
         np.testing.assert_array_equal(stored[-16:, 0], np.arange(16))
         np.testing.assert_array_equal(stored[-16:, 1], np.arange(16) + 1000)
 
+    def test_per_channel_vmax_scales_each_column(self):
+        """The ring holds each channel in its own volts, sample-exactly
+        in order (the reshape happens before the per-channel multiply)."""
+        s = _settings(VmaxSC=np.array([2.0, 0.01]))
+        rec = streams.Recorder(s)
+        rec.callback(_ramp_chunk(s, 0), s.chunk_size, None, None)
+        stored = rec.stored_time_data
+        np.testing.assert_allclose(stored[-8:, 0], 2.0 * np.arange(8))
+        np.testing.assert_allclose(stored[-8:, 1],
+                                   0.01 * (np.arange(8) + 1000.0))
+
+    def test_stale_length_per_channel_vmax_cannot_crash_the_callback(self):
+        """channels changed after VmaxSC was set: the row is fitted to the
+        block (truncated here), never broadcast-failed on the audio
+        thread."""
+        s = _settings(VmaxSC=np.array([2.0, 0.01, 5.0]))
+        rec = streams.Recorder(s)
+        rec.callback(_ramp_chunk(s, 0), s.chunk_size, None, None)
+        stored = rec.stored_time_data
+        np.testing.assert_allclose(stored[-8:, 0], 2.0 * np.arange(8))
+        np.testing.assert_allclose(stored[-8:, 1],
+                                   0.01 * (np.arange(8) + 1000.0))
+
     def test_wraparound_keeps_the_newest_window_in_order(self):
         s = _settings()
         rec = streams.Recorder(s)
@@ -477,6 +500,47 @@ class TestStreamReuse:
         s.stored_time = 0.016                         # mutate in place
         streams.start_stream(s)
         assert streams.REC_SC is not first            # rebuilt, not reused
+
+    def test_matching_per_channel_vmax_reuses(self, monkeypatch, no_pins,
+                                              clean_globals):
+        fake = self._bench()
+        monkeypatch.setattr(streams, 'sd', fake)
+        streams.start_stream(_settings(VmaxSC=np.array([1.0, 0.01])))
+        first = streams.REC_SC
+        streams.start_stream(_settings(VmaxSC=np.array([1.0, 0.01])))
+        assert streams.REC_SC is first
+        assert len(fake.opened) == 1
+
+    def test_changed_per_channel_vmax_rebuilds(self, monkeypatch, no_pins,
+                                               clean_globals):
+        fake = self._bench()
+        monkeypatch.setattr(streams, 'sd', fake)
+        streams.start_stream(_settings(VmaxSC=np.array([1.0, 0.01])))
+        first = streams.REC_SC
+        streams.start_stream(_settings(VmaxSC=np.array([1.0, 0.0316])))
+        assert streams.REC_SC is not first
+
+    def test_inplace_edit_of_a_per_channel_vmax_still_rebuilds(
+            self, monkeypatch, no_pins, clean_globals):
+        """The frozen signature holds a COPY of the per-channel values, so
+        turning one channel's knob (an in-place array edit by the serve
+        bridge) is still a change."""
+        fake = self._bench()
+        monkeypatch.setattr(streams, 'sd', fake)
+        s = _settings(VmaxSC=np.array([1.0, 0.01]))
+        streams.start_stream(s)
+        streams.start_stream(s)                       # reuse: recorder holds s
+        first = streams.REC_SC
+        s.VmaxSC[1] = 0.0316
+        streams.start_stream(s)
+        assert streams.REC_SC is not first
+
+    def test_scalar_and_per_channel_signatures_stay_hashable(self):
+        hash(streams._sc_settings_signature(_settings(VmaxSC=2.5)))
+        hash(streams._sc_settings_signature(
+            _settings(VmaxSC=np.array([1.0, 0.01]))))
+        assert streams._vmax_signature(2.5) == 2.5
+        assert streams._vmax_signature(np.array([1.0, 0.01])) == (1.0, 0.01)
 
     def test_dead_stream_rebuilds(self, monkeypatch, no_pins, clean_globals):
         fake = self._bench()

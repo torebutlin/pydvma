@@ -491,3 +491,25 @@ class TestSettingsToConfigJson:
 
     def test_none_settings_gives_empty(self):
         assert _settings_to_config_json(None) == {}
+
+    def test_per_channel_scale_reaches_the_ui_as_lists(self):
+        """A per-channel full scale (an interface with a preamp per
+        channel) and its stated gains travel as lists; an unstated
+        channel's gain is a JSON null, not a dropped key."""
+        import json
+        s = options.MySettings(device_driver='mock', channels=2, fs=8000,
+                               stored_time=0.1, VmaxSC=[1.0, 0.01],
+                               input_gain_db=[None, 60],
+                               input_pad=[False, True])
+        d = _settings_to_config_json(s)
+        json.dumps(d)
+        assert d['VmaxSC'] == [1.0, 0.01]
+        assert d['input_gain_db'] == [None, 60.0]
+        assert d['input_pad'] == [False, True]
+        assert d['input_mode'] == 'line'
+
+    def test_scalar_scale_stays_scalar_in_the_document(self):
+        d = _settings_to_config_json(_mock_settings())
+        assert d['VmaxSC'] == 1.0
+        assert d['input_gain_db'] is None
+        assert d['input_pad'] is False

@@ -35,41 +35,214 @@ except (ImportError, NotImplementedError, OSError):
     # machines); treat it the same as sounddevice being absent.
     sd = None
 
-def _derive_full_scale_volts(settings):
-    """Full-scale volts implied by ``settings.input_gain_db``, or ``None``.
+def _soundcard_identity(settings):
+    """``(name, neighbours)`` of the configured soundcard, or ``(None, None)``.
 
-    Resolves the configured soundcard device to a characterised profile
-    in `pydvma._soundcard_specs` and applies its maximum-input-level
-    table. When ``input_gain_db`` is None the derivation still succeeds
-    for a FIXED-GAIN interface (e.g. the ESI U24 XL): full scale is a
-    hardware constant there, so no stated gain is needed. Returns
-    ``None`` — leaving ``VmaxSC`` alone — for a variable-gain device
-    with no stated gain, a device that is not characterised, a
-    non-soundcard driver, or if the device cannot be identified (not
-    plugged in yet, PortAudio absent). A bad ``input_mode`` or an
-    out-of-range gain still raises, because those are mistakes in what
-    the operator asked for rather than missing information.
+    ``(None, None)`` for a non-soundcard driver, or when the device
+    cannot be identified (not plugged in yet, PortAudio absent).
+    ``neighbours`` is every device name present, for the indirect
+    Windows profile match in `pydvma._soundcard_specs`.
     """
-    from . import _soundcard_specs
     if settings.device_driver != 'soundcard':
-        return None
-    name = None
-    neighbours = None
+        return None, None
     try:
         from . import streams
         name = streams.soundcard_device_name(settings)
         neighbours = streams.all_soundcard_device_names()
     except Exception:
-        name = None
+        return None, None
     if not name:
-        return None
-    gain = settings.input_gain_db
-    if gain is None:
+        return None, None
+    return name, neighbours
+
+
+def _full_scale_from_profile(name, neighbours, gain_db, input_mode, pad):
+    """Full-scale volts of one channel of device ``name``, or ``None``.
+
+    ``gain_db`` None derives only on a FIXED-GAIN interface, where full
+    scale is a hardware constant; otherwise it returns ``None``.
+    Raises ``ValueError`` like `pydvma._soundcard_specs.full_scale_volts`
+    for a bad mode, an out-of-range gain, or a pad the device lacks.
+    """
+    from . import _soundcard_specs
+    if gain_db is None:
         if not _soundcard_specs.fixed_gain(name, neighbours=neighbours):
             return None
-        gain = 0.0
+        gain_db = 0.0
     return _soundcard_specs.full_scale_volts(
-        name, gain, settings.input_mode, neighbours=neighbours)
+        name, gain_db, input_mode, neighbours=neighbours, pad=pad)
+
+
+def _derive_full_scale_volts(settings):
+    """Full-scale volts implied by a SCALAR ``settings.input_gain_db``, or ``None``.
+
+    Resolves the configured soundcard device to a characterised profile
+    in `pydvma._soundcard_specs` and applies its maximum-input-level
+    table, with ``settings.input_mode`` and ``settings.input_pad``.
+    When ``input_gain_db`` is None the derivation still succeeds
+    for a FIXED-GAIN interface (e.g. the ESI U24 XL): full scale is a
+    hardware constant there, so no stated gain is needed. Returns
+    ``None`` — leaving ``VmaxSC`` alone — for a variable-gain device
+    with no stated gain, a device that is not characterised, a
+    non-soundcard driver, or if the device cannot be identified (not
+    plugged in yet, PortAudio absent). A bad ``input_mode``, an
+    out-of-range gain or a pad on a device without one still raises,
+    because those are mistakes in what the operator asked for rather
+    than missing information. Per-channel settings are derived channel
+    by channel in ``MySettings.__init__`` through the same helpers.
+    """
+    name, neighbours = _soundcard_identity(settings)
+    if not name:
+        return None
+    return _full_scale_from_profile(
+        name, neighbours, settings.input_gain_db, settings.input_mode,
+        bool(getattr(settings, 'input_pad', False)))
+
+
+def _is_per_channel(value):
+    """True for a per-channel sequence: a list, a tuple or a 1-D+ ndarray.
+
+    A string is one value (``input_mode='mic'``), as is a 0-d array.
+    """
+    if isinstance(value, (list, tuple)):
+        return True
+    return isinstance(value, np.ndarray) and value.ndim > 0
+
+
+def _gain_or_none(value):
+    """A stated gain as a float, or None when unstated.
+
+    ``None``, the string ``'None'`` (old settings files) and NaN (what
+    an ndarray holds where a list would hold None) all mean unstated.
+    """
+    if value is None or (isinstance(value, str) and value == 'None'):
+        return None
+    gain = float(value)
+    return None if np.isnan(gain) else gain
+
+
+def _as_bool(value):
+    """A switch setting as a bool; the strings ``'False'``/``'0'`` are False."""
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes', 'on')
+    return bool(value)
+
+
+def _collapse_equal(values):
+    """A float when every channel's value is equal, else the float array."""
+    values = np.asarray(values, dtype=float)
+    if values.size == 0:
+        return 1.0
+    if np.all(values == values[0]):
+        return float(values[0])
+    return values
+
+
+def _input_rails(settings, n=None):
+    """Full-scale input value of each of ``n`` channels, as a float ndarray.
+
+    Works on any settings-like object, including stand-ins and settings
+    restored from a file without ``__init__``: ``VmaxNI`` repeated on
+    ``'nidaq'``; otherwise ``VmaxSC``, a scalar broadcast to every
+    channel or a per-channel sequence truncated to ``n`` or padded with
+    1.0 (full-scale units: nothing is known about a channel added after
+    the values were set). ``n`` defaults to ``settings.channels``.
+    """
+    if getattr(settings, 'device_driver', None) == 'nidaq':
+        value = getattr(settings, 'VmaxNI', 1.0)
+    else:
+        value = getattr(settings, 'VmaxSC', 1.0)
+    per_channel = _is_per_channel(value)
+    if n is None:
+        n = getattr(settings, 'channels', None)
+    if n is None:
+        n = len(value) if per_channel else 1
+    n = int(n)
+    if not per_channel:
+        return np.full(n, float(value))
+    arr = np.asarray(value, dtype=float).ravel()
+    rails = np.ones(n)
+    m = min(n, arr.size)
+    rails[:m] = arr[:m]
+    return rails
+
+
+def _channel_rail(settings, channel):
+    """Full-scale input value of one channel, never raising.
+
+    The lenient lookup `pretrig_level` needs: it runs in the audio
+    callback and on the bare probe objects `pydvma.session` builds, so a
+    channel beyond a per-channel ``VmaxSC``, or a value that is not a
+    finite positive number, reads 1.0 rather than failing.
+
+    Args:
+        settings (object): A MySettings or a stand-in.
+        channel (int): Zero-based input channel.
+
+    Returns:
+        rail (float): The channel's full scale in stored units.
+    """
+    if getattr(settings, 'device_driver', None) == 'nidaq':
+        vmax = getattr(settings, 'VmaxNI', 1.0)
+    else:
+        vmax = getattr(settings, 'VmaxSC', 1.0)
+        if _is_per_channel(vmax):
+            try:
+                arr = np.asarray(vmax, dtype=float).ravel()
+                channel = int(channel)
+            except (TypeError, ValueError):
+                arr, channel = np.ones(0), 0
+            vmax = arr[channel] if 0 <= channel < arr.size else 1.0
+    try:
+        vmax = float(vmax)
+    except (TypeError, ValueError):
+        vmax = 1.0
+    if not np.isfinite(vmax) or vmax <= 0:
+        vmax = 1.0
+    return vmax
+
+
+#: Per-channel settings, and the value a channel added after they were
+#: set takes (see `_fit_per_channel`).
+_PER_CHANNEL_FILL = (
+    ('VmaxSC', 1.0),
+    ('input_gain_db', None),
+    ('input_mode', 'line'),
+    ('input_pad', False),
+    ('channel_sensitivities', 1.0),
+    ('iepe_excit_current_A', 0.0),
+)
+
+
+def _fit_per_channel(settings):
+    """Truncate or pad every per-channel setting to ``settings.channels``.
+
+    Mutates ``settings`` in place. Called by
+    `pydvma.streams._clamp_soundcard_input_channels` after it lowers
+    ``channels`` to what the device has, so the recorder's per-channel
+    scaling row, the stated gains and the calibration factors stay
+    aligned with the columns actually captured. Scalars are left alone
+    (they already mean "every channel"); a per-channel ``VmaxSC`` that
+    becomes uniform collapses to a float, as ``MySettings.__init__``
+    stores it. Attributes a stand-in settings object lacks are skipped.
+    """
+    n = int(settings.channels)
+    for name, fill in _PER_CHANNEL_FILL:
+        if not hasattr(settings, name):
+            continue
+        value = getattr(settings, name)
+        if not _is_per_channel(value) or len(value) == n:
+            continue
+        if isinstance(value, np.ndarray):
+            arr = np.asarray(value, dtype=float).ravel()
+            fitted = np.full(n, float(fill))
+            m = min(n, arr.size)
+            fitted[:m] = arr[:m]
+            if name == 'VmaxSC':
+                fitted = _collapse_equal(fitted)
+        else:
+            fitted = list(value)[:n] + [fill] * max(0, n - len(value))
+        setattr(settings, name, fitted)
 
 
 #: Fraction of the input's full scale that ``pretrig_threshold=None``
@@ -82,8 +255,9 @@ def pretrig_level(settings):
     """The trigger level a capture compares against, in stored units.
 
     ``settings.pretrig_threshold`` when one is set; otherwise
-    `PRETRIG_THRESHOLD_FS_FRACTION` of the input's full scale
-    (``VmaxNI`` on NI, ``VmaxSC`` on a soundcard), rounded to two
+    `PRETRIG_THRESHOLD_FS_FRACTION` of the TRIGGER channel's full scale
+    (``VmaxNI`` on NI; on a soundcard ``VmaxSC``, or its entry for
+    ``pretrig_channel`` when it is per-channel), rounded to two
     significant figures exactly as the web app rounds its default, so
     the two agree to the digit (0.25 V on a ±5 V NI range, 0.05 on an
     uncalibrated soundcard). Resolved at capture time, so an NI range
@@ -91,7 +265,9 @@ def pretrig_level(settings):
 
     Reads attributes with ``getattr`` rather than calling
     `MySettings.input_vmax`, so it also accepts the light stand-in
-    settings objects the recorders are sometimes driven with.
+    settings objects the recorders are sometimes driven with, and
+    settings restored from an old file. A rail that is missing, beyond
+    a per-channel list, or not a finite positive number counts as 1.0.
 
     Args:
         settings (MySettings): the capture's settings.
@@ -102,16 +278,7 @@ def pretrig_level(settings):
     threshold = getattr(settings, 'pretrig_threshold', None)
     if threshold is not None:
         return float(threshold)
-    if getattr(settings, 'device_driver', None) == 'nidaq':
-        vmax = getattr(settings, 'VmaxNI', 1.0)
-    else:
-        vmax = getattr(settings, 'VmaxSC', 1.0)
-    try:
-        vmax = float(vmax)
-    except (TypeError, ValueError):
-        vmax = 1.0
-    if not np.isfinite(vmax) or vmax <= 0:
-        vmax = 1.0
+    vmax = _channel_rail(settings, getattr(settings, 'pretrig_channel', 0) or 0)
     return float('%.2g' % (PRETRIG_THRESHOLD_FS_FRACTION * vmax))
 
 
@@ -134,7 +301,9 @@ class MySettings(object):
     the old rate; ``settings.channels = 3`` leaves the per-channel
     values (``channel_sensitivities``, ``iepe_excit_current_A``) sized
     for the old count, so plotting and transfer functions later fail
-    with an IndexError; and changing ``device_driver`` leaves the output
+    with an IndexError (only the full-scale accessors, `input_vmax`,
+    `input_vmax_channels` and `channels_in_volts`, truncate or pad to
+    the new count); and changing ``device_driver`` leaves the output
     driver and its voltage rail (``output_vmax()``) as they were. To
     change a setting, make a new ``MySettings``.
 
@@ -144,10 +313,12 @@ class MySettings(object):
       in volts; engineering-unit scaling is applied at display/fit time
       from ``channel_sensitivities``, never by rescaling the stored data.
     - **Per-channel fields take a scalar or a sequence.**
-      ``iepe_excit_current_A`` and ``channel_sensitivities`` accept one
-      value (broadcast to all ``channels``) or a list of length
-      ``channels``, indexed in captured-column order — on a cDAQ chassis
-      that is slot order (see ``input_channels_spec``).
+      ``iepe_excit_current_A``, ``channel_sensitivities``, ``VmaxSC``,
+      ``input_gain_db``, ``input_mode`` and ``input_pad`` accept one
+      value (meaning every channel) or a list of length ``channels``,
+      indexed in captured-column order — on a cDAQ chassis that is slot
+      order (see ``input_channels_spec``). A scalar keeps exactly its
+      one-value meaning.
     - **The ``output_*`` fields** configure the generation/AO path and,
       when left unset, are derived from their input counterparts at
       construction.
@@ -188,12 +359,13 @@ class MySettings(object):
             and full-scale units while it is left at 1.0 (uncalibrated)
             — the samples are scaled by ``VmaxSC`` on the way in, and
             the threshold is compared after that scaling. ``None``
-            (default) means 5 % of the input's full scale
-            (`input_vmax`), rounded to two significant figures: 0.25 V
-            on a ±5 V NI range, 0.05 on an uncalibrated soundcard. That
-            is the web app's default too, and it is resolved when the
-            capture runs (`pretrig_level`), so it follows a range the
-            hardware coerced. Raise it to a sensible fraction of the
+            (default) means 5 % of the trigger channel's full scale
+            (``input_vmax(pretrig_channel)``), rounded to two
+            significant figures: 0.25 V on a ±5 V NI range, 0.05 on an
+            uncalibrated soundcard. That is the web app's default too,
+            and it is resolved when the capture runs (`pretrig_level`),
+            so it follows a range the hardware coerced. Raise it to a
+            sensible fraction of the
             expected signal when 5 % sits near the noise floor.
         pretrig_channel (int): Channel index monitored for the trigger
             (default ``0``).
@@ -291,28 +463,52 @@ class MySettings(object):
             ``add_ai_voltage_chan``. Pick the smallest range covering the
             signal for best resolution. Fixed at ±5 V on the 9234 (other
             values are accepted but ignored by the hardware).
-        input_gain_db (float): Preamp gain currently set on the audio
-            interface, in dB (default ``None``). pydvma cannot read this
-            — it is a front-panel control no audio API exposes — so
-            stating it here lets ``VmaxSC`` be derived from the device's
-            published maximum input level, and records in the saved
-            dataset what the front panel was set to. Takes precedence
-            over an explicit ``VmaxSC``. Only applies to interfaces
-            characterised in ``pydvma._soundcard_specs``; ignored
-            otherwise. Changing the gain on the hardware invalidates the
-            calibration, so re-state it. A characterised FIXED-GAIN
-            interface (e.g. the ESI U24 XL) needs no stated gain:
-            ``VmaxSC`` is derived automatically when this is ``None``
-            and ``VmaxSC`` is left at its default.
-        input_mode (str): Which input the signal is on — ``'line'``
-            (default), ``'inst'`` or ``'mic'``. Sets the maximum input
-            level used with ``input_gain_db``; on a Scarlett 2i2 these
-            are 22, 12 and 16 dBu at minimum gain respectively.
-        VmaxSC (float): Soundcard input calibration (default ``1.0``) —
-            the jack voltage corresponding to a normalised reading of
-            1.0. Default ``1.0`` treats normalised samples as volts at
-            unit scale (no calibration); set it to your measured input
-            sensitivity to calibrate captures in volts.
+        input_gain_db (float or None or sequence): Preamp gain currently
+            set on the audio interface, in dB (default ``None``). pydvma
+            cannot read this — it is a front-panel control no audio API
+            exposes — so stating it here lets ``VmaxSC`` be derived from
+            the device's published maximum input level, and records in
+            the saved dataset what the front panel was set to. Takes
+            precedence over an explicit ``VmaxSC``. Only applies to
+            interfaces characterised in ``pydvma._soundcard_specs``;
+            ignored otherwise. Changing the gain on the hardware
+            invalidates the calibration, so re-state it. A characterised
+            FIXED-GAIN interface (e.g. the ESI U24 XL) needs no stated
+            gain: ``VmaxSC`` is derived automatically when this is
+            ``None`` and ``VmaxSC`` is left at its default. An interface
+            with a preamp per channel (the Audient iD44, four gain
+            knobs) takes a list of length ``channels`` instead, e.g.
+            ``[60, 60, None, 0]``: each channel's ``VmaxSC`` is derived
+            from its own entry, and a ``None`` entry leaves that
+            channel's ``VmaxSC`` as it is (1.0, full-scale units, unless
+            given). A scalar is the same gain on every channel, as
+            before. Stays a scalar when given as one, else is stored as
+            a list.
+        input_mode (str or sequence): Which input the signal is on —
+            ``'line'`` (default), ``'inst'`` or ``'mic'``, or a list
+            with one per channel. Sets the maximum input level used with
+            ``input_gain_db``; on a Scarlett 2i2 these are 22, 12 and
+            16 dBu at minimum gain respectively.
+        input_pad (bool or sequence): Whether the interface's input pad
+            is engaged (default ``False``), or a list with one per
+            channel. A pad lowers the signal before the preamp, so it
+            RAISES full scale by the profile's ``pad_db`` (10 dB on the
+            Audient iD44). Used only where full scale is derived from a
+            characterised interface's profile (a stated gain, or a
+            fixed-gain interface); ``True`` there on an interface with
+            no pad raises ``ValueError``.
+        VmaxSC (float or sequence): Soundcard input calibration (default
+            ``1.0``) — the jack voltage corresponding to a normalised
+            reading of 1.0. Default ``1.0`` treats normalised samples as
+            volts at unit scale (no calibration); set it to your
+            measured input sensitivity to calibrate captures in volts.
+            Takes a list with one per channel for an interface whose
+            channels differ. Stored as a float when every channel's
+            value is equal (whatever was passed), otherwise as a float
+            ndarray of shape ``(channels,)``; either way the recorder
+            multiplies each channel by its own value, so stored data
+            are volts per channel. Read it through `input_vmax` /
+            `input_vmax_channels` rather than directly.
         NI_mode (str): NI terminal configuration — ``'DAQmx_Val_RSE'``
             (default), ``'DAQmx_Val_NRSE'``, ``'DAQmx_Val_Diff'`` or
             ``'DAQmx_Val_PseudoDiff'``. DSA modules (9234) are
@@ -366,7 +562,11 @@ class MySettings(object):
             ±4.24 V.)
         output_VmaxSC (float or None): Full-scale output voltage for the
             soundcard AO path — the jack voltage corresponding to a ±1
-            sounddevice sample; defaults to ``VmaxSC``.
+            sounddevice sample. Always one number. Defaults to
+            ``VmaxSC`` when that is one number (every channel equal);
+            with a per-channel ``VmaxSC`` it defaults to ``1.0``, i.e.
+            the generated output is in normalised ±1 units until you set
+            it.
         use_output_as_ch0 (bool): When ``True`` and an ``output`` array
             is passed to ``log_data``, the generated drive signal is
             prepended as channel 0 of the recorded data (default
@@ -434,6 +634,7 @@ class MySettings(object):
                  VmaxSC=1.0,
                  input_gain_db=None,
                  input_mode='line',
+                 input_pad=False,
                  iepe_excit_current_A=0.0,
                  channel_sensitivities=1.0,
                  NI_mode='DAQmx_Val_RSE',
@@ -641,7 +842,6 @@ class MySettings(object):
         
         # ADVANCED SETTINGS
         self.VmaxNI=float(VmaxNI)
-        self.VmaxSC=float(VmaxSC)
 
         # Preamp gain provenance. pydvma cannot READ the gain on a USB
         # interface — it is a front-panel control no audio API exposes —
@@ -650,28 +850,37 @@ class MySettings(object):
         # Recording it here also means a saved dataset says what the
         # front panel was set to, which is the only defence against a
         # calibration silently going stale when someone turns the knob.
-        self.input_mode = str(input_mode).lower()
-        if (input_gain_db is None) or (input_gain_db == 'None'):
-            self.input_gain_db = None
-            if self.VmaxSC == 1.0:
-                # A fixed-gain interface (no analogue gain anywhere in
-                # its input path) has a constant full-scale voltage, so
-                # calibration needs no stated gain. Only the untouched
-                # default is replaced — an explicit VmaxSC is the
-                # operator's own calibration and wins.
+        # An interface with a preamp per channel (the Audient iD44)
+        # takes any of the four as a per-channel sequence instead.
+        if any(_is_per_channel(v)
+               for v in (VmaxSC, input_gain_db, input_mode, input_pad)):
+            self._init_per_channel_scale(VmaxSC, input_gain_db,
+                                         input_mode, input_pad)
+        else:
+            self.VmaxSC = float(VmaxSC)
+            self.input_mode = str(input_mode).lower()
+            self.input_pad = _as_bool(input_pad)
+            if (input_gain_db is None) or (input_gain_db == 'None'):
+                self.input_gain_db = None
+                if self.VmaxSC == 1.0:
+                    # A fixed-gain interface (no analogue gain anywhere in
+                    # its input path) has a constant full-scale voltage, so
+                    # calibration needs no stated gain. Only the untouched
+                    # default is replaced — an explicit VmaxSC is the
+                    # operator's own calibration and wins.
+                    derived = _derive_full_scale_volts(self)
+                    if derived is not None:
+                        self.VmaxSC = derived
+                        print('note: fixed-gain interface recognised; VmaxSC '
+                              'set to %.3g V (full-scale peak).' % derived)
+            else:
+                self.input_gain_db = float(input_gain_db)
                 derived = _derive_full_scale_volts(self)
                 if derived is not None:
+                    # An explicit VmaxSC would be a second, conflicting
+                    # answer to the same question, so the stated gain wins
+                    # and the derivation is what gets recorded.
                     self.VmaxSC = derived
-                    print('note: fixed-gain interface recognised; VmaxSC '
-                          'set to %.3g V (full-scale peak).' % derived)
-        else:
-            self.input_gain_db = float(input_gain_db)
-            derived = _derive_full_scale_volts(self)
-            if derived is not None:
-                # An explicit VmaxSC would be a second, conflicting
-                # answer to the same question, so the stated gain wins
-                # and the derivation is what gets recorded.
-                self.VmaxSC = derived
         self.NI_mode=NI_mode
         self.chunk_size=int(chunk_size)
         self.num_chunks=int(num_chunks)
@@ -686,7 +895,11 @@ class MySettings(object):
             self.output_VmaxNI = float(output_VmaxNI)
 
         if output_VmaxSC is None:
-            self.output_VmaxSC = self.VmaxSC
+            # Follows a one-number input full scale, as it always has. A
+            # per-channel input rail says nothing about the output jack,
+            # so the output then stays at its uncalibrated 1.0.
+            self.output_VmaxSC = (self.VmaxSC if np.ndim(self.VmaxSC) == 0
+                                  else 1.0)
         else:
             self.output_VmaxSC = float(output_VmaxSC)
 
@@ -788,14 +1001,49 @@ class MySettings(object):
                 )
 
 
-    def _broadcast_per_channel(self, value, name):
-        '''Coerce ``value`` to a float ndarray of length ``channels``.
+    def _broadcast_per_channel(self, value, name, convert=None):
+        '''Coerce ``value`` to one entry per channel.
 
-        Scalars (int / float / 0-d array) broadcast across all
+        Scalars (int / float / str / 0-d array) broadcast across all
         channels; a list / tuple / 1-d ndarray must already be the
-        right length. Used by `iepe_excit_current_A` and
-        `channel_sensitivities` so callers can pass either.
+        right length (a length-1 sequence broadcasts too). Without
+        ``convert`` the result is a float ndarray of length
+        ``channels``, used by `iepe_excit_current_A`,
+        `channel_sensitivities` and a per-channel `VmaxSC`. With
+        ``convert`` it is a list of ``convert(entry)``, for per-channel
+        settings that are not plain numbers: a stated gain may be None
+        on one channel, an input mode is a string
+        (`input_gain_db`, `input_mode`, `input_pad`).
+
+        Args:
+            value (object): The setting as passed to the constructor.
+            name (str): The setting's name, for the error message.
+            convert (callable or None): Applied to each entry; None
+                gives a float ndarray instead.
+
+        Returns:
+            values (np.ndarray or list): One entry per channel.
+
+        Raises:
+            ValueError: A sequence whose length is neither 1 nor
+                ``channels``, or one that is not 1-D.
         '''
+        if convert is not None:
+            if _is_per_channel(value):
+                if isinstance(value, np.ndarray) and value.ndim != 1:
+                    raise ValueError(
+                        '{} must be a scalar or 1-D sequence (got shape {})'
+                        .format(name, value.shape))
+                seq = list(value)
+            else:
+                seq = [value]
+            if len(seq) == 1:
+                seq = seq * self.channels
+            elif len(seq) != self.channels:
+                raise ValueError(
+                    '{} length {} does not match channels={}'
+                    .format(name, len(seq), self.channels))
+            return [convert(v) for v in seq]
         arr = np.atleast_1d(np.asarray(value, dtype=float))
         if arr.ndim != 1:
             raise ValueError(
@@ -811,22 +1059,154 @@ class MySettings(object):
             )
         return arr
 
+    def _init_per_channel_scale(self, VmaxSC, input_gain_db, input_mode,
+                                input_pad):
+        '''Set ``VmaxSC`` and the gain fields when any is per-channel.
+
+        The per-channel twin of the scalar block in ``__init__``, with
+        the same rules applied channel by channel: a stated gain on a
+        characterised soundcard derives that channel's full scale (and
+        overrides an explicit ``VmaxSC`` for it); an unstated gain
+        leaves an explicit ``VmaxSC`` alone and derives only on a
+        fixed-gain interface, and only where ``VmaxSC`` is the untouched
+        1.0; anything else keeps the given value. The device is looked
+        up once, and only if some channel needs it.
+
+        Each of the four fields stays scalar when it was given as one
+        and becomes a list of length ``channels`` otherwise. ``VmaxSC``
+        ends up a float when every channel's value is equal, else a
+        float ndarray of shape ``(channels,)``.
+
+        Args:
+            VmaxSC (float or sequence): The constructor argument.
+            input_gain_db (float or None or sequence): The constructor
+                argument; a sequence may hold None per channel.
+            input_mode (str or sequence): The constructor argument.
+            input_pad (bool or sequence): The constructor argument.
+
+        Raises:
+            ValueError: A sequence of the wrong length, a per-channel
+                ``VmaxSC`` that is not finite and positive, or a gain,
+                mode or pad the device does not have.
+        '''
+        vmax = self._broadcast_per_channel(VmaxSC, 'VmaxSC')
+        if not np.all(np.isfinite(vmax) & (vmax > 0)):
+            raise ValueError(
+                'VmaxSC must be a finite positive full-scale value on '
+                'every channel (got {!r}).'.format(vmax.tolist()))
+        gains = self._broadcast_per_channel(input_gain_db, 'input_gain_db',
+                                            convert=_gain_or_none)
+        modes = self._broadcast_per_channel(input_mode, 'input_mode',
+                                            convert=lambda m: str(m).lower())
+        pads = self._broadcast_per_channel(input_pad, 'input_pad',
+                                           convert=_as_bool)
+        identity = None
+        fixed = []
+        for ch in range(self.channels):
+            if gains[ch] is None and vmax[ch] != 1.0:
+                continue                 # the operator's own calibration
+            if identity is None:
+                identity = _soundcard_identity(self)
+            name, neighbours = identity
+            if not name:
+                break                    # nothing can be derived
+            derived = _full_scale_from_profile(name, neighbours, gains[ch],
+                                               modes[ch], pads[ch])
+            if derived is not None:
+                vmax[ch] = derived
+                if gains[ch] is None:
+                    fixed.append(ch)
+        if fixed:
+            print('note: fixed-gain interface recognised; VmaxSC set to the '
+                  'full-scale peak on channel(s) %s.'
+                  % ', '.join(str(ch) for ch in fixed))
+        self.VmaxSC = _collapse_equal(vmax)
+        self.input_gain_db = (gains if _is_per_channel(input_gain_db)
+                              else _gain_or_none(input_gain_db))
+        self.input_mode = (modes if _is_per_channel(input_mode)
+                           else str(input_mode).lower())
+        self.input_pad = (pads if _is_per_channel(input_pad)
+                          else _as_bool(input_pad))
+
 
     # Driver-selecting accessors for the full-scale voltages.  Internal
     # code (streams callbacks, oscilloscope display, clipping warning,
     # signal_generator) uses these so it doesn't have to branch on
     # device_driver.  All values are in volts.
 
-    def input_vmax(self):
-        '''Effective full-scale input voltage for the current driver.
+    def input_vmax(self, channel=None):
+        '''Effective full-scale input value for the current driver.
+
+        Args:
+            channel (int or None): Zero-based input channel, or None
+                (the default) for the largest over all channels.
 
         Returns:
             vmax (float): ``VmaxNI`` (the configured AI range) when
                 ``device_driver='nidaq'``; otherwise ``VmaxSC``, the
                 sound card's full-scale voltage (1.0 when uncalibrated,
-                so readings are in full-scale units).
+                so readings are in full-scale units). With a
+                per-channel ``VmaxSC``, that ``channel``'s entry, or
+                the largest entry when ``channel`` is None: the value
+                no sample of the capture can exceed, which is what a
+                single-number consumer (a level meter scale, the
+                dropout check's silence test) needs. A channel beyond a
+                per-channel ``VmaxSC`` reads 1.0 (see
+                `input_vmax_channels`).
+
+        Raises:
+            IndexError: A negative ``channel``.
         '''
-        return self.VmaxNI if self.device_driver == 'nidaq' else self.VmaxSC
+        if channel is None:
+            if self.device_driver == 'nidaq':
+                return self.VmaxNI
+            if not _is_per_channel(self.VmaxSC):
+                return self.VmaxSC
+            return float(np.max(self.input_vmax_channels()))
+        channel = int(channel)
+        if channel < 0:
+            raise IndexError('channel must be >= 0, got %d' % channel)
+        return float(_input_rails(self, max(int(self.channels), channel + 1))
+                     [channel])
+
+    def input_vmax_channels(self):
+        '''Full-scale input value of each channel, in stored units.
+
+        ``VmaxNI`` repeated on ``device_driver='nidaq'``; otherwise
+        ``VmaxSC`` broadcast when it is one number, or its per-channel
+        entries. The array always has ``channels`` entries: when
+        ``channels`` was changed after the settings were built, a
+        per-channel ``VmaxSC`` is truncated, or padded with 1.0 (the
+        full-scale units of a channel nothing is known about). This is
+        the rail the recorder scales by and the clip check judges each
+        channel against.
+
+        Returns:
+            rails (np.ndarray): Float array of shape ``(channels,)``.
+        '''
+        return _input_rails(self)
+
+    def channels_in_volts(self):
+        '''Whether each channel's full scale is a real voltage.
+
+        True on every channel on NI, where the AI task returns volts.
+        On a soundcard, True where the channel's ``VmaxSC`` has been
+        moved off its uncalibrated default of 1.0, which is what a
+        stated gain on a characterised device, a fixed-gain device's
+        automatic derivation, or an explicit ``VmaxSC`` all do; False
+        where the channel's data are full-scale units (no gain stated
+        on a variable-gain device, an uncharacterised device, or the
+        device could not be identified). The same rule as the web
+        app's volts test and ``pydvma.serve``'s ``inputVmaxIsVolts``,
+        applied per channel.
+
+        Returns:
+            in_volts (np.ndarray): Bool array of shape ``(channels,)``.
+        '''
+        rails = self.input_vmax_channels()
+        if self.device_driver == 'nidaq':
+            return np.ones(rails.shape, dtype=bool)
+        return rails != 1.0
 
     def output_vmax(self):
         '''Effective full-scale output voltage for the current driver.

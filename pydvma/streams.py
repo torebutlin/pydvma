@@ -101,6 +101,18 @@ def _ni_settings_signature(s):
     )
 
 
+def _vmax_signature(value):
+    """Frozen form of ``VmaxSC`` for `_sc_settings_signature`.
+
+    A float for one number, exactly as before; a tuple of floats for a
+    per-channel array, which is hashable, comparable and a copy of the
+    values at the time it was taken.
+    """
+    if options._is_per_channel(value):
+        return tuple(float(v) for v in np.asarray(value, dtype=float).ravel())
+    return float(value)
+
+
 def _sc_settings_signature(s):
     """Tuple of stream- and buffer-impacting soundcard settings.
 
@@ -115,7 +127,10 @@ def _sc_settings_signature(s):
 
     ``VmaxSC`` is included because the callback scales samples on the
     way IN: reusing a buffer of differently-scaled history would mix
-    two calibrations in one window. The duplex determinants
+    two calibrations in one window. A per-channel ``VmaxSC`` enters as
+    a tuple of its values (`_vmax_signature`), so the signature stays
+    hashable and is a COPY: an in-place edit of the array after the
+    stream opened still reads as a change. The duplex determinants
     (``output_device_index`` / ``output_channels`` when
     `output_shares_input_clock`) are included because they decide the
     stream's SHAPE (input-only vs full-duplex) at open time.
@@ -132,7 +147,7 @@ def _sc_settings_signature(s):
         int(s.chunk_size),
         int(s.num_chunks),
         float(s.stored_time),  # affects stored_time_data buffer size
-        float(getattr(s, 'VmaxSC', 1.0)),
+        _vmax_signature(getattr(s, 'VmaxSC', 1.0)),
         (int(s.output_device_index), int(getattr(s, 'output_channels', 1)))
         if shares else None,
     )
@@ -159,7 +174,10 @@ def _clamp_soundcard_input_channels(settings):
     allocation (`Recorder.__init__`) and the actual
     `sd.InputStream` opening (`Recorder.init_stream`). A no-op when
     ``sd`` is unavailable, when the device default can't be resolved,
-    or when ``settings.channels`` already fits.
+    or when ``settings.channels`` already fits. When it does clamp,
+    the per-channel settings (a per-channel ``VmaxSC``, stated gains,
+    modes, pads, ``channel_sensitivities``) are truncated to match, see
+    `pydvma.options._fit_per_channel`.
     '''
     if sd is None:
         return
@@ -178,6 +196,9 @@ def _clamp_soundcard_input_channels(settings):
               "requested channels=%d. Clamping to %d."
               % (in_info['name'], max_in, settings.channels, max_in))
         settings.channels = max_in
+        # Keep the per-channel settings (VmaxSC, stated gains, pads,
+        # sensitivities) aligned with the channels actually captured.
+        options._fit_per_channel(settings)
     _warn_about_loopback_channels(settings, in_info['name'])
 
 
@@ -1270,7 +1291,8 @@ class Recorder(object):
     to a normalised 1.0). Default ``VmaxSC=1.0`` means no calibration
     — ±1 normalised is returned as ±1 "V" — which keeps behaviour
     byte-identical to the old convention for anyone who hasn't
-    measured their soundcard's sensitivity.
+    measured their soundcard's sensitivity. A per-channel ``VmaxSC``
+    scales each channel by its own value.
 
     Channel-count clamping
     ----------------------
@@ -1447,7 +1469,24 @@ class Recorder(object):
         unfreezing after an armed capture, so the finished window
         cannot re-arm the trigger as it re-rolls through.'''
         self._stored_ring[:] = 0.0
-    
+
+    @staticmethod
+    def _scale_row(vmax, channels):
+        '''A per-channel ``VmaxSC`` as a float row of length ``channels``.
+
+        Returned as is when it already fits (no copy, so it costs
+        nothing per callback); otherwise truncated, or padded with 1.0
+        for a channel added after the values were set, so a stale-length
+        array can never misalign or crash the audio thread.
+        '''
+        row = np.asarray(vmax, dtype=float).ravel()
+        if row.size == channels:
+            return row
+        fitted = np.ones(channels)
+        m = min(channels, row.size)
+        fitted[:m] = row[:m]
+        return fitted
+
     def callback(self, in_data, frame_count, time_info, status):
         '''
         Obtains data from the audio stream, and runs the trigger state
@@ -1459,13 +1498,18 @@ class Recorder(object):
         volts (where "volts" means "ŷ × VmaxSC", with ŷ the
         normalised sample). VmaxSC defaults to 1.0 so uncalibrated
         soundcards keep identical numeric behaviour to the old ±1
-        convention.
+        convention. A per-channel ``VmaxSC`` (an interface with a
+        preamp per channel, such as the Audient iD44) multiplies each
+        column of the ``(chunk_size, channels)`` block by its own
+        channel's value, so every channel is in its own volts.
 
         ``pretrig_threshold`` is compared in those same units — volts
         on a calibrated interface, full-scale units on an uncalibrated
-        one. The default 0.05 therefore means "5% of full scale" only
+        one. An explicit 0.05 therefore means "5% of full scale" only
         while ``VmaxSC`` is 1.0; on a device with a measured voltage
-        scale it means 50 mV, which may sit in the noise.
+        scale it means 50 mV, which may sit in the noise. Left at None
+        it is 5 % of the trigger channel's own full scale
+        (`pydvma.options.pretrig_level`).
 
         Runs on the audio thread with an O(chunk_size) budget: one
         scaled copy of the chunk, two ring writes, and (armed only) the
@@ -1485,8 +1529,19 @@ class Recorder(object):
             except AttributeError:
                 pass
         # self.osc_data_chunk = (np.frombuffer(in_data, dtype='int'+str(self.settings.nbits))/2**(self.settings.nbits-1))
-        self.osc_data_chunk = np.copy(in_data) * self.settings.VmaxSC
-        self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
+        vmax = self.settings.VmaxSC
+        if options._is_per_channel(vmax):
+            # One full scale per channel: shape the block (frames,
+            # channels) FIRST so the (channels,) row multiplies each
+            # column by its own channel's value. The multiply makes the
+            # new array, so PortAudio's buffer is never written.
+            channels = self.settings.channels
+            self.osc_data_chunk = (
+                np.reshape(in_data, [self.settings.chunk_size, channels])
+                * self._scale_row(vmax, channels))
+        else:
+            self.osc_data_chunk = np.copy(in_data) * vmax
+            self.osc_data_chunk=np.reshape(self.osc_data_chunk,[self.settings.chunk_size,self.settings.channels])
         armed = self.settings.pretrig_samples is not None
         frozen = armed and self.capture_complete
         self._osc_pos = self._ring_write(self._osc_ring, self._osc_pos,
