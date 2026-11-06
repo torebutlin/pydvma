@@ -17,6 +17,12 @@ needs are missing from that picture:
   published maximum input level, which is what
   :func:`full_scale_volts` computes for ``MySettings.VmaxSC``.
 
+Some interfaces (the Audient iD44) have a gain per channel, a switchable
+pad and channels that are neither analogue nor loopback (ADAT optical);
+the profile keys ``per_channel_gain``, ``pad_db``, ``mode_channels`` and
+a ``(min, max)`` gain range describe those. A float ``gain_range_db``
+still means ``(0, value)``.
+
 Both are static per model, so they live in the ``PROFILES`` table below,
 in the spirit of ``_ni_device_specs.QUIRKS``. Add an entry when you
 characterise a new interface; unknown devices simply get ``None`` back
@@ -84,6 +90,48 @@ PROFILES = {
         # must be unplugged for headphone use) — as line outs both
         # jacks are mono L/R.
         'max_output_dbu': 6.9,
+    },
+    'audient_id44': {
+        # iD44MKII Manual V4: p16 (preamp features: line inputs are
+        # padded through the mic preamps, -10 dB pad, 100 Hz HPF), p18
+        # (input table: mic max +18 dBu, line +28 dBu, DI +10 dBu;
+        # digital reference 0 dBFS = +18 dBu), p19 (insert return drives
+        # the ADC directly), p55 (spec table: mic gain 0 to +60 dB, line
+        # gain -10 to +50 dB, D.I. gain 0-60 dB, mic EIN -126 dBu,
+        # max input +18 dBu (+28 with pad), line outs +18 dBu = 0 dBFS,
+        # headphones +14 dBu = 0 dBFS, 20 inputs = 4 analogue + 16
+        # digital). Bench 2026-11-06 (Mac): CoreAudio reports 22 inputs
+        # (21-22 loopback of DAW 1+2, amplitude exact), native rates
+        # 44.1/48/88.2/96 kHz, open-input ADC floor about -117 dBFS rms
+        # broadband at 48 kHz, line-path gain at the top stop measured
+        # +50.46 dB on channel 2.
+        'match': ('audient id44',),
+        'vendor_match': ('audient',),
+        'label': 'Audient iD44',
+        # 4 analogue preamps, 16 ADAT optical inputs (not wired to
+        # anything unless an expander is attached) and the two DAW
+        # loopback channels.
+        'channel_roles': ('analogue',) * 4 + ('optical',) * 16
+                         + ('loopback',) * 2,
+        # Maximum input at the mode's MINIMUM gain (p18, p55).
+        'max_input_dbu': {'mic': 18.0, 'line': 28.0, 'inst': 10.0},
+        # (minimum, maximum) gain in dB per mode (p55).
+        'gain_range_db': {'mic': (0.0, 60.0), 'line': (-10.0, 50.0),
+                          'inst': (0.0, 60.0)},
+        # Switchable pad (p16). The 10 dB figure is assumed on line and
+        # inst; the manual verifies it on mic only.
+        'pad_db': 10.0,
+        # Inst (D.I.) exists on the first two channels only (zero-based).
+        'mode_channels': {'inst': (0, 1)},
+        # Each analogue channel has its own gain control.
+        'per_channel_gain': True,
+        'preferred_fs': 48000,
+        # Microphone equivalent input noise (p55) and the measured
+        # open-input ADC floor, used by :func:`analogue_floor_dbfs`.
+        'ein_dbu': -126.0,
+        'adc_floor_dbfs': -117.0,
+        'max_output_dbu': 18.0,
+        'headphone_output_dbu': 14.0,
     },
 }
 
@@ -186,7 +234,8 @@ def fixed_gain(name, neighbours=None):
     profile = device_profile(name, neighbours)
     if profile is None:
         return False
-    return all(limit == 0.0 for limit in profile['gain_range_db'].values())
+    return all(_range_tuple(limit)[1] == 0.0
+               for limit in profile['gain_range_db'].values())
 
 
 def input_modes(name, neighbours=None):
@@ -213,30 +262,69 @@ def max_input_dbu(name, neighbours=None):
     return dict(profile['max_input_dbu'])
 
 
-def full_scale_volts(name, gain_db, input_mode='line', neighbours=None):
-    """Volts (peak) corresponding to a full-scale reading, or ``None``.
+def _range_tuple(value):
+    """A ``gain_range_db`` entry as ``(min, max)``; a float means ``(0, value)``."""
+    if isinstance(value, (tuple, list)):
+        return (float(value[0]), float(value[1]))
+    return (0.0, float(value))
 
-    This is the value ``MySettings.VmaxSC`` wants: the jack voltage that
-    reads 1.0 on the normalised ±1 scale PortAudio delivers. It follows
-    from the interface's maximum input level ``L`` (in dBu, at minimum
-    gain) and the preamp gain ``G``::
 
-        V_fullscale_peak = sqrt(2) * 0.7746 * 10 ** ((L - G) / 20)
+def gain_range(name, input_mode, neighbours=None):
+    """Usable ``(min_db, max_db)`` preamp gain for an input mode, or ``None``.
 
-    **Confirmed on hardware to 0.10 dB** (2026-08-10): a 5.000 Vpp sine
-    into a Scarlett 2i2 Line input at a reported 9 dB gain read 0.505072
-    of full scale, implying 4.9498 V peak against the 4.8932 V predicted
-    here. So both the published table and Focusrite Control's gain
-    readout can be trusted; no per-device calibration run is needed.
-
-    ``gain_db`` is the preamp gain the operator has set — pydvma cannot
-    read it, which is why it must be stated. Raises ``ValueError`` for an
-    unknown input mode or a gain outside the device's range, since a
-    silently wrong voltage would propagate into every derived result.
+    ``None`` when the device is not characterised or lacks that mode.
+    Profiles that store a single float give ``(0.0, value)``; the Audient
+    iD44's line path starts at -10 dB.
     """
     profile = device_profile(name, neighbours)
-    if profile is None or gain_db is None:
+    if profile is None:
         return None
+    entry = profile['gain_range_db'].get(str(input_mode).lower())
+    return None if entry is None else _range_tuple(entry)
+
+
+def per_channel_gain(name, neighbours=None):
+    """True when each analogue input has its own gain control (iD44)."""
+    profile = device_profile(name, neighbours)
+    return bool(profile and profile.get('per_channel_gain', False))
+
+
+def channel_input_modes(name, channel, neighbours=None):
+    """Input modes available on one zero-based channel, sorted, or ``None``.
+
+    ``None`` when the device is not characterised. ``'inst'`` is offered
+    only on the channels in the profile's ``mode_channels['inst']``;
+    optical and loopback channels have no input mode (``[]``).
+    """
+    profile = device_profile(name, neighbours)
+    if profile is None:
+        return None
+    channel = int(channel)
+    roles = profile['channel_roles']
+    role = roles[channel] if channel < len(roles) else 'analogue'
+    if role != 'analogue':
+        return []
+    restricted = profile.get('mode_channels', {})
+    return sorted(m for m in profile['max_input_dbu']
+                  if m not in restricted or channel in restricted[m])
+
+
+def optical_channels(name, channels, neighbours=None):
+    """Zero-based indices of the digital optical (ADAT) inputs; ``[]`` if none."""
+    roles = channel_roles(name, channels, neighbours)
+    if roles is None:
+        return []
+    return [i for i, role in enumerate(roles) if role == 'optical']
+
+
+def preferred_fs(name, neighbours=None):
+    """The profile's preferred sample rate in Hz, or ``None``."""
+    profile = device_profile(name, neighbours)
+    return None if profile is None else profile.get('preferred_fs')
+
+
+def _input_fs_dbu(profile, gain_db, input_mode, pad):
+    """Input level (dBu) that reads full scale; validates mode, gain, pad."""
     mode = str(input_mode).lower()
     if mode not in profile['max_input_dbu']:
         raise ValueError(
@@ -244,10 +332,76 @@ def full_scale_volts(name, gain_db, input_mode='line', neighbours=None):
             .format(input_mode, profile['label'],
                     ', '.join(sorted(profile['max_input_dbu']))))
     gain = float(gain_db)
-    limit = profile['gain_range_db'][mode]
-    if not (0.0 <= gain <= limit):
+    gmin, gmax = _range_tuple(profile['gain_range_db'][mode])
+    if not (gmin <= gain <= gmax):
         raise ValueError(
             'input_gain_db = {:g} dB is outside the {} {} input range '
-            '(0 to {:g} dB).'.format(gain, profile['label'], mode, limit))
-    max_dbu = profile['max_input_dbu'][mode]
-    return math.sqrt(2.0) * _DBU_REF_VRMS * 10.0 ** ((max_dbu - gain) / 20.0)
+            '({:g} to {:g} dB).'.format(gain, profile['label'], mode,
+                                        gmin, gmax))
+    if pad and not profile.get('pad_db'):
+        raise ValueError('{} has no input pad.'.format(profile['label']))
+    pad_db = profile['pad_db'] if pad else 0.0
+    return profile['max_input_dbu'][mode] - (gain - gmin) + pad_db
+
+
+def full_scale_volts(name, gain_db, input_mode='line', neighbours=None,
+                     pad=False):
+    """Volts (peak) corresponding to a full-scale reading, or ``None``.
+
+    This is the value ``MySettings.VmaxSC`` wants: the jack voltage that
+    reads 1.0 on the normalised ±1 scale PortAudio delivers. It follows
+    from the interface's maximum input level ``L`` (in dBu, at minimum
+    gain ``Gmin``), the preamp gain ``G`` and the optional pad::
+
+        V_fullscale_peak = sqrt(2) * 0.7746
+                           * 10 ** ((L - (G - Gmin) + pad_db) / 20)
+
+    ``Gmin`` is 0 for the Scarlett and U24 XL, so this reduces to
+    ``(L - G)`` there. **Confirmed on hardware to 0.10 dB** (2026-08-10):
+    a 5.000 Vpp sine into a Scarlett 2i2 Line input at a reported 9 dB
+    gain read 0.505072 of full scale, implying 4.9498 V peak against the
+    4.8932 V predicted here. The iD44 pad value is assumed 10 dB on line
+    and inst inputs and verified (manual) on mic only.
+
+    Args:
+        name (str): Device name as PortAudio reports it.
+        gain_db (float or None): Preamp gain the operator has set;
+            pydvma cannot read it, which is why it must be stated.
+        input_mode (str): ``'line'``, ``'mic'`` or ``'inst'``.
+        neighbours (list or None): Every device name present, for the
+            indirect Windows match.
+        pad (bool): True when the input pad is engaged.
+
+    Returns:
+        volts (float or None): Peak volts at digital full scale, or
+            ``None`` for an uncharacterised device or no gain.
+
+    Raises:
+        ValueError: For an unknown input mode, a gain outside the
+            device's range, or ``pad=True`` on a device with no pad, since
+            a silently wrong voltage would propagate into every result.
+    """
+    profile = device_profile(name, neighbours)
+    if profile is None or gain_db is None:
+        return None
+    level = _input_fs_dbu(profile, gain_db, input_mode, pad)
+    return math.sqrt(2.0) * _DBU_REF_VRMS * 10.0 ** (level / 20.0)
+
+
+def analogue_floor_dbfs(name, gain_db, input_mode='mic', neighbours=None,
+                        pad=False):
+    """Expected broadband noise floor in dBFS rms, or ``None``.
+
+    Adds, in power, the preamp's equivalent input noise referred to full
+    scale (``ein_dbu`` minus the full-scale input level at this gain) and
+    the converter's own floor (``adc_floor_dbfs``). ``None`` when the
+    profile has no ``ein_dbu``. Takes the same arguments as
+    :func:`full_scale_volts` and raises the same ``ValueError``.
+    """
+    profile = device_profile(name, neighbours)
+    if profile is None or gain_db is None or 'ein_dbu' not in profile:
+        return None
+    fs_dbu = _input_fs_dbu(profile, gain_db, input_mode, pad)
+    power = (10.0 ** ((profile['ein_dbu'] - fs_dbu) / 10.0)
+             + 10.0 ** (profile['adc_floor_dbfs'] / 10.0))
+    return 10.0 * math.log10(power)

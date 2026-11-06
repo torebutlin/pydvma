@@ -776,6 +776,19 @@ _LEGEND = """
 """
 
 
+def _squash_roles(roles):
+    """``['analogue','analogue','loopback']`` -> ``'1-2=analogue, 3=loopback'``."""
+    parts = []
+    start = 0
+    for i in range(1, len(roles) + 1):
+        if i == len(roles) or roles[i] != roles[start]:
+            span = ('%d' % (start + 1) if i - start == 1
+                    else '%d-%d' % (start + 1, i))
+            parts.append('%s=%s' % (span, roles[start]))
+            start = i
+    return ', '.join(parts)
+
+
 def format_inventory(driver=None, kind='input', rates=True, legend=True):
     """Render the device inventory as a printable report.
 
@@ -839,10 +852,16 @@ def format_inventory(driver=None, kind='input', rates=True, legend=True):
                                               group['status']), scale))
             roles = group.get('channel_roles') or []
             if any(r != 'analogue' for r in roles):
-                lines.append('    channels    : %s   (a loopback input '
-                             'carries the output mix, not the outside world)'
-                             % ', '.join('%d=%s' % (i + 1, r)
-                                         for i, r in enumerate(roles)))
+                notes = []
+                if 'loopback' in roles:
+                    notes.append('a loopback input carries the output mix, '
+                                 'not the outside world')
+                if 'optical' in roles:
+                    notes.append('an optical input is a digital (ADAT) '
+                                 'input, silent unless an expander is '
+                                 'attached')
+                lines.append('    channels    : %s   (%s)'
+                             % (_squash_roles(roles), '; '.join(notes)))
             native = next((e.get('native_rates') for e in group['entries']
                            if e.get('native_rates')), [])
             if native:

@@ -146,6 +146,14 @@ class TestCalibrationStatus:
         assert status == 'characterised'
         assert volts > 0
 
+    def test_per_channel_gain_device_needs_gain(self):
+        status, volts, _ = devices.calibration_status('Audient iD44')
+        assert status == 'needs_gain'
+        assert volts is None
+        status, volts, _ = devices.calibration_status(
+            'Audient iD44', input_gain_db=20.0, input_mode='mic')
+        assert status == 'characterised'
+
     def test_unknown_interface_is_uncalibrated_and_says_so(self):
         status, volts, advice = devices.calibration_status('Generic USB Audio')
         assert status == 'uncalibrated'
@@ -401,6 +409,18 @@ class TestFormatInventory:
         assert 'CHARACTERISED' in text
         assert 'uncalibrated' in text
         assert '1.8819 V peak' in text
+
+    def test_optical_roles_are_not_called_loopback(self, monkeypatch):
+        roles = ['analogue'] * 4 + ['optical'] * 2
+        group = {'name': 'Audient iD44', 'profile': 'Audient iD44',
+                 'status': 'needs_gain', 'full_scale_volts': None,
+                 'advice': 'state the gain', 'channel_roles': roles,
+                 'entries': []}
+        monkeypatch.setattr(devices, 'sd', object())
+        monkeypatch.setattr(devices, 'inventory', lambda **kw: [group])
+        text = devices.format_inventory(driver='soundcard', legend=False)
+        assert 'optical' in text
+        assert 'loopback' not in text
 
     def test_report_flags_a_routing_alias(self, fake_portaudio):
         text = devices.format_inventory(driver='soundcard')

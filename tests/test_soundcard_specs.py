@@ -282,3 +282,73 @@ class TestSettingsIntegration:
         its knob position is unknowable."""
         s = self._settings(monkeypatch, name=SCARLETT)
         assert s.VmaxSC == 1.0
+
+
+class TestID44Profile:
+    """Audient iD44: per-channel gain with a minimum, a pad, optical roles.
+
+    iD44MKII Manual V4 p16, p18, p19, p55; bench 2026-11-06.
+    """
+
+    NAME = 'Audient iD44'
+    K = math.sqrt(2) * 0.7746
+
+    def test_profile_is_found(self):
+        assert specs.device_profile(self.NAME)['label'] == 'Audient iD44'
+
+    def test_roles(self):
+        roles = specs.channel_roles(self.NAME, 22)
+        assert roles.count('analogue') == 4
+        assert roles.count('optical') == 16
+        assert roles.count('loopback') == 2
+        assert specs.loopback_channels(self.NAME, 22) == [20, 21]
+        assert specs.optical_channels(self.NAME, 22) == list(range(4, 20))
+        assert specs.optical_channels('Scarlett 2i2 4th Gen', 4) == []
+
+    @pytest.mark.parametrize('gain, mode, pad, exp_db', [
+        (0.0, 'mic', False, 18), (60.0, 'mic', False, -42),
+        (60.0, 'mic', True, -32), (-10.0, 'line', False, 28),
+        (50.0, 'line', False, -32),
+    ])
+    def test_full_scale_volts(self, gain, mode, pad, exp_db):
+        assert specs.full_scale_volts(
+            self.NAME, gain, mode, pad=pad) == pytest.approx(
+                self.K * 10 ** (exp_db / 20))
+
+    def test_out_of_range_raises(self):
+        with pytest.raises(ValueError):
+            specs.full_scale_volts(self.NAME, 61.0, 'mic')
+        with pytest.raises(ValueError):
+            specs.full_scale_volts(self.NAME, -11.0, 'line')
+        with pytest.raises(ValueError):
+            specs.full_scale_volts('Scarlett 2i2 4th Gen', 9.0, 'line',
+                                   pad=True)
+
+    def test_gain_range(self):
+        assert specs.gain_range(self.NAME, 'line') == (-10.0, 50.0)
+        assert specs.gain_range('Scarlett 2i2 4th Gen', 'line') == (0.0, 69.0)
+        assert specs.gain_range('Generic', 'line') is None
+
+    def test_channel_input_modes(self):
+        assert specs.channel_input_modes(self.NAME, 0) == [
+            'inst', 'line', 'mic']
+        assert specs.channel_input_modes(self.NAME, 2) == ['line', 'mic']
+        assert specs.channel_input_modes(self.NAME, 5) == []
+        assert specs.channel_input_modes(self.NAME, 21) == []
+
+    def test_per_channel_gain_and_fs(self):
+        assert specs.per_channel_gain(self.NAME) is True
+        assert specs.per_channel_gain('Scarlett 2i2 4th Gen') is False
+        assert specs.preferred_fs(self.NAME) == 48000
+        assert specs.preferred_fs('Scarlett 2i2 4th Gen') is None
+
+    def test_analogue_floor(self):
+        assert specs.analogue_floor_dbfs(
+            self.NAME, 60.0, 'mic') == pytest.approx(-84.0, abs=0.2)
+        assert specs.analogue_floor_dbfs(
+            self.NAME, 0.0, 'mic') == pytest.approx(-117.0, abs=0.1)
+        assert specs.analogue_floor_dbfs(
+            'Scarlett 2i2 4th Gen', 9.0, 'line') is None
+
+    def test_not_fixed_gain(self):
+        assert specs.fixed_gain(self.NAME) is False
