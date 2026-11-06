@@ -11,7 +11,7 @@ import { createAnalysisSettings } from '../../src/lib/stores/analysisSettings';
 import { createModalStore } from '../../src/lib/stores/modal';
 import { createToasts } from '../../src/lib/stores/toast';
 import { readDvma, writeDvma } from '../../src/lib/codec/dvma';
-import { provenanceFromSet, type ChannelCalibration } from '../../src/lib/model/calibration';
+import { changedProvenance, provenanceFromSet, type ChannelCalibration } from '../../src/lib/model/calibration';
 import type { EngineStore } from '../../src/lib/stores/engine';
 import type { DvmaDataset } from '../../src/lib/model/dataset';
 
@@ -96,4 +96,58 @@ test('provenanceFromSet reads scalars, lists and python array tags', () => {
     .toEqual({ gain_db: 12, input_mode: null, pad: null, device: null });
   expect(provenanceFromSet(s, 5).gain_db).toBeNull();
   expect(provenanceFromSet(null, 0)).toEqual({ gain_db: null, input_mode: null, pad: null, device: null });
+});
+
+const prov = (actions: ReturnType<typeof harness>['actions'], ds: DvmaDataset) => {
+  void actions;
+  return ds.items.find((i) => i.kind === 'TimeData')!.meta.channel_calibration;
+};
+
+test('a factor change without provenance clears that channel only', () => {
+  const { actions, ds } = harness();
+  const setId = actions.workingSets()[0].setId;
+  actions.setCalFactors(setId, [20, 1], ['Pa', 'V'], { provenance: [entry(), entry({ note: 'b' })] });
+  // (a) ch 0's factor moves (Best Match style) -> its entry is cleared;
+  // (b) ch 1 unchanged -> kept.
+  actions.setCalFactors(setId, [30, 1], ['Pa', 'V'], { warnFit: false });
+  const cc = prov(actions, ds) as (ChannelCalibration | null)[];
+  expect(cc[0]).toBeNull();
+  expect(cc[1]!.note).toBe('b');
+});
+
+test('a unit change alone clears; an untouched channel keeps its entry', () => {
+  const { actions, ds } = harness();
+  const setId = actions.workingSets()[0].setId;
+  actions.setCalFactors(setId, [20, 1], ['Pa', 'V'], { provenance: [entry(), undefined] });
+  actions.setCalFactors(setId, [20, 2], ['Pa', 'N']);
+  const cc = prov(actions, ds) as (ChannelCalibration | null)[];
+  expect(cc[0]!.note).toBe('spec sheet');
+  expect(cc[1]).toBeNull();
+});
+
+test('no provenance anywhere: no channel_calibration key is created', () => {
+  const { actions, ds } = harness();
+  const setId = actions.workingSets()[0].setId;
+  actions.setCalFactors(setId, [5, 5], ['Pa', 'Pa']);
+  actions.setCalFactors(setId, [6, 5], ['Pa', 'Pa']);
+  expect('channel_calibration' in ds.items[0].meta).toBe(false);
+});
+
+test('changedProvenance marks only changed channels, with note and settings', () => {
+  const rows = [
+    { ch: 0, label: 'a', sensitivity: 1, unit: 'V' },
+    { ch: 1, label: 'b', sensitivity: 1, unit: 'V' },
+  ];
+  const settings = { input_gain_db: [30, 40], input_mode: ['mic', 'line'], input_pad: [false, true] };
+  const d = '2026-11-06T10:00:00.000Z';
+  const out = changedProvenance(rows, [{ sensitivity: 0.05, unit: 'Pa' }, { sensitivity: 1, unit: 'V' }], settings, 'n', d);
+  expect(out[1]).toBeUndefined();
+  expect(out[0]).toEqual({
+    method: 'sensitivity', date: d, sensitivity: 0.05, unit: 'Pa', reference: null,
+    gain_db: 30, input_mode: 'mic', pad: false, device: null, note: 'n', carried: false,
+  });
+  // unit-only change counts; no change at all -> all undefined
+  expect(changedProvenance(rows, [{ sensitivity: 1, unit: 'V' }, { sensitivity: 1, unit: 'g' }], null, '', d)[1]).toBeDefined();
+  expect(changedProvenance(rows, [{ sensitivity: 1, unit: 'V' }, { sensitivity: 1, unit: 'V' }], null, '', d))
+    .toEqual([undefined, undefined]);
 });

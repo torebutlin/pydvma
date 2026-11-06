@@ -44,7 +44,7 @@
   import type { DerivedKind } from '../lib/analysis/actions';
   import { summariseColumn, type ColumnState } from '../lib/stores/channelSummary';
   import {
-    factorToSensitivity, provenanceFromSet, sensitivityToFactor, type CalRow, type ChannelCalibration, type TfCalLine, type TfCalRow,
+    changedProvenance, factorToSensitivity, sensitivityToFactor, type CalRow, type TfCalLine, type TfCalRow,
   } from '../lib/model/calibration';
   import { tfLineLabel } from '../lib/plot/tfChannels';
   import { calibrationController } from '../lib/stores/calibrationController';
@@ -102,7 +102,7 @@
     };
     applyCalibration?: (
       setId: number, factors: number[], units: string[],
-      opts?: { provenance?: (ChannelCalibration | null | undefined)[] },
+      opts?: { provenance?: (import('../lib/model/calibration').ChannelCalibration | null | undefined)[] },
     ) => void;
     onDeleteFit?: () => void;
     onDeleteSet?: (setId: number) => void;
@@ -203,14 +203,7 @@
       // Provenance for each channel whose sensitivity or unit was edited;
       // untouched channels keep whatever the file already recorded.
       const date = new Date().toISOString();
-      const provenance = results.map((r, ch): ChannelCalibration | undefined => {
-        const was = calRows[ch];
-        if (was && was.sensitivity === r.sensitivity && was.unit === r.unit) return undefined;
-        return {
-          method: 'sensitivity', date, sensitivity: r.sensitivity, unit: r.unit,
-          reference: null, ...provenanceFromSet(calSettings, ch), note, carried: false,
-        };
-      });
+      const provenance = changedProvenance(calRows, results, calSettings, note, date);
       writeCal(calSetId, factors, units, { provenance });
     }
     const writeTf = controller?.setTfCalibration;

@@ -253,6 +253,36 @@ export function provenanceFromSet(
 }
 
 /**
+ * The provenance the Calibrate dialog's Apply records: one entry per channel
+ * whose sensitivity or unit differs from the dialog's starting `rows`
+ * (`method: 'sensitivity'`, the stated gain/mode/pad/device read from the
+ * set's `settings`, the free-text `note`), and `undefined` for a channel left
+ * alone, so `setCalFactors` keeps what the file already said about it.
+ *
+ * @param rows The dialog's initial rows.
+ * @param results The edited sensitivity and unit of each channel, aligned to rows.
+ * @param settings The set's stored capture settings.
+ * @param note Free-text note, copied to every changed channel.
+ * @param date ISO 8601 timestamp to record.
+ */
+export function changedProvenance(
+  rows: readonly CalRow[],
+  results: readonly { sensitivity: number; unit: string }[],
+  settings: unknown,
+  note: string,
+  date: string,
+): (ChannelCalibration | undefined)[] {
+  return results.map((r, ch) => {
+    const was = rows[ch];
+    if (was && was.sensitivity === r.sensitivity && was.unit === r.unit) return undefined;
+    return {
+      method: 'sensitivity', date, sensitivity: r.sensitivity, unit: r.unit,
+      reference: null, ...provenanceFromSet(settings, ch), note, carried: false,
+    };
+  });
+}
+
+/**
  * Parenthesise a COMPOUND unit so it composes unambiguously.
  *
  * A unit containing anything other than a letter or a digit is wrapped:

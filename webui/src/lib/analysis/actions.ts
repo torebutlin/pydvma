@@ -2997,7 +2997,9 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    *
    * `opts.provenance` (one `ChannelCalibration | null` per channel) is saved
    * as the set's `channel_calibration`; a channel whose entry is `undefined`
-   * keeps what the file already said.
+   * keeps what the file already said, unless that channel's factor or unit
+   * changed in this call, which clears it to `null` (the entry no longer
+   * describes the calibration).
    */
   function setCalFactors(
     setId: number,
@@ -3011,19 +3013,28 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const changed = !sameFactors(
       normalizeFactors(ws.time.meta.channel_cal_factors, ws.nChannels), norm,
     );
+    const oldFactors = normalizeFactors(ws.time.meta.channel_cal_factors, ws.nChannels);
+    const oldUnits = normalizeUnits(ws.time.meta.units, ws.nChannels);
     setItemMeta(ws.time, 'channel_cal_factors', norm);
     if (units !== undefined) {
       setItemMeta(ws.time, 'units', normalizeUnits(units, ws.nChannels));
     }
-    if (opts.provenance) {
-      // Channels whose entry is `undefined` keep what the file had.
+    {
+      // Provenance describes the factor and unit it was recorded with, so it
+      // stays only while those are unchanged: a channel whose factor or unit
+      // moves without a new entry (Best Match, its Undo, any caller) is cleared.
       const prev = ws.time.meta.channel_calibration;
+      const newUnits = normalizeUnits(units !== undefined ? units : oldUnits, ws.nChannels);
+      let touched = !!opts.provenance;
       const merged = Array.from({ length: ws.nChannels }, (_, ch) => {
-        const p = opts.provenance![ch];
+        const p = opts.provenance?.[ch];
         if (p !== undefined) return p;
-        return Array.isArray(prev) ? (prev[ch] ?? null) : null;
+        const kept = Array.isArray(prev) ? (prev[ch] ?? null) : null;
+        const moved = norm[ch] !== oldFactors[ch] || newUnits[ch] !== oldUnits[ch];
+        if (moved && kept !== null) { touched = true; return null; }
+        return kept;
       });
-      setItemMeta(ws.time, 'channel_calibration', merged);
+      if (touched) setItemMeta(ws.time, 'channel_calibration', merged);
     }
     setDerived(setId, {
       calFactors: norm,
