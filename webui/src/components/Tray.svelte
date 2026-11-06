@@ -44,7 +44,8 @@
   import type { DerivedKind } from '../lib/analysis/actions';
   import { summariseColumn, type ColumnState } from '../lib/stores/channelSummary';
   import {
-    changedProvenance, factorToSensitivity, sensitivityToFactor, type CalRow, type TfCalLine, type TfCalRow,
+    capturedInVolts, changedProvenance, factorToSensitivity, gainAtRangeEnd, provenanceFromSet,
+    sensitivityToFactor, type CalRow, type TfCalLine, type TfCalRow,
   } from '../lib/model/calibration';
   import { tfLineLabel } from '../lib/plot/tfChannels';
   import { calibrationController } from '../lib/stores/calibrationController';
@@ -93,6 +94,10 @@
      *  only while the TF view is active (App threads `tfChInFor`). Cards
      *  then label rows `out/in` and mark the ref row — see `TrayCard`. */
     tfChIn,
+    /** The gain range per input mode (`{mode: [min, max]}`) of the connected
+     *  device called `name`, or null when it is not known. Lets the
+     *  reference-tone panel tell a gain at a range end from one on a knob. */
+    deviceGainRanges,
   }: {
     selection: Selection;
     modal?: ModalStore;
@@ -111,6 +116,7 @@
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
     tfChIn?: (setId: number) => number | null | undefined;
+    deviceGainRanges?: (name: string) => Record<string, [number, number]> | null;
   } = $props();
 
   // Live mode count for the fit pseudo-set's tray-card badge (round-5 item 13).
@@ -151,6 +157,10 @@
   let calTfRows = $state<TfCalRow[] | null>(null);
   let calTfOrphan = $state(false);
   let calTfPending = $state(false);
+  /** Per-channel source unit (a channel with a stated gain is volts). */
+  let calRowSourceUnits = $state<('V' | 'FS')[] | null>(null);
+  /** Sets that can serve as a reference-tone recording. */
+  let calRefSets = $state<{ id: number; name: string; nChannels: number }[]>([]);
 
   function openCalibrate(setId: number) {
     if (!readCal) return;
@@ -162,6 +172,12 @@
     // them, otherwise full-scale units. Naming it wrong is silent — the
     // numbers just come out scaled by the (unknown) full scale.
     calSourceUnit = sourceIsVolts ? 'V' : 'FS';
+    calRowSourceUnits = Array.from({ length: set.nChannels },
+      (_, ch) => (capturedInVolts(calSettings, ch) ? 'V' : 'FS'));
+    const timeIds = new Set(controller?.timeBearingSets?.() ?? []);
+    calRefSets = $setsView
+      .filter((s) => timeIds.has(s.id))
+      .map((s) => ({ id: s.id, name: s.name, nChannels: s.nChannels }));
     const label = get(selection.channelLabel);
     calRows = Array.from({ length: set.nChannels }, (_, ch) => ({
       ch,
@@ -186,12 +202,22 @@
     calSetId = setId;
   }
 
+  /** Whether a set's channel has a stated gain at a range end (a detent). */
+  function gainAtStop(setId: number, ch: number): boolean {
+    const prov = provenanceFromSet(controller?.getCalibrationSettings?.(setId), ch);
+    const ranges = prov.device ? deviceGainRanges?.(prov.device) ?? null : null;
+    return gainAtRangeEnd(prov, ranges);
+  }
+
   function closeCalibrate() {
     calSetId = null;
   }
 
   function commitCalibrate(
-    results: { sensitivity: number; unit: string }[] | null,
+    results: {
+      sensitivity: number; unit: string;
+      reference?: { level: number; level_unit: string; freq: number };
+    }[] | null,
     tf: { ch: number; line: TfCalLine | null }[] | null,
     note = '',
   ) {
@@ -359,6 +385,11 @@
       tfOrphan={calTfOrphan}
       tfPending={calTfPending}
       sourceUnit={calSourceUnit}
+      rowSourceUnits={calRowSourceUnits}
+      refSets={calRefSets}
+      currentSetId={calSetId}
+      measureReference={controller?.measureReferenceTone ?? null}
+      {gainAtStop}
       onApply={commitCalibrate}
       onCancel={closeCalibrate}
     />

@@ -35,8 +35,22 @@ scale, depending on the input:
    change.
 
 The label beside each box shows what it means, for example
-`V / (m/s²)`. The dialog also shows a disabled **known-input
-calibration…** button, which is not available.
+`V / (m/s²)`. Each row also has a **ref tone** button
+for calibrating from a recorded reference tone (below).
+
+### From a reference tone
+
+With an acoustic calibrator (94 dB SPL at 1 kHz) or a handheld
+accelerometer calibrator, record the tone on the channel, then press
+**ref tone** on that channel's row. Choose the recording, enter the
+calibrator's level (dB SPL for a Pa channel, otherwise an rms in the
+row's unit) and frequency, and press **Measure**. The sensitivity field
+is filled in and Apply saves the calibration with the level and
+frequency it came from. Any warning (clipping, a peak away from the
+stated frequency, broadband noise) is shown under the button. The
+calibration is valid only while the channel's gain knob and pad stay
+where they were; the panel says so unless the gain is stated at an end of
+its range.
 
 To remove a calibration, set the sensitivity to 1 and the unit to
 **V**. A sensitivity of zero, or one that isn't a number, counts as 1.

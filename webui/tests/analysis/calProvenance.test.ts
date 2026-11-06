@@ -151,3 +151,31 @@ test('changedProvenance marks only changed channels, with note and settings', ()
   expect(changedProvenance(rows, [{ sensitivity: 1, unit: 'V' }, { sensitivity: 1, unit: 'V' }], null, '', d))
     .toEqual([undefined, undefined]);
 });
+
+test('changedProvenance records a reference-tone calibration with its reference', () => {
+  const rows = [{ ch: 0, label: 'a', sensitivity: 1, unit: 'Pa' }];
+  const d = '2026-11-06T10:00:00.000Z';
+  const reference = { level: 94, level_unit: 'dB SPL', freq: 1000 };
+  const out = changedProvenance(rows, [{ sensitivity: 0.0335, unit: 'Pa', reference }], null, 'cal', d);
+  expect(out[0]!.method).toBe('reference_tone');
+  expect(out[0]!.reference).toEqual(reference);
+  const plain = changedProvenance(rows, [{ sensitivity: 0.0335, unit: 'Pa' }], null, 'cal', d);
+  expect(plain[0]!.method).toBe('sensitivity');
+  expect(plain[0]!.reference).toBeNull();
+});
+
+test('a factor that differs only by rounding (1/(1/f)) keeps the provenance', () => {
+  const { actions, ds } = harness();
+  const setId = actions.workingSets()[0].setId;
+  const f = 0.123;
+  actions.setCalFactors(setId, [f, 1], ['Pa', 'V'], { provenance: [entry(), undefined] });
+  // Whatever 1/(1/f) is, it must count as unchanged.
+  const roundTrip = 1 / (1 / f);
+  actions.setCalFactors(setId, [roundTrip, 1], ['Pa', 'V']);
+  const cc = ds.items.find((i) => i.kind === 'TimeData')!.meta.channel_calibration as ChannelCalibration[];
+  expect(cc[0]).not.toBeNull();
+  expect(cc[0].note).toBe('spec sheet');
+  // A genuine change (beyond 1e-12 relative) still clears it.
+  actions.setCalFactors(setId, [f * (1 + 1e-9), 1], ['Pa', 'V'], { warnFit: false });
+  expect((ds.items.find((i) => i.kind === 'TimeData')!.meta.channel_calibration as unknown[])[0]).toBeNull();
+});

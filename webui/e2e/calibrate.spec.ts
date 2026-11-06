@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
+import { writeDvma } from '../src/lib/codec/dvma';
 
 /**
  * Wave-A Task A2 — per-set calibration. Non-@engine: exercises the tray
@@ -11,7 +12,7 @@ import { fileURLToPath } from 'node:url';
  * Asserts:
  *   - the tray card's Calibrate button opens a per-set dialog with one row per
  *     channel, the preset units with each channel's stored unit selected, and
- *     the disabled known-input button;
+ *     a ref tone button on each channel row;
  *   - entering a sensitivity and hitting Apply scales the plotted amplitude:
  *     both channels get sensitivity 0.1 → cal factor 10, so the auto-fit
  *     y-axis tick magnitudes grow ~10× (the display-time cal, applied to the
@@ -78,8 +79,9 @@ test('Calibrate dialog opens per set with channel rows, preset + preserved units
   await expect(tf.getByTestId('cal-tf-den-1')).toHaveValue('N');
   await expect(tf.getByTestId('cal-tf-num-1')).toBeDisabled();
 
-  // The known-input calibration button is present but disabled (roadmap stub).
-  await expect(overlay.getByRole('button', { name: /known-input calibration/i })).toBeDisabled();
+  // Each channel row offers the reference-tone step.
+  await expect(overlay.getByTestId('cal-ref-0')).toBeVisible();
+  await expect(overlay.getByTestId('cal-ref-1')).toBeVisible();
 
   // Cancel closes without applying.
   await overlay.getByTestId('cal-cancel').click();
@@ -239,4 +241,87 @@ test('the dialog offers a calibration note field', async ({ page }) => {
   await overlay.getByTestId('cal-sens-0').fill('0.1');
   await overlay.getByTestId('cal-apply').click();
   await expect(overlay).toBeHidden();
+});
+
+// ---- Reference tone ------------------------------------------------------ //
+
+/** A one-channel 1 kHz tone whose rms is `rms`, as a loadable `.dvma`. */
+function toneDvma(rms: number): { name: string; mimeType: string; buffer: Buffer } {
+  const fs = 8000;
+  const n = 8000;
+  const axis = new Float64Array(n);
+  const data = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    axis[i] = i / fs;
+    data[i] = rms * Math.SQRT2 * Math.sin(2 * Math.PI * 1000 * i / fs);
+  }
+  const bytes = writeDvma({
+    formatVersion: 1, pydvmaVersion: '2.8.4',
+    items: [{
+      kind: 'TimeData',
+      arrays: {
+        time_axis: { shape: [n], isComplex: false, data: axis },
+        time_data: { shape: [n, 1], isComplex: false, data: data },
+      },
+      meta: { test_name: 'calibrator', timestring: 't0', unique_id: 'TONE0' },
+      settings: { fs },
+    }],
+  });
+  return { name: 'tone.dvma', mimeType: 'application/octet-stream', buffer: Buffer.from(bytes) };
+}
+
+test('the reference tone panel defaults follow the row unit and refuse a bad level', async ({ page }) => {
+  await page.goto('/?fixture=1');
+  await expect(card0(page)).toBeVisible();
+  const overlay = await openCalibrate(page);
+  // Row 0 is in N: a unit rms of 1 at 1 kHz.
+  await overlay.getByTestId('cal-ref-0').click();
+  await expect(overlay.getByTestId('cal-ref-level')).toHaveValue('1');
+  await expect(overlay.getByTestId('cal-ref-level-unit')).toHaveText('N');
+  // Switch the row to Pa: 94 dB SPL.
+  await overlay.getByTestId('cal-unit-0').selectOption('Pa');
+  await expect(overlay.getByTestId('cal-ref-level')).toHaveValue('94');
+  await expect(overlay.getByTestId('cal-ref-level-unit')).toHaveText('dB SPL');
+  // Accelerometer: 10 m/s2 at 159.2 Hz.
+  await overlay.getByTestId('cal-unit-0').selectOption('m/s²');
+  await expect(overlay.getByTestId('cal-ref-level')).toHaveValue('10');
+  await expect(overlay.getByTestId('cal-ref-freq')).toHaveValue('159.2');
+  // A non-positive level cannot be measured, and the stop note shows for an
+  // unstated gain.
+  await overlay.getByTestId('cal-ref-level').fill('0');
+  await expect(overlay.getByTestId('cal-ref-measure')).toBeDisabled();
+  await expect(overlay.getByTestId('cal-ref-invalid')).toBeVisible();
+  await expect(overlay.getByTestId('cal-ref-stop-note')).toContainText('gain knob and pad');
+});
+
+test.describe('@engine', () => {
+  test.setTimeout(240_000);
+
+  test('a 94 dB SPL reference tone sets the sensitivity and the PSD reads dB re (20 µPa)²/Hz', async ({ page }) => {
+    await page.goto('/');
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Load Data' }).click();
+    // rms chosen so that rms / 1.0024 Pa = 0.0335 per Pa.
+    await (await chooserPromise).setFiles(toneDvma(0.0335 * 1.0024));
+    await expect(card0(page)).toBeVisible();
+
+    const overlay = await openCalibrate(page);
+    await overlay.getByTestId('cal-unit-0').selectOption('Pa');
+    await overlay.getByTestId('cal-ref-0').click();
+    await expect(overlay.getByTestId('cal-ref-level')).toHaveValue('94');
+    await overlay.getByTestId('cal-ref-measure').click();
+    await expect.poll(
+      async () => Number(await overlay.getByTestId('cal-sens-0').inputValue()),
+      { timeout: 200_000 },
+    ).toBeCloseTo(0.0335, 3);
+    await expect(overlay.getByTestId('cal-ref-warning')).toHaveCount(0);
+    await overlay.getByTestId('cal-apply').click();
+    await expect(overlay).toBeHidden();
+
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Freq' }).click();
+    await page.locator('[data-spec="density"]').click();
+    await page.getByRole('button', { name: 'Calc PSD' }).click();
+    await expect(page.getByTestId('plot-line').first()).toBeVisible({ timeout: 200_000 });
+    await expect(yLabel(page)).toContainText('dB re (20 µPa)²/Hz');
+  });
 });

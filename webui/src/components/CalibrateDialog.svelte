@@ -27,9 +27,13 @@
    * channel calibration underneath: the channel rows are hidden and the TF
    * rows edit the set's own stored factors, so every line always has one.
    *
-   * The "known-input calibration…" button is disabled (a guided
-   * reference-signal flow is a later stage) — kept, not removed, because it is
-   * in the mockup and signposts the roadmap.
+   * REFERENCE TONE: each channel row has a "ref tone" button opening an inline
+   * panel that derives the sensitivity from a recorded calibrator tone (a
+   * 94 dB SPL / 1 kHz acoustic calibrator, or a handheld accelerometer
+   * calibrator): pick the set holding the recording, state the calibrator's
+   * level and frequency, Measure. The number lands in the row's sensitivity
+   * field (editing it by hand afterwards drops the reference), and Apply then
+   * records the calibration as `reference_tone` with the level and frequency.
    *
    * DUMB component: it receives the initial per-channel `rows` (and `tfRows`),
    * edits LOCAL copies, and emits the edited values on Apply; the parent owns
@@ -37,7 +41,15 @@
    * mounted only while open (keyed by setId), so local state seeds cleanly per
    * open.
    */
-  import { CAL_UNITS, type CalRow, type TfCalLine, type TfCalRow } from '../lib/model/calibration';
+  import {
+    CAL_UNITS, referenceDefaults, referenceRms, type CalRow, type TfCalLine, type TfCalRow,
+  } from '../lib/model/calibration';
+
+  /** What the reference-tone measurement returns (see `actions.measureReferenceTone`). */
+  type RefMeasurement = {
+    sensitivity: number; measuredRms: number; peakFreq: number;
+    warnings: string[]; clipped: boolean;
+  };
 
   let {
     setName,
@@ -46,6 +58,11 @@
     tfOrphan = false,
     tfPending = false,
     sourceUnit = 'V',
+    rowSourceUnits = null,
+    refSets = [],
+    currentSetId = null,
+    measureReference = null,
+    gainAtStop = null,
     onApply,
     onCancel,
   }: {
@@ -67,6 +84,27 @@
      */
     sourceUnit?: 'V' | 'FS';
     /**
+     * Per-channel override of `sourceUnit`, index-aligned to `rows`: a device
+     * with a preamp per input can deliver volts on one channel and full-scale
+     * units on another (an iD44 channel with a stated gain vs one without).
+     */
+    rowSourceUnits?: ('V' | 'FS')[] | null;
+    /** Sets with recorded time data, for the reference tone's set picker. */
+    refSets?: { id: number; name: string; nChannels: number }[];
+    /** The set this dialog calibrates: the picker's default. */
+    currentSetId?: number | null;
+    /** Measure a recorded reference tone; absent hides the reference button. */
+    measureReference?: ((
+      setId: number, ch: number, refRms: number, freq: number,
+    ) => Promise<RefMeasurement>) | null;
+    /**
+     * Whether the gain of channel `ch` of set `setId` is stated AND at an end
+     * of its mode's gain range (a detent the knob can be returned to); when it
+     * is not, the panel warns that the calibration holds only while the knob
+     * and pad stay put.
+     */
+    gainAtStop?: ((setId: number, ch: number) => boolean) | null;
+    /**
      * Per-channel edited values, index-aligned to `rows` (`null` for a TF-only
      * set, which shows no channel rows), and the TF lines (`null` when there
      * is no TF section): `line: null` = follow the channel calibration.
@@ -74,7 +112,10 @@
      * saves it with the provenance of each channel that changed.
      */
     onApply: (
-      results: { sensitivity: number; unit: string }[] | null,
+      results: {
+        sensitivity: number; unit: string;
+        reference?: { level: number; level_unit: string; freq: number };
+      }[] | null,
       tf: { ch: number; line: TfCalLine | null }[] | null,
       note: string,
     ) => void;
@@ -88,6 +129,63 @@
   let sens = $state<number[]>(rows.map((r) => r.sensitivity));
   // svelte-ignore state_referenced_locally
   let units = $state<string[]>(rows.map((r) => r.unit));
+  // Reference-tone panels, one slot per row. `refLevel`/`refFreq` hold what the
+  // user typed (null = the default for the row's unit); `refMeta` is the
+  // reference the CURRENT sensitivity was measured from (null once edited).
+  // svelte-ignore state_referenced_locally
+  let refOpen = $state<boolean[]>(rows.map(() => false));
+  // svelte-ignore state_referenced_locally
+  let refSet = $state<(number | null)[]>(rows.map(() => currentSetId));
+  // svelte-ignore state_referenced_locally
+  let refLevel = $state<(string | null)[]>(rows.map(() => null));
+  // svelte-ignore state_referenced_locally
+  let refFreq = $state<(string | null)[]>(rows.map(() => null));
+  // svelte-ignore state_referenced_locally
+  let refBusy = $state<boolean[]>(rows.map(() => false));
+  // svelte-ignore state_referenced_locally
+  let refWarnings = $state<string[][]>(rows.map(() => []));
+  // svelte-ignore state_referenced_locally
+  let refError = $state<string[]>(rows.map(() => ''));
+  // svelte-ignore state_referenced_locally
+  let refMeta = $state<({ level: number; level_unit: string; freq: number } | null)[]>(
+    rows.map(() => null));
+
+  const levelUnit = (unit: string) => referenceDefaults(unit).levelUnit;
+  const levelText = (i: number) => refLevel[i] ?? String(referenceDefaults(units[i]).level);
+  const freqText = (i: number) => refFreq[i] ?? String(referenceDefaults(units[i]).freq);
+  /** The calibrator's rms in engineering units, or NaN when not usable. */
+  const refRmsOf = (i: number) =>
+    referenceRms(Number(levelText(i)), units[i], Number(freqText(i)));
+  function refInvalid(i: number): string {
+    const level = Number(levelText(i));
+    if (!Number.isFinite(level) || level <= 0) return 'The level must be a number above zero.';
+    return Number.isNaN(refRmsOf(i)) ? 'The frequency must be a number above zero.' : '';
+  }
+
+  async function measure(i: number) {
+    const setId = refSet[i];
+    if (!measureReference || setId === null || refInvalid(i)) return;
+    refBusy[i] = true;
+    refError[i] = '';
+    refWarnings[i] = [];
+    try {
+      const r = await measureReference(setId, rows[i].ch, refRmsOf(i), Number(freqText(i)));
+      if (Number.isFinite(r.sensitivity) && r.sensitivity > 0) {
+        sens[i] = Number(r.sensitivity.toPrecision(5));
+        refMeta[i] = {
+          level: Number(levelText(i)), level_unit: levelUnit(units[i]), freq: Number(freqText(i)),
+        };
+      } else {
+        refError[i] = 'No usable sensitivity was measured.';
+      }
+      refWarnings[i] = r.warnings;
+    } catch (e) {
+      refError[i] = e instanceof Error ? e.message : String(e);
+    } finally {
+      refBusy[i] = false;
+    }
+  }
+
   /** Free-text note saved with the calibration provenance of changed channels. */
   let note = $state('');
 
@@ -146,8 +244,9 @@
    * device's voltage scale is unknown, so the operator is not invited to enter
    * a volts-per-unit rating against full-scale-unit data.
    */
-  function sensLabel(unit: string): string {
-    return unit === sourceUnit ? `${sourceUnit} / ${sourceUnit}` : `${sourceUnit} / (${unit})`;
+  function sensLabel(unit: string, i: number): string {
+    const src = rowSourceUnits?.[i] ?? sourceUnit;
+    return unit === src ? `${src} / ${src}` : `${src} / (${unit})`;
   }
 
   function apply() {
@@ -159,7 +258,12 @@
       })
       : null;
     onApply(
-      tfOrphan ? null : rows.map((_, i) => ({ sensitivity: Number(sens[i]), unit: units[i] })),
+      tfOrphan ? null : rows.map((_, i) => {
+        const reference = refMeta[i];
+        return reference
+          ? { sensitivity: Number(sens[i]), unit: units[i], reference }
+          : { sensitivity: Number(sens[i]), unit: units[i] };
+      }),
       tf,
       note.trim(),
     );
@@ -203,9 +307,10 @@
           step="0.001"
           data-testid={`cal-sens-${row.ch}`}
           bind:value={sens[i]}
+          oninput={() => { refMeta[i] = null; }}
           style="width:88px"
         />
-        <span class="ml">{sensLabel(units[i])}</span>
+        <span class="ml">{sensLabel(units[i], i)}</span>
         <select
           data-testid={`cal-unit-${row.ch}`}
           bind:value={units[i]}
@@ -215,7 +320,80 @@
             <option value={u}>{u}</option>
           {/each}
         </select>
+        {#if measureReference && refSets.length}
+          <button
+            class="btn small"
+            data-testid={`cal-ref-${row.ch}`}
+            aria-expanded={refOpen[i]}
+            title="calibrate from a recorded reference tone"
+            onclick={() => { refOpen[i] = !refOpen[i]; }}
+          >ref tone</button>
+        {/if}
       </div>
+      {#if refOpen[i] && measureReference}
+        {@const invalid = refInvalid(i)}
+        {@const pickedSet = refSet[i]}
+        <div class="ref-panel" data-testid={`cal-ref-panel-${row.ch}`}>
+          <div class="mrow">
+            <label for={`cal-ref-set-${row.ch}`} class="ml">Recording</label>
+            <select
+              id={`cal-ref-set-${row.ch}`}
+              data-testid="cal-ref-set"
+              bind:value={refSet[i]}
+            >
+              {#each refSets as s (s.id)}
+                <option value={s.id}>{s.name}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="mrow">
+            <label for={`cal-ref-level-${row.ch}`} class="ml">Calibrator</label>
+            <input
+              id={`cal-ref-level-${row.ch}`}
+              type="text"
+              inputmode="decimal"
+              data-testid="cal-ref-level"
+              value={levelText(i)}
+              oninput={(e) => { refLevel[i] = e.currentTarget.value; }}
+              style="width:64px"
+            />
+            <span class="ml" data-testid="cal-ref-level-unit">{levelUnit(units[i])}</span>
+            <span class="ml">at</span>
+            <input
+              type="text"
+              inputmode="decimal"
+              data-testid="cal-ref-freq"
+              aria-label="Calibrator frequency in Hz"
+              value={freqText(i)}
+              oninput={(e) => { refFreq[i] = e.currentTarget.value; }}
+              style="width:64px"
+            />
+            <span class="ml">Hz</span>
+            <button
+              class="btn small"
+              data-testid="cal-ref-measure"
+              disabled={!!invalid || refBusy[i] || pickedSet === null}
+              onclick={() => measure(i)}
+            >{refBusy[i] ? 'Measuring…' : 'Measure'}</button>
+          </div>
+          {#if invalid}
+            <p class="src-note warn" data-testid="cal-ref-invalid">{invalid}</p>
+          {/if}
+          {#if refError[i]}
+            <p class="src-note warn" data-testid="cal-ref-error">{refError[i]}</p>
+          {/if}
+          {#if refWarnings[i].length}
+            <ul class="src-note warn" data-testid="cal-ref-warning">
+              {#each refWarnings[i] as w (w)}<li>{w}</li>{/each}
+            </ul>
+          {/if}
+          {#if pickedSet !== null && gainAtStop && !gainAtStop(pickedSet, row.ch)}
+            <p class="src-note" data-testid="cal-ref-stop-note">
+              Valid only while this channel's gain knob and pad stay where they were.
+            </p>
+          {/if}
+        </div>
+      {/if}
     {/each}
     {/if}
 
@@ -305,12 +483,6 @@
       </p>
     {/if}
 
-    <div class="mrow">
-      <button class="btn" disabled title="guided calibration arrives later">
-        known-input calibration…
-      </button>
-    </div>
-
     <div class="mrow end">
       <button class="btn" data-testid="cal-cancel" onclick={onCancel}>Cancel</button>
       <button class="btn indigo" data-testid="cal-apply" disabled={anyInvalid} onclick={apply}>Apply</button>
@@ -340,6 +512,25 @@
   }
   .tf-section select.tf-unit:disabled {
     opacity: 0.55;
+  }
+  .src-note.warn {
+    color: var(--danger, #dc2626);
+  }
+  ul.src-note {
+    padding-left: 16px;
+  }
+  .ref-panel {
+    margin: -4px 0 8px 12px;
+    padding: 4px 0 2px 10px;
+    border-left: 2px solid var(--border);
+  }
+  .ref-panel .mrow {
+    margin: 6px 0;
+  }
+  .btn.small {
+    height: 24px;
+    padding: 0 8px;
+    font-size: 11.5px;
   }
   input.invalid {
     border-color: var(--danger, #dc2626);

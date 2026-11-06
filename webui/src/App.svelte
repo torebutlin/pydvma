@@ -74,7 +74,7 @@
   import { createMonitorStore } from './lib/stores/monitor';
   import { createBlaStore } from './lib/stores/bla';
   import { initTheme } from './lib/stores/theme';
-  import { selectProvider, fetchServeConfig } from './lib/audio/provider';
+  import { selectProvider, fetchServeConfig, deviceCapsFor } from './lib/audio/provider';
   import {
     describeServePatch, mapServeConfig, pushedSettingsRefusal, type ServeConfigPatch,
   } from './lib/audio/serveConfig';
@@ -166,6 +166,12 @@
   // Acquisition store (Plan 2): manages Web Audio device enumeration +
   // recording lifecycle; the liveSource capability gate flips on init.
   const acquire = createAcquireStore();
+  /** Gain range per input mode of the connected device named `name`, if known. */
+  function deviceGainRanges(name: string): Record<string, [number, number]> | null {
+    const dev = get(acquire.devices).find((d) => d.label === name);
+    if (!dev) return null;
+    return deviceCapsFor(get(acquire.bridgeCaps), dev.deviceId)?.gain_range_db ?? null;
+  }
   // Non-fatal capture/stream notices (dropped input, USB dropouts, a stalled
   // monitor, a stimulus scaled to the output rail) pin open until closed.
   acquire.onWarning((message) => toasts.push(message, { level: 'error' }));
@@ -1817,7 +1823,8 @@
             onDeleteFit={actions.clearFit} onDeleteSet={actions.removeSet}
             onRenameSet={actions.renameSet} onRenameChannel={actions.renameChannel}
             staleChains={actions.staleChains} onRederive={rederiveStale}
-            tfChIn={view === 'tf' ? tfChInFor : undefined} />
+            tfChIn={view === 'tf' ? tfChInFor : undefined}
+            deviceGainRanges={deviceGainRanges} />
         </div>
         <MiniMonitor {monitor} />
       </aside>

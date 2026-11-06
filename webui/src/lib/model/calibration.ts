@@ -187,6 +187,28 @@ export function capturedInVolts(settings: unknown, channel?: number): boolean {
 }
 
 /**
+ * Full scale of one channel in its STORED units, from the capture settings,
+ * for a clip check: `VmaxNI` on NI, otherwise that channel's `VmaxSC` (a
+ * scalar covers every channel; a channel past a per-channel list reads the
+ * uncalibrated 1.0, as python's `input_vmax` does). `undefined` when the
+ * settings state nothing usable, so the caller skips the check.
+ *
+ * @param settings The item's `settings` block, as loaded.
+ * @param channel Zero-based channel.
+ */
+export function channelRail(settings: unknown, channel: number): number | undefined {
+  if (!settings || typeof settings !== 'object') return undefined;
+  const s = settings as Record<string, unknown>;
+  const pick = (v: unknown): number | undefined => {
+    const u = unwrapArrayTag(v);
+    const x = Array.isArray(u) ? (channel < u.length ? u[channel] : 1) : u;
+    const n = Number(x);
+    return x != null && Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  return s.device_driver === 'nidaq' ? pick(s.VmaxNI) : pick(s.VmaxSC);
+}
+
+/**
  * Unwrap python's `{__array__: [...]}` tag (an ndarray setting, which
  * `readDvma` passes through verbatim); anything else is returned unchanged.
  */
@@ -253,6 +275,53 @@ export function provenanceFromSet(
 }
 
 /**
+ * The reference-tone panel's defaults for a channel in engineering unit
+ * `unit`: the unit the calibrator's level is quoted in (`'dB SPL'` for a
+ * pressure channel, otherwise the unit itself), its default level and its
+ * default frequency. A 94 dB SPL / 1 kHz acoustic calibrator, a 10 m/s² /
+ * 159.2 Hz (1000 rad/s) accelerometer calibrator, and 1 unit / 1 kHz else.
+ */
+export function referenceDefaults(unit: string): { levelUnit: string; level: number; freq: number } {
+  if (unit === 'Pa') return { levelUnit: 'dB SPL', level: 94, freq: 1000 };
+  if (unit === 'm/s²') return { levelUnit: unit, level: 10, freq: 159.2 };
+  return { levelUnit: unit, level: 1, freq: 1000 };
+}
+
+/**
+ * The calibrator's rms in engineering units from the level as typed: a dB SPL
+ * level converts through the 20 µPa reference, any other is already an rms.
+ * `NaN` for a level or frequency that is not finite and above zero, so the
+ * caller can refuse to measure instead of dividing by nothing.
+ *
+ * @param level The typed level.
+ * @param unit The channel's engineering unit (selects dB SPL for `'Pa'`).
+ * @param freq The typed calibrator frequency in Hz.
+ */
+export function referenceRms(level: number, unit: string, freq: number): number {
+  if (!Number.isFinite(level) || level <= 0 || !Number.isFinite(freq) || freq <= 0) return NaN;
+  return unit === 'Pa' ? 20e-6 * 10 ** (level / 20) : level;
+}
+
+/**
+ * Whether a channel's stated gain sits at an END of its mode's gain range, a
+ * detent the knob can be returned to. A reference-tone calibration holds only
+ * while the gain knob and pad stay where they were; at a range end that is
+ * easy to guarantee, anywhere else (or with the gain unstated) the user must
+ * be warned. False when the gain, the mode or the mode's range is unknown.
+ *
+ * @param prov The channel's stated hardware context (`provenanceFromSet`).
+ * @param ranges The device's `gain_range_db` as `{mode: [min, max]}`, or null.
+ */
+export function gainAtRangeEnd(
+  prov: Pick<ChannelCalibration, 'gain_db' | 'input_mode'>,
+  ranges: Record<string, [number, number]> | null | undefined,
+): boolean {
+  if (prov.gain_db === null || prov.input_mode === null || !ranges) return false;
+  const r = ranges[prov.input_mode];
+  return Array.isArray(r) && (prov.gain_db === r[0] || prov.gain_db === r[1]);
+}
+
+/**
  * The provenance the Calibrate dialog's Apply records: one entry per channel
  * whose sensitivity or unit differs from the dialog's starting `rows`
  * (`method: 'sensitivity'`, the stated gain/mode/pad/device read from the
@@ -264,10 +333,17 @@ export function provenanceFromSet(
  * @param settings The set's stored capture settings.
  * @param note Free-text note, copied to every changed channel.
  * @param date ISO 8601 timestamp to record.
+ *
+ * A result row may carry a `reference` (the level, its unit and the
+ * frequency of the tone it was measured from); the entry's method is then
+ * `'reference_tone'` and the reference is recorded.
  */
 export function changedProvenance(
   rows: readonly CalRow[],
-  results: readonly { sensitivity: number; unit: string }[],
+  results: readonly {
+    sensitivity: number; unit: string;
+    reference?: { level: number; level_unit: string; freq: number };
+  }[],
   settings: unknown,
   note: string,
   date: string,
@@ -276,8 +352,9 @@ export function changedProvenance(
     const was = rows[ch];
     if (was && was.sensitivity === r.sensitivity && was.unit === r.unit) return undefined;
     return {
-      method: 'sensitivity', date, sensitivity: r.sensitivity, unit: r.unit,
-      reference: null, ...provenanceFromSet(settings, ch), note, carried: false,
+      method: r.reference ? 'reference_tone' : 'sensitivity', date,
+      sensitivity: r.sensitivity, unit: r.unit,
+      reference: r.reference ?? null, ...provenanceFromSet(settings, ch), note, carried: false,
     };
   });
 }

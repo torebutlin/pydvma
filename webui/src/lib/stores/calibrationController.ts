@@ -29,6 +29,15 @@ export interface CalibrationController {
   };
   /** The set's stored capture settings (for the calibration provenance). */
   getCalibrationSettings?: (setId: number) => unknown;
+  /** Measure a recorded reference tone on one channel (Calibrate's ref tone). */
+  measureReferenceTone?: (
+    setId: number, ch: number, refRms: number, freq: number,
+  ) => Promise<{
+    sensitivity: number; measuredRms: number; peakFreq: number;
+    warnings: string[]; clipped: boolean;
+  }>;
+  /** Ids of the sets that carry recorded time data. */
+  timeBearingSets?: () => number[];
   /** Persist a set's cal factors (plus optional per-channel units). */
   setCalFactors: (
     setId: number, factors: number[], units?: readonly string[],

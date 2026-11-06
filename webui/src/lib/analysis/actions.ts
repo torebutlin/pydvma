@@ -61,7 +61,7 @@ import type {
 } from '../stores/damping';
 import type { Toasts } from '../stores/toast';
 import {
-  capturedInVolts, composeTfUnit, isIdentity, normalizeFactors, normalizeTfCal, normalizeUnits,
+  capturedInVolts, channelRail, composeTfUnit, isIdentity, normalizeFactors, normalizeTfCal, normalizeUnits,
   splitTfUnit, tfCalLine, tfCalToUi, wrapUnit, type ChannelCalibration, type TfCal, type TfCalLine,
 } from '../model/calibration';
 import type { ChoosableKind, ChoosableSet } from '../export/data';
@@ -2973,6 +2973,53 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
+   * Measure a reference tone (an acoustic calibrator's 94 dB SPL at 1 kHz, or
+   * a handheld accelerometer calibrator) on one channel of a set and return the
+   * sensitivity it implies, through the engine's `reference_tone_calibration`.
+   *
+   * The sensitivity is in the channel's STORED units per engineering unit
+   * (volts per Pa on a channel captured in volts, full-scale fraction per Pa
+   * otherwise), exactly what the Calibrate dialog's sensitivity field takes.
+   * `refRms` is the calibrator's rms in engineering units. The channel's input
+   * rail (for the clip check) is read from the stored capture settings.
+   * Nothing is written to the set; the dialog applies the number if the user
+   * accepts it.
+   *
+   * @param setId The set holding the recorded tone.
+   * @param ch Zero-based channel holding the tone.
+   * @param refRms The calibrator's rms level in engineering units.
+   * @param freq The calibrator's frequency in Hz.
+   * @returns The sensitivity, measured rms, spectral peak, clip flag and the
+   *   engine's warnings (never silently dropped).
+   */
+  async function measureReferenceTone(
+    setId: number, ch: number, refRms: number, freq: number,
+  ): Promise<{
+    sensitivity: number; measuredRms: number; peakFreq: number;
+    warnings: string[]; clipped: boolean;
+  }> {
+    const ws = working.find((w) => w.setId === setId);
+    if (!ws || !hasTimeData(ws.time)) throw new Error('that set has no recorded time data');
+    engine.boot();
+    const { axis, data, nCh } = timePayload(ws.time);
+    const payload: Record<string, unknown> = {
+      time_axis: axis, time_data: data, n_channels: nCh, fs: ws.fs,
+      channel: ch, ref_rms: refRms, freq,
+    };
+    const rail = channelRail(ws.time.settings, ch);
+    if (rail !== undefined) payload.vmax = rail;
+    const res = await engine.enqueue('reference_tone_calibration', payload);
+    const w = mval(res, 'warnings');
+    return {
+      sensitivity: num(mval(res, 'sensitivity')),
+      measuredRms: num(mval(res, 'measured_rms')),
+      peakFreq: num(mval(res, 'peak_freq')),
+      warnings: w == null ? [] : Array.from(w as ArrayLike<unknown>, String),
+      clipped: !!mval(res, 'clipped'),
+    };
+  }
+
+  /**
    * A set's stored capture settings, for the calibration provenance (the
    * stated gain, pad, input mode and device of each channel). `null` for an
    * unknown set.
@@ -3030,7 +3077,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const p = opts.provenance?.[ch];
         if (p !== undefined) return p;
         const kept = Array.isArray(prev) ? (prev[ch] ?? null) : null;
-        const moved = norm[ch] !== oldFactors[ch] || newUnits[ch] !== oldUnits[ch];
+        const moved = !sameFactor(norm[ch], oldFactors[ch]) || newUnits[ch] !== oldUnits[ch];
         if (moved && kept !== null) { touched = true; return null; }
         return kept;
       });
@@ -3046,6 +3093,15 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     dataset.update((d) => d);            // re-emit so autosave persists the edit
     mirrorUnitsToFitSet(setId);          // keep a fit overlay's axis unit in step
     if (changed && opts.warnFit !== false) warnStaleFit([setId]);
+  }
+
+  /**
+   * Two factors count as the same when they differ by no more than 1e-12 of
+   * the larger: the dialog round-trips an unchanged channel as `1/(1/f)`,
+   * which drifts by an ulp for some `f`, and that must not read as a change.
+   */
+  function sameFactor(a: number, b: number): boolean {
+    return Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b));
   }
 
   /** Element-wise equality for two already-normalised factor arrays. */
@@ -3087,7 +3143,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   // Publish the calibration API so the tray's Calibrate dialog can reach it
   // without a prop thread through App.svelte (see `calibrationController`).
-  calibrationController.set({ getCalibration, getCalibrationSettings, setCalFactors, getTfCalibration, setTfCalibration });
+  calibrationController.set({
+    getCalibration, getCalibrationSettings, setCalFactors, getTfCalibration, setTfCalibration,
+    measureReferenceTone,
+    timeBearingSets: () => working.filter((w) => hasTimeData(w.time)).map((w) => w.setId),
+  });
 
   // --------------------------------------------------------------------- //
   // Scaling tools (round-6 Qt-parity): x(iω) display power + Best Match
@@ -4291,7 +4351,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     sonoPromptNeeded, includeSonograms,
     /** Broken-chain flag store — see its doc. Read by `TrayCard`'s badge. */
     staleChains,
-    calcFft, calcPsd, calcTf, calcSono, lastSonoChannel, cleanImpulse, setImpulseClean, cleanedSets,
+    calcFft, calcPsd, calcTf, calcSono, lastSonoChannel, measureReferenceTone, cleanImpulse, setImpulseClean, cleanedSets,
     hasComputed, resampleTime, resampleSets, undoResample,
     calcFit, fitLineSummary, calcDamping, calcDampingBands, setCsdPair,
     /** Subset Save/Export (round-12 "Choose sets…") — see each function's doc. */
