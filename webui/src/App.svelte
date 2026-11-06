@@ -48,6 +48,7 @@
   import { createDampingStore } from './lib/stores/damping';
   import DampingPanel from './components/DampingPanel.svelte';
   import DampingStartLine from './components/DampingStartLine.svelte';
+  import type { BandKind, Weighting } from './lib/analysis/acoustics';
   import { buildPlotModel, isAutoPowerMode, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
   import { tfTransformEntries } from './lib/plot/tfChannels';
   import { csdPairEntries } from './lib/plot/csdChannels';
@@ -248,6 +249,12 @@
   const settingsMap = analysisSettings.map;   // subscribe so the deriveds re-run on patch
   const freqMode = $derived<FreqMode>(
     (void $settingsMap, analysisSettings.settingFor($analysisTarget, 'freq').mode),
+  );
+  const freqWeighting = $derived<Weighting>(
+    (void $settingsMap, analysisSettings.settingFor($analysisTarget, 'freq').weighting ?? 'Z'),
+  );
+  const freqBands = $derived<'off' | BandKind>(
+    (void $settingsMap, analysisSettings.settingFor($analysisTarget, 'freq').bands ?? 'off'),
   );
   // SONO heat-canvas branch (round-6 item 3): the sonogram targets ONE explicit
   // set via `sonoTarget` (not the shared 'all'-capable `analysisTarget`), so
@@ -1402,7 +1409,7 @@
   /** Single-pane model for the active view (magnitude pane when Bode). */
   const model = $derived<PlotModel>(
     buildPlotModel({
-      view, sets: setArrays, visible, freqMode, tfPlotType: plotType,
+      view, sets: setArrays, visible, freqMode, weighting: freqWeighting, bands: freqBands, tfPlotType: plotType,
       coherence, coherenceAuto, blaSigma, freqRange: $sharedFreqRange, range, xScale, yScale,
       nyquistRange,
     }),
@@ -1450,7 +1457,7 @@
           view === 'tf'
             ? { view: 'tf', sets: setArrays, visible, tfPlotType: 'mag', coherence: false,
                 freqRange: null, range: { x: null, y: null }, xScale, yScale: 'log' }
-            : { view: 'frequency', sets: setArrays, visible, freqMode, coherence: false,
+            : { view: 'frequency', sets: setArrays, visible, freqMode, overlays: false, coherence: false,
                 freqRange: null, range: { x: null, y: null }, xScale, yScale: 'log' },
         )
       : null,

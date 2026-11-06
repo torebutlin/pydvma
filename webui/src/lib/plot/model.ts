@@ -15,6 +15,7 @@
  */
 import { dataExtent, DB_FLOOR, type PlotLine, type PlotModel } from './build';
 import type { TfPlotType } from '../stores/viewstate';
+import { bandLevels, P_REF, weightingDb, type BandKind, type Weighting } from '../analysis/acoustics';
 import { tfColumn } from './tfChannels';
 import { splitTfUnit, tfCalLine, wrapUnit, type TfCal } from '../model/calibration';
 
@@ -530,6 +531,21 @@ export interface PlotModelArgs {
    * phase/real/imag/Nyquist and the time view.
    */
   yScale?: 'lin' | 'log';
+  /**
+   * Frequency-view acoustic weighting (display only; fft, power and density
+   * modes). Default `'Z'` (none). Never touches stored data or calculations.
+   */
+  weighting?: Weighting;
+  /**
+   * Frequency-view octave-band overlay (power and density modes): `'off'`
+   * (default), `'octave'` or `'third-octave'`. Display only.
+   */
+  bands?: 'off' | BandKind;
+  /**
+   * Whether derived overlays (the band steps) are drawn. Default `true`; the
+   * frequency navigator passes `false` so its peak detection sees only data.
+   */
+  overlays?: boolean;
 }
 
 const EMPTY: PlotModel = {
@@ -748,14 +764,27 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
     // unit so the square is unambiguous ('m/s²' → '(m/s²)²', but 'Pa' → 'Pa²').
     const powUnit = unit ? `${wrapUnit(unit)}²` : '';
     const csdUnit = mode === 'csd' ? csdPairUnit(byId, args.visible) : null;
+    const wt: Weighting = mode === 'csd' ? 'Z' : (args.weighting ?? 'Z');
+    const wTxt = wt === 'Z' ? '' : `${wt}-weighted`;
+    // dB SPL only when EVERY visible line is truly in pascals and the y scale
+    // is dB; anything else (volts, mixed units, FS) keeps plain dB.
+    const spl = !linMag && unit === 'Pa' && mode !== 'csd';
+    const wPar = wt === 'Z' ? '' : `(${wt})`;
+    // Insert the weighting note before the closing parenthesis of a label.
+    const wLabel = (base: string, inner: string): string =>
+      `${base} (${inner}${wTxt ? (inner ? ', ' : '') + wTxt : ''})`;
     const yLabel = mode === 'power'
-      ? (unit
-        ? (linMag ? `Power spectrum (${powUnit})` : `Power spectrum (${powUnit}, dB)`)
-        : (linMag ? 'Power spectrum' : 'Power spectrum (dB)'))
+      ? (spl
+        ? `Power spectrum (dB${wPar} re 20 µPa)`
+        : unit
+        ? (linMag ? wLabel('Power spectrum', powUnit) : wLabel('Power spectrum', `${powUnit}, dB`))
+        : (linMag ? (wTxt ? wLabel('Power spectrum', '') : 'Power spectrum') : wLabel('Power spectrum', 'dB')))
       : mode === 'density'
-      ? (unit
-        ? (linMag ? `PSD (${powUnit}/Hz)` : `PSD (${powUnit}/Hz, dB)`)
-        : (linMag ? 'PSD (per Hz)' : 'PSD (per Hz, dB)'))
+      ? (spl
+        ? `PSD (dB${wPar} re (20 µPa)²/Hz)`
+        : unit
+        ? (linMag ? wLabel('PSD', `${powUnit}/Hz`) : wLabel('PSD', `${powUnit}/Hz, dB`))
+        : (linMag ? wLabel('PSD', 'per Hz') : wLabel('PSD', 'per Hz, dB')))
       : mode === 'csd'
         // Cross-spectrum magnitude for the chosen pair (round-5 item 7). dB by
         // default (cross-spectra span orders of magnitude); linear honours the
@@ -763,7 +792,12 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         ? (csdUnit
           ? (linMag ? `CSD |S_xy| (${csdUnit})` : `CSD |S_xy| (${csdUnit}, dB)`)
           : (linMag ? 'CSD |S_xy|' : 'CSD |S_xy| (dB)'))
-        : (unit ? (linMag ? `Magnitude (${unit})` : `Magnitude (${unit}, dB)`) : (linMag ? 'Magnitude' : 'Magnitude (dB)'));
+        : (spl
+          ? `Magnitude (dB${wPar} re 20 µPa)`
+          : unit ? (linMag ? wLabel('Magnitude', unit) : wLabel('Magnitude', `${unit}, dB`))
+          : (linMag ? (wTxt ? wLabel('Magnitude', '') : 'Magnitude') : wLabel('Magnitude', 'dB')));
+    const bandKind = args.bands && args.bands !== 'off' ? args.bands : null;
+    const bandLines: PlotLine[] = [];
     for (const v of args.visible) {
       const s = byId.get(v.setId);
       if (mode === 'fft') {
@@ -781,7 +815,9 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
             const [fr, fi] = iwFactor(f.axis[i], p);
             [re, im] = [re * fr - im * fi, re * fi + im * fr];
           }
-          y[i] = linMag ? Math.hypot(re, im) : magDb(re, im);
+          const g = wt === 'Z' ? 1 : 10 ** (weightingDb(f.axis[i], wt) / 20);
+          const m = Math.hypot(re, im) * g;
+          y[i] = linMag ? m : (m > 0 ? 20 * Math.log10(spl ? m / P_REF : m) : DB_FLOOR);
         }
         lines.push({ ...baseLine(f.axis, y, v), dbY: !linMag });
       } else if (isAutoPowerMode(mode)) {
@@ -803,10 +839,27 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         }
         const y = new Float64Array(nf);
         for (let i = 0; i < nf; i++) {
-          const x = p.data.re[v.ch * nf + i] * scale;
-          y[i] = linMag ? x : powDb(x);
+          const g = wt === 'Z' ? 1 : 10 ** (weightingDb(p.axis[i], wt) / 10);
+          const x = p.data.re[v.ch * nf + i] * scale * g;
+          y[i] = linMag ? x : (x > 0 ? 10 * Math.log10(spl ? x / (P_REF * P_REF) : x) : DB_FLOOR);
         }
         lines.push({ ...baseLine(p.axis, y, v), dbY: !linMag });
+        // Octave-band overlay: band powers from the DENSITY, weighted inside.
+        const enbwB = p.enbw;
+        if (bandKind && args.overlays !== false && enbwB && Number.isFinite(enbwB) && enbwB > 0) {
+          const dens = new Float64Array(nf);
+          for (let i = 0; i < nf; i++) dens[i] = p.data.re[v.ch * nf + i] * cal2 / enbwB;
+          const rows = bandLevels(p.axis, dens, bandKind, wt);
+          const bx = new Float64Array(2 * rows.length);
+          const by = new Float64Array(2 * rows.length);
+          rows.forEach((r, k) => {
+            const val = mode === 'density' ? r.power / (r.upper - r.lower) : r.power;
+            const yv = linMag ? val : (val > 0 ? 10 * Math.log10(spl ? val / (P_REF * P_REF) : val) : DB_FLOOR);
+            bx[2 * k] = r.lower; bx[2 * k + 1] = r.upper;
+            by[2 * k] = yv; by[2 * k + 1] = yv;
+          });
+          bandLines.push({ ...baseLine(bx, by, v), width: 2.5, dbY: !linMag, role: 'bands' });
+        }
       } else {                                               // csd: cross-spectrum |S_xy| for the pair (i, j)
         const c = s?.csd; if (!c) continue;                  // Cxy (coherence) shape (Nc, Nc, Nf)
         const nc = c.data.shape[0] ?? 1;
@@ -845,6 +898,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         lines.push(baseLine(c.axis, y, v));
       }
     }
+    lines.push(...bandLines);
     return { ...EMPTY, lines, xLabel: 'Frequency (Hz)', yLabel, xScale: args.xScale, xRange: xr, yRange: yr };
   }
 

@@ -1,9 +1,10 @@
-import { expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import {
   buildPlotModel, decodeArray, differentiateUnit, iwFactor, migrateFreqMode,
   type MarshalledArray, type SetArrays, type VisibleLine,
 } from '../../src/lib/plot/model';
 import { dataExtent } from '../../src/lib/plot/build';
+import { bandLevels, P_REF, weightingDb } from '../../src/lib/analysis/acoustics';
 
 /** A marshalled real array with the given shape and flat row-major data. */
 const real = (shape: number[], data: number[]): MarshalledArray =>
@@ -268,7 +269,7 @@ test('unit labels: frequency magnitude carries the unit before (dB) / in linear'
     units: ['Pa'],
   }];
   expect(buildPlotModel({ view: 'frequency', freqMode: 'fft', sets, visible: [vis(0, 0, 'on')] }).yLabel)
-    .toBe('Magnitude (Pa, dB)');
+    .toBe('Magnitude (dB re 20 µPa)');
   expect(buildPlotModel({ view: 'frequency', freqMode: 'fft', yScale: 'lin', sets, visible: [vis(0, 0, 'on')] }).yLabel)
     .toBe('Magnitude (Pa)');
 });
@@ -1167,4 +1168,118 @@ test('TF magnitude honours x(iω) power and the ratio unit follows the numerator
   expect(m.lines[0].y[0]).toBeCloseTo(w, 6);              // |iω·H|
   // numerator m/s² differentiated once → m/s³; ratio (m/s³)/N.
   expect(m.yLabel).toBe('|H| ((m/s³)/N)');
+});
+
+describe('acoustic display', () => {
+  const axis = Float64Array.from([0, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750]);
+  const D = 1e-4;     // Pa²/Hz after enbw
+  const enbw = 1.5;
+  const pa = (extra: Partial<SetArrays> = {}): SetArrays => ({
+    setId: 0,
+    psd: {
+      axis,
+      data: decodeArray(real([1, axis.length], Array.from(axis, () => D * enbw))),
+      enbw,
+    },
+    units: ['Pa'],
+    ...extra,
+  });
+  const idx100 = 2;
+
+  test('density Z: dB re (20 µPa)²/Hz', () => {
+    const m = buildPlotModel({ view: 'frequency', freqMode: 'density', sets: [pa()], visible: [vis(0, 0, 'on')] });
+    expect(m.lines[0].y[idx100]).toBeCloseTo(10 * Math.log10(D / P_REF ** 2), 9);
+    expect(m.yLabel).toBe('PSD (dB re (20 µPa)²/Hz)');
+  });
+
+  test('density A: 100 Hz is 19.145 dB lower; label says (A)', () => {
+    const z = buildPlotModel({ view: 'frequency', freqMode: 'density', sets: [pa()], visible: [vis(0, 0, 'on')] });
+    const a = buildPlotModel({
+      view: 'frequency', freqMode: 'density', weighting: 'A', sets: [pa()], visible: [vis(0, 0, 'on')],
+    });
+    expect(z.lines[0].y[idx100] - a.lines[0].y[idx100]).toBeCloseTo(19.145, 2);
+    expect(a.yLabel).toBe('PSD (dB(A) re (20 µPa)²/Hz)');
+  });
+
+  test('FFT and power labels', () => {
+    const fftSet: SetArrays = {
+      setId: 0, units: ['Pa'],
+      freq: { axis: Float64Array.from([100]), data: decodeArray(cplx([1, 1], [3, 4])) },
+    };
+    const f = buildPlotModel({ view: 'frequency', freqMode: 'fft', weighting: 'C', sets: [fftSet], visible: [vis(0, 0, 'on')] });
+    expect(f.yLabel).toBe('Magnitude (dB(C) re 20 µPa)');
+    expect(f.lines[0].y[0]).toBeCloseTo(20 * Math.log10(5 / P_REF) + weightingDb(100, 'C'), 9);
+    const p = buildPlotModel({ view: 'frequency', freqMode: 'power', sets: [pa()], visible: [vis(0, 0, 'on')] });
+    expect(p.yLabel).toBe('Power spectrum (dB re 20 µPa)');
+  });
+
+  test('non-Pa weighted labels insert the weighting', () => {
+    const v = pa({ units: ['V'], unitsAreVolts: true });
+    const db = buildPlotModel({ view: 'frequency', freqMode: 'density', weighting: 'A', sets: [v], visible: [vis(0, 0, 'on')] });
+    expect(db.yLabel).toBe('PSD (V²/Hz, dB, A-weighted)');
+    const lin = buildPlotModel({ view: 'frequency', freqMode: 'density', weighting: 'A', yScale: 'lin', sets: [v], visible: [vis(0, 0, 'on')] });
+    expect(lin.yLabel).toBe('PSD (V²/Hz, A-weighted)');
+    const un = buildPlotModel({ view: 'frequency', freqMode: 'density', sets: [v], visible: [vis(0, 0, 'on')] });
+    expect(un.yLabel).toBe('PSD (V²/Hz, dB)');
+  });
+
+  test('Pa in linear scale is not dB SPL', () => {
+    const m = buildPlotModel({ view: 'frequency', freqMode: 'density', yScale: 'lin', sets: [pa()], visible: [vis(0, 0, 'on')] });
+    expect(m.yLabel).toBe('PSD (Pa²/Hz)');
+    expect(m.lines[0].y[idx100]).toBeCloseTo(D, 12);
+  });
+
+  test('mixed units keep plain dB', () => {
+    const a = pa();
+    const b = { ...pa(), setId: 1, units: ['V'], unitsAreVolts: true };
+    const m = buildPlotModel({
+      view: 'frequency', freqMode: 'density', sets: [a, b], visible: [vis(0, 0, 'on'), vis(1, 0, 'on')],
+    });
+    expect(m.yLabel).not.toContain('20 µPa');
+    expect(m.lines[0].y[idx100]).toBeCloseTo(10 * Math.log10(D), 9);
+  });
+
+  test('weighting does not break autofit', () => {
+    const m = buildPlotModel({
+      view: 'frequency', freqMode: 'density', weighting: 'A', sets: [pa()], visible: [vis(0, 0, 'on')],
+    });
+    const [lo, hi] = dataExtent(m.lines, 'y', 'left');
+    expect(Number.isFinite(lo) && Number.isFinite(hi)).toBe(true);
+  });
+
+  test('octave bands in power mode add a role:bands step line', () => {
+    const m = buildPlotModel({
+      view: 'frequency', freqMode: 'power', bands: 'octave', sets: [pa()], visible: [vis(0, 0, 'on')],
+    });
+    expect(m.lines).toHaveLength(2);
+    const b = m.lines[1];
+    expect(b.role).toBe('bands');
+    expect(b.dbY).toBe(true);
+    expect(b.width).toBe(2.5);
+    const dens = Float64Array.from(axis, () => D);
+    const rows = bandLevels(axis, dens, 'octave', 'Z');
+    expect(b.x).toHaveLength(2 * rows.length);
+    expect(b.y).toHaveLength(2 * rows.length);
+    rows.forEach((r, k) => {
+      expect(b.x[2 * k]).toBe(r.lower);
+      expect(b.x[2 * k + 1]).toBe(r.upper);
+      expect(b.y[2 * k]).toBeCloseTo(10 * Math.log10(r.power / P_REF ** 2), 9);
+      expect(b.y[2 * k + 1]).toBe(b.y[2 * k]);
+    });
+  });
+
+  test('density-mode bands are per Hz', () => {
+    const m = buildPlotModel({
+      view: 'frequency', freqMode: 'density', bands: 'octave', sets: [pa()], visible: [vis(0, 0, 'on')],
+    });
+    const rows = bandLevels(axis, Float64Array.from(axis, () => D), 'octave', 'Z');
+    expect(m.lines[1].y[0]).toBeCloseTo(10 * Math.log10(rows[0].power / (rows[0].upper - rows[0].lower) / P_REF ** 2), 9);
+  });
+
+  test('overlays: false draws no band line', () => {
+    const m = buildPlotModel({
+      view: 'frequency', freqMode: 'power', bands: 'octave', overlays: false, sets: [pa()], visible: [vis(0, 0, 'on')],
+    });
+    expect(m.lines).toHaveLength(1);
+  });
 });

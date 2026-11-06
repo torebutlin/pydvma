@@ -30,6 +30,7 @@
   import type { Selection } from '../../lib/stores/selection';
   import type { AnalysisSettings } from '../../lib/stores/analysisSettings';
   import type { FreqMode } from '../../lib/plot/model';
+  import type { BandKind, Weighting } from '../../lib/analysis/acoustics';
   import { createLiveCalc } from '../../lib/analysis/liveCalc';
   import { distributeByDf } from '../../lib/analysis/resolutionControl';
   import ResolutionControl from '../ResolutionControl.svelte';
@@ -135,7 +136,28 @@
     && (void $derivedSlices, actions.autoPowerMissingEnbw($target)),
   );
 
-  const patch = (partial: Partial<{ window: string; mode: FreqMode; nFrames: number; csdX: number; csdY: number }>) =>
+  const WEIGHTINGS: { id: Weighting; label: string; title: string }[] = [
+    { id: 'Z', label: 'Z', title: 'No frequency weighting' },
+    { id: 'A', label: 'A', title: 'A-weighting (IEC 61672), display only' },
+    { id: 'C', label: 'C', title: 'C-weighting (IEC 61672), display only' },
+  ];
+  const BANDS: { id: 'off' | BandKind; label: string; title: string }[] = [
+    { id: 'off', label: 'Off', title: 'No band overlay' },
+    { id: 'octave', label: 'Oct', title: 'Octave-band levels drawn over the spectrum' },
+    { id: 'third-octave', label: '⅓ Oct', title: 'One-third-octave band levels drawn over the spectrum' },
+  ];
+  const weighting = $derived<Weighting>(freq.weighting ?? 'Z');
+  const bands = $derived<'off' | BandKind>(freq.bands ?? 'off');
+  const showWeighting = $derived(freqMode === 'fft' || freqMode === 'power' || freqMode === 'density');
+  const showBands = $derived(freqMode === 'power' || freqMode === 'density');
+  /** Display-only: re-plots without a recompute, but y units/levels change. */
+  function patchDisplay(partial: Partial<{ weighting: Weighting; bands: 'off' | BandKind }>) {
+    actions.notifyUnitsChanged(['frequency']);
+    patch(partial);
+  }
+
+  const patch = (partial: Partial<{ window: string; mode: FreqMode; nFrames: number; csdX: number; csdY: number;
+    weighting: Weighting; bands: 'off' | BandKind }>) =>
     analysisSettings.patch($target, 'freq', partial);
 
   function calc() {
@@ -214,6 +236,32 @@
           </span>
         </div>
       </div>
+      {#if showWeighting}
+        <div class="grp">
+          <span class="grp-lab">weighting</span>
+          <div class="grp-ctl">
+            <span class="seg" role="group" aria-label="weighting" data-testid="freq-weighting">
+              {#each WEIGHTINGS as w (w.id)}
+                <button class:active={weighting === w.id} data-spec={w.id} title={w.title}
+                  onclick={() => patchDisplay({ weighting: w.id })}>{w.label}</button>
+              {/each}
+            </span>
+          </div>
+        </div>
+      {/if}
+      {#if showBands}
+        <div class="grp">
+          <span class="grp-lab">bands</span>
+          <div class="grp-ctl">
+            <span class="seg" role="group" aria-label="band overlay" data-testid="freq-bands">
+              {#each BANDS as b (b.id)}
+                <button class:active={bands === b.id} data-spec={b.id} title={b.title}
+                  onclick={() => patchDisplay({ bands: b.id })}>{b.label}</button>
+              {/each}
+            </span>
+          </div>
+        </div>
+      {/if}
       <div class="grp">
         <span class="grp-lab">window</span>
         <div class="grp-ctl">

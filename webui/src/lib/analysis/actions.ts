@@ -782,7 +782,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   /** Per-set settings for `view`, from the store or per-set defaults. */
   function freqSettings(setId: number) {
-    return settings?.get(setId, 'freq') ?? { window: 'hann', mode: 'fft' as const, nFrames: 10, csdX: 0, csdY: 1 };
+    return settings?.get(setId, 'freq') ?? { window: 'hann', mode: 'fft' as const, nFrames: 10, csdX: 0, csdY: 1, weighting: 'Z' as const, bands: 'off' as const };
   }
   function tfSettings(setId: number) {
     return settings?.get(setId, 'tf') ?? { chIn: 0, window: 'hann', averaging: 'within' as const, nFrames: 10 };

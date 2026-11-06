@@ -43,6 +43,8 @@ export interface PlotLine {
    * Only consulted when a zoom window (`xRange`) is active.
    */
   xMonotonic?: boolean;
+  /** `'bands'`: a derived octave-band step overlay, not measured data. */
+  role?: 'bands';
 }
 
 /**

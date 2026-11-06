@@ -28,6 +28,7 @@
 import { get, writable, type Readable } from 'svelte/store';
 import type { Selection } from './selection';
 import type { FreqMode } from '../plot/model';
+import type { BandKind, Weighting } from '../analysis/acoustics';
 
 /** The three analysis "views" that own per-set settings. */
 export type SettingsView = 'freq' | 'tf' | 'sono';
@@ -42,6 +43,10 @@ export type SettingsView = 'freq' | 'tf' | 'sono';
 export interface FreqSettings {
   window: string; mode: FreqMode; nFrames: number;
   csdX: number; csdY: number;
+  /** Acoustic weighting (display only). Absent in old files: 'Z'. */
+  weighting: Weighting;
+  /** Octave-band overlay (display only). Absent in old files: 'off'. */
+  bands: 'off' | BandKind;
 }
 /** TF-card settings: input channel, window, averaging mode, averaging frames. */
 export interface TfSettings { chIn: number; window: string; averaging: 'none' | 'within' | 'across'; nFrames: number; }
@@ -104,7 +109,7 @@ export interface ViewSettings { freq: FreqSettings; tf: TfSettings; sono: SonoSe
  */
 export function defaults(): PerSetSettings {
   return {
-    freq: { window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1 },
+    freq: { window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1, weighting: 'Z', bands: 'off' },
     tf: { chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 },
     sono: { nFft: 512, dynRangeDb: 60, method: 'stft', voicesPerOctave: 16, voicesAuto: true, w0: 6, fMin: null, fMax: null },
   };

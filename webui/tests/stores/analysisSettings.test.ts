@@ -13,7 +13,7 @@ beforeEach(() => {
 
 test('defaults() match the cards prior local defaults; fresh object each call', () => {
   const d = defaults();
-  expect(d.freq).toEqual({ window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1 });
+  expect(d.freq).toEqual({ window: 'hann', mode: 'fft', nFrames: 10, csdX: 0, csdY: 1, weighting: 'Z', bands: 'off' });
   expect(d.tf).toEqual({ chIn: 0, window: 'hann', averaging: 'within', nFrames: 10 });
   expect(d.sono).toEqual({
     nFft: 512, dynRangeDb: 60,
@@ -206,4 +206,11 @@ test('capture defaults: applied to a captured set, set by value, cleared by null
   expect(settings.get(c, 'tf')).toMatchObject({ window: 'none', averaging: 'within' });
   settings.setCaptureDefaults({ window: null });
   expect(get(settings.captureDefaults)).toEqual({});
+});
+
+test('old freq settings without weighting/bands restore as Z/off', () => {
+  const a = sel.addSet({ name: 'a', nChannels: 1, durationS: 1, timestamp: 't0' });
+  settings.patch(a, 'freq', { window: 'hann', mode: 'fft', nFrames: 10 });
+  expect(settings.get(a, 'freq').weighting).toBe('Z');
+  expect(settings.get(a, 'freq').bands).toBe('off');
 });

@@ -1272,7 +1272,7 @@ test('stampUiState writes labels and settings onto DvmaItems', () => {
   expect(item.ui).toBeDefined();
   expect(item.ui!.channel_labels).toEqual({ '0': 'impact' });
   // The CSD pair (round-5 item 7) rides along in the persisted freq settings.
-  expect(item.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'power', nFrames: 25, csdX: 0, csdY: 1 });
+  expect(item.ui!.analysis!.freq).toEqual({ window: 'flattop', mode: 'power', nFrames: 25, csdX: 0, csdY: 1, weighting: 'Z', bands: 'off' });
 });
 
 test('stampUiState always writes the Frequency + TF settings, defaults included', () => {

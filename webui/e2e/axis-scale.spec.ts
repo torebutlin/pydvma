@@ -128,4 +128,21 @@ test.describe('@engine', () => {
     expect(after![0]).toBeGreaterThan(0);          // log commit is always positive
     expect(after![1]).toBeGreaterThan(after![0]);  // a proper (lo < hi) band
   });
+
+  test('PSD: weighting adds A-weighted to the label; octave bands add a line per channel', async ({ page }) => {
+    await page.goto('/?fixture=1');
+    await expect(page.getByTestId('tray-card-0')).toBeVisible();
+    await page.locator(stage('Freq')).click();
+    await page.locator('[data-spec="density"]').click();
+    await page.getByRole('button', { name: 'Calc PSD' }).click();
+    await expect(page.getByTestId('plot-line').first()).toBeVisible({ timeout: 200_000 });
+
+    const yLabel = page.locator('[data-testid="plot-svg"] text.axlab').nth(1);
+    await page.locator('[data-testid="freq-weighting"] [data-spec="A"]').click();
+    await expect(yLabel).toContainText('A-weighted');
+
+    const before = await page.getByTestId('plot-line').count();
+    await page.locator('[data-testid="freq-bands"] [data-spec="octave"]').click();
+    await expect(page.getByTestId('plot-line')).toHaveCount(before * 2);   // one band step per visible line (fixture: 2 channels)
+  });
 });

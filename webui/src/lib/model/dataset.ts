@@ -35,7 +35,7 @@ export interface DvmaItemUi {
   analysis?: {
     /** `mode` accepts the legacy `'psd'` (pre power/density split); it is
      *  migrated to `'power'` on load by `migrateFreqMode`. */
-    freq?: { window?: string; mode?: 'fft' | 'psd' | 'power' | 'density' | 'csd'; nFrames?: number };
+    freq?: { window?: string; mode?: 'fft' | 'psd' | 'power' | 'density' | 'csd'; nFrames?: number; weighting?: 'Z' | 'A' | 'C'; bands?: 'off' | 'octave' | 'third-octave' };
     tf?: { chIn?: number; window?: string; averaging?: 'none' | 'within' | 'across'; nFrames?: number };
     sono?: {
       nFft?: number; dynRangeDb?: number;
