@@ -75,13 +75,23 @@ export function classifyPeak(peak: number): LevelVerdict {
  * derived from the stated preamp gain. Pass `null` when no gain has been
  * stated and the report carries dBFS only; inventing a scale would be worse
  * than admitting there isn't one.
+ *
+ * On an interface with a preamp per input (the Audient iD44) each channel has
+ * its own full scale: pass a list, one entry per channel, and each channel is
+ * converted with its own. A `null` entry, a non-positive one, or a channel
+ * past the end of the list gets no volts.
  */
 export function reportLevels(
   levels: readonly ChannelLevelInput[],
-  fullScaleVolts: number | null,
+  fullScaleVolts: number | readonly (number | null)[] | null,
 ): ChannelLevelReport[] {
-  const scale = fullScaleVolts != null && fullScaleVolts > 0 ? fullScaleVolts : null;
+  const valid = (v: number | null | undefined): number | null =>
+    v != null && Number.isFinite(v) && v > 0 ? v : null;
+  const single = Array.isArray(fullScaleVolts) ? null : valid(fullScaleVolts as number | null);
   return levels.map((lvl, channel) => {
+    const scale = Array.isArray(fullScaleVolts)
+      ? valid((fullScaleVolts as readonly (number | null)[])[channel])
+      : single;
     const peak = Number.isFinite(lvl?.peak) ? Math.abs(lvl.peak) : 0;
     const rms = Number.isFinite(lvl?.rms) ? Math.abs(lvl.rms) : 0;
     return {

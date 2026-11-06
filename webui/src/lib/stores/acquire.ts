@@ -275,6 +275,21 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    */
   const inputFullScaleIsVolts = writable<boolean>(false);
   /**
+   * The full scale of EACH input channel, in the stream's own units, from the
+   * `configured` reply's `inputVmaxChannels` (`MySettings.input_vmax_channels`)
+   * — or `null` until a bridge reports one, and again after a provider swap.
+   * An interface with a preamp per input (the Audient iD44) has a rail per
+   * channel: 8.7 mV at 60 dB of mic gain beside 1.0 on an unstated input.
+   * {@link inputFullScale} is then only the largest, so the meters and the
+   * clip flag judge each channel against its own entry here when present.
+   */
+  const inputFullScaleChannels = writable<number[] | null>(null);
+  /**
+   * Whether each entry of {@link inputFullScaleChannels} is in volts
+   * (`inputVmaxIsVoltsChannels`), or `null` alongside it.
+   */
+  const inputFullScaleIsVoltsChannels = writable<boolean[] | null>(null);
+  /**
    * The active backend kind as a REACTIVE store (constructor + {@link setProvider}).
    * AcquireCard reads it to light up the output-stimulus + pretrigger groups for
    * the Web Audio path (round-5 #10) WITHOUT touching {@link bridgeCaps} — that
@@ -349,6 +364,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       // gets the 1.0 default rather than a stale value from a previous device.
       inputFullScale.set(info.inputVmax ?? 1);
       inputFullScaleIsVolts.set(info.inputVmaxIsVolts ?? false);
+      inputFullScaleChannels.set(info.inputVmaxChannels ?? null);
+      inputFullScaleIsVoltsChannels.set(info.inputVmaxIsVoltsChannels ?? null);
     });
   }
   wireProvider(provider);
@@ -366,6 +383,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     // swap to Web Audio (normalised ±1) must not inherit an NI volt rail.
     inputFullScale.set(1);
     inputFullScaleIsVolts.set(false);
+    inputFullScaleChannels.set(null);
+    inputFullScaleIsVoltsChannels.set(null);
     wireProvider(p);
   }
 
@@ -676,6 +695,10 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     inputFullScale,
     /** Whether {@link inputFullScale} carries volts rather than a bare fraction. */
     inputFullScaleIsVolts,
+    /** Full scale of each input channel (null until a bridge reports one per channel). */
+    inputFullScaleChannels,
+    /** Whether each entry of {@link inputFullScaleChannels} is in volts (or null). */
+    inputFullScaleIsVoltsChannels,
     /** Active backend kind ('webaudio' | 'bridge') as a reactive store. */
     kind,
     /** Web Audio output-device list for the stimulus sink select (round-5 #10). */

@@ -346,6 +346,36 @@ test('levels stay in raw stream units; fullScale carries the rail', async () => 
   mon.stop();
 });
 
+test('each channel is judged against its OWN rail when the server gives one per channel', async () => {
+  // An iD44 with 60 dB of mic gain on channel 1 (full scale 10 mV) and a line
+  // input on channel 0 (full scale 1): the single max-over-channels rail would
+  // never see channel 1 clip, and the smallest rail would flag channel 0.
+  const { mon, acq } = setup();
+  acq.inputFullScale.set(1);
+  acq.inputFullScaleChannels.set([1, 0.01]);
+  await mon.start();
+
+  // Channel 0 at 90 % of its rail, channel 1 at 10 %: nothing clips.
+  capturedOndata!({ data: new Float32Array([0.9, 0.001]), nSamples: 1, nChannels: 2, fs: 48000 });
+  expect(get(mon.clipLatched)).toBe(false);
+
+  // Channel 1 at 99 % of its 10 mV rail clips, though it is 1 % of the max.
+  capturedOndata!({ data: new Float32Array([0.5, 0.0099]), nSamples: 1, nChannels: 2, fs: 48000 });
+  expect(get(mon.clipLatched)).toBe(true);
+  expect(get(mon.fullScaleChannels)).toEqual([1, 0.01]);
+  mon.stop();
+});
+
+test('a channel the per-channel rails do not cover falls back to the single rail', async () => {
+  const { mon, acq } = setup();
+  acq.inputFullScale.set(5);
+  acq.inputFullScaleChannels.set([5, 0]);   // a nonsense entry is not a divisor
+  await mon.start();
+  capturedOndata!({ data: new Float32Array([3.0, 3.0, 3.0]), nSamples: 1, nChannels: 3, fs: 48000 });
+  expect(get(mon.clipLatched)).toBe(false);
+  mon.stop();
+});
+
 test('a nonsense rail falls back to the normalised 1.0', async () => {
   const { mon, acq } = setup();
   acq.inputFullScale.set(0);

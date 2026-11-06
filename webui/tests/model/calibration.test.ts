@@ -107,6 +107,35 @@ test('capturedInVolts: a soundcard is volts only once VmaxSC is characterised', 
   expect(capturedInVolts({ device_driver: 'soundcard', VmaxSC: 1.9036 })).toBe(true);
 });
 
+test('capturedInVolts: a per-channel VmaxSC is judged channel by channel', () => {
+  // The Audient iD44: 60 dB of mic gain on channel 0 (8.2 mV full scale), an
+  // optical input on channel 1 with no rail (full-scale units).
+  const s = { device_driver: 'soundcard', VmaxSC: [0.0082, 1] };
+  expect(capturedInVolts(s, 0)).toBe(true);
+  expect(capturedInVolts(s, 1)).toBe(false);
+  // A channel the list does not cover reads 1.0, as python's input_vmax does.
+  expect(capturedInVolts(s, 2)).toBe(false);
+  // With no channel: volts only when EVERY channel is.
+  expect(capturedInVolts(s)).toBe(false);
+  expect(capturedInVolts({ device_driver: 'soundcard', VmaxSC: [0.0082, 0.87] })).toBe(true);
+  expect(capturedInVolts({ device_driver: 'soundcard', VmaxSC: [] })).toBe(false);
+});
+
+test('capturedInVolts reads the stored array tag a python-written file carries', () => {
+  // readDvma passes settings through verbatim, so a numpy VmaxSC arrives as
+  // its manifest tag, not as a plain list.
+  const s = { device_driver: 'soundcard', VmaxSC: { __array__: [0.0082, 1] } };
+  expect(capturedInVolts(s, 0)).toBe(true);
+  expect(capturedInVolts(s, 1)).toBe(false);
+  expect(capturedInVolts(s)).toBe(false);
+});
+
+test('capturedInVolts: a channel does not change the scalar answer', () => {
+  expect(capturedInVolts({ device_driver: 'soundcard', VmaxSC: 1.9036 }, 3)).toBe(true);
+  expect(capturedInVolts({ device_driver: 'soundcard', VmaxSC: 1 }, 0)).toBe(false);
+  expect(capturedInVolts({ device_driver: 'nidaq', VmaxSC: [1, 1] }, 1)).toBe(true);
+});
+
 test('capturedInVolts: Web Audio and anything unreadable are not volts', () => {
   expect(capturedInVolts({ device_driver: 'web_audio' })).toBe(false);
   expect(capturedInVolts(undefined)).toBe(false);

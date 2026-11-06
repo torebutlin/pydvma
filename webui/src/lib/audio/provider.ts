@@ -131,6 +131,43 @@ export interface DeviceCapsEntry {
    * WITH analogue gain (e.g. the 2i2).
    */
   fixed_gain?: boolean;
+  /**
+   * True when each analogue input has its OWN gain control (the Audient iD44:
+   * four preamps), from `device_caps[deviceId].per_channel_gain`. A gain then
+   * applies channel by channel, and an `'optical'` or `'loopback'` input
+   * (see {@link channel_roles}) takes no full scale from it — no preamp of the
+   * interface sits in front of it. Absent (never `false`) when the server says
+   * the gain is shared or the device is not characterised.
+   */
+  per_channel_gain?: boolean;
+  /**
+   * Usable preamp gain in dB as `[min, max]` per input mode, from
+   * `device_caps[deviceId].gain_range_db`. {@link max_input_dbu} is the level
+   * at the mode's MINIMUM gain, which is not always 0 dB — the iD44's line path
+   * starts at −10 dB — so full scale follows from `dBu - (gain - min)`.
+   * Absent when the device is not characterised.
+   */
+  gain_range_db?: Record<string, [number, number]>;
+  /**
+   * Attenuation of the interface's switchable input pad in dB (the iD44's
+   * 10 dB), from `device_caps[deviceId].pad_db`. An engaged pad raises the
+   * maximum input level by this much. Absent or `null` when there is no pad.
+   */
+  pad_db?: number | null;
+  /**
+   * Input modes only SOME inputs have, as `{mode: [zero-based channels]}`,
+   * from `device_caps[deviceId].mode_channels` — the iD44's `'inst'` (D.I.)
+   * is on inputs 1–2 only, `{inst: [0, 1]}`. A mode not listed here is on
+   * every analogue input. The server refuses a configure that asks a channel
+   * for a mode it lacks.
+   */
+  mode_channels?: Record<string, number[]>;
+  /**
+   * The sample rate the interface is best run at, in Hz, from
+   * `device_caps[deviceId].preferred_fs` (the iD44: 48000). Absent or `null`
+   * when the profile states none.
+   */
+  preferred_fs?: number | null;
   /** Maximum continuous sample rate in Hz (when no discrete ladder is given). */
   max_fs?: number;
   /** Maximum input (AI) channel count (`max_channels[deviceId].input`). */
@@ -363,6 +400,21 @@ export interface ConfiguredInfo {
    * the samples are a bare fraction of full scale with no voltage meaning.
    */
   inputVmaxIsVolts?: boolean;
+  /**
+   * The full-scale value of EACH input channel, in the stream's own units
+   * (`MySettings.input_vmax_channels`). An interface with a preamp per input
+   * (the Audient iD44) has a rail per channel — 8.7 mV at 60 dB of mic gain
+   * on one, 1.0 (full-scale units) on an optical input beside it — and then
+   * {@link inputVmax} is only the largest of them. Absent from a bridge
+   * predating the field, or when an entry is not a finite positive number.
+   */
+  inputVmaxChannels?: number[];
+  /**
+   * Whether each entry of {@link inputVmaxChannels} is in VOLTS
+   * (`MySettings.channels_in_volts`); {@link inputVmaxIsVolts} is true only
+   * when all of them are.
+   */
+  inputVmaxIsVoltsChannels?: boolean[];
 }
 
 /**
@@ -408,6 +460,14 @@ export function deviceCapsFor(
     out.max_input_dbu = dc.max_input_dbu;
   }
   if (dc && typeof dc.fixed_gain === 'boolean') out.fixed_gain = dc.fixed_gain;
+  // Per-channel gain model (multi-preamp interfaces). The server sends every
+  // key for every soundcard, with false/null when there is nothing to say;
+  // only real values are carried, so an absent key keeps meaning "unknown".
+  if (dc?.per_channel_gain === true) out.per_channel_gain = true;
+  if (dc && isGainRanges(dc.gain_range_db)) out.gain_range_db = dc.gain_range_db;
+  if (dc && isPositive(dc.pad_db)) out.pad_db = dc.pad_db;
+  if (dc && isModeChannels(dc.mode_channels)) out.mode_channels = dc.mode_channels;
+  if (dc && isPositive(dc.preferred_fs)) out.preferred_fs = dc.preferred_fs;
   // Voltage rails (NI only): pass through when the server reports a finite,
   // positive symmetric range so the UI can clamp VmaxNI / output_VmaxNI.
   if (dc && typeof dc.ai_vmax === 'number' && dc.ai_vmax > 0) out.ai_vmax = dc.ai_vmax;
@@ -430,6 +490,27 @@ export function deviceCapsFor(
   }
 
   return Object.keys(out).length ? out : null;
+}
+
+/** A finite number above zero. */
+function isPositive(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0;
+}
+
+/** A non-empty `{mode: [min, max]}` map of finite gains. */
+function isGainRanges(v: unknown): v is Record<string, [number, number]> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const entries = Object.values(v as Record<string, unknown>);
+  return entries.length > 0 && entries.every((r) => Array.isArray(r) && r.length === 2
+    && r.every((g) => typeof g === 'number' && Number.isFinite(g)));
+}
+
+/** A non-empty `{mode: [channel, ...]}` map of non-negative integers. */
+function isModeChannels(v: unknown): v is Record<string, number[]> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const entries = Object.values(v as Record<string, unknown>);
+  return entries.length > 0 && entries.every((chs) => Array.isArray(chs)
+    && chs.every((c) => Number.isInteger(c) && c >= 0));
 }
 
 /**
@@ -588,42 +669,117 @@ export function dbuToVoltsPeak(dbu: number): number {
   return Math.SQRT2 * 0.7746 * Math.pow(10, dbu / 20);
 }
 
+/** An input a sound-card preamp offers (`MySettings.input_mode`). */
+export type InputMode = 'line' | 'inst' | 'mic';
+
 /**
- * Full scale in VOLTS PEAK for the selected device, or `null` when the volt
- * scale is not known (an uncalibrated interface, whose readings are
- * full-scale units wearing no unit at all).  This is the scale the pretrigger
- * threshold is measured against, so both the Setup field's unit label and the
- * value the bridge sends derive from THIS one function — a UI that displayed
- * one basis while the wire used another would be worse than no hint.
+ * One channel's entry of a setting that is either one value for every channel
+ * or a list with one entry per channel (`MySettings` takes `VmaxSC`,
+ * `input_gain_db`, `input_mode` and `input_pad` either way): the scalar
+ * itself, else the list's entry at `channel`, `undefined` past its end.
+ * Without `channel`, the first channel's entry.
+ */
+export function channelValue<T>(value: T | readonly T[] | undefined, channel?: number): T | undefined {
+  if (!Array.isArray(value)) return value as T | undefined;
+  return (value as readonly T[])[channel ?? 0];
+}
+
+/**
+ * Whether a stated gain — one number, or a list with an entry per channel —
+ * states a gain on ANY channel. A list of nothing but `null` (every channel
+ * unstated) is no stated gain at all.
+ */
+export function gainIsStated(gain: BridgeConfig['inputGainDb']): boolean {
+  if (Array.isArray(gain)) return gain.some((g) => g != null && Number.isFinite(g));
+  return gain != null && Number.isFinite(gain);
+}
+
+/**
+ * Full scale in VOLTS PEAK that a stated gain implies on one input of a
+ * characterised interface — the server's derivation
+ * (`_soundcard_specs.full_scale_volts`):
+ * `dbuToVoltsPeak(dBu - (gain - min_gain) + pad_db)`, where `dBu` is the
+ * mode's maximum input level at its MINIMUM gain (`gain_range_db[mode][0]`,
+ * 0 dB when not published; the iD44's line path starts at −10 dB) and an
+ * engaged pad adds its attenuation back. `null` when there is no gain, no
+ * published level for the mode, or the device is not characterised.
+ */
+export function derivedFullScaleVolts(
+  dc: DeviceCapsEntry | undefined | null,
+  gainDb: number | null | undefined,
+  mode: string,
+  pad = false,
+): number | null {
+  const levels = dc?.max_input_dbu;
+  if (!levels || gainDb == null || !Number.isFinite(gainDb)) return null;
+  const dbu = levels[mode];
+  if (dbu == null || !Number.isFinite(dbu)) return null;
+  const minGain = dc?.gain_range_db?.[mode]?.[0];
+  const gmin = typeof minGain === 'number' && Number.isFinite(minGain) ? minGain : 0;
+  const padDb = pad && isPositive(dc?.pad_db) ? (dc!.pad_db as number) : 0;
+  return dbuToVoltsPeak(dbu - (gainDb - gmin) + padDb);
+}
+
+/**
+ * Full scale in VOLTS PEAK for one channel of the selected device, or `null`
+ * when the volt scale is not known (an uncalibrated interface, whose readings
+ * are full-scale units wearing no unit at all).  This is the scale the
+ * pretrigger threshold is measured against, so both the Setup field's unit
+ * label and the value the bridge sends derive from THIS one function — a UI
+ * that displayed one basis while the wire used another would be worse than
+ * no hint.
  *
  * Order: a FIXED-GAIN interface (ESI U24 XL) has one hardware constant, taken
  * from its sole `max_input_dbu` entry; a variable-gain one needs a STATED
- * gain (no audio API can read the preamp) and derives `dBu - gain`; failing
- * both, the server's published `full_scale_volts`.
+ * gain (no audio API can read the preamp) and derives it with
+ * {@link derivedFullScaleVolts}; failing both, the server's published
+ * `full_scale_volts`.
+ *
+ * Per channel: the gain, mode, pad and measured `vmaxSC` may each be one
+ * value or a list with an entry per channel, and `channel` (zero-based)
+ * picks this channel's; without it, channel 0's — exactly the single answer
+ * a scalar config always had. On an interface with a gain PER CHANNEL (the
+ * Audient iD44) an `'optical'` or `'loopback'` input takes no full scale
+ * from a stated gain (no preamp of the device is in front of it), and a mode
+ * the channel lacks (`mode_channels`: the iD44's inst is on inputs 1–2 only)
+ * gives none either — the server refuses that configure. A shared-gain
+ * interface (the 2i2) keeps one rail on every channel, loopback included,
+ * as the server does.
  */
 export function effectiveFullScaleVolts(
   caps: BridgeCaps | null,
   deviceId: string | undefined,
   cfg: BridgeConfig = {},
+  channel?: number,
 ): number | null {
   const dc = caps && deviceId ? caps.device_caps?.[deviceId] : undefined;
   if (!dc) return null;
+  const ch = channel ?? 0;
   const levels = dc.max_input_dbu;
   if (levels) {
     if (dc.fixed_gain) {
       const mode = Object.keys(levels)[0];
       const dbu = mode === undefined ? undefined : levels[mode];
       if (dbu != null && Number.isFinite(dbu)) return dbuToVoltsPeak(dbu);
-    } else if (cfg.inputGainDb != null && Number.isFinite(cfg.inputGainDb)) {
-      const dbu = levels[cfg.inputMode ?? 'line'];
-      if (dbu != null && Number.isFinite(dbu)) return dbuToVoltsPeak(dbu - cfg.inputGainDb);
+    } else {
+      const gain = channelValue(cfg.inputGainDb, ch);
+      if (gain != null && Number.isFinite(gain)) {
+        const role = dc.channel_roles?.[ch];
+        if (dc.per_channel_gain && (role === 'optical' || role === 'loopback')) return null;
+        const mode = channelValue(cfg.inputMode, ch) ?? 'line';
+        const onlyOn = dc.mode_channels?.[mode];
+        if (Array.isArray(onlyOn) && !onlyOn.includes(ch)) return null;
+        const v = derivedFullScaleVolts(dc, gain, mode, channelValue(cfg.inputPad, ch) === true);
+        if (v != null) return v;
+      }
     }
-  } else if (cfg.vmaxSC != null && Number.isFinite(cfg.vmaxSC) && cfg.vmaxSC > 0) {
+  } else {
     // No published levels — an uncharacterised interface — so the operator's
     // own measured full scale is the only answer there is. Checked only in
     // this branch: a profiled device derives the number from its stated gain
     // and the server overrides an explicit VmaxSC anyway.
-    return cfg.vmaxSC;
+    const vmax = channelValue(cfg.vmaxSC, ch);
+    if (vmax != null && Number.isFinite(vmax) && vmax > 0) return vmax;
   }
   const published = dc.full_scale_volts;
   return typeof published === 'number' && Number.isFinite(published) && published > 0
@@ -732,10 +888,24 @@ export interface BridgeConfig {
    * `MySettings.input_gain_db`. No audio API can READ this, so stating it is
    * the only way to get calibrated volts: the server derives `VmaxSC` from
    * the device's published maximum input level. Recorded in the dataset.
+   *
+   * One number for every channel, or a list with one entry per channel for
+   * an interface with a preamp per input (the Audient iD44); a `null` entry
+   * is a channel whose gain is not stated (no volts on it). Sent as given.
    */
-  inputGainDb?: number;
-  /** Which input the signal is on → `MySettings.input_mode`. */
-  inputMode?: 'line' | 'inst' | 'mic';
+  inputGainDb?: number | (number | null)[];
+  /**
+   * Which input the signal is on → `MySettings.input_mode`: one mode, or one
+   * per channel. Sent with every stated gain (python's default is `'line'`).
+   */
+  inputMode?: InputMode | InputMode[];
+  /**
+   * Whether the interface's input pad is engaged → `MySettings.input_pad`:
+   * one switch, or one per channel. The pad (the iD44's 10 dB) raises the
+   * maximum input level, so it changes the full scale a gain implies. Sent
+   * only with a stated gain; unset → python's default (off).
+   */
+  inputPad?: boolean | boolean[];
   /**
    * Measured full-scale input voltage → `MySettings.VmaxSC`: the jack voltage
    * that reads as a normalised 1.0.
@@ -750,8 +920,10 @@ export interface BridgeConfig {
    * Ignored for a device with a profile: there `inputGainDb` derives the same
    * number and the server would override an explicit value anyway, so the two
    * are never offered together.
+   *
+   * One value for every channel, or one per channel.
    */
-  vmaxSC?: number;
+  vmaxSC?: number | number[];
   /** Pretrigger sample count (null = no pretrigger / free-run capture). */
   pretrigSamples?: number | null;
   pretrigThreshold?: number;

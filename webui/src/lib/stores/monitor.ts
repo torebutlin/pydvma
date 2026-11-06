@@ -103,6 +103,20 @@ export const WINDOW_PRESETS_S = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10] as const;
  */
 const CLIP_THRESHOLD = 0.95;
 
+/**
+ * The full scale to judge channel `ch` against: its own entry of the
+ * per-channel rails when that is a finite positive number, else `fallback`
+ * (the stream's single rail, itself guarded to the normalised 1.0).  Shared by
+ * the clip flag and the level bars so the two can never disagree.
+ */
+export function channelFullScale(
+  rails: readonly number[] | null | undefined, ch: number, fallback: number,
+): number {
+  const v = rails?.[ch];
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 1;
+}
+
 /** Smallest FFT max-frequency the user may zoom to (Hz). */
 const MIN_FMAX_HZ = 10;
 /** The Welch averaging choices surfaced in the LiveCard's PSD mode. */
@@ -267,8 +281,12 @@ export function createMonitorStore(acquire: AcquireStore) {
     const lvls: ChannelLevel[] = [];
     let clippedThisChunk = false;
     // The rail these samples are measured against — volts on NI, a
-    // normalised 1.0 on Web Audio and an uncalibrated soundcard.
+    // normalised 1.0 on Web Audio and an uncalibrated soundcard. With a rail
+    // per channel (an interface with a preamp per input), each channel is
+    // judged against its own: the largest would never see a 60 dB mic
+    // channel clip. `channelFullScale` falls back to the single rail.
     const fs = currentFullScale();
+    const rails = get(acquire.inputFullScaleChannels);
     for (let ch = 0; ch < nCh; ch++) {
       let peak = 0;
       let sumSq = 0;
@@ -278,7 +296,7 @@ export function createMonitorStore(acquire: AcquireStore) {
         if (a > peak) peak = a;
         sumSq += v * v;
       }
-      if (peak >= CLIP_THRESHOLD * fs) clippedThisChunk = true;
+      if (peak >= CLIP_THRESHOLD * channelFullScale(rails, ch, fs)) clippedThisChunk = true;
       lvls.push({ peak, rms: Math.sqrt(sumSq / n) });
     }
     levels.set(lvls);
@@ -475,6 +493,14 @@ export function createMonitorStore(acquire: AcquireStore) {
     fullScale: acquire.inputFullScale,
     /** Whether {@link fullScale} carries volts rather than a bare fraction. */
     fullScaleIsVolts: acquire.inputFullScaleIsVolts,
+    /**
+     * Full scale of each channel, in the same units as {@link levels}, or
+     * `null` when the stream reports only the single {@link fullScale}. Read
+     * an entry through {@link channelFullScale}, which falls back to it.
+     */
+    fullScaleChannels: acquire.inputFullScaleChannels,
+    /** Whether each entry of {@link fullScaleChannels} is in volts (or null). */
+    fullScaleIsVoltsChannels: acquire.inputFullScaleIsVoltsChannels,
     windowS,
     fftYLog,
     fftXLog,

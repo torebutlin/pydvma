@@ -424,6 +424,50 @@ test('swapping to Web Audio drops the bridge input rail', async () => {
   expect(get(store.inputFullScaleIsVolts)).toBe(false);
 });
 
+test('each channel\u2019s rail from a configure reaches the meters, and clears when absent', async () => {
+  // A multi-preamp interface (the Audient iD44) has a full scale per input:
+  // 60 dB of mic gain on one channel, an unstated optical input on another.
+  const { provider, fireConfigured } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  expect(get(store.inputFullScaleChannels)).toBeNull();
+  expect(get(store.inputFullScaleIsVoltsChannels)).toBeNull();
+
+  fireConfigured({
+    requestedFs: 48000, configuredFs: 48000, channels: 2,
+    inputVmax: 1, inputVmaxIsVolts: false,
+    inputVmaxChannels: [0.0087, 1], inputVmaxIsVoltsChannels: [true, false],
+  });
+  expect(get(store.inputFullScaleChannels)).toEqual([0.0087, 1]);
+  expect(get(store.inputFullScaleIsVoltsChannels)).toEqual([true, false]);
+  // The single number is untouched: older consumers keep the safe maximum.
+  expect(get(store.inputFullScale)).toBe(1);
+
+  // A bridge that reports no per-channel rail must not inherit the last one.
+  fireConfigured({ requestedFs: 44100, configuredFs: 44100, channels: 2, inputVmax: 5 });
+  expect(get(store.inputFullScaleChannels)).toBeNull();
+  expect(get(store.inputFullScaleIsVoltsChannels)).toBeNull();
+});
+
+test('swapping provider drops the per-channel rails', async () => {
+  const { provider, fireConfigured } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  fireConfigured({
+    requestedFs: 48000, configuredFs: 48000, channels: 2,
+    inputVmax: 1, inputVmaxChannels: [0.0087, 1], inputVmaxIsVoltsChannels: [true, false],
+  });
+  store.setProvider({
+    kind: 'webaudio',
+    async capabilities() { return null; },
+    async enumerateInputDevices() { return []; },
+    startRecording() { return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 }; },
+    async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
+  });
+  expect(get(store.inputFullScaleChannels)).toBeNull();
+  expect(get(store.inputFullScaleIsVoltsChannels)).toBeNull();
+});
+
 test('sub-Hz float noise in the resolved rate is treated as an exact honour', async () => {
   const { provider, fireConfigured } = richBridgeProvider();
   const store = createAcquireStore(provider);

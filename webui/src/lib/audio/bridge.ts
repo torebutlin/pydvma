@@ -30,6 +30,7 @@ import {
   CancelledError,
   defaultPretrigThreshold,
   effectiveFullScaleVolts,
+  gainIsStated,
 } from './provider';
 import type {
   AppliedSettingsAnswer,
@@ -155,6 +156,15 @@ interface Pending {
   match: (msg: Record<string, unknown>) => boolean;
   resolve: (msg: Record<string, unknown>) => void;
   reject: (err: Error) => void;
+}
+
+/**
+ * A measured full scale (`BridgeConfig.vmaxSC`) worth sending: one finite
+ * positive value, or a non-empty list of them (one per channel).
+ */
+function isFullScale(v: BridgeConfig['vmaxSC']): v is number | number[] {
+  const ok = (x: unknown) => typeof x === 'number' && Number.isFinite(x) && x > 0;
+  return Array.isArray(v) ? v.length > 0 && v.every(ok) : ok(v);
 }
 
 /** `soundcard:2` / `nidaq:0` / `mock:0` → `{driver, index}` (null for ''). */
@@ -374,12 +384,17 @@ export class BridgeProvider implements SourceProvider {
    *
    * `inputVmax` / `inputVmaxIsVolts` are additive (`serve._input_scale_fields`)
    * and left `undefined` when a bridge predating them answers — the level
-   * meters then keep their 1.0 = full-scale assumption.
+   * meters then keep their 1.0 = full-scale assumption. So are the
+   * per-channel `inputVmaxChannels` / `inputVmaxIsVoltsChannels`, each taken
+   * only when every entry is well-formed (a finite positive rail; a boolean):
+   * a 0 must never travel as a divisor.
    */
   private emitConfigured(requestedFs: number, status: Record<string, unknown>): void {
     const configuredFs = Number(status.fs);
     if (!Number.isFinite(configuredFs) || configuredFs <= 0) return;
     const vmax = Number(status.inputVmax);
+    const rails = status.inputVmaxChannels;
+    const volts = status.inputVmaxIsVoltsChannels;
     this.configuredCb?.({
       requestedFs,
       configuredFs,
@@ -388,6 +403,14 @@ export class BridgeProvider implements SourceProvider {
       inputVmax: Number.isFinite(vmax) && vmax > 0 ? vmax : undefined,
       inputVmaxIsVolts:
         typeof status.inputVmaxIsVolts === 'boolean' ? status.inputVmaxIsVolts : undefined,
+      inputVmaxChannels: Array.isArray(rails) && rails.length > 0
+        && rails.every((r) => typeof r === 'number' && Number.isFinite(r) && r > 0)
+        ? (rails as number[]).slice()
+        : undefined,
+      inputVmaxIsVoltsChannels: Array.isArray(volts) && volts.length > 0
+        && volts.every((v) => typeof v === 'boolean')
+        ? (volts as boolean[]).slice()
+        : undefined,
     });
   }
 
@@ -687,18 +710,26 @@ export class BridgeProvider implements SourceProvider {
     // server auto-derives VmaxSC for a fixed-gain device when
     // `input_gain_db` is `None`; a stale out-of-range gain would instead
     // raise on the fixed-gain profile, whose gain range is exactly 0 dB.
+    //
+    // Gain, mode and pad go as given: one value, or a list with an entry per
+    // channel (an interface with a preamp per input, the Audient iD44), an
+    // unstated channel's gain as null. The mode goes with EVERY stated gain:
+    // python's default is 'line', and on the iD44 a 60 dB mic gain read as a
+    // line gain is out of range (line runs −10..+50 dB). A list stating no
+    // channel at all is no stated gain.
     const selDc = cfg.deviceId ? this.capsCache?.device_caps?.[cfg.deviceId] : undefined;
     if (selDc?.fixed_gain) {
       s.input_gain_db = null;
-    } else if (ec.inputGainDb != null) {
+    } else if (gainIsStated(ec.inputGainDb)) {
       s.input_gain_db = ec.inputGainDb;
-      if (ec.inputMode) s.input_mode = ec.inputMode;
-    } else if (ec.vmaxSC != null && Number.isFinite(ec.vmaxSC) && ec.vmaxSC > 0) {
+      s.input_mode = ec.inputMode ?? 'line';
+      if (ec.inputPad !== undefined) s.input_pad = ec.inputPad;
+    } else if (isFullScale(ec.vmaxSC)) {
       // An UNCHARACTERISED interface: no published input level means no gain
       // to state and nothing to derive from, so the operator's own measured
-      // full scale goes straight to `MySettings.VmaxSC`. Only reached when no
-      // gain was stated — a stated gain derives VmaxSC server-side and would
-      // override this, so the UI never offers both.
+      // full scale goes straight to `MySettings.VmaxSC` (one value, or one per
+      // channel). Only reached when no gain was stated — a stated gain derives
+      // VmaxSC server-side and would override this, so the UI never offers both.
       s.VmaxSC = ec.vmaxSC;
     }
     if (ec.vmaxNI != null) s.VmaxNI = ec.vmaxNI;
@@ -782,9 +813,12 @@ export class BridgeProvider implements SourceProvider {
     const p: Record<string, unknown> = {
       samples: ec.pretrigSamples ?? BARE_ARM_PRETRIG_SAMPLES,
     };
+    // The recorder compares the threshold on the TRIGGER channel, against
+    // that channel's own full scale (an interface with a preamp per input has
+    // one per channel), so the default is 5 % of THAT channel's.
     p.threshold = ec.pretrigThreshold
       ?? defaultPretrigThreshold(
-        effectiveFullScaleVolts(this.capsCache, cfg.deviceId, ec),
+        effectiveFullScaleVolts(this.capsCache, cfg.deviceId, ec, ec.pretrigChannel ?? 0),
       );
     if (ec.pretrigChannel != null) p.channel = ec.pretrigChannel;
     if (ec.pretrigTimeout != null) p.timeout = ec.pretrigTimeout;

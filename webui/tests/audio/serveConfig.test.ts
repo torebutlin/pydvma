@@ -208,6 +208,74 @@ test('a driver this server does not list is named in notes', () => {
   expect(mapServeConfig({ fs: 8000 }, devices)!.notes).toEqual([]);
 });
 
+// ---- input gain, mode, pad and full scale (VmaxSC), scalar or per channel ----
+// A notebook's `MySettings(input_gain_db=...)` used to stop at /config: the
+// app mapped none of these, so its next configure carried no gain and the
+// server derived nothing.
+
+test('per-channel gains with one mode and one pad map as given', () => {
+  const p = mapServeConfig({ input_gain_db: [60, 60, 60, 60], input_mode: 'mic', input_pad: false }, devices)!;
+  expect(p.bridge).toEqual({ inputGainDb: [60, 60, 60, 60], inputMode: 'mic', inputPad: false });
+});
+
+test('scalar gain, mode and pad map as scalars; an unstated channel stays null', () => {
+  expect(mapServeConfig({ input_gain_db: 9, input_mode: 'line', input_pad: true }, devices)!.bridge)
+    .toEqual({ inputGainDb: 9, inputMode: 'line', inputPad: true });
+  // The iD44's line path goes down to −10 dB: a negative gain is a gain.
+  expect(mapServeConfig({ input_gain_db: -10 }, devices)!.bridge.inputGainDb).toBe(-10);
+  expect(mapServeConfig({ input_gain_db: [60, null, 0, null] }, devices)!.bridge.inputGainDb)
+    .toEqual([60, null, 0, null]);
+  expect(mapServeConfig({ input_mode: ['inst', 'inst', 'mic', 'mic'], input_pad: [true, false] }, devices)!.bridge)
+    .toEqual({ inputMode: ['inst', 'inst', 'mic', 'mic'], inputPad: [true, false] });
+});
+
+test('a null gain, mode or pad clears; a gain list with nothing stated clears too', () => {
+  const p = mapServeConfig({ input_gain_db: null, input_mode: null, input_pad: null }, devices)!;
+  for (const k of ['inputGainDb', 'inputMode', 'inputPad'] as const) {
+    expect(k in p.bridge, k).toBe(true);
+    expect(p.bridge[k], k).toBeUndefined();
+  }
+  const q = mapServeConfig({ input_gain_db: [null, null] }, devices)!;
+  expect('inputGainDb' in q.bridge).toBe(true);
+  expect(q.bridge.inputGainDb).toBeUndefined();
+});
+
+test('junk gain, mode and pad values are skipped', () => {
+  expect(mapServeConfig({ input_gain_db: 'loud', input_mode: 'phono', input_pad: 'yes' }, devices)).toBeNull();
+  expect(mapServeConfig({ input_gain_db: [60, 'x'], input_mode: ['mic', 2], input_pad: [true, 1] }, devices))
+    .toBeNull();
+});
+
+test('a measured full scale maps as the operator\u2019s calibration, scalar or per channel', () => {
+  expect(mapServeConfig({ VmaxSC: 2.5, input_gain_db: null }, devices)!.bridge.vmaxSC).toBe(2.5);
+  expect(mapServeConfig({ VmaxSC: [2.5, 1.2] }, devices)!.bridge.vmaxSC).toEqual([2.5, 1.2]);
+});
+
+test('VmaxSC 1.0 is the uncalibrated placeholder: it clears rather than stating 1 V', () => {
+  // python's /config carries every field, so every plain launch sends 1.0.
+  for (const v of [1, [1, 1], null]) {
+    const p = mapServeConfig({ VmaxSC: v }, devices)!;
+    expect('vmaxSC' in p.bridge).toBe(true);
+    expect(p.bridge.vmaxSC).toBeUndefined();
+  }
+});
+
+test('a VmaxSC derived from a stated gain is not taken as a calibration', () => {
+  // The server derives it again from the gain; carried as an explicit value,
+  // it would outlive the gain and claim volts once the gain was cleared.
+  const p = mapServeConfig({ VmaxSC: 1.38, input_gain_db: 20, input_mode: 'line' }, devices)!;
+  expect(p.bridge.inputGainDb).toBe(20);
+  expect('vmaxSC' in p.bridge).toBe(true);
+  expect(p.bridge.vmaxSC).toBeUndefined();
+  const q = mapServeConfig({ VmaxSC: [0.0087, 1], input_gain_db: [60, null] }, devices)!;
+  expect(q.bridge.vmaxSC).toBeUndefined();
+});
+
+test('a nonsense VmaxSC is skipped', () => {
+  expect(mapServeConfig({ VmaxSC: 0 }, devices)).toBeNull();
+  expect(mapServeConfig({ VmaxSC: [2.5, -1] }, devices)).toBeNull();
+});
+
 test('describeServePatch summarises the headline fields for the toast', () => {
   const p = mapServeConfig({ fs: 3000, channels: 2, stored_time: 6, pretrig_samples: 100,
     analysis_window: 'none' }, devices)!;

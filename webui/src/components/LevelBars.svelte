@@ -16,9 +16,12 @@
    * normalised 1.0 on Web Audio / an uncalibrated soundcard.  Both the bar
    * fill and the tooltip are therefore taken as a fraction of
    * `monitor.fullScale` — reading them against a hard-coded 1.0 pegged every
-   * bar and lit CLIP on healthy NI signals (3C6 lab, 2026-09).
+   * bar and lit CLIP on healthy NI signals (3C6 lab, 2026-09).  When the
+   * stream reports a rail PER CHANNEL (`monitor.fullScaleChannels`: an
+   * interface with a preamp per input, the Audient iD44), each bar is a
+   * fraction of its own channel's — the same rail the clip flag uses.
    */
-  import type { MonitorStore } from '../lib/stores/monitor';
+  import { channelFullScale, type MonitorStore } from '../lib/stores/monitor';
 
   let {
     monitor,
@@ -46,6 +49,17 @@
   const fullScale = $derived(
     Number.isFinite($fullScaleStore) && $fullScaleStore > 0 ? $fullScaleStore : 1,
   );
+  const railsStore = $derived(monitor.fullScaleChannels);
+  const voltsChannelsStore = $derived(monitor.fullScaleIsVoltsChannels);
+  /** This channel's full scale: its own rail when reported, else the single one. */
+  function railOf(ch: number): number {
+    return channelFullScale($railsStore, ch, fullScale);
+  }
+  /** Whether this channel's rail is in volts (per channel when reported). */
+  function isVolts(ch: number): boolean {
+    const v = $voltsChannelsStore;
+    return v ? v[ch] === true : $isVoltsStore;
+  }
 
   /**
    * Bars to show — always at least the channels we have levels for. The rail
@@ -59,9 +73,9 @@
     return labels ? labels(ch) : `ch_${ch}`;
   }
 
-  /** Peak as a fraction of full scale, clamped to the bar's 0–1 range. */
-  function frac(peak: number): number {
-    return Math.max(0, Math.min(1, peak / fullScale));
+  /** Peak as a fraction of channel `ch`'s full scale, clamped to the bar's 0–1 range. */
+  function frac(peak: number, ch: number): number {
+    return Math.max(0, Math.min(1, peak / railOf(ch)));
   }
 
   /**
@@ -69,8 +83,8 @@
    * once the scale has a voltage meaning (NI, or a calibrated jack).
    */
   function barTitle(ch: number, peak: number): string {
-    const pct = `ch${ch}: peak ${(frac(peak) * 100).toFixed(0)}%`;
-    return $isVoltsStore ? `${pct} (${peak.toPrecision(3)} V of ${fullScale} V)` : pct;
+    const pct = `ch${ch}: peak ${(frac(peak, ch) * 100).toFixed(0)}%`;
+    return isVolts(ch) ? `${pct} (${peak.toPrecision(3)} V of ${railOf(ch)} V)` : pct;
   }
 </script>
 
@@ -84,7 +98,7 @@
     {#each bars as lv, ch (ch)}
       <div class="col">
         <span class="vbar" title={barTitle(ch, lv.peak)}>
-          <i style="height:{((1 - frac(lv.peak)) * 100).toFixed(0)}%"></i>
+          <i style="height:{((1 - frac(lv.peak, ch)) * 100).toFixed(0)}%"></i>
         </span>
         {#if variant === 'big'}<small>{label(ch)}</small>{/if}
       </div>

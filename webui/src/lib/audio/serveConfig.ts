@@ -37,7 +37,7 @@
  * device_driver/index, pretrig_*, VmaxNI, output_* , iepe_excit_current_A,
  * NI_mode).
  */
-import type { AudioInputDevice, BridgeConfig } from './provider';
+import { gainIsStated, type AudioInputDevice, type BridgeConfig, type InputMode } from './provider';
 import { DEFAULT_SETTINGS, type AcquireSettings, type AcquireStatus } from '../stores/acquire';
 import type { BlaPhase } from '../stores/bla';
 
@@ -107,6 +107,39 @@ function cleared(o: Record<string, unknown>, key: string): boolean {
 }
 
 /**
+ * One value, or a per-channel list of them (`MySettings` takes `VmaxSC`,
+ * `input_gain_db`, `input_mode` and `input_pad` either way), each read by
+ * `entry`. A list comes back as a list; `undefined` when the value, or any
+ * entry of the list, is malformed (`entry` returned `undefined`) or the list
+ * is empty — the whole field is then skipped rather than half-applied.
+ */
+function scalarOrList<T>(v: unknown, entry: (x: unknown) => T | undefined): T | T[] | undefined {
+  if (!Array.isArray(v)) return entry(v);
+  if (!v.length) return undefined;
+  const out: T[] = [];
+  for (const x of v) {
+    const e = entry(x);
+    if (e === undefined) return undefined;
+    out.push(e);
+  }
+  return out;
+}
+/** One channel's stated gain in dB, `null` where it is unstated. */
+function gainEntry(x: unknown): number | null | undefined {
+  return x === null || x === 'None' ? null : finNum(x);
+}
+/** An input mode python accepts (it lower-cases them). */
+function modeEntry(x: unknown): InputMode | undefined {
+  if (typeof x !== 'string') return undefined;
+  const m = x.toLowerCase();
+  return m === 'line' || m === 'inst' || m === 'mic' ? m : undefined;
+}
+/** A pad switch. */
+function padEntry(x: unknown): boolean | undefined {
+  return typeof x === 'boolean' ? x : undefined;
+}
+
+/**
  * Build a `<driver>:<index>` deviceId from a MySettings driver/index pair and
  * return it ONLY when the enumerated `devices` list actually exposes it (so a
  * stale/foreign selection never picks a phantom device).  `mock` always maps to
@@ -133,6 +166,13 @@ function matchDeviceId(
  * returns to {@link DEFAULT_SETTINGS}, a cleared bridge field is patched to
  * `undefined` so the app's own default applies, a cleared `device_driver`
  * selects the Default row, and a cleared `pretrig_samples` disarms.
+ *
+ * Sound-card input: `input_gain_db`, `input_mode` and `input_pad` map onto
+ * `inputGainDb` / `inputMode` / `inputPad`, and `VmaxSC` onto `vmaxSC`, each
+ * as one value or a per-channel list exactly as given. `VmaxSC` maps only
+ * where it is a measured full scale: a document that states a gain had it
+ * derived from that gain, and its `1.0` is the uncalibrated placeholder, so
+ * both clear `vmaxSC` instead.
  *
  * Output stimulus: read from a nested `output: {type, amp, f1, f2, duration}`
  * object OR flat `output_type` / `output_amp` / `output_f1` / `output_f2` /
@@ -216,6 +256,47 @@ export function mapServeConfig(
   if (iepe !== undefined && iepe >= 0) bridge.iepeExcitCurrentA = iepe;
   else if (cleared(c, 'iepe_excit_current_A') || (Array.isArray(iepeRaw) && iepeFirst === null)) {
     bridge.iepeExcitCurrentA = undefined;
+  }
+  // ---- sound-card input gain, mode, pad and full scale (VmaxSC) ----
+  // Each is one value or a list with one entry per channel (an interface with
+  // a preamp per input, the Audient iD44); a list stays a list, an unstated
+  // channel's gain stays null, and a gain list stating no channel clears.
+  // Without these a notebook's stated gain stopped at /config: the app's
+  // next configure carried none, so the server derived no volts.
+  let docGain: BridgeConfig['inputGainDb'];
+  if (cleared(c, 'input_gain_db')) bridge.inputGainDb = undefined;
+  else {
+    const g = scalarOrList(get(c, 'input_gain_db'), gainEntry);
+    if (g !== undefined && g !== null) {
+      docGain = g as BridgeConfig['inputGainDb'];
+      bridge.inputGainDb = gainIsStated(docGain) ? docGain : undefined;
+    }
+  }
+  if (cleared(c, 'input_mode')) bridge.inputMode = undefined;
+  else {
+    const m = scalarOrList(get(c, 'input_mode'), modeEntry);
+    if (m !== undefined) bridge.inputMode = m;
+  }
+  if (cleared(c, 'input_pad')) bridge.inputPad = undefined;
+  else {
+    const pad = scalarOrList(get(c, 'input_pad'), padEntry);
+    if (pad !== undefined) bridge.inputPad = pad;
+  }
+  // VmaxSC is the operator's own measured full scale only where no gain is
+  // stated: with one, python DERIVED it from the gain and the server derives
+  // it again from the gain this patch carries — kept as an explicit value it
+  // would outlive the gain and claim volts once the gain was cleared. 1.0 is
+  // the uncalibrated placeholder (every plain launch's /config carries it),
+  // so it clears rather than stating "1 V".
+  if (Object.prototype.hasOwnProperty.call(c, 'VmaxSC')) {
+    if (gainIsStated(docGain) || cleared(c, 'VmaxSC')) bridge.vmaxSC = undefined;
+    else {
+      const v = scalarOrList(get(c, 'VmaxSC'), posNum);
+      if (v !== undefined) {
+        const placeholder = Array.isArray(v) ? v.every((x) => x === 1) : v === 1;
+        bridge.vmaxSC = placeholder ? undefined : v;
+      }
+    }
   }
   const inSpec = get(c, 'input_channels_spec');
   if (typeof inSpec === 'string' && inSpec && inSpec !== 'None') bridge.inputChannelsSpec = inSpec;

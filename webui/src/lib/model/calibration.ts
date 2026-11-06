@@ -133,6 +133,13 @@ export interface TfCalRow {
   chanDen: string;
 }
 
+/** A finite positive value other than the uncalibrated 1.0 placeholder. */
+function isRealFullScale(v: unknown): boolean {
+  if (typeof v !== 'number' && typeof v !== 'string') return false;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 && n !== 1;
+}
+
 /**
  * Whether a set's samples are true VOLTS, judged from the capture settings
  * pydvma stored with it.
@@ -149,18 +156,36 @@ export interface TfCalRow {
  *     the jack has been characterised and stays at its uncalibrated `1.0`
  *     placeholder until then.
  *
+ * An interface with a preamp per input (the Audient iD44) can store `VmaxSC`
+ * as one value PER CHANNEL — a plain list, or the `{__array__: [...]}` tag a
+ * python-written file carries (`readDvma` passes settings through verbatim).
+ * Then `channel` (zero-based) asks about that channel alone, by the same
+ * rule, and a channel past the end of the list reads the uncalibrated 1.0 as
+ * python's `input_vmax` does; without `channel`, the answer is true only when
+ * EVERY channel is in volts. A scalar `VmaxSC` answers the same whatever the
+ * channel, exactly as it always has.
+ *
  * Reading it off the STORED settings (rather than off live acquisition state)
  * means a saved-and-reopened file, and a file written by python, answer the
  * same way — there is no extra field to persist and nothing to keep in sync.
  *
  * @param settings The item's `settings` block, as loaded.
+ * @param channel Zero-based channel to ask about; omitted, every channel.
  * @returns True only when the samples are known to be volts.
  */
-export function capturedInVolts(settings: unknown): boolean {
+export function capturedInVolts(settings: unknown, channel?: number): boolean {
   if (!settings || typeof settings !== 'object') return false;
   const s = settings as Record<string, unknown>;
   if (s.device_driver === 'nidaq') return true;
-  const vmaxSc = Number(s.VmaxSC);
+  let vmax: unknown = s.VmaxSC;
+  if (vmax && typeof vmax === 'object' && !Array.isArray(vmax) && '__array__' in vmax) {
+    vmax = (vmax as { __array__: unknown }).__array__;
+  }
+  if (Array.isArray(vmax)) {
+    if (channel != null) return isRealFullScale(vmax[channel]);
+    return vmax.length > 0 && vmax.every(isRealFullScale);
+  }
+  const vmaxSc = Number(vmax);
   return Number.isFinite(vmaxSc) && vmaxSc > 0 && vmaxSc !== 1;
 }
 

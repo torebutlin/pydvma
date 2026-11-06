@@ -34,14 +34,16 @@
   import { parseFs, fsOptionsFor } from '../../lib/stores/acquire';
   import {
     deviceCapsFor,
+    channelValue,
     clampVoltage,
     defaultPretrigThreshold,
+    derivedFullScaleVolts,
     effectiveFullScaleVolts,
     BARE_ARM_PRETRIG_SAMPLES,
     DEFAULT_PRETRIG_TIMEOUT_S,
     PYDVMA_DEFAULT_VMAX,
   } from '../../lib/audio/provider';
-  import type { MonitorStore } from '../../lib/stores/monitor';
+  import { channelFullScale, type MonitorStore } from '../../lib/stores/monitor';
   import { reportLevels, worstVerdict, verdictAdvice } from '../../lib/model/levelCheck';
 
   let {
@@ -281,15 +283,18 @@
   // Preview of what the stated gain means, so a wrong entry is obvious
   // before it silently scales a whole dataset. A fixed-gain device has no
   // gain TO state, so its full scale comes straight from fixedGainInfo.
+  // One gain, mode and pad for every channel only: a per-channel setting has
+  // a full scale per channel, which the level check below reads instead.
   const fullScaleVolts = $derived.by(() => {
     if (fixedGain) return fixedGainInfo?.volts ?? null;
     const gain = $bridgeConfig.inputGainDb;
-    const levels = bridgeSelCaps?.max_input_dbu;
-    if (gain == null || !levels) return null;
-    const dbu = levels[$bridgeConfig.inputMode ?? 'line'];
-    if (dbu == null) return null;
-    return Math.SQRT2 * 0.7746 * Math.pow(10, (dbu - gain) / 20);
+    const mode = $bridgeConfig.inputMode;
+    const pad = $bridgeConfig.inputPad;
+    if (typeof gain !== 'number' || Array.isArray(mode) || Array.isArray(pad)) return null;
+    return derivedFullScaleVolts(bridgeSelCaps, gain, mode ?? 'line', pad === true);
   });
+  /** A preamp per input (the Audient iD44): each channel has its own gain. */
+  const perChannelGain = $derived(bridgeSelCaps?.per_channel_gain === true && !fixedGain);
 
   // ---- trigger (pretrigger) ----
   // Gated on the CAPABILITY, not on the machine having NI-DAQ installed. The
@@ -305,7 +310,9 @@
    * is a VOLTAGE — the server compares it against VmaxSC-scaled data.
    */
   const triggerFullScale = $derived(
-    effectiveFullScaleVolts($bridgeCaps, $settings.deviceId, $bridgeConfig),
+    effectiveFullScaleVolts(
+      $bridgeCaps, $settings.deviceId, $bridgeConfig, $bridgeConfig.pretrigChannel ?? 0,
+    ),
   );
   const thresholdInVolts = $derived(triggerFullScale != null);
   /** The threshold that will actually be used when the field is left blank. */
@@ -350,20 +357,38 @@
   const levelFullScale = $derived(
     Number.isFinite($monitorFullScale) && $monitorFullScale > 0 ? $monitorFullScale : 1,
   );
+  // With a rail per channel (an interface with a preamp per input), each
+  // channel is a fraction of its OWN full scale, not of the largest.
+  const monitorFullScaleChannels = $derived(monitor.fullScaleChannels);
+  const monitorFullScaleIsVoltsChannels = $derived(monitor.fullScaleIsVoltsChannels);
   const normalisedLevels = $derived(
-    ($monitorLevels ?? []).map((l) => ({
-      peak: l.peak / levelFullScale,
-      rms: l.rms / levelFullScale,
-    })),
+    ($monitorLevels ?? []).map((l, ch) => {
+      const rail = channelFullScale($monitorFullScaleChannels, ch, levelFullScale);
+      return { peak: l.peak / rail, rms: l.rms / rail };
+    }),
   );
   /**
-   * The voltage full scale for the volts column: the gain-derived preview
-   * where there is one (a characterised soundcard), else the server's own
-   * rail when it said that rail is in volts (NI, or a calibrated jack).
+   * The voltage full scale for the volts column, per channel: the
+   * gain-derived preview where there is one (a characterised soundcard; each
+   * channel's own on an interface with a preamp per input), else the
+   * server's own rail for that channel when it said the rail is in volts (NI,
+   * or a calibrated jack).
    */
-  const levelVoltsScale = $derived(
-    fullScaleVolts ?? ($monitorFullScaleIsVolts ? levelFullScale : null),
-  );
+  const levelVoltsScale = $derived.by((): number | (number | null)[] | null => {
+    const rails = $monitorFullScaleChannels;
+    const volts = $monitorFullScaleIsVoltsChannels;
+    const served = (ch: number): number | null => {
+      if (rails && volts) return volts[ch] ? channelFullScale(rails, ch, levelFullScale) : null;
+      return $monitorFullScaleIsVolts ? levelFullScale : null;
+    };
+    const chans = ($monitorLevels ?? []).map((_, ch) => ch);
+    if (perChannelGain) {
+      return chans.map((ch) =>
+        effectiveFullScaleVolts($bridgeCaps, $settings.deviceId, $bridgeConfig, ch) ?? served(ch));
+    }
+    if (fullScaleVolts != null) return fullScaleVolts;
+    return chans.map(served);
+  });
   const levelReports = $derived(reportLevels(normalisedLevels, levelVoltsScale));
   const levelVerdict = $derived(worstVerdict(levelReports));
   const levelsLive = $derived($monitorStatus === 'streaming' || $monitorStatus === 'paused');
@@ -1039,7 +1064,7 @@
                       type="number"
                       min="0"
                       step="1"
-                      value={$bridgeConfig.inputGainDb ?? ''}
+                      value={typeof $bridgeConfig.inputGainDb === 'number' ? $bridgeConfig.inputGainDb : ''}
                       onchange={onInputGainChange}
                       placeholder="not set"
                       title="The preamp gain currently set on the interface, in dB. pydvma cannot read it, so state it here and full scale in volts follows from the device's published maximum input level."
@@ -1050,7 +1075,7 @@
                     <select
                       aria-label="input mode"
                       title="Which input the signal is on — sets the maximum input level used with the gain."
-                      value={$bridgeConfig.inputMode ?? 'line'}
+                      value={channelValue($bridgeConfig.inputMode) ?? 'line'}
                       onchange={onInputModeChange}
                       style="width:84px"
                     >

@@ -1999,3 +1999,242 @@ test('with no handler, or a handler that throws, the tab still answers (refusing
   fake.emitJson({ type: 'apply_settings', id: 4, settings: [1, 2] });
   expect(fake.sentJson().at(-1)).toMatchObject({ id: 4, ok: false });
 });
+
+// ---------------------------------------------------------------------------
+// Per-channel gain, mode and pad (the Audient iD44: four preamps, each with
+// its own gain knob and −10 dB pad). Python's MySettings takes each of these
+// as a scalar (unchanged meaning) or one per channel; the bridge carries them
+// through as given — a scalar stays scalar, a list stays a list, and an
+// unstated channel's gain travels as null.
+// ---------------------------------------------------------------------------
+
+/** Capabilities for the Audient iD44 as `serve._gain_model_caps` reports it. */
+const CAPS_ID44 = {
+  ...CAPS,
+  devices: { soundcard: ['Audient iD44'], nidaq: [] },
+  device_caps: {
+    'soundcard:0': {
+      driver: 'soundcard', index: 0, name: 'Audient iD44', ao: true,
+      input_modes: ['inst', 'line', 'mic'],
+      max_input_dbu: { mic: 18, line: 28, inst: 10 },
+      fixed_gain: false,
+      channel_roles: [
+        'analogue', 'analogue', 'analogue', 'analogue',
+        ...Array.from({ length: 16 }, () => 'optical'), 'loopback', 'loopback',
+      ],
+      per_channel_gain: true,
+      gain_range_db: { mic: [0, 60], line: [-10, 50], inst: [0, 60] },
+      pad_db: 10,
+      mode_channels: { inst: [0, 1] },
+      preferred_fs: 48000,
+    },
+  },
+};
+
+/** Configure against `caps` with `cfg` staged; returns the sent settings kwargs. */
+async function configuredSettingsFor(
+  caps: unknown, cfg: Record<string, unknown>, channelCount = 4,
+): Promise<Record<string, unknown>> {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(caps);
+  await capsP;
+  bp.setConfig(cfg);
+  const monP = bp.startMonitor(
+    { deviceId: 'soundcard:0', sampleRate: 48000, channelCount }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 48000, channels: channelCount });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+  const msg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  return msg.settings as Record<string, unknown>;
+}
+
+test('per-channel gain, mode and pad travel as lists, an unstated gain as null', async () => {
+  const s = await configuredSettingsFor(CAPS_ID44, {
+    inputGainDb: [60, 60, null, 0],
+    inputMode: 'mic',
+    inputPad: [false, true, false, false],
+  });
+  expect(s.input_gain_db).toEqual([60, 60, null, 0]);
+  expect(s.input_mode).toBe('mic');
+  expect(s.input_pad).toEqual([false, true, false, false]);
+  // A stated gain derives VmaxSC server-side; never a second answer.
+  expect(s.VmaxSC).toBeUndefined();
+});
+
+test('a per-channel mode list travels as a list', async () => {
+  const s = await configuredSettingsFor(CAPS_ID44, {
+    inputGainDb: 30, inputMode: ['inst', 'inst', 'line', 'line'], inputPad: true,
+  });
+  expect(s.input_gain_db).toBe(30);
+  expect(s.input_mode).toEqual(['inst', 'inst', 'line', 'line']);
+  expect(s.input_pad).toBe(true);
+});
+
+test('a stated gain always carries its mode: python defaults to line, not what Setup shows', async () => {
+  // The iD44's line gain range is −10..+50 dB and mic's is 0..60: a 60 dB
+  // mic gain sent without its mode would be read as an out-of-range LINE gain.
+  const s = await configuredSettingsFor(CAPS_ID44, { inputGainDb: [60, 60, 60, 60] });
+  expect(s.input_gain_db).toEqual([60, 60, 60, 60]);
+  expect(s.input_mode).toBe('line');
+  expect(s.input_pad).toBeUndefined();   // unstated: python's default (off)
+});
+
+test('a gain list with no channel stated is no stated gain at all', async () => {
+  const s = await configuredSettingsFor(
+    { ...CAPS, devices: { soundcard: ['Some Unknown Box'], nidaq: [] },
+      device_caps: { 'soundcard:0': { driver: 'soundcard', index: 0, name: 'Some Unknown Box' } } },
+    { inputGainDb: [null, null], inputPad: [true, true], vmaxSC: [2.5, 1.2] }, 2);
+  expect(s.input_gain_db).toBeUndefined();
+  expect(s.input_pad).toBeUndefined();
+  // ...so the operator's own measured full scale goes through, per channel.
+  expect(s.VmaxSC).toEqual([2.5, 1.2]);
+});
+
+test('a fixed-gain device still forces input_gain_db null over a stale gain list', async () => {
+  const s = await configuredSettingsFor(CAPS_U24XL, {
+    inputGainDb: [10, 10], inputMode: ['line', 'line'], inputPad: [true, true],
+  }, 2);
+  expect(s.input_gain_db).toBeNull();
+  expect(s.input_mode).toBeUndefined();
+  expect(s.input_pad).toBeUndefined();
+});
+
+test('deviceCapsFor surfaces the per-channel gain model', () => {
+  const entry = deviceCapsFor(CAPS_ID44 as never, 'soundcard:0');
+  expect(entry?.per_channel_gain).toBe(true);
+  expect(entry?.gain_range_db).toEqual({ mic: [0, 60], line: [-10, 50], inst: [0, 60] });
+  expect(entry?.pad_db).toBe(10);
+  expect(entry?.mode_channels).toEqual({ inst: [0, 1] });
+  expect(entry?.preferred_fs).toBe(48000);
+  expect(entry?.channel_roles?.[4]).toBe('optical');
+});
+
+test('deviceCapsFor omits the per-channel gain model where the server sent none', () => {
+  const entry = deviceCapsFor({
+    ...CAPS,
+    devices: { soundcard: ['Some card'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Some card', ao: false,
+        per_channel_gain: false, gain_range_db: null, pad_db: null,
+        mode_channels: null, preferred_fs: null,
+      },
+    },
+  } as never, 'soundcard:0');
+  expect(entry?.per_channel_gain).toBeUndefined();
+  expect(entry?.gain_range_db).toBeUndefined();
+  expect(entry?.pad_db).toBeUndefined();
+  expect(entry?.mode_channels).toBeUndefined();
+  expect(entry?.preferred_fs).toBeUndefined();
+});
+
+test('onConfigured carries the rail of each channel', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const infos: ConfiguredInfo[] = [];
+  bp.onConfigured((i) => infos.push(i));
+  const monP = bp.startMonitor({ sampleRate: 48000, channelCount: 3 }, () => {});
+  fake.open();
+  await tick();
+  fake.emitJson({
+    type: 'status', event: 'configured', fs: 48000, channels: 3,
+    inputVmax: 1, inputVmaxIsVolts: false,
+    inputVmaxChannels: [0.0087, 0.0087, 1],
+    inputVmaxIsVoltsChannels: [true, true, false],
+  });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+  expect(infos[0].inputVmaxChannels).toEqual([0.0087, 0.0087, 1]);
+  expect(infos[0].inputVmaxIsVoltsChannels).toEqual([true, true, false]);
+});
+
+test('a malformed per-channel rail is dropped, never a divisor of 0', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const infos: ConfiguredInfo[] = [];
+  bp.onConfigured((i) => infos.push(i));
+  const monP = bp.startMonitor({ sampleRate: 48000, channelCount: 2 }, () => {});
+  fake.open();
+  await tick();
+  fake.emitJson({
+    type: 'status', event: 'configured', fs: 48000, channels: 2,
+    inputVmax: 1, inputVmaxChannels: [1, 0], inputVmaxIsVoltsChannels: [true, 'yes'],
+  });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+  expect(infos[0].inputVmax).toBe(1);
+  expect(infos[0].inputVmaxChannels).toBeUndefined();
+  expect(infos[0].inputVmaxIsVoltsChannels).toBeUndefined();
+});
+
+test('effectiveFullScaleVolts per channel: own gain, mode and pad, from the mode minimum', () => {
+  const caps = CAPS_ID44 as never;
+  const cfg = {
+    inputGainDb: [60, 60, null, 0] as (number | null)[],
+    inputMode: ['mic', 'mic', 'mic', 'line'] as ('mic' | 'line')[],
+    inputPad: [false, true, false, false],
+  };
+  // mic at 60 dB: 18 dBu − 60 → 8.7 mV peak.
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', cfg, 0)).toBeCloseTo(dbuToVoltsPeak(-42), 12);
+  // The pad adds its 10 dB back.
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', cfg, 1)).toBeCloseTo(dbuToVoltsPeak(-32), 12);
+  // No gain stated on this channel: no volts.
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', cfg, 2)).toBeNull();
+  // Line at 0 dB is 10 dB above the line minimum (−10 dB): 28 − 10 = 18 dBu.
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', cfg, 3)).toBeCloseTo(dbuToVoltsPeak(18), 12);
+});
+
+test('effectiveFullScaleVolts: optical/loopback take no rail; a mode an input lacks gives none', () => {
+  const caps = CAPS_ID44 as never;
+  // One gain for every channel is still applied channel by channel.
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', { inputGainDb: 40, inputMode: 'mic' }, 2))
+    .toBeCloseTo(dbuToVoltsPeak(18 - 40), 12);
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', { inputGainDb: 40, inputMode: 'mic' }, 4)).toBeNull();
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', { inputGainDb: 40, inputMode: 'mic' }, 20)).toBeNull();
+  // Inst (D.I.) exists on inputs 1-2 only.
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', { inputGainDb: 0, inputMode: 'inst' }, 1))
+    .toBeCloseTo(dbuToVoltsPeak(10), 12);
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', { inputGainDb: 0, inputMode: 'inst' }, 2)).toBeNull();
+});
+
+test('effectiveFullScaleVolts: a measured full scale per channel on an uncharacterised box', () => {
+  const caps = { ...CAPS, device_caps: { 'soundcard:0': { full_scale_volts: null } } } as never;
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', { vmaxSC: [2.5, 1.2] }, 1)).toBe(1.2);
+  // Without a channel, the first channel's (today's single-number answer).
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', { vmaxSC: [2.5, 1.2] })).toBe(2.5);
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', { vmaxSC: 2.5 }, 1)).toBe(2.5);
+});
+
+test('a 2i2 keeps one rail on every channel, loopback included (no per-channel gain)', () => {
+  const caps = {
+    ...CAPS,
+    device_caps: {
+      'soundcard:0': {
+        fixed_gain: false, max_input_dbu: { line: 22, inst: 12, mic: 16 },
+        channel_roles: ['analogue', 'analogue', 'loopback', 'loopback'],
+        per_channel_gain: false, gain_range_db: { line: [0, 69] },
+      },
+    },
+  } as never;
+  const cfg = { inputGainDb: 9, inputMode: 'line' as const };
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', cfg, 3)).toBeCloseTo(4.8932, 4);
+  expect(effectiveFullScaleVolts(caps, 'soundcard:0', cfg)).toBeCloseTo(4.8932, 4);
+});
+
+test('the derived threshold uses the TRIGGER channel’s full scale', async () => {
+  // Channel 0 at 60 dB mic gain (8.7 mV full scale), channel 1 at 20 dB
+  // (0.87 V): a hammer on channel 1 must get 5 % of ITS rail, not channel 0's.
+  const { log } = await armedLogAgainst(CAPS_ID44, {
+    inputGainDb: [60, 20], inputMode: 'mic', pretrigChannel: 1,
+  });
+  expect((log()!.pretrigger as Record<string, unknown>).threshold)
+    .toBe(defaultPretrigThreshold(dbuToVoltsPeak(18 - 20)));
+});

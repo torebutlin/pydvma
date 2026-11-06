@@ -135,8 +135,12 @@
   // characterised interface — while the browser path compares a normalised
   // full-scale fraction. The waiting banner states which, because "waiting for
   // 0.05" is exactly the ambiguity that had a capture triggering on noise.
+  // Measured against the TRIGGER channel's own full scale (an interface with
+  // a preamp per input has one per channel).
   const triggerFullScale = $derived(
-    effectiveFullScaleVolts($bridgeCaps, $settings.deviceId, $bridgeConfig),
+    effectiveFullScaleVolts(
+      $bridgeCaps, $settings.deviceId, $bridgeConfig, $bridgeConfig.pretrigChannel ?? 0,
+    ),
   );
   const thresholdEffective = $derived(
     $bridgeConfig.pretrigThreshold ?? defaultPretrigThreshold(triggerFullScale),

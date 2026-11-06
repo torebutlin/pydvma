@@ -82,6 +82,28 @@ describe('reportLevels', () => {
     expect(rs.map((r) => r.channel)).toEqual([0, 1]);
   });
 
+  test('converts each channel with its OWN full scale when given one per channel', () => {
+    // A multi-preamp interface: 60 dB of mic gain on channel 0 (8.7 mV full
+    // scale), a line input on channel 1, no stated gain on channel 2.
+    const rs = reportLevels(
+      [{ peak: 0.5, rms: 0.25 }, { peak: 0.5, rms: 0.25 }, { peak: 0.5, rms: 0.25 }, { peak: 0.5, rms: 0.25 }],
+      [0.0087, 4.8932, null, 0],
+    );
+    expect(rs[0].peakVolts).toBeCloseTo(0.00435, 6);
+    expect(rs[0].rmsVolts).toBeCloseTo(0.002175, 6);
+    expect(rs[1].peakVolts).toBeCloseTo(2.4466, 4);
+    expect(rs[2].peakVolts).toBeNull();
+    expect(rs[3].peakVolts).toBeNull();   // non-positive: no scale, not 0 V
+    // dBFS and the verdict are per-channel fractions, untouched by the scale.
+    expect(rs.map((r) => r.verdict)).toEqual(['ok', 'ok', 'ok', 'ok']);
+  });
+
+  test('a channel beyond the per-channel list has no volts scale', () => {
+    const rs = reportLevels([{ peak: 0.5, rms: 0.25 }, { peak: 0.5, rms: 0.25 }], [4.8932]);
+    expect(rs[0].peakVolts).toBeCloseTo(2.4466, 4);
+    expect(rs[1].peakVolts).toBeNull();
+  });
+
   test('survives malformed level entries', () => {
     const rs = reportLevels(
       [{ peak: NaN, rms: NaN }, { peak: Infinity, rms: 1 }] as never,
