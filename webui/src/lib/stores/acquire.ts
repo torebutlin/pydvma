@@ -39,7 +39,7 @@ import {
 import type { DvmaDataset, DvmaItem } from '../model/dataset';
 import { capabilities } from './stages';
 import { staleChannelSettingsReset } from '../model/channelGain';
-import { captureDeviceName } from './carriedCal';
+import { captureDeviceLabel } from './carriedCal';
 
 // ---- types ----
 
@@ -319,11 +319,12 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    */
   let lastRecordingMeta: BridgeRecordingMeta | null = null;
   /**
-   * The input device's name for the most recent capture, taken when it
-   * started (`captureDeviceName`): stamped by `recordingToItem` as the
-   * capture's `device_name`. `null` when the device has no known name.
+   * The label of the input device the most recent capture was taken from,
+   * when it started (`captureDeviceLabel`; null for the Default row or an
+   * unnamed device): `recordingToItem` records it as `capture_device_label`
+   * when the server named no device.
    */
-  let lastRecordingDeviceName: string | null = null;
+  let lastRecordingDeviceLabel: string | null = null;
 
   /** Where the provider's non-fatal notices go (App: a pinned toast). */
   let warningSink: ((message: string) => void) | null = null;
@@ -599,7 +600,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     pretrigStatus.set('');
     cancelling.set(false);
     lastRecordingMeta = null;
-    lastRecordingDeviceName = captureDeviceName(get(bridgeCaps), get(devices), cfg.deviceId);
+    lastRecordingDeviceLabel = captureDeviceLabel(get(bridgeCaps), get(devices), cfg.deviceId);
 
     const rcfg: RecordConfig = {
       deviceId: cfg.deviceId || undefined,
@@ -632,12 +633,13 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       status.set('done');
       statusText.set('Recording complete.');
       // Refresh device labels now that permission has been granted. A browser
-      // capture that started without a label (the first one, which is what
-      // granted permission) takes its device name from the refreshed list,
-      // so it is filed under the same name as every capture after it.
-      if (lastRecordingDeviceName === null && provider.kind === 'webaudio') {
+      // capture from a chosen device that started without a label (the first
+      // one, which is what granted permission) takes its label from the
+      // refreshed list, so it is filed under the same name as every capture
+      // after it.
+      if (lastRecordingDeviceLabel === null && cfg.deviceId && provider.kind === 'webaudio') {
         await refreshDevices();
-        lastRecordingDeviceName = captureDeviceName(null, get(devices), cfg.deviceId);
+        lastRecordingDeviceLabel = captureDeviceLabel(null, get(devices), cfg.deviceId);
       } else {
         void refreshDevices();
       }
@@ -746,8 +748,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
     get lastRecording() { return lastRecording; },
     /** Provenance metadata for the last BRIDGE capture (null for Web Audio). */
     get lastRecordingMeta() { return lastRecordingMeta; },
-    /** The input device's name for the last capture (null when unknown). */
-    get lastRecordingDeviceName() { return lastRecordingDeviceName; },
+    /** The input device's label for the last capture (null: Default row or unnamed). */
+    get lastRecordingDeviceLabel() { return lastRecordingDeviceLabel; },
   };
 }
 
@@ -781,19 +783,20 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
  * `uuid.UUID`) the tagged form is preserved in `metaRaw`, so a re-save reads
  * back in python as a UUID rather than a plain string.
  *
- * `deviceName` (the acquire store's `lastRecordingDeviceName`, from
- * `captureDeviceName`) is stamped as `settings.device_name`, over any copy
- * the container carried: the name of the input device is the capture's
- * device identity (an index moves whenever the enumeration does), which
- * the calibration provenance records and an opt-in carried calibration is
- * filed under (`carriedCal.deviceKeyFor`). Omitted, the settings are as
- * before.
+ * `deviceLabel` (the acquire store's `lastRecordingDeviceLabel`) names the
+ * device the capture was taken from, for the calibration provenance and an
+ * opt-in carried calibration (`carriedCal.deviceKeyFor`). It is recorded as
+ * the web app's own `settings.capture_device_label`, and only when the
+ * container's settings name no device: `settings.device_name` is NEVER
+ * written here, because python reads it to re-find the device on a replay
+ * (`streams.resolve_device_index`), and the server's value is the truth
+ * about what it opened. Omitted, the settings are as before.
  */
 export function recordingToItem(
   rec: Recording,
   name?: string,
   meta?: BridgeRecordingMeta | null,
-  deviceName?: string | null,
+  deviceLabel?: string | null,
 ): DvmaItem {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -815,6 +818,9 @@ export function recordingToItem(
   const metaRaw = meta?.uniqueId && meta.uniqueIdRaw !== undefined
     ? { ...itemMeta, unique_id: meta.uniqueIdRaw }
     : undefined;
+
+  const containerName = meta?.settings?.device_name;
+  const serverNamed = typeof containerName === 'string' && containerName !== '';
 
   return {
     kind: 'TimeData',
@@ -841,7 +847,7 @@ export function recordingToItem(
       channels: rec.nChannels,
       stored_time: rec.nSamples / rec.fs,
       device_driver: meta?.deviceDriver ?? 'web_audio',
-      ...(deviceName ? { device_name: deviceName } : {}),
+      ...(deviceLabel && !serverNamed ? { capture_device_label: deviceLabel } : {}),
     },
   };
 }

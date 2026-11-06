@@ -294,7 +294,7 @@
       // Convert to a DvmaItem, preserving bridge container provenance
       // (real device driver / calibration / name) when present.
       const item = recordingToItem(
-        rec, undefined, acquire.lastRecordingMeta, acquire.lastRecordingDeviceName,
+        rec, undefined, acquire.lastRecordingMeta, acquire.lastRecordingDeviceLabel,
       );
       const setId = actions.addRecordedSet(item);
       // Round-9 digital low-pass, Web Audio side: the capture ran at the

@@ -35,11 +35,12 @@
    * field (editing it by hand afterwards drops the reference), and Apply then
    * records the calibration as `reference_tone` with the level and frequency.
    *
-   * USE FOR NEW RECORDINGS TOO (`cal-carry`, unticked by default, shown when
-   * the set names a device, `carryDevice`): Apply then also keeps each changed
-   * channel's calibration for later captures from that device, which arrive
-   * already calibrated (`stores/carriedCal`). Leaving it alone changes
-   * nothing.
+   * USE FOR NEW RECORDINGS TOO (`cal-carry`, unticked by default): Apply then
+   * also keeps every calibrated channel's calibration for later captures from
+   * the set's device, which arrive already calibrated (`stores/carriedCal`).
+   * Leaving it alone changes nothing. Offered only when the set names a device
+   * a capture can be filed under (`carryDevice`); otherwise a note says why
+   * (`cal-carry-unavailable`).
    *
    * DUMB component: it receives the initial per-channel `rows` (and `tfRows`),
    * edits LOCAL copies, and emits the edited values on Apply; the parent owns
@@ -115,9 +116,9 @@
     /** Whether a set stores channel `ch` in volts or full-scale units. */
     sourceUnitOf?: ((setId: number, ch: number) => 'V' | 'FS') | null;
     /**
-     * The device a carried calibration would be kept for (the set's device
-     * key, `carriedCal.deviceKeyFor`); `null` hides the "use for new
-     * recordings too" tick, as there is no device to carry it to.
+     * The device a carried calibration would be kept for (`carriedCal.
+     * carryKeyFor`); `null` replaces the "use for new recordings too" tick
+     * with a note, as no new capture could be filed under the set's device.
      */
     carryDevice?: string | null;
     /**
@@ -127,7 +128,7 @@
      * `note` is the free-text calibration note ('' when empty); the parent
      * saves it with the provenance of each channel that changed. `carry` is
      * the "use for new recordings too" tick: when true the parent also keeps
-     * each changed channel's calibration for new recordings from the device.
+     * every calibrated channel for new recordings from the device.
      */
     onApply: (
       results: {
@@ -460,12 +461,16 @@
         <div class="mrow">
           <label
             class="carry"
-            title={`New recordings from ${carryDevice} arrive with the calibration of each channel changed here (sensitivity, unit and how it was obtained). pydvma cannot read the gain knob, so it warns when a recording states a different gain or pad. Setup shows what is carried and can clear it.`}
+            title={`New recordings from ${carryDevice} arrive with the calibration of every calibrated channel here (sensitivity, unit and how it was obtained). pydvma cannot read the gain knob, so it warns when a recording states a different gain or pad. Setup shows what is carried and can clear it.`}
           >
             <input type="checkbox" data-testid="cal-carry" bind:checked={carry} />
             use for new recordings too
           </label>
         </div>
+      {:else}
+        <p class="src-note" data-testid="cal-carry-unavailable">
+          This recording does not name its device, so its calibration cannot be carried to new recordings.
+        </p>
       {/if}
     {/if}
 

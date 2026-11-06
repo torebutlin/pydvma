@@ -3,16 +3,19 @@
  *
  * A measurement-mic workflow calibrates each channel once (a spec-sheet
  * sensitivity or a calibrator tone) and then makes many recordings. Ticking
- * "use for new recordings too" in the Calibrate dialog files each applied
- * channel's calibration (sensitivity, unit and how it was obtained) under the
- * calibrated set's DEVICE; every later capture from that device then arrives
- * already calibrated (`actions.addRecordedSet`), its provenance marked
+ * "use for new recordings too" in the Calibrate dialog files every calibrated
+ * channel's calibration (sensitivity, unit, whether it is per volt or per
+ * full-scale unit, and how it was obtained) under the calibrated set's DEVICE
+ * (`actions.carryCalibration`); every later capture from that device then
+ * arrives already calibrated (`actions.addRecordedSet`), its provenance marked
  * `carried`. Nobody who leaves the tick alone sees any change.
  *
  * pydvma cannot read a gain knob, so a calibration carried to a recording
  * whose STATED gain, input mode or pad differs from the one it was made at is
- * applied with a warning ({@link carryWarnings}), never refused and never
- * silently trusted.
+ * applied with a warning ({@link carryWarnings}), never silently trusted. One
+ * carried to a recording stored in different units (volts against full-scale
+ * units, {@link carryBasisMessage}) would be wrong by the unknown full scale,
+ * so that channel is not calibrated at all, and the user is told why.
  *
  * Persisted per browser in `localStorage['pydvma.carriedCal.v1']`. Every
  * storage access is guarded: with storage blocked, full or absent (a private
@@ -31,6 +34,13 @@ export type CarriedChannelCal = {
   /** Stored units per engineering unit (the dialog's sensitivity). */
   sensitivity: number;
   unit: string;
+  /**
+   * What the sensitivity is per: `'V'` for a channel stored in volts, `'FS'`
+   * for one stored in full-scale units (`capturedInVolts` of the calibrated
+   * set). `null` when not recorded (an entry stored before this was kept):
+   * such an entry is never applied, as it could be in either.
+   */
+  basis: 'V' | 'FS' | null;
   /** How the calibration was obtained, as saved with the calibrated set. */
   provenance: ChannelCalibration;
 };
@@ -85,7 +95,8 @@ function cleanEntry(v: unknown): CarriedChannelCal | null {
   const unit = text(e.unit);
   if (sensitivity === null || sensitivity <= 0 || !unit) return null;
   const provenance = cleanProvenance(e.provenance, sensitivity, unit);
-  return provenance ? { sensitivity, unit, provenance } : null;
+  const basis = e.basis === 'V' || e.basis === 'FS' ? e.basis : null;
+  return provenance ? { sensitivity, unit, basis, provenance } : null;
 }
 
 /** Whether `k` names a channel: a non-negative integer (or its string). */
@@ -185,48 +196,74 @@ export type CarriedCalStore = ReturnType<typeof createCarriedCal>;
 /** The app's carried calibrations (one per page, persisted per browser). */
 export const carriedCal = createCarriedCal();
 
+/** A non-empty string setting, or null. */
+function named(v: unknown): string | null {
+  return typeof v === 'string' && v !== '' ? v : null;
+}
+
 /**
- * The device key a set's calibration is carried under: the `device_name` its
- * capture recorded (the identity, since a device index moves whenever the
- * enumeration changes), else its `device_driver`, else `''` (no device known:
- * nothing is carried).
+ * The device key a set's calibration is carried under: the `device_name` the
+ * server recorded for its capture (the identity, since a device index moves
+ * whenever the enumeration changes), else the web app's own
+ * `capture_device_label` (the device the capture was taken from, when the
+ * server named none), else its `device_driver`, else `''` (no device known).
+ * `provenanceFromSet` names the device by the same rule.
  *
  * @param settings The set's stored capture settings.
  */
 export function deviceKeyFor(settings: unknown): string {
   const s = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
-  if (typeof s.device_name === 'string' && s.device_name) return s.device_name;
-  if (typeof s.device_driver === 'string' && s.device_driver) return s.device_driver;
-  return '';
+  return named(s.device_name) ?? named(s.capture_device_label) ?? named(s.device_driver) ?? '';
 }
 
 /**
- * The name of the input device a capture from `deviceId` comes from, stamped
- * on the capture's settings as `device_name`: on the bridge the server's
- * name for the device (`device_caps[deviceId].name`, or the default input's
- * for an unset device); in the browser the device's label, once permission
- * has made it a real one. `null` when unknown.
+ * The key a set's calibration can be carried under, or null when no new
+ * capture could ever be filed under it: a set that names its device
+ * (`device_name` or `capture_device_label`), or a browser capture
+ * (`device_driver: 'web_audio'`, the key every unnamed browser capture
+ * shares). A bare `'soundcard'` / `'nidaq'` / `'mock'` is never what a
+ * capture from the bridge is filed under, so it is refused rather than
+ * stored where nothing would ever read it.
+ *
+ * @param settings The set's stored capture settings.
+ */
+export function carryKeyFor(settings: unknown): string | null {
+  const s = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
+  const name = named(s.device_name) ?? named(s.capture_device_label);
+  if (name) return name;
+  return s.device_driver === 'web_audio' ? 'web_audio' : null;
+}
+
+/**
+ * The label of the input device a capture from `deviceId` is taken from, for
+ * the capture's `capture_device_label` (see `recordingToItem`): the bridge's
+ * name for that device (`device_caps[deviceId].name`), or in the browser the
+ * device's label once permission has made it a real one. `null` for the
+ * Default row (`''`): what the default resolves to is the server's call (on
+ * Windows a different backend's entry from `default_input`), and its own
+ * `device_name` says which device it opened. `null` when unknown.
  *
  * @param caps The bridge's capability document, or null on the Web Audio path.
  * @param devices The enumerated input devices (browser labels).
  * @param deviceId The selected input device ('' = the default).
  */
-export function captureDeviceName(
+export function captureDeviceLabel(
   caps: BridgeCaps | null, devices: readonly AudioInputDevice[], deviceId: string,
 ): string | null {
-  if (caps) {
-    const n = deviceId ? caps.device_caps?.[deviceId]?.name : caps.default_input?.name;
-    return typeof n === 'string' && n ? n : null;
-  }
-  const d = devices.find((x) => x.deviceId === (deviceId || 'default'));
-  return d && d.hasLabel && d.label ? d.label : null;
+  if (!deviceId) return null;
+  if (caps) return named(caps.device_caps?.[deviceId]?.name);
+  const d = devices.find((x) => x.deviceId === deviceId);
+  return d && d.hasLabel ? named(d.label) : null;
 }
 
 /**
  * The device key a capture from the selected device will be filed under, so
- * Setup can say what will be carried: {@link captureDeviceName}, else the
- * driver the capture records (`web_audio` in the browser, the `<driver>` of a
- * bridge `<driver>:<index>` id).
+ * Setup can say what it will carry. The same rule as {@link deviceKeyFor},
+ * predicted before the capture: for a bridge device its name (the server
+ * records the same name as `device_name` for a sound card, and the web app
+ * records it as `capture_device_label` otherwise); for a browser device its
+ * label, else `'web_audio'`. `''` for the bridge's Default row, whose device
+ * only the server knows, and when the device has no name.
  *
  * @param caps The bridge's capability document, or null on the Web Audio path.
  * @param devices The enumerated input devices.
@@ -235,11 +272,9 @@ export function captureDeviceName(
 export function selectedDeviceKey(
   caps: BridgeCaps | null, devices: readonly AudioInputDevice[], deviceId: string,
 ): string {
-  const name = captureDeviceName(caps, devices, deviceId);
-  if (name) return name;
-  if (!caps) return 'web_audio';
-  if (!deviceId) return caps.default_input?.driver ?? '';
-  return deviceId.split(':')[0];
+  const label = captureDeviceLabel(caps, devices, deviceId);
+  if (label) return label;
+  return caps ? '' : 'web_audio';
 }
 
 const fmtDb = (g: number) => String(Math.round(g * 100) / 100);
@@ -251,22 +286,27 @@ const fmtDb = (g: number) => String(Math.round(g * 100) / 100);
  * `provenanceFromSet`), e.g. `"channel 1: calibrated at gain 60 dB, this
  * recording states 50 dB"`. A gain unstated at either end cannot be compared,
  * which is said too (`"channel 1: gain not stated, so pydvma cannot tell
- * whether it moved"`). An empty list when everything matches.
+ * whether it moved"`), except for a channel in volts at both ends with no
+ * gain stated at either: an NI input or a fixed-gain card, which has no knob
+ * to move. An empty list when everything matches.
  *
  * @param entry The carried calibration.
  * @param now The new recording's stated gain, mode and pad for this channel.
  * @param ch Zero-based channel, for the message.
+ * @param nowBasis Whether the new recording stores this channel in volts.
  */
 export function carryWarnings(
   entry: CarriedChannelCal,
   now: Pick<ChannelCalibration, 'gain_db' | 'input_mode' | 'pad'>,
   ch: number,
+  nowBasis: 'V' | 'FS',
 ): string[] {
   const c = `channel ${ch + 1}`;
   const was = entry.provenance;
   const out: string[] = [];
+  const noKnob = was.gain_db === null && now.gain_db === null && entry.basis === 'V' && nowBasis === 'V';
   if (was.gain_db === null || now.gain_db === null) {
-    out.push(`${c}: gain not stated, so pydvma cannot tell whether it moved`);
+    if (!noKnob) out.push(`${c}: gain not stated, so pydvma cannot tell whether it moved`);
   } else if (Math.abs(was.gain_db - now.gain_db) > 1e-9) {
     out.push(`${c}: calibrated at gain ${fmtDb(was.gain_db)} dB, this recording states ${fmtDb(now.gain_db)} dB`);
   }
@@ -281,6 +321,29 @@ export function carryWarnings(
     out.push(`${c}: calibrated with the pad ${before}, this recording ${after}`);
   }
   return out;
+}
+
+const basisName = (b: 'V' | 'FS' | null) =>
+  b === 'V' ? 'volts' : b === 'FS' ? 'full-scale units' : 'units it did not record';
+
+/**
+ * Why a carried calibration must NOT be applied to channel `ch` of a new
+ * recording, or null when it may: the sensitivity is per volt or per
+ * full-scale unit (`entry.basis`), and applying it to a channel stored in the
+ * other would be wrong by the unknown full scale (the rule
+ * `referenceBasis` applies to a reference tone), e.g. `"channel 1: calibrated
+ * in volts, this recording is in full-scale units — not applied"`. An entry
+ * that did not record its basis is never applied.
+ *
+ * @param entry The carried calibration.
+ * @param nowBasis Whether the new recording stores this channel in volts.
+ * @param ch Zero-based channel, for the message.
+ */
+export function carryBasisMessage(
+  entry: CarriedChannelCal, nowBasis: 'V' | 'FS', ch: number,
+): string | null {
+  if (entry.basis === nowBasis) return null;
+  return `channel ${ch + 1}: calibrated in ${basisName(entry.basis)}, this recording is in ${basisName(nowBasis)} — not applied`;
 }
 
 /**

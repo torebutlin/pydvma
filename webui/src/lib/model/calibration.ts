@@ -251,9 +251,10 @@ function perChannel(v: unknown, ch: number): unknown {
  * The stated hardware context of channel `ch` of a stored capture, for the
  * calibration provenance: `input_gain_db`, `input_mode` and `input_pad`
  * (each a scalar for every channel, or one per channel as a list or python's
- * `{__array__}` tag) and the `device_name` a capture records when it has one.
- * Anything absent, non-finite or of the wrong type reads as `null`, so the
- * result is always plain finite JSON.
+ * `{__array__}` tag), and the device: the `device_name` the server recorded,
+ * else the web app's `capture_device_label` (the same order as
+ * `carriedCal.deviceKeyFor`). Anything absent, non-finite or of the wrong
+ * type reads as `null`, so the result is always plain finite JSON.
  *
  * @param settings The item's `settings` block, as loaded.
  * @param ch Zero-based channel.
@@ -265,12 +266,12 @@ export function provenanceFromSet(
   const gain = perChannel(s.input_gain_db, ch);
   const mode = perChannel(s.input_mode, ch);
   const pad = perChannel(s.input_pad, ch);
-  const dev = s.device_name;
+  const named = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null);
   return {
     gain_db: typeof gain === 'number' && Number.isFinite(gain) ? gain : null,
     input_mode: typeof mode === 'string' ? mode : null,
     pad: typeof pad === 'boolean' ? pad : null,
-    device: typeof dev === 'string' && dev !== '' ? dev : null,
+    device: named(s.device_name) ?? named(s.capture_device_label),
   };
 }
 

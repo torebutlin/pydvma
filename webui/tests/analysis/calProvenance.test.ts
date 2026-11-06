@@ -98,6 +98,14 @@ test('provenanceFromSet reads scalars, lists and python array tags', () => {
   expect(provenanceFromSet(null, 0)).toEqual({ gain_db: null, input_mode: null, pad: null, device: null });
 });
 
+test('provenanceFromSet names the device by the server name, else the capture label', () => {
+  expect(provenanceFromSet({ device_name: 'Audient iD44', capture_device_label: 'x' }, 0).device)
+    .toBe('Audient iD44');
+  expect(provenanceFromSet({ device_name: null, capture_device_label: 'cDAQ1Mod1' }, 0).device)
+    .toBe('cDAQ1Mod1');
+  expect(provenanceFromSet({ device_name: '', device_driver: 'nidaq' }, 0).device).toBeNull();
+});
+
 const prov = (actions: ReturnType<typeof harness>['actions'], ds: DvmaDataset) => {
   void actions;
   return ds.items.find((i) => i.kind === 'TimeData')!.meta.channel_calibration;

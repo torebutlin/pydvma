@@ -36,6 +36,12 @@ export interface CalibrationController {
     sensitivity: number; measuredRms: number; peakFreq: number;
     warnings: string[]; clipped: boolean;
   }>;
+  /**
+   * Keep every calibrated channel of a set for new recordings from its device
+   * ("use for new recordings too"); returns how many channels were kept and
+   * says so in a toast when there were none.
+   */
+  carryCalibration?: (setId: number, note?: string) => number;
   /** Ids of the sets that carry recorded time data. */
   timeBearingSets?: () => number[];
   /** Persist a set's cal factors (plus optional per-channel units). */

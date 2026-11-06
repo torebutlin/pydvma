@@ -49,7 +49,7 @@
   } from '../lib/model/calibration';
   import { tfLineLabel } from '../lib/plot/tfChannels';
   import { calibrationController } from '../lib/stores/calibrationController';
-  import { carriedCal, deviceKeyFor } from '../lib/stores/carriedCal';
+  import { carryKeyFor } from '../lib/stores/carriedCal';
   import TrayCard from './TrayCard.svelte';
   import CalibrateDialog from './CalibrateDialog.svelte';
 
@@ -162,7 +162,7 @@
   let calRowSourceUnits = $state<('V' | 'FS')[] | null>(null);
   /** Sets that can serve as a reference-tone recording. */
   let calRefSets = $state<{ id: number; name: string; nChannels: number }[]>([]);
-  /** The set's device key, for "use for new recordings too" (null: none). */
+  /** The set's device key, for "use for new recordings too" (null: none a capture could match). */
   let calCarryDevice = $state<string | null>(null);
 
   function openCalibrate(setId: number) {
@@ -171,7 +171,7 @@
     if (!set) return;
     const { factors, units, sourceIsVolts } = readCal(setId);
     calSettings = controller?.getCalibrationSettings?.(setId) ?? null;
-    calCarryDevice = deviceKeyFor(calSettings) || null;
+    calCarryDevice = carryKeyFor(calSettings);
     // What a sensitivity is measured AGAINST: volts on a card that delivers
     // them, otherwise full-scale units. Naming it wrong is silent — the
     // numbers just come out scaled by the (unknown) full scale.
@@ -241,14 +241,9 @@
       const date = new Date().toISOString();
       const provenance = changedProvenance(calRows, results, calSettings, note, date);
       writeCal(calSetId, factors, units, { provenance });
-      // "Use for new recordings too": keep each changed channel's calibration
-      // for later captures from this set's device (they arrive calibrated).
-      const key = calCarryDevice;
-      if (carry && key) {
-        provenance.forEach((p, ch) => {
-          if (p) carriedCal.set(key, ch, { sensitivity: results[ch].sensitivity, unit: results[ch].unit, provenance: p });
-        });
-      }
+      // "Use for new recordings too": keep every calibrated channel of the set
+      // (as just written) for later captures from its device.
+      if (carry && calCarryDevice) controller?.carryCalibration?.(calSetId, note);
     }
     const writeTf = controller?.setTfCalibration;
     if (tf && writeTf) {

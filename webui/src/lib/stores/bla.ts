@@ -1165,7 +1165,7 @@ export function createBlaStore(deps: BlaDeps) {
           }
           const item = recordingToItem(
             rec, `${baseName} r${m + 1}e${e + 1}`, acquire.lastRecordingMeta,
-            acquire.lastRecordingDeviceName,
+            acquire.lastRecordingDeviceLabel,
           );
           // M × n_exc raw sets would flood the tray/legend, so they land
           // hidden — ATOMICALLY (`hidden: true`), not by hiding them after the

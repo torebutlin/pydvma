@@ -849,17 +849,17 @@ test('a device scan that resolves after a provider swap does not overwrite the n
   expect(get(capabilities).liveSource).toBe(false);
 });
 
-// ---- Task 10: the capture's device name, for its settings.device_name ----
+// ---- Task 10: the capture's device label, for settings.capture_device_label ----
 
-test('a capture records its device name, taking the browser label once the capture granted permission', async () => {
+test('a capture records its device label, taking the browser label once the capture granted permission', async () => {
   // Before permission the browser hides labels (a placeholder, hasLabel
-  // false); the capture itself grants it, so the name is read after it.
+  // false); the capture itself grants it, so the label is read after it.
   let granted = false;
   const provider: SourceProvider = {
     kind: 'webaudio',
     async capabilities() { return null; },
     async enumerateInputDevices() {
-      return [{ deviceId: 'default', label: granted ? 'Default - iD44' : 'Input defaul', groupId: 'g', hasLabel: granted }];
+      return [{ deviceId: 'usb-1', label: granted ? 'USB Mic' : 'Input usb-1', groupId: 'g', hasLabel: granted }];
     },
     startRecording() {
       granted = true;
@@ -869,24 +869,34 @@ test('a capture records its device name, taking the browser label once the captu
   };
   const store = createAcquireStore(provider);
   await store.refreshDevices();
+  store.patch({ deviceId: 'usb-1' });
   await store.record();
-  expect(store.lastRecordingDeviceName).toBe('Default - iD44');
+  expect(store.lastRecordingDeviceLabel).toBe('USB Mic');
+  // The Default row records no label.
+  store.patch({ deviceId: '' });
+  await store.record();
+  expect(store.lastRecordingDeviceLabel).toBeNull();
 
-  // On the bridge it is the server's name for the selected device.
+  // On the bridge it is the server's name for an explicitly chosen device,
+  // and nothing for the Default row (default_input is not what it opens).
   const caps = {
-    backends: ['soundcard'], devices: { soundcard: ['Audient iD44'], nidaq: [] },
-    device_caps: { 'soundcard:0': { name: 'Audient iD44' } },
+    backends: ['nidaq'], devices: { soundcard: [], nidaq: [{ name: 'cDAQ1Mod1', ai_channel_count: 4 }] },
+    device_caps: { 'nidaq:0': { name: 'cDAQ1Mod1' } },
+    default_input: { driver: 'soundcard', index: 0, name: 'Built-in Microphone' },
   };
   const bridge: SourceProvider = {
     kind: 'bridge',
     async capabilities() { return caps as never; },
-    async enumerateInputDevices() { return [{ deviceId: 'soundcard:0', label: 'Audient iD44', groupId: 'soundcard', hasLabel: true }]; },
+    async enumerateInputDevices() { return [{ deviceId: 'nidaq:0', label: 'NI: cDAQ1Mod1 (4 ch)', groupId: 'nidaq', hasLabel: true }]; },
     startRecording() { return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 }; },
     async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
   };
   const b = createAcquireStore(bridge);
   await b.init();
-  b.patch({ deviceId: 'soundcard:0' });
+  b.patch({ deviceId: 'nidaq:0' });
   await b.record();
-  expect(b.lastRecordingDeviceName).toBe('Audient iD44');
+  expect(b.lastRecordingDeviceLabel).toBe('cDAQ1Mod1');
+  b.patch({ deviceId: '' });
+  await b.record();
+  expect(b.lastRecordingDeviceLabel).toBeNull();
 });

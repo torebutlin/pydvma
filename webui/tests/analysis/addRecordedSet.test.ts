@@ -11,7 +11,8 @@ import { createEngineStore } from '../../src/lib/stores/engine';
 import { recordingToItem } from '../../src/lib/stores/acquire';
 import type { Recording } from '../../src/lib/audio/source';
 import type { EngineClient } from '../../src/lib/worker/client';
-import { carriedCal } from '../../src/lib/stores/carriedCal';
+import { captureDeviceLabel, carriedCal } from '../../src/lib/stores/carriedCal';
+import type { BridgeCaps } from '../../src/lib/audio/provider';
 import { createToasts } from '../../src/lib/stores/toast';
 import type { ChannelCalibration } from '../../src/lib/model/calibration';
 
@@ -183,20 +184,28 @@ test('a capture, or a loaded set with no recorded settings, gets the window / TF
 
 afterEach(() => carriedCal.clear());
 
-function carriedEntry(over: Partial<ChannelCalibration> = {}) {
+function carriedEntry(over: Partial<ChannelCalibration> = {}, basis: 'V' | 'FS' | null = 'V') {
   const provenance: ChannelCalibration = {
     method: 'sensitivity', date: '2026-11-06T10:00:00.000Z', sensitivity: 0.0335, unit: 'Pa',
     reference: null, gain_db: 60, input_mode: 'mic', pad: false, device: 'Audient iD44',
     note: 'spec sheet', carried: false, ...over,
   };
-  return { sensitivity: provenance.sensitivity, unit: provenance.unit, provenance };
+  return { sensitivity: provenance.sensitivity, unit: provenance.unit, basis, provenance };
 }
 
-/** A 2-channel capture from the iD44, stating gain/mode/pad for every channel. */
-function id44Item(gain: number | null = 60, name = 'mic_1') {
-  const item = recordingToItem(fakeRecording(2, 100), name, null, 'Audient iD44');
-  Object.assign(item.settings!, { input_gain_db: gain, input_mode: 'mic', input_pad: false });
-  return item;
+/**
+ * A 2-channel bridge capture from the iD44, as the server writes it: its own
+ * `device_name`, the stated gain/mode/pad, and a per-channel full scale (volts)
+ * unless `vmax` says otherwise (1.0 = full-scale units).
+ */
+function id44Item(gain: number | null = 60, name = 'mic_1', vmax: number[] = [0.0087, 0.0087]) {
+  return recordingToItem(fakeRecording(2, 100), name, {
+    deviceDriver: 'soundcard',
+    settings: {
+      device_driver: 'soundcard', device_name: 'Audient iD44', device_index: 3, VmaxSC: vmax,
+      input_gain_db: gain, input_mode: 'mic', input_pad: false,
+    },
+  });
 }
 
 function carryHarness() {
@@ -206,16 +215,44 @@ function carryHarness() {
   return { actions, toasts };
 }
 
-test('recordingToItem stamps the capture device name when given', () => {
-  const item = recordingToItem(fakeRecording(1, 10), 'n', {
-    deviceDriver: 'soundcard', settings: { device_name: 'stale name', device_index: 3 },
-  }, 'Audient iD44');
-  expect(item.settings).toMatchObject({ device_name: 'Audient iD44', device_index: 3 });
-  // Without one, the container's own copy stays.
+const NI_CAPS = {
+  backends: ['soundcard', 'nidaq'],
+  devices: { soundcard: ['Built-in Microphone'], nidaq: [{ name: 'cDAQ1Mod1', ai_channel_count: 4 }] },
+  device_caps: {
+    'soundcard:0': { name: 'Built-in Microphone' },
+    'nidaq:0': { name: 'cDAQ1Mod1' },
+  },
+  default_input: { driver: 'soundcard', index: 0, name: 'Built-in Microphone' },
+} as unknown as BridgeCaps;
+
+test('recordingToItem never writes device_name: the server name stays verbatim', () => {
+  // The server named the device it opened: kept exactly, no label added.
   const kept = recordingToItem(fakeRecording(1, 10), 'n', {
-    deviceDriver: 'soundcard', settings: { device_name: 'Scarlett 2i2' },
-  });
-  expect(kept.settings!.device_name).toBe('Scarlett 2i2');
+    deviceDriver: 'soundcard',
+    settings: { device_name: 'Analogue 1 + 2 (Focusrite USB Audio)', device_index: 3, device_hostapi: 'Windows WDM-KS' },
+  }, captureDeviceLabel(NI_CAPS, [], 'soundcard:0'));
+  expect(kept.settings!.device_name).toBe('Analogue 1 + 2 (Focusrite USB Audio)');
+  expect(kept.settings!.device_hostapi).toBe('Windows WDM-KS');
+  expect(kept.settings).not.toHaveProperty('capture_device_label');
+
+  // An explicit NI device the server did not name: the web app's own label only.
+  const ni = recordingToItem(fakeRecording(1, 10), 'n', {
+    deviceDriver: 'nidaq', settings: { device_driver: 'nidaq', device_index: 0, device_name: null },
+  }, captureDeviceLabel(NI_CAPS, [], 'nidaq:0'));
+  expect(ni.settings!.capture_device_label).toBe('cDAQ1Mod1');
+  expect(ni.settings!.device_name).toBeNull();
+
+  // The Default row: neither, whatever default_input says.
+  const def = recordingToItem(fakeRecording(1, 10), 'n', {
+    deviceDriver: 'mock', settings: { device_driver: 'mock' },
+  }, captureDeviceLabel(NI_CAPS, [], ''));
+  expect(def.settings).not.toHaveProperty('capture_device_label');
+  expect(def.settings).not.toHaveProperty('device_name');
+
+  // A browser capture from a chosen device records its label.
+  const web = recordingToItem(fakeRecording(1, 10), 'n', null, 'USB Mic');
+  expect(web.settings).toMatchObject({ device_driver: 'web_audio', capture_device_label: 'USB Mic' });
+  expect(web.settings).not.toHaveProperty('device_name');
 });
 
 test('a capture from a device with a carried calibration arrives calibrated', () => {
@@ -270,4 +307,92 @@ test('a hidden capture, another device, or channels beyond the capture are left 
   expect(item.meta.channel_cal_factors).toEqual([1 / 0.0335, 1]);
   expect((item.meta.channel_calibration as unknown[])).toHaveLength(2);
   expect(get(toasts.toasts)).toHaveLength(0);
+});
+
+test('a volts calibration is not applied to a full-scale recording, and says why', () => {
+  const { actions, toasts } = carryHarness();
+  carriedCal.set('Audient iD44', 0, carriedEntry({}, 'V'));
+  // Channel 0 stated no gain this time, so it is in full-scale units.
+  const item = id44Item(null, 'mic_2', [1, 0.0087]);
+  actions.addRecordedSet(item);
+  expect(item.meta.channel_cal_factors).toBeUndefined();
+  expect(item.meta.channel_calibration).toBeUndefined();
+  const list = get(toasts.toasts);
+  expect(list).toHaveLength(1);
+  expect(list[0].message).toContain(
+    'channel 1: calibrated in volts, this recording is in full-scale units — not applied');
+});
+
+test('a full-scale calibration is not applied to a volts recording; an unrecorded basis never is', () => {
+  const { actions, toasts } = carryHarness();
+  carriedCal.set('Audient iD44', 0, carriedEntry({}, 'FS'));
+  carriedCal.set('Audient iD44', 1, carriedEntry({}, null));
+  const item = id44Item();
+  actions.addRecordedSet(item);
+  expect(item.meta.channel_cal_factors).toBeUndefined();
+  const msg = get(toasts.toasts)[0].message;
+  expect(msg).toContain('channel 1: calibrated in full-scale units, this recording is in volts — not applied');
+  expect(msg).toContain('channel 2: calibrated in units it did not record, this recording is in volts — not applied');
+});
+
+test('no "gain not stated" toast for an NI channel (volts, no knob); one for a full-scale browser channel', () => {
+  const { actions, toasts } = carryHarness();
+  carriedCal.set('cDAQ1Mod1', 0, carriedEntry({ gain_db: null, input_mode: null, pad: null, unit: 'm/s²' }, 'V'));
+  const ni = recordingToItem(fakeRecording(1, 10), 'acc', {
+    deviceDriver: 'nidaq', settings: { device_driver: 'nidaq', device_name: null },
+  }, 'cDAQ1Mod1');
+  actions.addRecordedSet(ni);
+  expect((ni.meta.units as string[])[0]).toBe('m/s²');
+  expect(get(toasts.toasts)).toHaveLength(0);
+
+  carriedCal.set('USB Mic', 0, carriedEntry({ gain_db: null, input_mode: null, pad: null }, 'FS'));
+  const web = recordingToItem(fakeRecording(1, 10), 'mic', null, 'USB Mic');
+  actions.addRecordedSet(web);
+  expect((web.meta.units as string[])[0]).toBe('Pa');
+  expect(get(toasts.toasts)).toHaveLength(1);
+  expect(get(toasts.toasts)[0].message).toContain('channel 1: gain not stated');
+});
+
+// ---- carryCalibration: what "use for new recordings too" keeps ----
+
+test('carryCalibration keeps every calibrated channel, edited now or before', () => {
+  const { actions, toasts } = carryHarness();
+  const setId = actions.addRecordedSet(id44Item());
+  // Channel 1 was calibrated earlier (its provenance is in the file); now
+  // only channel 2's unit is changed. Both are carried.
+  actions.setCalFactors(setId, [1 / 0.0335, 1], ['Pa', 'V'], { provenance: [
+    { ...carriedEntry().provenance }, undefined,
+  ] });
+  actions.setCalFactors(setId, [1 / 0.0335, 1], ['Pa', 'N']);
+  expect(actions.carryCalibration(setId, 'today')).toBe(2);
+
+  const kept = carriedCal.forDevice('Audient iD44');
+  expect(kept[0]).toMatchObject({ sensitivity: 0.0335, unit: 'Pa', basis: 'V' });
+  expect(kept[0].provenance.note).toBe('spec sheet');           // the stored provenance
+  expect(kept[1]).toMatchObject({ sensitivity: 1, unit: 'N', basis: 'V' });
+  expect(kept[1].provenance).toMatchObject({                     // none stored: a fresh one
+    method: 'sensitivity', gain_db: 60, input_mode: 'mic', pad: false,
+    device: 'Audient iD44', note: 'today', carried: false,
+  });
+  expect(get(toasts.toasts)).toHaveLength(0);
+});
+
+test('carryCalibration with no calibrated channel stores nothing and says so', () => {
+  const { actions, toasts } = carryHarness();
+  const setId = actions.addRecordedSet(id44Item());
+  expect(actions.carryCalibration(setId)).toBe(0);
+  expect(get(carriedCal)).toEqual({});
+  const list = get(toasts.toasts);
+  expect(list).toHaveLength(1);
+  expect(list[0].level).toBe('info');
+  expect(list[0].message).toBe('nothing to carry: no channel is calibrated');
+});
+
+test('carryCalibration stores nothing for a set no capture could be filed with', () => {
+  const { actions } = carryHarness();
+  const item = recordingToItem(fakeRecording(1, 10), 'old', { deviceDriver: 'soundcard', settings: {} });
+  const setId = actions.addRecordedSet(item);
+  actions.setCalFactors(setId, [20], ['Pa']);
+  expect(actions.carryCalibration(setId)).toBe(0);
+  expect(get(carriedCal)).toEqual({});
 });

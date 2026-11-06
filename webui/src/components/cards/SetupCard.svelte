@@ -372,7 +372,8 @@
   // Calibrate dialog's opt-in "use for new recordings too"): said here, with
   // a way to stop it, because every capture from this device arrives
   // calibrated until it is cleared. The key is the one the capture will be
-  // filed under (`selectedDeviceKey` mirrors the capture's `device_name`).
+  // filed under (`selectedDeviceKey` predicts `deviceKeyFor` of the capture;
+  // the bridge's Default row has none, as only the server knows its device).
   const carriedKey = $derived(selectedDeviceKey($bridgeCaps, $devices, $settings.deviceId));
   const carriedText = $derived(carriedNote($carriedCal[carriedKey] ?? {}));
 

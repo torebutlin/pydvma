@@ -76,21 +76,37 @@ first and work in volts.
 To calibrate a microphone once and then make many recordings, tick
 **use for new recordings too** before pressing **Apply**. Every later
 recording from the same device then arrives already calibrated on each
-channel you changed: same sensitivity, same unit, and a record of how
-the calibration was made, marked as carried. The tick starts unticked
-each time, and nothing is carried unless you tick it. The app remembers
-the calibration in this browser, so it is still there after a reload.
+channel that is calibrated in this recording: same sensitivity, same
+unit, and a record of how the calibration was made, marked as carried.
+Channels calibrated earlier count too, so you can tick it later without
+changing anything. The tick starts unticked each time, and nothing is
+carried unless you tick it. The app remembers the calibration in this
+browser, so it is still there after a reload.
+
+The tick is offered only for a recording that names its device, as
+recordings made in the app normally do. A file that does not (for
+example one saved by an older version) shows a note instead.
 
 pydvma cannot read the gain knob, so a carried calibration is only as
 good as the gain you state. If a new recording states a different gain,
-input mode or pad on a carried channel, or no gain at all, the app still
-applies the calibration and shows a message naming each channel, for
-example "channel 1: calibrated at gain 60 dB, this recording states
-50 dB". Recalibrate if the knob or pad really moved.
+input mode or pad on a carried channel, or no gain at all where there
+is a knob, the app still applies the calibration and shows a message
+naming each channel, for example "channel 1: calibrated at gain 60 dB,
+this recording states 50 dB". Recalibrate if the knob or pad really
+moved. NI inputs and fixed-gain cards have no knob, so they get no such
+message.
 
-While a device carries a calibration, Setup says so ("calibration
-carried for channels 1, 2 (Pa)") and its **clear** button stops it.
-Recordings already made keep their calibration.
+A sensitivity is per volt on a channel recorded in volts, and per
+full-scale unit on one that is not (no gain or full scale stated). It
+is never carried from one to the other, because the number would be
+wrong by the unknown full scale. That channel stays uncalibrated, and
+the message says why.
+
+While the selected device carries a calibration, Setup says so
+("calibration carried for channels 1, 2 (Pa)") and its **clear** button
+stops it. Recordings already made keep their calibration. On a
+`pydvma-serve` connection Setup cannot say which device the **Default**
+row will record from, so pick the device by name to see the note.
 
 ## Calibrate a transfer function directly
 

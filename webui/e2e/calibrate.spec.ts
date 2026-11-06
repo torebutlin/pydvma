@@ -243,54 +243,72 @@ test('the dialog offers a calibration note field', async ({ page }) => {
   await expect(overlay).toBeHidden();
 });
 
-test('"use for new recordings too" is unticked by default and, ticked, keeps the changed channel', async ({ page }) => {
+test('a recording that does not name its device cannot carry its calibration', async ({ page }) => {
+  // The fixture's settings say only device_driver 'soundcard': no capture is
+  // ever filed under that, so the tick is replaced by a note.
   await page.goto('/?fixture=1');
   await expect(card0(page)).toBeVisible();
-  let overlay = await openCalibrate(page);
-  const carry = overlay.getByTestId('cal-carry');
-  await expect(carry).toBeVisible();
-  await expect(carry).not.toBeChecked();
-  // Unticked: Apply keeps nothing for new recordings.
-  await overlay.getByTestId('cal-sens-0').fill('0.05');
-  await overlay.getByTestId('cal-apply').click();
-  await expect(overlay).toBeHidden();
-  const key = 'pydvma.carriedCal.v1';
-  expect(await page.evaluate((k) => localStorage.getItem(k), key)).toBeNull();
+  const overlay = await openCalibrate(page);
+  await expect(overlay.getByTestId('cal-carry-unavailable')).toContainText('does not name its device');
+  await expect(overlay.getByTestId('cal-carry')).toHaveCount(0);
+});
 
-  // Ticked: the changed channel is kept under the set's device (the fixture
-  // names no device, so its driver), and the tick is unticked again next time.
-  overlay = await openCalibrate(page);
+test('"use for new recordings too" is unticked by default and, ticked, keeps every calibrated channel', async ({ page }) => {
+  await page.goto('/');
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Load Data' }).click();
+  await (await chooserPromise).setFiles(
+    toneDvma(0.03, { device_name: 'Audient iD44', device_driver: 'soundcard' }, 'named.dvma'));
+  await expect(card0(page)).toBeVisible();
+  const key = 'pydvma.carriedCal.v1';
+  const stored = async () => JSON.parse(await page.evaluate((k) => localStorage.getItem(k) ?? 'null', key));
+
+  // Ticked on an uncalibrated recording: nothing to carry, and it says so.
+  let overlay = await openCalibrate(page);
   await expect(overlay.getByTestId('cal-carry')).not.toBeChecked();
-  await overlay.getByTestId('cal-sens-1').fill('0.02');
-  await overlay.getByTestId('cal-unit-1').selectOption('Pa');
   await overlay.getByTestId('cal-carry').check();
   await overlay.getByTestId('cal-apply').click();
   await expect(overlay).toBeHidden();
-  const stored = JSON.parse(await page.evaluate((k) => localStorage.getItem(k) ?? 'null', key));
-  expect(Object.keys(stored)).toEqual(['soundcard']);
-  expect(Object.keys(stored.soundcard)).toEqual(['1']);
-  expect(stored.soundcard['1']).toMatchObject({ sensitivity: 0.02, unit: 'Pa' });
-  expect(stored.soundcard['1'].provenance).toMatchObject({ method: 'sensitivity', carried: false });
+  await expect(page.getByText('nothing to carry: no channel is calibrated')).toBeVisible();
+  expect(await stored()).toBeNull();
+
+  // Unticked (the default each time): calibrating keeps nothing for new recordings.
   overlay = await openCalibrate(page);
   await expect(overlay.getByTestId('cal-carry')).not.toBeChecked();
+  await overlay.getByTestId('cal-sens-0').fill('0.0335');
+  await overlay.getByTestId('cal-unit-0').selectOption('Pa');
+  await overlay.getByTestId('cal-apply').click();
+  await expect(overlay).toBeHidden();
+  expect(await stored()).toBeNull();
+
+  // Ticked with no edit: the calibrated channel is carried, with its saved
+  // provenance and the units it is per (this file states no full scale: FS).
+  overlay = await openCalibrate(page);
+  await overlay.getByTestId('cal-carry').check();
+  await overlay.getByTestId('cal-apply').click();
+  await expect(overlay).toBeHidden();
+  const kept = await stored();
+  expect(Object.keys(kept)).toEqual(['Audient iD44']);
+  expect(kept['Audient iD44']['0']).toMatchObject({ sensitivity: 0.0335, unit: 'Pa', basis: 'FS' });
+  expect(kept['Audient iD44']['0'].provenance).toMatchObject({ method: 'sensitivity', carried: false });
 });
 
 test('Setup says what the selected device carries, and clear stops it', async ({ page }) => {
-  // A calibration carried for the browser's default input, filed under its
-  // label (Chromium's fake device names it 'Fake Default Audio Input').
-  // Visiting Setup only enumerates devices; nothing is opened.
+  // A calibration carried for browser captures from the Default row, which
+  // are filed under their driver, 'web_audio'. Visiting Setup only
+  // enumerates devices; nothing is opened.
   const provenance = {
     method: 'sensitivity', date: '2026-11-06T10:00:00.000Z', sensitivity: 0.0335, unit: 'Pa',
-    reference: null, gain_db: 60, input_mode: 'mic', pad: false, device: null, note: '', carried: false,
+    reference: null, gain_db: null, input_mode: null, pad: null, device: null, note: '', carried: false,
   };
   await page.addInitScript((value) => {
     if (!sessionStorage.getItem('seeded')) {
       localStorage.setItem('pydvma.carriedCal.v1', value);
       sessionStorage.setItem('seeded', '1');
     }
-  }, JSON.stringify({ 'Fake Default Audio Input': {
-    0: { sensitivity: 0.0335, unit: 'Pa', provenance },
-    1: { sensitivity: 0.05, unit: 'Pa', provenance: { ...provenance, sensitivity: 0.05 } },
+  }, JSON.stringify({ web_audio: {
+    0: { sensitivity: 0.0335, unit: 'Pa', basis: 'FS', provenance },
+    1: { sensitivity: 0.05, unit: 'Pa', basis: 'FS', provenance: { ...provenance, sensitivity: 0.05 } },
   } }));
   await page.goto('/');
   await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Setup' }).click();

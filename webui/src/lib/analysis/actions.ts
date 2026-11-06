@@ -62,10 +62,12 @@ import type {
 import type { Toasts } from '../stores/toast';
 import {
   capturedInVolts, channelRail, composeTfUnit, isIdentity, normalizeFactors, normalizeTfCal, normalizeUnits,
-  provenanceFromSet, sensitivityToFactor, splitTfUnit, tfCalLine, tfCalToUi, wrapUnit,
-  type ChannelCalibration, type TfCal, type TfCalLine,
+  DEFAULT_UNIT, factorToSensitivity, provenanceFromSet, sensitivityToFactor, splitTfUnit, tfCalLine,
+  tfCalToUi, wrapUnit, type ChannelCalibration, type TfCal, type TfCalLine,
 } from '../model/calibration';
-import { carriedCal, carryWarnings, deviceKeyFor } from '../stores/carriedCal';
+import {
+  carriedCal, carryBasisMessage, carryKeyFor, carryWarnings, deviceKeyFor,
+} from '../stores/carriedCal';
 import type { ChoosableKind, ChoosableSet } from '../export/data';
 import { calibrationController } from '../stores/calibrationController';
 import { tfColumn } from '../plot/tfChannels';
@@ -2396,10 +2398,16 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * factor `1/sensitivity`), its unit and its provenance marked `carried`
    * (the gain, mode, pad and date it was MADE at, not this recording's).
    * Channels with nothing carried, and carried channels beyond the capture,
-   * are left alone. pydvma cannot read a gain knob, so where this recording's
-   * stated gain, input mode or pad differs from the calibration's (or a gain
-   * is unstated) ONE info toast lists every such channel (`carryWarnings`);
-   * the calibration is still applied. No-op for a device with nothing carried.
+   * are left alone.
+   *
+   * A channel this recording stores in different units from the calibration
+   * (volts against full-scale units, or a carried entry that did not record
+   * which) is NOT calibrated: the number would be wrong by the unknown full
+   * scale (`carryBasisMessage`). pydvma cannot read a gain knob, so where an
+   * applied channel's stated gain, input mode or pad differs from the
+   * calibration's, or a knob's gain is unstated, it is applied with a warning
+   * (`carryWarnings`). ONE info toast lists every such channel. No-op for a
+   * device with nothing carried.
    */
   function applyCarriedCalibration(ws: WorkingSet): void {
     const carried = carriedCal.forDevice(deviceKeyFor(ws.time.settings));
@@ -2410,22 +2418,80 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const factors = normalizeFactors(ws.time.meta.channel_cal_factors, ws.nChannels);
     const units = normalizeUnits(ws.time.meta.units, ws.nChannels);
     const provenance: (ChannelCalibration | undefined)[] = new Array(ws.nChannels).fill(undefined);
-    const warnings: string[] = [];
+    const messages: string[] = [];
+    let applied = 0;
     for (const ch of chans) {
       const e = carried[ch];
+      const basis = capturedInVolts(ws.time.settings, ch) ? 'V' : 'FS';
+      const refused = carryBasisMessage(e, basis, ch);
+      if (refused) { messages.push(refused); continue; }
       factors[ch] = sensitivityToFactor(e.sensitivity);
       units[ch] = e.unit;
       provenance[ch] = { ...e.provenance, carried: true };
-      warnings.push(...carryWarnings(e, provenanceFromSet(ws.time.settings, ch), ch));
+      applied += 1;
+      messages.push(...carryWarnings(e, provenanceFromSet(ws.time.settings, ch), ch, basis));
     }
-    setCalFactors(ws.setId, factors, units, { provenance, warnFit: false });
-    if (warnings.length) {
+    if (applied) setCalFactors(ws.setId, factors, units, { provenance, warnFit: false });
+    if (messages.length) {
       toasts?.push(
-        `Calibration carried from an earlier recording, but ${warnings.join('; ')}. `
-          + 'It holds only while the gain knob and pad are where they were when it was made.',
+        `Carried calibration: ${messages.join('; ')}. A carried calibration holds only `
+          + 'while the gain knob and pad are where they were when it was made.',
         { level: 'info', timeout: 12_000 },
       );
     }
+  }
+
+  /**
+   * Keep a set's calibration for new recordings from its device (the
+   * Calibrate dialog's "use for new recordings too", run after its Apply):
+   * EVERY calibrated channel (a cal factor other than 1, or a unit other than
+   * the default) is filed in `carriedCal` under the set's device key, with
+   * its sensitivity, unit, basis (volts or full-scale units,
+   * `capturedInVolts`) and provenance. The provenance is the set's stored
+   * `channel_calibration` entry when it describes that same sensitivity and
+   * unit, else a fresh `'sensitivity'` entry with the set's stated gain, mode,
+   * pad and device and the dialog's `note`. Entries of other channels already
+   * carried for the device are kept.
+   *
+   * With no calibrated channel nothing is stored and an info toast says so.
+   * A set whose device no capture could be filed under (`carryKeyFor`) stores
+   * nothing; the dialog does not offer the tick for one.
+   *
+   * @param setId The set just calibrated.
+   * @param note The dialog's free-text note, for a fresh provenance entry.
+   * @returns How many channels were carried.
+   */
+  function carryCalibration(setId: number, note = ''): number {
+    const ws = working.find((w) => w.setId === setId);
+    if (!ws) return 0;
+    const key = carryKeyFor(ws.time.settings);
+    if (!key) return 0;
+    const factors = normalizeFactors(ws.time.meta.channel_cal_factors, ws.nChannels);
+    const units = normalizeUnits(ws.time.meta.units, ws.nChannels);
+    const stored = ws.time.meta.channel_calibration;
+    const date = new Date().toISOString();
+    let n = 0;
+    for (let ch = 0; ch < ws.nChannels; ch++) {
+      if (factors[ch] === 1 && units[ch] === DEFAULT_UNIT) continue;
+      const implied = factorToSensitivity(factors[ch]);
+      const unit = units[ch];
+      const kept = Array.isArray(stored) ? stored[ch] as ChannelCalibration | null | undefined : null;
+      const describes = !!kept && typeof kept === 'object' && kept.unit === unit
+        && typeof kept.sensitivity === 'number' && sameFactor(kept.sensitivity, implied);
+      // The provenance's own number when it describes this channel: it is the
+      // one typed or measured, where 1/factor can be an ulp off it.
+      const sensitivity = describes ? kept!.sensitivity : implied;
+      const provenance: ChannelCalibration = describes ? kept! : {
+        method: 'sensitivity', date, sensitivity, unit, reference: null,
+        ...provenanceFromSet(ws.time.settings, ch), note, carried: false,
+      };
+      carriedCal.set(key, ch, {
+        sensitivity, unit, basis: capturedInVolts(ws.time.settings, ch) ? 'V' : 'FS', provenance,
+      });
+      n += 1;
+    }
+    if (!n) toasts?.push('nothing to carry: no channel is calibrated', { level: 'info' });
+    return n;
   }
 
   /**
@@ -3192,7 +3258,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   // without a prop thread through App.svelte (see `calibrationController`).
   calibrationController.set({
     getCalibration, getCalibrationSettings, setCalFactors, getTfCalibration, setTfCalibration,
-    measureReferenceTone,
+    measureReferenceTone, carryCalibration,
     timeBearingSets: () => working.filter((w) => hasTimeData(w.time)).map((w) => w.setId),
   });
 
@@ -4404,6 +4470,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     /** Subset Save/Export (round-12 "Choose sets…") — see each function's doc. */
     choosableSets, subsetDataset,
     getCalibration, getCalibrationSettings, setCalFactors, getTfCalibration, setTfCalibration,
+    carryCalibration,
     /**
      * Report a UNITS/quantity change on `views` to the injected
      * `ViewNotifier` (round-11 P5) — for the cards that change what a view
