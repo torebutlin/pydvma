@@ -2067,6 +2067,18 @@ test('per-channel gain, mode and pad travel as lists, an unstated gain as null',
   expect(s.VmaxSC).toBeUndefined();
 });
 
+test('per-channel lists are fitted to the channel count at send time', async () => {
+  const cfg = { inputGainDb: [60, 60, null, 0], inputMode: ['mic', 'mic', 'line', 'line'], inputPad: [false, true, false, false] };
+  const big = await configuredSettingsFor(CAPS_ID44, cfg, 22);
+  expect(big.input_gain_db).toEqual([60, 60, null, 0, ...Array(18).fill(null)]);
+  expect(big.input_mode).toEqual(['mic', 'mic', 'line', 'line', ...Array(18).fill('line')]);
+  expect(big.input_pad).toEqual([false, true, false, false, ...Array(18).fill(false)]);
+  const small = await configuredSettingsFor(CAPS_ID44, cfg, 2);
+  expect(small.input_gain_db).toEqual([60, 60]);
+  expect(small.input_mode).toEqual(['mic', 'mic']);
+  expect(small.input_pad).toEqual([false, true]);
+});
+
 test('a per-channel mode list travels as a list', async () => {
   const s = await configuredSettingsFor(CAPS_ID44, {
     inputGainDb: 30, inputMode: ['inst', 'inst', 'line', 'line'], inputPad: true,

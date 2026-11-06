@@ -25,6 +25,7 @@
  * There is no auto-reconnect (lab-local single-user stance).
  */
 import { readDvma } from '../codec/dvma';
+import { fitToChannels } from '../model/channelGain';
 import {
   BARE_ARM_PRETRIG_SAMPLES,
   CancelledError,
@@ -722,9 +723,10 @@ export class BridgeProvider implements SourceProvider {
     if (selDc?.fixed_gain) {
       s.input_gain_db = null;
     } else if (gainIsStated(ec.inputGainDb)) {
-      s.input_gain_db = ec.inputGainDb;
-      s.input_mode = ec.inputMode ?? 'line';
-      if (ec.inputPad !== undefined) s.input_pad = ec.inputPad;
+      const n = cfg.channelCount;
+      s.input_gain_db = fitToChannels(ec.inputGainDb, n, null);
+      s.input_mode = fitToChannels(ec.inputMode ?? 'line', n, 'line');
+      if (ec.inputPad !== undefined) s.input_pad = fitToChannels(ec.inputPad, n, false);
     } else if (isFullScale(ec.vmaxSC) && takesMeasuredFullScale(this.capsCache, cfg.deviceId)) {
       // An UNCHARACTERISED interface: no published input level means no gain
       // to state and nothing to derive from, so the operator's own measured

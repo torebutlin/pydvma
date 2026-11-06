@@ -47,6 +47,7 @@
   } from '../../lib/audio/provider';
   import {
     channelRows,
+    applyRowChange,
     rowFullScaleVolts,
     roleRange,
     opticalRange,
@@ -526,36 +527,9 @@
   function rowScale(row: ChannelGainRow): number | null {
     return bridgeSelCaps ? rowFullScaleVolts(bridgeSelCaps, row, rowGain(row), rowMode(row), rowPad(row)) : null;
   }
-  /**
-   * Write one row's gain, mode and pad. All three lists are rewritten at the
-   * channel count, each row's mode ALWAYS sent (the server defaults to line,
-   * which would silently change the scale of a gain stated for mic).
-   */
+  /** Write one row's edit; the lists are rebuilt by {@link applyRowChange}. */
   function patchRow(row: ChannelGainRow, change: { gain?: number | null; mode?: InputMode; pad?: boolean }) {
-    const n = Math.max($settings.channelCount, row.ch + 1);
-    const gains: (number | null)[] = [];
-    const modes: InputMode[] = [];
-    const pads: boolean[] = [];
-    for (let ch = 0; ch < n; ch++) {
-      const g = channelValue($bridgeConfig.inputGainDb, ch);
-      gains.push(typeof g === 'number' && Number.isFinite(g) ? g : null);
-      modes.push(channelValue($bridgeConfig.inputMode, ch) ?? 'line');
-      pads.push(channelValue($bridgeConfig.inputPad, ch) === true);
-    }
-    modes[row.ch] = rowMode(row);
-    if ('gain' in change) gains[row.ch] = change.gain ?? null;
-    if (change.mode) {
-      modes[row.ch] = change.mode;
-      const r = row.gainRange[change.mode];
-      const g = gains[row.ch];
-      if (r && g != null) gains[row.ch] = Math.min(r[1], Math.max(r[0], g));
-    }
-    if (change.pad !== undefined) pads[row.ch] = change.pad;
-    acquire.patchBridge({
-      inputGainDb: gains.some((g) => g != null) ? gains : undefined,
-      inputMode: modes,
-      inputPad: pads,
-    });
+    acquire.patchBridge(applyRowChange($bridgeConfig, row, change, $settings.channelCount));
   }
   function onRowGain(row: ChannelGainRow, e: Event) {
     const raw = (e.target as HTMLInputElement).value.trim();

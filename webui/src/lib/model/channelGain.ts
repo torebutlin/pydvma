@@ -135,3 +135,82 @@ export function staleChannelSettingsReset(
   if (Array.isArray(cfg.inputPad)) patch.inputPad = undefined;
   return patch;
 }
+
+/**
+ * A per-channel list at exactly `n` entries: extended with `fill` or
+ * truncated. A scalar (one value for every channel) is returned as is.
+ */
+export function fitToChannels<T>(value: T | readonly T[], n: number, fill: T): T | T[] {
+  if (!Array.isArray(value)) return value as T;
+  const out = (value as readonly T[]).slice(0, n);
+  while (out.length < n) out.push(fill);
+  return out;
+}
+
+/**
+ * Restate a gain after a mode change. The iD44's line input is the same knob
+ * as mic with a fixed 10 dB pad in front (line −10..+50 against mic 0..60), so
+ * the knob position is kept and the stated number moves by the difference of
+ * the ranges' minimums: mic 30 becomes line 20, line 50 (top stop) mic 60.
+ * No clamp. A blank gain stays blank.
+ */
+export function retargetGain(
+  gainRange: Record<string, [number, number]>,
+  fromMode: InputMode,
+  toMode: InputMode,
+  gain: number | null,
+): number | null {
+  if (gain == null) return null;
+  const from = gainRange[fromMode]?.[0];
+  const to = gainRange[toMode]?.[0];
+  if (from == null || to == null) return gain;
+  return gain - from + to;
+}
+
+/** The three per-channel lists as stored (scalars allowed) or as built. */
+export interface ChannelLists {
+  inputGainDb?: number | (number | null)[];
+  inputMode?: InputMode | InputMode[];
+  inputPad?: boolean | boolean[];
+}
+
+/**
+ * Apply one row's edit and return the three lists at `channelCount` entries
+ * (scalars expanded; gain null, mode 'line', pad false where unset). The row's
+ * mode is always written. A mode change moves the gain with {@link retargetGain}.
+ * `inputGainDb` is `undefined` when no channel states a gain.
+ */
+export function applyRowChange(
+  cur: ChannelLists,
+  row: ChannelGainRow,
+  change: { gain?: number | null; mode?: InputMode; pad?: boolean },
+  channelCount: number,
+): { inputGainDb: (number | null)[] | undefined; inputMode: InputMode[]; inputPad: boolean[] } {
+  const at = <T,>(v: T | readonly T[] | undefined, ch: number): T | undefined =>
+    Array.isArray(v) ? (v as readonly T[])[ch] : (v as T | undefined);
+  const n = Math.max(channelCount, row.ch + 1);
+  const gains: (number | null)[] = [];
+  const modes: InputMode[] = [];
+  const pads: boolean[] = [];
+  for (let ch = 0; ch < n; ch++) {
+    const g = at(cur.inputGainDb, ch);
+    gains.push(typeof g === 'number' && Number.isFinite(g) ? g : null);
+    modes.push(at(cur.inputMode, ch) ?? 'line');
+    pads.push(at(cur.inputPad, ch) === true);
+  }
+  const shown = at(cur.inputMode, row.ch);
+  const oldMode: InputMode = shown && row.modes.includes(shown) ? shown
+    : row.modes.includes('line') ? 'line' : row.modes[0];
+  modes[row.ch] = oldMode;
+  if ('gain' in change) gains[row.ch] = change.gain ?? null;
+  if (change.mode) {
+    modes[row.ch] = change.mode;
+    gains[row.ch] = retargetGain(row.gainRange, oldMode, change.mode, gains[row.ch]);
+  }
+  if (change.pad !== undefined) pads[row.ch] = change.pad;
+  return {
+    inputGainDb: gains.some((g) => g != null) ? gains : undefined,
+    inputMode: modes,
+    inputPad: pads,
+  };
+}

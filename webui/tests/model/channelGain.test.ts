@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import {
+  applyRowChange,
   channelRows,
+  fitToChannels,
+  retargetGain,
   opticalRange,
   rangeText,
   roleRange,
@@ -100,5 +103,49 @@ describe('staleChannelSettingsReset', () => {
     expect(Object.keys(p).sort()).toEqual(['inputGainDb', 'inputMode', 'inputPad']);
     expect(Object.values(p).every((v) => v === undefined)).toBe(true);
     expect(staleChannelSettingsReset(null, { inputGainDb: 20, inputMode: 'mic', inputPad: true })).toEqual({});
+  });
+});
+
+describe('retargetGain', () => {
+  const r = channelRows(ID44, 4, ROLES22)[0].gainRange;
+  test('keeps the knob position across modes', () => {
+    expect(retargetGain(r, 'mic', 'line', 30)).toBe(20);
+    expect(retargetGain(r, 'line', 'mic', 50)).toBe(60);
+    expect(retargetGain(r, 'line', 'mic', -10)).toBe(0);
+    expect(retargetGain(r, 'mic', 'inst', 40)).toBe(40);
+    expect(retargetGain(r, 'mic', 'line', null)).toBeNull();
+  });
+});
+
+describe('applyRowChange', () => {
+  const rows = channelRows(ID44, 4, ROLES22);
+  test('a gain edit fills the other channels and always writes the mode', () => {
+    const o = applyRowChange({}, rows[2], { gain: 25 }, 4);
+    expect(o.inputGainDb).toEqual([null, null, 25, null]);
+    expect(o.inputMode).toEqual(['line', 'line', 'line', 'line']);
+    expect(o.inputPad).toEqual([false, false, false, false]);
+  });
+  test('a pad toggle leaves the gains alone', () => {
+    const o = applyRowChange({ inputGainDb: [10, null], inputMode: ['mic', 'line'] }, rows[1], { pad: true }, 2);
+    expect(o.inputGainDb).toEqual([10, null]);
+    expect(o.inputMode).toEqual(['mic', 'line']);
+    expect(o.inputPad).toEqual([false, true]);
+  });
+  test('a mode change retargets that row only', () => {
+    const cur = { inputGainDb: [30, 30], inputMode: ['mic', 'mic'] as ('mic')[] };
+    const o = applyRowChange(cur, rows[0], { mode: 'line' }, 2);
+    expect(o.inputMode).toEqual(['line', 'mic']);
+    expect(o.inputGainDb).toEqual([20, 30]);
+  });
+  test('clearing the only gain gives undefined', () => {
+    expect(applyRowChange({ inputGainDb: [5] }, rows[0], { gain: null }, 1).inputGainDb).toBeUndefined();
+  });
+});
+
+describe('fitToChannels', () => {
+  test('pads, truncates, and leaves a scalar', () => {
+    expect(fitToChannels([1, 2], 4, null)).toEqual([1, 2, null, null]);
+    expect(fitToChannels([1, 2, 3], 2, null)).toEqual([1, 2]);
+    expect(fitToChannels('mic', 4, 'line')).toBe('mic');
   });
 });
