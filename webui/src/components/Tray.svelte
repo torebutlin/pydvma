@@ -209,6 +209,11 @@
     return gainAtRangeEnd(prov, ranges);
   }
 
+  /** Whether a set stores channel `ch` in volts or full-scale units. */
+  function sourceUnitOf(setId: number, ch: number): 'V' | 'FS' {
+    return capturedInVolts(controller?.getCalibrationSettings?.(setId), ch) ? 'V' : 'FS';
+  }
+
   function closeCalibrate() {
     calSetId = null;
   }
@@ -390,6 +395,7 @@
       currentSetId={calSetId}
       measureReference={controller?.measureReferenceTone ?? null}
       {gainAtStop}
+      {sourceUnitOf}
       onApply={commitCalibrate}
       onCancel={closeCalibrate}
     />

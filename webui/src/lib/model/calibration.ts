@@ -303,6 +303,23 @@ export function referenceRms(level: number, unit: string, freq: number): number 
 }
 
 /**
+ * What to do with a reference-tone result, given the basis (`'V'` volts or
+ * `'FS'` full-scale units) of the channel in the TONE recording and in the
+ * recording being CALIBRATED. The measured number is in the tone recording's
+ * stored units, so a mismatch would land a volts number in a full-scale field
+ * (or the reverse) wrong by the unknown full scale: `'refuse'`. Two
+ * full-scale recordings agree only if the gain did not move between them:
+ * `'warn'` unless it is the same recording. Two volts recordings are `'ok'`
+ * (a mic's V/Pa does not depend on the gain).
+ */
+export function referenceBasis(
+  tone: 'V' | 'FS', calibrated: 'V' | 'FS', sameSet: boolean,
+): 'ok' | 'warn' | 'refuse' {
+  if (tone !== calibrated) return 'refuse';
+  return tone === 'FS' && !sameSet ? 'warn' : 'ok';
+}
+
+/**
  * Whether a channel's stated gain sits at an END of its mode's gain range, a
  * detent the knob can be returned to. A reference-tone calibration holds only
  * while the gain knob and pad stay where they were; at a range end that is

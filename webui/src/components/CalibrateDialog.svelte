@@ -42,7 +42,7 @@
    * open.
    */
   import {
-    CAL_UNITS, referenceDefaults, referenceRms, type CalRow, type TfCalLine, type TfCalRow,
+    CAL_UNITS, referenceBasis, referenceDefaults, referenceRms, type CalRow, type TfCalLine, type TfCalRow,
   } from '../lib/model/calibration';
 
   /** What the reference-tone measurement returns (see `actions.measureReferenceTone`). */
@@ -63,6 +63,7 @@
     currentSetId = null,
     measureReference = null,
     gainAtStop = null,
+    sourceUnitOf = null,
     onApply,
     onCancel,
   }: {
@@ -104,6 +105,8 @@
      * and pad stay put.
      */
     gainAtStop?: ((setId: number, ch: number) => boolean) | null;
+    /** Whether a set stores channel `ch` in volts or full-scale units. */
+    sourceUnitOf?: ((setId: number, ch: number) => 'V' | 'FS') | null;
     /**
      * Per-channel edited values, index-aligned to `rows` (`null` for a TF-only
      * set, which shows no channel rows), and the TF lines (`null` when there
@@ -162,9 +165,26 @@
     return Number.isNaN(refRmsOf(i)) ? 'The frequency must be a number above zero.' : '';
   }
 
+  /** How the tone recording's units relate to the calibrated set's. */
+  function basisOf(i: number): { verdict: 'ok' | 'warn' | 'refuse'; message: string } {
+    const tone = refSet[i];
+    if (!sourceUnitOf || tone === null || currentSetId === null) return { verdict: 'ok', message: '' };
+    const ch = rows[i].ch;
+    const t = sourceUnitOf(tone, ch);
+    const c = sourceUnitOf(currentSetId, ch);
+    const verdict = referenceBasis(t, c, tone === currentSetId);
+    const name = (u: 'V' | 'FS') => (u === 'V' ? 'volts' : 'full-scale units');
+    return {
+      verdict,
+      message: verdict === 'refuse'
+        ? `The calibrator recording stores channel ${ch + 1} in ${name(t)} but this recording uses ${name(c)}: state the same gain for both recordings, or calibrate the recording the tone belongs to.`
+        : '',
+    };
+  }
+
   async function measure(i: number) {
     const setId = refSet[i];
-    if (!measureReference || setId === null || refInvalid(i)) return;
+    if (!measureReference || setId === null || refInvalid(i) || basisOf(i).verdict === 'refuse') return;
     refBusy[i] = true;
     refError[i] = '';
     refWarnings[i] = [];
@@ -333,6 +353,7 @@
       {#if refOpen[i] && measureReference}
         {@const invalid = refInvalid(i)}
         {@const pickedSet = refSet[i]}
+        {@const basis = basisOf(i)}
         <div class="ref-panel" data-testid={`cal-ref-panel-${row.ch}`}>
           <div class="mrow">
             <label for={`cal-ref-set-${row.ch}`} class="ml">Recording</label>
@@ -372,12 +393,15 @@
             <button
               class="btn small"
               data-testid="cal-ref-measure"
-              disabled={!!invalid || refBusy[i] || pickedSet === null}
+              disabled={!!invalid || refBusy[i] || pickedSet === null || basis.verdict === 'refuse'}
               onclick={() => measure(i)}
             >{refBusy[i] ? 'Measuring…' : 'Measure'}</button>
           </div>
           {#if invalid}
             <p class="src-note warn" data-testid="cal-ref-invalid">{invalid}</p>
+          {/if}
+          {#if basis.verdict === 'refuse'}
+            <p class="src-note warn" data-testid="cal-ref-basis">{basis.message}</p>
           {/if}
           {#if refError[i]}
             <p class="src-note warn" data-testid="cal-ref-error">{refError[i]}</p>
@@ -387,7 +411,11 @@
               {#each refWarnings[i] as w (w)}<li>{w}</li>{/each}
             </ul>
           {/if}
-          {#if pickedSet !== null && gainAtStop && !gainAtStop(pickedSet, row.ch)}
+          {#if basis.verdict === 'warn'}
+            <p class="src-note" data-testid="cal-ref-stop-note">
+              Valid only if this channel's gain knob and pad did not move between the two recordings.
+            </p>
+          {:else if basis.verdict === 'ok' && pickedSet !== null && gainAtStop && !gainAtStop(pickedSet, row.ch)}
             <p class="src-note" data-testid="cal-ref-stop-note">
               Valid only while this channel's gain knob and pad stay where they were.
             </p>

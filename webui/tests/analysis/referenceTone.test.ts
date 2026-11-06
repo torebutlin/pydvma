@@ -11,7 +11,7 @@ import { createAnalysisSettings } from '../../src/lib/stores/analysisSettings';
 import { createModalStore } from '../../src/lib/stores/modal';
 import { createToasts } from '../../src/lib/stores/toast';
 import { P_REF } from '../../src/lib/analysis/acoustics';
-import { channelRail, gainAtRangeEnd, referenceDefaults, referenceRms } from '../../src/lib/model/calibration';
+import { channelRail, gainAtRangeEnd, referenceBasis, referenceDefaults, referenceRms } from '../../src/lib/model/calibration';
 import type { EngineStore } from '../../src/lib/stores/engine';
 import type { DvmaDataset } from '../../src/lib/model/dataset';
 
@@ -102,4 +102,14 @@ test('a non-positive or non-finite level or frequency gives NaN', () => {
   for (const [l, f] of [[0, 1000], [-1, 1000], [NaN, 1000], [94, 0], [94, -3], [94, Infinity]]) {
     expect(Number.isNaN(referenceRms(l, 'Pa', f))).toBe(true);
   }
+});
+
+test('referenceBasis: refuse a basis mismatch, warn FS across recordings, else ok', () => {
+  expect(referenceBasis('V', 'V', false)).toBe('ok');
+  expect(referenceBasis('V', 'V', true)).toBe('ok');
+  expect(referenceBasis('FS', 'FS', true)).toBe('ok');
+  expect(referenceBasis('FS', 'FS', false)).toBe('warn');
+  expect(referenceBasis('V', 'FS', false)).toBe('refuse');
+  expect(referenceBasis('FS', 'V', false)).toBe('refuse');
+  expect(referenceBasis('FS', 'V', true)).toBe('refuse');
 });

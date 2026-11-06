@@ -246,7 +246,7 @@ test('the dialog offers a calibration note field', async ({ page }) => {
 // ---- Reference tone ------------------------------------------------------ //
 
 /** A one-channel 1 kHz tone whose rms is `rms`, as a loadable `.dvma`. */
-function toneDvma(rms: number): { name: string; mimeType: string; buffer: Buffer } {
+function toneDvma(rms: number, extra: Record<string, unknown> = {}, name = 'tone.dvma'): { name: string; mimeType: string; buffer: Buffer } {
   const fs = 8000;
   const n = 8000;
   const axis = new Float64Array(n);
@@ -264,10 +264,10 @@ function toneDvma(rms: number): { name: string; mimeType: string; buffer: Buffer
         time_data: { shape: [n, 1], isComplex: false, data: data },
       },
       meta: { test_name: 'calibrator', timestring: 't0', unique_id: 'TONE0' },
-      settings: { fs },
+      settings: { fs, ...extra },
     }],
   });
-  return { name: 'tone.dvma', mimeType: 'application/octet-stream', buffer: Buffer.from(bytes) };
+  return { name, mimeType: 'application/octet-stream', buffer: Buffer.from(bytes) };
 }
 
 test('the reference tone panel defaults follow the row unit and refuse a bad level', async ({ page }) => {
@@ -292,6 +292,27 @@ test('the reference tone panel defaults follow the row unit and refuse a bad lev
   await expect(overlay.getByTestId('cal-ref-measure')).toBeDisabled();
   await expect(overlay.getByTestId('cal-ref-invalid')).toBeVisible();
   await expect(overlay.getByTestId('cal-ref-stop-note')).toContainText('gain knob and pad');
+});
+
+test('a tone recorded in volts is refused for a full-scale recording', async ({ page }) => {
+  await page.goto('/');
+  // Set 0: full-scale units (no rail stated); set 1: volts (VmaxSC 2).
+  for (const f of [toneDvma(0.03, {}, 'a.dvma'), toneDvma(0.03, { VmaxSC: 2 }, 'b.dvma')]) {
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Load Data' }).click();
+    await (await chooserPromise).setFiles(f);
+    await page.waitForTimeout(300);
+  }
+  await expect(page.getByTestId('tray-card-1')).toBeVisible();
+  const overlay = await openCalibrate(page);   // set 0, full-scale
+  await overlay.getByTestId('cal-ref-0').click();
+  await expect(overlay.getByTestId('cal-ref-basis')).toHaveCount(0);   // its own recording
+  const options = await overlay.getByTestId('cal-ref-set').evaluate(
+    (el) => [...(el as HTMLSelectElement).options].map((o) => o.value));
+  await overlay.getByTestId('cal-ref-set').selectOption(options[1]);
+  await expect(overlay.getByTestId('cal-ref-basis')).toContainText('full-scale units');
+  await expect(overlay.getByTestId('cal-ref-measure')).toBeDisabled();
+  await expect(overlay.getByTestId('cal-sens-0')).toHaveValue('1');
 });
 
 test.describe('@engine', () => {
