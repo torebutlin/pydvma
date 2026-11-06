@@ -35,6 +35,12 @@
    * field (editing it by hand afterwards drops the reference), and Apply then
    * records the calibration as `reference_tone` with the level and frequency.
    *
+   * USE FOR NEW RECORDINGS TOO (`cal-carry`, unticked by default, shown when
+   * the set names a device, `carryDevice`): Apply then also keeps each changed
+   * channel's calibration for later captures from that device, which arrive
+   * already calibrated (`stores/carriedCal`). Leaving it alone changes
+   * nothing.
+   *
    * DUMB component: it receives the initial per-channel `rows` (and `tfRows`),
    * edits LOCAL copies, and emits the edited values on Apply; the parent owns
    * the sensitivity→factor conversion, persistence, and any toast. It is
@@ -64,6 +70,7 @@
     measureReference = null,
     gainAtStop = null,
     sourceUnitOf = null,
+    carryDevice = null,
     onApply,
     onCancel,
   }: {
@@ -108,11 +115,19 @@
     /** Whether a set stores channel `ch` in volts or full-scale units. */
     sourceUnitOf?: ((setId: number, ch: number) => 'V' | 'FS') | null;
     /**
+     * The device a carried calibration would be kept for (the set's device
+     * key, `carriedCal.deviceKeyFor`); `null` hides the "use for new
+     * recordings too" tick, as there is no device to carry it to.
+     */
+    carryDevice?: string | null;
+    /**
      * Per-channel edited values, index-aligned to `rows` (`null` for a TF-only
      * set, which shows no channel rows), and the TF lines (`null` when there
      * is no TF section): `line: null` = follow the channel calibration.
      * `note` is the free-text calibration note ('' when empty); the parent
-     * saves it with the provenance of each channel that changed.
+     * saves it with the provenance of each channel that changed. `carry` is
+     * the "use for new recordings too" tick: when true the parent also keeps
+     * each changed channel's calibration for new recordings from the device.
      */
     onApply: (
       results: {
@@ -121,6 +136,7 @@
       }[] | null,
       tf: { ch: number; line: TfCalLine | null }[] | null,
       note: string,
+      carry: boolean,
     ) => void;
     onCancel: () => void;
   } = $props();
@@ -208,6 +224,8 @@
 
   /** Free-text note saved with the calibration provenance of changed channels. */
   let note = $state('');
+  /** "Use for new recordings too": opt-in, so unticked on every open. */
+  let carry = $state(false);
 
   // TF section, seeded the same way. The factor is edited as TEXT so a blank
   // ("follow the channels") and a typo can be told apart from a number.
@@ -286,6 +304,7 @@
       }),
       tf,
       note.trim(),
+      !tfOrphan && carryDevice !== null && carry,
     );
   }
 
@@ -437,6 +456,17 @@
           style="flex:1"
         />
       </div>
+      {#if carryDevice !== null}
+        <div class="mrow">
+          <label
+            class="carry"
+            title={`New recordings from ${carryDevice} arrive with the calibration of each channel changed here (sensitivity, unit and how it was obtained). pydvma cannot read the gain knob, so it warns when a recording states a different gain or pad. Setup shows what is carried and can clear it.`}
+          >
+            <input type="checkbox" data-testid="cal-carry" bind:checked={carry} />
+            use for new recordings too
+          </label>
+        </div>
+      {/if}
     {/if}
 
     {#if tfRows && tfRows.length}
@@ -546,6 +576,14 @@
   }
   ul.src-note {
     padding-left: 16px;
+  }
+  label.carry {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
   }
   .ref-panel {
     margin: -4px 0 8px 12px;

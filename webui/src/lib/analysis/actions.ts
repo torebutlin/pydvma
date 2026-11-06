@@ -62,8 +62,10 @@ import type {
 import type { Toasts } from '../stores/toast';
 import {
   capturedInVolts, channelRail, composeTfUnit, isIdentity, normalizeFactors, normalizeTfCal, normalizeUnits,
-  splitTfUnit, tfCalLine, tfCalToUi, wrapUnit, type ChannelCalibration, type TfCal, type TfCalLine,
+  provenanceFromSet, sensitivityToFactor, splitTfUnit, tfCalLine, tfCalToUi, wrapUnit,
+  type ChannelCalibration, type TfCal, type TfCalLine,
 } from '../model/calibration';
+import { carriedCal, carryWarnings, deviceKeyFor } from '../stores/carriedCal';
 import type { ChoosableKind, ChoosableSet } from '../export/data';
 import { calibrationController } from '../stores/calibrationController';
 import { tfColumn } from '../plot/tfChannels';
@@ -2327,6 +2329,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * (see `selection.addSet`'s `hidden` option), and a hidden capture is not a
    * new line in the time view, so announcing it would re-autoscale that view
    * once per capture for data nobody can see.
+   *
+   * A visible capture from a device the user chose to carry a calibration
+   * for (the Calibrate dialog's "use for new recordings too",
+   * `stores/carriedCal`) arrives calibrated: see `applyCarriedCalibration`.
+   * A hidden one is left raw, like the window/averaging defaults.
    */
   function addRecordedSet(item: DvmaItem, opts: { hidden?: boolean } = {}): number {
     // P5: a capture is always a NEW line in the time view. Judged before the
@@ -2376,9 +2383,49 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // placeholder 'V', keeps the plain 'Amplitude'. See `capturedInVolts`.
       unitsAreVolts: capturedInVolts(item.settings),
     });
+    if (!opts.hidden) applyCarriedCalibration(ws);
 
     if (!opts.hidden) notify?.linesAdded('time', { viewWasEmpty: wasEmpty });
     return setId;
+  }
+
+  /**
+   * Give a new capture the calibration carried for its device (the opt-in
+   * "use for new recordings too", `stores/carriedCal`): each carried channel
+   * within the capture's channel count gets its sensitivity (as the cal
+   * factor `1/sensitivity`), its unit and its provenance marked `carried`
+   * (the gain, mode, pad and date it was MADE at, not this recording's).
+   * Channels with nothing carried, and carried channels beyond the capture,
+   * are left alone. pydvma cannot read a gain knob, so where this recording's
+   * stated gain, input mode or pad differs from the calibration's (or a gain
+   * is unstated) ONE info toast lists every such channel (`carryWarnings`);
+   * the calibration is still applied. No-op for a device with nothing carried.
+   */
+  function applyCarriedCalibration(ws: WorkingSet): void {
+    const carried = carriedCal.forDevice(deviceKeyFor(ws.time.settings));
+    const chans = Object.keys(carried).map(Number)
+      .filter((ch) => Number.isInteger(ch) && ch >= 0 && ch < ws.nChannels)
+      .sort((a, b) => a - b);
+    if (!chans.length) return;
+    const factors = normalizeFactors(ws.time.meta.channel_cal_factors, ws.nChannels);
+    const units = normalizeUnits(ws.time.meta.units, ws.nChannels);
+    const provenance: (ChannelCalibration | undefined)[] = new Array(ws.nChannels).fill(undefined);
+    const warnings: string[] = [];
+    for (const ch of chans) {
+      const e = carried[ch];
+      factors[ch] = sensitivityToFactor(e.sensitivity);
+      units[ch] = e.unit;
+      provenance[ch] = { ...e.provenance, carried: true };
+      warnings.push(...carryWarnings(e, provenanceFromSet(ws.time.settings, ch), ch));
+    }
+    setCalFactors(ws.setId, factors, units, { provenance, warnFit: false });
+    if (warnings.length) {
+      toasts?.push(
+        `Calibration carried from an earlier recording, but ${warnings.join('; ')}. `
+          + 'It holds only while the gain knob and pad are where they were when it was made.',
+        { level: 'info', timeout: 12_000 },
+      );
+    }
   }
 
   /**

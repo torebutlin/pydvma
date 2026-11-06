@@ -56,6 +56,7 @@
     type ChannelGainRow,
   } from '../../lib/model/channelGain';
   import { channelFullScale, type MonitorStore } from '../../lib/stores/monitor';
+  import { carriedCal, carriedNote, selectedDeviceKey } from '../../lib/stores/carriedCal';
   import { reportLevels, worstVerdict, verdictAdvice } from '../../lib/model/levelCheck';
 
   let {
@@ -367,12 +368,20 @@
   const pretrigTimeout = $derived($bridgeConfig.pretrigTimeout ?? DEFAULT_PRETRIG_TIMEOUT_S);
   const pretrigSamples = $derived($bridgeConfig.pretrigSamples);
 
+  // Calibration carried to new recordings from the selected device (the
+  // Calibrate dialog's opt-in "use for new recordings too"): said here, with
+  // a way to stop it, because every capture from this device arrives
+  // calibrated until it is cleared. The key is the one the capture will be
+  // filed under (`selectedDeviceKey` mirrors the capture's `device_name`).
+  const carriedKey = $derived(selectedDeviceKey($bridgeCaps, $devices, $settings.deviceId));
+  const carriedText = $derived(carriedNote($carriedCal[carriedKey] ?? {}));
+
   /** Whether any advisory note has something to say (else the strip is skipped). */
   const hasNotes = $derived(
     $coercedFs != null || fsAboveMax != null || calibrationNote != null
     || $deviceNote != null || loopbackRange != null || opticalRng != null
     || preferredFsNote != null || captureFs != null
-    || $bridgeConfig.outputFs != null,
+    || $bridgeConfig.outputFs != null || carriedText != null,
   );
 
   // Level check. The monitor already computes per-channel peak/RMS from the
@@ -920,6 +929,18 @@
             data-testid="setup-calibration-note"
           >
             {calibrationNote}
+          </span>
+        {/if}
+        {#if carriedText}
+          <span class="note coerce-note" data-testid="setup-carried-cal-note">
+            {carriedText}
+            <button
+              type="button"
+              class="btn sm"
+              data-testid="setup-carried-cal-clear"
+              title="Stop calibrating new recordings from this device automatically. Recordings already made keep their calibration."
+              onclick={() => carriedCal.clear(carriedKey)}
+            >clear</button>
           </span>
         {/if}
         {#if $deviceNote}

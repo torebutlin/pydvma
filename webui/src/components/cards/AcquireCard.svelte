@@ -293,7 +293,9 @@
       const rec = await acquire.record();
       // Convert to a DvmaItem, preserving bridge container provenance
       // (real device driver / calibration / name) when present.
-      const item = recordingToItem(rec, undefined, acquire.lastRecordingMeta);
+      const item = recordingToItem(
+        rec, undefined, acquire.lastRecordingMeta, acquire.lastRecordingDeviceName,
+      );
       const setId = actions.addRecordedSet(item);
       // Round-9 digital low-pass, Web Audio side: the capture ran at the
       // context's NATIVE rate (source.ts skips the rate pin when lpfOn);

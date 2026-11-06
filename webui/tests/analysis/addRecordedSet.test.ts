@@ -4,13 +4,16 @@
  * the derived store with time arrays for immediate plotting.
  */
 import { get } from 'svelte/store';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test } from 'vitest';
 import { createActions } from '../../src/lib/analysis/actions';
 import { createSelection } from '../../src/lib/stores/selection';
 import { createEngineStore } from '../../src/lib/stores/engine';
 import { recordingToItem } from '../../src/lib/stores/acquire';
 import type { Recording } from '../../src/lib/audio/source';
 import type { EngineClient } from '../../src/lib/worker/client';
+import { carriedCal } from '../../src/lib/stores/carriedCal';
+import { createToasts } from '../../src/lib/stores/toast';
+import type { ChannelCalibration } from '../../src/lib/model/calibration';
 
 /** Stub engine client — no real Worker, no pyodide. Sufficient for
  *  addRecordedSet (which never calls the engine). */
@@ -174,4 +177,97 @@ test('a capture, or a loaded set with no recorded settings, gets the window / TF
   // A Nonlin run's hidden raw capture never takes them.
   const raw = actions.addRecordedSet(recordingToItem(fakeRecording(), 'bla_raw'), { hidden: true });
   expect(settings.get(raw, 'tf').averaging).toBe('within');
+});
+
+// ---- Task 10: an opt-in calibration carried forward to new recordings ----
+
+afterEach(() => carriedCal.clear());
+
+function carriedEntry(over: Partial<ChannelCalibration> = {}) {
+  const provenance: ChannelCalibration = {
+    method: 'sensitivity', date: '2026-11-06T10:00:00.000Z', sensitivity: 0.0335, unit: 'Pa',
+    reference: null, gain_db: 60, input_mode: 'mic', pad: false, device: 'Audient iD44',
+    note: 'spec sheet', carried: false, ...over,
+  };
+  return { sensitivity: provenance.sensitivity, unit: provenance.unit, provenance };
+}
+
+/** A 2-channel capture from the iD44, stating gain/mode/pad for every channel. */
+function id44Item(gain: number | null = 60, name = 'mic_1') {
+  const item = recordingToItem(fakeRecording(2, 100), name, null, 'Audient iD44');
+  Object.assign(item.settings!, { input_gain_db: gain, input_mode: 'mic', input_pad: false });
+  return item;
+}
+
+function carryHarness() {
+  const sel = createSelection();
+  const toasts = createToasts();
+  const actions = createActions(createEngineStore(stubClient), sel, undefined, undefined, toasts);
+  return { actions, toasts };
+}
+
+test('recordingToItem stamps the capture device name when given', () => {
+  const item = recordingToItem(fakeRecording(1, 10), 'n', {
+    deviceDriver: 'soundcard', settings: { device_name: 'stale name', device_index: 3 },
+  }, 'Audient iD44');
+  expect(item.settings).toMatchObject({ device_name: 'Audient iD44', device_index: 3 });
+  // Without one, the container's own copy stays.
+  const kept = recordingToItem(fakeRecording(1, 10), 'n', {
+    deviceDriver: 'soundcard', settings: { device_name: 'Scarlett 2i2' },
+  });
+  expect(kept.settings!.device_name).toBe('Scarlett 2i2');
+});
+
+test('a capture from a device with a carried calibration arrives calibrated', () => {
+  const { actions, toasts } = carryHarness();
+  carriedCal.set('Audient iD44', 0, carriedEntry());
+  const item = id44Item();
+  const setId = actions.addRecordedSet(item);
+
+  expect((item.meta.channel_cal_factors as number[])[0]).toBe(1 / 0.0335);
+  expect((item.meta.channel_cal_factors as number[])[1]).toBe(1);
+  expect((item.meta.units as string[])[0]).toBe('Pa');
+  const cc = item.meta.channel_calibration as (ChannelCalibration | null)[];
+  expect(cc[0]!.carried).toBe(true);
+  expect(cc[0]!.gain_db).toBe(60);
+  expect(cc[0]!.note).toBe('spec sheet');
+  expect(cc[1]).toBeNull();
+  expect(get(actions.derived)[setId].calFactors![0]).toBe(1 / 0.0335);
+  // The same stated gain, mode and pad: nothing to warn about.
+  expect(get(toasts.toasts)).toHaveLength(0);
+});
+
+test('a carried calibration on a recording that states a different gain raises one info toast', () => {
+  const { actions, toasts } = carryHarness();
+  carriedCal.set('Audient iD44', 0, carriedEntry());
+  carriedCal.set('Audient iD44', 1, carriedEntry({ sensitivity: 0.05 }));
+  actions.addRecordedSet(id44Item(50));
+  const list = get(toasts.toasts);
+  expect(list).toHaveLength(1);
+  expect(list[0].level).toBe('info');
+  expect(list[0].message).toContain('calibrated at gain');
+  expect(list[0].message).toContain('channel 1');
+  expect(list[0].message).toContain('channel 2');
+});
+
+test('a hidden capture, another device, or channels beyond the capture are left alone', () => {
+  const { actions, toasts } = carryHarness();
+  carriedCal.set('Audient iD44', 0, carriedEntry());
+  carriedCal.set('Audient iD44', 3, carriedEntry({ gain_db: 10 }));
+
+  const hidden = id44Item(50, 'bla_raw');
+  actions.addRecordedSet(hidden, { hidden: true });
+  expect(hidden.meta.channel_cal_factors).toBeUndefined();
+  expect(hidden.meta.channel_calibration).toBeUndefined();
+
+  const other = recordingToItem(fakeRecording(2, 100), 'other', null, 'Scarlett 2i2');
+  actions.addRecordedSet(other);
+  expect(other.meta.channel_cal_factors).toBeUndefined();
+
+  // Channel 3 is beyond a 2-channel capture: ignored, and no warning for it.
+  const item = id44Item();
+  actions.addRecordedSet(item);
+  expect(item.meta.channel_cal_factors).toEqual([1 / 0.0335, 1]);
+  expect((item.meta.channel_calibration as unknown[])).toHaveLength(2);
+  expect(get(toasts.toasts)).toHaveLength(0);
 });

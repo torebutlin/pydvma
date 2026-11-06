@@ -848,3 +848,45 @@ test('a device scan that resolves after a provider swap does not overwrite the n
   expect(get(store.devices).map((d) => d.label)).toEqual(['Mock']);
   expect(get(capabilities).liveSource).toBe(false);
 });
+
+// ---- Task 10: the capture's device name, for its settings.device_name ----
+
+test('a capture records its device name, taking the browser label once the capture granted permission', async () => {
+  // Before permission the browser hides labels (a placeholder, hasLabel
+  // false); the capture itself grants it, so the name is read after it.
+  let granted = false;
+  const provider: SourceProvider = {
+    kind: 'webaudio',
+    async capabilities() { return null; },
+    async enumerateInputDevices() {
+      return [{ deviceId: 'default', label: granted ? 'Default - iD44' : 'Input defaul', groupId: 'g', hasLabel: granted }];
+    },
+    startRecording() {
+      granted = true;
+      return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 };
+    },
+    async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
+  };
+  const store = createAcquireStore(provider);
+  await store.refreshDevices();
+  await store.record();
+  expect(store.lastRecordingDeviceName).toBe('Default - iD44');
+
+  // On the bridge it is the server's name for the selected device.
+  const caps = {
+    backends: ['soundcard'], devices: { soundcard: ['Audient iD44'], nidaq: [] },
+    device_caps: { 'soundcard:0': { name: 'Audient iD44' } },
+  };
+  const bridge: SourceProvider = {
+    kind: 'bridge',
+    async capabilities() { return caps as never; },
+    async enumerateInputDevices() { return [{ deviceId: 'soundcard:0', label: 'Audient iD44', groupId: 'soundcard', hasLabel: true }]; },
+    startRecording() { return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 }; },
+    async startMonitor() { return { stop() {}, fs: 44100, nChannels: 1 }; },
+  };
+  const b = createAcquireStore(bridge);
+  await b.init();
+  b.patch({ deviceId: 'soundcard:0' });
+  await b.record();
+  expect(b.lastRecordingDeviceName).toBe('Audient iD44');
+});

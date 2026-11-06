@@ -71,6 +71,27 @@ first and work in volts.
     read in g instead, give the channel the unit `g` from Python. The
     dialog keeps it, and `0.1` is then right for 100 mV/g.
 
+### Use it for new recordings too
+
+To calibrate a microphone once and then make many recordings, tick
+**use for new recordings too** before pressing **Apply**. Every later
+recording from the same device then arrives already calibrated on each
+channel you changed: same sensitivity, same unit, and a record of how
+the calibration was made, marked as carried. The tick starts unticked
+each time, and nothing is carried unless you tick it. The app remembers
+the calibration in this browser, so it is still there after a reload.
+
+pydvma cannot read the gain knob, so a carried calibration is only as
+good as the gain you state. If a new recording states a different gain,
+input mode or pad on a carried channel, or no gain at all, the app still
+applies the calibration and shows a message naming each channel, for
+example "channel 1: calibrated at gain 60 dB, this recording states
+50 dB". Recalibrate if the knob or pad really moved.
+
+While a device carries a calibration, Setup says so ("calibration
+carried for channels 1, 2 (Pa)") and its **clear** button stops it.
+Recordings already made keep their calibration.
+
 ## Calibrate a transfer function directly
 
 Sometimes the transfer function's true level is known when neither
