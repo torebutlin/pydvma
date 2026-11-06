@@ -368,6 +368,24 @@ test('an over-range VmaxNI is clamped to the device ai_vmax on device select', a
   expect(get(store.bridgeConfig).vmaxNI).toBe(5); // clamped to the 9234 ±5 rail
 });
 
+test('per-channel gain lists are dropped when the device has no gain per channel', async () => {
+  const { provider, config } = richBridgeProvider();
+  const store = createAcquireStore(provider);
+  await store.init();
+  store.patchBridge({ inputGainDb: [30, null], inputMode: ['mic', 'line'], inputPad: [true, false] });
+  // The NI chassis has no per-channel gain: the lists would be refused.
+  store.patch({ deviceId: 'nidaq:0' });
+  const cfg = get(store.bridgeConfig);
+  expect(cfg.inputGainDb).toBeUndefined();
+  expect(cfg.inputMode).toBeUndefined();
+  expect(cfg.inputPad).toBeUndefined();
+  expect(config().inputGainDb).toBeUndefined();
+  // A scalar is never touched.
+  store.patchBridge({ inputGainDb: 20 });
+  store.patch({ deviceId: 'nidaq:0' });
+  expect(get(store.bridgeConfig).inputGainDb).toBe(20);
+});
+
 test('coercedFs is set on a DSA rate snap and cleared on an exact honour', async () => {
   const { provider, fireConfigured } = richBridgeProvider();
   const store = createAcquireStore(provider);

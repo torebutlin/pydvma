@@ -42,7 +42,18 @@
     BARE_ARM_PRETRIG_SAMPLES,
     DEFAULT_PRETRIG_TIMEOUT_S,
     PYDVMA_DEFAULT_VMAX,
+    gainIsStated,
+    type InputMode,
   } from '../../lib/audio/provider';
+  import {
+    channelRows,
+    rowFullScaleVolts,
+    roleRange,
+    opticalRange,
+    rangeText,
+    shouldUsePreferredFs,
+    type ChannelGainRow,
+  } from '../../lib/model/channelGain';
   import { channelFullScale, type MonitorStore } from '../../lib/stores/monitor';
   import { reportLevels, worstVerdict, verdictAdvice } from '../../lib/model/levelCheck';
 
@@ -123,31 +134,6 @@
       ? $bridgeConfig.vmaxSC
       : null,
   );
-  /** Is the selected device's VOLTAGE scale known, or standing in for a
-   *  measurement nobody made? Sample rates and channel counts come from
-   *  the driver and are equally reliable either way; volts do not. */
-  const calibrationNote = $derived.by(() => {
-    const d = selectedDevice;
-    if (!d?.calibration) return null;
-    if (d.calibration === 'characterised') {
-      return d.fullScaleVolts
-        ? `calibrated: full scale ${d.fullScaleVolts.toFixed(3)} V peak`
-        : null;
-    }
-    // An uncharacterised interface whose full scale the operator has MEASURED
-    // and entered below is calibrated — the server just had no profile to
-    // derive it from. Repeating "full scale unknown" there would be wrong.
-    if (d.calibration === 'uncalibrated' && statedVmaxSc != null) {
-      return `calibrated: full scale ${statedVmaxSc.toFixed(3)} V peak (stated)`;
-    }
-    return d.calibrationAdvice ?? null;
-  });
-  const calibrationWarn = $derived(
-    !!selectedDevice?.calibration
-    && selectedDevice.calibration !== 'characterised'
-    && !(selectedDevice.calibration === 'uncalibrated' && statedVmaxSc != null),
-  );
-
   // Basic (default) vs full settings view. Local UI state.
   let full = $state(false);
 
@@ -228,12 +214,18 @@
   // alongside their real inputs. A Scarlett 2i2 reports four inputs but
   // 3-4 are a tap of its own output mix, so a student who raises the
   // channel count to 4 records the playback, not the structure.
-  const loopbackFrom = $derived.by(() => {
+  // 1-based inclusive range of the loopback channels among those requested
+  // (21–22 on an iD44, whose optical inputs sit between), or null.
+  const loopbackRange = $derived.by(() => {
     const roles = bridgeSelCaps?.channel_roles;
     if (!roles || !roles.length) return null;
-    const first = roles.findIndex((r) => r === 'loopback');
-    if (first < 0 || $settings.channelCount <= first) return null;
-    return first + 1; // 1-based for display
+    return roleRange(roles, 'loopback', $settings.channelCount);
+  });
+  // The optical (ADAT) inputs among those requested: no preamp of the
+  // interface is in front of them.
+  const opticalRng = $derived.by(() => {
+    const roles = bridgeSelCaps?.channel_roles;
+    return roles && roles.length ? opticalRange(roles, $settings.channelCount) : null;
   });
   // Rates offerable as an explicit capture rate: the hardware's own ladder,
   // at or above the delivered rate (capturing below it would mean upsampling,
@@ -296,6 +288,48 @@
   /** A preamp per input (the Audient iD44): each channel has its own gain. */
   const perChannelGain = $derived(bridgeSelCaps?.per_channel_gain === true && !fixedGain);
 
+  /** Is the selected device's VOLTAGE scale known, or standing in for a
+   *  measurement nobody made? Sample rates and channel counts come from
+   *  the driver and are equally reliable either way; volts do not. */
+  const calibrationNote = $derived.by(() => {
+    const d = selectedDevice;
+    if (!d?.calibration) return null;
+    // A preamp per input: each channel's own row (with its full-scale
+    // preview) is the source of truth, so this note must not quote one
+    // device-wide figure or call the scale unknown while a row shows volts.
+    if (perChannelGain) {
+      return gainIsStated($bridgeConfig.inputGainDb)
+        ? 'calibrated per channel: full scale is shown beside each gain'
+        : 'state each channel\'s gain below for calibrated volts';
+    }
+    if (d.calibration === 'characterised') {
+      return d.fullScaleVolts
+        ? `calibrated: full scale ${d.fullScaleVolts.toFixed(3)} V peak`
+        : null;
+    }
+    // An uncharacterised interface whose full scale the operator has MEASURED
+    // and entered below is calibrated — the server just had no profile to
+    // derive it from. Repeating "full scale unknown" there would be wrong.
+    if (d.calibration === 'uncalibrated' && statedVmaxSc != null) {
+      return `calibrated: full scale ${statedVmaxSc.toFixed(3)} V peak (stated)`;
+    }
+    return d.calibrationAdvice ?? null;
+  });
+  const calibrationWarn = $derived(
+    perChannelGain
+      ? !!selectedDevice?.calibration && !gainIsStated($bridgeConfig.inputGainDb)
+      : !!selectedDevice?.calibration
+    && selectedDevice.calibration !== 'characterised'
+    && !(selectedDevice.calibration === 'uncalibrated' && statedVmaxSc != null),
+  );
+
+  /** Set when choosing a device moved the rate to its preferred one. */
+  let preferredFsText = $state<string | null>(null);
+  // Said only while the rate is still the one it set.
+  const preferredFsNote = $derived(
+    preferredFsText != null && bridgeSelCaps?.preferred_fs === $settings.sampleRate ? preferredFsText : null,
+  );
+
   // ---- trigger (pretrigger) ----
   // Gated on the CAPABILITY, not on the machine having NI-DAQ installed. The
   // old `hasNidaq` gate is why the trigger controls rendered beside a
@@ -335,7 +369,8 @@
   /** Whether any advisory note has something to say (else the strip is skipped). */
   const hasNotes = $derived(
     $coercedFs != null || fsAboveMax != null || calibrationNote != null
-    || $deviceNote != null || loopbackFrom != null || captureFs != null
+    || $deviceNote != null || loopbackRange != null || opticalRng != null
+    || preferredFsNote != null || captureFs != null
     || $bridgeConfig.outputFs != null,
   );
 
@@ -460,7 +495,79 @@
   });
 
   function onDeviceChange(e: Event) {
-    acquire.patch({ deviceId: (e.target as HTMLSelectElement).value });
+    const id = (e.target as HTMLSelectElement).value;
+    preferredFsText = null;
+    acquire.patch({ deviceId: id });
+    const dc = deviceCapsFor($bridgeCaps, id);
+    const pref = dc?.preferred_fs;
+    if (dc && pref && shouldUsePreferredFs(dc, $settings.sampleRate, dc.native_rates ?? [], $settings.lpfOn)) {
+      acquire.patch({ sampleRate: pref });
+      preferredFsText = `set to ${fmtHz(pref / 1000)} kHz, this interface's native rate`;
+    }
+  }
+
+  // ---- per-channel gain rows (an interface with a preamp per input) ----
+  const gainRows = $derived(
+    perChannelGain && bridgeSelCaps
+      ? channelRows(bridgeSelCaps, $settings.channelCount, bridgeSelCaps.channel_roles ?? [])
+      : [],
+  );
+  function rowMode(row: ChannelGainRow): InputMode {
+    const m = channelValue($bridgeConfig.inputMode, row.ch);
+    return m && row.modes.includes(m) ? m : row.modes.includes('line') ? 'line' : row.modes[0];
+  }
+  function rowGain(row: ChannelGainRow): number | null {
+    const g = channelValue($bridgeConfig.inputGainDb, row.ch);
+    return typeof g === 'number' && Number.isFinite(g) ? g : null;
+  }
+  function rowPad(row: ChannelGainRow): boolean {
+    return channelValue($bridgeConfig.inputPad, row.ch) === true;
+  }
+  function rowScale(row: ChannelGainRow): number | null {
+    return bridgeSelCaps ? rowFullScaleVolts(bridgeSelCaps, row, rowGain(row), rowMode(row), rowPad(row)) : null;
+  }
+  /**
+   * Write one row's gain, mode and pad. All three lists are rewritten at the
+   * channel count, each row's mode ALWAYS sent (the server defaults to line,
+   * which would silently change the scale of a gain stated for mic).
+   */
+  function patchRow(row: ChannelGainRow, change: { gain?: number | null; mode?: InputMode; pad?: boolean }) {
+    const n = Math.max($settings.channelCount, row.ch + 1);
+    const gains: (number | null)[] = [];
+    const modes: InputMode[] = [];
+    const pads: boolean[] = [];
+    for (let ch = 0; ch < n; ch++) {
+      const g = channelValue($bridgeConfig.inputGainDb, ch);
+      gains.push(typeof g === 'number' && Number.isFinite(g) ? g : null);
+      modes.push(channelValue($bridgeConfig.inputMode, ch) ?? 'line');
+      pads.push(channelValue($bridgeConfig.inputPad, ch) === true);
+    }
+    modes[row.ch] = rowMode(row);
+    if ('gain' in change) gains[row.ch] = change.gain ?? null;
+    if (change.mode) {
+      modes[row.ch] = change.mode;
+      const r = row.gainRange[change.mode];
+      const g = gains[row.ch];
+      if (r && g != null) gains[row.ch] = Math.min(r[1], Math.max(r[0], g));
+    }
+    if (change.pad !== undefined) pads[row.ch] = change.pad;
+    acquire.patchBridge({
+      inputGainDb: gains.some((g) => g != null) ? gains : undefined,
+      inputMode: modes,
+      inputPad: pads,
+    });
+  }
+  function onRowGain(row: ChannelGainRow, e: Event) {
+    const raw = (e.target as HTMLInputElement).value.trim();
+    if (raw === '') { patchRow(row, { gain: null }); return; }
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return;
+    const r = row.gainRange[rowMode(row)];
+    patchRow(row, { gain: r ? Math.min(r[1], Math.max(r[0], v)) : v });
+  }
+  function onRowStop(row: ChannelGainRow, end: 0 | 1) {
+    const r = row.gainRange[rowMode(row)];
+    if (r) patchRow(row, { gain: r[end] });
   }
   /**
    * Commit the typed sample rate.  Accepts plain hertz or k-notation
@@ -849,12 +956,20 @@
             {$deviceNote}
           </span>
         {/if}
-        {#if loopbackFrom}
+        {#if opticalRng}
+          <span class="note coerce-note" data-testid="setup-optical-note">
+            {rangeText(opticalRng)} {opticalRng[0] === opticalRng[1] ? 'is an optical (ADAT) input' : 'are optical (ADAT) inputs'}: {opticalRng[0] === opticalRng[1] ? 'it carries' : 'they carry'} signal only from an external preamp
+          </span>
+        {/if}
+        {#if preferredFsNote}
+          <span class="note coerce-note" data-testid="setup-preferred-fs-note">{preferredFsNote}</span>
+        {/if}
+        {#if loopbackRange}
           <!-- Loopback channels are a digital tap of the interface's own
                output, not inputs. Silent unless something is playing, and
                actively misleading when it is. -->
           <span class="note coerce-note" data-testid="setup-loopback-note">
-            channels {loopbackFrom}+ are the device's digital loopback, not inputs
+            {rangeText(loopbackRange)} {loopbackRange[0] === loopbackRange[1] ? "is the device's digital loopback, not an input" : "are the device's digital loopback, not inputs"}
           </span>
         {/if}
         {#if captureFs}
@@ -1055,6 +1170,68 @@
                     full scale ±{fixedGainInfo?.volts.toFixed(2)} V
                     ({fixedGainInfo && fixedGainInfo.dbu >= 0 ? '+' : ''}{fixedGainInfo?.dbu} dBu {fixedGainInfo?.mode})
                   </span>
+                </div>
+              {:else if perChannelGain}
+                <div class="grp" data-testid="setup-input-gain">
+                  <span class="grp-lab">input gain per channel (for calibrated volts)</span>
+                  {#each gainRows as row (row.ch)}
+                    {@const r = row.gainRange[rowMode(row)]}
+                    {@const fs = rowScale(row)}
+                    <div class="grp-ctl" data-testid="setup-ch-row-{row.ch}">
+                      <span class="ml">ch {row.ch + 1}</span>
+                      <select
+                        aria-label="input mode, channel {row.ch + 1}"
+                        data-testid="setup-ch-mode-{row.ch}"
+                        title="Which input this channel's signal is on."
+                        value={rowMode(row)}
+                        onchange={(e) => patchRow(row, { mode: (e.target as HTMLSelectElement).value as InputMode })}
+                        style="width:84px"
+                      >
+                        {#each row.modes as m}
+                          <option value={m}>{m}</option>
+                        {/each}
+                      </select>
+                      <button
+                        type="button"
+                        data-testid="setup-ch-gain-bottom-{row.ch}"
+                        title="Set the gain knob's bottom stop{r ? ` (${r[0]} dB)` : ''}."
+                        onclick={() => onRowStop(row, 0)}
+                      >bottom</button>
+                      <input
+                        type="number"
+                        min={r?.[0]}
+                        max={r?.[1]}
+                        step="1"
+                        value={rowGain(row) ?? ''}
+                        onchange={(e) => onRowGain(row, e)}
+                        placeholder="not set"
+                        data-testid="setup-ch-gain-{row.ch}"
+                        aria-label="input gain in dB, channel {row.ch + 1}"
+                        title="This channel's preamp gain in dB. pydvma cannot read it, so state it here."
+                        style="width:72px"
+                      />
+                      <span class="ml">dB</span>
+                      <button
+                        type="button"
+                        data-testid="setup-ch-gain-top-{row.ch}"
+                        title="Set the gain knob's top stop{r ? ` (${r[1]} dB)` : ''}."
+                        onclick={() => onRowStop(row, 1)}
+                      >top</button>
+                      {#if row.padAvailable}
+                        <label class="ml" title="The interface's input pad is engaged on this channel.">
+                          <input
+                            type="checkbox"
+                            checked={rowPad(row)}
+                            data-testid="setup-ch-pad-{row.ch}"
+                            onchange={(e) => patchRow(row, { pad: (e.target as HTMLInputElement).checked })}
+                          /> pad
+                        </label>
+                      {/if}
+                      <span class="note" data-testid="setup-ch-fs-{row.ch}">
+                        {fs != null ? `±${fs.toFixed(2)} V full scale` : 'full-scale units (gain not stated)'}
+                      </span>
+                    </div>
+                  {/each}
                 </div>
               {:else}
                 <div class="grp" data-testid="setup-input-gain">

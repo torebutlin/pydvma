@@ -38,6 +38,7 @@ import {
 } from '../audio/provider';
 import type { DvmaDataset, DvmaItem } from '../model/dataset';
 import { capabilities } from './stages';
+import { staleChannelSettingsReset } from '../model/channelGain';
 
 // ---- types ----
 
@@ -420,8 +421,14 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    */
   function reclampVoltages(): void {
     const sel = deviceCapsFor(get(bridgeCaps), get(settings).deviceId);
-    if (!sel) return;
     const cur = get(bridgeConfig);
+    // Per-channel gain/mode/pad lists belong to a device with a preamp per
+    // input; another device would be sent a list it refuses.
+    if (get(bridgeCaps)) {
+      const stale = staleChannelSettingsReset(sel, cur);
+      if (Object.keys(stale).length) patchBridge(stale);
+    }
+    if (!sel) return;
     const patch: Partial<BridgeConfig> = {};
     if (sel.ai_vmax != null) {
       const clamped = clampVoltage(cur.vmaxNI ?? PYDVMA_DEFAULT_VMAX, sel.ai_vmax);
