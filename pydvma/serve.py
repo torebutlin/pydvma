@@ -756,6 +756,38 @@ def _soundcard_candidate_rates(sd, index: int, max_in: int,
     return sorted(rates)
 
 
+def _gain_model_caps(name, neighbours) -> dict[str, Any]:
+    """Per-channel-gain fields of a soundcard's caps, empty values if unknown.
+
+    Returns ``per_channel_gain`` (each analogue input has its own gain
+    control), ``gain_range_db`` (``{mode: [min, max]}`` or None),
+    ``pad_db`` (the switchable pad's attenuation or None),
+    ``mode_channels`` (``{mode: [zero-based channels]}`` for modes only
+    some inputs have, or None) and ``preferred_fs`` (Hz or None).
+    """
+    profile = _soundcard_specs.device_profile(name, neighbours)
+    if profile is None:
+        return {'per_channel_gain': False, 'gain_range_db': None,
+                'pad_db': None, 'mode_channels': None, 'preferred_fs': None}
+    ranges = {}
+    for mode in profile['max_input_dbu']:
+        rng = _soundcard_specs.gain_range(name, mode, neighbours=neighbours)
+        if rng is not None:
+            ranges[mode] = [float(rng[0]), float(rng[1])]
+    pad = profile.get('pad_db')
+    restricted = profile.get('mode_channels') or {}
+    return {
+        'per_channel_gain': _soundcard_specs.per_channel_gain(
+            name, neighbours=neighbours),
+        'gain_range_db': ranges or None,
+        'pad_db': float(pad) if pad else None,
+        'mode_channels': ({m: [int(c) for c in ch]
+                           for m, ch in restricted.items()} or None),
+        'preferred_fs': _soundcard_specs.preferred_fs(
+            name, neighbours=neighbours),
+    }
+
+
 def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
     """Per-device soundcard capabilities from ``sounddevice.query_devices``.
 
@@ -831,6 +863,7 @@ def _soundcard_device_caps() -> tuple[list[str], dict[int, dict]]:
                 name, neighbours=all_names),
             'ao': max_out > 0,
         }
+        caps[i].update(_gain_model_caps(name, all_names))
 
     # Backend grouping (Windows lists one interface once per host API,
     # and the entries are NOT equivalent) plus the calibration status —
@@ -884,6 +917,12 @@ def _input_scale_fields(settings) -> dict[str, Any]:
       on a soundcard only once ``VmaxSC`` has been moved off its
       uncalibrated default of 1.0).
 
+    With a full scale per channel (an interface with a preamp each) the
+    reply also carries ``inputVmaxChannels`` (the rail of each channel)
+    and ``inputVmaxIsVoltsChannels`` (whether each is in volts); then
+    ``inputVmax`` is the largest rail and ``inputVmaxIsVolts`` is true
+    only when every channel is in volts, so an older client stays safe.
+
     Guarded: a settings object that cannot answer yields ``{}`` rather
     than failing the handshake, and the client keeps its 1.0 default.
     """
@@ -894,14 +933,24 @@ def _input_scale_fields(settings) -> dict[str, Any]:
     if not np.isfinite(vmax) or vmax <= 0:
         return {}
     try:
+        in_volts = [bool(v) for v in settings.channels_in_volts()]
+        rails = [float(v) for v in settings.input_vmax_channels()]
+    except Exception:
+        in_volts, rails = None, None
+    try:
         is_ni = settings.device_driver == 'nidaq'
-        vmax_sc = float(getattr(settings, 'VmaxSC', 1.0))
+        vmax_sc = np.asarray(getattr(settings, 'VmaxSC', 1.0), dtype=float)
     except Exception:
         return {'inputVmax': vmax}
-    return {
+    out = {
         'inputVmax': vmax,
-        'inputVmaxIsVolts': bool(is_ni or vmax_sc != 1.0),
+        'inputVmaxIsVolts': (all(in_volts) if in_volts is not None
+                             else bool(is_ni or np.any(vmax_sc != 1.0))),
     }
+    if rails is not None:
+        out['inputVmaxChannels'] = rails
+        out['inputVmaxIsVoltsChannels'] = in_volts
+    return out
 
 
 def _nidaq_device_caps() -> tuple[list[dict], dict[int, dict]]:
@@ -2529,6 +2578,13 @@ class _Connection:
                     'card this is the driver zero-filling lost USB packets: '
                     'try another USB port or cable, without a hub.'
                     % (dropouts[0], 1000.0 * dropouts[1]))
+
+            # Dead-input notices (unplugged optical, phantom power off),
+            # one frame listing every issue -- see `acquisition.input_health`.
+            health = getattr(acquisition, 'LAST_CAPTURE_INPUT_HEALTH', [])
+            if health:
+                await self._send_warning(
+                    'input health: ' + '; '.join(i['message'] for i in health))
 
             await self._send_json({
                 'type': 'log_result',

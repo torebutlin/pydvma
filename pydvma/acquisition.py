@@ -40,6 +40,16 @@ LAST_CAPTURE_OVERFLOWS = 0
 #: `pydvma.serve` for the capture-integrity toast.
 LAST_CAPTURE_DROPOUTS = (0, 0.0)
 
+#: Input-health issues found in the most recent `log_data` capture: the
+#: list `input_health` returned (dicts with ``channel``, ``kind`` and
+#: ``message``), ``[]`` when clean. Reset every capture; read by
+#: `pydvma.serve` for the input-health warning frame.
+LAST_CAPTURE_INPUT_HEALTH = []
+
+#: Margin above the expected analogue noise floor, in dB, under which
+#: `input_health` calls a channel dead rather than merely quiet.
+INPUT_HEALTH_MARGIN_DB = 10.0
+
 #: Shortest all-channel exact-zero run `exact_zero_dropouts` counts, in
 #: frames. Eight is far past chance on a 24-bit converter (a ~2e-6 FS
 #: noise floor is ~34 LSB) and still catches the smallest zero-fill
@@ -170,6 +180,91 @@ def _fit_rails(rails, n):
     m = min(n, arr.size)
     fitted[:m] = arr[:m]
     return fitted
+
+
+def input_health(data, settings):
+    '''Spot inputs that look unplugged, unpowered or dead after a capture.
+
+    Two checks, both on a characterised soundcard only (nothing is
+    reported for an unidentified device or an unstated gain, since the
+    expected noise floor is then unknown):
+
+    - ``'optical_silent'``: an optical (ADAT) input whose samples are all
+      exactly zero, i.e. nothing is connected to it.
+    - ``'no_signal'``: an analogue input with a stated gain whose rms
+      level, in dBFS of that channel's own full scale, is within
+      `INPUT_HEALTH_MARGIN_DB` of the interface's expected noise floor
+      (`pydvma._soundcard_specs.analogue_floor_dbfs`) or below it. A live
+      microphone sits well above that; a channel at the floor usually has
+      its 48 V phantom power, cable or gain wrong.
+
+    Args:
+        data (np.ndarray): Captured input samples, shape
+            ``(samples, channels)``, in the stream's units (the units
+            ``settings.input_vmax_channels`` is the full scale of).
+        settings (MySettings): The capture settings.
+
+    Returns:
+        issues (list of dict): One dict per problem channel with
+            ``channel`` (zero-based int), ``kind`` and ``message``;
+            empty when all is well or nothing can be judged.
+    '''
+    from . import _soundcard_specs
+    from . import options as _options
+    data = np.asarray(data, dtype=float)
+    if data.ndim != 2 or data.shape[0] == 0:
+        return []
+    if getattr(settings, 'device_driver', 'soundcard') != 'soundcard':
+        return []
+    try:
+        name, neighbours = _options._soundcard_identity(settings)
+    except Exception:
+        return []
+    if not name:
+        return []
+    n = data.shape[1]
+    roles = _soundcard_specs.channel_roles(name, n, neighbours=neighbours)
+    if roles is None:
+        return []
+    rails = _fit_rails(settings.input_vmax_channels(), n)
+
+    def per_channel(value, default):
+        if isinstance(value, (list, tuple, np.ndarray)):
+            seq = list(value)
+            return [seq[i] if i < len(seq) else default for i in range(n)]
+        return [value] * n
+
+    gains = per_channel(getattr(settings, 'input_gain_db', None), None)
+    modes = per_channel(getattr(settings, 'input_mode', 'mic'), 'mic')
+    pads = per_channel(getattr(settings, 'input_pad', False), False)
+    issues = []
+    for ch in range(n):
+        role = roles[ch] if ch < len(roles) else 'analogue'
+        x = data[:, ch]
+        if role == 'optical':
+            if not np.any(x):
+                issues.append({
+                    'channel': ch, 'kind': 'optical_silent',
+                    'message': 'channel {} is an optical (ADAT) input with '
+                               'nothing connected'.format(ch + 1)})
+        elif role == 'analogue' and gains[ch] is not None:
+            try:
+                floor = _soundcard_specs.analogue_floor_dbfs(
+                    name, float(gains[ch]), str(modes[ch]).lower(),
+                    neighbours=neighbours, pad=bool(pads[ch]))
+            except ValueError:
+                continue
+            if floor is None:
+                continue
+            rms = float(np.sqrt(np.mean(x ** 2))) / float(rails[ch])
+            level = 20.0 * np.log10(rms) if rms > 0 else -np.inf
+            if level < floor + INPUT_HEALTH_MARGIN_DB:
+                issues.append({
+                    'channel': ch, 'kind': 'no_signal',
+                    'message': 'channel {} is at the interface\'s own noise '
+                               'floor: check 48 V phantom, the cable, or '
+                               'the gain'.format(ch + 1)})
+    return issues
 
 
 #: Fraction of a channel's full scale above which a capture is reported
@@ -863,6 +958,15 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
     raw_peaks = (np.max(np.abs(stored_time_data_copy), axis=0)
                  if stored_time_data_copy.size else np.zeros(n_inputs))
 
+    # Dead inputs (unplugged optical, phantom power off) judged on the
+    # capture-rate input columns; reported after the clip check below.
+    global LAST_CAPTURE_INPUT_HEALTH
+    try:
+        LAST_CAPTURE_INPUT_HEALTH = input_health(stored_time_data_copy,
+                                                 settings)
+    except Exception:
+        LAST_CAPTURE_INPUT_HEALTH = []
+
     # ---- Digital low-pass (round-9): resample down to the target fs ------
     # The window (pretrigger alignment included) was assembled at the
     # capture rate; the stream may have coerced the oversample request (a
@@ -937,7 +1041,10 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
     if clipped:
         MESSAGE += _clip_message(clipped)
         print(MESSAGE)
-    
+
+    for issue in LAST_CAPTURE_INPUT_HEALTH:
+        MESSAGE += 'WARNING: ' + issue['message'] + '\n'
+        print('WARNING: ' + issue['message'])
     
     return dataset
     

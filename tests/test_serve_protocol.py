@@ -1294,6 +1294,26 @@ class TestSoundcardGainModelInCaps:
         assert caps['channel_roles'] == ['analogue', 'analogue', 'loopback', 'loopback']
         assert caps['fixed_gain'] is False
 
+    def test_id44_publishes_its_per_channel_gain_model(self, monkeypatch):
+        caps = self._caps(monkeypatch, 'Audient iD44')
+        assert caps['per_channel_gain'] is True
+        assert caps['pad_db'] == 10.0
+        assert caps['preferred_fs'] == 48000
+        assert caps['mode_channels'] == {'inst': [0, 1]}
+        assert caps['gain_range_db']['line'] == [-10.0, 50.0]
+
+    def test_2i2_has_no_per_channel_gain(self, monkeypatch):
+        caps = self._caps(monkeypatch, 'Scarlett 2i2 4th Gen')
+        assert caps['per_channel_gain'] is False
+        assert caps['pad_db'] is None
+        assert caps['mode_channels'] is None
+
+    def test_uncharacterised_device_has_empty_gain_model(self, monkeypatch):
+        caps = self._caps(monkeypatch, 'Mystery USB Mic')
+        assert caps['per_channel_gain'] is False
+        assert caps['gain_range_db'] is None
+        assert caps['preferred_fs'] is None
+
     def test_fixed_gain_device_says_so(self, monkeypatch):
         """A gainless interface's full scale is a hardware constant —
         the UI shows it directly instead of asking for a gain."""
@@ -2598,8 +2618,8 @@ class TestInputScaleFields:
 
     def test_ni_reports_its_configured_rail_in_volts(self):
         settings = options.MySettings(device_driver='nidaq', VmaxNI=5)
-        assert serve_mod._input_scale_fields(settings) == {
-            'inputVmax': 5.0, 'inputVmaxIsVolts': True}
+        out = serve_mod._input_scale_fields(settings)
+        assert out['inputVmax'] == 5.0 and out['inputVmaxIsVolts'] is True
 
     def test_ni_follows_the_rail_the_user_set(self):
         settings = options.MySettings(device_driver='nidaq', VmaxNI=10)
@@ -2607,15 +2627,24 @@ class TestInputScaleFields:
 
     def test_an_uncalibrated_soundcard_is_a_bare_full_scale_fraction(self):
         settings = options.MySettings(device_driver='soundcard')
-        assert serve_mod._input_scale_fields(settings) == {
-            'inputVmax': 1.0, 'inputVmaxIsVolts': False}
+        out = serve_mod._input_scale_fields(settings)
+        assert out['inputVmax'] == 1.0 and out['inputVmaxIsVolts'] is False
 
     def test_a_calibrated_jack_reports_volts(self):
         """VmaxSC off its 1.0 default IS the statement that the readings
         are volts — the same convention `MySettings.input_vmax` uses."""
         settings = options.MySettings(device_driver='soundcard', VmaxSC=13.8)
-        assert serve_mod._input_scale_fields(settings) == {
-            'inputVmax': 13.8, 'inputVmaxIsVolts': True}
+        out = serve_mod._input_scale_fields(settings)
+        assert out['inputVmax'] == 13.8 and out['inputVmaxIsVolts'] is True
+
+    def test_per_channel_rails_are_reported_not_dropped(self):
+        settings = options.MySettings(device_driver='soundcard', channels=4,
+                                      VmaxSC=[0.0082, 0.0082, 1.0, 1.0])
+        out = serve_mod._input_scale_fields(settings)
+        assert out['inputVmaxChannels'] == [0.0082, 0.0082, 1.0, 1.0]
+        assert out['inputVmaxIsVoltsChannels'] == [True, True, False, False]
+        assert out['inputVmax'] == 1.0
+        assert out['inputVmaxIsVolts'] is False
 
     def test_the_mock_driver_is_normalised(self):
         settings = options.MySettings(device_driver='mock')
