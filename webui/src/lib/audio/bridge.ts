@@ -31,6 +31,7 @@ import {
   defaultPretrigThreshold,
   effectiveFullScaleVolts,
   gainIsStated,
+  takesMeasuredFullScale,
 } from './provider';
 import type {
   AppliedSettingsAnswer,
@@ -724,12 +725,15 @@ export class BridgeProvider implements SourceProvider {
       s.input_gain_db = ec.inputGainDb;
       s.input_mode = ec.inputMode ?? 'line';
       if (ec.inputPad !== undefined) s.input_pad = ec.inputPad;
-    } else if (isFullScale(ec.vmaxSC)) {
+    } else if (isFullScale(ec.vmaxSC) && takesMeasuredFullScale(this.capsCache, cfg.deviceId)) {
       // An UNCHARACTERISED interface: no published input level means no gain
       // to state and nothing to derive from, so the operator's own measured
       // full scale goes straight to `MySettings.VmaxSC` (one value, or one per
       // channel). Only reached when no gain was stated — a stated gain derives
       // VmaxSC server-side and would override this, so the UI never offers both.
+      // Never sent to a CHARACTERISED device (or the Default row): python
+      // would take a value staged for another device as this one's own
+      // calibration, and Setup offers no field there to see or clear it.
       s.VmaxSC = ec.vmaxSC;
     }
     if (ec.vmaxNI != null) s.VmaxNI = ec.vmaxNI;

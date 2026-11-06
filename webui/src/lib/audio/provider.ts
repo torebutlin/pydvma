@@ -720,6 +720,34 @@ export function derivedFullScaleVolts(
   return dbuToVoltsPeak(dbu - (gainDb - gmin) + padDb);
 }
 
+/** The device's published maximum input levels, when it has any. */
+function publishedLevels(dc: DeviceCapsEntry | undefined | null): Record<string, number> | undefined {
+  const levels = dc?.max_input_dbu;
+  return levels && typeof levels === 'object' && Object.keys(levels).length ? levels : undefined;
+}
+
+/**
+ * Whether the selected device takes a MEASURED full scale
+ * (`BridgeConfig.vmaxSC` → `MySettings.VmaxSC`): only an uncharacterised
+ * one, i.e. a device the server describes (`device_caps[deviceId]`) that
+ * publishes no maximum input level. Exactly the case in which
+ * {@link effectiveFullScaleVolts} reads `vmaxSC`, so the wire and the
+ * trigger's volt basis never disagree.
+ *
+ * A characterised device (variable- or fixed-gain) derives its full scale
+ * from a stated gain or a hardware constant, and must never receive a staged
+ * one: python takes an explicit `VmaxSC` with no stated gain as the
+ * operator's own calibration, so a value left over from another device — a
+ * U24 XL's derived 1.9036 V reaching a 2i2 with no gain — would stamp its
+ * captures as volts while Setup, which shows that field only for an
+ * uncharacterised device, gave no way to see or clear it. The Default row
+ * (no `deviceId`) takes none either, for the same reason.
+ */
+export function takesMeasuredFullScale(caps: BridgeCaps | null, deviceId: string | undefined): boolean {
+  const dc = caps && deviceId ? caps.device_caps?.[deviceId] : undefined;
+  return !!dc && publishedLevels(dc) === undefined;
+}
+
 /**
  * Full scale in VOLTS PEAK for one channel of the selected device, or `null`
  * when the volt scale is not known (an uncalibrated interface, whose readings
@@ -755,7 +783,7 @@ export function effectiveFullScaleVolts(
   const dc = caps && deviceId ? caps.device_caps?.[deviceId] : undefined;
   if (!dc) return null;
   const ch = channel ?? 0;
-  const levels = dc.max_input_dbu;
+  const levels = publishedLevels(dc);
   if (levels) {
     if (dc.fixed_gain) {
       const mode = Object.keys(levels)[0];
@@ -776,8 +804,9 @@ export function effectiveFullScaleVolts(
   } else {
     // No published levels — an uncharacterised interface — so the operator's
     // own measured full scale is the only answer there is. Checked only in
-    // this branch: a profiled device derives the number from its stated gain
-    // and the server overrides an explicit VmaxSC anyway.
+    // this branch (see takesMeasuredFullScale): a profiled device derives the
+    // number from its stated gain or a hardware constant, and the bridge
+    // never sends it a staged VmaxSC.
     const vmax = channelValue(cfg.vmaxSC, ch);
     if (vmax != null && Number.isFinite(vmax) && vmax > 0) return vmax;
   }

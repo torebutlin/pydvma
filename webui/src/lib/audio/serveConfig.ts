@@ -171,8 +171,10 @@ function matchDeviceId(
  * `inputGainDb` / `inputMode` / `inputPad`, and `VmaxSC` onto `vmaxSC`, each
  * as one value or a per-channel list exactly as given. `VmaxSC` maps only
  * where it is a measured full scale: a document that states a gain had it
- * derived from that gain, and its `1.0` is the uncalibrated placeholder, so
- * both clear `vmaxSC` instead.
+ * derived from that gain, one whose device the list marks as characterised
+ * (`calibration` 'characterised' or 'needs_gain') had it derived from the
+ * device's profile, and its `1.0` is the uncalibrated placeholder, so all
+ * three clear `vmaxSC` instead.
  *
  * Output stimulus: read from a nested `output: {type, amp, f1, f2, duration}`
  * object OR flat `output_type` / `output_amp` / `output_f1` / `output_f2` /
@@ -288,8 +290,17 @@ export function mapServeConfig(
   // would outlive the gain and claim volts once the gain was cleared. 1.0 is
   // the uncalibrated placeholder (every plain launch's /config carries it),
   // so it clears rather than stating "1 V".
+  // A document whose device this server lists as CHARACTERISED (a profile:
+  // 'characterised', e.g. the U24 XL's auto-derived 1.9036 V with no gain, or
+  // 'needs_gain') had its VmaxSC derived too, so it clears as well. A device
+  // the list does not describe (not listed, the Default row, no calibration
+  // status) cannot be told apart here, and stages it; the bridge then sends
+  // it only to an uncharacterised device (`takesMeasuredFullScale`).
+  const docDeviceId = matchDeviceId(get(c, 'device_driver'), get(c, 'device_index'), devices);
+  const docCalibration = devices.find((d) => d.deviceId === docDeviceId)?.calibration;
+  const profiled = docCalibration === 'characterised' || docCalibration === 'needs_gain';
   if (Object.prototype.hasOwnProperty.call(c, 'VmaxSC')) {
-    if (gainIsStated(docGain) || cleared(c, 'VmaxSC')) bridge.vmaxSC = undefined;
+    if (gainIsStated(docGain) || profiled || cleared(c, 'VmaxSC')) bridge.vmaxSC = undefined;
     else {
       const v = scalarOrList(get(c, 'VmaxSC'), posNum);
       if (v !== undefined) {

@@ -271,6 +271,29 @@ test('a VmaxSC derived from a stated gain is not taken as a calibration', () => 
   expect(q.bridge.vmaxSC).toBeUndefined();
 });
 
+test('a VmaxSC from a document whose device is characterised is not staged', () => {
+  // A U24 XL launch: python auto-derives 1.9036 V with no stated gain. Staged,
+  // it would later be sent to another device as an operator calibration.
+  const listed: AudioInputDevice[] = [
+    ...devices,
+    { deviceId: 'soundcard:0', label: 'U24XL', groupId: 'soundcard', hasLabel: true,
+      calibration: 'characterised' },
+    { deviceId: 'soundcard:1', label: 'Scarlett 2i2', groupId: 'soundcard', hasLabel: true,
+      calibration: 'needs_gain' },
+    { deviceId: 'soundcard:2', label: 'Unknown box', groupId: 'soundcard', hasLabel: true,
+      calibration: 'uncalibrated' },
+  ];
+  for (const index of [0, 1]) {
+    const p = mapServeConfig({ device_driver: 'soundcard', device_index: index,
+      VmaxSC: 1.9036, input_gain_db: null }, listed)!;
+    expect('vmaxSC' in p.bridge, `soundcard:${index}`).toBe(true);
+    expect(p.bridge.vmaxSC, `soundcard:${index}`).toBeUndefined();
+  }
+  // An uncharacterised device's VmaxSC IS the operator's measurement.
+  expect(mapServeConfig({ device_driver: 'soundcard', device_index: 2, VmaxSC: 2.5 }, listed)!
+    .bridge.vmaxSC).toBe(2.5);
+});
+
 test('a nonsense VmaxSC is skipped', () => {
   expect(mapServeConfig({ VmaxSC: 0 }, devices)).toBeNull();
   expect(mapServeConfig({ VmaxSC: [2.5, -1] }, devices)).toBeNull();

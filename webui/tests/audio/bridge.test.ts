@@ -2238,3 +2238,66 @@ test('the derived threshold uses the TRIGGER channel’s full scale', async () =
   expect((log()!.pretrigger as Record<string, unknown>).threshold)
     .toBe(defaultPretrigThreshold(dbuToVoltsPeak(18 - 20)));
 });
+
+// ---------------------------------------------------------------------------
+// A staged VmaxSC goes ONLY to an uncharacterised device (Task 4 fix round 1).
+// A U24 XL launch carries its auto-derived 1.9036 V with no stated gain; sent
+// to a 2i2 with no gain, python would take it as the operator's own
+// calibration and stamp captures as volts, while Setup (which offers that
+// field only for an uncharacterised device) gives no way to see or clear it.
+// ---------------------------------------------------------------------------
+
+const CAPS_2I2_NO_GAIN = {
+  ...CAPS,
+  devices: { soundcard: ['Scarlett 2i2 4th Gen'], nidaq: [] },
+  device_caps: {
+    'soundcard:0': {
+      driver: 'soundcard', index: 0, name: 'Scarlett 2i2 4th Gen', ao: true,
+      input_modes: ['inst', 'line', 'mic'],
+      max_input_dbu: { line: 22, inst: 12, mic: 16 },
+      fixed_gain: false, calibration_status: 'needs_gain',
+    },
+  },
+};
+
+test('a staged VmaxSC never reaches a characterised device with no stated gain', async () => {
+  const s = await configuredSettingsFor(CAPS_2I2_NO_GAIN, { vmaxSC: 1.9036 }, 2);
+  expect(s.VmaxSC).toBeUndefined();
+  expect(s.input_gain_db).toBeUndefined();
+  // ...and the trigger's volt basis agrees: no volts on that device.
+  expect(effectiveFullScaleVolts(CAPS_2I2_NO_GAIN as never, 'soundcard:0', { vmaxSC: 1.9036 })).toBeNull();
+});
+
+test('a staged VmaxSC still reaches an uncharacterised device (no max_input_dbu)', async () => {
+  const uncal = {
+    ...CAPS,
+    devices: { soundcard: ['Some Unknown Box'], nidaq: [] },
+    device_caps: {
+      'soundcard:0': {
+        driver: 'soundcard', index: 0, name: 'Some Unknown Box', ao: false,
+        calibration_status: 'uncalibrated', max_input_dbu: null,
+      },
+    },
+  };
+  const s = await configuredSettingsFor(uncal, { vmaxSC: 1.9036 }, 2);
+  expect(s.VmaxSC).toBe(1.9036);
+});
+
+test('a staged VmaxSC is not sent for the Default row (no device to judge)', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(CAPS_2I2_NO_GAIN);
+  await capsP;
+  bp.setConfig({ vmaxSC: 1.9036 });
+  const monP = bp.startMonitor({ sampleRate: 48000, channelCount: 2 }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 48000, channels: 2 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+  const msg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  expect((msg.settings as Record<string, unknown>).VmaxSC).toBeUndefined();
+});
