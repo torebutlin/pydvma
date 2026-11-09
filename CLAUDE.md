@@ -8,6 +8,29 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+**v2.9.1 IS RELEASED END TO END (2026-11-09, Mac).** Patch, two web-app
+changes: the stage tabs follow a measurement's order (Setup, Live,
+Acquire, Time, Frequency, TF, Fit, Sonogram, Nonlin, Export;
+`lib/stores/stages.ts`), and the iD44's pad tick and every message about
+it say "−10 dB switch", as on its front panel (the label comes from the
+profile's `pad_db`; test id `setup-ch-pad-{ch}` unchanged). Tore uploaded
+with twine; PyPI's wheel and sdist are byte-identical to the verified
+build (sha256 f81a1e59… / 8a89ac4c…); tag `v2.9.1` is at the cut
+`4ce7adc` (lightweight) and pushed; the GitHub release "v2.9.1" (Latest)
+carries the CHANGELOG body and both files, so Zenodo archives it. Trap 3
+re-checked on the DOWNLOADED wheel: embedded `pydvma-2.9.1` engine wheel
+referenced by the bundled `index-D-c9Igmw.js`, all 27 `pydvma/*.py`
+byte-identical to `4ce7adc` in both the fat and the engine wheel,
+METADATA 2.9.1. A clean venv installing `pydvma[serve]==2.9.1` from PyPI
+serves its own UI (engine wheel 200), greets `{v:1, pydvma:'2.9.1',
+journal:true, files:true}` (`files:false` cross-origin), and its native
+`reference_tone_calibration` returns 0.0335 V/Pa. Built like 2.9.0 (clean
+detached worktree, `npm ci`, vendored pyodide, `vendor:wheels`). Suites
+at the cut: pytest 1657/7, vitest 1471/1, check 0/0, Playwright 145
+passed incl. BRIDGE_E2E and @engine, mkdocs --strict clean. **The lab
+PCs upgrade by re-running their Setup bat as administrator.** Nothing is
+pending on the release side.
+
 **v2.9.0 IS RELEASED END TO END (2026-11-09, Mac).** Tore uploaded with
 twine; PyPI's wheel and sdist are byte-identical to the verified build
 (sha256 866af551… / f1328833…); tag `v2.9.0` is at the cut `980e680`
