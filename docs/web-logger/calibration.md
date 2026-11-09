@@ -270,6 +270,12 @@ What you see depends on the interface:
   2i2 4th Gen, for example): **input gain (for calibrated volts)** in
   dB, and an input mode (**line**, **inst** or **mic**). Setup shows the
   full scale that follows as `full scale ≈ … V pk`.
+- **An interface with a preamp on every channel** (the Audient iD44):
+  **input gain per channel (for calibrated volts)**, one row per
+  channel with its input mode, its gain, **bottom** and **top** buttons
+  for the knob's end stops, and a **pad** tick where the interface has
+  a pad. Each row shows its own full scale. See
+  [Acoustic measurements](acoustics.md#state-the-gain-of-each-channel).
 - **A fixed-gain interface** (the ESI U24 XL): nothing to enter. Setup
   shows its constant full scale.
 - **Any other interface**: **full scale (for calibrated volts)**, in
@@ -296,7 +302,7 @@ scale instead, as `VmaxSC=` in volts peak.
 settings = dvma.MySettings(
     device_driver='soundcard',
     input_gain_db=9,        # what the front panel says
-    input_mode='line',      # 'line', 'inst' or 'mic'
+    input_mode='line',      # 'line', 'inst' or 'mic'; the default is 'line'
 )
 ```
 
@@ -305,10 +311,13 @@ measures the full scale against a signal generator, and
 `pydvma-serve --list-devices` shows what pydvma knows about each
 interface. The formula, and the interface levels it uses, are in
 [Deriving VmaxSC from the preamp gain](../user-guide/acquisition.md#deriving-vmaxsc-from-the-preamp-gain).
-`dvma.launch` and `pydvma-serve --settings` don't carry these two
-settings into the app, and they don't carry `channel_sensitivities`
-either. Enter the gain or full scale in Setup as above, and the
-sensitivities in the calibration dialog.
+Each of `input_gain_db`, `input_mode`, `input_pad` and `VmaxSC` takes
+one value for every channel or a list with one per channel, as in
+`input_gain_db=[60, 60, None, None]`; a `None` leaves that channel in
+fractions of full scale. `dvma.launch` and `pydvma-serve --settings`
+carry them into Setup (`VmaxSC` only for an interface pydvma has no
+profile for, since it derives the others). They don't carry
+`channel_sensitivities`: enter those in the calibration dialog.
 [Pre-filling Setup](running-locally.md#pre-filling-setup) lists what a
 launch does fill in.
 

@@ -231,10 +231,12 @@ The pre-fill covers the sample rate, channels, duration, device,
 pretrigger (`pretrig_samples`, `pretrig_threshold`, `pretrig_channel`,
 `pretrig_timeout`), the NI settings (`VmaxNI`, `output_VmaxNI`,
 `NI_mode`, `input_channels_spec`, and `iepe_excit_current_A`, whose
-first value applies to every channel), and the output device and
-channels. Other fields are ignored: in particular the input gain and
-full scale (`input_gain_db`, `VmaxSC`) and channel sensitivities, which
-you set in Setup and the Calibrate dialog. The file is read once when
+first value applies to every channel), the sound-card input gain,
+input mode and pad (`input_gain_db`, `input_mode`, `input_pad`, each one
+value or a list with one per channel, and `VmaxSC` for an interface
+pydvma has no profile for), and the output device and channels. Other
+fields are ignored: in particular channel sensitivities, which you set
+in the Calibrate dialog. The file is read once when
 the app opens and only fills in starting values; anything you change in
 Setup afterwards stays changed.
 

@@ -99,6 +99,7 @@ nav:
       - Noise & Nonlinearity Separation: web-logger/nonlin.md
       - Modal Fitting: web-logger/modal-fitting.md
       - Calibration & Units: web-logger/calibration.md
+      - Acoustic Measurements: web-logger/acoustics.md
       - Saving & Exporting: web-logger/export.md
       - The .dvma File Format: web-logger/dvma-format.md
       - NI Hardware: web-logger/ni-hardware.md

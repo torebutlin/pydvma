@@ -13,6 +13,45 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+### iD44 and acoustics follow-ups (2026-11-09)
+
+Design: `dev/plans/2026-11-06-id44-acoustics-design.md`; bench notes
+`dev/2026-11-06-id44-bench.md`; docs `docs/web-logger/acoustics.md`.
+
+- **Noise statistics** (Leq, L10/L50/L90, histograms, stationarity) over a
+  long recording. Tore post-processes for now; design wanted before any build.
+- **Mic frequency-response correction** from a calibration chart: normalise
+  the chart to 0 dB at the calibrator frequency, apply as a display
+  transform like the weighting. The M23 is flat to ±0.3 dB to 790 Hz and
+  about +1 dB at 10–15 kHz, so this matters only for the top octaves.
+- **dB SPL on the live scope**, and fast/slow time-weighted SPL.
+- **Band-level table export** (CSV of the octave/third-octave band levels the
+  frequency view draws).
+- **Per-unit measured gains.** pydvma stores profiles per MODEL; a unit's
+  measured stops (an iD44's differ by up to 0.8 dB per channel) live in the
+  user's launch code, and Setup forgets typed gains on reload. Options: a
+  small per-unit file keyed by device name, or persist Setup's gains per
+  device in the browser like the carried calibration. Tore's call.
+- **Choosing a device by name probes every other device** (found
+  2026-11-09, pre-existing since v2.3.0): `MySettings(device=<name>)` ->
+  `devices.resolve` -> `inventory` runs `entry_usable_rates` for each
+  device, and PortAudio on macOS implements `check_input_settings` by
+  OPENING a stream, so it touched a Scarlett 2i2 that another program was
+  using (logged `-9986` at 192 kHz). On the 2i2 a second stream stops the
+  first. Probe only the devices whose name matches, or use the CoreAudio
+  ladder (no stream) wherever `_coreaudio.native_rates` answers.
+- **iD44 on Windows**: device names, WDM-KS/WASAPI behaviour, rate
+  switching; not yet tried.
+- **The mic path is assumed to be the line path + 10 dB.** Measured on the
+  line path only (2026-11-09); a TRS-to-XLR cable from line out 3 (phantom
+  OFF, tones at -80 dBFS and below) would measure the mic stops directly.
+- **96 kHz**: how many optical inputs CoreAudio reports (the manual says 8
+  via SMUX); not checked, to avoid switching the rate on the bench.
+- **The `no_signal` input-health threshold** wants a check with phantom off
+  and a mic unplugged on a real channel.
+- **The Yeti** (USB mic) is a separate clock: fine for spectra, never for
+  TFs against the iD44. Documented only if someone asks.
+
 ### Long-recording follow-ups (2026-11-06, iD44 Task 11)
 
 Measured with `dev/long_capture_check.py`; numbers in

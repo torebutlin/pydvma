@@ -7,10 +7,61 @@ follows [semantic versioning](https://semver.org/).
 
 ### Added
 
-- **`pydvma.acoustics`**: IEC 61672-1 A/C weighting, IEC 61260 base-10
-  octave / third-octave band powers (from a density), tone level and
-  `reference_tone_calibration` for an acoustic calibrator, with a TypeScript
-  twin in the web app.
+- **Audient iD44 (MkII) support, and acoustic measurements.** pydvma now
+  knows the iD44: four analogue inputs with their own preamps, sixteen
+  optical (ADAT) inputs and the two loop-back inputs, the mic, line and
+  DI input levels, the gain ranges and the −10 dB pad (Audient's manual,
+  checked on a unit: see the new **Acoustic measurements** page of the
+  docs). Choosing it in Setup sets 48 kHz and shows one row per channel
+  for its input mode, gain (with **bottom** and **top** buttons for the
+  knob's end stops) and pad, so each channel records in volts. A capture
+  warns when an optical input carries no signal or a channel looks
+  unconnected. A rate below 44.1 kHz is captured at 48 kHz and
+  decimated, so the iD44's clock is never switched (switching it restarts
+  the iD mixer).
+- **Per-channel gain and full scale for any interface.**
+  `MySettings(input_gain_db=, input_mode=, input_pad=, VmaxSC=)` each take
+  one value for every channel, as before, or a list with one per channel,
+  and `input_pad` is new. `MySettings.input_vmax_channels()` and
+  `channels_in_volts()` report the result. The clip check and the app's
+  level meters judge each channel against its own full scale, and
+  `dvma.launch` / `pydvma-serve --settings` now pre-fill these four
+  settings in Setup.
+- **Sound pressure level, A- and C-weighting, and octave bands** in the
+  frequency view. A channel in Pa reads in dB re 20 µPa; a **weighting**
+  selector (Z/A/C, IEC 61672-1, display only) and a **bands** selector
+  (octave or one-third-octave, IEC 61260) draw band levels over the
+  spectrum. The same calculations are in the new `pydvma.acoustics`
+  (`weighting_db`, `band_table`, `band_levels`, `P_REF`), with a
+  TypeScript twin in the app pinned to it by shared test values.
+- **Calibrating from a reference tone.** The calibration dialog's **ref
+  tone** button measures a recorded calibrator tone (94 dB SPL, or an
+  accelerometer calibrator's level) and fills in the sensitivity, with
+  warnings for clipping, a peak away from the stated frequency, or
+  broadband noise. `pydvma.acoustics.reference_tone_calibration` is the
+  Python side.
+- **Calibrate once for later recordings.** Ticking **use for new
+  recordings too** in the calibration dialog makes later recordings from
+  the same device arrive calibrated, with a warning when a recording
+  states a different gain or pad on that channel.
+- **How each channel was calibrated is saved with the data**
+  (`TimeData.channel_calibration`: spec sheet or reference tone, date,
+  calibrator level and frequency, stated gain and pad, a note).
+
+### Changed
+
+- A stated gain may now go up to 2 dB past an interface's published gain
+  range, so a unit's measured knob stop can be used (an iD44 measured
+  +60.5 dB at its mic top stop against Audient's +60). Python used to
+  refuse it and Setup clamped it silently. Fixed-gain interfaces are
+  unchanged.
+- An FFT magnitude in Pa reads `Magnitude (dB re 20 µPa)` instead of
+  `Magnitude (Pa, dB)`.
+- The clip warning names the channels, for example "Data may be clipped
+  on input 1 (channel index 0)".
+- When a sound card has fewer inputs than asked for and the channel count
+  is reduced, the per-channel settings (gain, mode, pad,
+  `channel_sensitivities`) are cut to match.
 
 ### Fixed
 
