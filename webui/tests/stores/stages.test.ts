@@ -15,13 +15,10 @@ test('the app opens on Setup, the first stage of the workflow', () => {
   expect(STAGES[0].id).toBe('setup');
 });
 
-test('Live stage exists between Acquire and Time', () => {
-  const ids = STAGES.map((s) => s.id);
-  const acquireIdx = ids.indexOf('acquire');
-  const liveIdx = ids.indexOf('live');
-  const timeIdx = ids.indexOf('time');
-  expect(liveIdx).toBeGreaterThan(acquireIdx);
-  expect(liveIdx).toBeLessThan(timeIdx);
+test('the ribbon follows a measurement: set up, watch, record, analyse, export', () => {
+  expect(STAGES.map((s) => s.label)).toEqual([
+    'Setup', 'Live', 'Acquire', 'Time', 'Frequency', 'TF', 'Fit', 'Sonogram', 'Nonlin', 'Export',
+  ]);
 });
 
 test('Live stage is gated on liveSource', () => {
@@ -48,11 +45,11 @@ test('all ten stages are present', () => {
   expect(STAGES).toHaveLength(10);
   const ids = STAGES.map((s) => s.id);
   expect(ids).toEqual([
-    'setup', 'acquire', 'live', 'time', 'frequency', 'tf', 'bla', 'sono', 'fit', 'export',
+    'setup', 'live', 'acquire', 'time', 'frequency', 'tf', 'fit', 'sono', 'bla', 'export',
   ]);
 });
 
-test('Nonlin (BLA) sits after TF, shows the TF view and gates on a live source', () => {
+test('Nonlin (BLA) sits after Sonogram, shows the TF view and gates on a live source', () => {
   const bla = STAGES.find((s) => s.id === 'bla');
   expect(bla).toBeDefined();
   expect(bla!.label).toBe('Nonlin');
@@ -60,7 +57,7 @@ test('Nonlin (BLA) sits after TF, shows the TF view and gates on a live source',
   // It DRIVES the output and captures, so it needs a live source like Acquire.
   expect(bla!.needs).toBe('liveSource');
   const ids = STAGES.map((s) => s.id);
-  expect(ids.indexOf('bla')).toBe(ids.indexOf('tf') + 1);
+  expect(ids.indexOf('bla')).toBe(ids.indexOf('sono') + 1);
 });
 
 test('Nonlin follows the liveSource capability gate', () => {

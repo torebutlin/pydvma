@@ -16,19 +16,23 @@ export interface StageDef {
   view: ViewId | null;               // null = keeps current view (export) or own render (live)
   needs: 'none' | 'liveSource' | 'fitEngine';
 }
+// The ribbon's order is the order of a measurement (Tore, 2026-11-09):
+// configure, watch the signal, record, then the analysis views in the
+// order they build on each other (Fit needs a TF), the specialist stages,
+// and Export last.
 export const STAGES: StageDef[] = [
   { id: 'setup', label: 'Setup', view: null, needs: 'liveSource' },
-  { id: 'acquire', label: 'Acquire', view: 'time', needs: 'liveSource' },
   { id: 'live', label: 'Live', view: null, needs: 'liveSource' },
+  { id: 'acquire', label: 'Acquire', view: 'time', needs: 'liveSource' },
   { id: 'time', label: 'Time', view: 'time', needs: 'none' },
   { id: 'frequency', label: 'Frequency', view: 'frequency', needs: 'none' },
   { id: 'tf', label: 'TF', view: 'tf', needs: 'none' },
+  { id: 'fit', label: 'Fit', view: 'tf', needs: 'fitEngine' },
+  { id: 'sono', label: 'Sonogram', view: 'sono', needs: 'none' },
   // Schoukens BLA ("Nonlin"): a measurement stage — it DRIVES the output and
   // captures, so it gates on a live source exactly like Acquire, and it lands
   // TF sets, so its view is 'tf'.
   { id: 'bla', label: 'Nonlin', view: 'tf', needs: 'liveSource' },
-  { id: 'sono', label: 'Sonogram', view: 'sono', needs: 'none' },
-  { id: 'fit', label: 'Fit', view: 'tf', needs: 'fitEngine' },   // Plan 2
   { id: 'export', label: 'Export', view: null, needs: 'none' },
 ];
 
@@ -41,7 +45,7 @@ export const STAGES: StageDef[] = [
 export const capabilities = writable({ liveSource: false, fitEngine: false }); // Plan 1: both off
 /**
  * The ribbon's selected stage. The app OPENS on Setup, the first stage of
- * the measurement workflow (Setup → Acquire → … → Export), so a new user
+ * the measurement workflow (Setup → Live → Acquire → … → Export), so a new user
  * starts where a measurement starts. Two things move it off Setup without a
  * click: App falls back to Time once boot finds no live source (Setup would
  * stay gated), and loading a file from Setup or Live jumps to its data.

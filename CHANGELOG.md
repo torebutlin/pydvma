@@ -3,6 +3,18 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- The stage tabs follow the order of a measurement: Setup, Live, Acquire,
+  Time, Frequency, TF, Fit, Sonogram, Nonlin, Export. Live now comes
+  before Acquire, to check the signal before recording, and Fit sits
+  next to TF.
+- Setup's per-channel **pad** tick is now labelled by what the front panel
+  calls it, **−10 dB** on the iD44, and the calibration messages say
+  "−10 dB switch". The Python setting is still `input_pad`.
+
 ## 2.9.0 — 2026-11-09
 
 Support for the Audient iD44 audio interface with measurement

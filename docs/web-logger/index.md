@@ -37,21 +37,21 @@ The app is a row of **stages** you move through. Your datasets sit in the
 
 1. **[Setup](acquisition.md)**: choose the device, sample rate, channels
    and duration (plus NI options for NI hardware).
-2. **[Acquire](acquisition.md)**: record, with an optional pretrigger and
+2. **[Live](live-monitoring.md)**: a full oscilloscope with live spectrum
+   and level meters, to check the signal before recording.
+3. **[Acquire](acquisition.md)**: record, with an optional pretrigger and
    output signal.
-3. **[Live](live-monitoring.md)**: a full oscilloscope with live spectrum
-   and level meters.
 4. **[Time](analysis.md)**, **[Frequency](analysis.md)** and
    **[TF](analysis.md)**: the analysis views, with resolution and
    averaging controls.
-5. **[Nonlin](nonlin.md)**: separates measurement noise from nonlinear
-   distortion (a best linear approximation measurement).
+5. **[Fit](modal-fitting.md)**: modal fitting, with per-mode editing.
 6. **[Sonogram](analysis.md)**: time-frequency view and damping
    estimates.
-7. **[Fit](modal-fitting.md)**: modal fitting, with per-mode editing.
+7. **[Nonlin](nonlin.md)**: separates measurement noise from nonlinear
+   distortion (a best linear approximation measurement).
 8. **[Export](export.md)**: save `.dvma`, export MATLAB, CSV and figures.
 
-Setup, Acquire, Live and Nonlin are enabled only when a live input is
+Setup, Live, Acquire and Nonlin are enabled only when a live input is
 available, and Fit once there is a transfer function to fit. The app
 opens on **Setup**, or on **Time** when there is no live input; loading
 a file from Setup takes you to the stage that shows its data.
