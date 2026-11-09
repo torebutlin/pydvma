@@ -284,6 +284,13 @@ channel labels, any modal fit, and the analysis results you last saved
 with **Save Dataset**. Re-run anything else; with native analysis that is
 quick.
 
+The session file is about the size of your data (a 5 minute, 4 channel
+recording at 48 kHz makes it about 600 MB) and is rewritten a moment
+after each change, so keep some free space where it lives: the system
+temp folder unless you pass `--session-dir`. It stays there after the
+server stops, so the next one can offer it back; a server deletes the
+ones more than a week old when it starts.
+
 The browser keeps its own autosave as well. When that copy is newer than
 the server's (the server's could not be updated, for example while the
 analysis engine was stopped), the app offers the browser's copy instead,

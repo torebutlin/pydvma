@@ -62,6 +62,9 @@ follows [semantic versioning](https://semver.org/).
 - When a sound card has fewer inputs than asked for and the channel count
   is reduced, the per-channel settings (gain, mode, pad,
   `channel_sensitivities`) are cut to match.
+- `Recorder.stored_time_data_windowed` and `stored_freq_data` are computed
+  when read, rather than kept up to date on every audio block (each was a
+  full-length copy of a recording); they can no longer be assigned to.
 
 ### Fixed
 

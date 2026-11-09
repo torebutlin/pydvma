@@ -253,6 +253,10 @@ sonogram of one channel about 6 s, and saving or reloading under a second.
 A `.dvma` file of a long recording is stored uncompressed, so it is about
 the size of the data (576 MB for that recording), and saving it is fast.
 
+The server keeps a copy of the session on disk, about the size of the
+data, and rewrites it after each change: see
+[Your session is kept safe](running-locally.md#your-session-is-kept-safe).
+
 A recording takes 384 kB per channel per second at 48 kHz, plus 384 kB
 per second for its time axis: 8 MB per second for 20 channels. The limits
 that follow:

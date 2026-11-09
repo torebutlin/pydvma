@@ -40,6 +40,28 @@ Design: `dev/plans/2026-11-06-id44-acoustics-design.md`; bench notes
   using (logged `-9986` at 192 kHz). On the 2i2 a second stream stops the
   first. Probe only the devices whose name matches, or use the CoreAudio
   ladder (no stream) wherever `_coreaudio.native_rates` answers.
+- **`/engine` takes 4 GiB frames from any Origin** (final review, Minor 8).
+  `/ws` and `/engine` accepting any Origin is pre-existing (the `?enginehost=`
+  flow relies on it), but the long-recording cap raised the blast radius: a
+  hostile page visited while serving can make the server allocate up to 4 GB.
+  Gate `journal_set` and frames over 256 MiB on `is_local_app_request` (the
+  file ops already are) — a design call, since it refuses a cross-origin
+  `?enginehost=` client a long recording.
+- **The journal rewrites the whole session file on every autosave** (final
+  review, Important 2). After a long recording each ui change (hide a line,
+  rename) ships and spills ~600 MB (4 GB at 20 channels × 9 min). Time is fine
+  (0.5–0.7 s, off the event loop); disk is the cost, and `spill_failures` is
+  counted but never shown. Post/spill ui-only changes less often than data
+  changes, or skip the spill above a size with a WARNING; surface spill
+  failures. Docs now state the file's size.
+- **Python never writes `channel_calibration`** (provenance): a `log_data`
+  with `channel_sensitivities` saves Pa with no record of how. Stamp a
+  `'sensitivity'` entry from `channel_sensitivities`, or add
+  `TimeData.set_channel_calibration`.
+- **Carried calibration is keyed by device NAME**: two iD44s on one Mac share
+  it. Append the CoreAudio UID when two devices share a name.
+- **A served Setup per-channel-rows e2e** (a stub `device_caps` fixture): the
+  Default-row gap was found live, which an e2e would have caught.
 - **iD44 on Windows**: device names, WDM-KS/WASAPI behaviour, rate
   switching; not yet tried.
 - **The mic path is assumed to be the line path + 10 dB.** Measured on the

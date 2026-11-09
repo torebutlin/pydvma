@@ -569,11 +569,16 @@ voltages:
 
 On a characterised interface you do not have to measure the full scale.
 It follows in closed form from the interface's published maximum input
-level `L` (in dBu at minimum gain) and the preamp gain `G` you have set:
+level `L` (in dBu at the minimum gain `Gmin`), the preamp gain `G` you
+have set and, where the interface has one, the pad `P` (in dB, 0 when it
+is out):
 
 ```
-V_fullscale_peak = sqrt(2) * 0.7746 * 10 ** ((L - G) / 20)
+V_fullscale_peak = sqrt(2) * 0.7746 * 10 ** ((L - (G - Gmin) + P) / 20)
 ```
+
+`Gmin` is 0 on most interfaces, which makes this `(L - G)`. The Audient
+iD44's line input is the exception: its gain runs from −10 dB.
 
 pydvma cannot read `G`, because it is a front-panel control no audio API
 exposes. State it, and `VmaxSC` is derived for you:
@@ -594,6 +599,24 @@ gain **takes precedence over an explicit `VmaxSC`**. It applies only to
 interfaces characterised in `pydvma._soundcard_specs`, and any other
 device keeps the `VmaxSC` you gave it. Changing the gain on the hardware
 invalidates the calibration, so state it again when you do.
+
+An interface with a preamp on **every channel** (the Audient iD44) takes
+one value per channel: each of `input_gain_db`, `input_mode`, `input_pad`
+and `VmaxSC` can be a list, and a single value still means every channel.
+`settings.input_vmax_channels()` gives each channel's full scale, and
+`settings.channels_in_volts()` says which channels are in volts. A gain
+may go up to 2 dB past the published range, so a unit's measured knob
+stop can be stated. See
+[Acoustic measurements](../web-logger/acoustics.md#state-the-gain-of-each-channel).
+
+```python
+settings = dvma.MySettings(
+    device='iD44', channels=4,
+    input_mode='mic',                        # the default is 'line'
+    input_gain_db=[60, 60, None, None],      # None: that channel in full-scale units
+    input_pad=[False, True, False, False],
+)
+```
 
 #### Fixed-gain interfaces: nothing to state
 
@@ -717,10 +740,13 @@ This relies on three things covered above:
 
 ### Clipping detection
 
-`log_data` compares the captured data with `0.95 * input_vmax()` (`VmaxNI`
-on NI, `VmaxSC` on a soundcard) and prints `WARNING: Data may be clipped`
-if any sample comes within 5 % of the limit. The check uses the raw peak,
-before any digital low-pass.
+`log_data` compares each channel's peak with 95 % of that channel's own
+full scale (`settings.input_vmax_channels()`: `VmaxNI` on NI, the
+derived or stated `VmaxSC` on a soundcard) and prints, for example,
+`WARNING: Data may be clipped on input 1 (channel index 0)`, naming each
+channel that came within 5 % of its limit. The check uses the raw peak,
+before any digital low-pass. A channel with no known full scale (an
+iD44's optical inputs) is judged against the converter's own full scale.
 
 On a soundcard the check is only as meaningful as `VmaxSC`. With the
 default `1.0` it compares against a nominal unit scale. Derive `VmaxSC`
