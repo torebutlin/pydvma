@@ -176,6 +176,21 @@ class TestFullScaleVolts:
         with pytest.raises(ValueError, match='outside'):
             specs.full_scale_volts(id44, -12.5, 'line')
 
+    def test_an_out_of_range_gain_names_the_modes_it_fits(self):
+        """`MySettings(input_gain_db=60)` on an iD44 is a mic gain read on
+        the default line mode: the error says which mode it would fit."""
+        id44 = 'Audient iD44'
+        with pytest.raises(ValueError, match='outside') as err:
+            specs.full_scale_volts(id44, 60.0, 'line')
+        assert "Did you mean input_mode='mic' or input_mode='inst'?" in str(err.value)
+        with pytest.raises(ValueError) as err:
+            specs.full_scale_volts(id44, -10.0, 'mic')
+        assert "Did you mean input_mode='line'?" in str(err.value)
+        # No other mode fits: no hint.
+        with pytest.raises(ValueError) as err:
+            specs.full_scale_volts(id44, 80.0, 'mic')
+        assert 'Did you mean' not in str(err.value)
+
 
 class TestU24XLProfile:
     """The ESI U24 XL is the first FIXED-GAIN profile: no analogue gain

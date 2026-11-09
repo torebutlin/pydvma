@@ -105,3 +105,48 @@ def test_reference_tone_warnings():
 
 def test_verify_alias():
     assert verify._measure_tone_vrms is acoustics.tone_rms
+
+
+@pytest.mark.parametrize('ref_rms', [0.0, -1.0, float('nan'), float('inf')])
+def test_reference_tone_refuses_an_unusable_reference_level(ref_rms):
+    # A NaN sensitivity used to come back for ref_rms 0: refuse it by name.
+    with pytest.raises(ValueError, match='ref_rms'):
+        acoustics.reference_tone_calibration(_td(_tone(1000, 0.1)), 0, ref_rms, 1000)
+
+
+def test_reference_tone_check_clip_false_skips_the_rail():
+    x = _tone(1000, 0.1, noise_db=-80)
+    x = x / np.max(np.abs(x)) * 0.99
+    r = acoustics.reference_tone_calibration(_td(x, VmaxSC=1.0), 0, 1.0, 1000,
+                                             check_clip=False)
+    assert r['clipped'] is False and r['warnings'] == []
+
+
+def _engine_tone(peak):
+    fs = 48000.0
+    t = np.arange(int(fs)) / fs
+    return t, peak * np.sin(2 * np.pi * 1000 * t)
+
+
+def test_engine_reference_tone_without_a_rail_runs_no_clip_check():
+    # A volts set whose settings carry no rail: a 1.4 V peak tone is not
+    # "clipping" a 1.0 rail nobody stated (the engine's docstring: None
+    # skips the check).
+    from pydvma import engine
+    t, x = _engine_tone(1.4)
+    out = engine.reference_tone_calibration(t, x, 1, 48000.0, 0, 1.0, 1000.0, vmax=None)
+    assert out['clipped'] is False
+    assert not any('clipping' in w for w in out['warnings'])
+    # A stated rail still checks.
+    out = engine.reference_tone_calibration(t, x, 1, 48000.0, 0, 1.0, 1000.0, vmax=1.0)
+    assert out['clipped'] is True
+
+
+def test_engine_reference_tone_answers_only_finite_numbers():
+    import math
+    from pydvma import engine
+    t, x = _engine_tone(0.05)
+    out = engine.reference_tone_calibration(t, x, 1, 48000.0, 0, 1.0, 1000.0)
+    assert all(math.isfinite(v) for v in out.values() if isinstance(v, float))
+    with pytest.raises(ValueError, match='ref_rms'):
+        engine.reference_tone_calibration(t, x, 1, 48000.0, 0, 0.0, 1000.0)

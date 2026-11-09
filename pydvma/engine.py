@@ -796,8 +796,12 @@ def reference_tone_calibration(time_axis, time_data, n_channels, fs, channel, re
 
     Rebuilds a ``TimeData`` and runs `pydvma.acoustics.reference_tone_calibration`
     (middle 80 % of the record). ``vmax`` is the channel's input rail in stored
-    units for the clip check (``None`` skips it). Returns the result dict with
-    plain Python floats, bools and a list of warning strings.
+    units for the clip check; ``None`` (or a non-numeric value) skips the check,
+    since the rebuilt settings would otherwise judge a volts capture against a
+    default 1.0 rail nobody stated. Returns the result dict with plain Python
+    floats, bools and a list of warning strings; a ``ref_rms`` that is not a
+    finite number above zero raises ``ValueError``, so no non-finite number
+    is ever answered.
     """
     from pydvma import acoustics
     td = _time_data(time_axis, time_data, n_channels, fs)
@@ -805,7 +809,8 @@ def reference_tone_calibration(time_axis, time_data, n_channels, fs, channel, re
     if rail is not None:
         td.settings.VmaxSC = rail
         td.settings.device_driver = 'mock'
-    out = acoustics.reference_tone_calibration(td, int(channel), float(ref_rms), float(freq))
+    out = acoustics.reference_tone_calibration(td, int(channel), float(ref_rms), float(freq),
+                                               check_clip=rail is not None)
     return {k: ([str(w) for w in v] if k == 'warnings' else
                 bool(v) if k == 'clipped' else float(v)) for k, v in out.items()}
 

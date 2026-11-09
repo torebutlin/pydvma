@@ -180,7 +180,8 @@ def tone_rms(x, fs, freq, bin_neighbours=2):
     return float(np.sqrt(tone_energy / np.sum(w ** 2)))
 
 
-def reference_tone_calibration(time_data, channel, ref_rms, freq, *, freq_tolerance=0.05):
+def reference_tone_calibration(time_data, channel, ref_rms, freq, *, freq_tolerance=0.05,
+                               check_clip=True):
     """Sensitivity of one channel from an acoustic calibrator's tone.
 
     Analyses the middle 80 % of the record. The sensitivity is the measured
@@ -190,17 +191,28 @@ def reference_tone_calibration(time_data, channel, ref_rms, freq, *, freq_tolera
         time_data (TimeData): The capture; ``settings.input_vmax(channel)``
             is used for the clip check when available.
         channel (int): Channel holding the calibrator tone.
-        ref_rms (float): The calibrator's rms level in engineering units.
+        ref_rms (float): The calibrator's rms level in engineering units;
+            a finite number above zero.
         freq (float): The calibrator's frequency in Hz.
         freq_tolerance (float): Allowed fractional offset of the spectral
             peak from ``freq`` before a warning is raised.
+        check_clip (bool): False skips the clip check, for a capture whose
+            settings state no input rail (``clipped`` is then False).
 
     Returns a dict: ``sensitivity`` (stored units per engineering unit),
     ``measured_rms``, ``peak_freq``, ``tone_to_total_db``, ``clipped`` and
     ``warnings`` (strings quoting the numbers). Warnings cover a peak more
     than ``freq_tolerance`` from ``freq``, broadband rms more than 1 dB
     above the tone, and a peak at or above 0.95 of the input rail.
+
+    Raises:
+        ValueError: ``ref_rms`` is not a finite number above zero, which
+            has no sensitivity to give.
     """
+    ref = float(ref_rms)
+    if not (np.isfinite(ref) and ref > 0):
+        raise ValueError('ref_rms must be a finite number above zero (the '
+                         "calibrator's rms level), got {!r}.".format(ref_rms))
     full = np.asarray(time_data.time_data, dtype=float)
     if full.ndim == 1:
         full = full[:, None]
@@ -222,7 +234,7 @@ def reference_tone_calibration(time_data, channel, ref_rms, freq, *, freq_tolera
     rail = None
     settings = getattr(time_data, 'settings', None)
     try:
-        if settings is not None:
+        if check_clip and settings is not None:
             rail = float(settings.input_vmax(int(channel)))
     except Exception:
         rail = None
@@ -239,7 +251,7 @@ def reference_tone_calibration(time_data, channel, ref_rms, freq, *, freq_tolera
         warnings.append('Signal may be clipping: peak {:.4g} is at least 95 % of the '
                         'input range {:.4g}.'.format(peak, rail))
     return {
-        'sensitivity': float(measured / ref_rms) if ref_rms else float('nan'),
+        'sensitivity': float(measured / ref),
         'measured_rms': float(measured),
         'peak_freq': peak_freq,
         'tone_to_total_db': float(ratio_db),

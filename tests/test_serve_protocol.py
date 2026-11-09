@@ -2486,6 +2486,49 @@ def test_log_with_silent_dropouts_sends_integrity_warning(monkeypatch):
         serve_mod.acquisition.LAST_CAPTURE_DROPOUTS = (0, 0.0)
 
 
+def test_log_with_an_input_health_issue_sends_a_warning(monkeypatch):
+    """A dead input (an unplugged optical run, phantom power off) is a
+    pinned toast: one `warning` frame listing every issue, before the data.
+    Simulated at the `_capture_to_dvma` seam like the dropout test above."""
+    real_capture = serve_mod._capture_to_dvma
+
+    def unhealthy_capture(settings, test_name, output=None, cancel_event=None):
+        out = real_capture(settings, test_name, output, cancel_event)
+        serve_mod.acquisition.LAST_CAPTURE_INPUT_HEALTH = [
+            {'channel': 4, 'channels': list(range(4, 20)), 'kind': 'optical_silent',
+             'message': 'channels 5-20 are optical (ADAT) inputs with nothing connected'},
+            {'channel': 0, 'channels': [0], 'kind': 'no_signal',
+             'message': "channel 1 is at the interface's own noise floor"},
+        ]
+        return out
+
+    monkeypatch.setattr(serve_mod, '_capture_to_dvma', unhealthy_capture)
+
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='configure', settings={
+                    'channels': 2, 'fs': 8000, 'chunk_size': 1000,
+                    'stored_time': 0.1, 'num_chunks': 4, 'viewed_time': None,
+                })
+                await _recv_json(ws)
+                await _send(ws, type='log', duration=0.1, pretrigger=None)
+                warn = await _recv_json(ws, timeout=10.0)
+                assert warn['type'] == 'warning'
+                assert warn['message'] == (
+                    'input health: channels 5-20 are optical (ADAT) inputs with '
+                    "nothing connected; channel 1 is at the interface's own noise floor")
+                meta = await _recv_json(ws, timeout=10.0)
+                assert meta['type'] == 'log_result'   # data still delivered
+        finally:
+            await _stop_server(task)
+    try:
+        run_async(scenario)
+    finally:
+        serve_mod.acquisition.LAST_CAPTURE_INPUT_HEALTH = []
+
+
 # ---- monitor: ship what the recorder DELIVERED, not a wall-clock guess ----
 #
 # 3C6 lab, 2026-09-10: a 2i2 whose USB link stalled and burst made the

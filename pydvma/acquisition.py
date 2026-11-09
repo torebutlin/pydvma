@@ -15,8 +15,11 @@ import scipy.signal as signal
 import scipy.stats as stats
 import copy
 import datetime
+import logging
 import time
 import warnings
+
+_log = logging.getLogger(__name__)
 
 MESSAGE = ''
 
@@ -41,8 +44,9 @@ LAST_CAPTURE_OVERFLOWS = 0
 LAST_CAPTURE_DROPOUTS = (0, 0.0)
 
 #: Input-health issues found in the most recent `log_data` capture: the
-#: list `input_health` returned (dicts with ``channel``, ``kind`` and
-#: ``message``), ``[]`` when clean. Reset every capture; read by
+#: list `input_health` returned (dicts with ``channel``, ``channels``,
+#: ``kind`` and ``message``), ``[]`` when clean. Cleared at the start of
+#: every capture, so a capture that fails leaves none; read by
 #: `pydvma.serve` for the input-health warning frame.
 LAST_CAPTURE_INPUT_HEALTH = []
 
@@ -190,7 +194,9 @@ def input_health(data, settings):
     expected noise floor is then unknown):
 
     - ``'optical_silent'``: an optical (ADAT) input whose samples are all
-      exactly zero, i.e. nothing is connected to it.
+      exactly zero, i.e. nothing is connected to it. A run of adjacent
+      silent optical inputs is ONE issue (an iD44 asked for 22 channels
+      with no ADAT expander has sixteen of them).
     - ``'no_signal'``: an analogue input with a stated gain whose rms
       level, in dBFS of that channel's own full scale, is within
       `INPUT_HEALTH_MARGIN_DB` of the interface's expected noise floor
@@ -205,9 +211,11 @@ def input_health(data, settings):
         settings (MySettings): The capture settings.
 
     Returns:
-        issues (list of dict): One dict per problem channel with
-            ``channel`` (zero-based int), ``kind`` and ``message``;
-            empty when all is well or nothing can be judged.
+        issues (list of dict): One dict per problem with ``channels``
+            (the zero-based channels it covers: one, or a run of adjacent
+            silent optical inputs), ``channel`` (the first of them),
+            ``kind`` and ``message``; empty when all is well or nothing
+            can be judged.
     '''
     from . import _soundcard_specs
     from . import options as _options
@@ -238,16 +246,28 @@ def input_health(data, settings):
     modes = per_channel(getattr(settings, 'input_mode', 'mic'), 'mic')
     pads = per_channel(getattr(settings, 'input_pad', False), False)
     issues = []
+    optical_run = []
+
+    def close_optical_run():
+        if not optical_run:
+            return
+        first, last = optical_run[0], optical_run[-1]
+        message = ('channel {} is an optical (ADAT) input with nothing '
+                   'connected'.format(first + 1) if first == last else
+                   'channels {}-{} are optical (ADAT) inputs with nothing '
+                   'connected'.format(first + 1, last + 1))
+        issues.append({'channel': first, 'channels': list(optical_run),
+                       'kind': 'optical_silent', 'message': message})
+        del optical_run[:]
+
     for ch in range(n):
         role = roles[ch] if ch < len(roles) else 'analogue'
         x = data[:, ch]
-        if role == 'optical':
-            if not np.any(x):
-                issues.append({
-                    'channel': ch, 'kind': 'optical_silent',
-                    'message': 'channel {} is an optical (ADAT) input with '
-                               'nothing connected'.format(ch + 1)})
-        elif role == 'analogue' and gains[ch] is not None:
+        if role == 'optical' and not np.any(x):
+            optical_run.append(ch)
+            continue
+        close_optical_run()
+        if role == 'analogue' and gains[ch] is not None:
             try:
                 floor = _soundcard_specs.analogue_floor_dbfs(
                     name, float(gains[ch]), str(modes[ch]).lower(),
@@ -260,10 +280,11 @@ def input_health(data, settings):
             level = 20.0 * np.log10(rms) if rms > 0 else -np.inf
             if level < floor + INPUT_HEALTH_MARGIN_DB:
                 issues.append({
-                    'channel': ch, 'kind': 'no_signal',
+                    'channel': ch, 'channels': [ch], 'kind': 'no_signal',
                     'message': 'channel {} is at the interface\'s own noise '
                                'floor: check 48 V phantom, the cable, or '
                                'the gain'.format(ch + 1)})
+    close_optical_run()
     return issues
 
 
@@ -595,6 +616,10 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
             leaves no post-trigger data (``>= stored_time * fs``).
     '''
     global MESSAGE
+    # This capture's input-health notices start empty, so a capture that
+    # fails (or is cancelled) leaves none for the next reader to repeat.
+    global LAST_CAPTURE_INPUT_HEALTH
+    LAST_CAPTURE_INPUT_HEALTH = []
 
     # ---- Digital low-pass (round-9): swap in the CAPTURE configuration ----
     # From here down `settings` is what the stream runs at; the caller's
@@ -965,11 +990,12 @@ def log_data(settings, test_name=None, rec=None, output=None, cancel_event=None)
 
     # Dead inputs (unplugged optical, phantom power off) judged on the
     # capture-rate input columns; reported after the clip check below.
-    global LAST_CAPTURE_INPUT_HEALTH
     try:
         LAST_CAPTURE_INPUT_HEALTH = input_health(stored_time_data_copy,
                                                  settings)
-    except Exception:
+    except Exception as e:
+        # Advisory only: a failure costs the notice, never the capture.
+        _log.debug('input health check failed: %s', e, exc_info=True)
         LAST_CAPTURE_INPUT_HEALTH = []
 
     # ---- Digital low-pass (round-9): resample down to the target fs ------

@@ -333,6 +333,17 @@ def preferred_fs(name, neighbours=None):
     return None if profile is None else profile.get('preferred_fs')
 
 
+def _gain_in_range(gain_range, gain):
+    """Whether ``gain`` lies in ``gain_range``, widened by `GAIN_RANGE_SLACK_DB`.
+
+    The slack applies only to a range with a knob (``max > min``); a fixed
+    ``(g, g)`` range takes exactly ``g``.
+    """
+    gmin, gmax = _range_tuple(gain_range)
+    slack = GAIN_RANGE_SLACK_DB if gmax > gmin else 0.0
+    return gmin - slack <= float(gain) <= gmax + slack
+
+
 def _input_fs_dbu(profile, gain_db, input_mode, pad):
     """Input level (dBu) that reads full scale; validates mode, gain, pad."""
     mode = str(input_mode).lower()
@@ -344,13 +355,20 @@ def _input_fs_dbu(profile, gain_db, input_mode, pad):
     gain = float(gain_db)
     gmin, gmax = _range_tuple(profile['gain_range_db'][mode])
     slack = GAIN_RANGE_SLACK_DB if gmax > gmin else 0.0
-    if not (gmin - slack <= gain <= gmax + slack):
+    if not _gain_in_range(profile['gain_range_db'][mode], gain):
+        # A gain that fits another mode is usually that mode's gain read on
+        # the default 'line' (a 60 dB mic gain on an iD44): say which.
+        fits = [m for m in profile['gain_range_db']
+                if m != mode and m in profile['max_input_dbu']
+                and _gain_in_range(profile['gain_range_db'][m], gain)]
+        hint = (' Did you mean {}?'.format(' or '.join(
+            'input_mode={!r}'.format(m) for m in fits)) if fits else '')
         raise ValueError(
             'input_gain_db = {:g} dB is outside the {} {} input range '
-            '({:g} to {:g} dB{}).'.format(
+            '({:g} to {:g} dB{}).{}'.format(
                 gain, profile['label'], mode, gmin, gmax,
                 ', or up to {:g} dB past either end for a measured knob '
-                'stop'.format(slack) if slack else ''))
+                'stop'.format(slack) if slack else '', hint))
     if pad and not profile.get('pad_db'):
         raise ValueError('{} has no input pad.'.format(profile['label']))
     pad_db = profile['pad_db'] if pad else 0.0

@@ -187,6 +187,33 @@ def _mk_time(n=256, fs=1000.0, ch=2):
             'n_channels': ch, 'fs': fs, 'window': None}
 
 
+def test_a_request_past_the_windows_pipe_limit_is_refused_by_name(monkeypatch):
+    # multiprocessing on Windows cannot carry ~2 GiB through its pipe: the
+    # put fails inside the queue's feeder thread, the request never reaches
+    # the child, and the caller polled forever. Refuse it up front instead.
+    import sys
+    monkeypatch.setattr(engine_host, 'WINDOWS_QUEUE_MAX_BYTES', 1024)
+    w = engine_host.EngineWorker()
+    try:
+        payload = _mk_time(n=256, ch=2)          # 6 KiB of float64
+        monkeypatch.setattr(sys, 'platform', 'win32')
+        kind, rid, ok, msg = w.request(3, 'calc_fft', payload)
+        monkeypatch.setattr(sys, 'platform', 'darwin')
+        assert (kind, rid, ok) == ('done', 3, False)
+        assert 'Windows' in msg and '1 KiB' in msg
+        # Off Windows the same request runs.
+        kind, rid, ok, _ = w.request(4, 'calc_fft', payload)
+        assert (kind, rid, ok) == ('done', 4, True)
+    finally:
+        w.close()
+
+
+def test_the_request_size_counts_nested_arrays_and_bytes():
+    n = engine_host._payload_nbytes(
+        {'a': np.zeros(4), 'b': [np.zeros(2), {'c': b'xyz'}], 'd': 1.0, 'e': 'text'})
+    assert n == 4 * 8 + 2 * 8 + 3
+
+
 def test_worker_answers_calc_fft():
     w = engine_host.EngineWorker()
     try:
@@ -1012,8 +1039,13 @@ class TestIdleConnectionHoldsNoRequestBuffers:
                     assert journal.state()[1] == []
                     await asyncio.sleep(0.2)     # the connection is idle now
                     gc.collect()
-                    # Only this test's own names (and the call's argument).
-                    assert sys.getrefcount(posted) == 2, \
+                    # Only this test's own name (and the call's argument):
+                    # compared with a fresh bytes object held the same way,
+                    # not a literal, since what getrefcount reports for a
+                    # lone local differs between CPython versions (3.14).
+                    lone = b'PK-lone' + bytes(1024)
+                    lone_count = sys.getrefcount(lone)
+                    assert sys.getrefcount(posted) == lone_count, \
                         'an idle connection still holds the posted document'
                     assert sys.getrefcount(capture) == baseline, \
                         'an idle connection still holds the journal snapshot'

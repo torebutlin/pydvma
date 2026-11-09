@@ -66,6 +66,7 @@ import multiprocessing as _mp
 import queue as _queue
 import signal
 import struct
+import sys
 import threading
 import time
 import traceback
@@ -313,7 +314,10 @@ def _worker_main(req_q, res_q, cancel_ev):
             # background FEEDER THREAD, not in this call frame -- a
             # child-side try/except around ``put()`` cannot catch it, the
             # item is silently dropped, and the parent (a live, responsive
-            # child) polls forever with no 'done' ever arriving.
+            # child) polls forever with no 'done' ever arriving. The same
+            # limit on the REQUEST side (the parent's put) is refused up
+            # front on Windows by `EngineWorker.request`
+            # (`WINDOWS_QUEUE_MAX_BYTES`).
             #
             # No shipped op returns anything unpicklable. The SIZE half of
             # the premise changed when ``calc_sono_full`` landed (the
@@ -341,6 +345,45 @@ def _worker_main(req_q, res_q, cancel_ev):
         # Drop the request (a long recording's whole capture) before
         # blocking for the next one, as handle_connection does (_RELEASE).
         item = kwargs = None
+
+
+#: Largest request, in bytes of array (and bytes) data, `EngineWorker.request`
+#: sends to the worker on Windows. ``multiprocessing``'s pipe there cannot
+#: carry a pickled message of about 2 GiB or more: the put fails inside the
+#: queue's background feeder thread, where nothing can catch it, so the
+#: request never reaches the child and the caller would wait forever (see the
+#: DECISION note in `_worker_main`). A 20-channel capture of about 4.6
+#: minutes at 48 kHz reaches it within the /engine frame cap, so the request
+#: is refused by name instead. Other platforms send messages past 2 GiB.
+WINDOWS_QUEUE_MAX_BYTES = 2 * 1024 ** 3
+
+
+def _payload_nbytes(v):
+    """Bytes of array and bytes-like data anywhere in a request payload.
+
+    Walks dicts, lists and tuples; counts each ndarray's ``nbytes`` and each
+    ``bytes``/``bytearray``/``memoryview``'s length. Scalars and strings
+    count nothing: they are small next to the data. Returns an int.
+    """
+    if isinstance(v, np.ndarray):
+        return int(v.nbytes)
+    if isinstance(v, (bytes, bytearray)):
+        return len(v)
+    if isinstance(v, memoryview):
+        return int(v.nbytes)
+    if isinstance(v, dict):
+        return sum(_payload_nbytes(x) for x in v.values())
+    if isinstance(v, (list, tuple)):
+        return sum(_payload_nbytes(x) for x in v)
+    return 0
+
+
+def _fmt_binary_bytes(n):
+    """``n`` bytes as a short binary-unit string: ``'2 GiB'``, ``'6 KiB'``."""
+    for unit, size in (('GiB', 1024 ** 3), ('MiB', 1024 ** 2), ('KiB', 1024)):
+        if n >= size:
+            return '%.3g %s' % (n / size, unit)
+    return '%d bytes' % n
 
 
 class EngineWorker:
@@ -387,7 +430,23 @@ class EngineWorker:
         Holds ``self._lock`` for the whole call -- see the class
         docstring for why ``cancel()``/``kill()`` stay reachable from
         another thread regardless.
+
+        On Windows a request carrying more than `WINDOWS_QUEUE_MAX_BYTES`
+        of array data is refused with a ``('done', rid, False, message)``
+        reply naming the limit, without being sent: the multiprocessing
+        pipe there cannot carry it, and the failure would otherwise be a
+        silent hang.
         """
+        if sys.platform == 'win32':
+            size = _payload_nbytes(kwargs)
+            if size > WINDOWS_QUEUE_MAX_BYTES:
+                return ('done', rid, False,
+                        'this calculation needs %s of data, more than the %s '
+                        'that Python can pass to the engine worker on Windows '
+                        '(a Windows limit): use fewer channels, a shorter '
+                        'recording, or analyse part of it.'
+                        % (_fmt_binary_bytes(size),
+                           _fmt_binary_bytes(WINDOWS_QUEUE_MAX_BYTES)))
         with self._lock:
             if self._closed:
                 return ('done', rid, False, 'engine worker closed')

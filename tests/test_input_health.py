@@ -66,3 +66,68 @@ def test_uncharacterised_device_gives_nothing(monkeypatch):
                         lambda settings: ('Mystery USB Mic', ['x']))
     settings = options.MySettings(device_driver='soundcard', channels=2)
     assert acquisition.input_health(np.zeros((100, 2)), settings) == []
+
+
+def test_contiguous_silent_optical_inputs_are_one_issue(id44):
+    # An iD44 asked for 22 channels with no ADAT expander: one line for the
+    # sixteen optical inputs, not sixteen toasts' worth.
+    data = _noise()
+    data[:, 4:20] = 0.0
+    issues = [i for i in acquisition.input_health(data, _settings())
+              if i['kind'] == 'optical_silent']
+    assert len(issues) == 1
+    assert issues[0]['channel'] == 4
+    assert issues[0]['channels'] == list(range(4, 20))
+    assert 'channels 5-20 are optical (ADAT) inputs' in issues[0]['message']
+
+
+def test_separate_runs_of_silent_optical_inputs_are_separate_issues(id44):
+    data = _noise()
+    data[:, 5] = 0.0
+    data[:, 8:11] = 0.0
+    issues = [i for i in acquisition.input_health(data, _settings())
+              if i['kind'] == 'optical_silent']
+    assert [i['channels'] for i in issues] == [[5], [8, 9, 10]]
+    assert 'channel 6 is an optical (ADAT) input' in issues[0]['message']
+    assert 'channels 9-11 are optical (ADAT) inputs' in issues[1]['message']
+
+
+def _mock_settings():
+    return options.MySettings(device_driver='mock', channels=2, fs=8000,
+                              stored_time=0.1, chunk_size=100, num_chunks=4)
+
+
+def test_log_data_clears_the_last_issues_before_it_captures():
+    # A capture that fails early must not leave the previous capture's
+    # notices for the next reader.
+    acquisition.LAST_CAPTURE_INPUT_HEALTH = [{'channel': 0, 'kind': 'no_signal',
+                                              'message': 'stale'}]
+    settings = _mock_settings()
+    settings.pretrig_samples = settings.chunk_size + 1     # refused in log_data
+    try:
+        with pytest.raises(ValueError, match='pretrig_samples'):
+            acquisition.log_data(settings)
+        assert acquisition.LAST_CAPTURE_INPUT_HEALTH == []
+    finally:
+        acquisition.LAST_CAPTURE_INPUT_HEALTH = []
+
+
+def test_a_failing_health_check_is_logged_not_raised(monkeypatch, caplog):
+    import logging
+    from pydvma import streams
+
+    def broken(data, settings):
+        raise RuntimeError('health check exploded')
+
+    monkeypatch.setattr(acquisition, 'input_health', broken)
+    try:
+        with caplog.at_level(logging.DEBUG, logger='pydvma.acquisition'):
+            acquisition.log_data(_mock_settings())
+        assert acquisition.LAST_CAPTURE_INPUT_HEALTH == []
+        assert any('health check exploded' in r.getMessage()
+                   and r.levelno == logging.DEBUG for r in caplog.records)
+    finally:
+        try:
+            streams.REC.end_stream()
+        except Exception:
+            pass
