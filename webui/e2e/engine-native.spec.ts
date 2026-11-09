@@ -20,10 +20,10 @@ import { fileURLToPath } from 'node:url';
  * Two of the four tests are carry-overs from Task 3/8's review, both only
  * provable against a REAL socket (not the fake-transport unit tests):
  *
- *  - the `max_size=256*1024*1024` raise in `serve.py` exists so a request
- *    frame carrying a full capture doesn't get severed by the `websockets`
- *    default 1 MiB inbound cap — exercised here with a ~2M-sample calc_fft
- *    whose request frame is ≳10 MB (`__engineLargeTest`);
+ *  - the inbound-cap raise in `serve.py` (`ENGINE_MAX_MESSAGE_BYTES`)
+ *    exists so a request frame carrying a full capture doesn't get severed
+ *    by the `websockets` default 1 MiB inbound cap — exercised here with a
+ *    ~2M-sample calc_fft whose request frame is ≳10 MB (`__engineLargeTest`);
  *  - Stop must interrupt a call that is genuinely mid-compute on the SERVER
  *    (not just queued client-side) and the socket must then reconnect
  *    cleanly. This drives the close-mid-op race end to end from the
@@ -195,7 +195,7 @@ test.describe('native engine', () => {
     // measurement of anything on the wire — it just pins that this fixture
     // is actually big enough to exercise the "≳10 MB" carry-over bar (well
     // past the old 1 MiB websockets default, safely inside the serve.py
-    // max_size=256*1024*1024 raise the round-trip depends on).
+    // ENGINE_MAX_MESSAGE_BYTES raise the round-trip depends on).
     expect(result.nBytes).toBeGreaterThan(10 * 1024 * 1024);
     expect(result.freqAxisLen).toBeGreaterThan(0);
     expect(result.nOut).toBeGreaterThan(0);

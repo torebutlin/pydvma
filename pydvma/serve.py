@@ -339,6 +339,48 @@ DTYPE_BYTES = 255   #: header dtype — opaque bytes (container payload)
 _HEADER_STRUCT = struct.Struct('<BBBBHHIIf')
 HEADER_SIZE = _HEADER_STRUCT.size  # 20
 
+#: Inbound message ceiling on ``/ws`` (bytes). Its frames are small JSON
+#: control messages, so this is generous; a ceiling stays worth keeping
+#: because ``/ws`` is reachable cross-origin by design (the app's
+#: ``?bridge=`` dev/e2e flow, see the module docstring). A bigger message
+#: closes the socket with 1009.
+WS_MAX_MESSAGE_BYTES = 256 * 1024 * 1024
+
+#: Inbound message ceiling on ``/engine`` (bytes), set per connection at
+#: the handshake (`BridgeServer._process_request`). Its frames carry whole
+#: captures (every calc op sends the set's time data) and whole session
+#: documents (``journal_set``, ``files_save``): a 5 minute, 4 channel
+#: recording at 48 kHz is ~0.58 GB of float64 with its time axis, which the
+#: old shared 256 MiB cap refused by closing the socket (1009), killing the
+#: calc and every later one. 4 GiB is the largest document the browser can
+#: build at all (fflate writes no zip64), so it refuses nothing the app can
+#: send, while still bounding what any page that opens this socket can make
+#: the server hold. The app checks the same number before sending
+#: (``ENGINE_FRAME_MAX_BYTES`` in ``webui/src/lib/worker/frames.ts``).
+ENGINE_MAX_MESSAGE_BYTES = 4 * 1024 ** 3
+
+
+def _set_inbound_cap(connection, max_bytes):
+    """Set one websocket connection's inbound message ceiling.
+
+    ``websockets`` takes ``max_size`` per SERVER; the per-path ceiling is
+    applied here, on the connection's protocol, before the handshake
+    response is sent, so no frame can arrive under the server-wide value.
+    The protocol reads the attribute afresh for every frame it parses
+    (``max_message_size`` since websockets 15, ``max_size`` before).
+
+    Args:
+        connection (websockets.asyncio.server.ServerConnection): the
+            connection being opened.
+        max_bytes (int or None): the ceiling in bytes; None for none.
+    """
+    protocol = connection.protocol
+    if hasattr(protocol, 'max_message_size'):
+        protocol.max_message_size = max_bytes
+    else:
+        protocol.max_size = max_bytes
+
+
 # ---- server config defaults ----
 
 DEFAULT_PORT = 8760
@@ -1808,13 +1850,18 @@ class BridgeServer:
 
         Returns ``None`` for ``/ws`` or ``/engine`` (let the WebSocket
         handshake proceed), a JSON ``Response`` for ``/config``, or a
-        static-file ``Response`` for anything else.
+        static-file ``Response`` for anything else. An ``/engine``
+        connection gets its own inbound ceiling here,
+        `ENGINE_MAX_MESSAGE_BYTES`, in place of the server-wide
+        `WS_MAX_MESSAGE_BYTES` that ``/ws`` keeps.
         """
         path = request.path.split('?', 1)[0]
         if path == '/ws':
             return None  # proceed with the WebSocket upgrade
         if path == '/engine':
-            return None  # proceed with the WebSocket upgrade (native engine ops)
+            # Native engine ops: whole-capture and whole-document frames.
+            _set_inbound_cap(connection, ENGINE_MAX_MESSAGE_BYTES)
+            return None  # proceed with the WebSocket upgrade
         if path == '/config':
             body = json.dumps(self.settings_json).encode('utf-8')
             return self._http_response(200, 'application/json; charset=utf-8', body)
@@ -1927,14 +1974,18 @@ class BridgeServer:
         async with serve(
             self._handler, self.host, self.port,
             process_request=self._process_request,
-            # The default 1 MiB inbound-message cap fits /ws's small JSON
-            # control frames but would sever /engine mid-calc -- its binary
-            # frames carry whole capture arrays. Not unbounded, though:
-            # /ws is reachable cross-origin by design (the app's `?bridge=`
-            # dev/e2e flow, see the module docstring), so a ceiling stays
-            # worth keeping even in this loopback-only, lab-local trust
-            # model. 256 MiB clears any realistic capture frame.
-            max_size=256 * 1024 * 1024,
+            # The server-wide inbound ceiling is /ws's; /engine raises its
+            # own per connection in `_process_request` (see
+            # WS_MAX_MESSAGE_BYTES / ENGINE_MAX_MESSAGE_BYTES).
+            max_size=WS_MAX_MESSAGE_BYTES,
+            # No permessage-deflate. A browser offers it, and websockets
+            # then deflates every outbound frame and inflates every inbound
+            # one ON THIS EVENT LOOP: 4.6 s for a 200 MB frame against
+            # 0.1 s plain (measured 2026-11-06), during which the live
+            # scope, /ws and every other /engine connection stall -- for a
+            # few percent on float data and zip containers. Loopback has
+            # the bandwidth.
+            compression=None,
             logger=_WS_LOGGER,
         ) as server:
             self._server = server

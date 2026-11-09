@@ -1208,8 +1208,47 @@ def get_devices_soundcard():
 #     return device_name_list
 
 
+class _UnusedStoredCopies(object):
+    """The two full-length stored-buffer companions every recorder had.
+
+    Each recorder used to allocate, at construction, a
+    ``stored_time_data_windowed`` array the size of its stored buffer and
+    the rfft magnitude of that buffer, ``stored_freq_data``. Nothing ever
+    filled or read either (both stayed zeros: the rfft was taken of the
+    freshly zeroed buffer), yet they cost ~0.7 GB of float64 for a
+    5 minute, 4 channel capture, on every configure and every log. They
+    are kept as read-only attributes for any caller that touched them,
+    computed on access with the shapes and values they always had.
+    """
+
+    def _stored_shape(self):
+        ring = getattr(self, '_stored_ring', None)
+        if ring is None:                 # MockRecorder: a plain array
+            ring = self.stored_time_data
+        return ring.shape
+
+    @property
+    def stored_time_data_windowed(self):
+        """Zeros the shape of the stored buffer (never filled; legacy).
+
+        Returns:
+            windowed (numpy.ndarray): float64 zeros, ``(n_stored, channels)``.
+        """
+        return np.zeros(self._stored_shape())
+
+    @property
+    def stored_freq_data(self):
+        """Zeros the shape of the stored buffer's rfft (never filled; legacy).
+
+        Returns:
+            freq (numpy.ndarray): float64 zeros, ``(n_stored // 2 + 1, channels)``.
+        """
+        n, channels = self._stored_shape()
+        return np.zeros((n // 2 + 1, channels))
+
+
 #%% sounddevice stream
-class Recorder(object):
+class Recorder(_UnusedStoredCopies):
     '''Soundcard acquisition recorder (via `sounddevice`).
 
     Owns two circular buffers:
@@ -1419,11 +1458,8 @@ class Recorder(object):
         n_stored = self.stored_num_chunks * self.settings.chunk_size
         self._stored_ring = np.zeros(shape=(n_stored, self.settings.channels))
         self._stored_pos = 0
-        self.stored_time_data_windowed = np.zeros(shape=(n_stored, self.settings.channels))
-        #note the +2s to match up the length of stored_num_chunks
-        #formula used from the np.fft.rfft documentation
-        self.stored_freq_data = np.abs(np.fft.rfft(self._stored_ring, axis=0))
-        # self.list_dt = []
+        # stored_time_data_windowed / stored_freq_data: computed on access,
+        # see _UnusedStoredCopies.
 
     @property
     def osc_time_data(self):
@@ -2229,7 +2265,7 @@ def _ni_callback_interval(chunk_size):
     return n
 
 
-class Recorder_NI_nidaqmx(object):
+class Recorder_NI_nidaqmx(_UnusedStoredCopies):
     '''NI acquisition recorder using the official nidaqmx Python wrapper.
 
     Exposes the same public attribute shape the soundcard `Recorder`
@@ -2382,8 +2418,8 @@ class Recorder_NI_nidaqmx(object):
         n_stored = self.stored_num_chunks * settings.chunk_size
         self._stored_ring = np.zeros(shape=(n_stored, settings.channels))
         self._stored_pos = 0
-        self.stored_time_data_windowed = np.zeros(shape=(n_stored, settings.channels))
-        self.stored_freq_data = np.abs(np.fft.rfft(self._stored_ring, axis=0))
+        # stored_time_data_windowed / stored_freq_data: computed on access,
+        # see _UnusedStoredCopies.
         #: Chunks appended to the stored ring since these buffers were
         #: (re)allocated — lets `acquisition._wait_for_buffer_fill` top
         #: a dwell up until the ring truly holds a full window, the same
@@ -3301,7 +3337,7 @@ def setup_output_soundcard(settings, cancel_event=None):
 # `start_stream` to inject a specific signal.
 
 
-class MockRecorder(object):
+class MockRecorder(_UnusedStoredCopies):
     '''Hardware-free recorder. Same public attribute surface as
     `Recorder` / `Recorder_NI_nidaqmx` — `osc_time_data`,
     `stored_time_data`, `trigger_detected`, `audio_stream`,
@@ -3344,8 +3380,8 @@ class MockRecorder(object):
         self.stored_time_data = np.zeros(
             (self.stored_num_chunks * settings.chunk_size, settings.channels)
         )
-        self.stored_time_data_windowed = np.zeros_like(self.stored_time_data)
-        self.stored_freq_data = np.abs(np.fft.rfft(self.stored_time_data, axis=0))
+        # stored_time_data_windowed / stored_freq_data: computed on access,
+        # see _UnusedStoredCopies.
 
         # Deterministic signal: channel k gets a 0.1 V sine at
         # 100 * (k+1) Hz so tests can see distinct content per channel.

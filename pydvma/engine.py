@@ -366,15 +366,26 @@ def calc_sono(time_axis, time_data, n_channels, fs, ch, nperseg, noverlap,
       CWT feature. Against a STALE wheel (no ``calculate_cwt``) we raise a clear
       "engine wheel too old" message instead of an opaque ``AttributeError``.
 
+    Only channel ``ch`` is transformed: the app sends the whole set (every
+    calc op takes the set's time data as it is), but the image is of one
+    channel, and transforming all of them cost a complex cube per channel
+    for nothing — for an 8 channel, 150 s, 48 kHz record at nFFT 512, 2.3 GB
+    of working memory and 0.9 s, against 0.5 GB and 0.1 s for its one
+    channel (measured 2026-11-09). The image is the same to float precision
+    (a batched FFT's summation order depends on the batch width, as in
+    `calc_sono_full`).
+    An out-of-range ``ch`` still raises ``IndexError``.
+
     The CWT branch also reports PROGRESS while it runs (one frame per wavelet
-    scale, channels included in the total) when the worker has installed a hook
-    — see `set_progress_hook`. The STFT branch has no such loop and stays
-    silent. Both are unaffected numerically.
+    scale of the one channel) when the worker has installed a hook — see
+    `set_progress_hook`. The STFT branch has no such loop and stays silent.
     """
-    sd = _sono_data(time_axis, time_data, n_channels, fs, nperseg, noverlap,
+    y = np.asarray(time_data, dtype=np.float64).reshape(-1, int(n_channels))
+    one = np.ascontiguousarray(y[:, int(ch)])
+    sd = _sono_data(time_axis, one, 1, fs, nperseg, noverlap,
                     method, voices_per_octave, w0, f_min, f_max)
     return {'time_axis': _arr(sd.time_axis), 'freq_axis': _arr(sd.freq_axis),
-            'sono_data': _arr(np.abs(sd.sono_data[:, :, int(ch)]))}
+            'sono_data': _arr(np.abs(sd.sono_data[:, :, 0]))}
 
 
 def _sono_data(time_axis, time_data, n_channels, fs, nperseg, noverlap,

@@ -151,14 +151,15 @@ class TestProgressHook:
                              method='cwt', voices_per_octave=8, w0=6.0)
         assert out['sono_data']['shape'][0] > 0
 
-    def test_multichannel_total_spans_the_whole_call(self):
-        """A 2-channel CWT counts channels x scales, so the bar does not reset
-        to zero when the second channel starts."""
+    def test_multichannel_sono_transforms_and_counts_one_channel(self):
+        """The display sonogram of a 2-channel set transforms only the channel
+        it shows (Task 11), so the bar counts that channel's scales once, from
+        1 to the total, and never resets."""
         frames = []
         glue.set_progress_hook(lambda d, t: frames.append((d, t)))
         out = glue.calc_sono(**_payload(n_channels=2), ch=1, nperseg=256,
                              noverlap=128, method='cwt', voices_per_octave=8,
                              w0=6.0, f_min=30.0, f_max=400.0)
         n_freqs = out['freq_axis']['shape'][0]
-        assert len(frames) == 2 * n_freqs
-        assert frames[-1] == (2 * n_freqs, 2 * n_freqs)
+        assert [d for d, _ in frames] == list(range(1, n_freqs + 1))
+        assert frames[-1] == (n_freqs, n_freqs)

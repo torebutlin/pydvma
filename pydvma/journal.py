@@ -60,12 +60,22 @@ would otherwise let `add_capture` grow the list, and the bytes it
 holds, without limit for as long as the server runs. So the pending list
 is ALSO capped at `PENDING_CAPTURES_MAX_BYTES` total: every
 ``add_capture`` that pushes the running total over the cap evicts
-OLDEST-first until back under it, or the list is empty — including the
-entry just added, if a single capture alone exceeds the whole budget.
-This only ever bites when the cap is actually exceeded — an ordinary
-session, where the app's autosave posts a clearing document well
-before pending captures could add up to hundreds of megabytes, never
-triggers it.
+OLDEST-first until back under it — but never the capture just added,
+which stays pending even when it alone exceeds the whole budget (a long
+recording does, and dropping it is exactly the loss the journal exists
+to prevent). Every eviction is logged at WARNING on the
+``pydvma.journal`` logger with the bytes evicted, the bytes still held
+and the budget, so it is never silent. This only ever bites when the
+cap is actually exceeded — an ordinary session, where the app's
+autosave posts a clearing document well before pending captures could
+add up to a gigabyte, never triggers it.
+
+Write times: the journal also records when its document was posted and
+when each pending capture was registered (wall clock, ``time.time()``),
+and when an adopted spill file was last written. `stamped_state`
+returns them with the data; the app's boot restore compares them with
+its own IndexedDB autosave and offers that instead when it is newer —
+the journal's document goes stale whenever the app could not post one.
 
 Thread-safe (one lock around all state): writers arrive from the
 asyncio loop's executor threads, the bridge's log worker thread and the
@@ -96,6 +106,7 @@ giving up, and every spill that STILL fails end-to-end increments
 `SessionJournal.spill_failures`, so a stale spill is at least
 observable rather than silent.
 """
+import logging
 import os
 import tempfile
 import threading
@@ -103,14 +114,19 @@ import time
 
 from . import container
 
+_LOG = logging.getLogger(__name__)
+
 _BYTES_TYPES = (bytes, bytearray, memoryview)
 
 #: Total-bytes ceiling on the pending-captures list — see the module
-#: docstring's "Pending-captures budget" paragraph. 256 MiB comfortably
-#: covers a real lab session's captures between autosaves while still
-#: bounding the worst case (a client that never posts a document at
-#: all) to a fixed, modest amount of server memory.
-PENDING_CAPTURES_MAX_BYTES = 256 * 1024 * 1024
+#: docstring's "Pending-captures budget" paragraph. 1 GiB holds one long
+#: recording (4 channels x 5 min at 48 kHz is ~0.58 GB stored) next to
+#: the ordinary short captures of a lab session, so the long one landing
+#: evicts nothing, while still bounding the worst case (a client that
+#: never posts a document at all) to a fixed amount of server memory plus
+#: the newest capture, which is never evicted. It was 256 MiB, which a
+#: 5 minute recording alone exceeded and was silently evicted by.
+PENDING_CAPTURES_MAX_BYTES = 1024 * 1024 * 1024
 
 #: Sleep after each failed ``os.replace`` attempt in `_spill`
 #: (seconds); one final attempt follows the last sleep. Windows sharing
@@ -189,11 +205,14 @@ class SessionJournal(object):
         self._lock = threading.Lock()
         self._spill_lock = threading.Lock()
         self._doc = None
+        self._doc_time = None
+        # (bytes, unique_id set, registration time) per pending capture.
         self._captures = []
         self._listeners = []
         self._spill_path = spill_path
         self._recovered = None
         self._recovered_path = None
+        self._recovered_time = None
         self._generation = 0
         self._spill_failures = 0
 
@@ -257,6 +276,7 @@ class SessionJournal(object):
                     and expect_generation != self._generation):
                 return False
             self._doc = doc
+            self._doc_time = time.time()
             self._captures = [entry for entry in self._captures
                               if entry[1] and not entry[1] <= doc_ids]
             self._generation += 1
@@ -287,15 +307,13 @@ class SessionJournal(object):
 
         If appending pushes the pending list's total size over
         `PENDING_CAPTURES_MAX_BYTES`, the OLDEST pending entries
-        are evicted (silently — there is no error, no truncation
-        signal, just fewer captures on the next `state`) until
-        the total is back under the cap or the list is empty. Eviction
-        is strictly oldest-first with no special case for the entry
-        just appended: a single capture that alone exceeds the whole
-        budget is evicted too, leaving the list empty rather than
-        holding one capture over cap. See the module docstring's
-        "Pending-captures budget" paragraph — this only matters when
-        nothing ever posts a clearing document.
+        are evicted until the total is back under the cap or only the
+        entry just appended is left: the newest capture is never
+        evicted, so one that alone exceeds the whole budget stays
+        pending (alone). Any eviction is logged at WARNING with the
+        bytes evicted, the bytes still held and the budget. See the
+        module docstring's "Pending-captures budget" paragraph — this
+        only matters when nothing posts a clearing document.
 
         Args:
             dvma_bytes (bytes, bytearray, or memoryview): one
@@ -306,12 +324,26 @@ class SessionJournal(object):
         # matching comments.
         data = bytes(dvma_bytes)
         ids = container.manifest_ids(data)
+        budget = PENDING_CAPTURES_MAX_BYTES
+        evicted = []
         with self._lock:
-            self._captures.append((data, ids))
-            total = sum(len(c) for c, _ in self._captures)
-            while total > PENDING_CAPTURES_MAX_BYTES and self._captures:
-                total -= len(self._captures.pop(0)[0])
+            self._captures.append((data, ids, time.time()))
+            total = sum(len(entry[0]) for entry in self._captures)
+            # Never the entry just appended (the last one).
+            while total > budget and len(self._captures) > 1:
+                gone = len(self._captures.pop(0)[0])
+                evicted.append(gone)
+                total -= gone
+            held = len(self._captures)
             self._generation += 1
+        if evicted:
+            _LOG.warning(
+                'session journal: evicted %d pending capture(s), %d bytes, '
+                'oldest first, to stay within its %d bytes budget; still '
+                'holding %d pending capture(s), %d bytes. The app had not '
+                'yet posted a document containing them, so a tab closed now '
+                'cannot restore them from this server.',
+                len(evicted), sum(evicted), budget, held, total)
 
     def state(self):
         """Return a consistent snapshot of the journal.
@@ -335,8 +367,39 @@ class SessionJournal(object):
                 landed since.
         """
         with self._lock:
-            return (self._doc, [data for data, _ids in self._captures],
+            return (self._doc, [entry[0] for entry in self._captures],
                     self._generation)
+
+    def stamped_state(self):
+        """Return a consistent snapshot of the journal with write times.
+
+        Everything `state` returns, plus when each part was written, all
+        read under one lock so the times describe exactly the data
+        beside them. Times are wall-clock seconds since the epoch
+        (``time.time()``) — on the serving machine, which for the served
+        app is the browser's machine too, so the app can compare them
+        with its own ``Date.now()`` autosave timestamp.
+
+        Returns:
+            snapshot (dict): ``doc`` (bytes or None) and ``doc_saved_at``
+                (when it was posted, or None); ``captures`` (list of
+                bytes, oldest first, as `state` returns them) and
+                ``captures_saved_at`` (each one's registration time, in
+                the same order); ``generation`` (int, as `state`);
+                ``recovered`` (bytes or None, as `recovered`) and
+                ``recovered_saved_at`` (the adopted spill file's
+                modification time, or None).
+        """
+        with self._lock:
+            return {
+                'doc': self._doc,
+                'doc_saved_at': self._doc_time,
+                'captures': [entry[0] for entry in self._captures],
+                'captures_saved_at': [entry[2] for entry in self._captures],
+                'generation': self._generation,
+                'recovered': self._recovered,
+                'recovered_saved_at': self._recovered_time,
+            }
 
     @property
     def generation(self):
@@ -450,6 +513,7 @@ class SessionJournal(object):
         try:
             with open(path, 'rb') as fh:
                 data = fh.read()
+            mtime = os.path.getmtime(path)
         except OSError:
             return False
         if not data:
@@ -457,6 +521,7 @@ class SessionJournal(object):
         with self._lock:
             self._recovered = data
             self._recovered_path = path
+            self._recovered_time = mtime
         return True
 
     def recovered(self):
@@ -489,6 +554,7 @@ class SessionJournal(object):
                               and _same_path(path, self._spill_path))
             self._recovered = None
             self._recovered_path = None
+            self._recovered_time = None
         if path is not None and not is_live_spill:
             try:
                 os.remove(path)

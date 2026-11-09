@@ -573,3 +573,41 @@ def test_osc_samples_seen_counts_every_delivered_chunk():
     assert rec.osc_samples_seen == 3 * s.chunk_size
     rec.callback(_ramp_chunk(s, 0), s.chunk_size, None, None)
     assert rec.osc_samples_seen == 4 * s.chunk_size
+
+
+class TestNoDeadFullLengthCopies:
+    """Task 11: every recorder used to allocate a full-length
+    ``stored_time_data_windowed`` and an rfft magnitude of the stored
+    buffer at construction -- ~0.7 GB extra float64 for a 5 minute,
+    4 channel capture, rebuilt on every configure and log. Nothing ever
+    filled or read them (both stayed zeros). They are now computed on
+    access, with the shapes and values they always had."""
+
+    @staticmethod
+    def _check(rec, n_stored, channels):
+        for name in ('stored_time_data_windowed', 'stored_freq_data'):
+            assert name not in vars(rec), name + ' is still allocated'
+        windowed = rec.stored_time_data_windowed
+        freq = rec.stored_freq_data
+        assert windowed.shape == (n_stored, channels)
+        assert freq.shape == (n_stored // 2 + 1, channels)
+        assert not windowed.any() and not freq.any()
+
+    def test_soundcard_recorder(self):
+        s = _settings()
+        rec = streams.Recorder(s)
+        self._check(rec, rec.stored_num_chunks * s.chunk_size, s.channels)
+
+    def test_ni_recorder(self):
+        s = options.MySettings(device_driver='nidaq', channels=3, fs=5000,
+                               chunk_size=10, stored_time=0.3)
+        rec = object.__new__(streams.Recorder_NI_nidaqmx)
+        rec.settings = s
+        rec._alloc_buffers()
+        self._check(rec, rec.stored_num_chunks * s.chunk_size, s.channels)
+
+    def test_mock_recorder(self):
+        s = options.MySettings(device_driver='mock', channels=2, fs=8000,
+                               chunk_size=100, stored_time=0.5)
+        rec = streams.MockRecorder(s)
+        self._check(rec, rec.stored_time_data.shape[0], s.channels)

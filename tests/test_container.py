@@ -1031,3 +1031,90 @@ def test_dataset_from_manifest_checks_the_format_and_version():
     manifest['format_version'] = container.FORMAT_VERSION + 1
     with pytest.raises(ValueError, match="'thing.csv' uses dvma-dataset format_version"):
         container.dataset_from_manifest(manifest, arrays.__getitem__, 'thing.csv')
+
+
+class TestLargeMembersStored:
+    """Task 11: an array member over 16 MiB is written ZIP_STORED, smaller
+    ones keep ZIP_DEFLATED. Deflating a long recording's float64 arrays
+    took ~12 s for 518 MB of noise and saved 12 %; stored, the bytes go
+    straight in. Readers are unchanged (zipfile reads both methods), so
+    files written before this, deflated throughout, load as they always
+    did."""
+
+    @staticmethod
+    def _dataset(n_samples):
+        settings = options.MySettings(channels=1, fs=48000,
+                                      device_driver='mock')
+        data = np.sin(np.arange(n_samples) * 0.001).reshape(-1, 1)
+        td = datastructure.TimeData(np.arange(n_samples) / 48000.0, data,
+                                    settings, test_name='long')
+        return datastructure.DataSet(td), data
+
+    @staticmethod
+    def _methods(blob):
+        with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+            return {i.filename: i.compress_type for i in zf.infolist()}
+
+    def test_a_20_mib_member_is_stored_and_round_trips(self):
+        ds, data = self._dataset((20 * 1024 * 1024) // 8)
+        blob = container.save_bytes(ds)
+        methods = self._methods(blob)
+        assert methods['arrays/0000_time_data.npy'] == zipfile.ZIP_STORED
+        assert methods['arrays/0000_time_axis.npy'] == zipfile.ZIP_STORED
+        assert methods['manifest.json'] == zipfile.ZIP_DEFLATED
+        back = container.load_bytes(blob).time_data_list[0]
+        assert np.array_equal(back.time_data, data)
+        assert back.test_name == 'long'
+
+    def test_a_small_member_is_still_deflated(self):
+        ds, _ = self._dataset(1000)
+        methods = self._methods(container.save_bytes(ds))
+        assert methods['arrays/0000_time_data.npy'] == zipfile.ZIP_DEFLATED
+        assert methods['arrays/0000_time_axis.npy'] == zipfile.ZIP_DEFLATED
+
+    def test_the_file_writer_stores_large_members_too(self, tmp_path):
+        ds, data = self._dataset((20 * 1024 * 1024) // 8)
+        path = tmp_path / 'long.dvma'
+        container.save(ds, str(path))
+        methods = self._methods(path.read_bytes())
+        assert methods['arrays/0000_time_data.npy'] == zipfile.ZIP_STORED
+        back = container.load(str(path)).time_data_list[0]
+        assert np.array_equal(back.time_data, data)
+
+    def test_the_threshold_is_on_the_member_size(self):
+        # A 1-D float64 member exactly 16 MiB long (npy header included)
+        # stays deflated; one element more and it is stored.
+        limit = container.LARGE_MEMBER_BYTES
+        assert limit == 16 * 1024 * 1024
+        probe = io.BytesIO()
+        np.save(probe, np.zeros(2097136), allow_pickle=False)
+        header = len(probe.getvalue()) - 2097136 * 8
+        n_at = (limit - header) // 8
+        for n, expected in ((n_at, zipfile.ZIP_DEFLATED),
+                            (n_at + 1, zipfile.ZIP_STORED)):
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                container._write_array(zf, 'm.npy', np.zeros(n))
+            with zipfile.ZipFile(buf) as zf:
+                info = zf.getinfo('m.npy')
+                assert info.compress_type == expected
+                assert info.file_size == header + 8 * n
+                assert np.array_equal(
+                    np.load(io.BytesIO(zf.read('m.npy'))), np.zeros(n))
+
+    def test_a_file_whose_large_members_are_deflated_still_loads(self):
+        # Every .dvma before Task 11 (and any other writer) deflated all.
+        ds, data = self._dataset((20 * 1024 * 1024) // 8)
+        manifest, arrays = container.dataset_manifest(ds)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for member, arr in arrays.items():
+                raw = io.BytesIO()
+                np.save(raw, arr, allow_pickle=False)
+                zf.writestr(member, raw.getvalue())
+            zf.writestr('manifest.json', json.dumps(manifest))
+        blob = buf.getvalue()
+        assert (self._methods(blob)['arrays/0000_time_data.npy']
+                == zipfile.ZIP_DEFLATED)
+        back = container.load_bytes(blob).time_data_list[0]
+        assert np.array_equal(back.time_data, data)

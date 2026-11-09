@@ -259,6 +259,15 @@ def _configure_child_limits():
         analysis.CWT_MAX_IMAGE_BYTES = 8 * 1024 ** 3
 
 
+#: A request-queue item the worker skips. `EngineWorker.request` puts one
+#: right after each request: ``multiprocessing.Queue``'s feeder thread keeps
+#: the LAST item it pickled bound while it waits for the next, so without a
+#: small item behind it a long recording's whole pickled capture (hundreds
+#: of MB) stayed held in the serve process for as long as it sat idle
+#: (measured 2026-11-06).
+_FLUSH = 'flush'
+
+
 def _worker_main(req_q, res_q, cancel_ev):
     """Child entry: answer ``(id, op, kwargs)`` until ``None`` arrives.
 
@@ -289,6 +298,8 @@ def _worker_main(req_q, res_q, cancel_ev):
         item = req_q.get()
         if item is None:
             return
+        if item == _FLUSH:
+            continue
         rid, op, kwargs = item
         current['id'] = rid
         cancel_ev.clear()
@@ -327,6 +338,9 @@ def _worker_main(req_q, res_q, cancel_ev):
             # summary (below) -- the browser has no use for a Python stack.
             traceback.print_exc()
             res_q.put(('done', rid, False, '%s: %s' % (type(e).__name__, e)))
+        # Drop the request (a long recording's whole capture) before
+        # blocking for the next one, as handle_connection does (_RELEASE).
+        item = kwargs = None
 
 
 class EngineWorker:
@@ -380,6 +394,7 @@ class EngineWorker:
             if self._proc is None or not self._proc.is_alive():
                 self._spawn()
             self._req.put((rid, op, kwargs))
+            self._req.put(_FLUSH)    # frees the feeder's pickled copy (_FLUSH)
             while True:
                 try:
                     item = self._res.get(timeout=1.0)
@@ -637,6 +652,7 @@ async def handle_connection(websocket, journal=None, save_folder=None):
                     }))
                 except ConnectionClosed:
                     break                    # client's Stop -- exit cleanly
+                raw = req = payload = reply = frame = None   # see _RELEASE
                 continue
 
             # Journal ops are host-state ops -- answered here, never
@@ -672,15 +688,27 @@ async def handle_connection(websocket, journal=None, save_folder=None):
                     # The generation is a WRITER's concern (see
                     # SessionJournal.set_doc's expect_generation); the
                     # app's autosave owns the whole document and posts
-                    # unconditionally, so it stays off this wire.
-                    doc, captures, _generation = journal.state()
-                    reply = {'id': rid, 'ok': True,
-                             'result': {'doc': doc, 'captures': captures,
-                                        'recovered': journal.recovered()}}
+                    # unconditionally, so it stays off this wire. The
+                    # write times (seconds since the epoch, or None) let
+                    # the app's boot restore prefer its own IndexedDB
+                    # autosave when that is newer than everything here
+                    # (webui files/restoreChoice.ts); an app that predates
+                    # them ignores the extra keys.
+                    snap = journal.stamped_state()
+                    reply = {'id': rid, 'ok': True, 'result': {
+                        'doc': snap['doc'],
+                        'captures': snap['captures'],
+                        'recovered': snap['recovered'],
+                        'doc_saved_at': snap['doc_saved_at'],
+                        'captures_saved_at': snap['captures_saved_at'],
+                        'recovered_saved_at': snap['recovered_saved_at'],
+                    }}
                 try:
                     await websocket.send(encode_frame(reply))
                 except ConnectionClosed:
                     break
+                raw = req = payload = reply = frame = None   # see _RELEASE
+                doc = snap = None    # the posted document; the read snapshot
                 continue
 
             # Working-folder ops -- host-state ops too, answered here.
@@ -701,6 +729,7 @@ async def handle_connection(websocket, journal=None, save_folder=None):
                     await websocket.send(encode_frame(reply))
                 except ConnectionClosed:
                     break
+                raw = req = payload = reply = frame = result = None   # see _RELEASE
                 continue
 
             last_sent = [0.0]
@@ -788,6 +817,16 @@ async def handle_connection(websocket, journal=None, save_folder=None):
                 await websocket.send(frame)
             except ConnectionClosed:
                 break  # client closed mid-op (its Stop) -- exit cleanly
+            # _RELEASE: drop this request's buffers before waiting for the
+            # next frame. A coroutine's locals live until they are rebound,
+            # so the frame, its decoded arrays, the result and the encoded
+            # reply of a long recording's calc (2-3 GB together for a
+            # 5 minute, 8 channel capture) otherwise stayed held for as
+            # long as the connection sat idle, each op kind pinning its own
+            # (serve footprint measured 0.6 -> 4.9 GB over two rounds of
+            # journal_set/journal_get/files_save/calc_fft, 2026-11-06).
+            raw = req = payload = reply = frame = result = None
+            call = op_fut = done = _pending = None
     finally:
         if unsubscribe_journal is not None:
             unsubscribe_journal()

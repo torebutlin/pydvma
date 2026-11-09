@@ -2668,3 +2668,80 @@ def test_configure_reports_the_input_rail(monkeypatch):
     status = _configure_without_a_device(monkeypatch, seen, default_driver='mock')
     assert status['inputVmax'] == 1.0
     assert status['inputVmaxIsVolts'] is False
+
+
+# ---- long recordings (Task 11): per-path inbound caps, no ws compression --
+
+def test_inbound_frame_caps_are_per_path():
+    """``/ws`` keeps its 256 MiB inbound cap (it is reachable cross-origin
+    by design); ``/engine`` gets its own 4 GiB one, because whole-capture
+    calc payloads and whole-document journal/save frames for a 5 minute
+    multi-channel recording are far past 256 MiB. Before Task 11 one cap
+    covered both, and an /engine frame over it closed the socket (1009),
+    killing the calc and every later one."""
+    assert serve_mod.WS_MAX_MESSAGE_BYTES == 256 * 1024 * 1024
+    assert serve_mod.ENGINE_MAX_MESSAGE_BYTES == 4 * 1024 ** 3
+
+
+def test_engine_accepts_a_frame_over_the_ws_cap_and_ws_still_refuses_it(monkeypatch):
+    """Enforced per path at the handshake: the same over-``/ws``-cap frame
+    is answered on ``/engine`` and closes ``/ws`` with 1009. Caps shrunk
+    so the test moves megabytes, not gigabytes."""
+    from websockets.exceptions import ConnectionClosed
+    monkeypatch.setattr(serve_mod, 'WS_MAX_MESSAGE_BYTES', 1024 * 1024)
+    monkeypatch.setattr(serve_mod, 'ENGINE_MAX_MESSAGE_BYTES', 8 * 1024 * 1024)
+    doc = b'PK' + bytes(3 * 1024 * 1024)
+
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            async with connect('ws://127.0.0.1:%d/engine' % port,
+                               max_size=None) as eng:
+                await eng.recv()  # greeting
+                await eng.send(engine_host.encode_frame(
+                    {'id': 1, 'op': 'journal_set', 'payload': {'doc': doc}}))
+                reply = engine_host.decode_frame(
+                    await asyncio.wait_for(eng.recv(), 10))
+                assert reply['ok'] is True
+                await eng.send(engine_host.encode_frame(
+                    {'id': 2, 'op': 'journal_get', 'payload': {}}))
+                reply = engine_host.decode_frame(
+                    await asyncio.wait_for(eng.recv(), 10))
+                assert reply['result']['doc'] == doc
+
+            # Over each path's own cap the server closes with 1009. (No
+            # `async with` here: websockets' client close after a server
+            # abort trips over its own closed transport.)
+            for url, frame in (
+                    ('ws://127.0.0.1:%d/engine' % port, engine_host.encode_frame(
+                        {'id': 3, 'op': 'journal_set',
+                         'payload': {'doc': bytes(9 * 1024 * 1024)}})),
+                    (_ws_url(port), doc)):
+                ws = await connect(url, max_size=None)
+                if url.endswith('/engine'):
+                    await ws.recv()  # greeting
+                await ws.send(frame)
+                with pytest.raises(ConnectionClosed) as info:
+                    await asyncio.wait_for(ws.recv(), 10)
+                assert info.value.rcvd is not None
+                assert info.value.rcvd.code == 1009
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
+def test_websockets_are_served_without_permessage_deflate():
+    """The server declines permessage-deflate on both paths. A browser
+    offers it, and with it every capture container and calc payload was
+    zlib-compressed ON THE SERVE EVENT LOOP: measured 4.6 s for a 200 MB
+    frame against 0.1 s plain (Task 11), freezing the live scope and every
+    other connection for the duration, for a few percent on float data."""
+    async def scenario():
+        _server, task, port = await _start_server()
+        try:
+            for path in ('/ws', '/engine'):
+                async with connect('ws://127.0.0.1:%d%s' % (port, path)) as ws:
+                    assert ws.protocol.extensions == []
+        finally:
+            await _stop_server(task)
+    run_async(scenario)

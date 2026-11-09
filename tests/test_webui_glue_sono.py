@@ -238,3 +238,39 @@ class TestCalcSonoFullPreflight:
                                      'stft', 16, 6.0, None, None)
         from pydvma import analysis
         assert pred[0] * pred[1] * 2 * 16 < analysis.CWT_MAX_IMAGE_BYTES
+
+
+class TestDisplaySonoTransformsOneChannel:
+    """Task 11: ``calc_sono`` transforms only the channel it shows. It used
+    to transform every channel of the set and keep one (2.3 GB of working
+    memory for an 8 channel, 150 s, 48 kHz record at nFFT 512, against
+    0.5 GB for one channel)."""
+
+    def test_only_the_shown_channel_reaches_the_transform(self, monkeypatch):
+        widths = []
+        real = glue.analysis.calculate_sonogram
+
+        def spy(td, **kw):
+            widths.append(td.time_data.shape[1])
+            return real(td, **kw)
+
+        monkeypatch.setattr(glue.analysis, 'calculate_sonogram', spy)
+        p = _payload(n_channels=3)
+        glue.calc_sono(p['time_axis'], p['time_data'], p['n_channels'],
+                       p['fs'], ch=2, nperseg=256, noverlap=128)
+        assert widths == [1]
+
+    @pytest.mark.parametrize('ch', [0, 1, 2])
+    def test_the_image_is_the_all_channel_transform_of_that_channel(self, ch):
+        p = _payload(n_channels=3)
+        shown = glue.calc_sono(p['time_axis'], p['time_data'], p['n_channels'],
+                               p['fs'], ch=ch, nperseg=256, noverlap=128)
+        full = _full(p, [0, 1, 2])
+        _same_image(np.abs(_marsh(full['sono_data'])[:, :, ch]),
+                    _marsh(shown['sono_data']))
+
+    def test_an_out_of_range_channel_still_raises(self):
+        p = _payload(n_channels=2)
+        with pytest.raises(IndexError):
+            glue.calc_sono(p['time_axis'], p['time_data'], p['n_channels'],
+                           p['fs'], ch=5, nperseg=256, noverlap=128)

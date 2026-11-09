@@ -58,6 +58,16 @@ block of channel labels and per-set analysis settings; the ModalData
 :meth:`pydvma.session.Session.push` would otherwise destroy on every
 push. Python's own known fields always win on collision.
 
+Compression: members are deflated, except an array member over
+`LARGE_MEMBER_BYTES` (16 MiB), which is stored uncompressed
+(``ZIP_STORED``). Deflate takes seconds per hundred megabytes and gains
+a few percent on measured float64 (a long recording); stored, a 5 minute
+capture is written in a fraction of the time. The browser's writer
+(``writeDvma`` in ``webui/src/lib/codec/dvma.ts``) applies the same rule.
+Readers need nothing: a zip member says how it is stored, and every
+reader (``zipfile``, the browser's fflate) reads both methods, so files
+written before the rule, deflated throughout, load as they always did.
+
 Use `save` / `load`, or their in-memory twins `save_bytes` /
 `load_bytes` (same manifest, same members, one shared writer/reader —
 no filesystem touched) for callers that move a dataset over a socket
@@ -73,6 +83,7 @@ import json
 import math
 import os
 import tempfile
+import time
 import uuid
 import zipfile
 
@@ -373,10 +384,42 @@ def manifest_ids(data):
     return ids
 
 
+#: Array members whose ``.npy`` bytes (header included) exceed this are
+#: written ``ZIP_STORED`` rather than deflated — see the module
+#: docstring's "Compression" paragraph. The browser codec uses the same
+#: number on the same measure (the serialised member's length).
+LARGE_MEMBER_BYTES = 16 * 1024 * 1024
+
+
 def _write_array(zf, member, arr):
-    buf = io.BytesIO()
-    np.save(buf, np.asarray(arr), allow_pickle=False)
-    zf.writestr(member, buf.getvalue())
+    """Write one array as a ``.npy`` member of the open archive ``zf``.
+
+    A member up to `LARGE_MEMBER_BYTES` is deflated, as every member
+    always was; a larger one is stored uncompressed and streamed straight
+    into the archive (``np.save`` writes it in 16 MiB pieces), so a long
+    recording is neither deflated nor copied whole on its way in.
+
+    Args:
+        zf (zipfile.ZipFile): the archive, open for writing.
+        member (str): the member's name, e.g. ``arrays/0000_time_data.npy``.
+        arr (array_like): the array to save (pickle-free ``.npy``).
+    """
+    arr = np.asarray(arr)
+    if arr.nbytes <= LARGE_MEMBER_BYTES:
+        buf = io.BytesIO()
+        np.save(buf, arr, allow_pickle=False)
+        data = buf.getvalue()
+        if len(data) <= LARGE_MEMBER_BYTES:
+            zf.writestr(member, data)
+        else:  # within a header's length of the threshold
+            zf.writestr(member, data, compress_type=zipfile.ZIP_STORED)
+        return
+    info = zipfile.ZipInfo(member, date_time=time.localtime(time.time())[:6])
+    info.compress_type = zipfile.ZIP_STORED
+    info.external_attr = 0o600 << 16      # what writestr gives a named member
+    big = arr.nbytes + 4096 > zipfile.ZIP64_LIMIT
+    with zf.open(info, 'w', force_zip64=big) as fh:
+        np.save(fh, arr, allow_pickle=False)
 
 
 def _read_array(zf, member):

@@ -279,15 +279,69 @@ class TestPendingCapturesBudget:
         _, captures, _ = j.state()
         assert captures == [b'bb', b'cc']
 
-    def test_single_capture_over_budget_alone_is_evicted_too(self, monkeypatch):
-        # No special case for the just-appended entry: with only one
-        # entry in the list, "oldest" and "newest" are the same entry,
-        # and the eviction loop still runs until back under budget.
+    def test_single_capture_over_budget_is_kept(self, monkeypatch):
+        # Task 11 reversed this: a capture bigger than the whole budget
+        # used to be evicted on arrival, silently -- exactly a 5 minute
+        # recording, which a tab closed inside the autosave debounce then
+        # lost. The newest capture is never evicted.
         monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 2)
         j = SessionJournal()
         j.add_capture(b'toolong')
         _, captures, _ = j.state()
-        assert captures == []
+        assert captures == [b'toolong']
+
+    def test_a_300_mb_capture_stays_pending_under_the_real_budget(self):
+        # The spec's long recording: 4 microphones x 5 min at 48 kHz is
+        # ~460 MB of float64 (plus its time axis), stored uncompressed.
+        big = bytes(300 * 1024 * 1024)
+        j = SessionJournal()
+        j.add_capture(big)
+        _, captures, _ = j.state()
+        assert len(captures) == 1 and captures[0] is big
+
+    def test_a_long_capture_beside_a_short_pending_one_evicts_nothing(self):
+        # The budget holds one long recording next to ordinary short
+        # captures (a calibrator tone, a test take), so the long one
+        # landing does not push the short one out.
+        short = b'PK-short-take'
+        big = bytes(300 * 1024 * 1024)
+        j = SessionJournal()
+        j.add_capture(short)
+        j.add_capture(big)
+        _, captures, _ = j.state()
+        assert len(captures) == 2 and captures[0] == short
+
+    def test_the_newest_capture_survives_any_eviction(self, monkeypatch):
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 5)
+        j = SessionJournal()
+        j.add_capture(b'aa')
+        j.add_capture(b'bb')
+        j.add_capture(b'cccccccc')       # alone over budget: both older go
+        _, captures, _ = j.state()
+        assert captures == [b'cccccccc']
+
+    def test_an_eviction_logs_a_warning_with_the_byte_counts(
+            self, monkeypatch, caplog):
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 5)
+        j = SessionJournal()
+        j.add_capture(b'aa')
+        j.add_capture(b'bb')
+        with caplog.at_level('WARNING', logger='pydvma.journal'):
+            j.add_capture(b'cc')         # total 6 > 5: evicts 'aa'
+        warnings = [r for r in caplog.records if r.levelname == 'WARNING']
+        assert len(warnings) == 1
+        text = warnings[0].getMessage()
+        assert 'evicted 1 pending capture' in text
+        assert '2 bytes' in text          # what went
+        assert '4 bytes' in text          # what is still held
+        assert '5 bytes' in text          # the budget
+
+    def test_no_eviction_logs_nothing(self, monkeypatch, caplog):
+        with caplog.at_level('WARNING', logger='pydvma.journal'):
+            j = SessionJournal()
+            j.add_capture(b'aa')
+            j.add_capture(b'PK-big')
+        assert not [r for r in caplog.records if r.levelname == 'WARNING']
 
     def test_doc_post_still_clears_everything_regardless_of_budget(
             self, monkeypatch):
@@ -605,3 +659,68 @@ class TestThreadSafety:
         # Pending list is consistent (no torn state); exact content
         # depends on interleaving.
         assert all(c.startswith(b'c') for c in captures)
+
+
+class TestSavedTimes:
+    """`SessionJournal.stamped_state`: when each held document and capture
+    was written, for the app's boot restore, which offers the browser's
+    own autosave instead when that is newer (Task 11; the journal's
+    document went stale whenever the app's post was skipped)."""
+
+    def test_empty_journal_reports_no_times(self):
+        snap = SessionJournal().stamped_state()
+        assert snap['doc'] is None and snap['doc_saved_at'] is None
+        assert snap['captures'] == [] and snap['captures_saved_at'] == []
+        assert snap['recovered'] is None and snap['recovered_saved_at'] is None
+
+    def test_doc_and_capture_times_come_from_the_wall_clock(self, monkeypatch):
+        clock = iter([1000.0, 2000.0, 3000.0])
+        monkeypatch.setattr(journal_module.time, 'time', lambda: next(clock))
+        j = SessionJournal()
+        j.set_doc(b'doc')
+        j.add_capture(b'c1')
+        j.add_capture(b'c2')
+        snap = j.stamped_state()
+        assert snap['doc'] == b'doc' and snap['doc_saved_at'] == 1000.0
+        assert snap['captures'] == [b'c1', b'c2']
+        assert snap['captures_saved_at'] == [2000.0, 3000.0]
+        assert snap['generation'] == 3
+
+    def test_an_evicted_capture_takes_its_time_with_it(self, monkeypatch):
+        monkeypatch.setattr(journal_module, 'PENDING_CAPTURES_MAX_BYTES', 5)
+        clock = iter([1.0, 2.0, 3.0])
+        monkeypatch.setattr(journal_module.time, 'time', lambda: next(clock))
+        j = SessionJournal()
+        j.add_capture(b'aa')
+        j.add_capture(b'bb')
+        j.add_capture(b'cc')
+        snap = j.stamped_state()
+        assert snap['captures'] == [b'bb', b'cc']
+        assert snap['captures_saved_at'] == [2.0, 3.0]
+
+    def test_a_cleared_capture_takes_its_time_with_it(self, monkeypatch):
+        blob, _ = _capture_bytes()
+        j = SessionJournal()
+        j.add_capture(blob)
+        j.set_doc(_doc_bytes(blob))
+        snap = j.stamped_state()
+        assert snap['captures'] == [] and snap['captures_saved_at'] == []
+
+    def test_the_recovered_time_is_the_spill_file_mtime(self, tmp_path):
+        import os
+        spill = tmp_path / 'pydvma-session-1.dvma'
+        spill.write_bytes(b'PK-old')
+        os.utime(spill, (1234.0, 1234.0))
+        j = SessionJournal()
+        assert j.adopt_recovered(spill) is True
+        snap = j.stamped_state()
+        assert snap['recovered'] == b'PK-old'
+        assert snap['recovered_saved_at'] == 1234.0
+        j.discard_recovered()
+        assert j.stamped_state()['recovered_saved_at'] is None
+
+    def test_state_keeps_its_three_tuple(self):
+        j = SessionJournal()
+        j.set_doc(b'doc')
+        doc, captures, generation = j.state()
+        assert (doc, captures, generation) == (b'doc', [], 1)

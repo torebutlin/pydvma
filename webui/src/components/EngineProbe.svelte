@@ -23,7 +23,7 @@
    * either):
    *
    *  - `__engineLargeTest`: a ~2M-sample calc_fft (time_axis + time_data ⇒ a
-   *    request frame ≳10 MB) — the round-trip the `max_size=256*1024*1024`
+   *    request frame ≳10 MB) — the round-trip the `ENGINE_MAX_MESSAGE_BYTES`
    *    raise in `serve.py` exists for (the old `websockets` default of 1 MiB
    *    would sever this mid-frame).
    *  - `__engineStopTest`: starts a multi-second native CWT sonogram, calls
@@ -100,7 +100,7 @@
     // e2e self-test hook (Task 9 carry-over): a large calc_fft request —
     // ~2M-sample time_axis + time_data, each ~16 MB, so the request frame is
     // comfortably ≳10 MB — round-tripped through the native engine. Proves
-    // the `max_size=256*1024*1024` raise in serve.py actually matters (the
+    // the `ENGINE_MAX_MESSAGE_BYTES` raise in serve.py actually matters (the
     // `websockets` default 1 MiB cap would sever this mid-frame).
     (window as any).__engineLargeTest = async () => {
       await engine.whenReady();

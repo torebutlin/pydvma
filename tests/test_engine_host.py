@@ -353,7 +353,7 @@ def run_async(coro_fn):
     asyncio.run(coro_fn())
 
 
-async def _start_engine_server(journal=None):
+async def _start_engine_server(journal=None, save_folder=None):
     """Serve ``handle_connection`` directly on an ephemeral port, no
     :class:`~pydvma.serve.BridgeServer` involved.
 
@@ -367,7 +367,8 @@ async def _start_engine_server(journal=None):
     journal tests for that path.)
     """
     from websockets.asyncio.server import serve
-    handler = functools.partial(engine_host.handle_connection, journal=journal)
+    handler = functools.partial(engine_host.handle_connection, journal=journal,
+                                save_folder=save_folder)
     server = await serve(handler, '127.0.0.1', 0)
     port = next(iter(server.sockets)).getsockname()[1]
     return server, port
@@ -710,8 +711,18 @@ class TestJournalOps:
                         {'id': 2, 'op': 'journal_get', 'payload': {}}))
                     reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is True
-                    assert reply['result'] == {
+                    result = reply['result']
+                    times = {k: result.pop(k) for k in (
+                        'doc_saved_at', 'captures_saved_at',
+                        'recovered_saved_at')}
+                    assert result == {
                         'doc': b'DOC', 'captures': [b'CAP1'], 'recovered': None}
+                    # Task 11: when each was written, for the boot restore.
+                    assert isinstance(times['doc_saved_at'], float)
+                    assert len(times['captures_saved_at']) == 1
+                    assert (times['captures_saved_at'][0]
+                            >= times['doc_saved_at'])
+                    assert times['recovered_saved_at'] is None
             finally:
                 await _stop_engine_server(server)
         run_async(scenario)
@@ -729,7 +740,9 @@ class TestJournalOps:
                     reply = engine_host.decode_frame(await _recv(ws))
                     assert reply['ok'] is True
                     assert reply['result'] == {
-                        'doc': None, 'captures': [], 'recovered': None}
+                        'doc': None, 'captures': [], 'recovered': None,
+                        'doc_saved_at': None, 'captures_saved_at': [],
+                        'recovered_saved_at': None}
             finally:
                 await _stop_engine_server(server)
         run_async(scenario)
@@ -912,3 +925,130 @@ class TestJournalOps:
             finally:
                 await _stop_engine_server(server)
         run_async(scenario)
+
+
+class TestIdleConnectionHoldsNoRequestBuffers:
+    """Task 11: between ops, an idle /engine connection held its last
+    request's buffers -- the frame, the decoded arrays, the result and the
+    encoded reply stayed bound as coroutine locals, and
+    multiprocessing.Queue's feeder thread kept the pickled request -- which
+    for a long recording is gigabytes held for as long as the tab sits
+    there (serve footprint 0.6 -> 4.9 GB over two rounds of ops)."""
+
+    def test_decoded_arrays_are_released_after_the_reply(self, monkeypatch):
+        import gc
+        import weakref
+        held = []
+        real_decode = engine_host.decode_frame
+
+        def tracking_decode(data):
+            req = real_decode(data)
+            for v in (req.get('payload') or {}).values():
+                if isinstance(v, np.ndarray):
+                    held.append(weakref.ref(v))
+            return req
+
+        monkeypatch.setattr(engine_host, 'decode_frame', tracking_decode)
+
+        async def scenario():
+            server, port = await _start_engine_server()
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await _recv(ws)  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 1, 'op': 'calc_fft', 'payload': _mk_time()}))
+                    reply = engine_host.decode_frame(await _recv(ws, 30.0))
+                    assert reply['ok'] is True
+                    await asyncio.sleep(0.2)     # the connection is idle now
+                    gc.collect()
+                    assert len(held) == 2        # time_axis and time_data
+                    assert all(ref() is None for ref in held), \
+                        'an idle connection still holds the request arrays'
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_the_worker_skips_the_flush_item(self):
+        w = engine_host.EngineWorker()
+        try:
+            for rid in (1, 2):
+                kind, got, ok, _ = w.request(rid, 'calc_fft', _mk_time())
+                assert (kind, got, ok) == ('done', rid, True)
+        finally:
+            w.close()
+
+    def test_the_journal_ops_pin_no_document_or_capture(self):
+        # journal_set kept the posted document bound as a local, and
+        # journal_get its snapshot of the document AND the pending
+        # captures: once the journal moved on (the next post, a notebook
+        # push), the connection alone kept a long recording alive. bytes
+        # take no weak reference, so the holders are counted instead.
+        import gc
+        import sys
+        from pydvma.journal import SessionJournal
+        journal = SessionJournal()
+        capture = b'PK-capture' + bytes(1024)
+        baseline = sys.getrefcount(capture)
+
+        async def scenario():
+            server, port = await _start_engine_server(journal=journal)
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None) as ws:
+                    await _recv(ws)  # greeting
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 1, 'op': 'journal_set',
+                         'payload': {'doc': b'PK-first' + bytes(1024)}}))
+                    assert engine_host.decode_frame(await _recv(ws))['ok']
+                    posted = journal.state()[0]
+                    journal.add_capture(capture)
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 2, 'op': 'journal_get', 'payload': {}}))
+                    reply = engine_host.decode_frame(await _recv(ws))
+                    assert reply['result']['captures'] == [capture]
+                    # The journal moves on without this connection.
+                    journal.set_doc(b'PK-second')  # clears the id-less capture
+                    assert journal.state()[1] == []
+                    await asyncio.sleep(0.2)     # the connection is idle now
+                    gc.collect()
+                    # Only this test's own names (and the call's argument).
+                    assert sys.getrefcount(posted) == 2, \
+                        'an idle connection still holds the posted document'
+                    assert sys.getrefcount(capture) == baseline, \
+                        'an idle connection still holds the journal snapshot'
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
+    def test_a_file_read_is_released_after_the_reply(self, monkeypatch):
+        # files_read's result (the whole file) stayed bound as a local
+        # until the next op rebound it.
+        import gc
+        import sys
+        data = b'PK-file' + bytes(1024)
+        baseline = sys.getrefcount(data)
+        monkeypatch.setattr(engine_host, '_file_op',
+                            lambda folder, op, payload: {'data': data})
+
+        async def scenario():
+            server, port = await _start_engine_server(save_folder=object())
+            try:
+                async with connect('ws://127.0.0.1:%d/engine' % port,
+                                   max_size=None,
+                                   origin='http://127.0.0.1:%d' % port) as ws:
+                    greeting = json.loads(await _recv(ws))
+                    assert greeting['files'] is True
+                    await ws.send(engine_host.encode_frame(
+                        {'id': 1, 'op': 'files_read',
+                         'payload': {'path': 'x.dvma'}}))
+                    reply = engine_host.decode_frame(await _recv(ws))
+                    assert reply['result']['data'] == data
+                    await asyncio.sleep(0.2)     # the connection is idle now
+                    gc.collect()
+                    assert sys.getrefcount(data) == baseline, \
+                        'an idle connection still holds the file it read'
+            finally:
+                await _stop_engine_server(server)
+        run_async(scenario)
+
