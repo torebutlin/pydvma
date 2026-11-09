@@ -151,7 +151,9 @@
   let units = $state<string[]>(rows.map((r) => r.unit));
   // Reference-tone panels, one slot per row. `refLevel`/`refFreq` hold what the
   // user typed (null = the default for the row's unit); `refMeta` is the
-  // reference the CURRENT sensitivity was measured from (null once edited).
+  // reference the CURRENT sensitivity was measured from (null once the
+  // sensitivity or the unit is edited: a reference in dB SPL must not be
+  // recorded beside a unit of m/s²).
   // svelte-ignore state_referenced_locally
   let refOpen = $state<boolean[]>(rows.map(() => false));
   // svelte-ignore state_referenced_locally
@@ -354,6 +356,7 @@
         <select
           data-testid={`cal-unit-${row.ch}`}
           bind:value={units[i]}
+          onchange={() => { refMeta[i] = null; }}
           aria-label={`Unit for ${row.label}`}
         >
           {#each unitOptions(row.unit) as u (u)}

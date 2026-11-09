@@ -421,4 +421,44 @@ test.describe('@engine', () => {
     await expect(page.getByTestId('plot-line').first()).toBeVisible({ timeout: 200_000 });
     await expect(yLabel(page)).toContainText('dB re (20 µPa)²/Hz');
   });
+
+  test('a unit changed after Measure records a plain sensitivity, not the tone', async ({ page }) => {
+    // `?fixture=1` for the `window.__dataset` hook: the tone loads beside
+    // the fixture set, and its saved calibration provenance is read back.
+    await page.goto('/?fixture=1');
+    await expect(card0(page)).toBeVisible();
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Load Data' }).click();
+    await (await chooserPromise).setFiles(toneDvma(0.0335 * 1.0024));
+    const card = page.locator('[data-testid^="tray-card-"]').filter({ hasText: 'calibrator' });
+    await expect(card).toBeVisible();
+    await card.hover();
+    await card.getByTestId('cal-open').click();
+    const overlay = page.getByTestId('cal-overlay');
+    await expect(overlay).toBeVisible();
+
+    await overlay.getByTestId('cal-unit-0').selectOption('Pa');
+    await overlay.getByTestId('cal-ref-0').click();
+    await overlay.getByTestId('cal-ref-measure').click();
+    await expect.poll(
+      async () => Number(await overlay.getByTestId('cal-sens-0').inputValue()),
+      { timeout: 200_000 },
+    ).toBeCloseTo(0.0335, 3);
+    // The measured number stays, but it is no longer a pascal calibration.
+    await overlay.getByTestId('cal-unit-0').selectOption('m/s²');
+    await overlay.getByTestId('cal-apply').click();
+    await expect(overlay).toBeHidden();
+
+    const cal = await page.evaluate(() => {
+      type Item = { kind: string; meta: Record<string, unknown> };
+      type Store = { subscribe(fn: (d: { items: Item[] } | null) => void): () => void };
+      let out: unknown = null;
+      (window as unknown as { __dataset: Store }).__dataset.subscribe((d) => {
+        const tone = d?.items.find((i) => i.kind === 'TimeData' && i.meta.unique_id === 'TONE0');
+        out = tone?.meta.channel_calibration ?? null;
+      })();
+      return out as { method: string; unit: string; reference: unknown }[] | null;
+    });
+    expect(cal?.[0]).toMatchObject({ method: 'sensitivity', unit: 'm/s²', reference: null });
+  });
 });

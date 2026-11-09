@@ -69,7 +69,7 @@
     autosave, autosaveSavedAt, clearAutosave, journalPost, restoreOffer,
     setJournalOverflowNotice, setJournalSink,
   } from './lib/files/autosave';
-  import { chooseRestore } from './lib/files/restoreChoice';
+  import { idbMightWin, journalOffer } from './lib/files/restoreChoice';
   import type { DvmaDataset } from './lib/model/dataset';
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
@@ -774,8 +774,10 @@
    * app's post is skipped (too big for the /engine frame) or fails, while
    * the IndexedDB write still lands: after a long capture boot then offered
    * the stale server copy and never the one holding the capture. The
-   * IndexedDB offer's Restore parses the autosaved bytes and loads them;
-   * its Dismiss clears the autosave so it never re-offers.
+   * choice is made from the write times (`journalOffer`, `idbMightWin`), and
+   * the autosave's bytes are read only when it can win. The IndexedDB
+   * offer's Restore parses the autosaved bytes and loads them; its Dismiss
+   * clears the autosave so it never re-offers.
    */
   async function bootFileRestore(): Promise<void> {
     try {
@@ -791,31 +793,23 @@
     } catch (e) {
       console.warn('[journal] restore read failed:', e);
     }
-    const live = journal && (journal.doc || journal.captures.length) ? journal : null;
-    const recovered = !live && journal?.recovered ? journal.recovered : null;
-    const idbAt = autosaveSavedAt();
-    // With no timestamp the journal wins whatever IndexedDB holds (the rule
-    // before timestamps), so its bytes need not even be read.
+    // Decide from the write TIMES first (`restoreChoice.ts`): the autosave's
+    // bytes (hundreds of MB after a long session) are read only when they
+    // could win, never just to learn that the journal does.
+    const offer = journalOffer(journal);
+    const offerJournal = (): void => {
+      if (offer?.kind === 'live' && journal) offerJournalRestore(journal);
+      else if (offer?.kind === 'recovered' && journal?.recovered) offerRecoveredRestore(journal.recovered);
+    };
+    if (!idbMightWin(offer, autosaveSavedAt())) { offerJournal(); return; }
     let saved: Uint8Array | null = null;
-    if (!(live || recovered) || idbAt !== null) {
-      try {
-        saved = await restoreOffer();
-      } catch (e) {
-        console.warn('[autosave] restore read failed:', e);
-      }
+    try {
+      saved = await restoreOffer();
+    } catch (e) {
+      console.warn('[autosave] restore read failed:', e);
     }
-    const idb = saved ? { savedAt: idbAt ?? Number.NaN } : null;
-    if (live) {
-      const choice = chooseRestore({
-        doc: live.doc ? { savedAt: live.docSavedAt ?? Number.NaN } : undefined,
-        captures: live.captures.map((_, i) => ({ savedAt: live.capturesSavedAt?.[i] ?? Number.NaN })),
-      }, idb);
-      if (choice === 'journal') { offerJournalRestore(live); return; }
-    } else if (recovered) {
-      const choice = chooseRestore({ doc: { savedAt: journal?.recoveredSavedAt ?? Number.NaN } }, idb);
-      if (choice === 'journal') { offerRecoveredRestore(recovered); return; }
-    }
-    if (!saved) return;
+    // A timestamp with no bytes behind it: the journal, when there is one.
+    if (!saved) { offerJournal(); return; }
     const bytes = saved;
     toasts.push('Restore last session?', {
       level: 'info',
