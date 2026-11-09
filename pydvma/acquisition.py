@@ -462,6 +462,11 @@ def _capture_rate_message(reason, capture_fs, target_fs):
         return ('Capture rate: capturing at {:g} Hz (set by capture_fs) and '
                 'resampling down to fs = {:g} Hz.\n'
                 .format(capture_fs, target_fs))
+    if reason == 'preferred':
+        return ('Capture rate: capturing at {:g} Hz, this interface\'s '
+                'preferred rate (so its clock is not switched), and resampling '
+                'down to fs = {:g} Hz behind pydvma\'s anti-alias filter.\n'
+                .format(capture_fs, target_fs))
     if reason == 'oversample':
         return ('Digital low-pass: capturing at {:g} Hz (the lowest rate this '
                 'device can run with headroom over fs) and resampling down to '

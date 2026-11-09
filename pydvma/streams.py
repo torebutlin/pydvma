@@ -728,7 +728,8 @@ def select_capture_fs(settings, native=None):
 
     Returns ``(capture_fs, reason)`` where ``reason`` is a short tag
     naming which rule applied — ``'exact'``, ``'explicit'``,
-    ``'oversample'``, ``'lowest-native'`` or ``'unknown'`` — so callers
+    ``'oversample'``, ``'preferred'``, ``'lowest-native'`` or
+    ``'unknown'`` — so callers
     can phrase an accurate message rather than guessing.
 
     The target rate ``settings.fs`` is what the caller wants DELIVERED;
@@ -753,6 +754,13 @@ def select_capture_fs(settings, native=None):
       decimate in software (``'lowest-native'``) — a rate the hardware
       cannot run is otherwise served by CoreAudio's own converter, whose
       alias rejection was measured as poor as 12 dB.
+    - Except that where the device's profile names a preferred rate
+      (``_soundcard_specs.preferred_fs``; the Audient iD44's 48 kHz) and
+      that rate is native and high enough for the rule that applies
+      (above the target, or ``2.56 * fs`` with the low-pass on), capture
+      there instead (``'preferred'``). Switching an iD44's rate restarts
+      its mixer and clicks the outputs, and 8 kHz from 48 kHz is an
+      exact 6:1 where 44.1 kHz is not.
 
     With no ladder available the target is returned unchanged
     (``'unknown'``) and the device does whatever it was going to do.
@@ -772,10 +780,14 @@ def select_capture_fs(settings, native=None):
     if not native:
         return target, 'unknown'
 
+    preferred = _preferred_native_rate(settings, native)
+
     if getattr(settings, 'lpf_on', False):
         if oversample_strategy(settings) == 'highest':
             return native[-1], 'oversample'
         wanted = 2.56 * target
+        if preferred is not None and preferred >= wanted - 1e-6:
+            return preferred, 'preferred'
         headroom = [r for r in native if r >= wanted - 1e-6]
         if headroom:
             return headroom[0], 'oversample'
@@ -784,8 +796,26 @@ def select_capture_fs(settings, native=None):
     if any(abs(target - r) < 1e-6 for r in native):
         return target, 'exact'
 
+    if preferred is not None and preferred > target:
+        return preferred, 'preferred'
     above = [r for r in native if r > target]
     return (above[0] if above else native[-1]), 'lowest-native'
+
+
+def _preferred_native_rate(settings, native):
+    """The device profile's preferred rate when it is on ``native``, else None."""
+    from . import _soundcard_specs
+    name = soundcard_device_name(settings)
+    if not name:
+        return None
+    try:
+        pref = _soundcard_specs.preferred_fs(name)
+    except Exception:
+        return None
+    if pref is None:
+        return None
+    pref = float(pref)
+    return pref if any(abs(pref - r) < 1e-6 for r in native) else None
 
 
 def max_input_fs(settings):

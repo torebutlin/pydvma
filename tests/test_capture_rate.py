@@ -91,6 +91,54 @@ class TestSelectCaptureFs:
         assert streams.select_capture_fs(s)[1] == 'unknown'
 
 
+ID44_LADDER = [44100.0, 48000.0, 88200.0, 96000.0]
+
+
+@pytest.fixture
+def id44(monkeypatch):
+    """An Audient iD44: its profile names 48 kHz as the preferred rate."""
+    monkeypatch.setattr(streams, 'native_input_rates', lambda s: list(ID44_LADDER))
+    monkeypatch.setattr(streams, 'soundcard_device_name', lambda s: 'Audient iD44')
+
+
+class TestPreferredCaptureRate:
+    """A device whose profile names a preferred rate captures there when
+    that rate is high enough, so its clock is not switched for a low fs
+    (a rate change restarts the iD44's mixer) and 8 kHz is an exact 6:1."""
+
+    def test_low_fs_captures_at_the_preferred_rate(self, id44):
+        fs, reason = streams.select_capture_fs(make_settings(fs=8000))
+        assert (fs, reason) == (48000.0, 'preferred')
+
+    def test_low_fs_with_the_low_pass_also_uses_it(self, id44):
+        fs, reason = streams.select_capture_fs(make_settings(fs=8000, lpf_on=True))
+        assert (fs, reason) == (48000.0, 'preferred')
+
+    def test_a_native_target_is_still_captured_exactly(self, id44):
+        assert streams.select_capture_fs(make_settings(fs=44100)) == (44100.0, 'exact')
+        assert streams.select_capture_fs(make_settings(fs=48000)) == (48000.0, 'exact')
+
+    def test_a_preferred_rate_too_low_for_the_target_is_passed_over(self, id44):
+        assert streams.select_capture_fs(make_settings(fs=50000)) == (88200.0, 'lowest-native')
+        # 2.56 x 30 kHz = 76.8 kHz: 48 kHz has no headroom
+        assert (streams.select_capture_fs(make_settings(fs=30000, lpf_on=True))
+                == (88200.0, 'oversample'))
+
+    def test_an_explicit_capture_rate_still_wins(self, id44):
+        s = make_settings(fs=8000, capture_fs=96000)
+        assert streams.select_capture_fs(s) == (96000.0, 'explicit')
+
+    def test_a_device_without_a_preferred_rate_is_unchanged(self, native, monkeypatch):
+        monkeypatch.setattr(streams, 'soundcard_device_name',
+                            lambda s: 'Scarlett 2i2 4th Gen')
+        assert (streams.select_capture_fs(make_settings(fs=8000))
+                == (44100.0, 'lowest-native'))
+
+    def test_the_log_message_says_why(self):
+        msg = acquisition._capture_rate_message('preferred', 48000.0, 8000.0)
+        assert '48000' in msg and '8000' in msg and 'preferred' in msg
+
+
 class TestCaptureFsSetting:
     def test_defaults_to_auto(self):
         assert make_settings(fs=3000).capture_fs is None
