@@ -191,6 +191,22 @@ export interface JournalState {
   captures: Uint8Array[];
   /** A PREVIOUS serve run's session, offered for crash recovery, or null. */
   recovered: Uint8Array | null;
+  /**
+   * When the server stored `doc`, in ms since the epoch; undefined when
+   * there is no doc or the serve predates write times. These times are what
+   * the boot restore compares with the IndexedDB autosave's
+   * (`files/restoreChoice.ts`).
+   */
+  docSavedAt?: number;
+  /** When each of `captures` was registered (ms), in the same order. */
+  capturesSavedAt?: number[];
+  /** When the recovered spill file was last written (ms). */
+  recoveredSavedAt?: number;
+}
+
+/** A wire time (python seconds since the epoch) in ms, or undefined. */
+function msFrom(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v * 1000 : undefined;
 }
 
 /**
@@ -234,17 +250,32 @@ export async function journalSet(doc: Uint8Array): Promise<void> {
 /**
  * Read the serve journal (`journal_get`): the stored document, any captures
  * born server-side since it was posted, and a previous run's recovered
- * session if one was adopted at serve start.
+ * session if one was adopted at serve start — each with its write time when
+ * the serve reports one.
  */
 export async function journalGet(): Promise<JournalState> {
   const res = await requireJournal().call<Record<string, unknown>>('journal_get');
   const captures = Array.isArray(res?.captures) ? res.captures : [];
+  const times = Array.isArray(res?.captures_saved_at) ? res.captures_saved_at : null;
+  // A malformed capture is dropped rather than surfacing as a null capture,
+  // and its time with it, so `capturesSavedAt[i]` stays `captures[i]`'s.
+  const kept: Uint8Array[] = [];
+  const keptTimes: number[] = [];
+  captures.forEach((c, i) => {
+    const b = asBytes(c);
+    if (b === null) return;
+    kept.push(b);
+    keptTimes.push(msFrom(times?.[i]) ?? NaN);
+  });
+  const doc = asBytes(res?.doc);
+  const recovered = asBytes(res?.recovered);
   return {
-    doc: asBytes(res?.doc),
-    // filter(Boolean) can't narrow, hence the explicit reduce-style walk: a
-    // malformed entry is dropped rather than surfacing as a null capture.
-    captures: captures.map(asBytes).filter((b): b is Uint8Array => b !== null),
-    recovered: asBytes(res?.recovered),
+    doc,
+    captures: kept,
+    recovered,
+    docSavedAt: doc ? msFrom(res?.doc_saved_at) : undefined,
+    capturesSavedAt: times ? keptTimes : undefined,
+    recoveredSavedAt: recovered ? msFrom(res?.recovered_saved_at) : undefined,
   };
 }
 

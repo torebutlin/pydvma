@@ -282,6 +282,11 @@ channel labels, any modal fit, and the analysis results you last saved
 with **Save Dataset**. Re-run anything else; with native analysis that is
 quick.
 
+The browser keeps its own autosave as well. When that copy is newer than
+the server's (the server's could not be updated, for example while the
+analysis engine was stopped), the app offers the browser's copy instead,
+as **Restore last session?**.
+
 ## Where the analysis runs
 
 Served locally, the app sends its calculations to the pydvma server

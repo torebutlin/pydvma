@@ -224,6 +224,36 @@ describe('session journal helpers (native-engine stage 3)', () => {
     await clearJournalClient();
   });
 
+  test('journalGet carries the server write times, in ms, aligned with the captures', async () => {
+    // Task 11: the boot restore compares these with the IndexedDB autosave's
+    // own timestamp (files/restoreChoice.ts). Seconds on the wire (python's
+    // time.time()), milliseconds here (Date.now()); a malformed capture is
+    // dropped together with its time so the two lists stay aligned.
+    await bootWithJournal({
+      doc: new Uint8Array([7]),
+      doc_saved_at: 1700000000.5,
+      captures: [new Uint8Array([8]), 'junk', new Uint8Array([9])],
+      captures_saved_at: [1700000001, 1700000002, 1700000003.25],
+      recovered: new Uint8Array([6]),
+      recovered_saved_at: 1690000000,
+    });
+    const state = await journalGet();
+    expect(state.docSavedAt).toBe(1700000000500);
+    expect(state.captures.map((c) => c[0])).toEqual([8, 9]);
+    expect(state.capturesSavedAt).toEqual([1700000001000, 1700000003250]);
+    expect(state.recoveredSavedAt).toBe(1690000000000);
+    await clearJournalClient();
+  });
+
+  test('journalGet from a serve that reports no times leaves them unknown', async () => {
+    await bootWithJournal({ doc: new Uint8Array([7]), captures: [new Uint8Array([8])], recovered: null });
+    const state = await journalGet();
+    expect(state.docSavedAt).toBeUndefined();
+    expect(state.capturesSavedAt).toBeUndefined();
+    expect(state.recoveredSavedAt).toBeUndefined();
+    await clearJournalClient();
+  });
+
   test('journalDiscardRecovered sends the discard op', async () => {
     const f = await bootWithJournal();
     await journalDiscardRecovered();

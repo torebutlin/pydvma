@@ -20,6 +20,9 @@
 //     one frame; a session past the guard keeps its local autosave and drops
 //     only the server copy, and says so ONCE (setJournalOverflowNotice).
 //
+// The IndexedDB write also records WHEN it was taken (autosaveSavedAt), so
+// the boot restore can offer this copy over a staler server one.
+//
 // The journal leg is also reachable on its own, via journalPost(): an
 // explicit Save materialises analysis into the document and must reach the
 // server WITHOUT waiting for (or racing) the debounce — see App.svelte's
@@ -31,10 +34,56 @@
 // file it wrote is not the whole session, so the autosave still holds
 // something the file does not.
 import { del as idbDelReal, get as idbGetReal, set as idbSetReal } from 'idb-keyval';
+import { ENGINE_FRAME_MAX_BYTES } from '../worker/frames';
 import type { WorkDir } from './workdir';
 
 /** IndexedDB key holding the last autosave bytes (download-mode fallback). */
 export const IDB_KEY = 'pydvma:autosave';
+
+/**
+ * localStorage key holding WHEN the IndexedDB autosave was taken (ms since
+ * the epoch, as text). The boot-time restore compares it with the serve
+ * journal's own write times (`files/restoreChoice.ts`) and offers this copy
+ * when it is the newer one. Kept beside the bytes rather than inside them so
+ * the IndexedDB value stays the plain `.dvma` bytes every app version reads.
+ */
+export const IDB_SAVED_AT_KEY = 'pydvma:autosave:savedAt';
+
+type StampStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
+/** The page's localStorage, or null where it is absent or blocked. */
+function defaultStampStorage(): StampStorage | null {
+  return globalThis.localStorage ?? null;
+}
+let stampStorage: () => StampStorage | null = defaultStampStorage;
+
+/** TEST-ONLY: swap the timestamp's storage (an accessor, may throw). */
+export function __setStampStorage(next: () => StampStorage | null): void {
+  stampStorage = next;
+}
+
+/** Run `fn` on the timestamp storage; absent or blocked storage is a no-op. */
+function withStamps<T>(fn: (s: StampStorage) => T): T | null {
+  try {
+    const s = stampStorage();
+    return s ? fn(s) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * When the IndexedDB autosave was taken (ms since the epoch), or null when
+ * unknown: nothing saved, an autosave written by an app that predates the
+ * timestamp, or storage that is blocked. The time is when that autosave
+ * STARTED, i.e. before its journal post, so a copy written in the same
+ * autosave as the journal's document never reads as newer than it.
+ */
+export function autosaveSavedAt(): number | null {
+  const v = withStamps((s) => s.getItem(IDB_SAVED_AT_KEY));
+  const n = v == null ? NaN : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 
 /** Filename used for the in-folder autosave when an fsaccess dir is set. */
 const AUTOSAVE_NAME = 'autosave.dvma';
@@ -78,23 +127,28 @@ let journalSink: JournalSink | null = null;
 
 /**
  * Largest document the journal sink will post. The whole session goes over
- * /engine in ONE websocket frame, and `pydvma-serve` caps an inbound frame at
- * 256 MiB (`max_size` in serve.py's `run()`); an over-cap frame does not fail
- * politely — the server closes the socket with 1009, the app reports "engine
- * connection lost", re-boots, and the next autosave (still over cap) kills it
- * again, forever. So this guard sits comfortably BELOW that cap — the margin
- * covers the frame's own header/envelope and any future growth of serve's
- * per-frame overhead — and a session past it simply stops using the sink:
- * local autosave (folder / IndexedDB) is unaffected, and nothing is lost that
- * an explicit Save would not also have to write.
+ * /engine in ONE websocket frame, and `pydvma-serve` caps an inbound /engine
+ * frame at 4 GiB (`ENGINE_MAX_MESSAGE_BYTES` in serve.py, mirrored as
+ * `ENGINE_FRAME_MAX_BYTES`). An over-cap frame does not fail politely — the
+ * server closes the socket with 1009, the app reports "engine connection
+ * lost", re-boots, and the next autosave (still over cap) kills it again,
+ * forever. So this guard sits BELOW that cap — the 64 MiB margin covers the
+ * frame's own header/envelope — and a session past it simply stops using the
+ * sink: local autosave (folder / IndexedDB) is unaffected, and the boot
+ * restore then offers the newer IndexedDB copy instead of the stale server
+ * one (`files/restoreChoice.ts`).
+ *
+ * It was 192 MiB under the old shared 256 MiB serve cap, which a 4-channel
+ * recording passed at about 105 s: the server copy of the session then went
+ * stale from the first long capture on (Task 11).
  */
-export const JOURNAL_SINK_MAX_BYTES = 192 * 1024 * 1024;
+export const JOURNAL_SINK_MAX_BYTES = ENGINE_FRAME_MAX_BYTES - 64 * 1024 * 1024;
 
 let journalSinkMaxBytes = JOURNAL_SINK_MAX_BYTES;
 
 /**
  * TEST-ONLY: shrink (or restore) the sink's size guard, so the over-limit
- * branch can be exercised without allocating 192 MB. Not used by the app —
+ * branch can be exercised without allocating 4 GB. Not used by the app —
  * same escape hatch as `__setIdb`.
  */
 export function __setJournalSinkMaxBytes(next: number): void {
@@ -125,9 +179,10 @@ let overflowNotified = false;
  * meant the ENTIRE server-side session surface (tab-close restore, crash
  * recovery, `session.data` in a notebook) silently stopped tracking the
  * session while the app carried on looking healthy. That was tolerable while
- * only a pathological session could reach 192 MiB; including sonograms on
- * Save makes it ordinary — one all-channel sonogram of a 30 s × 51.2 kHz ×
- * 4 ch record is ~139 MB, so two measurements cross it.
+ * only a pathological session could reach the guard; under the old 192 MiB
+ * guard sonograms on Save made it ordinary (one all-channel sonogram of a
+ * 30 s × 51.2 kHz × 4 ch record is ~139 MB), and a 4-channel recording
+ * reached it on its own at about 105 s.
  *
  * ONE-SHOT: fired at most once per session, because the condition repeats on
  * every autosave and a toast per autosave would be its own bug. It is
@@ -248,14 +303,18 @@ export function cancelAutosave(): void {
  * when registered and within `JOURNAL_SINK_MAX_BYTES`, fan out a copy to the
  * journal sink too. An over-size session degrades to local-only autosave with
  * one console warning, rather than repeatedly closing the /engine socket.
+ * A successful IndexedDB write also records when this autosave started
+ * (`autosaveSavedAt`), taken BEFORE the journal post.
  */
 async function persist(bytes: Uint8Array, dir: WorkDir | null): Promise<void> {
+  const startedAt = Date.now();
   journalPost(bytes);          // size-guarded, failure-tolerant; see its doc
   try {
     if (dir && dir.kind === 'fsaccess') {
       await dir.save(AUTOSAVE_NAME, bytes);
     } else {
       await idb.set(IDB_KEY, bytes);
+      withStamps((s) => s.setItem(IDB_SAVED_AT_KEY, String(startedAt)));
     }
   } catch (e) {
     // Autosave is best-effort: never surface a failure to the user flow.
@@ -285,5 +344,6 @@ export async function restoreOffer(): Promise<Uint8Array | null> {
  * does not and must survive.
  */
 export async function clearAutosave(): Promise<void> {
+  withStamps((s) => s.removeItem(IDB_SAVED_AT_KEY));
   await idb.del(IDB_KEY);
 }

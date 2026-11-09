@@ -24,6 +24,16 @@
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
+/**
+ * The largest frame `pydvma-serve` accepts on `/engine`: serve.py's
+ * `ENGINE_MAX_MESSAGE_BYTES` (4 GiB), the largest document this app can build
+ * at all (fflate writes no zip64). Over it the server closes the socket with
+ * 1009, which takes every other in-flight call down too, so the socket client
+ * refuses such a request itself before sending (`socketClient.ts`). `/ws`
+ * keeps its own smaller cap.
+ */
+export const ENGINE_FRAME_MAX_BYTES = 4 * 1024 ** 3;
+
 /** A lifted-binary-value placeholder in the decoded (or about-to-be-encoded) header tree. */
 interface BinPlaceholder {
   __bin__: number;

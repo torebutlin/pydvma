@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { zipSync } from 'fflate';
-import { readDvma, writeDvma } from '../../src/lib/codec/dvma';
+import { LARGE_MEMBER_BYTES, readDvma, writeDvma } from '../../src/lib/codec/dvma';
+import { serializeNpy } from '../../src/lib/codec/npy';
 import { itemChannels, setItemMeta, type DvmaItem, type DvmaItemUi } from '../../src/lib/model/dataset';
 
 const bytes = new Uint8Array(readFileSync('tests/fixtures/impulse.dvma'));
@@ -283,4 +284,95 @@ test('channel_calibration meta (provenance, with null entries) survives write/re
   const td2 = readDvma(writeDvma(ds)).items.find(i => i.kind === 'TimeData')!;
   expect(td2.metaRaw!.channel_calibration).toEqual(cc);
   expect(td2.meta.channel_calibration).toEqual(cc);
+});
+
+/** Compression method of every member, read from the zip's central directory. */
+function zipMethods(zip: Uint8Array): Record<string, number> {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  let eocd = zip.length - 22;                       // no archive comment here
+  while (eocd >= 0 && view.getUint32(eocd, true) !== 0x06054b50) eocd--;
+  const count = view.getUint16(eocd + 10, true);
+  let p = view.getUint32(eocd + 16, true);
+  const out: Record<string, number> = {};
+  for (let i = 0; i < count; i++) {
+    expect(view.getUint32(p, true)).toBe(0x02014b50);
+    const method = view.getUint16(p + 10, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    out[new TextDecoder().decode(zip.subarray(p + 46, p + 46 + nameLen))] = method;
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
+test('a member over 16 MiB is written stored (level 0) and round-trips; small ones stay deflated', () => {
+  // Long recordings (Task 11): deflating a several-hundred-MB float64 member
+  // gains a few percent on real noise and freezes the main thread for
+  // seconds, so members over 16 MiB go in uncompressed. Both readers
+  // (fflate unzipSync, python's zipfile) read either method.
+  const ds = readDvma(bytes);
+  const n = (20 * 1024 * 1024) / 8;                 // 20 MiB of float64
+  const data = new Float64Array(n);
+  for (let i = 0; i < n; i++) data[i] = Math.sin(i * 0.001) + i * 1e-9;
+  const axis = new Float64Array(n);
+  for (let i = 0; i < n; i++) axis[i] = i / 48000;
+  const big: DvmaItem = {
+    kind: 'TimeData',
+    arrays: {
+      time_axis: { shape: [n], isComplex: false, data: axis },
+      time_data: { shape: [n, 1], isComplex: false, data },
+    },
+    meta: { test_name: 'long' }, settings: { fs: 48000, channels: 1 },
+  };
+  ds.items.push(big);
+  const out = writeDvma(ds);
+  const methods = zipMethods(out);
+  const idx = String(ds.items.length - 1).padStart(4, '0');
+  expect(methods[`arrays/${idx}_time_data.npy`]).toBe(0);    // stored
+  expect(methods[`arrays/${idx}_time_axis.npy`]).toBe(0);
+  expect(methods['manifest.json']).toBe(8);                   // deflated
+  expect(methods['arrays/0000_time_data.npy']).toBe(8);       // the fixture's small arrays
+  const back = readDvma(out).items[ds.items.length - 1];
+  expect(back.arrays.time_data.shape).toEqual([n, 1]);
+  const got = back.arrays.time_data.data as Float64Array;
+  let same = got.length === n;
+  for (let i = 0; same && i < n; i++) same = got[i] === data[i];
+  expect(same).toBe(true);
+  expect((back.arrays.time_axis.data as Float64Array)[n - 1]).toBe(axis[n - 1]);
+});
+
+test('a container whose large member is deflated (older writers) still reads', () => {
+  // Every .dvma written before Task 11 deflates every member, however big.
+  const n = (17 * 1024 * 1024) / 8;
+  const data = new Float64Array(n).map((_, i) => i % 7);
+  const manifest = {
+    format: 'dvma-dataset', format_version: 1, pydvma_version: '2.8.4', storage: 'npy',
+    items: [{ kind: 'TimeData', arrays: { time_axis: 'arrays/0000_time_axis.npy', time_data: 'arrays/0000_time_data.npy' }, meta: {}, settings: null }],
+  };
+  const zip = zipSync({
+    'arrays/0000_time_axis.npy': serializeNpy({ shape: [n], isComplex: false, data }),
+    'arrays/0000_time_data.npy': serializeNpy({ shape: [n, 1], isComplex: false, data }),
+    'manifest.json': new TextEncoder().encode(JSON.stringify(manifest)),
+  }, { level: 6 });
+  expect(zipMethods(zip)['arrays/0000_time_data.npy']).toBe(8);
+  const td = readDvma(zip).items[0];
+  expect((td.arrays.time_data.data as Float64Array)[n - 1]).toBe((n - 1) % 7);
+});
+
+test('the stored threshold is on the member size, as in python', () => {
+  // A 1-D float64 member exactly LARGE_MEMBER_BYTES long (npy header
+  // included) stays deflated; one element more and it is stored.
+  expect(LARGE_MEMBER_BYTES).toBe(16 * 1024 * 1024);
+  const probe = 2097136;
+  const header = serializeNpy({ shape: [probe], isComplex: false, data: new Float64Array(probe) }).length - probe * 8;
+  const nAt = (LARGE_MEMBER_BYTES - header) / 8;
+  expect(Number.isInteger(nAt)).toBe(true);
+  for (const [n, method] of [[nAt, 8], [nAt + 1, 0]] as const) {
+    const ds = { formatVersion: 1, pydvmaVersion: '', items: [{
+      kind: 'MetaData' as const, meta: {}, settings: null,
+      arrays: { x: { shape: [n], isComplex: false, data: new Float64Array(n) } },
+    }] };
+    expect(zipMethods(writeDvma(ds))['arrays/0000_x.npy']).toBe(method);
+  }
 });

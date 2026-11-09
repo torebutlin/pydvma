@@ -4,8 +4,10 @@
 // the wire protocol (frames.ts binary frames + JSON control messages)
 // instead of raw postMessage.
 import { describe, expect, test, vi } from 'vitest';
-import { createSocketEngineClient, type EngineWsLike } from '../../src/lib/worker/socketClient';
-import { encodeFrame, decodeFrame } from '../../src/lib/worker/frames';
+import {
+  createSocketEngineClient, __setEngineFrameMaxBytes, type EngineWsLike,
+} from '../../src/lib/worker/socketClient';
+import { encodeFrame, decodeFrame, ENGINE_FRAME_MAX_BYTES } from '../../src/lib/worker/frames';
 
 /**
  * Fake WebSocket: records sends and lets the test drive
@@ -588,5 +590,28 @@ describe('createSocketEngineClient', () => {
     await expect(initP).resolves.toBeUndefined();
 
     warn.mockRestore();
+  });
+});
+
+describe('the /engine frame ceiling (Task 11)', () => {
+  test('matches serve.py ENGINE_MAX_MESSAGE_BYTES: 4 GiB', () => {
+    expect(ENGINE_FRAME_MAX_BYTES).toBe(4 * 1024 ** 3);
+  });
+
+  test('an over-cap request is refused HERE, nothing is sent, and the socket lives on', async () => {
+    // Sent anyway, serve would close the socket with 1009 and take every
+    // other in-flight calc down with it; refused here, only this call fails.
+    __setEngineFrameMaxBytes(256);
+    try {
+      const { f, client } = await connected();
+      const big = client.call('journal_set', { doc: new Uint8Array(512) });
+      await expect(big).rejects.toThrow(/too large for the native engine/);
+      expect(f.sent).toHaveLength(0);
+      const small = client.call<number>('calc_a', { fs: 1 });
+      f.reply(encodeFrame({ id: sentId(f, 0), ok: true, result: 7 }));
+      await expect(small).resolves.toBe(7);
+    } finally {
+      __setEngineFrameMaxBytes(ENGINE_FRAME_MAX_BYTES);
+    }
   });
 });

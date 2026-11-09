@@ -14,6 +14,32 @@ follows [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **Long recordings work through `pydvma-serve` and `dvma.launch`.** A
+  recording of a few minutes (4 channels for more than about 2 minutes at
+  48 kHz, or 2 channels for about 4) used to break several things at once.
+  Every calculation on it (FFT, PSD, TF, sonogram) failed with "native
+  engine connection closed", and so did saving it to the working folder:
+  the server refused any message over 256 MB from the app and closed the
+  connection, taking any other running calculation with it. The server's
+  copy of the session never got the recording, and a capture bigger than
+  256 MB was dropped from it silently on arrival, so a tab closed straight
+  after such a recording could not get it back from the server; and on
+  reopening, the app offered the server's older copy rather than the
+  browser's own, newer autosave. Now the analysis connection takes
+  messages up to 4 GB (the acquisition connection keeps its 256 MB limit),
+  the server keeps the newest capture whatever its size and logs a warning
+  if it ever has to drop an older one, and the app offers whichever copy
+  of the session was saved last. Large transfers are also much faster:
+  the server no longer compresses its websocket messages (a 200 MB message
+  took 4.6 s to compress and stalled the live scope meanwhile; 0.1 s now),
+  and the parts of a `.dvma` file bigger than 16 MB are stored
+  uncompressed, so an autosave of a 5 minute, 4 channel session takes about
+  1 s instead of about 15 s, during which the app froze. Such files are
+  larger, about twice the size for a real recording (576 MB rather than
+  282 MB for 5 minutes of 4 channels); files saved before this change
+  load as they always did. The sonogram computes only the channel it
+  shows, which makes it several times faster and smaller on a
+  many-channel recording.
 - **In Safari, the web app's results turned to garbage after loading a
   large file.** Loading the 4C6 beam data (24 sets with a 6-mode fit)
   into the browser app in Safari 27.2 gave fit lines at 10⁹ Hz and a

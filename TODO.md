@@ -13,6 +13,54 @@ is still open, as one consolidated list.
 
 ## Backlog — web logger & analysis
 
+### Long-recording follow-ups (2026-11-06, iD44 Task 11)
+
+Measured with `dev/long_capture_check.py`; numbers in
+`dev/2026-11-06-id44-bench.md` ("Long recordings"). The fixes landed for
+the wire caps, the journal, the restore choice, websocket compression,
+stored `.dvma` members and idle buffers; these were measured or traced and
+left, as each is a redesign rather than a fix:
+
+- **The browser holds everything as float64, in several copies.** A
+  bridged capture lands as one Float64Array (now parsed once, no extra
+  copy), but `recordingToItem` copies the time axis, every calc op's
+  `timePayload` copies axis + data (`Float64Array.from`) and `encodeFrame`
+  copies them again, and the time view's `column()` (plot/model.ts)
+  allocates a fresh per-channel copy on every model rebuild. For 4 ch x
+  5 min that is ~0.6 GB per copy. Not measured in a real browser (the
+  harness is headless); a run of the served app at that size is the next
+  check. Options: share the store's arrays on the socket path (the copy
+  exists for the pyodide worker's transfer), memoise `column()`, store
+  float32 (a format change).
+- **The default PSD on a long record returns an Nc x Nc x Nf coherence
+  matrix.** 10 half-overlapped frames over 150 s are 27 s long (Δf
+  0.037 Hz, 654 546 bins): 382 MB back for 8 ch, worker peak 5.1 GB. Cxy
+  grows as Nc² x duration, so 20 ch x 5 min would return ~4.2 GB of it
+  alone. A long record wants a Δf-intent default (seconds per frame) or
+  Cxy on demand (the CSD pair only).
+- **`.dvma` stores the time axis as a full float64 array** (115 MB per
+  5 min at 48 kHz, whatever the channel count). `(t0, fs)` would do, but
+  it is a format change.
+- **Stored members trade size for speed.** Members over 16 MiB are no
+  longer deflated: a 5 min, 4 ch save is 576 MB where deflate gave 282 MB
+  for soundcard-like noise (float32 samples widened to float64 deflate to
+  ~50 %), but deflate took 27-29 s in Python and 14.5 s on the browser's
+  main thread per autosave. If file size matters, deflate level 1 in a
+  worker, or float32 storage, would get most of it back.
+- **websockets keeps the last inbound frame of a connection** until the
+  next one parses (its parser's local): up to one capture-sized buffer per
+  idle `/engine` connection, released by the next ping/pong (20 s).
+- **On macOS an idle serve still shows GBs after a long recording**
+  (footprint 1.1 -> 3.5 GB over the 8 ch x 150 s harness run). That is
+  libmalloc keeping freed large blocks for reuse, which footprint counts:
+  tracemalloc in the serve process shows no growth across repeated
+  calc/journal/file ops (live: the journal's document, the recorder's
+  buffers and websockets' last frame). Windows and glibc hand large blocks
+  back on free. Only worth acting on if a Mac lab session runs short of
+  memory (`malloc_zone_pressure_relief` after a large op).
+- **`container._read_array` reads a member whole, then `np.load` copies
+  it** (2x transient on load); `zf.open` streaming would halve it.
+
 ### Working folder / fit-line follow-ups (2026-10-22)
 
 - **`/ws` and `/engine` accept any Origin.** The working-folder file ops

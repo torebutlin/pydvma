@@ -5,14 +5,17 @@ import {
   clearAutosave,
   journalPost,
   restoreOffer,
+  autosaveSavedAt,
   setJournalOverflowNotice,
   setJournalSink,
   JOURNAL_SINK_MAX_BYTES,
   __setIdb,
   __setJournalSinkMaxBytes,
   __resetJournalOverflowNotice,
+  __setStampStorage,
 } from '../../src/lib/files/autosave';
 import type { WorkDir } from '../../src/lib/files/workdir';
+import { ENGINE_FRAME_MAX_BYTES } from '../../src/lib/worker/frames';
 
 /** A fake in-memory idb so restoreOffer/clearAutosave are deterministic. */
 function makeFakeIdb() {
@@ -35,12 +38,26 @@ function fakeFsDir(): WorkDir & { save: ReturnType<typeof vi.fn> } {
   } as WorkDir & { save: ReturnType<typeof vi.fn> };
 }
 
+/** A fake localStorage (the autosave's timestamp lives there). */
+function makeFakeStorage() {
+  const map = new Map<string, string>();
+  return {
+    map,
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => void map.set(k, v),
+    removeItem: (k: string) => void map.delete(k),
+  };
+}
+
 let idb: ReturnType<typeof makeFakeIdb>;
+let stamps: ReturnType<typeof makeFakeStorage>;
 
 beforeEach(() => {
   vi.useFakeTimers();
   idb = makeFakeIdb();
   __setIdb(idb);
+  stamps = makeFakeStorage();
+  __setStampStorage(() => stamps);
 });
 
 afterEach(() => {
@@ -207,11 +224,11 @@ describe('journal sink', () => {
   });
 
   test('an over-limit session skips the sink but still autosaves locally', async () => {
-    // serve caps an inbound /engine frame at 256 MiB and CLOSES the socket
+    // serve caps an inbound /engine frame (4 GiB) and CLOSES the socket
     // (1009) on anything bigger — which the app reports as "engine connection
     // lost", re-boots, and hits again on the next autosave. So an over-limit
     // document must never be posted. Limit shrunk for the test; the real one
-    // is 192 MiB and cannot be allocated here.
+    // is just under 4 GiB and cannot be allocated here.
     __setJournalSinkMaxBytes(8);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const posted: Uint8Array[] = [];
@@ -237,9 +254,13 @@ describe('journal sink', () => {
     expect(posted).toHaveLength(1);
   });
 
-  test('the default limit sits under serve’s 256 MiB frame cap', () => {
-    expect(JOURNAL_SINK_MAX_BYTES).toBe(192 * 1024 * 1024);
-    expect(JOURNAL_SINK_MAX_BYTES).toBeLessThan(256 * 1024 * 1024);
+  test('the default limit sits 64 MiB under serve’s 4 GiB /engine frame cap', () => {
+    // Task 11: it was 192 MiB under a shared 256 MiB cap, which a 4-channel
+    // recording passed at ~105 s; /engine now has its own ceiling.
+    expect(ENGINE_FRAME_MAX_BYTES).toBe(4 * 1024 ** 3);
+    expect(JOURNAL_SINK_MAX_BYTES).toBe(ENGINE_FRAME_MAX_BYTES - 64 * 1024 * 1024);
+    // A 4 ch x 5 min x 48 kHz session (~0.58 GB stored) posts.
+    expect(JOURNAL_SINK_MAX_BYTES).toBeGreaterThan(600e6);
   });
 
   test('a cancelled or disabled autosave never reaches the sink', async () => {
@@ -340,5 +361,61 @@ describe('journalPost — the explicit-Save journal seam', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('autosave timestamp (Task 11)', () => {
+  // The boot-time restore compares this with the serve journal's document
+  // time (files/restoreChoice.ts), so it is taken when the write STARTS --
+  // before the journal post -- and a copy written in the same autosave as
+  // the journal's document never looks newer than it.
+  test('an IndexedDB autosave records when it was taken', async () => {
+    vi.setSystemTime(1_000_000);
+    expect(autosaveSavedAt()).toBeNull();
+    autosave(() => new Uint8Array([1]), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(autosaveSavedAt()).toBe(1_002_000);
+  });
+
+  test('a failed IndexedDB write keeps the previous timestamp', async () => {
+    vi.setSystemTime(1_000_000);
+    autosave(() => new Uint8Array([1]), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    idb.set.mockImplementationOnce(async () => { throw new Error('quota'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    autosave(() => new Uint8Array([2]), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(autosaveSavedAt()).toBe(1_002_000);
+    warn.mockRestore();
+  });
+
+  test('a folder autosave leaves the IndexedDB timestamp alone', async () => {
+    autosave(() => new Uint8Array([1]), fakeFsDir(), true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(autosaveSavedAt()).toBeNull();
+  });
+
+  test('clearAutosave forgets the timestamp with the bytes', async () => {
+    autosave(() => new Uint8Array([1]), null, true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(autosaveSavedAt()).not.toBeNull();
+    await clearAutosave();
+    expect(autosaveSavedAt()).toBeNull();
+  });
+
+  test('a missing, blocked or corrupt storage reads as no timestamp and never throws', async () => {
+    stamps.map.set('pydvma:autosave:savedAt', 'not a number');
+    expect(autosaveSavedAt()).toBeNull();
+    for (const accessor of [
+      () => null,
+      () => { throw new Error('SecurityError: storage is blocked'); },
+    ]) {
+      __setStampStorage(accessor);
+      autosave(() => new Uint8Array([1]), null, true);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(idb.store.get('pydvma:autosave')).toEqual(new Uint8Array([1]));
+      expect(autosaveSavedAt()).toBeNull();
+      await clearAutosave();
+    }
   });
 });

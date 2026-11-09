@@ -6,7 +6,7 @@
 // greeting; restart() closes the socket (the server treats close as
 // cancel-and-kill of the in-flight op) and the store's re-boot reconnects.
 import type { EngineCallEvents, EngineClient } from './client';
-import { decodeFrame, encodeFrame } from './frames';
+import { decodeFrame, encodeFrame, ENGINE_FRAME_MAX_BYTES } from './frames';
 
 /**
  * The WebSocket slice this client depends on. Structurally identical to
@@ -68,6 +68,17 @@ const DEFAULT_GREETING_TIMEOUT_MS = 5000;
 const SUPPORTED_ENGINE_PROTOCOL_VERSION = 1;
 
 interface Pending { op: string; resolve: (v: any) => void; reject: (e: any) => void }
+
+/** Largest request frame `call` sends (see {@link ENGINE_FRAME_MAX_BYTES}). */
+let frameMaxBytes = ENGINE_FRAME_MAX_BYTES;
+
+/**
+ * TEST-ONLY: shrink (or restore) the request-frame ceiling, so the refusal
+ * can be exercised without allocating 4 GiB. Not used by the app.
+ */
+export function __setEngineFrameMaxBytes(next: number): void {
+  frameMaxBytes = next;
+}
 
 /**
  * `EngineClient` plus the extras the socket transport carries that a Worker
@@ -449,6 +460,17 @@ export function createSocketEngineClient(
           // executor rejects it).
           finish(id);
           throw e;
+        }
+        if (frame.byteLength > frameMaxBytes) {
+          // Sent, serve would close the socket with 1009 and every other
+          // in-flight call would fail with it ("native engine connection
+          // closed"); refused here, only this call fails, and says why.
+          finish(id);
+          const mb = (n: number) => Math.round(n / (1024 * 1024));
+          throw new Error(
+            `${op}: request too large for the native engine `
+              + `(${mb(frame.byteLength)} MB > ${mb(frameMaxBytes)} MB)`,
+          );
         }
         sock.send(frame);
       });

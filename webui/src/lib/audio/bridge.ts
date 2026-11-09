@@ -25,6 +25,7 @@
  * There is no auto-reconnect (lab-local single-user stance).
  */
 import { readDvma } from '../codec/dvma';
+import type { DvmaDataset } from '../model/dataset';
 import { fitToChannels } from '../model/channelGain';
 import {
   BARE_ARM_PRETRIG_SAMPLES,
@@ -179,8 +180,14 @@ function parseDeviceId(deviceId?: string): { driver: string; index: number } | n
   return { driver, index: Number.isFinite(index) ? index : 0 };
 }
 
-/** Widen any supported numeric array to a fresh Float64Array copy. */
+/**
+ * A Float64Array view of a parsed array: the array itself when it already is
+ * one (`parseNpy` hands back a fresh buffer nobody else holds), else a
+ * widened copy. A 5 minute capture's arrays are hundreds of MB, so the copy
+ * the float64 case used to make cost a full extra recording of memory.
+ */
 function toFloat64(a: Float64Array | Float32Array | Uint8Array): Float64Array {
+  if (a instanceof Float64Array) return a;
   const out = new Float64Array(a.length);
   out.set(a);
   return out;
@@ -194,7 +201,15 @@ function toFloat64(a: Float64Array | Float32Array | Uint8Array): Float64Array {
  * axis when absent.
  */
 export function recordingFromDvma(bytes: Uint8Array): Recording {
-  const ds = readDvma(bytes);
+  return recordingFromDataset(readDvma(bytes));
+}
+
+/**
+ * {@link recordingFromDvma} on an already-parsed container, so a capture is
+ * unzipped once for both its samples and its {@link recordingMetaFromDataset}
+ * metadata (each used to unzip the whole container).
+ */
+export function recordingFromDataset(ds: DvmaDataset): Recording {
   const item = ds.items.find((it) => it.kind === 'TimeData');
   if (!item) throw new Error('bridge .dvma has no TimeData item');
   const td = item.arrays.time_data;
@@ -226,7 +241,11 @@ export function recordingFromDvma(bytes: Uint8Array): Recording {
  * re-emitted as the `{__uuid__}` python wrote (see `BridgeRecordingMeta`).
  */
 export function recordingMetaFromDvma(bytes: Uint8Array): BridgeRecordingMeta | null {
-  const ds = readDvma(bytes);
+  return recordingMetaFromDataset(readDvma(bytes));
+}
+
+/** {@link recordingMetaFromDvma} on an already-parsed container. */
+export function recordingMetaFromDataset(ds: DvmaDataset): BridgeRecordingMeta | null {
   const item = ds.items.find((it) => it.kind === 'TimeData');
   if (!item) return null;
   const meta = item.meta ?? {};
@@ -505,7 +524,10 @@ export class BridgeProvider implements SourceProvider {
         fs: header.fs,
       });
     } else if (header.msgType === MSG_CONTAINER) {
-      const body = bytes.slice(HEADER_SIZE);
+      // A view, not a copy: the zip reader needs no alignment, and this
+      // frame's buffer is ours alone (a long capture's container is
+      // hundreds of MB).
+      const body = bytes.subarray(HEADER_SIZE);
       if (this.pendingContainer) {
         const pc = this.pendingContainer;
         this.pendingContainer = null;
@@ -952,8 +974,9 @@ export class BridgeProvider implements SourceProvider {
         }
         this.pendingContainer = { resolve, reject };
       });
-      this.lastRecordingMeta = recordingMetaFromDvma(bytes);
-      return recordingFromDvma(bytes);
+      const ds = readDvma(bytes);              // one unzip for both
+      this.lastRecordingMeta = recordingMetaFromDataset(ds);
+      return recordingFromDataset(ds);
     })();
     // Whatever the outcome, the clock belongs to no capture afterwards.
     void promise.catch(() => {}).then(() => {

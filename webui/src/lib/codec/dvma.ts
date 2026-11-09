@@ -2,12 +2,24 @@
 // members, mirroring pydvma/container.py (format 'dvma-dataset',
 // format_version 1). The manifest schema, not any class layout, is the
 // contract; python's container.load must accept everything writeDvma emits.
-import { unzipSync, zipSync } from 'fflate';
+import { unzipSync, zipSync, type Zippable } from 'fflate';
 import { parseNpy, serializeNpy, type NpyArray } from './npy';
 import type { DataKind, DvmaDataset, DvmaItem, DvmaItemUi } from '../model/dataset';
 
 const FORMAT_NAME = 'dvma-dataset';
 const FORMAT_VERSION = 1;
+
+/**
+ * Array members whose `.npy` bytes exceed this are written STORED (level 0)
+ * instead of deflated — the twin of python's `container.LARGE_MEMBER_BYTES`,
+ * on the same measure (the serialised member's length). Deflating a long
+ * recording's float64 arrays runs synchronously on the main thread for
+ * seconds per hundred megabytes and gains a few percent on measured data.
+ * Readers need nothing: every zip member says how it is stored, and both
+ * `unzipSync` and python's `zipfile` read either method, so files from
+ * older writers (deflated throughout) read as they always did.
+ */
+export const LARGE_MEMBER_BYTES = 16 * 1024 * 1024;
 
 // The seven kinds container.py knows (_KIND_CLASSES). An unknown kind
 // means the file was written by a newer pydvma — refuse rather than
@@ -131,7 +143,9 @@ export function readDvma(bytes: Uint8Array): DvmaDataset {
  * Serialize a DvmaDataset back to .dvma container bytes.
  *
  * Member naming matches container.save: one running index per ITEM
- * (arrays/0007_time_axis.npy), zero-padded to 4 digits. Metadata is
+ * (arrays/0007_time_axis.npy), zero-padded to 4 digits. Members are
+ * deflated (level 6), except an array member over `LARGE_MEMBER_BYTES`,
+ * which is stored uncompressed, as python's writer does. Metadata is
  * written from `metaRaw` when present (lossless: original tags kept
  * verbatim), falling back to the decoded `meta` for items authored in
  * JS — plain strings/numbers/lists, which python's _decode_value
@@ -145,7 +159,7 @@ export function readDvma(bytes: Uint8Array): DvmaDataset {
  * later, e.g. via setItemMeta.)
  */
 export function writeDvma(ds: DvmaDataset): Uint8Array {
-  const files: Record<string, Uint8Array> = {};
+  const files: Zippable = {};
   const manifest = {
     format: FORMAT_NAME, format_version: FORMAT_VERSION,
     pydvma_version: ds.pydvmaVersion, storage: 'npy',
@@ -155,7 +169,9 @@ export function writeDvma(ds: DvmaDataset): Uint8Array {
     const arrays: Record<string, string> = {};
     for (const [field, arr] of Object.entries(item.arrays)) {
       const member = `arrays/${String(index).padStart(4, '0')}_${field}.npy`;
-      files[member] = serializeNpy(arr);
+      const npy = serializeNpy(arr);
+      // Over LARGE_MEMBER_BYTES: stored, not deflated (see the constant).
+      files[member] = npy.length > LARGE_MEMBER_BYTES ? [npy, { level: 0 }] : npy;
       arrays[field] = member;
     }
     const meta = item.metaRaw ?? item.meta;

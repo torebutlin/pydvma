@@ -66,9 +66,10 @@
   import { sniffFormat } from './lib/files/sniff';
   import { fallbackDir, pickWorkDir, restoreWorkDir, serverDir, type WorkDir } from './lib/files/workdir';
   import {
-    autosave, clearAutosave, journalPost, restoreOffer,
+    autosave, autosaveSavedAt, clearAutosave, journalPost, restoreOffer,
     setJournalOverflowNotice, setJournalSink,
   } from './lib/files/autosave';
+  import { chooseRestore } from './lib/files/restoreChoice';
   import type { DvmaDataset } from './lib/model/dataset';
   import { createAcquireStore } from './lib/stores/acquire';
   import { createMonitorStore } from './lib/stores/monitor';
@@ -654,11 +655,10 @@
   }
 
   /**
-   * Boot-time restore from the pydvma-serve SESSION JOURNAL (stage 3).
-   * Returns true when it raised an offer — the signal for `bootFileRestore`
-   * to skip the IndexedDB one, because the server document wins whenever
-   * both exist (it receives the same debounced autosaves AND every capture
-   * at birth, so it is always ≥ the browser copy).
+   * Read the pydvma-serve SESSION JOURNAL (stage 3) for the boot-time
+   * restore, or null when there is no journal to ask. `bootFileRestore`
+   * then decides, by write time, whether to offer it or the IndexedDB
+   * autosave (`files/restoreChoice.ts`).
    *
    * Sequencing, in two gates, because the journal lives on the native engine
    * and the shell boots the engine LAZILY (nothing has computed yet here):
@@ -676,60 +676,60 @@
    *     socket, so `journalGet` below can go straight out.
    *
    * Every failure path — not native, resolved to something else, no journal
-   * capability, a rejected read — returns false and leaves today's IndexedDB
+   * capability, a rejected read — returns null and leaves today's IndexedDB
    * flow untouched.
    */
-  async function offerJournalRestore(): Promise<boolean> {
+  async function readJournalForRestore(): Promise<JournalState | null> {
     // The engine probe owns its own store and boots it (see
     // `engineProbeRequested`) — never double-boot alongside it.
-    if (engineProbeRequested) return false;
-    if (!(await willUseNativeEngine())) return false;
+    if (engineProbeRequested) return null;
+    if (!(await willUseNativeEngine())) return null;
     engine.boot();                    // idempotent; resolves the native client
-    if (await engine.whenResolved() !== 'native') return false;
-    if (!journalAvailable()) return false;   // a serve predating the journal
-    let state: JournalState;
+    if (await engine.whenResolved() !== 'native') return null;
+    if (!journalAvailable()) return null;   // a serve predating the journal
     try {
-      state = await journalGet();
+      return await journalGet();
     } catch (e) {
       console.warn('[journal] read failed:', e);
-      return false;
+      return null;
     }
-    if (state.doc || state.captures.length) {
-      const { doc, captures } = state;
-      toasts.push('Restore session from pydvma-serve?', {
-        level: 'info',
-        closable: false,                // its own Dismiss says what closing means
-        actions: [
-          { label: 'Restore', run: () => restoreFromJournal(doc, captures) },
-          // Dismiss is client-side only: the journal stays authoritative
-          // (the next autosave replaces it anyway), unlike the IndexedDB
-          // offer's Dismiss, which clears the stored bytes.
-          { label: 'Dismiss', run: () => {} },
-        ],
-      });
-      return true;
-    }
-    if (state.recovered) {
-      // Crash recovery: a PREVIOUS serve run's spill file, adopted at this
-      // server's start. Offered only when the live journal is empty.
-      const recovered = state.recovered;
-      toasts.push('Recover session from a previous pydvma-serve run?', {
-        level: 'info',
-        closable: false,                // Dismiss deletes the spill file; a × must not look like it
-        actions: [
-          { label: 'Restore', run: () => restoreFromJournal(recovered, []) },
-          {
-            // Dismiss discards it SERVER-side (deleting the spill file), so
-            // it is never offered again.
-            label: 'Dismiss',
-            run: () => void journalDiscardRecovered().catch(
-              (e) => console.warn('[journal] discard failed:', e)),
-          },
-        ],
-      });
-      return true;
-    }
-    return false;                     // live journal empty, nothing recovered
+  }
+
+  /** Offer the live journal's session (its document and pending captures). */
+  function offerJournalRestore(state: JournalState): void {
+    const { doc, captures } = state;
+    toasts.push('Restore session from pydvma-serve?', {
+      level: 'info',
+      closable: false,                // its own Dismiss says what closing means
+      actions: [
+        { label: 'Restore', run: () => restoreFromJournal(doc, captures) },
+        // Dismiss is client-side only: the journal stays authoritative
+        // (the next autosave replaces it anyway), unlike the IndexedDB
+        // offer's Dismiss, which clears the stored bytes.
+        { label: 'Dismiss', run: () => {} },
+      ],
+    });
+  }
+
+  /**
+   * Crash recovery: a PREVIOUS serve run's spill file, adopted at this
+   * server's start. Offered only when the live journal is empty.
+   */
+  function offerRecoveredRestore(recovered: Uint8Array): void {
+    toasts.push('Recover session from a previous pydvma-serve run?', {
+      level: 'info',
+      closable: false,                // Dismiss deletes the spill file; a × must not look like it
+      actions: [
+        { label: 'Restore', run: () => restoreFromJournal(recovered, []) },
+        {
+          // Dismiss discards it SERVER-side (deleting the spill file), so
+          // it is never offered again.
+          label: 'Dismiss',
+          run: () => void journalDiscardRecovered().catch(
+            (e) => console.warn('[journal] discard failed:', e)),
+        },
+      ],
+    });
   }
 
   /**
@@ -767,10 +767,15 @@
 
   /**
    * Boot-time file restore: reconnect last session's working folder, then
-   * offer to restore a session — the pydvma-serve journal first (native
-   * sessions; see `offerJournalRestore`), else the IndexedDB autosave with
-   * its "Restore last session?" toast. Restore parses the autosaved bytes
-   * and loads them; Dismiss clears the autosave so it never re-offers.
+   * offer to restore ONE session — whichever was written last of the
+   * pydvma-serve journal (native sessions; see `readJournalForRestore`) and
+   * the IndexedDB autosave (`chooseRestore`). The journal used to win
+   * whenever it held anything, but its document goes stale whenever the
+   * app's post is skipped (too big for the /engine frame) or fails, while
+   * the IndexedDB write still lands: after a long capture boot then offered
+   * the stale server copy and never the one holding the capture. The
+   * IndexedDB offer's Restore parses the autosaved bytes and loads them;
+   * its Dismiss clears the autosave so it never re-offers.
    */
   async function bootFileRestore(): Promise<void> {
     try {
@@ -780,17 +785,35 @@
       console.warn('[workdir] restore failed:', e);
     }
 
-    // The server copy wins when there is one (see offerJournalRestore).
+    let journal: JournalState | null = null;
     try {
-      if (await offerJournalRestore()) return;
+      journal = await readJournalForRestore();
     } catch (e) {
-      console.warn('[journal] restore offer failed:', e);
+      console.warn('[journal] restore read failed:', e);
     }
+    const live = journal && (journal.doc || journal.captures.length) ? journal : null;
+    const recovered = !live && journal?.recovered ? journal.recovered : null;
+    const idbAt = autosaveSavedAt();
+    // With no timestamp the journal wins whatever IndexedDB holds (the rule
+    // before timestamps), so its bytes need not even be read.
     let saved: Uint8Array | null = null;
-    try {
-      saved = await restoreOffer();
-    } catch (e) {
-      console.warn('[autosave] restore read failed:', e);
+    if (!(live || recovered) || idbAt !== null) {
+      try {
+        saved = await restoreOffer();
+      } catch (e) {
+        console.warn('[autosave] restore read failed:', e);
+      }
+    }
+    const idb = saved ? { savedAt: idbAt ?? Number.NaN } : null;
+    if (live) {
+      const choice = chooseRestore({
+        doc: live.doc ? { savedAt: live.docSavedAt ?? Number.NaN } : undefined,
+        captures: live.captures.map((_, i) => ({ savedAt: live.capturesSavedAt?.[i] ?? Number.NaN })),
+      }, idb);
+      if (choice === 'journal') { offerJournalRestore(live); return; }
+    } else if (recovered) {
+      const choice = chooseRestore({ doc: { savedAt: journal?.recoveredSavedAt ?? Number.NaN } }, idb);
+      if (choice === 'journal') { offerRecoveredRestore(recovered); return; }
     }
     if (!saved) return;
     const bytes = saved;
@@ -1008,7 +1031,7 @@
   /**
    * Use the server's working folder when the app is served by a
    * `pydvma-serve` / `dvma.launch` that offers it (native engine, greeting
-   * `files: true`). Same gating as {@link offerJournalRestore}: nothing is
+   * `files: true`). Same gating as {@link readJournalForRestore}: nothing is
    * booted unless this session would be native anyway.
    */
   async function adoptServerFolder(): Promise<void> {
