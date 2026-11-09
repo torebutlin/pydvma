@@ -49,6 +49,8 @@ const PYTHON = process.env.PYDVMA_PYTHON ?? 'python3';
 //   8768  derived-save.spec.ts  (DERIVED_SAVE_PORT — one fresh serve per test)
 //   8769  notebook-settings.spec.ts (NOTEBOOK_PORT — a dvma.launch session)
 //   8770  server-files.spec.ts  (FILES_PORT — a dvma.launch in a temp notebook folder)
+//   8771  dev/long_capture_check.py (not a spec: the long-recording harness's
+//         mock serve, --port to move it; keep it off a concurrent e2e run)
 // A collision is NASTIER than a bind error here: a mock `pydvma serve`
 // answers both /ws and /engine, so the loser's tests can silently run
 // against the winner's server instead of failing to start.
