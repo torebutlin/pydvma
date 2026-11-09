@@ -1116,6 +1116,31 @@ def _preferred_twin(device: dict | None) -> dict | None:
     return device
 
 
+def _opened_device_name(settings) -> str | None:
+    """Name of the sound card a configure is about to open, or None.
+
+    A capture from Setup's Default row arrives with no ``device_name``
+    (the app does not know which device the default is), and neither does
+    one configured by index alone. Stamping the enumerated name records
+    which interface the server actually opened: python's replay uses it to
+    re-find the device (`streams.resolve_device_index`), and the web app
+    files a carried calibration under it, so without it a calibration
+    carried for that interface never reached a Default-row capture.
+
+    Args:
+        settings (MySettings): The configure's settings, driver 'soundcard'.
+
+    Returns the name at ``settings.device_index`` in the sound-card
+    enumeration, else the default input's name, else None.
+    """
+    index = getattr(settings, 'device_index', None)
+    if index is not None:
+        names = streams.enumerated_device_names('soundcard') or []
+        if 0 <= int(index) < len(names) and names[int(index)]:
+            return names[int(index)]
+    return streams.soundcard_device_name(settings)
+
+
 def resolve_default_device(default_driver: str) -> tuple[str, int | None, str | None]:
     """What a ``configure`` that names no device should record from.
 
@@ -2242,6 +2267,8 @@ class _Connection:
             print(device_note)
 
         settings = options.MySettings(**kwargs)
+        if settings.device_driver == 'soundcard' and not settings.device_name:
+            settings.device_name = _opened_device_name(settings)
         self._stream_settings, rate_note = self._open_live_stream(settings)
         if self._stream_settings is settings and streams.REC is not None:
             self.settings = streams.REC.settings

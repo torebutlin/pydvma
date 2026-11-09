@@ -62,6 +62,14 @@ follows [semantic versioning](https://semver.org/).
 - When a sound card has fewer inputs than asked for and the channel count
   is reduced, the per-channel settings (gain, mode, pad,
   `channel_sensitivities`) are cut to match.
+- A capture through `pydvma-serve` or `dvma.launch` records the sound
+  card's name (`settings.device_name`) even when Setup's **Default** row
+  chose it, so a calibration carried for that interface reaches it, and
+  the file says which device recorded it.
+- Setup's **Default** row now behaves like the row of the device it
+  stands for: an iD44 as the computer's default input opens at 48 kHz
+  with its per-channel gain rows, and a stated gain puts the trigger
+  threshold in volts, as on the named row.
 - `Recorder.stored_time_data_windowed` and `stored_freq_data` are computed
   when read, rather than kept up to date on every audio block (each was a
   full-length copy of a recording); they can no longer be assigned to.

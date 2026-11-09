@@ -2401,6 +2401,7 @@ def _start_mock_recorder(seen):
     def fake_start(settings):
         seen['driver'] = settings.device_driver
         seen['index'] = settings.device_index
+        seen['name'] = getattr(settings, 'device_name', None)
         streams.REC_MOCK = streams.MockRecorder(settings)
         streams.REC_MOCK.init_stream(settings)
         streams.REC = streams.REC_MOCK
@@ -2437,7 +2438,11 @@ def test_configure_without_a_device_records_from_the_auto_default(monkeypatch):
     status = _configure_without_a_device(monkeypatch, seen, default_driver='auto')
     assert status['type'] == 'status' and status['event'] == 'configured'
     assert status['driver'] == 'soundcard'
-    assert seen == {'driver': 'soundcard', 'index': 12}
+    assert (seen['driver'], seen['index']) == ('soundcard', 12)
+    # The capture records WHICH interface the server opened, so the app's
+    # carried calibration (filed under the device name) finds it: the
+    # Default row sends no name of its own.
+    assert seen['name'] == 'Analogue 1 + 2 (Focusrite USB Audio)'
     assert 'Windows WASAPI' in status['deviceNote']
 
 
