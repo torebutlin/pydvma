@@ -48,7 +48,7 @@ row's unit) and frequency, and press **Measure**. The sensitivity field
 is filled in and Apply saves the calibration with the level and
 frequency it came from. Any warning (clipping, a peak away from the
 stated frequency, broadband noise) is shown under the button. The
-calibration is valid only while the channel's gain knob and pad stay
+calibration is valid only while the channel's gain knob and −10 dB switch stay
 where they were; the panel says so unless the gain is stated at an end of
 its range.
 
@@ -89,10 +89,10 @@ example one saved by an older version) shows a note instead.
 
 pydvma cannot read the gain knob, so a carried calibration is only as
 good as the gain you state. If a new recording states a different gain,
-input mode or pad on a carried channel, or no gain at all where there
+input mode or −10 dB switch on a carried channel, or no gain at all where there
 is a knob, the app still applies the calibration and shows a message
 naming each channel, for example "channel 1: calibrated at gain 60 dB,
-this recording states 50 dB". Recalibrate if the knob or pad really
+this recording states 50 dB". Recalibrate if the knob or switch really
 moved. NI inputs and fixed-gain cards have no knob, so they get no such
 message.
 
@@ -184,7 +184,7 @@ them; see [What each output holds](export.md#what-each-output-holds).
 
 Applying the Calibrate dialog also records **how** each changed channel
 was calibrated, as `channel_calibration` in the file: the method, the
-date, the sensitivity and unit, the gain, pad and input mode the capture
+date, the sensitivity and unit, the gain, −10 dB switch and input mode the capture
 stated, and the optional **Note** field of the dialog. In Python it is
 `data.time_data_list[0].channel_calibration`, a list with one entry per
 channel (`None` for a channel nobody calibrated).
@@ -273,8 +273,8 @@ What you see depends on the interface:
 - **An interface with a preamp on every channel** (the Audient iD44):
   **input gain per channel (for calibrated volts)**, one row per
   channel with its input mode, its gain, **bottom** and **top** buttons
-  for the knob's end stops, and a **pad** tick where the interface has
-  a pad. Each row shows its own full scale. See
+  for the knob's end stops, and a **−10 dB** tick where the interface
+  has that switch (an input pad). Each row shows its own full scale. See
   [Acoustic measurements](acoustics.md#state-the-gain-of-each-channel).
 - **A fixed-gain interface** (the ESI U24 XL): nothing to enter. Setup
   shows its constant full scale.

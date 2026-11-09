@@ -323,9 +323,11 @@ export function carryWarnings(
     out.push(`${c}: calibrated ${before}, this recording states ${after}`);
   }
   if (was.pad !== now.pad) {
-    const before = was.pad === null ? 'not stated' : was.pad ? 'on' : 'off';
-    const after = now.pad === null ? 'does not state it' : `states it ${now.pad ? 'on' : 'off'}`;
-    out.push(`${c}: calibrated with the pad ${before}, this recording ${after}`);
+    const before = was.pad === null ? 'not stated' : was.pad ? 'in' : 'out';
+    const after = now.pad === null ? 'does not state it' : `states it ${now.pad ? 'in' : 'out'}`;
+    // The iD44 is the only profile with a pad; its front panel calls it the
+    // −10 dB switch, and provenance records only in or out.
+    out.push(`${c}: calibrated with the −10 dB switch ${before}, this recording ${after}`);
   }
   return out;
 }

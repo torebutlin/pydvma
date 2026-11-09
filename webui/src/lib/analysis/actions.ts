@@ -2435,7 +2435,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     if (messages.length) {
       toasts?.push(
         `Carried calibration: ${messages.join('; ')}. A carried calibration holds only `
-          + 'while the gain knob and pad are where they were when it was made.',
+          + 'while the gain knob and −10 dB switch are where they were when it was made.',
         { level: 'info', timeout: 12_000 },
       );
     }

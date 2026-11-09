@@ -296,6 +296,12 @@
     return derivedFullScaleVolts(bridgeSelCaps, gain, mode ?? 'line', pad === true);
   });
   /** A preamp per input (the Audient iD44): each channel has its own gain. */
+  // The pad is named by what it does on the front panel (the iD44's
+  // "−10 dB" switch), not by the audio term "pad".
+  const padDb = $derived(
+    typeof bridgeSelCaps?.pad_db === 'number' && bridgeSelCaps.pad_db > 0 ? bridgeSelCaps.pad_db : 10,
+  );
+  const padLabel = $derived(`−${padDb} dB`);
   const perChannelGain = $derived(bridgeSelCaps?.per_channel_gain === true && !fixedGain);
 
   /** Is the selected device's VOLTAGE scale known, or standing in for a
@@ -1240,13 +1246,13 @@
                         onclick={() => onRowStop(row, 1)}
                       >top</button>
                       {#if row.padAvailable}
-                        <label class="ml" title="The interface's input pad is engaged on this channel.">
+                        <label class="ml" title={`Tick when this channel's ${padLabel} switch on the interface is in: it lowers the input by ${padDb} dB, so full scale is ${padDb} dB higher.`}>
                           <input
                             type="checkbox"
                             checked={rowPad(row)}
                             data-testid="setup-ch-pad-{row.ch}"
                             onchange={(e) => patchRow(row, { pad: (e.target as HTMLInputElement).checked })}
-                          /> pad
+                          /> {padLabel}
                         </label>
                       {/if}
                       <span class="note" data-testid="setup-ch-fs-{row.ch}">

@@ -56,7 +56,8 @@ it. In **Setup**, press **Full ▾**, then find **input gain per channel
 - the gain in dB, with **bottom** and **top** buttons that fill in the
   knob's end stops (mic 0 and +60 dB, line −10 and +50 dB, from
   Audient's manual);
-- **pad**, if the −10 dB pad switch is in;
+- **−10 dB**, ticked when that channel's −10 dB switch is in (an input
+  pad: it lowers the input by 10 dB, so full scale is 10 dB higher);
 - the full scale that follows, for example `±0.01 V full scale`. A row
   with no gain reads `full-scale units (gain not stated)`.
 
@@ -70,7 +71,7 @@ accurate sensitivity.
 **Choosing a stop.** With the M23 (33.5 mV/Pa) on a mic input, the
 loudest sine that fits is:
 
-| gain knob | pad | full scale | suits |
+| gain knob | −10 dB switch | full scale | suits |
 |---|---|---|---|
 | top (+60 dB) | out | 79 dB SPL | quiet rooms |
 | top (+60 dB) | in | 89 dB SPL | moderate noise |
@@ -120,7 +121,7 @@ iD44 this was built with measured (line input, 1 kHz, 2026-11-09):
 | 4 | +50.46 dB | −9.21 dB |
 | Audient's figure | +50 dB | −10 dB |
 
-and its pad measured 9.98 dB. The mic input is the line input plus
+and its −10 dB switch measured 9.98 dB. The mic input is the line input plus
 10 dB, so channel 1's mic top stop is +60.51 dB. Pressing **top** on that
 unit reads about 0.5 dB high. For your own unit, measure the stops once
 (see [Checking the interface](#checking-the-interface)), then **type the
@@ -134,7 +135,7 @@ session, which pre-fills Setup every time:
 ```python
 import pydvma as dvma
 
-# this iD44, mic inputs at the top stop, pad out
+# this iD44, mic inputs at the top stop, -10 dB switches out
 settings = dvma.MySettings(
     device='iD44', channels=4, fs=48000,
     input_mode='mic',
@@ -202,12 +203,13 @@ dependence.
 
 Tick **use for new recordings too** in the calibration dialog, and every
 later recording from the iD44 arrives in pascals. If a later recording
-states a different gain or pad on that channel, the app warns you. See
+states a different gain or −10 dB switch on that channel, the app warns
+you. See
 [Use it for new recordings too](calibration.md#use-it-for-new-recordings-too).
 
 Each calibrated channel's file records how its calibration was made:
 spec sheet or reference tone, the date, the calibrator's level and
-frequency, and the gain and pad you stated.
+frequency, and the gain and −10 dB switch you stated.
 
 ## Sound pressure level, weighting and bands
 

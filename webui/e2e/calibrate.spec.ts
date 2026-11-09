@@ -367,7 +367,7 @@ test('the reference tone panel defaults follow the row unit and refuse a bad lev
   await overlay.getByTestId('cal-ref-level').fill('0');
   await expect(overlay.getByTestId('cal-ref-measure')).toBeDisabled();
   await expect(overlay.getByTestId('cal-ref-invalid')).toBeVisible();
-  await expect(overlay.getByTestId('cal-ref-stop-note')).toContainText('gain knob and pad');
+  await expect(overlay.getByTestId('cal-ref-stop-note')).toContainText('gain knob and −10 dB switch');
 });
 
 test('a tone recorded in volts is refused for a full-scale recording', async ({ page }) => {

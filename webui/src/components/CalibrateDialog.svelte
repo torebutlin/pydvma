@@ -453,11 +453,11 @@
           {/if}
           {#if basis.verdict === 'warn'}
             <p class="src-note" data-testid="cal-ref-stop-note">
-              Valid only if this channel's gain knob and pad did not move between the two recordings.
+              Valid only if this channel's gain knob and −10 dB switch did not move between the two recordings.
             </p>
           {:else if basis.verdict === 'ok' && pickedSet !== null && gainAtStop && !gainAtStop(pickedSet, row.ch)}
             <p class="src-note" data-testid="cal-ref-stop-note">
-              Valid only while this channel's gain knob and pad stay where they were.
+              Valid only while this channel's gain knob and −10 dB switch stay where they were.
             </p>
           {/if}
         </div>
@@ -481,7 +481,7 @@
         <div class="mrow">
           <label
             class="carry"
-            title={`New recordings from ${carryDevice} arrive with the calibration of every calibrated channel here (sensitivity, unit and how it was obtained). pydvma cannot read the gain knob, so it warns when a recording states a different gain or pad. Setup shows what is carried and can clear it.`}
+            title={`New recordings from ${carryDevice} arrive with the calibration of every calibrated channel here (sensitivity, unit and how it was obtained). pydvma cannot read the gain knob, so it warns when a recording states a different gain or −10 dB switch. Setup shows what is carried and can clear it.`}
           >
             <input type="checkbox" data-testid="cal-carry" bind:checked={carry} />
             use for new recordings too

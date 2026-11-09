@@ -186,7 +186,7 @@ test('carryWarnings: a different input mode or pad, one message each', () => {
   const w = carryWarnings(entry(), { gain_db: 60, input_mode: 'line', pad: true }, 0, 'V');
   expect(w).toHaveLength(2);
   expect(w[0]).toBe('channel 1: calibrated in mic mode, this recording states line');
-  expect(w[1]).toBe('channel 1: calibrated with the pad off, this recording states it on');
+  expect(w[1]).toBe('channel 1: calibrated with the −10 dB switch out, this recording states it in');
 });
 
 test('carriedNote names the carried channels and their units', () => {
