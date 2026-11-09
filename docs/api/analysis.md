@@ -51,3 +51,22 @@ changing their input. Modal fitting is in the
 ## Units
 
 ::: pydvma.analysis.wrap_unit
+
+## Acoustics
+
+Sound pressure level, frequency weighting, band levels and calibration
+from a reference tone. The web app's frequency view draws the same
+curves and bands from a TypeScript twin pinned to these by shared
+known-answer vectors.
+
+::: pydvma.acoustics.P_REF
+
+::: pydvma.acoustics.weighting_db
+
+::: pydvma.acoustics.band_table
+
+::: pydvma.acoustics.band_levels
+
+::: pydvma.acoustics.tone_rms
+
+::: pydvma.acoustics.reference_tone_calibration

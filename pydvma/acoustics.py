@@ -51,9 +51,8 @@ def weighting_db(f, curve):
         f (array_like): Frequencies in Hz.
         curve (str): 'Z' (flat), 'A' or 'C'.
 
-    Returns:
-        An array of weightings in dB shaped like ``f``. 'Z' gives zeros;
-        ``f <= 0`` gives ``-inf`` for 'A' and 'C'.
+    Returns an array of weightings in dB shaped like ``f``. 'Z' gives
+    zeros; ``f <= 0`` gives ``-inf`` for 'A' and 'C'.
 
     Raises:
         ValueError: ``curve`` is not 'Z', 'A' or 'C'.
@@ -83,10 +82,9 @@ def band_table(bands, f_lo, f_hi):
         f_lo (float): Lowest frequency a band may reach, Hz.
         f_hi (float): Highest frequency a band may reach, Hz.
 
-    Returns:
-        A dict of equal-length lists ``centre`` (exact midbands), ``nominal``
-        (IEC labels), ``lower`` and ``upper`` (band edges). Only bands with
-        ``lower >= f_lo`` and ``upper <= f_hi`` are listed.
+    Returns a dict of equal-length lists ``centre`` (exact midbands),
+    ``nominal`` (IEC labels), ``lower`` and ``upper`` (band edges). Only
+    bands with ``lower >= f_lo`` and ``upper <= f_hi`` are listed.
 
     Raises:
         ValueError: ``bands`` is not a known kind.
@@ -123,10 +121,9 @@ def band_levels(f, psd, bands='octave', weighting='Z', min_bins=3):
         weighting (str): 'Z', 'A' or 'C'.
         min_bins (int): Bands with fewer bins are dropped.
 
-    Returns:
-        A dict with the `band_table` keys plus ``power`` (shape ``(Nb,)`` or
-        ``(Nc, Nb)``, unit^2) and ``n_bins``. The weighting at 0 Hz is
-        ``-inf`` dB, i.e. zero weight, so the DC bin adds nothing.
+    Returns a dict with the `band_table` keys plus ``power`` (shape
+    ``(Nb,)`` or ``(Nc, Nb)``, unit^2) and ``n_bins``. The weighting at
+    0 Hz is ``-inf`` dB, i.e. zero weight, so the DC bin adds nothing.
     """
     f = np.asarray(f, dtype=float)
     psd = np.asarray(psd, dtype=float)
@@ -168,8 +165,7 @@ def tone_rms(x, fs, freq, bin_neighbours=2):
         freq (float): Expected tone frequency in Hz.
         bin_neighbours (int): Bins summed either side of the nearest bin.
 
-    Returns:
-        The tone's RMS amplitude in the units of ``x``.
+    Returns the tone's RMS amplitude in the units of ``x``.
     """
     x = np.asarray(x, dtype=float).ravel()
     N = x.shape[0]
@@ -199,12 +195,11 @@ def reference_tone_calibration(time_data, channel, ref_rms, freq, *, freq_tolera
         freq_tolerance (float): Allowed fractional offset of the spectral
             peak from ``freq`` before a warning is raised.
 
-    Returns:
-        A dict: ``sensitivity`` (stored units per engineering unit),
-        ``measured_rms``, ``peak_freq``, ``tone_to_total_db``, ``clipped``
-        and ``warnings`` (strings quoting the numbers). Warnings cover a peak
-        more than ``freq_tolerance`` from ``freq``, broadband rms more than
-        1 dB above the tone, and a peak at or above 0.95 of the input rail.
+    Returns a dict: ``sensitivity`` (stored units per engineering unit),
+    ``measured_rms``, ``peak_freq``, ``tone_to_total_db``, ``clipped`` and
+    ``warnings`` (strings quoting the numbers). Warnings cover a peak more
+    than ``freq_tolerance`` from ``freq``, broadband rms more than 1 dB
+    above the tone, and a peak at or above 0.95 of the input rail.
     """
     full = np.asarray(time_data.time_data, dtype=float)
     if full.ndim == 1:
