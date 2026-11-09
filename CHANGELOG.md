@@ -3,7 +3,13 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.9.1 — 2026-11-09
+
+Two small changes to the web app: the stage tabs follow the order of a
+measurement, and the Audient iD44's pad tick is labelled **−10 dB**, as on
+its front panel. Upgrade with `pip install --upgrade
+"pydvma[serve,soundcard]"`; the lab PCs re-run their Setup bat as
+administrator.
 
 ### Changed
 
