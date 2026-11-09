@@ -160,6 +160,22 @@ class TestFullScaleVolts:
         with pytest.raises(ValueError, match='outside'):
             specs.full_scale_volts(SCARLETT, 65.0, 'inst')
 
+    def test_a_measured_stop_just_past_the_published_range_is_accepted(self):
+        """A real unit's knob stops sit a little off the manual's figures
+        (an iD44's measured +60.51 / +0.79 dB mic stops against 60 / 0), so a
+        MEASURED stop must be stateable: GAIN_RANGE_SLACK_DB either side."""
+        id44 = 'Audient iD44'
+        assert specs.GAIN_RANGE_SLACK_DB == 2.0
+        top = specs.full_scale_volts(id44, 60.51, 'mic')
+        assert top == pytest.approx(specs.full_scale_volts(id44, 60.0, 'mic')
+                                    * 10 ** (-0.51 / 20))
+        assert specs.full_scale_volts(id44, -1.9, 'mic') > specs.full_scale_volts(id44, 0.0, 'mic')
+        assert specs.full_scale_volts(id44, 51.9, 'line') is not None
+        with pytest.raises(ValueError, match='outside'):
+            specs.full_scale_volts(id44, 62.5, 'mic')
+        with pytest.raises(ValueError, match='outside'):
+            specs.full_scale_volts(id44, -12.5, 'line')
+
 
 class TestU24XLProfile:
     """The ESI U24 XL is the first FIXED-GAIN profile: no analogue gain
@@ -199,6 +215,9 @@ class TestU24XLProfile:
             specs.full_scale_volts(U24XL, 12.0)
         with pytest.raises(ValueError, match='outside'):
             specs.full_scale_volts(U24XL, -6.0)
+        # no knob, so no slack for a measured stop either
+        with pytest.raises(ValueError, match='outside'):
+            specs.full_scale_volts(U24XL, 1.0)
 
 
 class TestSettingsIntegration:
@@ -316,10 +335,11 @@ class TestID44Profile:
                 self.K * 10 ** (exp_db / 20))
 
     def test_out_of_range_raises(self):
+        # past the range AND its GAIN_RANGE_SLACK_DB for a measured stop
         with pytest.raises(ValueError):
-            specs.full_scale_volts(self.NAME, 61.0, 'mic')
+            specs.full_scale_volts(self.NAME, 62.5, 'mic')
         with pytest.raises(ValueError):
-            specs.full_scale_volts(self.NAME, -11.0, 'line')
+            specs.full_scale_volts(self.NAME, -12.5, 'line')
         with pytest.raises(ValueError):
             specs.full_scale_volts('Scarlett 2i2 4th Gen', 9.0, 'line',
                                    pad=True)

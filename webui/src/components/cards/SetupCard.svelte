@@ -47,6 +47,8 @@
   } from '../../lib/audio/provider';
   import {
     channelRows,
+    clampStatedGain,
+    GAIN_RANGE_SLACK_DB,
     applyRowChange,
     rowFullScaleVolts,
     roleRange,
@@ -546,8 +548,7 @@
     if (raw === '') { patchRow(row, { gain: null }); return; }
     const v = Number(raw);
     if (!Number.isFinite(v)) return;
-    const r = row.gainRange[rowMode(row)];
-    patchRow(row, { gain: r ? Math.min(r[1], Math.max(r[0], v)) : v });
+    patchRow(row, { gain: clampStatedGain(row.gainRange[rowMode(row)], v) });
   }
   function onRowStop(row: ChannelGainRow, end: 0 | 1) {
     const r = row.gainRange[rowMode(row)];
@@ -1195,15 +1196,15 @@
                       >bottom</button>
                       <input
                         type="number"
-                        min={r?.[0]}
-                        max={r?.[1]}
+                        min={r ? r[0] - GAIN_RANGE_SLACK_DB : undefined}
+                        max={r ? r[1] + GAIN_RANGE_SLACK_DB : undefined}
                         step="1"
                         value={rowGain(row) ?? ''}
                         onchange={(e) => onRowGain(row, e)}
                         placeholder="not set"
                         data-testid="setup-ch-gain-{row.ch}"
                         aria-label="input gain in dB, channel {row.ch + 1}"
-                        title="This channel's preamp gain in dB. pydvma cannot read it, so state it here."
+                        title="This channel's preamp gain in dB. pydvma cannot read it, so state it here. Type your unit's measured value to use it instead of the published stop."
                         style="width:72px"
                       />
                       <span class="ml">dB</span>

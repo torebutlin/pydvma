@@ -262,6 +262,16 @@ def max_input_dbu(name, neighbours=None):
     return dict(profile['max_input_dbu'])
 
 
+#: How far past a profile's published gain range a STATED gain may go,
+#: in dB, on an interface with a gain knob. A real unit's knob stops sit a
+#: little off the manual's figures and differ by channel: an Audient iD44
+#: measured +60.46..+60.59 dB at its mic top stops and +0.08..+0.79 dB at
+#: its bottom stops, against 60 and 0 (2026-11-09). A measured stop must
+#: be stateable; a typo is usually far larger. Fixed-gain profiles get no
+#: slack.
+GAIN_RANGE_SLACK_DB = 2.0
+
+
 def _range_tuple(value):
     """A ``gain_range_db`` entry as ``(min, max)``; a float means ``(0, value)``."""
     if isinstance(value, (tuple, list)):
@@ -333,11 +343,14 @@ def _input_fs_dbu(profile, gain_db, input_mode, pad):
                     ', '.join(sorted(profile['max_input_dbu']))))
     gain = float(gain_db)
     gmin, gmax = _range_tuple(profile['gain_range_db'][mode])
-    if not (gmin <= gain <= gmax):
+    slack = GAIN_RANGE_SLACK_DB if gmax > gmin else 0.0
+    if not (gmin - slack <= gain <= gmax + slack):
         raise ValueError(
             'input_gain_db = {:g} dB is outside the {} {} input range '
-            '({:g} to {:g} dB).'.format(gain, profile['label'], mode,
-                                        gmin, gmax))
+            '({:g} to {:g} dB{}).'.format(
+                gain, profile['label'], mode, gmin, gmax,
+                ', or up to {:g} dB past either end for a measured knob '
+                'stop'.format(slack) if slack else ''))
     if pad and not profile.get('pad_db'):
         raise ValueError('{} has no input pad.'.format(profile['label']))
     pad_db = profile['pad_db'] if pad else 0.0

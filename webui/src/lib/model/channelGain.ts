@@ -12,6 +12,25 @@ import {
   type InputMode,
 } from '../audio/provider';
 
+/**
+ * How far past a published gain range a STATED gain may go, in dB. Twin of
+ * python `_soundcard_specs.GAIN_RANGE_SLACK_DB`: a real unit's knob stops
+ * sit a little off the manual's figures (an iD44 measured +60.46..+60.59 dB
+ * at its mic top stops against 60), and a measured stop must be stateable.
+ */
+export const GAIN_RANGE_SLACK_DB = 2;
+
+/**
+ * The gain a typed value commits as: clamped to `range` widened by
+ * {@link GAIN_RANGE_SLACK_DB} at each end (none for a fixed `[g, g]` range,
+ * which has no knob). No range: the value as typed.
+ */
+export function clampStatedGain(range: [number, number] | undefined, v: number): number {
+  if (!range) return v;
+  const slack = range[1] > range[0] ? GAIN_RANGE_SLACK_DB : 0;
+  return Math.min(range[1] + slack, Math.max(range[0] - slack, v));
+}
+
 /** One analogue input's row in Setup. `ch` is zero-based. */
 export interface ChannelGainRow {
   ch: number;

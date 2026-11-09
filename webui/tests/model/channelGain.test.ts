@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 import {
   applyRowChange,
   channelRows,
+  clampStatedGain,
+  GAIN_RANGE_SLACK_DB,
   fitToChannels,
   retargetGain,
   opticalRange,
@@ -147,5 +149,21 @@ describe('fitToChannels', () => {
     expect(fitToChannels([1, 2], 4, null)).toEqual([1, 2, null, null]);
     expect(fitToChannels([1, 2, 3], 2, null)).toEqual([1, 2]);
     expect(fitToChannels('mic', 4, 'line')).toBe('mic');
+  });
+});
+
+describe('clampStatedGain', () => {
+  test('a measured stop just past the published range is kept (twin of python GAIN_RANGE_SLACK_DB)', () => {
+    expect(GAIN_RANGE_SLACK_DB).toBe(2);
+    expect(clampStatedGain([0, 60], 60.51)).toBe(60.51);
+    expect(clampStatedGain([-10, 50], -11.2)).toBe(-11.2);
+  });
+  test('beyond the slack it clamps to the slack edge', () => {
+    expect(clampStatedGain([0, 60], 75)).toBe(62);
+    expect(clampStatedGain([-10, 50], -30)).toBe(-12);
+  });
+  test('a fixed range has no knob, so no slack; no range keeps the value', () => {
+    expect(clampStatedGain([0, 0], 1.5)).toBe(0);
+    expect(clampStatedGain(undefined, 71)).toBe(71);
   });
 });
