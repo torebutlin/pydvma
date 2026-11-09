@@ -285,6 +285,16 @@
    * device's voltage scale is unknown, so the operator is not invited to enter
    * a volts-per-unit rating against full-scale-unit data.
    */
+  /**
+   * The rows whose samples are in full-scale units. All of them gets the
+   * device-wide note; only some (a mixed recording, e.g. an iD44 with one
+   * channel's gain stated) gets a note naming them, since the others ARE in
+   * volts.
+   */
+  const fsRowLabels = $derived(
+    rows.filter((_, i) => (rowSourceUnits?.[i] ?? sourceUnit) === 'FS').map((r) => r.label),
+  );
+
   function sensLabel(unit: string, i: number): string {
     const src = rowSourceUnits?.[i] ?? sourceUnit;
     return unit === src ? `${src} / ${src}` : `${src} / (${unit})`;
@@ -331,7 +341,14 @@
   <div class="modal">
     <div class="modal-title">Calibrate — {setName}</div>
 
-    {#if sourceUnit !== 'V'}
+    {#if fsRowLabels.length && fsRowLabels.length < rows.length}
+      <p class="src-note" data-testid="cal-source-note">
+        {fsRowLabels.join(', ')} {fsRowLabels.length === 1 ? 'has' : 'have'} no
+        stated gain or full scale, so {fsRowLabels.length === 1 ? 'its samples are' : 'their samples are'}
+        in full-scale units — enter {fsRowLabels.length === 1 ? 'its sensitivity' : 'their sensitivities'}
+        as FS per engineering unit, or state the gain in Setup to work in volts.
+      </p>
+    {:else if rows.length ? fsRowLabels.length : sourceUnit !== 'V'}
       <p class="src-note" data-testid="cal-source-note">
         This device's voltage scale is not known, so the samples are in
         full-scale units — enter each sensitivity as FS per engineering unit.
