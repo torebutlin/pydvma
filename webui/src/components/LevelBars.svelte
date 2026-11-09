@@ -22,6 +22,7 @@
    * fraction of its own channel's — the same rail the clip flag uses.
    */
   import { channelFullScale, type MonitorStore } from '../lib/stores/monitor';
+  import { sigFigs } from '../lib/format';
 
   let {
     monitor,
@@ -84,7 +85,7 @@
    */
   function barTitle(ch: number, peak: number): string {
     const pct = `ch${ch}: peak ${(frac(peak, ch) * 100).toFixed(0)}%`;
-    return isVolts(ch) ? `${pct} (${peak.toPrecision(3)} V of ${railOf(ch)} V)` : pct;
+    return isVolts(ch) ? `${pct} (${peak.toPrecision(3)} V of ${sigFigs(railOf(ch))} V)` : pct;
   }
 </script>
 

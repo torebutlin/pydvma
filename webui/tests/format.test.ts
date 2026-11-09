@@ -20,3 +20,11 @@ test('sigFigs passes non-finite inputs through as strings', () => {
   expect(sigFigs(NaN)).toBe('NaN');
   expect(sigFigs(Infinity)).toBe('Infinity');
 });
+
+test('sigFigs keeps a mic channel\'s millivolt full scale readable (iD44 at 60 dB)', () => {
+  // 18 dBu − 60 dB → 8.7 mV peak: three figures, where toFixed(2) said 0.01.
+  const v = Math.SQRT2 * 0.7746 * 10 ** ((18 - 60) / 20);
+  expect(sigFigs(v)).toBe('0.0087');
+  expect(sigFigs(1.9036)).toBe('1.9');
+  expect(sigFigs(13.8)).toBe('13.8');
+});
