@@ -3,7 +3,18 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 2.9.0 — 2026-11-09
+
+Support for the Audient iD44 audio interface with measurement
+microphones, and the standard acoustic tools that were missing: sound
+pressure level in dB re 20 µPa, A- and C-weighting, octave and
+third-octave bands, calibration from an acoustic calibrator, and a
+calibration that carries over to later recordings. Any interface can now
+state its gain per channel. Recordings of several minutes now work
+through `pydvma-serve`. Also fixes the web app's results in Safari after
+loading a large file. Upgrade with `pip install --upgrade
+"pydvma[serve,soundcard]"`; the lab PCs re-run their Setup bat as
+administrator.
 
 ### Added
 

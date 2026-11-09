@@ -8,6 +8,40 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-11-09 (Mac, iD44 + M23 on the bench): **the Audient iD44 +
+acoustics round is built, reviewed and live-verified; released as 2.9.0
+(see the release block when it lands).** Design
+`dev/plans/2026-11-06-id44-acoustics-design.md`, plan `…-plan.md`, bench
+notes `dev/2026-11-06-id44-bench.md`, user docs
+`docs/web-logger/acoustics.md`, lessons `dev/hardware-lessons-learnt.md`
+§7, follow-ups TODO.md "iD44 and acoustics follow-ups" + "Long-recording
+follow-ups". What landed: the `audient_id44` profile (4 analogue
+mic/line/inst preamps, 16 optical, 2 loopback; gain ranges WITH a minimum,
+line −10..+50; pad 10 dB; preferred 48 kHz); per-channel
+`input_gain_db`/`input_mode`/`input_pad`/`VmaxSC` (scalar = every
+channel, unchanged for 2i2/U24/NI) with per-channel clip check, meters,
+input-health warnings and Setup rows with top/bottom stop buttons;
+`pydvma.acoustics` (A/C weighting, IEC bands, reference tone) + TS twin;
+dB re 20 µPa, weighting and band overlays; calibration provenance
+(`TimeData.channel_calibration`), calibrate-from-reference-tone, opt-in
+carry-forward; long recordings (4 GiB `/engine` frames, `/ws` stays
+256 MiB; journal never evicts the newest capture; >16 MiB container
+members stored; permessage-deflate off; one-channel sonogram; restore
+picks the newer of journal/IDB). Coordinator fixes from the bench:
+`select_capture_fs` prefers the profile's `preferred_fs` (8 kHz from 48,
+never a rate switch — a switch restarts the iD mixer); a stated gain may
+go `GAIN_RANGE_SLACK_DB` = 2 dB past a knob's range (measured stops);
+serve stamps `settings.device_name` with the opened sound card (Default-
+row captures had none, so carry-forward silently never applied there).
+**This unit's measured line-path stops** (DAW THRU out 3 = +18 dBu
+reference): ch1–4 top +50.51/+50.46/+50.59/+50.46, bottom −9.92/−9.69/
+−9.43/−9.21 dB, pad 9.98 dB; mic = line + 10 (assumed). Hardware check:
+`dev/id44_hw_check.py --daw-thru-channel N [--line-gain-db G]`. NB the
+iD app's routing is NOT persistent (3+4 had left DAW THRU between
+sessions; the loop-back source was a mix). NB `MySettings(device=<name>)`
+probes EVERY device's rate ladder by opening streams on macOS (it touched
+a busy 2i2) — pre-existing, TODO; bench scripts pick by index.
+
 As of 2026-11-04, late (Mac; `55bb514`, CHANGELOG `## Unreleased`, no
 version bump): **Safari 27.2 JIT bug corrupted the in-browser engine.**
 pyodide converts each JS number with one function (`isSafeInteger ?
