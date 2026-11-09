@@ -31,6 +31,22 @@ export function clampStatedGain(range: [number, number] | undefined, v: number):
   return Math.min(range[1] + slack, Math.max(range[0] - slack, v));
 }
 
+/**
+ * What Setup says on a row whose typed gain {@link clampStatedGain} changed,
+ * e.g. `"62 dB: the top of the range plus 2 dB for a measured stop"`; `null`
+ * when the typed value stands. Python refuses such a gain; the app keeps the
+ * clamp but must not alter a typo silently.
+ */
+export function clampNote(range: [number, number] | undefined, typed: number): string | null {
+  const v = clampStatedGain(range, typed);
+  if (v === typed || !range) return null;
+  const db = `${v < 0 ? '−' : ''}${Math.abs(Math.round(v * 100) / 100)} dB`;
+  if (range[1] <= range[0]) return `${db}: this input has a fixed gain`;
+  return v > typed
+    ? `${db}: the bottom of the range minus ${GAIN_RANGE_SLACK_DB} dB for a measured stop`
+    : `${db}: the top of the range plus ${GAIN_RANGE_SLACK_DB} dB for a measured stop`;
+}
+
 /** One analogue input's row in Setup. `ch` is zero-based. */
 export interface ChannelGainRow {
   ch: number;
@@ -139,15 +155,17 @@ export function shouldUsePreferredFs(
 
 /**
  * The bridge-config patch that drops per-channel (list) gain, mode and pad
- * once the selected device has no gain per channel: a stale iD44 list sent to
- * a 2i2 makes the server refuse ("has no input pad"). Lists are kept only
- * while `per_channel_gain`; an empty object means nothing to reset.
+ * once the selected device is KNOWN to have no gain per channel: a stale iD44
+ * list sent to a 2i2 makes the server refuse ("has no input pad"). Unknown
+ * caps (`null`: a device the app cannot see, such as an older bridge's
+ * Default row) leave the lists alone, so a notebook's pre-filled per-channel
+ * gains are not deleted on a guess. An empty object means nothing to reset.
  */
 export function staleChannelSettingsReset(
   caps: DeviceCapsEntry | null | undefined,
   cfg: BridgeConfig,
 ): Partial<BridgeConfig> {
-  if (caps?.per_channel_gain === true) return {};
+  if (!caps || caps.per_channel_gain === true) return {};
   const patch: Partial<BridgeConfig> = {};
   if (Array.isArray(cfg.inputGainDb)) patch.inputGainDb = undefined;
   if (Array.isArray(cfg.inputMode)) patch.inputMode = undefined;

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   applyRowChange,
   channelRows,
+  clampNote,
   clampStatedGain,
   GAIN_RANGE_SLACK_DB,
   fitToChannels,
@@ -106,6 +107,12 @@ describe('staleChannelSettingsReset', () => {
     expect(Object.values(p).every((v) => v === undefined)).toBe(true);
     expect(staleChannelSettingsReset(null, { inputGainDb: 20, inputMode: 'mic', inputPad: true })).toEqual({});
   });
+  test('unknown caps leave the lists alone (only KNOWN caps without a gain per channel reset)', () => {
+    // A notebook's per-channel gains pre-filled into Setup must survive a
+    // selection whose device the app cannot see (an older bridge's Default row).
+    expect(Object.keys(staleChannelSettingsReset(null, lists as never))).toEqual([]);
+    expect(Object.keys(staleChannelSettingsReset(undefined, lists as never))).toEqual([]);
+  });
 });
 
 describe('retargetGain', () => {
@@ -165,5 +172,18 @@ describe('clampStatedGain', () => {
   test('a fixed range has no knob, so no slack; no range keeps the value', () => {
     expect(clampStatedGain([0, 0], 1.5)).toBe(0);
     expect(clampStatedGain(undefined, 71)).toBe(71);
+  });
+});
+
+describe('clampNote', () => {
+  test('says what a clamped gain became, and why', () => {
+    expect(clampNote([0, 60], 70)).toBe('62 dB: the top of the range plus 2 dB for a measured stop');
+    expect(clampNote([-10, 50], -30)).toBe('−12 dB: the bottom of the range minus 2 dB for a measured stop');
+    expect(clampNote([0, 0], 1.5)).toBe('0 dB: this input has a fixed gain');
+  });
+  test('nothing to say when the typed value stands', () => {
+    expect(clampNote([0, 60], 60.51)).toBeNull();
+    expect(clampNote([0, 60], 30)).toBeNull();
+    expect(clampNote(undefined, 99)).toBeNull();
   });
 });

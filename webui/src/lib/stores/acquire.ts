@@ -24,6 +24,7 @@ import {
 import {
   WebAudioProvider,
   deviceCapsFor,
+  selectedCaps,
   clampVoltage,
   isCancelled,
   PYDVMA_DEFAULT_VMAX,
@@ -38,7 +39,7 @@ import {
 } from '../audio/provider';
 import type { DvmaDataset, DvmaItem } from '../model/dataset';
 import { capabilities } from './stages';
-import { staleChannelSettingsReset } from '../model/channelGain';
+import { shouldUsePreferredFs, staleChannelSettingsReset } from '../model/channelGain';
 import { captureDeviceLabel } from './carriedCal';
 
 // ---- types ----
@@ -428,7 +429,8 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    * effective value equals the rail).
    */
   function reclampVoltages(): void {
-    const sel = deviceCapsFor(get(bridgeCaps), get(settings).deviceId);
+    // The Default row is the device it resolves to (`selectedCaps`).
+    const sel = selectedCaps(get(bridgeCaps), get(settings).deviceId);
     const cur = get(bridgeConfig);
     // Per-channel gain/mode/pad lists belong to a device with a preamp per
     // input; another device would be sent a list it refuses.
@@ -447,6 +449,24 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
       if (clamped !== (cur.outputVmaxNI ?? PYDVMA_DEFAULT_VMAX)) patch.outputVmaxNI = clamped;
     }
     if (Object.keys(patch).length) patchBridge(patch);
+  }
+
+  /**
+   * Opening on the Default row: when it resolves to an interface with a
+   * preferred rate (the iD44's 48 kHz, `preferred_fs`) and the hardware runs
+   * it, start there, exactly as choosing that device in Setup does
+   * (`shouldUsePreferredFs`; never with the digital low-pass on, whose rate
+   * is deliberate). Called once when the bridge's caps arrive, before the
+   * launch prefill, so a notebook's stated fs still wins.
+   */
+  function openAtPreferredFs(): void {
+    const s = get(settings);
+    if (s.deviceId) return;
+    const dc = selectedCaps(get(bridgeCaps), s.deviceId);
+    const pref = dc?.preferred_fs;
+    if (pref && shouldUsePreferredFs(dc, s.sampleRate, dc.native_rates ?? [], s.lpfOn)) {
+      patch({ sampleRate: pref });
+    }
   }
 
   /**
@@ -545,8 +565,10 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
    *
    * - Bridge: fetch `capabilities()`; on success flip the liveSource gate,
    *   store the caps (SetupCard reads them for the NI group), and
-   *   enumerate the bridge devices.  A dead bridge (null caps) leaves the
-   *   gate off so the app degrades gracefully.
+   *   enumerate the bridge devices; a Default row that resolves to an
+   *   interface with a preferred rate opens at it (`openAtPreferredFs`).
+   *   A dead bridge (null caps) leaves the gate off so the app degrades
+   *   gracefully.
    * - Web Audio: require `getUserMedia`, flip the gate immediately (before
    *   enumeration completes so the tabs are clickable), then enumerate.
    */
@@ -561,6 +583,7 @@ export function createAcquireStore(initialProvider?: SourceProvider) {
         // and the output rate to its AO cap.
         reclampVoltages();
         reclampOutputFs();
+        openAtPreferredFs();
       }
       return;
     }

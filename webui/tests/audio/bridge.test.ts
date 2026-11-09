@@ -29,6 +29,8 @@ import {
   effectiveFullScaleVolts,
   isCancelled,
   CancelledError,
+  resolvedDeviceId,
+  selectedCaps,
   PYDVMA_DEFAULT_VMAX,
   BARE_ARM_PRETRIG_SAMPLES,
   type BridgeCaps,
@@ -2312,4 +2314,106 @@ test('a staged VmaxSC is not sent for the Default row (no device to judge)', asy
   await monP;
   const msg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
   expect((msg.settings as Record<string, unknown>).VmaxSC).toBeUndefined();
+});
+
+
+// ---------------------------------------------------------------------------
+// The Default row IS the device it resolves to (final review, Important 1):
+// with the iD44 as the OS default, "Default — Audient iD44" must show the
+// same per-channel rows, rate and full scale as the "Audient iD44" row.
+// ---------------------------------------------------------------------------
+
+const CAPS_ID44_DEFAULT = {
+  ...CAPS_ID44,
+  default_input: { driver: 'soundcard', index: 0, name: 'Audient iD44', hostapi: 'Core Audio' },
+};
+
+test('resolvedDeviceId: a named row is itself, the Default row the OS default input', () => {
+  expect(resolvedDeviceId(CAPS_ID44_DEFAULT as never, 'soundcard:0')).toBe('soundcard:0');
+  expect(resolvedDeviceId(CAPS_ID44_DEFAULT as never, '')).toBe('soundcard:0');
+  // A bridge that names no default (or none at all) leaves the row unresolved.
+  expect(resolvedDeviceId(CAPS_ID44 as never, '')).toBe('');
+  expect(resolvedDeviceId({ ...CAPS_ID44, default_input: null } as never, '')).toBe('');
+  expect(resolvedDeviceId(null, '')).toBe('');
+  expect(resolvedDeviceId(null, 'abc')).toBe('abc');
+});
+
+test('resolvedDeviceId follows the server\'s --driver, as a configure naming no device does', () => {
+  // Under --driver mock (every e2e serve) Default records the mock
+  // generator, whatever the OS default input is.
+  expect(resolvedDeviceId({ ...CAPS_ID44_DEFAULT, default_driver: 'mock' } as never, '')).toBe('mock:0');
+  expect(resolvedDeviceId({ ...CAPS_ID44_DEFAULT, default_driver: 'nidaq' } as never, '')).toBe('nidaq:0');
+  expect(resolvedDeviceId({ ...CAPS_ID44_DEFAULT, default_driver: 'auto' } as never, '')).toBe('soundcard:0');
+  // auto with no input at all: the server records from the mock generator.
+  expect(resolvedDeviceId({ ...CAPS_ID44, default_input: null, default_driver: 'auto' } as never, ''))
+    .toBe('mock:0');
+  // An explicit soundcard driver takes the OS default as is (no backend move).
+  const win = {
+    ...CAPS_MULTI_BACKEND, default_driver: 'soundcard',
+    default_input: { driver: 'soundcard', index: 0, name: 'Line (U24XL with SPDIF I/O)', hostapi: 'MME' },
+  };
+  expect(resolvedDeviceId(win as never, '')).toBe('soundcard:0');
+  expect(selectedCaps({ ...CAPS_ID44_DEFAULT, default_driver: 'mock' } as never, '')?.per_channel_gain)
+    .toBeUndefined();
+});
+
+test('the capabilities document carries default_driver through', async () => {
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson({ ...CAPS_ID44_DEFAULT, default_driver: 'auto' });
+  expect((await capsP)?.default_driver).toBe('auto');
+});
+
+test('resolvedDeviceId moves a Windows default onto its recommended backend, as serve does', () => {
+  // The OS default is the MME entry; `--driver auto` records from the
+  // WDM-KS twin of the same box (serve._preferred_twin).
+  const caps = {
+    ...CAPS_MULTI_BACKEND,
+    default_input: { driver: 'soundcard', index: 0, name: 'Line (U24XL with SPDIF I/O)', hostapi: 'MME' },
+  };
+  expect(resolvedDeviceId(caps as never, '')).toBe('soundcard:1');
+  // Already the recommended entry: stays.
+  const rec = { ...caps, default_input: { ...caps.default_input, index: 2, name: 'Generic USB Audio' } };
+  expect(resolvedDeviceId(rec as never, '')).toBe('soundcard:2');
+});
+
+test('selectedCaps: the Default row gets the resolved device\'s caps', () => {
+  const sel = selectedCaps(CAPS_ID44_DEFAULT as never, '');
+  expect(sel).toEqual(deviceCapsFor(CAPS_ID44_DEFAULT as never, 'soundcard:0'));
+  expect(sel?.per_channel_gain).toBe(true);
+  expect(sel?.preferred_fs).toBe(48000);
+  expect(selectedCaps(CAPS_ID44 as never, '')).toBeNull();
+});
+
+test('effectiveFullScaleVolts on the Default row reads the resolved device', () => {
+  const cfg = { inputGainDb: [60, 20], inputMode: 'mic' as const };
+  expect(effectiveFullScaleVolts(CAPS_ID44_DEFAULT as never, '', cfg, 1))
+    .toBeCloseTo(dbuToVoltsPeak(18 - 20), 12);
+  expect(effectiveFullScaleVolts(CAPS_ID44 as never, '', cfg, 1)).toBeNull();
+});
+
+test('the Default row resolving to a fixed-gain box sends no stale gain', async () => {
+  const caps = {
+    ...CAPS_U24XL,
+    default_input: { driver: 'soundcard', index: 0, name: 'U24XL with SPDIF I/O' },
+  };
+  const fake = makeFakeWs();
+  const bp = new BridgeProvider('ws://x/ws', () => fake.ws);
+  const capsP = bp.capabilities();
+  fake.open();
+  await tick();
+  fake.emitJson(caps);
+  await capsP;
+  bp.setConfig({ inputGainDb: 30 });       // left over from a variable-gain device
+  const monP = bp.startMonitor({ sampleRate: 48000, channelCount: 2 }, () => {});
+  await tick();
+  fake.emitJson({ type: 'status', event: 'configured', fs: 48000, channels: 2 });
+  await tick();
+  fake.emitJson({ type: 'status', event: 'monitoring' });
+  await monP;
+  const msg = fake.sentJson().find((m) => m.type === 'configure') as Record<string, unknown>;
+  expect((msg.settings as Record<string, unknown>).input_gain_db).toBeNull();
 });

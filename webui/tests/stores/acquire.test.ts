@@ -386,6 +386,88 @@ test('per-channel gain lists are dropped when the device has no gain per channel
   expect(get(store.bridgeConfig).inputGainDb).toBe(20);
 });
 
+/** A bridge whose OS default input (the Default row) is the device in `deviceCaps`. */
+function defaultRowBridgeProvider(deviceCaps: Record<string, unknown>, defaultDriver = 'auto') {
+  const caps = {
+    v: 1, backends: ['soundcard'],
+    devices: { soundcard: [String(deviceCaps.name)], nidaq: [] },
+    fs_ladders: {}, max_channels: null, pretrigger: true, ao: true,
+    device_caps: { 'soundcard:0': { driver: 'soundcard', index: 0, ...deviceCaps } },
+    default_input: { driver: 'soundcard', index: 0, name: String(deviceCaps.name) },
+    default_driver: defaultDriver,
+  } as unknown as BridgeCaps;
+  const provider: SourceProvider = {
+    kind: 'bridge',
+    async capabilities() { return caps; },
+    async enumerateInputDevices() {
+      return [{ deviceId: 'soundcard:0', label: String(deviceCaps.name), groupId: 'soundcard', hasLabel: true }];
+    },
+    startRecording() {
+      return { promise: Promise.resolve(fakeRecording()), cancel() {}, elapsed: () => 0 };
+    },
+    async startMonitor() { return { stop() {}, fs: 48000, nChannels: 4 }; },
+    setConfig() {},
+    onLogStatus() {},
+    onConfigured() {},
+    lastMeta() { return null; },
+  };
+  return provider;
+}
+
+test('the Default row keeps per-channel gain lists when it resolves to a per-channel device', async () => {
+  // A notebook's `input_gain_db=[60.51, ...]` pre-filled into Setup, with the
+  // iD44 as the OS default: selecting Default must not delete it.
+  const store = createAcquireStore(defaultRowBridgeProvider({
+    name: 'Audient iD44', per_channel_gain: true,
+    gain_range_db: { mic: [0, 60], line: [-10, 50] },
+  }));
+  await store.init();
+  store.patchBridge({ inputGainDb: [60.51, 30, null, null], inputMode: ['mic', 'mic', 'line', 'line'] });
+  store.patch({ deviceId: 'soundcard:0' });
+  store.patch({ deviceId: '' });
+  expect(get(store.bridgeConfig).inputGainDb).toEqual([60.51, 30, null, null]);
+  expect(get(store.bridgeConfig).inputMode).toEqual(['mic', 'mic', 'line', 'line']);
+});
+
+const ID44_DEFAULT_CAPS = {
+  name: 'Audient iD44', per_channel_gain: true, preferred_fs: 48000,
+  native_rates: [44100, 48000, 88200, 96000],
+  gain_range_db: { mic: [0, 60], line: [-10, 50] },
+};
+
+test('the app opening on a Default row that is an iD44 starts at its preferred 48 kHz', async () => {
+  // Like choosing the named row (Setup's onDeviceChange); a launch prefill
+  // applied after init still sets its own fs.
+  const store = createAcquireStore(defaultRowBridgeProvider(ID44_DEFAULT_CAPS));
+  expect(get(store.settings).sampleRate).toBe(44100);
+  await store.init();
+  expect(get(store.settings).deviceId).toBe('');
+  expect(get(store.settings).sampleRate).toBe(48000);
+});
+
+test('the opening rate stays when the Default row is not that device (--driver mock)', async () => {
+  const store = createAcquireStore(defaultRowBridgeProvider(ID44_DEFAULT_CAPS, 'mock'));
+  await store.init();
+  expect(get(store.settings).sampleRate).toBe(44100);
+  // With the digital low-pass on the rate is deliberate, so it stays too.
+  const lpf = createAcquireStore(defaultRowBridgeProvider(ID44_DEFAULT_CAPS));
+  lpf.patch({ lpfOn: true });
+  await lpf.init();
+  expect(get(lpf.settings).sampleRate).toBe(44100);
+});
+
+test('the Default row still drops the lists when it resolves to a device with one gain', async () => {
+  const store = createAcquireStore(defaultRowBridgeProvider({
+    name: 'Scarlett 2i2 4th Gen', per_channel_gain: false,
+    max_input_dbu: { line: 22 }, gain_range_db: { line: [0, 69] },
+  }));
+  await store.init();
+  store.patchBridge({ inputGainDb: [30, null], inputMode: ['mic', 'line'] });
+  store.patch({ deviceId: '' });
+  expect(get(store.bridgeConfig).inputGainDb).toBeUndefined();
+  expect(get(store.bridgeConfig).inputMode).toBeUndefined();
+});
+
 test('coercedFs is set on a DSA rate snap and cleared on an exact honour', async () => {
   const { provider, fireConfigured } = richBridgeProvider();
   const store = createAcquireStore(provider);

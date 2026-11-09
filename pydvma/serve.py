@@ -69,7 +69,7 @@ Server → client:
 
 * ``capabilities`` — ``{v, backends, devices:{soundcard, nidaq},
   fs_ladders, max_channels, device_caps, default_input, default_output,
-  pretrigger, ao, engine}``.  All keys
+  default_driver, pretrigger, ao, engine}``.  All keys
   are stable across the additive Wave-C growth; ``v`` stays ``1``.
   ``engine`` is ``{v, pydvma, journal}`` — the separate ``/engine``
   websocket's own protocol version, the pydvma version answering it (see
@@ -93,7 +93,13 @@ Server → client:
   as default — ``{driver, index, name, hostapi}``, or ``null`` when
   there is none to report (no ``sounddevice``, no PortAudio host, or a
   default index outside the current enumeration).  Only the soundcard
-  backend has such a notion; NI does not.
+  backend has such a notion; NI does not.  ``default_driver`` is this
+  server's ``--driver`` (``'auto'``, ``'mock'``, ``'soundcard'`` or
+  ``'nidaq'``): what a ``configure`` naming no device records from (see
+  :func:`resolve_default_device`) — under ``'auto'`` the OS default
+  input on its recommended backend, under an explicit driver that
+  backend's own default — so the app can show its Default row as the
+  device it really is.
 * ``status`` — acknowledgement of ``configure`` / monitor lifecycle,
   carries the resolved stream geometry; also the pretrigger arming
   events ``armed`` / ``triggered`` / ``timeout`` (see below).
@@ -2118,7 +2124,7 @@ class _Connection:
         mtype = msg.get('type')
         try:
             if mtype == 'hello':
-                await self._on_hello()
+                await self._on_hello(server)
             elif mtype == 'configure':
                 await self._on_configure(msg, server)
             elif mtype == 'start_monitor':
@@ -2136,8 +2142,12 @@ class _Connection:
         except Exception as exc:  # never let one bad request kill the socket
             await self._send_error('%s: %s' % (type(exc).__name__, exc))
 
-    async def _on_hello(self) -> None:
+    async def _on_hello(self, server: BridgeServer) -> None:
         cap = build_capabilities()
+        # What a configure naming no device records from (see
+        # `resolve_default_device`): the app resolves its Default row
+        # through `default_input` only under 'auto'.
+        cap['default_driver'] = server.default_driver
         cap['type'] = 'capabilities'
         await self._send_json(cap)
 

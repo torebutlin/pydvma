@@ -33,6 +33,7 @@ import {
   defaultPretrigThreshold,
   effectiveFullScaleVolts,
   gainIsStated,
+  selectedCaps,
   takesMeasuredFullScale,
 } from './provider';
 import type {
@@ -741,7 +742,8 @@ export class BridgeProvider implements SourceProvider {
     // python's default is 'line', and on the iD44 a 60 dB mic gain read as a
     // line gain is out of range (line runs −10..+50 dB). A list stating no
     // channel at all is no stated gain.
-    const selDc = cfg.deviceId ? this.capsCache?.device_caps?.[cfg.deviceId] : undefined;
+    // The Default row is judged as the device it resolves to (`selectedCaps`).
+    const selDc = selectedCaps(this.capsCache, cfg.deviceId);
     if (selDc?.fixed_gain) {
       s.input_gain_db = null;
     } else if (gainIsStated(ec.inputGainDb)) {
@@ -755,9 +757,10 @@ export class BridgeProvider implements SourceProvider {
       // full scale goes straight to `MySettings.VmaxSC` (one value, or one per
       // channel). Only reached when no gain was stated — a stated gain derives
       // VmaxSC server-side and would override this, so the UI never offers both.
-      // Never sent to a CHARACTERISED device (or the Default row): python
-      // would take a value staged for another device as this one's own
-      // calibration, and Setup offers no field there to see or clear it.
+      // Never sent to a CHARACTERISED device (nor a Default row the app
+      // cannot resolve): python would take a value staged for another device
+      // as this one's own calibration, and Setup offers no field there to see
+      // or clear it.
       s.VmaxSC = ec.vmaxSC;
     }
     if (ec.vmaxNI != null) s.VmaxNI = ec.vmaxNI;
@@ -1102,6 +1105,8 @@ function normalizeCaps(m: Record<string, unknown>): BridgeCaps {
   if (di !== undefined) caps.default_input = di;
   const dout = normalizeDefaultDevice(m.default_output);
   if (dout !== undefined) caps.default_output = dout;
+  // What a configure naming no device records from (the server's --driver).
+  if (typeof m.default_driver === 'string' && m.default_driver) caps.default_driver = m.default_driver;
   return caps;
 }
 

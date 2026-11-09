@@ -33,7 +33,8 @@
   import type { AcquireStore } from '../../lib/stores/acquire';
   import { parseFs, fsOptionsFor } from '../../lib/stores/acquire';
   import {
-    deviceCapsFor,
+    resolvedDeviceId,
+    selectedCaps,
     channelValue,
     clampVoltage,
     defaultPretrigThreshold,
@@ -47,6 +48,7 @@
   } from '../../lib/audio/provider';
   import {
     channelRows,
+    clampNote,
     clampStatedGain,
     GAIN_RANGE_SLACK_DB,
     applyRowChange,
@@ -60,6 +62,7 @@
   import { channelFullScale, type MonitorStore } from '../../lib/stores/monitor';
   import { carriedCal, carriedNote, selectedDeviceKey } from '../../lib/stores/carriedCal';
   import { reportLevels, worstVerdict, verdictAdvice } from '../../lib/model/levelCheck';
+  import { sigFigs } from '../../lib/format';
 
   let {
     acquire,
@@ -127,8 +130,10 @@
     if (!d?.name) return 'Default';
     return allBackends && d.hostapi ? `Default — ${d.name} — ${d.hostapi}` : `Default — ${d.name}`;
   });
+  // The Default row is the device it resolves to (`resolvedDeviceId`), so
+  // "Default — Audient iD44" reads exactly like the "Audient iD44" row.
   const selectedDevice = $derived(
-    $devices.find((d) => d.deviceId === $settings.deviceId),
+    $devices.find((d) => d.deviceId === resolvedDeviceId($bridgeCaps, $settings.deviceId)),
   );
   /** The operator's own measured full scale, when they have entered one. */
   const statedVmaxSc = $derived(
@@ -172,7 +177,8 @@
   // carries caps (an fs ladder / max rate / max channels), they constrain
   // the fs select + channels input, taking precedence over the Web Audio
   // getCapabilities() values. Absent → the Web Audio behaviour below.
-  const bridgeSelCaps = $derived(deviceCapsFor($bridgeCaps, $settings.deviceId));
+  // The Default row ('') takes the caps of the device it resolves to.
+  const bridgeSelCaps = $derived(selectedCaps($bridgeCaps, $settings.deviceId));
   // fs options: a bridge device's discrete DSA ladder replaces the standard
   // soundcard list; otherwise the standard list (constrained by ranges).
   const fsOptions = $derived(
@@ -375,7 +381,7 @@
   // a way to stop it, because every capture from this device arrives
   // calibrated until it is cleared. The key is the one the capture will be
   // filed under (`selectedDeviceKey` predicts `deviceKeyFor` of the capture;
-  // the bridge's Default row has none, as only the server knows its device).
+  // the bridge's Default row takes the key of the device it resolves to).
   const carriedKey = $derived(selectedDeviceKey($bridgeCaps, $devices, $settings.deviceId));
   const carriedText = $derived(carriedNote($carriedCal[carriedKey] ?? {}));
 
@@ -511,7 +517,7 @@
     const id = (e.target as HTMLSelectElement).value;
     preferredFsText = null;
     acquire.patch({ deviceId: id });
-    const dc = deviceCapsFor($bridgeCaps, id);
+    const dc = selectedCaps($bridgeCaps, id);
     const pref = dc?.preferred_fs;
     if (dc && pref && shouldUsePreferredFs(dc, $settings.sampleRate, dc.native_rates ?? [], $settings.lpfOn)) {
       acquire.patch({ sampleRate: pref });
@@ -539,16 +545,35 @@
   function rowScale(row: ChannelGainRow): number | null {
     return bridgeSelCaps ? rowFullScaleVolts(bridgeSelCaps, row, rowGain(row), rowMode(row), rowPad(row)) : null;
   }
+  /**
+   * Per row, what a clamped typed gain became (`clampNote`), shown beside it
+   * until the row's next edit: Python refuses such a gain, so the app must
+   * not change a typo silently.
+   */
+  let clampNotes = $state<Record<number, string>>({});
   /** Write one row's edit; the lists are rebuilt by {@link applyRowChange}. */
   function patchRow(row: ChannelGainRow, change: { gain?: number | null; mode?: InputMode; pad?: boolean }) {
+    if (clampNotes[row.ch] !== undefined) {
+      const { [row.ch]: _cleared, ...rest } = clampNotes;
+      clampNotes = rest;
+    }
     acquire.patchBridge(applyRowChange($bridgeConfig, row, change, $settings.channelCount));
   }
   function onRowGain(row: ChannelGainRow, e: Event) {
-    const raw = (e.target as HTMLInputElement).value.trim();
+    const el = e.target as HTMLInputElement;
+    const raw = el.value.trim();
     if (raw === '') { patchRow(row, { gain: null }); return; }
     const v = Number(raw);
     if (!Number.isFinite(v)) return;
-    patchRow(row, { gain: clampStatedGain(row.gainRange[rowMode(row)], v) });
+    const range = row.gainRange[rowMode(row)];
+    const gain = clampStatedGain(range, v);
+    patchRow(row, { gain });
+    const note = clampNote(range, v);
+    if (note) {
+      clampNotes = { ...clampNotes, [row.ch]: note };
+      // The field shows what was stored, even when the store already held it.
+      el.value = String(gain);
+    }
   }
   function onRowStop(row: ChannelGainRow, end: 0 | 1) {
     const r = row.gainRange[rowMode(row)];
@@ -1164,7 +1189,7 @@
                     data-testid="setup-fixed-gain-note"
                     title="This interface has no analogue gain anywhere in the input path — full scale is a hardware constant, so calibrated volts need no operator input."
                   >
-                    full scale ±{fixedGainInfo?.volts.toFixed(2)} V
+                    full scale ±{fixedGainInfo ? sigFigs(fixedGainInfo.volts) : ''} V
                     ({fixedGainInfo && fixedGainInfo.dbu >= 0 ? '+' : ''}{fixedGainInfo?.dbu} dBu {fixedGainInfo?.mode})
                   </span>
                 </div>
@@ -1225,8 +1250,11 @@
                         </label>
                       {/if}
                       <span class="note" data-testid="setup-ch-fs-{row.ch}">
-                        {fs != null ? `±${fs.toFixed(2)} V full scale` : 'full-scale units (gain not stated)'}
+                        {fs != null ? `±${sigFigs(fs)} V full scale` : 'full-scale units (gain not stated)'}
                       </span>
+                      {#if clampNotes[row.ch]}
+                        <span class="note coerce-note" data-testid="setup-ch-gain-clamped-{row.ch}">{clampNotes[row.ch]}</span>
+                      {/if}
                     </div>
                   {/each}
                 </div>
@@ -1259,7 +1287,7 @@
                     </select>
                     {#if fullScaleVolts != null}
                       <span class="note" data-testid="setup-full-scale">
-                        full scale ≈ {fullScaleVolts.toFixed(3)} V pk
+                        full scale ≈ {sigFigs(fullScaleVolts)} V pk
                       </span>
                     {/if}
                   </div>

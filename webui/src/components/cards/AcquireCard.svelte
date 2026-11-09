@@ -21,7 +21,7 @@
   import { recordingToItem } from '../../lib/stores/acquire';
   import {
     outputCapable,
-    deviceCapsFor,
+    selectedCaps,
     clampVoltage,
     defaultPretrigThreshold,
     effectiveFullScaleVolts,
@@ -71,7 +71,7 @@
   const showOutput = $derived(isWebAudio ? true : outputCapable($bridgeCaps, $settings.deviceId));
   // The selected device's output voltage rail (ao_vmax) clamps the amplitude.
   // Web Audio has no calibrated volts, so there is no rail to clamp against.
-  const aoVmaxCap = $derived(isWebAudio ? undefined : deviceCapsFor($bridgeCaps, $settings.deviceId)?.ao_vmax);
+  const aoVmaxCap = $derived(isWebAudio ? undefined : selectedCaps($bridgeCaps, $settings.deviceId)?.ao_vmax);
   // Pretrigger arm: the bridge advertises pretrigger; Web Audio always supports it.
   const showPretrig = $derived(isWebAudio ? true : ($bridgeCaps?.pretrigger ?? false));
 

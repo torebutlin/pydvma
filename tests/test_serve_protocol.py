@@ -1612,6 +1612,23 @@ def test_capabilities_report_the_default_devices():
     run_async(scenario)
 
 
+@pytest.mark.parametrize('driver', ['auto', 'mock'])
+def test_capabilities_say_what_the_default_row_records_from(driver):
+    """`default_driver` is the server's `--driver`: the app resolves its
+    Default row through `default_input` only when a configure naming no
+    device records from it (`auto`), not under `--driver mock`."""
+    async def scenario():
+        _server, task, port = await _start_server(default_driver=driver)
+        try:
+            async with connect(_ws_url(port)) as ws:
+                await _send(ws, type='hello')
+                cap = await _recv_json(ws)
+                assert cap['default_driver'] == driver
+        finally:
+            await _stop_server(task)
+    run_async(scenario)
+
+
 class TestDefaultDeviceResolution:
     """Unit-level guards for `_default_soundcard_devices`, whose whole
     job is to answer "null" rather than guess when PortAudio is absent,

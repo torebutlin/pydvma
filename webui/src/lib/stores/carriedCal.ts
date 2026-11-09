@@ -23,7 +23,7 @@
  */
 import { get, writable } from 'svelte/store';
 import type { ChannelCalibration } from '../model/calibration';
-import type { BridgeCaps } from '../audio/provider';
+import { resolvedDeviceId, type BridgeCaps } from '../audio/provider';
 import type { AudioInputDevice } from '../audio/source';
 
 /** localStorage key holding the carried calibrations (versioned). */
@@ -262,8 +262,10 @@ export function captureDeviceLabel(
  * predicted before the capture: for a bridge device its name (the server
  * records the same name as `device_name` for a sound card, and the web app
  * records it as `capture_device_label` otherwise); for a browser device its
- * label, else `'web_audio'`. `''` for the bridge's Default row, whose device
- * only the server knows, and when the device has no name.
+ * label, else `'web_audio'`. The bridge's Default row takes the key of the
+ * device it resolves to (`resolvedDeviceId`; the name the server records when
+ * it opens that device), so it matches the named row; `''` when the server
+ * names no default, and when the device has no name.
  *
  * @param caps The bridge's capability document, or null on the Web Audio path.
  * @param devices The enumerated input devices.
@@ -272,8 +274,13 @@ export function captureDeviceLabel(
 export function selectedDeviceKey(
   caps: BridgeCaps | null, devices: readonly AudioInputDevice[], deviceId: string,
 ): string {
-  const label = captureDeviceLabel(caps, devices, deviceId);
+  const id = resolvedDeviceId(caps, deviceId);
+  const label = captureDeviceLabel(caps, devices, id);
   if (label) return label;
+  if (caps && !deviceId && caps.default_input
+    && id === `${caps.default_input.driver}:${caps.default_input.index}`) {
+    return named(caps.default_input.name) ?? '';
+  }
   return caps ? '' : 'web_audio';
 }
 

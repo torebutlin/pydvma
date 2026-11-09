@@ -308,6 +308,15 @@ export interface BridgeCaps {
   default_input?: BridgeDefaultDevice | null;
   /** The output (AO/playback) device the server would drive by default. */
   default_output?: BridgeDefaultDevice | null;
+  /**
+   * The server's `--driver`: what a configure naming no device records from.
+   * `'auto'` is the OS default input on its recommended backend
+   * (`default_input`, moved as `serve.resolve_default_device` moves it), an
+   * explicit driver that backend's own default (`'mock'` the mock generator,
+   * `'nidaq'` device 0, `'soundcard'` the OS default as is). Additive: absent
+   * from an older bridge, read as `'auto'`, the default since 2.4.
+   */
+  default_driver?: string;
 }
 
 /**
@@ -490,6 +499,65 @@ export function deviceCapsFor(
   }
 
   return Object.keys(out).length ? out : null;
+}
+
+/**
+ * The device a selection names: `deviceId` itself for a named row, and for
+ * the Default row (`''`) the device the server records from when the UI names
+ * none (`caps.default_driver`, see `serve.resolve_default_device`). Under
+ * `--driver auto` (or an older bridge that does not say) that is the OS
+ * default input (`caps.default_input`), moved onto the recommended backend of
+ * the same physical device (`device_group`) as the server moves it (on
+ * Windows the OS default is the MME entry; the recorder opens its WDM-KS or
+ * WASAPI twin), and the mock generator when there is no input; under an
+ * explicit driver, that backend's own default (`'mock:0'`, `'nidaq:0'`, the
+ * OS default soundcard as is). `''` when nothing can be said (an older bridge
+ * naming no default) and on the Web Audio path, where the browser's own
+ * default has no caps.
+ *
+ * @param caps The bridge's capability document, or null on Web Audio.
+ * @param deviceId The selected input device ('' = the Default row).
+ */
+export function resolvedDeviceId(caps: BridgeCaps | null, deviceId: string | undefined): string {
+  if (deviceId) return deviceId;
+  if (!caps) return '';
+  const driver = caps.default_driver ?? 'auto';
+  if (driver === 'mock' || driver === 'nidaq') return `${driver}:0`;
+  const d = caps.default_input;
+  if (!d) return driver === 'auto' && caps.default_driver ? 'mock:0' : '';
+  const id = `${d.driver}:${d.index}`;
+  if (driver !== 'auto') return id;
+  const all = caps.device_caps ?? {};
+  const group = (all[id] as Record<string, unknown> | undefined)?.device_group;
+  if (typeof group !== 'string' || (all[id] as Record<string, unknown>).recommended === true) return id;
+  // Inputs only: an output endpoint's `recommended` ranks it among outputs.
+  const isInput = (e: Record<string, unknown>) =>
+    typeof e.max_input_channels !== 'number' || e.max_input_channels > 0;
+  const twins = Object.entries(all)
+    .filter(([k, e]) => k.startsWith(`${d.driver}:`)
+      && (e as Record<string, unknown>).device_group === group
+      && (e as Record<string, unknown>).recommended === true
+      && isInput(e as Record<string, unknown>))
+    .map(([k]) => k)
+    .sort((a, b) => Number(a.slice(a.indexOf(':') + 1)) - Number(b.slice(b.indexOf(':') + 1)));
+  return twins[0] ?? id;
+}
+
+/**
+ * The per-device constraints of the SELECTED input, with the Default row
+ * resolved to its device ({@link resolvedDeviceId}): what Setup's per-channel
+ * rows, the preferred-rate move, the stale-list reset, the full-scale
+ * derivation and the bridge's configure all read, so "Default — Audient iD44"
+ * behaves exactly like the "Audient iD44" row. `null` when nothing is known.
+ *
+ * @param caps The bridge's capability document, or null on Web Audio.
+ * @param deviceId The selected input device ('' = the Default row).
+ */
+export function selectedCaps(
+  caps: BridgeCaps | null,
+  deviceId: string | undefined,
+): DeviceCapsEntry | null {
+  return deviceCapsFor(caps, resolvedDeviceId(caps, deviceId));
 }
 
 /** A finite number above zero. */
@@ -740,11 +808,13 @@ function publishedLevels(dc: DeviceCapsEntry | undefined | null): Record<string,
  * operator's own calibration, so a value left over from another device — a
  * U24 XL's derived 1.9036 V reaching a 2i2 with no gain — would stamp its
  * captures as volts while Setup, which shows that field only for an
- * uncharacterised device, gave no way to see or clear it. The Default row
- * (no `deviceId`) takes none either, for the same reason.
+ * uncharacterised device, gave no way to see or clear it. The Default row is
+ * judged as the device it resolves to ({@link resolvedDeviceId}), as Setup
+ * shows it; one the app cannot resolve takes none.
  */
 export function takesMeasuredFullScale(caps: BridgeCaps | null, deviceId: string | undefined): boolean {
-  const dc = caps && deviceId ? caps.device_caps?.[deviceId] : undefined;
+  const id = resolvedDeviceId(caps, deviceId);
+  const dc = caps && id ? caps.device_caps?.[id] : undefined;
   return !!dc && publishedLevels(dc) === undefined;
 }
 
@@ -773,6 +843,9 @@ export function takesMeasuredFullScale(caps: BridgeCaps | null, deviceId: string
  * gives none either — the server refuses that configure. A shared-gain
  * interface (the 2i2) keeps one rail on every channel, loopback included,
  * as the server does.
+ *
+ * The Default row (`deviceId` `''`) is the device it resolves to
+ * ({@link resolvedDeviceId}).
  */
 export function effectiveFullScaleVolts(
   caps: BridgeCaps | null,
@@ -780,7 +853,8 @@ export function effectiveFullScaleVolts(
   cfg: BridgeConfig = {},
   channel?: number,
 ): number | null {
-  const dc = caps && deviceId ? caps.device_caps?.[deviceId] : undefined;
+  const id = resolvedDeviceId(caps, deviceId);
+  const dc = caps && id ? caps.device_caps?.[id] : undefined;
   if (!dc) return null;
   const ch = channel ?? 0;
   const levels = publishedLevels(dc);

@@ -217,7 +217,10 @@ test('captureDeviceLabel: the bridge caps name or the browser label, never for t
 
   // Setup's key for the selected device is the key a capture from it is filed under.
   expect(selectedDeviceKey(caps, [], 'soundcard:1')).toBe('Audient iD44');
-  expect(selectedDeviceKey(caps, [], '')).toBe('');            // only the server knows
+  // The Default row's key is the device it resolves to, so a calibration
+  // carried from the named row shows on Default too (final review).
+  expect(selectedDeviceKey(caps, [], '')).toBe('MacBook Pro Microphone');
+  expect(selectedDeviceKey({ ...caps, default_input: null } as BridgeCaps, [], '')).toBe('');
   expect(selectedDeviceKey(caps, [], 'soundcard:7')).toBe('');
   expect(selectedDeviceKey(null, web, 'abc')).toBe('Audient iD44');
   expect(selectedDeviceKey(null, web, '')).toBe('web_audio');
