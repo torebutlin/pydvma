@@ -224,3 +224,47 @@ that hits the ceiling says so rather than passing quietly.
   `pip install --upgrade "pydvma[serve,soundcard]"`. (The GitHub
   releases for 2.4.2–2.4.4 are still to publish — that is what
   triggers the Zenodo archive.)
+
+## 7. The Audient iD44 (MkII) on macOS (2026-11-06 and 09)
+
+Bench notes in `dev/2026-11-06-id44-bench.md`; check with
+`dev/id44_hw_check.py`.
+
+- One CoreAudio device, 22 in / 24 out: inputs 1–4 analogue, 5–20
+  optical (ADAT: 16 at 44.1/48 kHz; the manual says 8 at 88.2/96 kHz,
+  not yet checked), 21–22 a digital loop-back of the playback. 24-bit.
+  No HAL input volume, so no hidden digital gain to pin (unlike the U24
+  XL). No sample-rate menu in the iD app on a Mac: pydvma sets the rate.
+- **A second stream on the iD44 while one runs fails to open**
+  (CoreAudio −10863, "cannot do in current context"). The first stream
+  survives, unlike the 2i2's, but a stimulus can only go out through
+  ONE duplex `sd.Stream`, which pydvma's same-device stimulus path
+  already uses.
+- **A nominal-rate change restarts the iD mixer**: the outputs click,
+  and a run of rate switches plus two failed opens gave a loud buzz from
+  the speakers. Set the rate once and leave it; pydvma pins it per
+  capture and puts it back.
+- The gain knobs are analogue and unreadable; 48 V, the −10 dB pad and
+  the 100 Hz HPF are front-panel switches. Only the end stops are
+  repeatable knob positions.
+- **DAW THRU is the electrical gain reference without a calibrator.**
+  Outputs 3+4 set to DAW THRU in the iD app bypass every volume control
+  and run +18 dBu at 0 dBFS. Cabled into an input, they gave channel 2's
+  line path at the top stop **+50.46 dB** at 1 kHz, identical to 0.01 dB
+  at −80/−70/−60 dBFS and on both days. pydvma, given the manual's +50,
+  reads that input 0.46 dB high in volts: exactly that offset.
+- **Check the iD app's routing before a gain measurement.** On
+  2026-11-09 outputs 3+4 had left DAW THRU: the test tone came out of
+  the speakers and the cabled input showed only its noise floor. And the
+  loop-back inputs carry DAW 1+2 exactly only while the app's loop-back
+  source is DAW 1+2; set to a mix, they also carried the mic's room
+  rumble (−66 dBFS rms) and the exactness check missed by 0.05 dB.
+- A duplex stream's start-up delay varies by a few hundred ms from run
+  to run, so a fixed analysis window sometimes catches silence (a run
+  read 0.47 dB low). Analyse a tone where it actually is.
+- **Choosing a device by NAME touches every other interface.** pydvma's
+  device list probes each device's rate ladder, and PortAudio on macOS
+  opens a test stream for each probe: a Scarlett 2i2 in use by another
+  program at 192 kHz logged `-9986` during a `MySettings(device='iD44')`.
+  On the 2i2 a second stream stops the first, so this can silence
+  another program. Bench scripts pick by index; the fix is a TODO.
